@@ -161,7 +161,7 @@ const prevReleaseState = `{"schema_version":0,"rev":3,"agent_id":"aurora","role"
 func TestRunReportsUpdateDueAndDoesNothingElse(t *testing.T) {
 	f := newDaemonFixture(t)
 	d, out := f.daemon(t, "")
-	raw := `{"schema_version":2,"rev":9,"agent_id":"aurora","role":"orchestrator",
+	raw := `{"schema_version":3,"rev":9,"agent_id":"aurora","role":"orchestrator",
 		"goal":"from a newer release","work_items":[],"decisions":[],"facts":{},"archived":[],"intents":[]}`
 	f.setState(t, raw)
 	before := f.db.Value(f.statePath(t))
@@ -352,8 +352,8 @@ func TestOrchestratorRunIsRegistered(t *testing.T) {
 }
 
 // newerReleaseState is a state node a newer release wrote: this binary reads
-// schema_version 1 and stops over it (G8).
-const newerReleaseState = `{"schema_version":2,"rev":9,"agent_id":"aurora","role":"orchestrator",
+// schema_version 2 and stops over it (G8).
+const newerReleaseState = `{"schema_version":3,"rev":9,"agent_id":"aurora","role":"orchestrator",
 	"goal":"from a newer release","work_items":[],"decisions":[],"facts":{},"archived":[],"intents":[]}`
 
 // TestWaitHonoursTheInterval: the wait is the interval's, not the stream's.

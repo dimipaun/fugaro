@@ -141,6 +141,30 @@ func TestAPIKeyWithProviderModelAllowed(t *testing.T) {
 	}
 }
 
+// TestProviderAuthJudgesTheVisionPin (V1, D2003, D2007): the credential rule
+// reaches the fourth slot. A vision model served by a provider is refused on a
+// vertex or oauth run exactly as a role's is — the run that points a stage at a
+// provider model is an api-key run — and an empty slot is refused by nothing,
+// because a run that writes no vision model sends nothing to a provider.
+func TestProviderAuthJudgesTheVisionPin(t *testing.T) {
+	ps := map[string]ModelProvider{"openrouter": okProvider()}
+	a := Agent{Auth: "oauth", Models: ModelRoles{Coder: "claude-opus-5-5", Reviewer: "claude-sonnet-5-5", Background: "claude-haiku-4-5"}}
+	if got := CheckProviderAuth(a, ps); len(got) != 0 {
+		t.Fatalf("an all-Claude oauth run with no vision model is refused: %v", got)
+	}
+	a.Models.Vision = "deepseek/deepseek-v4.1-flash"
+	got := problemsText(CheckProviderAuth(a, ps))
+	if !strings.Contains(got, "agent.models.vision") || !strings.Contains(got, "oauth") || !strings.Contains(got, "api-key") {
+		t.Errorf("problems = %q, want the vision slot refused for the credential", got)
+	}
+	if strings.Contains(got, "agent.models.coder") {
+		t.Errorf("problems = %q, and the three Claude roles are not refused", got)
+	}
+	if got := CheckProviderAuth(Agent{Auth: "api-key", Models: a.Models}, ps); len(got) != 0 {
+		t.Errorf("an api-key run with a provider vision model is refused: %v", got)
+	}
+}
+
 func TestProviderKeyEnv(t *testing.T) {
 	p := okProvider()
 	p.Secret = "openrouter-api-key"
@@ -321,7 +345,7 @@ func claimPrices(t *testing.T, ps map[string]ModelProvider) *pricing.Table {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tbl, err := PriceTable(ps, pricing.Overrides{claimID: pricing.Rates{InputPerM: 2, OutputPerM: 10}}, cat, checked.Add(24*time.Hour))
+	tbl, err := PriceTable(ps, pricing.Overrides{claimID: {Rates: pricing.Rates{InputPerM: 2, OutputPerM: 10}}}, cat, checked.Add(24*time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}

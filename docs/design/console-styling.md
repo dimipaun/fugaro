@@ -435,7 +435,7 @@ warnings → the caps panel.
 | Table | `spend-table`, `spend-table-head`, `spend-table-row`, `spend-th`, `spend-table-body`, `spend-row`, `spend-key`, `spend-gap-cell`, `spend-model`, `spend-notional`, `spend-compute`, `spend-runs`, `spend-run-hours`, `spend-tokens-in`, `spend-tokens-out`, `spend-partial`, `spend-unreadable`, `spend-num` |
 | Caps | `spend-caps`, `spend-caps-title`, `spend-caps-project`, `spend-caps-day`, `spend-caps-mode`, `spend-scope`, `spend-cap-limit`, `spend-cap-word`, `spend-cap-reserve`, `spend-cap-defaults`, `spend-cap-global`, `spend-cap-figure`, `spend-cap-counted`, `spend-cap-daily`, `spend-cap-per-run`, `spend-cap-notional`, `spend-cap-compute`, `spend-cap-headroom`, `spend-cap-repos`, `spend-cap-repo`, `spend-cap-repo-name`, `spend-cap-spent`, `spend-cap-bar`, `spend-cap-bar-svg`, `spend-cap-bar-track`, `spend-cap-bar-fill`, `spend-cap-at-cap`, `spend-kill`, `spend-kill-word`, `spend-kill-by`, `spend-kill-at`, `spend-kill-reason` |
 | Notes | `spend-note`, `spend-warning` |
-| By person | `spend-people`, `spend-people-title`, `spend-people-view`, `spend-people-you`, `spend-people-operator`, `spend-people-since`, `spend-people-until`, `spend-people-bound`, `spend-people-max-runs`, `spend-people-reason`, `spend-people-note`, `spend-people-rows`, `spend-people-totals`, `spend-people-unlaunched-word`, `spend-people-unlaunched`, `spend-person`, `spend-person-user`, `spend-person-total`, `spend-person-currency`, `spend-person-runs`, `spend-person-succeeded`, `spend-person-failed`, `spend-person-halted`, `spend-person-infra`, `spend-person-other`, `spend-person-no-record`, `spend-person-counted`, `spend-person-notional`, `spend-person-counted-runs`, `spend-person-average`, `spend-person-note` |
+| By person | `spend-people`, `spend-people-title`, `spend-people-view`, `spend-people-you`, `spend-people-admin`, `spend-people-since`, `spend-people-until`, `spend-people-bound`, `spend-people-max-runs`, `spend-people-reason`, `spend-people-note`, `spend-people-rows`, `spend-people-totals`, `spend-people-unlaunched-word`, `spend-people-unlaunched`, `spend-person`, `spend-person-user`, `spend-person-total`, `spend-person-currency`, `spend-person-runs`, `spend-person-succeeded`, `spend-person-failed`, `spend-person-halted`, `spend-person-infra`, `spend-person-other`, `spend-person-no-record`, `spend-person-counted`, `spend-person-notional`, `spend-person-counted-runs`, `spend-person-average`, `spend-person-note` |
 
 `data-*`: `data-theme`; `data-current`, `data-enabled`, `data-known` (on the
 `ol.spend-switch` itself, beside the eight words), `data-dimension`
@@ -471,9 +471,9 @@ figure whose cap the document names a scope for — and `data-at-cap` (`true|fal
 **`li.spend-cap-repo`** that owns the daily-cap bar, `true` when the document's own
 `headroom_usd` is a measured value at or below zero, or its `counted_usd` has reached its
 `daily_cap_usd`: `data-available` also
-on **`section.spend-people`**, where `data-view` (`all|own|unknown`), `data-operator`
+on **`section.spend-people`**, where `data-view` (`all|own|unknown`), `data-admin`
 (`true|false`) and `data-truncated` (`true|false`) record what the CLI's own read resolved —
-the view it scoped the rows to, whether the caller is an operator of the installation, and
+the view it scoped the rows to, whether the caller is an admin of the installation, and
 whether the read stopped at `max_runs` — so a rule about a private or a truncated panel
 selects the panel, `data-limit`
 (`max_reserve`) on **`div.spend-cap-limit`** — the reserve line, drawn above the global

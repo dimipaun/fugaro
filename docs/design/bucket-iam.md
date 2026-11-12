@@ -47,9 +47,9 @@ The 0.6.0 guard `config publish --executable-changes` is a CLI check. It binds o
 | Project Owners and Editors | `roles/storage.legacyBucketOwner` through GCS's convenience bindings (`projectOwner:`/`projectEditor:`), plus their project-level roles | GCS default; `internal/gcpfake/gcs.go` `ConvenienceBindings` models it |
 | Project Viewers | the convenience read bindings, which `fugaro init` removes (`infra.RemoveProjectViewers`) | `internal/infra/statebucket.go` |
 
-The bucket has `uniform_bucket_level_access = true` and `public_access_prevention = "enforced"`. It has **no versioning** and no retention policy (`modules/installation/bucket.tf`). The Terraform state is in a separate bucket, where only operators hold `objectAdmin`.
+The bucket has `uniform_bucket_level_access = true` and `public_access_prevention = "enforced"`. It **is versioned** (`modules/installation/bucket.tf:25-27`), which is the managed audit record's own control: D1545 (the ruling of 2026-11-07) makes that record what stands in for the person who would have read the plan, and an unversioned bucket let whoever applied erase it in place. The noncurrent versions the deletion of `runs/`, `cache/`, `locks/`, `tokens/` and `issues/` objects leaves are purged after 7 days (`bucket.tf:85-93`, `var.bucket_lifecycle.noncurrent_days`), so the bucket does not grow for ever, and `fugaro/` — where the record lives — has no such rule. There is no retention policy. The Terraform state is in a separate bucket, where only operators hold `objectAdmin`.
 
-People are made launchers or operators by `fugaro init --launcher/--operator`, stored in the local config's `terraform.launchers` and `terraform.operators`. A new config defaults both to the person running `init` ([gcp-setup.md](../gcp-setup.md), "Setup checks these for you"). So on a one-person installation, which is the case for both of the owner's installations, every launcher is also an operator.
+People are made operators or admins by `fugaro init --operator/--admin`, stored in the local config's `terraform.operators` and `terraform.admins`. A new config defaults both to the person running `init` ([gcp-setup.md](../gcp-setup.md), "Setup checks these for you"). So on a one-person installation, which is the case for both of the owner's installations, every operator is also an admin.
 
 ### 2.2 Who reads and writes which objects
 
@@ -83,7 +83,7 @@ People are made launchers or operators by `fugaro init --launcher/--operator`, s
 - **The install guard (`internal/infra/tf/cover.go`)** has these properties:
   - `grantRules` covers `roles/storage.objectAdmin` only to people, and `objectUser` and `objectViewer` only to accounts.
   - It checks the bucket of a bucket grant, but **not its condition**. An `objectUser` grant to a Fugaro account with no condition, or with any other condition, would be covered. This is a gap today, independent of this design.
-  - `tf.Guard` refuses every delete or replace unless `--allow-delete` names it, and `infra.DeleteHints` blames a missing `--launcher`/`--operator` for any deleted bucket grant.
+  - `tf.Guard` refuses every delete or replace unless `--allow-delete` names it, and `infra.DeleteHints` blames a missing `--operator`/`--admin` for any deleted bucket grant.
 - **doctor** already reads the project's IAM policy (`preflight.IAMPolicy`) and service accounts' policies (`doctor_signers.go`). Each degrades to a warning when it is refused.
 
 ## 3. The end state
@@ -189,7 +189,7 @@ bucket access (0.7.0): these launchers keep reading the runs bucket and writing 
   user:b@example.com
 ```
 
-`DeleteHints` already skips allowed addresses, so the misleading "pass --launcher again" hint never appears for these deletes.
+`DeleteHints` already skips allowed addresses, so the misleading "pass --operator again" hint never appears for these deletes.
 
 Veto alternative: no automatic allow. The operator passes `--allow-delete 'module.installation.google_storage_bucket_iam_member.runs["user:a@example.com"]'` once per launcher, as the refusal prints.
 
@@ -366,7 +366,7 @@ An operator's own coding agent with the operator's ADC can also write `fugaro/` 
 
 ## 11. Verified from the code, and not verified (live checklist)
 
-**Verified from the code** (§2): the grants, the object paths and their writers, the absence of launcher writes outside `runs/`, `tokens/` and `issues/`, gocloud's 403 mapping, the guard's missing condition check, and the bucket's uniform access with no versioning or retention.
+**Verified from the code** (§2): the grants, the object paths and their writers, the absence of launcher writes outside `runs/`, `tokens/` and `issues/`, gocloud's 403 mapping, the guard's missing condition check, the bucket's uniform access, and its versioning with the noncurrent-version purge the rules state, and no retention policy.
 
 **Verified live earlier, by analogy:** a prefix condition with `objectUser` allows writes and deletes under the prefix and denies writes, reads and listing elsewhere, for the job account (check 7).
 

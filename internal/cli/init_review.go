@@ -205,7 +205,7 @@ func (r *initRun) askOrdinary(what, notCovered string) (bool, error) {
 			return false, err
 		}
 		if covered {
-			fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
+			r.willDo(what)
 			if r.gateStandsIn() {
 				fmt.Fprintf(r.w, "  %s\n", initflow.GateOrdinary())
 			} else {
@@ -214,7 +214,7 @@ func (r *initRun) askOrdinary(what, notCovered string) (bool, error) {
 			return true, nil
 		}
 		if r.gateStandsIn() && initflow.PersonAtTheTerminal(r.conditions()) {
-			fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
+			r.willDo(what)
 			fmt.Fprintf(r.w, "  %s\n", initflow.OwnerProceeded())
 			return true, nil
 		}
@@ -235,6 +235,85 @@ func (r *initRun) confirmOrdinary(what, undone, notCovered string) error {
 		return r.notConfirmed(undone)
 	}
 	return nil
+}
+
+// confirmPlanned is confirmOrdinary for a step that is about to apply a plan:
+// a plan that grants a role to a member only the grants node holds names that
+// grant in its own banner before the confirmation (grantsNotAnnounced).
+//
+// It is the other half of the rule this file's announced and update_access.go's
+// heldAccess hold: the member is off the review screen, so the cover refuses
+// the plan and a managed project's gate refuses it outright — and the operator
+// at an ordinary terminal is asked, in the sentence naming the member, rather
+// than stopped with a plan no cover admits and no flag to pass. --yes answers it
+// as it answers any step: the owner's ruling under T7 dropped the rule that this
+// grant alone refused the flag, since nothing is typed to tell the two apart.
+func (r *initRun) confirmPlanned(what, undone string, p *tf.Plan, notCovered string) error {
+	if grants := r.grantsNotAnnounced(p); len(grants) > 0 {
+		ok, err := r.askPlanned(what, grants)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return r.notConfirmed(undone)
+		}
+		return nil
+	}
+	return r.confirmOrdinary(what, undone, notCovered)
+}
+
+// grantsNotAnnounced is the members this plan grants a role to that the review
+// screen did not announce: the `user:` members of its `*_iam_member` creates
+// that the installation's own outputs do not hold at the role this run's own
+// lists place them at (initRun.accessHeld) — a member the node gained, and one
+// it raised, whose roles the screen does not list either. Each member's grant is
+// one resource, so a member the node gained is a create.
+//
+// It is empty for a run that could not read those outputs, which is the answer
+// announced gives to the same question, and for a plan that grants no member at
+// all — a nil plan included, so a caller that has none keeps the step it had.
+func (r *initRun) grantsNotAnnounced(p *tf.Plan) []string {
+	if p == nil || !r.accessHeldRead {
+		return nil
+	}
+	var out []string
+	for _, rc := range p.ResourceChanges {
+		if !strings.HasSuffix(rc.Type, "_iam_member") || !slices.Contains(rc.Change.Actions, "create") {
+			continue
+		}
+		m, _ := rc.Change.After["member"].(string)
+		if isUserMember(m) && !slices.Contains(r.accessHeld, m) && !slices.Contains(out, m) {
+			out = append(out, m)
+		}
+	}
+	return sortedMembers(out)
+}
+
+// askPlanned is the question a grant to a member the review did not announce
+// asks: the banner naming the members, and then the confirmation every other
+// step of the run takes (confirmNow, T7): --ask's own y/N, --yes, or a person at
+// a real terminal being the answer, with nothing typed. The grant is named in
+// the banner rather than asked for apart, so a person reads whom it is for
+// before they confirm. A coding agent's session confirms nothing (the marker
+// first, as askOrdinary asks it), and a run with no terminal and no --yes is
+// asked nothing and confirms nothing.
+func (r *initRun) askPlanned(what string, grants []string) (bool, error) {
+	shown := make([]string, 0, len(grants))
+	for _, m := range grants {
+		shown = append(shown, pluginwire.Printable(m))
+	}
+	var ok bool
+	err := r.asking(func() error {
+		if m := agentMarker(os.Getenv, r.stdinTerminal()); m != "" {
+			return &initflow.AgentError{Marker: m}
+		}
+		fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s, granting %s, which the review did not announce\n",
+			r.projectName, r.gcpProject, what, strings.Join(shown, ", "))
+		var err error
+		ok, err = r.confirmNow(what + "?")
+		return err
+	})
+	return ok, err
 }
 
 // owner says why the project is Fugaro's own, or not: created by this run, or
@@ -292,8 +371,8 @@ func (e *initEngine) accessLists(ctx context.Context) []access {
 		return "from the local config"
 	}
 	out := []access{
-		{what: "launchers", members: e.spec.Launchers, source: src(o.launchersChanged), note: "launch runs; also mint run tokens when --firebase-project's token signer is applied"},
-		{what: "operators", members: e.spec.Operators, source: src(o.operatorsChanged), note: "onboard repositories and submit builds"},
+		{what: "operators", members: e.announced(e.spec.Launchers), source: src(o.operatorsChanged), note: "start runs; also mint run tokens when --firebase-project's token signer is applied"},
+		{what: "admins", members: e.announced(e.spec.Operators), source: src(o.adminsChanged), note: "onboard repositories and submit builds"},
 	}
 	if o.firebase != "" || e.lc.Terraform.BudgetBackend {
 		bs := "from the local config"
@@ -304,9 +383,45 @@ func (e *initEngine) accessLists(ctx context.Context) []access {
 		for _, a := range e.projectAdmins(ctx) {
 			out[len(out)-1].members = append(out[len(out)-1].members, a)
 		}
-		out = append(out, access{what: "budget viewers", members: slices.Concat(e.spec.Launchers, e.spec.Operators), source: "the launchers and operators"})
+		out = append(out, access{what: "budget viewers", members: e.announced(slices.Concat(e.spec.Launchers, e.spec.Operators)), source: "the operators and admins"})
 	}
 	return out
+}
+
+// announced is one of the run's two lists as the review screen announces it:
+// the members the installation's own outputs hold AT THE ROLE THE LIST PLACES
+// THEM AT and the ones this run named itself, without the members only the
+// grants node holds (update_access.go's heldAccess).
+//
+// The role is half of it, and the other half is that this cover cannot say one:
+// a member the node raised from operator to admin is in the outputs' operator
+// list and in the run's admin list, so announcing them under the list they came
+// from would name a person whose plan grants them the ADMIN's roles — a member
+// is announced where the outputs and the list agree on their role, which for a
+// member the node raised is nowhere: the list they came from holds them at the
+// lower role, and the raised role is the one the plan grants.
+//
+// Such a member is a grant nobody at this terminal made, and the screen's own
+// sentence is that a plan granting anyone it did not list is not covered: the
+// step names the grant in its banner and applies it on the confirmation every
+// step takes, and a managed project's gate refuses it outright (askOrdinary,
+// confirmPlanned). Listing them would take that line back: the
+// screen would show the member under the local config's name, the cover would
+// accept the plan that grants them, and one `--yes` passed for something else
+// would be the whole of the agreement. Excluding them is what makes the gate
+// refuse that plan too — the gate judges the plan by the very cover this builds
+// (stepCover) — and the roles step has already said, in its own words, which
+// members they are.
+//
+// A run that could not read the outputs filters nothing: what the node holds is
+// then all this run knows of the installation (accessAddsUnknown).
+func (e *initEngine) announced(members []string) []string {
+	if !e.r.accessHeldRead {
+		return members
+	}
+	return slices.DeleteFunc(slices.Clone(members), func(m string) bool {
+		return isUserMember(m) && !slices.Contains(e.r.accessHeld, m)
+	})
 }
 
 // projectAdmins are the GCP project's owners and editors who are users or
@@ -678,6 +793,14 @@ func (r *initRun) coverReasonsFirebase(p *tf.Plan, imports []tf.ImportKey) []str
 // it is the refusal.
 type stepCover struct {
 	notCovered func(*tf.Plan, []tf.ImportKey) []string
+	// split is the same answer in the two halves D1545 asks for — integrity,
+	// the reasons that still refuse (D1549), and content, the ones the gate
+	// records and warns about — taken from the cover notCovered answers whole
+	// rather than from a second reading of the review. nil is a cover that has
+	// no split, and the gate then reads every reason as integrity: the
+	// fail-closed direction, since a reason that might have been content being
+	// refused costs a confirmation and never a rule applied unrecorded.
+	split func(*tf.Plan, []tf.ImportKey) ([]string, []string)
 }
 
 func (c stepCover) NotCovered(p *tf.Plan, imports []tf.ImportKey) []string {
@@ -687,13 +810,62 @@ func (c stepCover) NotCovered(p *tf.Plan, imports []tf.ImportKey) []string {
 	return c.notCovered(p, imports)
 }
 
+// NotCoveredSplit is managed.Cover's other question (D1545). The two halves
+// together are NotCovered's answer, in its order and with its wording, so the
+// gate's warnings, its refusals and the record they are written into cannot
+// disagree about one change.
+func (c stepCover) NotCoveredSplit(p *tf.Plan, imports []tf.ImportKey) (integrity, content []string) {
+	if c.split == nil {
+		return c.NotCovered(p, imports), nil
+	}
+	return c.split(p, imports)
+}
+
 // coverOf is the cover of one step of this run, or one that refuses: a run
 // whose review was never built has no cover for any root, and the reasons are
 // empty in that case because there is no plan to ask about — an answer the gate
 // must not read as "nothing to refuse".
+//
+// which and the split are taken together, and both off the review's own cover:
+// a constructor that took one without the other is how a step's whole answer
+// and its halves would come to be about different plans.
 func (r *initRun) coverOf(which func(*tf.Plan, []tf.ImportKey) []string) stepCover {
 	if r.review == nil || r.review.cover == nil {
 		return stepCover{}
 	}
-	return stepCover{notCovered: which}
+	return stepCover{notCovered: which, split: r.coverSplit()}
+}
+
+// coverOfFirebase is coverOf for the root whose Firebase project may not be
+// Fugaro's: the step's own fact is prepended to the cover's reasons exactly as
+// coverReasonsFirebase prepends it to the whole answer, and it is an integrity
+// reason — a project that is not verified as Fugaro's refuses the plan
+// (D1549), which is not something a warning may carry.
+func (r *initRun) coverOfFirebase() stepCover {
+	if r.review == nil || r.review.cover == nil {
+		return stepCover{}
+	}
+	return stepCover{notCovered: r.coverReasonsFirebase, split: r.coverSplitFirebase()}
+}
+
+// coverSplit is the review cover's own two halves, asked of the same value
+// coverReasons asks its whole answer of (r.review.cover()), so the halves are
+// that answer's own division and not a second opinion about it.
+func (r *initRun) coverSplit() func(*tf.Plan, []tf.ImportKey) ([]string, []string) {
+	return func(p *tf.Plan, imports []tf.ImportKey) ([]string, []string) {
+		return r.review.cover().NotCoveredSplit(p, imports)
+	}
+}
+
+// coverSplitFirebase is coverSplit for the Firebase root, mirroring
+// coverReasonsFirebase's own rule: an unverified Firebase project is one
+// reason about the whole plan and the cover is not asked at all, while a
+// verified one leaves the cover's own answer, halves and all.
+func (r *initRun) coverSplitFirebase() func(*tf.Plan, []tf.ImportKey) ([]string, []string) {
+	return func(p *tf.Plan, imports []tf.ImportKey) ([]string, []string) {
+		if why := r.firebaseReason(); why != "" {
+			return []string{why}, nil
+		}
+		return r.coverSplit()(p, imports)
+	}
 }

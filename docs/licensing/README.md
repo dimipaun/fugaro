@@ -80,8 +80,11 @@ credentials service and the coordinator were both "part of the Core today, not o
 the coordinator is out of that parenthetical and the credentials service keeps it. That is the
 only sentence changed, and the website page was regenerated from the document
 ([reconciliation.md](reconciliation.md#amendment-2026-10-29-the-coordinator-leaves-the-terms-core)).
-**The move is planned, not landed** (`ee/` holds only its licence and README), so the coordinator
-is still part of the Core by section 2's path definition and the released MIT versions stay MIT.
+**The move the ruling asked for was planned, not landed, when this was written** (`ee/` held only
+its licence and README then); it has landed since, the coordinator now being the
+[`ee/coordinator/`](../../ee/coordinator) package — the amendment of 2026-11-11 below records what
+moved and what did not — so the coordinator is out of the Core by section 2's path definition,
+while the released MIT versions stay MIT (amended 2026-11-11).
 Counsel has not been consulted on the edit; the owner tells counsel in the next revision round.
 The licence files are untouched, the draft is still **not in force**, and the broader question of
 where the coordinator's released MIT versions leave the licence's coverage sentence is still
@@ -115,6 +118,50 @@ subscriptions plan's S2.1 is the task that writes it, and L3.1 of this plan's
 superseded there. **Nothing is built:** `ee/licence/` does not exist, no release reads or mounts a
 key, and minting stays the owner's, by hand, until the entity and the owner-operated service exist.
 
+**Amended 2026-11-11: the "move later" note (D400, D407).** **D400**, of the go-to-market work
+(D400, D407, T1 and F19 in
+[go-to-market/reconciliation.md](../go-to-market/reconciliation.md)), kept the console, the mobile
+app, the coordinator and the orchestrators where they were when the owner ruled — the code was
+under open pull requests, and moving it under them is what the ruling avoided — and asked for each
+area to be marked as covered by the `ee/` licence and moved into `ee/` later. The marking's timing
+is **D407**'s: the per-file notice goes in with the licence text it names. Both have landed, the
+notice following the text rather than arriving with it — the text is
+[`ee/LICENSE`](../../ee/LICENSE), counsel's of 2026-10-27, and the notice was the follow-up run the
+amendment of 2026-10-27 above records — so the files under `ee/`, `console/` and `mobile/` carry
+the two-line `LicenseRef-Fugaro-Subscription` notice, each directory's own licence file and its
+`README` excepted, as [LICENSING.md](../../LICENSING.md) states. The two font directories vendored under
+`console/` are the exception LICENSING.md does not name: they carry `OFL-1.1` notices in its place,
+being third-party files that are not Fugaro's to license (§7.1 of
+[`console/LICENSE.md`](../../console/LICENSE.md)). What D400 called "later" has happened for one of
+the four areas it named: the coordinator is under `ee/coordinator/`, its library as well as its
+command (D434 and T10 in
+[subscriptions/reconciliation.md](../subscriptions/reconciliation.md)), and governance, the report
+command, the graph and the key service sit there beside it, none of them among D400's four. The
+orchestrators D400 named were never in the core, so nothing of theirs moved: they are
+business-licensed from their first file (D435 and T20 in
+[subscriptions/reconciliation.md](../subscriptions/reconciliation.md)). The console and the mobile
+app have **not** moved: both are in the public tree still, in `console/` and `mobile/`, each under
+its own licence file of the same wording ([`console/LICENSE.md`](../../console/LICENSE.md),
+`mobile/LICENSE.md`) rather than under `ee/LICENSE` (D311, 2026-10-26,
+[reconciliation.md](reconciliation.md#amendment-2026-10-26-d311)), and each marked per file as D407
+timed.
+
+**Amended 2026-11-11: the note is the v1 text.** [licence-key.md](licence-key.md) is rewritten to the
+key design the [licence-key-v2 plan](../licence-key-v2/implementation-plan.md) and its
+[reconciliation](../licence-key-v2/reconciliation.md) fix (D2130--D2146, F1--F18, TN1--TN5), and it
+supersedes the subscriptions plan's S2.1 and this plan's L3.1 where they name the old claims. The
+format is the spec's `fgk_<payload>.<signature>`; the claim set is K1.1's, with a **required**
+`workspace_id` naming the workspace's Firebase project id, the renewal secret present only as its hash,
+`grace_days` carried by the key, `kind` of `paid`, `trial` or `comped`, and the states `active`,
+`grace` and `expired`. The note gains the policy version and its upgrade-message refusal, the
+unknown-fields exception for signed keys only, and the revocation section: a visible Cloud Scheduler
+job in the customer's own project, a status call and then a renewal, never a revocation on silence, and
+the accepted limits stated beside it -- of which the old note's "no revocation" and its three-part key
+text are gone. The rules the amended decisions keep are carried: the raw bytes before the claims, the
+offline check at `ee/register`, the read-only lapse, the overlap, the tier's maximum lifetime, the
+staging key's refusal and where each product keeps the key. **Nothing is built**: the note is still a
+design, the production keyring is empty, and K1.1's verifier is the first thing that reads a v1 key.
+
 Spec owner: the repository owner. Spec received 2026-10-24; reconciled against `origin/main` at
 `e924481cd` the same day.
 
@@ -123,7 +170,7 @@ Spec owner: the repository owner. Spec received 2026-10-24; reconciled against `
 | [spec.md](spec.md) | The owner's spec, verbatim (no typo fixes) |
 | [reconciliation.md](reconciliation.md) | Findings F1–F27 against the code and the published licence texts, resolutions R1–R8, decisions D300–D310 with the owner's answers (D301 and D303 amended), tensions T1 (ruled), T2 (accepted) and T3 (D303's mixed-licence release), items O1–O3, UNVERIFIED U1–U8. **Where it disagrees with `spec.md`, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Slices L0–L5 (L4.2, L4.3 and L5.1 owner-run), tasks with their tests and dependencies, levels, the critical path, the shared-files table. Nothing in it is approved |
-| [licence-key.md](licence-key.md) | The licence key's design (the subscriptions plan's S2.1, superseding this plan's L3.1): the claim set and the expiry-only rule, the offline check at `ee/register`, the grace and the read-only lapse, the overlapping renewal, the accepted limits, the staging key id, where each product keeps the key and how the console hands it to the CLI it spawns. **A design, not built; no release reads or mounts a key** |
+| [licence-key.md](licence-key.md) | The licence key's design (the licence-key-v2 plan's K1.5, superseding the subscriptions plan's S2.1 and this plan's L3.1): the `fgk_` claim set and the policy version, the offline check at `ee/register`, the grace and the read-only lapse, the overlapping renewal, the visible revocation job and its accepted limits, the staging key id, where each product keeps the key and how the console hands it to the CLI it spawns. **A design, not built; no release reads or mounts a key** |
 | [subscription-terms.md](subscription-terms.md) | The Fugaro Subscription Terms, a draft for counsel (2026-10-27, amended the same day to the owner's answers and edited 2026-10-29 on the owner's ruling D531 so it stops calling the coordinator Core): not reviewed, not in force; prices and other Order Form items in brackets, with the two open owner items and counsel's questions |
 
 ## The numbers this work holds

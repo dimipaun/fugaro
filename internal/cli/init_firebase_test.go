@@ -421,7 +421,7 @@ func TestInitFirebaseRefusesUnmarkedData(t *testing.T) {
 func TestInitFirebaseOwnersToTfvars(t *testing.T) {
 	r := newFBRig(t)
 	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes", "--budget-admin", "user:boss@example.com",
-		"--launcher", "user:l@example.com", "--operator", "user:op@example.com")
+		"--operator", "user:l@example.com", "--admin", "user:op@example.com")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -457,15 +457,15 @@ func TestInitFirebaseOwnersToTfvars(t *testing.T) {
 
 func TestInitFirebaseRefusesBadMembers(t *testing.T) {
 	for name, args := range map[string][]string{
-		"job account":       {"--budget-admin", "serviceAccount:fugaro-aurora-web-1a2b3c@proj-1234.iam.gserviceaccount.com"},
-		"build account":     {"--budget-admin", "serviceAccount:fugaro-b-aurora-9f8e7d@proj-1234.iam.gserviceaccount.com"},
-		"scheduler":         {"--launcher", "serviceAccount:fugaro-scheduler@proj-1234.iam.gserviceaccount.com"},
-		"history":           {"--operator", "serviceAccount:fugaro-history@proj-1234.iam.gserviceaccount.com"},
-		"signer":            {"--budget-admin", "serviceAccount:fugaro-token-signer@proj-1234.iam.gserviceaccount.com"},
-		"domain launcher":   {"--launcher", "domain:example.com"},
-		"wildcard operator": {"--operator", "user:*@example.com"},
-		"bare address":      {"--budget-admin", "boss@example.com"},
-		"all users":         {"--budget-admin", "allUsers"},
+		"job account":     {"--budget-admin", "serviceAccount:fugaro-aurora-web-1a2b3c@proj-1234.iam.gserviceaccount.com"},
+		"build account":   {"--budget-admin", "serviceAccount:fugaro-b-aurora-9f8e7d@proj-1234.iam.gserviceaccount.com"},
+		"scheduler":       {"--operator", "serviceAccount:fugaro-scheduler@proj-1234.iam.gserviceaccount.com"},
+		"history":         {"--admin", "serviceAccount:fugaro-history@proj-1234.iam.gserviceaccount.com"},
+		"signer":          {"--budget-admin", "serviceAccount:fugaro-token-signer@proj-1234.iam.gserviceaccount.com"},
+		"domain operator": {"--operator", "domain:example.com"},
+		"wildcard admin":  {"--admin", "user:*@example.com"},
+		"bare address":    {"--budget-admin", "boss@example.com"},
+		"all users":       {"--budget-admin", "allUsers"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newFBRig(t)
@@ -1925,12 +1925,19 @@ func TestUpdateWithoutSharedBudgetDoesNotTouchFirebase(t *testing.T) {
 // The first run converges the installation, so the second one's first step with
 // something to do is the rules deploy: on a fixture that has never run, the
 // installation stage's own confirmation comes first, and the answer to it would
-// be the one this test is about.
+// be the one this test is about. The machine's plugin is recorded at this
+// release for the same reason: the plugin stage installs it wherever the command
+// is typed, checkout or not (D955, U8), so a machine with no plugin recorded has
+// its own install as the second run's first thing to do, and the confirmation
+// this test is about is the rules step's.
 func TestUpdateRulesUnconfirmedRefusesPolicyWrite(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir()) // the machine's record is this test's, not the developer's
 	_, db := updateBudgetRig(t)
 	if out, _, err := executeStdin(t, "", "update", "--yes"); err != nil {
 		t.Fatalf("the converging run: %v\n%s", err, out)
 	}
+	checkoutFile(t, filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "plugins", "installed_plugins.json"),
+		`{"version":2,"plugins":{"fugaro@fugaro":[{"scope":"user","version":"0.2.0"}]}}`)
 	puts := db.RulePuts()
 	if puts == 0 {
 		t.Fatal("the converging run deployed no rules: the second run would be declining a deploy that is not there")
@@ -2823,5 +2830,81 @@ func TestRulesStageNotCoveredNoteWithoutTheFlag(t *testing.T) {
 	r.review.firebase = func(context.Context) (bool, string) { return true, "verified as Fugaro's" }
 	if got := r.firebaseReason(); got != "" {
 		t.Errorf("a verified Firebase project is not covered by the run: %q", got)
+	}
+}
+
+// The installation's own `fugaro update`/`setup` binds the workspace's read of
+// this project's database to the account the LOCAL config's pin names (W7,
+// docs/workspaces/spec.md §5), and to nothing else: the member writes down
+// which account may read its ledger, and the Firebase root's tfvars carry it
+// so the module's binding is the member's own statement rather than an
+// inference about another project's installation. A config that pins no
+// workspace passes no account, and the module then creates neither the role
+// nor the binding — the state of every installation that belongs to none.
+func TestSetupBindsTheWorkspaceReadToThePinnedAccount(t *testing.T) {
+	r := newFBRig(t)
+	b, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// wsPin is the member's own half as update_workspace_test.go writes it
+	// (W1): the membership key and the pin beside it, this machine's config
+	// naming the workspace and the account it trusts to read its ledger.
+	if err := os.WriteFile(r.cfg, append(b, "\n"+wsPin...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got, want := r.fbVars(t)["workspace_service_account"], "marker-workspace@project-ws.iam.gserviceaccount.com"; got != want {
+		t.Errorf("the Firebase root's workspace_service_account = %v, want the pin's %q: the account the member wrote down is the one the module binds", got, want)
+	}
+	// And the pin survives the apply: the installation's own config is not
+	// rewritten to drop what names the workspace.
+	if got := r.localConfig(t).WorkspacePin.ServiceAccount; got != "marker-workspace@project-ws.iam.gserviceaccount.com" {
+		t.Errorf("after setup the pin's account = %q, want it kept", got)
+	}
+
+	// A member of no workspace passes "" — and the module's count then creates
+	// nothing, so the key is present and empty rather than absent.
+	plain := newFBRig(t)
+	if out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes"); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got := plain.fbVars(t)["workspace_service_account"]; got != "" {
+		t.Errorf("an installation in no workspace passes %v for workspace_service_account, want \"\"", got)
+	}
+}
+
+// And the printed variables carry it too: --print-vars is what a person reads
+// to see what their installation holds, so a member whose config names a
+// workspace must see the account the Firebase root binds. The pin is in the
+// local config, so printing it costs no cloud call — the same carry the
+// credentials service's own entry gets, for the same reason.
+func TestTheFirebasePrintVarsCarryTheWorkspacePin(t *testing.T) {
+	r := newFBRig(t)
+	b, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(r.cfg, append(b, "\n"+wsPin...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := executeStdin(t, "", "update", "--firebase-project", fpID, "--print-vars")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var both struct {
+		Firebase map[string]any `json:"firebase"`
+	}
+	if err := json.Unmarshal([]byte(out), &both); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got, want := both.Firebase["workspace_service_account"], "marker-workspace@project-ws.iam.gserviceaccount.com"; got != want {
+		t.Errorf("--print-vars printed workspace_service_account = %v, want the pin's %q: a document that dropped it disagrees with the apply", got, want)
+	}
+	if len(r.calls(t)) != 0 {
+		t.Errorf("--print-vars made calls: terraform %q", r.calls(t))
 	}
 }

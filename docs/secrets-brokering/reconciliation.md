@@ -8,6 +8,10 @@ owner answered D490–D506 on 2026-10-27 (§5): all as recommended except **D501
 scaling to zero: not the recommendation; D502, staying opt-in, was relayed with it). **D494** is the
 recommendation and **departs from the owner's spec** (no RTDB token store). The plan is
 [implementation-plan.md](implementation-plan.md). Answering a decision approves no task.
+**2026-11-10:** §10 reads the later slices S2–S5 against the tree: all four are kept, two pieces are
+subsumed by other plans (DS3.5, MC6), and the owner answered **D2070–D2080** on 2026-11-10, all as
+recommended; the owner's 2026-11-10 "approve all tasks" ruling approves tasks B2.1–B5.9, each
+keeping its own gate.
 
 **Checked against:** `origin/main` at `db4c5f390`, on **2026-10-27**, then merged forward to
 `922a9cc74`, which carries #1167 (run dc73, the `allow_data_to` segment wildcard, merged); #907 (the
@@ -494,3 +498,173 @@ D460–D489 and Checks 180–189. They were checked against `main` and the docs 
 - **U8.** Cold-start latency of the service as the first hop of a git request after idle (D501's
   consequence); **answered by Check 190** (RUN 2026-10-30): the first git request after **2100 s**
   idle took **1 s**, on a **new** instance.
+
+## 10. The later slices read against the tree (2026-11-10)
+
+**What this section is.** The plan carried S2–S5 as four one-line bullets (B2.1, B3.1, B4.1, B5.1)
+with no files, tests or red steps, so no run could be launched for any of them. This section reads
+each one against `origin/main` at `d51ada6d5` (2026-11-10) and against the rulings taken since
+2026-10-27 — the deploy-now, switch-later ruling of 2026-11-05
+([../credentials-service/README.md](../credentials-service/README.md), line 3), the dynamic-delivery
+addendum ([dynamic-delivery/reconciliation.md](dynamic-delivery/reconciliation.md), D1930–D1946),
+the model-crafts and API-key work (`docs/model-crafts`, D1634, D1638; `docs/api-key-review`), the
+project workflow secret (`docs/project-workflow-secrets`, D1267) and the Bitbucket readings of
+2026-11-10 (D1980–D1984) — and turns what remains into the tasks of the plan's section "Later slices,
+planned 2026-11-10". Its decisions, **D2070–D2080, were answered by the owner on 2026-11-10, all as
+recommended**: each keeps its recommendation, the alternatives and their cost, and the answer in its
+last cell. The owner's 2026-11-10 "approve all tasks" ruling approves tasks B2.1–B5.9; each keeps
+its own gate (the owner-run checks, Check 195 before S4's code tasks, the serialization the plan
+names).
+
+### 10.1 Verdict per later task
+
+| Task | Verdict | Why (path and line on `d51ada6d5`) |
+| --- | --- | --- |
+| **B2.1** (S2, D498) every `agent.auth` mode through the service | **KEPT, re-scoped; partly subsumed** | The provider half is other plans' work: the bundle's provider key is AK6b (merged, `26e724261`, #2172), the OpenRouter upstream is dynamic-delivery's **DS3.5** (in a run, #2288), and the service serving Anthropic-key and OAuth **pool members** of a cascade is model-crafts' **MC6** (not started, held on AK7). What no plan carries: the switch admits `cascade` alone — `infra.CredentialsServiceServes` returns `installed && ready && auth == config.AuthCascade` (`internal/infra/spec.go:287-289`) — so an `api-key` or `oauth` repository keeps its job-mounted model credential and gets no service URL (`internal/cli/run.go:4603`). That residue is B2.1–B2.6 (F29–F31) |
+| **B3.1** (S3, D491) workflow `secrets:` through a vault fetch | **KEPT** | No later ruling retires it: dynamic-delivery R2 restates the order (model credentials first, "then workflow secrets and builds last") and leaves the mount flips to "a later plan" (`dynamic-delivery/implementation-plan.md`, "Declined, and why"); D1267 leaves the vault fetch to B3.1 and owes it one sentence (F33). The runner still reads every workflow secret from its own environment (`internal/runner/runner.go:2786-2791`). B3.1–B3.8 plan it; D2073–D2075 shape it |
+| **B4.1** (S4, D491, U4) builds and the image check through the service | **KEPT, gated on U4** | The build account still reads the git credential and every build secret: `google_secret_manager_secret_iam_member.build` (`deploy/terraform/gcp/modules/repo/build.tf:15-20`), the request built in Go (`internal/backend/gcp/build.go:204-211`, `internal/backend/gcp/catalog.go:334-341`), the check job's mounts (`deploy/terraform/gcp/modules/repo/check.tf:66-71`), and on GitHub the build step holds the App's private key itself (`internal/cli/gitcred.go`, `gitCredAppKeyEnv`). Whether a Cloud Build step can mint an ID token the service admits is still U4. B4.1–B4.7 plan it; D2076–D2077 shape it |
+| **B5.1** (S5, D505) shared project jobs at the service, then Bitbucket shared jobs | **KEPT** | A coding run on a shared job is still refused whole (`AuthConfig.SharedJobAccounts`, `internal/credsvc/auth.go:310-324`); the launcher hands no service URL to a project job (`internal/cli/run.go:4594`, `job != ""`); the runner never proxies a project job (`internal/runner/project.go:491`, `project` is the first refusal of `proxiedBitbucket`). The credentials plan's C3.9 general half is planned nowhere (`docs/credentials-service/implementation-plan.md:674`). docs/bitbucket-workspace-token's **T2.2 and T2.4 wait on it** (D1980, D1982, answered 2026-11-10). B5.1–B5.6 plan it; D2078–D2079 shape it |
+
+**None of the four is SUPERSEDED or MERGED whole.** Two pieces are subsumed by other plans and are
+not re-planned here: the OpenRouter upstream (DS3.5) and pool selection inside the service (MC6). Two
+pieces are moot under the rulings: the "provider routes" half of B2.1 at the service (D1634 keeps
+OpenRouter and Vertex members on the runner path, `docs/model-crafts/reconciliation.md:100`), and
+Vertex, which has no key (D498).
+
+### 10.2 Findings
+
+**F29, Gap (Check 191's first run, 2026-11-10).** `proxy: true` is inert for a repository off the
+credentials-service switch: `proxiedBitbucket` returns false without `FUGARO_CREDENTIALS_SERVICE_URL`
+(`internal/runner/project.go:494`), and the launcher sets that variable only where
+`CredentialsServiceServes` holds, which is `cascade` alone (`internal/cli/run.go:4603`,
+`internal/infra/spec.go:288`). The sandbox repository of Check 191's first run was not on the switch,
+and the check now says so (`6e319b650`, #2284). *Consequence:* a Bitbucket repository whose
+`agent.auth` is `oauth`, `api-key` or `vertex` (the default, `internal/config/defaults.go:56`) cannot
+be proxied today. S2 is therefore not only a model-key slice: it is what lets a non-cascade Bitbucket
+repository use S1, and why D2080 recommends S2 first.
+
+**F30, Gap.** An `oauth` run never starts the gateway: `GatewayOn` admits `api-key`, `vertex` and
+`cascade` only (`internal/runner/routing.go:292-299`), and `gatewayUpstream` refuses any other auth
+(`internal/runner/gateway.go:279-305`). Every gateway also needs the budget mode at `observe` or
+`enforce` (`internal/runner/routing.go:298`). *Consequence:* serving `oauth` through the service needs
+the gateway on for an `oauth` run on the switch, and a repository whose installation runs budget mode
+off cannot be switched without changing what that mode means (D2071).
+
+**F31, Gap.** The mount drop and the URL are one answer by design (`CredentialsServiceServes`'s own
+comment, `internal/infra/spec.go:282-286`), and `dropModelMounts` drops **every** model secret,
+provider keys included (`internal/infra/readiness.go:135-144`; `config.IsModelSecretEnv` is
+`ModelSecretEnvs` or `IsProviderKeyEnv`, `internal/config/providers.go:529-531`). For a `cascade`
+repository that is right — the cascade refuses a provider pin (`CheckProviderAuth`,
+`internal/config/providers.go:930`). For an `api-key` repository it is not: its provider keys stay on
+the runner path (D1634), so its drop takes the Anthropic key alone. And a launcher or a job image
+older than the change, meeting a repository whose mount was dropped, has no credential at all (the
+runner reads `ANTHROPIC_API_KEY` from its own environment, `internal/runner/gateway.go:281-283`).
+*Consequence:* D2072 — the URL first with the mounts kept, the mounts dropped later behind a flip list
+and an owner-run check, as D500 does for the Bitbucket token.
+
+**F32, Rule.** D502 ("stays opt-in") is superseded for the deploy by the owner's ruling of 2026-11-05:
+`fugaro update` deploys the service for every installation and a repository is switched onto it per
+repository, where the service can serve it (`docs/credentials-service/README.md`, line 3;
+`.claude/rules/credentials-service.md`). *Consequence:* every later slice is "per repository, where the
+switch holds", never "per opted-in installation"; G9's "without the opt-in" reads "off the switch".
+
+**F33, Rule.** D1267 (`docs/project-workflow-secrets/reconciliation.md:745-759`) fixes what B3.1
+reads: "the vault fetch reads the container the mount reads — `gcp.ProjectSecretID` of the logical
+name", the per-repository container being `gcp.SecretID` (`internal/backend/gcp/names.go:203`,
+`:214`), and the operator-local allow-list keeps deciding the reach. *Consequence:* no value moves and
+no name changes (dynamic-delivery's R6 holds for this class too); the service must learn the
+allow-list's answer per repository, because it cannot read an operator's local config (D2073), and it
+must be able to read those containers (D2074).
+
+**F34, Gap.** Under Q6 the service holds exactly one accessor, on the bundle
+(`TestCredentialsServiceGrantsAreTheOneBundle`, cited in `internal/credsvc/dynamicsecrets.go`'s header
+comment); D1931 departed from it once, for the dynamic-delivery prefixes only. A workflow secret's
+container carries the existing name, `fugaro-<slug>-<logical>-<hash>`, which no name-prefix condition
+separates from the job's git token and model secrets (dynamic-delivery F6). *Consequence:* D2074.
+
+**F35, Gap.** The Batch backend resolves `Options.Secrets` as the VM's own account
+(`internal/backend/batch/batch.go:203-207`, `internal/backend/batch/run.go:235`), and a Batch VM is not
+a job account the service admits (secret-readers E5). B1.7 already refuses a proxied run on Batch
+(G14). *Consequence:* D2075.
+
+**F36, Gap (U4 still open).** Nothing has measured whether a Cloud Build step running as the build
+account can fetch an ID token that the service's IAM and `Authenticator` admit; the daily check job is
+a Cloud Run job (`deploy/terraform/gcp/modules/repo/check.tf`) and can, as any job can.
+*Consequence:* S4 starts with an owner-run check (Check 195), and every S4 code task waits on it.
+
+**F37, Gap.** The GitHub build path holds the App's **private key** inside the build step and mints
+there (`internal/cli/gitcred.go`, `gitCredAppKeyEnv`, `gitCredGitHubAPI`). The service already answers a
+read-only GitHub request (`internal/credsvc/githubread.go:235`, `githubRead`). *Consequence:* R5.
+
+**F38, Rule.** C3.9's precondition is "the phase-3 shared-job rules are on `main`"
+(`docs/credentials-service/implementation-plan.md:111`, `:674`), and `:674` names one piece: "the
+reference record of project-centric §7 becomes the tier-A registry and the source of admissions
+(D131, O4)". On `main`: profile jobs (`internal/infra/projectjobs.go:68`, `ProjectJobs`), the
+profiles in the published node, the service reading admissions from that node (O4,
+`internal/credsvc/cascade.go:211`, `admittedAccounts`), and the review half of C3.9 (D1070,
+`docs/c39-review-identity/`), which already binds a shared caller to its profile
+(`AuthConfig.ReviewJobAccounts`, `internal/credsvc/auth.go:325-338`). *Consequence:* D2078 asks
+whether the published node is that record (the recommendation) or a separate registry is owed.
+
+**F39, Gap.** docs/bitbucket-workspace-token's T2.2 deploys a shared Bitbucket job that **mounts** the
+token (its "Behaviour" list). Under S1 a proxied repository's run reads no token; a shared job whose
+repositories are all proxied would carry a mount nothing reads, and one that is not proxied puts the
+workspace token's whole reach into a job serving several repositories — the case the 2026-10-15
+ruling kept Bitbucket off shared jobs for (`docs/git-providers.md:71`). *Consequence:* D2079.
+
+**F40, Gap.** A run identity names one slug, and the service binds a per-repository caller's
+repository through `JobAccount.Repo` (G3). A shared job's account serves every repository of its
+profile, so a shared coding caller's binding is "the identity's repository, and it is one of the
+profile's" — the shape the review half already uses. *Consequence:* B5.1's interface; a launcher can
+still mint an identity for any repository of the profile (D475, accepted).
+
+### 10.3 Resolutions (one defensible answer each)
+
+- **R5.** A build caller gets a read-only GitHub installation token for its own repository from the
+  service's existing read path, never the App key (F37).
+- **R6.** An `api-key` repository's provider keys stay on the runner path and keep their mounts in S2
+  (D1634); S2's drop takes `anthropic-api-key` and the OAuth token only (F31).
+- **R7 (amended after review round 1).** For a non-cascade repository the service decides from
+  `update`'s `creds/repoauth/<slug>` record, never from the caller: the run's declaration must match
+  it, a missing or mismatched one is refused, and only a repository with no record or a `cascade`
+  record gets today's cascade (F30, D2070).
+- **R8.** Every flip in S2–S5 follows D500: a flip list in `internal/config`, its Terraform mirror and
+  guard test, an owner-run check before and after, the `### For operators` line "run
+  `fugaro update`", and `belong` never touched.
+
+### 10.4 Decisions D2070–D2080 (answered 2026-11-10, all as recommended)
+
+Block **D2070–D2089**, taken above D2069, the highest number written or reserved on `main` or in any
+open pull request on 2026-11-10 (outer-loop-escalation's D2030–D2069, #2285, open when this was read
+and merged since as `280a0c379`). D2081–D2089 are reserved and unused. This folder's own
+D507–D519 stay reserved and unused.
+
+| # | Question | Recommendation and reason | Alternatives and their cost | Owner's answer |
+| --- | --- | --- | --- | --- |
+| **D2070** | How does the service serve an `api-key` or `oauth` repository (B2.1, F29)? *Amended after review round 1, before any answer: the first text let the caller's own header narrow, and a hostile agent could omit it and be served the whole cascade, tier B included (`internal/credsvc/cascade.go:28-31`).* | **(a) A `creds/repoauth/<slug>` record that `update` writes** from the repository's `fugaro.yaml` (its auth and, for `oauth`, the accounts its workflows name — the account is per workflow and per run, `oauth_token` and `--token`), read by the service; the run's declared mode and account are checked against it, and a missing or mismatched declaration on a non-cascade repository is refused (R7). Reason: no run writes `creds/`, no policy bump, and the cascade's admission, back-off and audit are reused | **(b) Supersede B2.1:** operators move to `cascade` with a one-member pool (MC5/MC6). Cost: no code, but every non-cascade Bitbucket repository stays unproxiable until its owner edits `fugaro.yaml`, and an `api-key` repository with a provider pin can never move (`CheckProviderAuth` refuses the pin under cascade). **(c) The repository's auth in the published node.** Cost: a policy field and a lockstep version bump (D477). **(d) The caller's header alone** (the first text). Cost: no boundary — the agent omits it |  Owner, 2026-11-10: as recommended |
+| **D2071** | An `api-key` or `oauth` repository on an installation whose budget mode is off (F30) | **Held off the switch:** the switch gains the mode as a condition; the repository keeps its mount and doctor says why. Reason: the gateway is what reaches the service, and it exists only in `observe` and `enforce`. **Consequence (review round 1):** the mode is read at `update` while the runner reads it live, so after B2.7's flip a publish that lowers the mode to `off` would leave switched jobs with no mount and every run halting until `update --repo`; under (a) B2.7 makes `fugaro project policy publish` refuse that lowering while such a repository is switched | **(b) Turn the gateway on for a switched repository whatever the mode.** Cost: "budget mode off" stops meaning "no gateway" for those runs, against every doc of the mode, but the mode can then change freely |  Owner, 2026-11-10: as recommended |
+| **D2072** | How S2 rolls out (F31) | **Two steps:** B2.3 hands out the URL and the runner uses the service, every mount kept (an older launcher or image still works **until the flip**; after B2.7 an older CLI, whose predicate is cascade-only, hands no URL to a job with no mount, and `serviceAuthSince` guards images, not launchers — a residue under the owner's no-skew ruling); B2.6 drops the Anthropic key and OAuth token mounts behind a flip list (`config.ServiceServedAuths`, empty until then) after Check 193 and the owner's go (R8) | **(b) One release drops both.** Cost: a teammate's older CLI, or a job image before `serviceAuthSince`, meets a repository with no credential and its runs halt. **(c) A policy version bump** so an older CLI refuses to launch. Cost: a lockstep upgrade of every installation for one slice |  Owner, 2026-11-10: as recommended |
+| **D2073** | Where the service learns which workflow secrets a repository's job may fetch (S3, F33) | **An RTDB node under `creds/`** (`creds/workflowsecrets/<slug>`) that `fugaro update` writes from the answer it already computes for the mounts. Reason: the service already reads RTDB with its own role, and the rules already deny every run identity `creds/` (dynamic-delivery §2) | **(b) A published policy field.** Cost: a version bump and a lockstep upgrade. **(c) A bucket object, as D1940's admin list.** Cost: a new grant to the service's account (today the bundle and `fugaroCredentialsDatabase` only) |  Owner, 2026-11-10: as recommended |
+| **D2074** | How the service reads a workflow secret's container (S3, F34) | **Per-container grants** from the repository root, one for each secret the job mounts, beside the job's own; a guard test holds the two sets equal. Reason: exact, and it follows D1931 in departing from Q6 for one class | **(b) A project-level accessor on a name-prefix condition.** Cost: no condition separates a workflow secret from the git token and model secrets under the existing names. **(c) Move workflow secrets into the bundle.** Cost: every value re-entered by a person (`update` cannot read a value: HARD RULE, dynamic-delivery R6) |  Owner, 2026-11-10: as recommended |
+| **D2075** | The Batch backend's workflow secrets (E5, F35) | **A permanent listed exception:** E5's exit becomes `never`, and a repository on `backend: cloud-batch` keeps `secretVariables` | **(b) A Batch VM caller class** in the service. Cost: a new caller class, a new principal kind in `cover.go`'s `grantRules`, for a backend that already runs no proxied repository (G14) |  Owner, 2026-11-10: as recommended |
+| **D2076** | A Bitbucket repository's build credential (S4) | **The service hands the build its repository's token for the build;** the accessor leaves the build account, the reach does not change (a Dockerfile can still read what BuildKit mounts). Reason: S4's aim is the accessor, and a build-side forwarder is a large new component | **(b) The build clones through the proxy** with a fetch-only build class. Cost: a forwarder in the build step, new rules in `internal/gitproxy` and a check of its own; it is the only option that narrows the reach |  Owner, 2026-11-10: as recommended |
+| **D2077** | A workflow build secret's value in S4 | **From the service, with the git credential,** so the build account's accessor list empties | **(b) Keep `availableSecrets` for build secrets** and move only the git credential. Cost: E3 and E6 never exit, and the guard keeps a runtime row |  Owner, 2026-11-10: as recommended |
+| **D2078** | Is C3.9's precondition met on `main` (F38)? | **Yes:** the one named piece — "the reference record of project-centric §7 becomes the tier-A registry and the source of admissions (D131, O4)" — is what the published node already is for the service (O4: the service learns each repository's admitted accounts from what `fugaro project policy publish` publishes; `admittedAccounts`, `internal/credsvc/cascade.go:211`), and profile jobs and the review half's profile binding are on `main`; B5.1 builds the coding half on them | **(b) Build a separate tier-A registry first,** as the sentence's letter reads. Cost: a second source of admissions beside the published node, which O4 already ruled is the source, and S5 waits on a design nobody has written |  Owner, 2026-11-10: as recommended |
+| **D2079** | A Bitbucket shared job (T2.2 there, F39) | **Proxied only:** a shared Bitbucket job is deployed only for a profile whose every repository the published block proxies, and it mounts no token | **(b) As T2.2 is written: mount the token.** Cost: the workspace token's whole reach in a job serving several repositories, which the proxy exists to end. **(c) Both, by profile.** Cost: two shapes of one job to test and explain |  Owner, 2026-11-10: as recommended |
+| **D2080** | The order of the four slices | **S2 first** (it unlocks S1 for every non-cascade repository, F29), then **S5** (it unblocks docs/bitbucket-workspace-token's T2.2 and T2.4), then **S3**, then **S4** (gated on U4) | **(b) Numeric order S2, S3, S4, S5.** Cost: Bitbucket shared jobs wait behind the vault and the builds. **(c) S5 first.** Cost: shared jobs move to the service while most per-repository jobs still cannot |  Owner, 2026-11-10: as recommended |
+
+**Tension T7, accepted with D2070–D2080: DS3.5 stays as built.** DS3.5 (#2288) puts an OpenRouter
+upstream in the service, while D1634 (model-crafts) keeps OpenRouter members on the runner path.
+This section follows D1634 (R6) for S2's drop, which takes the Anthropic key and the OAuth token
+only; the owner's answers of 2026-11-10 accept the tension as recorded, and DS3.5 stays as built.
+
+### 10.5 UNVERIFIED (added)
+
+- **U9.** That a Cloud Run execution started before a re-apply that drops a mount keeps the mounted
+  value for its whole life (believed: the platform resolves `secret_key_ref` at execution start;
+  `docs/design/update-in-flight.md` marks the neighbouring ForceNew case UNVERIFIED). Every flip in
+  S2–S5 leans on it, so Checks 193, 194, 196 and 197 each flip with a run in flight.
+- **U10.** That a Cloud Build step can fetch an ID token for an arbitrary audience from the metadata
+  server as the build account (U4 restated for S4; Check 195).
+- **U11.** That D2074's per-container grants stay inside IAM's limits for an installation with many
+  repositories (not read here).

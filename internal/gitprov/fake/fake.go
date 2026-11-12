@@ -6,6 +6,8 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 )
 
@@ -65,7 +68,7 @@ type PRState struct {
 
 // Call is one entry of the call log, which holds the calls that write
 // (reads leave the state file untouched): Op is the Provider method
-// (EnsurePR, UpdatePR, ApplyReady, Comment), PR the PR number involved
+// (EnsurePR, UpdatePR, ApplyReady, Comment, MarkReady, Merge), PR the PR number involved
 // (0 for an EnsurePR that finds or creates by branch, until it knows),
 // Detail what was asked, such as "draft=true" or "title,body".
 type Call struct {
@@ -85,9 +88,30 @@ type State struct {
 	// Files is the repository's file tree at its default branch (gitprov.
 	// ContentsReader, PIC3): a path relative to the repository's root ->
 	// the file's bytes. Branches is the same tree per named branch, for a
-	// read that names one; a branch not here has no files at all.
+	// read that names one; a branch not here is a ref this repository has
+	// nothing at (treeOf), which is a read that fails rather than one that
+	// quietly answers the default branch's files.
 	Files    map[string]string            `json:"files,omitempty"`
 	Branches map[string]map[string]string `json:"branches,omitempty"`
+	// Commits is the commit a ref names (gitprov.CommitReader): a branch
+	// name, or "" for the default branch, -> a full commit. A ref it does
+	// not name resolves to a commit derived from the ref (commitOf), so a
+	// test that does not care which commit a branch is at writes no entry
+	// and every read still happens at a commit.
+	Commits map[string]string `json:"commits,omitempty"`
+	// Trees is the tree a commit holds, for a test that needs one ref's
+	// read to answer a different tree than another's: the branch's tree in
+	// Branches and the resolved commit's in Trees. A commit not here sees
+	// the tree of the branch that resolves to it — a read at the commit a
+	// branch is at is a read of that branch — so a test that pins no tree
+	// and reads at a resolved commit reads the tree of the ref it came from.
+	Trees map[string]map[string]string `json:"trees,omitempty"`
+	// Checks is the checks reported at a commit (gitprov.Provider.Checks):
+	// a commit SHA -> what the host reports there. A commit this map does
+	// not name has no checks at all, which is not the same as checks that
+	// passed: the caller's ChecksState reads an empty set as CIUnknown, and
+	// a test that wants a green commit must say which checks said so.
+	Checks map[string][]gitprov.CheckRun `json:"checks,omitempty"`
 }
 
 // Provider is a fake git host.
@@ -127,6 +151,8 @@ type Provider struct {
 	FailComments    int
 	FailPullRequest int
 	FailRepository  int
+	// FailPullRequestByBranch makes that many PullRequestByBranch calls fail.
+	FailPullRequestByBranch int
 	// FailUpdatePR and FailApplyReady make that many calls fail without
 	// changing anything.
 	FailUpdatePR   int
@@ -201,6 +227,12 @@ func (p *Provider) Snapshot() State {
 		st.PRs[i] = pr
 	}
 	st.Calls = slices.Clone(p.State.Calls)
+	if p.State.Checks != nil {
+		st.Checks = make(map[string][]gitprov.CheckRun, len(p.State.Checks))
+		for sha, runs := range p.State.Checks {
+			st.Checks[sha] = slices.Clone(runs)
+		}
+	}
 	return st
 }
 
@@ -380,8 +412,8 @@ func (p *Provider) Repository(context.Context) (gitprov.RepoInfo, error) {
 }
 
 // Contents implements gitprov.ContentsReader: the file at path, at ref, out
-// of State's tree ("" is the default branch). The fake reads those trees and
-// nothing else, so a file one of them does not hold is a failure naming what
+// of the tree that ref sees (treeOf: a branch's own tree, a commit's, or the
+// default branch's). A file the tree does not hold is a failure naming what
 // was read, exactly as the real adapter's 404 is: a caller that ignored the
 // ref or the path could not quietly get the definition it meant to (PIC3).
 func (p *Provider) Contents(_ context.Context, path, ref string) ([]byte, error) {
@@ -390,15 +422,108 @@ func (p *Provider) Contents(_ context.Context, path, ref string) ([]byte, error)
 	if err := p.load(); err != nil {
 		return nil, err
 	}
-	tree := p.State.Files
-	if ref != "" {
-		tree = p.State.Branches[ref]
-	}
-	data, ok := tree[path]
+	data, ok := p.treeOf(ref)[path]
 	if !ok {
 		return nil, fmt.Errorf("fake provider: %s holds no %s", p.Repo, path)
 	}
 	return []byte(data), nil
+}
+
+// Commit implements gitprov.CommitReader: the commit ref names. A ref the
+// state pins (State.Commits) is answered as it is, a ref that is already a
+// full commit is its own commit, and anything else resolves to commitOf's
+// derived commit — so two refs are two commits, and the same ref is the same
+// commit on every call, which is what makes a read at it reproducible.
+func (p *Provider) Commit(_ context.Context, ref string) (string, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := p.load(); err != nil {
+		return "", err
+	}
+	return p.commitOf(ref), nil
+}
+
+// commitOf is the commit a ref names: the pinned one, the ref itself when it
+// is already a full commit, and otherwise a hash of the ref.
+func (p *Provider) commitOf(ref string) string {
+	if sha := p.State.Commits[ref]; sha != "" {
+		return sha
+	}
+	if gitops.ValidCommitSHA(ref) {
+		return ref
+	}
+	sum := sha256.Sum256([]byte("fake provider commit: " + ref))
+	return hex.EncodeToString(sum[:])[:40]
+}
+
+// treeOf is the tree a read at ref sees: the default branch's own tree for a
+// read that names no ref, Trees[ref] for a commit whose tree the test pinned,
+// Branches[ref] for a branch, and the tree of the branch that resolves to ref
+// for a read at a resolved commit (a read at the commit a branch is at is a
+// read of that branch).
+//
+// A ref none of those name is the default branch's tree when the state models
+// no branch at all — a test that pins only Files is a repository with one
+// branch, and reads them at whatever ref it names — and nil when the state
+// does model branches: there, a read at a branch that does not exist, or at a
+// commit no branch is at, fails as the host's 404 does rather than quietly
+// answering the default branch's files.
+//
+// So a test that needs two refs to answer different trees pins the commit in
+// Commits and the tree it holds in Trees; one that pins only Files writes
+// nothing else and reads them whichever ref it names.
+func (p *Provider) treeOf(ref string) map[string]string {
+	if ref == "" {
+		return p.State.Files
+	}
+	if t, ok := p.State.Trees[ref]; ok {
+		return t
+	}
+	if t, ok := p.State.Branches[ref]; ok {
+		return t
+	}
+	for branch, t := range p.State.Branches {
+		if p.commitOf(branch) == ref {
+			return t
+		}
+	}
+	if len(p.State.Branches) == 0 {
+		return p.State.Files
+	}
+	return nil
+}
+
+// Tree implements gitprov.TreeReader: the files under path, at ref, out of the
+// tree that ref sees (treeOf), each with the path it has relative to path and
+// its bytes. The limit is checked against the whole tree before anything is
+// handed back, as a host's listing is read before its content is, and the
+// entries are sorted by path so a caller's identity over them does not depend
+// on the order a map iterates in.
+func (p *Provider) Tree(_ context.Context, path, ref string, limit gitprov.TreeLimit) ([]gitprov.TreeFile, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := p.load(); err != nil {
+		return nil, err
+	}
+	prefix := ""
+	if path != "" && path != "." {
+		prefix = strings.TrimSuffix(path, "/") + "/"
+	}
+	var files []gitprov.TreeFile
+	var total int64
+	for name, data := range p.treeOf(ref) {
+		rel, ok := strings.CutPrefix(name, prefix)
+		if !ok || rel == "" {
+			continue
+		}
+		files = append(files, gitprov.TreeFile{Path: rel, Data: []byte(data)})
+		total += int64(len(data))
+	}
+	if len(files) > limit.MaxFiles || total > limit.MaxBytes {
+		return nil, fmt.Errorf("fake provider: %s holds %d files under %s, %d bytes: %w", p.Repo, len(files), path, total, gitprov.ErrTreeTooLarge)
+	}
+	slices.SortFunc(files, func(a, b gitprov.TreeFile) int { return strings.Compare(a.Path, b.Path) })
+	return files, nil
 }
 
 // PullRequest implements gitprov.Provider. The head is PRState.Head when
@@ -409,20 +534,62 @@ func (p *Provider) PullRequest(ctx context.Context, number int) (gitprov.PRInfo,
 		return info, err
 	}
 	// git runs outside the lock: the branch is read from the PR's own spec.
-	cmd := exec.CommandContext(ctx, "git", "--git-dir", p.Remote, "rev-parse", "--verify", "--quiet", "refs/heads/"+head+"^{commit}")
-	cmd.WaitDelay = gitWaitDelay
-	out, err := cmd.Output()
-	var exit *exec.ExitError
-	if errors.As(err, &exit) && exit.ExitCode() == 1 && len(bytes.TrimSpace(out)) == 0 {
-		// --verify --quiet: the branch is gone (a merge closed it). A real
-		// host still shows the PR, so the fake does too, without a head.
-		return info, nil
-	}
+	tip, err := p.branchTip(ctx, head)
 	if err != nil {
 		return gitprov.PRInfo{}, fmt.Errorf("fake provider: PR #%d's branch %s is not in %s: %w", number, head, p.Remote, err)
 	}
-	info.HeadSHA = strings.TrimSpace(string(out))
+	info.HeadSHA = tip
 	return info, nil
+}
+
+// PullRequestByBranch implements gitprov.PRBranchReader: the pull request
+// whose spec's branch is branch, whatever its state, the latest one when a
+// branch was opened twice. found is false when no pull request names it.
+func (p *Provider) PullRequestByBranch(_ context.Context, branch string) (gitprov.PRInfo, bool, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := p.load(); err != nil {
+		return gitprov.PRInfo{}, false, err
+	}
+	if p.FailPullRequestByBranch > 0 {
+		p.FailPullRequestByBranch--
+		return gitprov.PRInfo{}, false, errors.New("fake provider: injected PullRequestByBranch failure")
+	}
+	number := 0
+	for _, st := range p.State.PRs {
+		if st.Spec.Branch == branch && st.Number >= number {
+			number = st.Number
+		}
+	}
+	if number == 0 {
+		return gitprov.PRInfo{}, false, nil
+	}
+	info, _, err := p.pullRequestLocked(number)
+	if err != nil {
+		return gitprov.PRInfo{}, false, err
+	}
+	return info, true, nil
+}
+
+// pullRequestLocked is pullRequest's body with the lock already held.
+func (p *Provider) pullRequestLocked(number int) (info gitprov.PRInfo, branch string, err error) {
+	st, err := p.findLocked(number)
+	if err != nil {
+		return gitprov.PRInfo{}, "", err
+	}
+	return gitprov.PRInfo{
+		Number:       st.Number,
+		URL:          st.URL,
+		State:        stateOf(st),
+		Draft:        st.Draft,
+		Title:        p.titleOf(st),
+		Body:         p.bodyOf(st),
+		AuthorID:     cmp.Or(st.AuthorID, p.SelfID),
+		Base:         st.Spec.Base,
+		SourceBranch: st.Spec.Branch,
+		SourceRepo:   cmp.Or(st.Source, p.Repo),
+		HeadSHA:      st.Head,
+	}, st.Spec.Branch, nil
 }
 
 // pullRequest reads PR number from the state; branch is its source branch.
@@ -436,23 +603,7 @@ func (p *Provider) pullRequest(number int) (info gitprov.PRInfo, branch string, 
 		p.FailPullRequest--
 		return gitprov.PRInfo{}, "", errors.New("fake provider: injected PullRequest failure")
 	}
-	st, err := p.findLocked(number)
-	if err != nil {
-		return gitprov.PRInfo{}, "", err
-	}
-	return gitprov.PRInfo{
-		Number:       st.Number,
-		URL:          st.URL,
-		State:        stateOf(st),
-		Draft:        st.Draft,
-		Title:        p.titleOf(st),
-		Body:         p.bodyOf(st),
-		AuthorID:     cmp.Or(st.AuthorID, p.SelfID),
-		Base:         st.Spec.Base, // the base the PR was opened with; a test retargets it by editing the state
-		SourceBranch: st.Spec.Branch,
-		SourceRepo:   cmp.Or(st.Source, p.Repo),
-		HeadSHA:      st.Head,
-	}, st.Spec.Branch, nil
+	return p.pullRequestLocked(number)
 }
 
 // Comments implements gitprov.Provider: the injected foreign comments and
@@ -628,4 +779,141 @@ func (p *Provider) ApplyReady(_ context.Context, number int, reviewers, labels [
 		return err
 	}
 	return perr
+}
+
+// MergeMintExemption implements gitprov.MintExempt. A double stands in for a
+// host, and it holds no credential for one: there is no mint for it to take a
+// token from and nothing for a merge token to be bound to, so it says it is
+// exempt rather than leaving the same question the Bitbucket adapter answers
+// open here. A test that needs the mint's refusal wires the real provider.
+func (p *Provider) MergeMintExemption() error { return gitprov.ErrMintNotApplicable }
+
+// MarkReady implements gitprov.Provider: it refuses a PR whose head is not
+// the commit the call named (TestFakeMarkReadyRefusesOnHeadChange), and only
+// then clears the draft state. A state that records no head is a PR no
+// head-bound call can be checked against, so it refuses too: a mock that
+// answered "yes, that head" for a head nobody recorded would let a test pass
+// a gate the real provider never would.
+func (p *Provider) MarkReady(ctx context.Context, number int, expectedHeadSHA string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := p.load(); err != nil {
+		return err
+	}
+	p.logLocked(Call{Op: "MarkReady", PR: number, Detail: "sha=" + expectedHeadSHA})
+	defer func() { _ = p.save() }()
+	st, err := p.findLocked(number)
+	if err != nil {
+		return err
+	}
+	if state := stateOf(st); state != gitprov.PROpen {
+		return fmt.Errorf("PR #%d is %s: %w", st.Number, state, gitprov.ErrPRNotOpen)
+	}
+	if err := p.checkHeadLocked(ctx, st, expectedHeadSHA); err != nil {
+		return err
+	}
+	p.setDraftLocked(st, false)
+	return nil
+}
+
+// Merge implements gitprov.Provider: the head is checked the same way and the
+// PR becomes merged only when it is the one asked for. A draft is refused, for
+// ApplyReady's reason — a host will not merge one, so a test must notice a
+// merge that skipped readying — and there is no bypass to model: the fake
+// merges what a real host would merge at the head it was given. There is no
+// credential either: the gate is the caller's, and the mint that would refuse
+// an unbound merge is the real adapter's (E16, D2049).
+func (p *Provider) Merge(ctx context.Context, number int, expectedHeadSHA string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := p.load(); err != nil {
+		return err
+	}
+	p.logLocked(Call{Op: "Merge", PR: number, Detail: "sha=" + expectedHeadSHA})
+	defer func() { _ = p.save() }()
+	st, err := p.findLocked(number)
+	if err != nil {
+		return err
+	}
+	if state := stateOf(st); state != gitprov.PROpen {
+		return fmt.Errorf("PR #%d is %s: %w", st.Number, state, gitprov.ErrPRNotOpen)
+	}
+	if err := p.checkHeadLocked(ctx, st, expectedHeadSHA); err != nil {
+		return err
+	}
+	if st.Draft {
+		// GitHub refuses to merge a draft, and the ladder's order is
+		// MarkReady and then Merge: a test that merges without readying would
+		// be passing a sequence the real host rejects.
+		return fmt.Errorf("fake provider: Merge on PR #%d, which is still a draft", number)
+	}
+	st.State = gitprov.PRMerged
+	return nil
+}
+
+// Checks implements gitprov.Provider: what State.Checks reports at sha, and
+// nothing for a commit it does not name. The slice is a copy, so a caller
+// that appends to it does not change the state.
+func (p *Provider) Checks(_ context.Context, number int, sha string) ([]gitprov.CheckRun, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := p.load(); err != nil {
+		return nil, err
+	}
+	if _, err := p.findLocked(number); err != nil {
+		return nil, err
+	}
+	return slices.Clone(p.State.Checks[sha]), nil
+}
+
+// checkHeadLocked refuses a head-bound call that the state cannot bind: no
+// head at all, or one that is not the commit the caller named.
+//
+// The head it binds to is the one PullRequest reports (Head's own doc): the
+// state's recorded Head when one is set, and otherwise the tip of the PR's
+// branch in Remote. Reading it any other way would have the fake refuse the
+// very head its own read had just handed the caller — a ladder test could not
+// then ready or merge the pull request it had just read — and a double that
+// refuses a call production accepts is worse than none.
+//
+// git runs while the lock is held, unlike PullRequest's read: what this binds
+// to must be the head the state is at when the write below happens, which is
+// the atomicity the real host has and this mutex stands in for.
+func (p *Provider) checkHeadLocked(ctx context.Context, st *PRState, expected string) error {
+	head := st.Head
+	if head == "" {
+		tip, err := p.branchTip(ctx, st.Spec.Branch)
+		if err != nil {
+			return fmt.Errorf("fake provider: PR #%d's branch %s is not in %s: %w", st.Number, st.Spec.Branch, p.Remote, err)
+		}
+		head = tip
+	}
+	if head == "" {
+		return fmt.Errorf("fake provider: PR #%d records no head, so a head-bound call cannot be checked", st.Number)
+	}
+	if err := gitprov.CheckExpectedHead(head, expected); err != nil {
+		return fmt.Errorf("fake provider: PR #%d: %w", st.Number, err)
+	}
+	return nil
+}
+
+// branchTip is the commit refs/heads/branch names in this provider's Remote,
+// "" when there is no remote or the branch is gone (a merge closed it), and
+// the git failure otherwise. It does not take the lock: PullRequest reads
+// outside it, checkHeadLocked inside.
+func (p *Provider) branchTip(ctx context.Context, branch string) (string, error) {
+	if p.Remote == "" || branch == "" {
+		return "", nil
+	}
+	cmd := exec.CommandContext(ctx, "git", "--git-dir", p.Remote, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch+"^{commit}")
+	cmd.WaitDelay = gitWaitDelay
+	out, err := cmd.Output()
+	var exit *exec.ExitError
+	if errors.As(err, &exit) && exit.ExitCode() == 1 && len(bytes.TrimSpace(out)) == 0 {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }

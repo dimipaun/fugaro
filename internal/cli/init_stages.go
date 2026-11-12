@@ -7,11 +7,13 @@ import (
 	"os"
 	"slices"
 
+	accesslib "github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
 // The converge (internal/initflow) over the engines the converge already
@@ -83,6 +85,23 @@ type initEngine struct {
 	checkoutBehind bool
 
 	redact, held []string // the loop's redaction list, and the slots at its end a stage fills with a value it holds
+
+	// accessDB is the grants node's database as the roles step found it
+	// (update_access.go): set when this run has a node to read at all, and nil
+	// when it has none — no budget backend, or a database this installation
+	// never adopted. The installation root re-reads the node through it for the
+	// lists its own apply carries (F29a, deriveAccessAgain), which is why the
+	// client outlives the step that made it.
+	accessDB *rtdb.Client
+
+	// accessSeed is the migration's node as the roles step computed it, waiting
+	// for the installation root to write it (update_access.go, landSeed): the
+	// step runs before the loop's first stage, the run's confirmation and the
+	// guard, so the write is the root's, past all three. It is nil when this run
+	// migrates nothing — the node is there, --plan-only, a first run with no
+	// list to hold, outputs that could not be read — and it is cleared by the
+	// write, so a root that runs twice lands it once.
+	accessSeed *accesslib.Node
 }
 
 // environment runs the environment check once (it prints the local
@@ -278,6 +297,20 @@ func initStages(e *initEngine) []initflow.Stage {
 	// one command the user runs may not leave the checkout it runs in behind
 	// (init_checkout_upgrade.go, the owner's rule of 2026-10-30).
 	stages = append(stages, newCheckoutStage(e))
+	// The login unit that runs the orchestrator daemon: `fugaro setup` writes
+	// the first one (init_orchestrator_stage.go, the owner's Q2 answer of
+	// 2026-11-04) and `fugaro update` re-renders one already installed and
+	// never installs one (update_unit_stage.go, T7's ruling of 2026-11-05).
+	// The two are one stage — the loop takes one stage per name, and the
+	// canonical order holds one slot for it — and the door is what decides
+	// which of them this run gets, the way the door decides the project
+	// stage's creation path above. It comes after the checkout's own steps
+	// because the daemon it starts drives the project they leave behind.
+	if e.r.o.door == updateDoor.name {
+		stages = append(stages, newUpdateUnitStage(e))
+	} else {
+		stages = append(stages, newOrchestratorUnitStage(e))
+	}
 	// The Batch backend's provisioning is the owner's step and nothing else
 	// reaches it: the stage is registered only under its own flag, and
 	// `backend: cloud-batch` stays refused by config validation until the
@@ -325,6 +358,16 @@ func (e *initEngine) converge(ctx context.Context) error {
 	// for where nobody can answer them): it stops the run here, before the
 	// first stage, and it is never a fallback to the verdict.
 	if err := e.gateRun(ctx); err != nil {
+		return err
+	}
+	// The roles step, once for the whole run and before the first stage plans
+	// (update_access.go, RS3): the installation's member lists and the grants
+	// node are reconciled here, and the spec every stage below builds carries
+	// the lists the node says. It is before the loop rather than a stage of its
+	// own because it changes what the run's OWN applies carry — the
+	// installation stage is the first of them, and a step that ran beside it
+	// would leave that apply on the lists the file remembered.
+	if err := e.syncAccess(ctx); err != nil {
 		return err
 	}
 	// The door's one line about the runs that are running while it converges,
@@ -402,6 +445,15 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 	// leaves behind — and it returns no error either: the list is a derived
 	// object, and failing an upgrade over one is what the HARD RULE forbids.
 	e.writeAdminList(ctx)
+	// And T-RU5's, the fourth and last: what this release fixes about the
+	// project's filed issues, which is a step of the run and not of the door
+	// (update_resolved.go) because --json's document carries it and is printed
+	// on the next line. It is reached on the same path the three above are —
+	// the converge applied everything it had — and it is the one of the four
+	// that no mode has to exclude twice: what it writes to the shared store is
+	// the store's own guarded write, and what it prints is a line nobody has
+	// to act on.
+	r.updateResolved(ctx)
 	if err := r.printResult(); err != nil {
 		return err
 	}

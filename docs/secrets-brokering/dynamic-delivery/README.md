@@ -15,7 +15,7 @@ in the reconciliation.
 | [spec.md](spec.md) | The addendum, verbatim |
 | [reconciliation.md](reconciliation.md) | The unified design (§4), conflicts C1–C10 (§3), findings F1–F37, decisions D1930–D1946, resolutions R1–R12, UNVERIFIED. **Where it disagrees with `spec.md`, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Slices DS0–DS4, tasks, levels, critical path, shared-files table, Checks 510–511. **Nothing in it is approved** |
-| [check510-steps.md](check510-steps.md) | Check 510's owner steps (U3, F30: the name-prefix IAM condition, the two grants IAM cannot make conditioned, the secret ID length). **NOT RUN** |
+| [check510-steps.md](check510-steps.md) | Check 510's owner steps (U3, F30: the name-prefix IAM condition, the grants IAM may not be able to make conditioned, the secret ID length). The owner ran it on 2026-11-11 (its conditioned create was ADMITTED, contradicting F30's create half) and again on 2026-11-12 (a create outside the prefixes was REFUSED, so create is fenced by name and DS2.2 conditions it) |
 | [check511-steps.md](check511-steps.md) | Check 511's owner steps (U4: a request every N seconds keeps one service instance up). **NOT RUN** |
 
 ## Typos fixed in the spec

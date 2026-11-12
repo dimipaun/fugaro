@@ -127,7 +127,7 @@ func TestDecodeRefusesBadCloneURLs(t *testing.T) {
 // beside the escaped one, and both fold onto one canonical name in the decoded
 // map. Which URL survived was then whichever member the map's iteration saw
 // last, and both answers are visible: the surviving URL is what the run clones
-// from, and it is the entry validCloneURLs validates, so the same bytes were
+// from, and it is the entry ValidCloneURLs validates, so the same bytes were
 // accepted on one read of the node and refused on the next — 355 of 400 decodes
 // of one node accepted and 45 refused, from Go's map order alone. model_prices
 // refuses the analogous pair explicitly (Prices.UnmarshalJSON), and this block

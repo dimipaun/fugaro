@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -266,6 +268,42 @@ func TestGateAutofixNeedsFixCommand(t *testing.T) {
 	}
 	if rec.Status != runstore.StatusInfraError || rec.Outcome != runstore.OutcomeNone || len(h.provider.State.PRs) != 0 {
 		t.Fatalf("record = %+v", rec)
+	}
+}
+
+// TestGateRebaseNeedsTestCommand: the rebase step re-runs the workflow's
+// tests itself, alone in its recipe, so commands.test is the whole of what it
+// judges the replayed branch with (docs/recipes.md §1): on a workflow without
+// one the step would run `sh -c ""`, read the empty success as a passing run
+// and force-push the branch on it. RecipeGateProblems is where that pairing is
+// refused — `fugaro validate` reports it per workflow and a launch refuses it
+// before the task is written (internal/cli's gateCheckProblems) — and it is
+// stated here rather than through a run because a run cannot reach the gate
+// with no commands.test at all: config.Validate refuses the file first
+// ("workflows.app.commands.test: is required"), so a run-level arm would stay
+// green whatever this list said.
+//
+// Mutation (drop the recipe.UsesRebase arm of RecipeGateProblems): both
+// readings below come back clean, and nothing else in the suite says the
+// pairing is refused.
+func TestGateRebaseNeedsTestCommand(t *testing.T) {
+	rcp, ps := recipe.Parse([]byte(rebaseTask(t).YAML))
+	if len(ps) > 0 {
+		t.Fatal(ps)
+	}
+	// The control: the same recipe over a workflow that has commands.test is
+	// no problem at all, so what the readings below report is that key alone.
+	cmds := config.Commands{Build: "sh build.sh", Test: "sh test.sh"}
+	if got := runner.RecipeGateProblems(rcp, config.Workflow{Commands: cmds}); len(got) != 0 {
+		t.Fatalf("RecipeGateProblems with commands.test = %+v, want none", got)
+	}
+	for _, test := range []string{"", "   "} {
+		cmds.Test = test
+		got := runner.RecipeGateProblems(rcp, config.Workflow{Commands: cmds})
+		want := runner.GateProblem{Field: runner.GateCommands, Message: "rebase step needs commands.test"}
+		if len(got) != 1 || got[0] != want {
+			t.Fatalf("RecipeGateProblems with commands.test %q = %+v, want %+v alone", test, got, want)
+		}
 	}
 }
 

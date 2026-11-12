@@ -2,10 +2,16 @@
 
 **Status: written by task B1.11 of the secrets-brokering plan; run by the owner, task B1.12 (Check
 191) and the flip's own task (Check 192).** Neither has been run: Check 191 runs on the **released**
-build that first carries the proxy — **0.21.0** (the plan's Levels table gives the proxy chain
-0.15.0, and that release has no proxy to measure: `internal/credsvc/bitbucketproxy.go` landed
-2026-11-07, and 0.21.0 is the first tag that holds it) — and not on a development build: a build from
-a checkout resolves no released credentials-service image to deploy
+build whose **runner** carries the proxy — **0.22.0**. The plan's Levels table gives the proxy chain
+0.15.0, which has no proxy to measure, and 0.21.0 is the first tag that holds the service's half
+(`internal/credsvc/bitbucketproxy.go` landed 2026-11-07) — but it was cut **without** the runner's,
+which landed in the release after it (`internal/cli/recipes_skew.go`'s `proxySince` names the release
+that carries it, and that constant is the gate `fugaro run` refuses an older job image with). A run of
+this check made with an older CLI measures nothing about the proxy: such a CLI carries no `proxySince`
+launch gate, so a repository whose job image predates the proxy is launched as any other run, its
+runner pushes straight to Bitbucket with the token the job still mounts (the mount Check 192's flip
+takes off it), and the rows below would read as if the service had served that traffic. And not on a
+development build: a build from a checkout resolves no released credentials-service image to deploy
 (`internal/cli/init_credentials.go`, `resolveCredentialsImage`), so `fugaro version` must not print
 `dev`. Check 192 runs after the flip (D500, O7). **No agent runs any step of either**, and no agent
 has: what they measure is a live installation, real runs and the credentials service's own answers.
@@ -55,14 +61,22 @@ neither deletes nor closes them, and the block names each one.
   bundle, its root re-applied), and the sandbox repository published with `proxy: true`** (the plan's
   B1.7/B1.8, `fugaro project policy publish` from the project's
   `project_secrets.bitbucket-token.allow_data_to`). Check 191 reads the published policy from
-  `fugaro project policy show --project fugaro --json` and the switch from `fugaro doctor --project
-  fugaro --json` (its `credentials-service-deployed` row, which is the one reading of the invoker
-  grants), and fails the `proxied` row — before it launches anything — when the repository is not
-  admitted, is admitted without `proxy: true`, or is off the switch: the published half alone is
-  **inert**, a repository off the switch holds its own token and is served by nothing, so the check
-  stops rather than launch three runs at a path the proxy is not on. Its remedy is to set
-  `agent.auth: cascade` for that repository, run `fugaro update --repo` for it and run the check
-  again.
+  `fugaro project policy show --project fugaro --json` and the switch from the credentials service's
+  OWN IAM policy (`gcloud run services get-iam-policy fugaro-credentials --project fugaro-dev --region
+  us-east5 --format=json`) crossed with the repository's REAL jobs (the jobs whose own `FUGARO_REMOTE`
+  names it, from the job list the check already reads), and fails the `proxied` row — before it
+  launches anything — when the repository is not admitted, is admitted without `proxy: true`, or is
+  off the switch: the published half alone is **inert**, a repository off the switch holds its own
+  token and is served by nothing, so the check stops rather than launch three runs at a path the proxy
+  is not on. Its remedy is to set `agent.auth: cascade` for that repository, run `fugaro update
+  --repo` for it and run the check again. It stops the same way — unmeasured, nothing launched — when
+  `fugaro doctor --project fugaro --json` says the service is not there at all or has nothing to serve
+  a run's model credential out of: every model call of a run against such a service is refused, so the
+  three runs would fail at their first call rather than measure the proxy. Where doctor's row is about
+  the invoker grant — the sentence the released doctor gets wrong for a switched repository — doctor
+  answered it before it ever read the bundle, so the check reads the bundle itself (`gcloud secrets
+  versions list`, of the container `gcloud secrets list` names as the service's own) and stops
+  unmeasured when it holds no version Secret Manager will serve.
 - **Three sandbox Bitbucket repositories of that installation**: `CHECK191_REPO` (the proxied one the
   runs work in), `CHECK191_OTHER_REPO` (a **second** one, for the other-repository refusal) and, for
   `--after-flip`, `CHECK191_PLAIN_REPO` (one the published policy does **not** proxy). Plus
@@ -75,7 +89,9 @@ neither deletes nor closes them, and the block names each one.
 - `bash`, `mktemp`, `python3`, `curl`, `gcloud` and `fugaro` on PATH, and `git` for `--after-flip`
   (the checkout's origin remote, so the check knows the directory it is about to read doctor in is
   this repository's). `gcloud` must be authenticated as an account that may read Cloud Logging for
-  the installation, read the job list, list the installation's secrets and read the IAM policy of the
+  the installation, read the job list, read the credentials service's own IAM policy, list the
+  installation's secrets and read the versions of the credentials service's bundle container (the check
+  reads them itself where doctor's row is about the invoker grant), read the IAM policy of the
   one holding `bitbucket-token`, and **write and delete one node in the installation's Realtime
   Database** (Check 95 step 3 in the register is the same write): the ended-run row is set up by
   hand, as you, with `gcloud auth print-access-token` and `curl`, because no call of a run's own can
@@ -157,9 +173,22 @@ the repository may appear in any of them. If no secret carries that label the ro
 it reads `FAIL` and the check ends `2`, because there was no policy to read.
 
 Check 191: `proxied` (the published policy admits the repository with `proxy: true` **and** the
-credentials-service switch is on for it — `fugaro doctor --project fugaro --json`'s
-`credentials-service-deployed` row: `proxy: true` is inert for a repository off the switch, and a row
-that passed on the policy alone would call a run at the direct path a broken proxy), `run-launch` and
+credentials-service switch is on for it — the switch is read from the credentials service's OWN IAM
+policy (`gcloud run services get-iam-policy fugaro-credentials --project fugaro-dev --region us-east5
+--format=json`) and the repository's REAL jobs (the jobs whose own `FUGARO_REMOTE` names it, from the
+job list the check already reads): it is ON when every one of those jobs runs as an account that
+policy grants `roles/run.invoker` to and at least one job exists, OFF when an existing job's account
+is not granted, and UNREAD — a row the check could not measure — otherwise. `fugaro doctor`'s
+`credentials-service-deployed` sentence is NOT the decision: the released doctor lists job accounts of
+workflow variants the repository does not deploy, so the doctor row is read only for the states where
+the service cannot serve a run at all — the installation has no credentials service, or it has one that
+admits every job account and holds nothing to serve a model credential out of — and its text is carried
+in the row for context. Those states are the ones doctor's own row can be trusted for; where the row is
+about the invoker grant, doctor answered it before it ever read the bundle, so the check reads the
+bundle itself (`gcloud secrets versions list`, of the container `gcloud secrets list` names as the
+service's own) and stops unmeasured when it holds no version Secret Manager will serve.
+`proxy: true` is inert for a repository off the switch, and a row that passed on the policy alone
+would call a run at the direct path a broken proxy), `run-launch` and
 `run-outcome` (the working run reached a final status, succeeded, and the service served its push and
 its pull request — the branch and the number the check leaves for you), the seven refusal rows
 (`refusal-other-repository`, `refusal-other-ref`, `refusal-tag-ref`, `refusal-ref-delete`,
@@ -177,7 +206,9 @@ not a pass: the audit line is the other half of the reading.
 **Exit codes.** `0` is every criterion that was measured holding. `1` is a measured criterion that did
 not hold, or a guard that stopped the check before it ran. `2` is the check not being able to
 **measure** — a tool is missing, the ended-run probe could not be set up (the node could not be
-written, or did not read back), or no secret carries the label the accessor row is read from. A key
+written, did not read back, its write landed with the service's own lines holding nothing for it, its
+record names no forwarder of this execution, or its call was never handed to the service), or no
+secret carries the label the accessor row is read from. A key
 the run never reached reads `FAIL — not reached`.
 
 ## If it stops before the end
@@ -210,17 +241,34 @@ knowing by name:
   sandbox repository, or run this check as `--after-flip` if the flip has already happened. The check
   stops at this row: nothing below it was measured and no run was launched.
 - **The repository is off the credentials-service switch** (`proxied: FAIL`) — the published policy
-  admits it with `proxy: true`, and `fugaro doctor` reports its job account among the ones the service
-  does not admit, so its own `agent.auth` is not `cascade` (or its root was never re-applied with it):
-  the job mounts the token and the runs push straight to Bitbucket. Set `agent.auth: cascade` for that
-  repository (with a model credential in the service's bundle, `fugaro creds set`), run
-  `fugaro update --repo` for it and run the check again. The check stops here, and no run was launched
-  — the rows below would have measured the direct path, not the proxy.
-- **The switch could not be read** (`proxied: FAIL`, exit `2`) — `fugaro doctor --project fugaro
-  --json` came back without the `credentials-service-deployed` row, or with an arm this check does not
-  recognise, so whether the repository is served was **not measured**. Read `fugaro doctor --project
-  fugaro --json` yourself and settle it before you launch anything: a run whose switch nobody settled
-  is a run whose rows are about nothing.
+  admits it with `proxy: true`, and the credentials service's OWN IAM policy does not grant
+  `roles/run.invoker` to every account the repository's jobs run as, so its own `agent.auth` is not
+  `cascade` (or its root was never re-applied with it): the job mounts the token and the runs push
+  straight to Bitbucket. Set `agent.auth: cascade` for that repository (with a model credential in the
+  service's bundle, `fugaro creds set`), run `fugaro update --repo` for it and run the check again.
+  The check stops here, and no run was launched — the rows below would have measured the direct path,
+  not the proxy. An installation with no credentials service at all fails this row with that reason
+  instead: `proxy: true` is inert without one, and neither the policy nor a grant can even be read.
+- **The service has nothing to serve a run** (`proxied: FAIL`, exit `2`) — the credentials service
+  admits every job account and the bundle it serves from holds no version, or the newest version of it
+  is not `ENABLED`: every model call of a run against it is refused, so whether the repository is on
+  the switch was **not measured** and the three runs would fail at their first call. `fugaro doctor
+  --project fugaro --json` says so in its own words when its row is not about the invoker grant; where
+  it is, doctor never read the bundle and the check read it itself (`gcloud secrets versions list`, of
+  the container `gcloud secrets list` names as the service's own). Give the service a model credential
+  (`fugaro creds set` is the bundle's only writer; a version Secret Manager will not serve has to be
+  enabled first) and run the check again.
+- **The switch could not be read** (`proxied: FAIL`, exit `2`) — the service's own IAM policy or the
+  job list could not be read, the policy binds a job account in a way this check cannot interpret (a
+  custom role, or a grant that holds only while a condition does), no job of the repository is in the
+  list, a job runs as no account the check can name, the container the service's bundle is derived from
+  could not be named or its versions could not be read, or `fugaro doctor`'s
+  `credentials-service-deployed` row is one this check does not place (a document carrying no such row)
+  — so whether the repository is served was **not measured**. Read the facts yourself — `gcloud run
+  services get-iam-policy fugaro-credentials --project fugaro-dev --region us-east5 --format=json`, the
+  jobs of the repository in `gcloud run jobs list`, and the versions of the bundle container
+  (`gcloud secrets list`, then `gcloud secrets versions list`) — and settle it before you launch
+  anything: a run whose switch nobody settled is a run whose rows are about nothing.
 - **`the working run reported NO line for the … attempt`** — the probe's task asked for one
   `CHK191 attempt=<name> refused=… answer=…` line per attempt and the log holds none: the attempt was
   never made or never printed. Read `fugaro logs <run id>` and see what the agent did.
@@ -235,10 +283,55 @@ knowing by name:
   or the account may not write it), or was written and did not read back. **No probe was launched**
   and nothing about the ended-run refusal was measured; the row's detail says which of the two, and
   the node, if one was written, is left for the restore to delete.
-- **`ended-identity: FAIL` on a launched probe** — the probe was launched with its outcome already
-  written and was **not** refused (`without the service's ended-run refusal in its own log or its
-  row`), or it pushed, or opened a pull request. That is the reading that the write-once outcome no
-  longer ends an identity: run `fugaro diagnose <slug>/<run id>` before anything else.
+- **The probe's write landed and the service's own lines hold nothing for it** (`ended-identity: FAIL`,
+  exit `2`) — the row could not measure the service: the probe pushed (or opened a pull request) and
+  no `credsvc: audit` or class line names it, so that write did not go through the credentials service
+  at all. The repository's job still mounts its own Bitbucket token, and the runner that pushed used
+  it the old way, which is what a release whose **runner** does not carry the proxy does — see the
+  release paragraph above, and run the check again with the release that carries it and a job image
+  built from it. Read the service's own lines for the probe yourself first (`gcloud logging read`,
+  `jsonPayload.run`): a line there makes this the finding below instead.
+- **The probe's record names no forwarder of this execution** (`ended-identity: FAIL`, exit `2`) — the
+  probe wrote nothing and left the service's own lines empty, and its record holds no sentence about
+  this execution's forwarder, so its first call was not one this row can read: either its git traffic
+  went to Bitbucket itself (the same release-and-image case as above — a runner without the proxy
+  pushes with the job's own mounted token, and one that got no further than a refused model call is
+  the gateway's constant in the record, `unverified_run_identity`, which is a **model** call and not
+  the bootstrap git traffic this row reads), or the run got past its checkout, where the row measures
+  nothing. Read the record yourself (`fugaro diagnose <slug>/<run id>`) and the service's own lines
+  (`gcloud logging read`, `jsonPayload.run`), and run the check again on the release whose runner
+  carries the proxy.
+- **The probe's first call was never handed to the service** (`ended-identity: FAIL`, exit `2`) — the
+  call reached this execution's forwarder and was answered `502` (the listener's own answer for a
+  forward it could not make) or with no HTTP status a git command could read: nothing about the ended
+  identity was measured. Read the service's own lines and the record, and run the check again when the
+  service answers.
+- **`ended-identity: FAIL` on a launched probe** — one of two readings, and the row's detail says
+  which. **The service's own lines name the probe**: a call that reaches any route of the service is
+  audited before it is answered, while an identity refusal is answered before there is a route at all,
+  so a line for the ended run is the service having **served** a call of a run that had ended — this is
+  the finding the row exists for. **Or the service answered the probe's first call with a status other
+  than `403`**: `403` is what an identity refusal is answered with, and a `503` is `state_unavailable`
+  — the service could not read the run's outcome, so the ended-run refusal was never reached. Either
+  way: run `fugaro diagnose <slug>/<run id>` and read the service's own lines before anything else.
+
+**What the row reads, and why no wire type is in it.** The probe is a **proxied** run, so its first
+call is not a model call: the runner sends every Bitbucket URL to this execution's own loopback
+forwarder before anything else and opens the checkout through it (`internal/runner`'s
+`credentialVars`, `startProxiedGit`, `openCheckout`), and the gateway that makes the model calls starts
+only after that checkout is open. The service refuses that git call before there is a route at all, and
+**git prints the URL it could not access and the status it was answered, never the body** — the
+service's refusals are `application/json` (`internal/credsvc/wire.go`) — so the run's record carries
+git's own sentence, naming the forwarder (`/v1/bitbucket/proxy/`, a loopback endpoint derived per
+execution) and the `403`. That is what `ended-identity: PASS` reads, together with nothing written and
+no line in the service's own: the call went to the service and was refused, and the ended identity
+reached no route. The service's own sentence ("the run has ended: its outcome is written") is **never**
+relayed to any run (D143), and the gateway's constant naming the type is what a **model** call's
+refusal reads as — so neither the sentence nor the wire type is the reading, and a row that looked for
+either in the record or the log could never pass. What no reading can separate: the service answers an
+ended run and a run whose identity is otherwise unverifiable with the same status and the same wire
+type, so the `403` is read with the check's own setup — the same launcher launched the working run of
+the same repository minutes earlier, and that run was served.
 
 ## What is left behind
 

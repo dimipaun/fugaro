@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -11,11 +12,14 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"gocloud.dev/blob"
 
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/coordpath"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // extendState puts the registry, its build latch and the launch declarer back
@@ -614,4 +618,454 @@ func TestGraphStubRefusesWhateverTheFlags(t *testing.T) {
 	assertStubSaysWhy(t, "graph", "graph", "--source", "coordinator", "--json")
 	assertStubSaysWhy(t, "graph", "graph", "--watch", "--json")
 	assertStubSaysWhy(t, "graph", "graph", "--help")
+}
+
+// ---- the launch planner (A3.0) -------------------------------------------
+
+// abPair is the pair a test planner answers with: the champion's block for
+// pair pid, and a challenger task at run id challenger running model.
+func abPair(pid, challenger, model string) *Pair {
+	return &Pair{
+		Champion: task.AB{PairID: pid, Arm: task.ABArmChampion},
+		Challenger: &task.Spec{
+			Version: 1, RunID: challenger, Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x",
+			AB: &task.AB{PairID: pid, Arm: task.ABArmChallenger, Publish: task.ABPublishNone,
+				Challenger: model, ChallengerSource: task.ABChallengerOwner},
+		},
+	}
+}
+
+// installPlanner installs p as the build's launch planner for one test.
+func installPlanner(t *testing.T, p LaunchPlanner) {
+	t.Helper()
+	extendState(t)
+	if err := RegisterLaunchPlanner(p); err != nil {
+		t.Fatalf("registering the launch planner: %v", err)
+	}
+}
+
+// TestNoPlannerLaunchUnchanged: the core default is no planner, so a launch
+// samples nothing, marks nothing and says nothing of its own — the whole of
+// D550's "the plumbing is inert in a build that registers none".
+func TestNoPlannerLaunchUnchanged(t *testing.T) {
+	extendState(t)
+	f := newLaunchBudget(t, "observe")
+	out, errOut, err := runBudget(t)
+	if err != nil {
+		t.Fatalf("an untagged launch failed: %v", err)
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("%d executions, want 1", n)
+	}
+	spec := readSpec(t, f.cloudFixture, budgetRun)
+	if spec.AB != nil {
+		t.Errorf("an untagged launch sampled a pair: ab = %+v", spec.AB)
+	}
+	if spec.Batch != "" {
+		t.Errorf("batch = %q, want none", spec.Batch)
+	}
+	if strings.Contains(out+errOut, "ab:") {
+		t.Errorf("an untagged launch printed something of its own: %q / %q", out, errOut)
+	}
+}
+
+// TestPlannerCalledBeforeTaskWritten: the hook is asked once, before the first
+// run's task exists, with the launch's own resolved facts — the commit the run
+// is cut from, the repository and its slug, and a copy of the task as it would
+// be launched — and a planner that samples nothing leaves the launch as it was.
+func TestPlannerCalledBeforeTaskWritten(t *testing.T) {
+	f := newLaunchBudget(t, "observe")
+	var (
+		calls  int
+		atPlan PlannedRun
+		there  bool
+	)
+	installPlanner(t, func(ctx context.Context, run PlannedRun) (*Pair, error) {
+		calls++
+		atPlan = run
+		b, err := blob.OpenBucket(ctx, f.bucket)
+		if err != nil {
+			t.Errorf("opening the runs bucket: %v", err)
+			return nil, nil
+		}
+		defer b.Close()
+		if _, err := runstore.Open(b, appSlug, budgetRun).ReadTask(ctx); err == nil {
+			there = true
+		}
+		run.Spec.Task = "the planner's own copy"
+		return nil, nil
+	})
+	if _, _, err := runBudget(t); err != nil {
+		t.Fatalf("the launch failed: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("%d planner calls, want 1", calls)
+	}
+	if there {
+		t.Error("the planner was asked after the task was written")
+	}
+	if atPlan.Cloud == nil || atPlan.Cloud.env == nil {
+		t.Error("the planner was handed no cloud handle")
+	}
+	if atPlan.Slug != appSlug || atPlan.Repo != "acme/app" {
+		t.Errorf("planned %q of %q, want %q of acme/app", atPlan.Slug, atPlan.Repo, appSlug)
+	}
+	if atPlan.Spec == nil || atPlan.Spec.RunID != budgetRun {
+		t.Errorf("planned task = %+v, want the launch's own run", atPlan.Spec)
+	}
+	if atPlan.Chosen != true {
+		t.Error("--run-id was given, and the planner was not told the run id was chosen")
+	}
+	if atPlan.Config == nil {
+		t.Error("the planner was handed no configuration")
+	}
+	if spec := readSpec(t, f.cloudFixture, budgetRun); spec.Task != "Add a feature" {
+		t.Errorf("the stored task = %q, want the launch's own: the planner was handed a copy", spec.Task)
+	}
+}
+
+// TestLaunchCommitResolvesARef: the commit the planner is handed is the one
+// the run is cut from (D571): the ref resolved in this machine's checkout of
+// the repository, a full commit SHA as itself, and nothing at all where there
+// is no checkout to resolve it in.
+func TestLaunchCommitResolvesARef(t *testing.T) {
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "x")
+	sha := testutil.Git(t, dir, "rev-parse", "HEAD")
+	testutil.Git(t, dir, "update-ref", "refs/remotes/origin/main", sha)
+
+	if got := commitAt(context.Background(), dir, "main"); got != sha {
+		t.Errorf("commitAt(main) = %q, want %q", got, sha)
+	}
+	if got := commitAt(context.Background(), dir, sha); got != sha {
+		t.Errorf("commitAt(%s) = %q, want itself", sha, got)
+	}
+	if got := commitAt(context.Background(), dir, "nope"); got != "" {
+		t.Errorf("commitAt(nope) = %q, want nothing", got)
+	}
+	if got := commitAt(context.Background(), "", "main"); got != "" {
+		t.Errorf("commitAt with no checkout = %q, want nothing", got)
+	}
+}
+
+// TestPairLaunchesBothArmsUnderOneBatchLabel: a pair the budget has room for
+// is written and launched whole — the champion carries the pair's block and
+// the batch label both arms share, the challenger is the champion's own task
+// with the arm's run id and block, and the day's pair pre-check stands in for
+// the champion's single-run one.
+func TestPairLaunchesBothArmsUnderOneBatchLabel(t *testing.T) {
+	f := newLaunchBudget(t, "enforce")
+	installPlanner(t, func(context.Context, PlannedRun) (*Pair, error) {
+		return abPair("20261111-abcd1234", "20261111-120000-beef", "gemini-2.5-pro"), nil
+	})
+	if _, _, err := runBudget(t); err != nil {
+		t.Fatalf("the launch failed: %v", err)
+	}
+	if n := len(f.run.Executions()); n != 2 {
+		t.Fatalf("%d executions, want the pair's 2", n)
+	}
+	champion := readSpec(t, f.cloudFixture, budgetRun)
+	if champion.AB == nil || champion.AB.Arm != task.ABArmChampion || champion.AB.PairID != "20261111-abcd1234" {
+		t.Fatalf("the champion's block = %+v", champion.AB)
+	}
+	const label = "ab-20261111-abcd1234"
+	if champion.Batch != label {
+		t.Errorf("the champion's batch = %q, want %q", champion.Batch, label)
+	}
+	challenger := readSpec(t, f.cloudFixture, "20261111-120000-beef")
+	if challenger.AB == nil || challenger.AB.Arm != task.ABArmChallenger || challenger.AB.Challenger != "gemini-2.5-pro" {
+		t.Fatalf("the challenger's block = %+v", challenger.AB)
+	}
+	if challenger.Batch != label {
+		t.Errorf("the challenger's batch = %q, want the pair's one label %q", challenger.Batch, label)
+	}
+	if challenger.Task != champion.Task || challenger.Ref != champion.Ref || challenger.Workflow != champion.Workflow {
+		t.Errorf("the arms differ beyond the block: %+v vs %+v", challenger, champion)
+	}
+	if challenger.Overrides.Model != "" {
+		t.Error("the challenger's model travelled as an override, which D555 forbids")
+	}
+}
+
+// TestPlannerErrorNeverFailsLaunch: a planner that fails is a warning on one
+// line, never a failed launch: the champion starts alone, unmarked (D554).
+func TestPlannerErrorNeverFailsLaunch(t *testing.T) {
+	f := newLaunchBudget(t, "enforce")
+	installPlanner(t, func(context.Context, PlannedRun) (*Pair, error) {
+		return nil, errors.New("the challenger list could not be read")
+	})
+	_, errOut, err := runBudget(t)
+	if err != nil {
+		t.Fatalf("a planner error failed the launch: %v", err)
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("%d executions, want the champion alone", n)
+	}
+	spec := readSpec(t, f.cloudFixture, budgetRun)
+	if spec.AB != nil || spec.Batch != "" {
+		t.Errorf("the champion carries %+v / %q, want no pair block and no batch", spec.AB, spec.Batch)
+	}
+	if !strings.Contains(errOut, "ab:") {
+		t.Errorf("the planner's failure was silent: %q", errOut)
+	}
+}
+
+// TestPairPrecheckRefusedLaunchesChampionAloneUnmarked: the pair's own
+// pre-check is one lease of two headrooms, before either arm starts; when the
+// budget refuses it, the champion still goes — alone, unmarked, on the single
+// pre-check every launch makes (D554, D566).
+func TestPairPrecheckRefusedLaunchesChampionAloneUnmarked(t *testing.T) {
+	f := newLaunchBudget(t, "enforce")
+	// The repository's day is nearly spent: 49.7 counted against its 50 cap
+	// leaves room for the champion's own 250k lease and not for the pair's two.
+	// The counter is Counted, the one the rules and this pre-check both judge
+	// (Spent is seeded beside it as a live run leaves it).
+	f.db.Set(budget.PathSpendRepo(budget.Day(time.Now()), appSlug),
+		map[string]any{"counted": 49_700_000, "spent": 49 * usd1})
+	installPlanner(t, func(context.Context, PlannedRun) (*Pair, error) {
+		return abPair("20261111-abcd1234", "20261111-120000-beef", "gemini-2.5-pro"), nil
+	})
+	_, errOut, err := runBudget(t)
+	if err != nil {
+		t.Fatalf("a refused pair failed the champion's launch: %v", err)
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("%d executions, want the champion alone", n)
+	}
+	spec := readSpec(t, f.cloudFixture, budgetRun)
+	if spec.AB != nil || spec.Batch != "" {
+		t.Errorf("the champion carries %+v / %q, want no pair block and no batch", spec.AB, spec.Batch)
+	}
+	if !strings.Contains(errOut, "ab:") {
+		t.Errorf("the refused pair was silent: %q", errOut)
+	}
+}
+
+// TestPlannerSkipReasonInJSON: a planner that declines names a closed reason
+// (D556), and that reason is in `fugaro run --json` as well as on stderr, so
+// the console reads why a project with a challenger configured sampled
+// nothing.
+func TestPlannerSkipReasonInJSON(t *testing.T) {
+	f := newLaunchBudget(t, "observe")
+	installPlanner(t, func(context.Context, PlannedRun) (*Pair, error) {
+		return &Pair{Skip: "no-challenger"}, nil
+	})
+	out, errOut, err := runBudget(t, "--json")
+	if err != nil {
+		t.Fatalf("a declined pair failed the launch: %v", err)
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("%d executions, want the champion alone", n)
+	}
+	if spec := readSpec(t, f.cloudFixture, budgetRun); spec.AB != nil || spec.Batch != "" {
+		t.Errorf("the champion carries %+v / %q, want no pair block and no batch", spec.AB, spec.Batch)
+	}
+	var doc struct {
+		Pair *struct {
+			Reason string `json:"reason"`
+		} `json:"pair"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("the document is not JSON: %v\n%s", err, out)
+	}
+	if doc.Pair == nil || doc.Pair.Reason != "no-challenger" {
+		t.Errorf("pair = %+v in %s, want the planner's reason", doc.Pair, out)
+	}
+	if !strings.Contains(errOut, "ab: no pair sampled: no-challenger") {
+		t.Errorf("the skip line = %q, want the closed reason", errOut)
+	}
+}
+
+// TestMarginNeedsFiveCaps: a pair is sampled only with five per-run caps of
+// the day left (D573) — in observe as much as enforce — and the champion goes
+// alone, unmarked, when the margin is not there.
+func TestMarginNeedsFiveCaps(t *testing.T) {
+	// The fixture's per-run cap is 5 USD (the default), so the margin is 25.
+	// The day is seeded with Counted — what runs hold reserved and have not
+	// released, the counter every cap question is judged against — and not with
+	// Spent, which lags it while a run is live and would read as room the next
+	// lease is refused.
+	for _, tc := range []struct {
+		name    string
+		counted int64
+		sampled bool
+	}{
+		{"the day has five caps left", 25 * usd1, true},
+		{"the day has four caps left", 26 * usd1, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newLaunchBudget(t, "observe")
+			f.db.Set(budget.PathSpendRepo(budget.Day(time.Now()), appSlug), map[string]any{"counted": tc.counted})
+			installPlanner(t, func(context.Context, PlannedRun) (*Pair, error) {
+				return abPair("20261111-abcd1234", "20261111-120000-beef", "gemini-2.5-pro"), nil
+			})
+			_, errOut, err := runBudget(t)
+			if err != nil {
+				t.Fatalf("the launch failed: %v", err)
+			}
+			sampled := readSpec(t, f.cloudFixture, budgetRun).AB != nil
+			if sampled != tc.sampled {
+				t.Errorf("sampled = %v with %d micros counted, want %v (%s)", sampled, tc.counted, tc.sampled, errOut)
+			}
+			if n := len(f.run.Executions()); n != map[bool]int{true: 2, false: 1}[tc.sampled] {
+				t.Errorf("%d executions, want %d", n, map[bool]int{true: 2, false: 1}[tc.sampled])
+			}
+			if !tc.sampled && !strings.Contains(errOut, "ab:") {
+				t.Errorf("the refused margin was silent: %q", errOut)
+			}
+		})
+	}
+}
+
+// TestPlannerNotCalledForFollowUpRetryAttempts: the hook is for a first run's
+// task alone: a follow-up, a retry and a best-of-N attempt never reach it
+// (D558), whatever the build registered.
+func TestPlannerNotCalledForFollowUpRetryAttempts(t *testing.T) {
+	f := newLaunchBudget(t, "enforce")
+	setMaxParallel(t, 4) // the retry below launches after --attempts has two runs in flight
+	var calls int
+	installPlanner(t, func(context.Context, PlannedRun) (*Pair, error) {
+		calls++
+		return nil, nil
+	})
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--attempts", "2", "Add a feature"); err != nil {
+		t.Fatalf("--attempts failed: %v", err)
+	}
+	if calls != 0 {
+		t.Fatalf("--attempts asked the planner %d times, want none", calls)
+	}
+	// A stored task that never launched: --retry starts it as it stands.
+	seedRun(t, f.cloudFixture, "20261111-130000-cafe", "", "someone@example.com", false)
+	if _, _, err := execute(t, "run", "--retry", "20261111-130000-cafe"); err != nil {
+		t.Fatalf("--retry failed: %v", err)
+	}
+	if calls != 0 {
+		t.Fatalf("--retry asked the planner %d times, want none", calls)
+	}
+}
+
+// TestPlannerPairBlocksMustBeArms: the launcher judges the two blocks a planner
+// answers as the pair they have to be, which is the half of the pair the task
+// codec cannot see — it judges a block's own shape, and an absent block is
+// legal to it. A challenger's task with no block at all, or with the champion's
+// arm, would launch a second run that publishes (D554); two blocks carrying
+// different pair ids are a pair no reader can join. Each answer starts the
+// champion alone, unmarked.
+func TestPlannerPairBlocksMustBeArms(t *testing.T) {
+	cases := []struct {
+		name string
+		bad  func(p *Pair)
+		want string
+	}{
+		{"no challenger block", func(p *Pair) { p.Challenger.AB = nil },
+			"the challenger's task carries no ab block"},
+		{"the challenger carries the champion's arm", func(p *Pair) { p.Challenger.AB.Arm = task.ABArmChampion },
+			`the challenger's block carries the "champion" arm`},
+		{"the champion carries the challenger's arm", func(p *Pair) { p.Champion.Arm = task.ABArmChallenger },
+			`the champion's block carries the "challenger" arm`},
+		{"two pair ids", func(p *Pair) { p.Challenger.AB.PairID = "20261111-9999999999" },
+			"the two blocks carry different pair ids"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newLaunchBudget(t, "enforce")
+			installPlanner(t, func(context.Context, PlannedRun) (*Pair, error) {
+				p := abPair("20261111-abcd1234", "20261111-120000-beef", "gemini-2.5-pro")
+				tc.bad(p)
+				return p, nil
+			})
+			_, errOut, err := runBudget(t)
+			if err != nil {
+				t.Fatalf("a planner's bad pair failed the launch: %v", err)
+			}
+			if n := len(f.run.Executions()); n != 1 {
+				t.Fatalf("%d executions, want the champion alone", n)
+			}
+			spec := readSpec(t, f.cloudFixture, budgetRun)
+			if spec.AB != nil || spec.Batch != "" {
+				t.Errorf("the champion carries %+v / %q, want no pair block and no batch", spec.AB, spec.Batch)
+			}
+			if !strings.Contains(errOut, "ab: no pair sampled: "+tc.want) {
+				t.Errorf("the skip line = %q, want it to say %q", errOut, tc.want)
+			}
+		})
+	}
+}
+
+// TestPairNotSampledWhenTheLaunchAttaches: an --attach launch uploads its files
+// under its own run's prefix, and a mode: artifact run downloads them from
+// there (runstore.InputKey) — so the challenger, a run id of its own, would
+// name files that are not in its bucket and die at bootstrap. A launch that
+// attaches files samples nothing: the champion goes alone, unmarked, with its
+// own inputs.
+func TestPairNotSampledWhenTheLaunchAttaches(t *testing.T) {
+	f := newLaunchBudget(t, "enforce")
+	projectRecipesFixture(t, f.cloudFixture, map[string]string{"sizzle": projectSizzle})
+	installPlanner(t, func(context.Context, PlannedRun) (*Pair, error) {
+		return abPair("20261111-abcd1234", "20261111-120000-beef", "gemini-2.5-pro"), nil
+	})
+	shot := attachShot(t, "shot.png", "png")
+	_, errOut, err := execute(t, "run", "--repo", "acme/app", "--recipe", "sizzle", "--run-id", budgetRun,
+		"--attach", shot, "Render the nightly bundle")
+	if err != nil {
+		t.Fatalf("an --attach launch failed: %v", err)
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("%d executions, want the champion alone", n)
+	}
+	spec := readSpec(t, f.cloudFixture, budgetRun)
+	if spec.AB != nil || spec.Batch != "" {
+		t.Errorf("the champion carries %+v / %q, want no pair block and no batch", spec.AB, spec.Batch)
+	}
+	if len(spec.Inputs) != 1 {
+		t.Errorf("the champion's inputs = %+v, want the attached file", spec.Inputs)
+	}
+	if !strings.Contains(errOut, "ab: no pair sampled: the launch attaches files") {
+		t.Errorf("the skip line = %q, want the attach reason", errOut)
+	}
+}
+
+// TestRetryRefusesABTask: --retry launches a stored task as it stands, and an
+// arm is one half of a pair whose other half is a record of its own: a stored
+// task carrying a pair block is refused rather than replayed as a lone run.
+func TestRetryRefusesABTask(t *testing.T) {
+	f := newCloudFixture(t)
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	const id = "20261111-130000-cafe"
+	spec := &task.Spec{Version: 1, RunID: id, Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x",
+		AB: &task.AB{PairID: "ab-20261111-abcd1234", Arm: task.ABArmChampion}}
+	if err := runstore.Open(b, appSlug, id).CreateTask(ctx, spec); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := execute(t, "run", "--retry", id)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "A/B") {
+		t.Fatalf("--retry of an arm: err = %v, want exit 1 naming the pair", err)
+	}
+}
+
+// TestABUntaggedStubExitsWithCapabilityLine: `fugaro ab` is ee/'s command
+// (D570, T1), so a core build carries no ab command at all — and the name is
+// still an answer the CLI gives, the stub D522 fixes, rather than cobra's
+// "unknown command". A build without the A/B code must say it does not include
+// the command rather than claim the name never existed, which is what a source
+// builder and the console read (G3). The other half is ee/register's
+// TestABCommandRegistered: the tree that carries the code answers with the
+// command itself.
+func TestABUntaggedStubExitsWithCapabilityLine(t *testing.T) {
+	extendState(t)
+	if slices.Contains(coreRootPaths(), "fugaro ab") {
+		t.Fatal("the released tree holds an ab command: the stub is not installed for a name a core command owns")
+	}
+	if got := commandPaths(NewRootCmd()); !slices.Contains(got, "fugaro ab") {
+		t.Fatalf("a build without the ee tag answers no ab command:\n%v", got)
+	}
+	assertStubSaysWhy(t, "ab", "ab")
+	// The stub parses nothing, so the flags the command has reach the same
+	// message rather than cobra's "unknown flag", which would be a lie about a
+	// command the released binary carries.
+	assertStubSaysWhy(t, "ab", "ab", "--json")
+	assertStubSaysWhy(t, "ab", "ab", "--since", "7d", "--repo", "acme/app")
 }

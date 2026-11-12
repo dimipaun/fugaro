@@ -87,7 +87,7 @@ type initOptions struct {
 	imageSource                     string   // --image-source: a fork's own release registry/owner
 	expectDigests                   []string // --expect-digest KIND=sha256:...: the digest a release tag must resolve to
 	replaceImages                   []string // --replace-image KIND: kinds (history) whose tag in your registry may be replaced, each an ordinary covered step (askCovered: D12's answer of 2026-10-20 covers it in both doors, and a person at a real terminal without --yes confirms it there, typing nothing); a base kind is refused there, since nothing is copied for it any more
-	launchers, operators            []string
+	operators, admins               []string
 	budget                          int64
 	budgetCurrency, billingAccount  string
 	alertEmail                      string
@@ -108,9 +108,8 @@ type initOptions struct {
 	provisionBatch                      bool   // --provision-batch: provision the Batch backend's installation-level root (owner-run, typed confirmation)
 	coordinator                         bool   // --coordinator: opt the installation in to the coordinator's aggregation job (owner-run, at a terminal, never --yes)
 	onboardRepo                         string // --onboard-repo owner/name: the explicit opt-in to onboard the checkout's repository
-	allowFork                           bool   // --allow-fork: the plugin-wiring stage may move a fork's marketplace ref
 	allowDelete                         []string
-	launchersChanged, operatorsChanged  bool
+	operatorsChanged, adminsChanged     bool
 	alertEmailChanged, baseImageChanged bool
 
 	// --bake-repos answers the wizard's bake question without a terminal (IS7
@@ -170,6 +169,17 @@ type initOptions struct {
 	// the command the user is actually running rather than one that no longer
 	// exists.
 	door string
+
+	// resolvedPrinted is what this run has already said about its own issues,
+	// by the pair that names one project's issue (F8): the ones whose fixed
+	// line the resolved-issues step printed from this machine's own file
+	// (update_resolved.go). The retry offer below the step says the same
+	// sentence about the same issue, and one run says it once — the two
+	// memories that would otherwise say so are both writes, and neither is
+	// made in a coding agent's session (F16d). It is the run's own, so it is
+	// read by the offer and reset by nothing: a door's options live for one
+	// run.
+	resolvedPrinted map[resolvedKey]bool
 }
 
 // convergeDoor is one of the two front doors of the converge (setup.go,
@@ -370,7 +380,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			f := cmd.Flags()
-			o.launchersChanged, o.operatorsChanged = f.Changed("launcher"), f.Changed("operator")
+			o.operatorsChanged, o.adminsChanged = f.Changed("operator"), f.Changed("admin")
 			o.alertEmailChanged, o.baseImageChanged = f.Changed("alert-email"), f.Changed("base-image")
 			o.budgetAdminsChanged = f.Changed("budget-admin")
 			o.bakeReposChanged = f.Changed("bake-repos")
@@ -465,8 +475,8 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	// the run that creates the installation, which is the one whose answer is
 	// a project's own.
 	f.BoolVar(&o.bakeRepos, "bake-repos", false, "answer the bake question without a terminal: whether a repository the build can read is baked into the image its job runs (the default is yes, and an absent key means the same). --bake-repos says yes, --bake-repos=false says no, and either one writes the value into the local config this run writes, which the same run publishes. Passing neither asks the question where it can be asked — on a run that creates the installation, and nowhere else: a run with a project config keeps the answer the project's own (the published policy's) and is never asked, which is the rule for a managed project. Either way the answer takes effect in the images built from then on: the build is what bakes a repository in, so the images already built keep what they have until they are rebuilt")
-	f.StringArrayVar(&o.launchers, "launcher", nil, "an IAM member who launches and watches runs (repeatable; default: the local config's, and for a new config you, the authenticated user)")
-	f.StringArrayVar(&o.operators, "operator", nil, "an IAM member who onboards repositories (repeatable; default: the local config's, and for a new config you, the authenticated user)")
+	f.StringArrayVar(&o.operators, "operator", nil, "an IAM member who may start and watch runs (the operator role; repeatable; default: the local config's, and for a new config you, the authenticated user)")
+	f.StringArrayVar(&o.admins, "admin", nil, "an IAM member who may onboard repositories, apply Terraform and submit builds (the admin role; repeatable; default: the local config's, and for a new config you, the authenticated user)")
 	f.Int64Var(&o.budget, "budget", 0, budgetFlagHelp(d))
 	f.StringVar(&o.budgetCurrency, "budget-currency", "", "the budget's currency, such as USD")
 	f.StringVar(&o.billingAccount, "billing-account", "", "the billing account the budget is on")
@@ -518,25 +528,25 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	}
 	// The agent clause is about what leaves this machine, and about how far
 	// such a session actually gets: the writes on this machine's own files are
-	// the only ones an apply there may make (the checkout's pin and plugin
-	// wiring; the checkout stage is LocalUnderAgent for exactly those two),
-	// and they are reached only where nothing before the checkout stops over
-	// them — the loop stops at the first stage that needs the user and blocks
-	// the rest, and the one need that does not is the repository stage's
-	// (#1836, initflow's RunsPastStop): the checkout's two local steps read no
-	// repository state, and its cloud step, which builds that repository's job
-	// images, is skipped rather than run over the stop
-	// (checkoutStage.planFor's repositoryStopped). The plugin stage runs before
-	// the checkout on the same pin
-	// and is not LocalUnderAgent, so a stale plugin stops the run at the
-	// plugin (`fugaro update-skills`) with the checkout's local steps never
-	// reached (TestUpdateAgentSessionStopsAtThePluginBeforeTheCheckout). The
-	// help has to say that rather than promise a session a write it may not
+	// the only ones an apply there may make, and the stage that has them is the
+	// plugin's — the plugin installed in the user's own Claude Code at user
+	// scope, with nothing written in the checkout since the settings merge was
+	// deleted (U1 and U2 of docs/plugin-user-scope/implementation-plan.md). It
+	// is LocalUnderAgent for exactly that reason, so a stale plugin is applied
+	// in such a session rather than left for the user — the #1836 claim the
+	// stage was moved for
+	// (TestInitPluginStageMovesInAgentSessionAheadOfARepositoryStop). The
+	// checkout stage is LocalUnderAgent too, and what that buys there is the
+	// run's own account of its cloud half: the plan drops the image refresh,
+	// whose writes are not this machine's, and the apply leaves it for the user
+	// as a named step rather than one line naming `fugaro upgrade` and nothing
+	// of what became of the images (checkoutStage.planFor's repositoryStopped;
+	// the repository stop it applies past is #1836's, initflow's RunsPastStop).
+	// The help has to say that rather than promise a session a write it may not
 	// get to.
-	f.BoolVar(&o.yes, "yes", false, "confirm the ordinary steps without asking (only after reading what they do). It covers every ordinary step this door has — "+covers+" — and it never covers "+never+": those take a person at a real terminal, and no flag stands in for one. The single step a managed project does not confirm at all is a policy publish that would loosen its published node: at a real terminal the write prints one line saying what it does and the widening is read in the diff above it, a project's first node included — that diff names every member the node is created with. Under a coding agent's environment variable (CLAUDECODE and the like; CLAUDE_CODE_SSE_PORT alone is not one of them where standard input is a real terminal, because the Claude Code IDE extension sets it in a person's own terminal too, so it is a person's terminal and types the same confirmations, told in one line that they were accepted from an IDE terminal — another of those markers beside it, or no terminal, is what keeps a run a coding agent's session) "+d.name+" changes nothing outside this machine, --yes included, and the steps it will not run are listed under left_for_you (exit 1): the exceptions are "+d.name+" --anchor, which only edits the checkout's fugaro.yaml and honours --yes there, and the checkout's own local steps (the .claude/settings.json wiring and pin), whose every write is on this machine's own files — and those are reached only where nothing before the checkout stops over them, because a stage that needs you stops the run and blocks the rest: the plugin stage runs before the checkout on the same pin and is not local-under-agent, so a session whose plugin is stale stops there (`left for you`, exit 1) and the checkout is untouched. The one need that does not stop them is the repository stage's — the checkout's own pin and plugin steps read no repository state, and the plugin install is the one the reader of a stale line is stuck on — and the checkout's local steps run past it, while its cloud step, which builds that repository's job images, is skipped rather than run over it. It fails closed rather than promising a write it may never reach, and none of it is a barrier: it is a mitigation — an agent that unsets its own variables is not stopped, and the real controls are the confirmations at a real terminal and the skills' lint")
+	f.BoolVar(&o.yes, "yes", false, "confirm the ordinary steps without asking (only after reading what they do). It covers every ordinary step this door has — "+covers+" — and it never covers "+never+": those take a person at a real terminal, and no flag stands in for one. The single step a managed project does not confirm at all is a policy publish that would loosen its published node: at a real terminal the write prints one line saying what it does and the widening is read in the diff above it, a project's first node included — that diff names every member the node is created with. Under a coding agent's environment variable (CLAUDECODE and the like; CLAUDE_CODE_SSE_PORT alone is not one of them where standard input is a real terminal, because the Claude Code IDE extension sets it in a person's own terminal too, so it is a person's terminal and types the same confirmations, told in one line that they were accepted from an IDE terminal — another of those markers beside it, or no terminal, is what keeps a run a coding agent's session) "+d.name+" changes nothing outside this machine, --yes included, and the steps it will not run are listed under left_for_you (exit 1): the exceptions are "+d.name+" --anchor, which only edits the checkout's fugaro.yaml and honours --yes there, and the plugin stage, whose every write is on this machine's own files — the plugin installed in your own Claude Code at user scope, with nothing written in the checkout — so a coding agent's session applies it rather than leaving it for you. What such a session cannot take is the cloud half, whose writes are not this machine's: the checkout stage applies past a repository stage that needs you, and its plan drops the image refresh, which is left for the user as a named step (exit 1) rather than run over the stop. It fails closed rather than promising a write it may never reach, and none of it is a barrier: it is a mitigation — an agent that unsets its own variables is not stopped, and the real controls are the confirmations at a real terminal and the skills' lint")
 	f.StringVar(&o.onboardRepo, "onboard-repo", "", "owner/name of the checkout's origin repository (compared case-insensitively, without .git): the one opt-in that needs no terminal to wire and onboard a repository the project does not list yet, on github.com or bitbucket.org with an origin git config does not rewrite (--yes also covers onboarding such a repository, and neither it nor this flag is honoured in a coding agent's session; any other origin takes the confirmation of a person at the terminal)")
 	f.BoolVar(&o.coordinator, "coordinator", false, "with --firebase-project, opt the installation in to the coordinator's aggregation job (docs/coordinator, P5): the fugaro-coordinator service account, its roles/firebasedatabase.admin on the Firebase project (IAM cannot scope it to the coordinator's subtree; the job's own code does), roles/storage.objectViewer on the runs bucket, and — once the history image exists and the local config records a GitHub App ID — the Cloud Run job that holds the App key, its accessor on that one secret and a Scheduler job that runs it every 15 minutes. Nothing creates any of it by default. The opt-in is recorded in the local config (terraform.coordinator) once the apply has created the account, so later runs keep it. --yes never covers it, it is confirmed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor)")
-	f.BoolVar(&o.allowFork, "allow-fork", false, "let the plugin-wiring stage move the ref of a fugaro marketplace in .claude/settings.json that names a repository other than dimipaun/fugaro (a fork you host); never done otherwise")
 	// The flags --non-interactive only stops from prompting, worded for this
 	// door: --forget is fugaro update's, and setup's help must not describe
 	// what a flag setup refuses does.
@@ -657,6 +667,57 @@ type initRun struct {
 	// confirmations they always had.
 	gate *initGate
 
+	// accessDerive is the roles step's derive, taken again by the installation
+	// root for itself just before its own tfvars are written (F29a): the step
+	// that runs before the loop reconciles the node and hands the run its two
+	// lists, and this is the same derive read as late as the run can read one —
+	// immediately before the terraform whose plan takes the state lock — so a
+	// grant or a revoke that landed in between is applied rather than
+	// overwritten from the list the earlier read held. The engine sets it
+	// (update_access.go, deriveAccessAgain); this struct cannot read the node
+	// itself, the database client being the engine's, and it is nil in every run
+	// whose roles step found no node.
+	accessDerive func(ctx context.Context) (operators, admins []string, ok bool, err error)
+
+	// accessHeld are the IAM members the installation's own outputs held AT THE
+	// ROLE THIS RUN'S OWN LISTS PLACE THEM AT, plus the ones this run named on
+	// its own flags: the people this terminal was told about, and the only ones
+	// the review screen announces and its one confirmation may cover. A member
+	// of the grants node that is not among them is a grant nobody here made
+	// (update_access.go's heldAccess) — either a member the outputs held at no
+	// role, or one they held at the other role, which the node raised. The cover
+	// the screen builds is members and cannot see a role, so a raised member
+	// announced under the role the outputs hold them at would carry the admin's
+	// roles inside one --yes. accessHeldRead says whether the outputs could be
+	// read at all — a run that could not read them filters nothing, says so, and
+	// covers the node's whole roster as it did before this read existed.
+	accessHeld     []string
+	accessHeldRead bool
+
+	// accessHeldOperators and accessHeldAdmins are what accessHeld is made of:
+	// the members the installation's own outputs hold at each of the two roles,
+	// this run's own flags included (update_access.go's heldAccess). They are
+	// kept because the announcement is taken twice — the installation root takes
+	// it again off the node its own apply carries, whose read is later than the
+	// roles step's (announceHeld, deriveAccessAgain) — and the second take is the
+	// same question asked of lists that have changed, not a second read of the
+	// outputs, which do not change while a run is in flight. A revoked member
+	// stays in them: their absence from the run's lists is what says the run
+	// applies a revocation, and nothing announces or admits a removal by it.
+	accessHeldOperators []string
+	accessHeldAdmins    []string
+
+	// landFlags writes the roles step's two nodes into the cloud — the
+	// migration's, and this run's own --operator/--admin folded into it — and it
+	// is what the installation root calls once the run is past its confirmation
+	// and about to apply (update_access.go, landFlagLists). The roles step does
+	// not write either: the write is worth nothing before the confirmation the
+	// user may still decline, and its own comment says why the node is written
+	// before the apply rather than after. It is nil in every run whose roles step
+	// found no node; it writes nothing in a run that named no list and migrated
+	// nothing.
+	landFlags func(ctx context.Context) error
+
 	// refresh is `fugaro image refresh`'s own read of the same marks
 	// (openRefreshManaged), set by runImageRefresh and nil in every other run.
 	// It is what the refresh's steps that are not builds — the base pin, the
@@ -761,6 +822,12 @@ type initResult struct {
 	RTDBURL  string `json:"rtdb_url,omitempty"`
 	// Anchor is set by update --anchor.
 	Anchor *anchorResult `json:"anchor,omitempty"`
+	// ResolvedIssues is what `fugaro update` found this release fixes about
+	// the project's filed issues (update_resolved.go, T-RU5): the additive
+	// field the console, the mobile app and the history read, so its entries
+	// carry new names and no field here changes meaning (U4). It is absent
+	// when the update fixes none of them.
+	ResolvedIssues []resolvedIssueJSON `json:"resolved_issues,omitempty"`
 }
 
 func newInitRun(cmd *cobra.Command, o *initOptions) *initRun {
@@ -798,6 +865,20 @@ func (w runWriter) Write(p []byte) (int, error) {
 		w.r.rep.Resume()
 	}
 	return n, err
+}
+
+// notes is the run's stderr for the lines a stage prints itself rather than
+// through its own writer: the project header every cloud command starts with
+// and the notes a selection carries. They are the same rule as the run's own
+// lines (runWriter) because they land on the same terminal: a stage of a
+// converge selects the config for its own checkout while a step is in flight,
+// and on stdout the frame is drawn at the start of a line it never ends, so a
+// header written between two frames reads as the stage's name run into it.
+func (r *initRun) notes() io.Writer {
+	if r.rep == nil {
+		return r.cmd.ErrOrStderr()
+	}
+	return runWriter{r: r, out: r.cmd.ErrOrStderr()}
 }
 
 // endsLine reports whether a write left the cursor at the start of a line.
@@ -995,6 +1076,12 @@ func runInit(r *initRun) error {
 		if r.repLog != nil {
 			defer func() { _ = r.repLog.Close() }()
 		}
+		// The run's stderr is the reporter's too, from here on: a stage that
+		// selects the project config for its own checkout prints the header and
+		// the selection's notes while a step is in flight, and a frame and a
+		// header written on one terminal without the line coming down first
+		// read as one run-together line (see initRun.notes).
+		o.cloud.stderr = r.notes
 		return e.converge(cmd.Context())
 	}
 
@@ -1406,6 +1493,15 @@ func (r *initRun) progress() io.Writer {
 	return r.cmd.ErrOrStderr()
 }
 
+// stageDetail is where a refresh stage's own lines go: the lines reporting what
+// the stage did — the base it pinned, the check job it moved — are the run's
+// own output, so with a reporter they take the reporter's stream (the log
+// always, the terminal under --verbose: D1352, D1354) and without one the
+// run's writer, where they have always gone. A refresh a caller drives prints
+// through the caller's run, and a run whose log could not be opened prints
+// what it always printed rather than swallowing it (streamOut, G5).
+func (r *initRun) stageDetail() io.Writer { return streamOut(r.rep, r.repLog, r.w) }
+
 // planBlock prints a plan for the person who has to confirm it, and keeps the
 // whole of it for the run's own record: the counts and the changes they must
 // look at first, in Fugaro's words, on the terminal (tf.Brief), and Terraform's
@@ -1579,7 +1675,7 @@ func (o *initOptions) check() error {
 			name string
 			on   bool
 		}{{"--onboard-repo", o.onboardRepo != ""}, {"--github-app-id", o.githubAppID != ""}, {"--allow-delete", len(o.allowDelete) > 0},
-			{"--allow-fork", o.allowFork}, {"--check-github-app", o.checkApp}} {
+			{"--check-github-app", o.checkApp}} {
 			if f.on {
 				set = append(set, f.name)
 			}
@@ -1794,11 +1890,11 @@ func installOptions(o *initOptions, lc *localcfg.Config) (infra.InstallationSpec
 		RegistryCleanup: cmp.Or(o.registryCleanup, lc.Terraform.RegistryCleanup),
 		NoLogIsolation:  o.noLogIsolation || lc.Terraform.NoLogIsolation,
 	}
-	if o.launchersChanged {
-		opts.Launchers = append([]string{}, o.launchers...)
-	}
 	if o.operatorsChanged {
-		opts.Operators = append([]string{}, o.operators...)
+		opts.Launchers = append([]string{}, o.operators...)
+	}
+	if o.adminsChanged {
+		opts.Operators = append([]string{}, o.admins...)
 	}
 	// The installation carries the history account (and, once it can, the
 	// sweeper's job) from the first --firebase-project on, and a plain fugaro update
@@ -2030,6 +2126,17 @@ func (r *initRun) confirm(what, undone string) error {
 	return nil
 }
 
+// willDo prints the note of a step that no confirmation is asked for, in the
+// words the run has for exactly that: "will do" is the converge's own status
+// for a stage with work to do that nobody is asked about (initflow's
+// stateLabel). The ⚠ CONFIRM banner is what a question is shown under, so the
+// two may not be printed for one step — a managed project's own sentence says
+// no confirmation is taken, two lines under a banner that announced one (the
+// owner's feedback of 2026-11-10).
+func (r *initRun) willDo(what string) {
+	fmt.Fprintf(r.w, "will do (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
+}
+
 // confirmNow is the confirmation a step of this run asks now, and it asks
 // nothing: the policy removes the confirmations a person had to type
 // (docs/no-prompt-policy, D1540 and T7), and what answers for the step is what
@@ -2114,20 +2221,20 @@ func (r *initRun) yesRoute() string {
 	return ", or pass --yes once you have read what it does"
 }
 
-// ask shows the banner and reports whether the step is confirmed; without
-// a terminal and without --yes it isn't. In a coding agent's session it is
-// an *initflow.AgentError before anything is shown as confirmed: nothing a
-// run applies is confirmed there.
+// ask reports whether the step is confirmed, under the banner a question is
+// shown under; without a terminal and without --yes it isn't. In a coding
+// agent's session it is an *initflow.AgentError before anything is shown as
+// confirmed: nothing a run applies is confirmed there.
 //
-// The one session that is shown the banner and asked nothing is the owner's
-// own, in a managed project, at the step of the one command whose gate is its
-// own: `fugaro image refresh`'s non-build steps (r.refresh). The banner and
-// the diff above it are the whole of what the owner reads there, the sentence
-// says why, and the step goes on — the ruling of 2026-11-01, and the same
-// shape the plugin wiring's y/N and the IAM removals already have
-// (gateUnderway). Nothing else moves: a project that is not managed, a mark
-// that did not answer and a session with no terminal or with --yes reach the
-// lines below exactly as they always did.
+// The one session that is asked nothing at all is the owner's own, in a managed
+// project, at the step of the one command whose gate is its own: `fugaro image
+// refresh`'s non-build steps (r.refresh). What the owner reads there is the diff
+// above, the step's own note under the run's words for exactly that (willDo),
+// and the sentence that says why — and the step goes on. It is the ruling of
+// 2026-11-01, and the same shape the plugin wiring's y/N and the IAM removals
+// already have (gateUnderway). Nothing else moves: a project that is not
+// managed, a mark that did not answer and a session with no terminal or with
+// --yes reach the lines below exactly as they always did.
 func (r *initRun) ask(what string) (bool, error) {
 	// The banner and the name typed under it are one question: the line in
 	// flight is down across both (initRun.asking), or the frame drawn when the
@@ -2145,15 +2252,20 @@ func (r *initRun) ask(what string) (bool, error) {
 // banner is a note now, not a prompt: what answers for the step is the reader
 // of it (confirmNow), and the only arm that reads is --ask's, which asks the
 // step's own [y/N] through the one sanctioned confirmation helper.
+//
+// The banner is printed only where something follows it that answers for the
+// step: a question, a flag, or a person whose presence is the answer. An arm
+// that asks nothing at all prints the step's note under willDo instead.
 func (r *initRun) askBanner(what string) (bool, error) {
 	if m := agentMarker(os.Getenv, r.stdinTerminal()); m != "" {
 		return false, &initflow.AgentError{Marker: m}
 	}
-	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
 	if r.refresh.asksNothing(r.conditions()) {
+		r.willDo(what)
 		fmt.Fprintf(r.w, "  %s\n", initflow.GateOrdinary())
 		return true, nil
 	}
+	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
 	ok, err := r.confirmNow(what + "?")
 	if err != nil {
 		return false, err
@@ -2710,6 +2822,23 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 	if err != nil {
 		return outs, false, err
 	}
+	// The roles step's derive, taken again here and never earlier (F29a): the
+	// two lists this apply carries are read off the grants node at the last
+	// point the run can read one — immediately before the tfvars below, whose
+	// plan is the terraform that takes the state lock — so a grant or a revoke
+	// that landed since the step ran is what lands, rather than the list that
+	// read held. It is nil when the step found no node (no budget backend, a
+	// database this installation never adopted), and the lists are then the
+	// local config's, as they were before this release.
+	if r.accessDerive != nil {
+		operators, admins, ok, err := r.accessDerive(ctx)
+		if err != nil {
+			return outs, false, err
+		}
+		if ok {
+			spec.Launchers, spec.Operators = operators, admins
+		}
+	}
 	backend, err := prepare(wd, spec, im, verifiers, false)
 	if err != nil {
 		return outs, false, err
@@ -2813,8 +2942,16 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 			fmt.Fprintln(r.w, "No changes: the installation matches the plan.")
 			if r.o.planOnly {
 				stop = true
+				return nil, nil
 			}
-			return nil, nil
+			// A plan with nothing in it is still a run the user confirmed (or one
+			// that found the installation already matching): the roles step's writes
+			// — the migration's node, and the flags' fold into it — are landed here
+			// for the same reason as before an apply, and they are the one change of
+			// a run whose apply has nothing to do. A pure rename is exactly this run:
+			// the module's variables are unchanged, so the plan is empty, and the
+			// node is the record the migration exists to leave.
+			return nil, r.landFlaggedLists(ctx)
 		}
 		plan, err := t.Show(ctx, infra.PlanFile)
 		if err != nil {
@@ -2857,9 +2994,19 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 				return plan, nil
 			}
 			// 6. Confirm, 7. apply the plan shown.
-			if err := r.confirmOrdinary("applies "+counts.String()+r.installLabel, "nothing was applied", r.notCovered(plan, im.Keys())); err != nil {
+			if err := r.confirmPlanned("applies "+counts.String()+r.installLabel, "nothing was applied", plan, r.notCovered(plan, im.Keys())); err != nil {
 				return plan, err
 			}
+		}
+		// The roles step's two writes land here and nowhere earlier — the
+		// migration's node and the run's own --operator/--admin folded into it:
+		// the run is past the guard and past its confirmation (or past the gate
+		// that stands in for it) and is about to apply, so a change that was
+		// declined or refused has written nothing, and a write that fails stops
+		// the run before GCP holds a grant the node does not (update_access.go's
+		// landFlagLists).
+		if err := r.landFlaggedLists(ctx); err != nil {
+			return plan, err
 		}
 		if err := r.applyAndRecord(ctx, t); err != nil {
 			return plan, err
@@ -3156,11 +3303,11 @@ func (r *initRun) writeConfig(ctx context.Context, lc *localcfg.Config, spec inf
 	next.SetupPending = ""
 	next.LogView = outs.LogView
 	next.Terraform.StateBucket = spec.StateBucket
-	if r.o.launchersChanged {
-		next.Terraform.Launchers = slices.Clone(spec.Launchers)
-	}
 	if r.o.operatorsChanged {
-		next.Terraform.Operators = slices.Clone(spec.Operators)
+		next.Terraform.Operators = slices.Clone(spec.Launchers)
+	}
+	if r.o.adminsChanged {
+		next.Terraform.Admins = slices.Clone(spec.Operators)
 	}
 	if r.o.alertEmailChanged {
 		next.Terraform.AlertEmail = r.o.alertEmail
@@ -3331,6 +3478,36 @@ func (r *initRun) publishSharedConfig(ctx context.Context, lc *localcfg.Config) 
 	}
 }
 
+// updateResolved is the door's resolved-issues step (update_resolved.go,
+// T-RU5), and it is the last thing an update that converged does with the
+// installation: it records which two releases this update spans and prints
+// what this release fixes about the project's filed issues.
+//
+// It sits here, beside publishSharedConfig and after the loop rather than at
+// the door, because of the one thing it owes that the offer beside it does
+// not: the --json document. --json prints initResult the moment the converge
+// ends (printResult, from the loop's own outcome), so a step that added a
+// field to it after the run had returned would add it to a document already on
+// stdout. Everything else about it is built to be missed rather than felt (the
+// hard rule): the run reaches here only with every stage applied and nothing
+// left for the person, every failure inside it is a line not printed, and the
+// pass it runs is bounded to twenty seconds.
+func (r *initRun) updateResolved(ctx context.Context) {
+	if !updateResolvedRuns(r.o) || len(r.res.LeftForYou) > 0 {
+		return
+	}
+	// The bucket the run converged against, opened through the retry offer's
+	// own seam: the question is the same one — which project did this run
+	// converge, and where is its store — and a second seam would be a second
+	// answer to it.
+	b, err := updateRetryBucket(ctx, r.o.cloud, updateRetryProject(r.o, nil))
+	if err != nil {
+		return
+	}
+	defer func() { _ = b.Close() }()
+	r.res.ResolvedIssues = r.printResolvedIssues(ctx, b)
+}
+
 // writeLocalConfig writes next to path, showing the diff first and backing
 // up the file it replaces. A diff is confirmed by an apply's confirmation
 // (confirmed), else it asks on its own. An unchanged file isn't written.
@@ -3339,6 +3516,17 @@ func (r *initRun) writeLocalConfig(next *localcfg.Config, path string, old []byt
 		// A shared selection has no file; never write to an empty path.
 		return userErr("there is no local config file to write (a shared config has none): run fugaro setup to create your own local config")
 	}
+	// Every write of the local config converges the craft keys first, so
+	// `fugaro update` is the whole migration and no other command is one: it
+	// adds the credentials and crafts the older account keys name
+	// (init_craft_migrate.go). It runs on the config about to be written —
+	// after the rest of this run's own changes — and adds nothing to a config
+	// that already holds them, so nothing is written twice. What it could not
+	// convert is printed where this run reports on the file — with the write,
+	// or under the line saying the file is already current — and never before
+	// the confirmation: the notes describe the file as it now is, and a config
+	// the migration converted whole has none.
+	migrationNotes := migrateCraftKeys(next)
 	data, err := next.Marshal()
 	if err != nil {
 		return err
@@ -3349,6 +3537,13 @@ func (r *initRun) writeLocalConfig(next *localcfg.Config, path string, old []byt
 	r.res.Config = path
 	if old != nil && bytes.Equal(old, data) {
 		fmt.Fprintf(r.w, "The local config %s is up to date.\n", path)
+		// The keys the migration cannot convert are named here too: the file is
+		// current and still holds them, so they are a state of the file and not
+		// a change this run would make. A converged config has no note at all
+		// (migrateCraftKeys), so this says nothing about one.
+		for _, note := range migrationNotes {
+			fmt.Fprintf(r.w, "note: %s\n", note)
+		}
 		return nil
 	}
 	fmt.Fprintf(r.w, "The local config %s changes:\n%s", path, lineDiff(string(old), string(data)))
@@ -3372,6 +3567,9 @@ func (r *initRun) writeLocalConfig(next *localcfg.Config, path string, old []byt
 		return userErr("writing the local config: %v", err)
 	}
 	fmt.Fprintf(r.w, "wrote %s\n", path)
+	for _, note := range migrationNotes {
+		fmt.Fprintf(r.w, "note: %s\n", note)
+	}
 	if old == nil {
 		r.noteSecondProject()
 	}
@@ -3825,8 +4023,8 @@ func (o *initOptions) checkRepo() error {
 func (o *initOptions) installationFlags() []string {
 	installationOnly := map[string]bool{
 		"--config-only": o.configOnly, "--publish-config": o.publishConfig, "--anchor": o.anchor, "--budget": o.budget != 0, "--budget-currency": o.budgetCurrency != "",
-		"--billing-account": o.billingAccount != "", "--alert-email": o.alertEmailChanged, "--launcher": o.launchersChanged,
-		"--operator": o.operatorsChanged, "--base-image": o.baseImageChanged, "--base": len(o.baseKinds) > 0, "--image-source": o.imageSource != "", "--expect-digest": len(o.expectDigests) > 0, "--replace-image": len(o.replaceImages) > 0, "--no-log-isolation": o.noLogIsolation,
+		"--billing-account": o.billingAccount != "", "--alert-email": o.alertEmailChanged, "--operator": o.operatorsChanged,
+		"--admin": o.adminsChanged, "--base-image": o.baseImageChanged, "--base": len(o.baseKinds) > 0, "--image-source": o.imageSource != "", "--expect-digest": len(o.expectDigests) > 0, "--replace-image": len(o.replaceImages) > 0, "--no-log-isolation": o.noLogIsolation,
 		"--registry-cleanup": o.registryCleanup != "", "--runs-bucket": o.runsBucket != "", "--scheduler-region": o.schedulerRegion != "",
 		"--firebase-project": o.firebase != "", "--budget-mode": o.budgetMode != "", "--budget-admin": o.budgetAdminsChanged,
 		"--create-project": o.createProject, "--managed": o.managed, "--display-name": o.displayName != "", "--parent": o.parent != "", "--link-billing": o.linkBilling != "",
@@ -4347,7 +4545,7 @@ func (r *initRun) appPreCheck(ctx context.Context, lc *localcfg.Config, spec inf
 	}
 	keyID := spec.Secrets[config.GitHubAppKeySecret]
 	if r.o.checkApp {
-		id, err := gitSecretID(ctx, lc, spec, "the GitHub App pre-check of "+spec.Name)
+		id, err := gitSecretID(ctx, lc, spec, nodePolicy(ctx, &r.policy, lc), "the GitHub App pre-check of "+spec.Name)
 		if err != nil {
 			// One line, and for a drift the short form of it: oneLineCLI
 			// prints through pluginwire.Printable, which would cut the
@@ -4790,7 +4988,7 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 			r.warn(n)
 		}
 	}
-	ready, missing, err := infra.Readiness(ctx, c, spec, ex, r.o.planOnly)
+	ready, missing, err := infra.Readiness(ctx, c, spec, ex, r.o.planOnly, r.o.doorName())
 	if err != nil {
 		return infra.RepoSpec{}, nil, initErr(err)
 	}
@@ -4931,7 +5129,7 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 			if !first {
 				what += ", deploying the images just built"
 			}
-			if err := r.confirmOrdinary(what, "nothing was applied", r.notCovered(plan, im.Keys())); err != nil {
+			if err := r.confirmPlanned(what, "nothing was applied", plan, r.notCovered(plan, im.Keys())); err != nil {
 				return plan, err
 			}
 		}
@@ -5071,7 +5269,12 @@ func (r *initRun) submitAndWait(ctx context.Context, b cloudBuilder, lc *localcf
 	case err != nil:
 		return "", false, remote(err)
 	}
-	fmt.Fprintf(r.w, "Cloud Build build %s of %s submitted; log: %s\n", oneLine(res.ID), oneLine(res.Image), oneLine(res.LogURL))
+	// The build's own two lines are the run's output and not the screen's
+	// account of a step (D1352, D1354): with a reporter they are the stream, so
+	// the default view stays one line per step and the log holds what the build
+	// reported, and a run with no log prints them where it always has.
+	w := r.stageDetail()
+	fmt.Fprintf(w, "Cloud Build build %s of %s submitted; log: %s\n", oneLine(res.ID), oneLine(res.Image), oneLine(res.LogURL))
 	done, err := b.Wait(ctx, res.ID, 0)
 	if err != nil {
 		// The build was submitted and goes on without us: its ID comes back
@@ -5081,7 +5284,7 @@ func (r *initRun) submitAndWait(ctx context.Context, b cloudBuilder, lc *localcf
 		// running.
 		return res.ID, gcp.TerminalStatus(done.Status), remote(err)
 	}
-	fmt.Fprintf(r.w, "built %s/%s (Cloud Build build %s)\n", spec.Name, name, oneLine(done.ID))
+	fmt.Fprintf(w, "built %s/%s (Cloud Build build %s)\n", spec.Name, name, oneLine(done.ID))
 	r.res.Builds = append(r.res.Builds, done.ID)
 	return done.ID, true, nil
 }
@@ -5133,7 +5336,7 @@ func (r *initRun) buildImages(ctx context.Context, lc *localcfg.Config, cfg *con
 // secrets set command, as the bootstrap printed them, and each workflow's
 // other gates.
 func (r *initRun) printMissing(spec infra.RepoSpec, versions map[string]bool, missing []infra.Missing, needKey bool) {
-	steps := infra.SecretCommands(spec, versions, selfCommand(), quoteWord)
+	steps := infra.SecretCommands(spec, versions, selfCommand(), r.o.doorName(), quoteWord)
 	if !needKey {
 		// This run never calls Anthropic, so the key is not missing: it gates
 		// nothing (infra.NeedsBuild skips it), the job deploys without it, and

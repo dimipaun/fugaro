@@ -718,7 +718,6 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request, rt route
 type outcome struct {
 	charge
 	settled, pricedAs, servingModel, errorType string
-	usage                                      pricing.Usage // reported
 }
 
 func zeroOutcome(model string, sent bool) outcome {
@@ -1213,12 +1212,19 @@ func (s *Server) fromUsage(t *usageTee, p parsed, pr *Route, w pricing.Micros, p
 		floor = min(pricing.WithFee(t.acc.reported, fee), w)
 	}
 	o.usage = u
+	// The model this call is priced under, which is the one the request named
+	// and not the serving model the response's own message_start carried: the
+	// per-model token counts the run's record keeps hang off this one (G1.2).
+	// The serving model is the claim the dollars follow (ByModel), and a
+	// response naming a snapshot of the pin, or a model the table doesn't
+	// know at all, must not key the run's own counts.
+	o.pricedModel = p.model
 	o.model = serving
 	o.sent = true
 	o.tokens = u.Input + u.CacheWrite5m + u.CacheWrite1h + u.CacheRead + u.Output
 	// What this call had cached is what a switch after it re-reads (F24), and
 	// it is known because this call's usage was read.
-	o.cacheRead, o.cacheWrite, o.usageRead = u.CacheRead, u.CacheWrite5m+u.CacheWrite1h, true
+	o.usageRead = true
 	if !partial {
 		o.amount, o.settled = max(reported, floor), settledUsage
 		if pr != nil && t.acc.hasReported {
@@ -1374,16 +1380,27 @@ var hopByHop = map[string]bool{
 // dropResponseHeaders never reach the agent: they identify the
 // organization behind the real key, or set state on the gateway's origin.
 //
-// The credentials service's answer headers are three more of them (C1.15,
+// The credentials service's answer headers are four more of them (C1.15,
 // service.go), and they are dropped for every upstream kind rather than only
 // under a service one: the tier is what C1.16 charges the call by, the name
-// is which of the project's credentials answered, and the switch is which
-// credential a call moved between. The agent is the one party that must never
-// learn the set of credentials its project holds (D143), and every later
-// upstream kind that answers with them would have to remember this list.
+// is which of the project's credentials answered, the switch is which
+// credential a call moved between, and the probe is which tiers were tried.
+// The agent is the one party that must never learn the set of credentials its
+// project holds (D143), and every later upstream kind that answers with them
+// would have to remember this list.
+//
+// The workspace's headroom header is the fifth (W7, workspace_headroom.go),
+// and the figure it carries is the workspace's own — its month across all of
+// its members, per budget.WorkspaceRoom — which is delivered to a member's job
+// and to no one else on that side (spec §5: the service answers the calling
+// member's job service account "and no one else"). So it joins the four above
+// rather than travelling beside them: the gateway reads it where they are read
+// (before this copy, so the run's own process has it through DeliveredHeadroom)
+// and the agent is handed the model's answer without it.
 var dropResponseHeaders = map[string]bool{
 	"Anthropic-Organization-Id": true, "Set-Cookie": true, "Set-Cookie2": true,
 	HeaderTier: true, HeaderCredential: true, HeaderSwitch: true, HeaderProbe: true,
+	WorkspaceHeadroomHeader: true,
 }
 
 func copyResponseHeaders(dst, src http.Header, decoded bool) {

@@ -170,8 +170,8 @@ as it goes, so a launch that reaches the executable while the unpack is still
 running finds a file open for writing: Linux refuses that with ETXTBSY (and a
 launch that gets there before the file exists at all gets ENOENT). Two
 Playwright workers on a cold `node_modules` did exactly that, which is what made
-the `console (ubuntu-latest)` check — a required check of
-`scripts/release-gate.sh` — fail intermittently (`Error: electron.launch: spawn
+the `console (ubuntu-latest)` check — once a required check of
+`scripts/release-gate.sh`, since removed from it — fail intermittently (`Error: electron.launch: spawn
 ETXTBSY`, run 39174336894 attempt 1, then a red gate). The fetch is therefore
 **hoisted out of the workers**: `playwright.config.ts` names
 `test/support/globalSetup.ts`, which resolves the binary once in Playwright's
@@ -960,7 +960,11 @@ document's invariants hold. The result then goes through the console's redactor 
 `synthetic.ndjson` does), which is why the repo and slug read as pseudonyms
 (`r-...`, `slug-...`) and the project as `<project>`. Kept as the CLI wrote
 them, and only if in the fixed vocabulary listed in `scrub.ts` (`VOCAB`,
-`VERIFY_KINDS`, `QUEUED_NOTE_SHAPE`): mode, stage, round, health, deadline, auth,
+`VERIFY_KINDS`, `QUEUED_NOTE_SHAPE`): the document's mode, a run's own rigor
+mode and the layer it came from (`VOCAB.rigorMode`/`VOCAB.rigorFrom`, the two
+words `runs[].mode`/`runs[].from` carry from CLI 0.23.0 — a word each, never
+text a run wrote, and `-` for a run whose registry entry has neither), stage,
+round, health, deadline, auth,
 verify, connection state, `queued_note`, and the ages and burn numbers. A
 connection `reason` is the one value with a free-text branch: the two sentences
 the CLI writes itself are kept, and the transport's own error text is replaced
@@ -994,7 +998,9 @@ command's moved copy of that check, `ee/coordinator/cli/console_contract_test.go
 reading this file as bytes and importing nothing from it — reads the lists back
 out of the file and compares them with the constants the source writes
 them from: the runs[].stage vocabulary, the config's allowed `agent.auth`, the
-budget's modes, the three verify kinds, the two status words and the rerun flag,
+budget's modes, the run's rigor modes and layers (`VOCAB.rigorMode`,
+`VOCAB.rigorFrom`, against `internal/rigor`: the resolver's five modes, and its
+layers minus `reached`, which no record's `from` can be), the three verify kinds, the two status words and the rerun flag,
 the one warning sentence and the clean-tree note, the connection, health,
 deadline, status and outcome tables, the two connection `reason` sentences
 `internal/watch/state.go` writes itself (`CONNECTION_REASONS`), the two
@@ -4741,9 +4747,9 @@ create or edit anything under `.github/workflows/`:
   a key of the owner's) and attaches everything to `console-vX.Y.Z`.
 
 **Neither file is in `scripts/release-gate.sh`'s required-check list, and that is
-a decision rather than an omission.** The gate's list is derived from
-`console-tests.yml`'s job set and asserted by `TestReleaseGateRequiresTheConsoleCheck`,
-which refuses a workflow with more than one job — so adding the Linux build to
+a decision rather than an omission.** The gate's list is test, terraform and rules (plus the two console legs when `GATE_REQUIRE_CONSOLE=1`, set only by `console-release.yml`), and
+`TestReleaseGateRequiresTheConsoleCheck` asserts both —
+so adding the Linux build to
 the gate is not a packaging change at all, it is a change to which checks gate a
 release tag, and that is the owner's call. `docs/pending-workflows/README.md`'s
 `## console-linux.yml` section carries the three edits it would take, and the

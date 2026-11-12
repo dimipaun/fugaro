@@ -196,18 +196,17 @@ func TestStageOrderMatchesDependencies(t *testing.T) {
 	names := Names()
 	// Ten stages of the installation's own plus the deployed security rules
 	// generation (init_rules_stage.go), the published policy node's migration
-	// in place (init_policy_migrate.go), the credentials service's image moving
-	// onto this release's after that migration (init_stages.go's
-	// newCredentialsStage, the owner's ruling of 2026-11-10), the workspace's
-	// own project's root — the account and the one grant a workspace's own
-	// service reaches its database with (workspace_create.go, W3) — the
-	// workspace record the owner's `fugaro update` publishes
-	// (update_workspace.go / D1292), the project layer and its one local file
-	// (init_layer_stage.go), the checkout's own steps inside fugaro update
-	// (init_checkout_upgrade.go) and the compute backend's provisioning, which
-	// the design puts last (compute-backend §8.1 task 6).
-	if len(names) != 18 {
-		t.Fatalf("the design has eighteen stages, got %v", names)
+	// in place (init_policy_migrate.go), the workspace's own project's root —
+	// the account and the one grant a workspace's own service reaches its
+	// database with (workspace_create.go, W3) — the workspace record the
+	// owner's `fugaro update` publishes (update_workspace.go / D1292), the
+	// project layer and its one local file (init_layer_stage.go), the
+	// checkout's own steps inside fugaro update (init_checkout_upgrade.go), the credentials service's image moving onto this release's after the policy migration (init_stages.go's newCredentialsStage), the
+	// login unit that runs the orchestrator daemon (init_orchestrator_stage.go,
+	// O9) and the compute backend's provisioning, which the design puts last
+	// (compute-backend §8.1 task 6).
+	if len(names) != 19 {
+		t.Fatalf("the design has nineteen stages, got %v", names)
 	}
 	pos := map[string]int{}
 	for i, n := range names {
@@ -222,7 +221,7 @@ func TestStageOrderMatchesDependencies(t *testing.T) {
 		}
 	}
 	// The order the dogfooding run found by hand.
-	want := []string{Preflight, Project, Services, Installation, Firebase, Images, Installation2, Secrets, Plugin, Repository, Rules, Policy, CredentialsService, WorkspaceProject, Workspace, Layer, Checkout, Compute}
+	want := []string{Preflight, Project, Services, Installation, Firebase, Images, Installation2, Secrets, Plugin, Repository, Rules, Policy, CredentialsService, WorkspaceProject, Workspace, Layer, Checkout, Unit, Compute}
 	if !slices.Equal(names, want) {
 		t.Errorf("order = %v, want %v", names, want)
 	}
@@ -2074,6 +2073,45 @@ left for you (secrets, prompt): run fugaro update in your terminal
 `
 	if out.String() != want {
 		t.Errorf("the account without a reporter changed:\n%s\nwant:\n%s", out.String(), want)
+	}
+}
+
+// A stage whose writes are all on this machine is not blocked by a stage that
+// stopped ahead of it (D954, U8): the plugin stage runs although images waits
+// for you, its own line says which stop it ran past, and every stage after it
+// still waits for that stop. The marker is about what the stage reads — a
+// stage that reads no cloud is not the one a stopped cloud stage leaves in an
+// unknown state — which is why it runs past a needs-you stop and would run
+// past any other.
+func TestMachineLocalStageRunsPastAStop(t *testing.T) {
+	var log []string
+	stages := fakes(&log, Preflight, Images, Plugin, Repository)
+	stages[0].(*fake).status = Status{State: Done}
+	stages[1].(*fake).status = Status{State: NeedsYou, Detail: "the images need a credential only you have"}
+	res, err := Run(context.Background(), stages, yesOpts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st := states(res); st[Images] != NeedsYou || st[Plugin] != Changed || st[Repository] != Blocked {
+		t.Fatalf("states %v, want images %s, plugin %s (the marker runs past the stop) and repository %s", st, NeedsYou, Changed, Blocked)
+	}
+	var line, after string
+	for _, r := range res.Stages {
+		switch r.Name {
+		case Plugin:
+			line = r.Detail
+		case Repository:
+			after = r.Detail
+		}
+	}
+	if want := "machine-local: ran although " + Images + " waits for you"; !strings.HasPrefix(line, want) {
+		t.Errorf("the stage that ran past the stop reads %q, want %q first", line, want)
+	}
+	if after != "waits for "+Images {
+		t.Errorf("the stage behind it reads %q, want it still waiting for %s", after, Images)
+	}
+	if res.ExitCode() != 1 {
+		t.Errorf("exit %d, want 1: the run still has a stage left for the user", res.ExitCode())
 	}
 }
 

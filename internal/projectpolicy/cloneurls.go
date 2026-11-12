@@ -28,7 +28,7 @@ import (
 // without a slash stays readable; the escaped form is only what this package
 // writes.
 //
-// What a value may be is not this type's business but the node's: validCloneURLs
+// What a value may be is not this type's business but the node's: ValidCloneURLs
 // holds every entry to repourl.CloneURL — this repository, on this provider's
 // host, with no credentials — because the URL is where a run clones from, while
 // its slug, its locks, its cache and its budget session all name the repository
@@ -59,7 +59,7 @@ func (cs CloneURLs) MarshalJSON() ([]byte, error) {
 // carrying "github/acme/app" beside the "github%2Facme%2Fapp" this package
 // writes folds both members onto one canonical repository. Which of the two
 // URLs survived would then be whichever member the map's iteration happened to
-// see last: a node whose *validation* (validCloneURLs, entry by entry) and
+// see last: a node whose *validation* (ValidCloneURLs, entry by entry) and
 // whose run's clone URL both depend on Go's map order, so the same bytes are
 // accepted on one read and refused on the next. A repository named twice is
 // refused rather than read, and the keys are walked in sorted order so the

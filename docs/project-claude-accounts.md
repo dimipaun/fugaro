@@ -1,6 +1,6 @@
 # Project Claude accounts: one OAuth token per (profile, account)
 
-Status: **0.9.0, released.** The released Fugaro is 0.22.1, and 0.9.0 is the first release any of this page works on:
+Status: **0.9.0, released.** The released Fugaro is 0.23.0, and 0.9.0 is the first release any of this page works on:
 the `claude_accounts` field inside a profile, the `accounts` block in the published policy and the
 jobs they name all ship in 0.9.0 (policy version 3,
 [`internal/projectpolicy/version.go`](../internal/projectpolicy/version.go)), and a 0.8.x binary
@@ -300,9 +300,12 @@ read, so **0.9.0's accounts need all four of these**, in this order:
    there is no list to keep, and the publish seeds `allow_repos` from this machine's config — its
    `repos:` map and the shared config (`seedAllowRepos`) — so a repository you had removed with
    `fugaro project repos rm` comes back when the config still names it, and one you had added by
-   hand with `fugaro project repos add` is dropped. The node's `clone_urls` block (no command of
-   this release writes one) and any `routing` block a person wrote are dropped with it: a publish
-   carries those only from a node it replaces. So run this **per installation** before the delete
+   hand with `fugaro project repos add` is dropped. The node's `clone_urls` block and any
+   `routing` block a person wrote are dropped with it: a publish carries those only from a node it
+   replaces. `clone_urls` is the half you can put back, because it now has a writer outside the
+   console — `fugaro project clone-url set` writes the block in your own config file, and the
+   publish that follows takes it from there — while a hand-written `routing` block is yours to
+   write again. So run this **per installation** before the delete
    and keep what it prints:
 
    ```bash

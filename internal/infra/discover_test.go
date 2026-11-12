@@ -20,6 +20,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runner"
 )
 
@@ -344,7 +345,7 @@ func TestDiscoverAcceptsLegacySADisplayName(t *testing.T) {
 	if ex.DisplayNames["web"] != legacy {
 		t.Errorf("kept display name = %q, want %q", ex.DisplayNames["web"], legacy)
 	}
-	got, _, err := Readiness(context.Background(), f.c, spec, ex, false)
+	got, _, err := Readiness(context.Background(), f.c, spec, ex, false, "update")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -844,7 +845,7 @@ func TestReadinessKeepsExistingJob(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, missing, err := Readiness(ctx, f.c, spec, ex, false)
+	got, missing, err := Readiness(ctx, f.c, spec, ex, false, "update")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -874,7 +875,7 @@ func TestReadinessKeepsImageUntilBuilt(t *testing.T) {
 		t.Fatal(err)
 	}
 	web := spec.Workflows["web"]
-	got, _, err := Readiness(ctx, f.c, spec, ex, false)
+	got, _, err := Readiness(ctx, f.c, spec, ex, false, "update")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -886,7 +887,7 @@ func TestReadinessKeepsImageUntilBuilt(t *testing.T) {
 	}
 	f.ar.AddRepository("proj-1234", "us-east5", spec.Registry.RepositoryID, with(managed, gcp.LabelRepo, spec.Label))
 	f.ar.SetTag("proj-1234", "us-east5", spec.Registry.RepositoryID, strings.TrimSuffix(strings.TrimPrefix(web.Image, spec.RegistryPath+"/"), ":latest"), "latest")
-	got, missing, err := Readiness(ctx, f.c, spec, ex, false)
+	got, missing, err := Readiness(ctx, f.c, spec, ex, false, "update")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -912,7 +913,7 @@ func TestReadinessWaitsForImageAndSecrets(t *testing.T) {
 	}
 	ready := func() (bool, []string) {
 		t.Helper()
-		got, missing, err := Readiness(ctx, f.c, spec, ex, false)
+		got, missing, err := Readiness(ctx, f.c, spec, ex, false, "update")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -973,7 +974,7 @@ func TestReadinessCloneDeploysWithoutAnImageBuild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, missing, err := Readiness(ctx, f.c, rs, ex, false)
+	got, missing, err := Readiness(ctx, f.c, rs, ex, false, "update")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1009,7 +1010,7 @@ func TestReadinessCloneDeploysWithoutAnImageBuild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, missing, err = Readiness(ctx, f.c, rs, ex, false)
+	_, missing, err = Readiness(ctx, f.c, rs, ex, false, "update")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1036,7 +1037,7 @@ func TestReadinessImageHintNamesTheLogicalWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, missing, err := Readiness(ctx, f.c, spec, ex, false)
+	_, missing, err := Readiness(ctx, f.c, spec, ex, false, "update")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1089,7 +1090,7 @@ func TestReadinessGatesCheckJob(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		got, missing, err := Readiness(ctx, f.c, spec, ex, false)
+		got, missing, err := Readiness(ctx, f.c, spec, ex, false, "update")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1157,7 +1158,7 @@ func TestScheduleOnlyWithRecord(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, _, err := Readiness(ctx, f.c, spec, ex, false)
+	got, _, err := Readiness(ctx, f.c, spec, ex, false, "update")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1168,7 +1169,7 @@ func TestScheduleOnlyWithRecord(t *testing.T) {
 	if err := b.WriteAll(ctx, imagecheck.RecordKey(spec.Slug, "web"), []byte("{}"), nil); err != nil {
 		t.Fatal(err)
 	}
-	got, _, err = Readiness(ctx, f.c, spec, ex, false)
+	got, _, err = Readiness(ctx, f.c, spec, ex, false, "update")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1257,7 +1258,7 @@ func TestLookupsFailClosed(t *testing.T) {
 					t.Fatal(err)
 				}
 				ft.match, ft.code = tc.match, code
-				_, _, err = Readiness(ctx, c, spec, ex, false)
+				_, _, err = Readiness(ctx, c, spec, ex, false, "update")
 				check(err)
 			})
 		}
@@ -1276,7 +1277,7 @@ func TestReadinessRefusesJobWithoutImage(t *testing.T) {
 	}
 	// The spec's image isn't built, and the job has none to keep: switching
 	// to the spec's would point the job at a missing image.
-	got, _, err := Readiness(ctx, f.c, spec, ex, false)
+	got, _, err := Readiness(ctx, f.c, spec, ex, false, "update")
 	if err == nil {
 		t.Fatalf("readiness pointed a job with no image at %q", got.Workflows["web"].Image)
 	}
@@ -1326,7 +1327,7 @@ func TestReadinessCloneJobWithoutImageNamesTheConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = Readiness(ctx, f.c, rs, ex, false)
+	_, _, err = Readiness(ctx, f.c, rs, ex, false, "update")
 	var ue *UserError
 	if !errors.As(err, &ue) {
 		t.Fatalf("err = %v, want a user error", err)
@@ -1350,7 +1351,7 @@ func TestReadinessOutputSharesNoMaps(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := mustJSON(t, spec)
-	got, _, err := Readiness(ctx, f.c, spec, ex, false)
+	got, _, err := Readiness(ctx, f.c, spec, ex, false, "update")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1380,7 +1381,7 @@ func TestScheduleStaysPausedWithoutWorkflows(t *testing.T) {
 	check := *spec.Check
 	check.Workflows = nil
 	spec.Check = &check
-	got, _, err := Readiness(ctx, f.c, spec, ex, false)
+	got, _, err := Readiness(ctx, f.c, spec, ex, false, "update")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1433,7 +1434,7 @@ func readinessOf(t *testing.T, f *cloud, spec RepoSpec) (RepoSpec, []Missing, Ex
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, missing, err := Readiness(context.Background(), f.c, spec, ex, false)
+	got, missing, err := Readiness(context.Background(), f.c, spec, ex, false, "update")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1518,6 +1519,47 @@ func TestReadinessMissingNamesProjectWideFix(t *testing.T) {
 		return strings.Contains(m.Reason, "fugaro secrets set bitbucket-token") && !strings.Contains(m.Reason, "--repo")
 	}) {
 		t.Errorf("missing = %v, want the project-scope fix (secrets set, no --repo)", missing)
+	}
+}
+
+// A name only the published node admits the fix cannot be a `secrets set`
+// line for, whatever scope it would name: that command answers its scope from
+// the local config alone, so this machine can store neither copy -- the bare
+// form writes the repository's own, which then wins over the project's
+// forever (the flip TestReadinessMissingNamesProjectWideFix's form exists to
+// avoid), and --project-wide is refused. The fix is the run's own door, which
+// reads the node and stores the value in the container that decision picks.
+//
+// Mutation (run, restore): drop the ProjectSecretNodeOnly branch from
+// SecretFix and the fix below is the bare `secrets set` line.
+func TestReadinessMissingNamesTheRunDoorForANodeOnlyName(t *testing.T) {
+	f := newCloud(t)
+	in := sandboxInputs(t, m5Additions)
+	in.Policy = &projectpolicy.Policy{
+		Version:        projectpolicy.Version,
+		AllowRepos:     []string{"bitbucket/acme/sandbox"},
+		BitbucketToken: &projectpolicy.BitbucketToken{AllowRepos: []string{"bitbucket/acme/sandbox"}},
+	}
+	spec, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !spec.ProjectSecretNodeOnly["bitbucket-token"] {
+		t.Fatalf("the fixture is not the state this case is about: candidates %v, node-only %v", spec.ProjectSecretCandidates, spec.ProjectSecretNodeOnly)
+	}
+	// The repository's own copy is there with no version, and the project's is
+	// not there at all: nothing resolves, so the name is missing.
+	f.sm.Seed(spec.Secrets["bitbucket-token"], with(managed, gcp.LabelRepo, spec.Label, gcp.LabelSecret, "bitbucket-token"), nil)
+	_, missing, _ := readinessOf(t, f, spec)
+	if !slices.ContainsFunc(missing, func(m Missing) bool {
+		return strings.Contains(m.Reason, "secret bitbucket-token has no version: fugaro update")
+	}) {
+		t.Errorf("missing = %v, want the fix to be the run's own door", missing)
+	}
+	for _, m := range missing {
+		if strings.Contains(m.Reason, "secrets set bitbucket-token") {
+			t.Errorf("missing = %v hands the machine a `secrets set` line for a name only the node admits: that line stores the repository's own copy, which wins over the project's forever", m)
+		}
 	}
 }
 

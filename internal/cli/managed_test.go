@@ -28,6 +28,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // The property this feature's safety rests on, and the one place it is
@@ -818,6 +819,19 @@ var inlineAgentSites = []inlineAgentSite{
 		}
 		return ok && err == nil
 	}},
+	// askPlanned is the question a plan that grants a member the review did not
+	// announce asks (init_review.go, grantsNotAnnounced), and it carries the
+	// marker check askBanner carries for its own reason: it is the one question
+	// of the run that --yes does not answer, so a session that must confirm
+	// nothing must not answer it either.
+	{"init_review.go askPlanned", "init_review.go askPlanned (the grant the review did not announce)", func(t *testing.T, r *initRun, e *initEngine, marker string) bool {
+		ok, err := r.askPlanned("an ordinary step", []string{"user:new@example.com"})
+		var ae *initflow.AgentError
+		if marker != "" && (!errors.As(err, &ae) || ae.Marker != marker) {
+			t.Errorf("askPlanned's refusal under %s is %v, want the agent refusal", marker, err)
+		}
+		return ok && err == nil
+	}},
 	{"init_project.go canType", "init_project.go canType", func(t *testing.T, r *initRun, e *initEngine, _ string) bool {
 		return (&projectStage{e: e}).canType()
 	}},
@@ -861,11 +875,10 @@ var inlineAgentSites = []inlineAgentSite{
 // propertyAgentSites are the agent-marker sites the other ManagedXxx tests
 // drive, with the test that does.
 var propertyAgentSites = map[string]string{
-	"init.go askBanner":          "TestManagedNonManagedProjectNeverSkipsAConfirmation (the YesOrTyped class); ask is its wrapper (the question is asked with the run's line in flight down)",
-	"init.go confirmNow":         "TestManagedNonManagedProjectNeverSkipsAConfirmation (both classes), which reaches it through ask and askTyped",
-	"init.go conditions":         "TestManagedConfirmRuleMatchesTheTable, and the Typed class of the property through askTyped",
-	"init_stages.go options":     "TestManagedConfirmRuleMatchesTheTable (options().Agent) and TestManagedPluginStageThroughTheLoopAppliesUnderEachMarker (the stage loop's agent gate: the plugin stage is LocalUnderAgent since U1, so the loop applies it there and the marker decides the line, not the write)",
-	"init_plugin_stage.go Apply": "TestUpdateManagedPluginWiringAsksNothing (the managed gate's own hand on the wiring's y/N, in the owner's terminal and in a coding agent's session)",
+	"init.go askBanner":      "TestManagedNonManagedProjectNeverSkipsAConfirmation (the YesOrTyped class); ask is its wrapper (the question is asked with the run's line in flight down)",
+	"init.go confirmNow":     "TestManagedNonManagedProjectNeverSkipsAConfirmation (both classes), which reaches it through ask and askTyped",
+	"init.go conditions":     "TestManagedConfirmRuleMatchesTheTable, and the Typed class of the property through askTyped",
+	"init_stages.go options": "TestManagedConfirmRuleMatchesTheTable (options().Agent) and TestManagedPluginStageThroughTheLoopAppliesUnderEachMarker (the stage loop's agent gate: the plugin stage is LocalUnderAgent since U1, so the loop applies it there and the marker decides the line, not the write)",
 	// The policy stage refuses a marker itself rather than leaning on the
 	// loop's gate: it is SelfConfirming, so the loop would call it.
 	"init_policy_migrate.go Apply": "TestUpdatePolicyMigrationRefusedInAgentSession",
@@ -908,6 +921,14 @@ var propertyAgentSites = map[string]string{
 	// are the ones that reach it, an agent's session being refused by the
 	// installation step before that door runs at all.
 	"init_credentials.go credentialsBundleReady": "TestTheBundleIsNeverOpenedInAnAgentsSessionOrARunsProcess, TestTheRecordIsKeptUnderARunsProcessMarker and TestTheBackfillIsNotWrittenInAnAgentsSessionOrARunsProcess",
+	// The login unit's step (O9, Q2 and T7) refuses a marker itself rather
+	// than leaning on the loop's gate: it SKIPS with the marker's own
+	// sentence, because a unit is code that runs at every login and the drift
+	// a re-render would fix is what `doctor` reports until the person runs
+	// the command in their own terminal. Both doors share the read, and one
+	// test drives each: the setup door's skip, and the update door's — which
+	// leaves the installed unit exactly as it was.
+	"init_orchestrator_stage.go unitStepRead": "TestSetupNeverInstallsUnderAnAgentMarker (the setup door) and TestUpdateUnitStepAsksNothingAndIsLeftForThePerson (the update door)",
 	// The compute stage refuses a marker itself rather than leaning on the
 	// loop's gate, and it refuses FIRST, before the root's tfvars are written
 	// and planned: the stage is registered noYes, so the loop's own agent arm
@@ -1028,7 +1049,6 @@ var initFlagCases = map[string]string{
 	"check-github-app": "OUTSIDE the property: a secret read, refused under a marker (githubapp.go); no confirmation",
 	"allow-delete":     "OUTSIDE the property: feeds tf.Guard, not a confirmation (D74, Task 1.4, is the managed case)",
 	"allow-job-delete": "OUTSIDE the property: changes what a --repo plan holds, not whether it is confirmed",
-	"allow-fork":       "OUTSIDE the property: lets plugin wiring move a ref; the wiring's apply still confirms through ask",
 	"print-vars":       "no cloud call and no confirmation (canAsk is false under it)",
 	"no-build":         "only drops the first image build's offer (a Typed step); takes nothing away from a confirmation",
 	"provision-batch":  "main's compute stage (0.9.5, init_compute.go): registered noYes, its confirmation is the project's name typed (initflow.Typed), so --yes never covers it; added on the merge of main into next-0.8.5, the confirm table does not drive this stage itself",
@@ -1037,10 +1057,10 @@ var initFlagCases = map[string]string{
 	// bake-repos (IS7) is one of them: it answers the wizard's own question and
 	// writes the switch, and it is asked — and taken — on a first run of setup
 	// only, so no confirmation is touched by it either way.
-	"alert-email": "value", "bake-repos": "value", "base": "value", "base-image": "value", "billing-account": "value", "budget": "value",
+	"admin": "value", "alert-email": "value", "bake-repos": "value", "base": "value", "base-image": "value", "billing-account": "value", "budget": "value",
 	"budget-admin": "value", "budget-currency": "value", "budget-mode": "value", "config": "value",
 	"display-name": "value", "expect-digest": "value", "gcp-project": "value", "github-app-id": "value",
-	"image-source": "value", "launcher": "value", "name": "value", "no-log-isolation": "value",
+	"image-source": "value", "name": "value", "no-log-isolation": "value",
 	"operator": "value", "parent": "value", "project": "value", "region": "value",
 	"registry-cleanup": "value", "runs-bucket": "value", "scheduler-region": "value",
 	"state-bucket": "value; under --managed the value must be the derived fugaro-tfstate-<gcp-project> and anything else refuses the creation before the project stage (checkManagedStateBucket, Task 4.5/D59), the way a bad --budget-currency refuses it",
@@ -1215,19 +1235,19 @@ func TestManagedEveryAgentSiteInInitHasACase(t *testing.T) {
 	}
 }
 
-// The stage loop's agent gate over the plugin stage, whose writes are this
-// machine's own: the checkout's .claude/settings.json and the plugin in the
-// user's own Claude Code. The stage is LocalUnderAgent since U1 (D941 of
+// The stage loop's agent gate over the plugin stage, whose one write is this
+// machine's own: the plugin in the user's own Claude Code. The stage is
+// LocalUnderAgent since U1 (D941 of
 // docs/plugin-user-scope/implementation-plan.md), so a coding agent's session
 // applies it — which is the point of the marker: the plugin install is the
 // step that clears the staleness line every command prints, and a run that
 // parked it left that line unclearable (reconciliation.md F13). The plugin
 // stage is driven through the real loop with the options init builds
-// (initEngine.options), under every environment state, and the write is made
-// in all of them: what the marker decides inside the stage is which line
-// credits it — the flag, or the session nobody could ask — and never whether
-// it is made. With no marker, or one present but empty, the same run writes it
-// the ordinary way, so what this pins is not a stage that writes nothing.
+// (initEngine.options), under every environment state, and the install is made
+// in all of them: the marker decides which line credits it — the flag, or the
+// session nobody could ask — and never whether it is made. The checkout's own
+// file comes out of all of them byte for byte (U2, D949: the settings write
+// went with the merge), which is read off the file and not off the run's words.
 //
 // The loop's own refusal (initflow.AgentRefusal) is what a stage that reaches
 // outside this machine still reads in a session — the installation stage, in
@@ -1247,17 +1267,22 @@ func TestManagedPluginStageThroughTheLoopAppliesUnderEachMarker(t *testing.T) {
 		for _, env := range agentEnvStates() {
 			t.Run(how.name+"/"+env.name, func(t *testing.T) {
 				settings := wiringCheckout(t, settingsWithOthers)
+				f := testutil.NewClaudePluginFake(t, "[]", "[]")
+				f.On(t, "plugins", userInstall("0.2.0"), argsInstall...)
 				withTerminal(t, how.terminal)
 				o := how.o
 				e, out := stageEngine(t, how.stdin, &o)
 				env.apply(t) // after stageEngine, which blanks the markers
+				useFakeClaude(t, f)
 				res, err := initflow.Run(t.Context(), []initflow.Stage{newPluginStage(e)}, e.options())
 				if err != nil {
 					t.Fatalf("the loop: %v\n%s", err, out.String())
 				}
-				got, _ := os.ReadFile(settings)
-				if string(got) == settingsWithOthers || stateOf(res, initflow.Plugin) != initflow.Changed {
-					t.Fatalf("the run did not wire the plugin (marker %q): stages %+v\n%s", env.agentFor(how.terminal), res.Stages, out.String())
+				if stateOf(res, initflow.Plugin) != initflow.Changed {
+					t.Fatalf("the run did not install the plugin in Claude Code (marker %q): stages %+v\n%s", env.agentFor(how.terminal), res.Stages, out.String())
+				}
+				if got, _ := os.ReadFile(settings); string(got) != settingsWithOthers {
+					t.Errorf("the checkout's settings were written under marker %q, and nothing in the tree writes one (U2, D949):\n%s", env.agentFor(how.terminal), got)
 				}
 				if marker := env.agentFor(how.terminal); marker != "" {
 					// The stage is applied whole there, so neither the loop's
@@ -1280,36 +1305,42 @@ func TestManagedPluginStageThroughTheLoopAppliesUnderEachMarker(t *testing.T) {
 	}
 }
 
-// pluginStage.Apply reads the marker itself since U1: the stage is
-// LocalUnderAgent, so the loop applies it in a coding agent's session rather
-// than leaving it for the user, and the arm that reads the marker is what
-// writes the pin there — where nobody is at a prompt and --yes may not have
-// been given (init_plugin_stage.go's Apply). The loop still is its only caller
-// (newPluginStage is built in initEngine.converge alone and handed to
-// initflow.Run with initEngine.options), which is why the arm reads the
-// environment's marker rather than anything the stage carries.
+// pluginStage.Apply reads no agent marker at all: the only write it had that a
+// marker could decide was the checkout's .claude/settings.json, and that write
+// went with the merge (U2, D949). What is left is the machine's own install in
+// Claude Code, which no terminal and no --yes and no marker decides, and the
+// loop's own LocalUnderAgent gate is what applies the stage in a coding agent's
+// session rather than leaving it for the user. The loop is still its only
+// caller (newPluginStage is built in initEngine.converge alone and handed to
+// initflow.Run with initEngine.options).
 //
 // What this test records is the rest of that picture: Apply called directly
-// with Env.Yes writes under every marker, because --yes is a confirmation of
-// its own and the marker decides which line credits the write, never whether
-// it is made — and the stage is built by the loop alone, so nothing writes
-// through a caller that never looked at a marker. The loop's own gate, over
-// the stages that do reach outside this machine, is pinned by the
-// options().Agent case of TestManagedConfirmRuleMatchesTheTable and by
-// update_managed_test.go's installation gate.
-func TestManagedPluginStageApplyWritesUnderEveryMarkerItself(t *testing.T) {
+// with Env.Yes installs under every marker state, and the checkout's file comes
+// out of all of them byte for byte — so the stage is the same stage wherever it
+// is reached from, and the structural half below keeps it reachable only
+// through the loop, which is where the gate that does read a marker stands. The
+// loop's own gate, over the stages that do reach outside this machine, is
+// pinned by the options().Agent case of TestManagedConfirmRuleMatchesTheTable
+// and by update_managed_test.go's installation gate.
+func TestManagedPluginStageApplyIsTheInstallUnderEveryMarker(t *testing.T) {
 	releaseBuild(t, "0.2.0")
 	for _, env := range agentEnvStates() {
 		t.Run(env.name, func(t *testing.T) {
+			f := testutil.NewClaudePluginFake(t, "[]", "[]")
+			f.On(t, "plugins", userInstall("0.2.0"), argsInstall...)
 			settings := wiringCheckout(t, settingsWithOthers)
 			e, out := stageEngine(t, "", &initOptions{yes: true})
 			env.apply(t)
+			useFakeClaude(t, f)
 			s := newPluginStage(e)
 			if _, err := s.Apply(t.Context(), initflow.Env{Yes: true}); err != nil {
 				t.Fatalf("Apply: %v\n%s", err, out.String())
 			}
-			if got, _ := os.ReadFile(settings); string(got) == settingsWithOthers {
-				t.Errorf("Apply under %s did not write: the --yes arm is no longer reached before the marker's, or the write is parked where it should be made; update this test and the comment above", env.name)
+			if calls := callArgs(f.Calls(t)); !slices.ContainsFunc(calls, func(a []string) bool { return slices.Equal(a, argsInstall) }) {
+				t.Errorf("Apply under %s did not install the plugin in Claude Code: %q\n%s", env.name, calls, out.String())
+			}
+			if got, _ := os.ReadFile(settings); string(got) != settingsWithOthers {
+				t.Errorf("Apply under %s wrote the checkout's settings, and nothing in the tree writes one any more (U2, D949):\n%s", env.name, got)
 			}
 		})
 	}
@@ -1326,7 +1357,7 @@ func TestManagedPluginStageApplyWritesUnderEveryMarkerItself(t *testing.T) {
 			continue
 		}
 		if b, _ := os.ReadFile(path); strings.Contains(string(b), "newPluginStage(") || strings.Contains(string(b), "pluginStage{") {
-			t.Errorf("%s builds a plugin stage outside the loop: its Apply reads the marker off the environment, which only the loop's run sets", path)
+			t.Errorf("%s builds a plugin stage outside the loop: its Apply is the one the loop's gate has already decided on", path)
 		}
 	}
 }

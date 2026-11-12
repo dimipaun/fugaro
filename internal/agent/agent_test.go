@@ -44,6 +44,32 @@ func TestArgs(t *testing.T) {
 	}
 }
 
+// TestAgentRequestToolsFieldReachesArgv pins the tools field's two readings:
+// nil says nothing, and the empty slice says "no built-in tool at all", which
+// is the only spelling of it — a dropped empty flag would hand the stage the
+// CLI's own default set. The stage that asks for neither posture (F25) is the
+// reason this has to be a flag and not a settings key: nothing in a settings
+// file can withdraw every tool, so the argv is the whole of it.
+func TestAgentRequestToolsFieldReachesArgv(t *testing.T) {
+	quiet := Request{SessionID: "s1", SettingSources: []string{}, Tools: []string{}}
+	got := Args(quiet)
+	want := []string{"-p", "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions",
+		"--session-id", "s1", "--setting-sources", "", "--tools", ""}
+	if !slices.Equal(got, want) {
+		t.Fatalf("an empty list is passed as the flag with an empty value, not dropped:\n got %q\nwant %q", got, want)
+	}
+	// nil is the absence of the flag: a coding stage's argv carries neither.
+	for _, flag := range []string{"--setting-sources", "--tools"} {
+		if slices.Contains(Args(Request{SessionID: "s1"}), flag) {
+			t.Errorf("a nil list carries %s: %q", flag, Args(Request{SessionID: "s1"}))
+		}
+	}
+	named := Args(Request{SessionID: "s1", Tools: []string{"Read", "Grep"}})
+	if i := slices.Index(named, "--tools"); i < 0 || i+1 >= len(named) || named[i+1] != "Read,Grep" {
+		t.Fatalf("a named set is joined: %q", named)
+	}
+}
+
 func TestParseStream(t *testing.T) {
 	f, err := os.Open("testdata/stream-success.jsonl")
 	if err != nil {

@@ -255,6 +255,8 @@ reading a document will meet.
 | `models` | string | — | no | measured, a pre-rendered pair |
 | `recipe` | string | — | **yes** | absent before the run reports one |
 | `auth` | string | — | no | the run's auth mode, from the live registry entry. `oauth` means `spent_usd` is notional: such a run has no gateway, so `budget.AgentEntry.Spent` is its whole notional total (`snapshotEntry`, `internal/budget/registry.go`), while a cascade run's row carries the billed part its gateway charged and leaves its tier-A dollars to the notional counters (`notional_usd`) |
+| `mode` | string | — | no | the **rigor mode** the run resolved and is running at (`runstore.RigorRecord.Mode`, through the run's own registry entry — `budget.AgentEntry.Mode`, which the runner writes from its record at bootstrap and again at every moment that folds a new one in, so a live row follows a mid-run raise). It is **the same value** `runs ls --json`'s `rigor.mode` prints and the record keeps: one resolution, shown in two windows. **CLI 0.23.0.** Always present, `"-"` when the entry carries none — a run under rules that predate the child, which the run then goes without (the rules' `$other` refuses the whole entry for a child they do not know, so the field's arrival cost a rules deploy; `fugaro update` is the whole of it) — which is **"not recorded", never a mode the CLI picked**. Not an authority: no policy, admission or budget rule reads a feed value (design §5.1 rule 2), and the console's own live chip joins the run list's block by id today, so a reader that takes this one must not draw both |
+| `from` | string | — | no | the **layer that decided `mode`** (`internal/rigor`'s `Layer`: `area`, `repo`, `project`, `default` or `request`, D24): `area` for a rule the run's paths matched, then the repository's, the project's, Fugaro's built-in default, and the run's own request. Always present with `mode` and `"-"` with it — the two are one value, and a reader that has one has the other. **CLI 0.23.0.** A word from the CLI's own table, never text a job wrote, and never an authority |
 | `notional` | bool | — | no | **the availability state of `spent_usd`**: true when `spent_usd` is a subscription's list price, which for a live row is `auth == "oauth"` (`internal/watch/build.go`). It is a fact about this **live** row, never a reading of a recorded run's `model_basis`: a recorded run's split is `model_notional_usd` (C1.16/P12 — a cascade run the plan served in full has an api-list basis and billed nothing) |
 | `spent_usd` | `*float64` | USD | no | **null = unavailable** |
 | `age_seconds` | `*float64` | seconds | no | **null = unavailable** |
@@ -1529,8 +1531,8 @@ insertion above it. **The console spawns it** — design §5.1 rule 6's
 `runs stats --json` row, the console's `runs.stats` operation — as the data
 behind the Spend screen's by-person view, and the console passes `--since`
 and nothing else. **`--all-users` is not on the spawn list**, which is what
-keeps the view the CLI resolved out of a screen's hands: an operator of the
-installation sees every user's rows, a plain launcher sees their own row
+keeps the view the CLI resolved out of a screen's hands: an admin of the
+installation sees every user's rows, a plain operator sees their own row
 alone, and an identity the installation's own lists do not place stays
 private. It is read-only —
 the figures come from the run records (`launch.json`'s `launched_by`, and
@@ -1539,11 +1541,12 @@ there is no write path behind it and no counter a screen has to reconcile.
 
 | Field | Type | omitempty | Availability state |
 |---|---|---|---|
+| `version` | int | no | the document's own shape version, `2` today (`userStatsDocVersion`). **A field's meaning never changes under it** (the rule at the top of this document): adding a field is compatible, removing or retyping one bumps the version, and a field whose meaning must change gets a new name. Version 1 carried the privileged list's answer under `operator` — that role's word before the roles' rename, when the config's `terraform.operators` WAS the privileged set — and that word names the run-starters now, so a consumer reads `admin` and refuses a version it does not know rather than reading `operator` as the set it named then |
 | `project` | string | no | the Fugaro project, the marker's name |
 | `by` | string | no | the breakdown asked for: `"user"`, the only value the command publishes |
-| `view` | string | no | `"all"` or `"own"`: which rows the caller is shown. **The ruling, not a preference** — an operator of the installation (the identity the local config's `user:`/git names, listed in its `terraform.operators`) sees `"all"`; a plain launcher gets `"own"` unless they pass `--all-users`; an identity the lists do not place stays `"own"`. `"own"` with `rows: []` is a real state, not a failure: see the note below |
+| `view` | string | no | `"all"` or `"own"`: which rows the caller is shown. **The ruling, not a preference** — an admin of the installation (the identity the local config's `user:`/git names, listed in its `terraform.admins`) sees `"all"`; anyone else gets `"own"` unless they pass `--all-users`; an identity the lists do not place stays `"own"`. `"own"` with `rows: []` is a real state, not a failure: see the note below |
 | `you` | string | no | the identity the view was resolved for, in the same domain a row's key is. `""` is *unavailable*, not anonymous: the CLI could not tell who the caller is — no identity at all, or one with nothing printable in it — which `--all-users` gets past. It is `"unknown"` only when the caller's own identity literally says so, never as a stand-in for "no key of its own", because that word is a group of runs rather than a person. A screen must not read `you` as a row it can always find in `rows` (see below) |
-| `operator` | bool | no | whether the installation's own lists place `you` as an operator. A screen must not render `"all"` as "you are an operator": `--all-users` produces `"all"` with `operator: false` |
+| `admin` | bool | no | whether the installation's own lists place `you` as an **admin** — the privileged set the wider view is resolved from (`terraform.admins`), not the run-starters `operator` names. A screen must not render `"all"` as "you are an admin": `--all-users` produces `"all"` with `admin: false` |
 | `since` | string | no | the window's first UTC day (`YYYY-MM-DD`); `""` (unbounded) for `--since 0` |
 | `until` | string | no | the window's last UTC day. Both are UTC days, like `runs ls`'s window |
 | `max_runs` | int | no | the bound the read ran under (`--max-runs`, default 5000) |
@@ -2592,7 +2595,7 @@ registry (D1102).
 | `state` | string | never | never | the read's own words for the row: a stale layer's age (`stale 3h`), or `unread: <what could not be read>`. The console's argv deliberately omits `--offline`, so an unreachable layer says so and the row is drawn as unread rather than as a value |
 | `sensitive` | bool | **yes** | never | `omitempty`, so it appears only on a sensitive row. **The console drops such a row whole** — no key, no value, no control (D1111, the owner's ruling of 2026-11-01) — which is why the `value` member above is absent for one |
 | `writable` | bool | never | never | whether the **generic path** may write this key (`settings set KEY --layer <L> --yes -- <VALUE>`). Written on every row — a consumer branches on the value, never on the member's presence |
-| `owner` | string | never | never | the command family that writes the key when the generic path may not (`settingsFamilyCommands`, `internal/cli/settings_set.go`: `fugaro models`, `fugaro rigor set`, `fugaro rigor floor`, `fugaro accounts`, `fugaro secrets`, `fugaro project`), or `""` when there is none. `writable` and `owner` are answers about the same question, and a row with neither is a row no command writes |
+| `owner` | string | never | never | the command that writes the key (`settingsOwnerCommands`, `internal/cli/settings_read.go`, D1178): `fugaro settings set` on a row the generic path writes, the family that writes one it does not (`fugaro models`, `fugaro rigor set`, `fugaro rigor floor`, `fugaro accounts`, `fugaro secrets`, `fugaro project`, `fugaro workspace`, `fugaro image map`), and, for a key no command edits, a sentence naming the command that carries its file — `fugaro setup` and `fugaro update` for the installation's own keys, `fugaro config publish` for a key the layer file states and `fugaro config init` for one the repository's own file is opened with. **A `writable: false` row never spells the generic writer**: the write is what decides (D1102), and a row whose owner were `fugaro settings set` would say a command writes a key it has just refused. **`""` is a row no command writes** — the literal `*` of a wildcard row, which `settings set` writes only in its concrete spellings — and it is also what a CLI that predates D1178 wrote on every row it did not name, so a consumer treats the empty and the absent member the same way, and the screen draws this member only on a row `writable: false` — which is the one member a screen's drawing turns on |
 | `target_layer` | string | never | never | the layer a write with **no** `--layer` lands in: the narrowest of `repo`, `project` and `local` the key may be set in (`settingsDefaultLayer`, `internal/cli/settings_set.go`), and the layer the console passes back as `--layer` — what the window showed is what is spawned (D1105). **It is a fact about the key and not about the generic path's allowlist**, so it is **non-empty on a row the generic path refuses**: `mailbox.keychain_item` is `writable: false` with `owner: fugaro secrets` and `target_layer: "local"`. `""` is a key none of the three layers holds, which is a row no edit may target — a document from a CLI older than D1102 carries no such member at all, and it reads the same — and **empty is not a layer a screen can pass**: such a row gains no pencil, whatever `writable` says |
 | `levels` | array of level rows | **yes** | never | one row per layer that sets the key, for `--why`. Absent when the read did not compute them |
 
@@ -2618,10 +2621,15 @@ spellings is set:**
 `console/`: `writable` says whether the generic path may write the key at all,
 `target_layer` names the layer a write with no `--layer` lands in — the
 narrowest of `repo`, `project` and `local` the key may be set in, which the
-console passes back as `--layer` — and `owner` names the family that does write
-the key when the generic path may not — in S5's own words, so the sentence the
-screen draws ("`written by <owner>, not by the generic path`") is the CLI's
-refusal sentence and not the console's invention. **The first and the second are
+console passes back as `--layer` — and `owner` names the command that writes the
+key when the generic path may not, the family's own name or, for a key no
+command edits, the sentence naming the command that carries its file (D1178),
+in the CLI's own words, so the sentence the screen draws ("`written by <owner>,
+not by the generic path`") is the CLI's and not the console's invention. The
+pair is read together and never drawn apart: a row whose `writable` is false
+names a command other than the generic writer or names none, so the sentence
+the screen draws is never the contradiction of `written by fugaro settings set,
+not by the generic path`. **The first and the second are
 independent**: `target_layer` is a fact about the key, so a row the generic path
 refuses still names a layer and is refused by `writable: false`; the empty
 `target_layer` is a key none of the three layers holds, and there a screen has
@@ -2809,8 +2817,8 @@ parse of either.
 | --- | --- | --- | --- | --- |
 | `at` | string | never | never | when the command ran, in UTC, RFC 3339 to the second. It is the record's own time and never the listing's order |
 | `command` | string | never | never | the command as a person types it (`fugaro config publish`), which is the record's own name for it and not its argv. Bounded text |
-| `verdict` | string | never | never | the gate's own answer about the judged plan: `admitted` or `refused`. **A refusal is a record an owner reads most**, so it is drawn beside an admission and never instead of it |
-| `identity` | string | never | never | the account the write ran as: the deployer account for a managed apply, the operator's own elsewhere. Bounded text |
+| `verdict` | string | never | never | the gate's own answer about the judged plan: `admitted`, `warned` or `refused`. **A refusal is a record an owner reads most**, so it is drawn beside an admission and never instead of it. `warned` is D1545's middle answer — the gate recorded the plan's content findings and the write went through — and the findings themselves do not reach this document: the rules the gate fired are the record's own, and the bound below keeps them out, so a screen draws the verdict with no reason beside it |
+| `identity` | string | never | never | the account the write ran as: the command's own answer where it names one, and otherwise the credentials in force (the operator's own). Bounded text |
 | `plan_digest` | string | never | never | the sha256 of the exact document the gate judged, so a reader compares the record against a plan rather than believing a summary of it |
 
 **What is never in it, and it is the whole of the bound: the argv.** The record
@@ -2939,8 +2947,9 @@ opened, and no cloud object is written either.
 (`ee/register/graph.go`) — the graph plan's CG3. It is a **paid command** like
 the Coordinator tab's, because its `all` scope is the coordinator's stored view
 (D1362, F26); the plan scope the Graph already draws stays where it is.
-**Document:** `graph.Document`, `graph.SourceState`, `graph.Node` and
-`graph.Edge` (`ee/graph/document.go`), with the node key built by
+**Document:** `graph.Document`, `graph.SourceState`, `graph.Node`,
+`graph.Release` and `graph.Edge` (`ee/graph/document.go`), with the node key
+built by
 `graph.NodeKey` and the `--source` value parsed by `graph.ParseScope`
 (`ee/graph/key.go`). Cited by symbol, not by line, for §6.11's reason.
 
@@ -2960,7 +2969,21 @@ same event and the rule the graph plan's CG7 pins for this scope, so a withdrawn
 feed is a state a screen ages rather than a child it waits to exit. The
 console's subscription to that stream, and the
 drawing of what it carries (CG9b, CG11), are the tasks that follow: the read the
-console makes today is the one-shot one. The fields are read off
+console makes today is the one-shot one. **The coordinator scope is two
+documents and not one.** The sweep's stored view is the one CG2 landed, and the
+project's own **roadmap record** — its published tasks, its release boxes and
+the dependencies between them — is the one the coordinator's front door writes
+and the graph plan's GV4.1 added: `graph.CoordinatorRecordSource` draws it
+(`ee/graph/source_coordinator.go`), `releases[]` and the node fields `plan`,
+`stream`, `version` and `dangling` below are its own, and it is read from the
+same store through the same credential as the view (D2117, §6.22's own command).
+A record this build cannot read is **not** the scope's `unreadable`: the view
+above it answered, so the record's absence is a sentence in `warnings` beside
+the figures the scope does have, and the rule is that "the record holds nothing"
+and "the record holds something this build cannot read" must not look alike. The
+record shows real data once a plan has been published (the coordinator plan's
+P9c, a push from any checkout); until then every project draws the empty lists
+below. The fields are read off
 `ee/graph/document.go`'s struct tags and the rules off the plan's H1 to H5, so a
 task that finds the code disagreeing with this section has found a defect in one
 of the two.
@@ -2987,22 +3010,41 @@ provider, so this is the hand-edited entry and not the ordinary one. **The plan
 scope keeps its checkout and its card**; the new scopes are what the dropdown
 adds beside it (D1356).
 
-**`--source` selects the scope, and the set is closed.** `all` is the default and
-is the union of the scopes that exist — today the coordinator alone —
-`coordinator` is the stored view, and `orchestrator:<id>` and `local:<id>` are
-**refused with "no orchestrator is installed in this build"** until CG4 and CG5
-register their readers: an honest refusal, never an empty graph, because a screen
-must be able to tell "nothing here" from "not asked". The value reaches argv from
-the renderer, so the CLI refuses everything but the closed set below **before it
-reads anything** (H1), and the console sends only a value a previous read listed
-(F21):
+**`--source` selects the scope, and the set is closed.** `all` is the default
+and is the union of the scopes that exist — the coordinator's stored view, and
+one scope per orchestrator the project's database holds or this machine has a
+cached brief for (CG4's rule, D1358) — `coordinator` is the stored view alone,
+`orchestrator:<id>` is one orchestrator's state node, and `local:<id>` is the
+same node read as one this machine's daemon drives, falling back to its cached
+brief when there is none (CG5). **An id the project's database does not hold is
+refused**, naming the scope and `fugaro orchestrator ls` — and so is a
+`local:<id>` this machine has no cached brief for and whose node cannot be read —
+because a screen must be able to tell "nothing here" from "not asked", and never
+answered with an empty document, which is the same shape a scope with no work in
+it prints. **Existence is the question that listing answers** — a key under
+`/orchestrator/<id>` — and never whether a state node was written: `orchestrator
+run` writes the lease node before the cycle that saves a state, so an id it lists
+whose state node is not there yet is a scope that is **down**, in `all` and named
+on the command line alike, rather than a scope dropped from the document or
+refused over it. **A cache file this release cannot read is the warning of a read
+that still answers**, and not a refusal: the ids the project's database holds are
+read as the orchestrators they are, the ids only that cache knew about are left
+out of the document, and `warnings` carries the one sentence naming the file. A
+`local:<id>` asked for by name is the other thing: it asked for that very brief,
+so it is refused over it. The cache is `local:`'s own fallback and never the
+orchestrator scope's:
+`orchestrator:<id>` reads the node through the caller's credential, and a
+machine that happened to have a brief for that id cannot answer the scope that
+asks the project (D1358). The value reaches argv from the renderer, so the CLI
+refuses everything but the closed set below **before it reads anything** (H1),
+and the console sends only a value a previous read listed (F21):
 
 | Value | What it names |
 | --- | --- |
-| `all` | every scope that exists: today the coordinator's stored view, and the orchestrator scopes as they are built |
+| `all` | every scope that exists: the coordinator's stored view, and one scope per orchestrator the database holds or this machine runs (CG4's union) |
 | `coordinator` | the coordinator's stored view: every repository it has reconciled (§6.13), with no checkout |
-| `orchestrator:<id>` | one orchestrator's node under `orchestrator/` — **refused today**, CG4's reader |
-| `local:<id>` | one local orchestrator, read through its node and its cache file — **refused today**, CG5's reader |
+| `orchestrator:<id>` | one orchestrator's state node under `orchestrator/`, read through the caller's own credential (D1357) |
+| `local:<id>` | one orchestrator this machine's daemon drives: the same node, and the cached brief when the node is not there (CG5, D1358) |
 
 An id is one lower-case letter or digit, then up to 39 more of those or a hyphen,
 and nothing else. So a leading `-` (which would reach argv as a flag), a path
@@ -3018,15 +3060,16 @@ The document:
 | `seq` | number | never | never | the document's place in its stream: **`0` in a one-shot read**, and `1`, `2`, … within one `stream_id` in a stream, rising by one per document. It is never compared across `stream_id`s |
 | `generated_at` | string | never | never | RFC 3339; when the document was assembled. A **clock**, not an as-of: what a scope's data is worth is `sources[].as_of`, and a screen that draws an age draws it from that and never from this |
 | `sources` | array | never | never | one entry per scope the document covers, below. `[]` is a fact — the document covers nothing — and never a null: an empty list is written as an array (`MarshalJSON`), and a `null` read back is the empty list it means |
+| `releases` | array | never | never | the project's release boxes, below, as the roadmap record holds them (GV4.1). **They belong to the project and not to a scope** — the record is project-level (D2111) — so a box is drawn whichever scope a task it holds came from, and the list is written once however many scopes the document covers. `[]` is the ordinary case for a project that has never written one, and there is no `null`: a `null` read back is the empty list it means |
 | `nodes` | array | never | never | the graph's nodes, below. `[]` is a fact — the scope has nothing to draw — and the scope's own state sits beside it in `sources`, so a screen tells "empty" from "down" (H3) |
-| `edges` | array | never | never | the relations between nodes, by `key`, below. **The coordinator's stored view has no edges, so a document drawn from it alone carries `[]`** (F17); the orchestrator scopes' `depends_on` are what fills it (CG5) |
+| `edges` | array | never | never | the relations between nodes, by `key`, below. **The coordinator's stored view has no edges, so a document drawn from it alone carries `[]`** (F17); the two sources that fill it are the orchestrator scopes' `depends_on` (CG5) and the roadmap record's own cross-plan dependencies (D2112, GV4.1) |
 | `warnings` | array | never | never | what the read could not do, as sentences fit to print; `[]` is the ordinary case. Sanitised with `safetext.Field` like every other string here |
 
 one entry of `sources`:
 
 | Key | Type | Absent | Null | Notes |
 | --- | --- | --- | --- | --- |
-| `source` | string | never | never | the source this state is about (`graph.Scope.String`): `coordinator`, `orchestrator:<id>` or `local:<id>`, and **never `all`** — `all` is a selector and not a source, so a read that selected it (`graph --json`'s default) writes one entry per scope that exists, each named for itself, which today is one `coordinator` entry. It is the source half of every `key` that came from it, and a value a console may send back as `--source` |
+| `source` | string | never | never | the source this state is about (`graph.Scope.String`): `coordinator`, `orchestrator:<id>` or `local:<id>`, and **never `all`** — `all` is a selector and not a source, so a read that selected it (`graph --json`'s default) writes one entry per scope that exists, each named for itself: the coordinator's stored view first, then one per orchestrator id, in id order. A project with no orchestrator and nothing cached answers with the one `coordinator` entry and nothing else. It is the source half of every `key` that came from it, and a value a console may send back as `--source` |
 | `state` | string | never | never | one of the four words below. **The whole answer**, so a screen draws it as a word and never as a colour alone (H3, H10) |
 | `as_of` | string | never | **yes** | RFC 3339; when this source's data was last known good. **Null when there is no such time**, which is a source that has never read: null is not "now", and a screen must not draw an age from it — it draws one from this field when it is set, and never from `generated_at`. **The coordinator's stored view carries no time of its own** — it is a function of its inputs, which is why the Coordinator screen claims no age for it (CG2) — so a caller that read the views without knowing when the sweep stored them has none to give and prints null, and **`graph --json`, a one-shot read, is that caller**: its coordinator scope has a null `as_of` and is never stale by age. The stream (CG7) is the caller that knows its own read's time and can fill it; the sweep's own marker is a separate fact and not this field |
 | `reason` | string | never | never | why, in words, when the state is not `up`; `""` when it is. The read's own sentence, sanitised like every other string here, and the field a screen shows **beside** the state rather than instead of it |
@@ -3068,14 +3111,14 @@ exit** (H3): the read answered, and this entry is its answer.
   in both cases: a screen draws the state and the reason, never a partial graph.
 
 **A refused read is the other case, and it is terminal.** An invalid `--source`
-(H1), or a scope this build does not have (`orchestrator:` and `local:` before
-CG4 and CG5), is an error with a non-zero exit and **no document at all**, naming
-the command — which is what the console reads as "this CLI has no graph" and
-answers by keeping the plan scope and a refusal sentence (T3, CG10). A repository
-whose `repos` entry names no provider is refused the same way (above), and so is
-a database the scope's read could not reach — an IAM refusal, a connection that
-failed: those reads made no answer at all, where `unreadable` is an answer this
-build cannot read and a `down` source is one that answered with nothing stored.
+(H1), or a scope the database holds nothing for (above), is an error with a
+non-zero exit and **no document at all**, naming the command — which is what
+the console reads as "this CLI has no graph" and answers by keeping the plan
+scope and a refusal sentence (T3, CG10). A repository whose `repos` entry names
+no provider is refused the same way (above), and so is a database the scope's
+read could not reach — an IAM refusal, a connection that failed: those reads
+made no answer at all, where `unreadable` is an answer this build cannot read
+and a `down` source is one that answered with nothing stored.
 A refusal and a `down` source are told apart by exactly that: one is a process
 that printed nothing and failed, the other is a document with the state in it.
 
@@ -3085,13 +3128,28 @@ one entry of `nodes`:
 | --- | --- | --- | --- | --- |
 | `key` | string | never | never | `<source>:<id>`, built by `graph.NodeKey` — the one place the join happens, so a reader that takes a key apart and a writer that builds one cannot drift. **Unique within one source and not across them**: `coordinator:42` and `local:o1:42` are two nodes, and nothing dedupes across sources (D1356). **A reader takes a key apart with the `source` and `id` beside it and never by splitting on the first colon**, because a local scope's own string carries one: the key `local:o1:42` is source `local:o1` and id `42` |
 | `source` | string | never | never | the scope the node came from, as `sources[].source` spells it: the identity half of the node and not prose, refused rather than sanitised for `id`'s reason |
-| `kind` | string | never | never | one of `pull_request`, `run`, `task` (`graph.NodePullRequest`, `NodeRun`, `NodeTask`) — the kinds this document knows today. The coordinator scope produces the first two: its pull requests and the runs joined to them (CG2). `task` is the orchestrator scopes' (CG5) |
-| `id` | string | never | never | the source's own id for the thing: the other half of `key`, and the pull request's number, the run's id or the task's id as that source writes it. **Identity, not prose**: `source` and `id` are the two fields the read refuses rather than sanitises, because `safetext.Field` is lossy and two raw ids that collapse to one string would otherwise share one key (D1356) |
+| `kind` | string | never | never | one of `pull_request`, `run`, `task` (`graph.NodePullRequest`, `NodeRun`, `NodeTask`) — the kinds this document knows today. The coordinator scope produces all three: the sweep's stored view gives the first two, its pull requests and the runs joined to them (CG2), and the roadmap record beside it gives the third (D2112, GV4.1; `task` is also the orchestrator scopes' kind, CG5) |
+| `id` | string | never | never | the source's own id for the thing: the other half of `key`, and the pull request's number, the run's id or the task's id as that source writes it. **Identity, not prose**: `source` and `id` are the two fields the read refuses rather than sanitises, because `safetext.Field` is lossy and two raw ids that collapse to one string would otherwise share one key (D1356). **A record task's id is its qualified id**, `<plan>/<task>`: the record is project-level, so a plan's repository is provenance only and never part of the id (D2111, `coordinator.SplitQualifiedID` splits one at its **last** `/`) |
 | `title` | string | never | never | what a person reads. **Untrusted display text**: sanitised with `safetext.Field` on construction, and re-sanitised by the console's own class before a renderer sees it |
 | `repo` | string | never | never | the repository the node belongs to, `owner/name`. **Untrusted display text**: a screen draws it as text and never as a link, a path or an attribute |
-| `state` | string | never | never | the source's own word for the node's state — what a pull request, a run or a task carries in the source it came from, carried through with no translation here, because the document has no vocabulary of its own. `""` is a source with no state to give, not a gap |
-| `release` | string | never | never | the release the node belongs to, as the source spells it — the coordinator's stored records each carry one (`coordinator.Record`) — which is what groups the coordinator scope's nodes. `""` means the node names no release |
-| `updated` | string | never | **yes** | RFC 3339; when the node last changed. **Null when the source does not say**, and null is not "just now" |
+| `state` | string | never | never | the source's own word for the node's state — what a pull request, a run or a task carries in the source it came from, carried through with no translation here, because the document has no vocabulary of its own. `""` is a source with no state to give, not a gap. **A roadmap record's task is the one node that always has none**: the record holds a plan, a title, an assignment and the edges, and the state a reader sees beside a task is its **box's** (`releases[].state`, below), not the task's, so a screen that drew a task's own `state` would draw nothing for every one of them |
+| `release` | string | never | never | the release the node belongs to, as the source spells it — the coordinator's stored records each carry one (`coordinator.Record`) — which is what groups the coordinator scope's nodes. `""` means the node names no release. **A record task's value is a release box's `key`** (`releases[].key`, below) and nothing else, so the join from a task to its box happens by one string comparison: `""` is a task the record draws in **no box** — nobody has placed it (D2114), or its assignment names a release the record no longer holds (D2115) — which the console draws in its stream's **unassigned** lane with the plan's own `version` beside it |
+| `plan` | string | never | never | the plan document a roadmap task belongs to (GV4.1). **It is what marks a node as the record's**, since the record and the sweep's stored view draw nodes of the same `source`: a node whose `plan` is `""` is not the record's and draws exactly as it did before the record existed. It is also the lane a task is drawn in when the record assigns it to no box, and the leading half of the qualified id in `id` |
+| `stream` | string | never | never | the stream a roadmap task is drawn in (D2113): **the stream of the box it has been assigned to, or the plan's own when nobody has placed it** (D2114). `""` for a node that is not the record's. The record's release documents are where a stream comes from — no `docs/release-streams.yaml` is read, so a project whose repositories carry none draws the same way |
+| `version` | string | never | never | the roadmap plan's own target version, carried for a task the record draws in **no box** and `""` for one it draws inside a box (D2114). A task in no box is one nobody has placed, and it is also one whose assignment names a release the record no longer holds, which the record marks `dangling` (D2115) — both are drawn in the plan's own lane, where the number is the one thing the record can say about when the task is due. **It is carried for no task inside a box, and it is never matched to a release**: a box is drawn by its name and the state the record calls it, so a number beside a task in one would read as the box's own version, and the record's boxes carry no version to match it against |
+| `dangling` | bool | **yes** | never | D2115's mark, written only when true: the node is one of the **two** shapes the record's own reader calls dangling — a task an assignment or an edge names and **no plan document carries**, so the node is an id the record is still talking about rather than a task anybody published, and a task whose assignment names a **release the record no longer holds**, which is a published task the record cannot file in a box. Both are the record's own housekeeping rather than a state of the work, so a marked node may be either; the second is drawn in its plan's lane, because the box it names is not there. A screen draws the mark as its own word (`dangling`) instead of showing a dependency that points at nothing or a task in a box that does not exist. Absent is the ordinary case — the record's id resolved — and a reader **must** read absent as false: an older CLI has no such field |
+| `updated` | string | never | **yes** | RFC 3339; when the node last changed. **Null when the source does not say**, and null is not "just now". **A record task has no such time**: the record carries none, so its `updated` is null and a screen draws no age for it |
+
+one entry of `releases` (D2113, GV4.1):
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `key` | string | never | never | the box's identity, built by `coordinator.ReleaseID` from the stream and the record's own id for it — **an opaque hash and not a name**, which is why a screen names a box by `name` below and joins a task to one by this string and never by either of those. **Unique across the project**: a box is the record's and belongs to no scope, and a reader takes this value as a whole rather than taking it apart. A key sanitising would rewrite is **refused**, not rewritten: two boxes would otherwise share one (`Sanitise`, on `Release`'s own reason and a node's `source`/`id` reason) |
+| `stream` | string | never | never | the stream the box is in, as the record spells it — the record's streams **are** the `stream` values its releases carry, so there is no catalogue to read and no closed set: it is the lane a screen groups its boxes under. `""` is a box the record placed in no stream, which the console draws in one lane of its own (`no stream`) rather than dropping |
+| `id` | string | never | never | the record's own id for the box, and the string `key` is derived from (`coordinator.ReleaseID(stream, id)`) — so a reader joins by `key` and never by this, and it is carried for the record's sake rather than a screen's. Sanitised as display text |
+| `name` | string | never | never | what a person reads, and **the only name a box has**: the release's name (`Badger`, `Camel`, `Mango`, …). **Untrusted display text**: sanitised with `safetext.Field` on construction, and re-sanitised by the console's own class before a renderer sees it. A box is drawn by this and never by `key` |
+| `state` | string | never | never | the record's own word for the release, `open` or `finished` (`coordinator.ReleaseOpen`, `ReleaseFinished`) — carried through with no translation, like a node's. **It is the state a task in this box is drawn with**, since a task has none of its own (above), and a screen draws it as a word and never as a colour alone |
+| `order` | number | never | never | the box's **position in its stream**, which is the order a graph draws a stream's boxes in. It is the record's own stored number and not a version — a box's version is not something the record holds, which is exactly why a plan's `version` is never matched to one (D2114) |
 
 one entry of `edges`:
 
@@ -3099,7 +3157,7 @@ one entry of `edges`:
 | --- | --- | --- | --- | --- |
 | `from` | string | never | never | the `key` of the node the relation starts at |
 | `to` | string | never | never | the `key` of the node it ends at |
-| `kind` | string | never | never | the source's own word for the relation (`depends_on` is the one the orchestrator state carries, F14); the document defines no vocabulary of its own. An edge whose two keys name no node in the same document is drawn as nothing rather than as a node of its own |
+| `kind` | string | never | never | the source's own word for the relation (`depends_on` is the word both sources that draw one use: the orchestrator state's own, F14, and the roadmap record's cross-plan dependency, D2112, which is the same relation from the same direction — the needing task to what it needs); the document defines no vocabulary of its own. **An edge is always within one source**, since a key carries its source: the record's edges are all `coordinator:` keys, and a key that names no node in the same document is drawn as nothing rather than as a node of its own — a record edge to a dangling task is not that case, because the dangling id is a node of its own (`dangling`, above), which is the whole point of D2115 |
 
 **`graph --watch --json`: whole snapshots, one per change.** The stream prints
 whole documents rather than event deltas (D1360, F19). The first snapshot arrives
@@ -3133,11 +3191,18 @@ and the next `seq` rather than a delta — the client restarts its own subscript
 and each connect begins with a full `put` of the subtree (`rtdb.Client.Stream`)
 — so a reader never has to ask what it missed.
 
-**One subscription per scope.** The child subscribes to **one** `coordinator/`
-subtree per scope it covers, shared across that scope's nodes rather than opened
-once per node (H6, F12): an RTDB stream is a held connection, and the console
-runs this one only while the Graph tab is visible and counts it in
-`MAX_LIVE_FEEDS` (CG9b, CG11).
+**One subscription per scope subtree.** The child subscribes to **one** node per
+scope subtree it covers, shared across that scope's nodes rather than opened once
+per node (H6, F12): `all` covers two — `/coordinator` and `/orchestrator` — a
+single orchestrator scope covers that id's own node under the second, and
+`coordinator` covers the first alone (`graph.ScopeSubtrees`). An RTDB stream is a
+held connection, and the console runs these only while the Graph tab is visible
+and counts them in `MAX_LIVE_FEEDS` (CG9b, CG11). **The first document waits for
+every subtree's own opening `put`** — the transport's proof that the listen is
+live (rtdb.Client.Stream) — so a subtree that is slow to connect is in the first
+snapshot rather than in a second one, and a subtree that withdraws before its put
+is a scope that is `down` in that first document rather than a wait that never
+ends.
 
 ### 6.23 `fugaro security paths --json` — the list in force, and the answer per path
 
@@ -3246,13 +3311,14 @@ checkout does not hold is the `error` above rather than a guess at another
 document.
 
 **A read that did not answer is not an exit, and it is not a silent floor
-either.** The one thing this slice reads at the ref is the repository's own
-`fugaro.yaml`, for `project`; a repository that has none at its base — one being
-onboarded — still gets an answer, because the list in force is the floor alone
-here and the floor is compiled in. So the document is printed with `error` set
-and the command exits zero, §6.21's own rule for a state that is the answer, and
-the table a person reads says the same thing on stderr beside it: what it printed
-is the floor, and the repository's own rows are not in it.
+either.** The one thing this reads at the ref is the repository's own
+`fugaro.yaml`, for `project` and for its own rows; a repository that has none at
+its base — one being onboarded — still gets an answer, because a file that names
+no project names no layer either, and the list in force is then the floor alone
+and the floor is compiled in. So the document is printed with `error` set and the
+command exits zero, §6.21's own rule for a state that is the answer, and the
+table a person reads says the same thing on stderr beside it: what it printed is
+the floor, and neither the repository's own rows nor a project layer's are in it.
 
 **What is not in it, and it is the whole of the bound: the session.** The
 document carries the caller's own `--check` paths and nothing else of the machine
@@ -3276,10 +3342,25 @@ console's spawn list, and that is D1514's deferral rather than an oversight: the
 console draws no screen from this document yet, and this section exists because
 §6 is where a document a console could read is written down.
 
-**This slice is the floor alone** (D1504, D1519). No project key and no
-repository key exists yet, so every row's `source` is `floor` and there is one
-layer to merge; SC7 and SC8 add the two keys, SC9 re-points this read at the one
-resolution, and the shape above does not move for any of them.
+**The three layers, and where the two written ones are read** (SC9, D1506,
+D1511). The list in force is `config.SecurityPatterns`' one resolution: the
+engine's floor, the project layer's rows and the repository's own, unioned by row
+name, so a repository with no `security:` key gets its project's rows and the
+floor's, a project with no key gets the floor, and no later layer can take a row
+an earlier one wrote away. Every row carries the `source` above. The
+repository's own rows are read out of its `fugaro.yaml` **at the base ref**, out
+of the checkout's own object database — the same read that answers `project`
+above. The project layer's are read out of this machine's **cached copy** of the
+published layer (`modelsLayer`, the offline read `fugaro models ls` makes) and
+never out of the bucket it lives in. A machine that holds no cached layer for the
+project therefore prints the floor's rows and the repository's without the
+project's, and no member above can carry that: the command says it on stderr, in
+both forms of the document. It is the one place this read can differ from a
+run's, and the run is the control — it resolves the published layer itself,
+while this document is the advisory read. A row a layer writes under a name an
+earlier layer's row already spends is not in force either, and it is said on
+stderr the same way (`config.SecurityIgnoredRow`, D1506): the row is what its
+author believes and the list in force is not.
 
 ## 7. The CLI gaps, settled against the code
 
@@ -3379,7 +3460,7 @@ table against the live constructors.
    `link.openPullRequest` took it to twenty-five and writes nothing, and C4c's
    `coordinator.intents` took it to twenty-six and writes nothing — **the
    counts in this parenthesis are the history up to that commit, and rule 5's
-   thirty-seven is today's**), and no other argv that writes is reachable
+   thirty-eight is today's**), and no other argv that writes is reachable
    from a renderer. Two further commands this file
    describes are writes, and **neither is in the console's set**: `fugaro cancel
    RUN --json` (§6.3), which is on the design's "never" table and which no v1

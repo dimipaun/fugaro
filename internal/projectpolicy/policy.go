@@ -276,6 +276,25 @@ type Policy struct {
 	// every craft resolves to the project's default credential (D1624).
 	Crafts *config.Crafts `json:"crafts,omitempty"`
 
+	// SubscriptionSpread is the project's switch over the pools that list more
+	// than one Claude OAuth subscription (docs/model-crafts/reconciliation.md
+	// F22, D1622, D1636): the successor of the D875 switch `claude_account_auto`
+	// held, under the name the pools it governs use, and off is what a run reads
+	// until the owner turns it on. With it off a pool of two or more
+	// subscriptions serves nothing and each subscription member of a mixed pool
+	// is stepped over, so a subscription with an API-key fallback beside it is
+	// the shape that works (D1626).
+	//
+	// It travels here for the account-choice members' reason: the value decides
+	// which credential serves a stage, and an environment value of a shared job
+	// is launcher-writable, so the owner's own node — written by the publish and
+	// read by a run that fails closed — is where it lives. It is a pointer
+	// because "the owner wrote false" and "the owner wrote nothing" are two
+	// facts: the second is the state every installation is in and the one the
+	// node stays byte for byte identical in, and only the first is an owner
+	// saying no to a spread the project's pools would otherwise make.
+	SubscriptionSpread *bool `json:"subscription_spread,omitempty"`
+
 	// CloneURLs are the project's clone URLs, keyed by canonical repository
 	// (Canonical: "github/owner/name", the spelling allow_repos patterns and
 	// the runner's slug already use). A repository that is not listed here
@@ -551,7 +570,8 @@ var knownTopLevelKeys = map[string]bool{
 	"image_map":     true, "bake_repos": true, "image_services": true,
 	"default_claude_account": true, "claude_account_stages": true,
 	"crafts": true, "craft_credentials": true, "craft_pools": true,
-	"orchestrator": true, "binaries": true,
+	"subscription_spread": true,
+	"orchestrator":        true, "binaries": true,
 	"triage": true,
 }
 
@@ -618,7 +638,14 @@ func (p Provider) EffectivePricePolicy() string { return p.ModelProvider.PricePo
 // internal/localcfg.ModelPrice): input_per_m and output_per_m are required,
 // and the optional rates are pointers so that a field left out keeps the list
 // default (cache_write_5m 1.25, cache_write_1h 2, cache_read 0.1,
-// web_search_per_1k 10), never 0. Decode checks the block with the catalogue's
+// web_search_per_1k 10), never 0. ImageTokens is the per-image token ceiling
+// a call carrying an image block is reserved at (D2001), and a pointer for
+// the same reason: left out, the model keeps the ceiling it had, and an
+// explicit 0 refuses its images. It does not move the node's Version (D2015):
+// nothing was removed or re-meant, and a version an older reader does not know
+// refuses the whole node, where this member needs one launch refused — that
+// guard is the release's visionSince check, not a version move. Decode checks
+// the block with the catalogue's
 // own pricing.ParseOverrides as well, so the two spellings cannot drift
 // (TestDecodeModelPricesAgreeWithTheCatalog). The model ID it belongs to is
 // the map key of Prices, which escapes it on the node and not in Go.
@@ -629,6 +656,7 @@ type Price struct {
 	CacheWrite1h   *float64   `json:"cache_write_1h,omitempty"`
 	CacheRead      *float64   `json:"cache_read,omitempty"`
 	WebSearchPer1k *float64   `json:"web_search_per_1k,omitempty"`
+	ImageTokens    *int64     `json:"image_tokens,omitempty"`
 	LongContext    *PriceTier `json:"long_context,omitempty"`
 }
 
@@ -1369,6 +1397,21 @@ func decodeWithKeys(raw []byte, keys map[string]bool) (*Policy, bool, error) {
 			p.Crafts = &cs
 		}
 	}
+	// The subscription switch is read last of the model-crafts members because
+	// it is a statement *about* the pools above rather than a definition among
+	// them: it is the one member of the group with no name to judge and nothing
+	// to judge it against, so a node that carries it and no pool is read in
+	// full and a run that finds no pool never asks it anything. A written false
+	// is the owner's own "no" and is kept — that is what the pointer is for —
+	// while an absent member (and a written null, which is the same absence)
+	// leaves the switch unset, which a run reads as off.
+	if sraw, ok := doc["subscription_spread"]; ok && !IsNull(sraw) {
+		var on bool
+		if err := json.Unmarshal(sraw, &on); err != nil {
+			return nil, true, fmt.Errorf("projectpolicy: subscription_spread: %w", err)
+		}
+		p.SubscriptionSpread = &on
+	}
 	// The Bitbucket block is judged *before* the profiles block, and the
 	// profiles against it: a profile that mounts the token admits a subset of
 	// this block's repositories, which is a property of the two together, and
@@ -1481,7 +1524,7 @@ func decodeWithKeys(raw []byte, keys map[string]bool) (*Policy, bool, error) {
 		if err := json.Unmarshal(craw, &p.CloneURLs); err != nil {
 			return nil, true, fmt.Errorf("projectpolicy: clone_urls: %w", err)
 		}
-		if err := validCloneURLs(p.CloneURLs); err != nil {
+		if err := ValidCloneURLs(p.CloneURLs); err != nil {
 			return nil, true, err
 		}
 	}
@@ -1626,7 +1669,7 @@ func ValidVerifierAccounts(accounts []string) error {
 	return policy.ValidVerifierAccounts(accounts)
 }
 
-// validCloneURLs checks the clone_urls block, entry by entry: each key a
+// ValidCloneURLs checks the clone_urls block, entry by entry: each key a
 // canonical repository name, and each value an https URL without credentials
 // that names exactly that repository on that repository's own provider's host
 // — the rules the deployer applies to a repository URL (repourl.CloneURL, the
@@ -1639,7 +1682,7 @@ func ValidVerifierAccounts(accounts []string) error {
 // cache and its budget session name — the very thing the run's own remote
 // checks refuse when a launcher sets FUGARO_REMOTE, and the reason the node
 // is checked here rather than trusted.
-func validCloneURLs(urls CloneURLs) error {
+func ValidCloneURLs(urls CloneURLs) error {
 	for _, key := range sortedStringKeys(urls) {
 		at := fmt.Sprintf("projectpolicy: clone_urls[%s]", key)
 		provider, repo, ok := strings.Cut(key, "/")

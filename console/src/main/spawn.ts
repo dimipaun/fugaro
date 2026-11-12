@@ -1259,6 +1259,23 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     dirFlag: false,
   },
   {
+    // The Project tab's seat estimate (subscriptions plan S4.2; `seats.read`,
+    // `src/main/ipc.ts`; the rulings are D439, D433 and T14). The command is
+    // `fugaro seats --json`, and that is its whole argv: the estimate reads this
+    // machine's own launcher and operator lists plus the last 90 days of runs,
+    // and its window is the ruling's own 90 days with no flag to move it.
+    //
+    // **It is a read of core data alone** -- the command stores nothing, sends
+    // nothing and consults no key, licence or server -- and it takes the project
+    // flag like every other project-scoped read, because the two lists it reads
+    // are the active installation's own config (`takesProject`).
+    operation: 'seats.read',
+    words: ['seats', '--json'],
+    takesProject: true,
+    args: [],
+    dirFlag: false,
+  },
+  {
     // **The launch, and the console's only write** (design §5.1 rule 11, D22).
     // The row is rule 11's argv word for word: `run --task-file - --json
     // --run-id <id> --repo <owner/name> [--title=<T>] [--plan-task=<P>]
@@ -1343,7 +1360,7 @@ export const SETTINGS_EDIT_PHASE_WORDS: Readonly<Record<SettingsEditPhase, reado
 })
 
 /** SETTINGS_EDIT_LAYERS is the whole of the layer vocabulary
- * (`settingsWriteLayers`, `internal/cli/settings_set.go:37`): the three
+ * (`settingsWriteLayers`, `internal/cli/settings_set.go:41`): the three
  * documents one edit can land in. It is the console's own copy because the
  * layer reaches an argv, and a word that is not one of the three has no
  * business in one -- the read's `target_layer` is held to this set before the

@@ -56,11 +56,35 @@ const (
 // plugin's own writes unmoved over a build that is asked for after them.
 func NeedsBilling(name string) bool {
 	switch name {
-	case Preflight, Project, Plugin, Checkout:
+	case Preflight, Project, Plugin, Checkout, Unit:
 		return false
 	}
 	return true
 }
+
+// MachineLocal is whether a stage is only this machine's: it reads no cloud and
+// writes nothing outside the machine it runs on. Such a stage is not stopped by
+// a cloud stage that stopped in front of it (blocker), which is what lets the
+// one documented command do the local half for a reader who holds no owner's
+// role (D954, U8 of docs/plugin-user-scope/implementation-plan.md; spec §11).
+//
+// The marker is name-level for NeedsBilling's reason: the loop is handed
+// stages and knows them by name, and the invariant it carries — no cloud read,
+// no write outside this machine — is a property of the stage's own code, kept
+// by hand where that code is (Plugin, internal/cli/init_plugin_stage.go: the
+// plugin installed in the user's own Claude Code through the claude CLI, and
+// the checkout's own .claude/settings.json only where a pin an older fugaro
+// left is there to take out — a write a coding agent's session refuses, so a
+// marked session's own writes are the machine's). A stage whose local half sits
+// beside a cloud write is not one of these, whatever it also writes: Checkout
+// is the case that says so — its cloud step is a cloud write, and the loop
+// cannot tell the two halves apart.
+//
+// The tool that runs such a stage after a stop reads the managed gate before it
+// writes and refuses on the gate's zero value (the plugin stage's removal): a
+// step that now runs inside a managed project's agent session is a writing step
+// of a gated command, and the refusal is the direction that keeps it.
+func MachineLocal(name string) bool { return name == Plugin }
 
 // Names of the stages, in the order the design runs them (§3.1). A stage
 // is registered under exactly one of them.
@@ -147,6 +171,16 @@ const (
 	// It comes after the repository stage, whose onboarding is what the
 	// images it refreshes belong to, and before compute, which stays last.
 	Checkout = "checkout"
+	// Unit is the login unit that runs the orchestrator daemon
+	// (internal/cli/init_orchestrator_stage.go for `setup`, which installs the
+	// first one, and internal/cli/update_unit_stage.go for `update`, which
+	// re-renders one already installed and never installs one). The two are
+	// one stage because the loop takes one stage per name and the door decides
+	// which of them it is (initStages): the owner's ruling Q2 of 2026-11-04
+	// gives the first install to `setup`, and T7's of 2026-11-05 makes
+	// `fugaro update` re-render an installed unit so that one command stays
+	// the whole upgrade.
+	Unit = "unit"
 	// Compute is the Batch backend's installation-level provisioning
 	// (design docs/design/compute-backend.md §8.1 task 6). It is last
 	// because it is the only stage that may not run before everything else
@@ -270,6 +304,26 @@ var order = []slot{
 	// does not write that (accounts_add_converge_test.go is the door that says
 	// so).
 	{name: Checkout, needs: []string{Repository, Layer}, pastStops: []string{Repository}},
+	// The login unit that runs the daemon. It comes after the checkout's own
+	// steps and before compute: the daemon it starts drives the project the
+	// repository stage published and re-reads the policy node every stage
+	// before it wrote, so a run that installed a unit ahead of those would
+	// start a daemon that cannot read what it drives. Like Plugin and
+	// Checkout it writes only this machine's own files — one file under the
+	// person's home — so billing does not gate it (NeedsBilling).
+	//
+	// noYes: --yes never covers it. A unit is code that runs at every login, so
+	// neither door may take a flag for it (the owner's Q2 answer of 2026-11-04
+	// and T7's ruling of 2026-11-05). Neither door asks a question of its own
+	// either: Q2's first install has no confirmation beside the plan line the
+	// person already read, and T7's re-render has none either — the owner's
+	// rule of 2026-11-10 is that `fugaro update` carries no extra prompt — so
+	// the step the run cannot make is a step --yes does not cover, which the
+	// loop leaves for the user (the update door) or skips with the sentence
+	// that says nobody was at the terminal (the setup door). What fences the
+	// write is the session, not a question: a coding agent's run writes no
+	// unit at all, and the drift stays visible through `fugaro doctor`.
+	{name: Unit, needs: []string{Repository, Policy}, noYes: true},
 	// The compute backend's provisioning is money, permanent and owner-run,
 	// so --yes never covers it; it comes last, after every stage that
 	// builds the identity, the registry and the installation it reads.

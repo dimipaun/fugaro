@@ -2,17 +2,23 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
+	"math"
 	"slices"
 	"strings"
+	"time"
 
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // defaultBranchData is fugaro.yaml as the repository's default branch has
@@ -53,11 +59,14 @@ func (r *run) defaultBranchFile(ctx context.Context) ([]byte, string, error) {
 }
 
 // resolvePolicy computes the run's effective budget once, at bootstrap, as
-// the tightest of three layers: the owner's ceiling (the job environment,
-// r.d.Spend), the default branch's fugaro.yaml and the run's own cfg. A
-// layer can only tighten, so a branch (or the agent, which can edit
-// fugaro.yaml mid-run) never loosens what the owner or the team set. The
-// result is stored on the run (r.spend, r.policy) and never recomputed.
+// the tightest of four layers: the owner's ceiling (the job environment,
+// r.d.Spend), the default branch's fugaro.yaml, the run's own cfg and — for a
+// launch that asked for one — the chain's remaining (D1044). A layer can only
+// tighten, so a branch (or the agent, which can edit fugaro.yaml mid-run)
+// never loosens what the owner or the team set. The chain is the last of the
+// four, because what it carries is the run's to write (a hand-written task,
+// an older CLI) and the figure a chain has left is not. The result is stored
+// on the run (r.spend, r.policy) and never recomputed.
 //
 // A default-branch file whose policy keys are invalid is an error: the
 // ceiling alone would silently drop the team's rules. When the job has no
@@ -132,7 +141,20 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 			MaxOutputCoder: p.MaxOutputTokens.Coder, MaxOutputReviewer: p.MaxOutputTokens.Reviewer, Governance: p.Governance}
 	}
 
-	layers := []policy.Layer{ceiling, def, FileLayer(cfg)}
+	file := FileLayer(cfg)
+	// The chain's remaining is resolved against the three layers above it and
+	// merged after them: it is the run's own figure that arrives here (the
+	// launcher wrote it into the task, and a hand-written task carries
+	// whatever its writer typed), so it is the one layer that must not be able
+	// to loosen what the ceiling, the default branch or the branch resolved
+	// (D1044). pre is the merge under it, and chainLayer reads only its mode
+	// out of it.
+	pre := policy.Merge(ceiling, def, file)
+	chain, err := r.chainLayer(ctx, pre)
+	if err != nil {
+		return err
+	}
+	layers := []policy.Layer{ceiling, def, file, chain}
 	r.govLayers = layers
 	e := policy.Merge(layers[0], layers[1:]...)
 	if found {
@@ -143,9 +165,12 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 		// and saying "policy" for those would name the wrong owner).
 		policySources(&e, fromPolicy)
 	}
-	// Merge lists the default branch's ignored values before the branch's,
-	// so the number the first two layers drop says who asked for each.
+	// Merge lists the ignored values in layer order, so the numbers the first
+	// two layers drop and the first three drop say who asked for each: what
+	// the branch's own file lost is between them, and everything after the
+	// second is the chain's (recordPolicy reads them back).
 	nDef := len(policy.Merge(ceiling, def).Ignored)
+	nFile := len(pre.Ignored)
 	s := Spend{Mode: e.Mode, MaxRunTokens: e.MaxRunTokens, AllowedModels: e.AllowedModels, Prices: c.Prices}
 	if s.Mode == "" {
 		s.Mode = policy.ModeOff
@@ -207,8 +232,378 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 	if err := r.resolveLevels(); err != nil {
 		return err
 	}
-	r.rec.Policy = r.recordPolicy(nDef)
+	r.rec.Policy = r.recordPolicy(nDef, nFile)
 	return nil
+}
+
+// chainDimensions is the four dimensions a chain limits (spec §2), in the
+// order a message about them names them.
+var chainDimensions = []runstore.Dimension{runstore.USD, runstore.Tokens, runstore.Time, runstore.ReviewRounds}
+
+// chainLayer is the merge's last layer: what is left of the chain's limits
+// once the runs behind this one are charged for what they spent (D1041,
+// D1044, D1047).
+//
+// The launcher resolved this figure before the launch and wrote it into the
+// task, and the runner resolves it again here because a task reaches it
+// unchecked: ReadTask decodes whatever the bucket holds, so a hand-written
+// task — or one an older CLI wrote before the four members existed — carries
+// the chain's limit itself or a figure a chain that has spent cannot leave
+// (D1044). Nothing is taken on the task's word. The chain behind this run is
+// read from the bucket's records, one id at a time, by name (F21), and its
+// own limit is read back from the stored task of the run that began it
+// (D1046). The money and token figures come from the budget database, read
+// with this run's own token, which may read its own ledger node and no
+// sibling's (U4) — so a sibling's ledger read fails rather than answering
+// zero, and the dimension is left unmeasured instead of charged nothing
+// (D1049, D1051).
+//
+// pre is the merge under this layer, and only its mode is read: with the
+// budget off there is no ledger at all, the records are the figures and the
+// chain is a report rather than a stop (D1046, T10).
+//
+// A chain with nothing left of a dimension this run is asked to carry is a
+// refusal at bootstrap and not a run that starts and halts at once (D1050
+// case 1): the halt is recorded and nothing has been spent, no ledger has
+// been leased and no agent has run.
+//
+// A read that stops at a link the bucket no longer holds is the one failure
+// this layer answers rather than refuses (ErrChainGap): the chain's limit and
+// its spend are both gone with the record, and the figures the task carries —
+// what the launcher resolved against the previous run's stored task, which is
+// what survives the gap — are the bound the run runs under, applied as the
+// first bound alone and refused over when they are spent (D1052).
+func (r *run) chainLayer(ctx context.Context, pre policy.Effective) (policy.Layer, error) {
+	var l policy.Layer
+	o := r.spec.Overrides
+	if o.MaxUSD == nil && o.MaxTokens == nil && o.MaxTime == "" && o.MaxReviewRounds == nil {
+		// A launch that asked for no chain limit is in no chain (D1041), and
+		// nothing is read to establish that: the four figures above are the
+		// whole of what a chain is, so a run that carries none of them — every
+		// ordinary run — resolves exactly as it did before this layer existed.
+		return l, nil
+	}
+	ledgers, err := r.chainLedgers(ctx, pre)
+	if err != nil {
+		return l, err
+	}
+	own, err := r.ownChainUse(ctx, ledgers)
+	if err != nil {
+		return l, err
+	}
+	from := r.spec.PreviousRun
+	if from == "" {
+		// A launch that begins a chain is the chain: the run the launcher
+		// linked it to is its root, and a retry's link is the stored task's
+		// own previous_run (D1045). A retry therefore resolves the chain
+		// behind the run it retries, and what *this* run already holds — the
+		// ledger node it kept from the attempt that halted — is charged
+		// against the remaining below (D1050 case 3).
+		from = r.spec.RunID
+	}
+	chain, err := runstore.ResolveChain(ctx, r.d.Store.Sibling(from), ledgers, runstore.PerRunCaps{}, r.d.Now())
+	gapped := false
+	switch {
+	case errors.Is(err, runstore.ErrChainGap):
+		// The bucket has aged a hop out from under the chain, so what it has
+		// spent cannot be read at all (D1052). The figures this run's task
+		// carries are still a bound — the launcher resolved them against the
+		// previous run's stored task, which is what survives the gap — and
+		// with no chain read there is no second figure to hold them under, so
+		// they are applied as chainRemaining's first bound and nothing else.
+		// Dropping the layer instead would leave the run bounded by the
+		// per-run caps alone, which is the hole the launcher's own gap arm
+		// closes for every other launch shape.
+		r.d.Log.Warn("the chain's records stop at a link the bucket no longer holds: this run is held to the limit its task was launched with", "err", err)
+		chain, gapped = nil, true
+	case err != nil:
+		return l, fmt.Errorf("reading the chain this run continues: %w", err)
+	}
+	limit := task.Overrides{}
+	if !gapped {
+		limit = r.spec.Overrides
+	}
+	if chain != nil && chain.Root != r.spec.RunID {
+		// The chain's own limit is the root launch's number and nobody else's
+		// (D1046): it is read back from the stored task of the run that began
+		// the chain, which no later launch can raise (D1052). A task the
+		// bucket no longer holds leaves the launcher's own figures as the only
+		// limit in hand — never a figure invented here.
+		spec, err := r.d.Store.Sibling(chain.Root).ReadTask(ctx)
+		switch {
+		case errors.Is(err, runstore.ErrNotFound):
+			limit = task.Overrides{}
+		case err != nil:
+			return l, fmt.Errorf("reading the stored task of run %s, which began this chain: %w", chain.Root, err)
+		default:
+			limit = spec.Overrides
+		}
+	}
+	enforced := ledgers != nil
+	for _, d := range chainDimensions {
+		rem, limited := chainRemaining(d, o, limit, chain, own)
+		if !limited {
+			continue
+		}
+		if !chainSpentOut(d, rem) {
+			setChainLayer(&l, d, rem)
+			continue
+		}
+		// What is spent out is named by the bound that is spent — see
+		// chainFromWord — and what a person can do about it is the bound's own:
+		// a chain's limit is raised in the run that began it, while a gap
+		// leaves the chain unreadable and the launch outside it the way out.
+		spent := fmt.Sprintf("%s has nothing left of its %s limit", chainFromWord(chain), chainDimensionWord(d))
+		advice := "raise the limit in the run that began the chain, or launch a run that is not part of it"
+		if gapped {
+			advice = "the chain behind it cannot be read (the bucket has aged its records out), so launch a run that is not part of this chain"
+		}
+		if !enforced {
+			// With the budget off the chain is UNENFORCED: a report and not a
+			// stop (D1046, T10), so a spent chain is said out loud and the run
+			// goes on to spend past it.
+			r.d.Log.Warn(spent+", and the budget is off, so nothing stops this run from spending past it",
+				"dimension", chainDimensionWord(d))
+			continue
+		}
+		return l, &HaltError{Halt: runstore.Halt{
+			Reason: runstore.HaltRunCap,
+			Scope:  "run",
+			At:     r.d.Now().UTC(),
+			Detail: spent + ", so this run would start with nothing to spend: " + advice,
+		}}
+	}
+	return l, nil
+}
+
+// chainLedgers is the ledger reader this run reads its chain with, nil when
+// there is no ledger at all.
+//
+// The gate is the resolved policy's mode and not the job's: the ceiling can be
+// off while a repository commits observe or enforce, and the chain's money
+// figures are the database's exactly when the run is accounted for
+// (Spend.On). The reader itself is this run's own node — see ownLedger.
+func (r *run) chainLedgers(ctx context.Context, pre policy.Effective) (runstore.LedgerReader, error) {
+	if !(Spend{Mode: pre.Mode}).On() {
+		return nil, nil
+	}
+	db, err := r.budgetClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if db == nil {
+		return nil, nil
+	}
+	return ownLedger{db: db, slug: r.d.Store.Slug(), run: r.spec.RunID}, nil
+}
+
+// ownLedger is the budget database as one run of a chain can read it: its own
+// node, and no other.
+//
+// The job's Firebase token carries the slug and the run it was minted for (the
+// rules' RUN claim, auth.token.fs == $slug && auth.token.fr == $run), so any
+// other node is refused by the database rather than missing (U4). That is not
+// an accident to be smoothed over: the chain's money figures for the runs
+// behind this one are exactly what this identity cannot see, and a read that
+// answered zero for them would hand the chain the whole budget it had already
+// spent (D1049, F14). It is reported as the failure it is, and ResolveChain
+// then leaves the dimension unmeasured.
+type ownLedger struct {
+	db   *rtdb.Client
+	slug string
+	run  string
+}
+
+func (l ownLedger) ReadLedger(ctx context.Context, slug, run string) (runstore.Ledger, bool, error) {
+	if slug != l.slug || run != l.run {
+		return runstore.Ledger{}, false, fmt.Errorf("the ledger of run %s/%s: this run's token reads only its own", slug, run)
+	}
+	got, found, err := budget.LedgerDB{DB: l.db}.ReadLedger(ctx, slug, run)
+	return runstore.Ledger{Reserved: got.Reserved, Released: got.Released, Tokens: got.Tokens}, found, err
+}
+
+// ownChainUse is what this run has already charged its own ledger, in the two
+// dimensions a ledger keeps (F20): the money it still holds — reserved less
+// released (D1046) — and its tokens. Time and review rounds hold nothing of
+// their own: both are read off the record the run is writing, and a chain's
+// figures for them come from the runs behind it.
+//
+// The chain read cannot answer this. It walks the chain *behind* this run (a
+// follow-up, a retry), and a chain of one — a first run — is read from the
+// run's own record and its own ledger node, which is at bootstrap a node
+// nothing has written yet. A run that halted mid-flight and started again is
+// the case that needs the figure: its reservation is still held, and what is
+// left of the chain's limit is drawn from the rest (D1050 case 3).
+func (r *run) ownChainUse(ctx context.Context, ledgers runstore.LedgerReader) (map[runstore.Dimension]runstore.Amount, error) {
+	own := map[runstore.Dimension]runstore.Amount{}
+	if ledgers == nil {
+		return own, nil
+	}
+	l, found, err := ledgers.ReadLedger(ctx, r.d.Store.Slug(), r.spec.RunID)
+	if err != nil {
+		// The database refused this run's own node, or the read failed: the
+		// run's own session reads the same node a moment later and fails the
+		// same way, so it stops here rather than resolve a limit against a
+		// figure it never saw.
+		return nil, fmt.Errorf("reading this run's own ledger: %w", err)
+	}
+	if !found {
+		// A run that has held nothing yet: the node is written with the first
+		// lease, and a launch that has not spent holds nothing (F20).
+		return own, nil
+	}
+	own[runstore.USD] = runstore.Amount(l.Held())
+	own[runstore.Tokens] = runstore.Amount(l.Tokens)
+	return own, nil
+}
+
+// chainRemaining is one dimension's remaining as this run must carry it, and
+// whether anything bounds it at all.
+//
+// Two figures can bound it, and the tighter of them is the one that survives —
+// a hand-written task is the run's own text and the chain's limit is not, so
+// neither may be trusted alone:
+//
+//   - The task's own figure, less what this run already holds (own). For a
+//     launch that begins a chain the figure is the chain's limit itself
+//     (D1041); for a follow-up or a retry the launcher wrote the remaining it
+//     resolved (D1047). The spend since then is this run's own, and nothing
+//     else's: no other run of the chain can have spent between the launcher's
+//     read and this one, and a run that halted and started again holds its
+//     reservation (D1050 case 3).
+//   - The chain's own limit, read back from the root's stored task (D1046),
+//     less what the chain's records and ledgers say it has spent. This is the
+//     figure the task cannot loosen, and it is only there where the read
+//     measured the dimension — money and tokens are measured only for a chain
+//     of this run alone, since this token reads its own ledger node and no
+//     sibling's (U4, D1049).
+//
+// A nil chain is a read that stopped at a link the bucket no longer holds: the
+// chain's limit and its spend are both unknown, so the first bound stands
+// alone (ErrChainGap, D1052).
+func chainRemaining(d runstore.Dimension, o task.Overrides, limit task.Overrides, chain *runstore.Chain, own map[runstore.Dimension]runstore.Amount) (runstore.Amount, bool) {
+	rem, limited := runstore.Amount(0), false
+	if lim, ok := chainLimitAmount(o, d); ok {
+		rem, limited = lim-own[d], true
+	}
+	if chain == nil {
+		return rem, limited
+	}
+	if lim, ok := chainLimitAmount(limit, d); ok {
+		if used := chain.Used(d); used.Measured {
+			if left := lim - used.Amount; !limited || left < rem {
+				rem, limited = left, true
+			}
+		}
+	}
+	return rem, limited
+}
+
+// chainSpentOut reports whether a remaining is no figure at all in the unit
+// the layer carries it: a sub-micro-dollar cap is no cap, a fractional token
+// or round is no whole one, and a chain with nothing left of a dimension is a
+// refusal rather than a limit the run resolves and cannot be held to (D1050
+// case 1).
+func chainSpentOut(d runstore.Dimension, a runstore.Amount) bool {
+	if d == runstore.Time {
+		return a <= 0
+	}
+	return a < 1
+}
+
+// chainLimitAmount is one dimension's limit as a task carries it, in the
+// dimension's own unit, and whether the task limits it at all (D1041: a launch
+// that names none carries no chain limit). A figure a task cannot hold — a
+// duration that does not parse, a dollar amount past what a micro-dollar can
+// be — reads as no limit rather than as a failure: the task was validated when
+// it was written, and what this call does with it is a comparison. It is the
+// same read the launcher's own chain resolution makes of a task
+// (internal/cli's chainLimitAmount), restated here because the CLI imports
+// this package and not the other way round.
+func chainLimitAmount(o task.Overrides, d runstore.Dimension) (runstore.Amount, bool) {
+	switch d {
+	case runstore.USD:
+		if o.MaxUSD == nil {
+			return 0, false
+		}
+		micros, err := pricing.FromUSD(*o.MaxUSD)
+		if err != nil {
+			return 0, false
+		}
+		return runstore.Amount(micros), true
+	case runstore.Tokens:
+		if o.MaxTokens == nil {
+			return 0, false
+		}
+		return runstore.Amount(*o.MaxTokens), true
+	case runstore.Time:
+		if o.MaxTime == "" {
+			return 0, false
+		}
+		dur, err := time.ParseDuration(o.MaxTime)
+		if err != nil {
+			return 0, false
+		}
+		return runstore.Amount(dur.Seconds()), true
+	case runstore.ReviewRounds:
+		if o.MaxReviewRounds == nil {
+			return 0, false
+		}
+		return runstore.Amount(*o.MaxReviewRounds), true
+	}
+	return 0, false
+}
+
+// setChainLayer writes one dimension's remaining into the layer, in the unit
+// the merge compares in (D1041): dollars for the cap, whole tokens, a
+// duration, a count. It is the same write the launcher makes into a task
+// (internal/cli's setChainLimit), in the merge's vocabulary rather than the
+// task's, and it is the whole of how the chain reaches the run's budget: the
+// cap the gateway enforces is this figure and nothing else (D1059).
+func setChainLayer(l *policy.Layer, d runstore.Dimension, a runstore.Amount) {
+	switch d {
+	case runstore.USD:
+		l.PerRunUSD = pricing.Micros(a).USD()
+	case runstore.Tokens:
+		l.MaxRunTokens = int64(a)
+	case runstore.Time:
+		l.MaxRunTime = time.Duration(math.Round(float64(a) * float64(time.Second)))
+	case runstore.ReviewRounds:
+		l.MaxReviewRounds = int64(a)
+	}
+}
+
+// chainFromWord names the bound a refusal is about: the chain the figures were
+// read from — the run that began it, which is where its limit lives and where a
+// person raises it (D1046, F22) — or, for the nil chain a gap leaves, the
+// figures this run's task carries, which are then the only bound there is
+// (ErrChainGap, D1052).
+func chainFromWord(c *runstore.Chain) string {
+	if c == nil {
+		return "the limit this run's task carries"
+	}
+	if len(c.Runs) > 1 {
+		return fmt.Sprintf("the chain of run %s, %d runs long,", c.Root, len(c.Runs))
+	}
+	return fmt.Sprintf("the chain of run %s", c.Root)
+}
+
+// chainDimensionWord names one dimension the way a message about it reads. It
+// is the launcher's own wording for the same four figures (internal/cli's
+// chainDimensionWord): the two sides say the same thing about a chain, and the
+// runner cannot call into the CLI, which imports this package.
+func chainDimensionWord(d runstore.Dimension) string {
+	switch d {
+	case runstore.USD:
+		return "dollar"
+	case runstore.Tokens:
+		return "token"
+	case runstore.Time:
+		return "wall-time"
+	case runstore.ReviewRounds:
+		return "review-round"
+	}
+	return string(d)
 }
 
 // envCeiling is the ceiling the job environment deploys: the owner's mode, cap,
@@ -300,6 +695,19 @@ func (r *run) policyCeiling(pp *projectpolicy.Policy, env policy.Layer, c Spend)
 	// effective policy (policy.Merge), so a later layer could add a level and
 	// none can take one away.
 	ceiling.ReviewFloor = pp.ReviewFloor
+	// The triage switch rides the ceiling layer for the floor's reason
+	// (D1854): it is the owner's word about whether a run's review rounds are
+	// judged at all, and the node is the one object the launcher cannot write.
+	// Unlike the floor it IS a key of the merge's own vocabulary
+	// (policy.KeyTriage, which the repository writes as agent.triage), so a
+	// node that turns it off and a repository that asks for it meet in
+	// policy.Merge and the tighter one wins — off, whichever way round
+	// (Effective.TriageOff). It is named in `set`, again unlike the floor: the
+	// node wrote a value result.json reports the source of, and "ceiling"
+	// would name the owner of the switch he did not flip.
+	if pp.Triage != nil {
+		ceiling.Triage, set[policy.KeyTriage] = pp.Triage, true
+	}
 	// The binary allow rule rides the ceiling layer for the floor's reason
 	// (D986): it is the owner's word about the paths a run may add a binary at,
 	// the node is the one object the launcher cannot write, and the merge
@@ -415,7 +823,7 @@ func FileLayer(cfg *config.Config) policy.Layer {
 // chose (H1), and it would put all eighteen governance keys in every record,
 // including the records of repositories that write no policy at all. A key a
 // layer did write is kept: the value is then a decision somebody made.
-func policyRecord(e policy.Effective, nDef int) *runstore.PolicyRecord {
+func policyRecord(e policy.Effective, nDef, nFile int) *runstore.PolicyRecord {
 	sources := maps.Clone(e.Sources)
 	for k := range e.Governance.DefaultGovernanceKeys() {
 		if sources[k] == policy.SourceCeiling {
@@ -440,10 +848,17 @@ func policyRecord(e policy.Effective, nDef int) *runstore.PolicyRecord {
 	if len(sources) > 0 {
 		rec.Sources = sources
 	}
+	// The ignored values come back in layer order, so the two counts say which
+	// layer asked for each: before nDef the default branch, before nFile the
+	// run's own file, and after it the chain — the one layer whose figure is
+	// the run's own text and may therefore be the one that lost (D1044).
 	for i, ig := range e.Ignored {
 		from := policy.SourceBranch
-		if i < nDef {
+		switch {
+		case i < nDef:
 			from = policy.SourceDefaultBranch
+		case i >= nFile:
+			from = policy.SourceChain
 		}
 		rec.Ignored = append(rec.Ignored, runstore.PolicyIgnored{Key: ig.Key, Value: ig.Value, Effective: ig.Effective, Source: ig.Source, From: from})
 	}
@@ -452,8 +867,8 @@ func policyRecord(e policy.Effective, nDef int) *runstore.PolicyRecord {
 
 // recordPolicy builds the record and, once per run, logs the policy and
 // warns once per key about each value that was dropped.
-func (r *run) recordPolicy(nDef int) *runstore.PolicyRecord {
-	rec := policyRecord(r.policy, nDef)
+func (r *run) recordPolicy(nDef, nFile int) *runstore.PolicyRecord {
+	rec := policyRecord(r.policy, nDef, nFile)
 	if rec == nil {
 		return nil
 	}

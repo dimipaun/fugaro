@@ -13,12 +13,6 @@ import (
 	"unicode"
 )
 
-// Provider kinds, as git.provider names them in fugaro.yaml.
-const (
-	KindGitHub    = "github"
-	KindBitbucket = "bitbucket"
-)
-
 // PRSpec describes the pull request a run wants.
 type PRSpec struct {
 	// Number, when non-zero, makes EnsurePR update pull request Number's
@@ -274,6 +268,26 @@ type ContentsReader interface {
 	Contents(ctx context.Context, path, ref string) ([]byte, error)
 }
 
+// PRBranchReader is implemented by a provider that can find the pull request
+// a branch is the source of, whatever its state, which is how `fugaro
+// followups` looks the parent of a run's deferred findings up (D1843, F30):
+// by the run's own launcher-written branch, and never by a pull request
+// number the job-written run record carries, so a job that wrote a record
+// cannot name somebody else's merged pull request as its parent.
+//
+// It is not part of Provider for the reason ContentsReader is not: a host
+// that cannot answer it must keep working everywhere else, and a caller that
+// needs it refuses rather than guesses. The GitHub and Bitbucket adapters and
+// the file-backed test provider implement it.
+type PRBranchReader interface {
+	// PullRequestByBranch reads the pull request whose source branch is
+	// branch, however it ended: found is false when no pull request was ever
+	// opened from that branch. The read is bounded to one request per host
+	// plus one read of the pull request itself, and it is a read of this
+	// repository alone.
+	PullRequestByBranch(ctx context.Context, branch string) (info PRInfo, found bool, err error)
+}
+
 // MaxContentsBytes bounds what one Contents read returns: 1 MiB, GitHub's
 // own ceiling for a contents reply, so the bound a caller applies is the
 // bound the API already applies and no larger.
@@ -292,6 +306,71 @@ var (
 	ErrContentsEmpty    = errors.New("the file is there and holds nothing")
 	ErrContentsTooLarge = errors.New("the file is larger than a contents read returns")
 )
+
+// CommitReader is implemented by a provider that can resolve a ref to the
+// commit it names, which is what a catalog entry's Dockerfile and its build
+// context are read at (D1394, D1395). A source names a branch, and a read at
+// that branch answers whatever the branch is at the moment of the read, so the
+// copy resolves it once and reads both at the commit it got: one read, one
+// commit, and the record's value is the commit the definition was taken from
+// rather than the operator's own checkout.
+//
+// ref is a branch or a tag, "" for the repository's default branch; the caller
+// validates it, because it comes from a published catalog. What comes back is
+// a full commit, and a caller that puts it in a build, a record or a label
+// holds it to that shape: the value reaches `git fetch` and the revision
+// label, where a ref that is not a commit means something else.
+//
+// It is not part of Provider, for ContentsReader's own reason: a host without
+// a commit read has no way to answer it, and a caller that does not need one
+// must keep working there. The GitHub and Bitbucket adapters and the
+// file-backed test provider implement it.
+type CommitReader interface {
+	Commit(ctx context.Context, ref string) (string, error)
+}
+
+// TreeReader is implemented by a provider that can read a directory of its
+// repository at one commit, which is how a catalog entry's build context is
+// read before a build: the files under path, at ref, each with the bytes the
+// context's identity is taken over (D1401).
+//
+// path is a repository-relative directory — the catalog's own rule allows ".",
+// the repository root — ref is the commit the caller resolved (CommitReader),
+// and the paths that come back are relative to path, so moving a context
+// inside its repository does not move its identity. limit bounds the read
+// before anything is fetched: a tree over it is refused with ErrTreeTooLarge
+// rather than carried, and a caller that puts these bytes into a build gets a
+// bounded tree or an error.
+//
+// It is not part of Provider: a host without a tree read has no way to answer
+// it, and a caller that does not need one must keep working there. The GitHub
+// and Bitbucket adapters and the file-backed test provider implement it.
+type TreeReader interface {
+	Tree(ctx context.Context, path, ref string, limit TreeLimit) ([]TreeFile, error)
+}
+
+// TreeFile is one file of a tree read: its path relative to the directory that
+// was read, and its bytes. A file of no bytes is a file (a repository holds
+// them), which is why a tree read keeps one where a definition read refuses
+// one.
+type TreeFile struct {
+	Path string
+	Data []byte
+}
+
+// TreeLimit bounds one Tree read: how many files it may return and how many
+// bytes they may hold together. Both are read off the host's own listing
+// before a file is fetched, so a tree over the limit costs one listing and no
+// content, and the refusal names the ceiling rather than a build that grew
+// past it.
+type TreeLimit struct {
+	MaxFiles int
+	MaxBytes int64
+}
+
+// ErrTreeTooLarge means a Tree read was refused because the tree is over the
+// limit its caller gave: more files, or more bytes, than the read returns.
+var ErrTreeTooLarge = errors.New("the tree is larger than a tree read returns")
 
 // Provider is what the runner needs from the git host.
 type Provider interface {
@@ -356,6 +435,57 @@ type Provider interface {
 	// its head repository is a fork of the one this Provider was opened
 	// for. It never writes anything.
 	FetchPRHead(ctx context.Context, number int) (PRHead, error)
+	// MarkReady marks pull request number ready for review, bound to the
+	// head expectedHeadSHA (E8, D2041, G2): it re-reads the head, refuses
+	// with ErrHeadMoved when the pull request is not at that commit, and
+	// only then clears the draft state. A pull request that is not open is
+	// refused with ErrPRNotOpen before the head is considered — a closed
+	// pull request keeps its head, so the head check alone would pass on one
+	// — which is the refusal every other write of every provider gives. On a
+	// provider whose credential is the gated mint's, the mint has already
+	// re-read and refused a moved head (MergeMinter.MintMerge), so
+	// ErrHeadMoved is this call's own read, the one that catches a push
+	// landing after the mint's; both are the same refusal to a caller and
+	// neither is a retry. The credential comes from the merge mint
+	// (UseMergeMint, E16/D2049); a provider without one refuses with
+	// ErrNoMergeMint rather than reaching for its own, and a host with no
+	// mint to gate says so with MintExempt and ErrMintNotApplicable rather
+	// than being taken for one that does. It is not ApplyReady: that one adds
+	// reviewers and labels to a pull request somebody else made ready, and
+	// this one is the daemon's own new authority to un-draft a pull request a
+	// run left as a draft.
+	MarkReady(ctx context.Context, number int, expectedHeadSHA string) error
+	// Merge merges pull request number at exactly the head expectedHeadSHA
+	// (E8, G2, G14): it re-reads the head and refuses with ErrHeadMoved when
+	// it has moved, sends the expected head to the host as the merge's own
+	// precondition, and never sends an admin or bypass flag. A pull request
+	// that is not open is refused with ErrPRNotOpen before anything is sent:
+	// a closed pull request keeps its head, so the head check alone would
+	// pass on one. On a provider whose credential is the gated mint's the
+	// mint has already re-read and refused a moved head
+	// (MergeMinter.MintMerge), so ErrHeadMoved is this call's own read. The
+	// credential is the merge mint's (UseMergeMint), so a merge is a merge
+	// the gate minted for; a provider without one refuses with ErrNoMergeMint, and a
+	// host with no mint to gate says so with MintExempt and
+	// ErrMintNotApplicable. A provider whose merge API has no expected-head
+	// precondition refuses with ErrMergeNoHeadPrecondition (F24): an unbound
+	// merge is the one thing this call exists to make impossible.
+	Merge(ctx context.Context, number int, expectedHeadSHA string) error
+	// Checks reads the checks reported at commit sha of pull request number
+	// (E8, F25). The state is ChecksState's to decide and the caller's to
+	// fail closed on: an empty slice is a commit whose checks report
+	// nothing, which is CIUnknown and never green, and an error is a read
+	// that did not happen rather than a commit that passed. A provider that
+	// cannot report checks at all refuses with ErrChecksUnsupported. A host
+	// with more than one way to report CI reports all of them: a commit is
+	// green only if every report on it passed, so a read that took one
+	// report and not the other would read a failing commit as a passing one
+	// (GitHub has two: check runs and commit statuses). Reading them takes a
+	// permission the run's installation token does not ask for, so a host
+	// that refuses the read for that reason reports
+	// ErrChecksPermission — the same refusal as any other failed read, named
+	// so it is not read as a commit with no checks.
+	Checks(ctx context.Context, number int, sha string) ([]CheckRun, error)
 }
 
 // Opener opens the provider of kind (KindGitHub or KindBitbucket) for repo

@@ -1,0 +1,657 @@
+package diagnoseagent
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/dimipaun/fugaro/internal/cmdlog"
+)
+
+// evidenceFrag is the harmless constant every fixture value here is built
+// from: no value in this file is a secret-shaped literal (the repository's
+// Rule 10), and what these tests assert about a credential is that it does not
+// reach a file, never that it looks like one.
+const evidenceFrag = "ZQ7X4"
+
+// evidenceValue is one test's fixture secret.
+func evidenceValue(t *testing.T, tag string) string {
+	t.Helper()
+	return evidenceFrag + "-" + t.Name() + "-" + tag
+}
+
+// evidenceCommit is a fixture commit, forty hex digits as internal/cli.Commit
+// carries them.
+const evidenceCommit = "0123456789abcdef0123456789abcdef01234567"
+
+// evidenceShape is a credential no list holds: the shape a failing cloud call
+// prints, which only the pattern pass can know. It is built from pieces
+// (Rule 10) and it is the exact shape internal/redact's corpus pins.
+func evidenceShape() string {
+	return strings.Join([]string{"ghp_", strings.Repeat("A1b2C3d4", 5)}, "")
+}
+
+// evidenceID is the run ID the fixtures diagnose: the shape D1609 rules,
+// `update-<14-digit UTC stamp>-<pid>`.
+func evidenceID() cmdlog.ID {
+	return cmdlog.ID{Command: "update", At: time.Date(2026, 11, 7, 18, 30, 12, 0, time.UTC), PID: 48213}
+}
+
+// evidenceEnv points the state directory at a temporary directory: the
+// evidence folder is placed by localcfg.UserDir, and a test may not touch the
+// machine's own.
+func evidenceEnv(t *testing.T) func(string) string {
+	t.Helper()
+	dir := t.TempDir()
+	return func(name string) string {
+		if name == "XDG_STATE_HOME" {
+			return dir
+		}
+		return ""
+	}
+}
+
+// evidenceRead returns every file in the folder, by base name, so an assertion
+// can run over all of them rather than over one it remembered to name.
+func evidenceRead(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		out[d.Name()] = string(data)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("reading the evidence folder: %v", err)
+	}
+	return out
+}
+
+// TestEvidenceCollectWritesTheFolderAndBothPasses pins the collector's whole
+// contract in one place: the folder it writes, the files in it, and the rule
+// that no file carries a secret — neither one the caller named (the exact
+// pass) nor a shape nobody named (the pattern pass, F4). The log, the config
+// and the doctor output each hold both, so a collector that redacted one of
+// them, or only the exact values, fails here.
+//
+// Each file carries the named secret at a bare position — no key name, no
+// `=` or `:` in front of it — because the pattern pass reads shapes and key
+// names: a named secret planted as `token: <it>` or `API_KEY=<it>` would be
+// redacted with the exact pass dropped, and this test would pass a collector
+// that never redacts what its caller handed it.
+func TestEvidenceCollectWritesTheFolderAndBothPasses(t *testing.T) {
+	getenv := evidenceEnv(t)
+	secret := evidenceValue(t, "planted")
+	shape := evidenceShape()
+	id := evidenceID()
+
+	logText := "terraform apply: reading the installation\n" +
+		"ERROR: the api refused " + shape + " (403)\n" +
+		"the box answered " + secret + " and nothing else\n"
+	configText := "model: sonnet\nclaude_accounts:\n  team-b:\n    # the account is " + secret + "\n"
+	doctorText := "budget check failed: Authorization: Bearer " + shape + "\n" +
+		"the account was " + secret + " and the check stopped\n"
+
+	ev, err := Collect(context.Background(), id, Options{
+		Version: "v0.5.2",
+		Commit:  evidenceCommit,
+		Getenv:  getenv,
+		GOOS:    "linux",
+		Open:    func(cmdlog.ID) (io.ReadCloser, error) { return io.NopCloser(strings.NewReader(logText)), nil },
+		Doctor:  func(context.Context) ([]byte, error) { return []byte(doctorText), nil },
+		Config:  func(context.Context) ([]byte, error) { return []byte(configText), nil },
+		Secrets: []string{secret},
+	})
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+
+	if ev.RunID != id.String() {
+		t.Errorf("Evidence.RunID = %q, want %q", ev.RunID, id.String())
+	}
+	if ev.Command != "update" {
+		t.Errorf("Evidence.Command = %q, want update: it is the command the log's name spells", ev.Command)
+	}
+	if ev.Version != "v0.5.2" {
+		t.Errorf("Evidence.Version = %q, want v0.5.2", ev.Version)
+	}
+	if ev.EvidenceDir == "" {
+		t.Fatal("Evidence.EvidenceDir is empty: the prompt points the agent at it")
+	}
+	fi, err := os.Lstat(ev.EvidenceDir)
+	if err != nil {
+		t.Fatalf("the evidence folder was not left behind: %v", err)
+	}
+	if !fi.IsDir() {
+		t.Fatalf("%s is not a directory", ev.EvidenceDir)
+	}
+	if perm := fi.Mode().Perm(); perm != 0o700 {
+		t.Errorf("the evidence folder is %04o, want 0700 (D1603)", perm)
+	}
+
+	files := evidenceRead(t, ev.EvidenceDir)
+	for _, name := range []string{id.String() + ".log", "doctor.txt", "version.txt", "config.yaml"} {
+		if _, ok := files[name]; !ok {
+			t.Errorf("the evidence folder holds no %s: it holds %v", name, evidenceNames(files))
+		}
+	}
+	for name, text := range files {
+		if strings.Contains(text, secret) {
+			t.Errorf("%s carries the secret the caller named: every file is redacted with the exact pass", name)
+		}
+		if strings.Contains(text, shape) {
+			t.Errorf("%s carries a credential-shaped value: every file is redacted with the pattern pass too", name)
+		}
+	}
+	// The three files that were given something to redact carry the marker
+	// where it stood: the pass substitutes, it never drops the text around it.
+	for _, name := range []string{id.String() + ".log", "doctor.txt", "config.yaml"} {
+		if !strings.Contains(files[name], "[REDACTED]") {
+			t.Errorf("%s holds no [REDACTED] where a value stood: %q", name, files[name])
+		}
+	}
+	if got := files["version.txt"]; !strings.Contains(got, "v0.5.2") || !strings.Contains(got, evidenceCommit) {
+		t.Errorf("version.txt = %q, want the installed version and the commit the binary was built from", got)
+	}
+	for name := range files {
+		mode := evidenceMode(t, filepath.Join(ev.EvidenceDir, name))
+		if mode != 0o600 {
+			t.Errorf("%s is %04o, want 0600", name, mode)
+		}
+	}
+}
+
+// TestEvidenceCollectKeepsTheLogsOwnWords: the log is the diagnosis's reason to
+// exist, so the file named after the run ID is the log's own text (redacted),
+// not a note about it. The line the failure is readable from has to survive.
+func TestEvidenceCollectKeepsTheLogsOwnWords(t *testing.T) {
+	getenv := evidenceEnv(t)
+	id := evidenceID()
+	logText := "step: reading the installation\nStep failed: permission denied on the bucket\n"
+	ev, err := Collect(context.Background(), id, Options{
+		Version: "v0.5.2", Getenv: getenv, GOOS: "linux",
+		Open: func(cmdlog.ID) (io.ReadCloser, error) { return io.NopCloser(strings.NewReader(logText)), nil },
+	})
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	got := evidenceRead(t, ev.EvidenceDir)[id.String()+".log"]
+	if !strings.Contains(got, "permission denied on the bucket") {
+		t.Errorf("the log file = %q, want the log's own line: the collector redacts, it does not summarise", got)
+	}
+}
+
+// TestEvidenceCollectDoesNotAbortOnAMissingDoctor: doctor makes cloud calls and
+// the cloud is often exactly what is broken (F23), so a doctor that fails, or
+// one this diagnosis does not have at all, leaves a note in the folder rather
+// than failing the collection. The rest of the evidence is what the diagnosis
+// still has.
+func TestEvidenceCollectDoesNotAbortOnAMissingDoctor(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		doctor func(context.Context) ([]byte, error)
+		want   string
+	}{
+		{
+			name:   "no doctor to run",
+			doctor: nil,
+			want:   "not run",
+		},
+		{
+			name: "the doctor failed",
+			doctor: func(context.Context) ([]byte, error) {
+				return nil, errors.New("listing the jobs: the api is unreachable")
+			},
+			want: "the api is unreachable",
+		},
+		{
+			name:   "the doctor printed nothing",
+			doctor: func(context.Context) ([]byte, error) { return []byte("\n\t\n"), nil },
+			want:   "printed nothing",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			getenv := evidenceEnv(t)
+			id := evidenceID()
+			ev, err := Collect(context.Background(), id, Options{
+				Version: "v0.5.2", Getenv: getenv, GOOS: "linux",
+				Open: func(cmdlog.ID) (io.ReadCloser, error) {
+					return io.NopCloser(strings.NewReader("Failed in 1.2s\n")), nil
+				},
+				Doctor: tc.doctor,
+			})
+			if err != nil {
+				t.Fatalf("Collect with %s: %v, want the collection to carry on: a diagnosis is not lost over the doctor", tc.name, err)
+			}
+			got := evidenceRead(t, ev.EvidenceDir)["doctor.txt"]
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("doctor.txt = %q, want it to carry %q", got, tc.want)
+			}
+			if _, ok := evidenceRead(t, ev.EvidenceDir)[id.String()+".log"]; !ok {
+				t.Error("the log is missing: a missing doctor is not a missing diagnosis")
+			}
+		})
+	}
+}
+
+// TestEvidenceCollectNotesADoctorThatTimesOut: the timeout is the collector's
+// own (F23), so a doctor that never answers is not the diagnosis's hang. The
+// note says so, because the agent has to be able to tell "doctor said nothing
+// is wrong" from "doctor never answered".
+func TestEvidenceCollectNotesADoctorThatTimesOut(t *testing.T) {
+	was := doctorTimeout
+	doctorTimeout = 20 * time.Millisecond
+	t.Cleanup(func() { doctorTimeout = was })
+
+	getenv := evidenceEnv(t)
+	id := evidenceID()
+	blocked := make(chan struct{})
+	t.Cleanup(func() { close(blocked) })
+	ev, err := Collect(context.Background(), id, Options{
+		Version: "v0.5.2", Getenv: getenv, GOOS: "linux",
+		Open: func(cmdlog.ID) (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader("Failed in 1.2s\n")), nil
+		},
+		Doctor: func(ctx context.Context) ([]byte, error) {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-blocked:
+				return []byte("the doctor answered too late\n"), nil
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	got := evidenceRead(t, ev.EvidenceDir)["doctor.txt"]
+	if !strings.Contains(got, "did not finish within") {
+		t.Errorf("doctor.txt = %q, want a note that doctor did not finish in time", got)
+	}
+	if strings.Contains(got, "too late") {
+		t.Error("doctor.txt carries a doctor's answer to a call that was abandoned")
+	}
+}
+
+// TestEvidenceCollectDoesNotWaitForADoctorThatIgnoresItsDeadline: the timeout is
+// the collector's own (F23), and it cannot rest on the doctor reading the
+// context it is handed. A doctor that ignores it — a cloud client that hung, a
+// subprocess nobody kills — is exactly the state this diagnosis exists for, so
+// the collection returns without the call and the note says it was abandoned.
+func TestEvidenceCollectDoesNotWaitForADoctorThatIgnoresItsDeadline(t *testing.T) {
+	was := doctorTimeout
+	doctorTimeout = 20 * time.Millisecond
+	t.Cleanup(func() { doctorTimeout = was })
+
+	getenv := evidenceEnv(t)
+	id := evidenceID()
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	ev, err := Collect(context.Background(), id, Options{
+		Version: "v0.5.2", Getenv: getenv, GOOS: "linux",
+		Open: func(cmdlog.ID) (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader("Failed in 1.2s\n")), nil
+		},
+		Doctor: func(context.Context) ([]byte, error) {
+			<-release // the context handed to it decides nothing here
+			return []byte("the doctor answered too late\n"), nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("Collect: %v, want it to return without a doctor that never answers", err)
+	}
+	got := evidenceRead(t, ev.EvidenceDir)["doctor.txt"]
+	if !strings.Contains(got, "did not finish within") {
+		t.Errorf("doctor.txt = %q, want a note that doctor did not finish in time: the collection waited on a doctor that ignores its deadline", got)
+	}
+	if strings.Contains(got, "too late") {
+		t.Error("doctor.txt carries a doctor's answer to a call that was abandoned")
+	}
+}
+
+// TestEvidenceCollectKeepsTheEndOfAnOversizeLog: a log is unbounded, and a
+// command that streamed gigabytes would otherwise be read into memory whole.
+// What is kept is the end, because that is where a failed command writes why
+// it failed, and the file says what was left out — a truncated log that
+// claimed to be the whole one would be a lie the diagnosis rests on.
+func TestEvidenceCollectKeepsTheEndOfAnOversizeLog(t *testing.T) {
+	was := maxLogBytes
+	maxLogBytes = 256
+	t.Cleanup(func() { maxLogBytes = was })
+
+	getenv := evidenceEnv(t)
+	id := evidenceID()
+	head := "step: the beginning of a very long stream\n"
+	tail := "Step failed: quota exceeded\n"
+	logText := head + strings.Repeat("a long line of installation output\n", 20) + tail
+	ev, err := Collect(context.Background(), id, Options{
+		Version: "v0.5.2", Getenv: getenv, GOOS: "linux",
+		Open: func(cmdlog.ID) (io.ReadCloser, error) { return io.NopCloser(strings.NewReader(logText)), nil },
+	})
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	got := evidenceRead(t, ev.EvidenceDir)[id.String()+".log"]
+	if !strings.Contains(got, tail) {
+		t.Errorf("the log file does not hold the end of the log: %q", got)
+	}
+	if strings.Contains(got, head) {
+		t.Errorf("the log file holds the beginning of a log past the cap: %q", got)
+	}
+	if !strings.Contains(got, "only its last") {
+		t.Errorf("the log file does not say what was left out: %q", got)
+	}
+}
+
+// TestEvidenceCollectKeepsTheEndOfALogManyTimesTheCap: the store that writes the
+// log caps nothing (internal/report/logsink.go), so a collection meets logs many
+// times maxLogBytes, and the tail is read through a ring rather than by sliding a
+// full buffer down per chunk (tailOf). What the file keeps is still the log's own
+// end, byte for byte, and the note still states the whole length rather than the
+// length kept — a truncated end that read as the whole log would be a lie the
+// diagnosis rests on.
+func TestEvidenceCollectKeepsTheEndOfALogManyTimesTheCap(t *testing.T) {
+	was := maxLogBytes
+	// 100 KiB is not a multiple of the 32 KiB the read loop asks for, so a chunk
+	// lands across the ring's end and the wrap is what this test reads.
+	maxLogBytes = 100 << 10
+	t.Cleanup(func() { maxLogBytes = was })
+
+	getenv := evidenceEnv(t)
+	id := evidenceID()
+	head := "step: the beginning of a very long stream\n"
+	tail := "Step failed: quota exceeded\n"
+	logText := head + strings.Repeat("a line of installation output\n", 64*int(maxLogBytes)/32) + tail
+	ev, err := Collect(context.Background(), id, Options{
+		Version: "v0.5.2", Getenv: getenv, GOOS: "linux",
+		Open: func(cmdlog.ID) (io.ReadCloser, error) { return io.NopCloser(strings.NewReader(logText)), nil },
+	})
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	got := evidenceRead(t, ev.EvidenceDir)[id.String()+".log"]
+	if !strings.HasSuffix(got, logText[len(logText)-int(maxLogBytes):]) {
+		t.Errorf("the log file does not end with the log's own last %d bytes: the tail is not the log's tail", maxLogBytes)
+	}
+	if !strings.Contains(got, tail) {
+		t.Errorf("the log file does not hold the end of the log: %q", got[len(got)-120:])
+	}
+	if strings.Contains(got, head) {
+		t.Errorf("the log file holds the beginning of a log many times the cap: %q", got[:120])
+	}
+	if want := fmt.Sprintf("is %d bytes", len(logText)); !strings.Contains(got, want) {
+		t.Error("the log file does not state the whole length of the log it shortened")
+	}
+}
+
+// TestEvidenceCollectRedactsTheValueTheCapWouldSplit: the tail is cut at a byte
+// offset, so a credential standing where the cut falls would reach the file as
+// two halves — the bytes before the cut dropped, the rest kept — and neither
+// pass knows half of a value, so the half that is kept would be kept as it
+// stands. The window (logRedactOverlap) is what keeps that from happening: the
+// passes see the value whole, and what stands at the cut is [REDACTED]. The
+// secret here straddles the cut by construction, three bytes of it before it
+// and the rest after, and the log is longer than the window, so the cut is
+// inside the log rather than at its start.
+func TestEvidenceCollectRedactsTheValueTheCapWouldSplit(t *testing.T) {
+	getenv := evidenceEnv(t)
+	id := evidenceID()
+	end := "the installation stopped after the account was read\n"
+	wasMax, wasOverlap := maxLogBytes, logRedactOverlap
+	t.Cleanup(func() { maxLogBytes, logRedactOverlap = wasMax, wasOverlap })
+
+	// Both passes are read the same way, because a fragment is a fragment
+	// whichever of them would have replaced the value whole.
+	for _, tc := range []struct{ what, value string }{
+		{"the value the caller named", evidenceValue(t, "at-the-cut")},
+		{"a credential-shaped value nobody named", evidenceShape()},
+	} {
+		// The kept tail is the log's last maxLogBytes bytes, so the cap is set
+		// to put the value's fourth byte at that offset: three bytes of it are
+		// left out, and the rest is what a cut without the window would keep.
+		// The newline after the value is what keeps a shape's own match from
+		// running into the line below it: a token shape is greedy over the
+		// characters that spell one, and `the` is spelled with them.
+		maxLogBytes = int64(len(tc.value) + 1 + len(end) - 3)
+		logRedactOverlap = 512
+		logText := strings.Repeat("a line of installation output\n", 1<<9) + tc.value + "\n" + end
+
+		ev, err := Collect(context.Background(), id, Options{
+			Version: "v0.5.2", Getenv: getenv, GOOS: "linux",
+			Open:    func(cmdlog.ID) (io.ReadCloser, error) { return io.NopCloser(strings.NewReader(logText)), nil },
+			Secrets: []string{evidenceValue(t, "at-the-cut")},
+		})
+		if err != nil {
+			t.Fatalf("Collect: %v", err)
+		}
+		got := evidenceRead(t, ev.EvidenceDir)[id.String()+".log"]
+		if strings.Contains(got, tc.value) {
+			t.Errorf("the log file carries %s the cut ran through", tc.what)
+		}
+		if kept := tc.value[3:]; strings.Contains(got, kept) {
+			t.Errorf("the log file carries %q, the part of %s past the cut: the passes saw half a value and neither knows one", kept, tc.what)
+		}
+		if !strings.Contains(got, "[REDACTED]") {
+			t.Errorf("the log file holds no [REDACTED] where the cut fell: %s reached it in one piece nobody replaced", tc.what)
+		}
+		if !strings.Contains(got, end) {
+			t.Errorf("the log file does not hold the log's own last line: %q", got)
+		}
+	}
+}
+
+// TestEvidenceCollectNotesALogTheRedactionCut: a log inside the cap can be
+// longer than the cap once redacted, because a pass puts a marker of its own
+// length where a value stood and a value shorter than that marker grows, and
+// the cut then takes the front of the text. The note is what says so: a file
+// that begins mid-log without it is a file a reader takes for the whole log.
+func TestEvidenceCollectNotesALogTheRedactionCut(t *testing.T) {
+	was := maxLogBytes
+	t.Cleanup(func() { maxLogBytes = was })
+	getenv := evidenceEnv(t)
+	id := evidenceID()
+	head := "the beginning of the log, which the cut takes\n"
+	tail := "Step failed: quota exceeded\n"
+	logText := head + evidenceFrag + "\n" + tail
+	// The cap is the log's own length, so the log fits it and the read keeps
+	// every byte of it: what can go is only what the cut takes, and the
+	// fragment stands as a marker longer than itself, which puts the redacted
+	// text past the cap. A cap even one byte under the log would not show it —
+	// the note that names the log's size against the cap is written there
+	// already — which is what makes this the case that went silent.
+	maxLogBytes = int64(len(logText))
+	ev, err := Collect(context.Background(), id, Options{
+		Version: "v0.5.2", Getenv: getenv, GOOS: "linux",
+		Open:    func(cmdlog.ID) (io.ReadCloser, error) { return io.NopCloser(strings.NewReader(logText)), nil },
+		Secrets: []string{evidenceFrag},
+	})
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	got := evidenceRead(t, ev.EvidenceDir)[id.String()+".log"]
+	if strings.Contains(got, head) {
+		t.Errorf("the log file holds the beginning of a log the cut went through: %q", got)
+	}
+	if !strings.Contains(got, tail) {
+		t.Errorf("the log file does not hold the end of the log: %q", got)
+	}
+	if !strings.Contains(got, "left out") {
+		t.Errorf("the log file does not say its beginning was left out: %q", got)
+	}
+	if strings.Contains(got, evidenceFrag) {
+		t.Errorf("the log file carries the value the caller named: %q", got)
+	}
+}
+
+// TestEvidenceCollectDoesNotNoteALogItKeptWhole: a log inside the cap that
+// redaction makes shorter is still the whole log, and the file must not carry
+// the note. The note is about bytes that were left out, and redaction changing
+// the text's length is not that: a file saying its beginning was left out while
+// holding the log's first line is the lie the note exists to prevent.
+func TestEvidenceCollectDoesNotNoteALogItKeptWhole(t *testing.T) {
+	was := maxLogBytes
+	t.Cleanup(func() { maxLogBytes = was })
+	getenv := evidenceEnv(t)
+	id := evidenceID()
+	head := "the beginning of the log, which the file holds\n"
+	tail := "Step failed: quota exceeded\n"
+	value := evidenceValue(t, "whole")
+	logText := head + value + "\n" + tail
+	maxLogBytes = int64(len(logText))
+	ev, err := Collect(context.Background(), id, Options{
+		Version: "v0.5.2", Getenv: getenv, GOOS: "linux",
+		Open:    func(cmdlog.ID) (io.ReadCloser, error) { return io.NopCloser(strings.NewReader(logText)), nil },
+		Secrets: []string{value},
+	})
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	got := evidenceRead(t, ev.EvidenceDir)[id.String()+".log"]
+	if !strings.Contains(got, head) {
+		t.Errorf("the log file does not hold the beginning of a log that fits the cap: %q", got)
+	}
+	if strings.Contains(got, "left out") {
+		t.Errorf("the log file says the beginning was left out of a log it holds whole: %q", got)
+	}
+	if strings.Contains(got, value) {
+		t.Errorf("the log file carries the value the caller named: %q", got)
+	}
+}
+
+// TestEvidenceCollectReplacesAnEarlierCollection: the folder belongs to the run
+// ID (one diagnosis per failed command), so a second collection writes over the
+// first's files. A file the first left and the second does not write would be
+// evidence for a diagnosis nobody ran here.
+func TestEvidenceCollectReplacesAnEarlierCollection(t *testing.T) {
+	getenv := evidenceEnv(t)
+	id := evidenceID()
+	first := evidenceValue(t, "first")
+	collect := func(logText string) Evidence {
+		t.Helper()
+		ev, err := Collect(context.Background(), id, Options{
+			Version: "v0.5.2", Getenv: getenv, GOOS: "linux",
+			Open:    func(cmdlog.ID) (io.ReadCloser, error) { return io.NopCloser(strings.NewReader(logText)), nil },
+			Secrets: []string{first},
+		})
+		if err != nil {
+			t.Fatalf("Collect: %v", err)
+		}
+		return ev
+	}
+	ev := collect("Failed in 1.2s: " + first + "\n")
+	collect("Failed in 1.2s: a second run\n")
+	files := evidenceRead(t, ev.EvidenceDir)
+	for name, text := range files {
+		if strings.Contains(text, first) {
+			t.Errorf("%s still carries the first collection's text: a second collection replaces the folder", name)
+		}
+	}
+}
+
+// TestEvidenceCollectRefusesWhatIsNotARunID: the folder's name comes from the
+// run ID, so an ID nothing wrote is refused before anything is created. The
+// state directory is left as it was: a refusal writes nothing.
+func TestEvidenceCollectRefusesWhatIsNotARunID(t *testing.T) {
+	for _, id := range []cmdlog.ID{
+		{Command: "../logs", At: time.Date(2026, 11, 7, 18, 30, 12, 0, time.UTC), PID: 1},
+		{Command: "Update", At: time.Date(2026, 11, 7, 18, 30, 12, 0, time.UTC), PID: 1},
+		{Command: "", At: time.Date(2026, 11, 7, 18, 30, 12, 0, time.UTC), PID: 1},
+	} {
+		getenv := evidenceEnv(t)
+		_, err := Collect(context.Background(), id, Options{
+			Version: "v0.5.2", Getenv: getenv, GOOS: "linux",
+			Open: func(cmdlog.ID) (io.ReadCloser, error) {
+				return io.NopCloser(strings.NewReader("Failed in 1.2s\n")), nil
+			},
+		})
+		switch {
+		case err == nil:
+			t.Errorf("Collect(%q) = nil error, want a refusal: that is not a run ID a log is filed under", id)
+		case !strings.Contains(err.Error(), "run ID"):
+			t.Errorf("Collect(%q) = %v, want the refusal to name what a run ID is", id, err)
+		}
+	}
+}
+
+// TestEvidenceCollectFailsWhenTheLogCannotBeRead: the log is the evidence the
+// diagnosis is about, so a run whose log cannot be read is not a diagnosis with
+// less evidence — it is no diagnosis. Nothing is written: the folder is created
+// after the log is in hand.
+func TestEvidenceCollectFailsWhenTheLogCannotBeRead(t *testing.T) {
+	getenv := evidenceEnv(t)
+	id := evidenceID()
+	_, err := Collect(context.Background(), id, Options{
+		Version: "v0.5.2", Getenv: getenv, GOOS: "linux",
+		Open:   func(cmdlog.ID) (io.ReadCloser, error) { return nil, cmdlog.ErrNoLog },
+		Doctor: func(context.Context) ([]byte, error) { return []byte("all checks are ok\n"), nil },
+	})
+	if !errors.Is(err, cmdlog.ErrNoLog) {
+		t.Fatalf("Collect = %v, want the log read's own error", err)
+	}
+	entries, err := os.ReadDir(getenv("XDG_STATE_HOME"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("a collection with no log left %d entries in the state directory: nothing is created before the log is in hand", len(entries))
+	}
+}
+
+// TestEvidenceCollectGivesUpOnALogThatNeverProgresses: Open is a seam, so the
+// reader behind it is not always the log store's own file. A reader that
+// answers every call with nothing and no error must end the collection rather
+// than spin it: a diagnosis that never returns is a diagnosis nobody gets.
+func TestEvidenceCollectGivesUpOnALogThatNeverProgresses(t *testing.T) {
+	getenv := evidenceEnv(t)
+	id := evidenceID()
+	_, err := Collect(context.Background(), id, Options{
+		Version: "v0.5.2", Getenv: getenv, GOOS: "linux",
+		Open: func(cmdlog.ID) (io.ReadCloser, error) {
+			return io.NopCloser(evidenceStall{}), nil
+		},
+	})
+	if !errors.Is(err, io.ErrNoProgress) {
+		t.Fatalf("Collect = %v, want the read to give up: an empty read is not the end of a stream", err)
+	}
+}
+
+// evidenceStall reads nothing forever without ever saying so.
+type evidenceStall struct{}
+
+func (evidenceStall) Read([]byte) (int, error) { return 0, nil }
+
+// evidenceNames is a folder's file names, sorted, for a failure message.
+func evidenceNames(files map[string]string) []string {
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// evidenceMode is one file's permission bits.
+func evidenceMode(t *testing.T, path string) os.FileMode {
+	t.Helper()
+	fi, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	return fi.Mode().Perm()
+}

@@ -227,8 +227,8 @@ func TestUpdatePrintsRetryForResolvedIssue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fugaro update stopped at %s:\n%s\n%s", stoppedStage(out), out, errOut)
 	}
-	if !strings.Contains(errOut, "You can retry: fugaro update --repo [REDACTED]\n") {
-		t.Errorf("the update that installed the release fixing this machine's issue does not offer the retry:\n%s\n%s", out, errOut)
+	if want := resolvedFixedLine(up.Number, "fugaro update --repo [REDACTED]", true); !strings.Contains(errOut, want) {
+		t.Errorf("the update that installed the release fixing this machine's issue does not print %q:\n%s\n%s", want, out, errOut)
 	}
 	got, err := store.Get(strconv.Itoa(up.Number))
 	if err != nil {
@@ -249,7 +249,7 @@ func TestUpdateRetryIgnoresHostileSharedCommand(t *testing.T) {
 		[]issues.Issue{retryLocal("fugaro update")},
 		[]issues.SharedRow{retryRow(7, retryRelease, hostile)},
 		retryRelease, NewRootCmd())
-	if len(lines) != 1 || lines[0] != "You can retry: fugaro update" {
+	if len(lines) != 1 || lines[0] != resolvedFixedLine(7, "fugaro update", true) {
 		t.Fatalf("lines = %q, want this machine's own command alone", lines)
 	}
 	if len(mark) != 1 {
@@ -295,10 +295,10 @@ func TestUpdateRetryPrintsOnlyFugaroCommands(t *testing.T) {
 		command string
 		want    string
 	}{
-		{"fugaro update", "You can retry: fugaro update"},
-		{"fugaro update --repo [REDACTED]", "You can retry: fugaro update --repo [REDACTED]"},
-		{"fugaro run [REDACTED]", "You can retry: fugaro run [REDACTED]"},
-		{"fugaro issue show [REDACTED]", "You can retry: fugaro issue show [REDACTED]"},
+		{"fugaro update", "fugaro update"},
+		{"fugaro update --repo [REDACTED]", "fugaro update --repo [REDACTED]"},
+		{"fugaro run [REDACTED]", "fugaro run [REDACTED]"},
+		{"fugaro issue show [REDACTED]", "fugaro issue show [REDACTED]"},
 		{"[REDACTED] update", ""},
 		{"fugaro frobnicate", ""},
 		{"fugaro issue frobnicate", ""},
@@ -308,8 +308,8 @@ func TestUpdateRetryPrintsOnlyFugaroCommands(t *testing.T) {
 		{"fugaro -v frobnicate", ""},
 		{"fugaro --verbose issue frobnicate", ""},
 		{"fugaro -v issue frobnicate", ""},
-		{"fugaro -v update", "You can retry: fugaro -v update"},
-		{"fugaro -v issue show [REDACTED]", "You can retry: fugaro -v issue show [REDACTED]"},
+		{"fugaro -v update", "fugaro -v update"},
+		{"fugaro -v issue show [REDACTED]", "fugaro -v issue show [REDACTED]"},
 		{"sh -c [REDACTED]", ""},
 		{"", ""},
 		// A stored command a shell runs as two.
@@ -342,8 +342,15 @@ func TestUpdateRetryPrintsOnlyFugaroCommands(t *testing.T) {
 			if len(lines) > 0 {
 				got = lines[0]
 			}
-			if got != tc.want {
-				t.Errorf("retryHintLines(%q) = %q, want %q", tc.command, got, tc.want)
+			// tc.want is the command the line offers, and the line itself is
+			// resolvedFixedLine's — the wording both callers print, pinned by
+			// update_resolved_test.go's own test.
+			want := ""
+			if tc.want != "" {
+				want = resolvedFixedLine(7, tc.want, true)
+			}
+			if got != want {
+				t.Errorf("retryHintLines(%q) = %q, want %q", tc.command, got, want)
 			}
 		})
 	}
@@ -403,7 +410,7 @@ func TestUpdateRetryOnce(t *testing.T) {
 
 	cmd, o, _, errOut := retryRig(t)
 	updateRetryHint(cmd, o, nil)
-	if got := errOut.String(); got != "You can retry: fugaro update\n" {
+	if got := errOut.String(); got != resolvedFixedLine(number, "fugaro update", true)+"\n" {
 		t.Fatalf("the first update printed %q, want the one offer", got)
 	}
 	got, err := store.Get(strconv.Itoa(number))
@@ -414,7 +421,7 @@ func TestUpdateRetryOnce(t *testing.T) {
 		t.Fatal("the offer was not marked in the local issue file")
 	}
 	updateRetryHint(cmd, o, nil)
-	if got := errOut.String(); got != "You can retry: fugaro update\n" {
+	if got := errOut.String(); got != resolvedFixedLine(number, "fugaro update", true)+"\n" {
 		t.Errorf("the second update printed %q, want one offer per issue", got)
 	}
 }
@@ -442,8 +449,8 @@ func TestUpdateRetryMakesNoCloudWrite(t *testing.T) {
 	before := retryBucketFiles(t, dir)
 	cmd, o, _, errOut := retryRig(t)
 	updateRetryHint(cmd, o, nil)
-	if errOut.String() != "You can retry: fugaro update\n" {
-		t.Fatalf("the offer printed %q, so this test proves nothing about what it wrote", errOut.String())
+	if want := resolvedFixedLine(up.Number, "fugaro update", true) + "\n"; errOut.String() != want {
+		t.Fatalf("the offer printed %q, want %q, so this test proves nothing about what it wrote", errOut.String(), want)
 	}
 	if after := retryBucketFiles(t, dir); !maps.Equal(before, after) {
 		t.Errorf("the offer wrote to the shared store: %d object(s) before, %d after", len(before), len(after))
@@ -487,7 +494,7 @@ func TestUpdateRetryRunsNothing(t *testing.T) {
 
 	cmd, o, _, errOut := retryRig(t)
 	updateRetryHint(cmd, o, nil)
-	if !strings.Contains(errOut.String(), "You can retry: fugaro update\n") {
+	if !strings.Contains(errOut.String(), resolvedFixedLine(number, "fugaro update", true)) {
 		t.Fatalf("the offer did not print the command:\n%s", errOut.String())
 	}
 	if _, err := os.Stat(marker); err == nil {
@@ -508,8 +515,8 @@ func TestUpdateRetryAgentSessionMarksNothing(t *testing.T) {
 
 	cmd, o, _, errOut := retryRig(t)
 	updateRetryHint(cmd, o, nil)
-	if errOut.String() != "You can retry: fugaro update\n" {
-		t.Fatalf("an agent's session printed %q, want the same offer", errOut.String())
+	if want := resolvedFixedLine(number, "fugaro update", true) + "\n"; errOut.String() != want {
+		t.Fatalf("an agent's session printed %q, want %q", errOut.String(), want)
 	}
 	got, err := store.Get(strconv.Itoa(number))
 	if err != nil {
@@ -598,8 +605,8 @@ func TestUpdateRetryReadsTheCheckoutsStore(t *testing.T) {
 	cmd, o, _, errOut := retryRig(t)
 	o.repo = true
 	updateRetryHint(cmd, o, []string{checkout})
-	if errOut.String() != "You can retry: fugaro update\n" {
-		t.Fatalf("fugaro update --repo %s printed %q, want the checkout's own store read:\n%s", checkout, errOut.String(), errOut.String())
+	if want := resolvedFixedLine(up.Number, "fugaro update", true) + "\n"; errOut.String() != want {
+		t.Fatalf("fugaro update --repo %s printed %q, want %q", checkout, errOut.String(), want)
 	}
 	got, err := store.Get(strconv.Itoa(up.Number))
 	if err != nil {
@@ -621,7 +628,7 @@ func TestUpdateRetrySelectsTheProjectTheRunNamed(t *testing.T) {
 		want string
 	}{
 		// The project the run named: its store holds the resolved issue.
-		{"aurora", "You can retry: fugaro update\n"},
+		{"aurora", "fugaro update"},
 		// The other config on the machine: its store holds nothing, so the
 		// name is what the offer went by and not the single store it found.
 		{"bramble", ""},
@@ -648,8 +655,12 @@ func TestUpdateRetrySelectsTheProjectTheRunNamed(t *testing.T) {
 			cmd, o, _, errOut := retryRig(t)
 			o.name = tc.name
 			updateRetryHint(cmd, o, nil)
-			if errOut.String() != tc.want {
-				t.Fatalf("fugaro update --name %s printed %q, want %q", tc.name, errOut.String(), tc.want)
+			want := ""
+			if tc.want != "" {
+				want = resolvedFixedLine(up.Number, tc.want, true) + "\n"
+			}
+			if errOut.String() != want {
+				t.Fatalf("fugaro update --name %s printed %q, want %q", tc.name, errOut.String(), want)
 			}
 		})
 	}
@@ -719,7 +730,7 @@ func TestUpdateRetryAppliesTheRunsBucket(t *testing.T) {
 		runsBucket string
 		want       string
 	}{
-		{"the config's own bucket", "", "You can retry: fugaro update\n"},
+		{"the config's own bucket", "", "fugaro update"},
 		{"the bucket the run passed", "other", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -741,8 +752,12 @@ func TestUpdateRetryAppliesTheRunsBucket(t *testing.T) {
 			cmd, o, _, errOut := retryRig(t)
 			o.runsBucket = tc.runsBucket
 			updateRetryHint(cmd, o, nil)
-			if errOut.String() != tc.want {
-				t.Fatalf("fugaro update --runs-bucket %q printed %q, want %q", tc.runsBucket, errOut.String(), tc.want)
+			want := ""
+			if tc.want != "" {
+				want = resolvedFixedLine(up.Number, tc.want, true) + "\n"
+			}
+			if errOut.String() != want {
+				t.Fatalf("fugaro update --runs-bucket %q printed %q, want %q", tc.runsBucket, errOut.String(), want)
 			}
 		})
 	}
@@ -755,7 +770,17 @@ func TestUpdateRetryAppliesTheRunsBucket(t *testing.T) {
 // one question — and without the flag nothing changes. It is a function of its
 // own because the seam it feeds opens a gs:// URL, which no hermetic test can
 // reach: the answer is what is checked, not the open.
+//
+// The last two rows are that same rule seen from the other side: a config
+// whose endpoints are fakes answers with no bucket at all, so the seam opens
+// nothing real (the e2e upgrade tests run whole installations whose configs
+// carry fake endpoints, and the resolved-issues step reads this store).
+// skipGSOnFakeEndpoints is off for this package's tests, so the two rows turn
+// it on for themselves, exactly as the skip's own tests do.
 func TestUpdateRetryBucketURL(t *testing.T) {
+	old := skipGSOnFakeEndpoints
+	skipGSOnFakeEndpoints = true
+	t.Cleanup(func() { skipGSOnFakeEndpoints = old })
 	for _, tc := range []struct {
 		name       string
 		config     localcfg.Config
@@ -771,6 +796,10 @@ func TestUpdateRetryBucketURL(t *testing.T) {
 		// Unreachable through a selection (localcfg refuses a config with
 		// neither), and the guard the seam had before it: one silence more.
 		{"no bucket anywhere", localcfg.Config{}, "", ""},
+		// A test's or an emulator's installation: its endpoints stand for the
+		// gs:// bucket above, so that bucket is not opened for real.
+		{"fake endpoints over a runs_bucket", localcfg.Config{RunsBucket: "old", Endpoints: localcfg.Endpoints{NoAuth: true}}, "", ""},
+		{"fake endpoints over a bucket_url", localcfg.Config{Bucket: "gs://old", Endpoints: localcfg.Endpoints{Storage: "http://127.0.0.1:1/storage/v1/"}}, "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			lc := tc.config

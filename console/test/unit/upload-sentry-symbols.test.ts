@@ -36,6 +36,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { afterEach, describe, expect, it } from 'vitest'
+import { itHostRoute } from '../support/hostRoute'
 
 /** The script under test, and the console directory whose `dist/main` and
  * `package.json` its own arguments are resolved against. */
@@ -170,7 +171,7 @@ describe('the symbol upload with no token', () => {
 })
 
 describe('the inject run', () => {
-  it('runs one command, the inject, on the built main process, and nothing else', () => {
+  itHostRoute('runs one command, the inject, on the built main process, and nothing else', () => {
     const dir = scratch()
     const { env, record } = uploadEnv(dir)
     const { status } = runScript(env, ['inject'])
@@ -184,7 +185,7 @@ describe('the inject run', () => {
     ])
   })
 
-  it('reaches the CLI with the token in its environment and nowhere else', () => {
+  itHostRoute('reaches the CLI with the token in its environment and nowhere else', () => {
     const dir = scratch()
     const { env, record } = uploadEnv(dir)
     runScript(env, ['inject'])
@@ -213,7 +214,7 @@ describe('the inject run', () => {
 })
 
 describe('the symbol upload with a token', () => {
-  it('runs the two uploads, in order, with the exact arguments', () => {
+  itHostRoute('runs the two uploads, in order, with the exact arguments', () => {
     const dir = scratch()
     const { env, record } = uploadEnv(dir)
     const { status } = runScript(env)
@@ -257,7 +258,7 @@ describe('the symbol upload with a token', () => {
     for (const line of argv) expect(line).not.toContain(PLACEHOLDER_TOKEN)
   })
 
-  it('sets the org, the project and the EU region beside the token', () => {
+  itHostRoute('sets the org, the project and the EU region beside the token', () => {
     const dir = scratch()
     const { env, record } = uploadEnv(dir)
     runScript(env)
@@ -267,7 +268,7 @@ describe('the symbol upload with a token', () => {
     ])
   })
 
-  it('tags the upload with console/package.json’s version when nothing names one', () => {
+  itHostRoute('tags the upload with console/package.json’s version when nothing names one', () => {
     const dir = scratch()
     const declared = String((JSON.parse(readFileSync(path.join(consoleRoot, 'package.json'), 'utf8')) as { version: unknown }).version)
     const { env, record } = uploadEnv(dir)
@@ -287,7 +288,7 @@ describe('the symbol upload with a token', () => {
     }
   })
 
-  it('tags the inject run with the same release, read the same way', () => {
+  itHostRoute('tags the inject run with the same release, read the same way', () => {
     // The stamp and the upload have to agree: the id `inject` writes into the
     // file and the map is looked up under the release the map was filed under,
     // so a run that read one version and a run that read another would file
@@ -302,7 +303,7 @@ describe('the symbol upload with a token', () => {
     ])
   })
 
-  it('stops at the first failure and exits with the CLI’s own code', () => {
+  itHostRoute('stops at the first failure and exits with the CLI’s own code', () => {
     const dir = scratch()
     const { env, record } = uploadEnv(dir, 3)
     const { status } = runScript(env)

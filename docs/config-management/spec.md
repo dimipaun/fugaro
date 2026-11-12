@@ -1,6 +1,6 @@
 # The design: managing every configuration, behind the generic writer and the managed gate
 
-**Status as of 2026-11-10: in progress, 5/14 merged; see [docs/status.md](../status.md) for the current table.** Every decision in this document is **open with a
+**Status as of 2026-11-10: in progress, 8/14 merged; see [docs/status.md](../status.md) for the current table.** Every decision in this document is **open with a
 recommendation**, written to be answered by the owner. **Where this file and
 [reconciliation.md](reconciliation.md) disagree, the reconciliation wins.**
 
@@ -22,7 +22,7 @@ edits a file by hand. Three properties define it, and each is a rule of this des
    a key whose owner is not a command that exists, or a sentence saying `setup` or `update` owns it, is
    the defect this design closes (§4).
 2. **Every shape has a mechanism.** The generic writer handles scalars and string lists today
-   (`internal/cli/settings_set.go:96`); a map entry, an object-list entry and a
+   (`internal/cli/settings_set.go:105`); a map entry, an object-list entry and a
    concrete spelling of a wildcard key have none. §2 gives them one, in the generic path, and a
    dedicated command exists only where a rule differs (§3).
 3. **Nothing is published by a second command.** The HARD RULE in `CLAUDE.md` — `fugaro update` is the
@@ -41,29 +41,29 @@ project layer file's entries, D1175), and the dedicated commands of §3 are then
 
 The registry spells a wildcard key `workflows.*.commands.test`
 (`internal/settings/registry.go:223`). `settingsWriteLookup`
-(`internal/cli/settings_set.go:551`) reaches a wildcard row only for a spelling
+(`internal/cli/settings_set.go:570`) reaches a wildcard row only for a spelling
 `settingsGenericKeys` names, so a concrete key a person would type — `workflows.web.commands.test` —
 resolves to no row and is refused.
 
 **Recommendation (D1161): a concrete key matches the wildcard row whose pattern it fits.** The
 resolution is the settings read's own rule, reused rather than re-derived:
-`settingsPatternMatch` (`internal/cli/settings_set.go:574`) already matches a
+`settingsPatternMatch` (`internal/cli/settings_set.go:593`) already matches a
 pattern against a concrete key. The write path uses it to find the row, keeps the concrete key in the
 document it prints and the diff it shows, and the registry row supplies the layers, the default, the
 merge rule and the owner. The alternative — requiring the literal `*` — costs nothing to write and
 makes the command unusable by a person, which is the whole point of the ruling.
 
 **What changes is the allowlist and not the resolver.** The wildcard loop is already bounded to rows
-`settingsGenericKeys` names by name (`internal/cli/settings_set.go:551`), which is how
-`stages.*.claude_account` (`:120`) is reachable and why `workflows.*` is not; the literal `*` spelling
-keeps its own refusal (`:501`). So the task is to decide, row by row, which wildcard blocks the generic
+`settingsGenericKeys` names by name (`internal/cli/settings_set.go:570`), which is how
+`stages.*.claude_account` (`:129`) is reachable and why `workflows.*` is not; the literal `*` spelling
+keeps its own refusal (`:511`). So the task is to decide, row by row, which wildcard blocks the generic
 path carries — the same decision `settingsGenericKeys` is for at every other row — and the resolver
 needs no change at all.
 
 ### 2.2 `--add-entry` and `--remove-entry`
 
 `settings set --add` and `--remove` already add and remove **items of a string-list key**
-(`internal/cli/settings_set.go:261`, `:1851`), through `yamledit.AddListItem` and
+(`internal/cli/settings_set.go:280`, `:1870`), through `yamledit.AddListItem` and
 `yamledit.RemoveListItem` (`internal/yamledit/yamledit.go:234`, `:258`). They do not
 reach a **map** (`workflows.*.cache.*.key`, `providers.*.models`) or an **object list**
 (`workflows.*.cache` is a sequence of mappings, `workflows.*.secrets` a sequence of
@@ -89,8 +89,8 @@ entry by `name`), because the registry names leaves and not blocks.
 ### 2.3 The dry run, the confirmation, the backup and the compare-and-swap
 
 **Recommendation (D1166): an entry write is the same edit as any other.** It is classified by the same
-`settingsTypedWrite` call (`internal/cli/settings_set.go:1684`), printed by the
-same dry-run document (`internal/cli/settings_set.go:2019`), confirmed through
+`settingsTypedWrite` call (`internal/cli/settings_set.go:1703`), printed by the
+same dry-run document (`internal/cli/settings_set.go:2038`), confirmed through
 the same `applySettingsEdit` (`internal/cli/settings_write.go:86`), backed up
 by the same `backupFile` (`internal/cli/init.go:2602`) and refused when the file moved by
 the same byte compare-and-swap (`internal/cli/settings_write.go:150`). There is
@@ -210,13 +210,21 @@ and published by a second command. `fugaro config publish`
 the generation (`internal/cli/config_publish.go:255`) and writes the object.
 
 **Recommendation (D1175): every layer entry is a managed entry with a writer** — `profiles.*` (36),
-`defaults.*` (agent, git, rigor), `ab.*` (5) and `claude_models` — reached by the generic writer's §2
-mechanism. The layer's rows already exist in the registry
+`defaults.*` (agent, git, rigor) and `ab.*` (5), the reconciliation's own list: the layer's
+`claude_models` is not one of them, because that key is `fugaro models`' own
+(`internal/settings/registry.go:511`). They are reached by the generic writer's §2 mechanism. The
+layer's rows already exist in the registry
 (`internal/settings/registry.go:411`), so the change is the allowlist and the entry
-mechanism, not a new registry.
+mechanism, not a new registry. **Which of them the generic path writes today is the owner column's
+answer and not this list's**: `fugaro models` owns the five `ab.*` leaves and `defaults.agent`'s
+`model`, `models.*`, `crafts.*.model`, `levels.*` and `recipe`
+(`internal/settings/registry.go:518`, `:625`), and the family refusal is asked before the allowlist
+(`internal/cli/settings_set.go:209`), so those are refused until D1178's owner rename hands them
+over — the `ab` **block** is written now, through §2's entry mechanism, whose row the generic path
+builds itself.
 
 **Recommendation (D1176): the edit's own next step publishes.** `fugaro settings set --layer project`
-already ends with `next: fugaro update` (`internal/cli/settings_set.go:2067`); the
+already ends with `next: fugaro update` (`internal/cli/settings_set.go:2086`); the
 HARD RULE is that `update` publishes the layer, not that a person runs `fugaro config publish` after it.
 `fugaro config publish` therefore **stays** as the operator's own door (and is the door the agent runs
 under the gate, [managed spec](../managed-agent-converge/spec.md) §4.2), but no *edit* here requires it:
@@ -252,7 +260,7 @@ three parts:
   command that would be read as an editor.
 - **The mechanism is the read's own table, not the write's map.** `settingsFamilyCommands` is asked a
   second question too — it is what refuses a write and points the key at its family
-  (`internal/cli/settings_set.go:523`) — so a family cannot simply be added to it: `config` owns
+  (`internal/cli/settings_set.go:542`) — so a family cannot simply be added to it: `config` owns
   `max_parallel` (`internal/settings/registry.go:560`) and `setup` owns `update_check` (`:566`), and both
   are keys the generic path writes today, so an entry for either family would refuse two keys `settings
   set` writes.
@@ -262,10 +270,10 @@ three parts:
 **Recommendation (D1179): the four budget keys stay the generic writer's, and the allowlist gains the
 two it refuses.** `budget.mode`, `budget.per_day_usd`, `budget.per_run_usd` and `budget.allowed_models`
 are a repository's own tightening of a ceiling (`internal/config/scope.go:91`, four `InRepo` rows): two
-of them are already in `settingsGenericKeys` (`internal/cli/settings_set.go:96`) and the other two are
+of them are already in `settingsGenericKeys` (`internal/cli/settings_set.go:105`) and the other two are
 **added to it**, which is the whole of what F13 needs — today they default to the owner `settings set`
 (`internal/settings/registry.go:324`) while the allowlist refuses them on purpose
-(`internal/cli/settings_set.go:79`). `fugaro budget set` keeps writing the budget **database**'s caps
+(`internal/cli/settings_set.go:88`). `fugaro budget set` keeps writing the budget **database**'s caps
 under its ETag-guarded write (`internal/cli/budget.go:923`) and owns no registry row. `compute_prices.*`
 (`internal/settings/registry.go:595`) becomes a generic-writer entry (D1162) as well: it is a deliberate
 local override with its own validation (`internal/localcfg/localcfg.go:119`) that no run's ceiling turns
@@ -282,12 +290,15 @@ is visible in a document it produces before it writes; the rows are:
 | New command or operation | What the managed gate admits | Refused, and who refuses it |
 | --- | --- | --- |
 | `settings set\|unset` with a **concrete** key (§2.1) | Admitted for a key the registry knows at a scope inside the project, where the value lowers no floor and widens no ceiling — **including `budget.mode` and `budget.per_day_usd`**, which D1179 gives the generic path | A widening that takes the typed project name — **D1026**, a `Typed` step is never admitted |
-| `settings set\|unset` with `--add-entry` / `--remove-entry` (§2.2) | Admitted when the entry adds no `allow_data_to` member and no `secrets` member | A `secrets` entry and an `allow_data_to` widening: refused by the widening rule, not by the gate's plan |
-| `fugaro workflow add\|rm` (§3.7) | Admitted as a `--layer repo` write, the one document an agent session may write today | An executable-key change (`image.apt`, `image.setup`, `commands.*`) without the owner's flag |
-| `fugaro rigor set` (§3.1) | Admitted for a mode at or above the resolved mode | `hotfix` (D834), a duplicate glob (D838), and a floor **lowered or removed** — the typed name, D1026 |
-| `fugaro accounts rm` (§3.3) | **Nothing** — a session's referrer check answers itself, so the removal is refused whatever it finds | Any token entry at all, and `allow_data_to` widened |
-| `fugaro secrets rm`, the secret policy flags (§3.2) | **Nothing** — a secret's removal and its policy are values no plan shows | The whole family: refused in a session, gate or not |
-| `fugaro project repos set`, `fugaro image add --image` | Admitted within the plan's caps, on the same rules the layer and the catalog already carry | A reserved key, an executable-key change, and an IAM widening |
+| `settings set\|unset` with `--add-entry` / `--remove-entry` (§2.2) | Admitted when the entry adds no `allow_data_to` member and no `secrets` member | A `secrets` entry and an `allow_data_to` widening: refused by the widening rule, not by the gate's plan (**D1165**), and the typed project name that widening takes is a `Typed` step (**D1026**, **D846**) |
+| `fugaro workflow add\|rm` (§3.7) | Admitted as a `--layer repo` write, the one document an agent session may write today | An executable-key change (`image.apt`, `image.setup`, `commands.*`) without the owner's flag (**D1177**), and a block the gate cannot read as a plan (**D1026**) |
+| `settings set --layer project` (§3.6) | Admitted for a `layer.profiles.*` entry, for a `layer.defaults.*` leaf the allowlist carries, and for the `layer.ab` block's entries through §2's own entry write | `layer.claude_models`, and every leaf `fugaro models` owns — `layer.ab.*`, and `layer.defaults.agent`'s `model`, `models.*`, `crafts.*.model`, `levels.*` and `recipe` — which stay that family's until D1178's owner rename (**D1178**); also a reserved key, and any entry that widens a ceiling or lowers a floor — the typed name (**D1175**, **D1026**) |
+| `fugaro rigor set` (§3.1) | Admitted for a mode at or above the resolved mode | `hotfix` (**D834**), a duplicate glob (**D838**), and a floor **lowered or removed** — the typed name, **D1026** |
+| `fugaro rigor floor` (§3.1) | Admitted for an entry the rank rule admits: a floor added, or one raised | A removal or a lowering, which takes the project's name typed at a terminal with nothing standing in for it (**D1170**, **D846**), and a `Typed` step is never admitted (**D1026**) |
+| `fugaro secrets rm`, the secret policy flags (§3.2) | **Nothing** — a secret's removal and its policy are values no plan shows | The whole family: refused in a session, gate or not (**D1171**) |
+| `fugaro accounts rm` (§3.3) | **Nothing** — a session's referrer check answers itself, so the removal is refused whatever it finds | Any token entry at all, and `allow_data_to` widened (**D1172**, **D868**) |
+| `fugaro project repos set` (§3.4) | Admitted within the plan's caps, on the rules the layer write of §3.6 and the entry write of §2 already carry | A reserved key, an executable-key change, and an IAM widening (**D1173**, **D1026**) |
+| `fugaro image add --image` (§3.5) | Admitted as a catalog entry with a prebuilt source, the same write `--dockerfile` makes | A repository that also names a catalog entry (**D1155**), and an IAM widening (**D1026**) |
 
 **Recommendation (D1181): the agent-session refusal stays everywhere outside the gate.** No task here
 removes a refusal in a coding agent's session; a command is runnable by an agent only when
@@ -302,16 +313,101 @@ here.** About seventy keys are `setup`'s and `update`'s — `endpoints.*` (22),
 `terraform.*`, `batch.*`, `build.*`, `gcp_project`, `region`, `runs_bucket`, `registry`,
 `policy_generation`, `layer_generation`
 (`internal/settings/registry.go:535`, `:571`, `:581`, `:585`, `:659`, `:545`). They
-are not a person's edit; they are the output of the converge. Two of them look like deliberate choices
-with no command today — `terraform.alert_email` (`internal/settings/registry.go:586`)
-and `batch.machine_type` (`internal/settings/registry.go:572`):
+are not a person's edit; they are the output of the converge.
 
-- **A deliberate change is made by the flag that feeds the converge, not by an edit of the file.** The
-  converge already takes `--alert-email` (`internal/cli/init.go:368`) and the batch
-  machine is the design's own default; the recommendation is that a fact a person must choose gets a
-  **flag on `fugaro setup` or `fugaro update`**, reading the same local file it writes today, and the
-  registry row's owner says `fugaro setup` or `fugaro update` and nothing else. A hand edit of a file the
-  next `update` overwrites is the state this design removes.
+The **owner table** is these rows: every key the two doors own that **no writer carries today** — the
+generic path's allowlist refuses it, no family in `settingsFamilyCommands` owns it, and no task here
+gives it a command — with the converge flag that changes it when the two doors have one:
+
+| Installation fact | The converge flag that writes it |
+| --- | --- |
+| `backend` | — |
+| `base_images` | `--base-image` |
+| `batch.boot_image` | — |
+| `batch.image` | — |
+| `batch.machine_type` | — |
+| `batch.network` | — |
+| `batch.service_account` | — |
+| `batch.socket_gid` | — |
+| `batch.subnetwork` | — |
+| `batch.task_timeout` | — |
+| `bucket_url` | `--runs-bucket` |
+| `build.machine_type` | — |
+| `build.region` | — |
+| `build.service_account` | — |
+| `compute_prices.*.gib_second_usd` | — |
+| `compute_prices.*.vcpu_second_usd` | — |
+| `credentials_service.url` | — |
+| `endpoints.api_keys` | — |
+| `endpoints.artifact_registry` | — |
+| `endpoints.batch` | — |
+| `endpoints.cloud_asset` | — |
+| `endpoints.cloud_billing` | — |
+| `endpoints.cloud_build` | — |
+| `endpoints.cloud_scheduler` | — |
+| `endpoints.compute` | — |
+| `endpoints.firebase_database` | — |
+| `endpoints.firebase_management` | — |
+| `endpoints.firebase_rules` | — |
+| `endpoints.firestore` | — |
+| `endpoints.iam` | — |
+| `endpoints.iam_credentials` | — |
+| `endpoints.identity_toolkit` | — |
+| `endpoints.logging` | — |
+| `endpoints.no_auth` | — |
+| `endpoints.resource_manager` | — |
+| `endpoints.run` | — |
+| `endpoints.secret_manager` | — |
+| `endpoints.service_usage` | — |
+| `endpoints.storage` | — |
+| `image_source` | `--image-source` |
+| `layer.jobs.catalog_check.paused` | — |
+| `layer.jobs.reports.paused` | — |
+| `layer_generation` | — |
+| `local.gcp_project` | `--gcp-project` |
+| `local.version` | — |
+| `log_view` | — |
+| `name` | `--name` |
+| `policy_generation` | — |
+| `region` | `--region` |
+| `registry` | — |
+| `registry_host` | — |
+| `runs_bucket` | `--runs-bucket` |
+| `scheduler_region` | `--scheduler-region` |
+| `setup_pending` | — |
+| `terraform.admins` | `--admin` |
+| `terraform.alert_email` | `--alert-email` |
+| `terraform.budget_admins` | `--budget-admin` |
+| `terraform.budget_backend` | `--firebase-project` |
+| `terraform.coordinator` | `--coordinator` |
+| `terraform.no_log_isolation` | `--no-log-isolation` |
+| `terraform.operators` | `--operator` |
+| `terraform.registry_cleanup` | `--registry-cleanup` |
+| `terraform.state_bucket` | `--state-bucket` |
+| `user` | — |
+
+- **A fact with no flag today waits for a flag rather than for an editor.** The `—` cells are not an
+  invitation: the answer to "I want this to be different" is a **new flag on `fugaro setup` or
+  `fugaro update`**, following the same local file the converge reads, and never a hand edit of a file
+  the next `update` overwrites — which is the state this design removes. The rows with a flag are the
+  change a person makes today, and they are the shape every other row takes when it is asked for.
+- **Two rows here are D1179's, and the plan carries its half of that decision in no task at all.**
+  `compute_prices.*.gib_second_usd` and `compute_prices.*.vcpu_second_usd` become the generic writer's
+  entries (§2, D1162) under D1179, so the allowlist gains them and this table loses both rows in the same
+  change: until then the tree has no writer for them at all, which is exactly what a row here says. **That
+  change has no task**, and the two rows are the record of it: the plan gives D1179's allowlist half to
+  **G0**, which landed without these two, and **G12**'s own section disclaims them as G0's
+  (§ plan, G12). A decision the plan does not assign is reported and not decided here —
+  the rows stay, the gap is named, and whichever task the owner gives these two keys drops both rows and
+  this bullet in the same sweep.
+- **Two of them look like deliberate choices with no command today** — `terraform.alert_email`
+  (`internal/settings/registry.go:586`) and `batch.machine_type` (`internal/settings/registry.go:572`).
+  The converge already takes `--alert-email` (`internal/cli/init.go:368`) and the batch machine is the
+  design's own default, so the first is the row's flag and the second stays the converge's own value
+  until somebody needs it changed.
+- **A key the generic writer carries is not an installation fact**, whatever its owner column says:
+  `commit_name`, `commit_email` and `update_check` are `setup`'s by owner and `settings set`'s by the
+  allowlist (D1179), so no row here names them.
 
 ## 7. What this design is not
 

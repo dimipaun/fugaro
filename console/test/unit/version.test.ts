@@ -61,6 +61,8 @@ import {
   parseCliVersion,
   renderVersionSkew,
   runsListPageSupported,
+  SEATS_CLI_FLOOR,
+  seatsSupported,
   skewSentence,
   unreadableCompatibility,
   unreadableReason,
@@ -610,6 +612,35 @@ describe('runsListPageSupported', () => {
     ]
     for (const line of unplaceable) {
       expect(runsListPageSupported(line), JSON.stringify(line)).toBe(false)
+    }
+  })
+})
+
+describe('seatsSupported', () => {
+  it('is the release that carries `fugaro seats`, and the boundary is a patch', () => {
+    // The command landed in v0.21.0 (`docs/releases/v0.21.0.md`). A CLI below it
+    // has no such word and answers `unknown command "seats"`, and every line
+    // above this console's supported set is placed `ok` -- so `0.20.9` is a CLI
+    // this console draws the whole tab for and one whose seat read cannot be
+    // asked for, which is exactly what a range membership cannot answer.
+    expect(SEATS_CLI_FLOOR).toBe('0.21.0')
+    const boundary: readonly { readonly line: string; readonly supported: boolean }[] = [
+      { line: '0.13.0', supported: false },
+      { line: '0.20.0', supported: false },
+      { line: '0.20.9', supported: false },
+      { line: '0.21.0', supported: true },
+      { line: '0.21.1', supported: true },
+      { line: '1.0.0', supported: true },
+      { line: '0.21.0+build.7', supported: true },
+      // A prerelease is refused however close it is: `meetsCliFloor` refuses
+      // every core carrying a `-`, so the panel draws its own sentence rather
+      // than asking a build nobody has run this read against.
+      { line: '0.21.0-rc.1', supported: false },
+      { line: 'dev', supported: false },
+      { line: '', supported: false },
+    ]
+    for (const row of boundary) {
+      expect(seatsSupported(row.line), row.line).toBe(row.supported)
     }
   })
 })

@@ -23,7 +23,7 @@ func grantChange(name, member, role string, actions ...string) planChange {
 // grant, or a member on neither list, is still refused.
 func TestInitHardeningAllowsOnlyTheLauncherGrantDeletes(t *testing.T) {
 	const a, o = "user:a@example.com", "user:o@example.com"
-	args := []string{"setup", "--yes", "--launcher", a, "--launcher", o, "--operator", o}
+	args := []string{"setup", "--yes", "--operator", a, "--operator", o, "--admin", o}
 
 	r := newInitRig(t)
 	r.stateBucket()
@@ -49,7 +49,7 @@ func TestInitHardeningAllowsOnlyTheLauncherGrantDeletes(t *testing.T) {
 	r.stateBucket()
 	r.setPlan(t, grantChange("runs", o, "roles/storage.objectAdmin", "delete"))
 	out, _, err = executeStdin(t, "", args...)
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), `runs["`+o+`"]`) || !strings.Contains(err.Error(), "--launcher and --operator") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), `runs["`+o+`"]`) || !strings.Contains(err.Error(), "--operator and --admin") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
 	if strings.Contains(out, "bucket access (0.7.0)") {
@@ -86,7 +86,7 @@ func TestInitHardeningRefusesAMixedPlan(t *testing.T) {
 		grantChange("runs_reader", a, "roles/storage.objectViewer", "create"),
 		grantChange("runs_launcher", a, "roles/storage.objectUser", "create"),
 		grantChange("state", a, "roles/storage.objectAdmin", "delete"))
-	out, _, err := executeStdin(t, "", "setup", "--yes", "--launcher", a)
+	out, _, err := executeStdin(t, "", "setup", "--yes", "--operator", a)
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), `state["`+a+`"]`) {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -120,7 +120,7 @@ func launcherReplaceChange(bucket, member, beforeTitle, beforeExpr string) planC
 func TestInitAdmitsTheLauncherGrantUpgrade(t *testing.T) {
 	const a, o = "user:a@example.com", "user:o@example.com"
 	bucket := "fugaro-runs-" + initProject
-	args := []string{"setup", "--yes", "--launcher", a, "--launcher", o, "--operator", o}
+	args := []string{"setup", "--yes", "--operator", a, "--operator", o, "--admin", o}
 
 	r := newInitRig(t)
 	r.stateBucket()
