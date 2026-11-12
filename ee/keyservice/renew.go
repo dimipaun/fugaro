@@ -286,6 +286,11 @@ func (s *Service) status(w http.ResponseWriter, r *http.Request) {
 // server for it (§7, D2138). A revoked key is refused for the same kind of
 // reason: §8's list is what a renewal checks first, and a key the licensor has
 // withdrawn is never handed a successor.
+//
+// A key outside its renewal window is answered its own state and handed nothing:
+// the successor is the key for the term *after* the one the customer is in, and
+// one minted before that term is nearly over is a term nobody paid for
+// (renewable).
 func (s *Service) renew(w http.ResponseWriter, r *http.Request) {
 	call, ok := s.renewalCall(w, r)
 	if !ok {
@@ -362,6 +367,15 @@ func (s *Service) renew(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		refuseRenewal(w)
+		return
+	}
+	if !renewable(key.record, key.policy, now) {
+		// The state and not the uniform refusal: this caller proved the secret,
+		// so what it is told is about its own key, and `ok` with no successor is
+		// the same answer `/status` gives it. A refusal here would read as the
+		// licence being finished and send a holder whose key is good for another
+		// month to a reissue.
+		writeAnswer(w, Answer{Status: key.status()})
 		return
 	}
 	if s.mintsV1 == nil {
@@ -474,6 +488,31 @@ func (s *Service) sight(ctx context.Context, keyID string) {
 	if err := s.store.TouchKey(ctx, keyID, s.now()); err != nil {
 		log.Printf("keyservice: recording the check of the key %s: %v", keyID, err)
 	}
+}
+
+// renewable answers whether a successor is to be minted now: the window is open
+// once the key is inside the lead its own row names before `paid_through` — the
+// lead the key carries as `renew_before_days` and its job asks from (§7, T26) —
+// and a key already past its end is inside it trivially, which is what a holder
+// whose job lapsed gets.
+//
+// Without the window the endpoint takes a term per call: every successor is a
+// new key id with a new secret and therefore a throttle bucket of its own, so a
+// holder — or whoever has read its secret — climbs the ladder in one instant and
+// pays for none of it (TestChainedRenewalsStopAtOneTerm). With it, a successor
+// ends a period past the key it replaced and is itself out of its own window
+// until that period is nearly over, so one call buys one term and the next waits
+// its turn.
+//
+// What it bounds is the rate and not the payment: which term the customer is in
+// is this key's own `paid_through`, while whether a later one was paid for is
+// the merchant's record of a subscription's end (§5.2) and the store holds no
+// link from a key to the subscription it was minted for. Capping a successor at
+// that subscription's paid-through is the gate that closes the other half, and
+// it belongs to the paths that mint a paid term (K2.5).
+func renewable(record Record, policy Policy, now time.Time) bool {
+	lead := time.Duration(policy.RenewBeforeDays) * 24 * time.Hour
+	return !now.Before(record.Expires.Add(-lead))
 }
 
 // renewalDays is the term the next key runs for: from now to the end of the term

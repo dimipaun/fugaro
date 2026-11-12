@@ -139,6 +139,38 @@ func heldKeyIn(t *testing.T, f *fixture, policy, workspace string) (keyID, secre
 	return record.KeyID, minted.RenewalSecret, minted.Key
 }
 
+// issuance is the record the store holds of one key, which is what a renewal
+// reads its term and its window from.
+func (f *fixture) issuance(t *testing.T, keyID string) Record {
+	t.Helper()
+	for _, record := range f.records() {
+		if record.KeyID == keyID {
+			return record
+		}
+	}
+	f.t.Fatalf("the store holds no record of the key %s", keyID)
+	return Record{}
+}
+
+// inTheRenewalWindow moves the clock to where a renewal is asked for and answers
+// that instant: a day inside the lead the key's own row names before its
+// `paid_through`, which is where the job asks (§7, T26) and the only place the
+// service mints a successor from (renewable). A key issued a moment ago is a
+// whole term away from its window, so every test that renews starts here.
+func (f *fixture) inTheRenewalWindow(t *testing.T, keyID string) time.Time {
+	t.Helper()
+	record := f.issuance(t, keyID)
+	policy, known := DefaultPolicy(record.Plan)
+	if !known {
+		t.Fatalf("the key was minted from the row %q, which is not in the policy table", record.Plan)
+	}
+	opens := record.Expires.Add(-time.Duration(policy.RenewBeforeDays) * 24 * time.Hour)
+	if asked := opens.Add(24 * time.Hour); asked.After(f.now) {
+		f.advance(asked.Sub(f.now))
+	}
+	return f.now
+}
+
 // withoutAWorkspace is the same key's state with its workspace taken away, which
 // is what an issue path that never learned one leaves behind.
 func withoutAWorkspace(t *testing.T, f *fixture, keyID string) {
@@ -261,6 +293,7 @@ func TestRenewalAnswersAreUniform(t *testing.T) {
 func TestTheKeyAloneCannotRenew(t *testing.T) {
 	f, spy := renewing(t)
 	keyID, secret, key := heldKey(t, f, PolicyTeamMonthly)
+	f.inTheRenewalWindow(t, keyID)
 	claims := v1Verified(t, f, key)
 	if claims.RenewalSecretHash == "" {
 		t.Fatal("the key carries no renewal secret hash, so this test cannot tell the hash from the secret")
@@ -355,6 +388,7 @@ func TestARenewalMustNameTheWorkspace(t *testing.T) {
 func TestARenewalStaysInTheKeysOwnWorkspace(t *testing.T) {
 	f, spy := renewing(t)
 	keyID, secret, _ := heldKey(t, f, PolicyTeamMonthly)
+	f.inTheRenewalWindow(t, keyID)
 	elsewhere := RenewalCall{KeyID: keyID, WorkspaceID: "someone-elses-project", RenewalSecret: secret}
 
 	if rec := f.call(RouteRenew, elsewhere); rec.Code != http.StatusForbidden {
@@ -441,6 +475,7 @@ func TestRevokedKeyIsNeverRenewed(t *testing.T) {
 func TestStatusCarriesNoKey(t *testing.T) {
 	f, _ := renewing(t)
 	keyID, secret, _ := heldKey(t, f, PolicyTeamMonthly)
+	f.inTheRenewalWindow(t, keyID)
 
 	rec := f.call(RouteStatus, RenewalCall{KeyID: keyID, RenewalSecret: secret})
 	if rec.Code != http.StatusOK {
@@ -502,6 +537,7 @@ func assertNoKeyIn(t *testing.T, rec *httptest.ResponseRecorder, material ...str
 func TestReplayedRenewalIsIdempotent(t *testing.T) {
 	f, spy := renewing(t)
 	keyID, secret, _ := heldKey(t, f, PolicyTeamMonthly)
+	f.inTheRenewalWindow(t, keyID)
 	call := RenewalCall{KeyID: keyID, WorkspaceID: workspaceID, RenewalSecret: secret}
 
 	first := answerOf(t, f.call(RouteRenew, call))
@@ -538,6 +574,7 @@ func TestAStrangerCannotSpendTheHoldersAllowance(t *testing.T) {
 	)
 	f, spy := renewingWithin(t, Limits{Requests: 3, Window: time.Hour})
 	keyID, secret, _ := heldKey(t, f, PolicyTeamMonthly)
+	f.inTheRenewalWindow(t, keyID)
 
 	for i := 0; i < 3; i++ {
 		rec := f.callFrom(stranger, RouteRenew, RenewalCall{KeyID: keyID, WorkspaceID: workspaceID, RenewalSecret: freshSecret(t)})
@@ -586,6 +623,7 @@ func TestAStrangerCannotSpendTheHoldersAllowance(t *testing.T) {
 func TestTheOldSecretFetchesTheNextKeyForADay(t *testing.T) {
 	f, spy := renewing(t)
 	keyID, secret, _ := heldKey(t, f, PolicyTeamMonthly)
+	f.inTheRenewalWindow(t, keyID)
 	old := RenewalCall{KeyID: keyID, WorkspaceID: workspaceID, RenewalSecret: secret}
 	first := answerOf(t, f.call(RouteRenew, old))
 	if first.Key == "" || first.RenewalSecret == "" {
@@ -617,7 +655,9 @@ func TestTheOldSecretFetchesTheNextKeyForADay(t *testing.T) {
 		t.Errorf("the minter was asked for %d key(s) after the window, want none: a spent secret mints nothing", got)
 	}
 	// The successor renews with its own secret, which is what makes the chain a
-	// chain rather than a key that can be renewed once.
+	// chain rather than a key that can be renewed once: a term later, when its
+	// own window opens.
+	f.inTheRenewalWindow(t, successor)
 	next := answerOf(t, f.call(RouteRenew, RenewalCall{KeyID: successor, WorkspaceID: workspaceID, RenewalSecret: first.RenewalSecret}))
 	if next.Key == "" {
 		t.Fatal("the successor was not renewed, so the rotation left a key that can never renew again")
@@ -641,7 +681,7 @@ func TestTheNextKeyCoversTheTermAfterThisOne(t *testing.T) {
 		t.Fatal("the monthly row is not in the table")
 	}
 
-	f.advance(20 * 24 * time.Hour)
+	at := f.inTheRenewalWindow(t, keyID)
 	answer := answerOf(t, f.call(RouteRenew, RenewalCall{KeyID: keyID, WorkspaceID: workspaceID, RenewalSecret: secret}))
 	if answer.Key == "" {
 		t.Fatal("the renewal answered no key")
@@ -653,10 +693,11 @@ func TestTheNextKeyCoversTheTermAfterThisOne(t *testing.T) {
 	if asked.Policy != policy.Name || asked.WorkspaceID != workspaceID || asked.Organisation != "acme.example" || asked.Seats != 3 || asked.Environment != f.env {
 		t.Errorf("the minter was asked %+v, want the row the key was minted from, its organisation, its seats and the workspace the caller named", asked)
 	}
-	// Ten days of the key's own term are left, so the successor runs for those
-	// ten plus a whole period.
-	if want := 10*24*time.Hour + policy.Term; time.Duration(asked.TermDays)*24*time.Hour != want {
-		t.Errorf("the successor was asked for %d day(s), want the %s left of this term plus the row's %s: a renewal inside the window costs the customer nothing", asked.TermDays, 10*24*time.Hour, policy.Term)
+	// Six days of the key's own term are left — a day inside the lead its row
+	// names — so the successor runs for those six plus a whole period.
+	left := f.issuance(t, keyID).Expires.Sub(at)
+	if want := left + policy.Term; time.Duration(asked.TermDays)*24*time.Hour != want {
+		t.Errorf("the successor was asked for %d day(s), want the %s left of this term plus the row's %s: a renewal inside the window costs the customer nothing", asked.TermDays, left, policy.Term)
 	}
 	claims := v1Verified(t, f, answer.Key)
 	if !claims.PaidThrough.After(f.now) {
@@ -687,6 +728,7 @@ func TestTheNextKeyCoversTheTermAfterThisOne(t *testing.T) {
 func TestConcurrentRenewalsMintOneKey(t *testing.T) {
 	f, spy := renewing(t)
 	keyID, secret, _ := heldKey(t, f, PolicyTeamMonthly)
+	f.inTheRenewalWindow(t, keyID)
 	body, err := json.Marshal(RenewalCall{KeyID: keyID, WorkspaceID: workspaceID, RenewalSecret: secret})
 	if err != nil {
 		t.Fatalf("encoding the request: %v", err)
@@ -736,6 +778,7 @@ func TestConcurrentRenewalsMintOneKey(t *testing.T) {
 func TestASecondInstanceAnswersTheSameRotation(t *testing.T) {
 	first, _ := renewing(t)
 	keyID, secret, _ := heldKey(t, first, PolicyTeamMonthly)
+	first.inTheRenewalWindow(t, keyID)
 	call := RenewalCall{KeyID: keyID, WorkspaceID: workspaceID, RenewalSecret: secret}
 	answer := answerOf(t, first.call(RouteRenew, call))
 	if answer.Key == "" {
@@ -770,16 +813,17 @@ func TestAnExpiredHandoverIsDropped(t *testing.T) {
 	rotate := func(policy string) string {
 		t.Helper()
 		keyID, secret, _ := heldKey(t, f, policy)
+		f.inTheRenewalWindow(t, keyID)
 		if answerOf(t, f.call(RouteRenew, RenewalCall{KeyID: keyID, WorkspaceID: workspaceID, RenewalSecret: secret})).Key == "" {
 			t.Fatalf("the key %s did not renew", keyID)
 		}
 		return keyID
 	}
 	first := rotate(PolicyTeamMonthly)
-	second := rotate(PolicyTeamMonthly)
 	if _, live, err := f.store.Handover(ctx, first, f.now); err != nil || !live {
 		t.Fatalf("the store answered live=%v err=%v for a rotation made now, want the successor it has just kept", live, err)
 	}
+	second := rotate(PolicyTeamMonthly)
 
 	f.advance(25 * time.Hour)
 	rotate(PolicyTeamMonthly)
@@ -804,6 +848,7 @@ func TestAnExpiredHandoverIsDropped(t *testing.T) {
 func TestARotationInsideItsWindowWithoutItsAnswerIsRetried(t *testing.T) {
 	f, _ := renewing(t)
 	keyID, secret, _ := heldKey(t, f, PolicyTeamMonthly)
+	f.inTheRenewalWindow(t, keyID)
 	call := RenewalCall{KeyID: keyID, WorkspaceID: workspaceID, RenewalSecret: secret}
 	if answerOf(t, f.call(RouteRenew, call)).Key == "" {
 		t.Fatal("the key did not renew, so there is no rotation to lose the answer of")
@@ -853,6 +898,7 @@ func TestARotationTheStoreDidNotRecordIsNeverAnswered(t *testing.T) {
 		f.deps.Store = store
 	})
 	keyID, secret, _ := heldKey(t, f, PolicyTeamMonthly)
+	f.inTheRenewalWindow(t, keyID)
 	store.refuse = true
 
 	rec := f.call(RouteRenew, RenewalCall{KeyID: keyID, WorkspaceID: workspaceID, RenewalSecret: secret})
@@ -874,11 +920,100 @@ func TestARotationTheStoreDidNotRecordIsNeverAnswered(t *testing.T) {
 func TestTheRenewalFailsWhenTheMinterDoes(t *testing.T) {
 	f, spy := renewing(t)
 	keyID, secret, _ := heldKey(t, f, PolicyTeamMonthly)
+	f.inTheRenewalWindow(t, keyID)
 	spy.err = errors.New("the minter is unreachable")
 	if rec := f.call(RouteRenew, RenewalCall{KeyID: keyID, WorkspaceID: workspaceID, RenewalSecret: secret}); rec.Code != http.StatusInternalServerError {
 		t.Errorf("a renewal whose minter failed was answered %d, want %d: a transient failure is not a refusal of the key", rec.Code, http.StatusInternalServerError)
 	}
 	if _, held, err := f.store.KeyState(context.Background(), keyID); err != nil || !held {
 		t.Fatalf("reading the key's state: held=%v err=%v", held, err)
+	}
+}
+
+// TestARenewalOutsideItsWindowMintsNothing: a renewal is the key for the term
+// *after* the one the customer is in, and the service mints it inside the lead
+// the key's own row names before `paid_through` (§7, T26) and not before. A key
+// issued a moment ago is a whole term away from that, and what it is answered is
+// its own state — `ok` and no successor, which is what the status route says
+// about it — rather than a refusal that would read as the licence being over.
+func TestARenewalOutsideItsWindowMintsNothing(t *testing.T) {
+	f, spy := renewing(t)
+	keyID, secret, _ := heldKey(t, f, PolicyTeamMonthly)
+	call := RenewalCall{KeyID: keyID, WorkspaceID: workspaceID, RenewalSecret: secret}
+
+	rec := f.call(RouteRenew, call)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("a renewal asked for a term early was answered %d (%q), want the key's own state", rec.Code, rec.Body.String())
+	}
+	answer := answerOf(t, rec)
+	if answer.Status != StatusOK || answer.NewerKey {
+		t.Errorf("the answer is %+v, want the key's state and no successor", answer)
+	}
+	assertNoKeyIn(t, rec, secret)
+	if got := spy.minted(); got != 0 {
+		t.Errorf("the minter was asked for %d key(s) outside the renewal window, want none: a term minted before the one the customer is in is a term nobody paid for", got)
+	}
+	if got := len(f.records()); got != 1 {
+		t.Errorf("the store holds %d record(s) after a renewal that minted nothing, want the key's own and no other", got)
+	}
+
+	// The control: the same call inside the window is served, so what the window
+	// turned away above is the timing and not the route.
+	f.inTheRenewalWindow(t, keyID)
+	if answerOf(t, f.call(RouteRenew, call)).Key == "" {
+		t.Error("the same renewal inside the window answered no key, want the successor")
+	}
+	if got := spy.minted(); got != 1 {
+		t.Errorf("the minter was asked for %d key(s), want the one renewal the open window allowed", got)
+	}
+}
+
+// TestChainedRenewalsStopAtOneTerm: the probe a review of this endpoint ran, as
+// a test. A successor is a new key id with a new secret and therefore a throttle
+// bucket of its own, so a holder that renews the key it was just handed — twelve
+// times, all at one instant — takes twelve terms for the price of one and ends
+// up with a licence that outlives everything it paid for. The window is what
+// stops the chain: the successor's own window opens a term after the renewal
+// that minted it, so one call buys one term, and the latest `paid_through` the
+// store holds is this key's own end plus that single period.
+func TestChainedRenewalsStopAtOneTerm(t *testing.T) {
+	f, spy := renewing(t)
+	keyID, secret, _ := heldKey(t, f, PolicyTeamMonthly)
+	policy, known := DefaultPolicy(PolicyTeamMonthly)
+	if !known {
+		t.Fatal("the monthly row is not in the table")
+	}
+	f.inTheRenewalWindow(t, keyID)
+	paidThrough := f.issuance(t, keyID).Expires
+
+	held := RenewalCall{KeyID: keyID, WorkspaceID: workspaceID, RenewalSecret: secret}
+	first := answerOf(t, f.call(RouteRenew, held))
+	if first.Key == "" {
+		t.Fatal("the renewal inside the window answered no key, so there is no chain to climb")
+	}
+	// Every later call renews the key the one before it was handed, which is
+	// what a holder climbing the ladder does.
+	for i := 0; i < 11; i++ {
+		claims := v1Verified(t, f, first.Key)
+		held = RenewalCall{KeyID: claims.KeyID, WorkspaceID: workspaceID, RenewalSecret: first.RenewalSecret}
+		answer := answerOf(t, f.call(RouteRenew, held))
+		if answer.Key != "" {
+			t.Fatalf("renewal %d of the chain was handed a key, want the key's own state: a successor at one instant buys a term per call, and the licence outlives what was paid for", i+2)
+		}
+		if answer.Status != StatusOK {
+			t.Errorf("renewal %d of the chain was answered %q, want the successor's own state", i+2, answer.Status)
+		}
+	}
+	if got := spy.minted(); got != 1 {
+		t.Errorf("the minter was asked for %d key(s) by twelve renewals at one instant, want the one the open window allowed", got)
+	}
+	furthest := paidThrough
+	for _, record := range f.records() {
+		if record.Expires.After(furthest) {
+			furthest = record.Expires
+		}
+	}
+	if want := paidThrough.Add(policy.Term); !furthest.Equal(want) {
+		t.Errorf("the latest term in the store ends at %s, want %s — the term this key is in plus the one renewal it was entitled to, and not a period per call (T26)", furthest, want)
 	}
 }
