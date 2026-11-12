@@ -317,6 +317,9 @@ func userPairWrite(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config,
 		if err != nil {
 			return dbErr(lc, err, false)
 		}
+		if err := userPairDrift(lc, node); err != nil {
+			return err
+		}
 		if grant && userHoldsPair(node.Grants, member, role, scope) {
 			fmt.Fprintf(out, "%s already holds %s at %s in project %s's grants node; nothing was written\n",
 				safetext.Field(member), role, safetext.Field(scope.String()), safetext.Field(lc.Name))
@@ -345,6 +348,34 @@ func userPairWrite(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config,
 	return userErr("nothing was %s: the grants node changed under every one of %d attempts, so another admin is writing it right now and the change cannot be judged against a picture that stays still. Read it with 'fugaro user ls' and run this again", pairPast(grant), userPairAttempts)
 }
 
+// userPairDrift refuses to create the grants node while this machine's own
+// lists still hold members who are on neither side of this change.
+//
+// It is the one refusal that is about the state the node is in rather than
+// about the change: an installation whose roles are still its IAM lists has no
+// node at all (RS3 derives the lists FROM the node, and the migration is what
+// puts them in it). A node this command created would hold the pair being
+// written and nothing else, and the next `fugaro update` would derive the two
+// lists from it — so every operator and admin this machine still names, none of
+// whom the node knows, would lose their IAM grant in that run. A grant cannot
+// quietly revoke the installation's roster, and the migration is one command
+// away: it has to happen first.
+//
+// A machine whose lists hold nobody has nothing to lose, and is written: its
+// roles are entirely the node's, whether the node is absent because it has no
+// grants or because nothing has derived them yet.
+func userPairDrift(lc *localcfg.Config, node accesslib.Node) error {
+	if node.Found {
+		return nil
+	}
+	held := append(slices.Clone(lc.Terraform.Operators), lc.Terraform.Admins...)
+	if len(held) == 0 {
+		return nil
+	}
+	return userErr("nothing was written: project %s has no grants node at %s yet, and this machine's own lists still hold %d member(s) — %s. Their roles are the installation's IAM lists, and the next fugaro update derives those lists FROM the node: a node written now would hold this change and nobody else, so that update would derive the lists from it and drop every member it does not name. Run fugaro update first — it migrates this installation's lists into the node — then run this again",
+		safetext.Field(lc.Name), accesslib.PathNode, len(held), safetext.FieldListLine(held))
+}
+
 // userPairJudge is the judgement the write is made under: it returns the grants
 // the node would hold, or the refusal.
 //
@@ -368,71 +399,96 @@ func userPairJudge(lc *localcfg.Config, grants []accesslib.Grant, caller, member
 		if !unplaced && !userMayAdmin(held, isImplicit, scope) {
 			return nil, userPairNeedsAdmin(member, role, scope, userHeldText(held), false)
 		}
-		return userPairNext(grants, member, role, scope, false), nil
-	}
-	old, replacing := userGrantAt(grants, member, scope)
-	demotion := replacing && !role.AtLeast(old.Role)
-	if !unplaced {
-		if demotion && !userMayAdmin(held, isImplicit, scope) {
-			return nil, userPairNeedsAdmin(member, role, scope, userHeldText(held), true)
+	} else {
+		old, replacing := userGrantAt(grants, member, scope)
+		demotion := replacing && !role.AtLeast(old.Role)
+		if !unplaced {
+			if demotion && !userMayAdmin(held, isImplicit, scope) {
+				return nil, userPairNeedsAdmin(member, role, scope, userHeldText(held), true)
+			}
+			if !userMayGrant(held, isImplicit, role, scope) {
+				return nil, userPairNeedsRole(member, role, scope, userHeldText(held))
+			}
 		}
-		if !userMayGrant(held, isImplicit, role, scope) {
-			return nil, userPairNeedsRole(member, role, scope, userHeldText(held))
-		}
 	}
-	next := userPairNext(grants, member, role, scope, true)
-	// The last project admin stays (F17.2). The count is over the document that
-	// would be written, plus the implicit admins the design names that this
-	// machine can read (its own terraform.budget_admins, F17.3), plus the
-	// caller themselves when the node places them nowhere: their write is what
-	// proves them an implicit admin (F22's table), and a caller who is not one
-	// never gets this far — their write is refused below and nothing lands.
+	// The last project admin stays (F17.2), and a revoke is judged by it exactly
+	// as a demotion is: both empty the role, and the verb is not what the rule
+	// is about.
+	//
+	// The implicit admins the design names that this machine can read (its own
+	// terraform.budget_admins, F17.3) stand beside the stored ones, and the
+	// caller themselves stands there when the node places them nowhere: their
+	// write is what proves them an implicit admin (F22's table), and a caller
+	// who is not one never gets this far — their write is refused and nothing
+	// lands.
+	next := userPairNext(grants, member, role, scope, grant)
 	if unplaced {
 		implicit = append(slices.Clone(implicit), caller)
 	}
-	if err := userLastProjectAdmin(lc, next, implicit, member); err != nil {
+	if err := userLastProjectAdmin(grants, next, implicit, member); err != nil {
 		return nil, err
 	}
 	return next, nil
 }
 
-// userLastProjectAdmin refuses a document that would leave the installation
-// with no project admin: the stored admin@project members of the document that
-// would be written, and the implicit admins beside them (F17.2, F22).
+// userLastProjectAdmin refuses the change that TAKES the installation's last
+// project admin away — the stored admin@project members, and the implicit
+// admins beside them (F17.2, F22). The two documents are compared because the
+// rule is about what the change removes, and the change is judged against the
+// same read the write is conditional on, so the "before" it uses is the
+// picture the write lands on (F23): another writer in between costs a
+// re-read and a re-judgement, never a count of a state that has moved.
 //
-// It is the rule F23's conditional write exists to make safe, and it is why a
-// grant is judged over the whole document rather than over the entry it
-// changes: `grant --role operator` for the last project admin is their own
-// demotion, and it empties the role exactly as a revoke does.
-func userLastProjectAdmin(lc *localcfg.Config, next []accesslib.Grant, implicit []string, member string) error {
-	admins := slices.Clone(implicit)
-	for _, g := range next {
-		if g.Role == accesslib.RoleAdmin && g.Scope.Kind == accesslib.ScopeProject {
-			admins = append(admins, g.User)
-		}
-	}
-	if len(admins) > 0 {
+// A node holding NO project admin at all is not a change this refuses. That
+// state is reachable and legitimate — a repository-scoped grant is a whole
+// node's worth of roles (F22's table), and an implicit admin whose own role is
+// not stored can make one — and refusing every later change on such a node
+// would be a dead end: the repository admin it would refuse holds no
+// project-scope role and could not add the admin the sentence asks for. What
+// the rule protects is the admin the change is about to remove, and an
+// installation that has none loses none.
+func userLastProjectAdmin(grants, next []accesslib.Grant, implicit []string, member string) error {
+	if len(implicit) > 0 || userProjectAdmins(grants) == 0 || userProjectAdmins(next) > 0 {
 		return nil
 	}
-	return userErr("nothing was written: %s would hold no admin at project scope, and no owner, editor or terraform.budget_admin is named either, so the installation would have no project admin at all — nobody could grant a role, run its update or settle it. Add the admin who is to take over first, then make this change: a project Owner can also do it from outside the grants node, or add themselves to terraform.budget_admins (fugaro update --budget-admin)", safetext.Field(member))
+	return userErr("nothing was written: the grants node would hold no admin at project scope after this change — %s is the only member that carries it — and no owner, editor or terraform.budget_admin is named either, so the installation would have no project admin at all: nobody could grant a role, run its update or settle it. Add the admin who is to take over first, then make this change; a project Owner can also do it from outside the grants node, or add themselves to terraform.budget_admins (fugaro update --budget-admin)", safetext.Field(member))
+}
+
+// userProjectAdmins counts the pairs of a document that are a project-scope
+// admin: the role the rule above is about.
+func userProjectAdmins(grants []accesslib.Grant) int {
+	n := 0
+	for _, g := range grants {
+		if g.Role == accesslib.RoleAdmin && g.Scope.Kind == accesslib.ScopeProject {
+			n++
+		}
+	}
+	return n
 }
 
 // userPairNext is the document the change makes: a grant replaces the role of
 // the pair already stored at that scope and appends the pair when there is
 // none, and a revoke removes the pair it names. The order of the other grants
 // is kept, so a change to one member is one line of the node.
+//
+// One role per member and scope is what a grant writes, so the pair is replaced
+// and never added beside the one it replaces: two pairs at one scope would be
+// two roles the resolver has to choose between, and `Effective` would take the
+// higher of them — a "demotion" that demotes nobody.
 func userPairNext(grants []accesslib.Grant, member string, role accesslib.Role, scope accesslib.Scope, grant bool) []accesslib.Grant {
 	next := make([]accesslib.Grant, 0, len(grants)+1)
+	replaced := false
 	for _, g := range grants {
 		switch {
 		case !grant && g.User == member && g.Role == role && g.Scope.String() == scope.String():
 			continue
 		case grant && g.User == member && g.Scope.String() == scope.String():
 			g.Role = role
+			replaced = true
 		}
 		next = append(next, g)
 	}
-	if grant {
+	if grant && !replaced {
 		next = append(next, accesslib.Grant{User: member, Role: role, Scope: scope})
 	}
 	return next
