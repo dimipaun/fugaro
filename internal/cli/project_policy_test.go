@@ -3026,8 +3026,9 @@ func TestProjectPolicyPublishReplacesAShapeFreePredecessor(t *testing.T) {
 }
 
 // TestProjectPolicyPublishRefusesACarriedNodeWithTheUpdate: the other older
-// state, and the one an operator meets most — a node one step older than the shape-free
-// predecessor is what an installation holds between the binary upgrade and `fugaro update`. The
+// state, and the one an operator meets most — a node this reader refuses and
+// the migration chain still carries is what an installation holds between the
+// binary upgrade and `fugaro update`. The
 // migration chain carries it, so the publish names the update's in-place
 // rewrite rather than the delete: the delete works here, but a publish that
 // follows rebuilds the node from this machine's config and drops the members
@@ -3035,7 +3036,7 @@ func TestProjectPolicyPublishReplacesAShapeFreePredecessor(t *testing.T) {
 // of the same node and names the same move.
 func TestProjectPolicyPublishRefusesACarriedNodeWithTheUpdate(t *testing.T) {
 	f := newProjectFixture(t, "")
-	f.db.Set(projectpolicy.PathShared(), map[string]any{"version": projectpolicy.Version - 2, "budget": map[string]any{"mode": "enforce"}})
+	f.db.Set(projectpolicy.PathShared(), map[string]any{"version": refusedOlderVersion(t), "budget": map[string]any{"mode": "enforce"}})
 	_, _, err := execute(t, "project", "policy", "publish")
 	if err == nil {
 		t.Fatal("publishing over an older node was allowed")

@@ -129,6 +129,33 @@ func v3Node(extra map[string]any) map[string]any {
 	return n
 }
 
+// refusedOlderVersion is a policy version this binary's strict reader refuses
+// (ReadsVersion) while the migration chain still carries it (Migratable): the
+// node an installation holds between the binary upgrade and `fugaro update`,
+// which is the state every fixture about a carried node has to name.
+//
+// It is computed from the chain's own tables rather than counted back from
+// Version, because the count moved under the fixtures twice: each shape-free
+// step (migrate.go) is a version this reader answers with its own node, so
+// `Version - 1` and `Version - 2` stop meaning "a node this reader refuses" the
+// moment the version before them is shape-free, and a fixture spelling them
+// passes through the read it was written to fail — the test then fails
+// somewhere else, in the gate that never heard of the node.
+func refusedOlderVersion(t *testing.T) int {
+	t.Helper()
+	for v := projectpolicy.Version - 1; v >= 1; v-- {
+		if projectpolicy.ReadsVersion(v) {
+			continue
+		}
+		if !projectpolicy.Migratable(v) {
+			t.Fatalf("policy version %d is refused by this reader and no migration step reaches it, so no fixture can be built from it: this binary's Version is %d", v, projectpolicy.Version)
+		}
+		return v
+	}
+	t.Fatalf("every policy version below this binary's %d is read as this reader's own, so no older node is refused: check projectpolicy's shape-free steps", projectpolicy.Version)
+	return 0
+}
+
 // v3NodeMountingTheBitbucketToken is a version-3 node whose only profile
 // mounts the project's Bitbucket credential: the node whose migration cannot
 // state the block that credential is bounded by, and so the node that needs

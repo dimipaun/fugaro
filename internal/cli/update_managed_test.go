@@ -1619,7 +1619,7 @@ func TestUpdateManagedLeavesComputeOwnerRun(t *testing.T) {
 // the one a PERSON at the terminal on a managed project gets.
 //
 // The shape is therefore that person: the installation root planned for a
-// change §4.1 refuses to apply (a removal of a grant), and the fourth read of
+// change §4.1 refuses to apply (an authoritative IAM resource), and the fourth read of
 // its saved plan — the credentials stage's own — refused. The two arms are the
 // entry's own answer and its mutation: under the gate the step is left for the
 // owner and the run carries on, and with the entry dropped the same refusal
@@ -1647,8 +1647,8 @@ func TestUpdateManagedGatesTheCredentialsServiceStage(t *testing.T) {
 				if stopped := stoppedStage(got); stopped != initflow.CredentialsService {
 					t.Fatalf("the run stopped at %s, want the credentials-service stage:\n%s", stopped, got)
 				}
-				if left := leftFor(got, initflow.CredentialsService, initflow.LeftCommand); left != "" {
-					t.Errorf("a stage this door does not gate left the owner a command:\n%s", got)
+				if left := leftFor(got, initflow.CredentialsService, initflow.LeftRefused); left != "" {
+					t.Errorf("a stage this door does not gate left the owner the gate's own step, which is the answer the entry exists to give:\n%s", got)
 				}
 				return
 			}
@@ -1658,13 +1658,24 @@ func TestUpdateManagedGatesTheCredentialsServiceStage(t *testing.T) {
 			if s := stoppedStage(got); s != "(the summary names no failed stage)" {
 				t.Fatalf("the run failed at %s: the gate's refusal is the owner's step, not a failure:\n%s", s, got)
 			}
-			left := leftFor(got, initflow.CredentialsService, initflow.LeftCommand)
+			// LeftRefused and not LeftCommand: what the gate leaves the owner
+			// is D1012's refusal step (internal/initflow's stage.go answers a
+			// gate verdict with it), not a command to run — the plan this stage
+			// holds is the installation's own, and no command of the owner's
+			// rebuilds what the gate would not admit.
+			left := leftFor(got, initflow.CredentialsService, initflow.LeftRefused)
 			if left == "" {
 				t.Fatalf("the credentials-service stage was not left for the owner:\n%s", got)
 			}
-			for _, want := range []string{"managed gate refused this step", "storage_bucket_iam_member"} {
-				if !strings.Contains(left, want) {
-					t.Errorf("the step left for the owner does not name %q:\n%s", want, left)
+			// The address is read where the terminal says it is: the step's
+			// brief carries one clause of the reason, and the sentence that
+			// names the resource is in the log the line points at (the owner's
+			// feedback of 2026-11-09, which managed_ask_test reads the same
+			// way).
+			whole := left + "\n" + namedLog(t, got)
+			for _, want := range []string{"managed gate refused this step", "storage_bucket_iam_binding.runs"} {
+				if !strings.Contains(whole, want) {
+					t.Errorf("the step left for the owner does not name %q:\n%s", want, whole)
 				}
 			}
 		})
@@ -1691,7 +1702,13 @@ func credentialsStageRun(t *testing.T) (string, int) {
 	r.script["show -json"] = r.script["show"]
 	r.script["plan@installation"] = map[string]any{"exit": 2}
 	admitted := map[string]any{"stdout": planJSON(t, change("module.installation.google_service_account.scheduler", "create"))}
-	refused := map[string]any{"stdout": planJSON(t, grantChange("state", "user:a@example.com", "roles/storage.objectAdmin", "delete"))}
+	// The refusal is D1549's kind and not a grant the review screen did not
+	// list: since T9 a grant is a content finding the gate records and warns
+	// about (TestUpdateManagedOutOfTableGrantAppliesAndIsRecorded), so a plan
+	// of those is applied and cannot witness the step this run has to leave.
+	// An authoritative IAM resource still refuses, and it is the same refusal
+	// this stage met when the fixture was a grant.
+	refused := map[string]any{"stdout": planJSON(t, change("module.installation.google_storage_bucket_iam_binding.runs", "create"))}
 	r.script["show@installation"] = []any{admitted, admitted, admitted, refused}
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"credentials_service": credentialsServiceOutput()})}
 	r.save(t)

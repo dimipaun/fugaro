@@ -213,10 +213,12 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		// stage existed) costs the node what a publish rebuilds from the
 		// operator's own config.
 		//
-		// The version is two steps back rather than the step immediately below
-		// this one: that step's node is shape-free, so this reader reads it
-		// (ReadsVersion) and there is no skew for doctor to report at all.
-		doctorPolicyRig(t, doctorPolicy(func(p *projectpolicy.Policy) { p.Version = projectpolicy.Version - 2 }), "")
+		// The version is the newest this reader refuses while the chain still
+		// carries it (refusedOlderVersion), not a fixed count back from this
+		// binary's: every version above it is a shape-free step, so this reader
+		// answers those with its own node (ReadsVersion) and there is no skew
+		// for doctor to report at all.
+		doctorPolicyRig(t, doctorPolicy(func(p *projectpolicy.Policy) { p.Version = refusedOlderVersion(t) }), "")
 		c, ok := doctorChecksByID(t)["policy-older-than-binary"]
 		if !ok || c.Severity != "warning" {
 			t.Fatalf("policy-older-than-binary = %+v (present %v), want a warning", c, ok)

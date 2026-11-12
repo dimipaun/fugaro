@@ -234,7 +234,10 @@ func TestRunRefusesAJobImageThatCannotReadThePolicyNode(t *testing.T) {
 // a lockstep and not a blanket refusal of shared launches.
 func TestLaunchPolicyGatesRefusesASharedImageThatCannotReadThePolicyNode(t *testing.T) {
 	f := newLaunchBudget(t, "off")
-	publishPolicy(t, f, `{"version":6,"allow_repos":["github/acme/*"]}`)
+	// The node this binary writes: the lockstep below is VersionSince[Version],
+	// so a node one step back would only move the release the image is judged
+	// against.
+	publishPolicy(t, f, fmt.Sprintf(`{"version":%d,"allow_repos":["github/acme/*"]}`, projectpolicy.Version))
 	// fileEnv: the lock and the policy alike live in the fixture's bucket.
 	env := fileEnv(t, f.cloudFixture)
 	spec := &task.Spec{Version: 1, RunID: budgetRun, Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x"}
@@ -454,9 +457,10 @@ func TestRunRefusesAPolicyOlderThanTheBinary(t *testing.T) {
 }
 
 // The same gate, one version higher: a node the migration chain carries forward
-// — version 4 is the one 0.14.0 through 0.21 wrote, so it is the node every
-// installation holds between the binary upgrade and `fugaro update` — must not
-// be answered with the delete. `fugaro project policy publish --delete` loses
+// and this reader refuses (refusedOlderVersion — the version above it is
+// shape-free, so this reader answers that one with its own node and there is no
+// skew to report) is the node every installation holds between the binary
+// upgrade and `fugaro update`, and it must not be answered with the delete. `fugaro project policy publish --delete` loses
 // what only the node holds (the clone_urls, credentials, craft_credentials,
 // craft_pools and crafts blocks a publish rebuilds from the operator's own
 // config and not from the node), which is the state the update's policy stage
@@ -468,13 +472,13 @@ func TestRunRefusesAPolicyOlderThanTheBinary(t *testing.T) {
 // exists, so the launch is refused with the move that keeps the node.
 func TestRunRefusesACarriedPolicyWithTheUpdateAndNotTheDelete(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
-	publishPolicy(t, f, fmt.Sprintf(`{"version":%d,"allow_repos":["*"]}`, projectpolicy.Version-1))
+	publishPolicy(t, f, fmt.Sprintf(`{"version":%d,"allow_repos":["*"]}`, refusedOlderVersion(t)))
 	_, _, err := runBudget(t)
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v (exit %d), want a user error", err, ExitCode(err))
 	}
 	for _, want := range []string{
-		fmt.Sprintf("the project policy is version %d", projectpolicy.Version-1),
+		fmt.Sprintf("the project policy is version %d", refusedOlderVersion(t)),
 		fmt.Sprintf("this Fugaro understands version %d", projectpolicy.Version),
 		"fugaro update", "rewrites the node in place", "keeping the members it carries", policySince,
 	} {

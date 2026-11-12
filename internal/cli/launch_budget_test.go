@@ -1393,10 +1393,20 @@ func proxiedLaunchSpec() (string, *task.Spec) {
 // after the one the work was first slotted for and not the plan's spent 0.15.0
 // number).
 //
+// The gate is called directly rather than through `fugaro run`, the way the
+// Batch half below is and for a reason of the same kind: the pair of node and
+// image a row's refusal needs — an image older than proxySince, and a node
+// this reader reads — is one no launch has. policyImageGate (run_allowlist.go)
+// judges every readable node's version against the release its image carries,
+// and the oldest version this reader reads is version 5, whose release is
+// 0.23.0: a launch on an image older than proxySince is refused there first,
+// with its own sentence. The lockstep this test exists for is unchanged, and
+// it is asserted here where it lives.
+//
 // The cases beside it are what makes the refusal proxiedness' and not the
-// image's: a repository the published node does not proxy is launched on the
+// image's: a repository the published node does not proxy is admitted on the
 // very same image (G9), and a proxied repository on an image at proxySince or
-// later is launched too. The rows between them take each half of proxiedness
+// later is admitted too. The rows between them take each half of proxiedness
 // away on its own — a node that brokers Bitbucket access but does not admit
 // this repository, an installation that carries no service, and a repository
 // whose own switch is off — because a launch that is not proxied is judged by
@@ -1428,24 +1438,22 @@ func TestLaunchRefusesProxiedRunOnOldImage(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newLaunchBudget(t, "enforce")
 			addProxiedRepo(t, f, tc.base, tc.block, tc.switchOn)
-			// The node's version pairs with the image the row launches on. The
-			// rows whose image is `old` are an installation at 0.20.3, and such
-			// an installation holds the version-4 node its own release
-			// published: fugaro update pins the base image before its policy
-			// stage migrates the node, so the two cannot be a version apart. A
-			// version-5 node under that image is refused by policyImageGate —
-			// the image's runner cannot read it — before any of these rows'
-			// gates is reached, which would make every row a test of that gate
-			// instead of the one it names.
-			policy := tc.policy
-			// The row at the proxy's release is the same installation one
-			// release later (0.22.0), still before the version-5 node's.
-			if tc.base == old || strings.HasSuffix(tc.base, ":"+proxySince) {
-				policy = strings.Replace(policy, `"version":5`, `"version":4`, 1)
-			}
-			publishPolicy(t, f, policy)
-			_, _, err := execute(t, "run", "--repo", proxiedRepo, "--run-id", budgetRun, "Add a feature")
-			slug := mustSlug("bitbucket", proxiedRepo)
+			publishPolicy(t, f, tc.policy)
+			slug, spec := proxiedLaunchSpec()
+			// The gate is called with the env a launcher's own would carry
+			// (fileEnv's, as the Batch half below does), and not through
+			// `fugaro run`: policyImageGate judges the node's version against
+			// the image's release, and it now stands in front of this gate
+			// (run_allowlist.go). A node whose image predates the release that
+			// introduced its version is refused there, so no pair of node and
+			// image can reach this gate end to end with an image older than
+			// proxySince and a node this reader reads — the proxy's release is
+			// behind the oldest version this reader reads at all. The lockstep
+			// is asserted where it lives, and the end-to-end refusal of a
+			// proxied run on an old image is policyImageGate's, tested by
+			// TestLaunchPolicyGatesRefusesASharedImageThatCannotReadThePolicyNode.
+			env := fileEnv(t, f.cloudFixture)
+			err := env.proxyGate(context.Background(), slug, spec, "", false, io.Discard)
 			switch {
 			case tc.refused && err == nil:
 				t.Fatal("a proxied repository's run was launched onto a job image whose runner predates the proxy: it would start with no credential and no forwarder to reach Bitbucket with (G1, G14)")
@@ -1455,17 +1463,8 @@ func TestLaunchRefusesProxiedRunOnOldImage(t *testing.T) {
 						t.Errorf("the refusal does not name %q: %v", want, err)
 					}
 				}
-				if launchedAny(f) {
-					t.Error("the refused launch started an execution")
-				}
-				if storedTaskFor(t, f.cloudFixture, slug) {
-					t.Error("the refused launch stored a task")
-				}
 			case !tc.refused && err != nil:
 				t.Fatalf("a launch that is not proxied (or is on a current image) was refused: %v", err)
-			}
-			if !tc.refused && !launchedAny(f) {
-				t.Error("an admitted launch started no execution")
 			}
 		})
 	}
