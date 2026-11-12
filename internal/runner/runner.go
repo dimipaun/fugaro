@@ -1999,7 +1999,7 @@ const bashTimeoutSlack = 2 * time.Minute
 //
 // A checkout the image baked is not always at the work directory: on the
 // shared image D1900 gives every per-repository job it is at a per-slug path
-// under bakedRepoRoot, and bootstrap makes that path the work directory when it
+// under BakedRepoRoot, and bootstrap makes that path the work directory when it
 // is this run's repository's (openBakedCheckout). Every arm below therefore
 // works on r.d.WorkDir alone.
 //
@@ -2022,18 +2022,33 @@ func (r *run) openCheckout(ctx context.Context, remote string, cloneVars map[str
 	return gitops.CloneBlobless(ctx, r.d.WorkDir, remote, "", env, modelCredentialVars...)
 }
 
-// bakedRepoRoot is the directory a shared image keeps the repositories it baked
+// BakedRepoRoot is the directory a shared image keeps the repositories it baked
 // in: one checkout per repository, named by the repository's storage slug
 // (openBakedCheckout). The name is fixed here rather than discovered because
 // both ends of the layout are Fugaro's own code — the bake step writes these
-// directories, and a run of the image reads them here. Nothing writes them yet:
-// the bake step (IS8b, docs/image-setup-skill) waits on the owner's ruling on
-// O3, so this constant and the per-slug arm below are the contract that step has
-// to meet, and until it does every run falls back to the clone. It is a sibling
-// of the work directory and never a path inside it, because the work directory
-// is the run's own checkout and a repository the image merely carries is not
-// part of it.
-const bakedRepoRoot = "baked"
+// directories (internal/imagebake's Root, which a generated definition spells
+// into the image), and a run of the image reads them here, as a sibling of the
+// work directory. The two ends are one layout only while a job's work directory
+// is what the base image and `fugaro exec` say it is, which is what
+// TestBakedRootIsTheJobWorkDirectorysSibling pins: the constants agreeing is not
+// something either package can check for the other.
+//
+// It is a sibling of the work directory and never a path inside it, because the
+// work directory is the run's own checkout and a repository the image merely
+// carries is not part of it.
+const BakedRepoRoot = "baked"
+
+// BakedDir is where a run whose work directory is workDir finds the checkout a
+// shared image baked for slug: a sibling of the work directory (BakedRepoRoot).
+// It is the path internal/imagebake's generated stage writes into the image and
+// the one openBakedCheckout opens, and it is exported — and openBakedCheckout
+// goes through it — because the layout has one end in each package, so a test
+// is the only place that can hold them together (internal/cli's
+// TestBakedRootIsTheJobWorkDirectorysSibling, over the work directory a job's
+// image actually starts in).
+func BakedDir(workDir, slug string) string {
+	return filepath.Join(filepath.Dir(workDir), BakedRepoRoot, slug)
+}
 
 // openBakedCheckout settles the checkout this run finds in its image, before
 // anything of the run can use it.
@@ -2041,7 +2056,7 @@ const bakedRepoRoot = "baked"
 // A checkout in the image is not one this run made, and which repository it is
 // a checkout OF is not a property of the path it sits at. The run therefore
 // opens the work directory when it holds a checkout and, otherwise, the
-// directory the image baked this run's own repository at (bakedRepoRoot,
+// directory the image baked this run's own repository at (BakedRepoRoot,
 // named by the run's storage slug) — and never another repository's, which is
 // the half of the shared image's layout that a single clone at a fixed path
 // could not do (D1900: a per-repository job runs the project's catalog image,
@@ -2080,7 +2095,7 @@ func (r *run) openBakedCheckout(ctx context.Context) error {
 	}
 	repo, err := gitops.Open(r.d.WorkDir, nil)
 	if err != nil {
-		dir := filepath.Join(filepath.Dir(r.d.WorkDir), bakedRepoRoot, slug)
+		dir := BakedDir(r.d.WorkDir, slug)
 		// No checkout at the work directory: this run's own repository is at
 		// its own baked path on a shared image, and a run that has none there
 		// either has no baked checkout at all.
@@ -2574,6 +2589,30 @@ func (r *run) bootstrap(ctx context.Context) error {
 		return fmt.Errorf("recipe %s is mode: %s, but the task says mode: %s", rrec.Name, rcp.Mode, spec.Mode)
 	}
 	r.artifact, r.out = rcp.Mode == recipe.ModeArtifact, rcp.Outputs
+	// The artifact boundary on the Batch backend (plan
+	// 2026-10-19-compute-backend.md Task 10 step 5, Global Constraint 13, design
+	// artifact-runs.md §8.5 and D11): an artifact-producing run is never run on
+	// cloud-batch, because a Batch run's account is not per-repository and the
+	// same run's inputs, artifacts and record would then be readable and
+	// overwritable by every run on the profile.
+	//
+	// This is the arm the launcher's own gate cannot be, and the plan says which
+	// is which: the launch gate reads the REF's copy of the recipe (a repository
+	// recipe by name, resolved in the working tree), and the ref can be stale --
+	// a task launched against a base whose recipe was mode: implement an hour ago
+	// launches, and the runner is the process that actually reads the recipe it
+	// will run. So the runner refuses on the RESOLVED recipe, before any stage
+	// and before any model call, and the gate's ref read stays as defence in
+	// depth beside it rather than as the substitute for it.
+	//
+	// Keyed on FUGARO_BACKEND, which every job of either backend carries
+	// (backend.BackendEnv, written by internal/infra into every job): the
+	// platform a run's job is on is a fact of its own environment, and nothing
+	// else here knows it -- the launch gate runs in the launcher, on the other
+	// side of the job.
+	if r.artifact && r.jobEnv(backend.BackendEnv) == backend.CloudBatch {
+		return fmt.Errorf("recipe %s is mode: artifact, which renders a deliverable into the run's bucket, and this run's job is on the cloud-batch backend: an artifact-producing run is never launched on it, because a Batch run's account is not per-repository -- the same run's inputs, artifacts and record would be readable and overwritable by every run on the profile (docs/design/artifact-runs.md §8.5 and D11, plan 2026-10-19-compute-backend.md Global Constraint 13). Launch an artifact recipe on backend: cloud-run", rrec.Name)
+	}
 	// A task that attached files under a resolved recipe of another mode
 	// fails the run before its first step (design §8.2): the launcher
 	// refuses this for every launch that resolves a recipe, and this is the

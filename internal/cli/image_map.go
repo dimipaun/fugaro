@@ -149,6 +149,15 @@ func runImageMapSet(cmd *cobra.Command, o cloudOptions, repo, entry string) erro
 	if onDisk.ImageMap == nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "note: this machine's project config names no repo-to-image map, so this mapping is written as the project's whole map: if the project already has one published, it is replaced by this file's rather than added to")
 	}
+	// Whether the mapping puts a repository on an image whose copy still
+	// carries another repository's checkout: the map decides who runs an
+	// entry's image and the copy decides whose source is in it, so this write
+	// is the only moment before jobs run on that image when the two can be
+	// seen apart (noteBakedExposure). The read is best effort — a machine that
+	// cannot reach the runs bucket still writes the mapping, and the note says
+	// what it could not check — and the rebuild it names is the entry's next
+	// build, which composes the copy for the map this write leaves.
+	noteBakedExposure(ctx, cmd.ErrOrStderr(), onDisk, next, entry)
 	if err := imageCatalogGate(onDisk, "the map's entry for "+pluginwire.Printable(canon), cmd.ErrOrStderr()); err != nil {
 		return err
 	}

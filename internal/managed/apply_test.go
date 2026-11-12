@@ -47,6 +47,58 @@ type applyRig struct {
 	// credFiles are the credential files the rig's terraform was built
 	// around, one per build.
 	credFiles []string
+	// rec is the audit record writer the apply hands its verdict to
+	// (Request.Recorder): every test below runs the request this builds, so
+	// the record every command in the gate's set leaves is written here too.
+	rec *fakeRecorder
+}
+
+// fakeRecorder is the caller's own writer of the audit record (AuditRecorder),
+// and it holds what the record would be made of: the verdicts the apply reached
+// and the error a test scripts the write to fail with.
+//
+// It writes nothing itself, deliberately: the record's own shape is
+// AuditRecordFor's and is tested there, and what this rig has to answer is the
+// one question the apply's sequence turns on — which verdict reached the
+// recorder, and when.
+type fakeRecorder struct {
+	mu sync.Mutex
+	// conv is every verdict the apply recorded, in the order it recorded them
+	// (one apply records one, whichever way it ends).
+	conv []Converge
+	// err is what a scripted write failure returns, and it stops the apply the
+	// way a real one does (D1014).
+	err error
+}
+
+func (f *fakeRecorder) Record(ctx context.Context, c Converge) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.err != nil {
+		return f.err
+	}
+	f.conv = append(f.conv, c)
+	return nil
+}
+
+// recorded is the one verdict this apply recorded, and a test that calls it on
+// an apply that recorded none — or more than one — fails rather than reading a
+// zero value.
+func (f *fakeRecorder) recorded(t *testing.T) Converge {
+	t.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.conv) != 1 {
+		t.Fatalf("the apply recorded %d verdict(s), and one apply leaves one record", len(f.conv))
+	}
+	return f.conv[0]
+}
+
+// records is what the recorder holds, as a copy.
+func (f *fakeRecorder) records() []Converge {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.conv)
 }
 
 // newApplyRig builds the rig with one root (rootFiles) in the checkout.
@@ -64,7 +116,7 @@ func newApplyRig(t *testing.T, rootFiles map[string]string) *applyRig {
 	if err != nil {
 		t.Fatalf("CopyRoot: %v", err)
 	}
-	return &applyRig{rig: r, wd: wd, src: src}
+	return &applyRig{rig: r, wd: wd, src: src, rec: &fakeRecorder{}}
 }
 
 // bin is the terraform this apply runs, built when it is asked for and not
@@ -269,6 +321,11 @@ func (r *applyRig) request(t *testing.T) Request {
 			r.mu.Unlock()
 			return true, nil
 		},
+		// The record this apply leaves, written by the caller's own writer
+		// (D1014, and the ruling of 2026-11-11 that puts this command in the
+		// gate's set): every apply in this file records one verdict, so a test
+		// reads the verdict back here rather than from the session's screen.
+		Recorder:     r.rec,
 		Workdir:      r.wd,
 		Terraform:    r.bin(t),
 		Cover:        admitAll{},
@@ -443,6 +500,138 @@ func TestApplyStopsAtARefusedGateAndAppliesNothing(t *testing.T) {
 	}
 	if applied := r.applied(t); len(applied) != 0 {
 		t.Errorf("the refused apply still applied something: %v", applied)
+	}
+	// A refusal is recorded too (D1025), and what is recorded is the refusal's
+	// own verdict: an owner whose plan was refused is the reader who wants the
+	// record most, and a record filed as an admission about a plan nothing
+	// applied would be the one answer a reader must not find here.
+	rec := r.rec.recorded(t)
+	if rec.Refuse() == nil {
+		t.Error("the recorded verdict is not a refusal, and the plan was refused: a reader of the record would take this step for one that was applied")
+	}
+	if rec.Warned() {
+		t.Error("the recorded verdict is a warned one, which is the answer for a plan that WAS applied with findings")
+	}
+	if len(rec.Rules()) == 0 {
+		t.Error("the record names no rule, so it does not say what refused the plan")
+	}
+	if rec.Digest() == "" {
+		t.Error("the record carries no digest, and which bytes were judged is the whole point of it (D1022)")
+	}
+}
+
+// A refused plan whose record cannot be written: both sentences reach the
+// caller, the way the CLI gate's admit chains the same pair. What the session
+// acts on is the refusal — nothing was applied, and why — and a command that
+// returned the writer's error alone would leave it with a failure it cannot tell
+// from a refused plan (or, worse, from a broken gate) while D1014's rule is the
+// one that has to be readable in it.
+func TestApplyKeepsTheRefusalWhenTheRecordCannotBeWritten(t *testing.T) {
+	r := newApplyRig(t, plainRoot())
+	r.planWithChanges(t, change(planBucket, "google_storage_bucket", []string{"delete"}, nil))
+	writeErr := errors.New("the audit record could not be written")
+	r.rec.err = writeErr
+	_, err := Apply(context.Background(), r.request(t))
+	if !errors.Is(err, ErrRefused) {
+		t.Errorf("failure %v does not reach the gate's own refusal, so nothing can tell a refused plan from a write that broke: %v", err, writeErr)
+	}
+	var refused *RefusedError
+	if !errors.As(err, &refused) {
+		t.Fatalf("failure %v does not carry the verdict that refused", err)
+	}
+	if len(refused.Verdict.Refusals) == 0 {
+		t.Error("the carried refusal lists nothing, so the session reads no reason for the step that was not applied")
+	}
+	if !strings.Contains(err.Error(), planBucket) {
+		t.Errorf("failure %v does not name the change that was refused", err)
+	}
+	if !strings.Contains(err.Error(), writeErr.Error()) {
+		t.Errorf("failure %v does not carry the write's own cause, which is what classifies the exit (an operator's grant, an outage)", err)
+	}
+}
+
+// The other half of the sequence (spec §6): a record that cannot be written
+// AFTER the plan was applied fails the command. The apply landed — the fake's
+// own call log says so — and nothing else in this command's answer could say
+// that a change this run made is unaccounted for, which is D1014's rule and the
+// reason the record is written last.
+func TestApplyFailsWhenTheRecordOfAnAppliedPlanCannotBeWritten(t *testing.T) {
+	r := newApplyRig(t, plainRoot())
+	r.planWithChanges(t, bucket(planBucket))
+	r.rec.err = errors.New("the audit record could not be written")
+	_, err := Apply(context.Background(), r.request(t))
+	if err == nil {
+		t.Fatal("an apply whose record could not be written was reported as done")
+	}
+	if errors.Is(err, ErrRefused) {
+		t.Errorf("the failure reads as a refusal, and the plan was admitted and applied: %v", err)
+	}
+	if applied := r.applied(t); len(applied) != 1 {
+		t.Errorf("the fake was asked to apply %v, want the one apply whose record failed", applied)
+	}
+	if recs := r.rec.records(); len(recs) != 0 {
+		t.Errorf("the recorder holds %d verdict(s) after a write that failed, and it appends nothing it could not write: %v", len(recs), recs)
+	}
+}
+
+// An apply that failed is still an apply that recorded what it was asked to
+// do: terraform creates what it can before it stops, so the plan the gate
+// admitted has landed in the project whether or not this call returned zero
+// (spec §6, and `fugaro update`'s applyAndRecord records a failed apply for the
+// same reason). Since D1545 the record is also the only control left on the
+// content findings, so a root that puts an off-table grant before a resource
+// sure to fail would otherwise land the grant with nothing recorded and nothing
+// for `fugaro doctor` to warn about.
+func TestApplyRecordsThePlanItAppliedWhenTheApplyItselfFails(t *testing.T) {
+	r := newApplyRig(t, plainRoot())
+	r.planWithChanges(t, bucket(planBucket))
+	r.script["apply"] = map[string]any{"exit": 1, "stderr": "the provider rejected the apply"}
+	res, err := Apply(context.Background(), r.request(t))
+	if err == nil {
+		t.Fatal("an apply terraform refused was reported as done")
+	}
+	if errors.Is(err, ErrRefused) {
+		t.Errorf("the failure reads as a refusal, and the gate admitted this plan: %v", err)
+	}
+	var ee *tf.ExitError
+	if !errors.As(err, &ee) || ee.Code != 1 {
+		t.Errorf("the apply's own exit code is no longer what the caller reads: %v", err)
+	}
+	if applied := r.applied(t); len(applied) != 1 {
+		t.Errorf("the fake was asked to apply %v, want the one apply that failed", applied)
+	}
+	if !res.Verdict.OK {
+		t.Error("the returned result no longer carries the verdict the gate passed")
+	}
+	rec := r.rec.recorded(t)
+	if rec.Refuse() != nil {
+		t.Error("the recorded verdict is a refusal, and this plan was admitted and applied")
+	}
+	if rec.Digest() == "" {
+		t.Error("the record carries no digest, and which bytes were applied is the whole point of it (D1022)")
+	}
+}
+
+// And where that record cannot be written either, the failure carries both:
+// terraform's own cause, which is what classifies the exit, and the write's,
+// which is D1014's rule. Returning the writer's error alone would report a
+// failed apply as a broken gate.
+func TestApplyKeepsTheApplysFailureWhenTheRecordCannotBeWritten(t *testing.T) {
+	r := newApplyRig(t, plainRoot())
+	r.planWithChanges(t, bucket(planBucket))
+	r.script["apply"] = map[string]any{"exit": 1, "stderr": "the provider rejected the apply"}
+	writeErr := errors.New("the audit record could not be written")
+	r.rec.err = writeErr
+	_, err := Apply(context.Background(), r.request(t))
+	if err == nil {
+		t.Fatal("an apply that failed and recorded nothing was reported as done")
+	}
+	var ee *tf.ExitError
+	if !errors.As(err, &ee) || ee.Code != 1 {
+		t.Errorf("failure %v does not carry the apply's own exit code, so the command's exit status is the write's: %v", err, writeErr)
+	}
+	if !strings.Contains(err.Error(), writeErr.Error()) {
+		t.Errorf("failure %v does not carry the write's own cause", err)
 	}
 }
 
@@ -711,6 +900,11 @@ func TestApplyRefusesARequestItCannotRun(t *testing.T) {
 		{"no cover", func(r *Request) { r.Cover = nil }},
 		{"no access", func(r *Request) { r.Access = nil }},
 		{"no impersonator", func(r *Request) { r.Impersonator = nil }},
+		// Nothing writes the audit record: an apply that would leave no trail
+		// is refused before it reads a plan, rather than applied and then found
+		// to have nowhere to account for itself (D1014, the ruling of
+		// 2026-11-11 that requires one).
+		{"nothing writes the record", func(r *Request) { r.Recorder = nil }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newApplyRig(t, plainRoot())

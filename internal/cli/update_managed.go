@@ -552,16 +552,23 @@ func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey
 	}
 	// The gate's three answers are built from the verdict and never beside it
 	// (managed.Converge's own rule): a rule that fired and did not refuse goes
-	// to the Converge's warnings, so the record say which rules they were and
-	// the step still applies (D1545).
-	warnings := ruleLines(verdict.Warnings)
-	conv := managedmode.ConvergeRefused(doc, class, ruleLines(verdict.Refusals))
-	if verdict.OK {
-		if len(warnings) == 0 {
-			conv = managedmode.ConvergeAdmitted(doc, class, admittedRules(upgrade, false))
-		} else {
-			conv = managedmode.ConvergeWarned(doc, class, admittedRules(upgrade, true), warnings)
-		}
+	// to the Converge's warnings, so the record says which rules they were and
+	// the step still applies (D1545). A REFUSED plan carries them too when the
+	// gate raised them beside the rules that stopped it
+	// (ConvergeRefusedWithWarnings): the record of a refusal names both, so an
+	// owner reads what the gate saw about the rest of the plan and not only what
+	// refused it (the ruling of 2026-11-11). The lines are managed.RuleLines',
+	// the same rendering the record of an apply uses, so a finding reads the
+	// same way wherever it is filed.
+	warnings := managedmode.RuleLines(verdict.Warnings)
+	var conv managedmode.Converge
+	switch {
+	case !verdict.OK:
+		conv = managedmode.ConvergeRefusedWithWarnings(doc, class, managedmode.RuleLines(verdict.Refusals), warnings)
+	case len(warnings) == 0:
+		conv = managedmode.ConvergeAdmitted(doc, class, admittedRules(upgrade, false))
+	default:
+		conv = managedmode.ConvergeWarned(doc, class, admittedRules(upgrade, true), warnings)
 	}
 	m, err := g.g.admit(ctx, class, conv)
 	if err != nil {
@@ -1174,24 +1181,6 @@ func admittedRules(upgrade []string, warned bool) []string {
 	rules := []string{guard, cover, costs}
 	if len(upgrade) > 0 {
 		rules = append(rules, "the replaces this binary's own upgrade makes were matched out of this plan, both halves of each change compared before it was named (infra.LauncherGrantUpgrade): "+safetext.FieldListLine(upgrade))
-	}
-	return rules
-}
-
-// ruleLines is a verdict's refusals or its warnings as the rules that fired,
-// one per item, in the gate's own gate/address/why shape. They are what the
-// refusal sentence names after NotConverged, what this step prints when the
-// gate warned, and what the audit record holds — and internal/managed bounds
-// them where it renders them: a rule can quote a plan, and a plan is not this
-// program's text.
-func ruleLines(refs []managedmode.Refusal) []string {
-	rules := make([]string, 0, len(refs))
-	for _, ref := range refs {
-		why := ref.Gate + ": " + ref.Why
-		if ref.Address != "" {
-			why = ref.Gate + ": " + ref.Address + " — " + ref.Why
-		}
-		rules = append(rules, why)
 	}
 	return rules
 }

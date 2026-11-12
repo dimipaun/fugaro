@@ -312,9 +312,9 @@ func initStages(e *initEngine) []initflow.Stage {
 		stages = append(stages, newOrchestratorUnitStage(e))
 	}
 	// The Batch backend's provisioning is the owner's step and nothing else
-	// reaches it: the stage is registered only under its own flag, and
-	// `backend: cloud-batch` stays refused by config validation until the
-	// enable task (design compute-backend §8.1 tasks 6 and 9).
+	// reaches it: the stage is registered only under its own flag, so an
+	// installation reaches it by asking for it and never as part of an update
+	// (design compute-backend §8.1 tasks 6 and 9).
 	if e.r.o.provisionBatch {
 		stages = append(stages, newComputeStage(e))
 	}

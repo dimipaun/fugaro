@@ -39,10 +39,13 @@ func TestUpdateConvergesSlimBase(t *testing.T) {
 		t.Fatalf("the fixture records base_images.base = %s, want the previous release's %s", got, prev)
 	}
 
-	// policy-vs-jobs is the check that fires on the stale base: the job images
-	// the records show were built on the previous release's base, which is what
-	// the images stage has to move.
-	convergeOn(t, r, []string{"policy-vs-jobs", "policy-rules-skew", "plugin-pin"})
+	// The node the previous release published is a version-4 one, so
+	// policy-older-than-binary is the check that fires before the run — and it
+	// is the policy stage's, which migrates the node in place. The stale base
+	// is what the assertions after the run are about: the job images the
+	// records show were built on the previous release's base, which is what the
+	// images stage has to move.
+	convergeOn(t, r, []string{"policy-older-than-binary", "policy-rules-skew", "plugin-pin"})
 
 	// The pin this release's images stage resolves, verifies and records: the
 	// one value whose movement is this installation reaching the slim base.

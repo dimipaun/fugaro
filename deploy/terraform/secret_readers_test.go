@@ -105,6 +105,7 @@ var secretReaderExceptions = []struct {
 	// DS2.2 is to have it run as holds no secretAccessor and no secrets.get
 	// (F30; that account's grants are not fenced yet).
 	{id: "E22", keys: []string{"internal/intake/gcp.go"}},
+	{id: "E23", keys: []string{"internal/cli/doctor_batch.go"}},
 }
 
 // A key under this prefix names a rule the scan enforces rather than a hit it
