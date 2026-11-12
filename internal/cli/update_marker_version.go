@@ -47,6 +47,19 @@ func (e *initEngine) convergeMarkerVersion(ctx context.Context) {
 	if e.c == nil {
 		return
 	}
+	// The version this run's own gate read answered with, before a read of this
+	// step's own: a fact that is not version 3 is one this step has nothing to
+	// do about, and asking the bucket again to be told so is a read the
+	// installation pays for on every update it ever runs. It is also what keeps
+	// the step's cost off an installation that has no fact at all — the
+	// unmanaged project whose runs bucket does not exist, where a read of this
+	// step's own finds a refusal and would have to say something about it,
+	// while the run already knows there is nothing there. The gate's answer is
+	// the object's own version (read.go), so a version-3 fact with its label
+	// missing reaches this step too.
+	if v := r.gate.factVersion(); v != managed.MarkerVersionBuilds {
+		return
+	}
 	// The bucket the managed read looks in, by its default name: a fact kept
 	// anywhere else is one no reader of this build ever finds (readFactObject
 	// derives the name from the project), so converging it there would be a
@@ -64,7 +77,7 @@ func (e *initEngine) convergeMarkerVersion(ctx context.Context) {
 	}
 	wrote, err := managed.ConvergeMarker(ctx, e.c.Storage, bucket, r.gcpProject, number)
 	if err != nil {
-		r.warn(fmt.Sprintf("the creation fact of %s records the image build count this release no longer bounds a build by (D1543), and it was left as it is: %s. The installation keeps working — a version-3 fact is a fact this build reads, and the count in it bounds nothing — and the next `fugaro update` converges it", safetext.Field(r.gcpProject), safetext.FieldErr(err)))
+		r.warn(fmt.Sprintf("the creation fact of %s records the image build count this release does not bound a build by (D1543), and it was left as it is: %s. The installation keeps working — a version-3 fact is a fact this build reads, and the count in it bounds nothing — and the next `fugaro update` converges it", safetext.Field(r.gcpProject), safetext.FieldErr(err)))
 		return
 	}
 	if !wrote {
