@@ -1131,10 +1131,13 @@ func doctorIntakeChecks(ctx context.Context, lc *localcfg.Config, sm *gcp.Secret
 		checks = append(checks, doctorCheck{ID: id, OK: true, Severity: "info",
 			Problem: "no secrets intake is deployed in " + lc.GCPProject + ": no binding of its project policy names " + member})
 	}
-	if len(readers) > 0 {
+	// One line per role, so each carries the removal command for the grant it
+	// names: gcloud takes one --role per call, and an account holding two of
+	// them is two grants to take off.
+	for _, role := range readers {
 		checks = append(checks, doctorCheck{ID: id, Severity: "warning",
-			Problem: "the intake's account " + member + " holds " + strings.Join(readers, ", ") + ", a grant that reads secret values: the intake creates, versions and deletes the dynamic containers and its design gives it no way to read one (DS2.2, R3), so a holder of this grant can read what it writes",
-			Fix:     "remove the grant: gcloud projects remove-iam-policy-binding " + quoteWord(lc.GCPProject) + " --member=" + member + " --role=" + strings.Join(readers, " --role=")})
+			Problem: "the intake's account " + member + " holds " + role + ", a grant that reads secret values: the intake creates, versions and deletes the dynamic containers and its design gives it no way to read one (DS2.2, R3), so a holder of this grant can read what it writes",
+			Fix:     "remove the grant: gcloud projects remove-iam-policy-binding " + quoteWord(lc.GCPProject) + " --member=" + member + " --role=" + role})
 	}
 	if len(unfenced) > 0 {
 		checks = append(checks, doctorCheck{ID: id, Severity: "warning",
