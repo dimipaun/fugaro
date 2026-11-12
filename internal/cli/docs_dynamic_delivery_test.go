@@ -130,7 +130,7 @@ func TestDynamicDeliveryDocsPinned(t *testing.T) {
 			"DS0.2",
 			c.stepsRef,
 			c.script,
-			"OWNER-RUN, NOT RUN.",
+			dynamicDeliveryRowStatus(c.number),
 			"no agent runs any step of it",
 		} {
 			if !strings.Contains(row, want) {
@@ -141,7 +141,7 @@ func TestDynamicDeliveryDocsPinned(t *testing.T) {
 		section := checkSection(t, register, c.number)
 		flat := strings.ToLower(flattenDoc(section))
 		for _, want := range []string{
-			"**not run.**",
+			dynamicDeliverySectionStatus(c.number),
 			"no agent runs any step of it",
 			c.stepsRef,
 			c.script,
@@ -196,7 +196,7 @@ func TestDynamicDeliveryDocsPinned(t *testing.T) {
 			"--dry-run",
 			"bash " + c.script,
 			"No agent runs any step of it",
-			"**NOT RUN",
+			dynamicDeliveryStepsStatus(c.number),
 		} {
 			if !strings.Contains(steps, want) {
 				t.Errorf("%s does not say %q: a steps file that leaves out its own script, the register it records into or the fact that no agent runs it is a file a reader cannot follow", c.path, want)
@@ -316,4 +316,27 @@ func TestDynamicDeliveryReadmeLinksTheFolder(t *testing.T) {
 			t.Errorf("%s's File table does not link %s: the two steps files are this work's checks, and the table is where a reader finds them", dynamicDeliveryReadme, base)
 		}
 	}
+}
+
+// Check 510 has been run by the owner (2026-11-12) and records its result;
+// Check 511 is still written and not run.
+func dynamicDeliveryRowStatus(number string) string {
+	if number == "510" {
+		return "RUN 2026-11-12"
+	}
+	return "OWNER-RUN, NOT RUN."
+}
+
+func dynamicDeliverySectionStatus(number string) string {
+	if number == "510" {
+		return "**run 2026-11-12"
+	}
+	return "**not run.**"
+}
+
+func dynamicDeliveryStepsStatus(number string) string {
+	if number == "510" {
+		return "The re-run of 2026-11-12"
+	}
+	return "**NOT RUN"
 }
