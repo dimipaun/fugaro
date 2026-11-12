@@ -159,7 +159,7 @@ func doctorVisionFinding(coder, ref string, files []string, repo string) doctorC
 		Problem: fmt.Sprintf("the coder model %s is priced without an image rate, %s, and %s tracks %s: a stage that reads one is refused by the gateway mid-run, after its work is paid for",
 			pluginwire.Printable(coder), doctorVisionSlot(""), pluginwire.Printable(ref), strings.Join(names, ", ")),
 		Fix: fmt.Sprintf("set agent.models.vision to a model that can read images (%s models use %s vision <id>), and price that model's images with model_prices' image_tokens (0 refuses an image)",
-			selfCommand(), pluginwire.Printable(repo)),
+			selfCommand(), quoteWord(repo)),
 	}
 }
 
