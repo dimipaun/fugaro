@@ -46,13 +46,18 @@ the existing CI on `main` for the post-flight suite. The migration default is
 **Pro** (D19). What this branch builds changes two things for a repository that
 configures nothing: its runs resolve and record Pro, and Pro's per-run budget
 default is 0.85 of the deployed cap (T6.1). It does **not** change what "ready"
-means yet: `runner.Decide` takes no mode until Slice 3 (the run loop that applies
-the mode) is built, and that is the slice that will change readiness for an
-unconfigured repository. The loud migration note plus the one-line pin
-`rigor.default: critical` are what a repository uses to keep today's behaviour;
-the security-sensitive tier (the D18 floors) stays **Critical**, so every claim
-that a cut "relaxes nothing" or is "byte-identical to today" holds for
-**Critical mode only**.
+means for such a repository: Slice 3 is built — the run loop applies the mode, so
+the modes decide readiness today — but `runner.Decide` reads a mode's blocking row
+only where the repository opted in (`rigor.Config.Configured`: a `rigor:` block, or
+a project `defaults.rigor`), and a repository that configures nothing still blocks
+on every finding it did not fix. The loud migration note plus the one-line pin
+`rigor.default: critical` are what a repository uses to keep today's behaviour.
+The security-sensitive tier is **not a mode floor in this tree**: T1.5's built-in
+sensitive-path floors are unbuilt, and what the runner guarantees a
+security-sensitive diff today is review level 3, forced on a matching path
+whatever mode the run resolved — the escalation raises a level and never the mode.
+Every claim that a cut "relaxes nothing" or is "byte-identical to today" is
+therefore about **Critical mode only**.
 
 The owner's 2026-10-20 spec was written without seeing this repository, so
 several of its premises moved work: the top-level `review:` configuration it
@@ -161,6 +166,8 @@ operators` section:
   per-mode budgets (T6.1, and T6.2's `fugaro budget preview --mode`); and T7.1,
   the product document this folder's promise now lives on
   ([docs/rigor-modes.md](../rigor-modes.md)). What is left is the plan's own list:
+  T1.5's built-in sensitive-path floors — the security tier's own Critical floor,
+  and the one task the plan hands to an operator rather than to a run —
   Slice 5's Hotfix gate, its ready PR and the recorded follow-up task
   (T5.3–T5.5) — the gate being the one piece
   [docs/rigor-modes.md](../rigor-modes.md) names as missing — T6.3's per-mode

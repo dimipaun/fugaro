@@ -38,7 +38,7 @@ because the run it names is the one with the least room to spend.
 | `poc` | "Happy path only. Damn the torpedoes; just make it work." | 1 / 1 | Nothing but a finding the spec calls catastrophic — a `security` or `data_loss` class, or an impact of 5 — and a finding whose score cannot be read at all. | 0.55 |
 | `startup` | "Good foundation. Happy path plus common error paths. Rare, expensive corner cases go to the backlog." | 2 / 2 | A finding whose likelihood × impact reaches 8, plus the catastrophic override above. | 0.70 |
 | `pro` | "Established-company quality. Aim for bug-free patches, but balance cost against likelihood; extremely rare, high-effort issues may stay unfixed." | 3 / 3 | A finding whose likelihood × impact reaches 4, plus the override — except the case the sentence names: a likelihood of 1 with a fix cost of 4 or more is tolerated. | 0.85 |
-| `critical` | "Maximum care about everything." | 3 / 5 | Every finding. It is the strictest mode and the one no repository may fall below for security-sensitive code. | 1.00 |
+| `critical` | "Maximum care about everything." | 3 / 5 | Every finding. It is the strictest mode: no threshold stands between a finding and the block, and nothing is tolerated at the stop. | 1.00 |
 | `hotfix` | "Production is on fire. Time is the dominant constraint." Reached only by a layer written by hand, never by a flag (§[What is not settled](#what-is-not-settled-the-hotfix-gate)). | 1 / 1 | A finding of class `security` alone, plus an unscored one. A `data_loss` finding and an impact of 5 are tolerated. | 0.40 |
 
 The rounds column is the mode's **default**, not a cap (§[Review
@@ -72,6 +72,25 @@ level, `critical` adds the adversarial pass after it, and `hotfix` runs `pro`'s
 set. In every mode but `poc` the first-line level is the repository's own switch
 (`agent.first_line_review`: `auto`, `on` or `off`). The owner's floor can require
 a level the configuration turned off (§[The floor](#the-floor)).
+
+**A security-sensitive diff forces a level, and it does not force a mode.** Where
+the run's own diff touches a path the security list carries — the engine's own
+patterns unioned with the repository's and the project layer's
+(`config.SecurityPatterns`) — the runner turns review level 3 on for that run and
+rebuilds the plan so the adversarial pass is in it. That escalation is raise-only
+and it clears a layer's own off-switch for the level, so no configuration defeats
+it; what it does **not** do is raise the mode, because a mode raise would rewrite
+the round counts and the findings policy for a change whose only new fact is its
+paths (D1508). A `poc` or `startup` repository that touches a security path
+therefore reviews that diff adversarially and is still judged by its own row:
+today the guarantee is the level, and no mode is a floor for security-sensitive
+code. The design's own built-in floor for that tier — a set of sensitive paths
+that resolves to `critical` whatever the run asks for — is task T1.5 and is not
+built, so a repository that wants those paths reviewed at `critical` writes the
+area rule itself (§[Choosing a mode](#choosing-a-mode)). A run whose escalation
+was refused — the level's settings do not resolve for it, or the path is first
+committed at finalize, after the last round — records the refusal and is never
+published ready (`ReasonSecurityRefused`).
 
 ### What blocks
 
@@ -226,11 +245,17 @@ fugaro rigor floor set critical l1,l2,l3
 fugaro rigor floor unset poc
 ```
 
-`set` takes a comma-separated list of `l1`, `l2` and `l3`. Adding a mode the file
-does not carry, or a level a mode's floor does not carry, is the ordinary write —
-it can only require more review. Dropping a level, or removing a mode's entry, is
-a whole project reviewing less: it asks nothing, and a coding agent's session is
-refused it outright.
+`set` takes a comma-separated list of `l1`, `l2` and `l3`. **A coding agent's
+session is refused every write here** — `set` and `unset` alike, in both
+directions, and before the file is read at all, so the session is shown neither
+the diff nor the sentence. The floor is the owner's own minimum and every change
+to it is the owner's own hand: the refusal names the command to run at your own
+terminal, and no flag changes its answer. At that terminal, adding a mode the
+file does not carry, or a level a mode's floor does not carry, is the ordinary
+write — it can only require more review, and it prints the sentence naming the
+change. Dropping a level, or removing a mode's entry, is a whole project
+reviewing less: it prints what it widens, and it asks nothing either, as
+`--yes` says on both subcommands.
 
 **The floor is outside every layer and only tightens.** `poc`, `startup`, `pro`,
 `critical` and `hotfix` are all under it: a floor of `l2` on `poc` runs the senior
