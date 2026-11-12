@@ -11,13 +11,16 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	accesslib "github.com/dimipaun/fugaro/internal/access"
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 const (
@@ -204,6 +207,9 @@ func TestAccessBudgetAdminOnAnotherRepoCannotSetThisOne(t *testing.T) {
 		"nothing was set",
 		"needs admin on "+accessRepoCanon,
 		"(user:admin@example.com) hold admin at github/acme/web")
+	if v := f.db.Value(budget.PathCapsRepo(appSlug)); v != nil {
+		t.Errorf("the refused set wrote %s = %v", budget.PathCapsRepo(appSlug), v)
+	}
 }
 
 // TestAccessBudgetProjectViewerCannotSetGlobal: reading the project's caps is
@@ -270,10 +276,19 @@ func TestAccessBudgetShowIsAProjectRead(t *testing.T) {
 // cannot widen it.
 func TestAccessReposAllReposAdminCannotEditTheAllowList(t *testing.T) {
 	f := accessFixture(t, false)
+	f.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version":     projectpolicy.Version,
+		"budget":      map[string]any{"mode": "enforce", "per_run_usd": 5},
+		"allow_repos": []string{"github/acme/app"},
+	})
 	accessAs(t, f.db, accessAdminAddr,
 		userStored(t, accessMember(t, accessAdminAddr), accesslib.RoleAdmin, "all-repos"))
+	before := allowReposOf(t, f.db)
 	_, _, err := execute(t, "project", "repos", "add", "github/acme/new")
 	accessRefused(t, err, "nothing was added to the allow-list", "admin at project scope", "(user:admin@example.com) hold admin at all-repos")
+	if after := allowReposOf(t, f.db); !slices.Equal(after, before) {
+		t.Errorf("the refused add rewrote the published allow-list: %v, want %v", after, before)
+	}
 }
 
 // TestAccessAccountsAllReposAdminCannotAddAnAccount: accounts are on F19's
@@ -297,17 +312,27 @@ func TestAccessAccountsAllReposAdminCannotAddAnAccount(t *testing.T) {
 func TestAccessSecretsRepoAdminCannotWriteTheProjectCopy(t *testing.T) {
 	t.Run("the project's copy", func(t *testing.T) {
 		f := accessFixture(t, false)
+		sm := gcpfake.NewSecrets(t)
+		f.rewriteConfig(t, "endpoints: { no_auth: true }", "endpoints: { secret_manager: "+sm.URL+"/, no_auth: true }")
 		accessAs(t, f.db, accessAdminAddr,
 			userStored(t, accessMember(t, accessAdminAddr), accesslib.RoleAdmin, accessRepoCanon))
 		_, _, err := executeStdin(t, "value\n", "secrets", "set", config.AnthropicSecret, "--project-wide")
 		accessRefused(t, err, "nothing was written", "admin at project scope", "(user:admin@example.com) hold admin at "+accessRepoCanon)
+		if got := sm.Latest(gcp.ProjectSecretID("aurora", config.AnthropicSecret)); len(got) != 0 {
+			t.Errorf("the refused set stored the project's copy: %q", got)
+		}
 	})
 	t.Run("another repository's copy", func(t *testing.T) {
 		f := accessFixture(t, false)
+		sm := gcpfake.NewSecrets(t)
+		f.rewriteConfig(t, "endpoints: { no_auth: true }", "endpoints: { secret_manager: "+sm.URL+"/, no_auth: true }")
 		accessAs(t, f.db, accessAdminAddr,
 			userStored(t, accessMember(t, accessAdminAddr), accesslib.RoleAdmin, "github/acme/web"))
 		_, _, err := executeStdin(t, "value\n", "secrets", "set", config.AnthropicSecret, "--repo", "acme/app")
 		accessRefused(t, err, "nothing was written", "needs admin on "+accessRepoCanon, "(user:admin@example.com) hold admin at github/acme/web")
+		if got := sm.Latest(gcp.SecretID(appSlug, config.AnthropicSecret)); len(got) != 0 {
+			t.Errorf("the refused set stored acme/app's copy: %q", got)
+		}
 	})
 }
 
@@ -326,5 +351,42 @@ func TestAccessWithoutAGrantsNodeTheCommandsAreUnchanged(t *testing.T) {
 	}
 	if v := f.db.Value(budget.PathCapsGlobal); v == nil {
 		t.Error("the global caps were not written")
+	}
+}
+
+// TestAccessUnreadableGrantsNodeIsARefusal pins the other half of the rule
+// above: a node that is there and cannot be read is a refusal, never an empty
+// roster. Failing open here would hand the project's own surfaces to whoever
+// the database cannot answer for, which is the opposite of what the node is for.
+func TestAccessUnreadableGrantsNodeIsARefusal(t *testing.T) {
+	f := accessFixture(t, false)
+	f.db.Set(accesslib.PathNode, "not a grants node")
+	userPairAs(t, accessMember(t, accessAdminAddr))
+	_, _, err := execute(t, "budget", "set", "--global", "--per-run", "3")
+	if err == nil {
+		t.Fatal("a roster that could not be read allowed a project-level write")
+	}
+	if v := f.db.Value(budget.PathCapsGlobal); v != nil {
+		t.Errorf("the refused set wrote %s = %v", budget.PathCapsGlobal, v)
+	}
+}
+
+// TestAccessGateRefusesHTTP2DebugBeforeItOpens: the gate is the first cloud
+// open of commands that were purely local before this task — `accounts add`
+// edits the config and talked to nothing — so it carries the guard every other
+// open carries. Without it the request the gate makes would be one Go prints
+// under GODEBUG=http2debug, bearer token and all.
+func TestAccessGateRefusesHTTP2DebugBeforeItOpens(t *testing.T) {
+	f := accessFixture(t, false)
+	accessAs(t, f.db, accessAdminAddr,
+		userStored(t, accessMember(t, accessAdminAddr), accesslib.RoleAdmin, accessRepoCanon))
+	before := accessConfigText(t)
+	t.Setenv("GODEBUG", "http2debug=2")
+	_, _, err := execute(t, "accounts", "add", "team-a", "--repos", "acme/app", "--yes")
+	if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "http2debug") {
+		t.Fatalf("accounts add: err = %v, want the GODEBUG refusal", err)
+	}
+	if after := accessConfigText(t); after != before {
+		t.Errorf("the GODEBUG refusal wrote the project config:\n%s", after)
 	}
 }
