@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/recipe"
 )
 
@@ -61,7 +62,7 @@ import (
 // TestDocsMixedCredentialsCorrectsTheStaleMissingList are those two pins.
 
 // TestDocsMixedCredentialsRecordsTheRuling: the design note carries the rule
-// as its own section, with the two stages it may serve, the two it may never
+// as its own section, with the stages it may serve, the two it may never
 // serve, the second-provider refusal, the threat model and the failure
 // behaviour the tasks B1-B6 follow.
 func TestDocsMixedCredentialsRecordsTheRuling(t *testing.T) {
@@ -70,10 +71,12 @@ func TestDocsMixedCredentialsRecordsTheRuling(t *testing.T) {
 
 	// The stages are read from the recipe's own step names, so a step renamed
 	// in the tree fails here rather than leaving the document naming a stage
-	// no run has.
+	// no run has. `triage` is a runner stage and not a recipe step (D1851), so
+	// it is named as the tree names it (config.RunStages).
 	for _, want := range []string{
 		"`" + string(recipe.StepReview) + "`",
 		"`" + string(recipe.StepAdversarial) + "`",
+		"`triage`",
 		"`implement`",
 		"`review_first`",
 	} {
@@ -81,14 +84,21 @@ func TestDocsMixedCredentialsRecordsTheRuling(t *testing.T) {
 			t.Errorf("%s §11 never names %s: the rule is about which stages the account may serve", path, want)
 		}
 	}
-	// The two stages the account may serve are the whole of the allow-list, and
-	// the sentence that permits them is where a reader learns the rule is a
+	// The stages the account may serve are the whole of the allow-list, and the
+	// sentence that permits them is where a reader learns the rule is a
 	// permission rather than a ban: read with "and no other stage", a rule that
-	// named a third stage and said nothing else would still fail here.
-	permitted := fmt.Sprintf("the account serves `%s` and `%s` and no other stage",
-		recipe.StepReview, recipe.StepAdversarial)
+	// named one more stage and said nothing else would still fail here. The
+	// names come off the launch's own list (config.MixedAccountStages), so a
+	// stage added to the mix fails here rather than leaving the document a
+	// stage behind the launch.
+	quoted := make([]string, 0, len(config.MixedAccountStages))
+	for _, stage := range config.MixedAccountStages {
+		quoted = append(quoted, "`"+stage+"`")
+	}
+	permitted := fmt.Sprintf("the account serves %s and no other stage",
+		strings.Join(quoted[:len(quoted)-1], ", ")+" and "+quoted[len(quoted)-1])
 	if !strings.Contains(section, permitted) {
-		t.Errorf("%s §11 does not state the allow-list as %q: the account may serve exactly those two stages, and a rule that lists refusals instead lets the next stage a recipe adds read as permitted", path, permitted)
+		t.Errorf("%s §11 does not state the allow-list as %q: the account may serve exactly those stages, and a rule that lists refusals instead lets the next stage a recipe adds read as permitted", path, permitted)
 	}
 	for _, want := range []string{
 		// The rule, the one credential it permits and the two keys that may
