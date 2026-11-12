@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	crm "google.golang.org/api/cloudresourcemanager/v1"
 	"google.golang.org/api/googleapi"
 	runapi "google.golang.org/api/run/v2"
 	secretmanager "google.golang.org/api/secretmanager/v1"
@@ -22,10 +23,12 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
 	"github.com/dimipaun/fugaro/internal/gitprov/httpjson"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runner"
+	"github.com/dimipaun/fugaro/internal/secretname"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -1068,4 +1071,197 @@ func proxiedBitbucketRepos(lc *localcfg.Config) []string {
 		}
 	}
 	return out
+}
+
+// doctorIntakeChecks is DS4.2's read of the dynamic class's own account: the
+// secrets intake is deployed, DS2.2 gives it no way to read a value, its write
+// role is bound under the name fence, and no container of the project carries a
+// prefix of the class that no grammar admits.
+//
+// It reads the project's IAM policy the two reader checks already read — the
+// caller passes the one answer down rather than asking again
+// (doctorSecretManagerChecks' rule) — and the account is named by the id
+// modules/installation/intake.tf creates (tf.IntakeAccountID), which is the
+// only thing that says which member is the intake's at all. A policy that
+// could not be read is left to the line that already reports it, the sweep's or
+// the deployers': a second sentence about one failed read is noise, and the
+// checks that read the policy each ask it a question of their own.
+//
+// The accessor is a warning and never a failure: the account is granted one by
+// a hand change or by a root applied before the class existed, and an
+// installation mid-repair must not be failed by doctor (the sweep's own rule).
+// A grant that reads values is the worst of the two states the check reports —
+// it lets the account read what it wrote — and an unfenced write grant is the
+// other: it lets the intake create, version and delete ANY container of the
+// project, which is what the fence exists to bound (R3).
+func doctorIntakeChecks(ctx context.Context, lc *localcfg.Config, sm *gcp.Secrets, pol *crm.Policy, polErr error, roles *iamRoles) []doctorCheck {
+	const id = "secrets-intake"
+	checks := doctorDynamicSecretNameChecks(ctx, lc, sm)
+	if polErr != nil {
+		return checks
+	}
+	member := intakeAccountMember(lc.GCPProject)
+	writeRole := "projects/" + lc.GCPProject + "/roles/" + tf.IntakeSecretsRole
+	var (
+		deployed bool
+		readers  []string
+		unread   []string
+		unfenced []string
+	)
+	for _, b := range pol.Bindings {
+		if b == nil || !slices.Contains(b.Members, member) {
+			continue
+		}
+		deployed = true
+		carries, errText := secretReaderRole(b.Role, roles)
+		switch {
+		case errText != "":
+			unread = append(unread, pluginwire.Printable(b.Role))
+		case carries:
+			readers = append(readers, pluginwire.Printable(b.Role))
+		}
+		if b.Role == writeRole && !fencedUnderSecretNames(b.Condition) {
+			unfenced = append(unfenced, pluginwire.Printable(b.Role))
+		}
+	}
+	for _, list := range [][]string{readers, unread, unfenced} {
+		slices.Sort(list)
+	}
+	switch {
+	case !deployed:
+		checks = append(checks, doctorCheck{ID: id, OK: true, Severity: "info",
+			Problem: "no secrets intake is deployed in " + lc.GCPProject + ": no binding of its project policy names " + member})
+	}
+	if len(readers) > 0 {
+		checks = append(checks, doctorCheck{ID: id, Severity: "warning",
+			Problem: "the intake's account " + member + " holds " + strings.Join(readers, ", ") + ", a grant that reads secret values: the intake creates, versions and deletes the dynamic containers and its design gives it no way to read one (DS2.2, R3), so a holder of this grant can read what it writes",
+			Fix:     "remove the grant: gcloud projects remove-iam-policy-binding " + quoteWord(lc.GCPProject) + " --member=" + member + " --role=" + strings.Join(readers, " --role=")})
+	}
+	if len(unfenced) > 0 {
+		checks = append(checks, doctorCheck{ID: id, Severity: "warning",
+			Problem: "the intake's write grant " + strings.Join(unfenced, ", ") + " is not bound under the per-user and project-shared name-prefix condition: the role creates, versions and deletes containers, so without the fence the account reaches every secret of " + lc.GCPProject,
+			Fix:     "re-apply the installation root that writes this grant: " + selfCommand() + " update   # modules/installation/intake.tf binds it under the " + secretname.UserPrefix + "/" + secretname.ProjectPrefix + " fence"})
+	}
+	if len(unread) > 0 {
+		checks = append(checks, doctorCheck{ID: id, Severity: "info", unread: true,
+			Problem: "could not read what " + strings.Join(unread, ", ") + " carries, so whether the intake's account can read a secret's value through it is unknown, not no",
+			Fix:     "rerun fugaro doctor with access to the project, or as an operator who can read each role (gcloud iam roles describe ROLE)"})
+	}
+	if deployed && len(readers) == 0 && len(unread) == 0 && len(unfenced) == 0 {
+		checks = append(checks, doctorCheck{ID: id, OK: true, Severity: "info",
+			Problem: "the secrets intake is deployed in " + lc.GCPProject + ", its account " + member + " holds no role that reads a secret's value, and its write grant is bound under the " + secretname.UserPrefix + "/" + secretname.ProjectPrefix + " name-prefix condition"})
+	}
+	return checks
+}
+
+// intakeAccountMember is the intake's own account as an IAM policy spells it:
+// the account modules/installation/intake.tf creates in the installation's
+// project (tf.IntakeAccountID), which is what every one of the class's grants
+// names it by.
+func intakeAccountMember(project string) string {
+	return "serviceAccount:" + tf.IntakeAccountID + "@" + project + ".iam.gserviceaccount.com"
+}
+
+// fencedUnderSecretNames reports whether a binding's condition bounds it to the
+// class's names: the expression has to carry both prefixes the fence is made
+// of, which is the whole of what the condition is for (R3). The title is not
+// read — it names the condition, never what it admits — and the exact
+// expression is pinned where it is written, by the plan-time check on
+// modules/installation/intake.tf (internal/infra/tf's fence matcher), so this
+// read answers "is there a fence here at all" rather than re-deciding the
+// module's own text.
+func fencedUnderSecretNames(cond *crm.Expr) bool {
+	if cond == nil {
+		return false
+	}
+	return strings.Contains(cond.Expression, secretname.UserPrefix) && strings.Contains(cond.Expression, secretname.ProjectPrefix)
+}
+
+// doctorDynamicSecretNameChecks is DS4.2's name read: a container of the
+// installation's project whose name carries one of the class's prefixes and
+// which secretname.Parse refuses.
+//
+// Such a name is in the fence's reach and outside every reader's: the intake's
+// write grant admits it — the condition is a prefix test — while the routes
+// (DS2.1) and the credentials service (DS3.3) both refuse a name the grammar
+// does not admit, so the container can be versioned and deleted by the intake
+// and can never be resolved by anyone. It is a hand-written container or a
+// leftover of a rename, and it is what a member's "my credential is not
+// reaching the run" looks like from the outside.
+//
+// The listing is metadata only and asks the project once more, which the reader
+// sweep also lists: the sweep's listing answers "who can read these", and a
+// name is not a reader. A listing that fails is left to the sweep, which
+// reports that failure in its own words.
+func doctorDynamicSecretNameChecks(ctx context.Context, lc *localcfg.Config, sm *gcp.Secrets) []doctorCheck {
+	if sm == nil {
+		return nil
+	}
+	containers, err := sm.List(ctx, nil)
+	if err != nil {
+		return nil
+	}
+	slices.SortFunc(containers, func(a, b gcp.SecretInfo) int { return strings.Compare(a.ID, b.ID) })
+	var out []doctorCheck
+	for _, c := range containers {
+		if prefixOf(c.ID) == "" {
+			continue
+		}
+		_, err := secretname.Parse(c.ID)
+		if err == nil {
+			continue
+		}
+		out = append(out, doctorCheck{ID: "dynamic-secret-name", Severity: "warning",
+			Problem: "secret " + pluginwire.Printable(c.ID) + " is named as a dynamic one and the name grammar refuses it, so no reader can ever resolve it: " + err.Error(),
+			Fix:     "delete it if nothing uses it (gcloud secrets delete SECRET), or write the credential again under a name the grammar admits: " + secretname.UserPrefix + "<account id>_<name> or " + secretname.ProjectPrefix + "<name>"})
+	}
+	return out
+}
+
+// prefixOf is the class's prefix a container's name carries, "" for one of
+// neither: it is the fence's own test, in the one place this package asks it.
+func prefixOf(id string) string {
+	for _, p := range []string{secretname.UserPrefix, secretname.ProjectPrefix} {
+		if strings.HasPrefix(id, p) {
+			return p
+		}
+	}
+	return ""
+}
+
+// doctorLegacyOpenPoolChecks is D1942's line: a pool the migration marked
+// legacy_open is served to whoever asks (config.Pool.Serves), so it is the one
+// kind of pool nobody owns, and the migration is what put it in that state — it
+// marks the pools that predate owners rather than guessing one for them.
+//
+// The published node is where a pool is served from, so it is what the check
+// reads, through the same read doctor's other node questions use. D1942 asks
+// the line to ask an admin to name an owner, and it does: no command of this
+// release writes a pool's owner — `fugaro accounts pool` writes the members of
+// the installation's own config, and publishing carries the node's pools
+// forward — so the line names the member to write (the node's
+// pools.<name>.owner, with the people the pool may be served to as
+// pools.<name>.allowed_users) rather than a command that would not write it.
+//
+// A node that is absent, unreadable or older than this binary is not this
+// check's to report: the policy checks own those states, and a pool question
+// asked of a node nobody read would answer nothing.
+func doctorLegacyOpenPoolChecks(ctx context.Context, lc *localcfg.Config) []doctorCheck {
+	p, _, err := projectPolicyRead(ctx, lc)
+	if err != nil || p == nil {
+		return nil
+	}
+	var names []string
+	for _, pool := range p.CraftPools {
+		if pool.LegacyOpen {
+			names = append(names, pluginwire.Printable(pool.Name))
+		}
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	slices.Sort(names)
+	return []doctorCheck{{ID: "pools-legacy-open", Severity: "warning",
+		Problem: "the published policy serves " + strings.Join(names, ", ") + " as legacy-open: a pool the migration left with no owner is served to everyone the roster admits, so no one answers for it (D1942)",
+		Fix:     "ask a project admin to name each one an owner in the published policy (pools.<name>.owner, and the people it may be served to as pools.<name>.allowed_users)"}}
 }

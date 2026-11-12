@@ -2483,6 +2483,27 @@ func intakeFence() *gcpfake.IAMCondition {
 	}
 }
 
+// useIntakeIAM points the rig's config at an IAM fake holding the dynamic
+// class's write role as modules/installation/intake.tf defines it. The check
+// asks the IAM API what a custom role carries, so a rig without one would
+// report the intake's own role as one nobody read rather than answer the
+// question the test is about.
+func useIntakeIAM(t *testing.T, r *brokeringRig) {
+	t.Helper()
+	iam := gcpfake.NewIAM(t)
+	cfg := strings.Replace(r.cfg, "endpoints: { ", "endpoints: { iam: "+iam.URL+"/, ", 1)
+	if cfg == r.cfg {
+		t.Fatal("the rig's config carries no endpoints block to point at the IAM fake")
+	}
+	if err := os.WriteFile(r.cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r.cfg = cfg
+	role := "projects/" + initProject + "/roles/" + tf.IntakeSecretsRole
+	iam.AddRole(initProject, tf.IntakeSecretsRole, "Fugaro secrets intake (the conditioned writes)", false)
+	iam.SetRolePermissions(role, "secretmanager.secrets.create", "secretmanager.secrets.delete", "secretmanager.versions.add")
+}
+
 // setIntakePolicy writes the rig's project policy with bindings beside the
 // operator's own roles/owner, which every other check of the rig reads.
 func setIntakePolicy(t *testing.T, r *brokeringRig, bindings ...gcpfake.Binding) {
@@ -2534,6 +2555,7 @@ func TestDoctorIntakeHasNoAccessor(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newBrokeringRig(t)
+			useIntakeIAM(t, r)
 			setIntakePolicy(t, r, tc.bindings...)
 			o, _ := r.doctor(t)
 			found := checksByID(o, "secrets-intake")
@@ -2548,7 +2570,7 @@ func TestDoctorIntakeHasNoAccessor(t *testing.T) {
 				if !strings.Contains(c.Problem, tc.finding) {
 					t.Errorf("the warning does not name %q: %s", tc.finding, c.Problem)
 				}
-				if !strings.Contains(c.Fix, "remove-iam-policy-binding") && !strings.Contains(c.Fix, "fugaro update") {
+				if !strings.Contains(c.Fix, "remove-iam-policy-binding") && !strings.Contains(c.Fix, selfCommand()+" update") {
 					t.Errorf("the warning's fix names no action: %s", c.Fix)
 				}
 				return
