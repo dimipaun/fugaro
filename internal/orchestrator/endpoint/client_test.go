@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -443,6 +444,69 @@ func TestClientStreamRefusesAnEventLongerThanADocument(t *testing.T) {
 	if n, total := written.Load(), int64(line*lines); n > 16<<20 {
 		t.Errorf("the peer wrote %d of its %d bytes before the reader hung up, want about one document: the reader read past its own bound", n, total)
 	}
+}
+
+// stallingPort is a listener that accepts a connection and never answers it:
+// the process that took a dead daemon's port, which is what the handshake's own
+// timeout exists for. It holds every connection it accepts, so a reader that
+// waited on the answer would wait for as long as its caller allows.
+func stallingPort(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listening on loopback: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			t.Cleanup(func() { _ = conn.Close() })
+		}
+	}()
+	return ln.Addr().String()
+}
+
+// TestClientLookupIsBoundedByTheHandshakeTimeout: a port that accepts and never
+// answers is answered in handshakeTimeout, whatever the caller's context is.
+// The caller that matters is a watch: LocalLive.Watch looks up with the watch's
+// own context, which outlives every single lookup, and Probe holds the run
+// directory's lock across the handshake -- so an unbounded lookup would hold
+// that lock for as long as the watch ran, and the next daemon's Hold would
+// refuse over a file nobody is serving.
+func TestClientLookupIsBoundedByTheHandshakeTimeout(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	c, getenv, dir := clientFor(t)
+	writeRegistryFile(t, dir, registryFor(t, endpointID, stallingPort(t)), 0o600)
+
+	start := time.Now()
+	live, ok, err := c.Lookup(ctx, endpointID)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("looking up a port that never answers: %v", err)
+	}
+	if ok {
+		t.Fatalf("a port that never answers read as live: %+v", live)
+	}
+	if elapsed > 4*handshakeTimeout {
+		t.Errorf("the lookup took %s, want about %s: the handshake's own bound is what must answer here, not the caller's %s context",
+			elapsed, handshakeTimeout, 30*time.Second)
+	}
+	if ctx.Err() != nil {
+		t.Errorf("the lookup ended with the caller's context: %v", ctx.Err())
+	}
+
+	// The lock is the point: the file the stalling port answered nothing for is
+	// removed by the reader that found it dead, and the daemon that comes next
+	// takes the id.
+	holder, err := Hold(getenv, "linux", registryFor(t, endpointID, stallingPort(t)))
+	if err != nil {
+		t.Fatalf("holding the id after the lookup: %v: the lookup left the run directory's lock held", err)
+	}
+	t.Cleanup(func() { _ = holder.Remove() })
 }
 
 // TestTheTokenIsNeverPrintedOrLogged is the rule the whole design is written

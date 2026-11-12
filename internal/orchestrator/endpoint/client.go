@@ -88,7 +88,10 @@ type Client struct {
 	// HTTP is the client every request goes through, and nil is one with no
 	// timeout of its own: every request here carries a context, which is what
 	// bounds it, and a timeout on the client would end the stream at it -- the
-	// stream is as long as its caller's context and nothing else.
+	// stream is as long as its caller's context and nothing else. The handshake
+	// is the one request whose bound is not the caller's: a nil is handed to
+	// Probe as nil, so handshake's own default client (handshakeTimeout) is what
+	// answers for it.
 	HTTP *http.Client
 }
 
@@ -153,8 +156,19 @@ func (l Live) GoString() string { return l.String() }
 // reads them. The error is for a file that is there and is not one this release
 // wrote (a widened mode, a symlink, a document that does not decode): this
 // reader cannot judge it, so it neither trusts it nor takes it away.
+//
+// The handshake is bounded by handshakeTimeout and not by the caller's context.
+// A caller watching passes the watch's own context, which outlives any single
+// lookup, and Probe holds the run directory's lock across the handshake: a
+// process that accepts the connection and never answers -- the one that took a
+// dead daemon's port -- would otherwise hold this read, and that lock, until the
+// watch ended, and the next daemon's Hold would refuse over a file nobody is
+// serving. What the timeout buys is the lock, which is why it is here and not
+// only in the client Probe is handed.
 func (c Client) Lookup(ctx context.Context, id string) (Live, bool, error) {
-	reg, live, err := Probe(ctx, c.getenv(), c.goos(), id, c.http())
+	ctx, cancel := context.WithTimeout(ctx, handshakeTimeout)
+	defer cancel()
+	reg, live, err := Probe(ctx, c.getenv(), c.goos(), id, c.HTTP)
 	if err != nil {
 		return Live{}, false, err
 	}
