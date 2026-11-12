@@ -180,6 +180,13 @@ const (
 	// (D2042, G15). LadderLaunch is what plans one, and the executor that walks
 	// the ladder asks for it (E10a): the launcher's own plan holds nothing for
 	// such an item, because a person's approval has no attempt left to give it.
+	//
+	// Nothing starts one in this release. An attempt is declared under a person's
+	// standing approval and nothing else (patch.go's commitIntent), which is
+	// exactly what a rung 1 resume does not have — a retry spent it, and the item
+	// carries the marker in its place — so Starter refuses this kind rather than
+	// hand a caller a launch no write can record (LadderLaunch,
+	// TestLadderResumeIsRefusedByTheWriteSide).
 	ActionLadder ActionKind = "ladder"
 	// ActionReissue starts an attempt whose run id is already recorded and
 	// whose run never started. It is the same launch, not a second one.
@@ -291,8 +298,17 @@ func importanceRank(view RunView, w WorkItem) int {
 // whose phase an attempt starts from — the items nothing may start for want of
 // somebody's go — in the order a launcher takes work, the important follow-ups
 // first. It is what a message to a person, or a list they read, is built from,
-// and it decides nothing: what comes back is an order to put in front of them,
-// and every item in it is one no daemon may start (G6, F21).
+// and it decides nothing: what comes back is an order to put in front of them.
+//
+// No item in it is one a plan of this package may start, and that is not the
+// same as saying no daemon may start it (G6, F21 still holds, and nothing here
+// is approved by being listed): an item whose approval is spent and which the
+// ladder has walked to rung 1 is one the ladder's executor resumes under the
+// approval that covered it (LadderLaunch). It is listed all the same, because
+// what a person decides about the ladder's floor — a new approval over the item
+// as it now stands, or a cancellation — is theirs to make, and a queue that
+// dropped the items the ladder is carrying would be a list that hides work from
+// the one reader who can call it off.
 func Queue(s State, view RunView) []WorkItem {
 	var out []WorkItem
 	for _, w := range planOrder(s, view) {
@@ -356,16 +372,36 @@ func LadderRuns(s State, w WorkItem) int {
 // retried — and this is what is left once the approval has no attempt left. It
 // answers false for an item whose own loop still holds work — an attempt under
 // the approval's allowance, or one committed and not reported — because a
-// launch beside either of those is the loop's and not the ladder's. What comes
-// back is a launch like any other — the run id is minted and the intent
-// committed before anything starts (D1231) — and it approves nothing: the
-// approval covers it, and the ladder has no approval of its own (G6, F21).
+// launch beside either of those is the loop's and not the ladder's.
+//
+// The caps are read here the way Plan reads them, and what comes back approves
+// nothing: the approval covers the run, and the ladder has no approval of its
+// own (G6, F21). What it starts would be intent-first like any other launch —
+// the run id is minted and the intent committed before anything starts (D1231)
+// — and that is what does not exist yet: an intent is declared under a person's
+// standing approval and nothing else (patch.go's commitIntent), and the item a
+// rung 1 resume starts from is one whose approval a retry has already spent, so
+// the state would refuse the declaration, and nothing carries this action out
+// either (Starter.Start). The write side is E7's file and the rule is reported
+// rather than relaxed here, so what the ladder plans for such an item is a
+// launch nothing can start (TestLadderResumeIsRefusedByTheWriteSide) — the gap
+// that has to close before the executor can walk rung 1 (E10a).
 //
 // Nothing else on the ladder is this. Every other rung launches a run of
 // another recipe — a rebase, the one stronger pass, the judge, a merge, a split
 // — and a rung the item is past is a rung whose answer is not another normal
 // run of its recipe.
-func LadderLaunch(s State, w WorkItem, view RunView) (Action, bool) {
+func LadderLaunch(s State, w WorkItem, view RunView, caps Caps) (Action, bool) {
+	if caps.KillSwitch || OverCap(s) || BreakerOpen(s) {
+		// The three questions Plan asks before it launches anything. They are not
+		// the ladder's bound — that is LadderRuns and, where a person set one, the
+		// cost ceiling (D2042) — they are whether this node launches at all: a
+		// start while the budget switch holds spends what a person stopped, one on
+		// a node over its size cap acts on a record that may no longer be the whole
+		// one, and one while the breaker's question stands is the pause a restart
+		// may not lift.
+		return Action{}, false
+	}
 	if w.Escalation == nil || w.Escalation.Rung != escalation.R1 {
 		return Action{}, false
 	}
@@ -448,9 +484,14 @@ type Starter struct {
 // holds, and a re-issue is checked against the state in hand before it starts,
 // so nothing here starts a run the state does not carry — neither a run id the
 // state never recorded nor a spec it does not hold.
+//
+// A ladder launch is not one of these (ActionLadder): the write that records an
+// attempt is a standing approval's to allow, and the run the ladder asks for is
+// one that approval has already spent. Refusing the kind here is what keeps the
+// starter from claiming a launch nothing recorded.
 func (d Starter) Start(ctx context.Context, s State, a Action, now time.Time) (State, error) {
 	switch a.Kind {
-	case ActionLaunch, ActionRetry, ActionLadder:
+	case ActionLaunch, ActionRetry:
 		return d.begin(ctx, s, a, now)
 	case ActionReissue:
 		w, err := reissuable(s, a)
@@ -468,9 +509,7 @@ func (d Starter) Start(ctx context.Context, s State, a Action, now time.Time) (S
 // the intent that records it, and start it only once the write has landed. What
 // it starts is the spec of the item that write left, not the one the action
 // named: the state is the record of what a person approved, and an action is a
-// proposal built from an earlier read of it. A ladder launch is begun here as
-// any other is — the intent is what records the run, and the ladder's own count
-// is read off it.
+// proposal built from an earlier read of it.
 func (d Starter) begin(ctx context.Context, s State, a Action, now time.Time) (State, error) {
 	if d.Mint == nil || d.Commit == nil || d.Launcher == nil {
 		return s, errors.New("orchestrator: the starter carries no launcher, no commit or no mint, and a start it cannot record is one it must not make")

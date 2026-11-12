@@ -1,7 +1,9 @@
 package orchestrator_test
 
 import (
+	"errors"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -318,7 +320,7 @@ func TestThirdNormalRunIsCoveredByLadder(t *testing.T) {
 		t.Fatalf("the plan holds %+v, and the person's two attempts are spent", got)
 	}
 
-	a, ok := orchestrator.LadderLaunch(s, item, orchestrator.RunView{})
+	a, ok := orchestrator.LadderLaunch(s, item, orchestrator.RunView{}, o6Caps())
 	if !ok {
 		t.Fatal("the ladder launches nothing for an item at rung 1 whose approval is spent, and its third normal run is the ladder's")
 	}
@@ -354,7 +356,7 @@ func TestThirdNormalRunIsCoveredByLadder(t *testing.T) {
 	// ApprovalAttempts read twice.
 	spent := item
 	spent.Escalation = atRung1(now.Add(-90*time.Minute), orchestrator.MaxOuterAttempts)
-	if a, ok := orchestrator.LadderLaunch(s, spent, orchestrator.RunView{}); ok {
+	if a, ok := orchestrator.LadderLaunch(s, spent, orchestrator.RunView{}, o6Caps()); ok {
 		t.Fatalf("the ladder launches %+v with %d outer runs spent", a, orchestrator.MaxOuterAttempts)
 	}
 
@@ -362,7 +364,7 @@ func TestThirdNormalRunIsCoveredByLadder(t *testing.T) {
 	// ladder resumes only what was approved: nothing starts under the old go.
 	edited := item
 	edited.Brief = "a brief nobody approved"
-	if a, ok := orchestrator.LadderLaunch(s, edited, orchestrator.RunView{}); ok {
+	if a, ok := orchestrator.LadderLaunch(s, edited, orchestrator.RunView{}, o6Caps()); ok {
 		t.Fatalf("the ladder launches %+v over a spec no approval covers", a)
 	}
 
@@ -373,7 +375,7 @@ func TestThirdNormalRunIsCoveredByLadder(t *testing.T) {
 	looping.Escalation = atRung1(now.Add(-90*time.Minute), 3)
 	loop := o6Node(t, now, looping)
 	loop.Intents = []orchestrator.Intent{first}
-	if a, ok := orchestrator.LadderLaunch(loop, looping, orchestrator.RunView{}); ok {
+	if a, ok := orchestrator.LadderLaunch(loop, looping, orchestrator.RunView{}, o6Caps()); ok {
 		t.Fatalf("the ladder launches %+v while the person's approval still plans the item's retry", a)
 	}
 
@@ -388,7 +390,7 @@ func TestThirdNormalRunIsCoveredByLadder(t *testing.T) {
 	if got := orchestrator.Plan(hold, orchestrator.RunView{}, o6Caps(), now); len(got) != 0 {
 		t.Fatalf("the plan holds %+v for a refused run, and a refusal is not one a retry answers", got)
 	}
-	if a, ok := orchestrator.LadderLaunch(hold, refused, orchestrator.RunView{}); ok {
+	if a, ok := orchestrator.LadderLaunch(hold, refused, orchestrator.RunView{}, o6Caps()); ok {
 		t.Fatalf("the ladder launches %+v over a run the item's own loop refuses to retry", a)
 	}
 
@@ -406,7 +408,7 @@ func TestThirdNormalRunIsCoveredByLadder(t *testing.T) {
 		ApprovalAt: atSpent,
 		At:         now.Add(-time.Minute),
 	})
-	if a, ok := orchestrator.LadderLaunch(crash, inFlight, orchestrator.RunView{}); ok {
+	if a, ok := orchestrator.LadderLaunch(crash, inFlight, orchestrator.RunView{}, o6Caps()); ok {
 		t.Fatalf("the ladder launches %+v while the item has an attempt committed and not reported", a)
 	}
 }
@@ -426,17 +428,17 @@ func TestLadderLaunchStopsAtCostCeiling(t *testing.T) {
 	s.Intents = twoAttempts("wi-1", at, now.Add(-100*time.Minute), item)
 
 	view := orchestrator.RunView{Spend: map[string]orchestrator.LadderSpend{"wi-1": {USD: 4.5, Ceiling: 5}}}
-	if _, ok := orchestrator.LadderLaunch(s, item, view); !ok {
+	if _, ok := orchestrator.LadderLaunch(s, item, view, o6Caps()); !ok {
 		t.Fatal("the ladder launches nothing below the ceiling, and 4.50 of 5.00 is below it")
 	}
 
 	view.Spend["wi-1"] = orchestrator.LadderSpend{USD: 5, Ceiling: 5}
-	if a, ok := orchestrator.LadderLaunch(s, item, view); ok {
+	if a, ok := orchestrator.LadderLaunch(s, item, view, o6Caps()); ok {
 		t.Fatalf("the ladder launches %+v at the ceiling, and the ceiling is what a person set to stop it", a)
 	}
 
 	view.Spend["wi-1"] = orchestrator.LadderSpend{USD: 5}
-	if _, ok := orchestrator.LadderLaunch(s, item, view); !ok {
+	if _, ok := orchestrator.LadderLaunch(s, item, view, o6Caps()); !ok {
 		t.Fatal("the ladder launches nothing with no ceiling set, and with none the counts are the bound")
 	}
 
@@ -445,7 +447,7 @@ func TestLadderLaunchStopsAtCostCeiling(t *testing.T) {
 	// carries is the sum of the item's own run records, which is the state's.
 	view.Spend["wi-1"] = orchestrator.LadderSpend{USD: 4.5, Ceiling: 5}
 	view.Spend["wi-2"] = orchestrator.LadderSpend{USD: 400, Ceiling: 5}
-	if _, ok := orchestrator.LadderLaunch(s, item, view); !ok {
+	if _, ok := orchestrator.LadderLaunch(s, item, view, o6Caps()); !ok {
 		t.Fatal("another item's spend stopped this item's launch, and the ceiling reads the item's own runs")
 	}
 }
@@ -502,6 +504,128 @@ func TestLadderIntentSurvivesCrashAndRetry(t *testing.T) {
 	s = o6Report(t, s, "wi-1", resume.ID, orchestrator.OutcomeFailed, orchestrator.PhaseFailed, now.Add(time.Minute))
 	if got := orchestrator.Plan(s, orchestrator.RunView{}, o6Caps(), now.Add(2*time.Minute)); len(got) != 0 {
 		t.Fatalf("the plan holds %+v after the resume reported, and a person is what opens another attempt", got)
+	}
+}
+
+// TestLadderLaunchRefusesOnTheNodesGuards is the ladder's launch read against
+// the three questions Plan asks before it launches anything (caps.go): a start
+// while the kill switch holds spends what a person stopped, one on a node past
+// its size cap acts on a record that may no longer be the whole one, and one
+// while the breaker's question stands is a pause no restart may lift. The
+// executor asks for this launch directly (E10a) rather than through a plan, so
+// the ladder's own bound (LadderRuns, the cost ceiling) is not the whole of
+// what it reads.
+func TestLadderLaunchRefusesOnTheNodesGuards(t *testing.T) {
+	now := o6Now()
+	at := now.Add(-2 * time.Hour)
+	item := spentItem(t, "wi-1", now, at)
+	item.Phase = orchestrator.PhaseFailed
+	item.Escalation = atRung1(now.Add(-90*time.Minute), 1)
+	s := o6Node(t, now, item)
+	s.Intents = twoAttempts("wi-1", at, now.Add(-100*time.Minute), item)
+
+	// The item the three cases below are about launches here, so what stops it
+	// in each of them is the one question that case turns on.
+	if _, ok := orchestrator.LadderLaunch(s, item, orchestrator.RunView{}, o6Caps()); !ok {
+		t.Fatal("the ladder launches nothing for an item at rung 1 whose approval is spent, and its third normal run is the ladder's")
+	}
+
+	off := withCaps(func(c *orchestrator.Caps) { c.KillSwitch = true })
+	if a, ok := orchestrator.LadderLaunch(s, item, orchestrator.RunView{}, off); ok {
+		t.Fatalf("the ladder launched %+v with the kill switch on", a)
+	}
+
+	bloated := bloatedState(t, now)
+	bloated.WorkItems = append(bloated.WorkItems, item)
+	bloated.Intents = append(bloated.Intents, twoAttempts("wi-1", at, now.Add(-100*time.Minute), item)...)
+	if !orchestrator.OverCap(bloated) {
+		t.Fatalf("the node under test is %d bytes and the cap is %d", stateBytes(t, bloated), orchestrator.MaxStateBytes)
+	}
+	if a, ok := orchestrator.LadderLaunch(bloated, item, orchestrator.RunView{}, o6Caps()); ok {
+		t.Fatalf("the ladder launched %+v on a node past its size cap", a)
+	}
+
+	// The trip's question is the node's and not the process's: the daemon that
+	// raised it is gone, and the pause is read off the state it left.
+	var tripped orchestrator.Breaker
+	for range orchestrator.BreakerThreshold {
+		tripped.Observe(orchestrator.CycleEmpty)
+	}
+	question, ok := tripped.Decision(s, now)
+	if !ok {
+		t.Fatal("the tripped breaker had no question to raise")
+	}
+	paused := o6Apply(t, s, question, orchestrator.Actor{Class: orchestrator.Daemon, Now: now})
+	if !orchestrator.BreakerOpen(paused) {
+		t.Fatal("the node carries the trip's unanswered question and does not read as open")
+	}
+	if a, ok := orchestrator.LadderLaunch(paused, item, orchestrator.RunView{}, o6Caps()); ok {
+		t.Fatalf("the ladder launched %+v while the breaker's question stands", a)
+	}
+}
+
+// TestLadderResumeIsRefusedByTheWriteSide pins the gap between what the ladder
+// plans and what this release can record. A rung 1 resume is the ladder's, not
+// a person's: the approval that covers it is one a retry has already spent, and
+// the state records an attempt under a standing approval and nothing else
+// (patch.go's commitIntent). So the launch LadderLaunch plans for such an item
+// is one the write side refuses, and the starter refuses the action outright
+// rather than mint a run id and hand a caller a launch no write can record.
+//
+// Both refusals are pinned here rather than mended here: patch.go is another
+// task's file (E7) and a fix round adds no functionality, so what has to move
+// before the executor walks rung 1 (E10a) is named in the launcher and reported
+// — the write side learns to accept a ladder intent under the item's spent
+// marker, counted against LadderRuns, and this action joins what Starter
+// carries out. This test is what changes the day it does.
+func TestLadderResumeIsRefusedByTheWriteSide(t *testing.T) {
+	now := o6Now()
+	at := now.Add(-2 * time.Hour)
+	item := spentItem(t, "wi-1", now, at)
+	item.Phase = orchestrator.PhaseFailed
+	item.Escalation = atRung1(now.Add(-90*time.Minute), 1)
+	s := o6Node(t, now, item)
+	s.Intents = twoAttempts("wi-1", at, now.Add(-100*time.Minute), item)
+
+	a, ok := orchestrator.LadderLaunch(s, item, orchestrator.RunView{}, o6Caps())
+	if !ok {
+		t.Fatal("the ladder plans no resume for the item this test drives the write side with")
+	}
+	if a.Kind != orchestrator.ActionLadder {
+		t.Fatalf("the ladder planned %+v", a)
+	}
+
+	// The declaration itself, exactly as the starter would make it: the item is
+	// failed, so the write that declares the attempt moves it to queued first.
+	runID := "20261107-130000-aaaa"
+	queued := orchestrator.PhaseQueued
+	op := orchestrator.WorkItemOp{
+		ID:     a.ItemID,
+		RunID:  &runID,
+		Phase:  &queued,
+		Intent: &orchestrator.IntentOp{ID: a.IntentID, RunID: &runID, SpecDigest: &a.Digest, ApprovalAt: &a.ApprovalAt},
+	}
+	_, err := orchestrator.Apply(s, orchestrator.Patch{BaseRev: s.Rev, Ops: []orchestrator.Op{{Op: orchestrator.OpWorkItemUpsert, WorkItem: &op}}}, orchestrator.Actor{Class: orchestrator.Daemon, Now: now})
+	if !errors.Is(err, orchestrator.ErrActorNotAllowed) {
+		t.Fatalf("the resume was declared with %v, and the state is what refuses a ladder's attempt", err)
+	}
+	if !strings.Contains(err.Error(), "no standing approval") {
+		t.Fatalf("the refusal is %v, and what a rung 1 resume has instead of an approval is the marker a retry left", err)
+	}
+
+	o := newO6Starter(t, s, now, runID)
+	err = o.run(a)
+	if !errors.Is(err, orchestrator.ErrInvalid) || !strings.Contains(err.Error(), "not an action this release carries out") {
+		t.Fatalf("the starter answered a ladder launch with %v, and nothing here starts a run no write can record", err)
+	}
+	if len(o.l.started) != 0 || o.m.calls != 0 || o.wrote {
+		t.Fatalf("the refused ladder launch started %v, minted %d run id(s) and wrote %v", o.l.started, o.m.calls, o.wrote)
+	}
+	if o.s.Rev != s.Rev || len(o.s.Intents) != len(s.Intents) {
+		t.Fatalf("the refused ladder launch left the node at rev %d with %d intent(s), and it started nothing", o.s.Rev, len(o.s.Intents))
+	}
+	if w, _ := o.s.Item("wi-1"); w.Attempts != item.Attempts || w.Phase != item.Phase || w.RunID != item.RunID {
+		t.Fatalf("the refused ladder launch wrote %+v", w)
 	}
 }
 
