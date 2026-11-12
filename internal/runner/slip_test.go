@@ -255,8 +255,10 @@ func TestClaimAtRunnerStart(t *testing.T) {
 	// that is not this machine it would travel in cleartext: the run proceeds
 	// without a slip, the way it does for a service that cannot be reached.
 	t.Run("a cleartext URL to another host is not claimed at", func(t *testing.T) {
+		var logBuf bytes.Buffer
 		svc := newSlipService(t, nil)
 		r := slipRun(t, svc, nil, func(r *run) {
+			r.d.Log = slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 			r.d.Env = []string{
 				credentialsServiceURLEnv + "=http://creds.example",
 				SlipEnv + "=" + slipFixtureID,
@@ -268,6 +270,15 @@ func TestClaimAtRunnerStart(t *testing.T) {
 		}
 		if r.slipHold() != nil {
 			t.Error("the run holds a slip it claimed at a URL it will not send its own identity to")
+		}
+		// The two readings above cannot tell the guard from its absence: the
+		// URL is a host no stand-in answers, so a run that skipped the guard
+		// and called it would fail at the name, hold no slip and reach this
+		// stand-in zero times all the same. What it says about it can: the
+		// guard refuses before any call is built, and the run's line is the
+		// guard's own sentence rather than the one a failed call writes.
+		if !strings.Contains(logBuf.String(), "is not https: the claim would carry the job's own identity token in cleartext") {
+			t.Errorf("the run did not refuse the cleartext URL before calling it: its log says\n%s", logBuf.String())
 		}
 	})
 
@@ -305,6 +316,51 @@ func TestClaimAtRunnerStart(t *testing.T) {
 			}
 			if got := strings.Count(logBuf.String(), "no usable claim secret"); got != 1 {
 				t.Errorf("the run warned about the unusable claim secret %d times, want once: %s", got, logBuf.String())
+			}
+		})
+	}
+}
+
+// TestTheServiceURLTheClaimIsSentTo: the guard the claim is held to before the
+// job's own Google ID token is put in its Authorization header. The token is
+// the job's identity, so a URL this run will not send it to is a URL it does
+// not claim at: https, or http on a loopback address, which is a test's own
+// service, and nothing else -- no path, no query, no fragment and no userinfo,
+// which are the shapes a URL that carries an identity somewhere else takes.
+//
+// The table is here rather than only in the run's own reading of it, because
+// that reading cannot reach this guard's other side: the URL it refuses is a
+// host no stand-in answers, so a run that skipped the guard would send nothing
+// there too and hold no slip either, and the two would read alike. The set
+// below is the guard's whole decision, and every refusal in it is one this
+// test fails without.
+func TestTheServiceURLTheClaimIsSentTo(t *testing.T) {
+	for _, tc := range []struct {
+		name, url string
+		refused   bool
+	}{
+		{"https", "https://creds.example", false},
+		{"https with a port", "https://creds.example:443", false},
+		{"http on a loopback address", "http://127.0.0.1:8080", false},
+		{"http on localhost", "http://localhost:8080", false},
+		{"http on the IPv6 loopback", "http://[::1]:8080", false},
+		{"http on another host", "http://creds.example", true},
+		{"http on a private address", "http://10.0.0.7:8080", true},
+		{"no scheme", "creds.example", true},
+		{"no host", "https://", true},
+		{"credentials in the URL", "https://user:pass@creds.example", true},
+		{"a path", "https://creds.example/v1", true},
+		{"a query", "https://creds.example?x=1", true},
+		{"a fragment", "https://creds.example#x", true},
+		{"not a URL at all", "://", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkSlipServiceURL(tc.url)
+			if tc.refused && err == nil {
+				t.Errorf("%q is a URL this run would send the job's identity token to", tc.url)
+			}
+			if !tc.refused && err != nil {
+				t.Errorf("%q is refused: %v", tc.url, err)
 			}
 		})
 	}

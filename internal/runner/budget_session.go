@@ -82,9 +82,10 @@ const (
 // the run of an installation whose service was not asked for one, and the run
 // proceeds on the path it took before the slip existed.
 //
-// It is spelled here and aliased there rather than closed over, because the
-// two halves are one name: the launcher cannot import this package, so the
-// one definition is the reader's.
+// It is spelled here and aliased there (internal/cli's envSlip is
+// runner.SlipEnv) rather than respelled, because the two halves are one name:
+// the launcher writes it and this package reads it, so a second spelling is a
+// launcher and a runner that disagree about it in silence.
 const SlipEnv = "FUGARO_SLIP"
 
 // slipHold is the slip this run took, and the beat that keeps the service
@@ -1063,6 +1064,13 @@ func (r *run) stopSlipBeat() {
 // run's failure — the run's own calls still present the claim — so it is one
 // warning, once: a beat that cannot land usually cannot land for the rest of
 // the run, and a line per interval would say the same thing every 15 s.
+//
+// The one failure that is not the service's is the run's own end: this
+// context is cancelled by stopSlipBeat and by nothing else (startSlipBeat
+// detaches it from the run's), so an attempt that ends with it cancelled is
+// this run giving up a request of a run that is over. There is no next call to
+// pay a cold start, and the warning below would report the run's own end as
+// the service going away.
 func (r *run) beatSlip(ctx context.Context, hold *slipHold) {
 	body, err := json.Marshal(credsvc.SlipClaimRequest{Execution: slipExecution(r.d.Execution)})
 	if err != nil {
@@ -1078,6 +1086,9 @@ func (r *run) beatSlip(ctx context.Context, hold *slipHold) {
 		// because the route that serves a credential is not this one.
 		return
 	case err != nil:
+		if ctx.Err() != nil {
+			return
+		}
 		r.slipWarnOnce(hold, "the keep-warm beat could not reach the installation's credentials service, so the instance serving this run may go cold and the next call pays a cold start (D1934)", err)
 	case ans.status != http.StatusOK:
 		r.slipWarnOnce(hold, "the installation's credentials service refused the keep-warm beat, so the instance serving this run may go cold and the next call pays a cold start (D1934)", fmt.Errorf("the service answered %d", ans.status))

@@ -58,11 +58,22 @@ func TestKeepWarmBeatStopsWhenTheRunEnds(t *testing.T) {
 	}
 	// The request the service held was still in flight when the run ended, and
 	// Run has now returned: the run gave it up rather than returning with it
-	// open, which is the run's own line about a beat that did not land. A run
-	// that walked away from it would say nothing here, and the request would
-	// outlive the run.
-	if !strings.Contains(b.logs.String(), "keep-warm beat could not reach") {
-		t.Errorf("the run ended with a keep-warm request still in flight: its own log has no line about giving it up:\n%s", b.logs.String())
+	// open. The fake closes Ended for a held request whose context ended while
+	// it was holding, so this reads the giving up itself -- the run's own
+	// cancellation reaching the service -- and not a line the run wrote about
+	// it: a run that walked away from the request would leave the service
+	// holding it, and this would time out.
+	select {
+	case <-b.fake.Ended(heldBeatIndex(t, b.fake)):
+	case <-time.After(10 * time.Second):
+		t.Error("the run returned with its keep-warm request still in flight at the service: it walked away from the request instead of giving it up")
+	}
+	// And it says nothing about a cold start while doing it: the beat ends
+	// because the run is over, so there is no next call to pay one, and the
+	// warning for a beat that did not land is for the service's failures
+	// rather than the run's own end.
+	if strings.Contains(b.logs.String(), "pays a cold start") {
+		t.Errorf("the run's own end is reported as the credentials service going cold:\n%s", b.logs.String())
 	}
 
 	// Nothing of the run may still be asking the service to read its slip
@@ -73,6 +84,23 @@ func TestKeepWarmBeatStopsWhenTheRunEnds(t *testing.T) {
 	if _, got := svc.counted(); got != settled {
 		t.Errorf("the run sent %d keep-warm requests after it ended (had %d): the beat outlives the run", got, settled)
 	}
+}
+
+// heldBeatIndex is the index, in the fake's own record, of the keep-warm
+// request the service is holding: the last beat the fake saw, which is the one
+// in flight when the run ends, because the beat's goroutine is inside it and
+// sends no later one. A beat is a call on the claim route that presents the
+// claim secret; the claim itself presents none (D1941).
+func heldBeatIndex(t *testing.T, f *anthropicfake.Fake) int {
+	t.Helper()
+	seen := f.Seen()
+	for i := len(seen) - 1; i >= 0; i-- {
+		if seen[i].URL.Path == credsvc.SlipClaimPath && seen[i].Header.Get(credsvc.HeaderSlipClaim) != "" {
+			return i
+		}
+	}
+	t.Fatalf("the fake saw no keep-warm request, so the run's beat never reached the service")
+	return -1
 }
 
 // heldBeat holds a stage open until the run's keep-warm request is in flight
