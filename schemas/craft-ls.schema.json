@@ -51,7 +51,8 @@
             "coder",
             "review",
             "senior-review",
-            "security-review"
+            "security-review",
+            "merge-judge"
           ],
           "description": "The craft this row is about (config.CraftNames)."
         },

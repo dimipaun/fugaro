@@ -94,6 +94,14 @@ const (
 	// part of the loop: a recipe carrying it holds it alone, runs no
 	// implement stage and reviews nothing.
 	StepRebase StepKind = "rebase"
+	// StepMergeJudge is rung 3's whole run (E6, D2031): one read-only stage
+	// that answers whether a handed-over pull request may merge with
+	// follow-ups or is blocked, and never merges anything itself. It is the
+	// core's own step of mode: evaluate — the mode whose whole work is one
+	// step's, on material the run's own bucket holds, with no checkout of the
+	// branch it reads — so a recipe carrying it holds it alone, pushes
+	// nothing and opens no pull request.
+	StepMergeJudge StepKind = "merge_judge"
 )
 
 // registeredSteps are the step kinds this build adds to version 1's closed
@@ -191,6 +199,7 @@ var builtinStepKinds = map[StepKind]bool{
 	StepPlan:        true,
 	StepRender:      true,
 	StepRebase:      true,
+	StepMergeJudge:  true,
 	"checks":        true,
 }
 
@@ -852,6 +861,8 @@ func (p *parser) steps(r *Recipe, v *yaml.Node) ([]Step, []int) {
 			kind = StepDigest
 		case string(StepRebase):
 			kind = StepRebase
+		case string(StepMergeJudge):
+			kind = StepMergeJudge
 		case "checks":
 			p.add(kpath, k.Line, "the step type is check, not checks")
 			continue
@@ -866,7 +877,7 @@ func (p *parser) steps(r *Recipe, v *yaml.Node) ([]Step, []int) {
 				p.add(kpath, k.Line, "%s", paidStepMsg(k.Value))
 				continue
 			default:
-				p.add(kpath, k.Line, "is not a step type (version 1 has first_line, review, adversarial, check, digest, plan, render and rebase)")
+				p.add(kpath, k.Line, "is not a step type (version 1 has first_line, review, adversarial, check, digest, plan, render, rebase and merge_judge)")
 				continue
 			}
 		}
@@ -887,7 +898,7 @@ func (p *parser) steps(r *Recipe, v *yaml.Node) ([]Step, []int) {
 			idx = append(idx, i)
 			continue
 		}
-		if kind == StepPlan || kind == StepRender || kind == StepDigest || kind == StepRebase {
+		if kind == StepPlan || kind == StepRender || kind == StepDigest || kind == StepRebase || kind == StepMergeJudge {
 			p.emptyStepBody(kpath, body)
 			out = append(out, s)
 			idx = append(idx, i)
@@ -1299,16 +1310,22 @@ func (p *parser) order(r *Recipe, src []int) {
 }
 
 // orderEvaluate checks a mode: evaluate recipe's steps: exactly one, and it is
-// a step this build registered as evaluate's own (RegisterStepKind). The mode
-// runs no implement loop, no gate, no review and no render, so every one of
-// version 1's own steps is refused here by name — a check step would run a
-// repository command, and first_line, review and digest would start an agent —
-// and the registration's own mode is read rather than the bare fact that the
-// kind is registered: a kind another mode grew a placement rule for is not one
-// this sequence may run.
+// a step this build registered as evaluate's own (RegisterStepKind) or the
+// core's own judge step (StepMergeJudge, E6). The mode runs no implement loop,
+// no gate, no review and no render, so every one of version 1's other steps is
+// refused here by name — a check step would run a repository command, and
+// first_line, review and digest would start an agent — and the registration's
+// own mode is read rather than the bare fact that the kind is registered: a
+// kind another mode grew a placement rule for is not one this sequence may
+// run. The judge step needs no registration to sit here because its code is
+// this tree's (the runner's own stage, mergejudge.go), and it is the only step
+// of version 1 whose whole meaning is a mode: evaluate run's work.
 func (p *parser) orderEvaluate(steps []Step, src []int) {
 	for i, s := range steps {
 		path := fmt.Sprintf("steps[%d]", src[i])
+		if s.Kind == StepMergeJudge {
+			continue
+		}
 		if mode, ok := registeredStepMode(s.Kind); ok && mode == ModeEvaluate {
 			continue
 		}
@@ -1325,7 +1342,7 @@ func (p *parser) orderArtifact(steps []Step, src []int) {
 	for i, s := range steps {
 		path := fmt.Sprintf("steps[%d]", src[i])
 		switch s.Kind {
-		case StepCheck, StepFirstLine, StepDigest, StepReview, StepAdversarial, StepRebase:
+		case StepCheck, StepFirstLine, StepDigest, StepReview, StepAdversarial, StepRebase, StepMergeJudge:
 			// check included: an artifact recipe has no implement for a
 			// gate to judge, no report to write and no review to give a
 			// ship verdict.

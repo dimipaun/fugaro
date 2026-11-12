@@ -1,5 +1,7 @@
 package recipe
 
+import "slices"
+
 // StageBound is the most stages a run of r can start with first-line rounds f
 // and review rounds n (the knobs), implement included. Check steps are
 // runner commands with their own timeout, so they are not model stages and
@@ -51,6 +53,16 @@ func StageBound(r *Recipe, f, n, n3Default int) int {
 	if UsesRebase(r) {
 		return 1
 	}
+	// A judge recipe is one model stage at most, and it is read-only: the
+	// run's whole work is the judge's own stage over the diff and the
+	// findings the launcher left under its prefix (recipe.StepMergeJudge,
+	// mergejudge.go), so no implement stage, no review and no loop is
+	// counted here whatever the knobs say. Without this the arithmetic below
+	// would count the review rounds a run of it never starts, because no
+	// review step is there to write their number down.
+	if UsesMergeJudge(r) {
+		return 1
+	}
 	implement := 1
 	if UsesDigest(r) {
 		implement = 0
@@ -97,6 +109,14 @@ func StageBound(r *Recipe, f, n, n3Default int) int {
 		total += adversarial * per3
 	}
 	return total
+}
+
+// UsesMergeJudge reports whether r holds the merge judge step, rung 3's whole
+// run (recipe.StepMergeJudge, E6). It reads the parsed steps rather than a
+// parse-time flag, as UsesRebase and UsesDigest do: a parser that predates the
+// step refuses the whole recipe ("is not a step type") instead of dropping it.
+func UsesMergeJudge(r *Recipe) bool {
+	return slices.ContainsFunc(r.Steps, func(s Step) bool { return s.Kind == StepMergeJudge })
 }
 
 // UsesV07 reports whether r uses a key added in 0.7.0 (the image gate). It

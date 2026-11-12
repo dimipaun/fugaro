@@ -1,0 +1,7 @@
+version: 1
+name: merge-judge
+description: "Reads a handed-over pull request at its head: the diff, the open findings and the fundamentals checklist. It answers merge with follow-ups or blocked, and merges nothing itself."
+use_when: "A pull request no further round will move, launched at the head a scored review verdict already covers (--pr N --recipe merge-judge). The judge is advisory: the deterministic gate decides the merge."
+mode: evaluate
+steps:
+  - merge_judge: {}

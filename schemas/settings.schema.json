@@ -243,6 +243,12 @@
         "agent.crafts.coder.model": {
           "default": "unset = required: the coder implements, so a run needs its model"
         },
+        "agent.crafts.merge-judge.access": {
+          "default": "unset = the senior review's access"
+        },
+        "agent.crafts.merge-judge.model": {
+          "default": "unset = the senior review's model"
+        },
         "agent.crafts.review.access": {
           "default": "unset = the coder's access"
         },
@@ -488,6 +494,12 @@
         },
         "crafts.coder.model": {
           "default": "unset = required: the coder implements, so a run needs its model"
+        },
+        "crafts.merge-judge.access": {
+          "default": "unset = the senior review's access"
+        },
+        "crafts.merge-judge.model": {
+          "default": "unset = the senior review's model"
         },
         "crafts.review.access": {
           "default": "unset = the coder's access"
@@ -781,6 +793,12 @@
         },
         "layer.defaults.agent.crafts.coder.model": {
           "default": "unset = defaults.agent.model"
+        },
+        "layer.defaults.agent.crafts.merge-judge.access": {
+          "default": "unset = none: only the local config and the policy node name a credential"
+        },
+        "layer.defaults.agent.crafts.merge-judge.model": {
+          "default": "unset = the senior review's model"
         },
         "layer.defaults.agent.crafts.review.access": {
           "default": "unset = none: only the local config and the policy node name a credential"
