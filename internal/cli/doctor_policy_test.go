@@ -78,6 +78,45 @@ func doctorChecksByID(t *testing.T) map[string]doctorCheck {
 	return m
 }
 
+// TestDoctorOfflineSkipsThePolicyChecks: `--offline` records a skip for each of
+// the three checks whose answer is in the project's Realtime Database, and not
+// one request reaches the database the rig's local config points at (D951,
+// D952; U3 of docs/plugin-user-scope/implementation-plan.md). The published
+// node and the deployed rules generation are exactly the facts the flag
+// promises not to read, and the skip is what tells a reader "not read" from
+// "read and found fine" — a distinction the three checks would otherwise lose
+// by simply being absent from a run that reports ok, which is the silent pass
+// the classes exist to prevent.
+func TestDoctorOfflineSkipsThePolicyChecks(t *testing.T) {
+	_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
+	before := len(db.Requests())
+	out, _, _ := execute(t, "doctor", "--offline", "--json", "--dir", t.TempDir())
+	var o doctorOutput
+	if err := json.Unmarshal([]byte(out), &o); err != nil {
+		t.Fatalf("doctor --offline --json is not JSON: %v\n%s", err, out)
+	}
+	m := map[string]doctorCheck{}
+	for _, c := range o.Checks {
+		m[c.ID] = c
+	}
+	for _, id := range []string{"policy-rules-skew", "policy-vs-jobs", "policy-older-than-binary"} {
+		c, ok := m[id]
+		if !ok {
+			t.Errorf("%s is absent from --offline, so a reader cannot tell it was not asked:\n%s", id, out)
+			continue
+		}
+		if !c.Skipped || c.OK {
+			t.Errorf("%s = %+v, want skipped and not ok", id, c)
+		}
+		if !strings.Contains(c.Problem, "--offline") {
+			t.Errorf("%s's problem does not say why it was not run: %q", id, c.Problem)
+		}
+	}
+	if after := len(db.Requests()); after != before {
+		t.Fatalf("--offline made %d database requests", after-before)
+	}
+}
+
 // TestDoctorPolicyChecks is the checks of plan task 1.6 step 4, each on the
 // state it exists for, with the severity it must carry: policy-published
 // (info), policy-newer-than-binary and policy-older-than-binary (warnings,

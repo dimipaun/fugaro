@@ -71,8 +71,9 @@ installed on this machine compares with this binary, and the pin a checkout
 that still carries one holds — the merge that wrote those pins is gone, so a
 pin an older fugaro left is read here (and by fugaro doctor's plugin-pin
 check). It exits 1 on any warning state (outdated, newer, unpinned, foreign,
-not wired, installed differs); "not installed" and "cannot compare" are
-informational.`,
+installed differs); "not wired" — the normal state of a checkout nothing pins,
+since the merge that wrote those pins is gone — "not installed" and "cannot
+compare" are informational.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runUpdateSkills(cmd, dir, check, asJSON)

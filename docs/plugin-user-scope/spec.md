@@ -232,9 +232,14 @@ version Fugaro wants and which install answers.
 
 **The one-screen doctor.** In the default view the two IDs read: `plugin-pin` — a repository that opts in
 to the pin, and whether it matches this binary; `plugin-install` — the plugin on this machine, and whether
-it is this binary's release. Neither changes class to `measure`; `plugin-install` changes from measure to
-update, which is the class the owner's own list in `CLAUDE.md` puts it in ("the plugin pin: what `doctor`
-already reports").
+it is this binary's release. `plugin-install` changes from measure to update, which is the class the owner's
+own list in `CLAUDE.md` puts it in ("the plugin pin: what `doctor` already reports") — the plugin stage
+installs the plugin on this machine, so `fugaro update` is what repairs it. `plugin-pin` keeps its update
+class for the states that are wrong (a pin this binary does not match, a foreign wiring) and takes the
+measure one for the state that is not: a repository whose `.claude/settings.json` wires nothing, which is
+the normal one now that no merge writes a pin (D949). Filed as audit that state was counted by the pointer
+line, so the one screen the owner reads most said "1 more finding" over a checkout with nothing wrong with
+it; as a measurement it is printed by `--all` and `--json` and counted in no view's total.
 
 ## 7. The session-start nudge (D945, D946, D947, D951, D952)
 
@@ -284,7 +289,7 @@ skipped check only under `--all`, in its own words, and counts it in no view's t
 | Is the plugin on this machine this binary's release? | yes — `plugin-install`, from Claude Code's `installed_plugins.json` (`internal/pluginwire/status.go:221`, `installState`) |
 | Does the checkout open the plugin the repository pins? | yes — `plugin-pin`, from `.claude/settings.json` |
 | Is the repository's image on this release's base? | yes — `base-image`, from the local project config (`doctorProject.BaseImages`) |
-| Does a workflow's job carry what the local config would write now? | yes where the local config is readable — `image-config-<workflow>` |
+| Does a workflow's job carry what the local config would write now? | **no.** `image-config-<workflow>` answers from the build record in the runs bucket (`doctor_layer.go:464`), which needs credentials; offline the check is skipped, one per workflow the checkout's own `fugaro.yaml` lists that the ordinary run emits the check for — a workflow that builds from a `dockerfile:` and one the project's image catalog gives an image to get no such check at all (`doctor_layer.go:389`, `imageConfigWorkflows`) |
 | Is the **published policy node** this binary's version? | **no.** It lives in the project's Realtime Database; reading it needs credentials. `fugaro update --check` already says so in its own words (`upgrade.go:501`, `checkPolicyCaveat`) |
 | Is the **deployed security rules generation** this binary's? | **no**, for the same reason (`upgrade.go:568`, `checkRulesCaveat`) |
 | Is a **newer release** available? | **no, and it is a network call — opt-in only (D952)** |

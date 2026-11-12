@@ -82,14 +82,18 @@ var doctorShownSecurityIDs = map[string]bool{
 // not name a command that will not do the work: the converge's own stages are
 // preflight, installation, Firebase, images, installation again, secrets,
 // plugin and the checkout's repository, rules and policy (init_stages.go), and
-// a check whose remedy is none of them is not an update item. One the plan
-// means to move here is not here yet:
+// a check whose remedy is none of them is not an update item.
 //
-//   - plugin-install: what differs is the plugin Claude Code installed, and
-//     the converge's plugin stage rewrites the checkout's pin, not the
-//     installation: `fugaro update` writes that pin, and Claude Code installs
-//     the plugin from it (the marketplace command in Claude Code being the
-//     same move by hand).
+// plugin-install joined the class with D942 (U3 of
+// docs/plugin-user-scope/implementation-plan.md): the plugin stage *is* the
+// install's now, since the merge that wrote the checkout's pin was deleted
+// (D949) and the plugin is this machine's, installed at user scope — so the
+// class's one command is exactly what repairs "no plugin on this machine" or
+// an older one. It sat in doctorMeasureIDs until then, under the note this
+// comment used to carry: the class's line named `fugaro upgrade --local` and
+// the installation was Claude Code's own move. The check's own sentence keeps
+// Claude Code's by-hand form beside the command (doctorUpdateFixes), because
+// the marketplace commands are what a machine with no claude on PATH has left.
 //
 // policy-older-than-binary is here since the policy stage carries the
 // migration: a node in a version the chain reaches is what that stage rewrites
@@ -118,6 +122,7 @@ var doctorShownSecurityIDs = map[string]bool{
 var doctorUpdatePrefixes = []string{
 	"cli-version",
 	"plugin-pin",
+	"plugin-install",
 	"orchestrator-unit",
 	"base-image",
 	"image-config-",
@@ -215,9 +220,20 @@ var doctorMeasureIDs = map[string]bool{
 	// The update lookup did not answer. Nothing about this installation is
 	// wrong, and the newer-release case is the warning variant of the same ID.
 	"cli-version": true,
-	// pluginwire's own "never a failure" states: not installed, cannot
-	// compare. "installed differs" is a warning, and a finding.
+	// pluginwire's one remaining "never a failure" state: cannot compare, which
+	// a development build or an unreadable install record leaves. "not
+	// installed" and "installed differs" are warnings since D942 (U3 of
+	// docs/plugin-user-scope/implementation-plan.md), and the class of both is
+	// update — the plugin on this machine is what `fugaro update` installs.
 	"plugin-install": true,
+	// pluginwire's "not wired": a checkout nothing pins, because the merge
+	// that writes a pin is gone (D949, U5). It is the normal state of every
+	// repository now, and information rather than a finding — filed as audit
+	// it was counted by the pointer line, so the one screen said "1 more
+	// finding" over a repository with nothing wrong with it. The states that
+	// ARE wrong (a pin this binary does not match, a foreign wiring) are
+	// warnings, and the update arm above keeps them in the default view.
+	"plugin-pin": true,
 	// The standing note the wiring always prints beside its per-notice lines:
 	// a fixed sentence about what wiring the plugin blesses, not a finding of
 	// this checkout's.
@@ -304,6 +320,18 @@ func doctorClassOf(c doctorCheck) string {
 	// prints "everything checked is ok" beside an exit code 1.
 	finding := !c.OK && c.Severity != "info"
 	switch {
+	case c.Skipped:
+		// A check `--offline` did not run (D946). It is never an item: nothing
+		// is wrong, and the class's own command is not the answer to a question
+		// nobody asked — which is why this arm sits above the update one, where
+		// policy-rules-skew and cli-version would otherwise land. It is never
+		// counted either, so it is the measure class in the one sense the views
+		// need: --all prints it (in its own words, doctorCheckLine) and no
+		// view's total counts it, because a skip is not a finding. Its severity
+		// is "info", so it fails nothing, with or without --strict; the
+		// `skipped` member is what tells a reader it was not checked, and the
+		// default view's own pointer line says how many there were.
+		return doctorClassMeasure
 	case c.OK && c.Severity == "" && !c.unread:
 		// doctor's own bookkeeping: nothing prints it, in any view. A check that
 		// is ok AND carries the unread marker is not bookkeeping: its own line
@@ -546,6 +574,15 @@ func printDoctorReport(w io.Writer, checks []doctorCheck, v doctorView) {
 	if held.other > 0 {
 		printDoctorAuditNotice(w, held.other)
 	}
+	// And what this view did not ask: a skipped check is not a finding and no
+	// total counts it (D946), but a screen that says "everything checked is ok"
+	// over four checks it never ran leaves the reader unable to tell a check
+	// that passed from one that was never made — the silent pass the classes
+	// exist to prevent. The pointer names the count and sends the reader to
+	// --all, which prints each one in its own words.
+	if n := doctorSkippedCount(checks); n > 0 {
+		printDoctorSkippedNotice(w, n)
+	}
 }
 
 // doctorSplit is the items by what they ask of the reader: what has to be
@@ -603,6 +640,30 @@ func doctorFindings(n int) string {
 		return "finding"
 	}
 	return "findings"
+}
+
+// doctorSkippedCount is how many checks this run did not make.
+func doctorSkippedCount(checks []doctorCheck) int {
+	n := 0
+	for _, c := range checks {
+		if c.Skipped {
+			n++
+		}
+	}
+	return n
+}
+
+// printDoctorSkippedNotice is the line that keeps a check `--offline` did not
+// run from being an unmentioned one. It is a pointer and not a total: a skipped
+// check is not a finding, nothing is wrong, and the verdict above it is
+// untouched — but the reader is told that the run asked fewer questions than
+// the command can.
+func printDoctorSkippedNotice(w io.Writer, n int) {
+	word := "checks"
+	if n == 1 {
+		word = "check"
+	}
+	fmt.Fprintf(w, "%d %s not run by `--offline`: `fugaro doctor --all`\n", n, word)
 }
 
 // printDoctorItem prints one item of the default view: the check's ID, the
@@ -676,6 +737,14 @@ var doctorUpdateFixes = map[string]string{
 	// A check that cannot even be read outside a checkout says so in its own
 	// text: update is the whole upgrade, and it runs in the repository.
 	"plugin-pin": "run `fugaro update` in the repository's checkout",
+	// plugin-install's class is new (D942), and the check's own line was
+	// already the right one (#1500 re-pointed it at `fugaro update`): it keeps
+	// Claude Code's by-hand move beside the command, which is what a machine
+	// with no claude on PATH has left — the same fallback the check's own fix
+	// string and noClaudeHint name. A plain `fugaro update` would be the right
+	// command and a shorter line; it would also drop the one move the reader
+	// can make in a coding agent's session, where the write is refused.
+	"plugin-install": "run `fugaro update`, or install it in Claude Code",
 
 	// policy-vs-jobs has no line of its own, because the whole `fugaro update`
 	// is its remedy: the stage list (init_stages.go) is images — the rebuild
@@ -801,11 +870,13 @@ var doctorShorts = map[string]doctorShort{
 	// fix, and `fugaro orchestrator install` is the by-hand form the check's own
 	// text keeps for --all and --json.
 	"orchestrator-unit": {"the login unit that runs the orchestrator daemon was written from an older template.", ""},
-	// The plugin Claude Code installed is not the checkout's pin, and the
-	// converge's plugin stage writes the pin: `fugaro update` is the command
-	// the line names (CLAUDE.md's hard rule), and the install that follows the
-	// pin is Claude Code's own.
-	"plugin-install": {"the installed Claude Code plugin is not the pinned one.",
+	// The plugin Claude Code has installed is not the version Fugaro wants:
+	// the checkout's pin where it carries one, this binary's own release
+	// otherwise (D942). The sentence says the version rather than the pin
+	// because the pin is the rarer of the two now — nothing in the tree writes
+	// one (D949) — and the line's own command, `fugaro update`, is what
+	// installs the right one either way.
+	"plugin-install": {"the plugin installed in Claude Code is not the version this Fugaro needs.",
 		"run `fugaro update`, or install it in Claude Code"},
 	"base-image": {"no Fugaro base image is recorded, so image builds start from whatever the repository names.", ""},
 	// The published policy node is older than this binary. The command that
