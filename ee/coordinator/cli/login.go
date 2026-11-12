@@ -54,11 +54,19 @@ import (
 // turns a door on — rather than a URL this build guessed and a connection that
 // then failed.
 //
-// **The URL is read once, at login, and the credential carries it.** The
-// roadmap commands then hold everything they need in the keychain: they check
-// the issuer the installation's outputs name against the issuer the credential
-// was minted for (a door that moved is a credential that must not be sent to
-// it) without reading Terraform again on every write.
+// **The credential records the door it was minted for, and every command
+// reads the door's address from the installation's outputs again.** The two
+// are not compared into a refusal, and that is deliberate: the URL is the
+// installation's own output, the address is refused unless it is https or a
+// loopback host (coordinatorFrontDoorAddress), and a front door recreated
+// somewhere else is the same installation with the same queue behind it, so a
+// credential minted at the old URL is worth presenting at the new one. What a
+// moved door costs is that the refresh is refused there, and
+// coordinatorSignInAgain is where that refusal becomes useful: it names the
+// URL the credential was minted for beside the one the installation publishes
+// now, and the one command that signs in again. Reading the outputs on every
+// call is not an optimisation to be had either — the off state (D934) is a
+// per-command refusal, and it is the same null login refuses on.
 //
 // **No token, code or verifier is ever printed, logged or named in an error.**
 // The three are the flow's own secrets: what a failure says is which step
@@ -548,15 +556,23 @@ func coordinatorAwaitCallback(ctx context.Context, ln net.Listener, state string
 			// The flow is answered; this is a second request to the same
 			// listener, and it changes nothing.
 		default:
-			switch {
-			case q.Get("state") != state:
-				cb.finish("", errors.New("a request reached the loopback listener carrying a state this login did not send, so it is not this flow's answer and was ignored"))
-			case q.Get("error") != "":
-				cb.finish("", fmt.Errorf("the front door refused the authorization: %s", coordinatorOAuthError(q)))
-			case q.Get("code") == "":
-				cb.finish("", errors.New("the front door answered the loopback redirect with neither a code nor an error"))
-			default:
-				cb.finish(q.Get("code"), nil)
+			// A request whose state this login did not mint is not this
+			// flow's answer, and it ends nothing: it is answered with the
+			// page and otherwise ignored, because any local process — or any
+			// page the person opens while signing in — can reach a loopback
+			// port, and one of them must not be able to cancel a sign-in in
+			// progress. Only a request carrying the state ends the wait; the
+			// others are the favicon, the second tab and the port scan the
+			// note above names.
+			if q.Get("state") == state {
+				switch {
+				case q.Get("error") != "":
+					cb.finish("", fmt.Errorf("the front door refused the authorization: %s", coordinatorOAuthError(q)))
+				case q.Get("code") == "":
+					cb.finish("", errors.New("the front door answered the loopback redirect with neither a code nor an error"))
+				default:
+					cb.finish(q.Get("code"), nil)
+				}
 			}
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")

@@ -70,6 +70,14 @@ type fakeFrontDoor struct {
 	// calls and kinds are what the door served and what it queued.
 	calls []fakeToolCall
 	kinds map[string]string
+	// version is the version the door answers its documents in,
+	// mcpauth.RoadmapAnswerVersion unless a test moved it to drive the
+	// client's refusal of a number it does not read.
+	version int
+	// writeRefusal, when set, is the sentence the door's write tools answer
+	// with instead of queueing: the other refusal the real door sends inside
+	// a successful result with `isError`.
+	writeRefusal string
 	// refuseStatus, when set, is the status every MCP call is answered with
 	// instead of being served.
 	refuseStatus int
@@ -85,6 +93,7 @@ func newFakeFrontDoor(t *testing.T) *fakeFrontDoor {
 		refresh: "refresh-1",
 		minted:  1,
 		kinds:   map[string]string{},
+		version: mcpauth.RoadmapAnswerVersion,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc(mcpauth.RegisterPath, d.register)
@@ -116,6 +125,22 @@ func (d *fakeFrontDoor) serve(status, reason, current string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.status, d.reason, d.current = status, reason, current
+}
+
+// refuseWrite makes every write tool answer the way the real door answers a
+// call it refused before queueing anything.
+func (d *fakeFrontDoor) refuseWrite(sentence string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.writeRefusal = sentence
+}
+
+// answerInVersion moves the number the door answers its documents in, so that
+// a test can put a shape this build does not know on the wire.
+func (d *fakeFrontDoor) answerInVersion(version int) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.version = version
 }
 
 // toolCalls is what the door was asked to do, in order.
@@ -244,7 +269,12 @@ func (d *fakeFrontDoor) mcp(w http.ResponseWriter, r *http.Request) {
 		id, _ := req.Params.Arguments["id"].(string)
 		outcome, ok := d.outcome(id)
 		if !ok {
-			d.rpcError(w, -32602, mcpauth.ErrRoadmapRequestUnknown.Error())
+			// An id this door holds nothing for is the tool's own refusal and
+			// not the protocol's, so it arrives the way the real door sends
+			// one: HTTP 200, `isError`, the sentence in the content — and not
+			// as a JSON-RPC error, which the real door reserves for a name
+			// the catalogue does not hold.
+			d.answerError(w, req.ID, mcpauth.ErrRoadmapRequestUnknown.Error())
 			return
 		}
 		d.answer(w, req.ID, outcome)
@@ -255,9 +285,32 @@ func (d *fakeFrontDoor) mcp(w http.ResponseWriter, r *http.Request) {
 		d.rpcError(w, -32601, "no such tool")
 		return
 	}
+	d.mu.Lock()
+	refusal, version := d.writeRefusal, d.version
+	d.mu.Unlock()
+	if refusal != "" {
+		d.answerError(w, req.ID, refusal)
+		return
+	}
 	id := d.queue(kind)
 	d.answer(w, req.ID, map[string]any{
-		"version": coordinatorOutcomeVersion, "request": id, "kind": kind, "asked": req.Params.Arguments,
+		"version": version, "request": id, "kind": kind, "asked": req.Params.Arguments,
+	})
+}
+
+// answerError is one tool's own refusal as MCP carries it: a successful
+// result, the sentence in the content, and `isError` set — which is what the
+// real door sends for everything from the catalogue lookup down
+// (resource.go's callTool), an unknown request id and a write refused before
+// it was queued alike. A client that reads that text as the tool's data is
+// reading an error message as a document.
+func (d *fakeFrontDoor) answerError(w http.ResponseWriter, id int, sentence string) {
+	writeFakeJSON(w, http.StatusOK, map[string]any{
+		"jsonrpc": "2.0", "id": id,
+		"result": map[string]any{
+			"content": []map[string]any{{"type": "text", "text": sentence}},
+			"isError": true,
+		},
 	})
 }
 
@@ -296,7 +349,7 @@ func (d *fakeFrontDoor) outcome(id string) (map[string]any, bool) {
 	if status == "" {
 		status = mcpauth.RoadmapApplied
 	}
-	out := map[string]any{"version": coordinatorOutcomeVersion, "request": id, "kind": kind, "status": status}
+	out := map[string]any{"version": d.version, "request": id, "kind": kind, "status": status}
 	if d.reason != "" {
 		out["reason"] = d.reason
 	}
@@ -476,6 +529,55 @@ func TestLoginUsesPKCEAndALoopbackRedirect(t *testing.T) {
 	}
 	if strings.Contains(out, cred.RefreshToken) || strings.Contains(out, "code-1") {
 		t.Errorf("login printed something of the flow it must not:\n%s", out)
+	}
+}
+
+// TestALoginIgnoresARequestItDidNotSend is the one rule the loopback listener
+// has about strangers: a request that does not carry the state this login
+// minted is answered with the page and changes nothing. Any local process —
+// and any page the person happens to have open while signing in — can reach a
+// loopback port, so a request that ended the sign-in would let one of them
+// cancel a login in progress.
+//
+// The foreign request here carries a code of its own, which the door's token
+// endpoint would refuse: a login that read it would fail at the exchange, so
+// the sign-in completing is what says the request was ignored.
+func TestALoginIgnoresARequestItDidNotSend(t *testing.T) {
+	newCloudFixture(t)
+	door := newFakeFrontDoor(t)
+	store := &keychain.Fake{}
+	withFrontDoor(t, door, store)
+	coordinatorOpenBrowser = func(raw string) error {
+		u, err := url.Parse(raw)
+		if err != nil {
+			return err
+		}
+		foreign := u.Query().Get("redirect_uri") + "?code=not-this-flows&state=not-this-flows-state"
+		resp, err := http.Get(foreign)
+		if err != nil {
+			return err
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+		return door.openBrowser(raw)
+	}
+
+	if _, _, err := execute(t, "coordinator", "login", "--scope", "roadmap:write"); err != nil {
+		t.Fatalf("a request this login did not send ended the sign-in: %v", err)
+	}
+	item, err := keychain.ParseItem("aurora"+coordinatorCredentialSuffix, "aurora")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(store.Keys) != 1 {
+		t.Fatalf("the keychain holds %v; want the one credential the flow that was answered stored", store.Keys)
+	}
+	cred, err := coordinatorReadCredential(context.Background(), store, item)
+	if err != nil {
+		t.Fatalf("reading back what login stored: %v", err)
+	}
+	if cred.RefreshToken != door.refreshToken() {
+		t.Error("the credential does not hold the refresh token the door minted")
 	}
 }
 

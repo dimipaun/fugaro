@@ -68,19 +68,17 @@ var coordinatorRoadmapPoll = 2 * time.Second
 // not answered in half a minute is not going to.
 const coordinatorRoadmapToolTimeout = 30 * time.Second
 
-// coordinatorOutcomeVersion is the version of the outcome document these
-// commands print. It is the front door's own roadmapAnswerVersion, spelled
-// here because the console reads this document off the CLI and the two have to
-// be the same number: a shape change is a version and not a field that means
-// something new (the console contract's §6.24).
-const coordinatorOutcomeVersion = 1
-
 // coordinatorOutcomeDoc is one roadmap request's outcome, as the front door
 // answers it and as `--json` prints it.
 //
 // It is a copy of the front door's own document and not a reading of it: the
 // fields are the same names, so a client that reads one reads the other, and
-// the console that reads this one is reading the door's vocabulary.
+// the console that reads this one is reading the door's vocabulary. Its
+// version is the front door's own constant (mcpauth.RoadmapAnswerVersion)
+// rather than a number spelled again here: this build refuses a document whose
+// version is not that one instead of reading its fields, so two numbers that
+// could drift apart would be a client reading a shape it does not know (the
+// console contract's §6.24).
 type coordinatorOutcomeDoc struct {
 	Version int    `json:"version"`
 	Request string `json:"request"`
@@ -329,7 +327,13 @@ func runCoordinatorRoadmapWrite(cmd *cobra.Command, o *coordinatorRoadmapOptions
 		Version int    `json:"version"`
 		Request string `json:"request"`
 	}
-	if err := json.Unmarshal(answer, &queued); err != nil || queued.Request == "" {
+	if err := json.Unmarshal(answer, &queued); err != nil {
+		return fcli.RemoteErr(errors.New("the front door's answer to the write was not a queued request"))
+	}
+	if err := coordinatorAnswerVersion("the answer to this write", queued.Version); err != nil {
+		return err
+	}
+	if queued.Request == "" {
 		return fcli.RemoteErr(errors.New("the front door's answer to the write named no request id"))
 	}
 	// The id is printed before the wait and not after it: a person who stops
@@ -452,10 +456,35 @@ func coordinatorReadOutcome(ctx context.Context, client *http.Client, door *coor
 		return coordinatorOutcomeDoc{}, err
 	}
 	var outcome coordinatorOutcomeDoc
-	if err := json.Unmarshal(answer, &outcome); err != nil || outcome.Request == "" || outcome.Status == "" {
+	if err := json.Unmarshal(answer, &outcome); err != nil {
+		return coordinatorOutcomeDoc{}, fcli.RemoteErr(errors.New("the front door's answer to roadmap_request was not an outcome document"))
+	}
+	if err := coordinatorAnswerVersion("the answer to roadmap_request", outcome.Version); err != nil {
+		return coordinatorOutcomeDoc{}, err
+	}
+	if outcome.Request == "" || outcome.Status == "" {
 		return coordinatorOutcomeDoc{}, fcli.RemoteErr(errors.New("the front door's answer to roadmap_request was not an outcome document"))
 	}
 	return outcome, nil
+}
+
+// coordinatorAnswerVersion refuses one of the front door's documents by its
+// number rather than reading it field by field.
+//
+// The door and this build ship together, so a number this build does not read
+// is one of two machines out of step, and the fix for both is the one command
+// that brings them to the same release — which is why this is the person's
+// (exit 1) and not the installation's. Reading the document anyway would be
+// the failure the number exists to prevent: a field that means something new
+// in a shape this build does not know draws a wrong answer with no error
+// (the console contract's §6.24, and the rule that a format's meaning is
+// versioned rather than reused).
+func coordinatorAnswerVersion(what string, version int) error {
+	if version == mcpauth.RoadmapAnswerVersion {
+		return nil
+	}
+	return fcli.UserErr("the front door answered %s in version %d of its roadmap document, and this build reads version %d: run `fugaro update`, which brings the CLI and the installation to the same release",
+		what, version, mcpauth.RoadmapAnswerVersion)
 }
 
 // coordinatorPrintOutcome prints one outcome, and is the whole of what the
@@ -518,6 +547,10 @@ func coordinatorOutcomeSentence(o coordinatorOutcomeDoc) string {
 
 // coordinatorCallTool is one `tools/call` on the front door's MCP endpoint,
 // over the bearer token this command minted, and answers the tool's own JSON.
+// A tool that refused the call has no JSON to answer with, and telling the two
+// apart is this function's business rather than each caller's: MCP carries a
+// refusal in the same successful result, so the flag beside the text is what
+// decides whether it is read as a document or reported as the refusal it is.
 //
 // **The request is what the tool's catalogue row says it is**, and nothing
 // here composes an argument: the flags are the fields, they are sent under the
@@ -577,12 +610,34 @@ func coordinatorCallTool(ctx context.Context, client *http.Client, door *coordin
 	if rpc.Result == nil {
 		return nil, fcli.RemoteErr(fmt.Errorf("the front door's answer to %s carried neither a result nor an error", name))
 	}
+	text := ""
 	for _, part := range rpc.Result.Content {
 		if part.Type == "text" && strings.TrimSpace(part.Text) != "" {
-			return json.RawMessage(part.Text), nil
+			text = part.Text
+			break
 		}
 	}
-	return nil, fcli.RemoteErr(fmt.Errorf("the front door's answer to %s carried no text", name))
+	if text == "" {
+		return nil, fcli.RemoteErr(fmt.Errorf("the front door's answer to %s carried no text", name))
+	}
+	if rpc.Result.IsError {
+		// A tool's own refusal is MCP's execution error: HTTP 200, a
+		// successful result, and the sentence in the content with `isError`
+		// set — because a client has to show what the tool said rather than
+		// treat the call as one the server could not read. So the text is not
+		// the tool's data and must not be parsed as it: an unknown request id
+		// and a write refused before it was queued (a stale `expect`, an
+		// argument the schema does not hold) both arrive here, and reading
+		// them as documents turned the door's own sentence into "the answer
+		// was not an outcome document".
+		//
+		// Every one of them is this call's and not the installation's (exit
+		// 1): what the door cannot answer for at all is a JSON-RPC error, not
+		// this — an unreadable store is answered as -32603, and a name the
+		// catalogue does not hold as -32602, both handled above.
+		return nil, fcli.UserErr("the front door refused %s: %s", name, safetext.OneLine(text))
+	}
+	return json.RawMessage(text), nil
 }
 
 // coordinatorCallRefusal turns a non-200 answer into the sentence a person

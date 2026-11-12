@@ -265,9 +265,88 @@ func TestReleasesSetRefusesAChangedIDOrStream(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &doc); err != nil {
 		t.Fatalf("--json printed %q, which is not the outcome document: %v", out, err)
 	}
-	if doc.Version != coordinatorOutcomeVersion || doc.Status != mcpauth.RoadmapRefused ||
+	if doc.Version != mcpauth.RoadmapAnswerVersion || doc.Status != mcpauth.RoadmapRefused ||
 		doc.Current != "v7" || doc.Request == "" || doc.Kind != string(mcpauth.RequestReleaseSet) {
 		t.Errorf("--json printed %+v; want the refused outcome with the current version", doc)
+	}
+}
+
+// TestAWriteRefusedBeforeItIsQueuedIsTheDoorsOwnSentence is the refusal a
+// write meets when there is nothing to wait for: the door answered HTTP 200
+// with a successful result and `isError` set, which is how MCP carries a
+// tool's own refusal and how a stale `expect` and an argument the schema does
+// not hold both arrive. Reading that text as the tool's data reported this
+// build's guess at the shape ("named no request id") and dropped the door's
+// sentence — the reason, and the version the record holds, which is the one
+// value that tells a person what to send next.
+func TestAWriteRefusedBeforeItIsQueuedIsTheDoorsOwnSentence(t *testing.T) {
+	newCloudFixture(t)
+	door := newFakeFrontDoor(t)
+	store := &keychain.Fake{}
+	withFrontDoor(t, door, store)
+	seedCredential(t, store, door, "aurora")
+	door.refuseWrite("the record has moved since this request was built: it holds the version v7 and the request expected v3; read the record again and send what it holds")
+
+	out, _, err := execute(t, "coordinator", "roadmap", "releases", "set",
+		"--id", "2026.1", "--stream", "ga", "--name", "Winter", "--state", "open",
+		"--order", "3", "--expect", "v3", "--json")
+	if err == nil {
+		t.Fatal("a write the door refused before queueing exited 0")
+	}
+	if fcli.ExitCode(err) != fcli.ExitUserError {
+		t.Errorf("the refusal exited %d; want %d — nothing was queued, and the door's own sentence is what says so", fcli.ExitCode(err), fcli.ExitUserError)
+	}
+	if !strings.Contains(err.Error(), "holds the version v7") || !strings.Contains(err.Error(), "expected v3") {
+		t.Errorf("the refusal is %q; want the door's sentence with the version the record holds", err)
+	}
+	if strings.Contains(err.Error(), "named no request id") || strings.Contains(err.Error(), "not an outcome document") {
+		t.Errorf("the refusal is %q; want the door's sentence and not this build's guess at the shape it could not parse", err)
+	}
+	if strings.TrimSpace(out) != "" {
+		t.Errorf("--json printed %q for a call that was never queued: there is no request to report", out)
+	}
+}
+
+// TestADocumentInAVersionThisBuildDoesNotReadIsRefused is the gate the version
+// is for, at both ends of a write: the number is the front door's own
+// (mcpauth.RoadmapAnswerVersion — one constant, so there is no second number
+// to drift), and a document carrying another one is refused by its number
+// rather than read field by field. Reading it anyway is the failure the number
+// exists to prevent: a field that means something new in a shape this build
+// does not know is a wrong answer with no error.
+func TestADocumentInAVersionThisBuildDoesNotReadIsRefused(t *testing.T) {
+	newCloudFixture(t)
+	door := newFakeFrontDoor(t)
+	store := &keychain.Fake{}
+	withFrontDoor(t, door, store)
+	seedCredential(t, store, door, "aurora")
+
+	future := strconv.Itoa(mcpauth.RoadmapAnswerVersion + 1)
+	door.answerInVersion(mcpauth.RoadmapAnswerVersion + 1)
+	_, _, err := execute(t, needArgs()...)
+	if err == nil {
+		t.Fatal("a queued answer in a version this build does not read was read field by field")
+	}
+	if !strings.Contains(err.Error(), future) || !strings.Contains(err.Error(), "fugaro update") {
+		t.Errorf("the refusal is %q; want it to name the version the door answered in and the command that brings the two into step", err)
+	}
+	if fcli.ExitCode(err) != fcli.ExitUserError {
+		t.Errorf("the refusal exited %d; want %d — the machine out of step is this one", fcli.ExitCode(err), fcli.ExitUserError)
+	}
+
+	// The other end: the queued answer is one this build reads, and the
+	// outcome document it reads back is not.
+	door.answerInVersion(mcpauth.RoadmapAnswerVersion)
+	if _, _, err := execute(t, needArgs()...); err != nil {
+		t.Fatalf("roadmap need: %v", err)
+	}
+	door.answerInVersion(mcpauth.RoadmapAnswerVersion + 1)
+	_, _, err = execute(t, "coordinator", "roadmap", "request", "req-1")
+	if err == nil {
+		t.Fatal("an outcome document in a version this build does not read was read field by field")
+	}
+	if strings.Contains(err.Error(), "not an outcome document") {
+		t.Errorf("the refusal is %q; want the version's own refusal and not this build's guess at the shape", err)
 	}
 }
 
@@ -327,6 +406,8 @@ func TestRoadmapRequestReadsAnOutcomeLater(t *testing.T) {
 		t.Error("an id the door holds nothing for was answered as if it existed")
 	} else if !strings.Contains(err.Error(), "queued for you") {
 		t.Errorf("the refusal is %q; want the door's own sentence for an unknown id", err)
+	} else if fcli.ExitCode(err) != fcli.ExitUserError {
+		t.Errorf("an unknown id exited %d; want %d — it is the caller's, and the door said so", fcli.ExitCode(err), fcli.ExitUserError)
 	}
 	door.mu.Lock()
 	after := len(door.calls)

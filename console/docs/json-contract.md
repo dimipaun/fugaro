@@ -3382,7 +3382,7 @@ next.
 
 | Key | Type | Absent | Null | Notes |
 | --- | --- | --- | --- | --- |
-| `version` | integer | never | never | the document's own version, `1`. It is the front door's `roadmapAnswerVersion`, so a shape change moves both together, and a document this build does not know is refused by its number rather than read field by field |
+| `version` | integer | never | never | the document's own version, `1`. It is the front door's `mcpauth.RoadmapAnswerVersion`, the one constant both ends read, so a shape change moves both together, and a document this build does not know is refused by its number rather than read field by field: the command exits **1** and names `fugaro update`, which is the one command that brings the CLI and the installation to the same release |
 | `request` | string | never | never | the request's id, minted by the front door when it queued the write. It is the only handle on the request, the value `roadmap request` takes, and the value the command prints **before** it waits — so a person who stops the command still holds it |
 | `kind` | string | never | never | what the request asked for: `publish_plan`, `unpublish_plan`, `move`, `need`, `unneed` or `release_set`. It is the request's own discriminator and not the tool's name, because two tools are the same act with opposite arguments |
 | `status` | string | never | never | one of `applied`, `refused`, `failed`, `pending` |
@@ -3400,6 +3400,21 @@ and the same document read again later is how a caller sees it move. A `pending`
 document is the reason `roadmap request` exists as a command of its own: a write
 that runs out its 60 seconds prints this document and the id that reads it
 later.
+
+**A call the door refuses before it queues anything has no document at all.**
+A tool's own refusal travels the way MCP carries one — HTTP 200, a successful
+result, and the sentence in the content with `isError` set — and it is an
+answer about a call rather than a request that exists, so there is nothing to
+print: the command writes nothing to standard output, with or without `--json`,
+the door's sentence is the error, and the exit code is **1**. That is the shape
+of `releases set` built on a version the record has moved past, and of an
+argument the tool's schema does not hold. The version the record holds arrives
+inside that sentence rather than in a `current` field, because no request was
+queued to carry one: a console that showed a `current` beside such a refusal
+would be showing the answer to a different call. (A refusal from the protocol
+layer rather than from the tool — a name the catalogue does not hold, a store
+the door could not read — is a JSON-RPC error, and it is not this document
+either.)
 
 **The wait.** A write asks for its outcome immediately after queueing, and asks
 again every two seconds until the status is not `pending` or 60 seconds have
