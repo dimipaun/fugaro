@@ -795,9 +795,12 @@ func (s *Service) paidRequest(policy, workspaceID, organisation string, seats, d
 // key minted and mailed and then **not** recorded is not a duplicate of the
 // recorded one: it is a second live key, with no issuance and no key state, so
 // nothing can renew it, a refund mapped to the recorded key_id leaves it live,
-// and the operator reading the store cannot see it at all. Every write after the
-// mail therefore withdraws the key it was about when it fails, which is what
-// puts that key in §8's list where the licensor can see and act on it.
+// and the operator reading the store cannot see it at all. The issuance write is
+// therefore the one that withdraws the key it was about when it fails, which is
+// what puts that key in §8's list where the licensor can see and act on it. A
+// failed key state withdraws nothing: it is the pair's safe half (above), and
+// the key it belongs to is one the store holds, so a revocation can name it and
+// a redelivery can finish it.
 func (s *Service) paid(ctx context.Context, req RequestV1, applicant, source string) (MintedV1, error) {
 	mints, answersV1 := s.mints.(MintsV1)
 	if !answersV1 {

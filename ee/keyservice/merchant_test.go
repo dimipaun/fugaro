@@ -400,6 +400,103 @@ func TestASeatChangeThatNamesNoWorkspaceIsRefused(t *testing.T) {
 	}
 }
 
+// lenientMints is the minter as the intake really reaches it (Check 174): the
+// minter's own service, another process, which mints the request it is handed
+// and does not re-check the claims the intake assembled. It fills an empty
+// workspace id instead of refusing it, so a request the service should not have
+// made is one this minter answers with a signed key — which is what makes the
+// service's own clause the only thing standing between a purchase that names no
+// workspace and a key every verifier refuses.
+type lenientMints struct {
+	Mints
+	innerV1 MintsV1
+}
+
+func (l lenientMints) MintV1(ctx context.Context, req RequestV1) (MintedV1, error) {
+	if req.WorkspaceID == "" {
+		req.WorkspaceID = workspaceID
+	}
+	return l.innerV1.MintV1(ctx, req)
+}
+
+// TestAPurchaseThatNamesNoWorkspaceIsRefused: TN2, D2134 and §5.1 — the
+// workspace binding scopes a cascade project's model access, so a key minted
+// with none is one every verifier that reads the claim refuses. The purchase's
+// own event is where the binding comes from, so a purchase that names none is
+// refused before anything is minted, mailed or recorded, and the 500 is what
+// puts it in front of the merchant's retry and the deploy's alerting.
+//
+// The minter is the one the assertions are about: behind the intake's call it is
+// another process, and a minter that answers what it is handed — the fixture's
+// own refuses an empty workspace id, so it cannot tell this guard from the
+// minter's — mints this purchase happily. Deleting `e.WorkspaceID == ""` from
+// `purchased` therefore fails this test on the signature, the mail and the
+// record rather than passing on the minter's refusal.
+func TestAPurchaseThatNamesNoWorkspaceIsRefused(t *testing.T) {
+	f := newFixture(t)
+	f.deps.Mints = lenientMints{Mints: f.deps.Mints, innerV1: f.deps.Mints.(MintsV1)}
+	f.start()
+
+	rec := f.deliver(Event{
+		ID:           "evt-1",
+		Type:         EventPurchase,
+		Mode:         ModeFor(f.env),
+		OccurredAt:   f.now,
+		Subscription: "sub-acme.example",
+		Organisation: "acme.example",
+		Email:        buyerAddress("acme.example"),
+		Seats:        5,
+		TermDays:     365,
+	})
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("a purchase naming no workspace was answered %d, want 500: the merchant's retry and the owner's alerting are what see an event this service cannot serve", rec.Code)
+	}
+	if got := f.signer.calls; got != 0 {
+		t.Errorf("a purchase naming no workspace signed %d key(s), want none: the key would carry no binding, and every verifier that reads one refuses it (TN2, D2134)", got)
+	}
+	if got := len(f.records()); got != 0 {
+		t.Errorf("a purchase naming no workspace recorded %d key(s), want none", got)
+	}
+	if got := len(f.mail.sent); got != 0 {
+		t.Errorf("a purchase naming no workspace mailed %d message(s), want none", got)
+	}
+	if _, held, _ := f.store.Subscription(context.Background(), "sub-acme.example"); held {
+		t.Errorf("a purchase naming no workspace stored a subscription, want nothing written")
+	}
+}
+
+// olderMints is the intake wired with the older format's route and nothing else:
+// one Mints, as a deployment whose client never grew the v1 route hands the paid
+// path.
+type olderMints struct{ Mints }
+
+// TestAPurchaseThroughAMinterThatCannotAnswerV1IsRefused: what a customer buys
+// is a v1 key — the format whose `key_id` a §8 revocation names and whose claims
+// carry the policy (D2130) — so an intake whose minter answers only the older
+// route is refused rather than handed a key no released verifier reads, and no
+// key is minted, mailed or recorded on the way.
+func TestAPurchaseThroughAMinterThatCannotAnswerV1IsRefused(t *testing.T) {
+	f := newFixture(t)
+	f.deps.Mints = olderMints{Mints: f.deps.Mints}
+	f.start()
+
+	if rec := f.event(Event{ID: "evt-1", Type: EventPurchase, Organisation: "acme.example", Seats: 5, TermDays: 365}); rec.Code != http.StatusInternalServerError {
+		t.Errorf("a purchase through a minter that answers no v1 request was answered %d, want 500: the merchant's retry and the owner's alerting are what see a deployment wired wrong", rec.Code)
+	}
+	if got := f.signer.calls; got != 0 {
+		t.Errorf("a purchase through a minter that answers no v1 request signed %d key(s), want none: the older format's key carries no key_id for a revocation to name", got)
+	}
+	if got := len(f.records()); got != 0 {
+		t.Errorf("a purchase through a minter that answers no v1 request recorded %d key(s), want none", got)
+	}
+	if got := len(f.mail.sent); got != 0 {
+		t.Errorf("a purchase through a minter that answers no v1 request mailed %d message(s), want none", got)
+	}
+	if _, held, _ := f.store.Subscription(context.Background(), "sub-acme.example"); held {
+		t.Errorf("a purchase through a minter that answers no v1 request stored a subscription, want nothing written")
+	}
+}
+
 // TestAnEventForAnUnknownSubscriptionIsRefused: a cancellation or a seat change
 // the store has no subscription for is an event the service cannot place — it
 // arrived before the purchase it belongs to. Answering 200 drops it for good,
