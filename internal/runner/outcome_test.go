@@ -1016,6 +1016,7 @@ var capRound = []Finding{
 	{File: "d.go", Summary: "the token is logged in the clear", Likelihood: 2, Impact: 2, FixCost: 1, Class: "security"},
 	{File: "e.go", Summary: "a write drops the row it rewrote", Likelihood: 2, Impact: 3, FixCost: 1, Class: "data_loss"},
 	{File: "f.go", Summary: "the reviewer scored nothing"},
+	{File: "g.go", Summary: "the licence text needs counsel's clearance", NeedsOwner: true, Likelihood: 1, Impact: 1, FixCost: 1, Class: "cosmetic"},
 }
 
 // capRun is a run of the mode block names whose rounds the cap ended, with the
@@ -1045,6 +1046,9 @@ func capRun(t *testing.T, block string, findings []Finding) *run {
 //     (F28).
 //   - The security finding and the unscored one are floor in every mode and
 //     appear nowhere.
+//   - The finding the reviewer left to the owner appears nowhere either, though
+//     it is scored like the trivial one: a cap files the tasks a later run
+//     picks up, and this one is a decision only the owner makes (OD1).
 func TestCapDeferralsAreTheStopsOwn(t *testing.T) {
 	cases := []struct {
 		mode rigor.Mode

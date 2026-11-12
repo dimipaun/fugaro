@@ -924,6 +924,13 @@ const capDeferredReason = "the run reached its review cap with this finding stil
 // table has. That is what makes D1845's "a floor finding always holds the
 // draft" true of this block and not only of Decide, which never reads it.
 //
+// A finding only the owner can settle is not one either, however low its scores
+// are: the cap's block is follow-up tasks, and a decision that is not a run's to
+// make is not one a later run settles (OD1). The judge never defers such a
+// finding for the same reason (triage.Apply), and a cap that filed one would
+// have `fugaro followups` open a coding task for the question the record beside
+// it says the run is waiting on.
+//
 // The repository's opt-in is asked before anything else (D1858, D1852): a
 // deferral recorded for a repository that never asked for the mode would file a
 // follow-up task out of a reading the run does not publish under, and an
@@ -938,7 +945,7 @@ func (r *run) capDeferrals() []runstore.DeferredFinding {
 	mode := r.reachedRigor()
 	var out []runstore.DeferredFinding
 	for _, f := range r.lastSenior.Findings {
-		if rigor.BlocksAtStop(mode, scoreOf(f)) {
+		if f.NeedsOwner || rigor.BlocksAtStop(mode, scoreOf(f)) {
 			continue
 		}
 		out = append(out, runstore.DeferredFinding{

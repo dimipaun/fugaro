@@ -211,6 +211,54 @@ func TestCapHitUnconfiguredRecordsNoDeferrals(t *testing.T) {
 	}
 }
 
+// ownerAskSummary is a finding whose only remedy is a decision the run cannot
+// make (OD1), which is the reviewer's flag and not a score.
+const ownerAskSummary = "the licence text needs counsel's clearance"
+
+// ownerAskFinding is that finding at scores the stop would otherwise let
+// through: likelihood 1 x impact 1 is below Startup's floor of 8, so the flag
+// alone is what this case reads.
+func ownerAskFinding() map[string]any {
+	return map[string]any{
+		"severity": "minor", "file": "feature.txt", "summary": ownerAskSummary, "needs_owner": true,
+		"likelihood": 1, "impact": 1, "fix_cost": 1, "class": "cosmetic",
+	}
+}
+
+// TestCapHitDoesNotFileAnOwnerFinding: the cap files what it leaves open as
+// follow-ups — tasks a later run picks up and acts on — and a finding only the
+// owner can settle is not one of them: no code change makes the decision (OD1),
+// and the judge is the same way about it (triage.Apply). A cap filing it would
+// hand `fugaro followups` a coding task for the owner's question while the
+// record beside it says the run is waiting on that very decision.
+func TestCapHitDoesNotFileAnOwnerFinding(t *testing.T) {
+	h := newHarness(t, modeCfg(t, "startup", 1, ""), nil)
+	rec, err := h.run(t,
+		implement("feature"),
+		reviewScored("changes", blockingFinding(), ownerAskFinding()),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.OwnerDecisions == nil || len(rec.OwnerDecisions.Decisions) != 1 {
+		t.Fatalf("owner decisions = %+v, want the one the capped round left", rec.OwnerDecisions)
+	}
+	if rec.Outcome != runstore.OutcomeDraft || rec.Reason != "review is waiting on 1 owner decision" {
+		t.Fatalf("rec = %+v (reason %q), want the draft the owner's question leaves", rec, rec.Reason)
+	}
+	d := deferredOf(rec)
+	if _, ok := d[findingKeyOf("feature.txt", ownerAskSummary)]; ok {
+		t.Errorf("the record filed the owner's finding as a follow-up: %+v", rec.Deferred)
+	}
+	left, ok := d[findingKeyOf("feature.txt", "unbounded retry loop in the fetch path")]
+	if !ok {
+		t.Fatalf("the record's deferred block = %+v, want the round's other finding filed by the cap", rec.Deferred)
+	}
+	if left.Source != runstore.TriageSourceCap || left.Reason != capReason {
+		t.Errorf("the cap's deferral = %+v, want the stop's own source and one-line reason", left)
+	}
+}
+
 // TestCapHitTriageOffStillRecordsTheCapsDeferrals is D1858: the judge's switch
 // is not what defers these findings — the cap is — so a Startup run that asked
 // no judge at all files the whole round it stopped on, and merges with it. The
