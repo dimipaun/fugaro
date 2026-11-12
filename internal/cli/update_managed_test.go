@@ -1647,8 +1647,8 @@ func TestUpdateManagedGatesTheCredentialsServiceStage(t *testing.T) {
 				if stopped := stoppedStage(got); stopped != initflow.CredentialsService {
 					t.Fatalf("the run stopped at %s, want the credentials-service stage:\n%s", stopped, got)
 				}
-				if left := leftFor(got, initflow.CredentialsService, initflow.LeftRefused); left != "" {
-					t.Errorf("a stage this door does not gate left the owner the gate's own step, which is the answer the entry exists to give:\n%s", got)
+				if strings.Contains(got, "left for you ("+initflow.CredentialsService+", ") {
+					t.Errorf("a stage this door does not gate left the owner a step, which is the answer the entry exists to give:\n%s", got)
 				}
 				return
 			}
@@ -1658,12 +1658,17 @@ func TestUpdateManagedGatesTheCredentialsServiceStage(t *testing.T) {
 			if s := stoppedStage(got); s != "(the summary names no failed stage)" {
 				t.Fatalf("the run failed at %s: the gate's refusal is the owner's step, not a failure:\n%s", s, got)
 			}
-			// LeftRefused and not LeftCommand: what the gate leaves the owner
-			// is D1012's refusal step (internal/initflow's stage.go answers a
-			// gate verdict with it), not a command to run — the plan this stage
-			// holds is the installation's own, and no command of the owner's
-			// rebuilds what the gate would not admit.
-			left := leftFor(got, initflow.CredentialsService, initflow.LeftRefused)
+			// LeftCommand and not LeftRefused: the plan this stage holds is
+			// refused for the removal of a data-bearing bucket, the verdict
+			// initflow calls GateRefusedDelete, and stage.go hands that one the
+			// owner's own Left rather than a refusal step — the line
+			// leftForRemovals builds, which is the one the reader runs at their
+			// own terminal to admit a removal they decided on (D1012).
+			// LeftRefused is the other classes' shape (a plan outside the cover,
+			// or one no verdict ever read) and it carries no command, so a
+			// removal answered with it would tell the reader nothing about the
+			// bucket they are being asked about.
+			left := leftFor(got, initflow.CredentialsService, initflow.LeftCommand)
 			if left == "" {
 				t.Fatalf("the credentials-service stage was not left for the owner:\n%s", got)
 			}
