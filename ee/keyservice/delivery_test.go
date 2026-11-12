@@ -366,6 +366,7 @@ func TestAPurchaseWithNoDeliverableAddressIsRefused(t *testing.T) {
 			OccurredAt:   f.now,
 			Subscription: "sub-" + strconv.Itoa(i),
 			Organisation: "acme.example",
+			WorkspaceID:  workspaceID,
 			Email:        raw,
 			Seats:        5,
 			TermDays:     365,

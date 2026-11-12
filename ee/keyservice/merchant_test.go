@@ -34,6 +34,7 @@ func TestPurchaseEventNeedsAValidSignature(t *testing.T) {
 		OccurredAt:   f.now,
 		Subscription: "sub-acme.example",
 		Organisation: "acme.example",
+		WorkspaceID:  workspaceID,
 		Email:        buyerAddress("acme.example"),
 		Seats:        5,
 		TermDays:     365,
@@ -87,6 +88,7 @@ func TestPurchaseEventIsIdempotent(t *testing.T) {
 		OccurredAt:   f.now.Add(-6 * time.Hour),
 		Subscription: "sub-acme.example",
 		Organisation: "acme.example",
+		WorkspaceID:  workspaceID,
 		Email:        buyerAddress("acme.example"),
 		Seats:        5,
 		TermDays:     365,
@@ -121,6 +123,7 @@ func TestReplayedOrOutOfOrderEventIsIgnored(t *testing.T) {
 		OccurredAt:   f.now,
 		Subscription: "sub-acme.example",
 		Organisation: "acme.example",
+		WorkspaceID:  workspaceID,
 		Email:        buyerAddress("acme.example"),
 		Seats:        5,
 		TermDays:     365,
@@ -224,6 +227,7 @@ func TestARedeliveredPurchaseDoesNotResurrectACancelledSubscription(t *testing.T
 		OccurredAt:   f.now,
 		Subscription: "sub-acme.example",
 		Organisation: "acme.example",
+		WorkspaceID:  workspaceID,
 		Email:        buyerAddress("acme.example"),
 		Seats:        5,
 		TermDays:     365,
@@ -275,11 +279,13 @@ func TestAnEventThatDoesNotSayWhatToMintIsRefused(t *testing.T) {
 		name  string
 		event Event
 	}{
-		{name: "a purchase for no organisation", event: Event{ID: "evt-1", Type: EventPurchase, Seats: 5, TermDays: 365}},
-		{name: "a purchase for no seats", event: Event{ID: "evt-1", Type: EventPurchase, Organisation: "acme.example", TermDays: 365}},
-		{name: "a purchase for a negative number of seats", event: Event{ID: "evt-1", Type: EventPurchase, Organisation: "acme.example", Seats: -5, TermDays: 365}},
-		{name: "a purchase for no term", event: Event{ID: "evt-1", Type: EventPurchase, Organisation: "acme.example", Seats: 5}},
-		{name: "a purchase for a negative term", event: Event{ID: "evt-1", Type: EventPurchase, Organisation: "acme.example", Seats: 5, TermDays: -30}},
+		{name: "a purchase for no organisation", event: Event{ID: "evt-1", Type: EventPurchase, WorkspaceID: workspaceID, Seats: 5, TermDays: 365}},
+		{name: "a purchase for no workspace", event: Event{ID: "evt-1", Type: EventPurchase, Organisation: "acme.example", Seats: 5, TermDays: 365}},
+		{name: "a purchase for no seats", event: Event{ID: "evt-1", Type: EventPurchase, Organisation: "acme.example", WorkspaceID: workspaceID, TermDays: 365}},
+		{name: "a purchase for a negative number of seats", event: Event{ID: "evt-1", Type: EventPurchase, Organisation: "acme.example", WorkspaceID: workspaceID, Seats: -5, TermDays: 365}},
+		{name: "a purchase for no term", event: Event{ID: "evt-1", Type: EventPurchase, Organisation: "acme.example", WorkspaceID: workspaceID, Seats: 5}},
+		{name: "a purchase for a negative term", event: Event{ID: "evt-1", Type: EventPurchase, Organisation: "acme.example", WorkspaceID: workspaceID, Seats: 5, TermDays: -30}},
+		{name: "a purchase for a term the checkout does not sell", event: Event{ID: "evt-1", Type: EventPurchase, Organisation: "acme.example", WorkspaceID: workspaceID, Seats: 5, TermDays: 7}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture(t)
@@ -364,6 +370,7 @@ func TestAnEventForAnUnknownSubscriptionIsRefused(t *testing.T) {
 		OccurredAt:   bought,
 		Subscription: "sub-acme.example",
 		Organisation: "acme.example",
+		WorkspaceID:  workspaceID,
 		Email:        buyerAddress("acme.example"),
 		Seats:        5,
 		TermDays:     365,
@@ -409,6 +416,7 @@ func TestAnEventWhosePurchaseWasNotSavedIsRefused(t *testing.T) {
 		OccurredAt:   bought,
 		Subscription: "sub-acme.example",
 		Organisation: "acme.example",
+		WorkspaceID:  workspaceID,
 		Email:        buyerAddress("acme.example"),
 		Seats:        5,
 		TermDays:     365,
@@ -478,7 +486,7 @@ func TestRenewalKeyIssuesThirtyDaysBeforeExpiry(t *testing.T) {
 	if claims.Seats != 5 || claims.Organisation != "acme.example" {
 		t.Errorf("the renewal key claims %d seat(s) for %q, want the subscription's own", claims.Seats, claims.Organisation)
 	}
-	if got := f.claims(f.mintedKeys()[0]); got.Seats != 5 {
+	if got := v1Verified(t, f, f.mintedKeys()[0]); got.Seats != 5 {
 		t.Errorf("the first key claims %d seat(s), want the purchase's 5: a renewal withdraws nothing", got.Seats)
 	}
 
@@ -671,6 +679,7 @@ func TestAnEventWithNoInstantIsRefused(t *testing.T) {
 		Mode:         ModeFor(f.env),
 		Subscription: "sub-acme.example",
 		Organisation: "acme.example",
+		WorkspaceID:  workspaceID,
 		Email:        buyerAddress("acme.example"),
 		Seats:        9,
 		TermDays:     365,
@@ -722,14 +731,15 @@ func TestSeatChangeReissues(t *testing.T) {
 	if !changed.Expires.Equal(first.Expires) {
 		t.Errorf("the reissued key covers to %s, want the term's end %s: a seat change reissues inside the term the customer paid for", changed.Expires, first.Expires)
 	}
-	claims := f.claims(f.mintedKeys()[1])
-	if claims.Seats != 5 || claims.Expires != first.Expires.Unix() {
-		t.Errorf("the reissued key claims %d seat(s) to %d, want 5 to %d", claims.Seats, claims.Expires, first.Expires.Unix())
+	claims := v1Verified(t, f, f.mintedKeys()[1])
+	if claims.Seats != 5 || !claims.PaidThrough.Equal(first.Expires) {
+		t.Errorf("the reissued key claims %d seat(s) to %s, want 5 to %s", claims.Seats, claims.PaidThrough, first.Expires)
 	}
 }
 
 // TestCancellationStopsReissue: §5.3 — the key the customer holds keeps working
-// until it expires (there is no revocation, §9.2) and the renewal does not come.
+// until it expires (a cancellation withdraws nothing: withdrawing is the refund's
+// and the chargeback's, §8) and the renewal does not come.
 func TestCancellationStopsReissue(t *testing.T) {
 	f := newFixture(t)
 	first := f.purchase("evt-1", "acme.example", 5, 365)
@@ -744,8 +754,8 @@ func TestCancellationStopsReissue(t *testing.T) {
 	if got := len(f.records()); got != 1 {
 		t.Errorf("the record holds %d key(s), want the one the customer holds", got)
 	}
-	if claims := f.claims(held); claims.Expires != first.Expires.Unix() {
-		t.Errorf("the held key reads expires=%d, want %d: a cancellation withdraws nothing", claims.Expires, first.Expires.Unix())
+	if claims := v1Verified(t, f, held); !claims.PaidThrough.Equal(first.Expires) {
+		t.Errorf("the held key reads paid_through=%s, want %s: a cancellation withdraws nothing", claims.PaidThrough, first.Expires)
 	}
 }
 
@@ -795,20 +805,22 @@ func TestACancellationStopsTheSeatChangeToo(t *testing.T) {
 }
 
 // TestTestModeEventsMintStagingKeysOnly: §5.4 and Check 179 — a merchant event
-// in test mode mints a staging key and nothing else, and the key id is what
-// makes a production verifier refuse it rather than half-accept it (§2).
+// in test mode mints a staging key and nothing else, and the signing key named
+// in the key is what makes a production verifier refuse it rather than
+// half-accept it (§2).
 func TestTestModeEventsMintStagingKeysOnly(t *testing.T) {
 	staging := newFixtureIn(t, Staging)
 	staging.purchase("evt-1", "acme.example", 5, 365)
 	key := staging.mintedKeys()[0]
-	if !strings.HasPrefix(key, stagingKeyID+".") {
-		t.Errorf("a test-mode purchase minted a key under %q, want the staging id %q", key[:strings.IndexByte(key, '.')], stagingKeyID)
+	claims, state, err := licence.VerifyV1([]byte(key), staging.now, staging.ring, workspaceID)
+	if err != nil || state != licence.Active {
+		t.Fatalf("the staging ring reads its own key as %v, %v", state, err)
 	}
-	if _, _, err := licence.VerifyAgainst([]byte(key), staging.now, licence.Keyring{productionKeyID: staging.ring[productionKeyID]}); !errors.Is(err, licence.ErrUnknownKeyID) {
+	if claims.KID != stagingKeyID {
+		t.Errorf("a test-mode purchase minted a key under the ring %q, want the staging id %q", claims.KID, stagingKeyID)
+	}
+	if _, _, err := licence.VerifyV1([]byte(key), staging.now, licence.Keyring{productionKeyID: staging.ring[productionKeyID]}, workspaceID); !errors.Is(err, licence.ErrUnknownKeyID) {
 		t.Errorf("a production keyring read a staging key as %v, want ErrUnknownKeyID", err)
-	}
-	if _, state, err := licence.VerifyAgainst([]byte(key), staging.now, staging.ring); err != nil || state != licence.Valid {
-		t.Errorf("the staging ring reads its own key as %v, %v", state, err)
 	}
 
 	// The production intake, and the same event: nothing is minted.
@@ -821,5 +833,217 @@ func TestTestModeEventsMintStagingKeysOnly(t *testing.T) {
 	staging.event(Event{ID: "evt-2", Type: EventPurchase, Mode: Live, Organisation: "other.example", Seats: 5, TermDays: 365})
 	if got := staging.signer.calls; got != 1 {
 		t.Errorf("a staging intake signed %d key(s) in all, want the test-mode purchase's one", got)
+	}
+}
+
+// TestRefundRevokesTheKey: §8 and D2131 — a refund or a chargeback writes one
+// entry of the revocation list, for the one key the merchant names, and that is
+// the whole of the event's effect. The list is what the customer's own job and
+// §8's status check read, so an entry written for the wrong key is a licence
+// withdrawn that nobody was refunded for, and a key left live that was.
+//
+// The body is verified before it is read, and a refund is the event where that
+// matters most: an unsigned one accepted would let anyone who knows a key_id
+// revoke a customer's licence, from anywhere, with one POST.
+func TestRefundRevokesTheKey(t *testing.T) {
+	f := newFixture(t)
+	refunded := f.purchase("evt-1", "acme.example", 5, 365)
+	other := f.purchase("evt-2", "widget.example", 3, 30)
+	signed, recorded := f.signer.calls, len(f.records())
+
+	body, err := json.Marshal(Event{
+		ID: "evt-3", Type: EventRefund, Mode: Live, OccurredAt: f.now,
+		Subscription: "sub-acme.example", KeyID: refunded.KeyID,
+	})
+	if err != nil {
+		t.Fatalf("encoding the event: %v", err)
+	}
+	for _, tc := range []struct {
+		name   string
+		header string
+	}{
+		{name: "no signature at all", header: ""},
+		{name: "a signature of another secret", header: signEvent([]byte("another-secret"), f.now, body)},
+		{name: "a signature over another body", header: signEvent(f.secret, f.now, append(body, ' '))},
+	} {
+		if rec := f.deliverRaw(body, tc.header); rec.Code != http.StatusOK {
+			t.Errorf("%s: the intake answered %d, want 200: the merchant is not told which of its events a stranger could forge", tc.name, rec.Code)
+		}
+	}
+	if got := f.revocations(); len(got) != 0 {
+		t.Fatalf("an unverified refund wrote %+v, want no entry", got)
+	}
+
+	// The merchant's own refund, naming one of the two keys the customer holds.
+	f.advance(time.Hour)
+	at := f.now
+	f.deliverRaw(body, signEvent(f.secret, at, body))
+	entry, held, err := f.store.Revocation(context.Background(), refunded.KeyID)
+	if err != nil || !held {
+		t.Fatalf("the refund left no entry for %s (held=%v, err=%v), want the key it named withdrawn", refunded.KeyID, held, err)
+	}
+	if entry.Reason != ReasonRefund {
+		t.Errorf("the refund's entry reads %q, want %q", entry.Reason, ReasonRefund)
+	}
+	if !entry.At.Equal(f.now.Add(-time.Hour)) {
+		t.Errorf("the refund's entry is stamped %s, want the event's own instant %s", entry.At, f.now.Add(-time.Hour))
+	}
+	if _, held, _ := f.store.Revocation(context.Background(), other.KeyID); held {
+		t.Errorf("the refund of %s withdrew the key %s too, want the one key the event named", refunded.KeyID, other.KeyID)
+	}
+	if got := f.revocations(); len(got) != 1 {
+		t.Errorf("the refund left %d entry(ies) in §8's list, want one", len(got))
+	}
+	if got := f.signer.calls; got != signed {
+		t.Errorf("a refund signed %d key(s), want none: withdrawing is not issuing", got-signed)
+	}
+	if got := len(f.records()); got != recorded {
+		t.Errorf("a refund recorded %d key(s), want none: §5.2's idempotency is a record of an issuance", got-recorded)
+	}
+
+	// The merchant redelivers it, as it redelivers everything, and the entry it
+	// already holds is left exactly as it is: the list only ever grows (§8).
+	f.advance(2 * time.Hour)
+	f.deliverRaw(body, signEvent(f.secret, f.now, body))
+	f.advance(2 * time.Hour)
+	f.deliverRaw(body, signEvent(f.secret, f.now, body))
+	again, _, err := f.store.Revocation(context.Background(), refunded.KeyID)
+	if err != nil {
+		t.Fatalf("reading the entry back: %v", err)
+	}
+	if !again.At.Equal(entry.At) || again.Reason != entry.Reason {
+		t.Errorf("the redelivered refund changed the entry to %+v, want the first delivery's %+v: a refund delivered twice is one revocation", again, entry)
+	}
+	if got := f.revocations(); len(got) != 1 {
+		t.Errorf("§8's list holds %d entry(ies) after two redeliveries, want the one", len(got))
+	}
+
+	// A chargeback names its own reason: what reaches the holder is the key's
+	// state, and the licensor's word for it is what the list keeps.
+	f.advance(day)
+	chargedAt := f.now
+	f.event(Event{ID: "evt-4", Type: EventChargeback, OccurredAt: chargedAt, Subscription: "sub-widget.example", KeyID: other.KeyID})
+	charged, held, err := f.store.Revocation(context.Background(), other.KeyID)
+	if err != nil || !held {
+		t.Fatalf("the chargeback left no entry for %s (held=%v, err=%v)", other.KeyID, held, err)
+	}
+	if charged.Reason != ReasonChargeback || !charged.At.Equal(chargedAt) {
+		t.Errorf("the chargeback's entry is %+v, want %q at %s", charged, ReasonChargeback, chargedAt)
+	}
+
+	// And a refund that names no key is refused rather than written: an entry
+	// with no key_id answers for every key nobody named (K2.2).
+	if rec := f.event(Event{ID: "evt-5", Type: EventRefund, OccurredAt: f.now, Subscription: "sub-acme.example"}); rec.Code == http.StatusOK {
+		t.Error("a refund that names no key was answered 200, want a refusal: the merchant has to see the bug in the event it sends")
+	}
+	if got := f.revocations(); len(got) != 2 {
+		t.Errorf("§8's list holds %d entry(ies) after the unnamed refund, want the two the merchant named", len(got))
+	}
+}
+
+// TestSeatChangeReissuesUnderANewKeyID: §5.3, §8 and K2.2 — the reissue is a
+// new key under a new `key_id`, and that is what makes §8's list usable at all.
+// An entry names one key, so a reissue that kept the id of the key it replaces
+// would be withdrawn by a refund of a key the customer no longer holds, and a
+// key reissued after a leak would inherit the leak's entry. What does not move
+// is the term: the customer paid for one, and the new key covers what is left of
+// it at the seats they bought.
+func TestSeatChangeReissuesUnderANewKeyID(t *testing.T) {
+	f := newFixture(t)
+	first := f.purchase("evt-1", "acme.example", 3, 365)
+	before := v1Verified(t, f, f.mintedKeys()[0])
+	if !strings.HasPrefix(first.KeyID, keyIDPrefix) {
+		t.Errorf("the purchase's key id is %q, want one under the %q prefix (spec section 3.2)", first.KeyID, keyIDPrefix)
+	}
+
+	f.advance(30 * day)
+	f.event(Event{ID: "evt-2", Type: EventSeatChange, Organisation: "acme.example", Seats: 5, TermDays: 365})
+
+	records := f.records()
+	if len(records) != 2 {
+		t.Fatalf("the seat change left %d key(s), want the purchase's and its own", len(records))
+	}
+	reissued := records[1]
+	if reissued.KeyID == first.KeyID {
+		t.Errorf("the reissue kept the key id %q, want its own: an entry of §8's list names one key and a refund of the superseded one must not withdraw the key the customer holds", reissued.KeyID)
+	}
+	after := v1Verified(t, f, f.mintedKeys()[1])
+	if after.KeyID != reissued.KeyID {
+		t.Errorf("the reissued key claims the key id %q and the record names %q, want the record's own", after.KeyID, reissued.KeyID)
+	}
+	if after.Seats != 5 || !after.PaidThrough.Equal(before.PaidThrough) {
+		t.Errorf("the reissued key claims %d seat(s) to %s, want 5 to %s: the seats move and the term does not", after.Seats, after.PaidThrough, before.PaidThrough)
+	}
+	if after.WorkspaceID != before.WorkspaceID {
+		t.Errorf("the reissued key binds the workspace %q, want the purchase's %q", after.WorkspaceID, before.WorkspaceID)
+	}
+
+	// The refund of the key the customer no longer holds withdraws that one.
+	f.advance(day)
+	f.event(Event{ID: "evt-3", Type: EventRefund, OccurredAt: f.now, Subscription: "sub-acme.example", KeyID: first.KeyID})
+	if _, held, _ := f.store.Revocation(context.Background(), first.KeyID); !held {
+		t.Errorf("the refund of %s wrote no entry, want the key it named withdrawn", first.KeyID)
+	}
+	if _, held, _ := f.store.Revocation(context.Background(), reissued.KeyID); held {
+		t.Errorf("the refund of the superseded key %s withdrew the reissued key %s: the reissue has its own id and §8's list is keyed by it", first.KeyID, reissued.KeyID)
+	}
+	if claims := v1Verified(t, f, f.mintedKeys()[1]); claims.KeyID != reissued.KeyID {
+		t.Errorf("the key the customer holds claims the key id %q, want the reissued %q", claims.KeyID, reissued.KeyID)
+	}
+}
+
+// TestEnterpriseIsNotACheckoutPlan: D2141 and §5.5 — Enterprise is not sold at
+// the checkout. Its keys are invoiced directly by the entity and minted from the
+// admin page, so a deployment whose paid plan names the Enterprise tier is one
+// whose checkout would price a tier that is never self-serve — and the customer
+// would be mailed a key for a licence nobody sold them. The mint is refused
+// rather than served the Team row.
+func TestEnterpriseIsNotACheckoutPlan(t *testing.T) {
+	f := newFixtureWith(t, Production, func(f *fixture) {
+		f.cfg.Paid = Plan{Name: paidPlanName, Tier: licence.TierEnterprise, Features: []string{"seats"}}
+	})
+	if rec := f.deliver(Event{
+		ID: "evt-1", Type: EventPurchase, Mode: Live, OccurredAt: f.now,
+		Subscription: "sub-acme.example", Organisation: "acme.example", WorkspaceID: workspaceID,
+		Email: buyerAddress("acme.example"), Seats: 25, TermDays: 365,
+	}); rec.Code == http.StatusOK {
+		t.Error("a purchase on a deployment whose paid plan names the Enterprise tier was answered 200, want a refusal: Enterprise is invoiced directly (D2141)")
+	}
+	if got := f.signer.calls; got != 0 {
+		t.Errorf("a checkout that sells no Enterprise key signed %d key(s), want none", got)
+	}
+	if got := len(f.records()); got != 0 {
+		t.Errorf("a checkout that sells no Enterprise key recorded %d key(s), want none", got)
+	}
+	if len(f.mail.sent) != 0 {
+		t.Errorf("a checkout that sells no Enterprise key mailed %d message(s), want none", len(f.mail.sent))
+	}
+	if _, held, _ := f.store.Subscription(context.Background(), "sub-acme.example"); held {
+		t.Error("a refused Enterprise purchase created a subscription, want the event left with nothing")
+	}
+
+	// The rows the checkout does sell are the two Team periods, and no term a
+	// merchant event can carry reaches an Enterprise one: a renewal, which
+	// covers what is left of the term the customer is in, is sold under the row
+	// they bought rather than under a longer one.
+	for _, tc := range []struct {
+		days int
+		want string
+	}{
+		{days: 30, want: PolicyTeamMonthly},
+		{days: 365, want: PolicyTeamAnnual},
+		{days: 395, want: PolicyTeamAnnual},
+	} {
+		if got, sold := checkoutPolicy(tc.days); !sold || got != tc.want {
+			t.Errorf("a term of %d day(s) is sold under %q (sold=%v), want %q", tc.days, got, sold, tc.want)
+		}
+	}
+	if got, sold := checkoutPolicy(7); sold {
+		t.Errorf("a term of 7 day(s) is sold under %q, want no row: a key minted for a period nobody sells is a licence the customer paid whatever they paid for", got)
+	}
+	for _, row := range checkoutRows {
+		if row.policy == PolicyEnterprise || row.policy == PolicyEnterpriseAirGapped {
+			t.Errorf("the checkout sells %q, and §5.5's Enterprise keys are invoiced directly (D2141)", row.policy)
+		}
 	}
 }
