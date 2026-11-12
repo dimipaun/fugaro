@@ -1034,10 +1034,17 @@ esac
 echo "pull request #$pr_number merged as $merge_sha; verifying main"
 git switch --quiet main
 retry_read git pull --quiet --ff-only origin main
-head_sha=$(git rev-parse HEAD)
-if [ "$head_sha" != "$merge_sha" ]; then
-  echo "HEAD ($head_sha) is not the release merge commit ($merge_sha); something else landed on main first, inspect before tagging" >&2
+# The tag goes on the merge commit by its SHA, wherever main's tip is by now:
+# a commit that landed after it is not in the release, and the gate below
+# vouches for the merge commit alone.
+if ! git merge-base --is-ancestor "$merge_sha" origin/main; then
+  echo "the release merge commit ($merge_sha) is not on origin/main; inspect before tagging" >&2
   exit 1
+fi
+head_sha=$merge_sha
+if [ "$(git rev-parse HEAD)" != "$head_sha" ]; then
+  echo "main has moved past the release merge commit; tagging $head_sha, not the tip"
+  git checkout --quiet --detach "$head_sha"
 fi
 scripts/bump-plugin-version.sh --check "$version"
 # CI starts on the merge commit only now, so its checks are usually missing

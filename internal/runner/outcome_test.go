@@ -443,6 +443,10 @@ type raisedCase struct {
 	declared []string
 	paths    []string
 	findings []Finding
+	// deferred is the round's judge-deferred findings, as the loop keeps them
+	// beside the round's own (T-TR7b, seniorRound.Deferred). It is empty for a
+	// case whose round no judge was asked about.
+	deferred []rigor.Score
 	moments  []string
 }
 
@@ -473,7 +477,7 @@ func raisedRun(t *testing.T, tc raisedCase) *run {
 		},
 		d: Deps{Log: slog.New(slog.DiscardHandler)},
 	}
-	r.lastSenior = seniorRound{Round: 2, Findings: tc.findings}
+	r.lastSenior = seniorRound{Round: 2, Findings: tc.findings, Deferred: tc.deferred}
 	r.bootstrapRigor(ctx)
 	paths := tc.paths
 	if len(paths) == 0 {
@@ -547,6 +551,144 @@ func TestModeRaisedAtFinalizeLeavesDraft(t *testing.T) {
 	held := raisedRun(t, raisedCase{block: block, findings: []Finding{riskFour}, moments: []string{runstore.RigorAtRound}})
 	if ready, reason := decideOf(t, held); !ready {
 		t.Errorf("a raise the last review round was held at left the pull request a draft: %q", reason)
+	}
+}
+
+// TestTriageDeferralsVoidedByFinalizeRaise is F31: the mode's reading of a
+// round now has two halves — what its own table tolerates and what a judge
+// deferred (T-TR7b) — and the raise at finalize withdraws both. The round below
+// is one the run does not block on any more, because every finding in it was
+// deferred, and the mode rose after it: the pull request stays a draft on the
+// raise's own reason, and not ready on a deferral made under a mode the run
+// does not publish under.
+//
+// The second half is the same round one moment earlier, which is the case the
+// deferral does make ready: the raise happened at a review round, so that round
+// was held at the raised mode and its deferral is an answer the run publishes
+// under.
+func TestTriageDeferralsVoidedByFinalizeRaise(t *testing.T) {
+	const block = "rigor:\n  default: poc\n  areas:\n    - { name: payments, match: \"internal/payments/**\", mode: startup }\n"
+	late := raisedRun(t, raisedCase{
+		block: block, findings: []Finding{riskNine}, deferred: []rigor.Score{scoreOf(riskNine)},
+		moments: []string{runstore.RigorAtFinalize},
+	})
+	if got := late.reachedRigor(); got != rigor.Startup {
+		t.Fatalf("the run resolved %q; want startup, or the case proves nothing", got)
+	}
+	ready, reason := decideOf(t, late)
+	if ready {
+		t.Fatalf("a mode raised at finalize published a round it took only through a judge's deferrals: %q", reason)
+	}
+	const want = "the mode was raised to startup by area payments at finalize, after the last review round"
+	if reason != want {
+		t.Errorf("reason = %q, want %q", reason, want)
+	}
+
+	held := raisedRun(t, raisedCase{
+		block: block, findings: []Finding{riskNine}, deferred: []rigor.Score{scoreOf(riskNine)},
+		moments: []string{runstore.RigorAtRound},
+	})
+	if ready, reason := decideOf(t, held); !ready {
+		t.Errorf("a raise the round carrying the deferral was held at left the pull request a draft: %q", reason)
+	}
+}
+
+// TestAllDeferredRoundReadsAsTolerated is the policy half of T-TR7b's loop
+// rule: tolerates lets a round through when its findings all sit in one of the
+// policy's two letting-through halves — the mode's own tolerance and the
+// judge's deferrals — and not otherwise. The count is read against the record,
+// so a policy whose halves do not add up to the round it is given blocks, which
+// is the case that keeps a split from another round from deciding anything
+// (D4).
+func TestAllDeferredRoundReadsAsTolerated(t *testing.T) {
+	cases := []struct {
+		name     string
+		findings []rigor.Score
+		deferred []rigor.Score
+		ready    bool
+		reason   string
+	}{
+		{
+			"a round the mode's own table tolerates",
+			[]rigor.Score{tiny}, nil, true,
+			"review round 2 left 1 finding, tolerated at startup",
+		},
+		{
+			"a round whose findings a judge deferred whole",
+			[]rigor.Score{big}, []rigor.Score{big}, true,
+			"review round 2 left 1 finding, tolerated at startup",
+		},
+		{
+			"a round with one finding in neither half",
+			[]rigor.Score{big, big}, []rigor.Score{big}, false,
+			"review round 2 still has 2 findings",
+		},
+		{
+			// The count is read against the record, so deferrals the round no
+			// longer has cannot let it through: a policy is an answer about one
+			// round and a round it does not add up to is one it cannot decide.
+			"a deferral the round does not carry",
+			[]rigor.Score{big}, []rigor.Score{big, big}, false,
+			"review round 2 still has 1 finding",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			last := &runstore.ReviewSummary{Round: 2, Verdict: "changes", Findings: len(tc.findings)}
+			pol := findingsPolicyOf(optedIn, rigor.Startup, 2, tc.findings, "").withDeferred(tc.deferred)
+			dec := Decide([]verify.Record{{Kind: verify.KindTest, HeadSHA: "abc", CleanTree: true, Passed: true}}, "abc", last, pol, nil)
+			if dec.Ready != tc.ready || dec.Reason != tc.reason {
+				t.Errorf("Decide = %v %q, want %v %q", dec.Ready, dec.Reason, tc.ready, tc.reason)
+			}
+		})
+	}
+}
+
+// TestAStopDoesNotCountADeferralTwice is the stop's split read with a judge in
+// the loop (T-TR7b, D30). At the stop the policy's letting-through half is the
+// stop's own (rigor.SplitAtStop): it accepts every finding but the catastrophic
+// ones. A judge may only defer a finding the table blocks and the floor does not
+// name, and a floor finding is never any of those, so a deferral is one the stop
+// has already accepted — the half carries it, and folding the round's deferrals
+// in beside it would count one finding twice.
+//
+// The round below is exactly that pair: one floor finding, one deferral, at
+// Startup's stop, which accepts the deferral and blocks on the floor finding.
+// Counted twice the round adds up to its own count, so the stop takes it whole
+// and the pull request is published ready over a finding the run never settled —
+// acceptance and record alike. The reason is the draft's own, which is what the
+// run with no judge at all says about the same round (F32's answer for it).
+func TestAStopDoesNotCountADeferralTwice(t *testing.T) {
+	floor := Finding{Likelihood: 1, Impact: 1, FixCost: 1, Class: "security", Summary: "the token is logged in the clear"}
+	r := raisedRun(t, raisedCase{
+		block:    "rigor:\n  default: startup\n",
+		findings: []Finding{riskNine, floor},
+		deferred: []rigor.Score{scoreOf(riskNine)},
+	})
+	r.stopAt = runstore.StopRoundsSpent
+	if got := r.reachedRigor(); got != rigor.Startup {
+		t.Fatalf("the run resolved %q; want startup, or the case proves nothing", got)
+	}
+	pol := r.findingsPolicy()
+	if pol.AtStop == "" {
+		t.Fatal("the policy carries no stop, so nothing here reads the acceptance")
+	}
+	if got := pol.through(); got != 1 {
+		t.Errorf("the policy lets %d of the round's findings through, want the one the stop accepts: the deferral is that one and is not a second", got)
+	}
+	ready, reason := decideOf(t, r)
+	if ready {
+		t.Fatalf("a round the stop blocks one finding of was published ready: %q", reason)
+	}
+	const want = "review round 2 still has 2 findings"
+	if reason != want {
+		t.Errorf("reason = %q, want %q", reason, want)
+	}
+	if ac := r.acceptedRecord(pol, r.decidingReview()); ac != nil {
+		t.Errorf("the record's accepted block = %+v, want none: the stop accepted one finding of the round and the run is a draft", ac)
+	}
+	if tf := r.toleratedRecord(pol, r.decidingReview()); tf != nil {
+		t.Errorf("the record's tolerated findings = %+v, want none: the mode's own floor blocks this round, and the stop's acceptance was withdrawn with the draft", tf)
 	}
 }
 

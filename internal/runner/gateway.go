@@ -989,6 +989,12 @@ func (r *run) checkBudget(ctx context.Context) error {
 	if ps := r.checkLevels(priced); len(ps) > 0 {
 		return refusal("the models can't be priced under the budget", ps)
 	}
+	// The run's images, judged with the pins above: a coder that can't read
+	// one is refused here, before any stage spends, when the task names a
+	// picture — and warned about when the repository alone tracks one (V5).
+	if err := r.checkImages(ctx); err != nil {
+		return err
+	}
 	for _, w := range config.PinWarnings(r.cfg.Agent, s.Prices) {
 		r.d.Log.Warn("model pin: "+w.String(), "code", w.Code)
 	}
