@@ -479,9 +479,9 @@ func TestRenewalKeyIssuesThirtyDaysBeforeExpiry(t *testing.T) {
 	if !minted.Record.Issued.Equal(f.now) {
 		t.Errorf("the renewal's `issued` is %s, want the service's own clock (%s)", minted.Record.Issued, f.now)
 	}
-	claims := f.claims(minted.Key)
-	if claims.Expires != wantExpiry.Unix() || claims.Issued != f.now.Unix() {
-		t.Errorf("the renewal key claims issued=%d expires=%d, want %d and %d", claims.Issued, claims.Expires, f.now.Unix(), wantExpiry.Unix())
+	claims := v1Verified(t, f, minted.Key)
+	if !claims.PaidThrough.Equal(wantExpiry) || !claims.IssuedAt.Equal(f.now) {
+		t.Errorf("the renewal key claims issued=%s paid_through=%s, want %s and %s", claims.IssuedAt, claims.PaidThrough, f.now, wantExpiry)
 	}
 	if claims.Seats != 5 || claims.Organisation != "acme.example" {
 		t.Errorf("the renewal key claims %d seat(s) for %q, want the subscription's own", claims.Seats, claims.Organisation)
@@ -490,8 +490,89 @@ func TestRenewalKeyIssuesThirtyDaysBeforeExpiry(t *testing.T) {
 		t.Errorf("the first key claims %d seat(s), want the purchase's 5: a renewal withdraws nothing", got.Seats)
 	}
 
+	// The renewal is a v1 key like the purchase's, and that is what makes it one
+	// the rest of the licence machinery can act on: its own `key_id`, which §8's
+	// list and a K2.3 reissue name; the workspace the purchase bound, which every
+	// verifier reads (TN2, D2134); the row its term is sold under; and the
+	// renewal secret mailed beside it and kept as a digest, which is the pair the
+	// term after this one is renewed with (D2135).
+	if claims.KeyID == first.KeyID || !strings.HasPrefix(claims.KeyID, keyIDPrefix) {
+		t.Errorf("the renewal key's key id is %q, and the purchase's is %q, want a new %q id: a reissue is a new key (§8)", claims.KeyID, first.KeyID, keyIDPrefix)
+	}
+	if claims.WorkspaceID != workspaceID || claims.Tier != licence.TierTeam {
+		t.Errorf("the renewal key claims workspace %q and tier %q, want %q and %q", claims.WorkspaceID, claims.Tier, workspaceID, licence.TierTeam)
+	}
+	if minted.Record.Plan != PolicyTeamAnnual {
+		t.Errorf("the renewal mints under the row %q, want the one the subscription's year is sold under (%q)", minted.Record.Plan, PolicyTeamAnnual)
+	}
+	if minted.RenewalSecret == "" {
+		t.Error("the renewal answered with no renewal secret, want the one its own renewal needs (D2135)")
+	}
+	state, held, err := f.store.KeyState(context.Background(), claims.KeyID)
+	if err != nil || !held {
+		t.Fatalf("the store holds no key state for the renewal's key %s (held=%v, err=%v), so the term it covers could never be renewed", claims.KeyID, held, err)
+	}
+	if state.RenewalSecretHash != secretHash(minted.RenewalSecret) {
+		t.Errorf("the store holds the digest %q for the renewal's key, want the hash of the secret it answered, %q", state.RenewalSecretHash, secretHash(minted.RenewalSecret))
+	}
+	sent := f.mail.sent[len(f.mail.sent)-1]
+	if !strings.Contains(sent.Body, minted.Key) || !strings.Contains(sent.Body, minted.RenewalSecret) {
+		t.Errorf("the renewal's mail is %q, want both lines of D2135's bundle: the key and the secret beside it", sent.Body)
+	}
+
 	if _, again, err := f.svc.Renew(context.Background(), "sub-acme.example"); err != nil || again {
 		t.Errorf("a second renewal for the same term minted (renewed=%v, err=%v), want one mint per (subscription, term, seats)", again, err)
+	}
+}
+
+// TestARenewalMintsOnlyUnderTheRowTheCheckoutSells: the renewal's key is minted
+// under the same rows a purchase is (D442, §12.1), so a subscription whose term
+// is one the checkout does not sell and one whose record names no workspace —
+// the binding every v1 key carries (TN2, D2134) — are refused with nothing
+// minted rather than renewed into a key no row and no verifier can name.
+func TestARenewalMintsOnlyUnderTheRowTheCheckoutSells(t *testing.T) {
+	f := newFixture(t)
+	for _, tc := range []struct {
+		name string
+		sub  Subscription
+	}{
+		{
+			name: "a term shorter than the shortest row",
+			sub: Subscription{
+				ID: "sub-weekly.example", Organisation: "weekly.example", WorkspaceID: workspaceID,
+				Email: buyerAddress("weekly.example"), Seats: 5, TermDays: 7,
+				At: f.now.Add(-365 * day), Expires: f.now.Add(-day),
+			},
+		},
+		{
+			name: "a record with no workspace",
+			sub: Subscription{
+				ID: "sub-unbound.example", Organisation: "unbound.example",
+				Email: buyerAddress("unbound.example"), Seats: 5, TermDays: 365,
+				At: f.now.Add(-365 * day), Expires: f.now.Add(-day),
+			},
+		},
+	} {
+		if err := f.store.SaveSubscription(context.Background(), tc.sub); err != nil {
+			t.Fatalf("saving the subscription for %s: %v", tc.name, err)
+		}
+		minted, renewed, err := f.svc.Renew(context.Background(), tc.sub.ID)
+		if !errors.Is(err, ErrNoClaims) || renewed || minted.Key != "" {
+			t.Errorf("the renewal for %s minted (key=%q, renewed=%v, err=%v), want ErrNoClaims with nothing minted", tc.name, minted.Key, renewed, err)
+		}
+		if after := len(f.records()); after != 0 {
+			t.Fatalf("the renewal for %s left %d record(s), want none: a refused renewal spends no source", tc.name, after)
+		}
+		state, _, err := f.store.Subscription(context.Background(), tc.sub.ID)
+		if err != nil {
+			t.Fatalf("reading the subscription for %s: %v", tc.name, err)
+		}
+		if !state.Expires.Equal(tc.sub.Expires) {
+			t.Errorf("the term of %s moved to %s, want it where it was (%s): a refused renewal advances nothing", tc.name, state.Expires, tc.sub.Expires)
+		}
+	}
+	if got := len(f.mail.sent); got != 0 {
+		t.Errorf("the refused renewals mailed %d message(s), want none", got)
 	}
 }
 

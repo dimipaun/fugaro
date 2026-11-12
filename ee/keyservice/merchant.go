@@ -383,6 +383,14 @@ func (s *Service) completed(ctx context.Context, e Event, record Record) error {
 		sub.TermDays = daysBetween(record.Issued, record.Expires)
 		sub.Email = to
 		sub.At = e.OccurredAt
+		// The workspace is the event's and not the record's: the issuance record
+		// carries no workspace id, so a purchase whose subscription write failed
+		// and is repaired here would otherwise leave a record that names none —
+		// and Renew refuses such a record rather than minting a key every
+		// verifier refuses (TN2, §5.1).
+		if e.WorkspaceID != "" {
+			sub.WorkspaceID = e.WorkspaceID
+		}
 		if record.Expires.After(sub.Expires) {
 			sub.Expires = record.Expires
 		}
@@ -392,6 +400,9 @@ func (s *Service) completed(ctx context.Context, e Event, record Record) error {
 			return nil
 		}
 		sub.Seats = record.Seats
+		if e.WorkspaceID != "" {
+			sub.WorkspaceID = e.WorkspaceID
+		}
 		sub.At = e.OccurredAt
 		return s.store.SaveSubscription(ctx, sub)
 	}
@@ -430,6 +441,7 @@ func (s *Service) purchased(ctx context.Context, e Event) error {
 	return s.store.SaveSubscription(ctx, Subscription{
 		ID:           e.Subscription,
 		Organisation: e.Organisation,
+		WorkspaceID:  e.WorkspaceID,
 		Seats:        e.Seats,
 		TermDays:     e.TermDays,
 		Email:        to,
@@ -494,6 +506,7 @@ func (s *Service) seatChanged(ctx context.Context, e Event, sub Subscription) er
 		return err
 	}
 	sub.Seats = e.Seats
+	sub.WorkspaceID = e.WorkspaceID
 	sub.At = e.OccurredAt
 	return s.store.SaveSubscription(ctx, sub)
 }
@@ -527,6 +540,16 @@ func (s *Service) withdrawn(ctx context.Context, e Event) error {
 // days before the term it follows ends, its `issued` on the day the service
 // runs, its `expires` at the end of the term it covers.
 //
+// The key is a v1 one, minted through the same path a purchase uses and not
+// through the older format's `mint`: what every issue path hands a customer is
+// the same format (D2130), a renewal is a new key under a new `key_id` — the one
+// a refund or a leak is later named by (§8) — it carries the workspace binding
+// TN2 requires, and it is mailed with its own renewal secret and written into
+// the key state, so that the term after this one can be renewed at all (D2135,
+// K2.3). The row is the one the subscription's term is sold under, which is what
+// makes a renewal minted inside a term the customer is in carry that term's
+// grace and renewal mode (D2133, D442).
+//
 // What calls it is the merchant's renewal or the scheduler that reads one, and
 // the route and the authentication that reach it are the deploy's (§5.3) — this
 // is the service's half of the rule, and the window is what makes a trigger that
@@ -546,6 +569,14 @@ func (s *Service) withdrawn(ctx context.Context, e Event) error {
 // than minted for — the term would otherwise advance on a key that reached
 // nobody, and the source is spent once, so that term could never be re-minted.
 //
+// The workspace and the row come from the subscription's own record, and a
+// record that carries neither the binding nor a term the checkout sells is
+// refused rather than minted: a v1 key with no workspace id is one every
+// verifier refuses (TN2), and one minted for a period nobody sells is a licence
+// the customer paid for with whatever they paid (D442). The refusal is visible
+// and the trigger sends it again — the state is what has to be repaired, and a
+// key minted to fit it would be the wrong key.
+//
 // The mint and the store write are two writes, as a purchase's are, and the same
 // failure is repaired the same way: the source is recorded before the term is
 // saved, so a store that refuses the save leaves a key in the customer's mailbox
@@ -562,47 +593,54 @@ func (s *Service) withdrawn(ctx context.Context, e Event) error {
 // ordinary webhook latency or a merchant retry, would be dropped for good: the
 // subscription would never cancel, and every later renewal would mint another
 // key for a customer who has left (§5.2, §5.3).
-func (s *Service) Renew(ctx context.Context, subscriptionID string) (Minted, bool, error) {
+func (s *Service) Renew(ctx context.Context, subscriptionID string) (MintedV1, bool, error) {
 	sub, held, err := s.store.Subscription(ctx, subscriptionID)
 	if err != nil {
-		return Minted{}, false, err
+		return MintedV1{}, false, err
 	}
 	if !held {
-		return Minted{}, false, fmt.Errorf("%w: %s", ErrUnknownSubscription, subscriptionID)
+		return MintedV1{}, false, fmt.Errorf("%w: %s", ErrUnknownSubscription, subscriptionID)
 	}
 	if sub.Cancelled {
-		return Minted{}, false, nil
+		return MintedV1{}, false, nil
 	}
 	now := s.now()
 	if now.Before(sub.Expires.Add(-RenewalLead)) {
-		return Minted{}, false, nil
+		return MintedV1{}, false, nil
 	}
 	next := sub.Expires.Add(time.Duration(sub.TermDays) * 24 * time.Hour)
 	days := daysBetween(now, next)
 	if days < 1 {
-		return Minted{}, false, nil
+		return MintedV1{}, false, nil
 	}
 	source := "renew:" + sub.ID + ":" + sub.Expires.UTC().Format(time.RFC3339)
 	if record, minted, err := s.recorded(ctx, source); err != nil {
-		return Minted{}, false, err
+		return MintedV1{}, false, err
 	} else if minted {
 		// One mint per (subscription, term, seats) (§5.2): the source names the
 		// term, so a second trigger inside the window finds this and stops — and
 		// what it stops on is the record, which is where the term's end is if the
 		// first trigger minted and could not save.
-		return Minted{}, false, s.renewed(ctx, sub, record)
+		return MintedV1{}, false, s.renewed(ctx, sub, record)
+	}
+	policy, sold := checkoutPolicy(sub.TermDays)
+	if !sold {
+		return MintedV1{}, false, fmt.Errorf("%w: the renewal of the subscription %s is for a term the checkout does not sell (D442)", ErrNoClaims, sub.ID)
+	}
+	if sub.WorkspaceID == "" {
+		return MintedV1{}, false, fmt.Errorf("%w: the renewal of the subscription %s, whose record names no workspace (TN2)", ErrNoClaims, sub.ID)
 	}
 	to, deliverable := address(sub.Email)
 	if !deliverable {
-		return Minted{}, false, fmt.Errorf("%w: the subscription %s", ErrNoBuyer, sub.ID)
+		return MintedV1{}, false, fmt.Errorf("%w: the subscription %s", ErrNoBuyer, sub.ID)
 	}
-	answer, err := s.mint(ctx, s.mintRequest(s.cfg.Paid, sub.Organisation, sub.Seats, days), to, source)
+	answer, err := s.paid(ctx, s.paidRequest(policy, sub.WorkspaceID, sub.Organisation, sub.Seats, days), to, source)
 	if err != nil {
-		return Minted{}, false, err
+		return MintedV1{}, false, err
 	}
 	sub.Expires = next
 	if err := s.store.SaveSubscription(ctx, sub); err != nil {
-		return Minted{}, false, err
+		return MintedV1{}, false, err
 	}
 	return answer, true, nil
 }

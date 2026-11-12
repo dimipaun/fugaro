@@ -102,9 +102,17 @@ type Verification struct {
 // because a renewal is minted months later with nothing but this record to
 // deliver the key to: the event that carried the address is long gone, and a
 // key minted with no address reaches nobody (§5.1, §5.3).
+//
+// WorkspaceID is the Firebase project the subscription's keys bind to, kept for
+// the same reason the address is: a v1 key names the workspace it binds to
+// (TN2, D2134), the purchase is the event that carried it, and a renewal minted
+// months later has nothing else to read it from. A subscription whose record
+// names none cannot be renewed into a v1 key at all, which is why it is refused
+// rather than minted (§5.1, §5.3).
 type Subscription struct {
 	ID           string    `json:"id"`
 	Organisation string    `json:"organisation"`
+	WorkspaceID  string    `json:"workspace_id"`
 	Seats        int       `json:"seats"`
 	TermDays     int       `json:"term_days"`
 	Email        string    `json:"email"`
