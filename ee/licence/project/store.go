@@ -285,9 +285,10 @@ type View struct {
 	RenewalMode string
 	// Source says which store answered.
 	Source Source
-	// Check is the last revocation check's record, and HasCheck says whether
-	// there is one: a key that never checks (`check_interval: null`) and a key
-	// installed a moment ago have none.
+	// Check is the last revocation check the project ran -- the installation's
+	// record and not one key's, so a key installed after a check carries that
+	// check's figures until the next check replaces them -- and HasCheck says
+	// whether there is one at all: a project that never checked has none.
 	Check    Check
 	HasCheck bool
 }

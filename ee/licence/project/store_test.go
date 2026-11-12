@@ -14,6 +14,7 @@ package project
 // denied write brings, so nothing here reaches a network or a home directory.
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -264,6 +265,41 @@ func TestProjectStoreKeepsTwoKeys(t *testing.T) {
 	}
 }
 
+// TestTheStoreRefusesWhatItCannotRead pins the guard an install stands on: an
+// object of another version, or one that is not this store's shape, is refused
+// rather than read as far as it parses and then replaced -- the object is the
+// project's only copy of a key, and a store that overwrote what it could not
+// understand is how a key is lost.
+func TestTheStoreRefusesWhatItCannotRead(t *testing.T) {
+	ctx := context.Background()
+	m := newMinted(t)
+	for _, what := range []struct{ name, object string }{
+		{"an object of a version this build does not write", `{"v":99,"keys":["fgk_alpha"]}`},
+		{"an object that is not this store's shape", `{"licence":"fgk_alpha"}`},
+	} {
+		t.Run(what.name, func(t *testing.T) {
+			r := newRig(t)
+			raw := []byte(what.object)
+			if err := r.bucket.Put(ctx, Object, raw, "application/json"); err != nil {
+				t.Fatal(err)
+			}
+			if keys, err := r.store.Keys(ctx); !errors.Is(err, ErrObject) || keys != nil {
+				t.Fatalf("%s answers %d keys and %v, want ErrObject and none", what.name, len(keys), err)
+			}
+			if err := r.store.Install(ctx, []byte(m.key(t, nil))); !errors.Is(err, ErrObject) {
+				t.Fatalf("installing a key beside %s = %v, want ErrObject", what.name, err)
+			}
+			after, _, err := r.bucket.Read(ctx, Object)
+			if err != nil {
+				t.Fatalf("reading %s back: %v", Object, err)
+			}
+			if !bytes.Equal(after, raw) {
+				t.Errorf("the refused install left %q on the bucket, want the %d bytes it could not read", after, len(raw))
+			}
+		})
+	}
+}
+
 // TestTheStoreNeverLogsAKey holds the store to the rule the key's own package
 // keeps for argv: a key text reaches the bucket's object and nothing else. No
 // error the store returns and no value it hands out carries one, in whole or in
@@ -458,6 +494,37 @@ func TestAViewerReadsTheStateNotTheKey(t *testing.T) {
 		}
 	})
 
+	t.Run("a refused project key does not fall back to the machine's", func(t *testing.T) {
+		// The project holds a key this build cannot place -- one signed by a
+		// keypair outside the ring -- and the machine holds a good one. The
+		// machine's must not license the installation: the project's key is the
+		// installation's, and a per-machine key quietly upgrading an
+		// installation whose own key was refused is exactly what the rule
+		// refuses (D2137).
+		stranger := newMinted(t)
+		refused := newRig(t)
+		if err := refused.store.Install(ctx, []byte(stranger.key(t, nil))); err != nil {
+			t.Fatalf("installing a key signed by another keypair: %v", err)
+		}
+		machine := m.key(t, func(c *licence.ClaimsV1) { c.Seats = 99 })
+
+		applied, err := refused.store.Active(ctx, at(30), m.ring, testFirebaseProject, [][]byte{[]byte(machine)})
+		if err == nil {
+			t.Fatalf("a refused project key beside a valid machine key answered %q from %q, want the refusal", applied.Claims.KeyID, applied.Source)
+		}
+		if !errors.Is(err, licence.ErrSignature) {
+			t.Errorf("the refusal reads %v, want the signature the project's key failed", err)
+		}
+		if applied.Source == SourceMachine {
+			t.Errorf("Active answered from %q, want no store at all: a machine's key must not answer for an installation whose own key was refused", applied.Source)
+		}
+
+		view, err := refused.store.View(ctx, at(30), m.ring, testFirebaseProject, [][]byte{[]byte(machine)})
+		if err == nil || view.Source == SourceMachine || view.Seats == 99 {
+			t.Errorf("View of a refused project key beside a machine key reads %+v (%v), want the refusal and never the machine's key", view, err)
+		}
+	})
+
 	t.Run("the unreachable counter is a streak", func(t *testing.T) {
 		// Silence raises the count and moves nothing else, and one answer
 		// clears it and moves LastOK: that pair is what warns admins after 30
@@ -487,6 +554,33 @@ func TestAViewerReadsTheStateNotTheKey(t *testing.T) {
 		}
 		if view.Check.Failures != 0 || view.Check.Status != CheckRevoked || !view.Check.LastOK.Equal(at(5)) {
 			t.Errorf("an answer after silence reads %+v, want the streak cleared and the answer's own time in LastOK", view.Check)
+		}
+
+		// The record is the installation's and not one key's (View's own
+		// contract): the renewal's next key, which is what a key arriving after
+		// a check is, carries that check's figures -- the streak and LastOK
+		// count the project's silence, and an install does not run a check. That
+		// carry is what K3.2 shows and what D2140's 30-day warning counts from.
+		fresh := m.key(t, func(c *licence.ClaimsV1) {
+			c.KeyID = "lk_test_installed_after_a_check"
+			c.PaidThrough = at(390)
+		})
+		if err := r.store.Install(ctx, []byte(fresh)); err != nil {
+			t.Fatalf("installing a key after a check: %v", err)
+		}
+		applied, err := r.store.Active(ctx, at(5), m.ring, testFirebaseProject, nil)
+		if err != nil {
+			t.Fatalf("Active after the install: %v", err)
+		}
+		if applied.Claims.KeyID != "lk_test_installed_after_a_check" {
+			t.Fatalf("the installed key did not apply: Active answers %q", applied.Claims.KeyID)
+		}
+		view, err = r.store.View(ctx, at(5), m.ring, testFirebaseProject, nil)
+		if err != nil {
+			t.Fatalf("View: %v", err)
+		}
+		if !view.HasCheck || !view.Check.At.Equal(at(5)) || view.Check.Failures != 0 || !view.Check.LastOK.Equal(at(5)) {
+			t.Errorf("a key installed after a check reads %+v, want the project's record carried and not reset", view.Check)
 		}
 	})
 }
