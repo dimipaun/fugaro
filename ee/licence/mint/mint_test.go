@@ -1089,8 +1089,14 @@ func TestRunRefusesWhatItCannotMintV1(t *testing.T) {
 		{"a term that wraps to a negative one", func(f *fakeSigner) []string { return v1RunArgs(f, "-days", "200000") }, nil, true},
 		// Wrapping round is not the same as wrapping negative: 213504 days land
 		// on a positive quarter of an hour, which the verifier accepts and the
-		// state check passes, so nothing past this guard can catch it.
-		{"a term that wraps to a short one", func(f *fakeSigner) []string { return v1RunArgs(f, "-days", "213504") }, nil, true},
+		// ended-key guard below passes, so this guard is the only one that can
+		// refuse it -- which is why the row mints at the tool's own clock
+		// (-issued-at blank). A stamp in the past would put the wrapped term's
+		// end before now, and the ended-key guard would refuse the claim set
+		// whatever this guard did, leaving this one pinned by nothing.
+		{"a term that wraps to a short one", func(f *fakeSigner) []string {
+			return v1RunArgs(f, "-issued-at", "", "-days", "213504")
+		}, nil, true},
 		// A negative grace or renewal lead is a sign in the wrong place: the key
 		// would carry a window nobody asked for, and the verifier places the
 		// number rather than bounding it, so nothing past this guard catches it.
@@ -1133,6 +1139,37 @@ func TestRunRefusesWhatItCannotMintV1(t *testing.T) {
 			}
 			if tc.noSigning && len(signer.seen) != 0 {
 				t.Errorf("the signer was asked to sign %d payload(s) before the refusal: %v is a thing the tool can see before it spends a signature", len(signer.seen), tc.name)
+			}
+		})
+	}
+}
+
+// TestRunNamesTheTermGuardThatRefusedV1 holds the two rows above whose refusal
+// is not the guard the row is aimed at: a term of no days and a term past what
+// the arithmetic counts both leave a `paid_through` that is not after now, so
+// the ended-key guard refuses them as well and the row passes whether or not the
+// guard it names is there. The refusal's text is the one thing that tells the
+// two apart, and only a test reads it.
+func TestRunNamesTheTermGuardThatRefusedV1(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args func(*fakeSigner) []string
+		want string
+	}{
+		{"a term of no days", func(f *fakeSigner) []string { return v1RunArgs(f, "-days", "0") }, "must be a positive number of days"},
+		{"a term past what the arithmetic counts", func(f *fakeSigner) []string { return v1RunArgs(f, "-days", "200000") }, "cannot be counted"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			signer := newFakeSigner(t)
+			err := run(tc.args(signer), io.Discard, signingRunner(signer))
+			if err == nil {
+				t.Fatalf("%s was minted, want the refusal of the guard that reads the days", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("the refusal is %v, and it does not carry %q: the ended-key guard refusing it instead would leave the guard that reads the days unpinned", err, tc.want)
+			}
+			if len(signer.seen) != 0 {
+				t.Errorf("the signer was asked to sign %d payload(s) before the refusal", len(signer.seen))
 			}
 		})
 	}
