@@ -24,6 +24,11 @@ import (
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
+// imageGateRemedy is the move every image-gate refusal names: fugaro update's
+// images stage is the one way a job image moves onto a newer base, now that
+// the repository-level image commands are disabled (IS2).
+const imageGateRemedy = "Run fugaro update in its checkout"
+
 func TestCheckRecipeImage(t *testing.T) {
 	f := newCloudFixture(t)
 	env := fileEnv(t, f)
@@ -58,7 +63,7 @@ func TestCheckRecipeImage(t *testing.T) {
 		}
 		if tc.wantErr != "" && err != nil {
 			for _, want := range []string{"recipe mine needs a job image whose runner knows recipes (fugaro 0.5.0 or later)",
-				"Run fugaro image refresh --repo acme/app --workflow web in its checkout, in your own terminal window, or with --yes from CI or a script (never in a coding agent's session", "this release's base base image", "--recipe default"} {
+				imageGateRemedy + ", in your own terminal window, or with --yes from CI or a script (never in a coding agent's session", "this release's base base image", "--recipe default"} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("%q: %v lacks %q", tc.baseRef, err, want)
 				}
@@ -70,7 +75,7 @@ func TestCheckRecipeImage(t *testing.T) {
 	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.4.1")
 	err := checkRecipeImage(context.Background(), env, appSlug, spec, "", &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "fugaro.yaml's agent.recipe needs a job image") || strings.Contains(err.Error(), "--recipe default") ||
-		!strings.Contains(err.Error(), "it verifies this release's base image and pins it by digest through the installation's remote repository, points") {
+		!strings.Contains(err.Error(), "its images stage verifies this release's base image, pins it by digest through the installation's remote repository and rebuilds") {
 		t.Fatalf("agent.recipe: %v", err)
 	}
 }
@@ -1902,7 +1907,7 @@ func TestRunRefusesTheNoneModelOnAnOlderBaseImage(t *testing.T) {
 				"needs a job image whose runner knows " + noneModelKnows,
 				"fugaro " + noneModelSince + " or later",
 				"ghcr.io/dimipaun/fugaro-base:" + c.rel + ", release " + c.rel,
-				"fugaro image refresh --repo acme/other --workflow svc",
+				imageGateRemedy,
 				"; or write it as none: true in fugaro.yaml",
 			} {
 				if !strings.Contains(err.Error(), want) {
@@ -1971,7 +1976,7 @@ func TestRunRefusesTheLayersNoneModelOnAnOlderBaseImage(t *testing.T) {
 	for _, want := range []string{
 		"the project layer's defaults.agent.levels (read for acme/other)",
 		"needs a job image whose runner knows " + noneModelKnows,
-		"fugaro image refresh --repo acme/other --workflow " + config.ImplicitWorkflow,
+		imageGateRemedy,
 		"write it as none: true in the project layer's defaults.agent.levels and publish it again",
 	} {
 		if !strings.Contains(err.Error(), want) {
@@ -2174,7 +2179,7 @@ func TestRunRefusesTheStopFractionOnAnOlderBaseImage(t *testing.T) {
 				"needs a job image whose runner knows " + stopFractionKnows(true, false),
 				"fugaro " + stopFractionSince + " or later",
 				"ghcr.io/dimipaun/fugaro-base:" + c.rel + ", release " + c.rel,
-				"fugaro image refresh --repo acme/other --workflow svc",
+				imageGateRemedy,
 				"; or remove agent.review_stop_fraction from fugaro.yaml",
 			} {
 				if !strings.Contains(err.Error(), want) {
@@ -2274,7 +2279,7 @@ func TestRunRefusesTheLayersStopFractionOnAnOlderBaseImage(t *testing.T) {
 			for _, want := range []string{
 				"the project layer's defaults.agent.review_stop_fraction (read for acme/other)",
 				"needs a job image whose runner knows " + stopFractionKnows(false, true),
-				"fugaro image refresh --repo acme/other --workflow " + config.ImplicitWorkflow,
+				imageGateRemedy,
 				"remove defaults.agent.review_stop_fraction from the project layer and publish it again",
 			} {
 				if !strings.Contains(err.Error(), want) {
@@ -2624,7 +2629,7 @@ func TestLauncherRefusesTriageOnAnOlderImage(t *testing.T) {
 				"needs a job image whose runner knows " + triageKnows,
 				"fugaro " + triageSince + " or later",
 				"ghcr.io/dimipaun/fugaro-base:" + c.rel + ", release " + c.rel,
-				"fugaro image refresh --repo acme/other --workflow svc",
+				imageGateRemedy,
 				"; or remove agent.triage from fugaro.yaml",
 			} {
 				if !strings.Contains(err.Error(), want) {
@@ -2927,5 +2932,37 @@ func TestEscalationSinceHasAReleaseBullet(t *testing.T) {
 		if !strings.Contains(bullet, want) {
 			t.Errorf("docs/release.md's escalationSince bullet does not say %q", want)
 		}
+	}
+}
+
+// TestPairImageWhy: a pair is dropped when either judge of the job image — the
+// installation's base image or the base its build record was built FROM —
+// predates abSince, and sampled on when neither can show a release at all.
+func TestPairImageWhy(t *testing.T) {
+	const base = "ghcr.io/dimipaun/fugaro-base:"
+	spec := &task.Spec{Version: 1, RunID: "20261007-100000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x"}
+	for _, tc := range []struct{ name, baseImage, recordRef, want string }{
+		{"no judge can date the image", "", "-", ""},
+		{"old base image", base + "0.13.9", "-", pairOldImage},
+		{"base image at abSince", base + abSince, "-", ""},
+		{"old record base", "", base + "0.13.9", pairOldImage},
+		{"record base at abSince", "", base + abSince, ""},
+		{"record base is a dev build", "", "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c", ""},
+		{"record names no base", "", "", ""},
+		{"current base, old record", base + abSince, base + "0.13.9", pairOldImage},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newCloudFixture(t)
+			env := fileEnv(t, f)
+			if tc.baseImage != "" {
+				env.lc.BaseImages = map[string]string{config.BaseKind: tc.baseImage}
+			}
+			if tc.recordRef != "-" {
+				writeBuildRecord(t, f, appSlug, "web", tc.recordRef)
+			}
+			if got := pairImageWhy(context.Background(), env, appSlug, spec); got != tc.want {
+				t.Fatalf("pairImageWhy = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

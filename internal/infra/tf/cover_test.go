@@ -747,7 +747,7 @@ func TestRolePinsAreTheModules(t *testing.T) {
 	strRE := regexp.MustCompile(`"([^"]+)"`)
 	// resource name -> the role ID the modules give it (names.role_ids and the
 	// literals in history.tf and the Firebase module's names.minter_role_id).
-	ids := map[string]string{"launcher": "fugaroLauncher", "fugaro_viewer": ViewerRole, "job_runner": "fugaroJobRunner", "build_submitter": "fugaroBuildSubmitter", "tag_mover": "fugaroTagMover", "cloud_asset_reader": CloudAssetRole, "token_minter": "fugaroTokenMinter", "history": "fugaroHistory", "reaper": "fugaroReaper", "preload_builder": "fugaroPreloadBuilder", "fugaro_deployer": DeployerRole, "credentials_database": CredentialsDatabaseRole, "workspace_read": WorkspaceReadRole}
+	ids := map[string]string{"launcher": "fugaroLauncher", "fugaro_viewer": ViewerRole, "job_runner": "fugaroJobRunner", "build_submitter": "fugaroBuildSubmitter", "tag_mover": "fugaroTagMover", "cloud_asset_reader": CloudAssetRole, "token_minter": "fugaroTokenMinter", "history": "fugaroHistory", "reaper": "fugaroReaper", "preload_builder": "fugaroPreloadBuilder", "fugaro_deployer": DeployerRole, "credentials_database": CredentialsDatabaseRole, "workspace_read": WorkspaceReadRole, "intake_secrets": IntakeSecretsRole, "secret_lister": SecretListerRole}
 	for role, label := range deployerRoleLabel {
 		ids[label] = role
 	}

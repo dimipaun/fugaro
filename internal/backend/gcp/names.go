@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/secretname"
 )
 
 // Name limits and hash widths (checked 2026-09-28):
@@ -234,6 +235,48 @@ func ProjectSecretID(fugaroProject, logical string) string {
 func CredsBundleSecretID(fugaroProject string) string {
 	return ProjectSecretID(fugaroProject, "creds-bundle")
 }
+
+// DynamicSecretNamesConditionTitle is the title of the dynamic class's one
+// name-prefix condition (D1931, DS2.2), as the installation module writes it
+// beside the local that holds the expression. internal/infra/tf reads a plan's
+// condition titles, so both spellings are taken from here rather than written
+// twice.
+const DynamicSecretNamesConditionTitle = "fugaro-intake-secret-names"
+
+// DynamicSecretNamesCondition is the fence around the dynamic secret
+// containers: ONE CEL expression admitting the whole of secretname's grammar —
+// the per-user prefix and the shared one — carried by both grants of the class,
+// the intake's conditioned writes (create, version-add and delete, in a single
+// binding) and the credentials service's conditioned accessor on the project.
+//
+// The condition is what makes a project-wide grant safe. The names are the
+// callers' own, so an installation does not know them when it plans, and the
+// resource's own name is the only thing left to narrow a binding by: the
+// project segment of a Secret Manager resource name is the project NUMBER,
+// which the module never learns offline, so the extraction template anchors at
+// the collection segment instead. What the condition cannot carry is the list —
+// Check 510 (2026-11-12) refused secretmanager.secrets.list under
+// exactly this expression — which is why the two services hold an
+// unconditioned lister role beside it.
+//
+// The prefixes are the grammar's own (internal/secretname), so the condition
+// and the names it admits cannot drift apart, and the underscore in each is
+// what keeps the fence off every other name Fugaro derives: those are
+// sanitized to [a-z0-9-] and can hold none.
+func DynamicSecretNamesCondition() string {
+	const extract = `resource.name.extract("/secrets/{secret}")`
+	return extract + `.startsWith("` + secretname.UserPrefix + `") || ` +
+		extract + `.startsWith("` + secretname.ProjectPrefix + `")`
+}
+
+// IntakeAdminListConditionTitle is the title of the intake's one bucket grant
+// (DS2.2): objectViewer on the runs bucket under a condition naming the single
+// object the derived admin list is published to (DS2.0's access.PathAdminList).
+// The title is here with the class's other one; the expression is built where
+// it is checked (internal/infra/tf), because it needs the runs bucket's name
+// from the plan AND that object's key, and this package cannot reach the
+// package that owns the key (internal/access imports this one).
+const IntakeAdminListConditionTitle = "fugaro-intake-admin-list"
 
 // ImageName is the derived image of (slug, workflow) in registry, untagged,
 // built like JobName without the fugaro- prefix.

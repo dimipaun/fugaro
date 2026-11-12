@@ -1437,7 +1437,7 @@ how the second change happens, and the two readings are:**
   moves together or the guard fires. *(ii)* **`update` becomes a bundle writer**, which is a class of
   code the CLI does not have: it reads the project's existing secrets — the model credential, and the
   App key, which is **already a project-wide secret** (`gcp.ProjectSecretID(lc.Name,
-  config.GitHubAppKeySecret)`, `internal/cli/project_enroll.go:918`, which is what makes this reading
+  config.GitHubAppKeySecret)`, `internal/cli/project_enroll.go:1075`, which is what makes this reading
   feasible rather than a prompt) — and writes them into the one bundle secret, so the CLI holds raw
   credential values on a path that today never does. Terraform cannot do it: no credential value may
   reach Terraform or its state (`TestNoSecretVersionsInTerraform`), so the migration is the CLI's or

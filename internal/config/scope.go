@@ -35,6 +35,7 @@ const (
 	whyRepoShape        = "it is the repository's own"
 	whyCredentialAccess = "it names a credential or pool the local config (never the project layer) allow-lists, so only the repository's own, PR-reviewed fugaro.yaml may choose among them — the same reason agent.oauth_token is refused here"
 	whyRemoved          = "it was removed in 0.7.0 (" + MigrationDoc + ")"
+	whyGrade            = "it is the model choice the project owns (G3): the project layer states a grade for every repository of the project, and a repository's own entry is dropped and recorded by the merge (a grade is a value, unlike the escalation thresholds, which no shared layer may hold at all), so this is the one layer a grade's credential or pool can be named in"
 	whyGovernance       = "it is a guardrail Fugaro ships: the project layer sets it for every repository of the project" +
 		" (a top-level key of the layer file, like claude_models) and a repository can only tighten it," +
 		" because the per-run cap stays the ceiling and a stage budget is a fraction under it (G6)"
@@ -83,6 +84,15 @@ var Scopes = []ScopeRow{
 	{Key: "agent.crafts.senior-review.access", In: InRepo, Why: whyCredentialAccess},
 	{Key: "agent.crafts.security-review.model", In: InProject | InRepo},
 	{Key: "agent.crafts.security-review.access", In: InRepo, Why: whyCredentialAccess},
+	// The escalation ladder's two model grades (docs/outer-loop-escalation E2,
+	// D2039): the pair a craft carries, in one block of its own, and the one
+	// place a project layer may name an access (whyGrade). A repository's entry
+	// is admitted, so that the merge can drop it and record it rather than the
+	// file being refused where the value is what lost.
+	{Key: "model_grades.strong.model", In: InProject | InRepo, Why: whyGrade},
+	{Key: "model_grades.strong.access", In: InProject | InRepo, Why: whyGrade},
+	{Key: "model_grades.strongest.model", In: InProject | InRepo, Why: whyGrade},
+	{Key: "model_grades.strongest.access", In: InProject | InRepo, Why: whyGrade},
 	{Key: "agent.review_rounds", In: InProject | InRepo | InOverride},
 	{Key: "agent.max_budget_usd", In: InProject | InRepo | InOverride},
 	{Key: "agent.instructions", In: InRepo, Why: whyFiles},

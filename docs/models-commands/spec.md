@@ -37,9 +37,11 @@ table and, for repository usage, this machine's remembered checkouts (D793). One
    `allow_data_to` and `budget.allowed_models` (when set). A model `budget.allowed_models` leaves out is
    shown as refused for every repository.
 4. **Usage.** For each repository the project config records (`repos:`): its `agent.models.coder`,
-   `agent.models.reviewer` and `agent.models.background` (the effective background when unset,
-   `config.EffectiveBackground`), read from the repository's `fugaro.yaml` at its base branch in this
-   machine's checkout, resolved over the project layer when the machine holds the layer's cached copy.
+   `agent.models.reviewer`, `agent.models.background` (the effective background when unset,
+   `config.EffectiveBackground`) and `agent.models.vision` (D2013; the one pin with no fallback, so a
+   file that sets no slot draws an empty cell rather than the coder's model), read from the repository's
+   `fugaro.yaml` at its base branch in this machine's checkout, resolved over the project layer when the
+   machine holds the layer's cached copy.
    A repository with no checkout here is listed as `unknown (no checkout on this machine)`, never
    guessed. A row whose pin no route serves, or no price prices, is flagged with the refusal a launch
    would give.
@@ -99,7 +101,7 @@ the warning says the next run of that repository fails at launch with a no-provi
 changed (`fugaro models use`) or the model is added back. `budget.allowed_models` is never left as an empty list,
 which the loader refuses: removing its last entry is refused with the reason.
 
-## 6. `fugaro models use <repo> <coder|reviewer|background> <id> [--yes]`
+## 6. `fugaro models use <repo> <coder|reviewer|background|vision> <id> [--yes]`
 
 Prepares the change to the repository's own `fugaro.yaml` (`agent.models.<role>`), never silently
 (D781):
@@ -116,8 +118,9 @@ Prepares the change to the repository's own `fugaro.yaml` (`agent.models.<role>`
   absent), keeping comments and every other byte, prints the diff, and asks for confirmation (`--yes`
   outside a terminal). It never commits, pushes or opens a pull request: the change reaches runs when
   the user's own branch is merged to the base branch, which is what every run reads.
-- The roles are the three keys `agent.models` has today. The review levels' own per-level models
-  (D720–D737) are added to `use` by the task that adds their keys (D791).
+- The roles are the four keys `agent.models` has today: `coder`, `reviewer`, `background` and, since the
+  vision-model work, `vision` (D2013). The review levels' own per-level models (D720–D737) are added to
+  `use` by the task that adds their keys (D791).
 - It writes the repository's file only, never the project layer, whose `agent.models` keys a launcher
   can write too (D792).
 

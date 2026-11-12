@@ -812,6 +812,7 @@ func TestInitBaseRepublishesSharedConfig(t *testing.T) {
 	open := sharedBucketOpener
 	publishes := 0
 	sharedBucketOpener = func(ctx context.Context, u string) (*blobx.Bucket, error) { publishes++; return open(ctx, u) }
+	t.Cleanup(func() { sharedBucketOpener = open })
 	if _, _, err := executeStdin(t, "", "setup", "--yes", "--plan-only", "--base", "base"); err != nil {
 		t.Fatal(err)
 	}

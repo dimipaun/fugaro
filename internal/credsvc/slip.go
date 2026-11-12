@@ -8,10 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget/token"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/secretname"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -39,14 +41,20 @@ import (
 //
 // # What the two routes decide, and what they do not
 //
-// The grant decides three things: WHO is asking (the launcher class, D1938),
-// WHICH credentials the slip will permit (the owner rule of R7, checked here
-// because this is the one place a whole run's set is written down), and how
-// long the run may be served (R10's cap, kept here as a service constant). It
-// decides nothing about pools: a `fugaro_p_` name is granted to any launcher,
-// because whether a pool admits that person is a fact about the pool and the
-// published policy and is DS3.2's check, made where the credential is actually
-// resolved.
+// The grant decides four things: WHO is asking (the launcher class, D1938),
+// WHICH credentials the slip will permit (the owner rule of R7 and the pool rule
+// of G8, both checked here because this is the one place a whole run's set is
+// written down), WHICH pool decided it (recorded on the slip, so a grant can be
+// read back against the roster that allowed it), and how long the run may be
+// served (R10's cap, kept here as a service constant).
+//
+// The pool rule is made here rather than where a credential is resolved because
+// the slip is what a run is served from afterwards: the launcher is the person a
+// roster is about, and what it asks for is decided once. The roster is therefore
+// read at ISSUE time and never remembered — a member the publisher takes off it
+// is refused at the next grant — while a slip already issued keeps serving the
+// run it was granted for, which is what makes the rule a grant-time one and not
+// one a run's calls re-answer (G8).
 //
 // The claim decides one thing: that the caller is the run the slip names, at
 // the account the slip expects, and that nobody has claimed it yet (D1941). It
@@ -141,7 +149,10 @@ type SlipGrantRequest struct {
 	Account string `json:"account"`
 	// Credentials are the secret IDs the run may be served, exactly and only
 	// (creds.Slip.Allowed). A per-user name may be another owner's only if the
-	// launcher IS that owner (R7).
+	// launcher IS that owner (R7), and a name a pool of the published policy
+	// governs — the pool's own name, or a project-shared name whose credential
+	// the pool lists — only if the launcher is that pool's owner or one of the
+	// users it allows (D1936, G8).
 	Credentials []string `json:"credentials"`
 	// MaxRuntimeSeconds is how long the launcher asks the run to be served for.
 	// It is CLAMPED to maxSlipRuntime and never refused for being large: a
@@ -302,12 +313,18 @@ func newSlipID() (string, error) {
 //   - the owner rule (R7), before the slip is written: a name the launcher may
 //     not be served is a request this contract does not read, and a refused
 //     grant writes nothing at all.
+//   - the pool rule (G8, D1936), after the owner rule and beside it: the one
+//     step here that reads the project's published policy, for the pools that
+//     govern the names it asks for. It comes after the stop switches because
+//     those are read from the database too, and a stopped service is refused
+//     before any roster is consulted.
 //   - the id and the record. The id is drawn here rather than taken from the
 //     call: an id a caller chose is an id two callers can collide on.
 //
-// What is deliberately NOT here: the policy, the bundle and the cascade. A
-// grant mints nothing — it writes down what a run may later ask for — so there
-// is no credential to read and no admission to consult.
+// What is deliberately NOT here: the bundle and the cascade. A grant mints
+// nothing — it writes down what a run may later ask for — so there is no
+// credential to read and no admission to consult; the policy is read for its
+// pools and for nothing else.
 func (s *Server) slipGrant(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	tok, err := bearerFromHTTP(r)
 	if err != nil {
@@ -370,6 +387,18 @@ func (s *Server) slipGrant(ctx context.Context, w http.ResponseWriter, r *http.R
 		s.refuseGrant(ctx, w, caller.Account, StatusRequestRefused, ErrorRequestRefused, requestRefused+err.Error())
 		return
 	}
+	pool, err := s.grantPool(ctx, req.Credentials, caller.Account)
+	switch {
+	case errors.Is(err, errPolicyUnreadable):
+		// A roster that cannot be read is not an empty roster, and it is not a
+		// refusal of what the launcher sent either: it is this service's state,
+		// answered the way every other unreadable document here is.
+		s.refuseGrant(ctx, w, caller.Account, StatusUnavailable, ErrorStateUnavailable, err.Error())
+		return
+	case err != nil:
+		s.refuseGrant(ctx, w, caller.Account, StatusRequestRefused, ErrorRequestRefused, requestRefused+err.Error())
+		return
+	}
 	id, err := newSlipID()
 	if err != nil {
 		s.log.Error("credsvc: a slip id could not be drawn", "error", err)
@@ -384,6 +413,7 @@ func (s *Server) slipGrant(ctx context.Context, w http.ResponseWriter, r *http.R
 		Run:             req.Run,
 		ExpectedAccount: req.Account,
 		Allowed:         append([]string(nil), req.Credentials...),
+		Pool:            pool,
 		MaxRuntime:      runtime,
 	}
 	if err := s.cfg.Slips.Create(ctx, sl); err != nil {
@@ -400,7 +430,8 @@ func (s *Server) slipGrant(ctx context.Context, w http.ResponseWriter, r *http.R
 	// what it writes is a record whose names DS1.6 serves. This line is where an
 	// operator reads who asked for a run and which run it was.
 	s.log.Info("credsvc: a slip was granted",
-		"slip", id, "run", req.Run, "repository", req.Slug, "account", req.Account, "launcher", caller.Account)
+		"slip", id, "run", req.Run, "repository", req.Slug, "account", req.Account,
+		"launcher", caller.Account, "pool", pool)
 	body, err := json.Marshal(SlipGrantResponse{Slip: id, MaxRuntimeSeconds: int64(runtime.Seconds())})
 	if err != nil {
 		// The answer is built before it is written, as the read mints build
@@ -563,12 +594,12 @@ func slipIsThisRuns(sl creds.Slip, id Identity) bool {
 // R7: a per-user secret ID — fugaro_u_<id>_<name> — may be named only by the
 // launcher whose verified Google account id is <id>.
 //
-// A project-shared name (fugaro_p_) that the grammar ADMITS is granted to any
-// launcher here, because whether a pool admits that person is a fact about the
-// pool and its allowed_users and is DS3.2's check where the credential is
-// resolved (R11, G8). And a name with NEITHER of the grammar's two prefixes — a
-// bundle entry's own name, such as a model credential's — has no owner to
-// compare, so there is none to check.
+// A project-shared name (fugaro_p_) that the grammar ADMITS has no owner to
+// compare here: a shared credential belongs to the project and not to the
+// person, and who may be served it is a fact about the pools of the published
+// policy, which the grant's next step decides (grantPool, R11, G8). And a name
+// with NEITHER of the grammar's two prefixes — a bundle entry's own name, such
+// as a model credential's — has no owner to compare, so there is none to check.
 //
 // A name that carries one of the two prefixes and does NOT parse is refused,
 // which is the one case that looks like the second and is not: the grammar is
@@ -578,7 +609,7 @@ func slipIsThisRuns(sl creds.Slip, id Identity) bool {
 // separator makes the split ambiguous; fugaro_u_<another account> with no name
 // at all; fugaro_u_<another account>_<a platform credential kind> — is exactly
 // the shape the owner rule exists for, and passing it over would leave the
-// resolution (DS3.2) to decide, at a later call, what this route waved through.
+// resolution (DS3.3) to decide, at a later call, what this route waved through.
 // The prefix is the whole of the test, and the reading is fail-closed: a name
 // that cannot be read as somebody else's is not thereby nobody's.
 //
@@ -597,7 +628,7 @@ func checkGrantedNames(names []string, owner string) error {
 			}
 			// Neither prefix: not a name of the grammar at all, so nothing here
 			// can say who owns it, and what may be served under it is the
-			// resolution's answer (DS3.2).
+			// resolution's answer (DS3.3).
 			continue
 		}
 		if parsed.ID != "" && parsed.ID != owner {
@@ -605,6 +636,172 @@ func checkGrantedNames(names []string, owner string) error {
 		}
 	}
 	return nil
+}
+
+// errPolicyUnreadable is the class of a refused grant whose pools could not be
+// decided because the project's published policy could not be read: this
+// service's state and not the launcher's request, answered as an unavailable
+// service (StatusUnavailable) the way every other unreadable document here is.
+//
+// It is a sentinel rather than a status carried back because the reading is the
+// same one this package gives every other unreadable document — an unreadable
+// switch is not an off switch, an unreadable admission is not an empty one — and
+// a roster that could not be read admits nobody (fail closed, D143). The
+// launcher loses nothing it had: a grant it cannot get is a run that starts
+// slip-less, and a credential only a slip serves is refused at the call (R9).
+var errPolicyUnreadable = errors.New("the project's policy could not be read, so no pool can be resolved for this grant")
+
+// errGrantNotInPool is the refusal of a grant naming a pool, or a credential a
+// pool lists, that the launcher is neither the owner of nor allowed by. It names
+// no value of the call — not the pool, not the credential, not the launcher —
+// because the names of a grant are the caller's own bytes and this is the route
+// where it hands over a list of them.
+var errGrantNotInPool = errors.New("a pool and the credentials it lists are served to its owner and to the users it allows, and this launcher is neither (D1936)")
+
+// grantPool holds a grant's names to the pools of the project's published
+// policy, and answers the pool that decided it: the empty string for a grant no
+// pool governs (what wants a slip that names no pool — a bundle entry's own
+// name, or a runner that cannot reach the service at all), and otherwise the
+// name of the first pool, in the policy's own order, that admitted a name of
+// this grant (G8, D1936, R11).
+//
+// The decision is PER NAME, and that is the whole of the rule: a name is served
+// only where some pool that GOVERNS THAT NAME serves the launcher. Two names
+// under two pools are two questions, and a roster answers for its own names and
+// for no others — a launcher served by the first pool alone is refused the
+// grant that also asks for the second pool's name. It has to be that way round,
+// because the slip's list is what the run is served from later (DS1.6): a name
+// admitted here is a name that run will be handed, so a check that read "the
+// launcher is served by SOME pool of this grant" would serve one person a
+// credential another pool shares with somebody else.
+//
+// A SINGLE name several pools govern is the other direction, and there it is a
+// union: a publisher that lists one credential in two pools has said both
+// rosters may have it, so a launcher either of them serves is admitted. The union is
+// per name and never across the names of one call, which is exactly the atom
+// this loop iterates.
+//
+// A name that is governed and that no governing pool admits refuses the WHOLE
+// grant rather than being dropped from it: a run that got some of what it asked
+// for is a run that fails later over a credential it was told it would have. The
+// refusal happens before anything is written.
+//
+// Both directions come from the same rule, and config.Pool.Serves is where it
+// lives: an owner, an allowed user or a pool the migration found ownerless are
+// served, and nobody else is (D1936's default is owner-only, D1942's marker is
+// the exception).
+//
+// The roster is compared by the rule this package compares every address by
+// (foldEmail, the launcher class's own fold): a pool spells its owner and its
+// allowed users as addresses — the roster's key, since a sub is not something an
+// operator can write down — and a service that compared the operator's spelling
+// to the claim's byte for byte would admit nobody whose case differs (R10).
+//
+// It reads the policy per grant and never caches it: the roster is resolved when
+// the slip is issued (G8), so a publisher's change is in effect at the next
+// grant. The slip's own cache (R4) holds the BODY of an issued grant, which is
+// exactly the decision this rule must not make once and keep.
+func (s *Server) grantPool(ctx context.Context, names []string, account string) (string, error) {
+	shared, found, err := s.cfg.Policy.Shared(ctx)
+	if err != nil {
+		return "", errPolicyUnreadable
+	}
+	if !found || shared == nil {
+		// This installation has published no policy, so it defines no pool and
+		// no name of this grant is one a pool governs: the grant is what it was
+		// before pools existed (G7's installation that has adopted nothing yet,
+		// R9). It is NOT the unreadable case above: nothing failed, and a
+		// document that does not exist cannot name a pool to enforce.
+		return "", nil
+	}
+	launcher := foldedAddress(account)
+	admitted := ""
+	for _, name := range names {
+		governed, served := false, false
+		for _, pool := range shared.CraftPools {
+			if !poolGovernsName(pool, name) {
+				continue
+			}
+			governed = true
+			if !foldedPool(pool).Serves(launcher) {
+				continue
+			}
+			served = true
+			if admitted == "" {
+				admitted = pool.Name
+			}
+			break
+		}
+		if governed && !served {
+			return "", errGrantNotInPool
+		}
+	}
+	return admitted, nil
+}
+
+// poolGovernsName reports whether a pool decides whether a launcher may have
+// ONE name of a grant, which is the whole of "this pool authorises this name":
+// the pool's OWN NAME, which is what a craft's `access` writes when a craft runs
+// on a pool, or, for a project-shared name of the grammar, the credential that
+// name holds where the pool lists it among its members (R11: sharing is a
+// project-shared secret under a pool's allowed users, and a pool's members are
+// the credentials it shares).
+//
+// It takes one name rather than the grant's list because the pool's authority is
+// per name: the caller must ask this of every name it is deciding, and a first
+// name a pool governs may not carry a second one past the pools that govern that
+// second name (grantPool).
+//
+// The two halves are disjoint by construction and cannot be confused:
+// config.ValidatePools refuses a name defined as both a credential and a pool, so
+// a pool's own name is no member of any pool, and a member is no pool's name.
+//
+// A plain credential name that a pool happens to list is NOT looked up here. The
+// policy's own decision about a craft credential — that `access` names it, that
+// the bundle serves it — is the path that serves it today, and a grant naming it
+// directly names no pool (R9: the path that names no pool keeps serving what it
+// served). What a pool does govern is the pool itself and the shared secrets
+// under it.
+func poolGovernsName(pool config.Pool, name string) bool {
+	if name == pool.Name {
+		return true
+	}
+	parsed, err := secretname.Parse(name)
+	if err != nil || !parsed.Shared() {
+		return false
+	}
+	return slices.Contains(pool.Members, parsed.Name)
+}
+
+// foldedAddress is an address in the shape this service compares addresses in:
+// the launcher class's own fold, and the empty string for anything it cannot
+// fold, which no roster can name and which therefore matches no pool that states
+// an owner or an allowed user (the printable-ASCII rule of foldEmail; a
+// legacy-open pool is served whoever asks, and Serves decides that itself).
+func foldedAddress(email string) string {
+	folded, _ := foldEmail(email)
+	return folded
+}
+
+// foldedPool is a pool read in the same shape, so that config.Pool.Serves — the
+// one rule that says who a pool serves (D1936, D1942) — is applied to addresses
+// both of which are folded, and not restated here with a second comparison.
+//
+// It copies: the allowed users are compared through a new slice, so the decoded
+// policy the service holds is never rewritten by a read of it. An address this
+// service cannot fold is dropped rather than compared, because it names nobody
+// it could ever admit — a roster entry is the operator's own text, and an entry
+// that is not an address is one no verified launcher can match.
+func foldedPool(pool config.Pool) config.Pool {
+	pool.Owner = foldedAddress(pool.Owner)
+	allowed := make([]string, 0, len(pool.AllowedUsers))
+	for _, user := range pool.AllowedUsers {
+		if folded, ok := foldEmail(user); ok {
+			allowed = append(allowed, folded)
+		}
+	}
+	pool.AllowedUsers = allowed
+	return pool
 }
 
 // maxSlipRuntimeSeconds is maxSlipRuntime in the unit the launcher speaks, and
