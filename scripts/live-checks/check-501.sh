@@ -451,7 +451,7 @@ step_update() {
   else
     UPDATE_ASKED="and it named no build, so no workflow image of this checkout needed rebuilding — its transcript is in $SCRATCH/update.out"
   fi
-  fact update PASS "fugaro update ran to its end in ${SANDBOX} (exit 0, $((${UPDATE_ENDED} - ${UPDATE_STARTED}))s) at your own terminal and with no --yes, so its review and its billable rebuilds were answered by you ${UPDATE_ASKED}: this is the upgrade IS13's release ships, and it is the one that moves the base pin"
+  fact update PASS "fugaro update ran to its end in ${SANDBOX} (exit 0, $((${UPDATE_ENDED} - ${UPDATE_STARTED}))s) at your own terminal and with no --yes, so its review and its billable rebuilds were answered by you ${UPDATE_ASKED}: it is the one command that is the whole upgrade, and the one that moves the base pin the row below reads"
 }
 
 # step_pin_after: what the update left. The pin is read again with the same
