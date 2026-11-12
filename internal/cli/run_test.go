@@ -142,7 +142,10 @@ func TestLaunchTextNamesTheChainOnlyWhenThereIsOne(t *testing.T) {
 	})
 	t.Run("a launch that begins a chain", func(t *testing.T) {
 		newCloudFixture(t)
-		out, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20260927-100000-abcd", "Add a feature")
+		// The id is minted against the real clock: this test drives --pr
+		// above, whose window the guard reads this id against, and a launch
+		// that begins a chain is what it is whatever the date says.
+		out, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", wallRunIDAt(0, "100000", "abcd"), "Add a feature")
 		if err != nil {
 			t.Fatal(err)
 		}
