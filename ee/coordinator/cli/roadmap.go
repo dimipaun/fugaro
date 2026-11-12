@@ -374,6 +374,15 @@ func runCoordinatorRoadmapRequest(cmd *cobra.Command, o *coordinatorRoadmapOptio
 // already revoked, and the person's next command would be refused with no way
 // to tell why. Storing first means a call that fails afterwards costs a
 // rotation and nothing else.
+//
+// **The swap is one step, under this project's lock** (credentiallock.go). Two
+// commands of one project started at once would otherwise both present the
+// token the keychain holds, and the second presentation is the reuse D930
+// answers by revoking the family: the person is signed out, in a browser, for
+// something they did not do. So the credential is read a second time under the
+// lock, and the one read there — not the one read before the Terraform run — is
+// the one presented: the command that waited is reading what the command ahead
+// of it stored.
 func coordinatorOpenDoor(ctx context.Context, cloud *fcli.CloudFlags) (*coordinatorDoor, *http.Client, error) {
 	env, err := fcli.SelectProject(ctx, cloud)
 	if err != nil {
@@ -385,8 +394,12 @@ func coordinatorOpenDoor(ctx context.Context, cloud *fcli.CloudFlags) (*coordina
 		return nil, nil, err
 	}
 	store := coordinatorKeychain()
-	cred, err := coordinatorReadCredential(ctx, store, item)
-	if err != nil {
+	// The keychain is read before the installation's outputs are: a person who
+	// has not signed in is told that, rather than waiting for a Terraform run
+	// they do not need. What is read here is not what is presented — the
+	// credential is read again under the lock — so a stale answer is not a
+	// problem, and an absent one still is.
+	if _, err := coordinatorReadCredential(ctx, store, item); err != nil {
 		return nil, nil, err
 	}
 	url, err := coordinatorFrontDoorURL(ctx, lc)
@@ -397,6 +410,15 @@ func coordinatorOpenDoor(ctx context.Context, cloud *fcli.CloudFlags) (*coordina
 		return nil, nil, err
 	}
 	client, err := coordinatorFrontDoorHTTP()
+	if err != nil {
+		return nil, nil, err
+	}
+	lock, err := coordinatorLockCredential(lc.Name)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer lock.release()
+	cred, err := coordinatorReadCredential(ctx, store, item)
 	if err != nil {
 		return nil, nil, err
 	}

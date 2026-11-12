@@ -480,6 +480,52 @@ func TestTheRotatedRefreshTokenIsStoredBack(t *testing.T) {
 	}
 }
 
+// TestTwoCommandsAtOnceDoNotSpendTheSameRefreshToken is the credential lock's
+// own test (D930). The refresh token is spent by the exchange that reads it, so
+// two commands of one project started at once must not both present the token
+// the keychain holds: the door reads the second presentation as the reuse D930
+// answers by revoking the family, which signs the person out, sends them to a
+// browser, and records a theft they did not commit.
+//
+// The two commands are held at the barrier until both have read the credential,
+// which is the state the lock exists for. Without the lock both present the
+// same token and the second is refused; with it the command that waited reads
+// the successor the first one stored, and the keychain is left holding the
+// token the door will accept next.
+func TestTwoCommandsAtOnceDoNotSpendTheSameRefreshToken(t *testing.T) {
+	newCloudFixture(t)
+	door := newFakeFrontDoor(t)
+	store := &keychain.Fake{}
+	withFrontDoor(t, door, store)
+	seedCredential(t, store, door, "aurora")
+	withTwoCommandsAtOnce(t)
+
+	answers, errs := executeConcurrently(t, 2, needArgs()...)
+	for i := range answers {
+		if errs[i] != nil {
+			t.Errorf("command %d was refused: %v\n%s", i+1, errs[i], answers[i])
+		}
+	}
+	presented := door.refreshPresentations()
+	if len(presented) != 2 {
+		t.Fatalf("the door was handed %d refresh tokens (%v); want one per command", len(presented), presented)
+	}
+	if presented[0] == presented[1] {
+		t.Errorf("both commands presented the refresh token %q: the second use of it is the reuse the door revokes the family over", presented[0])
+	}
+	item, err := keychain.ParseItem("aurora"+coordinatorCredentialSuffix, "aurora")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cred, err := coordinatorReadCredential(context.Background(), store, item)
+	if err != nil {
+		t.Fatalf("reading the credential back: %v", err)
+	}
+	if cred.RefreshToken != door.refreshToken() {
+		t.Errorf("the keychain holds %q; want %q, the successor both commands left it holding", cred.RefreshToken, door.refreshToken())
+	}
+}
+
 // TestACredentialTheDoorWillNotRenewSaysToSignInAgain is the refusal a person
 // meets when the family was revoked, or when the installation's front door was
 // recreated somewhere else: the door's own sentence, and the one command that
@@ -562,7 +608,10 @@ func TestRoadmapNeverWritesTheDatabaseItself(t *testing.T) {
 	// import arrived: P9b's writers are reached from the record's package and
 	// from the store the coordinator's other commands open.
 	writers := []string{"openCoordinatorStore", "CoordinatorDB", "coordinator.Store", "rtdb.", "runstore."}
-	for _, name := range []string{"roadmap.go", "login.go"} {
+	// credentiallock.go is on the same path — it is what the credential is
+	// swapped under — so it is held to the same property rather than left as
+	// the one file of the three nobody checks.
+	for _, name := range []string{"roadmap.go", "login.go", "credentiallock.go"} {
 		fset := token.NewFileSet()
 		file, err := parser.ParseFile(fset, name, nil, parser.ImportsOnly)
 		if err != nil {

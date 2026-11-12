@@ -293,8 +293,8 @@ func newCoordinatorLogoutCmd() *cobra.Command {
 		Use:   "logout",
 		Short: "Delete the front door credential this project's keychain holds",
 		Long: "Remove the keychain item `fugaro coordinator login` wrote, which is the\n" +
-			"whole of what this machine holds for the front door: no file, no cache and\n" +
-			"nothing else is written, so deleting the item is the end of it.\n\n" +
+			"whole of what this machine holds for the front door: the token is in no\n" +
+			"file and in no cache, so deleting the item is the end of it.\n\n" +
 			"An item that is not there is not an error: the state a person asks for is\n" +
 			"the state they get. The token family itself is not revoked by this command\n" +
 			"— the door revokes a family where it is revoked, and a device that lost\n" +
@@ -319,6 +319,15 @@ func runCoordinatorLogout(cmd *cobra.Command, o *coordinatorLoginOptions) error 
 	if err != nil {
 		return err
 	}
+	// The delete takes the same lock a write swaps the credential under, so a
+	// logout that lands while one is in flight is not undone by that write's
+	// own write-back: whichever of the two runs second is the one the keychain
+	// answers with.
+	lock, err := coordinatorLockCredential(lc.Name)
+	if err != nil {
+		return err
+	}
+	defer lock.release()
 	if err := coordinatorKeychain().Delete(ctx, item); err != nil {
 		return fcli.RemoteErr(err)
 	}
@@ -400,6 +409,16 @@ func runCoordinatorLogin(cmd *cobra.Command, o *coordinatorLoginOptions) error {
 		return err
 	}
 	cred := frontDoorCredential{Issuer: issuer, ClientID: registration.ClientID, RefreshToken: tokens.RefreshToken, Scopes: scopes}
+	// The store is the other writer of this project's item, so it takes the lock
+	// the roadmap commands swap the credential under: a login that stored while
+	// a write was between its read and its write-back would be overwritten by a
+	// credential of the family that write had just rotated, and the person
+	// would be left signed in as the one they replaced.
+	lock, err := coordinatorLockCredential(lc.Name)
+	if err != nil {
+		return err
+	}
+	defer lock.release()
 	if err := coordinatorStoreCredential(ctx, coordinatorKeychain(), item, cred); err != nil {
 		return err
 	}

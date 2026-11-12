@@ -59,11 +59,20 @@ type fakeFrontDoor struct {
 	registeredRedirect string
 	authorizeQuery     url.Values
 	code               string
-	// The tokens the door has minted. refresh is the one that works now: a
-	// rotation replaces it, so a client that presents the old one is refused.
-	access  string
-	refresh string
-	minted  int
+	// The tokens the door has minted. refresh is the refresh token that works
+	// now: a rotation replaces it, so a client that presents the old one is
+	// refused. accesses is every access token the door still honours, which is
+	// a set and not the newest one — an access token is valid until it expires,
+	// and two commands of one person's, each holding the token it was just
+	// minted, are both calling this door.
+	accesses map[string]bool
+	refresh  string
+	minted   int
+	// presented is every refresh token the token endpoint was handed, in order.
+	// A token appearing here twice is the reuse D930 answers by revoking the
+	// family, which is what the test of two commands at once asserts never
+	// happens.
+	presented []string
 	// What the door answers a write with.
 	status  string
 	reason  string
@@ -104,11 +113,12 @@ func newFakeFrontDoor(t *testing.T) *fakeFrontDoor {
 	// one a test seeded: a fixture whose successor is its predecessor would
 	// pass a rotation test that asserted nothing.
 	d := &fakeFrontDoor{
-		t:       t,
-		refresh: "refresh-1",
-		minted:  1,
-		kinds:   map[string]string{},
-		version: mcpauth.RoadmapAnswerVersion,
+		t:        t,
+		refresh:  "refresh-1",
+		minted:   1,
+		kinds:    map[string]string{},
+		accesses: map[string]bool{},
+		version:  mcpauth.RoadmapAnswerVersion,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc(mcpauth.RegisterPath, d.register)
@@ -130,6 +140,14 @@ func (d *fakeFrontDoor) refreshToken() string {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.refresh
+}
+
+// refreshPresentations is every refresh token the token endpoint was handed, in
+// order, which is what a test of the reuse D930 revokes a family over reads.
+func (d *fakeFrontDoor) refreshPresentations() []string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]string(nil), d.presented...)
 }
 
 // clientID is the registration the door minted.
@@ -243,6 +261,7 @@ func (d *fakeFrontDoor) token(w http.ResponseWriter, r *http.Request) {
 		writeFakeJSON(w, faultStatus, map[string]string{"error": faultError, "error_description": "the token could not be minted"})
 		return
 	}
+	var access, refresh string
 	switch r.Form.Get("grant_type") {
 	case "authorization_code":
 		// The verifier is checked against the challenge the door was given,
@@ -262,39 +281,57 @@ func (d *fakeFrontDoor) token(w http.ResponseWriter, r *http.Request) {
 			writeFakeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_grant", "error_description": "the code verifier does not match the challenge"})
 			return
 		}
-	case "refresh_token":
 		d.mu.Lock()
-		spent := r.Form.Get("refresh_token") != d.refresh
+		access, refresh = d.mintLocked()
 		d.mu.Unlock()
-		if spent {
+	case "refresh_token":
+		// The check and the rotation are one step, as they are in the door's
+		// own store: a fake that released the lock between the two would
+		// accept the pair of presentations the real door revokes a family
+		// over, and the test of two commands at once would pass against the
+		// code the lock exists to replace.
+		presented := r.Form.Get("refresh_token")
+		d.mu.Lock()
+		d.presented = append(d.presented, presented)
+		if presented != d.refresh {
+			d.mu.Unlock()
 			writeFakeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_grant", "error_description": "this refresh token was already spent"})
 			return
 		}
+		access, refresh = d.mintLocked()
+		d.mu.Unlock()
 	default:
 		writeFakeJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported_grant_type"})
 		return
 	}
-	d.mu.Lock()
-	d.minted++
-	d.access = fmt.Sprintf("access-%d", d.minted)
-	d.refresh = fmt.Sprintf("refresh-%d", d.minted)
-	access, refresh := d.access, d.refresh
-	d.mu.Unlock()
 	writeFakeJSON(w, http.StatusOK, map[string]any{
 		"access_token": access, "token_type": "Bearer", "expires_in": 600,
 		"refresh_token": refresh, "scope": mcpauth.ScopeRoadmapWrite,
 	})
 }
 
+// mintLocked mints the next pair, with d.mu held. The access token joins the
+// ones the door honours and the refresh token becomes the one that works, so a
+// rotation is the only way either changes.
+func (d *fakeFrontDoor) mintLocked() (access, refresh string) {
+	d.minted++
+	access = fmt.Sprintf("access-%d", d.minted)
+	refresh = fmt.Sprintf("refresh-%d", d.minted)
+	d.accesses[access] = true
+	d.refresh = refresh
+	return access, refresh
+}
+
 func (d *fakeFrontDoor) mcp(w http.ResponseWriter, r *http.Request) {
+	bearer, presented := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 	d.mu.Lock()
-	refuse, access := d.refuseStatus, d.access
+	refuse, minted := d.refuseStatus, presented && bearer != "" && d.accesses[bearer]
 	d.mu.Unlock()
 	if refuse != 0 {
 		writeFakeJSON(w, refuse, map[string]string{"error": "invalid_token", "message": "this token was revoked"})
 		return
 	}
-	if r.Header.Get("Authorization") != "Bearer "+access || access == "" {
+	if !minted {
 		writeFakeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid_token", "message": "no token of this door's"})
 		return
 	}
@@ -496,6 +533,30 @@ func withFrontDoor(t *testing.T, door *fakeFrontDoor, store keychain.Store) {
 	coordinatorKeychain = func() keychain.Store { return store }
 	coordinatorFrontDoorURL = func(context.Context, *localcfg.Config) (string, error) { return door.URL(), nil }
 	coordinatorOpenBrowser = door.openBrowser
+}
+
+// withTwoCommandsAtOnce holds every command that takes the credential lock at a
+// barrier until two of them have arrived, so that the lock's own test reaches
+// the state the lock is about: two commands, each already holding the
+// credential it read, before either of them has taken the lock. Started
+// together they reach that state by timing alone only sometimes, and a test
+// that reaches what it is about only sometimes proves nothing — the lesson
+// TestTheCallbackRecordsOneAnswerOfMany was written for.
+func withTwoCommandsAtOnce(t *testing.T) {
+	t.Helper()
+	prev := coordinatorBeforeCredentialLock
+	t.Cleanup(func() { coordinatorBeforeCredentialLock = prev })
+	arrived := make(chan struct{}, 2)
+	release := make(chan struct{})
+	coordinatorBeforeCredentialLock = func() {
+		arrived <- struct{}{}
+		<-release
+	}
+	go func() {
+		<-arrived
+		<-arrived
+		close(release)
+	}()
 }
 
 // seedCredential is the state a person is in after a login: the keychain holds

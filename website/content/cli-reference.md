@@ -1856,8 +1856,8 @@ This command has no subcommands.
 Delete the front door credential this project's keychain holds
 
 Remove the keychain item `fugaro coordinator login` wrote, which is the
-whole of what this machine holds for the front door: no file, no cache and
-nothing else is written, so deleting the item is the end of it.
+whole of what this machine holds for the front door: the token is in no
+file and in no cache, so deleting the item is the end of it.
 
 An item that is not there is not an error: the state a person asks for is
 the state they get. The token family itself is not revoked by this command
