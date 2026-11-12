@@ -232,8 +232,23 @@ func userPair(cmd *cobra.Command, o *userGrantOptions, arg string, grant bool) e
 	if err != nil {
 		return err
 	}
-	_, lc, err := selectProject(ctx, o.cloudOptions)
+	sel, lc, err := selectProject(ctx, o.cloudOptions)
 	if err != nil {
+		return err
+	}
+	// The drift guard below reads this machine's own two lists, because they are
+	// the only evidence this command has that a grant is the installation's
+	// first write — an absent node is both "not migrated" and "the lists hold
+	// nobody" (access.Node). A selection that fell back to the shared config
+	// carries no terraform block at all, so those lists read empty and the guard
+	// could not fire: a first pair written there would put a node holding one
+	// pair on an installation whose lists are full, and the next fugaro update
+	// derives the IAM lists from that node, dropping every member they held
+	// (update_access.go's accessDropped). The refusal names fugaro setup, which
+	// is the door that writes a config with the lists in it — the same refusal
+	// user add and rm meet (userLocalConfig), asked before the database is
+	// opened at all.
+	if err := userLocalConfig(sel, lc); err != nil {
 		return err
 	}
 	_, db, err := budgetDBFor(ctx, lc)

@@ -3,12 +3,14 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	accesslib "github.com/dimipaun/fugaro/internal/access"
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
@@ -768,5 +770,54 @@ func TestRevokeIsNotUndoneByTheNextUpdate(t *testing.T) {
 	}
 	if !strings.Contains(converge, revoked) {
 		t.Errorf("the run drops the member in silence:\n%s", converge)
+	}
+}
+
+// TestGrantRefusesASelectionWithNoFile: the drift guard above reads THIS
+// MACHINE's two lists, because an absent grants node is both "not migrated" and
+// "the lists hold nobody" (access.Node) and only those lists tell the two
+// apart. A machine whose project was selected from the shared config has no
+// config file at all — a shared config carries no terraform block — so those
+// lists read empty and the guard would not fire: a grant there would create a
+// node holding one pair on an installation whose lists are full, and the next
+// `fugaro update` derives the IAM lists from that node and drops every member
+// they held (accessDropped). The refusal is the one user add and rm meet, and
+// it comes before the database is opened.
+func TestGrantRefusesASelectionWithNoFile(t *testing.T) {
+	noAgentSession(t)
+	noTerminal(t)
+	f := sharedEnd2End(t)
+	// The installation's own database, marked for the project the shared config
+	// names, and pointed at from that config: if the refusal were not there the
+	// command would reach a real write, which is what makes this case worth
+	// pinning rather than a refusal for a database it could not open anyway.
+	db := gcpfake.NewRTDB(t)
+	db.Set(budget.PathMark, map[string]any{
+		"managed_by": "fugaro", "project": initProjectName, "gcp_project": "proj-1234", "version": 1,
+	})
+	db.Set(budget.PathProject, initProjectName)
+	inner := sharedFetch
+	sharedFetch = func(ctx context.Context, getenv func(string) string, now time.Time, name, gcp string) (*localcfg.Config, string, error) {
+		c, note, err := inner(ctx, getenv, now, name, gcp)
+		if err == nil && c != nil && c.Budget != nil {
+			c.Budget.RTDBURL = db.URL
+		}
+		return c, note, err
+	}
+	t.Cleanup(func() { sharedFetch = inner })
+	t.Chdir(gitCheckout(t, filepath.Join(f.dir, "app"), "version: 1\nproject: "+initProjectName+"\ngcp_project: proj-1234\n"))
+	userPairAs(t, "user:root@example.com")
+
+	all, err := userPairRun(t, "grant", "user:new@example.com", "operator", "project")
+	if err == nil {
+		t.Fatalf("a grant written from a machine with no config of its own created the installation's node:\n%s", all)
+	}
+	for _, w := range []string{"fugaro setup", "shared config", userListSource} {
+		if !strings.Contains(all, w) {
+			t.Errorf("the refusal does not say %q:\n%s", w, all)
+		}
+	}
+	if accessNode(t, db).Found {
+		t.Errorf("the refused grant created the node:\n%s", all)
 	}
 }
