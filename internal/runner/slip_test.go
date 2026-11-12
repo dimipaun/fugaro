@@ -176,6 +176,11 @@ func slipRun(t *testing.T, svc *slipService, answer func(n int, r *http.Request,
 		}
 	})
 	r.sess = svcSession(t)
+	// A run's own end stops the beat (Run's deferred cleanup does it on every
+	// path out of it), so a fixture's beat is stopped here: one that outlived
+	// its test would keep asking this stand-in for the length of the next
+	// test, and would read the interval that test set.
+	t.Cleanup(r.stopSlipBeat)
 	return r
 }
 
