@@ -59,11 +59,20 @@ type planStep struct {
 // owner's floor, the allowed_models list, the same-model rule, the
 // provider-effort rule and the closed effort set (G1, D721, D725).
 //
+// The levels the run's own request forces on above the owner's floor are part
+// of this resolution (securityForcedLevels, SC10, D1517): the task's
+// `security: true` and the layer's always_level_3 are read here rather than
+// after the run is under way, so the plan bootstrap builds already carries the
+// adversarial step and nothing about the run changes under the agent's feet.
+// A mode: review recipe is the one run the request cannot hold — the level has
+// no step to run in — and there the force is dropped with a warning rather
+// than failing the run (securityForcedLevels).
+//
 // A run with no mode resolves nothing: the mode is the resolver's first
 // layer, and rigor.Known is false only for a run that never resolved one at
 // all (a hand-built one; every real run's bootstrapRigor answers).
 func (r *run) resolveLevels() error {
-	levels, err := r.resolveLevelsForcing(nil)
+	levels, err := r.resolveLevelsForcing(r.securityForcedLevels())
 	if err != nil {
 		return err
 	}
@@ -72,11 +81,15 @@ func (r *run) resolveLevels() error {
 }
 
 // resolveLevelsForcing is resolveLevels with levels forced on above the owner's
-// floor. It is the security escalation's re-resolution (security.go, D1507):
-// the run's diff matched a row of the list in force, so level 3 is required of
-// this run exactly as the owner's floor requires a level — the same input, so
-// the same refusals and the same Inserted answer, and the runner's plan then
-// carries the step.
+// floor. It is both halves of level 3's forcing: resolveLevels' own resolution
+// of a run that asks for it (securityForcedLevels, SC10) and the security
+// escalation's re-resolution (security.go, D1507), where the run's diff matched
+// a row of the list in force. Both require level 3 of the run exactly as the
+// owner's floor requires a level — the same input, so the same refusals and the
+// same Inserted answer, and the runner's plan then carries the step. They
+// differ in when they are taken and in what happens to a refusal: bootstrap
+// fails the run (the launcher is still there to be told), a seam warns and
+// leaves the levels where they are (F9).
 //
 // A forced level is raise-only (D1517): the layers' off-switches for it are
 // cleared rather than allowed to defeat it (forcedLevelsAreRaiseOnly below).
@@ -85,7 +98,8 @@ func (r *run) resolveLevels() error {
 // cannot go on with the answer — a refusal the floor's own requirement met, a
 // plan that would not hold it — leaves the run's levels where they are, which
 // is what "the escalation never fails the run" needs (F9). force is nil for
-// every ordinary resolution, which is then byte-for-byte resolveLevels.
+// every run that asks for no level, which is then byte-for-byte the resolution
+// this function had before either forcing existed.
 func (r *run) resolveLevelsForcing(force []policy.Level) (config.Levels, error) {
 	mode := r.reachedRigor()
 	if !rigor.Known(mode) {
@@ -134,17 +148,21 @@ func (r *run) resolveLevelsForcing(force []policy.Level) (config.Levels, error) 
 }
 
 // forcedLevelsAreRaiseOnly is the configuration and the task block with review
-// level 3's off-switch cleared, for the escalation's forced resolution.
+// level 3's off-switch cleared, for a forced resolution: the run's own request
+// that it be at the strongest level (securityForcedLevels, SC10) and the
+// escalation's re-resolution when its diff matched (security.go) alike.
 //
-// The forced level is raise-only — D1517's rule for the escalation's row, and
-// the reason SC10's `security: false` changes nothing — so a layer's `none` for
-// level 3 is not a veto on it. D722 refuses a floored level a layer turned off,
-// and that refusal is the launcher's: it is raised at bootstrap, where the
-// person who wrote the task can still be told to fix it. At the escalation's
-// seams the launcher is gone and the run's own classification is what decides
-// (D1510), so the switch is cleared rather than allowed to defeat a requirement
-// the owner's list made. The escalation says so where it can be read: in the
-// log and in the record's own member (security.go).
+// The forced level is raise-only — D1517's rule for the request and for the
+// escalation's row alike, and the reason `security: false` changes nothing — so
+// a layer's `none` for level 3 is not a veto on it. D722 refuses a floored level
+// a layer turned off, and that refusal is the launcher's: it is raised where the
+// person who wrote the task can still be told to fix it. A forced resolution is
+// not that refusal: at the escalation's seams the launcher is gone and the run's
+// own classification is what decides (D1510), and the run's own request is the
+// one statement that only turns the level on, so the switch is cleared rather
+// than allowed to defeat a requirement the owner's list made. The escalation
+// says so where it can be read: in the log and in the record's own member
+// (security.go).
 func (r *run) forcedLevelsAreRaiseOnly() (*config.Config, *config.ReviewLevels) {
 	cfg := *r.cfg
 	cfg.Agent.Levels.L3 = levelThreeNotOff(cfg.Agent.Levels.L3)

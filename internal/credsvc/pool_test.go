@@ -13,6 +13,7 @@ package credsvc
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 const (
@@ -41,12 +43,18 @@ const (
 // poolBundleDoc is the installation's bundle with testPoolAccount's
 // subscription on it: the default account's token, alice's, bob's and the
 // project's paid key.
-func poolBundleDoc(t *testing.T) []byte {
+func poolBundleDoc(t *testing.T, extra ...string) []byte {
 	t.Helper()
-	return []byte(config.ClaudeOAuthToken + ": " + fakeCred(t, "default") + "\n" +
+	doc := config.ClaudeOAuthToken + ": " + fakeCred(t, "default") + "\n" +
 		config.ClaudeOAuthTokenPrefix + testAccount + ": " + fakeCred(t, testAccount) + "\n" +
-		config.ClaudeOAuthTokenPrefix + testPoolAccount + ": " + fakeCred(t, testPoolAccount) + "\n" +
-		config.AnthropicSecret + ": " + fakeCred(t, "paid") + "\n")
+		config.ClaudeOAuthTokenPrefix + testPoolAccount + ": " + fakeCred(t, testPoolAccount) + "\n"
+	// extra are further named accounts, for a test whose pool reaches past the
+	// two this fixture's pool lists: a rotation is read off the members it
+	// visits (roundrobin_test.go).
+	for _, name := range extra {
+		doc += config.ClaudeOAuthTokenPrefix + name + ": " + fakeCred(t, name) + "\n"
+	}
+	return []byte(doc + config.AnthropicSecret + ": " + fakeCred(t, "paid") + "\n")
 }
 
 // poolNode is the fixture's project node with the test's own keys written into
@@ -54,27 +62,33 @@ func poolBundleDoc(t *testing.T) []byte {
 // the accounts: the budget's credentials block, the craft credentials, the
 // pools, the crafts and the subscription switch.
 //
+// The pools every block here writes are legacy_open, the migration's own
+// marker for a pool that existed before pools carried an owner (D1942): what
+// these tests read is which of a pool's members serves a call, and such a pool
+// serves everyone, where an owner and a roster would answer a question this
+// file does not ask (the grant is slip_pool_test's).
+//
 // The three accounts are offered to both of the fixture's repositories, as
 // testPolicyDoc's are, because a pool member's own admission is the same leg
 // (O4) the cascade's list is narrowed by and a member this repository is not
 // admitted to is a member it is not served by.
-//
-// The node is written at the version this Fugaro reads, and its pools name an
-// owner, because Decode refuses the two things an older fixture got away with:
-// a node more than one version behind the reader, and a pool with no owner
-// (version 5's rule, D1936). The owner is the launcher class's own account —
-// what a pool's owner is, and this file's calls are a job's, which ownership
-// does not gate: it is the slip grant that serves the owner and the users the
-// pool names (R10).
-func poolNode(block string) string {
+func poolNode(block string, extra ...string) string {
+	// extra are further accounts the node defines, and they are defined the way
+	// the three above are: a member's admission is the intersection of the
+	// child's list and this block (admittedAccounts), so an account absent here
+	// is an account no pool member can be served from.
+	accounts := []string{config.DefaultClaudeAccount, testAccount, testPoolAccount}
+	accounts = append(accounts, extra...)
+	entries := make([]string, 0, len(accounts))
+	for _, name := range accounts {
+		entries = append(entries, `"`+name+`": {"allow_repos": ["`+testRepo+`", "`+testOtherRepo+`"]}`)
+	}
 	return `{
-		"version": 6,
+		"version": ` + strconv.Itoa(projectpolicy.Version) + `,
 		"budget": ` + testBudgetDoc + `,
 		"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"],
 		"accounts": {
-			"default": {"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"]},
-			"` + testAccount + `": {"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"]},
-			"` + testPoolAccount + `": {"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"]}
+			` + strings.Join(entries, ",\n\t\t\t") + `
 		},
 		` + block + `
 	}`
@@ -102,17 +116,43 @@ func poolSvc(t *testing.T, block string) *svc {
 // one craft key is enough to put the pool under both of a coding run's
 // first-craft stages.
 func poolCraftBlock(credentials string, members ...string) string {
+	return poolCraftBlockOf("", credentials, members...)
+}
+
+// poolCraftBlockOf is poolCraftBlock with the pool's strategy written: "" is
+// the key's absence, which is D1632's failover and the shape every pool written
+// before the strategy existed has, and a strategy is the owner's word for how
+// the members are shared out (roundrobin_test.go).
+func poolCraftBlockOf(strategy, credentials string, members ...string) string {
+	return `"craft_credentials": [` + credentials + `],
+		"craft_pools": [` + poolDoc(testPoolName, strategy, members...) + `],
+		"crafts": {"coder": {"access": "` + testPoolName + `"}}`
+}
+
+// poolDoc is ONE pool as the node writes it — the name, the owner a published
+// pool must name (D1936), the strategy when one is asked for and `members` in
+// the order the owner listed them — so that a fixture whose project goes out on
+// two pools of different strategies writes two of these rather than a second
+// copy of the shape (roundrobin_test.go's mixture).
+func poolDoc(name, strategy string, members ...string) string {
 	quoted := make([]string, 0, len(members))
 	for _, m := range members {
 		quoted = append(quoted, `"`+m+`"`)
 	}
-	return `"craft_credentials": [` + credentials + `],
-		"craft_pools": [{"name": "` + testPoolName + `", "owner": "` + testLauncherAccount + `", "members": [` + strings.Join(quoted, ", ") + `]}],
-		"crafts": {"coder": {"access": "` + testPoolName + `"}}`
+	written := ""
+	if strategy != "" {
+		written = `, "strategy": "` + strategy + `"`
+	}
+	return `{"name": "` + name + `", "owner": "` + testPoolOwner + `"` + written + `, "members": [` + strings.Join(quoted, ", ") + `]}`
 }
 
 // testPoolName is the fixture's pool, by the name its crafts' accesses spell.
 const testPoolName = "acme-pool"
+
+// testPoolOwner is the owner a published pool must name (D1936): the node is
+// the document that rule bites on, so a fixture that publishes a pool names one
+// the way `fugaro accounts pool add` does.
+const testPoolOwner = "owner@example.com"
 
 // TestPoolMembersAreServedByTierOrder is MC6's red step: a pool that lists the
 // API key first is still served by its OAuth member, because the TIER decides
@@ -243,7 +283,7 @@ func TestReviewCraftPoolOnlyReviewClass(t *testing.T) {
 				{"name": "`+testAccount+`", "type": "claude-oauth"},
 				{"name": "`+testPoolAccount+`", "type": "claude-oauth"}
 			],
-			"craft_pools": [{"name": "`+testPoolName+`", "owner": "`+testLauncherAccount+`", "members": ["`+testAccount+`", "`+testPoolAccount+`"]}],
+			"craft_pools": [{"name": "`+testPoolName+`", "owner": "`+testPoolOwner+`", "members": ["`+testAccount+`", "`+testPoolAccount+`"]}],
 			"crafts": {"senior-review": {"access": "`+testPoolName+`"}, "security-review": {"access": "`+testPoolName+`"}},
 			"subscription_spread": true`))
 		s.policy.admissions[s.slug] = decodeTestChild(t,
@@ -298,7 +338,7 @@ func TestSubscriptionPoolInertInCredsvc(t *testing.T) {
 				{"name": "` + testAccount + `", "type": "claude-oauth"},
 				{"name": "` + testPoolAccount + `", "type": "claude-oauth"}
 			],
-			"craft_pools": [{"name": "` + testPoolName + `", "owner": "` + testLauncherAccount + `", "members": ["` + testPoolAccount + `", "` + testAccount + `"]}],
+			"craft_pools": [{"name": "` + testPoolName + `", "owner": "` + testPoolOwner + `", "members": ["` + testPoolAccount + `", "` + testAccount + `"]}],
 			"crafts": {"coder": {"access": "` + testPoolName + `"}}` + spread
 	}
 

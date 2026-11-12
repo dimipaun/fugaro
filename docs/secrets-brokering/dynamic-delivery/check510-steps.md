@@ -28,8 +28,9 @@ restore deletes. Read the header before you start; this file is the commands.
   mounted secret, `fugaro-<slug>-<logical>-<hash>` — and not against a name the check invented.
 - **The create rows (F30, and the 2026-11-11 reading that contradicted half of it):**
   `secretmanager.secrets.create` was said to be checked on the **project**, so a conditioned grant of it
-  would admit nothing, not even the prefix it names — which is why the intake holds create
-  unconditioned. The owner's run of 2026-11-11 measured the opposite for a `fugaro_u_` name: the
+  would admit nothing, not even the prefix it names — the reading the plan carried, with the intake's
+  create unconditioned, until the owner's runs measured otherwise. The owner's run of 2026-11-11
+  measured the opposite for a `fugaro_u_` name: the
   conditioned grant **admitted** the create. The three create rows are therefore **readings reported to
   you** (`REPORT` in the block) rather than criteria the check passes or fails, and what they settle is
   the pair: `create-conditioned` (a name inside the prefix) and `create-conditioned-outside` (a name

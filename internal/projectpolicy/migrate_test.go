@@ -126,7 +126,7 @@ func TestMigrateEditsOnlyTheBytesItWrites(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Migrate = %v", err)
 	}
-	want := bytes.Replace(raw, []byte(`"version": 3`), []byte(`"version": 6`), 1)
+	want := bytes.Replace(raw, []byte(`"version": 3`), []byte(`"version": 7`), 1)
 	if !bytes.Equal(migrated, want) {
 		t.Errorf("the migrated node is not the node with its version rewritten:\n got %s\nwant %s", migrated, want)
 	}
@@ -165,7 +165,7 @@ func TestMigrateRoundTripsThroughTheStrictReader(t *testing.T) {
 	}
 	// The fixture with its version rewritten by hand is what "nothing but the
 	// version changed" means, and the strict reader is the judge of it.
-	hand := bytes.Replace(raw, []byte(`"version": 3`), []byte(`"version": 6`), 1)
+	hand := bytes.Replace(raw, []byte(`"version": 3`), []byte(`"version": 7`), 1)
 	want, found, err := Decode(hand)
 	if err != nil || !found {
 		t.Fatalf("the hand-rewritten fixture does not decode: (%v, %v)", found, err)
@@ -274,8 +274,8 @@ func TestMigrateRefusesAMalformedNodeUntouched(t *testing.T) {
 // and not its own.
 func TestMigrateCurrentIsANoOp(t *testing.T) {
 	for _, raw := range [][]byte{
-		[]byte(`{"version":6,"budget":{"mode":"enforce"},"allow_repos":["github/owner/repo-a"]}`),
-		[]byte(`{"version":6,"allow_repos":["nope"]}`),
+		[]byte(`{"version":7,"budget":{"mode":"enforce"},"allow_repos":["github/owner/repo-a"]}`),
+		[]byte(`{"version":7,"allow_repos":["nope"]}`),
 	} {
 		migrated, changes, err := Migrate(raw)
 		if err != nil {
@@ -560,7 +560,7 @@ func TestMigrateWritesTheMarkerOnlyWhereItIsMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Migrate = %v", err)
 	}
-	if len(changes) != 2 || changes[0].Changed != "the version field: 4 to 5" || changes[1].Changed != "the version field: 5 to 6" {
+	if len(changes) != 3 || changes[0].Changed != "the version field: 4 to 5" || changes[1].Changed != "the version field: 5 to 6" || changes[2].Changed != "the version field: 6 to 7" {
 		t.Fatalf("changes = %+v, want the step to report the version field alone: no pool of this node needed a marker", changes)
 	}
 	if !slices.Contains(changes[0].Kept, "craft_pools") {
