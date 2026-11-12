@@ -3146,8 +3146,8 @@ func warnCoreJobImage(ctx context.Context, env *cloudEnv, slug string, spec *tas
 	if spec.Tier != "" {
 		asks = append(asks, "the run's tier")
 	}
-	fmt.Fprintf(warn, "warning: the job image of %s workflow %s is a core build of fugaro: it reads %s and ignores it, so nothing it sets is enforced by this run. Run fugaro image refresh --repo %s --workflow %s in its checkout, in your own terminal window, to have it enforced\n",
-		spec.Repo, spec.Workflow, strings.Join(asks, " and "), spec.Repo, spec.Workflow)
+	fmt.Fprintf(warn, "warning: the job image of %s workflow %s is a core build of fugaro: it reads %s and ignores it, so nothing it sets is enforced by this run. Run fugaro update in its checkout, in your own terminal window, to have it enforced\n",
+		spec.Repo, spec.Workflow, strings.Join(asks, " and "))
 }
 
 // governanceImageWarnings is validate's half of checkGovernanceImage, and has
@@ -3195,7 +3195,7 @@ func governanceImageWarnings(c *config.Config, editionOf func(workflow string) (
 	}
 	for _, name := range governanceEditionWorkflows(c) {
 		if edition, known := editionOf(name); known && edition == EditionCore {
-			warnings = append(warnings, config.Problem{Path: "workflow " + name, Message: "is a core build of fugaro: the job image of workflow " + name + " reads the governance: block and ignores it, so nothing it sets is enforced by a run of this repository. Run fugaro image refresh in that workflow's checkout to have it enforced"})
+			warnings = append(warnings, config.Problem{Path: "workflow " + name, Message: "is a core build of fugaro: the job image of workflow " + name + " reads the governance: block and ignores it, so nothing it sets is enforced by a run of this repository. Run fugaro update in its checkout to have it enforced"})
 		}
 	}
 	return warnings, notes
