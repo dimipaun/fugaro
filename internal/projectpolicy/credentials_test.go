@@ -296,11 +296,11 @@ func TestPolicyBackoffCapAboveItsEffectiveInitial(t *testing.T) {
 // *number does not move for this task*, and that is what this asserts. See the
 // pull request for the disagreement between the plan's text and the code.
 func TestPolicyCredentialsCarryNoVersionBump(t *testing.T) {
-	if Version != 6 {
-		t.Fatalf("the policy Version is %d, and this test's node is written for 6: update both together, deliberately", Version)
+	if Version != 7 {
+		t.Fatalf("the policy Version is %d, and this test's node is written for 7: update both together, deliberately", Version)
 	}
 	p, found, err := Decode([]byte(`{
-		"version": 6,
+		"version": 7,
 		"budget": {"mode": "off"},
 		"credentials": {"fallback": "oauth-only", "wait_threshold": "15m"}
 	}`))
