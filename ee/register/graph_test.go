@@ -28,6 +28,8 @@ import (
 // answers to is the registered command and never the core's stand-in. What the
 // command prints is ee/graph/cli's own tests'.
 func TestGraphRegisteredOnce(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	root := cli.NewRootCmd()
 	c, _, err := root.Find([]string{"graph"})
 	if err != nil || c == nil || c.Name() != "graph" {

@@ -201,12 +201,14 @@ func (e *Effective) refuseCraftCredentials(names []string) {
 	}
 }
 
-// craftSource is the layer a refused craft value lost to, as a record reads it:
-// the layer that set the effective value where one did, and the project's own —
-// the merge's first layer — where none did. The project's set of credentials
-// and pools is the whole answer to "may this name be used", so its silence
-// about a name is the answer a later layer may not loosen, and it is that layer
-// the value was measured against.
+// craftSource is the layer a refused project-owned value lost to, as a record
+// reads it: the layer that set the effective value where one did, and the
+// project's own — the merge's first layer — where none did. The project's set of
+// credentials and pools is the whole answer to "may this name be used", so its
+// silence about a name is the answer a later layer may not loosen, and it is that layer
+// the value was measured against. A refused grade is measured the same way
+// (tightenGrades): a value with no effective counterpart was measured against
+// the layer that owns the block.
 //
 // It is never "": a record's ignored[].source is the layer of the effective
 // value, and a schema pins it to the four layer names

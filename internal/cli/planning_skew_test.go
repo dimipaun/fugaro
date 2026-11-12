@@ -207,7 +207,7 @@ func TestRunRefusesPlanningOnAnOlderBaseImage(t *testing.T) {
 				"knows the planning: block",
 				"fugaro " + planningSince + " or later",
 				"ghcr.io/dimipaun/fugaro-base:" + c.rel + ", release " + c.rel,
-				"fugaro image refresh --repo acme/other --workflow svc",
+				imageGateRemedy,
 				"; or remove the planning: block from fugaro.yaml",
 			} {
 				if !strings.Contains(err.Error(), want) {
@@ -256,7 +256,7 @@ func TestRunRefusesTheLayersPlanningOnAnOlderBaseImage(t *testing.T) {
 	for _, want := range []string{
 		"the project layer's defaults.planning (read for acme/other)",
 		"knows the project layer's defaults.planning",
-		"fugaro image refresh --repo acme/other --workflow " + config.ImplicitWorkflow,
+		imageGateRemedy,
 		"remove defaults.planning from the project layer",
 	} {
 		if !strings.Contains(err.Error(), want) {
@@ -380,7 +380,7 @@ func TestValidateWarnsWhenTheProjectLayerSetsPlanning(t *testing.T) {
 // make writing the key an operator step, and `fugaro update` the one command the
 // user is told to run may not be two.
 func TestUpdateConvergesFromThePreviousVersionWithPlanningKey(t *testing.T) {
-	r := newConvergeRigYAML(t, v5Node(), refreshYAML+"planning: { decoupling: false }\n")
+	r := newConvergeRigYAML(t, v6Node(), refreshYAML+"planning: { decoupling: false }\n")
 	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
 }
 
@@ -393,7 +393,17 @@ func TestUpdateConvergesFromThePreviousVersionWithPlanningKey(t *testing.T) {
 // judged on the recorded image passes there for the wrong reason.
 func predatePlanning(t *testing.T, r *convergeRig) {
 	t.Helper()
-	from, to := pinnedRef("base", convergePrev), pinnedRef("base", shiftRelease(t, planningSince, -1))
+	predateBaseImageTo(t, r, shiftRelease(t, planningSince, -1))
+}
+
+// predateBaseImageTo is predatePlanning for any release: it moves the base
+// image both copies of the local config record to rel's tag, which is the state
+// of an installation whose recorded image predates a key this release adds. The
+// rig's own two versions are 1.2.x, above every 0.2x *Since constant, so a gate
+// judged on the recorded image would pass there for the wrong reason.
+func predateBaseImageTo(t *testing.T, r *convergeRig, rel string) {
+	t.Helper()
+	from, to := pinnedRef("base", convergePrev), pinnedRef("base", rel)
 	for _, path := range []string{r.cfg, convergeLocalConfigPath(t)} {
 		data, err := os.ReadFile(path)
 		if err != nil {
@@ -424,7 +434,7 @@ func predatePlanning(t *testing.T, r *convergeRig) {
 // judged the config as the run found it would refuse here and turn writing the
 // key into an operator step, which is the failure this test exists to catch.
 func TestUpdateConvergesFromABaseImageThatPredatesPlanning(t *testing.T) {
-	r := newConvergeRigYAML(t, v5Node(), refreshYAML+"planning: { decoupling: false }\n")
+	r := newConvergeRigYAML(t, v6Node(), refreshYAML+"planning: { decoupling: false }\n")
 	predatePlanning(t, r)
 	if got, want := projectConfigOf(t, r).BaseImages["base"], pinnedRef("base", shiftRelease(t, planningSince, -1)); got != want {
 		t.Fatalf("the installation records the base image %s, want the release before the key, %s: this is not the installation the test is about", got, want)

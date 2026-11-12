@@ -519,7 +519,7 @@ crafts:
 // release with default_claude_account set reaches the craft vocabulary with
 // `fugaro update` alone, and doctor is clean afterwards (the HARD RULE, F17).
 func TestUpdateConvergesPreviousInstallation(t *testing.T) {
-	r := newConvergeRig(t, v5NodeWithAccounts())
+	r := newConvergeRig(t, v6NodeWithAccounts())
 	r.appendConfig(t, migratedAccounts)
 	// The keys go in before the copy the door reads is taken: the rig clears
 	// FUGARO_CONFIG, so the local config `fugaro update` reads and writes is the
@@ -568,7 +568,7 @@ func TestUpdateConvergesPreviousInstallation(t *testing.T) {
 // refusal). What idempotence means for this migration is a property of the file
 // it produced, and that is what the test reads.
 func TestUpdateIsIdempotent(t *testing.T) {
-	r := newConvergeRig(t, v5NodeWithAccounts())
+	r := newConvergeRig(t, v6NodeWithAccounts())
 	r.appendConfig(t, migratedAccounts)
 	// The keys go in before the copy the door reads is taken: the rig clears
 	// FUGARO_CONFIG, so the local config `fugaro update` reads and writes is the
@@ -596,7 +596,7 @@ func TestUpdateIsIdempotent(t *testing.T) {
 // already — is one nobody reads, and the keys it is about are the same keys
 // every time.
 func TestUpdateReportsTheKeysItCannotConvert(t *testing.T) {
-	node := v5NodeWithAccounts()
+	node := v6NodeWithAccounts()
 	// The node carries the stage key too: an account key the node does not
 	// carry is a widening of what the project's runs may reach, and publishing
 	// one needs a typed confirmation at a real terminal (policyAccountWidening).
@@ -685,14 +685,14 @@ default_claude_account: team-a
 	}
 }
 
-// v5NodeWithAccounts is v5Node carrying the account-choice members this
+// v6NodeWithAccounts is v6Node carrying the account-choice members this
 // fixture's local config states, so the policy stage's publish is a publish of
 // the verifier list alone: an account key the node does not carry is a widening
 // of what every run of the project may reach, and publishing one needs a typed
 // confirmation at a real terminal (policyAccountWidening), which is the one
 // thing a headless test cannot give.
-func v5NodeWithAccounts() map[string]any {
-	node := v5Node()
+func v6NodeWithAccounts() map[string]any {
+	node := v6Node()
 	node["default_claude_account"] = "team-a"
 	node["claude_account_stages"] = map[string]any{"review_first": "team-b"}
 	return node
