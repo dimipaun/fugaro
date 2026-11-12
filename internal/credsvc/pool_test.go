@@ -60,7 +60,7 @@ func poolBundleDoc(t *testing.T) []byte {
 // admitted to is a member it is not served by.
 func poolNode(block string) string {
 	return `{
-		"version": 4,
+		"version": 5,
 		"budget": ` + testBudgetDoc + `,
 		"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"],
 		"accounts": {
@@ -99,9 +99,15 @@ func poolCraftBlock(credentials string, members ...string) string {
 		quoted = append(quoted, `"`+m+`"`)
 	}
 	return `"craft_credentials": [` + credentials + `],
-		"craft_pools": [{"name": "` + testPoolName + `", "members": [` + strings.Join(quoted, ", ") + `]}],
+		"craft_pools": [{"name": "` + testPoolName + `", "owner": "` + testPoolOwner + `", "members": [` + strings.Join(quoted, ", ") + `]}],
 		"crafts": {"coder": {"access": "` + testPoolName + `"}}`
 }
+
+// testPoolOwner is the address every fixture pool names as its owner: a
+// PUBLISHED pool that names nobody is refused (D1936), and the owner is read
+// only where a slip is issued, so nothing on the cascade path below depends on
+// which address it is.
+const testPoolOwner = "pool-owner@example.invalid"
 
 // testPoolName is the fixture's pool, by the name its crafts' accesses spell.
 const testPoolName = "acme-pool"
@@ -235,7 +241,7 @@ func TestReviewCraftPoolOnlyReviewClass(t *testing.T) {
 				{"name": "`+testAccount+`", "type": "claude-oauth"},
 				{"name": "`+testPoolAccount+`", "type": "claude-oauth"}
 			],
-			"craft_pools": [{"name": "`+testPoolName+`", "members": ["`+testAccount+`", "`+testPoolAccount+`"]}],
+			"craft_pools": [{"name": "`+testPoolName+`", "owner": "`+testPoolOwner+`", "members": ["`+testAccount+`", "`+testPoolAccount+`"]}],
 			"crafts": {"senior-review": {"access": "`+testPoolName+`"}, "security-review": {"access": "`+testPoolName+`"}},
 			"subscription_spread": true`))
 		s.policy.admissions[s.slug] = decodeTestChild(t,
@@ -290,7 +296,7 @@ func TestSubscriptionPoolInertInCredsvc(t *testing.T) {
 				{"name": "` + testAccount + `", "type": "claude-oauth"},
 				{"name": "` + testPoolAccount + `", "type": "claude-oauth"}
 			],
-			"craft_pools": [{"name": "` + testPoolName + `", "members": ["` + testPoolAccount + `", "` + testAccount + `"]}],
+			"craft_pools": [{"name": "` + testPoolName + `", "owner": "` + testPoolOwner + `", "members": ["` + testPoolAccount + `", "` + testAccount + `"]}],
 			"crafts": {"coder": {"access": "` + testPoolName + `"}}` + spread
 	}
 
