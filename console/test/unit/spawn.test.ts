@@ -137,6 +137,8 @@ import { installStub } from './stub'
 import type { Stub } from './stub'
 import { DISTRO_PATH, installWslStub } from './wslstub'
 import type { WslFixture, WslReport, WslStub } from './wslstub'
+import { reportedMode } from '../support/fsMode'
+import { itHostRoute } from '../support/hostRoute'
 
 const SOURCE_ROOT = fileURLToPath(new URL('../../src', import.meta.url))
 const PROJECT = 'fugaro'
@@ -2015,7 +2017,7 @@ describe('the real spawner', () => {
       child.on('close', () => resolve())
     })
 
-  it('gives the child the descriptors its caller asked for', async () => {
+  itHostRoute('gives the child the descriptors its caller asked for', async () => {
     // T-F4: the one child whose output is nobody's is the stop sent **inside**
     // a distribution, and it asks for `'ignore'` on all three, because a pipe
     // nobody drains is a child that blocks on write. `nodeSpawner` used to
@@ -2423,7 +2425,7 @@ describe('the child environment', () => {
     expect(host.env[LICENCE_KEY_VAR]).toBe(KEY)
   })
 
-  it('hands a key to no source child while no release takes it back out', async () => {
+  itHostRoute('hands a key to no source child while no release takes it back out', async () => {
     // The gate at the call site that spawns every operation but the launch:
     // `CliSource`'s `#plan` asks `licenceKeySupported` of the resolved binary's
     // own version line **before** it reads the store, and the floor is unset
@@ -2463,7 +2465,7 @@ describe('the child environment', () => {
     }
   })
 
-  it('reaches the child as its real environment, not just as a plan', async () => {
+  itHostRoute('reaches the child as its real environment, not just as a plan', async () => {
     // The end-to-end half: the stub reports the keys of its own process.env, so
     // a merge with process.env anywhere in the console would show up here.
     const directory = freshDirectory()
@@ -2491,7 +2493,7 @@ describe('the child environment', () => {
 })
 
 describe('the child’s working directory', () => {
-  it('spawns from the installation’s checkout when it has one', async () => {
+  itHostRoute('spawns from the installation’s checkout when it has one', async () => {
     const directory = freshDirectory()
     const checkout = freshDirectory('fugaro-checkout-')
     const stub = installStub(directory, { commands: { version: { stdout: '1.4.2\n' }, doctor: { stdout: '{}\n' } } })
@@ -2505,7 +2507,7 @@ describe('the child’s working directory', () => {
     expect(stub.reports().at(-1)?.cwd).toBe(checkout)
   })
 
-  it('spawns from a private directory the app owns when there is no checkout, and never /', async () => {
+  itHostRoute('spawns from a private directory the app owns when there is no checkout, and never /', async () => {
     ownTemporaryDirectory()
     const directory = freshDirectory()
     const stub = installStub(directory, { commands: { version: { stdout: '1.4.2\n' }, doctor: { stdout: '{}\n' } } })
@@ -2519,10 +2521,10 @@ describe('the child’s working directory', () => {
     expect(cwd).not.toBe('/')
     expect(cwd.startsWith(realpathSync(tmpdir()))).toBe(true)
     expect(statSync(cwd).isDirectory()).toBe(true)
-    expect(statSync(cwd).mode & 0o777).toBe(0o700)
+    expect(statSync(cwd).mode & 0o777).toBe(reportedMode(0o700))
   })
 
-  it('passes `doctor --dir <that directory>` and never `--strict`', async () => {
+  itHostRoute('passes `doctor --dir <that directory>` and never `--strict`', async () => {
     const directory = freshDirectory()
     const stub = installStub(directory, { commands: { version: { stdout: '1.4.2\n' }, doctor: { stdout: '{}\n' } } })
     const source = await CliSource.create({ target: { project: PROJECT }, configuredBinaryPath: stub.binary, appEnv: {} })
@@ -2545,14 +2547,14 @@ describe('the child’s working directory', () => {
   it('creates the private directory with owner-only mode and reuses it', () => {
     ownTemporaryDirectory()
     expect(privateWorkingDirectory()).toBe(privateWorkingDirectory())
-    expect(statSync(privateWorkingDirectory()).mode & 0o777).toBe(0o700)
+    expect(statSync(privateWorkingDirectory()).mode & 0o777).toBe(reportedMode(0o700))
   })
 })
 
 describe('the private working directory', () => {
   const uid = typeof process.getuid === 'function' ? process.getuid() : null
   const name = PRIVATE_DIR_LEAF
-  it('puts the uid in the base directory, so a second user never shares it', () => {
+  itHostRoute('puts the uid in the base directory, so a second user never shares it', () => {
     // The defect this test exists for: the base was `join(tmpdir(),
     // 'fugaro-console')` for every user on the machine, created 0700 by whoever
     // ran first. Every other user then found a directory owned by someone else
@@ -2605,7 +2607,7 @@ describe('the private working directory', () => {
     mkdirSync(join(base, name), { mode: 0o755 })
     chmodSync(join(base, name), 0o755)
     const path = privateWorkingDirectory({ base })
-    expect(lstatSync(path).mode & 0o777).toBe(0o700)
+    expect(lstatSync(path).mode & 0o777).toBe(reportedMode(0o700))
     const linked = join(freshDirectory(), 'linked-base')
     symlinkSync(base, linked)
     expect(() => privateWorkingDirectory({ base: linked })).toThrow(/symbolic link/)
@@ -2617,7 +2619,7 @@ describe('the private working directory', () => {
     expect(realpathSync(path)).toBe(path)
   })
 
-  it('creates a directory on Windows that makes no mode claim at all (F12, T-D4)', () => {
+  itHostRoute('creates a directory on Windows that makes no mode claim at all (F12, T-D4)', () => {
     // F12: the POSIX guarantees are POSIX-only, and the defect is stating them
     // anyway. NTFS reports two modes and neither is a POSIX one; `chmodSync` is
     // a no-op there and `process.getuid` does not exist, so a `0700` description
@@ -2790,7 +2792,7 @@ describe('binary resolution', () => {
     expect(LINUX_LOCATIONS.route).toBe('host')
   })
 
-  it('resolves against the platform’s list, and the list is an argument rather than a global', () => {
+  itHostRoute('resolves against the platform’s list, and the list is an argument rather than a global', () => {
     // `binDirectories` walks the same table `locationsFor` returns, so the two
     // cannot drift; `platform` is how a test drives it, because the runner this
     // suite executes on is not the machine the app ships to.
@@ -2821,7 +2823,7 @@ describe('binary resolution', () => {
     expect([...binDirectories({ home: 'C:\\Users\\owner', platform: 'win32' })]).toEqual([])
   })
 
-  it('asks the mode question of the platform whose filesystem it is asking (F4, T-C7)', () => {
+  itHostRoute('asks the mode question of the platform whose filesystem it is asking (F4, T-C7)', () => {
     // The runner this suite executes on is POSIX, so the Windows answer is
     // driven rather than observed -- and the POSIX answer is asserted next to
     // it, because a platform argument that changed both branches would be a
@@ -3000,7 +3002,7 @@ describe('binary resolution', () => {
     expect(stub.calls()).toBe(0)
   })
 
-  it('resolves a configured path first, and reports where it came from', async () => {
+  itHostRoute('resolves a configured path first, and reports where it came from', async () => {
     const directory = freshDirectory()
     const stub = installStub(directory, { commands: { version: { stdout: '1.4.2\n' } } })
     const resolution = await resolveBinary({
@@ -3014,7 +3016,7 @@ describe('binary resolution', () => {
     expect(resolution.ok && resolution.source).toBe('configured')
   })
 
-  it('walks the well-known prefixes in order, and stops there', async () => {
+  itHostRoute('walks the well-known prefixes in order, and stops there', async () => {
     const base = freshDirectory()
     const first = join(base, 'prefix-a', 'bin')
     const second = join(base, 'prefix-b', 'bin')
@@ -3058,7 +3060,7 @@ describe('binary resolution', () => {
     expect(stub.calls()).toBe(0)
   })
 
-  it('resolves ~/.local/bin for the home directory it was given', async () => {
+  itHostRoute('resolves ~/.local/bin for the home directory it was given', async () => {
     const home = freshDirectory('fugaro-home-')
     const stub = installStub(join(home, '.local', 'bin'), { commands: { version: { stdout: '1.0.0\n' } } })
     const resolution = await resolveBinary({
@@ -3074,7 +3076,7 @@ describe('binary resolution', () => {
     expect(resolution.ok && resolution.path).toBe(stub.binary)
   })
 
-  it('takes the home directory from the process environment when the caller passes none', async () => {
+  itHostRoute('takes the home directory from the process environment when the caller passes none', async () => {
     // **The e2e suite's hermetic override, in the fast suite.** `test/support/
     // cliStub.ts` chooses the CLI a launch reads the only way rule 4 allows: it
     // writes the stub into a scratch home's `~/.local/bin` and points the
@@ -3105,7 +3107,7 @@ describe('binary resolution', () => {
     expect(decoy.calls(), 'the resolution searched the app’s PATH').toBe(0)
   })
 
-  it('refuses a candidate whose version cannot be read, rather than skipping it', async () => {
+  itHostRoute('refuses a candidate whose version cannot be read, rather than skipping it', async () => {
     const base = freshDirectory()
     const first = join(base, 'prefix-a', 'bin')
     const second = join(base, 'prefix-b', 'bin')
@@ -3125,7 +3127,7 @@ describe('binary resolution', () => {
     expect(resolution.ok === false && resolution.reason).toMatch(/not a version/)
   })
 
-  it('refuses a binary that exits non-zero for `version`, with the CLI’s sentence', async () => {
+  itHostRoute('refuses a binary that exits non-zero for `version`, with the CLI’s sentence', async () => {
     const directory = freshDirectory()
     const stub = installStub(directory, {
       commands: { version: { stderr: 'fugaro: this build cannot report a version\n', code: 1 } },
@@ -3182,7 +3184,7 @@ describe('binary resolution', () => {
     expect(cliSentence('panic: nil map\n')).toBe('panic: nil map')
   })
 
-  it('refuses to build a source around a binary whose version cannot be read', async () => {
+  itHostRoute('refuses to build a source around a binary whose version cannot be read', async () => {
     const directory = freshDirectory()
     const stub = installStub(directory, { commands: { version: { stdout: 'nope\n' } } })
     await expect(
@@ -3463,7 +3465,7 @@ describe('the WSL resolution path', () => {
     expect(script).not.toContain('rm -rf')
   })
 
-  it('hands the CLI a hostile title as exactly one word, for all five shell shapes', async () => {
+  itHostRoute('hands the CLI a hostile title as exactly one word, for all five shell shapes', async () => {
     // The single quote above is one of five shapes a shell reads as syntax. The
     // title is the launch's one hostile-shaped value -- it is the row's one
     // `=`-form word, and `assertDistroWordsAreSafe` screens only the words a
@@ -3523,7 +3525,7 @@ describe('the WSL resolution path', () => {
     }
   })
 
-  it('resolves a stored installation inside its distribution, and starts the CLI there', async () => {
+  itHostRoute('resolves a stored installation inside its distribution, and starts the CLI there', async () => {
     const arrangement = wslRoot()
     const resolution = await resolveInside(arrangement)
     expect(resolution).toEqual({
@@ -3558,7 +3560,7 @@ describe('the WSL resolution path', () => {
     expect(child.cwd).toBe(arrangement.distroDirectory)
   })
 
-  it('states the path the installation stored, and runs the name the distribution resolves', async () => {
+  itHostRoute('states the path the installation stored, and runs the name the distribution resolves', async () => {
     // `binaryPath` under a `distro` is a Linux spelling **inside** the
     // distribution (F15): it is what the console states -- the resolution's
     // `path`, which is the header's line (D3(a)) -- and it is *not* the program
@@ -3587,7 +3589,7 @@ describe('the WSL resolution path', () => {
     expect(plan.env['PATH']?.startsWith('/home/dimi/.local/bin:')).toBe(true)
   })
 
-  it('refuses with `no-wsl` when wsl.exe cannot answer at all', async () => {
+  itHostRoute('refuses with `no-wsl` when wsl.exe cannot answer at all', async () => {
     const arrangement = wslRoot(NO_WSL)
     const resolution = await resolveInside(arrangement)
     expect(resolution.ok).toBe(false)
@@ -3601,7 +3603,7 @@ describe('the WSL resolution path', () => {
     expect(arrangement.wsl.childCalls()).toBe(0)
   })
 
-  it('refuses with `no-distro` when the stored distribution has gone, and never falls back to the default', async () => {
+  itHostRoute('refuses with `no-distro` when the stored distribution has gone, and never falls back to the default', async () => {
     // The mutation this case exists for: a fallback that picks the **default**
     // distribution (here `Debian`) when the stored one is missing. The stored
     // name is a distribution this machine does not have -- a rename or a removal
@@ -3623,7 +3625,7 @@ describe('the WSL resolution path', () => {
     expect(arrangement.wsl.reports().filter((report) => report.kind === 'spawn')).toHaveLength(0)
   })
 
-  it('hands `wsl.exe` a directory with spaces as one word', async () => {
+  itHostRoute('hands `wsl.exe` a directory with spaces as one word', async () => {
     // **The case a review asked for**: whitespace in the directory is admitted
     // (`isSafeInstallationValue`; it is a `wsl.exe` argument, not a shell word),
     // so the claim that it is *safe* has to be made where it can be observed --
@@ -3652,7 +3654,7 @@ describe('the WSL resolution path', () => {
     expect(realpathSync(child.cwd)).toBe(realpathSync(spaced))
   })
 
-  it('refuses, with a sentence, a listed distribution whose name has a space, a quote or a `;`', async () => {
+  itHostRoute('refuses, with a sentence, a listed distribution whose name has a space, a quote or a `;`', async () => {
     // Part D's rule (T-D3, `isDistroName`): the WSL route runs the CLI through
     // the distribution's own shell, so a name outside `DISTRO_NAME_PATTERN` is
     // refused (fail closed) even though `wsl.exe --list --quiet` prints it and
@@ -3677,7 +3679,7 @@ describe('the WSL resolution path', () => {
     }
   })
 
-  it('refuses, with a sentence, a listed distribution whose name it will not hand to `wsl.exe`', async () => {
+  itHostRoute('refuses, with a sentence, a listed distribution whose name it will not hand to `wsl.exe`', async () => {
     // T-E3's edge, and the reason the guard is a name check and not a crash: a
     // registered name can begin with `-` -- which is the one shape that is
     // argument confusion, because `wsl.exe` may read it as its own flag -- and
@@ -3707,7 +3709,7 @@ describe('the WSL resolution path', () => {
     expect(arrangement.wsl.reports().filter((report) => report.kind === 'spawn')).toHaveLength(0)
   })
 
-  it('refuses with `no-fugaro-in-distro` when the distribution has no CLI in it', async () => {
+  itHostRoute('refuses with `no-fugaro-in-distro` when the distribution has no CLI in it', async () => {
     // What a shell says when the command is not there: status 127 and a
     // sentence. The classification is by the probe (T-C5), so this is the
     // vector the resolver has to read -- and the instruction it produces is
@@ -3725,7 +3727,7 @@ describe('the WSL resolution path', () => {
     expect(resolution.reason).toContain('"Ubuntu"')
   })
 
-  it('reports a CLI that is there and broken as the probe’s refusal, not as a missing one', async () => {
+  itHostRoute('reports a CLI that is there and broken as the probe’s refusal, not as a missing one', async () => {
     // The distinction the four kinds exist for: a `fugaro` that is installed and
     // fails is **not** a `fugaro` that is missing, and a screen that said
     // "install it" would send the operator to install what they already have.
@@ -3748,7 +3750,7 @@ describe('the WSL resolution path', () => {
     expect(other.kind).toBe('no-binary')
   })
 
-  it('reads the handshake inside the distribution an installation names', async () => {
+  itHostRoute('reads the handshake inside the distribution an installation names', async () => {
     // The startup read is the same route: on Windows there is no host `fugaro`
     // to find, so an installation that names a distribution is read inside it.
     const arrangement = wslRoot()
@@ -3780,7 +3782,7 @@ describe('the WSL resolution path', () => {
     expect(only(arrangement.wsl.children()).argv).toEqual(['version'])
   })
 
-  it('does not walk the host for an installation whose distribution has gone', async () => {
+  itHostRoute('does not walk the host for an installation whose distribution has gone', async () => {
     // The handshake's ordinary rule is "an installation's binary is an override,
     // not a pin" -- it falls through to rule 4's walk when a stored path has
     // gone. On the WSL route there is nothing to fall through *to*: the walk is
@@ -3842,7 +3844,7 @@ describe('the WSL resolution path', () => {
   //   5. the double forwarding its own environment to the child -- the child
   //      hop's key set is pinned exactly, and `test/unit/wslstub.test.ts` holds
   //      that half of the double's contract on its own.
-  it('hands the distribution exactly CHILD_ENV_KEYS, with this process’s credentials planted', async () => {
+  itHostRoute('hands the distribution exactly CHILD_ENV_KEYS, with this process’s credentials planted', async () => {
     // The planted credentials are *names*, and the values are inert strings that
     // match no credential shape (the rule `test/unit/secret-hygiene.test.ts`
     // enforces over this tree). They stand in for everything the console's
@@ -4350,7 +4352,7 @@ describe('the supervisor', () => {
     expect(ended).toEqual(['refused'])
   })
 
-  it('stops a binary that never answers `version` instead of abandoning it', async () => {
+  itHostRoute('stops a binary that never answers `version` instead of abandoning it', async () => {
     // The one stop path in this module that used to walk away: `withTimeout`
     // resolved its race and left the child running, reparented to init when the
     // app quits, with its stdout still draining into a promise nobody awaits.
@@ -4448,7 +4450,7 @@ describe('the supervisor', () => {
     expect(calls[1]).toEqual(['/usr/bin/wsl.exe', '-d', 'Ubuntu', '-e', 'sh', '-c', 'kill -TERM 4321'])
   })
 
-  it('stops a long-lived child with SIGTERM and reports the stop', async () => {
+  itHostRoute('stops a long-lived child with SIGTERM and reports the stop', async () => {
     const directory = freshDirectory()
     const stub = installStub(directory, {
       commands: { version: { stdout: '1.4.2\n' }, watch: { lines: ['{"day":"2026-01-01"}'], hold: true } },
@@ -4467,7 +4469,7 @@ describe('the supervisor', () => {
     await source.close()
   })
 
-  it('tells a screen why the feed ended when the CLI refuses', async () => {
+  itHostRoute('tells a screen why the feed ended when the CLI refuses', async () => {
     const directory = freshDirectory()
     const stub = installStub(directory, {
       commands: {
@@ -4481,7 +4483,7 @@ describe('the supervisor', () => {
     await source.close()
   })
 
-  it('answers current() with the frame it already has, without spawning again', async () => {
+  itHostRoute('answers current() with the frame it already has, without spawning again', async () => {
     const directory = freshDirectory()
     const stub = installStub(directory, {
       commands: { version: { stdout: '1.4.2\n' }, watch: { lines: ['{"day":"2026-01-01"}'], hold: true } },
@@ -4495,7 +4497,7 @@ describe('the supervisor', () => {
     await source.close()
   })
 
-  it('surfaces a degraded-mode sentence next to the document it accompanies', async () => {
+  itHostRoute('surfaces a degraded-mode sentence next to the document it accompanies', async () => {
     const directory = freshDirectory()
     const stub = installStub(directory, {
       commands: {
@@ -4743,7 +4745,7 @@ describe('the live subscription', () => {
   const liveSource = (stub: Stub): Promise<CliSource> =>
     CliSource.create({ target: { project: PROJECT }, configuredBinaryPath: stub.binary, appEnv: {} })
 
-  it('answers a second live.watch from the feed it already has, and spawns no second child', async () => {
+  itHostRoute('answers a second live.watch from the feed it already has, and spawns no second child', async () => {
     const stub = installStub(freshDirectory(), {
       commands: { version: { stdout: '1.4.2\n' }, watch: WATCH_ONE },
     })
@@ -4760,7 +4762,7 @@ describe('the live subscription', () => {
     await source.close()
   })
 
-  it('keeps two subscriptions apart, and stops both when the source closes', async () => {
+  itHostRoute('keeps two subscriptions apart, and stops both when the source closes', async () => {
     const stub = installStub(freshDirectory(), {
       commands: { version: { stdout: '1.4.2\n' }, watch: WATCH_ONE },
     })
@@ -4781,7 +4783,7 @@ describe('the live subscription', () => {
     expect(stub.kills().map((kill) => kill.signal)).toEqual(['SIGTERM', 'SIGTERM'])
   })
 
-  it('keeps at most MAX_LIVE_FEEDS children, stopping the least recently used', async () => {
+  itHostRoute('keeps at most MAX_LIVE_FEEDS children, stopping the least recently used', async () => {
     // Every distinct valid repository is a distinct argv, so a renderer that
     // walked through repositories used to start one `fugaro watch` per name and
     // keep every one of them until quit.
@@ -4813,7 +4815,7 @@ describe('the live subscription', () => {
     await waitFor(() => stub.kills().length === 6)
   })
 
-  it('answers every overlapping current() with the same first frame', async () => {
+  itHostRoute('answers every overlapping current() with the same first frame', async () => {
     // `handlersFor`'s `live.watch` calls `current()` on every invocation and a
     // screen reaches that once per poll, so two polls can overlap. One waiter
     // slot would drop the first call, whose own budget timer would then refuse
@@ -4835,7 +4837,7 @@ describe('the live subscription', () => {
     await source.close()
   })
 
-  it('drops a feed that ended, so the retry after a refusal starts a fresh child', async () => {
+  itHostRoute('drops a feed that ended, so the retry after a refusal starts a fresh child', async () => {
     const stub = installStub(freshDirectory(), {
       commands: { version: { stdout: '1.4.2\n' }, watch: { stderr: 'fugaro: no project selected\n', code: 1 } },
     })
@@ -4857,7 +4859,7 @@ describe('the live subscription', () => {
     expect(stub.kills()).toHaveLength(1)
   })
 
-  it('drops a feed the console stopped, so the next watch starts a child again', async () => {
+  itHostRoute('drops a feed the console stopped, so the next watch starts a child again', async () => {
     const stub = installStub(freshDirectory(), {
       commands: { version: { stdout: '1.4.2\n' }, watch: WATCH_ONE },
     })
@@ -4878,7 +4880,7 @@ describe('the live subscription', () => {
 })
 
 describe('the installation store', () => {
-  it('stores an installation whose checkout matches, after one doctor read', async () => {
+  itHostRoute('stores an installation whose checkout matches, after one doctor read', async () => {
     const directory = freshDirectory()
     const checkout = freshDirectory('fugaro-checkout-')
     const stub = installStub(directory, { commands: { version: { stdout: '1.4.2\n' }, doctor: { stdout: '{"checks":[]}\n' } } })
@@ -4890,7 +4892,7 @@ describe('the installation store', () => {
     expect(doctor?.argv).toEqual(['doctor', '--json', '--project', PROJECT, '--dir', checkout])
   })
 
-  it('refuses to store a checkout that belongs to another project, showing the CLI’s sentence', async () => {
+  itHostRoute('refuses to store a checkout that belongs to another project, showing the CLI’s sentence', async () => {
     const directory = freshDirectory()
     const checkout = freshDirectory('fugaro-checkout-')
     const stub = installStub(directory, {
@@ -4917,7 +4919,7 @@ describe('the installation store', () => {
     expect(stub.calls()).toBe(0)
   })
 
-  it('never reads the checkout itself: the CLI is the reader', async () => {
+  itHostRoute('never reads the checkout itself: the CLI is the reader', async () => {
     // Rule 7, as an observable: **a `fugaro.yaml` that is a directory**. The
     // console hands the checkout to the child as its `cwd` and reads nothing in
     // it, so `add` succeeds on the CLI's own answer; a console that opened
@@ -4945,7 +4947,7 @@ describe('the installation store', () => {
   // hands in, so the store's **ordering** -- load first, check, push, then save
   // -- is the part worth pinning: each of the three tests below fails for a
   // store that got one of those four moves in the wrong place.
-  it('starts from what it loaded, and saves the whole list after a verified add', async () => {
+  itHostRoute('starts from what it loaded, and saves the whole list after a verified add', async () => {
     const directory = freshDirectory()
     const checkout = freshDirectory('fugaro-checkout-')
     const stub = installStub(directory, { commands: { version: { stdout: '1.4.2\n' }, doctor: { stdout: '{}\n' } } })
@@ -4963,7 +4965,7 @@ describe('the installation store', () => {
     expect(saved).toEqual([[held, { project: PROJECT, binaryPath: stub.binary, checkout }]])
   })
 
-  it('writes nothing when the check refuses, and nothing before the check', async () => {
+  itHostRoute('writes nothing when the check refuses, and nothing before the check', async () => {
     const directory = freshDirectory()
     const checkout = freshDirectory('fugaro-checkout-')
     const stub = installStub(directory, {
@@ -4986,7 +4988,7 @@ describe('the installation store', () => {
     expect(store.list()).toEqual([])
   })
 
-  it('has the installation in memory when the save itself fails', async () => {
+  itHostRoute('has the installation in memory when the save itself fails', async () => {
     // The order in the store is: check, push, save. A `save` that throws
     // therefore leaves the two halves disagreeing in the one direction that is
     // safe -- the list has the installation, the file does not, and the next
@@ -5010,7 +5012,7 @@ describe('the installation store', () => {
 })
 
 describe('the source as a whole', () => {
-  it('answers a refused read with the CLI’s own sentence', async () => {
+  itHostRoute('answers a refused read with the CLI’s own sentence', async () => {
     const directory = freshDirectory()
     const stub = installStub(directory, {
       commands: {
@@ -5022,7 +5024,7 @@ describe('the source as a whole', () => {
     await expect(source.listRuns({ since: '3d' })).rejects.toThrow('no runs matched --since 3d')
   })
 
-  it('refuses a read that printed no document rather than drawing an empty screen', async () => {
+  itHostRoute('refuses a read that printed no document rather than drawing an empty screen', async () => {
     const directory = freshDirectory()
     const stub = installStub(directory, {
       commands: { version: { stdout: '1.4.2\n' }, 'runs ls': { stdout: 'no runs\n' } },
@@ -5031,7 +5033,7 @@ describe('the source as a whole', () => {
     await expect(source.listRuns({})).rejects.toBeInstanceOf(SourceRefusal)
   })
 
-  it('drops the `fugaro: ` prefix from the sentence a screen shows', async () => {
+  itHostRoute('drops the `fugaro: ` prefix from the sentence a screen shows', async () => {
     const directory = freshDirectory()
     const stub = installStub(directory, {
       commands: {
@@ -5045,7 +5047,7 @@ describe('the source as a whole', () => {
     expect((error as SourceRefusal).sentence).toBe('no runs matched --since 3d')
   })
 
-  it('returns the version line and the one link as text, with no document in them', async () => {
+  itHostRoute('returns the version line and the one link as text, with no document in them', async () => {
     const directory = freshDirectory()
     const stub = installStub(directory, {
       commands: {
@@ -5059,7 +5061,7 @@ describe('the source as a whole', () => {
     expect(link.text).toBe('https://console.cloud.google.com/logs/query;query=run')
   })
 
-  it('never passes --url together with --json, which the CLI refuses', async () => {
+  itHostRoute('never passes --url together with --json, which the CLI refuses', async () => {
     const directory = freshDirectory()
     const stub = installStub(directory, {
       commands: { version: { stdout: '1.4.2\n' }, 'logs --url': { stdout: 'https://example.invalid\n' }, logs: { stdout: '{}\n' } },
@@ -5072,7 +5074,7 @@ describe('the source as a whole', () => {
     }
   })
 
-  it('reads every line `logs RUN --json` prints into the window the Run screen draws', async () => {
+  itHostRoute('reads every line `logs RUN --json` prints into the window the Run screen draws', async () => {
     // `logs RUN --json` prints one compact object per entry (contract section
     // 6.2), not one document: a reader that kept the last object would hand
     // the screen a single line, and `parseLogWindow` none at all. 250 entries,
@@ -5102,7 +5104,7 @@ describe('the source as a whole', () => {
     expect(model.logs.refused.value).toBe(1)
   })
 
-  it('answers a run with no log entries with an empty window, not a refusal', async () => {
+  itHostRoute('answers a run with no log entries with an empty window, not a refusal', async () => {
     const directory = freshDirectory()
     const stub = installStub(directory, { commands: { version: { stdout: '1.4.2\n' }, logs: { stdout: '' } } })
     const source = await CliSource.create({ target: { project: PROJECT }, configuredBinaryPath: stub.binary, appEnv: {} })
@@ -5115,7 +5117,7 @@ describe('the source as a whole', () => {
     expect(model.logs.refused.value).toBe(0)
   })
 
-  it('records every spawn it makes, including the version handshake', async () => {
+  itHostRoute('records every spawn it makes, including the version handshake', async () => {
     const directory = freshDirectory()
     const logPath = join(directory, 'spawn.jsonl')
     const stub = installStub(directory, {
@@ -5136,7 +5138,7 @@ describe('the source as a whole', () => {
     expect(second.argv).toEqual([stub.binary, 'budget', 'show', '--json', '--project', 'chosen'])
   })
 
-  it('hands the same spawn log to every spawn, and no log at all when the operator did not opt in', async () => {
+  itHostRoute('hands the same spawn log to every spawn, and no log at all when the operator did not opt in', async () => {
     const directory = freshDirectory()
     const stub = installStub(directory, { commands: { version: { stdout: '1.4.2\n' }, doctor: { stdout: '{}\n' } } })
     const source = await CliSource.create({
@@ -5572,7 +5574,7 @@ describe('the wrapper into a distribution', () => {
   const spawnReports = (wsl: WslStub): readonly WslReport[] =>
     wsl.reports().filter((report) => report.kind === 'spawn')
 
-  it('carries the CLI’s exit status through the wrapper, and never shows the wrapper', async () => {
+  itHostRoute('carries the CLI’s exit status through the wrapper, and never shows the wrapper', async () => {
     // T-F1, F26. The wrapper is transparent to a status: what the operator
     // reads is `fugaro`'s, and the marker the shell prints before it `exec`s
     // never reaches a screen (`cliSentence` is what a screen shows).
@@ -5612,7 +5614,7 @@ describe('the wrapper into a distribution', () => {
     expect(answering.stub.kills()).toEqual([])
   })
 
-  it('never reads a wsl.exe failure as a CLI exit code', async () => {
+  itHostRoute('never reads a wsl.exe failure as a CLI exit code', async () => {
     // T-F1's other half (F26, U7/U8). A `--cd` that does not exist inside the
     // distribution is a `wsl.exe` that fails **before** it starts anything
     // there: the status and the sentence are `wsl.exe`'s, and a console that
@@ -5646,7 +5648,7 @@ describe('the wrapper into a distribution', () => {
     expect(probe.reason).not.toContain('the binary exited')
   })
 
-  it('cancels inside the distribution, naming the pid the wrapper recorded', async () => {
+  itHostRoute('cancels inside the distribution, naming the pid the wrapper recorded', async () => {
     // T-F4, F24 and decision D6(a). Killing the Windows-side `wsl.exe` is not
     // documented to kill the Linux process it started, so the console sends one
     // more `wsl.exe` that kills the pid the wrapper reported -- and the fake
@@ -5749,7 +5751,7 @@ describe('the wrapper into a distribution', () => {
     expect(calls[1]).toEqual(['/usr/bin/wsl.exe', '-d', 'Ubuntu', '-e', 'sh', '-c', 'kill -TERM 4321'])
   })
 
-  it('stops the Linux process when the fake `wsl.exe` dies at once on `SIGTERM`', async () => {
+  itHostRoute('stops the Linux process when the fake `wsl.exe` dies at once on `SIGTERM`', async () => {
     // The same case end to end, with the real double: this `wsl.exe` does not
     // hold on `SIGTERM` (the case above does), so it dies the moment the
     // console kills it and the CLI it started is left as an orphan inside the
@@ -5883,7 +5885,7 @@ describe('the wrapper into a distribution', () => {
     expect((await refusal).message).not.toContain('may still be running')
   })
 
-  it('feeds a watch stream through the wrapper exactly as on the host route', async () => {
+  itHostRoute('feeds a watch stream through the wrapper exactly as on the host route', async () => {
     // T-F3 (F28, F29): the wrapper is not allowed to change the feed. The same
     // scenario runs on both routes and the two must produce the same frames, the
     // same notices and the same end.
@@ -5954,7 +5956,7 @@ describe('the wrapper into a distribution', () => {
     expect(frame?.document?.['note']).toBe('héllo ✓')
   })
 
-  it('stops a read whose pipe outlives the child at the deadline, through the wrapper', async () => {
+  itHostRoute('stops a read whose pipe outlives the child at the deadline, through the wrapper', async () => {
     // T-F5 (F25): the read deadline is the backstop, and on this route it is
     // load-bearing -- the wrapper adds a relay and the distribution a session,
     // and either can hold the pipe open after the process that wrote to it has
@@ -6005,7 +6007,7 @@ describe('the wrapper into a distribution', () => {
     expect(timers.pending()).toBe(1)
   })
 
-  it('refuses a hostile word before the shell, and quotes every word that reaches it', async () => {
+  itHostRoute('refuses a hostile word before the shell, and quotes every word that reaches it', async () => {
     // The binding carry-over from Part C's review, in the two layers Parts D and
     // F give it. The CLI's argv is built from a project name, a checkout and a
     // config path, and `isSafeInstallationValue` deliberately admits `$`, a
@@ -6050,7 +6052,7 @@ describe('the wrapper into a distribution', () => {
     expect(child.argv.filter((word) => word === '/home/dimi/.config/fugaro/config.toml')).toHaveLength(1)
   })
 
-  it('sends the stop as an argv array with shell false, and refuses a pid line it cannot trust', async () => {
+  itHostRoute('sends the stop as an argv array with shell false, and refuses a pid line it cannot trust', async () => {
     // The stop is spawned like every other child (rule 1): the distribution is
     // its own argv word, `-e` separates it from the distribution's, and
     // `shell: false` is what keeps a word from being re-parsed. The pid comes

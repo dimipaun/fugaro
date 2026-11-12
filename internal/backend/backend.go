@@ -17,10 +17,11 @@ import (
 // and the job's FUGARO_BACKEND.
 const CloudRun = "cloud-run"
 
-// CloudBatch is Cloud Batch's backend name. internal/backend/batch speaks
-// it, but nothing selects it yet: config validation refuses it everywhere
-// until the owner's Check 57a measurement says the platform behaves as
-// docs/design/compute-backend.md describes (design §9).
+// CloudBatch is Cloud Batch's backend name. internal/backend/batch speaks it,
+// and `backend: cloud-batch` is a name internal/localcfg ACCEPTS since the
+// enable task (plan 2026-10-19-compute-backend.md Task 10): what refuses an
+// installation that selects it is `fugaro doctor`, which fails until every
+// Batch check design §4.4 lists passes.
 const CloudBatch = "cloud-batch"
 
 // TaskTimeoutSlack is what the job's task timeout adds to the workflow's

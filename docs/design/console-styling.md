@@ -1211,9 +1211,9 @@ fallback to `--font-mono`.
 The Graph draws one model twice: a **picture** (an `svg` whose geometry is the layout
 worker's answer, written as SVG attributes because `style-src 'self'` admits no inline
 style, §5.5) and a **list** that is the same model with every title whole. Regions in tree
-order: header (the heading and the toolbar) → chips → the stage, which holds the canvas or the
-list and, while a task is selected, the inspector beside it → the legend, under the canvas
-alone.
+order: header (the heading and the toolbar) → chips → the stage, which holds the canvas —
+inside the pane that scrolls it sideways, below — or the list, and, while a task is
+selected, the inspector beside it → the legend, under the canvas alone.
 
 **The screen answers a control in the frame it was pressed in** (0.117.0). The refresh, the
 stream filter and the plan select are one section's controls, and
@@ -1231,6 +1231,29 @@ another's. A card is **260 × 88** (`GRAPH_NODE_WIDTH`, `GRAPH_NODE_HEIGHT`), wh
 two constants the engine is told and the two **one stream's** layout cache is keyed by: the
 key is a serialization of that stream's **structure**, so the box sizes are in it and a
 card that changes size changes the key with it.
+
+**The picture has a scale floor, and below it the pane scrolls** (the graph-fits-the-width
+slice's G1.1; D735). Fitting the panel's width alone had one way to draw a
+wide graph: **small**. A picture wider than its panel was scaled down until a title wrapped
+over three lines arrived as a grey block, and the columns that made it wide — the streams,
+the releases, a level's own width — were the ones that decided how small. So a card may not
+be drawn narrower than **`GRAPH_MIN_SCALE`** of its own 260 px: at 0.75 that is 195 px, and
+the card's title (the theme's `--text-sm`, 13 px) is still drawn at 9.75 px, its footnotes
+(`--text-xs`, 12 px) at 9 px. The canvas carries the whole picture at that scale as its own
+`width`/`height` geometry — **attributes, never an inline style**, `style-src 'self'`
+admitting none (§5.5) — and the stylesheet turns that into a floor rather than a size:
+`width: auto; min-width: 100%`. A panel at or above the floor draws the canvas exactly as it
+did before, the picture at the panel's own width; a narrower one holds the canvas at the
+floor inside **`div.graph-canvas-pane`**, which carries the `overflow-x: auto` that reads the
+rest of the picture sideways. The floor is the **whole picture's** width, bands and release
+boxes included, never one level's or one stream's: a bound taken from a narrower rectangle
+would leave the columns that made the picture wide drawn under it. **The pane wraps the
+canvas and nothing else** — the list has no width of its own to keep, and the coordinator
+scope draws no picture at all — and the zoom is untouched by it: the frame is the picture
+scaled by the zoom, which stays the operator's own control and the way to go below the
+floor. **No ELK wrapping** (`elk.layered.wrapping`): the layers run left to right, and
+folding them toward a wide shape widens the picture across the axis a reader moves along,
+for a new set of positions and a new cache key.
 
 **One engine run per stream, and the runs are stacked as rows** (the owner's ruling of
 2026-10-31). The engine's packing is two-dimensional: handed every stream at once, it
@@ -1350,7 +1373,8 @@ every word already and carries neither kind of line.
 | `graph-chip-name`, `graph-chip-mark`, `graph-chip-version` | `span`s inside the chip | the name, the `✓` mark and the version |
 | `graph-chip-body`, `graph-chip-tasks`, `graph-chip-task`, `graph-chip-task-title` | the open chip's own panel | drawn **only** while `aria-expanded` is `true` |
 | `graph-release-bar` | `p` (chip body) and `span` (list heading) | the "n of m done" bar, both places |
-| `graph-canvas` | `svg` | `viewBox` carries the zoom; the element has no width or height of its own, and its dotted-grid ground is a CSS background on this element rather than an element of its own |
+| `graph-canvas` | `svg` | `viewBox` carries the zoom, and `width`/`height` carry the picture's **scale floor** (`GRAPH_MIN_SCALE`, the whole picture at 0.75): the stylesheet makes them a floor rather than a size (`width: auto; min-width: 100%`), so the element's box is the panel's width whenever there is room and the floor only when there is not. Its dotted-grid ground is a CSS background on this element rather than an element of its own |
+| `graph-canvas-pane` | `div` | the box the canvas is read through: it wraps the canvas alone and carries `overflow-x: auto`, so a picture held at its floor is read by scrolling sideways. The list and the coordinator scope draw no pane — neither has a width of its own to keep |
 | `graph-band`, `graph-band-box` | `g` + `rect` | one band per stream that has a task on the picture, drawn **first** so it is the ground of its own row: the `g` carries `data-stream`, and the box is the row's wash |
 | `graph-band-label` | `text` at the band's head | the stream's own `Sanitized` name ("no stream" for the plans that name none) |
 | `graph-release`, `graph-release-box` | `g` + `rect` | one frame per release with a task on the picture |

@@ -2,15 +2,15 @@
 // (design docs/design/compute-backend.md): one Batch job per run, on Compute
 // Engine VMs, for the workflows that need a real Docker daemon.
 //
-// Nothing selects it yet. `backend: cloud-batch` is refused by config
-// validation, doctor and init until the enable task, which by construction
-// comes after logs, cost and the reaper exist (design §8.1): a Batch run
-// without log routing leaves its output in the project's default logs, and a
-// Batch run without a reaper leaks VMs. What exists here is the seam's
-// second implementation, held to backendtest.Run, so that `jobs.cancel`
+// An installation reaches it by writing `backend: cloud-batch`, which config
+// validation accepts since the enable and `doctor` gates on the two things a
+// Batch run needs to be safe (design §8.1 task 9): a Batch run without log
+// routing leaves its output in the project's default logs, and a Batch run
+// without a reaper leaks VMs. What exists here is the seam's second
+// implementation, held to backendtest.Run, so that `jobs.cancel`
 // rather than `jobs.delete` is a tested requirement rather than a comment
 // (§1.4), and so that the shape of a Batch run's identity, states and job
-// definition is pinned before anything can be enabled.
+// definition is pinned.
 //
 // What is deliberately NOT here, and which task owns it:
 //
@@ -148,6 +148,13 @@ const defaultBootDiskGB = 50
 // refused with the reason and the larger type named, which is the operator's
 // decision to make rather than a silent one.
 const defaultMachineType = "e2-standard-8"
+
+// DefaultMachineType is that type, for a caller that has to ask a question
+// about the VM a run gets without building a backend: `fugaro doctor`'s cost
+// check prices the installation's region and machine type against this build's
+// table, and an installation whose batch block names no type is priced at the
+// type its runs actually get rather than at a second guess at the default.
+func DefaultMachineType() string { return defaultMachineType }
 
 // Docker is the VM's Docker daemon as a run reaches it: the socket, mounted
 // from the host (design §2.2, C2). It is the installation's, not the run's --

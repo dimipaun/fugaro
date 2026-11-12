@@ -4,10 +4,14 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/imagebake"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -33,6 +37,102 @@ func imageMapFile(t *testing.T) (string, map[string]string) {
 		t.Fatalf("the config after the write: %v", err)
 	}
 	return path, lc.ImageMap
+}
+
+// writeCatalogCopy puts def at builds/catalog/<entry>/Dockerfile in the
+// fixture's runs bucket, where a build of that entry reads it: the file://
+// bucket stands in for the runs bucket a copy is written to (recordReadURL).
+func writeCatalogCopy(t *testing.T, f *cloudFixture, entry string, def []byte) {
+	t.Helper()
+	key, err := config.CatalogDockerfileKey(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(f.dir, "runs", filepath.FromSlash(key))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, def, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestImageMapSetNotesABakedCopyItsNewJobsCouldRead: the map decides who runs
+// an entry's image and the copy decides whose source is in it, and this command
+// writes the first while the second stands until the entry is built again. A
+// mapping that puts a repository on an entry whose copy still bakes another
+// repository's checkout is the one moment before those jobs run when the two
+// can be seen apart (F18, O3's reading (b)): it is said out loud, with the
+// rebuild that converges it, and it is written all the same — the map is what
+// that rebuild reads, so a refusal here would leave the operator no way to
+// reach it.
+func TestImageMapSetNotesABakedCopyItsNewJobsCouldRead(t *testing.T) {
+	f := newCloudFixture(t)
+	f.appendConfig(t, "  acme/sandbox: { provider: bitbucket, workflows: [web] }\n")
+	f.appendConfig(t, catalogYAML)
+	slug := mustSlug(gitprov.KindGitHub, "acme/app")
+	baked, err := imagebake.Append([]byte("FROM example.invalid/base\n"), imagebake.Plan{Baked: &imagebake.Repo{
+		Repo: "acme/app", Slug: slug, URL: "https://github.com/acme/app.git", Branch: "main",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeCatalogCopy(t, f, "tools", baked)
+
+	// The repository the copy bakes is not a repository the checkout is news
+	// to: mapping it adds no reader, so there is nothing to say.
+	if _, errOut, err := execute(t, "image", "map", "set", "acme/app", "tools"); err != nil {
+		t.Fatalf("image map set: %v\n%s", err, errOut)
+	} else if strings.Contains(errOut, "could read it") {
+		t.Errorf("mapping the repository the copy bakes was reported as an exposure: %q", errOut)
+	}
+
+	// Any other repository the map puts on the entry has a job that pulls that
+	// image and could read the checkout inside it.
+	_, errOut, err := execute(t, "image", "map", "set", "acme/sandbox", "tools")
+	if err != nil {
+		t.Fatalf("image map set: %v\n%s", err, errOut)
+	}
+	if want := "carries the checkout of acme/app at /work/baked/" + slug; !strings.Contains(errOut, want) {
+		t.Errorf("stderr = %q, want it to name what the copy holds (%s)", errOut, want)
+	}
+	if !strings.Contains(errOut, "acme/sandbox") {
+		t.Errorf("stderr = %q, want it to name the repository the mapping exposes it to", errOut)
+	}
+	if !strings.Contains(errOut, "fugaro image build catalog tools") {
+		t.Errorf("stderr = %q, want the rebuild that converges the copy", errOut)
+	}
+	// And the mapping is written: the note names what the operator does next,
+	// not a step this command refused to take.
+	if _, got := imageMapFile(t); got["acme/sandbox"] != "tools" {
+		t.Errorf("ImageMap = %v, want the mapping written", got)
+	}
+}
+
+// TestImageMapSetSaysNothingWithoutABakedCopy: the note above is owed only when
+// there is a checkout to expose. An entry nothing was copied for yet has no
+// image for those jobs to pull, and a copy that carries the entry's own
+// definition bakes no checkout at all — the ordinary case, and the one a line
+// about it would turn into noise on every mapping a project writes.
+func TestImageMapSetSaysNothingWithoutABakedCopy(t *testing.T) {
+	f := newCloudFixture(t)
+	f.appendConfig(t, "  acme/sandbox: { provider: bitbucket, workflows: [web] }\n")
+	f.appendConfig(t, catalogYAML)
+
+	// No copy was ever written for tools.
+	if _, errOut, err := execute(t, "image", "map", "set", "acme/sandbox", "tools"); err != nil {
+		t.Fatalf("image map set: %v\n%s", err, errOut)
+	} else if strings.Contains(errOut, "could read it") {
+		t.Errorf("a mapping onto an entry nothing was built for was reported as an exposure: %q", errOut)
+	}
+
+	// A copy that is the entry's own definition, with no generated stage on it.
+	writeCatalogCopy(t, f, "base", []byte("FROM example.invalid/base\n"))
+	if _, errOut, err := execute(t, "image", "map", "set", "acme/sandbox", "base"); err != nil {
+		t.Fatalf("image map set: %v\n%s", err, errOut)
+	} else if strings.Contains(errOut, "could read it") {
+		t.Errorf("a copy that bakes no checkout was reported as an exposure: %q", errOut)
+	}
 }
 
 // TestImageMapSetWritesTheMapping: one set writes one mapping into the project

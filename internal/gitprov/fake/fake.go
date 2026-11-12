@@ -68,7 +68,7 @@ type PRState struct {
 
 // Call is one entry of the call log, which holds the calls that write
 // (reads leave the state file untouched): Op is the Provider method
-// (EnsurePR, UpdatePR, ApplyReady, Comment), PR the PR number involved
+// (EnsurePR, UpdatePR, ApplyReady, Comment, MarkReady, Merge), PR the PR number involved
 // (0 for an EnsurePR that finds or creates by branch, until it knows),
 // Detail what was asked, such as "draft=true" or "title,body".
 type Call struct {
@@ -106,6 +106,12 @@ type State struct {
 	// branch is at is a read of that branch — so a test that pins no tree
 	// and reads at a resolved commit reads the tree of the ref it came from.
 	Trees map[string]map[string]string `json:"trees,omitempty"`
+	// Checks is the checks reported at a commit (gitprov.Provider.Checks):
+	// a commit SHA -> what the host reports there. A commit this map does
+	// not name has no checks at all, which is not the same as checks that
+	// passed: the caller's ChecksState reads an empty set as CIUnknown, and
+	// a test that wants a green commit must say which checks said so.
+	Checks map[string][]gitprov.CheckRun `json:"checks,omitempty"`
 }
 
 // Provider is a fake git host.
@@ -221,6 +227,12 @@ func (p *Provider) Snapshot() State {
 		st.PRs[i] = pr
 	}
 	st.Calls = slices.Clone(p.State.Calls)
+	if p.State.Checks != nil {
+		st.Checks = make(map[string][]gitprov.CheckRun, len(p.State.Checks))
+		for sha, runs := range p.State.Checks {
+			st.Checks[sha] = slices.Clone(runs)
+		}
+	}
 	return st
 }
 
@@ -522,19 +534,11 @@ func (p *Provider) PullRequest(ctx context.Context, number int) (gitprov.PRInfo,
 		return info, err
 	}
 	// git runs outside the lock: the branch is read from the PR's own spec.
-	cmd := exec.CommandContext(ctx, "git", "--git-dir", p.Remote, "rev-parse", "--verify", "--quiet", "refs/heads/"+head+"^{commit}")
-	cmd.WaitDelay = gitWaitDelay
-	out, err := cmd.Output()
-	var exit *exec.ExitError
-	if errors.As(err, &exit) && exit.ExitCode() == 1 && len(bytes.TrimSpace(out)) == 0 {
-		// --verify --quiet: the branch is gone (a merge closed it). A real
-		// host still shows the PR, so the fake does too, without a head.
-		return info, nil
-	}
+	tip, err := p.branchTip(ctx, head)
 	if err != nil {
 		return gitprov.PRInfo{}, fmt.Errorf("fake provider: PR #%d's branch %s is not in %s: %w", number, head, p.Remote, err)
 	}
-	info.HeadSHA = strings.TrimSpace(string(out))
+	info.HeadSHA = tip
 	return info, nil
 }
 
@@ -775,4 +779,141 @@ func (p *Provider) ApplyReady(_ context.Context, number int, reviewers, labels [
 		return err
 	}
 	return perr
+}
+
+// MergeMintExemption implements gitprov.MintExempt. A double stands in for a
+// host, and it holds no credential for one: there is no mint for it to take a
+// token from and nothing for a merge token to be bound to, so it says it is
+// exempt rather than leaving the same question the Bitbucket adapter answers
+// open here. A test that needs the mint's refusal wires the real provider.
+func (p *Provider) MergeMintExemption() error { return gitprov.ErrMintNotApplicable }
+
+// MarkReady implements gitprov.Provider: it refuses a PR whose head is not
+// the commit the call named (TestFakeMarkReadyRefusesOnHeadChange), and only
+// then clears the draft state. A state that records no head is a PR no
+// head-bound call can be checked against, so it refuses too: a mock that
+// answered "yes, that head" for a head nobody recorded would let a test pass
+// a gate the real provider never would.
+func (p *Provider) MarkReady(ctx context.Context, number int, expectedHeadSHA string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := p.load(); err != nil {
+		return err
+	}
+	p.logLocked(Call{Op: "MarkReady", PR: number, Detail: "sha=" + expectedHeadSHA})
+	defer func() { _ = p.save() }()
+	st, err := p.findLocked(number)
+	if err != nil {
+		return err
+	}
+	if state := stateOf(st); state != gitprov.PROpen {
+		return fmt.Errorf("PR #%d is %s: %w", st.Number, state, gitprov.ErrPRNotOpen)
+	}
+	if err := p.checkHeadLocked(ctx, st, expectedHeadSHA); err != nil {
+		return err
+	}
+	p.setDraftLocked(st, false)
+	return nil
+}
+
+// Merge implements gitprov.Provider: the head is checked the same way and the
+// PR becomes merged only when it is the one asked for. A draft is refused, for
+// ApplyReady's reason — a host will not merge one, so a test must notice a
+// merge that skipped readying — and there is no bypass to model: the fake
+// merges what a real host would merge at the head it was given. There is no
+// credential either: the gate is the caller's, and the mint that would refuse
+// an unbound merge is the real adapter's (E16, D2049).
+func (p *Provider) Merge(ctx context.Context, number int, expectedHeadSHA string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := p.load(); err != nil {
+		return err
+	}
+	p.logLocked(Call{Op: "Merge", PR: number, Detail: "sha=" + expectedHeadSHA})
+	defer func() { _ = p.save() }()
+	st, err := p.findLocked(number)
+	if err != nil {
+		return err
+	}
+	if state := stateOf(st); state != gitprov.PROpen {
+		return fmt.Errorf("PR #%d is %s: %w", st.Number, state, gitprov.ErrPRNotOpen)
+	}
+	if err := p.checkHeadLocked(ctx, st, expectedHeadSHA); err != nil {
+		return err
+	}
+	if st.Draft {
+		// GitHub refuses to merge a draft, and the ladder's order is
+		// MarkReady and then Merge: a test that merges without readying would
+		// be passing a sequence the real host rejects.
+		return fmt.Errorf("fake provider: Merge on PR #%d, which is still a draft", number)
+	}
+	st.State = gitprov.PRMerged
+	return nil
+}
+
+// Checks implements gitprov.Provider: what State.Checks reports at sha, and
+// nothing for a commit it does not name. The slice is a copy, so a caller
+// that appends to it does not change the state.
+func (p *Provider) Checks(_ context.Context, number int, sha string) ([]gitprov.CheckRun, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := p.load(); err != nil {
+		return nil, err
+	}
+	if _, err := p.findLocked(number); err != nil {
+		return nil, err
+	}
+	return slices.Clone(p.State.Checks[sha]), nil
+}
+
+// checkHeadLocked refuses a head-bound call that the state cannot bind: no
+// head at all, or one that is not the commit the caller named.
+//
+// The head it binds to is the one PullRequest reports (Head's own doc): the
+// state's recorded Head when one is set, and otherwise the tip of the PR's
+// branch in Remote. Reading it any other way would have the fake refuse the
+// very head its own read had just handed the caller — a ladder test could not
+// then ready or merge the pull request it had just read — and a double that
+// refuses a call production accepts is worse than none.
+//
+// git runs while the lock is held, unlike PullRequest's read: what this binds
+// to must be the head the state is at when the write below happens, which is
+// the atomicity the real host has and this mutex stands in for.
+func (p *Provider) checkHeadLocked(ctx context.Context, st *PRState, expected string) error {
+	head := st.Head
+	if head == "" {
+		tip, err := p.branchTip(ctx, st.Spec.Branch)
+		if err != nil {
+			return fmt.Errorf("fake provider: PR #%d's branch %s is not in %s: %w", st.Number, st.Spec.Branch, p.Remote, err)
+		}
+		head = tip
+	}
+	if head == "" {
+		return fmt.Errorf("fake provider: PR #%d records no head, so a head-bound call cannot be checked", st.Number)
+	}
+	if err := gitprov.CheckExpectedHead(head, expected); err != nil {
+		return fmt.Errorf("fake provider: PR #%d: %w", st.Number, err)
+	}
+	return nil
+}
+
+// branchTip is the commit refs/heads/branch names in this provider's Remote,
+// "" when there is no remote or the branch is gone (a merge closed it), and
+// the git failure otherwise. It does not take the lock: PullRequest reads
+// outside it, checkHeadLocked inside.
+func (p *Provider) branchTip(ctx context.Context, branch string) (string, error) {
+	if p.Remote == "" || branch == "" {
+		return "", nil
+	}
+	cmd := exec.CommandContext(ctx, "git", "--git-dir", p.Remote, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch+"^{commit}")
+	cmd.WaitDelay = gitWaitDelay
+	out, err := cmd.Output()
+	var exit *exec.ExitError
+	if errors.As(err, &exit) && exit.ExitCode() == 1 && len(bytes.TrimSpace(out)) == 0 {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }

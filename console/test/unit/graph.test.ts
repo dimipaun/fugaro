@@ -43,7 +43,7 @@ import { GRAPH_DOCUMENT_VERSION, decodeGraphDocument } from '../../src/shared/sc
 import type { GraphView, PlanStatusView, RunView } from '../../src/shared/schema'
 import { GRAPH_ROW_GAP, nodeKey } from '../../src/renderer/graph/layout'
 import type { WorkerLike } from '../../src/renderer/graph/layout-client'
-import { GRAPH_MAX_TITLE_CODE_POINTS, GRAPH_SCOPE_NO_RELEASE, STATE_WORDS, buildGraphModel } from '../../src/renderer/graph/model'
+import { GRAPH_MAX_TITLE_CODE_POINTS, GRAPH_NODE_WIDTH, GRAPH_SCOPE_NO_RELEASE, STATE_WORDS, buildGraphModel } from '../../src/renderer/graph/model'
 import { STAMP_LEAD, stampOf } from '../../src/renderer/section'
 import { WRITE_UNAVAILABLE } from '../../src/renderer/writes'
 import { LIVE_PR_NO_LINK_REASON } from '../../src/renderer/screens/live'
@@ -58,6 +58,7 @@ import {
   GRAPH_LAYER_OPTION,
   GRAPH_CRITICAL_PATH,
   GRAPH_DEPENDS_ON,
+  GRAPH_MIN_SCALE,
   GRAPH_NO_CANVAS,
   GRAPH_NO_PLANS,
   GRAPH_NO_RUN,
@@ -1540,6 +1541,28 @@ function inspectorIn(root: FakeNode): FakeNode | null {
   return classedIn(root, 'graph-inspector')[0] ?? null
 }
 
+/**
+ * themeRule is one stylesheet rule's declarations, by the rule's exact selector.
+ *
+ * The picture's scale floor is half a drawing and half a rule -- the canvas
+ * carries the size and the stylesheet decides what its box does with it -- so the
+ * cases about it read the declarations a browser would apply, with the comments
+ * taken out first: a note about a declaration is not a declaration.
+ */
+function themeRule(sheet: string, selector: string): Readonly<Record<string, string>> {
+  const css = readFileSync(join('src', 'renderer', 'theme', sheet), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+  const at = css.indexOf(`${selector} {`)
+  if (at === -1) throw new Error(`${sheet} carries no ${selector} rule`)
+  const open = css.indexOf('{', at) + 1
+  const found: Record<string, string> = {}
+  for (const declaration of css.slice(open, css.indexOf('}', open)).split(';')) {
+    const colon = declaration.indexOf(':')
+    if (colon === -1) continue
+    found[declaration.slice(0, colon).trim()] = declaration.slice(colon + 1).trim()
+  }
+  return found
+}
+
 /** inspectorOf is the panel of one selected task, over a fresh screen: the case
  * that reads a panel says as little as it can about how it got there. */
 async function inspectorOf(key: string): Promise<FakeNode> {
@@ -1824,6 +1847,92 @@ function scopeDecoded(): GraphView {
   return result.value
 }
 
+/**
+ * RECORD_RAW is one `graph --json` document of a project whose coordinator has
+ * written a roadmap record (GV4.1): the sources above, two release boxes -- one
+ * per stream, one of them finished -- four record tasks and one of the stored
+ * view's pull requests, and two cross-plan edges.
+ *
+ * The two edges are what the drawing could not show at all before this change:
+ * `place` (in `cli`, in Camel) waits on a task of **style** in the finished
+ * Mango, and `ship` (in `cli`, in Camel) waits on `place`, which is a dependency
+ * inside one stream and one box and is therefore not drawn faintly. `free` has
+ * been placed in no box at all and carries its plan's own version, and `left` is
+ * an id the record holds an edge for and no plan document carries (D2115).
+ */
+const RECORD_RAW: Readonly<Record<string, unknown>> = {
+  version: GRAPH_DOCUMENT_VERSION,
+  stream_id: '',
+  seq: 0,
+  generated_at: '2026-11-11T09:00:00Z',
+  sources: [{ source: 'coordinator', state: 'up', as_of: '2026-11-11T08:00:00Z', reason: '' }],
+  releases: [
+    { key: 'release-style-mango', stream: 'style', id: 'v1.4.0', name: 'Mango', state: 'finished', order: 1 },
+    { key: 'release-cli-camel', stream: 'cli', id: 'v1.5.0', name: 'Camel', state: 'open', order: 2 },
+  ],
+  nodes: [
+    recordNode('plans/style/paint', 'style', 'release-style-mango', '', 'done', 'paint the banner'),
+    recordNode('plans/cli/place', 'cli', 'release-cli-camel', '', 'waiting', 'place the loader'),
+    recordNode('plans/cli/ship', 'cli', 'release-cli-camel', '', 'waiting', 'ship the loader'),
+    recordNode('plans/cli/free', 'cli', '', '1.6.0', 'waiting', 'free the loader'),
+    { ...recordNode('plans/gone/left', 'cli', 'release-cli-camel', '', '', 'the id the record left behind'), dangling: true },
+    {
+      key: 'coordinator:acme/widgets#42',
+      source: 'coordinator',
+      kind: 'pull_request',
+      id: 'acme/widgets#42',
+      title: 'Tidy the widget loader',
+      repo: 'acme/widgets',
+      state: 'open',
+      release: 'v1.4.0',
+      updated: null,
+    },
+  ],
+  edges: [
+    { from: 'coordinator:plans/cli/place', to: 'coordinator:plans/style/paint', kind: 'depends_on' },
+    { from: 'coordinator:plans/cli/ship', to: 'coordinator:plans/cli/place', kind: 'depends_on' },
+  ],
+  warnings: [],
+}
+
+/** recordNode is one task as the record's own documents make it: the qualified
+ * id (`<plan>/<task>`, project-wide, D2111), the plan it belongs to, the stream
+ * it is drawn in, the key of the box it is in (`''` for a task nobody has
+ * placed) and the plan's own version -- `''` wherever a box holds the task,
+ * which is where the CLI writes no number (D2114). */
+function recordNode(
+  id: string,
+  stream: string,
+  release: string,
+  version: string,
+  state: string,
+  title: string,
+): Record<string, unknown> {
+  return {
+    key: `coordinator:${id}`,
+    source: 'coordinator',
+    kind: 'task',
+    id,
+    title,
+    repo: '',
+    state,
+    release,
+    updated: null,
+    plan: id.slice(0, id.lastIndexOf('/')),
+    stream,
+    version,
+  }
+}
+
+/** RECORD_DOCUMENT is the record's document through the real decoder. */
+const RECORD_DOCUMENT: GraphView = recordDecoded()
+
+function recordDecoded(): GraphView {
+  const result = decodeGraphDocument(RECORD_RAW, 'graph.read')
+  if (!result.ok) throw new Error(result.skew.because)
+  return result.value
+}
+
 /** drawingOf is a screen's current drawing, mounted so its elements can be
  * walked. */
 function drawingOf(screen: GraphScreen): FakeNode {
@@ -2033,6 +2142,140 @@ describe('the graph screen and its scope', () => {
     expect(classedIn(drawingOf(screen), 'graph-scope-notice')).toHaveLength(0)
   })
 
+  it('draws the record’s lanes, boxes and dependency markers, and narrows to one stream', async () => {
+    const { screen, worker } = screenWith()
+    await screen.loadScope(RECORD_DOCUMENT)
+    const drawn = drawingOf(screen)
+
+    // The record's own streams are the filter, drawn by the plan scope's own
+    // segmented control: one segment per lane, then All, keyed `stream:<name>`
+    // and `all` so that a press means the same thing in either scope.
+    const tabs = classedIn(drawn, 'graph-tab')
+    expect(tabs.map((each) => each.getAttribute('data-tab'))).toEqual(['stream:style', 'stream:cli', 'all'])
+    expect(tabs.map((each) => each.textContent)).toEqual(['style', 'cli', 'All'])
+
+    // One lane per stream, in the record's own order, each headed by the stream
+    // it is a lane of.
+    expect(classedIn(drawn, 'graph-scope-lane').map((each) => each.getAttribute('data-stream'))).toEqual([
+      'style',
+      'cli',
+    ])
+    expect(classedIn(drawn, 'graph-scope-lane-heading').map((each) => each.textContent)).toEqual(['style', 'cli'])
+
+    // A box is the record's own release document (D2113): its key is the hook a
+    // task's `release` joins to, its name is the heading a reader sees -- and
+    // never its key, which is a hash -- and its state is drawn as a **word**.
+    expect(classedIn(drawn, 'graph-scope-box').map((each) => each.getAttribute('data-release'))).toEqual([
+      'release-style-mango',
+      'release-cli-camel',
+    ])
+    expect(classedIn(drawn, 'graph-scope-box-name').map((each) => each.textContent)).toEqual(['Mango', 'Camel'])
+    expect(classedIn(drawn, 'graph-scope-box').map((each) => each.getAttribute('data-state'))).toEqual([
+      'finished',
+      'open',
+    ])
+
+    // The task nobody placed is in its stream's unassigned group, with the
+    // plan's own version beside it and the console's words saying whose it is
+    // (D2114): a release box carries a name and no version, so the two are never
+    // matched.
+    const unassigned = classedIn(drawn, 'graph-scope-unassigned')
+    expect(unassigned).toHaveLength(1)
+    expect(classedIn(unassigned[0] ?? drawn, 'graph-scope-unassigned-heading')[0]?.textContent).toBe('unassigned')
+    const free = stateRow(drawn, 'coordinator:plans/cli/free')
+    expect(classedIn(free, 'graph-scope-version')[0]?.textContent).toBe('1.6.0')
+    expect(classedIn(free, 'graph-scope-version-mark')[0]?.textContent).toBe('from the plan')
+
+    // **The edge the drawing had no place for.** A cross-plan dependency is the
+    // marker its needing task carries: the stream and the box the needed task is
+    // in -- "needs CLI · Camel", the spec's own sentence -- so a reader looking
+    // at one stream still sees what the task waits on, and `data-cross` is what
+    // tells the drawing to draw it faintly.
+    const place = stateRow(drawn, 'coordinator:plans/cli/place')
+    const cross = classedIn(place, 'graph-scope-need')
+    expect(cross.map((each) => each.getAttribute('data-need'))).toEqual(['coordinator:plans/style/paint'])
+    expect(cross.map((each) => each.getAttribute('data-cross'))).toEqual(['true'])
+    expect(cross.map((each) => each.textContent)).toEqual(['needs style · Mango'])
+    // Nothing is selected, so no marker is lit: `data-need-on` is drawn for
+    // every one of them and is what a selection turns on.
+    expect(cross.map((each) => each.getAttribute('data-need-on'))).toEqual(['false'])
+    // A dependency inside one stream and one box is a marker too, and it carries
+    // no `data-cross` at all rather than `false`.
+    const ship = classedIn(stateRow(drawn, 'coordinator:plans/cli/ship'), 'graph-scope-need')
+    expect(ship.map((each) => each.getAttribute('data-cross'))).toEqual([null])
+    expect(ship.map((each) => each.textContent)).toEqual(['needs cli · Camel'])
+
+    // A dangling endpoint is drawn as such (D2115), in the box its own
+    // assignment names.
+    const left = stateRow(drawn, 'coordinator:plans/gone/left')
+    expect(left.getAttribute('data-dangling')).toBe('true')
+    expect(classedIn(left, 'graph-scope-dangling')[0]?.textContent).toBe('dangling')
+
+    // The stored view's own record is still grouped by the release string its
+    // repository wrote: the record's boxes did not take it over.
+    expect(classedIn(drawn, 'graph-scope-release').map((each) => each.getAttribute('data-release'))).toEqual([
+      'v1.4.0',
+    ])
+    // And no layout is asked for: this scope is a reading, and the record's
+    // edges are markers rather than lines.
+    expect(worker.placements).toBe(0)
+
+    // Narrowing to one stream is the record's own tab, and it leaves that lane
+    // and nothing else -- the stored view's group stays, because it is not a
+    // stream.
+    await screen.narrow('cli')
+    const narrowed = drawingOf(screen)
+    expect(classedIn(narrowed, 'graph-scope-lane').map((each) => each.getAttribute('data-stream'))).toEqual(['cli'])
+    expect(classedIn(narrowed, 'graph-tab').map((each) => each.getAttribute('aria-pressed'))).toEqual([
+      'false',
+      'true',
+      'false',
+    ])
+    expect(classedIn(narrowed, 'graph-scope-release').map((each) => each.getAttribute('data-release'))).toEqual([
+      'v1.4.0',
+    ])
+    // **The marker survives the filter**: it names the other stream and the box
+    // the needed task is in even where that task is not drawn at all, which is
+    // the whole reason it is a word under the task rather than a line to it.
+    expect(
+      classedIn(stateRow(narrowed, 'coordinator:plans/cli/place'), 'graph-scope-need').map((each) => each.textContent),
+    ).toEqual(['needs style · Mango'])
+  })
+
+  it('draws the record’s boxes with no task in them, and calls that an empty box and not an empty scope', async () => {
+    // A document whose record holds releases and no task at all: the boxes are
+    // the record's own documents (D2113), so the drawing is the lanes and their
+    // boxes -- not the sentence a scope with nothing to draw is answered with,
+    // which is a claim about the *scope* and would be false here.
+    const { screen } = screenWith()
+    const decoded = decodeGraphDocument({ ...RECORD_RAW, nodes: [], edges: [] }, 'graph.read')
+    if (!decoded.ok) throw new Error(decoded.skew.because)
+    await screen.loadScope(decoded.value)
+    const drawn = drawingOf(screen)
+
+    expect(classedIn(drawn, 'graph-scope-empty')).toHaveLength(0)
+    expect(classedIn(drawn, 'graph-scope-node')).toHaveLength(0)
+    expect(classedIn(drawn, 'graph-scope-lane').map((each) => each.getAttribute('data-stream'))).toEqual([
+      'style',
+      'cli',
+    ])
+    expect(classedIn(drawn, 'graph-scope-box-name').map((each) => each.textContent)).toEqual(['Mango', 'Camel'])
+    expect(classedIn(drawn, 'graph-scope-box').map((each) => each.getAttribute('data-state'))).toEqual([
+      'finished',
+      'open',
+    ])
+    // The streams are still the filter: a lane with no task in it is a stream a
+    // reader can still choose, and one that chose nothing leaves the same two.
+    expect(classedIn(drawn, 'graph-tab').map((each) => each.getAttribute('data-tab'))).toEqual([
+      'stream:style',
+      'stream:cli',
+      'all',
+    ])
+    // And there is no group of unplaced tasks, because there is no task: an
+    // empty box is not one.
+    expect(classedIn(drawn, 'graph-scope-unassigned')).toHaveLength(0)
+  })
+
   it('draws the as-of time beside a source state, and nothing where the source named none', async () => {
     // CG11's third interface clause: `source_state` is drawn as words **with**
     // the as-of time. The state word says which of the four states the source
@@ -2052,5 +2295,110 @@ describe('the graph screen and its scope', () => {
     // time the console made up, in the one cell a reader trusts to be a
     // document's.
     expect(classedIn(sources[1] ?? drawn, 'graph-source-asof')).toHaveLength(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The scale the picture is drawn at (slice G, D735)
+// ---------------------------------------------------------------------------
+
+describe('the graph screen and the scale it is drawn at', () => {
+  it('graph: fits the width above the minimum scale', async () => {
+    // **The picture has a scale floor, and the panel's width is what reaches
+    // it.** Above the floor nothing changes: the canvas is the panel's own
+    // width, which is `width: auto` with `min-width: 100%` and is what the
+    // element did before the floor existed. The floor itself is the canvas's
+    // `width`/`height` geometry -- the whole picture at `GRAPH_MIN_SCALE` --
+    // written as attributes because `style-src 'self'` backs no inline style.
+    const screen = elkScreen()
+    await screen.load(DOCUMENT, RUNS)
+    const root = drawingOf(screen)
+    const frame = viewBoxIn(root)
+    const canvas = classedIn(root, 'graph-canvas')[0]
+    if (canvas === undefined) throw new Error('the drawing put no canvas up')
+
+    // The floor is the **whole picture**, bands and release boxes included, and
+    // the frame the screen itself computed is that picture: a floor taken from
+    // one level's width would leave the columns that made the picture wide drawn
+    // under the bound it was meant to keep.
+    expect(canvas.getAttribute('width')).toBe(String(frame.width * GRAPH_MIN_SCALE))
+    expect(canvas.getAttribute('height')).toBe(String(frame.height * GRAPH_MIN_SCALE))
+
+    // The number is a legibility floor and not a taste: a card's title is drawn
+    // at the theme's own `--text-sm`, and at the floor it is still at least
+    // 9.75 px -- a 260 px card drawn 195 px wide. A smaller floor is a title
+    // wrapped over three lines that a reader reads as a grey block.
+    const title = Number.parseFloat(themeRule('flight-deck.css', ':root')['--text-sm'] ?? '')
+    expect(Number.isFinite(title), 'the theme declares no --text-sm, so the floor below is unread').toBe(true)
+    expect(GRAPH_MIN_SCALE).toBeLessThan(1)
+    expect(GRAPH_NODE_WIDTH * GRAPH_MIN_SCALE).toBe(195)
+    expect(title * GRAPH_MIN_SCALE).toBeGreaterThanOrEqual(9)
+
+    // And the canvas fills the panel whenever there is room: `min-width: 100%`
+    // is what makes the floor a floor rather than a size, and `height: auto`
+    // keeps the picture's ratio while it stretches.
+    const rule = themeRule('flight-deck.css', 'section.graph svg.graph-canvas')
+    expect(rule['width']).toBe('auto')
+    expect(rule['min-width']).toBe('100%')
+    expect(rule['height']).toBe('auto')
+  })
+
+  it('graph: scrolls horizontally below it', async () => {
+    // Below the floor the canvas keeps its geometry and the pane around it
+    // scrolls: a picture read sideways is still a picture, where a picture
+    // shrunk to the panel is one nobody can read. `width: 100%` -- the rule the
+    // screen carried before the floor existed -- is exactly the value that would
+    // fit the width whatever the picture's own size, so the canvas must not
+    // carry it any more.
+    const screen = elkScreen()
+    await screen.load(DOCUMENT, RUNS)
+    const root = drawingOf(screen)
+    const frame = viewBoxIn(root)
+    const canvas = classedIn(root, 'graph-canvas')[0]
+    if (canvas === undefined) throw new Error('the drawing put no canvas up')
+
+    const pane = classedIn(root, 'graph-canvas-pane')[0]
+    if (pane === undefined) throw new Error('the canvas was drawn with no pane to scroll it in')
+    expect(pane.children.map((each) => each.getAttribute('class'))).toEqual(['graph-canvas'])
+    // The stage still holds the drawing: the pane is between the two, and the
+    // inspector is still the stage's own second column.
+    const stage = classedIn(root, 'graph-stage')[0]
+    expect(stage?.children.map((each) => each.getAttribute('class'))).toEqual(['graph-canvas-pane'])
+
+    expect(themeRule('flight-deck.css', 'div.graph-canvas-pane')['overflow-x']).toBe('auto')
+    const rule = themeRule('flight-deck.css', 'section.graph svg.graph-canvas')
+    expect(rule['width'], 'the canvas still fits the width whatever the picture’s size').not.toBe('100%')
+    // The floor is below the picture's own width, or there would be no range in
+    // which the pane has anything to scroll.
+    expect(Number(canvas.getAttribute('width'))).toBeLessThan(frame.width)
+    expect(Number(canvas.getAttribute('height'))).toBeLessThan(frame.height)
+
+    // **The pane is the picture's and no one else's.** The list is not a picture
+    // and has no width of its own to keep, so a list drawing grows no scroll
+    // area it would never use.
+    const { screen: listing } = screenWith()
+    await listing.load(DOCUMENT, RUNS)
+    const drawn = listing.change({ view: 'list' })
+    if (drawn === null) throw new Error('no drawing')
+    expect(classedIn(mounted(drawn), 'graph-canvas-pane')).toHaveLength(0)
+  })
+
+  it('layout: no wrapping option', async () => {
+    // **The floor is the whole of D735's first half**: the picture is never
+    // folded to fit, it is scrolled. `elk.layered.wrapping` is the option that
+    // would fold it -- and folding a graph whose layers run left to right widens
+    // it across the axis a reader moves along, which is the wrong shape for the
+    // panel as well as a new cache key and a new set of positions. So no ask
+    // this screen makes carries a wrapping key at all.
+    const { screen, worker } = screenWith()
+    await screen.load(DOCUMENT, RUNS)
+    const asks = worker.sent.filter((each) => each['cmd'] === 'layout')
+    expect(asks.length, 'the picture was drawn with no layout to read the options off').toBeGreaterThan(0)
+    for (const ask of asks) {
+      const options = (ask['layoutOptions'] ?? {}) as Readonly<Record<string, string>>
+      expect(Object.keys(options).filter((each) => each.includes('wrapping')), 'the engine was asked to fold the picture').toEqual([])
+      expect(options['elk.algorithm']).toBe('layered')
+      expect(options['elk.direction']).toBe('RIGHT')
+    }
   })
 })

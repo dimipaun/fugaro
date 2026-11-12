@@ -32,23 +32,38 @@ const (
 // ReviewRounds.
 type Amount float64
 
-// Figure is one dimension of a chain read: the amount, and whether the chain
-// measured it at all.
+// Figure is one dimension of a chain read: the amount, the floor under it that
+// the runs the read could read put there, and whether the chain measured it at
+// all.
 type Figure struct {
 	Amount Amount
+	// Floor is what the runs the read could actually read establish, and it is
+	// the figure a caller's --used-* may not go under (D1048) whichever way the
+	// dimension came back. Where the read measured the dimension it is at or
+	// under Amount — the same sum, with whatever the runs it could not read
+	// were charged on top of it — and where it could not, Amount is nothing to
+	// read while this is still the sum of the runs that were read. A caller who
+	// could state a figure under it could state a zero and take the runs it
+	// could not read off the chain's charge again, which is the whole cap by
+	// the back door (T1, F14).
+	Floor Amount
 	// Measured is false when the chain has no figure for the dimension, and
 	// Amount is then nothing to read rather than a number to trust. It is
-	// false in two cases. With the budget off there is no ledger, and no run
+	// false in three cases. With the budget off there is no ledger, and no run
 	// record carries a whole-run token total — result.json's only token
 	// figures are the gateway's cache sums, which exclude the input and
 	// output tokens a cap counts — so a budget-off chain does not measure
-	// tokens rather than approximating them (D1051, F8). And a run whose
-	// ledger cannot be read leaves the dimension it could not be charged in
-	// unmeasured, where the caller's PerRunCaps had no bound for it: the
-	// only other figures available are a zero and the sum of the runs that
-	// could be read, both of which say the chain spent less than it may have
-	// (D1049). A reader prints that; a false Measured is never a zero that
-	// was read.
+	// tokens rather than approximating them (D1051, F8). A run whose ledger
+	// cannot be read leaves the dimension it could not be charged in
+	// unmeasured, where the caller's PerRunCaps had no bound for it: the only
+	// other figures available are a zero and the sum of the runs that could
+	// be read, both of which say the chain spent less than it may have
+	// (D1049). And a read that stopped at a gap leaves the record-backed
+	// dimensions unmeasured too: the records behind the hop are gone with the
+	// one the link named, so the time and the rounds of the runs that could
+	// still be read are a lower bound of the chain's, and reporting a lower
+	// bound as the figure is the shortening F21 and T5 forbid. A reader
+	// prints that; a false Measured is never a zero that was read.
 	Measured bool
 }
 
@@ -88,12 +103,11 @@ type LedgerReader interface {
 
 // PerRunCaps is, per dimension, the largest amount one run of this chain
 // could have been holding, and so what a ledger that cannot be read is
-// charged (D1049). The caller passes the bounds it resolved: the effective
-// per-run cap where the installation sets one — the lower of the policy's
-// and the database's — and otherwise **the chain's own limit for that
-// dimension**, which is then the tightest bound in play. Neither is the
-// chain's limit where a per-run cap exists: that one is the root launch's
-// number and lives in its stored task (D1046).
+// charged (D1049). The caller passes the bounds it resolved: the installation's
+// per-run cap where it sets one — the lower of the policy's and the database's.
+// That is not the chain's limit where a per-run cap exists: that one is the
+// root launch's number and lives in its stored task (D1046), and it is the
+// number a caller reads out of the chain rather than one it hands in.
 //
 // **Zero is the absence of a bound**, in this codebase's own vocabulary for
 // both dimensions: policy.PerRunUSD is documented `0 = unset` and
@@ -119,12 +133,14 @@ type PerRunCaps struct {
 	Tokens int64
 }
 
-// LedgerMiss is one run of a chain whose ledger could not be read, and which
-// of the two ways it failed: Err set is a read that failed, Err nil a node
-// the database does not have. Both are charged the per-run cap (D1049) —
-// and in a dimension the caller's PerRunCaps has no bound for, charged
-// nothing and left unmeasured instead — and they are kept apart here because
-// a reader names which one it hit (L1).
+// LedgerMiss is one run of a chain whose money could not be read, and which of
+// the three ways it failed: Err nil is a node the database does not have, Err
+// set a read that failed, and ErrChainGap a run the link reaches whose record
+// the bucket no longer holds — charged the per-run cap and left with the runs
+// behind it unfollowable (ResolveChain). The first two are charged the per-run
+// cap (D1049) — and in a dimension the caller's PerRunCaps has no bound for,
+// charged nothing and left unmeasured instead — and all three are kept apart
+// here because a reader names which one it hit (L1).
 type LedgerMiss struct {
 	Run string
 	Err error
@@ -135,13 +151,21 @@ type LedgerMiss struct {
 type Chain struct {
 	// Root is the chain's id: the root run id (D1045) — the run a pull
 	// request's branch is named for, the run a retry's stored task carries,
-	// or the run --continues names.
+	// or the run --continues names. It is empty for the one read that stopped
+	// at a gap: the run that began the chain is behind the hop the bucket no
+	// longer holds anything under, so its id was never read, and rooting the
+	// chain at the oldest run the link still reached would be the shortening
+	// a gap must not become.
 	Root string
 	// Runs are the chain's run ids, the root first and the run the read
 	// started from last. They come from the link, one record named at a
-	// time, and never from a listing (F21).
+	// time, and never from a listing (F21). A read that stopped at a gap
+	// holds the runs it could still reach, which are the ones after the hop
+	// and not a chain of their own.
 	Runs []string
-	// Charged are the runs whose ledger could not be read, in Runs' order.
+	// Charged are the runs whose money could not be read, in Runs' order,
+	// with the hop a gap stopped at last: its record is what is missing, so
+	// it is in no Run and is named here (ErrChainGap).
 	Charged []LedgerMiss
 	// Enforced is whether the money and token figures are the budget
 	// database's. It is false when the read had no ledger to consult — the
@@ -170,15 +194,17 @@ func (c *Chain) Remaining(limit Amount, dim Dimension) Figure {
 	return Figure{Amount: limit - used.Amount, Measured: true}
 }
 
-// figure is one dimension's reading, and none at all when the dimension is
-// not measured: a sum over the runs that could be read is a lower bound, and
-// a lower bound reported as the figure is the one thing an unmeasured
-// dimension must not hand a reader.
-func figure(a Amount, measured bool) Figure {
+// figure is one dimension's reading: the charge the chain holds, and none at
+// all when the dimension is not measured — a sum over the runs that could be
+// read is a lower bound, and a lower bound reported as the figure is the one
+// thing an unmeasured dimension must not hand a reader. The sum is not thrown
+// away with it: it is the figure's Floor, which is what the read did establish
+// however the dimension came back.
+func figure(amount, floor Amount, measured bool) Figure {
 	if !measured {
-		return Figure{}
+		return Figure{Floor: floor}
 	}
-	return Figure{Amount: a, Measured: true}
+	return Figure{Amount: amount, Floor: floor, Measured: true}
 }
 
 // ErrChainGap is a chain read that stopped at a link whose record the bucket no
@@ -190,6 +216,13 @@ func figure(a Amount, measured bool) Figure {
 // what is left now. Every other failed read is a figure unknown for a reason no
 // other object answers, and a caller that carried on without it would run past
 // a limit nothing established.
+//
+// The read that hits one still answers what it read, with the hop charged
+// (ResolveChain), and only for a chain with a ledger to charge it in: with the
+// budget off the figures are the records, and a chain the records stop partway
+// through has no figure at all — the runs the link still reaches are a lower
+// bound of it, and the sum of a lower bound is the shortening this error exists
+// to prevent.
 var ErrChainGap = errors.New("the chain's records stop at a link the bucket no longer holds")
 
 // ResolveChain reads the chain the run of s belongs to: the runs its records
@@ -204,16 +237,21 @@ var ErrChainGap = errors.New("the chain's records stop at a link the bucket no l
 // since a run writes result.json as it starts — the run a --retry's stored
 // task names, and the one a --continues names — so nothing is read for it and
 // it holds nothing (D1045). A run the link *reaches* with no record is the
-// other case and ends the read with an error: its record is the only thing
-// that says which run came before it, so with it gone the runs behind that
-// hop cannot be found, and answering anyway would root the chain at the hop
-// and drop every run before it from both the membership and the spend — the
-// same reason a record that cannot be read for any other reason and a link
-// that runs in a circle end the read (F21, T5: a launcher can delete a
-// record, and a chain's figure is never the one a deletion leaves behind). The
-// missing record's own error is ErrChainGap, the one of the three a caller may
-// answer for where it holds the previous run's stored task; the other two it
-// refuses.
+// other case and ends the walk there: its record is the only thing that says
+// which run came before it, so with it gone the runs behind that hop cannot be
+// found (F21, T5: a launcher can delete a record). What that hop does *not* do
+// is drop what was read: the runs the link still reaches are answered, with the
+// hop charged the per-run cap the way a ledger that cannot be read is charged
+// (D1049 — the most that run could have been holding, and the dimension left
+// unmeasured where the caller's PerRunCaps has no bound for it), named in
+// Charged with ErrChainGap, and the record-backed dimensions reported
+// unmeasured rather than as a sum over the runs that could still be read: below
+// the hop sits a chain of unknown length whose records are gone with it, so
+// every figure the readable runs give is a lower bound, and a lower bound
+// reported as the chain's figure is exactly the shortening F21 and T5 forbid.
+// The error is returned with the chain where there is a ledger to charge the
+// hop in, and alone where there is not: with the budget off the figures *are*
+// the records, so a read the records stop partway through has none.
 //
 // ledgers is the budget database, nil when the budget is off — where the
 // records are the figures and the chain is UNENFORCED (D1046) — perRun is
@@ -233,6 +271,10 @@ func ResolveChain(ctx context.Context, s *Store, ledgers LedgerReader, perRun Pe
 	// for: the two mean different things when the bucket has no record.
 	var ids []string
 	records := map[string]*Record{}
+	// gap is the linked run whose record the bucket does not have: the walk
+	// stops there, and the runs behind it are not named by anything the read
+	// can reach.
+	var gap string
 	id, linked := from, false
 	for id != "" {
 		if _, seen := records[id]; seen {
@@ -251,7 +293,8 @@ func ResolveChain(ctx context.Context, s *Store, ledgers LedgerReader, perRun Pe
 		rec, err := s.Sibling(id).ReadRecord(ctx)
 		switch {
 		case errors.Is(err, ErrNotFound) && linked:
-			return nil, fmt.Errorf("the chain of run %s/%s links to run %s, whose record runs/%s/%s/result.json does not have, so the runs behind it cannot be found: %w", s.Slug(), from, id, s.Slug(), id, ErrChainGap)
+			gap = id
+			id = ""
 		case errors.Is(err, ErrNotFound):
 			// The run the read was named for never started, so the chain is
 			// it alone and it holds nothing (D1045).
@@ -270,10 +313,41 @@ func ResolveChain(ctx context.Context, s *Store, ledgers LedgerReader, perRun Pe
 		}
 	}
 	slices.Reverse(ids)
-	c.Runs, c.Root = ids, ids[0]
+	c.Runs = ids
+	// The chain's id is the run that began it, which a gap puts on the far
+	// side of a hop the read cannot follow: naming the oldest run it did read
+	// would root the chain at a run the link never said was the root.
+	if gap == "" {
+		c.Root = ids[0]
+	}
 
 	var usd, tokens, seconds, rounds Amount
+	// usdRead and tokensRead are the same sums without what the runs that could
+	// not be read were charged for: the floor a caller's --used-* may not go
+	// under, and so the one figure an unmeasured dimension still hands over.
+	var usdRead, tokensRead Amount
 	unbound := map[Dimension]bool{}
+	// charge is one run whose money could not be read, and what the read
+	// counted for it: the per-run cap where the caller bounds the dimension
+	// (D1049), and the dimension left unmeasured where it does not. A run
+	// whose node is absent, a run whose read failed and the hop of a gap are
+	// all three charged here, because all three leave the same figure unknown
+	// — and the hop is charged the cap rather than read: the cap is the most
+	// it could have been holding, so it is the larger of the two figures and
+	// the direction D1049 takes.
+	charge := func(id string, err error) {
+		c.Charged = append(c.Charged, LedgerMiss{Run: id, Err: err})
+		if perRun.USD == 0 {
+			unbound[USD] = true
+		} else {
+			usd += Amount(perRun.USD)
+		}
+		if perRun.Tokens == 0 {
+			unbound[Tokens] = true
+		} else {
+			tokens += Amount(perRun.Tokens)
+		}
+	}
 	for _, id := range ids {
 		rec := records[id]
 		if rec == nil {
@@ -284,36 +358,33 @@ func ResolveChain(ctx context.Context, s *Store, ledgers LedgerReader, perRun Pe
 		seconds += chainSeconds(rec, now)
 		rounds += Amount(len(rec.Reviews))
 		if ledgers == nil {
-			usd += recordUSD(rec)
+			held := recordUSD(rec)
+			usd, usdRead = usd+held, usdRead+held
 			continue
 		}
 		l, found, err := ledgers.ReadLedger(ctx, s.Slug(), id)
 		if err != nil || !found {
-			c.Charged = append(c.Charged, LedgerMiss{Run: id, Err: err})
-			// A dimension the caller has no bound for is not charged: a
-			// zero here reads the run as free, which is the figure D1049
-			// forbids, so the dimension is reported unmeasured instead (and
-			// not as the sum of the runs that could be read, which is a
-			// lower bound rather than the figure).
-			if perRun.USD == 0 {
-				unbound[USD] = true
-			} else {
-				usd += Amount(perRun.USD)
-			}
-			if perRun.Tokens == 0 {
-				unbound[Tokens] = true
-			} else {
-				tokens += Amount(perRun.Tokens)
-			}
+			charge(id, err)
 			continue
 		}
-		usd += Amount(l.Held())
-		tokens += Amount(l.Tokens)
+		held, tk := Amount(l.Held()), Amount(l.Tokens)
+		usd, usdRead = usd+held, usdRead+held
+		tokens, tokensRead = tokens+tk, tokensRead+tk
 	}
-	c.used[USD] = figure(usd, !unbound[USD])
-	c.used[Tokens] = figure(tokens, ledgers != nil && !unbound[Tokens])
-	c.used[Time] = Figure{Amount: seconds, Measured: true}
-	c.used[ReviewRounds] = Figure{Amount: rounds, Measured: true}
+	if gap != "" {
+		charge(gap, ErrChainGap)
+	}
+	c.used[USD] = figure(usd, usdRead, !unbound[USD])
+	c.used[Tokens] = figure(tokens, tokensRead, ledgers != nil && !unbound[Tokens])
+	c.used[Time] = figure(seconds, seconds, gap == "")
+	c.used[ReviewRounds] = figure(rounds, rounds, gap == "")
+	if gap != "" {
+		err := fmt.Errorf("the chain of run %s/%s links to run %s, whose record runs/%s/%s/result.json does not have, so the runs behind it cannot be found: %w", s.Slug(), from, gap, s.Slug(), gap, ErrChainGap)
+		if ledgers == nil {
+			return nil, err
+		}
+		return c, err
+	}
 	return c, nil
 }
 

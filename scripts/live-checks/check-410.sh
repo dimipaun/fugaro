@@ -26,8 +26,9 @@
 #     nothing else: no setup, no environment prepared by this check beyond the
 #     same scratch state directory the failing run used. A diagnosis that needs
 #     one more step is a finding;
-#   * the evidence folder the diagnosis wrote: 0700, holding the log, doctor's
-#     output, the version and the effective configuration.
+#   * the evidence folder the diagnosis wrote: its mode (recorded, not judged),
+#     holding the log, doctor's output, the version and the effective
+#     configuration.
 #
 # It creates NOTHING in the cloud, and it cannot: the project it names does not
 # exist. It does spend ONE model call on your own credential, which is what a

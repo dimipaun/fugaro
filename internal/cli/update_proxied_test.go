@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -38,7 +40,15 @@ func proxiedRepoRig(t *testing.T) (*initRig, *gcpfake.RTDB) {
 // (G15), so the tests below read it rather than the local config.
 func publishProxiedNode(t *testing.T, db *gcpfake.RTDB, proxy bool, repos ...string) {
 	t.Helper()
-	node := map[string]any{"version": projectpolicy.Version, "allow_repos": []string{"bitbucket/acme/sandbox"}}
+	publishProxiedNodeAt(t, db, projectpolicy.Version, proxy, repos...)
+}
+
+// publishProxiedNodeAt is publishProxiedNode with the node's version chosen:
+// the node the first `fugaro update` after a version bump reads is written one
+// version behind, which is what the converge test below starts from.
+func publishProxiedNodeAt(t *testing.T, db *gcpfake.RTDB, version int, proxy bool, repos ...string) {
+	t.Helper()
+	node := map[string]any{"version": version, "allow_repos": []string{"bitbucket/acme/sandbox"}}
 	if len(repos) > 0 {
 		node["bitbucket_token"] = map[string]any{"allow_repos": repos, "proxy": proxy}
 	}
@@ -117,6 +127,88 @@ func TestUpdateRepoCarriesTheProxiedFact(t *testing.T) {
 		if len(r.ran(t, "apply")) != 0 {
 			t.Errorf("%s: the run applied: %q", name, r.calls(t))
 		}
+	}
+}
+
+// proxiedConvergeRig is proxiedRepoRig for a whole converge: the installation's
+// database carries the budget backend `fugaro update --firebase-project` writes
+// (the nodes the rules and policy stages act on), so one run reaches the
+// repository stage and the policy stage behind it.
+func proxiedConvergeRig(t *testing.T) (*initRig, *gcpfake.RTDB) {
+	t.Helper()
+	r := newInitRig(t)
+	r.repoReady(t)
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
+		"credentials_service": map[string]any{"name": "fugaro-credentials", "region": "us-east5"},
+	})}
+	db := gcpfake.NewRTDB(t)
+	db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "project": initProjectName, "gcp_project": initProject, "version": 1})
+	db.Set(budget.PathProject, initProjectName)
+	db.Set(budget.PathMode, budget.ModeEnforce)
+	db.Set(budget.PathLimits, map[string]any{"maxReserveMicros": 5_000_000})
+	r.appendConfig(t, "budget: { mode: enforce, per_run_usd: 5, rtdb_url: "+db.URL+", firebase_project: \""+initProject+"\" }\n")
+	r.save(t)
+	return r, db
+}
+
+// TestUpdateConvergesAProxiedV4NodeInOneRun: the first `fugaro update` after
+// the upgrade that bumps the policy version converges a proxied repository in
+// ONE run — the node migrated to this binary's version, and the repository root
+// carrying the fact the node states.
+//
+// The two halves are one run's because the repository stage runs BEFORE the
+// policy stage (initStages registers it there, and the order is deliberate: the
+// rules stage is what the policy write is gated on). A strict read of the node
+// in the repository stage refuses the version behind, the stage then passes no
+// policy at all (repoPolicyInput), and internal/infra reads a nil policy as
+// "nothing is proxied" (resolveBitbucketProxied judges nothing without one) —
+// so the repository root drops bitbucket_proxied, the job's service account
+// keeps the accessor and the mount on bitbucket-token the credentials-service
+// proxy withholds, and the node's published image catalog and map are not
+// enforced. All of that converges on a SECOND `fugaro update`, which is the
+// operator step the HARD RULE forbids.
+//
+// The read that fixes it is the repository stage's own
+// (repoPolicyRead/ReadCarriedForwardShapeFree, v4 being projectpolicy's
+// ShapeFreeFloor), so the stage reads the node the policy stage of the same run
+// is about to write.
+func TestUpdateConvergesAProxiedV4NodeInOneRun(t *testing.T) {
+	slug, err := task.Slug("bitbucket", "acme/sandbox")
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := projectpolicy.Canonical("bitbucket", "acme/sandbox")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, db := proxiedConvergeRig(t)
+	// The credentials the installation already holds: a converge reaches the
+	// repository stage only past the secrets stage, and this test is about the
+	// stages behind it.
+	r.seedRepoSecret(t, "bitbucket-token", []byte(tokenValue))
+	r.seedRepoSecret(t, "claude-oauth-token", []byte(tokenValue))
+	// The image build is the fake builder: what this test reads is the root's
+	// plan and the node, not a Cloud Build.
+	useFakeBuilder(t)
+	publishProxiedNodeAt(t, db, projectpolicy.Version-1, true, canonical)
+	if got := nodeVersionOn(t, db); got != projectpolicy.Version-1 {
+		t.Fatalf("the rig's node is version %d, want %d: this test is about the node the first update after the bump reads", got, projectpolicy.Version-1)
+	}
+	dir := repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", checkoutYAML("bitbucket", "oauth", "aurora", ""))
+	t.Chdir(dir)
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	if err != nil {
+		t.Fatalf("one fugaro update --yes did not converge a version-%d node that proxies this repository: %v\nstdout:\n%s\nstderr:\n%s", projectpolicy.Version-1, err, out, errOut)
+	}
+	if got := nodeVersionOn(t, db); got != projectpolicy.Version {
+		t.Errorf("the published policy is version %d after one run, want %d: the policy stage migrates the node in place, and the run the repository stage is in is that run\n%s", got, projectpolicy.Version, out)
+	}
+	got, present := repoProxiedFact(t, slug)
+	if !present || !got {
+		t.Errorf("the repository root's tfvars carry repo.bitbucket_proxied = %v (key present: %v), want true: the repository stage read the node carried forward, and a stage that passes no policy there reads as 'nothing is proxied' (the second fugaro update the HARD RULE forbids)\n%s", got, present, out)
+	}
+	if !strings.Contains(out, "migrated the published policy from version "+strconv.Itoa(projectpolicy.Version-1)+" to "+strconv.Itoa(projectpolicy.Version)) {
+		t.Errorf("the run's account does not name the migration this test is about:\n%s", out)
 	}
 }
 

@@ -50,6 +50,20 @@ type CraftPool struct {
 	Strategy string
 	// Members is the pool's members, in the order it tries them.
 	Members []string
+	// Owner is the account the pool belongs to, by the email its roster
+	// spells — the same spelling config.Pool.Owner holds, because a pool's
+	// authorisation is decided from the published policy alone (D1936, R10)
+	// and this is the form that node carries.
+	Owner string
+	// AllowedUsers is the roster the owner shares the pool with, by email. It
+	// is a SET and not an ordered list: unlike Members, the order a layer
+	// writes it in carries no meaning, which is why a later layer may narrow
+	// it by dropping users rather than by keeping their order (tightenCraftPool).
+	AllowedUsers []string
+	// LegacyOpen is D1942's marker for a pool that predates owners: it is
+	// served to everyone, which is what the migration writes so that a pool
+	// the owner never gave an owner to keeps working (F37).
+	LegacyOpen bool
 }
 
 // CraftLayer is one layer's craft block: the credentials and the pools the
@@ -117,6 +131,18 @@ func CraftPoolMembersKey(name string) string { return CraftPoolKey(name) + ".mem
 // CraftPoolStrategyKey is the policy key of a pool's strategy
 // ("crafts.pools.claude.strategy").
 func CraftPoolStrategyKey(name string) string { return CraftPoolKey(name) + ".strategy" }
+
+// CraftPoolOwnerKey is the policy key of a pool's owner
+// ("crafts.pools.claude.owner").
+func CraftPoolOwnerKey(name string) string { return CraftPoolKey(name) + ".owner" }
+
+// CraftPoolAllowedUsersKey is the policy key of a pool's roster
+// ("crafts.pools.claude.allowed_users").
+func CraftPoolAllowedUsersKey(name string) string { return CraftPoolKey(name) + ".allowed_users" }
+
+// CraftPoolLegacyOpenKey is the policy key of a pool's legacy-open marker
+// ("crafts.pools.claude.legacy_open").
+func CraftPoolLegacyOpenKey(name string) string { return CraftPoolKey(name) + ".legacy_open" }
 
 // CraftAccessKey is the policy key of one craft's access
 // ("crafts.senior-review.access").
@@ -206,10 +232,20 @@ func (e *Effective) defineCraftPools(pools map[string]CraftPool, src string) {
 			e.Craft.Pools = make(map[string]CraftPool, len(pools))
 		}
 		p := pools[name]
-		e.Craft.Pools[name] = CraftPool{Strategy: p.Strategy, Members: dedupe(p.Members)}
+		e.Craft.Pools[name] = CraftPool{Strategy: p.Strategy, Members: dedupe(p.Members),
+			Owner: p.Owner, AllowedUsers: dedupe(p.AllowedUsers), LegacyOpen: p.LegacyOpen}
 		e.Sources[CraftPoolMembersKey(name)] = src
 		if p.Strategy != "" {
 			e.Sources[CraftPoolStrategyKey(name)] = src
+		}
+		if p.Owner != "" {
+			e.Sources[CraftPoolOwnerKey(name)] = src
+		}
+		if len(p.AllowedUsers) > 0 {
+			e.Sources[CraftPoolAllowedUsersKey(name)] = src
+		}
+		if p.LegacyOpen {
+			e.Sources[CraftPoolLegacyOpenKey(name)] = src
 		}
 	}
 }
@@ -255,7 +291,55 @@ func (e *Effective) tightenCraftPool(name string, p CraftPool, src string) {
 				p.Strategy, poolStrategyText(out.Strategy), e.craftSource(CraftPoolStrategyKey(name))})
 		}
 	}
+	// The roster may only narrow: every name on it is a grant of the pool's
+	// spend, so a layer that drops one is tighter and one that adds one is
+	// looser, whatever else it keeps. The order is not compared — a roster is a
+	// set — so a layer that re-lists the project's users in another order moves
+	// nothing and is not recorded (Merge).
+	if len(p.AllowedUsers) > 0 && !sameUsers(cur.AllowedUsers, p.AllowedUsers) {
+		if subsetOf(cur.AllowedUsers, p.AllowedUsers) {
+			out.AllowedUsers, e.Sources[CraftPoolAllowedUsersKey(name)] = dedupe(p.AllowedUsers), src
+		} else {
+			e.Ignored = append(e.Ignored, Ignored{CraftPoolAllowedUsersKey(name),
+				strings.Join(p.AllowedUsers, ","), strings.Join(cur.AllowedUsers, ","),
+				e.craftSource(CraftPoolAllowedUsersKey(name))})
+		}
+	}
+	// An owner and the legacy-open marker are not a later layer's to write at
+	// all. D1936 makes the owner the one account a pool's spend is the owner's
+	// own, and D1942's marker is what a pool the migration found ownerless
+	// carries: a repository that could set either would hand itself a shared
+	// token the owner never gave, or reopen a pool the owner had narrowed.
+	if p.Owner != "" && p.Owner != cur.Owner {
+		e.Ignored = append(e.Ignored, Ignored{CraftPoolOwnerKey(name), p.Owner, cur.Owner,
+			e.craftSource(CraftPoolOwnerKey(name))})
+	}
+	if p.LegacyOpen && !cur.LegacyOpen {
+		e.Ignored = append(e.Ignored, Ignored{CraftPoolLegacyOpenKey(name), "true", "false",
+			e.craftSource(CraftPoolLegacyOpenKey(name))})
+	}
 	e.Craft.Pools[name] = out
+}
+
+// sameUsers reports whether two rosters hold the same names, order aside: a
+// roster is a set, so a layer that re-lists the project's users in another
+// order has said nothing new (tightenCraftPool).
+func sameUsers(have, want []string) bool {
+	if len(have) != len(dedupe(want)) {
+		return false
+	}
+	return subsetOf(have, want)
+}
+
+// subsetOf reports whether every name of want is a name of have: the roster
+// rule, which is a set's and not the member list's (narrows).
+func subsetOf(have, want []string) bool {
+	for _, u := range want {
+		if !slices.Contains(have, u) {
+			return false
+		}
+	}
+	return true
 }
 
 // selectCraftAccess applies a layer's crafts: project is whether it is the

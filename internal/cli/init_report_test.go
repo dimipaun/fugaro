@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -948,20 +949,35 @@ func TestUpdateUnderAgentMarkerPrintsTheSameSteps(t *testing.T) {
 	agent := applyingRig(t)
 	outAgent, errAgentOut, errAgent := executeStdin(t, "", "update", "--yes")
 
-	// The marker changes what the run may do, not which stages it reached: the
-	// stages the agent's account names are the person's own, up to the stage
-	// the run stopped at. A run that stops leaves every stage behind it saying
-	// the same thing, and those are one waiting line (report.Waits) rather than
-	// a line each, so the agent's account names fewer of them than the
-	// person's -- the ones it does name are in the same order.
+	// The marker changes what the run may do, not which stages it reached: every
+	// stage the agent's account names is one the person's names, in the same
+	// order. The agent's account is no longer the person's own up to the stop
+	// (D954, U8): the stages between the installation and the plugin waited
+	// behind the stop the run made — one waiting line, which is not a step — and
+	// the plugin, this machine's own and initflow.MachineLocal, runs past that
+	// stop and is named after it. So the agent's steps are the person's, less
+	// the ones that only waited.
 	personStages := stepNames(outPerson)
 	agentStages := stepNames(outAgent)
 	if len(agentStages) == 0 || len(personStages) < len(agentStages) {
-		t.Fatalf("the runs' accounts name %v and %v, want the agent's the person's own up to the stop:\nperson:\n%s\nagent:\n%s",
+		t.Fatalf("the runs' accounts name %v and %v, want the agent's the person's own less the stages that waited:\nperson:\n%s\nagent:\n%s",
 			personStages, agentStages, outPerson, outAgent)
 	}
-	if strings.Join(personStages[:len(agentStages)], " ") != strings.Join(agentStages, " ") {
-		t.Errorf("the marker changed the account's steps:\nperson: %v\nagent: %v", personStages, agentStages)
+	rest := personStages
+	for _, name := range agentStages {
+		i := slices.Index(rest, name)
+		if i < 0 {
+			t.Errorf("the marker changed the account's steps:\nperson: %v\nagent: %v", personStages, agentStages)
+			break
+		}
+		rest = rest[i+1:]
+	}
+	// And what the marker does change is in the account too: the agent's run
+	// reaches the machine-local plugin stage although it left the installation
+	// for the user — the stage whose own writes are on this machine, which is
+	// what it is named in both runs.
+	if !slices.Contains(agentStages, initflow.Plugin) || !slices.Contains(personStages, initflow.Plugin) {
+		t.Errorf("an account does not name the machine-local plugin stage:\nperson: %v\nagent: %v", personStages, agentStages)
 	}
 	for _, out := range []string{outPerson, outAgent} {
 		lines := reportLines(out)

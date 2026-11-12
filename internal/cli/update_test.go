@@ -152,12 +152,21 @@ func TestUpdateLeavesAnUnenrolledRepositoryAloneAndExitsOne(t *testing.T) {
 		t.Errorf("an apply ran:\n%q", calls)
 	}
 
-	// The three stages that work on the checkout — secrets, plugin, repository
-	// — leave ONE line each in ONE result, and it is the same line. A run that
-	// offered --onboard-repo at one of them would be telling the reader to
-	// pass a flag its own door refuses to put, beside two stages naming the
-	// door that asks; the human run above cannot see that, because a run whose
-	// apply stops at the installation prints no left-for-you at all.
+	// The two stages that work on the checkout's repository — secrets and
+	// repository — leave ONE line each in ONE result, and it is the same line. A
+	// run that offered --onboard-repo at one of them would be telling the reader
+	// to pass a flag its own door refuses to put, beside the other stage naming
+	// the door that asks; the human run above cannot see that, because a run
+	// whose apply stops at the installation prints no left-for-you at all.
+	//
+	// The plugin stage is no longer one of them (D955, U8): the plugin it
+	// installs is this machine's own, the same one for every checkout, so here —
+	// a checkout whose repository the machine's config does not list, which is
+	// the state the red step names — it has the install to make and no line
+	// naming fugaro setup. The checkout's own gate is read only where the
+	// checkout carries a pin the removal would take out, and a gate authorises a
+	// write: this stage makes none here.
+	//
 	// A plan-only run is the one that reaches every stage of the list (a
 	// needs-you stage blocks the ones behind it otherwise), and it confirms
 	// nothing: conditions() reads --yes as false under --plan-only.
@@ -169,7 +178,7 @@ func TestUpdateLeavesAnUnenrolledRepositoryAloneAndExitsOne(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{initflow.Secrets, initflow.Plugin, initflow.Repository} {
+	for _, name := range []string{initflow.Secrets, initflow.Repository} {
 		if stateOf(res, name) != initflow.NeedsYou {
 			t.Fatalf("%s is %+v, want needs-you: the repository is not the project's and this door does not ask", name, res.Stages)
 		}
@@ -181,9 +190,26 @@ func TestUpdateLeavesAnUnenrolledRepositoryAloneAndExitsOne(t *testing.T) {
 			t.Errorf("%s leaves %+v, want one command naming the door that enrols", name, lf)
 		}
 	}
-	if len(res.Left) != 3 {
-		t.Errorf("the run left %d lines, want one per stage: %+v", len(res.Left), res.Left)
+	if len(res.Left) != 2 {
+		t.Errorf("the run left %d lines, want one per stage that asked: %+v", len(res.Left), res.Left)
 	}
+	if got := stageDetailOf(res, initflow.Plugin); !strings.Contains(got, "installs the plugin in Claude Code") || strings.Contains(got, "setup") {
+		t.Errorf("the plugin stage does not install the machine's own plugin in a checkout the machine's config does not list: %q", got)
+	}
+	if _, ok := leftOf(res, initflow.Plugin); ok {
+		t.Errorf("the plugin stage left something for the user: %+v", res.Left)
+	}
+}
+
+// stageDetailOf is one stage's own line out of a converge result, "" when the
+// run stopped before reaching it.
+func stageDetailOf(res *initflow.Result, name string) string {
+	for _, s := range res.Stages {
+		if s.Name == name {
+			return s.Detail
+		}
+	}
+	return ""
 }
 
 // TestUpdateUnderYesCoversEveryStageItOwns: `update --yes` is total over its
