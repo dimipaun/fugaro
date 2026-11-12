@@ -4,8 +4,147 @@
 failure a machine hit: the machine writes it to a local file first, and then
 uploads it to the project's shared store in the runs bucket, where it gets a
 number and where the same failure reported by somebody else is attached to the
-same record as an occurrence. This page documents `fugaro issue mine`, the view
-over the issues this user reported.
+same record as an occurrence. An issue is named by its number — `#0007` — once
+the store has given it one, and by its local ID `local-<run stem>` until then;
+`show`, `dismiss` and `submit` take either spelling (`7` and `#0007` are the
+same reference), and `list` prints the one a reader can copy.
+
+| Command | What it is for |
+| --- | --- |
+| `fugaro issue list` | the project's issues, one row each: the whole team's, and this machine's not-yet-uploaded ones |
+| `fugaro issue mine` | the issues this user reported, with where each stands and the release that fixed it |
+| `fugaro issue show REF` | one issue, whole: its header and the diagnosis' own words |
+| `fugaro issue submit [REF]` | exactly what would be filed on GitHub for one issue or for every one still waiting, and the filing itself with `--ask` |
+| `fugaro issue dismiss REF` | mark one issue as not worth filing, here and in the project's store |
+| `fugaro issue sync` | upload the issues this machine saved and has not uploaded yet |
+
+`list` takes `--mine`, `--all` and `--json`; `mine` takes `--all` and `--json`;
+`show` takes `--json`; `submit` takes `--ask`; `dismiss` and `sync` take none.
+Nothing in the family runs a command for you: where a record names the command
+that failed, it is printed and never run, because what it names came out of a
+job's log.
+
+## The listing: `fugaro issue list`
+
+`list` prints the project's issues, one row an issue, with the class the
+diagnosis gave it, where it stands and its one-line summary. The order is the
+store's own: the issues with no number yet — this machine's, the ones a person
+has to look at — first, then the numbered ones ascending. An issue belongs to
+the project once it has a number, so the rows are the whole team's; where the
+project's copy and this machine's file disagree, the project's is printed. A
+record this machine's folder holds for another project is not a row: the folder
+is one for the whole machine, and another project's number is not this
+listing's to print.
+
+Listing uploads this machine's own pending issues first, exactly as `mine`
+does: the same failure reported twice is one issue, and the one still waiting
+here has to reach the store before it can be shown beside the team's. A run
+that cannot reach the store lists this machine's own records alone and says why
+on stderr, which leaves the table itself clean for a reader and a script; a
+machine with nothing saved and no store prints nothing at all, rather than a
+header with no rows under it.
+
+`--mine` lists the issues this user reported instead: the same rows `fugaro
+issue mine` prints, from the same read, so the two commands answer with one
+listing. `--all` goes with `--mine` and only with it, and shows the rows the
+30-day rule hides; on its own it is refused, because this machine's own folder
+keeps every record until it is deleted, and the rule is about the project's
+issues and not about the files here.
+
+`--json` prints the records themselves, in the shape
+`schemas/issue-record.schema.json` describes — or, with `--mine`, the versioned
+document `schemas/issue-mine.schema.json` describes.
+
+## One issue: `fugaro issue show REF`
+
+`show` prints one issue whole: a header naming it and where it stands — its
+class, status, the run it came from, who reported it, when it was created, the
+Fugaro version and OS that failed, the command that failed, and the GitHub link
+once it has one — and then the diagnosis' own words: the summary, the
+diagnosis, the steps and the log excerpts. A field with nothing in it is left
+out. Every one of those values was written about log text this machine did not
+write, so each is printed as data: nothing in it reaches the terminal as an
+escape sequence, and the stored link is printed only in the shape
+`https://github.com/dimipaun/fugaro/issues/<n>` — anything else a shared record
+holds is dropped rather than followed.
+
+An issue that has been uploaded is printed as the project's store has it: the
+store is the truth once an issue has a number, so a teammate's dismissal, or a
+fix the update pass recorded, shows here rather than the copy this machine
+wrote when the failure happened. A number also names a teammate's issue, which
+this machine has no file of: the rows `list` prints are the whole team's, and a
+reference that is a number is read from the project's store. This machine's own
+pending issues are uploaded first, as `list` does. A run that cannot reach the
+store prints this machine's own copy and says why on stderr — or, for a number
+it has no file of, refuses.
+
+`--json` prints the record itself, in the shape
+`schemas/issue-record.schema.json` describes.
+
+## Filing one: `fugaro issue submit [REF]`
+
+`submit` is the one command of the family that sends text out of this machine,
+and it sends nothing until a person has read the exact bytes. It builds the
+post once — the title, the body and the sha256 of those bytes — and prints
+them. With no reference it visits every `pending` issue and skips the ones
+already filed or set aside. Without `--ask` it files nothing and uploads
+nothing: a plain run is a preview.
+
+`--ask` uploads this machine's own pending issues first, exactly as `issue sync`
+does, shows the preview, and files exactly those bytes after a yes at your own
+terminal. It is the only thing that files: a pipe and a coding agent's session
+never do, because a confirmation nobody can answer is a refusal and never a
+silent proceed. The filing is made under a claim on the project's record, so
+two people filing one issue at the same moment file it once; a claim another
+submitter holds is refused with who holds it and until when, and a record that
+changed after the preview was shown is refused rather than filed unseen.
+
+Filing needs GitHub's own `gh` with an account on github.com. Where it is
+missing, or has no account there, the install command or `gh auth login` is
+printed with a new-issue link holding the same title and body; nothing is filed
+and the command exits non-zero. The post carries the bug and not whose machine
+hit it: it is projected from the record and scrubbed of the reporter, the
+project's and the repository's names, home-directory paths and emails, and the
+text is re-redacted by your own binary at submit, because the store is a file
+any teammate's machine can have written. A link has a length limit, so a body
+too long for it is cut to a fixed budget and ends with a notice saying so,
+naming the reference a person prints the whole issue with — `fugaro issue
+show` — rather than a path on the machine that filed it.
+
+## Setting one aside: `fugaro issue dismiss REF`
+
+`dismiss` marks one issue as not worth filing. The status is written in the
+issue's own file and nothing else changes: the record stays where it is, so a
+listing still shows what was set aside and who set it aside, and nothing is
+filed.
+
+An issue is the project's, so one that has already been uploaded is set aside
+in the project's store as well: a teammate's listing then shows it as
+dismissed, and the decision does not have to be made again on every machine. A
+store that cannot be reached is a line on stderr and the dismissal here stands
+— the command is safe to run again once the store is back. A store that answers
+and refuses — the issue is filed, or a teammate has already decided it — is
+another matter, and refuses the command, because the decision is then not this
+machine's to make.
+
+A number this machine has no file of is a teammate's issue: it is read from the
+project's store and set aside there, and a store that cannot be reached is then
+the refusal rather than a line, there being nothing here to set aside instead.
+An issue that has already been filed is refused outright: it is open on GitHub,
+and setting it aside here would not close it.
+
+## Getting them to the team: `fugaro issue sync`
+
+`sync` uploads the issues this machine saved and has not uploaded yet. An issue
+is saved on the machine that hit the failure and uploaded afterwards, so a run
+that was offline, or that died before its upload, leaves it here; this is the
+command that retries those. Each one takes the project's next number, is renamed
+to it, and — when a teammate already reported the same failure — is attached to
+their issue as one more occurrence instead of becoming a second one.
+
+An issue that cannot be uploaded stays where it is and is named in one line, and
+the next run retries it: nothing here deletes an issue or files one on GitHub.
+`No pending issues.` is the whole answer when nothing was waiting.
 
 ## What happened to my issues: `fugaro issue mine`
 
@@ -130,3 +269,16 @@ from (`shared`, `snapshot` or `local`), the time that state was known, the
 installation's release, the number of hidden rows and whether the store's own
 listing was cut short. The rows carry the same display data as the printed ones,
 counts included; no other reporter's name or digest is in the document.
+
+## In a coding agent's session
+
+An agent's session may read what is on this machine and may not write to the
+cloud, so the family splits there. `list`, `show` and `mine` print this
+machine's own files and the last shared read it cached, and read nothing from
+the project. `sync` refuses, because uploading is a write to the project's
+store. `dismiss` refuses even for an issue that exists only on this machine: a
+steered diagnosis could otherwise bury a real bug, so a person sets one aside.
+`submit` previews as usual, and `--ask` refuses, because the upload and the
+claim are writes — a session ends up with the same post and the same sha256 a
+person files themselves. Each refusal names the command a person runs at their
+own terminal rather than saying that an agent may not.
