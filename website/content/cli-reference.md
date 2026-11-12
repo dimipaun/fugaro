@@ -3856,7 +3856,7 @@ file is kept. The command never commits, pushes or opens a pull request — the
 change reaches runs when the owner's own branch is merged to the base branch,
 which is what every run reads.
 
-Usage: `fugaro models use <repo> <coder|reviewer|background> <id>`
+Usage: `fugaro models use <repo> <coder|reviewer|background|vision> <id>`
 
 Flags:
 

@@ -188,10 +188,10 @@ var yamlMeta = map[string]Row{
 	// one. The models family owns it as it owns the three rows above — the
 	// slot's checks are that command's (D2013: priced, a route opens it to this
 	// repository, no whitespace), which a generic scalar write does not make —
-	// and the fourth role name reaches `models use` in V6 of docs/vision-model.
-	// Until it does, this row's refusal names the family that will write the
-	// key, and the key is written by hand — in fugaro.yaml, or in the project
-	// layer's own file for every repository of it.
+	// and V6 of docs/vision-model gave the family the fourth role name, so this
+	// row's refusal names the command that writes the key. A hand edit is the
+	// other way in — in fugaro.yaml, or in the project layer's own file for
+	// every repository of it.
 	"agent.models.vision": {
 		Owner:   "models",
 		Default: unset("none: a stage whose own model cannot read an image keeps it"),
