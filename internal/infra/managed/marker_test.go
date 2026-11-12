@@ -132,10 +132,23 @@ const markerBudgetJSON = `{"version":2,"gcp_project":"proj-1234","budget":{"amou
 
 // markerBuildsJSON is the version-3 object, byte for byte: the same fact and
 // the same amount, with the bound on billable image builds a managed
-// project's refresh is held to (M5, D1013). Four fields, the budget's own two
-// inside it — still no token, no key, no email, and the count is a figure this
-// package's own default, never a credential.
+// project's refresh was held to (M5, D1013). Four fields, the budget's own two
+// inside it — still no token, no key, no email, and the count is a figure an
+// installation recorded, never a credential.
 const markerBuildsJSON = `{"version":3,"gcp_project":"proj-1234","budget":{"amount":7,"currency":"USD"},"max_image_builds":1}`
+
+// markerNoBuildsJSON is the version-4 object, byte for byte: the version this
+// build writes, which records the amount and no count at all (D1543). It is
+// what `fugaro update` converges a version-3 object into.
+const markerNoBuildsJSON = `{"version":4,"gcp_project":"proj-1234","budget":{"amount":7,"currency":"USD"}}`
+
+// v3Builds is the count the version-3 fixtures carry: the one build per
+// invocation D1013's default was, which is the figure every installation that
+// recorded one has. It is a literal rather than a constant of the package
+// because the package no longer has one — nothing bounds a build by this
+// figure, and a version-3 object carries it only because that is the shape
+// version 3 was written in.
+const v3Builds = 1
 
 // The budget version's shape: the version follows the budget and nothing
 // else does, so a marker whose version and budget disagree is refused rather
@@ -200,7 +213,7 @@ func TestMarkerBudgetVersionShape(t *testing.T) {
 // project held to the default of one and a project whose recorded bound
 // nothing could read (D1013's table).
 func TestMarkerBuildsVersionShape(t *testing.T) {
-	m := Marker{Version: MarkerVersionBuilds, GCPProject: testProject, Budget: &Budget{Amount: 7, Currency: "USD"}, MaxImageBuilds: DefaultImageBuilds}
+	m := Marker{Version: MarkerVersionBuilds, GCPProject: testProject, Budget: &Budget{Amount: 7, Currency: "USD"}, MaxImageBuilds: v3Builds}
 	b, err := m.Bytes()
 	if err != nil {
 		t.Fatal(err)
@@ -270,11 +283,10 @@ func TestWriteMarkerRoundTrip(t *testing.T) {
 	}
 }
 
-// The same write for a managed creation: WriteMarker with a budget writes
-// the version that carries it — and, with it, the image build bound the
-// object's own default records, because the creation was asked for no bound
-// (M5, D1013) — and a call with a budget that is not an amount — no currency,
-// an amount of 0 — is refused with nothing written, which is the fail-closed
+// The same write for a managed creation: WriteMarker with a budget writes the
+// version that carries it, which is the version that carries the amount alone
+// (D1543) — and a call with a budget that is not an amount — no currency, an
+// amount of 0 — is refused with nothing written, which is the fail-closed
 // direction of a fact the read believes.
 func TestWriteMarkerRecordsTheBudgetItWasGiven(t *testing.T) {
 	ctx := context.Background()
@@ -285,8 +297,8 @@ func TestWriteMarkerRecordsTheBudgetItWasGiven(t *testing.T) {
 		t.Fatal(err)
 	}
 	b, ok := readMarker(t, s, testBucket)
-	if !ok || string(b) != markerBuildsJSON {
-		t.Fatalf("gs://%s/%s = %q (present %v), want %q", testBucket, MarkerObject, b, ok, markerBuildsJSON)
+	if !ok || string(b) != markerNoBuildsJSON {
+		t.Fatalf("gs://%s/%s = %q (present %v), want %q", testBucket, MarkerObject, b, ok, markerNoBuildsJSON)
 	}
 	// Once, like version 1: the amount is what the creation was required to
 	// choose, and a later run's budget flags change the Terraform budget
@@ -3586,8 +3598,8 @@ func TestBudgetCheck(t *testing.T) {
 // and buy nothing.
 
 // TestWriteFlagRoundTrip is the write half of the command: the object is
-// MarkerObject, it is the version that carries the amount the owner chose and
-// the bound the object's own default records, and a project that already
+// MarkerObject, it is the version that carries the amount the owner chose,
+// and a project that already
 // records an amount is refused rather than rewritten — this command adds a
 // budget, it does not edit one.
 func TestWriteFlagRoundTrip(t *testing.T) {
@@ -3602,8 +3614,8 @@ func TestWriteFlagRoundTrip(t *testing.T) {
 		t.Error("the flag reported a replacement with nothing there to replace")
 	}
 	b, ok := readMarker(t, s, testBucket)
-	if !ok || string(b) != markerBuildsJSON {
-		t.Fatalf("gs://%s/%s = %q (present %v), want %q", testBucket, MarkerObject, b, ok, markerBuildsJSON)
+	if !ok || string(b) != markerNoBuildsJSON {
+		t.Fatalf("gs://%s/%s = %q (present %v), want %q", testBucket, MarkerObject, b, ok, markerNoBuildsJSON)
 	}
 	// Once a budget is recorded: a project that already records one is not
 	// flagged again — the amount is the owner's decision at the time it was
@@ -3616,7 +3628,7 @@ func TestWriteFlagRoundTrip(t *testing.T) {
 	if replaced {
 		t.Error("the refused second call reported a replacement")
 	}
-	if b, _ := readMarker(t, s, testBucket); string(b) != markerBuildsJSON {
+	if b, _ := readMarker(t, s, testBucket); string(b) != markerNoBuildsJSON {
 		t.Errorf("the second call changed the object to %q", b)
 	}
 }
@@ -3644,7 +3656,6 @@ func TestReadFlagFactReadsTheObjectWithoutTheLabel(t *testing.T) {
 		seed   string
 		ours   bool
 		budget Budget
-		builds int64
 		want   string
 	}{
 		{name: "nothing there", ours: false, want: "is not there"},
@@ -3664,13 +3675,17 @@ func TestReadFlagFactReadsTheObjectWithoutTheLabel(t *testing.T) {
 			seed: `{"version":3,"gcp_project":"proj-1234","budget":{"amount":7,"currency":"USD"},"max_image_builds":0}`,
 			ours: false, want: "records an image build bound this build refuses",
 		},
-		{name: "this project's fact recording an amount", seed: markerBuildsJSON, ours: true, budget: Budget{Amount: 7, Currency: "USD"}, builds: 1},
+		{name: "this project's fact recording an amount", seed: markerBuildsJSON, ours: true, budget: Budget{Amount: 7, Currency: "USD"}},
 		{
+			// The count is read and judged by nothing: a fact of that version
+			// recording any count in the range is this project's fact recording
+			// the amount, which is the whole of what this read answers (D1543).
 			name: "this project's fact recording another bound",
 			seed: `{"version":3,"gcp_project":"proj-1234","budget":{"amount":7,"currency":"USD"},"max_image_builds":1000}`,
-			ours: true, budget: Budget{Amount: 7, Currency: "USD"}, builds: 1000,
+			ours: true, budget: Budget{Amount: 7, Currency: "USD"},
 		},
-		{name: "the version that records no bound", seed: markerBudgetJSON, ours: true, budget: Budget{Amount: 7, Currency: "USD"}, builds: DefaultImageBuilds},
+		{name: "the version that records no bound", seed: markerBudgetJSON, ours: true, budget: Budget{Amount: 7, Currency: "USD"}},
+		{name: "the version this build writes", seed: markerNoBuildsJSON, ours: true, budget: Budget{Amount: 7, Currency: "USD"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, f := newStorage(t)
@@ -3688,14 +3703,8 @@ func TestReadFlagFactReadsTheObjectWithoutTheLabel(t *testing.T) {
 			if tc.ours && fact.Budget != tc.budget {
 				t.Errorf("Budget = %+v, want %+v", fact.Budget, tc.budget)
 			}
-			if tc.ours && fact.Builds != tc.builds {
-				t.Errorf("Builds = %d, want %d", fact.Builds, tc.builds)
-			}
 			if !tc.ours && !strings.Contains(fact.Reason, tc.want) {
 				t.Errorf("the reason %q does not say %q", fact.Reason, tc.want)
-			}
-			if !tc.ours && fact.Builds != 0 {
-				t.Errorf("Builds = %d on an object this read does not believe: the figure is set only when Ours", fact.Builds)
 			}
 		})
 	}
@@ -3733,8 +3742,8 @@ func TestWriteFlagReplacesTheCreationFactThatRecordsNoAmount(t *testing.T) {
 	if !ok {
 		t.Fatalf("no %s in gs://%s after the flag", MarkerObject, testBucket)
 	}
-	if string(b) != markerBuildsJSON {
-		t.Errorf("after the flag gs://%s/%s = %s, want %s", testBucket, MarkerObject, b, markerBuildsJSON)
+	if string(b) != markerNoBuildsJSON {
+		t.Errorf("after the flag gs://%s/%s = %s, want %s", testBucket, MarkerObject, b, markerNoBuildsJSON)
 	}
 }
 
@@ -3804,12 +3813,15 @@ func TestWriteFlagWritesSomethingTheManagedReadBelieves(t *testing.T) {
 			if budget.Amount != 7 || budget.Currency != "USD" {
 				t.Errorf("ReadBudget after the flag = %+v, want the amount the flag recorded (7 USD)", budget)
 			}
-			builds, err := ReadImageBuilds(ctx, s, c, testFugaroProject, testProject)
-			if err != nil || !builds.OK || builds.Default || builds.Invalid {
-				t.Fatalf("ReadImageBuilds after the flag = %+v, %v; want a recorded bound, nil", builds, err)
+			// The version the flag writes, and no count in it: the flag is one
+			// of the two writers of the object, so what it leaves is the shape
+			// this build writes (D1543).
+			got, ok := readMarker(t, s, testBucket)
+			if !ok {
+				t.Fatal("the flag wrote no creation fact")
 			}
-			if builds.Builds != DefaultImageBuilds {
-				t.Errorf("ReadImageBuilds after the flag = %+v, want the bound the flag recorded (%d)", builds, DefaultImageBuilds)
+			if string(got) != markerNoBuildsJSON {
+				t.Errorf("the object the flag wrote = %s, want %s", got, markerNoBuildsJSON)
 			}
 		})
 	}

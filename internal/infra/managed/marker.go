@@ -767,17 +767,7 @@ func alreadyFlagged(bucket, project string, cur []byte) error {
 type FlagFact struct {
 	Ours   bool
 	Budget Budget
-	// Version is the marker version the object is, and it is set only when
-	// Ours. The versions that record an amount answer here — 2, 3 and 4 — and
-	// the caller that completes a half-written flag with the label wants it for
-	// one reason: a version-3 object still carries the image build count D1543
-	// removed, and a flag that completed one by writing only the label would
-	// finish an object whose shape this build no longer writes rather than the
-	// one its own statement promised. It reads the version and converges the
-	// object through ConvergeMarker when it has to; nothing here judges the
-	// count, which no longer bounds anything.
-	Version int
-	Reason  string
+	Reason string
 }
 
 // ReadFlagFact reads the object half of gcpProject's marks in bucket, without
@@ -830,12 +820,21 @@ func readFlagFact(ctx context.Context, s *storage.Service, bucket, project strin
 	if err := m.Budget.Check(); err != nil {
 		return FlagFact{Reason: fmt.Sprintf("gs://%s/%s records a budget this build refuses (%v)", bucket, MarkerObject, err)}, nil
 	}
-	// The count a version-3 object carries is deliberately NOT judged here: it
-	// no longer bounds anything (D1543), so refusing a fact over it would refuse
-	// an object whose amount is exactly what this read was asked for. The shape
-	// check still judges it for every reader that asks what the object IS
-	// (parseMarker), which is where an unreadable version-3 figure belongs.
-	return FlagFact{Ours: true, Budget: *m.Budget, Version: m.Version}, nil
+	// And the other figure the version that carried a bound records, judged by
+	// the rule the managed read judges the same key with (CheckImageBuilds): a
+	// version-3 object whose figure this build refuses — the zero that is also
+	// what an absent key decodes to included — is an object `readFactObject`
+	// refuses whole, so believing it here would hand a caller half of a fact the
+	// read does not accept, and `fugaro update` would then complete a flag on an
+	// object its own migration refuses to rewrite (ConvergeMarker). Nothing
+	// bounds a build by the figure (D1543): what this judges is whether the
+	// object IS the version-3 fact, which is what the caller is asking.
+	if m.Version == MarkerVersionBuilds {
+		if err := CheckImageBuilds(m.MaxImageBuilds); err != nil {
+			return FlagFact{Reason: fmt.Sprintf("gs://%s/%s records an image build bound this build refuses (%v)", bucket, MarkerObject, err)}, nil
+		}
+	}
+	return FlagFact{Ours: true, Budget: *m.Budget}, nil
 }
 
 // recordsBudget reports whether a marker version records a budget amount: 2, 3

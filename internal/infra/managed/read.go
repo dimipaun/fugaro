@@ -201,12 +201,6 @@ type BudgetAnswer struct {
 	Budget  Budget
 	OK      bool
 	Invalid bool
-	// Version is the marker version the answer came from, set exactly when OK.
-	// Its one caller is `fugaro update`'s marker converge (internal/cli's
-	// update_marker_version.go), which has to know whether the fact it is
-	// looking at is a version this build still writes: the amount alone is not
-	// enough to tell a version-4 fact from the version-3 fact D1543 retired.
-	Version int
 	Reason  string
 }
 
@@ -228,7 +222,7 @@ func ReadBudgetAnswer(ctx context.Context, s *storage.Service, c *crm.Service, p
 	if m.Budget == nil {
 		return BudgetAnswer{Reason: fmt.Sprintf("gs://%s/%s records no budget amount for %s: the creation fact is version %d, which is a creation this task's amount was never required for", runsBucketName(gcpProject), MarkerObject, project, m.Version)}, nil
 	}
-	return BudgetAnswer{Budget: *m.Budget, OK: true, Version: m.Version}, nil
+	return BudgetAnswer{Budget: *m.Budget, OK: true}, nil
 }
 
 // readFact is the read the two above are: the creation fact of gcpProject, as
