@@ -422,7 +422,10 @@ func TestAccessRunsShowIsReadInScope(t *testing.T) {
 // stderr rather than dropped in silence (D1586's read half).
 func TestAccessRunsLsListsInScope(t *testing.T) {
 	noAgentSession(t)
-	const id = "20261112-120005-abd2"
+	// A listing's window is measured back from the clock lsNow reads, and this
+	// test's listing is that one: the id is minted against it rather than fixed
+	// (runid_test.go's guard, TestNoFixedRunIDsInRecencyTests).
+	id := recentRunID(t, time.Minute, "abd2")
 	// A listing prints a run's short form, not its id (task.ShortRun).
 	short := task.ShortRun(id)
 
