@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -50,6 +51,21 @@ var testStateRoot string
 // traffic, which is all the fakes use, around any proxy). A test that
 // means to talk to GCS points its config's endpoints at a fake.
 func TestMain(m *testing.M) {
+	// The test binary's own flags are not a session's arguments. The commands
+	// that leave an audit trail take theirs from the process (managed_gate.go's
+	// Argv, os.Args[1:]), so a `-run` naming a shard's tests would put the whole
+	// name list in every record one of them writes — past the 64 KiB a reader
+	// accepts, which turns a command that ran fine in a whole-package run into
+	// a failed one in a subset. The program's own name stays: secondUpdate
+	// re-executes this binary through it (update_lock_test.go).
+	//
+	// The flags are parsed first, because the run below is what parses them
+	// (testing's M.Run parses os.Args, and skips it when TestMain got there
+	// first): trimming before that leaves this binary with no -test.run and no
+	// -test.timeout, so every subset would run the whole package with nothing
+	// bounding it.
+	flag.Parse()
+	os.Args = os.Args[:1]
 	os.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "/nonexistent/fugaro-tests-have-no-credentials.json")
 	os.Setenv("GCE_METADATA_HOST", "127.0.0.1:1")
 	os.Setenv("HTTPS_PROXY", "http://127.0.0.1:1")
