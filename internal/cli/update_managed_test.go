@@ -1619,7 +1619,7 @@ func TestUpdateManagedLeavesComputeOwnerRun(t *testing.T) {
 // the one a PERSON at the terminal on a managed project gets.
 //
 // The shape is therefore that person: the installation root planned for a
-// change §4.1 refuses to apply (a removal of a grant), and the fourth read of
+// change §4.1 refuses to apply (the removal of a data-bearing bucket), and the fourth read of
 // its saved plan — the credentials stage's own — refused. The two arms are the
 // entry's own answer and its mutation: under the gate the step is left for the
 // owner and the run carries on, and with the entry dropped the same refusal
@@ -1662,7 +1662,7 @@ func TestUpdateManagedGatesTheCredentialsServiceStage(t *testing.T) {
 			if left == "" {
 				t.Fatalf("the credentials-service stage was not left for the owner:\n%s", got)
 			}
-			for _, want := range []string{"managed gate refused this step", "storage_bucket_iam_member"} {
+			for _, want := range []string{"managed gate refused this step", "google_storage_bucket.runs"} {
 				if !strings.Contains(left, want) {
 					t.Errorf("the step left for the owner does not name %q:\n%s", want, left)
 				}
@@ -1685,13 +1685,13 @@ func TestUpdateManagedGatesTheCredentialsServiceStage(t *testing.T) {
 // Returns the run's own output, and the applies that reached the fake.
 func credentialsStageRun(t *testing.T) (string, int) {
 	t.Helper()
-	r := newConvergeRig(t, v6Node())
+	r := newConvergeRig(t, staleNode(t))
 	publishCredentialsImage(t, r.imagesRig, convergeRelease)
 	seedCredentialsService(t, r.imagesRig, oldCredentialsRef(convergePrev))
 	r.script["show -json"] = r.script["show"]
 	r.script["plan@installation"] = map[string]any{"exit": 2}
 	admitted := map[string]any{"stdout": planJSON(t, change("module.installation.google_service_account.scheduler", "create"))}
-	refused := map[string]any{"stdout": planJSON(t, grantChange("state", "user:a@example.com", "roles/storage.objectAdmin", "delete"))}
+	refused := map[string]any{"stdout": planJSON(t, change("module.installation.google_storage_bucket.runs", "delete"))}
 	r.script["show@installation"] = []any{admitted, admitted, admitted, refused}
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"credentials_service": credentialsServiceOutput()})}
 	r.save(t)

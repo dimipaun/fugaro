@@ -49,13 +49,16 @@ func atVersion(doc string, v int) json.RawMessage {
 // into the call's refusal (server.go's servePolicy).
 func TestRTDBPolicyServesAShapeFreePredecessor(t *testing.T) {
 	twin := decodeTestPolicy(t, testPolicyDoc())
+	if !projectpolicy.ReadsVersion(projectpolicy.Version - 1) {
+		t.Fatal("the version below this one is no longer a shape-free step behind: the row below needs the newest version that still is")
+	}
 	for _, tc := range []struct {
 		name    string
 		version int
 		refused bool
 	}{
-		{"this release's node", 5, false},
-		{"the node one shape-free step behind", 4, false},
+		{"this release's node", projectpolicy.Version, false},
+		{"the node one shape-free step behind", projectpolicy.Version - 1, false},
 		{"a node the chain cannot read across", 3, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

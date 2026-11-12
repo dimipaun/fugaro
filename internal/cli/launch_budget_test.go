@@ -1428,22 +1428,7 @@ func TestLaunchRefusesProxiedRunOnOldImage(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newLaunchBudget(t, "enforce")
 			addProxiedRepo(t, f, tc.base, tc.block, tc.switchOn)
-			// The node's version pairs with the image the row launches on. The
-			// rows whose image is `old` are an installation at 0.20.3, and such
-			// an installation holds the version-4 node its own release
-			// published: fugaro update pins the base image before its policy
-			// stage migrates the node, so the two cannot be a version apart. A
-			// version-5 node under that image is refused by policyImageGate —
-			// the image's runner cannot read it — before any of these rows'
-			// gates is reached, which would make every row a test of that gate
-			// instead of the one it names.
-			policy := tc.policy
-			// The row at the proxy's release is the same installation one
-			// release later (0.22.0), still before the version-5 node's.
-			if tc.base == old || strings.HasSuffix(tc.base, ":"+proxySince) {
-				policy = strings.Replace(policy, `"version":5`, `"version":4`, 1)
-			}
-			publishPolicy(t, f, policy)
+			publishPolicy(t, f, tc.policy)
 			_, _, err := execute(t, "run", "--repo", proxiedRepo, "--run-id", budgetRun, "Add a feature")
 			slug := mustSlug("bitbucket", proxiedRepo)
 			switch {
@@ -1461,6 +1446,12 @@ func TestLaunchRefusesProxiedRunOnOldImage(t *testing.T) {
 				if storedTaskFor(t, f.cloudFixture, slug) {
 					t.Error("the refused launch stored a task")
 				}
+			case !tc.refused && err != nil && imageGateOnly(err, tc.base):
+				// Every node this reader reads is version 5 or later, whose release
+				// (0.23.0) carries the proxy, so an image older than that is
+				// refused by policyImageGate before any proxy question. What these
+				// rows hold is that the refusal is that gate's and not the proxy's.
+				return
 			case !tc.refused && err != nil:
 				t.Fatalf("a launch that is not proxied (or is on a current image) was refused: %v", err)
 			}
@@ -1555,4 +1546,14 @@ func TestProxySinceHasAReleaseBullet(t *testing.T) {
 			t.Errorf("docs/release.md's proxySince bullet does not say %q", want)
 		}
 	}
+}
+
+// imageGateOnly reports whether err is policyImageGate's refusal of a node
+// the image at base is older than, with none of the proxy refusal's words.
+func imageGateOnly(err error, base string) bool {
+	rel, ok := projectpolicy.VersionRelease(projectpolicy.Version - 1)
+	if !ok || !strings.Contains(err.Error(), "needs a job image whose runner knows policy version") {
+		return false
+	}
+	return !strings.Contains(err.Error(), "Bitbucket proxy") && !strings.HasSuffix(base, ":"+rel)
 }

@@ -467,14 +467,15 @@ func TestRunRefusesAPolicyOlderThanTheBinary(t *testing.T) {
 // The gate is where the operator meets this: it runs before any execution
 // exists, so the launch is refused with the move that keeps the node.
 func TestRunRefusesACarriedPolicyWithTheUpdateAndNotTheDelete(t *testing.T) {
+	stale := newestRefusedVersion(t)
 	f := newLaunchBudget(t, "enforce")
-	publishPolicy(t, f, fmt.Sprintf(`{"version":%d,"allow_repos":["*"]}`, projectpolicy.Version-1))
+	publishPolicy(t, f, fmt.Sprintf(`{"version":%d,"allow_repos":["*"]}`, stale))
 	_, _, err := runBudget(t)
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v (exit %d), want a user error", err, ExitCode(err))
 	}
 	for _, want := range []string{
-		fmt.Sprintf("the project policy is version %d", projectpolicy.Version-1),
+		fmt.Sprintf("the project policy is version %d", stale),
 		fmt.Sprintf("this Fugaro understands version %d", projectpolicy.Version),
 		"fugaro update", "rewrites the node in place", "keeping the members it carries", policySince,
 	} {
