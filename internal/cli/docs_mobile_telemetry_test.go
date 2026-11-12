@@ -374,7 +374,9 @@ func TestTelemetryPlanLinksResolve(t *testing.T) {
 // side a reader can check -- the names an implementer has to write down; the
 // second half moved when P7.1a wired the SDKs in, and what it pins now is that
 // the three packages the plan names are the ones the app declares, and that the
-// telemetry module the flags will be read from is still P7.2's and P7.3's.
+// telemetry module the flags will be read from is P7.2's -- built, since that
+// task landed the app's statement and its privacy link -- with P7.3's event
+// module and scan still to come.
 func TestTelemetryPlanNamesTheFlagsItDependsOn(t *testing.T) {
 	plan := readDoc(t, telemetryPlan)
 	for _, want := range []string{
@@ -405,8 +407,22 @@ func TestTelemetryPlanNamesTheFlagsItDependsOn(t *testing.T) {
 			t.Errorf("mobile/package.json does not name %s: P7.1a wired the three packages in, and the plan's Task P7.1 names them as the dependency the flags depend on", want)
 		}
 	}
-	if _, err := os.Stat("../../mobile/src/telemetry"); err == nil {
-		t.Errorf("mobile/src/telemetry exists: the plan's telemetry module is P7.2's and P7.3's, and neither is built")
+	// P7.2 built the module's first half: the statement the app shows and the
+	// privacy URL it refuses -- with `shared/url`'s validator, whose host list
+	// is still the owner's D124 answer and ships empty -- live in
+	// `mobile/src/telemetry/notice.js`, and `mobile/src/app/root.js` renders
+	// them as the shell's last child, after the body. The statement is the half
+	// of it the owner's ruling of 2026-10-30 (D731, which supersedes D255 and
+	// orders the plan's section 6, section 7.4 and P7.2 amended) leaves standing,
+	// and the plan's own status lines and P7.2 section say so -- including that
+	// the task was built ahead of that amendment, and that the statement names
+	// the reporters the build still carries. What the plan's section
+	// 7.4 reads from this directory -- the event module and the scan that holds
+	// it, which admits exactly one collection call site -- is P7.3's and T3.1's
+	// and is not here yet.
+	notice := "../../mobile/src/telemetry/notice.js"
+	if _, err := os.Stat(notice); err != nil {
+		t.Errorf("%s is gone: P7.2 ships the app's statement and the privacy link there, and mobile/src/app/root.js renders both", notice)
 	}
 }
 
