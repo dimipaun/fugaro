@@ -149,8 +149,11 @@ var (
 )
 
 // The run's own calls have bounds of their own: a service that hangs must not
-// hold the claim past the run's start, and a beat that hangs must not outlive
-// the interval it was sent for.
+// hold the claim past the run's start, and one attempt of a beat must not hold
+// the beat's goroutine. The ticker drops the ticks a slow beat did not take,
+// so a service that answers slowly is beaten at less than one request per
+// interval rather than at a queue of them, and the run's end cancels whatever
+// attempt is in flight instead of waiting it out.
 const (
 	slipCallTimeout = 30 * time.Second
 	// slipClaimBudget bounds the whole claim, the retries and the waits
@@ -889,9 +892,14 @@ func slipExecution(execution string) string {
 //
 // An answer about the call is not retried: a refusal, a slip already claimed,
 // a service that does not serve the route, all answer the same thing to a
-// second call, and the retries would only spend the run's start on it. A
-// service that cannot be reached, one that answers 5xx, and one that answers
-// its rate limit are the three the backoff steps over.
+// second call, and the retries would only spend the run's start on it. What the
+// backoff steps over is an attempt this run got no answer to: a service that
+// cannot be reached (a cold start, a refused connection, a reset), one that
+// answers 5xx or its rate limit, and an attempt that never left -- a call this
+// run could not build because the metadata server or its own identity was not
+// there yet, and an answer whose body broke mid-read. The last two are the same
+// class as the rest: nothing the service decided, and nothing this run can act
+// on but to ask once more.
 //
 // The ctx is the call's own budget: a cancelled wait, and an in-flight request
 // whose ctx is cancelled, both end it at once, which is what lets the beat be

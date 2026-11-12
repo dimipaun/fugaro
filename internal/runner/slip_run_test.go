@@ -83,8 +83,11 @@ func heldBeat(svc *slipStandIn, inner step) step {
 	return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
 		res, err := inner(t, ctx, req)
 		waitUntil(t, "the run's first keep-warm request", func() bool { _, beats := svc.counted(); return beats > 0 })
-		svc.hold()
-		<-svc.held
+		// The channel is taken from the arming call rather than read off the
+		// stand-in: the service nils the field as it closes it, so a reader
+		// that fetched the field itself could read nil and wait on it forever.
+		held := svc.hold()
+		<-held
 		return res, err
 	}
 }
@@ -114,10 +117,14 @@ func newSlipStandIn(secret string) *slipStandIn {
 }
 
 // hold arms the hold: from here the service answers a beat by not answering.
-func (s *slipStandIn) hold() {
+// It hands back the channel such a beat closes, read under the same lock that
+// arms it, so the caller waits on the channel that is really closed rather
+// than on the field the service clears as it closes it.
+func (s *slipStandIn) hold() chan struct{} {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.armed = true
-	s.mu.Unlock()
+	return s.held
 }
 
 // answer is the service's reply to one call on the claim route: the claim's own

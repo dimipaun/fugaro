@@ -645,7 +645,12 @@ func TestBeatGoesToTheServiceTheSlipWasClaimedAt(t *testing.T) {
 	}
 
 	// The job's environment now names another service, as a rewrite of the job
-	// spec between two of the run's calls would.
+	// spec between two of the run's calls would. The beat is stopped across it
+	// and started again after: a live beat reads this environment on every
+	// call (the metadata host and the execution name are read off it), so
+	// writing it under one would be a race of this test's own making -- a
+	// run's own environment never changes under it.
+	r.stopSlipBeat()
 	env := make([]string, 0, len(r.d.Env))
 	for _, kv := range r.d.Env {
 		if !strings.HasPrefix(kv, credentialsServiceURLEnv+"=") {
@@ -653,6 +658,7 @@ func TestBeatGoesToTheServiceTheSlipWasClaimedAt(t *testing.T) {
 		}
 	}
 	r.d.Env = append(env, credentialsServiceURLEnv+"="+elsewhere.URL)
+	r.startSlipBeat(context.Background())
 
 	// Several intervals of the fixture's cadence: a beat that re-derived its
 	// URL from the environment has sent the claim secret to the host named
