@@ -285,11 +285,19 @@ func TestDocsMultiModelRecordsTheReviewAccountException(t *testing.T) {
 		}
 	}
 
+	// The mix is three stages since triage joined it (D1851), and §3's sentence
+	// is quoted with that count: this guard is what makes a stage added to or
+	// removed from config.MixedAccountStages fail here rather than pass on a
+	// count the sentence no longer has.
+	if len(config.MixedAccountStages) != 3 {
+		t.Fatalf("config.MixedAccountStages holds %v; the sentence pinned below is the mix's three-stage rule", config.MixedAccountStages)
+	}
 	key := flattenDoc(docSection(t, path, doc, "## 3. The key"))
 	for _, want := range []string{
 		"stage-scoped Claude OAuth account",
 		"`review`",
 		"`adversarial`",
+		"`triage`",
 		"`implement`",
 		"`review_first`",
 		"a second provider's key",
@@ -299,11 +307,11 @@ func TestDocsMultiModelRecordsTheReviewAccountException(t *testing.T) {
 		"design/mixed-credentials.md",
 		// The two keys that admit the mix, and the condition on the second: the
 		// project default an oauth run uses for every stage is a way in for the
-		// two mixed stages where their own model is an Anthropic one, and no
+		// three mixed stages where their own model is an Anthropic one, and no
 		// further (the owner's ruling of 2026-11-05).
 		"by the project's `default_claude_account` where that stage's own model is an Anthropic one",
 		"stages.review.claude_account",
-		"the default is a way in for those two stages and for no others",
+		"the default is a way in for those three stages and for no others",
 		// The run's own anthropic-api-key mount is not a third credential of
 		// this kind: it is what an api-key job already carries for the gateway.
 		"anthropic-api-key",
