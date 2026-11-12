@@ -103,6 +103,14 @@ func TestSecurityMdStatesTheWorkspaceThreatModel(t *testing.T) {
 		"**And the limit this release does not hide.**",
 		"no code path takes them on this tree",
 		"**a workspace's cap binds nothing today**",
+		// The alarm is the cap's second half and it is unwired too: the section
+		// states the design's alarm above and has to say that nothing hosts it,
+		// or a reader takes it as live while residual risk 1 counts it as a
+		// mitigation. `budget.ReconcileWorkspace` is called from its own test
+		// file and from nothing else on this tree.
+		"**The reconciliation alarm is in the same state**",
+		"`budget.ReconcileWorkspace` is reached from its own tests and from nothing that runs",
+		"the meter, the headroom and the alarm arrive together with the wiring",
 		// The alarm, and the unbound member that fails closed rather than
 		// counting as zero.
 		"**The reconciliation alarm.**",
