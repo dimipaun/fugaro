@@ -373,6 +373,8 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	"fugaro settings get":      {args: []string{"a.b"}},
 	"fugaro stats runs":        {args: []string{"--project", "proj-1234"}},
 	"fugaro user add":          {args: []string{"someone@example.com"}},
+	"fugaro user grant":        {args: []string{"someone@example.com", "--role", "operator", "--scope", "project"}},
+	"fugaro user revoke":       {args: []string{"someone@example.com", "--role", "operator", "--scope", "project"}},
 	// Offboarding takes the member's address as its argument, and the body it
 	// then reaches refuses here: this world selects no project, so there is no
 	// roster to read and no intake to call. The write and the sweep are driven

@@ -485,38 +485,74 @@ func newestRun(p judgePair) string {
 func judgedPairs(ctx context.Context, bucket *blobx.Bucket, slug string, recs []*runstore.Record) (map[string]bool, error) {
 	spoken := map[string]bool{}
 	for _, rec := range recs {
-		if !isJudgeRun(rec) {
+		if !IsJudgeRun(rec) {
 			continue
 		}
-		data, err := runstore.Open(bucket.Bucket, slug, rec.RunID).ReadFile(ctx, runstore.VerdictsName)
-		switch {
-		case errors.Is(err, runstore.ErrNotFound):
-			continue
-		case err != nil:
-			return nil, fcli.RemoteErr(fmt.Errorf("reading %s/%s's verdicts: %w", slug, rec.RunID, err))
+		verdicts, err := JudgeVerdicts(ctx, bucket, slug, rec.RunID)
+		if err != nil {
+			return nil, err
 		}
-		var v judgeVerdicts
-		if err := decodeStrict(data, &v); err != nil {
-			return nil, fcli.RemoteErr(fmt.Errorf("reading %s/%s's verdicts: %w", slug, rec.RunID, err))
-		}
-		for _, pv := range v.Pairs {
-			if pv.Skipped == skipCallFailed {
+		for pairID, v := range verdicts {
+			if v.Skipped == skipCallFailed {
 				continue
 			}
-			spoken[pv.PairID] = true
+			spoken[pairID] = true
 		}
 	}
 	return spoken, nil
 }
 
-// isJudgeRun reports whether a record is one of this repository's judge runs,
+// IsJudgeRun reports whether a record is one of this repository's judge runs,
 // from the recipe the run recorded: the catalog recipe of this package's name.
 // A repository's own recipe of the same name is not one — a manifest is written
 // for a catalog recipe alone (internal/cli's writeRecipeManifest) — and neither
-// is a run of any other recipe.
-func isJudgeRun(rec *runstore.Record) bool {
+// is a run of any other recipe. A nil record is no judge run, and neither is a
+// record carrying no recipe block.
+//
+// It is exported because a reader of the A/B figures meets judge runs among the
+// records it read, and it must tell them from the pairs' own arms to know which
+// prefixes hold a verdicts object worth reading (A5.4).
+func IsJudgeRun(rec *runstore.Record) bool {
 	return rec != nil && rec.Recipe != nil &&
 		rec.Recipe.Name == RecipeName && rec.Recipe.Source == string(recipe.SourceCatalog)
+}
+
+// JudgeVerdicts is what one judge run decided, keyed by pair ID (D559): the
+// verdicts object it wrote under its own prefix (runstore.VerdictsName), read
+// as it was stored and joined by nothing else. A judge run that wrote no
+// object — one that died before its step finished — answers an empty map and no
+// error, because it decided nothing and the pairs it took up are unjudged
+// rather than misjudged; that is why ErrNotFound is not an error here and an
+// object that is there and unreadable is.
+//
+// The entries are the object's own, skips included: a pair a judge run left
+// unjudged is one this answers a Verdict for, with no winner, which is exactly
+// what the score needs to know it (Verdict.Judged).
+//
+// An object of another version is an error, read the way this file reads its
+// manifest: a verdict is a claim about a pair, and reading a shape this build
+// does not know as "nothing judged" would drop every pair it decided out of
+// every figure a reader sees (A5.4) rather than say the object is there.
+func JudgeVerdicts(ctx context.Context, bucket *blobx.Bucket, slug, runID string) (map[string]Verdict, error) {
+	data, err := runstore.Open(bucket.Bucket, slug, runID).ReadFile(ctx, runstore.VerdictsName)
+	switch {
+	case errors.Is(err, runstore.ErrNotFound):
+		return map[string]Verdict{}, nil
+	case err != nil:
+		return nil, fcli.RemoteErr(fmt.Errorf("reading %s/%s's verdicts: %w", slug, runID, err))
+	}
+	var v judgeVerdicts
+	if err := decodeStrict(data, &v); err != nil {
+		return nil, fcli.RemoteErr(fmt.Errorf("reading %s/%s's verdicts: %w", slug, runID, err))
+	}
+	if v.Version != judgeVersion {
+		return nil, fcli.RemoteErr(fmt.Errorf("%s/%s's verdicts at %s are version %d, and this build writes and reads version %d", slug, runID, runstore.VerdictsName, v.Version, judgeVersion))
+	}
+	out := make(map[string]Verdict, len(v.Pairs))
+	for _, pv := range v.Pairs {
+		out[pv.PairID] = Verdict{Winner: pv.Winner, Reason: pv.Reason, Skipped: pv.Skipped, JudgeModel: v.JudgeModel}
+	}
+	return out, nil
 }
 
 // readRunRecords reads one record per run ID, in the order it was handed.
@@ -577,7 +613,7 @@ func refuseJudgeInFlight(ctx context.Context, bucket *blobx.Bucket, slug string,
 			recordless = append(recordless, id)
 			continue
 		}
-		if isJudgeRun(rec) && rec.Status == runstore.StatusRunning {
+		if IsJudgeRun(rec) && rec.Status == runstore.StatusRunning {
 			return judgeInFlightRefusal(slug, id)
 		}
 	}
