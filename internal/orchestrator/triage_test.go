@@ -1,6 +1,7 @@
 package orchestrator_test
 
 import (
+	"go/ast"
 	"go/parser"
 	"go/token"
 	"os"
@@ -99,6 +100,99 @@ func TestTriageNeverCallsAModel(t *testing.T) {
 			if p == "github.com/dimipaun/fugaro/internal/agent" || strings.HasPrefix(p, "github.com/dimipaun/fugaro/internal/agent/") {
 				t.Errorf("%s imports %s: the triage rule is code and makes no model call", name, p)
 			}
+		}
+	}
+}
+
+// triageConstants is the string value of every constant triage.go declares
+// with the named type, in source order, read out of the source rather than
+// listed here: a vocabulary has one spelling in this package, and a constant
+// added without its list is what the test below exists to catch.
+func triageConstants(t *testing.T, typeName string) []string {
+	t.Helper()
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "triage.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, decl := range f.Decls {
+		gd, ok := decl.(*ast.GenDecl)
+		if !ok || gd.Tok != token.CONST {
+			continue
+		}
+		for _, spec := range gd.Specs {
+			vs, ok := spec.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+			if id, ok := vs.Type.(*ast.Ident); !ok || id.Name != typeName {
+				continue
+			}
+			for _, v := range vs.Values {
+				lit, ok := v.(*ast.BasicLit)
+				if !ok || lit.Kind != token.STRING {
+					t.Fatalf("triage.go: a %s constant's value is %T, not a string literal", typeName, v)
+				}
+				s, err := strconv.Unquote(lit.Value)
+				if err != nil {
+					t.Fatal(err)
+				}
+				out = append(out, s)
+			}
+		}
+	}
+	return out
+}
+
+// TestTriageVocabulariesAreTheDeclaredConstants pins TriageReasons to the
+// TriageReason constants triage.go declares, and Severities to the Severity
+// ones, both directions and in order. Each list is the one spelling of its
+// vocabulary, and each is what the caller gates on — a caller stores or prints
+// a reason only after KnownTriageReason, and reads a finding's severity only
+// after KnownSeverity — so a code the rule can answer with and the list lacks
+// would be dropped by the very guard the rule's own doc sends the caller to,
+// and one the list carries while no constant declares it is a word no writer
+// can produce. Mutation (run, restored): drop a name from either list, or add
+// a constant and leave it out, and this names the side that has it.
+func TestTriageVocabulariesAreTheDeclaredConstants(t *testing.T) {
+	declared := triageConstants(t, "TriageReason")
+	if len(declared) == 0 {
+		t.Fatal("no TriageReason constants found in triage.go: this test proves nothing")
+	}
+	reasons := make([]string, 0, len(orchestrator.TriageReasons))
+	for _, r := range orchestrator.TriageReasons {
+		reasons = append(reasons, string(r))
+		if !orchestrator.KnownTriageReason(r) {
+			t.Errorf("KnownTriageReason(%q) is false for a reason TriageReasons carries", r)
+		}
+	}
+	if !slices.Equal(reasons, declared) {
+		t.Errorf("TriageReasons = %v, the TriageReason constants triage.go declares = %v", reasons, declared)
+	}
+	for _, unknown := range []orchestrator.TriageReason{"", "no_such_reason"} {
+		if orchestrator.KnownTriageReason(unknown) {
+			t.Errorf("KnownTriageReason(%q) is true: the vocabulary is closed", unknown)
+		}
+	}
+
+	declaredSeverities := triageConstants(t, "Severity")
+	if len(declaredSeverities) == 0 {
+		t.Fatal("no Severity constants found in triage.go: this test proves nothing")
+	}
+	severities := make([]string, 0, len(orchestrator.Severities))
+	for _, s := range orchestrator.Severities {
+		severities = append(severities, string(s))
+		if !orchestrator.KnownSeverity(s) {
+			t.Errorf("KnownSeverity(%q) is false for a severity Severities carries", s)
+		}
+	}
+	if !slices.Equal(severities, declaredSeverities) {
+		t.Errorf("Severities = %v, the Severity constants triage.go declares = %v", severities, declaredSeverities)
+	}
+	for _, unknown := range []orchestrator.Severity{"", "blocker"} {
+		if orchestrator.KnownSeverity(unknown) {
+			t.Errorf("KnownSeverity(%q) is true: a word outside the set is refused, never read as low", unknown)
 		}
 	}
 }
