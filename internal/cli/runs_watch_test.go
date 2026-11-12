@@ -65,14 +65,31 @@ func newWatchFixture(t *testing.T, checks []gitprov.CheckRun) *triageFixture {
 }
 
 // installWatchProvider hands `runs watch` a fake host, the way every other
-// command in this package is handed one.
+// command in this package is handed one. Which repositories the command asks it
+// about is not this helper's business; a test that pins that reads
+// installWatchProviderAsking.
 func installWatchProvider(t *testing.T, p *fake.Provider) {
 	t.Helper()
+	installWatchProviderAsking(t, p)
+}
+
+// installWatchProviderAsking is installWatchProvider with the seam's own
+// question kept: every repository the command asks the host about, in the order
+// it asks them. The repository is what a print about a run's pull request and
+// its checks is decided by, so it is what a test reads to say which repository
+// the print was about (F24, F30).
+func installWatchProviderAsking(t *testing.T, p *fake.Provider) *[]string {
+	t.Helper()
+	asked := &[]string{}
 	was := openWatchProvider
 	openWatchProvider = func([]string, func(string)) (string, gitprov.Opener, error) {
-		return "github", gitprov.Static(p), nil
+		return "github", func(_ context.Context, _, repo string) (gitprov.Provider, []string, error) {
+			*asked = append(*asked, repo)
+			return p, nil, nil
+		}, nil
 	}
 	t.Cleanup(func() { openWatchProvider = was })
+	return asked
 }
 
 // watchJSON is `fugaro runs watch --json`'s document.
@@ -304,6 +321,61 @@ func TestRunsWatchPrintsTheSameOutcomeAsTheDaemon(t *testing.T) {
 			f.step(t)
 			if got, want := f.line(t).Text, watchLine(row.Outcome, row.Reasons); got != want {
 				t.Errorf("the tick logged %q, and the print says %q: the two are one decision", got, want)
+			}
+		})
+	}
+}
+
+// TestRunsWatchAsksTheHostAboutTheRunsOwnRepository: the repository the print
+// asks the forge about comes from the slug the run was found under and this
+// machine's own resolution of it — the launcher's task and this machine's
+// config — and never from the record the job wrote, so a job cannot point the
+// read at a repository the run never touched (F24, F30). The daemon's own pin of
+// the same rule is TestTriageAsksTheHostAboutTheRunsOwnRepository, and this is
+// its twin for the print: the three cases are the ones a hostile or merely
+// wrong record can make.
+//
+// Mutation (run, restore): resolve the repository out of rec.Repo instead of
+// followUpsRepo over the task and the second and third cases ask a host about
+// "attacker/other", which is the whole of what this test exists to refuse.
+func TestRunsWatchAsksTheHostAboutTheRunsOwnRepository(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// taskRepo is what the launcher wrote into the run's own storage and
+		// recordRepo what the job wrote into the record. The record is the
+		// job's own file, which is why it is the one that may name anything.
+		taskRepo, recordRepo string
+	}{
+		{name: "the task its launcher wrote", taskRepo: "acme/app", recordRepo: "acme/app"},
+		{name: "a record naming another repository", taskRepo: "acme/app", recordRepo: "attacker/other"},
+		{name: "a task naming another repository", taskRepo: "attacker/other", recordRepo: "attacker/other"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newWatchFixture(t, green())
+			f.writeTaskRepo(t, tc.taskRepo)
+			rec := triageRecord()
+			rec.Repo = tc.recordRepo
+			f.putRecord(t, rec)
+			// The findings the run left, so the read is whole and the outcome is
+			// the one the run's own host's green checks give it: a print that
+			// failed closed on an unreadable input would say less about which
+			// repository it asked.
+			f.findings(t)
+			asked := installWatchProviderAsking(t, f.prov)
+
+			doc := watchJSON(t)
+			if len(*asked) != 1 || (*asked)[0] != "acme/app" {
+				t.Fatalf("the print asked a host about %v, want the run's own repository", *asked)
+			}
+			if len(doc.Runs) != 1 {
+				t.Fatalf("the document judges %d runs, want the one the bucket holds: %+v", len(doc.Runs), doc.Runs)
+			}
+			row := doc.Runs[0]
+			if row.Outcome != string(orchestrator.MergeAsIs) {
+				t.Errorf("the print says the run is %q, want the merge the run's own host's green checks and its clear findings give it:\n%+v", row.Outcome, row)
+			}
+			if !slices.Contains(row.Reasons, string(orchestrator.ReasonCIGreen)) {
+				t.Errorf("the codes behind %q are %v, and the checks the run's own host reports at its head are not among them", row.Outcome, row.Reasons)
 			}
 		})
 	}
