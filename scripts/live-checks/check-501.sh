@@ -26,16 +26,19 @@
 #     whole upgrade, so what it leaves is what the installation is on — and the
 #     row says whether the pin moved or was already this release's;
 #   * one run launched from the sandbox checkout and followed with `fugaro runs
-#     ls --repo <slug> --json` until it is **terminal**, then its `result.json`
-#     read from the runs bucket at the run's own key and checked against the run
-#     id this check launched (a record read by listing alone could be another
-#     run's);
-#   * the record's `image.built_at`, against the moment the update ended: a run
-#     whose image was built after the upgrade started on what the upgrade put
-#     there, and one whose image predates it did not. A record that carries no
-#     build time (an image built before that field existed, or a job running the
-#     base image directly) is reported as a row this check could not date rather
-#     than as a finding.
+#     ls --repo <the repository the launch named> --json` until it is
+#     **terminal**, then its `result.json` read from the runs bucket at the key
+#     that listing's own `run` ref gives (the repository's one-segment slug, not
+#     the `owner/name` the launch named) and checked against the run id this
+#     check launched (a record read by listing alone could be another run's);
+#   * the record's `image.built_at`, against the moment the update started: a run
+#     whose image was built while or after the upgrade ran started on what the
+#     upgrade put there, and one whose image predates it did not. The start and
+#     not the end, because the update waits for its own rebuilds before it
+#     returns, so a rebuilt image is always built inside the update's window. A
+#     record that carries no build time (an image built before that field
+#     existed, or a job running the base image directly) is reported as a row
+#     this check could not date rather than as a finding.
 #
 # What it creates: nothing of its own choosing. The update is the upgrade you
 # would run anyway (its billable image rebuilds are among the steps you answer),
@@ -157,7 +160,8 @@ UPDATE_ENDED=""
 UPDATE_ASKED=""
 PICKED_RUN=""
 RUN_ID=""
-RUN_SLUG=""
+LAUNCH_REPO=""
+RUN_REF=""
 SETTLED=no
 
 scratch_up() {
@@ -196,7 +200,9 @@ remove_scratch() {
 # Every reader prints `key=value` lines or `\t`-separated rows, so a shell can
 # hold them without a second parser, and a timestamp is printed both as written
 # and as epoch seconds, because the image row compares it with a time this script
-# took.
+# took. A run row carries the row's own `run` ref as its last column: the
+# record's object name is built from that ref's first segment, which is the
+# repository's one-segment slug and not the `owner/name` the launch names.
 write_reader() {
   cat >"$SCRATCH/read.py" <<'PY'
 import datetime
@@ -241,11 +247,12 @@ elif what == "rows":
     rows = doc.get("runs") or []
     print("count=%d" % len(rows))
     for row in rows:
-        print("row\t%s\t%s\t%s\t%s" % (
+        print("row\t%s\t%s\t%s\t%s\t%s" % (
             row.get("run_id") or "",
             row.get("status") or "",
             yes(row.get("terminal")),
             row.get("stage") or "",
+            row.get("run") or "",
         ))
 elif what == "record":
     image = doc.get("image") or {}
@@ -507,12 +514,12 @@ step_run() {
     return 0
   fi
   RUN_ID=$(field "$SCRATCH/launch.txt" run_id)
-  RUN_SLUG=$(field "$SCRATCH/launch.txt" repo)
-  if [ -z "$RUN_ID" ] || [ -z "$RUN_SLUG" ]; then
-    fact run-launched FAIL "fugaro run --json named no run (run_id=${RUN_ID:-none}, repo=${RUN_SLUG:-none}): this check follows the run it launched, and a launch that does not name it cannot be followed. What it printed is in $SCRATCH/launch.out"
+  LAUNCH_REPO=$(field "$SCRATCH/launch.txt" repo)
+  if [ -z "$RUN_ID" ] || [ -z "$LAUNCH_REPO" ]; then
+    fact run-launched FAIL "fugaro run --json named no run (run_id=${RUN_ID:-none}, repo=${LAUNCH_REPO:-none}): this check follows the run it launched, and a launch that does not name it cannot be followed. What it printed is in $SCRATCH/launch.out"
     return 0
   fi
-  fact run-launched PASS "fugaro run launched ${RUN_ID} on ${RUN_SLUG} from the sandbox checkout (status $(field "$SCRATCH/launch.txt" status)): the run is the check's own, and the rows below follow this one and no other"
+  fact run-launched PASS "fugaro run launched ${RUN_ID} on ${LAUNCH_REPO} from the sandbox checkout (status $(field "$SCRATCH/launch.txt" status)): the run is the check's own, and the rows below follow this one and no other"
 }
 
 # step_terminal: the run has to end. A check that read a record while a run was
@@ -522,15 +529,16 @@ step_terminal() {
     unmeasured terminal "there is no run to follow: the row above says why"
     return 0
   fi
-  say "waiting for ${RUN_ID} to end (up to ${RUN_TIMEOUT}s; fugaro runs ls --repo ${RUN_SLUG} --json --limit 1)"
+  say "waiting for ${RUN_ID} to end (up to ${RUN_TIMEOUT}s; fugaro runs ls --repo ${LAUNCH_REPO} --json --limit 1)"
   local waited=0 run_status="" ended="" stage=""
   while [ "$waited" -lt "$RUN_TIMEOUT" ]; do
-    run_bounded "$CLI_TIMEOUT" rows "$SANDBOX" "$FUGARO_BIN" runs ls --repo "$RUN_SLUG" --json --limit 1
+    run_bounded "$CLI_TIMEOUT" rows "$SANDBOX" "$FUGARO_BIN" runs ls --repo "$LAUNCH_REPO" --json --limit 1
     run_status="" ended="" stage=""
     if [ "$BOUNDED_STATUS" = 0 ] && read_json rows "$SCRATCH/rows.out" "$SCRATCH/rows.txt"; then
       run_status=$(row_field 3)
       ended=$(row_field 4)
       stage=$(row_field 5)
+      RUN_REF=$(row_field 6)
       if [ "$ended" = true ]; then break; fi
     fi
     sleep "$POLL_SECONDS"
@@ -547,7 +555,7 @@ step_terminal() {
 # step_result_json: the record, read from the runs bucket at the run's own key
 # and checked against the run this check launched.
 step_result_json() {
-  if [ -z "$RUN_ID" ] || [ -z "$RUN_SLUG" ]; then
+  if [ -z "$RUN_ID" ] || [ -z "$LAUNCH_REPO" ]; then
     unmeasured result-json "there is no run whose record could be read: the row above says why"
     return 0
   fi
@@ -555,7 +563,14 @@ step_result_json() {
     unmeasured result-json "the run ${RUN_ID} had not ended by the time the row above gave up, so this check did not read its record: a record read while a run is still working is whatever was there before it. Watch it with 'fugaro watch ${RUN_ID}' and run this check again when it has ended"
     return 0
   fi
-  local key="runs/${RUN_SLUG}/${RUN_ID}/result.json"
+  case "$RUN_REF" in
+  */"$RUN_ID") ;;
+  *)
+    unmeasured result-json "fugaro runs ls --json named this run's row with no ref this check could take a bucket key from (run=$(printf '%s' "${RUN_REF:-none}")), so there was no key to read: the record of run ${RUN_ID} lives under the repository's slug, and the slug is what that row's ref carries"
+    return 0
+    ;;
+  esac
+  local key="runs/${RUN_REF}/result.json"
   say "reading the record: gcloud storage cat gs://fugaro-runs-${PROJECT}/${key}"
   run_bounded "$CLI_TIMEOUT" record "$SANDBOX" gcloud storage cat "gs://fugaro-runs-${PROJECT}/${key}" --project="${PROJECT}"
   if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
@@ -578,9 +593,13 @@ step_result_json() {
 
 # step_image: the dated evidence that the run started on what the upgrade put
 # there. The record's `image.built_at` is when the image the job ran was built,
-# so one at or after the moment the update ended is a job on an image built after
-# the base pin moved — and one before it is a job on the image the installation
-# had before the upgrade. A record that carries no build time is not a finding:
+# so one at or after the moment the update STARTED is a job on an image the
+# upgrade built — and one before it is a job on the image the installation had
+# before the upgrade. The moment it started and not the moment it ended: the
+# update waits for its own rebuilds before it returns, so a rebuilt image's build
+# time is always inside the update's own window, and comparing against its end
+# would read a run on the rebuilt image as a declined rebuild. A record that
+# carries no build time is not a finding:
 # an image built before the field existed, and a job running the base image
 # directly, both leave it empty by design.
 step_image() {
@@ -603,11 +622,11 @@ step_image() {
     fact image INFO "not dated: the record's image.built_at (${built_at}) is not a timestamp this check could read, so it cannot say whether the image was built after the update"
     return 0
   fi
-  if [ "$built_epoch" -lt "$UPDATE_ENDED" ]; then
-    fact image FAIL "the run ${RUN_ID} started on an image built at ${built_at}, before the update ended ($(human_time "$UPDATE_ENDED")): the job ran the image the installation already had, so the base the update pinned is not what this run started on. If you declined the rebuild the update offered, that is this row and the run proves nothing about the new base — walk the rebuild steps in the update's own transcript ($SCRATCH/update.out) and run this check again"
+  if [ "$built_epoch" -lt "$UPDATE_STARTED" ]; then
+    fact image FAIL "the run ${RUN_ID} started on an image built at ${built_at}, before the update started ($(human_time "$UPDATE_STARTED")): the job ran the image the installation already had, so the base the update pinned is not what this run started on. If you declined the rebuild the update offered, that is this row and the run proves nothing about the new base — walk the rebuild steps in the update's own transcript ($SCRATCH/update.out) and run this check again"
     return 0
   fi
-  fact image PASS "the run ${RUN_ID} started on an image built at ${built_at}, at or after the moment the update ended (image.built_at): the job's image was built by the upgrade this check ran, which is the outside evidence that the base pin the update left is what a run really starts on"
+  fact image PASS "the run ${RUN_ID} started on an image built at ${built_at}, at or after the moment the update started (image.built_at, compared against the start because the update waits for its own rebuilds before it returns): the job's image was built by the upgrade this check ran, which is the outside evidence that the base pin the update left is what a run really starts on"
 }
 
 # restore: what this check changed, said rather than assumed.
@@ -661,7 +680,7 @@ plan() {
   fi
   say "  [read] fugaro doctor --json again — the base pin after the update"
   say "  [network, BILLABLE] fugaro run --repo ${SANDBOX}${RECIPE:+ --recipe ${RECIPE}} --json \"${TASK}\" — one sandbox run, followed with fugaro runs ls --json until it is terminal"
-  say "  [read] gcloud storage cat gs://fugaro-runs-<the project>/runs/<repo>/<run>/result.json — the record, and the image.built_at it was built at"
+  say "  [read] gcloud storage cat gs://fugaro-runs-<the project>/runs/<the repository's slug>/<run>/result.json — the record, and the image.built_at it was built at"
   for key in installation base-pin update pin-after run-launched terminal result-json image; do
     fact "$key" INFO "planned: a real run measures this row; --dry-run did not"
   done

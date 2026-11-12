@@ -90,10 +90,13 @@
 # would rather set it in the environment), STALE_REPO (a checkout whose own
 # `image:` block is stale; the sandbox by default), TASK and RECIPE (what the run
 # is launched with), CHECKOUT_<entry> (the checkout one entry is built from),
-# BUILD_TIMEOUT_SECONDS (1800), RUN_TIMEOUT_SECONDS (3600),
+# REGION (us-east5: the guard that refuses a project or region naming `belong`
+# reads it), MAX_BUILDS (4: the most Cloud Builds this check will spend, one per
+# entry), BUILD_TIMEOUT_SECONDS (1800), RUN_TIMEOUT_SECONDS (3600),
 # UPDATE_TIMEOUT_SECONDS (900), POLL_SECONDS (15: how often the run is looked
-# for), SKIP_BUILDS (1: read the catalog and launch the run, and spend no Cloud
-# Build).
+# for), DOCTOR_TIMEOUT_SECONDS (180), CLI_TIMEOUT_SECONDS (180),
+# LAUNCH_TIMEOUT_SECONDS (600), SKIP_BUILDS (1: read the catalog and launch the
+# run, and spend no Cloud Build).
 set -Eeuo pipefail
 
 # No xtrace, whatever the shell it was started from had: this check drives a
@@ -165,7 +168,8 @@ BAKE_REPOS=""
 BUILD_STATUS=0
 BUILD_TIMED_OUT=no
 RUN_ID=""
-RUN_SLUG=""
+LAUNCH_REPO=""
+RUN_REF=""
 RUN_STATUS=0
 RUN_TIMED_OUT=no
 SETTLED=no
@@ -204,7 +208,10 @@ remove_scratch() {
 # owner's machine has python3 and no jq, and a row that read a document with
 # grep would report a digest the build did not write the day the document is
 # re-wrapped. Every reader prints `key=value` lines or `\t`-separated rows, so a
-# shell can hold them without a second parser.
+# shell can hold them without a second parser. A run row carries the row's own
+# `run` ref as its last column: the record's object name is built from that
+# ref's first segment, which is the repository's one-segment slug and not the
+# `owner/name` the launch names.
 write_reader() {
   cat >"$SCRATCH/read.py" <<'PY'
 import json
@@ -253,11 +260,12 @@ elif what == "rows":
     rows = doc.get("runs") or []
     print("count=%d" % len(rows))
     for row in rows:
-        print("row\t%s\t%s\t%s\t%s" % (
+        print("row\t%s\t%s\t%s\t%s\t%s" % (
             row.get("run_id") or "",
             row.get("status") or "",
             yes(row.get("terminal")),
             row.get("stage") or "",
+            row.get("run") or "",
         ))
 elif what == "record":
     image = doc.get("image") or {}
@@ -284,8 +292,15 @@ field() { # field FILE KEY — the value of one `key=value` line, "" when absent
   sed -n "s/^$2=//p" "$1" 2>/dev/null | head -n 1
 }
 
-# name_of_entry NAME — the value of a `entry\t<name>\t...` row, for the row a key
-# names.
+# row_field COLUMN: one column of the run this check launched, out of the last
+# `fugaro runs ls --json` read. The run's own id is the only row that counts: a
+# list read by position alone could be another run's.
+row_field() { # row_field COLUMN
+  awk -F'\t' -v id="$RUN_ID" -v col="$1" '$1 == "row" && $2 == id { print $col; exit }' "$SCRATCH/rows.txt" 2>/dev/null
+}
+
+# entry_digest FILE NAME — the value of a `entry\t<name>\t...` row's digest
+# column, for the row a key names.
 entry_digest() { # entry_digest FILE NAME
   awk -F'\t' -v name="$2" '$1 == "entry" && $2 == name { print $6; exit }' "$1" 2>/dev/null || true
 }
@@ -594,12 +609,12 @@ step_run() {
     return 0
   fi
   RUN_ID=$(field "$SCRATCH/launch.txt" run_id)
-  RUN_SLUG=$(field "$SCRATCH/launch.txt" repo)
-  if [ -z "$RUN_ID" ] || [ -z "$RUN_SLUG" ]; then
+  LAUNCH_REPO=$(field "$SCRATCH/launch.txt" repo)
+  if [ -z "$RUN_ID" ] || [ -z "$LAUNCH_REPO" ]; then
     fact run-launched FAIL "fugaro run --json named no run (run_id=$(field "$SCRATCH/launch.txt" run_id), repo=$(field "$SCRATCH/launch.txt" repo)): this check follows the run it launched, and a launch that does not name it cannot be followed. What it printed is in $SCRATCH/launch.out"
     return 0
   fi
-  fact run-launched PASS "fugaro run launched ${RUN_ID} on ${RUN_SLUG} from the sandbox checkout (status $(field "$SCRATCH/launch.txt" status)): the run is the check's own, and the rows below follow this one and no other"
+  fact run-launched PASS "fugaro run launched ${RUN_ID} on ${LAUNCH_REPO} from the sandbox checkout (status $(field "$SCRATCH/launch.txt" status)): the run is the check's own, and the rows below follow this one and no other"
 }
 
 # step_terminal: the run has to end. A check that read a record while a run was
@@ -610,32 +625,34 @@ step_terminal() {
     unmeasured terminal "there is no run to follow: the row above says why"
     return 0
   fi
-  say "waiting for ${RUN_ID} to end (up to ${RUN_TIMEOUT}s; fugaro runs ls --repo ${RUN_SLUG} --json --limit 1)"
-  local waited=0 status="" stage=""
+  say "waiting for ${RUN_ID} to end (up to ${RUN_TIMEOUT}s; fugaro runs ls --repo ${LAUNCH_REPO} --json --limit 1)"
+  local waited=0 run_status="" ended="" stage=""
   while [ "$waited" -lt "$RUN_TIMEOUT" ]; do
-    run_bounded "$CLI_TIMEOUT" rows "$SANDBOX" "$FUGARO_BIN" runs ls --repo "$RUN_SLUG" --json --limit 1
-    status=""
+    run_bounded "$CLI_TIMEOUT" rows "$SANDBOX" "$FUGARO_BIN" runs ls --repo "$LAUNCH_REPO" --json --limit 1
+    run_status="" ended="" stage=""
     if [ "$BOUNDED_STATUS" = 0 ] && read_json rows "$SCRATCH/rows.out" "$SCRATCH/rows.txt"; then
-      status=$(awk -F'\t' -v id="$RUN_ID" '$1 == "row" && $2 == id { print $4; exit }' "$SCRATCH/rows.txt")
-      stage=$(awk -F'\t' -v id="$RUN_ID" '$1 == "row" && $2 == id { print $5; exit }' "$SCRATCH/rows.txt")
-      if [ "$status" = true ]; then break; fi
+      run_status=$(row_field 3)
+      ended=$(row_field 4)
+      stage=$(row_field 5)
+      RUN_REF=$(row_field 6)
+      if [ "$ended" = true ]; then break; fi
     fi
     sleep "$POLL_SECONDS"
     waited=$((waited + POLL_SECONDS))
   done
-  if [ "$status" != true ]; then
-    unmeasured terminal "${RUN_ID} had not ended after ${RUN_TIMEOUT}s (last row: status=$(awk -F'\t' -v id="$RUN_ID" '$1 == "row" && $2 == id { print $3; exit }' "$SCRATCH/rows.txt" 2>/dev/null), stage=${stage:-unknown}): this check reads a terminal run's own record, and reading one while the run is still working would read whatever was there before. Watch it with 'fugaro watch ${RUN_ID}' and run this check again when it has ended — the run it launched is a real one and is not cancelled by stopping here"
+  if [ "$ended" != true ]; then
+    unmeasured terminal "${RUN_ID} had not ended after ${RUN_TIMEOUT}s (last row: status=${run_status:-unknown}, stage=${stage:-unknown}): this check reads a terminal run's own record, and reading one while the run is still working would read whatever was there before. Watch it with 'fugaro watch ${RUN_ID}' and run this check again when it has ended — the run it launched is a real one and is not cancelled by stopping here"
     return 0
   fi
   SETTLED=yes
-  fact terminal PASS "${RUN_ID} ended in ${waited}s (status=$(awk -F'\t' -v id="$RUN_ID" '$1 == "row" && $2 == id { print $3; exit }' "$SCRATCH/rows.txt"), stage=${stage:-unknown}, read from fugaro runs ls --json): the run reached its end, which is the state the record below is written in"
+  fact terminal PASS "${RUN_ID} ended in ${waited}s (status=${run_status:-unknown}, stage=${stage:-unknown}, read from fugaro runs ls --json): the run reached its end, which is the state the record below is written in"
 }
 
 # step_result_json: the record, read from the runs bucket as the owner would
 # read it. The record's own run_id is what ties it to the run this check
 # launched: a record read by listing alone could be another run's.
 step_result_json() {
-  if [ -z "$RUN_ID" ] || [ -z "$RUN_SLUG" ]; then
+  if [ -z "$RUN_ID" ] || [ -z "$LAUNCH_REPO" ]; then
     unmeasured result-json "there is no run whose record could be read: the row above says why"
     return 0
   fi
@@ -643,7 +660,14 @@ step_result_json() {
     unmeasured result-json "the run ${RUN_ID} had not ended by the time the row above gave up, so this check did not read its record: a record read while a run is still working is whatever was there before it, which is the state the row above refuses to read a terminal run's own record from. Watch it with 'fugaro watch ${RUN_ID}' and run this check again when it has ended"
     return 0
   fi
-  local key="runs/${RUN_SLUG}/${RUN_ID}/result.json"
+  case "$RUN_REF" in
+  */"$RUN_ID") ;;
+  *)
+    unmeasured result-json "fugaro runs ls --json named this run's row with no ref this check could take a bucket key from (run=$(printf '%s' "${RUN_REF:-none}")), so there was no key to read: the record of run ${RUN_ID} lives under the repository's slug, and the slug is what that row's ref carries"
+    return 0
+    ;;
+  esac
+  local key="runs/${RUN_REF}/result.json"
   say "reading the record: gcloud storage cat gs://fugaro-runs-${PROJECT}/${key}"
   run_bounded "$CLI_TIMEOUT" record "$SANDBOX" gcloud storage cat "gs://fugaro-runs-${PROJECT}/${key}" --project="${PROJECT}"
   if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
@@ -777,7 +801,7 @@ plan() {
     say "  [read] fugaro image ls --json again — the digest each entry's build recorded"
   fi
   say "  [network, BILLABLE] fugaro run --repo ${SANDBOX}${RECIPE:+ --recipe ${RECIPE}} --json \"${TASK}\" — one sandbox run, followed with fugaro runs ls --json until it is terminal"
-  say "  [read] gcloud storage cat gs://fugaro-runs-<the project>/runs/<repo>/<run>/result.json — the record, and its image.baked_commit"
+  say "  [read] gcloud storage cat gs://fugaro-runs-<the project>/runs/<the repository's slug>/<run>/result.json — the record, and its image.baked_commit"
   say "  [network, read, creates nothing] fugaro update --repo ${STALE_REPO} --plan-only — D1900's 'is ignored' warning for the stale image: block"
   fact stale-warning INFO "planned: a real run measures this row; --dry-run did not"
   fact builds INFO "planned: a real run measures this row; --dry-run did not"

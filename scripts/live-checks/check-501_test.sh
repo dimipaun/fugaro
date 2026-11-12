@@ -51,6 +51,11 @@ expect_status() { # status want what
 
 project=fugaro-chk501-test
 run_id=run-20261112130000-1
+# The repository's slug, as `fugaro runs ls --json` carries it in a row's `run`
+# ref: ONE path segment (task.Slug's readable name plus a hash), where the launch
+# names the repository as `owner/name`. The record's object name is built from
+# this one, so a case that reads the key back is reading the check's own choice.
+slug=acme-sandbox-9f8e7d6c
 before_ref=us-east5-docker.pkg.dev/p/fugaro-base:0.23.0
 after_ref='us-east5-docker.pkg.dev/p/fugaro-base@sha256:aaaa'
 # The two build times sit far outside the moment the update ends — one well
@@ -120,6 +125,17 @@ update)
     printf 'fugaro: the installation stage failed: the terraform binary is not on PATH\n' >&2
     exit 1
     ;;
+  update-rebuilds)
+    # The rebuild the update waits for lands INSIDE its own window: the image's
+    # build time is stamped now, and the update does not return for three
+    # seconds, so built_at is after the moment the check read for the start of
+    # the update and before the moment it read for the end. This is the one
+    # window a comparison against the update's END reads as a declined rebuild,
+    # and the case below is what pins which moment the row uses.
+    stamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    sed -i "s|\"built_at\":\"[^\"]*\"|\"built_at\":\"${stamp}\"|" "$FAKE_JSON_DIR/record.json"
+    sleep 3
+    ;;
   *)
     printf 'fugaro: 1 to add, 0 to change, 0 to destroy.\n'
     printf 'fugaro: rebuilding the workflow images of %s\n' "$PWD"
@@ -165,7 +181,7 @@ JSON
 {"project":"$project","run":"3000","repo":"acme/sandbox","run_id":"$run_id","branch":"fugaro/20261112-130000-abcd","execution":"exec-2","status":"launched"}
 JSON
   cat >"$json/rows.json" <<JSON
-{"project":"$project","runs":[{"run":"3000","repo":"acme/sandbox","run_id":"$run_id","status":"succeeded","stage":"writeback","terminal":true,"settled":true}],"totals":{"runs":1},"warnings":[]}
+{"project":"$project","runs":[{"run":"$slug/$run_id","repo":"acme/sandbox","run_id":"$run_id","status":"succeeded","stage":"writeback","terminal":true,"settled":true}],"totals":{"runs":1},"warnings":[]}
 JSON
   cat >"$json/record.json" <<JSON
 {"version":1,"run_id":"$run_id","repo":"acme/sandbox","workflow":"agent","status":"succeeded","stage":"writeback","outcome":"pr","image":{"built_at":"$new_image","baked_commit":"9f8e7d6"},"pushed_head":"9f8e7d6"}
@@ -305,7 +321,8 @@ test_happy_path() {
   expect_contains "$calls" "run --repo $dir/sandbox --json" "happy path: the run is launched from the sandbox checkout"
   expect_contains "$calls" "runs ls --repo acme/sandbox --json --limit 1" "happy path: the run is followed by its own slug"
   expect_absent "$calls" "--yes" "happy path: nothing is confirmed for the owner"
-  expect_contains "$(cat "$dir/logs/gcloud.calls")" "gs://fugaro-runs-${project}/runs/acme/sandbox/${run_id}/result.json" "happy path: the record is read at the run's own key"
+  expect_contains "$(cat "$dir/logs/gcloud.calls")" "gs://fugaro-runs-${project}/runs/${slug}/${run_id}/result.json" "happy path: the record is read at the run's own key"
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "runs/acme/sandbox/" "happy path: the key is the one-segment slug, not the owner/name the launch names"
   assert_scratch_removed "$dir" "happy path"
 }
 
@@ -385,8 +402,24 @@ test_an_image_built_before_the_update_is_a_finding() {
   run_check "$dir"
   expect_status "$status" 1 "an image built before the update"
   expect_contains "$out" "FACT image: FAIL" "an image built before the update: the row"
-  expect_contains "$out" "started on an image built at ${old_image}, before the update ended" "an image built before the update: the two times"
+  expect_contains "$out" "started on an image built at ${old_image}, before the update started" "an image built before the update: the two times"
   expect_contains "$out" "declined the rebuild" "an image built before the update: the answer the row offers"
+}
+
+test_an_image_rebuilt_inside_the_update_window_is_a_pass() {
+  # `fugaro update` waits for its own image rebuilds before it returns, so an
+  # image the upgrade built is always built inside the update's own window: after
+  # the moment it started and before the moment it ended. Compared against the
+  # END of the update, that reading comes out as a declined rebuild — exactly
+  # backwards, and the row would fail on the upgrade that worked. This case is
+  # the one that tells the two moments apart.
+  local dir=$work/rebuild
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=update-rebuilds
+  expect_status "$status" 0 "an image rebuilt inside the update's window"
+  expect_contains "$out" "FACT image: PASS" "an image rebuilt inside the update's window: the row"
+  expect_contains "$out" "at or after the moment the update started" "an image rebuilt inside the update's window: the moment it is compared against"
+  expect_contains "$out" "the update waits for its own rebuilds before it returns" "an image rebuilt inside the update's window: why the start and not the end"
 }
 
 test_a_record_with_no_build_time_is_not_a_finding() {
@@ -404,7 +437,7 @@ test_a_record_with_no_build_time_is_not_a_finding() {
 test_a_run_that_never_ends_is_not_measured() {
   local dir=$work/notterminal
   prepare "$dir"
-  printf '{"project":"%s","runs":[{"run":"3000","repo":"acme/sandbox","run_id":"%s","status":"running","stage":"implement","terminal":false}],"warnings":[]}\n' "$project" "$run_id" >"$dir/json/rows.json"
+  printf '{"project":"%s","runs":[{"run":"%s/%s","repo":"acme/sandbox","run_id":"%s","status":"running","stage":"implement","terminal":false}],"warnings":[]}\n' "$project" "$slug" "$run_id" "$run_id" >"$dir/json/rows.json"
   run_check "$dir" CHECK501_RUN_TIMEOUT_SECONDS=1
   expect_status "$status" 2 "a run that never ended"
   expect_contains "$out" "FACT terminal: FAIL" "a run that never ended: the row"
@@ -542,6 +575,7 @@ t test_an_installation_with_no_base_pin_is_a_finding
 t test_a_pin_the_update_leaves_empty_is_a_finding
 t test_a_pin_that_did_not_move_says_so
 t test_an_image_built_before_the_update_is_a_finding
+t test_an_image_rebuilt_inside_the_update_window_is_a_pass
 t test_a_record_with_no_build_time_is_not_a_finding
 t test_a_run_that_never_ends_is_not_measured
 t test_a_record_that_cannot_be_read_is_a_finding

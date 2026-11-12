@@ -47,6 +47,11 @@ expect_status() { # status want what
 
 project=fugaro-chk500-test
 run_id=run-20261112120000-1
+# The repository's slug, as `fugaro runs ls --json` carries it in a row's `run`
+# ref: ONE path segment (task.Slug's readable name plus a hash), where the launch
+# names the repository as `owner/name`. The record's object name is built from
+# this one, so a case that reads the key back is reading the check's own choice.
+slug=acme-sandbox-9f8e7d6c
 
 # --------------------------------------------------------------------- fakes
 write_fake_gcloud() { # dir
@@ -187,7 +192,7 @@ JSON
 {"project":"$project","run":"2000","repo":"acme/sandbox","run_id":"$run_id","branch":"fugaro/20261112-120000-abcd","execution":"exec-1","status":"launched"}
 JSON
   cat >"$json/rows.json" <<JSON
-{"project":"$project","runs":[{"run":"2000","repo":"acme/sandbox","run_id":"$run_id","status":"succeeded","stage":"writeback","terminal":true,"settled":true,"branch":"fugaro/20261112-120000-abcd","base_branch":"main"}],"totals":{"runs":1},"warnings":[]}
+{"project":"$project","runs":[{"run":"$slug/$run_id","repo":"acme/sandbox","run_id":"$run_id","status":"succeeded","stage":"writeback","terminal":true,"settled":true,"branch":"fugaro/20261112-120000-abcd","base_branch":"main"}],"totals":{"runs":1},"warnings":[]}
 JSON
   cat >"$json/record.json" <<JSON
 {"version":1,"run_id":"$run_id","repo":"acme/sandbox","workflow":"agent","status":"succeeded","stage":"writeback","outcome":"pr","image":{"built_at":"2026-11-12T11:00:00Z","baked_commit":"9f8e7d6"},"pushed_head":"9f8e7d6"}
@@ -339,7 +344,8 @@ test_happy_path() {
   expect_contains "$calls" "run --repo $dir/sandbox --json" "happy path: the run is launched from the sandbox checkout"
   expect_contains "$calls" "runs ls --repo acme/sandbox --json --limit 1" "happy path: the run is followed by its own slug"
   expect_contains "$calls" "update --repo $dir/stale --plan-only (in $dir/stale)" "happy path: the stale checkout is planned in its own directory"
-  expect_contains "$(cat "$dir/logs/gcloud.calls")" "gs://fugaro-runs-${project}/runs/acme/sandbox/${run_id}/result.json" "happy path: the record is read at the run's own key"
+  expect_contains "$(cat "$dir/logs/gcloud.calls")" "gs://fugaro-runs-${project}/runs/${slug}/${run_id}/result.json" "happy path: the record is read at the run's own key"
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "runs/acme/sandbox/" "happy path: the key is the one-segment slug, not the owner/name the launch names"
   expect_absent "$calls" "--yes" "happy path: nothing is confirmed for the owner"
   assert_scratch_removed "$dir" "happy path"
 }
@@ -487,7 +493,7 @@ test_a_build_can_be_left_out() {
 test_a_run_that_never_ends_is_not_measured() {
   local dir=$work/notterminal
   prepare "$dir"
-  printf '{"project":"%s","runs":[{"run":"2000","repo":"acme/sandbox","run_id":"%s","status":"running","stage":"implement","terminal":false}],"warnings":[]}\n' "$project" "$run_id" >"$dir/json/rows.json"
+  printf '{"project":"%s","runs":[{"run":"%s/%s","repo":"acme/sandbox","run_id":"%s","status":"running","stage":"implement","terminal":false}],"warnings":[]}\n' "$project" "$slug" "$run_id" "$run_id" >"$dir/json/rows.json"
   run_check "$dir" CHECK500_RUN_TIMEOUT_SECONDS=1
   expect_status "$status" 2 "a run that never ended"
   expect_contains "$out" "FACT terminal: FAIL" "a run that never ended: the row"
