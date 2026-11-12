@@ -793,6 +793,34 @@ func TestAnExpiredHandoverIsDropped(t *testing.T) {
 	}
 }
 
+// TestARotationInsideItsWindowWithoutItsAnswerIsRetried: the rotation and the
+// answer beside it are two writes, so there is an instant — and, if the second
+// write fails, a longer stretch — in which the rotation exists and its answer
+// does not. Inside the window that is a service unable to answer yet, and the
+// holder is told to ask again; a refusal there would tell a customer whose
+// successor is minutes old that its key is finished and send it to a reissue.
+// Past the window the answer is gone for good, and the refusal is the honest
+// answer then.
+func TestARotationInsideItsWindowWithoutItsAnswerIsRetried(t *testing.T) {
+	f, _ := renewing(t)
+	keyID, secret, _ := heldKey(t, f, PolicyTeamMonthly)
+	call := RenewalCall{KeyID: keyID, WorkspaceID: workspaceID, RenewalSecret: secret}
+	if answerOf(t, f.call(RouteRenew, call)).Key == "" {
+		t.Fatal("the key did not renew, so there is no rotation to lose the answer of")
+	}
+	f.store.mu.Lock()
+	delete(f.store.handovers, keyID)
+	f.store.mu.Unlock()
+
+	if rec := f.call(RouteRenew, call); rec.Code != http.StatusInternalServerError {
+		t.Errorf("a replay inside the window whose answer the store does not hold was answered %d (%q), want %d: a retry is what asks again", rec.Code, rec.Body.String(), http.StatusInternalServerError)
+	}
+	f.advance(renewalHandover + time.Hour)
+	if rec := f.call(RouteRenew, call); rec.Code != http.StatusForbidden {
+		t.Errorf("a replay past the window whose answer the store does not hold was answered %d, want %d: the window is over and the secret is spent", rec.Code, http.StatusForbidden)
+	}
+}
+
 // unrecordedRotations is the store of an instance that lost a rotation to
 // another one: the rotation's record comes back as a source the store already
 // holds, which is the instant between the record and the handover beside it.
