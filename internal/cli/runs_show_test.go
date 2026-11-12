@@ -29,6 +29,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // The three runs every test here shows: the root that began the chain, the
@@ -303,6 +304,123 @@ func TestRunsShowMarksABudgetOffChainUnenforced(t *testing.T) {
 	}
 }
 
+// dropStoredTask removes a run's task.json from the fixture's bucket, which is
+// what an aged-out chain root looks like from here: the bucket drops a run's
+// objects together once the run is older than its window, and the chain's limit
+// lives in that one object (D1046).
+func dropStoredTask(t *testing.T, f *cloudFixture, id string) {
+	t.Helper()
+	ctx := context.Background()
+	b, err := blob.OpenBucket(ctx, f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	if err := runstore.Open(b, appSlug, id).DeleteFile(ctx, "task.json"); err != nil {
+		t.Fatalf("deleting task.json of %s: %v", id, err)
+	}
+}
+
+// TestRunsShowSaysWhenTheChainsLimitCouldNotBeRead: the chain's limit lives in
+// the stored task of the run that began it (D1046) and the bucket ages a run's
+// objects out, so a chain whose root is older than that window has no figure
+// left to read. The empty limits that follows is not a chain that bounds
+// nothing — read for each other, an unknown limit reads as an unlimited one and
+// the answer says the opposite of the truth, which is what the null of an
+// unmeasured dimension prevents one level down (D1051). limits_read is the
+// member that keeps the two apart in the document too (D1056), and the chain
+// itself is still answered: the runs the link reached and what they spent are a
+// fact about them whatever the root's object held.
+func TestRunsShowSaysWhenTheChainsLimitCouldNotBeRead(t *testing.T) {
+	t.Run("the root's task is gone", func(t *testing.T) {
+		f := showRig(t)
+		dropStoredTask(t, f, showRoot)
+
+		out, errOut, err := execute(t, "runs", "show", showTip)
+		if err != nil {
+			t.Fatalf("runs show %s: %v (%s)", showTip, err, errOut)
+		}
+		if !strings.Contains(out, "the chain's limit could not be read") {
+			t.Errorf("runs show does not say the chain's limit could not be read:\n%s", out)
+		}
+		if strings.Contains(out, "bounds none") {
+			t.Errorf("a chain whose limit could not be read is printed as one that bounds nothing:\n%s", out)
+		}
+		if !strings.Contains(out, showRoot) || !strings.Contains(out, "3 runs") {
+			t.Errorf("runs show drops what it did read of the chain:\n%s", out)
+		}
+
+		jout, jerrOut, err := execute(t, "runs", "show", "--json", showTip)
+		if err != nil {
+			t.Fatalf("runs show --json: %v (%s)", err, jerrOut)
+		}
+		var got struct {
+			Chain      string `json:"chain"`
+			LimitsRead bool   `json:"limits_read"`
+			Limits     []any  `json:"limits"`
+		}
+		if err := json.Unmarshal([]byte(jout), &got); err != nil {
+			t.Fatal(err)
+		}
+		if got.Chain != showRoot || got.LimitsRead || len(got.Limits) != 0 {
+			t.Errorf("chain = %q, limits_read = %v, %d limits: want the chain read, its limit not, and no rows", got.Chain, got.LimitsRead, len(got.Limits))
+		}
+	})
+	t.Run("a chain that bounds nothing", func(t *testing.T) {
+		f := newLaunchBudget(t, "enforce")
+		seedShowRun(t, f.cloudFixture, showRoot, "", task.Overrides{}, 1.0, 0)
+		seedShowRun(t, f.cloudFixture, showMid, showRoot, task.Overrides{}, 0.5, 0)
+		seedShowRun(t, f.cloudFixture, showTip, showMid, task.Overrides{}, 0.25, 0)
+
+		out, errOut, err := execute(t, "runs", "show", showTip)
+		if err != nil {
+			t.Fatalf("runs show %s: %v (%s)", showTip, err, errOut)
+		}
+		if !strings.Contains(out, "bounds none of the four dimensions") {
+			t.Errorf("runs show does not say a chain with no limit bounds nothing:\n%s", out)
+		}
+		if strings.Contains(out, "could not be read") {
+			t.Errorf("a chain that bounds nothing is printed as one whose limit could not be read:\n%s", out)
+		}
+		// The same two documents, told apart by the same member: the limit was
+		// read here and it is empty, and a consumer that read the two empty
+		// limits arrays for each other would bound neither chain.
+		jout, jerrOut, err := execute(t, "runs", "show", "--json", showTip)
+		if err != nil {
+			t.Fatalf("runs show --json: %v (%s)", err, jerrOut)
+		}
+		var got struct {
+			LimitsRead bool  `json:"limits_read"`
+			Limits     []any `json:"limits"`
+		}
+		if err := json.Unmarshal([]byte(jout), &got); err != nil {
+			t.Fatal(err)
+		}
+		if !got.LimitsRead || len(got.Limits) != 0 {
+			t.Errorf("limits_read = %v with %d limits, want a limit that was read and bounds nothing", got.LimitsRead, len(got.Limits))
+		}
+	})
+}
+
+// TestRunsShowResolvesARepoPath: --repo is documented as taking a path inside a
+// checkout, and repoArg is the one resolver of that value (repo_arg.go), which
+// every sibling command runs. Without it the path is handed to the run resolver
+// as though it were part of a run reference, and refused with a sentence naming
+// neither the flag nor the value.
+func TestRunsShowResolvesARepoPath(t *testing.T) {
+	testutil.IsolateGit(t)
+	showRig(t)
+	checkout := repoArgCheckout(t, filepath.Join(t.TempDir(), "checkout"), githubOrigin)
+
+	out, errOut, err := execute(t, "runs", "show", showTip, "--repo", checkout)
+	if err != nil {
+		t.Fatalf("runs show %s --repo %s: %v (%s)", showTip, checkout, err, errOut)
+	}
+	if !strings.Contains(out, showRoot) || !strings.Contains(out, "ENFORCED") {
+		t.Errorf("runs show --repo <path> did not resolve the checkout to its repository:\n%s", out)
+	}
+}
+
 // TestRunsShowNamesTheHalt: a halted run's first question is how much is left
 // (D1055), and the halt itself is the rest of the answer — why it stopped, over
 // what, and when.
@@ -362,13 +480,14 @@ func TestRunsShowJSONMatchesTheSchema(t *testing.T) {
 	}
 
 	var got struct {
-		Version  int    `json:"version"`
-		Repo     string `json:"repo"`
-		Run      string `json:"run"`
-		Chain    string `json:"chain"`
-		RunCount int    `json:"run_count"`
-		Enforced bool   `json:"enforced"`
-		Limits   []struct {
+		Version    int    `json:"version"`
+		Repo       string `json:"repo"`
+		Run        string `json:"run"`
+		Chain      string `json:"chain"`
+		RunCount   int    `json:"run_count"`
+		Enforced   bool   `json:"enforced"`
+		LimitsRead bool   `json:"limits_read"`
+		Limits     []struct {
 			Dimension string   `json:"dimension"`
 			Limit     float64  `json:"limit"`
 			Used      *float64 `json:"used"`
@@ -391,6 +510,12 @@ func TestRunsShowJSONMatchesTheSchema(t *testing.T) {
 	}
 	if got.Chain != showRoot || got.RunCount != 3 || !got.Enforced {
 		t.Errorf("chain = %q, %d runs, enforced = %v, want %q and its three runs, enforced", got.Chain, got.RunCount, got.Enforced, showRoot)
+	}
+	// The limit was read, and the rows below are it: limits_read false would say
+	// the chain's figure was never read, which is the other reading of a
+	// document whose limits are empty (ChainLimits.LimitsRead).
+	if !got.LimitsRead {
+		t.Errorf("limits_read = false for a chain whose root's stored task holds the limit")
 	}
 	// The amounts are the engine's own figures, unconverted: micro-dollars for
 	// the money — the unit the ledger, the caps and every other document count

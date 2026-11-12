@@ -56,10 +56,21 @@ type ChainLimits struct {
 	// records are the figures and the chain is a report and not a stop (D1046,
 	// T10).
 	Enforced bool `json:"enforced"`
+	// LimitsRead is whether the chain's limit was read at all: the figure lives
+	// in the stored task of the run that began the chain, and the bucket ages a
+	// run's objects out, so a chain whose root is older than that window has no
+	// limit left to read. It is what tells an empty Limits apart from a chain
+	// that bounds nothing — an empty array under a false one says the limit is
+	// unknown, not that the chain is unbounded: read for each other, a chain
+	// whose limit is unknown becomes a chain nothing bounds, which is what the
+	// dimension-level null of an unmeasured figure prevents one level down
+	// (D1051).
+	LimitsRead bool `json:"limits_read"`
 	// Limits are the dimensions the chain's own limit bounds, in the order
 	// every message about them reads: dollars, tokens, wall time, review
 	// rounds. A dimension the chain sets no figure for is absent rather than
-	// present at zero: nothing bounds it.
+	// present at zero: nothing bounds it. Empty under a true LimitsRead is a
+	// chain that bounds none of the four.
 	Limits []ChainLimit `json:"limits"`
 }
 
@@ -122,7 +133,11 @@ func newRunsShowCmd() *cobra.Command {
 			"UNENFORCED, and the token dimension is reported unmeasured rather than\n" +
 			"approximated.\n\n" +
 			"The wall-time and review-round limits are advisory: no rule enforces them.\n\n" +
-			"--json prints {version, repo, run, chain, run_count, enforced, limits[], halt},\n" +
+			"The bucket ages a run's objects out, so a chain older than that window has a\n" +
+			"root whose stored task is gone: the chain itself is still shown and its limit is\n" +
+			"reported as one that could not be read (limits_read false) rather than as a chain\n" +
+			"that bounds nothing (limits_read true, an empty limits).\n\n" +
+			"--json prints {version, repo, run, chain, run_count, enforced, limits_read, limits[], halt},\n" +
 			"each limit a {dimension, limit, used, remaining, source} whose amounts are in\n" +
 			"the dimension's own unit: micro-dollars for the money — the unit the budget\n" +
 			"database and the rest of the CLI's documents count it in — whole tokens,\n" +
@@ -144,6 +159,13 @@ func runRunsShow(cmd *cobra.Command, o *runsShowOptions, ref string) error {
 		return err
 	}
 	defer env.Close()
+	// repoArg is the one resolver of a --repo value, and this flag is documented
+	// as taking a path: `--repo .` in a checkout names that checkout's
+	// repository, and a path that resolves to nothing is refused naming the
+	// flag. Without it the path would be read as part of a run reference.
+	if o.repo, err = repoArg(ctx, o.cloud, o.repo); err != nil {
+		return err
+	}
 	// artifactsRun is the run resolver every command that takes RUN and --repo
 	// uses: --repo names the repository a bare run ID belongs to, and a RUN that
 	// already carries a slug has to agree with it.
@@ -269,12 +291,18 @@ func chainLimitsOf(ctx context.Context, env *cloudEnv, slug, id string, warn io.
 	spec, err := readTask(ctx, env, slug, chain.Root)
 	switch {
 	case errors.Is(err, runstore.ErrNotFound):
-		// The run that began the chain has no stored task left, so the chain
-		// carries no limit: nothing bounds the dimensions it spent in.
+		// The run that began the chain has no stored task left — the bucket ages
+		// a run's objects out — so the limit is unknown rather than absent: the
+		// chain is not one that bounds nothing, and LimitsRead says which of the
+		// two an empty Limits is. A launcher reads the same missing object as
+		// "nothing is inherited" for the launch it is writing, where a bound it
+		// cannot read is no bound at all; a reader has no launch to bound and
+		// must not answer the same way.
 		return out, nil
 	case err != nil:
 		return nil, err
 	}
+	out.LimitsRead = true
 	for _, d := range chainDimensions() {
 		limit, limited := chainLimitAmount(spec.Overrides, d)
 		if !limited {
@@ -325,7 +353,9 @@ func chainBlock(lim *ChainLimits) string {
 // writeChainLimits prints the chain and its limits, the way both commands print
 // them: the chain's id and whether it is enforced, then one row per dimension
 // it bounds. A chain that bounds nothing prints the line that says so rather
-// than an empty table, and a chain whose root could not be read prints why.
+// than an empty table, a chain whose limit could not be read prints that
+// instead — the two are different answers and the flag is what tells them
+// apart — and a chain whose root is behind a gap prints why.
 func writeChainLimits(w io.Writer, lim *ChainLimits) error {
 	word := "ENFORCED"
 	if !lim.Enforced {
@@ -340,7 +370,14 @@ func writeChainLimits(w io.Writer, lim *ChainLimits) error {
 		fmt.Fprintf(w, "Chain:    the chain's records stop at a link the bucket no longer holds, so its limits cannot be read\n")
 	}
 	if len(lim.Limits) == 0 {
-		if lim.Chain != "" {
+		switch {
+		case lim.Chain != "" && !lim.LimitsRead:
+			// The chain line above stops at the id; what is missing is the
+			// limit itself, and saying "bounds none" here would answer the
+			// opposite question (the bucket ages a run's objects out, so this
+			// is an ordinary state of an old chain, not an error).
+			fmt.Fprintf(w, "Limits:   the chain's limit could not be read: the run that began it has no stored task left, so what bounds this chain is unknown and not nothing\n")
+		case lim.Chain != "":
 			fmt.Fprintf(w, "Limits:   this chain bounds none of the four dimensions\n")
 		}
 		return nil

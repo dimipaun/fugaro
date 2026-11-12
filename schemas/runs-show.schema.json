@@ -11,6 +11,7 @@
     "chain",
     "run_count",
     "enforced",
+    "limits_read",
     "limits"
   ],
   "properties": {
@@ -42,9 +43,13 @@
       "type": "boolean",
       "description": "Whether the money and token figures are the budget database's. False is the spec's UNENFORCED: the installation's budget is off, so the records are the figures and the chain is a report and not a stop (D1046, T10). A consumer that needs a stop must read this beside the figures."
     },
+    "limits_read": {
+      "type": "boolean",
+      "description": "Whether the chain's limit was read at all. The figure lives in the stored task of the run that began the chain, and the bucket ages a run's objects out, so a chain whose root is older than that window has no limit left to read. True with an empty `limits` is a chain that bounds none of the four dimensions; false is a chain whose limit is unknown, and it is the only member that tells the two apart: a consumer that read an empty array alone would read a spent chain as a free one, which is what the null of an unmeasured dimension prevents one level down (D1051)."
+    },
     "limits": {
       "type": "array",
-      "description": "One row per dimension the chain's own limit bounds, in the order every message about them reads: usd, tokens, time, review_rounds. A dimension the chain sets no figure for is absent rather than present at zero — nothing bounds it — and an empty array is a chain that bounds none of the four, or one whose limit could not be read (an empty `chain`, or a root run whose stored task the bucket no longer holds).",
+      "description": "One row per dimension the chain's own limit bounds, in the order every message about them reads: usd, tokens, time, review_rounds. A dimension the chain sets no figure for is absent rather than present at zero — nothing bounds it — and an empty array under a true `limits_read` is a chain that bounds none of the four. Empty under a false `limits_read` is a chain whose limit could not be read: its root run's stored task is gone, or the read stopped at a gap in the chain (an empty `chain`).",
       "items": {
         "$ref": "#/$defs/limit"
       }

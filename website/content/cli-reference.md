@@ -6079,7 +6079,12 @@ approximated.
 
 The wall-time and review-round limits are advisory: no rule enforces them.
 
---json prints {version, repo, run, chain, run_count, enforced, limits[], halt},
+The bucket ages a run's objects out, so a chain older than that window has a
+root whose stored task is gone: the chain itself is still shown and its limit is
+reported as one that could not be read (limits_read false) rather than as a chain
+that bounds nothing (limits_read true, an empty limits).
+
+--json prints {version, repo, run, chain, run_count, enforced, limits_read, limits[], halt},
 each limit a {dimension, limit, used, remaining, source} whose amounts are in
 the dimension's own unit: micro-dollars for the money — the unit the budget
 database and the rest of the CLI's documents count it in — whole tokens,

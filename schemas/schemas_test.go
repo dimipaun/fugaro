@@ -6314,13 +6314,20 @@ func TestRunsShowSchema(t *testing.T) {
 		t.Errorf("version: $comment = %q, and runsShowDocVersion in internal/cli/runs_show.go is %q", got, consts["runsShowDocVersion"])
 	}
 	// Every top-level member is required, the empty ones included: a chain of
-	// one is run_count 1 and a chain nothing bounds is a [] rather than a
-	// document missing them.
+	// one is run_count 1, a chain nothing bounds is a [] rather than a document
+	// missing it, and limits_read is what says whether that [] means "bounds
+	// none" or "not read".
 	req := stringsOf(t, doc, "required")
-	for _, key := range []string{"version", "repo", "run", "chain", "run_count", "enforced", "limits"} {
+	for _, key := range []string{"version", "repo", "run", "chain", "run_count", "enforced", "limits_read", "limits"} {
 		if !slices.Contains(req, key) {
 			t.Errorf("required is %v, and the document always carries %q", req, key)
 		}
+	}
+	// limits_read is a boolean and not a string or a count: it is the flag a
+	// consumer branches on to tell an empty limits from a chain that bounds
+	// nothing, and a member that could be either would be branched on wrongly.
+	if kind := nodeOf(t, doc, "properties", "limits_read")["type"]; kind != "boolean" {
+		t.Errorf("limits_read: type = %v, want a boolean", kind)
 	}
 	want := []string{string(runstore.USD), string(runstore.Tokens), string(runstore.Time), string(runstore.ReviewRounds)}
 	if got := stringsOf(t, doc, "$defs", "limit", "properties", "dimension", "enum"); !slices.Equal(got, want) {
@@ -6361,21 +6368,26 @@ func TestRunsShowSchema(t *testing.T) {
 		name string
 		doc  string
 	}{
-		{"an enforced chain", `{"version": 1, "repo": "acme/app", "run": "github-acme-app-4f2a/20261101-150000-c3c3", "chain": "20261101-090000-a1a1", "run_count": 3, "enforced": true, "limits": [` +
+		{"an enforced chain", `{"version": 1, "repo": "acme/app", "run": "github-acme-app-4f2a/20261101-150000-c3c3", "chain": "20261101-090000-a1a1", "run_count": 3, "enforced": true, "limits_read": true, "limits": [` +
 			`{"dimension": "usd", "limit": 4000000, "used": 2250000, "remaining": 1750000, "source": "chain"},` +
 			`{"dimension": "tokens", "limit": 800000, "used": 550000, "remaining": 250000, "source": "chain"},` +
 			`{"dimension": "time", "limit": 2700, "used": 900, "remaining": 1800, "source": "chain"},` +
 			`{"dimension": "review_rounds", "limit": 4, "used": 2, "remaining": 2, "source": "chain"}]}`},
-		{"a budget-off chain", `{"version": 1, "repo": "acme/app", "run": "github-acme-app-4f2a/20261101-150000-c3c3", "chain": "20261101-090000-a1a1", "run_count": 3, "enforced": false, "limits": [` +
+		{"a budget-off chain", `{"version": 1, "repo": "acme/app", "run": "github-acme-app-4f2a/20261101-150000-c3c3", "chain": "20261101-090000-a1a1", "run_count": 3, "enforced": false, "limits_read": true, "limits": [` +
 			`{"dimension": "usd", "limit": 4000000, "used": 2250000, "remaining": 1750000, "source": "chain"},` +
 			`{"dimension": "tokens", "limit": 800000, "used": null, "remaining": null, "source": "chain"}]}`},
-		{"a chain that bounds nothing", `{"version": 1, "repo": "acme/app", "run": "github-acme-app-4f2a/20261101-150000-c3c3", "chain": "20261101-150000-c3c3", "run_count": 1, "enforced": true, "limits": []}`},
-		{"a chain whose records stop at a gap", `{"version": 1, "repo": "acme/app", "run": "github-acme-app-4f2a/20261101-150000-c3c3", "chain": "", "run_count": 2, "enforced": true, "limits": []}`},
-		{"a halted run", `{"version": 1, "repo": "acme/app", "run": "github-acme-app-4f2a/20261101-150000-c3c3", "chain": "20261101-090000-a1a1", "run_count": 3, "enforced": true, "limits": [], ` +
+		{"a chain that bounds nothing", `{"version": 1, "repo": "acme/app", "run": "github-acme-app-4f2a/20261101-150000-c3c3", "chain": "20261101-150000-c3c3", "run_count": 1, "enforced": true, "limits_read": true, "limits": []}`},
+		{"a chain whose records stop at a gap", `{"version": 1, "repo": "acme/app", "run": "github-acme-app-4f2a/20261101-150000-c3c3", "chain": "", "run_count": 2, "enforced": true, "limits_read": false, "limits": []}`},
+		// The chain was read whole and its limit was not: the run that began it
+		// has no stored task left, so the empty limits here is "unknown" and the
+		// member that says so is the only thing telling it from the case above it
+		// (D1051 one level up).
+		{"a chain whose limit could not be read", `{"version": 1, "repo": "acme/app", "run": "github-acme-app-4f2a/20261101-150000-c3c3", "chain": "20261101-090000-a1a1", "run_count": 3, "enforced": true, "limits_read": false, "limits": []}`},
+		{"a halted run", `{"version": 1, "repo": "acme/app", "run": "github-acme-app-4f2a/20261101-150000-c3c3", "chain": "20261101-090000-a1a1", "run_count": 3, "enforced": true, "limits_read": true, "limits": [], ` +
 			`"halt": {"reason": "run_cap", "scope": "run", "at": "2026-11-01T15:05:00Z", "detail": "run spent $5.00 of $5.00"}}`},
 		// A member this schema does not know is not refused: a consumer reading
 		// a newer CLI's document must not fall over (D1056's addition rule).
-		{"a member from a newer CLI", `{"version": 1, "repo": "acme/app", "run": "github-acme-app-4f2a/20261101-150000-c3c3", "chain": "20261101-150000-c3c3", "run_count": 1, "enforced": true, "limits": [], "spent_days": 3}`},
+		{"a member from a newer CLI", `{"version": 1, "repo": "acme/app", "run": "github-acme-app-4f2a/20261101-150000-c3c3", "chain": "20261101-150000-c3c3", "run_count": 1, "enforced": true, "limits_read": true, "limits": [], "spent_days": 3}`},
 	} {
 		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(tc.doc))
 		if err != nil {
@@ -6386,12 +6398,18 @@ func TestRunsShowSchema(t *testing.T) {
 		}
 	}
 	for _, tc := range []struct{ name, doc string }{
-		{"a dimension no chain has", `{"version": 1, "repo": "r", "run": "s/x", "chain": "x", "run_count": 1, "enforced": true, "limits": [{"dimension": "memory", "limit": 1, "used": 1, "remaining": 0, "source": "chain"}]}`},
-		{"a figure read as text", `{"version": 1, "repo": "r", "run": "s/x", "chain": "x", "run_count": 1, "enforced": true, "limits": [{"dimension": "usd", "limit": 4, "used": "2.25", "remaining": 1.75, "source": "chain"}]}`},
-		{"a row with no source", `{"version": 1, "repo": "r", "run": "s/x", "chain": "x", "run_count": 1, "enforced": true, "limits": [{"dimension": "usd", "limit": 4, "used": 2.25, "remaining": 1.75}]}`},
-		{"a chain with no run count", `{"version": 1, "repo": "r", "run": "s/x", "chain": "x", "enforced": true, "limits": []}`},
-		{"a document with no enforced member", `{"version": 1, "repo": "r", "run": "s/x", "chain": "x", "run_count": 1, "limits": []}`},
-		{"a halt of a scope no limit is set at", `{"version": 1, "repo": "r", "run": "s/x", "chain": "x", "run_count": 1, "enforced": true, "limits": [], "halt": {"reason": "run_cap", "scope": "project", "at": "2026-11-01T15:05:00Z"}}`},
+		{"a dimension no chain has", `{"version": 1, "repo": "r", "run": "s/x", "chain": "x", "run_count": 1, "enforced": true, "limits_read": true, "limits": [{"dimension": "memory", "limit": 1, "used": 1, "remaining": 0, "source": "chain"}]}`},
+		{"a figure read as text", `{"version": 1, "repo": "r", "run": "s/x", "chain": "x", "run_count": 1, "enforced": true, "limits_read": true, "limits": [{"dimension": "usd", "limit": 4, "used": "2.25", "remaining": 1.75, "source": "chain"}]}`},
+		{"a row with no source", `{"version": 1, "repo": "r", "run": "s/x", "chain": "x", "run_count": 1, "enforced": true, "limits_read": true, "limits": [{"dimension": "usd", "limit": 4, "used": 2.25, "remaining": 1.75}]}`},
+		{"a chain with no run count", `{"version": 1, "repo": "r", "run": "s/x", "chain": "x", "enforced": true, "limits_read": true, "limits": []}`},
+		{"a document with no enforced member", `{"version": 1, "repo": "r", "run": "s/x", "chain": "x", "run_count": 1, "limits_read": true, "limits": []}`},
+		// limits_read is the member that tells an empty limits from a chain that
+		// bounds nothing, so a document without it leaves that question open —
+		// and a consumer that defaulted it to one of the two answers would read
+		// half of the documents backwards.
+		{"a document with no limits_read member", `{"version": 1, "repo": "r", "run": "s/x", "chain": "x", "run_count": 1, "enforced": true, "limits": []}`},
+		{"limits_read read as text", `{"version": 1, "repo": "r", "run": "s/x", "chain": "x", "run_count": 1, "enforced": true, "limits_read": "yes", "limits": []}`},
+		{"a halt of a scope no limit is set at", `{"version": 1, "repo": "r", "run": "s/x", "chain": "x", "run_count": 1, "enforced": true, "limits_read": true, "limits": [], "halt": {"reason": "run_cap", "scope": "project", "at": "2026-11-01T15:05:00Z"}}`},
 	} {
 		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(tc.doc))
 		if err != nil {
