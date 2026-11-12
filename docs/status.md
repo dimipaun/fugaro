@@ -6,7 +6,7 @@ How this page is written
 3. **Left** lists only the tasks still to do and the state of each (in a run, a draft PR #N, waiting on X, owner-run). It never lists finished work; merged tasks are counted in Merged and named nowhere else. A ruling about a task that is still open may stay as a short clause on that task.
 4. A spec with merged/total of 0.7 or more sits in "In progress, close to done"; below 0.7 it sits in "In progress, a lot left". For an "about n/m" row, n/m decides.
 5. A spec that is in the works (a task of it has a live run or an open pull request, draft or not, or it has merged a task) is never in "To do or parked", which holds only specs with nothing merged, no live run and no open pull request.
-6. A pull request is in one of four states, and the four words are the same ones everyone uses: **live** (a run is going on it, which is what rule 3's "in a run" means), **ready** (no run is going and only a merge is left), **stalled** (it had a run, no run is going and it is not ready) and **orphan** (no run ever produced or follows it).
+6. A pull request is in one of four states, and the four words are the same ones everyone uses: **live** (a run is going on it, which is what rule 3's "in a run" means), **ready** (no run is going and only a merge is left, so it is never a draft), **stalled** (it had a run, no run is going and it is not ready — a draft with a run behind it, whatever that run ended as) and **orphan** (no run ever produced or follows it).
 -->
 
 # Fugaro: status of every spec under docs/
