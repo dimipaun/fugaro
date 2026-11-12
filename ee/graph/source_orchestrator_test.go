@@ -32,9 +32,10 @@ package graph
 //     that daemon (CG13c).
 //   - TestLocalScopeFallsBackToTheNodeAndThenTheCache: the order T5(a) was
 //     amended to, as a machine with no endpoint sees it.
-//   - TestLocalScopeRefusesAnIdOutsideThePatternBeforeAnyRead: H1's pattern is
-//     checked before the registry file or the node is looked at, and only for a
-//     local scope (CG13c).
+//   - TestAnIdNoLocalScopeNamesIsReadFromItsNode: H1's pattern is judged before
+//     the endpoint is read, and losing that judgement only ever costs the
+//     endpoint, never the scope: an id with `_` the database and this machine's
+//     cache both hold is drawn from its node (CG13c).
 //   - TestOnlyALocalScopeReadsTheEndpoint: a live endpoint beside an
 //     `orchestrator:` scope is not read at all, counted at the transport.
 //   - TestTheEndpointStreamFeedsTheWatch: the endpoint's stream feeds the
@@ -742,26 +743,33 @@ func TestLocalScopeFallsBackToTheNodeAndThenTheCache(t *testing.T) {
 	})
 }
 
-// TestLocalScopeRefusesAnIdOutsideThePatternBeforeAnyRead: H1's pattern governs
-// the scope argument while the daemon's own rule governs the id of
+// TestAnIdNoLocalScopeNamesIsReadFromItsNode: H1's pattern governs the local
+// scope's argument while the daemon's own rule governs the id of
 // `orchestrator/<id>`, and where the two differ the narrower one decides — a
-// project whose name carries `_`, or is longer than 40 characters, has no local
-// scope (CG13c). The refusal happens before the registry file is looked at and
-// before the node is decoded, which is what the counting transport and the
-// undecodable node hold.
+// project whose name carries `_`, or is longer than 40 characters, is one no
+// `local:` scope names (CG13c). The endpoint is therefore not read for it, which
+// the counting transport holds, and the node and then the cache answer exactly as
+// they do on a machine with no daemon at all.
 //
-// It is ErrNoOrchestrator's refusal and not a state, so `all` leaves such an id
-// out with the warning saying so rather than taking the document down with it
-// (readGraph). The control at the end is the other half: an id of the same shape
-// under `orchestrator:` is read as before, because only a local scope's id has
-// to be a value the command line could have carried.
-func TestLocalScopeRefusesAnIdOutsideThePatternBeforeAnyRead(t *testing.T) {
+// It is not a refusal, and the cached brief below is why: `all` enumerates the
+// database's ids and this machine's briefs, and a brief is what makes an id local
+// there whatever the database holds (graphSources, D1358). An id the database has
+// a state node for, with a brief beside it, is drawn from that node — its work
+// items and their `depends_on` with it — instead of dropping out of the console's
+// default graph, which is what a refusal here would do to it (readGraph).
+//
+// The command line's refusal for such a name is the caller's, made when the
+// argument is parsed and before a source exists to refuse anything
+// (TestGraphRefusesAnInvalidScopeBeforeAnyRead): the command line is the one
+// place a local scope is named rather than enumerated.
+func TestAnIdNoLocalScopeNamesIsReadFromItsNode(t *testing.T) {
 	tickedAt := time.Date(2026, 11, 11, 17, 0, 0, 0, time.UTC)
 	const project = "my_project"
 	long := strings.Repeat("o", 41)
 
 	// The id is one the daemon's own rule admits: `agentRE` takes `_` and 64
-	// characters, so a daemon for this project really does serve an endpoint.
+	// characters, so a daemon for this project really is serving an endpoint
+	// beside the read that must not reach it.
 	if _, err := orchestrator.PathNode(project); err != nil {
 		t.Fatalf("the fixture id is not one the daemon's own rule admits: %v", err)
 	}
@@ -772,28 +780,36 @@ func TestLocalScopeRefusesAnIdOutsideThePatternBeforeAnyRead(t *testing.T) {
 	client.HTTP = &http.Client{Transport: counted}
 
 	for _, id := range []string{project, long} {
-		// The node is not a document this build reads: a scope that decoded it
-		// before judging the id would answer `unreadable` rather than refuse.
-		src := OrchestratorSource{ID: id, Local: true, Endpoint: client, Node: json.RawMessage("{")}
+		src := OrchestratorSource{ID: id, Local: true, Endpoint: client,
+			Node: stateOf(t, id, item("wi-1", "an item of the node", "acme/app"))}
 		nodes, edges, st, err := src.Nodes()
-		if !errors.Is(err, ErrNoOrchestrator) {
-			t.Errorf("a local scope whose id is %q answered %v, want ErrNoOrchestrator", id, err)
-			continue
+		if err != nil {
+			t.Fatalf("a local scope whose id is %q was refused: %v", id, err)
 		}
-		if !strings.Contains(err.Error(), "local:"+id) {
-			t.Errorf("the refusal %q does not name the scope it refused", err)
+		if st.State != SourceUp || st.AsOf != nil {
+			t.Errorf("the scope for %q is %+v, want it up from the node and claiming no age", id, st)
 		}
-		if len(nodes) != 0 || len(edges) != 0 || st.State != "" {
-			t.Errorf("the refused scope answered with nodes %+v, edges %+v and state %+v", nodes, edges, st)
+		if len(nodes) != 1 || nodes[0].ID != "wi-1" || len(edges) != 0 {
+			t.Errorf("the scope for %q drew %+v with edges %+v, want the node's one item", id, nodes, edges)
 		}
 	}
 	if n := counted.count.Load(); n != 0 {
-		t.Errorf("the scope made %d requests before refusing the id, want none: the pattern is checked before any read (H1)", n)
+		t.Errorf("the scope made %d requests for an id no local scope names, want none: the pattern is judged before the endpoint is read (H1)", n)
 	}
 
-	// The control: the same id under the kind the database holds is read, so the
-	// refusal above is the local scope's own rule and not a source that refuses
-	// everything.
+	// The other half of what `all` enumerates: an id with a brief and no node is
+	// this machine's own scope, down, stamped with the brief's own time — a scope
+	// of the document and not one left out of it (D1358, T5(a)).
+	cached := time.Date(2026, 11, 10, 9, 30, 0, 0, time.UTC)
+	withCache := OrchestratorSource{ID: project, Local: true, Endpoint: client, CachedAt: cached}
+	if _, _, st, err := withCache.Nodes(); err != nil {
+		t.Fatalf("a local scope for %q with a cached brief was refused: %v", project, err)
+	} else if st.State != SourceDown || st.AsOf == nil || !st.AsOf.Equal(cached) {
+		t.Errorf("the scope for %q is %+v, want it down stamped %s", project, st, cached)
+	}
+
+	// The control: the same id under the kind the database holds is read as it was
+	// before, because only a local scope's id is judged against H1's pattern.
 	control := OrchestratorSource{ID: project, Node: stateOf(t, project, item("wi-1", "an item", "acme/app"))}
 	if _, _, st, err := control.Nodes(); err != nil || st.State != SourceUp {
 		t.Errorf("an orchestrator scope for %q is %+v, %v, want it up", project, st, err)
