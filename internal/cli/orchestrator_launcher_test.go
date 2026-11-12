@@ -38,8 +38,15 @@ func newLauncherFixture(t *testing.T) *launcherFixture {
 	// enough that the tier and the title would be refused — which is a fact
 	// about those tests and not about this one. The base is a release past the
 	// newest skew gate rather than a literal, so the next gate does not turn
-	// every daemon test into a refusal.
-	writeBuildRecord(t, f.cloudFixture, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+shiftRelease(t, securitySince, 1))
+	// every daemon test into a refusal — and the policy's own floor is one of
+	// those gates (policyImageGate, whose floor is the release that introduced
+	// the node's version): a base below it is refused before this fixture's
+	// launches reach the gate they are about.
+	base := shiftRelease(t, securitySince, 1)
+	if newer(nodeRelease, base) {
+		base = nodeRelease
+	}
+	writeBuildRecord(t, f.cloudFixture, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+base)
 	return f
 }
 
@@ -142,7 +149,7 @@ func TestRunLauncherRunsThePolicyGate(t *testing.T) {
 	ctx := context.Background()
 	// A policy that admits a different repository: what refuses below is the
 	// allow-list and not the budget, which the fixture leaves enforcing.
-	publishPolicy(t, f.launchBudgetFixture, `{"version":4,"allow_repos":["github/acme/other"]}`)
+	publishPolicy(t, f.launchBudgetFixture, `{"version":5,"allow_repos":["github/acme/other"]}`)
 	l := f.launcher(t)
 	spec := orchestrator.Spec{ItemID: "wi-1", Title: "land the daemon", Repo: "acme/app", Recipe: "standard", Brief: "This is the launch the policy refuses."}
 	const runID = "20261109-101500-abcd"
@@ -469,7 +476,7 @@ func TestRunLauncherPassesTheCommandsLaunchGates(t *testing.T) {
 			// default mode is pro (Fugaro's own default) is refused on an
 			// image older than the release that reads levels.
 			prepare: func(t *testing.T, f *launcherFixture) {
-				publishPolicy(t, f.launchBudgetFixture, `{"version":4,"allow_repos":["github/acme/*"],"review_floor":{"pro":["l2"]}}`)
+				publishPolicy(t, f.launchBudgetFixture, `{"version":5,"allow_repos":["github/acme/*"],"review_floor":{"pro":["l2"]}}`)
 				writeBuildRecord(t, f.cloudFixture, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+shiftRelease(t, reviewLevelsSince, -1))
 			},
 			want: []string{"the owner's review-level floor", "fugaro " + reviewLevelsSince},

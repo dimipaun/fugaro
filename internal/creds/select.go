@@ -92,9 +92,12 @@ type Selector struct {
 // candidates is the caller's list, and Select never widens it: exactly the
 // credentials the project policy admits for this call, tier A before tier B.
 // Nothing here reads an admission (that is C1.11's, from what C1.2 publishes)
-// and nothing here invents a credential the caller did not offer. The order
-// within a tier does not matter; the tier does, and a candidate whose tier is
-// not one this release selects is refused rather than skipped. A tier B
+// and nothing here invents a credential the caller did not offer. The tier
+// decides which credential is taken and the order within a tier does not —
+// except in a tie, which the offered order breaks, so a pool is listed the way
+// its owner ordered it and the listed order never outranks the tier (F7). A
+// candidate whose tier is not one this release selects is refused rather than
+// skipped. A tier B
 // candidate offered under `oauth-only` is not refused — it carries no mistake —
 // but it is never selected, and a call that nothing else can serve is answered
 // with ErrFallbackForbidden when that candidate could actually serve it (see the
@@ -442,15 +445,15 @@ func (s *Selector) leastRecentlyExhausted(ctx context.Context, usable []Credenti
 	ordered := make([]Credential, len(usable))
 	copy(ordered, usable)
 	since := func(c Credential) time.Time { return recency(marks[c.Name]) }
-	// Sorted by name as well, so the tied set has one order for every caller:
-	// candidates arrive in whatever order the policy read produced, and a
-	// round-robin over an unordered set is not a round robin.
-	sort.Slice(ordered, func(i, j int) bool {
-		si, sj := since(ordered[i]), since(ordered[j])
-		if !si.Equal(sj) {
-			return si.Before(sj)
-		}
-		return ordered[i].Name < ordered[j].Name
+	// The order it is sorted into is the OFFERED order, held stable: a tie is
+	// left as the caller listed the candidates, so the tied set has one order
+	// and it is the caller's — for a pool, the order its owner wrote it in
+	// (F7: within a tier the pool's listed order breaks the tie). A round robin
+	// over a set that arrived in whatever order a document read produced would
+	// not be a round robin, and sorting the tie by name would be this package
+	// re-ordering a pool the owner ordered deliberately.
+	sort.SliceStable(ordered, func(i, j int) bool {
+		return since(ordered[i]).Before(since(ordered[j]))
 	})
 	tied := []Credential{ordered[0]}
 	for _, c := range ordered[1:] {

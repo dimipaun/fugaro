@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -18,8 +19,10 @@ import (
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
 	"github.com/dimipaun/fugaro/internal/image"
+	"github.com/dimipaun/fugaro/internal/imagebake"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 )
 
@@ -176,7 +179,11 @@ func (f *catalogCheckFixture) putRecord(t *testing.T, entry, repo string, gen in
 	rec, err := json.Marshal(imagecheck.CatalogRecordState{
 		Version: imagecheck.CatalogRecordVersion, Entry: entry, SourceCommit: catalogCheckCommit,
 		DefinitionGeneration: gen, DefinitionSHA256: sum,
-		BaseRef: checkBase, BaseDigest: baseDigest, BuiltAt: time.Now().Add(-time.Hour).UTC(),
+		// The template the job's own binary would run: a record that names it
+		// is a build of this same release, so the tests below are about the
+		// triggers they name and not about the template one.
+		TemplateSalt: gcp.TemplateSalt(Version),
+		BaseRef:      checkBase, BaseDigest: baseDigest, BuiltAt: time.Now().Add(-time.Hour).UTC(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -320,6 +327,7 @@ func TestCatalogCheckJobRebuildsTheChangedEntryAsItsOwnRepositorysAccount(t *tes
 		ServiceAccount: gcp.BuildServiceAccountID(otherSlug) + "@proj-1234.iam.gserviceaccount.com",
 		MachineType:    "E2_HIGHCPU_8",
 		Bucket:         "gs://" + catalogBuildBucket,
+		TemplateSalt:   gcp.TemplateSalt(Version),
 		Selftest:       catalogCheckSelftest(t, "acme/other", catalogCheckCommit),
 	})
 	if err != nil {
@@ -447,6 +455,61 @@ func TestCatalogCheckJobBuildsNothingWithoutACopiedDefinition(t *testing.T) {
 	}
 	if st := f.state(t, "runtime", "acme/other"); st == nil || st.Decision != imagecheck.CheckFailed {
 		t.Fatalf("runtime check.json = %+v", st)
+	}
+}
+
+// TestCatalogCheckJobBuildsNothingWithoutAStagedContext: an entry that names a
+// build context is pinned to the digest and the commit the copy staged with it,
+// so a copy that staged neither — or the digest but not the commit — is an
+// error for that entry, not a rebuild, and the message names the command that
+// stages them. A copy that never staged the context is not "nothing changed".
+func TestCatalogCheckJobBuildsNothingWithoutAStagedContext(t *testing.T) {
+	cat := &config.Catalog{Entries: []config.Entry{
+		{Name: "tools", Tags: []string{"node"}, Source: config.Source{Kind: config.SourceDockerfile, Repo: "acme/app", Path: ".fugaro/tools.Dockerfile", Context: "ci"}},
+	}}
+	for _, tc := range []struct {
+		name         string
+		hash, commit bool
+		want         string
+	}{
+		{"no digest", false, false, "has no staged context digest"},
+		{"no commit", true, false, "has no staged context commit"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newCatalogCheckJob(t, catalogCheckSpecFor(t, cat, 5))
+			gen, sum := f.seed(t, "tools", "acme/app", catalogCheckAppDef, checkBaseDigest)
+			f.putRecord(t, "tools", "acme/app", gen, sum, checkBaseDigest)
+			for _, obj := range []struct {
+				put  bool
+				key  func(string) (string, error)
+				data string
+			}{
+				{tc.hash, config.CatalogContextHashKey, strings.Repeat("7", 64)},
+				{tc.commit, config.CatalogContextCommitKey, catalogCheckCommit},
+			} {
+				if !obj.put {
+					continue
+				}
+				key, err := obj.key("tools")
+				if err != nil {
+					t.Fatal(err)
+				}
+				f.put(t, key, []byte(obj.data))
+			}
+
+			lines, err := runCatalogCheck(t)
+			if err == nil {
+				t.Fatal("the catalog check reported no failure for a context entry with no staged context")
+			}
+			if got := buildPosts(f.fb); got != 0 {
+				t.Fatalf("builds submitted = %d, want 0", got)
+			}
+			l := lineFor(t, lines, "tools")
+			if l.Decision != imagecheck.CheckFailed || l.Severity != "ERROR" ||
+				!strings.Contains(l.Error, tc.want) || !strings.Contains(l.Error, "fugaro image build tools") {
+				t.Fatalf("tools line = %+v", l)
+			}
+		})
 	}
 }
 
@@ -731,6 +794,177 @@ func TestCatalogCheckJobRefusesAnEntryAssignedTwice(t *testing.T) {
 	}
 }
 
+// TestCatalogCheckReadsTheStagedContextHash: the context trigger's input is the
+// digest the copy staged beside the Dockerfile, read from the runs bucket and
+// never from the repository. An entry whose staged digest is not the one its
+// record names is a rebuild with the catalog-context reason, one whose staged
+// digest is the record's is a skip, and the fingerprint the entry's check.json
+// keeps carries the staged value, and the rebuild it submits is the entry's own
+// build, pinned to the staged commit and digest — all four of which the bucket
+// read is the only source of. Nothing on this path opens a git provider, and
+// the opener below fails the test if one is ever reached: the digest is read
+// from the bucket precisely so this job keeps the credential-less shape the
+// comment on its Lockfiles: false states (D1401, reconciliation §4.6).
+func TestCatalogCheckReadsTheStagedContextHash(t *testing.T) {
+	was := openCatalogProvider
+	openCatalogProvider = func([]string, func(string)) (string, gitprov.Opener, error) {
+		t.Error("the catalog check opened a git provider: the context trigger reads the digest the copy staged in the runs bucket (D1401)")
+		return "", nil, errors.New("no provider")
+	}
+	t.Cleanup(func() { openCatalogProvider = was })
+
+	cat := &config.Catalog{Entries: []config.Entry{
+		{Name: "tools", Tags: []string{"node"}, Source: config.Source{Kind: config.SourceDockerfile, Repo: "acme/app", Path: ".fugaro/tools.Dockerfile", Context: "."}},
+		{Name: "extra", Tags: []string{"node"}, Source: config.Source{Kind: config.SourceDockerfile, Repo: "acme/app", Path: ".fugaro/extra.Dockerfile", Context: "ci"}},
+	}}
+	f := newCatalogCheckJob(t, catalogCheckSpecFor(t, cat, 5))
+	staged, same := strings.Repeat("7", 64), strings.Repeat("8", 64)
+	stagedCommit := strings.Repeat("c1", 20)
+	gens, sums := map[string]int64{}, map[string]string{}
+	for _, tc := range []struct{ entry, recorded, staged string }{
+		{"tools", strings.Repeat("9", 64), staged},
+		{"extra", same, same},
+	} {
+		gen, sum := f.seed(t, tc.entry, "acme/app", catalogCheckAppDef, checkBaseDigest)
+		gens[tc.entry], sums[tc.entry] = gen, sum
+		recKey, err := gcp.CatalogRecordKey(f.slugs["acme/app"], tc.entry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := json.Marshal(imagecheck.CatalogRecordState{
+			Version: imagecheck.CatalogRecordVersion, Entry: tc.entry, SourceCommit: catalogCheckCommit,
+			ContextCommit: catalogCheckCommit, ContextSHA256: tc.recorded,
+			DefinitionGeneration: gen, DefinitionSHA256: sum,
+			TemplateSalt: gcp.TemplateSalt(Version),
+			BaseRef:      checkBase, BaseDigest: checkBaseDigest, BuiltAt: time.Now().Add(-time.Hour).UTC(),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.put(t, recKey, data)
+		hashKey, err := config.CatalogContextHashKey(tc.entry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.put(t, hashKey, []byte(tc.staged))
+		commitKey, err := config.CatalogContextCommitKey(tc.entry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.put(t, commitKey, []byte(stagedCommit))
+	}
+
+	lines, err := runCatalogCheck(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l := lineFor(t, lines, "tools"); l.Decision != imagecheck.Rebuild || !slices.Equal(l.Reasons, []string{imagecheck.ReasonCatalogContext}) {
+		t.Fatalf("tools line = %+v, want a rebuild on the moved context", l)
+	}
+	if l := lineFor(t, lines, "extra"); l.Decision != imagecheck.Skip || len(l.Reasons) != 0 {
+		t.Fatalf("extra line = %+v, want a skip (its staged digest is its record's)", l)
+	}
+	st := f.state(t, "tools", "acme/app")
+	if st == nil || st.BuildInputs == nil || st.BuildInputs.ContextSHA256 != staged {
+		t.Fatalf("tools check.json = %+v, want the staged context digest %s on its inputs", st, staged)
+	}
+
+	// The rebuild the trigger fires is the entry's own build: the staged commit
+	// and digest go with it, so the build runs the entry's context rather than
+	// the template's one-file directory and records the digest it built — a
+	// rebuild that states no context would record context_sha256: "" and fire
+	// again the next night.
+	if got := buildPosts(f.fb); got != 1 {
+		t.Fatalf("builds submitted = %d, want 1", got)
+	}
+	slug := f.slugs["acme/app"]
+	want, err := gcp.CatalogBuildRequest("proj-1234", gcp.CatalogBuildSpec{
+		Entry: "tools", Slug: slug,
+		GitProvider: "bitbucket", RepoURL: "https://bitbucket.org/acme/app.git", BaseBranch: "main",
+		GitSecretID: gcp.SecretID(slug, "bitbucket-token"), GitUser: bitbucket.GitUsername,
+		Base: checkBase, Image: catalogBuildImage(t, "tools"),
+		Definition:     gcp.CatalogDefinition{SourceCommit: stagedCommit, Generation: gens["tools"], SHA256: sums["tools"]},
+		Context:        ".",
+		ContextCommit:  stagedCommit,
+		ContextSHA256:  staged,
+		ServiceAccount: gcp.BuildServiceAccountID(slug) + "@proj-1234.iam.gserviceaccount.com",
+		MachineType:    "E2_HIGHCPU_8",
+		Bucket:         "gs://" + catalogBuildBucket,
+		TemplateSalt:   gcp.TemplateSalt(Version),
+		Selftest:       catalogCheckSelftest(t, "acme/app", stagedCommit),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wantMap map[string]any
+	if err := json.Unmarshal(data, &wantMap); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.fb.Last(); !reflect.DeepEqual(got, wantMap) {
+		t.Fatalf("request =\n%v\nwant\n%v", got, wantMap)
+	}
+}
+
+// TestCatalogCheckRebuildsOnAChangedTemplate: an entry whose last build ran a
+// template this job does not know — the release behind — is rebuilt, and the
+// record the rebuild writes carries this job's own template, so the trigger
+// fires once and not every night. The copied definition, the context and the
+// base are the same bytes either way, so without the salt a release that
+// changes how catalog images are built rebuilds every workflow image and no
+// catalog entry at all (F33, D1402's second half).
+func TestCatalogCheckRebuildsOnAChangedTemplate(t *testing.T) {
+	f := newCatalogCheckJob(t, catalogCheckSpecFor(t, catalogCheckCatalog("runtime"), 5))
+	gen, sum := f.seed(t, "runtime", "acme/other", catalogCheckOtherDef, checkBaseDigest)
+	recKey, err := gcp.CatalogRecordKey(f.slugs["acme/other"], "runtime")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(imagecheck.CatalogRecordState{
+		Version: imagecheck.CatalogRecordVersion, Entry: "runtime", SourceCommit: catalogCheckCommit,
+		DefinitionGeneration: gen, DefinitionSHA256: sum,
+		// A build of the release behind: the same definition and base, a
+		// template this job has never run.
+		TemplateSalt: strings.Repeat("9", 64),
+		BaseRef:      checkBase, BaseDigest: checkBaseDigest, BuiltAt: time.Now().Add(-time.Hour).UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.put(t, recKey, data)
+
+	lines, err := runCatalogCheck(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l := lineFor(t, lines, "runtime"); l.Decision != imagecheck.Rebuild || !slices.Equal(l.Reasons, []string{imagecheck.ReasonCatalogTemplate}) {
+		t.Fatalf("runtime line = %+v, want a rebuild on the changed template", l)
+	}
+	if got := buildPosts(f.fb); got != 1 {
+		t.Fatalf("builds submitted = %d, want 1", got)
+	}
+	// The rebuild states the template this job would run, which is what the
+	// record it writes carries: the same salt twice would fire again tomorrow.
+	st := catalogBuildStep(t, f.fb, "catalog-record")
+	if st == nil {
+		t.Fatal("the request has no catalog-record step")
+	}
+	var salt string
+	env, _ := st["env"].([]any)
+	for _, raw := range env {
+		kv, _ := raw.(string)
+		if v, ok := strings.CutPrefix(kv, "TEMPLATE_SALT="); ok {
+			salt = v
+		}
+	}
+	if want := gcp.TemplateSalt(Version); salt != want {
+		t.Fatalf("the rebuild states the template salt %q, want this job's own %q", salt, want)
+	}
+}
+
 // TestCatalogCheckJobNeedsItsSpec: a job that cannot read what to check says
 // so, and submits nothing.
 func TestCatalogCheckJobNeedsItsSpec(t *testing.T) {
@@ -746,5 +980,159 @@ func TestCatalogCheckJobNeedsItsSpec(t *testing.T) {
 	}
 	if len(lines) != 1 || lines[0].Decision != imagecheck.CheckFailed || lines[0].Severity != "ERROR" {
 		t.Fatalf("lines = %+v", lines)
+	}
+}
+
+// TestCatalogCheckJobSmokesABakedDefinitionWhereTheImagePutIt: a rebuild is
+// submitted from the copy this job reads, and that copy is the one a build
+// composed (imagebake, the image setup skill's bake step, IS8b). The smoke is
+// the manual build's own spec, so it has to read the checkout where the
+// definition put it — /work/baked/<slug> — rather than at /work/repo, or the
+// nightly rebuild of every baked entry fails against an image that is exactly
+// what the build before it verified.
+func TestCatalogCheckJobSmokesABakedDefinitionWhereTheImagePutIt(t *testing.T) {
+	f := newCatalogCheckJob(t, catalogCheckSpecFor(t, catalogCheckCatalog("runtime"), 5))
+	slug := f.slugs["acme/other"]
+	baked, err := imagebake.Append([]byte(catalogCheckOtherDef), imagebake.Plan{Baked: &imagebake.Repo{
+		Repo: "acme/other", Slug: slug,
+		URL: "https://bitbucket.org/acme/other.git", Branch: "main",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The base has moved, which is what the schedule rebuilds for.
+	f.seed(t, "runtime", "acme/other", string(baked), "sha256:"+strings.Repeat("9", 64))
+
+	if _, err := runCatalogCheck(t); err != nil {
+		t.Fatal(err)
+	}
+	if got := buildPosts(f.fb); got != 1 {
+		t.Fatalf("builds submitted = %d, want 1", got)
+	}
+	b64, _ := catalogBuildSubs(t, f.fb)["_SELFTEST_B64"].(string)
+	data, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		t.Fatalf("_SELFTEST_B64 = %q: %v", b64, err)
+	}
+	var spec image.SelftestSpec
+	if err := json.Unmarshal(data, &spec); err != nil {
+		t.Fatal(err)
+	}
+	want := "/work/baked/" + slug
+	if spec.RepoDir != want {
+		t.Errorf("the rebuild's smoke reads %s, want %s: the definition this job read bakes the checkout there", spec.RepoDir, want)
+	}
+	if spec.Commit != catalogCheckCommit || spec.Origin != "https://bitbucket.org/acme/other.git" {
+		t.Errorf("the rebuild's smoke is %+v, want the committed checkout of acme/other", spec)
+	}
+}
+
+// TestCatalogCheckJobRefusesADefinitionBakedForAnotherRepository: the generated
+// stage clones the composing repository's own checkout and pins the build to
+// that repository's URL, so a definition that bakes one repository cannot be
+// rebuilt from another checkout (O3 (b)). The nightly check is where that
+// arrives, because it rebuilds an entry as whichever repository the spec
+// assigns it to, and such a rebuild would fail inside the stage — after the
+// build was submitted and paid for. It is refused here, before a build is
+// submitted, and the line says which repository the definition bakes.
+func TestCatalogCheckJobRefusesADefinitionBakedForAnotherRepository(t *testing.T) {
+	// The entry is assigned to acme/other and the definition bakes acme/app's
+	// checkout: the rebuild's REPO_URL would be acme/other's, and the generated
+	// stage would refuse it inside the build — after the build was submitted
+	// and paid for. Here the check refuses it first, and the fix it names is the
+	// one the assignment is made from.
+	appSlug := mustSlug("bitbucket", "acme/app")
+	baked, err := imagebake.Append([]byte(catalogCheckOtherDef), imagebake.Plan{Baked: &imagebake.Repo{
+		Repo: "acme/app", Slug: appSlug,
+		URL: "https://bitbucket.org/acme/app.git", Branch: "main",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, tc := range map[string]struct {
+		cat  *config.Catalog
+		want []string
+	}{
+		// The composing repository is one this installation builds in (the
+		// catalog gives it an entry of its own), so the check names it and the
+		// map command that makes the assignment agree with the definition.
+		"the composing repository is in the spec": {
+			cat:  catalogCheckCatalog("tools", "runtime"),
+			want: []string{"acme/app", "fugaro image map set acme/app runtime"},
+		},
+		// It is not — a repository of the project with no entry of its own — so
+		// the line names the directory the definition bakes, and the build that
+		// composes a definition for the repository the rebuild would run as.
+		"the composing repository is not in the spec": {
+			cat:  catalogCheckCatalog("runtime"),
+			want: []string{"/work/baked/" + appSlug, "fugaro image build runtime"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newCatalogCheckJob(t, catalogCheckSpecFor(t, tc.cat, 5))
+			f.seed(t, "runtime", "acme/other", string(baked), "sha256:"+strings.Repeat("9", 64))
+
+			lines, err := runCatalogCheck(t)
+			if err == nil || !strings.Contains(err.Error(), "runtime") {
+				t.Fatalf("err = %v, want the entry the check failed for", err)
+			}
+			if got := buildPosts(f.fb); got != 0 {
+				t.Fatalf("builds submitted = %d, want 0: the rebuild cannot run as the repository whose checkout the definition bakes", got)
+			}
+			l := lineFor(t, lines, "runtime")
+			if l.Decision != imagecheck.CheckFailed || l.Severity != "ERROR" || !strings.Contains(l.Error, "acme/other") {
+				t.Fatalf("runtime line = %+v, want the failure naming the repository the rebuild would run as", l)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(l.Error, want) {
+					t.Errorf("the line %q does not name %q", l.Error, want)
+				}
+			}
+		})
+	}
+}
+
+// TestCatalogCheckJobRebuildsADefinitionComposedFromANonCanonicalOrigin: a
+// definition is composed from a checkout's origin — the operator's own remote —
+// while the check's own REPO_URL is repourl.CloneURL's canonical form, and the
+// two are the same repository whenever the origin differs only in git's own
+// spellings of it: no ".git", a trailing slash, a capital letter. Such an entry
+// is not held back by the check: it is submitted, and the URL the submission
+// carries is the rebuild's own canonical one — the pair the stage's guard has
+// to accept (imagebake's repoURLGuard, which is where the guard itself is run,
+// because a guard is shell and this job never builds anything for real).
+func TestCatalogCheckJobRebuildsADefinitionComposedFromANonCanonicalOrigin(t *testing.T) {
+	for name, origin := range map[string]string{
+		"no .git":          "https://bitbucket.org/acme/app",
+		"a trailing slash": "https://bitbucket.org/acme/app/",
+		"a capital letter": "https://Bitbucket.org/Acme/App",
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newCatalogCheckJob(t, catalogCheckSpecFor(t, catalogCheckCatalog("tools"), 5))
+			baked, err := imagebake.Append([]byte(catalogCheckAppDef), imagebake.Plan{Baked: &imagebake.Repo{
+				Repo: "acme/app", Slug: f.slugs["acme/app"], URL: origin, Branch: "main",
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.seed(t, "tools", "acme/app", string(baked), "sha256:"+strings.Repeat("9", 64))
+
+			lines, err := runCatalogCheck(t)
+			if err != nil {
+				t.Fatalf("err = %v: a definition composed from %s bakes acme/app, which is the repository this entry rebuilds as", err, origin)
+			}
+			if got := buildPosts(f.fb); got != 1 {
+				t.Fatalf("builds submitted = %d, want 1: the entry's definition bakes the repository the rebuild runs as", got)
+			}
+			if l := lineFor(t, lines, "tools"); l.Decision != imagecheck.Rebuild {
+				t.Fatalf("tools line = %+v, want a rebuild", l)
+			}
+			// The build's own argument is the canonical spelling, which is the
+			// one the composed definition does not carry: the guard is what
+			// has to see through that, not this test's fixture.
+			if subs := catalogBuildSubs(t, f.fb); subs["_REPO_URL"] != "https://bitbucket.org/acme/app.git" {
+				t.Fatalf("_REPO_URL = %v, want the rebuild's own canonical URL", subs["_REPO_URL"])
+			}
+		})
 	}
 }

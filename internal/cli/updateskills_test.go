@@ -34,6 +34,24 @@ func withVersion(t *testing.T, v string) {
 	t.Cleanup(func() { claudeLookPath = oldClaude })
 }
 
+// installUserPlugin writes Claude Code's record of a plugin installed at user
+// scope, at version v, into the config directory withVersion isolated: the
+// install doctor's plugin-install answers about wherever the checkout carries
+// no release-tag pin (D942, U3 of
+// docs/plugin-user-scope/implementation-plan.md), and the one fugaro update
+// maintains.
+func installUserPlugin(t *testing.T, v string) {
+	t.Helper()
+	dir := filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "plugins")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"version":2,"plugins":{"fugaro@fugaro":[{"scope":"user","version":"` + v + `"}]}}`
+	if err := os.WriteFile(filepath.Join(dir, "installed_plugins.json"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // skillCheckout makes a Fugaro checkout whose settings hold content ("" for
 // none): a real repository with a fugaro.yaml, which is the whole of what makes
 // a checkout one Fugaro's steps run in (U1 of
@@ -134,8 +152,13 @@ func TestUpdateSkillsCheckExitCode(t *testing.T) {
 		{"outdated", wiredAt("v0.1.0"), 1},
 		{"newer", wiredAt("v0.3.0"), 1},
 		{"unpinned", wiredAt(""), 1},
-		{"not wired", `{}`, 1},
-		{"missing", "", 1},
+		// A checkout nothing pins is the normal checkout since D949: nothing
+		// in the tree writes a pin any more, so "not wired" is information and
+		// no longer turns a repository's CI red (D942, U3 of
+		// docs/plugin-user-scope/implementation-plan.md). The pinned states
+		// around it are unchanged.
+		{"not wired", `{}`, 0},
+		{"missing", "", 0},
 	} {
 		root, settings := skillCheckout(t, tc.content)
 		var before []byte
@@ -226,8 +249,14 @@ func TestUpdateSkillsLeavesAnUnreadableFileAlone(t *testing.T) {
 	if got := upgradeRead(t, settings); got != content {
 		t.Errorf("rewritten: %q, want %q", got, content)
 	}
+	// A file that cannot be parsed is one of "not wired"'s states, and that
+	// state is information since D942 (U3 of
+	// docs/plugin-user-scope/implementation-plan.md): the exit code flipped
+	// with the severity, and the reason stays on the line the command prints —
+	// the check says what it could not read, it just no longer fails a
+	// repository the merge that wrote pins left behind.
 	txt, _, err := execute(t, "update-skills", "--check", "--dir", root)
-	if ExitCode(err) != 1 || !strings.Contains(txt, "not usable settings") {
+	if err != nil || !strings.Contains(txt, "not usable settings") {
 		t.Errorf("--check: err=%v out=%q", err, txt)
 	}
 }
@@ -505,8 +534,13 @@ func TestDisabledPluginReported(t *testing.T) {
 	withVersion(t, "0.2.0")
 	const content = `{"extraKnownMarketplaces":{"fugaro":{"source":{"source":"github","repo":"dimipaun/fugaro","ref":"v0.2.0"}}},"enabledPlugins":{"fugaro@fugaro":false}}`
 	root, settings := skillCheckout(t, content)
+	// "disabled by the repository" is one of "not wired"'s states, which is
+	// information since D942 (U3 of
+	// docs/plugin-user-scope/implementation-plan.md): --check prints the state
+	// and exits 0, the same treatment a checkout nothing pins gets, because
+	// neither is a state the machine's install is in.
 	txt, _, err := execute(t, "update-skills", "--check", "--dir", root)
-	if ExitCode(err) != 1 || !strings.Contains(txt, "disabled by the repository") {
+	if err != nil || !strings.Contains(txt, "disabled by the repository") {
 		t.Fatalf("check: err=%v out=%q", err, txt)
 	}
 	f := testutil.NewClaudePluginFake(t, "[]", "[]")

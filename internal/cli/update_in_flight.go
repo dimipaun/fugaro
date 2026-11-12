@@ -28,17 +28,19 @@ import (
 // internal/budget/rules); and no step of the update writes a run's registry
 // entry, its ledger, its day counters or its record.
 //
-// Three steps can still reach one, and the line names every one of them that
+// Four steps can still reach one, and the line names every one of them that
 // this run can take — naming a step and why, rather than either claiming a
 // safety that is not there or dropping the claim: the budget mode's raise to
 // enforce, which a session re-reads on every lease and every report while the
 // policy node is read once (`Session.readConfig`); the policy node itself, which
 // a project routed through the credentials cascade re-reads on EVERY model call
 // (`internal/credsvc`), so a run in flight is held to the node this update
-// publishes from its next call; and a retirement, which deletes an orphaned
-// Cloud Run job and takes the executions running on it with it
-// (`deleteOrphanedJob`, init_retire.go). None of the three is the update
-// stopping a run, and none of them is asked to wait.
+// publishes from its next call; the window between that write and the
+// credentials service's own replacement, which is the release before this one's
+// service meeting a node it cannot read for the length of one apply; and a
+// retirement, which deletes an orphaned Cloud Run job and takes the executions
+// running on it with it (`deleteOrphanedJob`, init_retire.go). None of the four
+// is the update stopping a run, and none of them is asked to wait.
 
 // announceRunsInFlight prints the update door's one line about the runs in
 // flight, and nothing at all when there are none (an installation with an empty
@@ -99,6 +101,9 @@ func (e *initEngine) inFlightSteps(ctx context.Context, db *rtdb.Client) []strin
 	}
 	if e.policyReadsLive(ctx, db) {
 		steps = append(steps, fmt.Sprintf("the policy this update publishes, which every model call of this project's runs re-reads (%s: %s), so a run in flight is held to the new node from its next call", "routing.claude.via", projectpolicy.RouteCascade))
+	}
+	if e.credentialsWindowOpens(ctx, db) {
+		steps = append(steps, "the credentials service this update replaces, which reads the published node on every call it serves: this run raises the node's version in one stage and moves the service in the next, and a call landing between the two meets the previous release's service with a node its own binary does not understand")
 	}
 	if e.retireTakesExecutions(managed) {
 		steps = append(steps, "the retirement this update runs, which deletes an orphaned job and takes the executions still running on it")
@@ -171,12 +176,51 @@ func (e *initEngine) budgetModeBindsRuns(ctx context.Context, db *rtdb.Client, m
 // A read that failed or a node that is not there is false: with no node there is
 // no switch, and an unreadable one is the silence every other read in this file
 // answers with.
+//
+// It reads through ReadCarriedForward and not Read, and that is the whole of
+// this line's correctness on the upgrade that bumps the policy version: the
+// node every installation holds while this update runs is written in the
+// version behind, so Read would refuse it and answer "no cascade" for the
+// project that has one — and the line would say "no step of it can reach them"
+// about the policy stage, which rewrites the node the credentials service
+// re-reads on every model call of a run in flight. What is asked here is a
+// question about the node rather than a decision by it, which is the difference
+// Read and ReadCarriedForward are two functions for.
 func (e *initEngine) policyReadsLive(ctx context.Context, db *rtdb.Client) bool {
-	p, found, err := projectpolicy.Read(ctx, db)
+	p, found, err := projectpolicy.ReadCarriedForward(ctx, db)
 	if err != nil || !found || p == nil || p.Routing == nil || p.Routing.Claude == nil {
 		return false
 	}
 	return p.Routing.Claude.Via == projectpolicy.RouteCascade
+}
+
+// credentialsWindowOpens is whether this update opens the window the credentials
+// service's own replacement leaves: the run raises the published node's version
+// (the node is behind this binary's, so the policy stage's write moves it) and
+// then replaces the service that reads that node per call, one stage later
+// (init_stages.go's credentialsResolveBeforeRaise is the same pair seen from the
+// writing side). The service is read by a cascade project's model calls and by
+// every Bitbucket-proxied call alike, so the clause is named for any project
+// whose installation carries the service — which is why this asks the two facts
+// the writing run asks and not the project's routing.
+//
+// Both halves are the questions the two stages are gated on rather than the
+// whole of their decisions, as every clause here is: a node whose version is
+// behind is one the policy stage may refuse to write for another reason (the
+// gate, a ceiling this run may not loosen), and an image that is not this
+// release's is one the move may be held back from pinning (credentialsMoveHeld).
+// Naming the window over a run that turns out not to open it is the direction
+// this line errs in.
+func (e *initEngine) credentialsWindowOpens(ctx context.Context, db *rtdb.Client) bool {
+	p, found, err := projectpolicy.Read(ctx, db)
+	if err != nil || !found || p == nil || p.Version >= projectpolicy.Version {
+		return false
+	}
+	doc, image, err := e.recordedCredentialsImage()
+	if err != nil || doc == nil {
+		return false
+	}
+	return credentialsImageStale(releaseVersion(), image)
 }
 
 // retireTakesExecutions is whether this run can retire at all: the two ways one

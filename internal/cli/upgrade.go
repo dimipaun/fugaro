@@ -503,6 +503,21 @@ func policyStep(ctx context.Context, u *upgradeCtx) stepResult {
 	case m == nil:
 		return stepResult{state: stepCurrent, reason: fmt.Sprintf("the published policy is version %d", projectpolicy.Version)}
 	}
+	// The node's version and the credentials service's process move together,
+	// and this door moves no service: its cloud step is fugaro image refresh,
+	// which rebuilds job images and never the installation's tfvars, so a node
+	// raised here leaves the release behind's service reading it and refusing
+	// every cascade and Bitbucket-proxied call of the project until a later
+	// `fugaro update` succeeds (init_stages.go's credentialsRaiseHeld has the
+	// whole argument, and init_policy_migrate.go's Check is the update door's
+	// half of it). The step is skipped rather than failed — nothing in the
+	// checkout is wrong — and the reason names the one command that does the
+	// pair together.
+	if m.moved != nil {
+		if why := credentialsRaiseHeld(lc); why != "" {
+			return stepResult{state: stepSkipped, reason: fmt.Sprintf("the published policy is version %d and this step holds it there: %s, and the service that reads the published node on every cascade and Bitbucket-proxied call refuses a node its own binary does not understand — %s migrates the node and replaces the service in one run", m.from, why, selfCommand()+" update")}
+		}
+	}
 	// No gate is passed: `fugaro upgrade` is not one of the managed set's
 	// commands, so this step keeps every confirmation it always had — the
 	// in-flight refusal included, which the update door alone answers with

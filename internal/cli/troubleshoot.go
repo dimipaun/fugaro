@@ -433,7 +433,13 @@ func troubleshootCredential(ctx context.Context, res troubleshootResolution) (di
 	var read diagnoseagent.SecretReader
 	if lc := res.lc; lc != nil {
 		accounts.Block = lc.ClaudeAccounts
-		accounts.Default = lc.DefaultClaudeAccount
+		// The key resolves before the diagnosis asks the block for the account
+		// (localcfg.Config.ResolveAccount, D2091): diagnoseagent reads the name
+		// against claude_accounts, and an alias held back would be refused there
+		// as an account this file does not define — a sentence sending the
+		// person to define an entry their own alias block forbids (D2092's one
+		// namespace).
+		accounts.Default, _ = lc.ResolveAccount(lc.DefaultClaudeAccount)
 		// The stages are left out: a local diagnosis stands for no stage of a
 		// run, so every per-stage choice is about some other command's work.
 		read = func(name string) (string, error) {

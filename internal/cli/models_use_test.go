@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -405,6 +406,55 @@ func TestModelsUseJudgesTheBackgroundRoleAsALaunchWould(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "api-key") {
 		t.Errorf("the refusal does not say which auth the model needs: %v", err)
+	}
+	if got := readFileString(t, path); got != before {
+		t.Errorf("the refused switch wrote the file:\n%s", got)
+	}
+}
+
+// TestModelsUseWritesTheVisionSlot is V6's red step: agent.models has a fourth
+// key — the model a stage runs instead when its own model cannot read an image
+// (D2000) — and the switch writes it through the same edit and the same checks
+// as the other three, as the one line it adds. It is red while modelsRoleNames
+// has three entries: the role is refused, and the slot is not a name a
+// repository may pin.
+func TestModelsUseWritesTheVisionSlot(t *testing.T) {
+	modelsUseHome(t)
+	path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseCommentedYAML)
+
+	wantRoles := []string{"coder", "reviewer", "background", "vision"}
+	if !slices.Equal(modelsRoleNames, wantRoles) {
+		t.Fatalf("modelsRoleNames = %v, want %v: the vision slot is one of agent.models' keys, and every surface lists it beside the other three", modelsRoleNames, wantRoles)
+	}
+
+	out, _, err := execute(t, "models", "use", "owner/repo-a", "vision", "deepseek/deepseek-v4-pro", "--yes")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	want := strings.Replace(modelsUseCommentedYAML,
+		"    reviewer: claude-sonnet-5-5\n",
+		"    reviewer: claude-sonnet-5-5\n    vision: deepseek/deepseek-v4-pro\n", 1)
+	if got := readFileString(t, path); got != want {
+		t.Errorf("the edit is not the one line, under the key it names:\ngot:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// TestModelsUseRefusesAnUnpricedVisionModel: the slot is judged like every
+// other pin, so a model the price table cannot price is refused — the `models
+// add` that would fix it is named — and nothing is written. A slot that took
+// one would be the failure the slot exists to prevent: the stage that reads an
+// image dies at the gateway for want of a price.
+func TestModelsUseRefusesAnUnpricedVisionModel(t *testing.T) {
+	modelsUseHome(t)
+	path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseCommentedYAML)
+	before := readFileString(t, path)
+
+	_, _, err := execute(t, "models", "use", "owner/repo-a", "vision", "vendor/model-q", "--yes")
+	if err == nil {
+		t.Fatal("an unpriced vision model was accepted")
+	}
+	if !strings.Contains(err.Error(), "fugaro models add vendor/model-q") {
+		t.Errorf("the refusal does not name the models add that fixes it: %v", err)
 	}
 	if got := readFileString(t, path); got != before {
 		t.Errorf("the refused switch wrote the file:\n%s", got)

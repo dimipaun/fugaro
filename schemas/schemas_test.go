@@ -6279,6 +6279,148 @@ func TestRunsDigestDueSchema(t *testing.T) {
 	}
 }
 
+// TestRunsShowSchema holds schemas/runs-show.schema.json to the document
+// `fugaro runs show --json` prints (docs/run-limit-carry-over spec §7, D1055,
+// D1056) and to the Go vocabulary its members are written as. The figures
+// themselves are a chain read — a bucket and a budget database — and are pinned
+// by value in internal/cli (TestRunsShowJSONMatchesTheSchema, which validates
+// the command's own output against this file); what is checked here is the
+// contract a consumer reads them by: that the schema loads (a broken $ref
+// between $defs is exactly where a hand edit breaks), that version is
+// runsShowDocVersion, that a limit's dimension is one of runstore's four, that
+// an unmeasured dimension is null on both figures rather than a zero, and that
+// the source is a layer's own name rather than an enum — a record's merge may
+// name a layer this schema has never heard of, and a consumer that refused one
+// would refuse a newer CLI's document.
+func TestRunsShowSchema(t *testing.T) {
+	raw, err := os.ReadFile("runs-show.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	sch := compile(t, "runs-show.schema.json")
+
+	consts := goConstValues(t, "../internal/cli/runs_show.go")
+	version := nodeOf(t, doc, "properties", "version")
+	if version["const"] != float64(1) {
+		t.Errorf("version: const = %v, and the document's first version is 1 (D1056)", version["const"])
+	}
+	// The $comment is the pointer from the contract to the code: it must name a
+	// constant this file's own parse found, or it points at nothing.
+	if got, _ := version["$comment"].(string); !strings.Contains(got, "runsShowDocVersion") || consts["runsShowDocVersion"] != "1" {
+		t.Errorf("version: $comment = %q, and runsShowDocVersion in internal/cli/runs_show.go is %q", got, consts["runsShowDocVersion"])
+	}
+	// Every top-level member is required, the empty ones included: a chain of
+	// one is run_count 1, a chain nothing bounds is a [] rather than a document
+	// missing it, and limits_read is what says whether that [] means "bounds
+	// none" or "not read".
+	req := stringsOf(t, doc, "required")
+	for _, key := range []string{"version", "repo", "run", "chain", "run_count", "enforced", "limits_read", "limits"} {
+		if !slices.Contains(req, key) {
+			t.Errorf("required is %v, and the document always carries %q", req, key)
+		}
+	}
+	// limits_read is a boolean and not a string or a count: it is the flag a
+	// consumer branches on to tell an empty limits from a chain that bounds
+	// nothing, and a member that could be either would be branched on wrongly.
+	if kind := nodeOf(t, doc, "properties", "limits_read")["type"]; kind != "boolean" {
+		t.Errorf("limits_read: type = %v, want a boolean", kind)
+	}
+	want := []string{string(runstore.USD), string(runstore.Tokens), string(runstore.Time), string(runstore.ReviewRounds)}
+	if got := stringsOf(t, doc, "$defs", "limit", "properties", "dimension", "enum"); !slices.Equal(got, want) {
+		t.Errorf("$defs.limit.dimension: the enum is %v, and runstore's dimensions are %v", got, want)
+	}
+	// The two figures of a dimension the chain does not measure are null and
+	// never a zero, which is the one thing D1049 and D1051 forbid: a missing
+	// figure read as free restores the whole chain's budget (F14), and a
+	// budget-off chain has no token figure at all (T10).
+	limitReq := stringsOf(t, doc, "$defs", "limit", "required")
+	for _, key := range []string{"dimension", "limit", "used", "remaining", "source"} {
+		if !slices.Contains(limitReq, key) {
+			t.Errorf("$defs.limit.required is %v, and every row carries %q", limitReq, key)
+		}
+	}
+	for _, key := range []string{"used", "remaining"} {
+		branches, _ := nodeOf(t, doc, "$defs", "limit", "properties", key)["oneOf"].([]any)
+		var number, nul bool
+		for _, b := range branches {
+			m, _ := b.(map[string]any)
+			number = number || m["type"] == "number"
+			nul = nul || m["type"] == "null"
+		}
+		if !number || !nul {
+			t.Errorf("$defs.limit.%s: oneOf is %v, and the member is either a figure or null", key, branches)
+		}
+	}
+	// The limit itself is never null: a row exists only for a dimension the
+	// chain bounds, and a row without a figure would be an unread one.
+	if kind := nodeOf(t, doc, "$defs", "limit", "properties", "limit")["type"]; kind != "number" {
+		t.Errorf("$defs.limit.limit: type = %v, want a number", kind)
+	}
+	if kind := nodeOf(t, doc, "$defs", "limit", "properties", "source")["type"]; kind != "string" {
+		t.Errorf("$defs.limit.source: type = %v, want the layer's own name as a string", kind)
+	}
+
+	for _, tc := range []struct {
+		name string
+		doc  string
+	}{
+		{"an enforced chain", `{"version": 1, "repo": "acme/app", "run": "github-acme-app-4f2a/20261101-150000-c3c3", "chain": "20261101-090000-a1a1", "run_count": 3, "enforced": true, "limits_read": true, "limits": [` +
+			`{"dimension": "usd", "limit": 4000000, "used": 2250000, "remaining": 1750000, "source": "chain"},` +
+			`{"dimension": "tokens", "limit": 800000, "used": 550000, "remaining": 250000, "source": "chain"},` +
+			`{"dimension": "time", "limit": 2700, "used": 900, "remaining": 1800, "source": "chain"},` +
+			`{"dimension": "review_rounds", "limit": 4, "used": 2, "remaining": 2, "source": "chain"}]}`},
+		{"a budget-off chain", `{"version": 1, "repo": "acme/app", "run": "github-acme-app-4f2a/20261101-150000-c3c3", "chain": "20261101-090000-a1a1", "run_count": 3, "enforced": false, "limits_read": true, "limits": [` +
+			`{"dimension": "usd", "limit": 4000000, "used": 2250000, "remaining": 1750000, "source": "chain"},` +
+			`{"dimension": "tokens", "limit": 800000, "used": null, "remaining": null, "source": "chain"}]}`},
+		{"a chain that bounds nothing", `{"version": 1, "repo": "acme/app", "run": "github-acme-app-4f2a/20261101-150000-c3c3", "chain": "20261101-150000-c3c3", "run_count": 1, "enforced": true, "limits_read": true, "limits": []}`},
+		{"a chain whose records stop at a gap", `{"version": 1, "repo": "acme/app", "run": "github-acme-app-4f2a/20261101-150000-c3c3", "chain": "", "run_count": 2, "enforced": true, "limits_read": false, "limits": []}`},
+		// The chain was read whole and its limit was not: the run that began it
+		// has no stored task left, so the empty limits here is "unknown" and the
+		// member that says so is the only thing telling it from the case above it
+		// (D1051 one level up).
+		{"a chain whose limit could not be read", `{"version": 1, "repo": "acme/app", "run": "github-acme-app-4f2a/20261101-150000-c3c3", "chain": "20261101-090000-a1a1", "run_count": 3, "enforced": true, "limits_read": false, "limits": []}`},
+		{"a halted run", `{"version": 1, "repo": "acme/app", "run": "github-acme-app-4f2a/20261101-150000-c3c3", "chain": "20261101-090000-a1a1", "run_count": 3, "enforced": true, "limits_read": true, "limits": [], ` +
+			`"halt": {"reason": "run_cap", "scope": "run", "at": "2026-11-01T15:05:00Z", "detail": "run spent $5.00 of $5.00"}}`},
+		// A member this schema does not know is not refused: a consumer reading
+		// a newer CLI's document must not fall over (D1056's addition rule).
+		{"a member from a newer CLI", `{"version": 1, "repo": "acme/app", "run": "github-acme-app-4f2a/20261101-150000-c3c3", "chain": "20261101-150000-c3c3", "run_count": 1, "enforced": true, "limits_read": true, "limits": [], "spent_days": 3}`},
+	} {
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(tc.doc))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sch.Validate(inst); err != nil {
+			t.Errorf("%s: the schema refuses a document the command writes: %v", tc.name, err)
+		}
+	}
+	for _, tc := range []struct{ name, doc string }{
+		{"a dimension no chain has", `{"version": 1, "repo": "r", "run": "s/x", "chain": "x", "run_count": 1, "enforced": true, "limits_read": true, "limits": [{"dimension": "memory", "limit": 1, "used": 1, "remaining": 0, "source": "chain"}]}`},
+		{"a figure read as text", `{"version": 1, "repo": "r", "run": "s/x", "chain": "x", "run_count": 1, "enforced": true, "limits_read": true, "limits": [{"dimension": "usd", "limit": 4, "used": "2.25", "remaining": 1.75, "source": "chain"}]}`},
+		{"a row with no source", `{"version": 1, "repo": "r", "run": "s/x", "chain": "x", "run_count": 1, "enforced": true, "limits_read": true, "limits": [{"dimension": "usd", "limit": 4, "used": 2.25, "remaining": 1.75}]}`},
+		{"a chain with no run count", `{"version": 1, "repo": "r", "run": "s/x", "chain": "x", "enforced": true, "limits_read": true, "limits": []}`},
+		{"a document with no enforced member", `{"version": 1, "repo": "r", "run": "s/x", "chain": "x", "run_count": 1, "limits_read": true, "limits": []}`},
+		// limits_read is the member that tells an empty limits from a chain that
+		// bounds nothing, so a document without it leaves that question open —
+		// and a consumer that defaulted it to one of the two answers would read
+		// half of the documents backwards.
+		{"a document with no limits_read member", `{"version": 1, "repo": "r", "run": "s/x", "chain": "x", "run_count": 1, "enforced": true, "limits": []}`},
+		{"limits_read read as text", `{"version": 1, "repo": "r", "run": "s/x", "chain": "x", "run_count": 1, "enforced": true, "limits_read": "yes", "limits": []}`},
+		{"a halt of a scope no limit is set at", `{"version": 1, "repo": "r", "run": "s/x", "chain": "x", "run_count": 1, "enforced": true, "limits_read": true, "limits": [], "halt": {"reason": "run_cap", "scope": "project", "at": "2026-11-01T15:05:00Z"}}`},
+	} {
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(tc.doc))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sch.Validate(inst); err == nil {
+			t.Errorf("%s: the schema accepts a document the command cannot write", tc.name)
+		}
+	}
+}
+
 // goConstValues is every constant declared in a Go file, by name, as the text
 // of its own literal: a string constant's value without its quotes, a number's
 // digits. A constant built from an expression is left out rather than guessed

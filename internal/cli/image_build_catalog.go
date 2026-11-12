@@ -15,10 +15,12 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/catalog"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/image"
+	"github.com/dimipaun/fugaro/internal/imagebake"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
@@ -72,6 +74,9 @@ func runImageBuildCatalogOrDerived(cmd *cobra.Command, name string, o imageBuild
 	if name != "" {
 		return userErr("this project has no image catalog, so there is no entry %s to build: fugaro image add %s writes one and fugaro update publishes it, while fugaro image build --workflow builds a workflow's derived image", pluginwire.Printable(name), pluginwire.Printable(name))
 	}
+	if repoImagesOff {
+		return repoImagesDisabled(cmd.OutOrStdout())
+	}
 	return runImageBuildCloud(cmd, o)
 }
 
@@ -122,11 +127,13 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 	if repo == "" {
 		repo = origin
 	}
-	if a, err1 := task.CanonicalRepo(origin); err1 != nil {
+	canon, err1 := task.CanonicalRepo(origin)
+	if err1 != nil {
 		return userErr("%v", err1)
-	} else if b, err2 := task.CanonicalRepo(repo); err2 != nil {
+	}
+	if b, err2 := task.CanonicalRepo(repo); err2 != nil {
 		return userErr("%v", err2)
-	} else if a != b {
+	} else if canon != b {
 		return userErr("--repo %s is not this checkout's origin (%s); run from %s's checkout", repo, origin, repo)
 	}
 	entries, err := catalogBuildEntries(cmd, cat, name, repo, o.noSmoke)
@@ -229,6 +236,53 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 			return err
 		}
 	}
+	// The bake this build may compose into an entry's Dockerfile (the image
+	// setup skill's bake step, IS8b): the project's repo-to-image map and its
+	// bake switch, read the way the catalog itself was read for this command —
+	// this machine's own project config over the published node's (D1906,
+	// D1901) — and under the same rule for a node that cannot be read, which
+	// the warning above has already said out loud. Nothing here is decided per
+	// entry: which repository a build bakes is the checkout this command is
+	// running in, and each entry only answers whether it is that repository's
+	// image.
+	published, _, _ := env.policy.read(ctx, lc)
+	var publishedMap map[string]string
+	var publishedBake *bool
+	if published != nil {
+		publishedMap, publishedBake = published.ImageMap, published.BakeRepos
+	}
+	imageMap := lc.ImageMapEffective(publishedMap)
+	bakeRepos := lc.BakeReposEffective(publishedBake)
+	// The project's repositories, in the map's own key space (the canonical
+	// form, task.CanonicalRepo), and the entry the catalog marks as its default:
+	// the two things Decide reads the map against. The map is a statement about
+	// the repositories it names, so a project repository it names none for is
+	// one whose image a build cannot know — the deploy resolves it by that
+	// repository's own config — and the default entry is the one every
+	// repository that names no entry runs, whatever the map says.
+	var projectRepos []string
+	for name := range lc.Repos {
+		if canonical, err := task.CanonicalRepo(name); err == nil {
+			projectRepos = append(projectRepos, canonical)
+		}
+	}
+	catDefault := ""
+	for _, e := range cat.Entries {
+		if e.Default {
+			catDefault = e.Name
+			break
+		}
+	}
+	// What the map and the switch decide, and what they do not (imagebake.
+	// Decide): the map is the build's only evidence about any repository but
+	// the checkout's own, so a stage is composed only for an entry the map puts
+	// this repository alone on — a shared image is O3 (b)'s F18 boundary, and
+	// no answer to bake_repos puts a checkout into one. An installation that
+	// maps nothing therefore composes nothing at all, which is byte-for-byte
+	// the definition it had. No path under fugaro update writes a definition at
+	// all (O1), which is what keeps it a one-command upgrade.
+	bakeRepo := imagebake.Repo{Repo: canon, Slug: rs.Slug, URL: repoURL, Branch: cmp.Or(rs.BaseBranch, "main")}
+	bakeRef := bakeReference(cfg, cat, rs.Slug, catalog.Backend(lc.Backend()))
 	// The image is spelled from the host the installation's registries are
 	// under and not from a region of this command's own, so a build pushes
 	// exactly where a job's catalog image is pulled from, whichever one the
@@ -372,6 +426,10 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 			Entry: e.Name, Slug: rs.Slug,
 			ServiceAccount: rs.BuildServiceAccountEmail, MachineType: lc.Build.MachineType,
 			Bucket: lc.RecordBucketURL(), NoSmoke: o.noSmoke,
+			// The record carries the template this build ran, so a release that
+			// changes how catalog images are built reaches the entry the next
+			// time the check reads it (F33, D1402).
+			TemplateSalt: gcp.TemplateSalt(Version),
 		}
 		if e.Source.Kind == config.SourceImage {
 			spec.Prebuilt, spec.Selftest = e.Source.Image, prebuiltSelftest
@@ -380,7 +438,17 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 			if err != nil {
 				return failStep(sr.rep, step, withLease(userErr("%v", err), lease.release(ctx)))
 			}
-			src, err := writeCatalogDockerfile(ctx, rb, opener, env.repoProvider(e.Source.Repo, cfg), e)
+			// The bake this entry's definition may carry, decided here where the
+			// entry's name is: the build's own repository, and only when this is
+			// the image that repository's jobs run (O3 reading (b), so the other
+			// repositories the image serves clone at job start).
+			bakePlan := imagebake.Decide(imagebake.Request{
+				Entry: e.Name, Repo: bakeRepo, Reference: bakeRef,
+				Map: imageMap, Bake: bakeRepos,
+				Repos: projectRepos, Default: catDefault,
+			})
+			noteBakePlan(cmd, e.Name, bakePlan)
+			src, dropped, err := writeCatalogDockerfile(ctx, rb, opener, env.repoProvider(e.Source.Repo, cfg), e, bakePlan)
 			if err != nil {
 				// A provider opened without the credential its environment did
 				// not carry fails here with its own sentence, which is left
@@ -392,6 +460,13 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 					return failStep(sr.rep, step, withLease(fmt.Errorf("%w%s", err, providerHint), lease.release(ctx)))
 				}
 				return failStep(sr.rep, step, withLease(err, lease.release(ctx)))
+			}
+			// The copy lost the checkout a previous build composed into it, if
+			// any: the plan above is this build's own bake and says nothing
+			// about a copy it composes none into, and a job of the entry finds
+			// no checkout in the image from this build on.
+			if dropped != "" {
+				noteBakeDropped(cmd.ErrOrStderr(), lc, e.Name, dropped)
 			}
 			// A test seam between the copy above and the read-back below
 			// (catalogCopyRace): another publisher's copy of this entry can
@@ -464,6 +539,13 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 			smoke, err := image.SpecForCloud(cfg, workflow, spec.Definition.SourceCommit, repoURL)
 			if err != nil {
 				return withLease(userErr("%v", err), lease.release(ctx))
+			}
+			// The smoke reads the checkout where this image actually put it: a
+			// composed definition bakes at imagebake.BakedDir, and a smoke still
+			// looking at /work/repo would fail the build this command just
+			// composed -- or, worse, pass on a checkout the image never baked.
+			if dir, baked := imagebake.BakedDir(data); baked && builds {
+				smoke.RepoDir = dir
 			}
 			selftestJSON, err := json.Marshal(smoke)
 			if err != nil {
@@ -724,4 +806,83 @@ func catalogBuildBanner(entries []config.Entry, machineType, account, registry s
 	default:
 		return head + "each Dockerfile entry's build reads the Dockerfile copied into the project's bucket, smoke-tests the candidate and promotes the image into " + registry + " and records it, and each prebuilt entry is smoke-tested against the runtime contract alone"
 	}
+}
+
+// bakeReference is the catalog entry the checkout's own jobs run, "" when they
+// run none or a different one each: a repository whose jobs run an entry runs
+// that entry's image whatever the project's map says (T1 reading (b)), so the
+// bake belongs in that entry's image and not in this one.
+//
+// The entry is the deploy's own answer to the same question, because the bake
+// belongs in the image the repository's jobs actually start — a checkout baked
+// into an image they never pull is work nobody reads. catalog.JobImage is the
+// one resolver internal/infra's imageRequest asks for the deployed job's image,
+// asked here without the project's map, so what it names is the entry the
+// workflow's own reference or the catalog's default gives it. A pin (image_name:) and a workflow's own needs:
+// are both references, which is what F4 and T1 (b) call them: reading only the
+// pin would bake a repository that declares needs: into the entry the map puts
+// it on, an image its own jobs never start.
+//
+// Naming the entry is not the same as baking into it: imagebake.Decide still
+// asks the project's map to put this repository on that entry and to put no
+// other repository there, because the map is the only evidence a build has
+// about any repository but the checkout's own (O3 (b)) — the reference says
+// which image this repository's jobs start, and the map is what a build can
+// read about the rest.
+//
+// A workflow that runs the base image or a shared dependency layer names no
+// entry and is skipped: such a job holds no repository source and a checkout
+// baked for it would be read by nobody. A workflow the rule cannot answer —
+// a pin the catalog does not hold, no default and no covering candidate —
+// contributes nothing, and a bake is not the place to guess: what such a
+// workflow runs is what fugaro validate and the job spec's own refusals
+// settle, before a build is composed at all.
+func bakeReference(cfg *config.Config, cat *config.Catalog, slug string, be catalog.Backend) string {
+	names := map[string]bool{}
+	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
+		sel, err := catalog.JobImage(catalog.ImageRequest{Catalog: cat, Canonical: slug, Workflow: cfg.Workflows[name], Backend: be})
+		if err != nil || sel.Source != catalog.SourceCatalog {
+			continue
+		}
+		names[sel.Entry.Name] = true
+	}
+	if len(names) != 1 {
+		return ""
+	}
+	for name := range names {
+		return name
+	}
+	return ""
+}
+
+// noteBakePlan is the line a build prints about its bake decision: the two
+// things a person cannot read off the Dockerfile are that an entry's image
+// bakes one repository and that every other repository it serves clones at its
+// own job start (O3 reading (b)). Which plans are worth a line is the plan's
+// own answer (imagebake.Plan.Notable), so the rule that decides the bake and
+// the rule that decides what is said about it cannot drift apart.
+func noteBakePlan(cmd *cobra.Command, entry string, p imagebake.Plan) {
+	if !p.Notable {
+		return
+	}
+	if p.Baked == nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "note: the catalog entry %s bakes no checkout: %s\n", pluginwire.Printable(entry), p.Reason)
+		return
+	}
+	dir, err := imagebake.Path(p.Baked.Slug)
+	if err != nil {
+		return // Decide refused this slug, so this cannot happen; a note is not worth a refusal of the build
+	}
+	alone := "no other repository the project maps to it runs it"
+	if len(p.Cloned) > 0 {
+		alone = fmt.Sprintf("the other repositories the project maps to it (%s) run this image too, so their jobs can read this checkout, and they clone their own at job start", strings.Join(p.Cloned, ", "))
+	}
+	// What the line claims is what the image carries and where. That a job of
+	// the repository reads it is not a promise this command has to hedge: IS8's
+	// reader is in main (runner.openBakedCheckout, over runner.BakedDir), so a
+	// job whose image carries a checkout opens the per-slug path instead of
+	// cloning, and the only repository it opens it for is the one the checkout
+	// is of — which is the other half of what the line says about the rest.
+	fmt.Fprintf(cmd.ErrOrStderr(), "note: the catalog entry %s bakes the checkout of %s at %s, so the image carries that repository's source; %s\n",
+		pluginwire.Printable(entry), pluginwire.Printable(p.Baked.Repo), dir, alone)
 }

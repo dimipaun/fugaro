@@ -207,7 +207,7 @@ func TestRunRefusesPlanningOnAnOlderBaseImage(t *testing.T) {
 				"knows the planning: block",
 				"fugaro " + planningSince + " or later",
 				"ghcr.io/dimipaun/fugaro-base:" + c.rel + ", release " + c.rel,
-				"fugaro image refresh --repo acme/other --workflow svc",
+				imageGateRemedy,
 				"; or remove the planning: block from fugaro.yaml",
 			} {
 				if !strings.Contains(err.Error(), want) {
@@ -256,7 +256,7 @@ func TestRunRefusesTheLayersPlanningOnAnOlderBaseImage(t *testing.T) {
 	for _, want := range []string{
 		"the project layer's defaults.planning (read for acme/other)",
 		"knows the project layer's defaults.planning",
-		"fugaro image refresh --repo acme/other --workflow " + config.ImplicitWorkflow,
+		imageGateRemedy,
 		"remove defaults.planning from the project layer",
 	} {
 		if !strings.Contains(err.Error(), want) {
@@ -380,7 +380,7 @@ func TestValidateWarnsWhenTheProjectLayerSetsPlanning(t *testing.T) {
 // make writing the key an operator step, and `fugaro update` the one command the
 // user is told to run may not be two.
 func TestUpdateConvergesFromThePreviousVersionWithPlanningKey(t *testing.T) {
-	r := newConvergeRigYAML(t, v4Node(), refreshYAML+"planning: { decoupling: false }\n")
+	r := newConvergeRigYAML(t, v5Node(), refreshYAML+"planning: { decoupling: false }\n")
 	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
 }
 
@@ -424,7 +424,7 @@ func predatePlanning(t *testing.T, r *convergeRig) {
 // judged the config as the run found it would refuse here and turn writing the
 // key into an operator step, which is the failure this test exists to catch.
 func TestUpdateConvergesFromABaseImageThatPredatesPlanning(t *testing.T) {
-	r := newConvergeRigYAML(t, v4Node(), refreshYAML+"planning: { decoupling: false }\n")
+	r := newConvergeRigYAML(t, v5Node(), refreshYAML+"planning: { decoupling: false }\n")
 	predatePlanning(t, r)
 	if got, want := projectConfigOf(t, r).BaseImages["base"], pinnedRef("base", shiftRelease(t, planningSince, -1)); got != want {
 		t.Fatalf("the installation records the base image %s, want the release before the key, %s: this is not the installation the test is about", got, want)

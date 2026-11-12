@@ -29,9 +29,18 @@ resource "google_project_iam_custom_role" "token_minter" {
 locals {
   people = toset(concat(var.launchers, var.operators))
   admins = toset(concat(var.admins, var.budget_admins))
+  # Everyone who reads the database and the spend history: the launchers, the
+  # operators, the admins (who read both through datastore_viewer) and the
+  # viewers. It is a local of its own and not `people` widened, because the
+  # minter grant below is exactly `people`: a viewer reads the database and
+  # holds no way to mint an identity (roles.md §4).
+  readers = setunion(local.people, toset(var.viewers))
 }
 
 # Launchers and operators mint tokens, granted on the signer account alone.
+# The viewers are deliberately not among them: this is the grant that would
+# let a viewer mint the identity of anyone in the project, which is F44's
+# problem and the reason roles.md §4 forbids it.
 resource "google_service_account_iam_member" "minter" {
   for_each = local.people
 
@@ -42,7 +51,7 @@ resource "google_service_account_iam_member" "minter" {
 
 # ... and read the database (fugaro watch, budget show).
 resource "google_project_iam_member" "viewer" {
-  for_each = local.people
+  for_each = local.readers
 
   project = var.project
   role    = "roles/firebasedatabase.viewer"
@@ -60,10 +69,10 @@ resource "google_project_iam_member" "admin" {
 
 # ... and read the spend history in Firestore (fugaro report). Viewer only:
 # nobody but the history account writes it, and it writes through
-# datastore.user, below. Launchers, operators and admins; no domain or
-# wildcard member can get here (the variables' validation).
+# datastore.user, below. Launchers, operators, admins and viewers; no domain
+# or wildcard member can get here (the variables' validation).
 resource "google_project_iam_member" "datastore_viewer" {
-  for_each = setunion(local.people, local.admins)
+  for_each = setunion(local.readers, local.admins)
 
   project = var.project
   role    = "roles/datastore.viewer"
@@ -103,11 +112,14 @@ resource "google_project_iam_member" "history_firestore" {
 # credentials need a quota project, and a service account's own project does
 # not have the Firestore API enabled), which requires
 # serviceusage.services.use on it. serviceUsageConsumer is that one
-# permission set, held by the history account and by the people who get
-# datastore.viewer above, on this project only; no domain or wildcard member
-# can get here (the variables' validation).
+# permission set, held by the history account and by every principal
+# datastore_viewer above names, viewers included: the spend history is one of
+# the reads a viewer is for (roles.md §4), and a viewer without it is a
+# datastore.viewer every Firestore call refuses. The two sets are one set by
+# construction and the Firebase root test asserts they stay equal; no domain
+# or wildcard member can get here (the variables' validation).
 resource "google_project_iam_member" "usage_consumer" {
-  for_each = setunion(local.people, local.admins)
+  for_each = setunion(local.readers, local.admins)
 
   project = var.project
   role    = "roles/serviceusage.serviceUsageConsumer"

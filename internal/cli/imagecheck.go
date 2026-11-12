@@ -94,6 +94,9 @@ func newImageCheckCmd() *cobra.Command {
 				return runImageCheckCatalogJob(cmd, o)
 			}
 			if o.job {
+				if repoImagesOff {
+					return repoImagesDisabled(cmd.OutOrStdout())
+				}
 				if err := refuseJobSubmission(o, "the repository's"); err != nil {
 					return err
 				}

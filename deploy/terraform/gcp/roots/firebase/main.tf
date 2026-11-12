@@ -46,6 +46,7 @@ module "firebase" {
   skip_apis           = var.skip_apis
   launchers           = var.launchers
   operators           = var.operators
+  viewers             = var.viewers
   admins              = var.admins
   budget_admins       = var.budget_admins
   history_account     = var.history_account

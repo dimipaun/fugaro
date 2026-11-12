@@ -149,6 +149,17 @@ func (c *Config) Shared() *Config {
 	s.SecretExpires = nil
 	s.Build.ServiceAccount = ""
 	s.BaseBranch = ""
+	// BackendName is dropped for BaseBranch's reason, and one of its own: it
+	// is a whole backend for every machine that reads the file, and the
+	// checks that keep that safe are `fugaro doctor`'s, which reads the
+	// selected config on the machine running it and is what the enable task
+	// puts in front of the name -- not something a launch consults. A
+	// launcher who could write `backend: cloud-batch` into the runs bucket
+	// would therefore move every teammate who has no local config onto VMs
+	// with a `batch:` block they wrote, while the machine that ran the
+	// provisioning and the doctor reading never sees the file at all
+	// (docs/design/shared-config.md §4; the reader refuses the key besides).
+	s.BackendName = ""
 	// ReviewFloor is the owner's policy and travels the way BaseBranch does,
 	// through `fugaro project policy publish` into the policy node. It is
 	// dropped here for a sharper reason than the keys above it: the floor is
@@ -214,6 +225,14 @@ func (c *Config) Shared() *Config {
 	s.DefaultClaudeAccount = ""
 	s.ClaudeAccountStages = nil
 	s.ClaudeAccountAuto = false
+	// The aliases the choice keys may hold are dropped with them and for their
+	// reason, one step nearer the credential: a published alias would name an
+	// account in a file any launcher can write, which is the way around the
+	// account's own allow_data_to these keys are local-only to close
+	// (docs/account-aliases, D2090). A launcher on another machine reads no
+	// alias, exactly as it reads no default_claude_account today, and
+	// ParseShared refuses the key besides.
+	s.ClaudeAccountAliases = nil
 	// The subscription switch goes with them, for their reason and one of its
 	// own: it is the owner's own act about the terms his subscriptions are held
 	// under (D1622), and a launcher who could write it into the shared file
@@ -284,7 +303,6 @@ func MergeShared(published, local *Config) *Config {
 	}
 	keep(&out.Region, published.Region)
 	keep(&out.RegistryHost, published.RegistryHost)
-	keep(&out.BackendName, published.BackendName)
 	keep(&out.LogView, published.LogView)
 	keep(&out.ImageSource, published.ImageSource)
 	keep(&out.SchedulerRegion, published.SchedulerRegion)

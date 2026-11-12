@@ -41,55 +41,88 @@ type RemoteMints struct {
 
 // Mint sends one request to the minter and answers what it minted.
 func (r RemoteMints) Mint(ctx context.Context, req Request) (Minted, error) {
-	if strings.TrimSpace(r.URL) == "" {
-		return Minted{}, errors.New("the intake has no minter URL, and this half cannot sign")
-	}
-	if r.Tokens == nil {
-		return Minted{}, errors.New("the intake has no source of ID tokens, so the minter's own check would refuse it")
-	}
-	client := r.Client
-	if client == nil {
-		client = http.DefaultClient
-	}
-	body, err := json.Marshal(req)
-	if err != nil {
-		return Minted{}, fmt.Errorf("the mint request: %w", err)
-	}
-	token, err := r.Tokens.IDToken(ctx, r.URL)
-	if err != nil {
-		return Minted{}, fmt.Errorf("the ID token for the minter: %w", err)
-	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimSuffix(r.URL, "/")+RouteMint, bytes.NewReader(body))
-	if err != nil {
-		return Minted{}, fmt.Errorf("the call to the minter: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+token)
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return Minted{}, fmt.Errorf("the call to the minter: %w", err)
-	}
-	defer resp.Body.Close()
-	answer, err := io.ReadAll(io.LimitReader(resp.Body, maxRequestBytes))
-	if err != nil {
-		return Minted{}, fmt.Errorf("the minter's answer: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		// The minter's refusal is its own text and it names no claim: what it
-		// refused is a claim set this service built, so its words are this
-		// service's to read and nobody else's.
-		return Minted{}, fmt.Errorf("the minter refused the request with %d: %s", resp.StatusCode, strings.TrimSpace(string(answer)))
-	}
-	dec := json.NewDecoder(bytes.NewReader(answer))
-	dec.DisallowUnknownFields()
 	var minted Minted
-	if err := dec.Decode(&minted); err != nil {
-		return Minted{}, fmt.Errorf("the minter's answer is not one this service reads: %w", err)
+	if err := r.call(ctx, RouteMint, req, &minted); err != nil {
+		return Minted{}, err
 	}
 	if minted.Key == "" || minted.Record.KeyID == "" {
 		return Minted{}, errors.New("the minter answered no key")
 	}
 	return minted, nil
+}
+
+// MintV1 sends one v1 request to the minter and answers what it minted, with the
+// renewal secret beside the key.
+//
+// The secret crosses this call and nowhere else: the two halves are one
+// deployment's pair, the call is the platform-authenticated one (Check 174), and
+// the secret is the second line of the bundle an issue path shows once and never
+// stores (D2135). An answer without one is refused here rather than passed on,
+// because a key whose secret the intake never saw is a key nobody can renew.
+func (r RemoteMints) MintV1(ctx context.Context, req RequestV1) (MintedV1, error) {
+	var minted MintedV1
+	if err := r.call(ctx, RouteMintV1, req, &minted); err != nil {
+		return MintedV1{}, err
+	}
+	if minted.Key == "" || minted.Record.KeyID == "" {
+		return MintedV1{}, errors.New("the minter answered no key")
+	}
+	if minted.RenewalSecret == "" {
+		return MintedV1{}, errors.New("the minter answered no renewal secret, and a key that cannot renew is not one this service issues (D2135)")
+	}
+	return minted, nil
+}
+
+// call is the one call both mints make: the request as JSON, the ID token the
+// minter's platform check reads, and an answer decoded strictly. The two routes
+// differ in the shape of the values and in nothing else, and a second copy of
+// this would be a second place for the token to be forgotten.
+func (r RemoteMints) call(ctx context.Context, route string, request, answer any) error {
+	if strings.TrimSpace(r.URL) == "" {
+		return errors.New("the intake has no minter URL, and this half cannot sign")
+	}
+	if r.Tokens == nil {
+		return errors.New("the intake has no source of ID tokens, so the minter's own check would refuse it")
+	}
+	client := r.Client
+	if client == nil {
+		client = http.DefaultClient
+	}
+	body, err := json.Marshal(request)
+	if err != nil {
+		return fmt.Errorf("the mint request: %w", err)
+	}
+	token, err := r.Tokens.IDToken(ctx, r.URL)
+	if err != nil {
+		return fmt.Errorf("the ID token for the minter: %w", err)
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimSuffix(r.URL, "/")+route, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("the call to the minter: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+token)
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("the call to the minter: %w", err)
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxRequestBytes))
+	if err != nil {
+		return fmt.Errorf("the minter's answer: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		// The minter's refusal is its own text and it names no claim: what it
+		// refused is a claim set this service built, so its words are this
+		// service's to read and nobody else's.
+		return fmt.Errorf("the minter refused the request with %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(answer); err != nil {
+		return fmt.Errorf("the minter's answer is not one this service reads: %w", err)
+	}
+	return nil
 }
 
 // MetadataTokens reads the ID token from the platform's metadata server, which

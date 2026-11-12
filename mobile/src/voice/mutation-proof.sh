@@ -109,6 +109,10 @@ require_clean() { # file
   fi
 }
 require_clean "$F"
+# Two of section 4b's mutations below name the session controller, which is
+# VS1.1's file and another module's suite; `git checkout` restores it the same
+# way, so it is held to the same rule.
+require_clean mobile/src/voice-session/session.js
 require_clean mobile/src/voice/dialogue.js
 require_clean mobile/src/voice/interrupt.js
 require_clean mobile/src/voice/speaker.js
@@ -315,6 +319,41 @@ run "the OS's refusal of the microphone is recorded" \
   "  pipeline.on('unavailable', (event) => {
     microphone = Object.freeze({ ok: false, code: event.code });
   });" ""
+
+# 4b. The queue's hold, which is VS1.1's session speaking (screen.js), and the
+#     session that sets it (session.js). A paused session is "playback paused"
+#     (§4) and §6.3's unsafe route "must not continue speaking through the
+#     loudspeaker" (check 116: "nothing comes out of the loudspeaker") -- and
+#     both are reached *by* the stop whose cancel is an `utterance` event, which
+#     is a boundary the queue would drain on. The last two prove the session's
+#     half, in its own suite: `PAUSED` alone and `OVER` alone are each one of
+#     the two facts, and either one dropped speaks an update the plan forbids.
+#
+#     NOT here, deliberately, and in the same spirit as the note above: the
+#     `was &&` in `setHeld` (the drain happens on the way *out* of a hold, and a
+#     session re-states "not held" on every state change). Removing it survives
+#     the suite, and the harness says so rather than claiming a kill. It cannot
+#     be killed from P3.5's surface: a queue that is not held drains at the
+#     offer that filled it or at the boundary that freed it, so no sequence
+#     through `offer`, the switch, the digest, the presence or the pipeline
+#     leaves an update queued, unheld and drainable for a repeated `setHeld` to
+#     reach. What it defends is the session's per-commit call, which P3.5's own
+#     suite does not drive.
+run "the queue's hold is what keeps a paused session quiet" \
+  "    if (held || highest === null) return;" \
+  "    if (highest === null) return;"
+run "letting go of the hold is a boundary" \
+  "      if (was && !held) drain();" ""
+run "the hold is a boolean" \
+  "      if (typeof value !== 'boolean') return refuse(SCREEN_CODES.BAD_HELD, 'held');" ""
+run "the session holds the queue through §4's pauses" \
+  "    screen.setHeld(PAUSED.includes(current.state) || OVER.includes(current.state));" \
+  "    screen.setHeld(OVER.includes(current.state));" \
+  mobile/src/voice-session/session.js src/voice-session/*.test.js
+run "the session holds the queue when it is over" \
+  "    screen.setHeld(PAUSED.includes(current.state) || OVER.includes(current.state));" \
+  "    screen.setHeld(PAUSED.includes(current.state));" \
+  mobile/src/voice-session/session.js src/voice-session/*.test.js
 
 # 5. The offline refusal: the plan's own sentence, and the one state it names.
 #    The branch asks the client's licence question first (S6.3; the review's

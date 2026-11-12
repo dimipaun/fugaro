@@ -42,6 +42,12 @@ variable "operators" {
   nullable = false
 }
 
+variable "viewers" {
+  type     = list(string)
+  default  = []
+  nullable = false
+}
+
 variable "admins" {
   type     = list(string)
   default  = []

@@ -52,7 +52,7 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, posix } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { FuseState, FuseV1Options, FuseVersion } from '@electron/fuses'
@@ -643,7 +643,7 @@ describe('the packaging configuration the fuses belong to', () => {
       for (const match of text.matchAll(/^(import|export)\s([^'"]*?)from\s+'(\.[^']+)'|^import\s+'(\.[^']+)'/gm)) {
         if (/^type\s/.test(match[2] ?? '')) continue
         const specifier = match[3] ?? match[4] ?? ''
-        visit(`${join(dirname(source), specifier).replace(/\.js$/, '')}.ts`)
+        visit(`${posix.join(posix.dirname(source), specifier).replace(/\.js$/, '')}.ts`)
       }
     }
     visit('src/main/index.ts')

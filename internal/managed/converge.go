@@ -87,13 +87,24 @@ type Converge struct {
 	// admitted is the verdict itself, and false is its zero value: every
 	// Converge that ConvergeAdmitted did not build refuses.
 	admitted bool
-	// warnings are the gate's content findings (D1545): the rules that fired
-	// about WHAT the document contains, which the gate recorded and warned
-	// about rather than stopping. They are non-empty only on a Converge that
-	// ConvergeWarned built, and a non-empty list is what lets such a Converge
-	// proceed without being admitted — the step is applied with the finding
-	// recorded, not because the document passed. Like rules, they are bounded
-	// where they are rendered, since a rule's words can quote a plan.
+	// refused is the other verdict, and it is a field of its own because a
+	// REFUSED document can carry warnings too (ConvergeRefusedWithWarnings):
+	// a plan the integrity rules refused may also have raised content findings,
+	// and the record of that refusal names both. Without it "the warnings are
+	// non-empty" would be the whole of the warned verdict, and a refusal that
+	// carried findings would read as a step that was applied with them — which
+	// is the one thing a record may not say about a document nothing applied.
+	refused bool
+	// warnings are the gate's findings the step was applied with (D1545): the
+	// rules that fired about WHAT the document contains, which the gate records
+	// and warns about rather than stopping. On a Converge that ConvergeWarned
+	// built they are what lets it proceed without being admitted — the step is
+	// applied with the finding recorded, not because the document passed — and
+	// on one ConvergeRefusedWithWarnings built they are carried by a verdict
+	// that refuses, so the record of the refusal holds what the gate saw. They
+	// are empty on an admitted or a plainly refused Converge. Like rules, they
+	// are bounded where they are rendered, since a rule's words can quote a
+	// plan.
 	warnings []string
 }
 
@@ -108,12 +119,31 @@ func ConvergeAdmitted(doc []byte, class initflow.ConfirmClass, rules []string) C
 // ConvergeRefused is the other verdict a document can reach: at least one rule
 // refused it, and the caller passes the rules that did.
 //
+// A refused document that ALSO raised content findings is
+// ConvergeRefusedWithWarnings: the two are one verdict, and the difference is
+// only what the record of it holds.
+//
 // A document that could not be read at all is not one of these. It is an error
 // before this type exists (plan.go's own rule for a plan terraform could not
 // read, which is what keeps "no verdict" from ever reading as "admitted"), and
 // a command in the set fails on it rather than writing.
 func ConvergeRefused(doc []byte, class initflow.ConfirmClass, rules []string) Converge {
-	return Converge{digest: convergeDigest(doc), class: class, rules: slices.Clone(rules)}
+	return Converge{digest: convergeDigest(doc), class: class, rules: slices.Clone(rules), refused: true}
+}
+
+// ConvergeRefusedWithWarnings is ConvergeRefused for the document the integrity
+// rules refused while the content ones were also raised: the caller passes the
+// rules that refused AND the findings the gate recorded beside them, and the
+// record of the refusal holds both (audit.go). It exists because a record that
+// named only the refusals would drop what the gate saw about the rest of the
+// plan — the findings an owner reads the record for, and the half the acting
+// session is not told about, since a refusal's own sentence lists what refused.
+//
+// It refuses exactly as ConvergeRefused does: the findings are carried and not
+// acted on, and Warned is false for it — a document the gate refused is not a
+// step that was applied with findings (Converge.refused).
+func ConvergeRefusedWithWarnings(doc []byte, class initflow.ConfirmClass, rules, warnings []string) Converge {
+	return Converge{digest: convergeDigest(doc), class: class, rules: slices.Clone(rules), warnings: slices.Clone(warnings), refused: true}
 }
 
 // ConvergeWarned is D1545's third answer: the gate recorded content findings
@@ -152,10 +182,13 @@ var ErrNotConverged = errors.New("the managed gate did not admit this step")
 const NotConverged = "a managed project applies the steps this gate judged and no others, so nothing is written here: no person is being asked, and no flag, variable or mark reaches past the gate (D1012)"
 
 // Refuse is the gate's whole behaviour: nil only when a verdict admitted the
-// document OR recorded warnings about it (D1545, ConvergeWarned) AND the
-// step's class is one a plan gate judges. It is the FIRST thing a command in
-// the set reads — before its first write, and before any argument of a write is
-// built — so a Converge that was never built refuses however it is called.
+// document OR recorded warnings about it without refusing it (D1545,
+// ConvergeWarned) AND the step's class is one a plan gate judges. It is the
+// FIRST thing a command in the set reads — before its first write, and before
+// any argument of a write is built — so a Converge that was never built refuses
+// however it is called, and so does a refused one that happens to carry
+// findings (ConvergeRefusedWithWarnings): what a verdict holds is not what it
+// decided.
 //
 // The two ways to a refusal are one predicate on purpose: a caller cannot ask
 // "was the plan admitted" and act on that answer, because the answer the class
@@ -164,7 +197,7 @@ const NotConverged = "a managed project applies the steps this gate judged and n
 // step is the same predicate's other half: it is not admitted, but it is not
 // refused either, and the warnings it holds are what a caller reports.
 func (c Converge) Refuse() error {
-	if (c.admitted || len(c.warnings) > 0) && c.class == initflow.YesOrTyped {
+	if !c.refused && (c.admitted || len(c.warnings) > 0) && c.class == initflow.YesOrTyped {
 		return nil
 	}
 	return fmt.Errorf("%w: %s — %s", ErrNotConverged, NotConverged, c.refusedBy())
@@ -181,15 +214,18 @@ func (c Converge) Refuse() error {
 // sentence would be this program printing it to the session it is refusing.
 func (c Converge) refusedBy() string {
 	why := make([]string, 0, 2)
-	if !c.admitted {
-		switch {
-		case len(c.warnings) > 0:
-			why = append(why, "nothing admitted it, and the gate recorded "+safetext.FieldListLine(c.warnings)+" as a warning")
-		case len(c.rules) == 0:
-			why = append(why, "no rule of this step's document admitted it")
-		default:
-			why = append(why, "refused by "+safetext.FieldListLine(c.rules))
-		}
+	switch {
+	case c.refused && len(c.rules) == 0:
+		why = append(why, "no rule of this step's document admitted it")
+	case c.refused:
+		// The rules that refused, whether or not findings were raised beside
+		// them: what refused this document is what its reader acts on, and the
+		// findings are in the record the refusal leaves.
+		why = append(why, "refused by "+safetext.FieldListLine(c.rules))
+	case !c.admitted && len(c.warnings) > 0:
+		why = append(why, "nothing admitted it, and the gate recorded "+safetext.FieldListLine(c.warnings)+" as a warning")
+	case !c.admitted:
+		why = append(why, "no rule of this step's document admitted it")
 	}
 	if c.class == initflow.Typed {
 		why = append(why, "the step's confirmation class is Typed, which no plan gate admits (D1026)")
@@ -210,19 +246,23 @@ func (c Converge) Digest() string { return c.digest }
 // the refusal that printed them printed what the gate held.
 func (c Converge) Rules() []string { return slices.Clone(c.rules) }
 
-// Warnings are the content findings the gate recorded and did not refuse on
-// (D1545), as a copy: empty on an admitted or refused Converge, and non-empty
-// only on one ConvergeWarned built. A caller reports them — the audit record
-// holds them (audit.go) and the apply prints them — so a step that proceeded
-// leaves a trail of what left the cover tables rather than passing silently.
+// Warnings are the findings the gate recorded and did not refuse on (D1545),
+// as a copy: empty on an admitted or a plainly refused Converge, non-empty on
+// one ConvergeWarned built, and non-empty on a ConvergeRefusedWithWarnings
+// too — a refusal carries what the gate saw beside the rules that stopped it.
+// A caller reports them: the audit record holds them (audit.go), and the
+// command that applied the step prints them, so a step that proceeded leaves a
+// trail of what left the cover tables rather than passing silently.
 func (c Converge) Warnings() []string { return slices.Clone(c.warnings) }
 
-// Warned reports whether the gate recorded content findings about this
-// document instead of admitting it (D1545): false on an admitted Converge,
-// whose rules all passed, and true on a step that proceeds with warnings. It
-// is the fact AuditRecordFor reads to write the "warned" verdict, so it is the
-// one place a record and a command agree that a step was applied with findings.
-func (c Converge) Warned() bool { return len(c.warnings) > 0 }
+// Warned reports whether the gate recorded findings about this document
+// instead of admitting it (D1545): false on an admitted Converge, whose rules
+// all passed, and false on a refused one, which nothing applied — a refusal
+// that carries findings was not applied with them — so it is true only on a
+// step that proceeds with warnings. It is the fact AuditRecordFor reads to
+// write the "warned" verdict, so it is the one place a record and a command
+// agree that a step was applied with findings.
+func (c Converge) Warned() bool { return !c.refused && len(c.warnings) > 0 }
 
 // convergeDigest is the document's bytes, hex-encoded sha256: the digest the
 // gate carries of the exact bytes it read, and the one D1022's record is

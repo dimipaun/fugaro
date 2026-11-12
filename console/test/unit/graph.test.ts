@@ -43,7 +43,7 @@ import { GRAPH_DOCUMENT_VERSION, decodeGraphDocument } from '../../src/shared/sc
 import type { GraphView, PlanStatusView, RunView } from '../../src/shared/schema'
 import { GRAPH_ROW_GAP, nodeKey } from '../../src/renderer/graph/layout'
 import type { WorkerLike } from '../../src/renderer/graph/layout-client'
-import { GRAPH_MAX_TITLE_CODE_POINTS, GRAPH_SCOPE_NO_RELEASE, STATE_WORDS, buildGraphModel } from '../../src/renderer/graph/model'
+import { GRAPH_MAX_TITLE_CODE_POINTS, GRAPH_NODE_WIDTH, GRAPH_SCOPE_NO_RELEASE, STATE_WORDS, buildGraphModel } from '../../src/renderer/graph/model'
 import { STAMP_LEAD, stampOf } from '../../src/renderer/section'
 import { WRITE_UNAVAILABLE } from '../../src/renderer/writes'
 import { LIVE_PR_NO_LINK_REASON } from '../../src/renderer/screens/live'
@@ -58,6 +58,7 @@ import {
   GRAPH_LAYER_OPTION,
   GRAPH_CRITICAL_PATH,
   GRAPH_DEPENDS_ON,
+  GRAPH_MIN_SCALE,
   GRAPH_NO_CANVAS,
   GRAPH_NO_PLANS,
   GRAPH_NO_RUN,
@@ -1540,6 +1541,28 @@ function inspectorIn(root: FakeNode): FakeNode | null {
   return classedIn(root, 'graph-inspector')[0] ?? null
 }
 
+/**
+ * themeRule is one stylesheet rule's declarations, by the rule's exact selector.
+ *
+ * The picture's scale floor is half a drawing and half a rule -- the canvas
+ * carries the size and the stylesheet decides what its box does with it -- so the
+ * cases about it read the declarations a browser would apply, with the comments
+ * taken out first: a note about a declaration is not a declaration.
+ */
+function themeRule(sheet: string, selector: string): Readonly<Record<string, string>> {
+  const css = readFileSync(join('src', 'renderer', 'theme', sheet), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+  const at = css.indexOf(`${selector} {`)
+  if (at === -1) throw new Error(`${sheet} carries no ${selector} rule`)
+  const open = css.indexOf('{', at) + 1
+  const found: Record<string, string> = {}
+  for (const declaration of css.slice(open, css.indexOf('}', open)).split(';')) {
+    const colon = declaration.indexOf(':')
+    if (colon === -1) continue
+    found[declaration.slice(0, colon).trim()] = declaration.slice(colon + 1).trim()
+  }
+  return found
+}
+
 /** inspectorOf is the panel of one selected task, over a fresh screen: the case
  * that reads a panel says as little as it can about how it got there. */
 async function inspectorOf(key: string): Promise<FakeNode> {
@@ -2272,5 +2295,110 @@ describe('the graph screen and its scope', () => {
     // time the console made up, in the one cell a reader trusts to be a
     // document's.
     expect(classedIn(sources[1] ?? drawn, 'graph-source-asof')).toHaveLength(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The scale the picture is drawn at (slice G, D735)
+// ---------------------------------------------------------------------------
+
+describe('the graph screen and the scale it is drawn at', () => {
+  it('graph: fits the width above the minimum scale', async () => {
+    // **The picture has a scale floor, and the panel's width is what reaches
+    // it.** Above the floor nothing changes: the canvas is the panel's own
+    // width, which is `width: auto` with `min-width: 100%` and is what the
+    // element did before the floor existed. The floor itself is the canvas's
+    // `width`/`height` geometry -- the whole picture at `GRAPH_MIN_SCALE` --
+    // written as attributes because `style-src 'self'` backs no inline style.
+    const screen = elkScreen()
+    await screen.load(DOCUMENT, RUNS)
+    const root = drawingOf(screen)
+    const frame = viewBoxIn(root)
+    const canvas = classedIn(root, 'graph-canvas')[0]
+    if (canvas === undefined) throw new Error('the drawing put no canvas up')
+
+    // The floor is the **whole picture**, bands and release boxes included, and
+    // the frame the screen itself computed is that picture: a floor taken from
+    // one level's width would leave the columns that made the picture wide drawn
+    // under the bound it was meant to keep.
+    expect(canvas.getAttribute('width')).toBe(String(frame.width * GRAPH_MIN_SCALE))
+    expect(canvas.getAttribute('height')).toBe(String(frame.height * GRAPH_MIN_SCALE))
+
+    // The number is a legibility floor and not a taste: a card's title is drawn
+    // at the theme's own `--text-sm`, and at the floor it is still at least
+    // 9.75 px -- a 260 px card drawn 195 px wide. A smaller floor is a title
+    // wrapped over three lines that a reader reads as a grey block.
+    const title = Number.parseFloat(themeRule('flight-deck.css', ':root')['--text-sm'] ?? '')
+    expect(Number.isFinite(title), 'the theme declares no --text-sm, so the floor below is unread').toBe(true)
+    expect(GRAPH_MIN_SCALE).toBeLessThan(1)
+    expect(GRAPH_NODE_WIDTH * GRAPH_MIN_SCALE).toBe(195)
+    expect(title * GRAPH_MIN_SCALE).toBeGreaterThanOrEqual(9)
+
+    // And the canvas fills the panel whenever there is room: `min-width: 100%`
+    // is what makes the floor a floor rather than a size, and `height: auto`
+    // keeps the picture's ratio while it stretches.
+    const rule = themeRule('flight-deck.css', 'section.graph svg.graph-canvas')
+    expect(rule['width']).toBe('auto')
+    expect(rule['min-width']).toBe('100%')
+    expect(rule['height']).toBe('auto')
+  })
+
+  it('graph: scrolls horizontally below it', async () => {
+    // Below the floor the canvas keeps its geometry and the pane around it
+    // scrolls: a picture read sideways is still a picture, where a picture
+    // shrunk to the panel is one nobody can read. `width: 100%` -- the rule the
+    // screen carried before the floor existed -- is exactly the value that would
+    // fit the width whatever the picture's own size, so the canvas must not
+    // carry it any more.
+    const screen = elkScreen()
+    await screen.load(DOCUMENT, RUNS)
+    const root = drawingOf(screen)
+    const frame = viewBoxIn(root)
+    const canvas = classedIn(root, 'graph-canvas')[0]
+    if (canvas === undefined) throw new Error('the drawing put no canvas up')
+
+    const pane = classedIn(root, 'graph-canvas-pane')[0]
+    if (pane === undefined) throw new Error('the canvas was drawn with no pane to scroll it in')
+    expect(pane.children.map((each) => each.getAttribute('class'))).toEqual(['graph-canvas'])
+    // The stage still holds the drawing: the pane is between the two, and the
+    // inspector is still the stage's own second column.
+    const stage = classedIn(root, 'graph-stage')[0]
+    expect(stage?.children.map((each) => each.getAttribute('class'))).toEqual(['graph-canvas-pane'])
+
+    expect(themeRule('flight-deck.css', 'div.graph-canvas-pane')['overflow-x']).toBe('auto')
+    const rule = themeRule('flight-deck.css', 'section.graph svg.graph-canvas')
+    expect(rule['width'], 'the canvas still fits the width whatever the picture’s size').not.toBe('100%')
+    // The floor is below the picture's own width, or there would be no range in
+    // which the pane has anything to scroll.
+    expect(Number(canvas.getAttribute('width'))).toBeLessThan(frame.width)
+    expect(Number(canvas.getAttribute('height'))).toBeLessThan(frame.height)
+
+    // **The pane is the picture's and no one else's.** The list is not a picture
+    // and has no width of its own to keep, so a list drawing grows no scroll
+    // area it would never use.
+    const { screen: listing } = screenWith()
+    await listing.load(DOCUMENT, RUNS)
+    const drawn = listing.change({ view: 'list' })
+    if (drawn === null) throw new Error('no drawing')
+    expect(classedIn(mounted(drawn), 'graph-canvas-pane')).toHaveLength(0)
+  })
+
+  it('layout: no wrapping option', async () => {
+    // **The floor is the whole of D735's first half**: the picture is never
+    // folded to fit, it is scrolled. `elk.layered.wrapping` is the option that
+    // would fold it -- and folding a graph whose layers run left to right widens
+    // it across the axis a reader moves along, which is the wrong shape for the
+    // panel as well as a new cache key and a new set of positions. So no ask
+    // this screen makes carries a wrapping key at all.
+    const { screen, worker } = screenWith()
+    await screen.load(DOCUMENT, RUNS)
+    const asks = worker.sent.filter((each) => each['cmd'] === 'layout')
+    expect(asks.length, 'the picture was drawn with no layout to read the options off').toBeGreaterThan(0)
+    for (const ask of asks) {
+      const options = (ask['layoutOptions'] ?? {}) as Readonly<Record<string, string>>
+      expect(Object.keys(options).filter((each) => each.includes('wrapping')), 'the engine was asked to fold the picture').toEqual([])
+      expect(options['elk.algorithm']).toBe('layered')
+      expect(options['elk.direction']).toBe('RIGHT')
+    }
   })
 })
