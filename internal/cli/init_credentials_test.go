@@ -220,6 +220,11 @@ func credentialsOutputs(t *testing.T, r *imagesRig) {
 	t.Helper()
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
 		"credentials_service": credentialsServiceOutput(),
+		// The second service the same module publishes, and the same rule
+		// applies to it: a run whose tfvars carry the intake and whose outputs
+		// name none is the half-carried state this fixture must not model
+		// (fillCredentialsAudience refuses it).
+		"intake": intakeServiceOutput(),
 	})}
 	r.save(t)
 }
@@ -228,6 +233,19 @@ func credentialsOutputs(t *testing.T, r *imagesRig) {
 // the shape Cloud Run assigns (the service's name, the project number, the
 // region), which is the audience its callers' ID tokens are minted for.
 const credentialsServiceURL = "https://fugaro-credentials-123456789012.us-east5.run.app"
+
+// intakeServiceURL is the same shape for the installation's other Cloud Run
+// service (DS2.2, DS4.1), and a URL of its own: the two services are two
+// audiences, and a caller's ID token is minted for the one it calls.
+const intakeServiceURL = "https://fugaro-intake-123456789012.us-east5.run.app"
+
+// intakeServiceOutput is the secrets intake as the installation root's outputs
+// carry it (the installation root's outputs.tf): credentialsServiceOutput's
+// three members for the second service, which is what the audience fill reads
+// back and what `fugaro secrets user set` derives the intake's URL from.
+func intakeServiceOutput() map[string]any {
+	return map[string]any{"name": infra.IntakeServiceName, "region": "us-east5", "url": intakeServiceURL}
+}
 
 // TestUpdateSetsCredentialsServiceOnEveryInstallation is the RED STEP of this
 // task. On the tree before it, an installation whose tfvars carried no

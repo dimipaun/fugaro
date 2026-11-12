@@ -254,6 +254,13 @@ func outputsJSONWith(t *testing.T, over map[string]any) string {
 		"operators":                []string{},
 		"log_view":                 initLogView,
 		"registry_cleanup_dry_run": true,
+		// The installation's two Cloud Run services, as this release's module
+		// publishes them: a run whose tfvars carry either block and whose
+		// outputs name none is the half-carried state the audience fill
+		// refuses, and the rigs that seed one of the blocks have no other
+		// document to read the URL back from.
+		"credentials_service": credentialsServiceOutput(),
+		"intake":              intakeServiceOutput(),
 	}
 	maps.Copy(vals, over)
 	out := map[string]any{}
