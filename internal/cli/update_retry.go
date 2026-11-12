@@ -76,7 +76,7 @@ var updateRetryBucket = func(ctx context.Context, o cloudOptions, p retryProject
 	if err != nil {
 		return nil, err
 	}
-	return blobx.Open(ctx, url)
+	return openRecordBucket(ctx, url)
 }
 
 // retryBucketURL is the bucket the offer reads, from the config the run

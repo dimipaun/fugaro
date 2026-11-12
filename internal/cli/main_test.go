@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -144,18 +145,38 @@ func TestMain(m *testing.M) {
 	// while their configs carry fake endpoints, so they turn the skip off and
 	// the tests of the skip itself turn it on.
 	skipGSOnFakeEndpoints = false
+	// Every read of the runs bucket goes through openRecordBucket, which is
+	// where a rig whose config computes a gs:// runs bucket URL — most of them
+	// — ends up the first time anything resolves a project layer or reads the
+	// installation's record: the tests turn the fake-endpoint skip off above,
+	// so nothing but this stops the open. Opening does no network I/O of its
+	// own, but the read behind it retries inside the storage client with no
+	// bound, and a whole-package run only ever got away with it because a test
+	// earlier in the package had left a failing opener behind — in a subset
+	// that test is in another shard, and thirteen tests in one shard sat in the
+	// retry instead. A gs:// URL is answered with the error a failed open would
+	// give (the layer stage skips with it, the update offer prints nothing), so
+	// what a test sees stays what it saw; a test that means to read a bucket
+	// gives its rig a bucket_url: file:// fixture or replaces this var itself.
+	recordOpen := openRecordBucket
+	openRecordBucket = func(ctx context.Context, url string) (*blobx.Bucket, error) {
+		if strings.HasPrefix(url, "gs://") {
+			return nil, errors.New("fugaro: test tried to open a real gs:// runs bucket: " + url + "; use a bucket_url: file:// fixture or override openRecordBucket")
+		}
+		return recordOpen(ctx, url)
+	}
 	// Neither shipped gate needs a seam any more: managedDeployerShipped is
 	// true as of 0.10.0 and batchProvisionShipped as of 0.9.5, so the managed
 	// paths and the Batch provisioning run as they ship, with nothing opened
 	// for the tests.
-	// findLayer's bucket has no seam override redirecting gs:// elsewhere
-	// the way sharedBucketOpener does above: a rig whose local config
-	// computes a gs:// runs bucket URL (most do; only bucket_url: file://
-	// fixtures don't) would otherwise have it opened for real the first
-	// time anything resolves a project layer. A test that means to
-	// exercise a layer already uses a file:// bucket_url or overrides this
-	// var itself; anything else panics loudly instead of quietly reaching
-	// storage.googleapis.com.
+	// findLayer's bucket is the one read that does not go through that var,
+	// and it has no override redirecting gs:// elsewhere the way
+	// sharedBucketOpener does above: a rig whose local config computes a
+	// gs:// runs bucket URL, which most do, would otherwise have it opened
+	// for real the first time anything resolves a project layer. A test that
+	// means to exercise a layer already uses a file:// bucket_url or
+	// overrides this var itself; anything else panics loudly instead of
+	// quietly reaching storage.googleapis.com.
 	layerBucketOpener = func(ctx context.Context, url string) (*blobx.Bucket, error) {
 		if strings.HasPrefix(url, "gs://") {
 			panic("fugaro: test tried to open a real gs:// project layer bucket: " + url + "; use a bucket_url: file:// fixture or override layerBucketOpener")

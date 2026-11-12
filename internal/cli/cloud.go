@@ -88,8 +88,10 @@ type cloudEnv struct {
 	stageAccountNote bool
 }
 
-// openRecordBucket opens the bucket build records are read from. Tests
-// replace it.
+// openRecordBucket opens a runs-bucket URL — the bucket build records are
+// read from, and the shared store the update offer reads, which is the same
+// bucket. Tests replace it, so it is also the one seam every read of one has
+// to go through for the suite to stay off Google.
 var openRecordBucket = blobx.Open
 
 // recordBucket is the bucket ls, image status and the local image check
