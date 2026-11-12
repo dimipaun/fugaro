@@ -13,8 +13,7 @@ Terraform is written against.
 The check is `scripts/live-checks/check510.sh` (its sibling test is
 `scripts/live-checks/check510_test.sh`, which drives it against fake tools only and never a real
 project). The register's section is `docs/gcp-live-checklist.md`, "Check 510", and that is where the
-block you paste back is recorded — its row still reads NOT RUN, because the block it records is the one
-the re-run prints. What the check settles is in the plan
+block you paste back is recorded — its row reads RUN 2026-11-12 and carries the re-run's block. What the check settles is in the plan
 ([secrets-brokering/dynamic-delivery/implementation-plan.md](implementation-plan.md), its DS0.2 and
 DS0.3) and in the check's own header — which also carries what it creates, what it costs and what its
 restore deletes. Read the header before you start; this file is the commands.
