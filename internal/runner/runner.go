@@ -2986,7 +2986,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 	for k, v := range gitops.IdentityFor(r.identity) {
 		set[k] = v
 	}
-	if r.follow == nil && !r.review && !r.artifact && !r.shadow {
+	if r.follow == nil && !r.review && !r.artifact && !r.evaluate && !r.shadow {
 		// A follow-up's agent gets no git credentials and no GH_TOKEN
 		// (design §6.1): the runner fetched the branch and pushes it, and
 		// the comments arrive in the prompt. A review run's agent gets
@@ -2997,7 +2997,12 @@ func (r *run) bootstrap(ctx context.Context) error {
 		// deliverable is uploaded by the runner. A challenger arm's gets
 		// none because the arm pushes nothing at all (A2.1): the token in
 		// this environment would be one an agent could push with, which is
-		// exactly what no challenger may hold.
+		// exactly what no challenger may hold. A mode: evaluate run's gets
+		// none for the same reason again, and the merge judge is why it
+		// matters (E6, G1): its whole input is a diff anybody who opened
+		// the pull request wrote, the run checks out no branch and pushes
+		// none, and a judge that could push would be a veto with a
+		// credential behind it — the one thing rung 3 may never be.
 		agentAuthVars, err := r.authVars()
 		if err != nil {
 			return fmt.Errorf("building git credentials: %w", err)
@@ -4708,11 +4713,12 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	sw := agent.NewRedactor(io.MultiWriter(NewLineWriter(log, "agent"), stderrTail), r.secretList())
 	req.Dir, req.Env, req.Transcript, req.Stderr = r.d.WorkDir, stageEnv, tw, sw
 	if opts.Dir != "" {
-		// The stage's own directory rather than the checkout: the one stage
-		// that asks for it is the triage judge, which must have nothing of the
-		// run in reach (F25). Everything the stage's own environment names —
-		// the state directory, the home it runs with, the git credentials — is
-		// an absolute path, so nothing else moves with the working directory.
+		// The stage's own directory rather than the checkout: the stages that
+		// ask for it are the two judges — internal/triage's (F25) and the merge
+		// judge's (E6, mergejudge.go) — which must have nothing of the run in
+		// reach. Everything the stage's own environment names — the state
+		// directory, the home it runs with, the git credentials — is an
+		// absolute path, so nothing else moves with the working directory.
 		req.Dir = opts.Dir
 	}
 	req.Model, req.MaxBudgetUSD = r.stageModel(name), r.cfg.Agent.MaxBudgetUSD

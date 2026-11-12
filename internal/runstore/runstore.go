@@ -930,6 +930,163 @@ func knownSource(s TriageSource) bool {
 	return false
 }
 
+// MergeJudgeVerdict is the word a merge judge answered, one of the two the
+// spec names (docs/outer-loop-escalation spec, "Merge judge"): the pull request
+// may merge with the leftovers filed as follow-ups, or it is blocked.
+type MergeJudgeVerdict string
+
+const (
+	// MergeJudgeMergeWithFollowUps is the judge's yes: the change may merge and
+	// what it leaves open is filed. It is advisory and never a merge of its own
+	// — the deterministic gate decides (D2031, D2047).
+	MergeJudgeMergeWithFollowUps MergeJudgeVerdict = "merge_with_follow_ups"
+	// MergeJudgeBlocked is the judge's no, and the only word that does
+	// anything: it stops the ladder's merge for this head.
+	MergeJudgeBlocked MergeJudgeVerdict = "blocked"
+)
+
+// MergeJudgeImportance is how a leftover finding the judge named is filed: one
+// of the two words of D2040. It is a fact a reader sorts by and never an
+// approval (D2040, G6): an important follow-up is prioritised above new work,
+// and nothing but the owner's own decision lets a pull request merge.
+type MergeJudgeImportance string
+
+const (
+	// MergeJudgeImportant is a follow-up that has to be done, ahead of new work.
+	MergeJudgeImportant MergeJudgeImportance = "important"
+	// MergeJudgeMinor is one that goes into the ordinary queue.
+	MergeJudgeMinor MergeJudgeImportance = "minor"
+)
+
+// MaxMergeJudgeFollowUps bounds the follow-ups a verdict may name, for the
+// reason MaxTolerated bounds the tolerated findings: the list is a model's
+// output and the block is a small object every listing reads.
+const MaxMergeJudgeFollowUps = 32
+
+// MaxMergeJudgeBlocker bounds the fundamental issue a blocked verdict names, in
+// runes. The text becomes rung 4's scope (the split is scoped to it), so it is
+// one paragraph and not a report: a longer answer is clipped rather than
+// refused, because the merge is blocked either way.
+const MaxMergeJudgeBlocker = 500
+
+// MergeJudge is the merge judge's answer, as the judge run recorded it (E6,
+// D2031, D2044): the verdict, the short reason beside it, the fundamental issue
+// a blocked verdict names, and the follow-ups a merge leaves behind, each with
+// the importance D2040 gives it.
+//
+// It is the record's own block and not a file beside it because the reader is
+// the ladder's launcher, and the ladder reads records: a verdict written
+// anywhere else would be a second thing to find and to prove. Absent — never an
+// empty block — for every run that judged nothing, which is every run of a
+// recipe that holds no judge step and every record written before this field
+// existed, so an old reader sees the record it always saw and the format's
+// version stays 1.
+type MergeJudge struct {
+	Verdict MergeJudgeVerdict `json:"verdict"`
+	// Reason is the judge's one-line why, clipped to MaxTriageLine runes.
+	Reason string `json:"reason"`
+	// Blocker is the fundamental issue a blocked verdict names, clipped to
+	// MaxMergeJudgeBlocker runes, and the scope rung 4 splits to. Absent on a
+	// merge, which blocks nothing.
+	Blocker string `json:"blocker,omitempty"`
+	// FollowUps are the leftovers a merge leaves behind, one per finding the
+	// judge classified. Never null, so a reader can range over it.
+	FollowUps []MergeJudgeFollowUp `json:"follow_ups"`
+	// Model is the model the judge ran on, from the stage's own resolution.
+	// Absent when the run could not name one, as a stage timing's model is.
+	Model string `json:"model,omitempty"`
+	// Unreadable is set when the judge answered nothing this build could read.
+	// The verdict beside it is blocked — D2044's rule that an answer nobody can
+	// read is a veto, and the record says which of the two it was: a judge that
+	// said blocked, or a judge that said nothing usable.
+	Unreadable bool `json:"unreadable,omitempty"`
+}
+
+// MergeJudgeFollowUp is one leftover finding a merge leaves behind: the key it
+// is known by, so a follow-up task can be filed from it (`fugaro followups`,
+// T-TR4), and D2040's word for how urgent it is.
+type MergeJudgeFollowUp struct {
+	// Key is the finding's opaque key, the same one the verdict that raised it
+	// and the record's own deferral carry (DeferredFinding.Key, D1850).
+	Key string `json:"key"`
+	// Importance is D2040's word: important or minor.
+	Importance MergeJudgeImportance `json:"importance"`
+}
+
+// NewMergeJudge bounds the block a judge run records and returns what to store,
+// or nil when there is nothing to store — a run that judged nothing carries no
+// block at all, rather than an empty one.
+//
+// A verdict outside the two words is refused here as it is refused by the
+// reader that produced it (knownMergeJudgeVerdict): a third word is a block no
+// reader can act on and, read as a merge, one that would put a word the judge
+// never said into the record. Everything else a reader cannot use is dropped
+// rather than stored — a follow-up with no key or a word outside the two, over
+// the cap — and the text is clipped, so a block this function answers is always
+// one the schema and the readers accept.
+func NewMergeJudge(v MergeJudge) *MergeJudge {
+	if !knownMergeJudgeVerdict(v.Verdict) {
+		return nil
+	}
+	v.Reason = clipRunes(v.Reason, MaxTriageLine)
+	v.Blocker = clipRunes(v.Blocker, MaxMergeJudgeBlocker)
+	if v.Verdict == MergeJudgeBlocked && v.Blocker == "" && !v.Unreadable {
+		// A blocked verdict names the fundamental issue, and that issue is
+		// rung 4's scope (D2031, spec §"Merge judge"): a block with nothing to
+		// name is a block rung 4 cannot act on, and the reader that produced
+		// this block refuses such an answer as unreadable — so the fact is
+		// recorded rather than left looking like a judgment it never made.
+		v.Unreadable = true
+	}
+	followUps := []MergeJudgeFollowUp{}
+	for _, f := range v.FollowUps {
+		if len(followUps) >= MaxMergeJudgeFollowUps {
+			break
+		}
+		if !ValidFindingKey(f.Key) || !knownMergeJudgeImportance(f.Importance) {
+			continue
+		}
+		followUps = append(followUps, f)
+	}
+	v.FollowUps = followUps
+	return &v
+}
+
+// knownMergeJudgeVerdict reports whether v is one of the two words, as
+// knownVerdict is for triage's.
+func knownMergeJudgeVerdict(v MergeJudgeVerdict) bool {
+	return v == MergeJudgeMergeWithFollowUps || v == MergeJudgeBlocked
+}
+
+// knownMergeJudgeImportance reports whether i is one of D2040's two words.
+func knownMergeJudgeImportance(i MergeJudgeImportance) bool {
+	return i == MergeJudgeImportant || i == MergeJudgeMinor
+}
+
+// ValidFindingKey reports whether key is a finding key this tree writes: the
+// lowercase hex digest internal/runner's findingKey builds, which is what the
+// schema's own pattern states (16 to 64 characters). A key outside it names no
+// finding, so a follow-up built from it would be a task about nothing.
+//
+// It is exported because the judge's reader states the same rule as the
+// document it answers (runner.DecodeMergeJudgeVerdict): a key that is not one
+// this tree writes is a malformed member of the answer and refused there, while
+// a key that is well formed and names no finding of the brief is dropped later
+// — that second rule needs the brief and so belongs to the caller. One
+// definition serves both sides, which is why this is the tree's only predicate
+// for the shape of a key.
+func ValidFindingKey(key string) bool {
+	if len(key) < 16 || len(key) > 64 {
+		return false
+	}
+	for _, c := range key {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
 // MaxOwnerDecisions bounds the pending owner decisions a record stores, for
 // the reason MaxTolerated bounds the tolerated findings: the list is a model's
 // output and the record is a small object every listing reads.
@@ -1470,6 +1627,16 @@ type Record struct {
 	// never an empty block — for every run that deferred nothing, which is
 	// every record written before this field existed (F21).
 	Deferred *DeferredFindings `json:"deferred,omitempty"`
+	// MergeJudge is the merge judge's answer (E6, D2031): what rung 3 decided
+	// about the head this run read — merge with follow-ups, or blocked with the
+	// fundamental issue rung 4 splits to. A block of its own and never a
+	// replacement for Reviews: those are the reviewers' verdicts, and this one
+	// is the judge's, which the ladder reads as a veto and never as an approval.
+	// Absent — never an empty block — for every run that judged nothing, which
+	// is every run that is not a merge judge run and every record written before
+	// this field existed: the field is additive, so an old reader sees the
+	// record it always saw and the format's version stays 1.
+	MergeJudge *MergeJudge `json:"merge_judge,omitempty"`
 	// OwnerDecisions is what the run's review left for the repository's owner
 	// to settle (OD1): the findings a reviewer marked needs_owner, which no
 	// code change can fix, so the run spent no fix round on them — it stopped
@@ -1576,6 +1743,18 @@ func PatchKey(prefix string) string { return prefix + PatchName }
 // rather than recomputed at the judge — and writer and reader spell the leaf
 // once, as PatchName is.
 const ManifestName = "ab/manifest.json"
+
+// MergeJudgeInputName is the brief a merge judge run reads, written by its
+// launcher under the run's own prefix:
+// runs/<repo-slug>/<judge-run-id>/merge-judge/input.json. The launcher writes it
+// before the run's task exists and the judge stage reads it back, so what the
+// judge was shown is fixed at the launch rather than recomputed at the judge —
+// and writer and reader spell the leaf once, as ManifestName is.
+//
+// It is a leaf of its own and not ManifestName, which is the A/B judge's: the
+// two are different documents read by different steps, and one name for both
+// would be a reader that found the other's manifest.
+const MergeJudgeInputName = "merge-judge/input.json"
 
 // VerdictsName is where a judge run writes what it decided, under its own
 // prefix and nowhere else: runs/<repo-slug>/<judge-run-id>/ab/verdicts.json.

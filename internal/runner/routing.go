@@ -196,9 +196,9 @@ func (r *run) applyRouting(pp *projectpolicy.Policy, found bool) error {
 // The write lands in the coder's *own* slot (agent.models.coder) rather than
 // in agent.model, the one place a pin is set by hand instead of through
 // pinSlots. That slot is what the judge stage pins — stageRole gives the judge
-// the coder's role, since a registered step's calls are charged to a stage
-// with no role of its own — so a single write moves the coder's passes and the
-// judge's, which is the whole of "one stronger single pass"
+// the coder's role, whether it is a registered step's stage or the merge
+// judge's own (stageMergeJudge) — so a single write moves the coder's passes
+// and the judge's, which is the whole of "one stronger single pass"
 // (TestRoutingGradeAppliesToCoderAndJudge). The reviewer and the background
 // model fall back to agent.model, and a grade is a model the ladder reserved
 // for one pass, not for every stage that named none.
@@ -206,7 +206,11 @@ func (r *run) applyRouting(pp *projectpolicy.Policy, found bool) error {
 // A grade that names no credential writes none: policy.Grade.Access is "" for
 // the project's default credential (D1624), and the run's own coder craft — a
 // repository may send one craft out on one of the owner's credentials (D1628)
-// — is a choice the grade is silent about, not one it revokes.
+// — is a choice the grade is silent about, not one it revokes. A grade that
+// names one writes both crafts the pass runs on (the coder's and the merge
+// judge's, stageCraft): a grade is a model and a credential the project layer
+// chose together (D2039), so a judge left on the merge-judge craft's own access
+// would be the grade's model on a credential chosen for something else.
 //
 // It runs before the switch and before the levels (resolvePolicy). A grade
 // written after the switch would be a model the switch never judged: an owner
@@ -246,6 +250,7 @@ func (r *run) applyGrade() error {
 	}
 	if grade.Access != "" {
 		a.Crafts.Coder.Access = grade.Access
+		a.Crafts.MergeJudge.Access = grade.Access
 	}
 	return nil
 }
@@ -767,6 +772,11 @@ func stageLevel(stage string) (policy.Level, bool) {
 // coder's credential. triage runs level 2's model and so the senior review's
 // access, which is stageLevel's reason told about a credential.
 //
+// The merge judge is the merge-judge craft's (E6, config.CraftMergeJudge), which
+// is a craft of its own for the reason the others are: a repository or a project
+// may send the judge's calls out on a credential of its own, and the judge is not
+// a review — it runs no review step and reads no checkout (mode: evaluate).
+//
 // plan is the coder's: it is the coder's own planning and it is not a stage
 // F13 names, and "" is a stage outside the run's vocabulary, for which the walk
 // answers nothing rather than guessing a craft.
@@ -780,6 +790,8 @@ func stageCraft(stage string) string {
 		return config.CraftSeniorReview
 	case stageAdversarial:
 		return config.CraftSecurityReview
+	case stageMergeJudge:
+		return config.CraftMergeJudge
 	}
 	return ""
 }

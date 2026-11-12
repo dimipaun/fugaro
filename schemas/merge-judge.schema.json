@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/merge-judge.schema.json",
+  "title": "Fugaro merge judge verdict",
+  "description": "The verdict rung 3 of the escalation ladder answers with (docs/outer-loop-escalation spec §\"Merge judge\", D2031, D2044). The judge is a mode: evaluate run whose whole work is one read-only stage: it checks out no branch, runs no repository command, pushes nothing and opens no pull request, and its input is the brief its launcher left at merge-judge/input.json — the diff at the head, the findings the ladder left open there and the fundamentals checklist, and never the reviewers' fix-request framing. This document is the shape of the answer to that brief, and internal/runner's readJudgeVerdict is the reader: the structured answer alone, with no fallback to the stage's text, because the brief carries a diff anybody who opened the pull request wrote and a reader that also read prose would let the diff decide. An answer this shape does not permit is refused as a whole, and a refused answer is a veto (D2044): the verdict beside an unreadable one is blocked, and the run records that it was blocked without an answer rather than a judgment it never made. The word `blocked` stops the ladder's merge for this head and names rung 4's scope in `blocker`; `merge_with_follow_ups` is an opinion about a merge and never a merge — what merges is the deterministic gate (D2047). Members may be added within a version — the reader decodes strictly, so a member it does not know is an error rather than a value it ignores — and removing or retyping one bumps version, which a reader that does not know the number refuses.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "verdict", "reason", "follow_ups"],
+  "properties": {
+    "version": {
+      "const": 1,
+      "$comment": "internal/runner's mergeJudgeInputVersion, in internal/runner/mergejudge.go. The brief the judge reads carries the same number, because the launcher that writes the brief is the reader of this verdict.",
+      "description": "The verdict format's version. A field never changes meaning (CLAUDE.md), so a member that is removed or retyped bumps this number and a reader that does not know it refuses the document."
+    },
+    "verdict": {
+      "enum": ["merge_with_follow_ups", "blocked"],
+      "description": "The two words, and the whole vocabulary (internal/runstore's MergeJudgeVerdict). `merge_with_follow_ups` says the change may merge as it stands with what it leaves open filed; `blocked` says something in it is fundamental enough that it must not merge, and it is the only word that does anything. A third word is refused rather than read as one of the two."
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "pattern": "^[^\\r\\n]+$",
+      "description": "The judge's one-line why, which the run's record keeps beside the verdict (runstore.MergeJudge.Reason, clipped to runstore.MaxTriageLine runes). One line, non-empty and bounded, because it is read in a table cell and in a listing beside every other record's. A reason written across two lines is refused rather than folded: the fold would hide the second line's text from the reader that bounds it."
+    },
+    "blocker": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "pattern": "^[^\\r\\n]*$",
+      "description": "The fundamental issue a `blocked` verdict names, and the scope rung 4's split is written to (D2031, spec §\"Merge judge\"): the split task says what it is settling, and a block with nothing to name is a block rung 4 cannot act on. Required of `blocked` by the brief's own words and not by this document — JSON Schema states that condition with the conditional keywords Anthropic's structured output does not carry — and the reader makes it a rule: a blocked verdict that names no blocker is recorded as blocked without an answer, which reads as the same veto. Absent on a merge, which blocks nothing."
+    },
+    "follow_ups": {
+      "type": "array",
+      "maxItems": 32,
+      "description": "The findings the judge is not blocking on: one entry per finding of the brief that a merge leaves behind, each with D2040's word for how urgent it is. The merge files these as follow-up tasks. Always written, empty included, so an absent array is a malformed answer rather than a claim that nothing is left open. A key that names no finding of the brief is dropped rather than refused — the rest of the answer is still a judgment of the head — which is the reader's rule and not this document's, because a key's membership is a fact about the brief and not about the answer.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key", "importance"],
+        "properties": {
+          "key": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{16,64}$",
+            "description": "The finding's key, copied from the brief exactly as the judge read it: a lowercase hex digest of the finding's file and summary (internal/runner's findingKey, F11, D1850). It is what makes a follow-up about a finding rather than about a position in a list a later round may have reordered, so the judge echoes the value it was given and never invents one."
+          },
+          "importance": {
+            "enum": ["important", "minor"],
+            "description": "How the follow-up is filed (D2040, internal/runstore's MergeJudgeImportance): `important` is one that has to be done ahead of new work, `minor` is one for the ordinary queue. A prioritisation and never an approval (D2040): nothing but the owner's own decision lets a pull request merge."
+          }
+        }
+      }
+    }
+  }
+}
