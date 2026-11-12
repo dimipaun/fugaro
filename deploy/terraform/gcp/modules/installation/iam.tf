@@ -149,19 +149,28 @@ resource "google_project_iam_member" "operator_cloud_asset_reader" {
 # the front end before the container runs, and the read mint BB4 builds would
 # be unreachable for everyone it admits.
 #
-# Why exactly these members. The read mint's admitted people are the
-# operators' user members and nobody else (credentials.tf's own locals, which
-# both this grant and the service's environment are built from): one list, two
-# spellings, so a person who may knock and a person who may be served cannot
-# drift apart. Every other operator spelling is left out for the reason the
-# class refuses those callers — a group or a domain is not a person's address,
-# and a service account is the non-person caller the class exists to refuse.
-# A launcher, an admin or a job account gets nothing here: the token this grant
-# leads to reaches the installing person's whole Bitbucket workspace (U3), and
-# a caller who is not one of the installation's operators has no business
-# asking for one.
+# Why exactly these members. They are the roster's own people — the launchers
+# and the operators — as their USER members, from one list
+# (intake.tf's local.launcher_invoker_members) that the intake's own invoker
+# grant and both services' class lists are built from as well: one list, so a
+# person who may knock and a person who may be served cannot drift apart. Until
+# DS2.2 this grant named the operators alone, and an installation whose roster
+# named a launcher who was not an operator had a caller the front end refused
+# before any process could decide (F31). Every other spelling is left out for
+# the reason the class refuses those callers — a group or a domain is not a
+# person's address, and a service account is the non-person caller the class
+# exists to refuse.
+#
+# The width is the deliberate part (F36). Cloud Run grants the invoker per
+# service and not per route, so every member here passes IAM on every route
+# this service has: the class check inside the process is what decides who is
+# served after that, and a caller the roster drops loses the class on the next
+# update that rewrites it. The token the read mint leads to reaches the
+# installing person's whole Bitbucket workspace (U3), which is why the PERSON
+# class stays the operators': a launcher is served as a launcher, and that mint
+# is not theirs.
 resource "google_cloud_run_v2_service_iam_member" "credentials_invoker" {
-  for_each = local.credentials_service_on ? toset(local.credentials_read_members) : toset([])
+  for_each = local.credentials_service_on ? local.launcher_invoker_members : toset([])
 
   project  = var.project
   location = var.region

@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
@@ -125,7 +126,17 @@ var allowedTypes = map[string]bool{
 // reach" of spec.md §8 one grant away from false. Exactly one row carries the
 // bit, and it is narrowed further by the bucket it is on
 // (mcpauthStoreGrant, TestMCPAccountIsItsOwnPrincipalKind).
-type who uint8
+//
+// Intake is the secrets intake's own account (D1931, DS2.2), its own kind for
+// the catalog check job's reason: as one of FugaroAccounts every toAccounts row
+// would have accepted it, and this is the one account that may CREATE, add a
+// version to and DELETE the installation's dynamic secret containers — a write
+// reach no job account has. Exactly two rows carry the bit
+// (fugaroIntakeSecrets, which is conditioned by name, and the shared
+// fugaroSecretLister), each narrowed further by the condition it must carry
+// (dynamicSecretsGrant) and, for the runs bucket's one object, by the bucket
+// and the object (intakeAdminListGrant).
+type who uint16
 
 const (
 	toPeople who = 1 << iota
@@ -136,6 +147,7 @@ const (
 	toVerifier
 	toCatalogCheck
 	toMCP
+	toIntake
 )
 
 // customKey is how grantRules names a custom role of the installation (by its
@@ -187,7 +199,24 @@ var grantRules = map[string]map[string]who{
 		// nothing else, in the ONE binding credentials.tf writes (toCredentials
 		// alone — granting it to a job account or to a person is not a grant
 		// the installation makes).
-		customKey + CredentialsDatabaseRole:       toCredentials,
+		customKey + CredentialsDatabaseRole: toCredentials,
+		// The dynamic-delivery class (D1931, DS2.2). fugaroIntakeSecrets is
+		// create, version-add and delete of the grammar's containers, held by
+		// the intake's own account and by nothing else, and only under the
+		// name-prefix fence (dynamicSecretsGrant reads the condition, which
+		// grantRules cannot see); fugaroSecretLister is a name-and-metadata
+		// read the two services share, because secretmanager.secrets.list is
+		// refused under that same condition (Check 510) — so it is
+		// unconditioned on purpose and it is the one row of this class that
+		// takes two principals.
+		customKey + IntakeSecretsRole: toIntake,
+		customKey + SecretListerRole:  toIntake | toCredentials,
+		// The service's project-level accessor over the same fence: a PROJECT
+		// grant, unlike the bundle's (google_secret_manager_secret_iam_member),
+		// so the row is here rather than in that type's, and it names the
+		// credentials account alone — a job account holding a project-wide
+		// secretAccessor is precisely what DS2.2 exists to stop.
+		"roles/secretmanager.secretAccessor":      toCredentials,
 		"roles/aiplatform.user":                   toAccounts,
 		"roles/batch.agentReporter":               toAccounts,
 		"roles/batch.jobsEditor":                  toPeople, // only under the Fugaro job-name condition (jobsCondition); never an account
@@ -241,8 +270,12 @@ var grantRules = map[string]map[string]who{
 		// check the bit would let a plan hand this account every repository's
 		// records and check state (the account's own read is
 		// TestCatalogCheckRecordsGrant's subject).
-		"roles/storage.objectUser":   toPeople | toAccounts | toCatalogCheck,
-		"roles/storage.objectViewer": toPeople | toAccounts | toCoordinator,
+		"roles/storage.objectUser": toPeople | toAccounts | toCatalogCheck,
+		// The intake's bit is on the reader row and not on the writer's: what
+		// the class reads is the derived admin list, one object of the runs
+		// bucket (intakeAdminListGrant checks the bucket AND the object), and
+		// its own writes go to Secret Manager, never to the runs bucket.
+		"roles/storage.objectViewer": toPeople | toAccounts | toCoordinator | toIntake,
 	},
 	"google_artifact_registry_repository_iam_member": {
 		customKey + "fugaroTagMover":    toAccounts,
@@ -442,6 +475,39 @@ const MCPServerAccountID = "fugaro-mcp"
 // module by TestCoverMCPNamesAreTheWritersNames.
 const MCPServerStorePrefix = "fugaro-mcpauth-"
 
+// IntakeAccountID is the secrets intake's own service account (D1931, DS2.2),
+// the one modules/installation/intake.tf creates in the installation's project
+// and the service runs as. It is NOT among FugaroAccounts, for the front door's
+// account's reason: as one of them every toAccounts row would have accepted it,
+// and this is the one account that may CREATE, add a version to and DELETE the
+// installation's dynamic secret containers — a write reach no job account has
+// and no `fugaro update` confirmation announced on its behalf. It is a kind of
+// its own (toIntake), and every grant it is given is refused unless a row
+// carries that bit AND the narrowing check accepts it: the two project grants
+// of the dynamic class, under the name-prefix fence (dynamicSecretsGrant), and
+// the runs bucket's one admin-list object (intakeAdminListGrant).
+//
+// There is no writer-side constant to pin it to yet — the stage that deploys
+// the intake is DS4.1's — so the module's own validation is what holds the ID
+// today, and the pin lands with that stage's tfvars.
+const IntakeAccountID = "fugaro-intake"
+
+// IntakeSecretsRole and SecretListerRole are the dynamic class's two custom
+// roles (intake.tf, D1931, DS2.2). They are two and not one because an IAM
+// binding's condition cannot be lifted for a single permission of its role:
+// the write half (create, delete and versions.add) is granted to the intake
+// alone and only under the name-prefix fence, while secretmanager.secrets.list
+// must stay unconditioned — Check 510 (2026-11-12) refused that call under the
+// condition — so it is a role of its own, holding that permission and nothing
+// else. The lister is the one role of the class two principals share: the
+// intake and the credentials service each find containers by listing.
+// RolePermissions pins both permission lists and TestRolePinsAreTheModules
+// holds them to the module's, so no plan can widen either role.
+const (
+	IntakeSecretsRole = "fugaroIntakeSecrets"
+	SecretListerRole  = "fugaroSecretLister"
+)
+
 // FugaroRoles are the custom role IDs the modules create; FugaroAccounts the
 // fixed service account IDs a toAccounts row accepts. Job and build accounts
 // are fugaro-<readable>-<8 hex>. The deployer account (DeployerAccountID) and
@@ -453,7 +519,7 @@ const MCPServerStorePrefix = "fugaro-mcpauth-"
 // own account (MCPServerAccountID), for the same reason (toCoordinator,
 // toCatalogCheck, toMCP).
 var (
-	FugaroRoles    = []string{"fugaroLauncher", "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder", CloudAssetRole, CredentialsDatabaseRole, WorkspaceReadRole, DeployerRole, DeployerStorageRole, DeployerSecretRole, DeployerAccountRole, DeployerAPIKeyRole, DeployerRepositoryRole, DeployerRunJobRole, DeployerSchedulerRole}
+	FugaroRoles    = []string{"fugaroLauncher", "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder", CloudAssetRole, CredentialsDatabaseRole, WorkspaceReadRole, IntakeSecretsRole, SecretListerRole, DeployerRole, DeployerStorageRole, DeployerSecretRole, DeployerAccountRole, DeployerAPIKeyRole, DeployerRepositoryRole, DeployerRunJobRole, DeployerSchedulerRole}
 	FugaroAccounts = []string{"fugaro-scheduler", "fugaro-history", "fugaro-token-signer", "fugaro-reaper", "fugaro-preload"}
 )
 
@@ -805,6 +871,14 @@ func (c Cover) isMCPMember(m string) bool {
 	return p != "" && m == "serviceAccount:"+MCPServerAccountID+"@"+p+".iam.gserviceaccount.com"
 }
 
+// isIntakeMember is whether m is the secrets intake's own account as an IAM
+// member, in the installation's project: the account intake.tf creates and the
+// service runs as (IntakeAccountID).
+func (c Cover) isIntakeMember(m string) bool {
+	p := c.installationProject()
+	return p != "" && m == "serviceAccount:"+IntakeAccountID+"@"+p+".iam.gserviceaccount.com"
+}
+
 // mcpauthStoreBucket is the name of D935's store in this cover's installation
 // project — MCPServerStorePrefix + the project — and "" when the cover has
 // none. It is the same name for every installation of that project, which is
@@ -923,6 +997,18 @@ var RolePermissions = map[string][]string{
 	// installation's database. credentials.tf lists both permissions with their
 	// reasons; TestCredentialsDatabaseRoleIsTheTwoDataPermissions is the pin.
 	CredentialsDatabaseRole: {"firebasedatabase.instances.get", "firebasedatabase.instances.update"},
+	// The dynamic class's write half (intake.tf, D1931, DS2.2): what the
+	// intake may do to a container, and no read at all — it creates one, adds a
+	// version to it and deletes it, and it must not be able to read a value
+	// back (R3), which is why neither secretmanager.secrets.get nor
+	// secretmanager.versions.access is here. All three are conditioned by name
+	// in the binding below (dynamicSecretsGrant), so the role's own reach is
+	// the grammar's containers and no other resource of the project.
+	IntakeSecretsRole: {"secretmanager.secrets.create", "secretmanager.secrets.delete", "secretmanager.versions.add"},
+	// ... and the list half, which the intake and the credentials service
+	// share: the names, labels and annotations of the project's containers, and
+	// never a version and never a payload.
+	SecretListerRole: {"secretmanager.secrets.list"},
 	// The workspace's read of the MEMBER's database (docs/workspaces/
 	// spec.md §5, W7; workspace_access.go): the ONE permission a member's own
 	// Fugaro installation binds, so the workspace's credentials service can
@@ -1036,25 +1122,17 @@ var credentialsServiceEnv = []string{
 // in the same binary — deploy/terraform is embedded — so the order is the
 // cover's and not a release's).
 //
-// Its one entry is FUGARO_LAUNCHER_ACCOUNTS, the launcher class's list (D1938,
-// F25): this task adds the name to the cover, and the change that makes
-// installation/credentials.tf render it takes the entry off this list
-// (DS2.2). The service reads it as an OPTIONAL value the whole time
-// (internal/cli's credentialsServiceConfig), so a deployment that has not
-// moved yet serves the same service with a launcher class that admits nobody
-// rather than failing to start.
-//
-// The entry before it, FUGARO_REVIEW_JOB_ACCOUNTS, left this list in the same
-// change that made installation/credentials.tf render it, and it is the shape
-// the launcher name is following.
-//
-// It is a list with a tripwire and not a carve-out. Two tests hold it: the
-// golden test below fails on a name that is both here and on the plan, and
+// It is empty: the last name on it, FUGARO_LAUNCHER_ACCOUNTS (the launcher
+// class's list, D1938, F25), left it in the change that made
+// installation/credentials.tf render it (DS2.2), and FUGARO_REVIEW_JOB_ACCOUNTS
+// left it the same way before that. The function stays, empty rather than
+// removed, because it is the tripwire and not a carve-out: two tests hold it —
+// the golden test below fails on a name that is both here and on the plan, and
 // internal/cli's TestCredentialsServiceEnvIsTheDeploymentsOwn fails on one that
-// is here and in the module's own source — so an entry cannot be left behind
-// once the module renders it.
+// is here and in the module's own source — so a name added ahead of its module
+// cannot be left behind once the module renders it.
 func CredentialsServiceEnvAwaitingTheModule() []string {
-	return []string{"FUGARO_LAUNCHER_ACCOUNTS"}
+	return nil
 }
 
 // APITargets are the two services the Firebase web key may call, sorted;
@@ -1417,8 +1495,23 @@ func (c Cover) grant(rc ResourceChange, creates, createdSAIDs, heldSAIDs map[str
 	if why == "" && t == "google_storage_bucket_iam_member" && c.isMCPMember(str(rc.Change.After["member"])) {
 		why = c.mcpauthStoreGrant(rc)
 	}
+	if why == "" && t == "google_project_iam_member" {
+		why = c.dynamicSecretsGrant(rc)
+	}
 	if why == "" && t == "google_storage_bucket_iam_member" {
-		why = c.bucketCondition(rc, createdSAIDs, heldSAIDs)
+		// The member says WHICH bucket check this is: the intake's own read is
+		// one object under its own condition (intakeAdminListGrant), and
+		// bucketCondition is what judges every other grant — a launcher's, a
+		// job's, an account's — under the bucket conditions the modules write.
+		// The two are alternatives and not two checks in a row: bucketCondition
+		// refuses every conditioned objectViewer that is not a repository's or
+		// a job's, so an intake grant reaching it would be refused for being
+		// the very thing this check accepts.
+		if c.isIntakeMember(str(rc.Change.After["member"])) {
+			why = c.intakeAdminListGrant(rc)
+		} else {
+			why = c.bucketCondition(rc, createdSAIDs, heldSAIDs)
+		}
 	}
 	if why == "" && t == "google_project_iam_member" && !unknown(rc.Change, "role") && str(rc.Change.After["role"]) == "roles/batch.jobsEditor" {
 		why = c.jobsCondition(rc.Change)
@@ -1641,6 +1734,18 @@ func (c Cover) checkGrant(typ string, ch Change, createsSA, createsRole, creates
 			// reason: a plan that listed the front door's address would
 			// otherwise be able to grant it any toAccounts row's role.
 			kind = toMCP
+		case c.isIntakeMember(m):
+			// ... and the secrets intake's own account (D1931, DS2.2): its own
+			// kind, whose three rows — the conditioned write role, the shared
+			// lister and objectViewer on the runs bucket — are narrowed further
+			// by dynamicSecretsGrant and intakeAdminListGrant, so the condition
+			// and the object are what make each grant the modules' own. Every
+			// other grant it is given, an account's role or a person's alike,
+			// is refused and the update that carries one asks its owner. Read
+			// here, before the review screen's list, for the deployer's reason:
+			// a plan that listed the intake's address would otherwise be able
+			// to grant it a launcher's or an operator's role.
+			kind = toIntake
 		case slices.Contains(c.Listed, m):
 			if !strings.HasPrefix(m, "user:") && !strings.HasPrefix(m, "group:") && !strings.HasPrefix(m, "serviceAccount:") {
 				return fmt.Sprintf("grants to %s, which is not a user, group or service account", m)
@@ -1965,6 +2070,131 @@ var tokenClause = regexp.MustCompile(`^resource\.name\.startsWith\("projects/_/b
 // and the expression both, so the comparison below would pass on a grant this
 // account's row exists to refuse.
 var conditionSlug = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+
+// dynamicSecretsGrant says why a project grant of the dynamic secret class is
+// not the modules', "" when it is — and "" for every project grant that is not
+// of the class, which is the whole of what this function reads.
+//
+// The class's whole reach in a project is three bindings (intake.tf and
+// credentials.tf, D1931, DS2.2), and each is the one thing a row of grantRules
+// cannot see:
+//
+//   - the intake's write role (IntakeSecretsRole) to the intake's own account,
+//     under the name-prefix fence;
+//   - the credentials service's prefix accessor — a PROJECT grant of
+//     roles/secretmanager.secretAccessor, deliberately not the per-secret
+//     bundle's — to the service's own account, under the same fence byte for
+//     byte: the reader half of the names the intake writes;
+//   - the lister role (secretmanager.secrets.list alone), to either of those
+//     two accounts, under NO condition, because Check 510 (2026-11-12) refused
+//     that call under the fence.
+//
+// What makes this check the fence rather than a formality: without it a plan
+// could grant the write role UNCONDITIONED — create and delete for every secret
+// container of the project — or hand the prefix accessor to an account of its
+// choosing, and both would ride the same one confirmation, since grantRules
+// reads a member kind and a role and says nothing about a condition. The
+// expression is compared against gcp.DynamicSecretNamesCondition() byte for
+// byte, so a narrower or a wider spelling is refused rather than read as nearly
+// right, and a condition known only after apply is refused the way the rest of
+// this file refuses one.
+func (c Cover) dynamicSecretsGrant(rc ResourceChange) string {
+	ch := rc.Change
+	key, ok := c.roleKey(str(ch.After["role"]))
+	if !ok {
+		return ""
+	}
+	write := key == customKey+IntakeSecretsRole
+	lister := key == customKey+SecretListerRole
+	accessor := key == "roles/secretmanager.secretAccessor"
+	if !write && !lister && !accessor {
+		return ""
+	}
+	member := str(ch.After["member"])
+	switch {
+	case write && !c.isIntakeMember(member):
+		return "grants the intake's write role to " + member + ", which is not the intake's own account: create, delete and version-add of the dynamic containers is one account's authority (D1931)"
+	case accessor && !c.isCredentialsMember(member):
+		return "grants a project-wide roles/secretmanager.secretAccessor to " + member + ", which is not the credentials service's own account: the dynamic class's reader is that account and the per-secret bundle stays the only other accessor (D1931, Q6)"
+	case lister && !c.isIntakeMember(member) && !c.isCredentialsMember(member):
+		return "grants the dynamic secrets lister to " + member + ", which is neither the intake's account nor the credentials service's: those two are the only principals that find the dynamic containers by listing (D1931)"
+	}
+	if p := str(ch.After["project"]); !slices.Contains(c.Projects, p) {
+		return "grants " + str(ch.After["role"]) + " for the dynamic secrets in project " + p + ", which is not one of this installation's projects"
+	}
+	conds, why := grantConditions(ch, "a dynamic secrets grant")
+	if why != "" {
+		return why
+	}
+	if lister {
+		if len(conds) != 0 {
+			return "grants the dynamic secrets lister under a condition, which the modules never do: secretmanager.secrets.list is REFUSED under the name-prefix condition (Check 510), so the list is the one half of the fence that carries none"
+		}
+		return ""
+	}
+	if len(conds) == 0 {
+		return "grants " + str(ch.After["role"]) + " for the dynamic secrets with no condition, which is every secret container of the project: the name-prefix fence is the whole of what narrows it to the grammar's names (D1931, F30)"
+	}
+	if str(conds[0]["description"]) != "" {
+		return "a dynamic secrets grant whose condition has a description, which the modules never set"
+	}
+	if title, expr := str(conds[0]["title"]), str(conds[0]["expression"]); title != gcp.DynamicSecretNamesConditionTitle || expr != gcp.DynamicSecretNamesCondition() {
+		return "grants " + str(ch.After["role"]) + " for the dynamic secrets under a condition that is not " + gcp.DynamicSecretNamesConditionTitle + ": " + gcp.DynamicSecretNamesCondition() + " is the fence, byte for byte, and the same one the intake's writes carry (D1931, F30)"
+	}
+	return ""
+}
+
+// intakeAdminListGrant says why a bucket grant to the intake is not the
+// modules', "" when it is (and "" for every bucket grant that is not the
+// intake's): objectViewer on the runs bucket under a condition naming ONE
+// object, the derived admin list `fugaro update` publishes (DS2.0's
+// access.PathAdminList), for the intake's own account. The object is read by
+// name and never by listing — the intake holds no storage.objects.list — and
+// the condition is what makes that true: an objectViewer on the bucket without
+// one reaches every run record, prompt and transcript the installation keeps.
+//
+// The bucket is read from the cover rather than from the grant where it can be
+// (a bucket this run knows), and the expression is built here from that name
+// and the object's fixed key, so a plan that moved the read to another object —
+// the admin list's own neighbours are the run records — is refused.
+func (c Cover) intakeAdminListGrant(rc ResourceChange) string {
+	ch := rc.Change
+	if !c.isIntakeMember(str(ch.After["member"])) {
+		return ""
+	}
+	if role := str(ch.After["role"]); role != "roles/storage.objectViewer" {
+		return "grants the intake's account " + role + " on a bucket, and its one bucket role is objectViewer on the admin list's object (DS2.0)"
+	}
+	conds, why := grantConditions(ch, "a bucket grant")
+	if why != "" {
+		return why
+	}
+	if len(conds) == 0 {
+		return "grants the intake's account objectViewer on the bucket with no condition, which is every run record, prompt and transcript the installation keeps: the derived admin list is ONE object"
+	}
+	if str(conds[0]["description"]) != "" {
+		return "a bucket grant whose condition has a description, which the modules never set"
+	}
+	bucket := str(ch.After["bucket"])
+	if bucket == "" || !slices.Contains(c.Buckets, bucket) {
+		return "grants the intake's account objectViewer on bucket " + bucket + ", which is not the runs bucket of this installation"
+	}
+	want := IntakeAdminListCondition(bucket)
+	if str(conds[0]["title"]) != gcp.IntakeAdminListConditionTitle || str(conds[0]["expression"]) != want {
+		return "grants the intake's account objectViewer on the runs bucket under a condition that is not the derived admin list's one object: " + want + " is that read, byte for byte"
+	}
+	return ""
+}
+
+// IntakeAdminListCondition is the one expression the intake's read of the
+// derived admin list is bound under (intake.tf, DS2.0's access.PathAdminList):
+// ONE object of that bucket and nothing else in it. It is here rather than
+// built twice — in the module and in this check — for the reason every other
+// condition of the modules has its builder beside its check: a test that
+// spells it out again could agree with the module while the check refused it.
+func IntakeAdminListCondition(bucket string) string {
+	return `resource.name == "projects/_/buckets/` + bucket + `/objects/` + access.PathAdminList + `"`
+}
 
 // bucketCondition says why a bucket grant's condition is not the modules'
 // (docs/design/bucket-iam.md H6), "" when it is: objectAdmin carries none; an

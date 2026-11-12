@@ -11,15 +11,33 @@
 # (C1.11), and there is no per-credential grant and no `condition` over the
 # model secrets — no secretmanager.googleapis.com/secretId filter, no
 # name-prefix fence. TestCredentialsServiceGrantsAreTheOneBundle below is what
-# keeps that true. Its reach in the realtime database is the OTHER thing this
-# file grants, and it is granted the same way — one unconditioned binding, to
-# the service's own account — with the permissions spelled out at the role.
+# keeps that true.
+#
+# D1931 (the owner's ruling of 2026-11-09, DS2.2) puts a SECOND class of
+# credential beside the bundle and reverses Q6 for that class alone: a
+# credential a user supplies for themselves lives in a container of its own,
+# named by the internal/secretname grammar (fugaro_u_<sub>_<name> per person,
+# fugaro_p_<name> for the project), the intake writes it, and this service reads
+# it through the name-prefix accessor granted below — the fence Q6 took off the
+# MODEL secrets, kept to the dynamic names by the one expression the intake's
+# own writes are conditioned by (intake.tf's dynamic_secret_names_condition).
+# The bundle is untouched: one container, one unconditioned grant.
+# TestCredentialsServiceGrantsAreTheOneBundle holds the two apart — Q6's half
+# unconditioned, the dynamic half conditioned, and no third way into Secret
+# Manager — and the list beside them (F30: no name condition can fence
+# secretmanager.secrets.list, so it is its own role, unconditioned, holding
+# that permission alone) is the role the intake's lister binding shares.
+#
+# Its reach in the realtime database is the OTHER thing this file grants, and it
+# is granted Q6's way — one unconditioned binding, to the service's own account
+# — with the permissions spelled out at the role.
 
 locals {
   # The whole file is gated on the one variable: null creates nothing, and a
-  # single boolean keeps the six resources of this file in step (the account,
-  # the bundle container, the accessor grant on it, the database role and its
-  # binding, and the service — TestCredentialsServiceResourcesAreCounted is
+  # single boolean keeps the eight resources of this file in step (the account,
+  # the bundle container, the accessor grant on it, the dynamic class's
+  # conditioned accessor and its lister binding — D1931 — the database role and
+  # its binding, and the service — TestCredentialsServiceResourcesAreCounted is
   # what holds this number and the file's own resources together, in both
   # directions).
   credentials_service_on = var.credentials_service != null
@@ -65,18 +83,21 @@ locals {
     tonumber(split(".", local.credentials_image_release)[1]) >= 15
   )
 
-  # The people the read mint admits, and the only ones it may be invoked by
-  # (BB4). They are the installation's operators' USER members: the class
-  # verifies the `email` claim of a caller's own Google ID token against this
-  # list (G4), so IAM's other spellings are not people at all — a `group:` or
-  # `domain:` member has no address of its own to compare, and admitting a
-  # `serviceAccount:` one would admit exactly the non-person caller the class
-  # exists to refuse (the coordinator's resident service, G4). So the two
-  # locals are the same set in the two spellings the two readers take: the
-  # members go on the invoker grant (iam.tf, the grant every caller passes
-  # through before the container runs) and the bare addresses go into the
-  # service's environment below, which internal/cli reads as the admitted list
-  # (envPersonAccounts).
+  # The people the read mint admits (BB4): the installation's operators' USER
+  # members. The class verifies the `email` claim of a caller's own Google ID
+  # token against this list (G4), so IAM's other spellings are not people at
+  # all — a `group:` or `domain:` member has no address of its own to compare,
+  # and admitting a `serviceAccount:` one would admit exactly the non-person
+  # caller the class exists to refuse (the coordinator's resident service, G4).
+  # The addresses go into the service's environment below, which internal/cli
+  # reads as the admitted list (envPersonAccounts).
+  #
+  # The INVOKER grant is the other half of BB4 and it is deliberately not this
+  # list any more: it is local.launcher_invoker_members (intake.tf), the roster's
+  # launchers as well as its operators, because a launcher asks the service for
+  # secrets and was refused at IAM before any class could decide (F31). The
+  # person class stays the operators' — a launcher is served as a launcher
+  # (FUGARO_LAUNCHER_ACCOUNTS), and the read mint is the operators' route.
   credentials_read_members = [for m in var.operators : m if startswith(m, "user:")]
   credentials_read_people  = [for m in local.credentials_read_members : trimprefix(m, "user:")]
 
@@ -277,6 +298,45 @@ resource "google_project_iam_member" "credentials_database" {
   depends_on = [google_project_iam_custom_role.credentials_database]
 }
 
+# The dynamic class's two reaches (D1931), beside the bundle's one. The first is
+# the prefix accessor: the service reads a user's own credential from the
+# container the intake wrote, and it reads it by the SAME expression the intake's
+# writes are conditioned by (intake.tf's local), because a reader fenced by one
+# prefix and a writer by another would leave the names the intake writes
+# unreadable, or readable by a shape nobody granted. The grant is on the project
+# rather than on a container because the names are the callers' own and an
+# installation does not know them when it plans — a condition on
+# resource.name is what makes one grant cover exactly the dynamic names.
+#
+# The second is the list (F30): the owner's sub and verified email are
+# ANNOTATIONS on the container (R10 — label values cannot hold an email), and
+# finding a person's prefix by one is a metadata read no name condition can
+# carry (Check 510 refused it under the fence). It is the same role the intake's
+# lister binding uses, unconditioned, holding nothing but
+# secretmanager.secrets.list.
+resource "google_project_iam_member" "credentials_prefix_accessor" {
+  count = local.credentials_service_on ? 1 : 0
+
+  project = var.project
+  role    = "roles/secretmanager.secretAccessor"
+  member  = google_service_account.credentials[0].member
+
+  condition {
+    title      = local.dynamic_secret_names_condition.title
+    expression = local.dynamic_secret_names_condition.expression
+  }
+}
+
+resource "google_project_iam_member" "credentials_lister" {
+  count = local.credentials_service_on ? 1 : 0
+
+  project = var.project
+  role    = "projects/${var.project}/roles/fugaroSecretLister"
+  member  = google_service_account.credentials[0].member
+
+  depends_on = [google_project_iam_custom_role.secret_lister]
+}
+
 # The service itself. It requires IAM: nothing here grants roles/run.invoker to
 # allUsers or allAuthenticatedUsers, and invoker_iam_disabled is set to false
 # explicitly rather than left to the provider's default, so the front end
@@ -284,8 +344,15 @@ resource "google_project_iam_member" "credentials_database" {
 # change of that default cannot open the service silently. The ingress is ALL
 # because the caller is a Cloud Run *job* of this project, which reaches the
 # service over its public run.app URL (a job is not on a VPC network); the
-# fence is the IAM check, not the network — the only member is each job
-# account's own invoker grant (modules/workflow/sa.tf). INGRESS_TRAFFIC_INTERNAL_ONLY
+# fence is the IAM check, not the network — and the members of that check are
+# three kinds: each job account's own invoker grant (modules/workflow/sa.tf),
+# the installation's operators' person class, and — since F31, DS2.2 — the
+# roster's launchers (iam.tf's credentials_invoker, made from the same list the
+# intake's is). Cloud Run grants the invoker per service and not per route, so
+# every one of them passes IAM on every route of this service: the class check
+# inside the process (FUGARO_PERSON_ACCOUNTS, FUGARO_LAUNCHER_ACCOUNTS) is the
+# fence that decides who is served, and it is the finer of the two (F36).
+# INGRESS_TRAFFIC_INTERNAL_ONLY
 # would refuse every caller there is today (independent security review of this
 # file, n3, which agreed with ALL): revisit it the day a job reaches the
 # service over Direct VPC egress instead, because then the network is a fence
@@ -555,6 +622,25 @@ resource "google_cloud_run_v2_service" "credentials" {
         for_each = length(local.credentials_read_people) == 0 ? [] : [jsonencode(local.credentials_read_people)]
         content {
           name  = "FUGARO_PERSON_ACCOUNTS"
+          value = env.value
+        }
+      }
+      # ... and the launcher class (F36, D1938/F25): the identities that may
+      # ask this service for a slip, which are the roster's launchers and its
+      # operators — the same people the invoker grant admits (iam.tf's
+      # credentials_invoker, F31). Without this name the service fails closed
+      # and issues no slip at all, which is the gap the plan carries (F36); with
+      # it, a member the roster dropped is refused from the next update on.
+      #
+      # It is var.launcher_accounts rather than a list written here: the
+      # addresses come from the roster (internal/infra/launchers.go), rendered
+      # only when there are any — an installation whose roster names no launcher
+      # starts with a class that admits nobody rather than refusing to bind a
+      # port, the same rule the person class above follows.
+      dynamic "env" {
+        for_each = length(var.launcher_accounts) == 0 ? [] : [jsonencode(var.launcher_accounts)]
+        content {
+          name  = "FUGARO_LAUNCHER_ACCOUNTS"
           value = env.value
         }
       }
