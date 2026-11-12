@@ -226,6 +226,29 @@ func TestAccessSettingsRepoAdminChangesRepoSettingWithinGuardrail(t *testing.T) 
 	}
 }
 
+// TestAccessSettingsDryRunAnswersWithoutARole: the gate is asked for a write,
+// and a --dry-run makes none. A caller the roles refuse gets the document the
+// write would produce — the diff is the change they hand an admin, and the file
+// it describes is one they can already read — and the file it would have been
+// written to is untouched either way.
+func TestAccessSettingsDryRunAnswersWithoutARole(t *testing.T) {
+	settingsAccessRig(t, userStored(t, settingsAccessRepoUser, accesslib.RoleAdmin, "bitbucket/acme/sandbox"))
+	layer := settingsAccessLayerFile(t, settingsAccessLayerProfile)
+	before := readFileString(t, layer)
+	userPairAs(t, settingsAccessRepoUser)
+
+	out, _, err := execute(t, "settings", "set", "layer.default_profile", "svc", "--layer", "project", "--dry-run", "--json")
+	if err != nil {
+		t.Fatalf("a dry run of a write the caller may not make was refused: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "default_profile") {
+		t.Errorf("the dry run did not answer with the edit it would make:\n%s", out)
+	}
+	if readFileString(t, layer) != before {
+		t.Error("the dry run wrote the file")
+	}
+}
+
 // TestAccessSettingsProjectAdminMakesBothWrites: the project-scope admin is
 // admitted at both layers, so the refusals above are a comparison against the
 // caller's own scope and not a refusal of the writes themselves. The one

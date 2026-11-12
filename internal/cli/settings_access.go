@@ -32,6 +32,15 @@ import (
 //     repository (ActionManageRepo), which an all-repos admin and a
 //     repository-scoped admin hold over the repositories they name.
 //
+// A `--layer local` write is judged with the project layer rather than left to
+// whoever runs the command: it is this machine's copy of the project's own
+// config, its values are the project's (`max_parallel`, `update_check`, the
+// `repos.*` overrides), and a publish derives parts of it into the published
+// policy. SD18's "a local file the user owns may be edited by the user" is about
+// the file being one person's, edited at their own terminal and by hand, and
+// about a coding agent's session writing nothing — not about the role the write
+// takes.
+//
 // Who the caller is comes from the credential and never from this machine's
 // config or git (finding F21), and it is read through userCallerLookup, the one
 // seam `fugaro user grant` reads it through.
@@ -61,10 +70,17 @@ func settingsAccessGate(ctx context.Context, lc *localcfg.Config, what string) e
 // project-level or a repository-level surface, and a repository-level one
 // resolves the canonical repository the write is judged in.
 //
-// It is asked where the write would be made and never before: a key that
-// already reads what was asked for, or one that is not set at all, is no write
-// and needs no role (both commands return before this call).
+// It is asked where the write would be made and never before, and it is asked
+// for a write alone: a key that already reads what was asked for, or one that is
+// not set at all, is no write (both commands return before this call), and a
+// --dry-run makes none either — it answers with the document the write would
+// produce, which is how a caller the roles refuse hands an admin the change to
+// make (and the agent-session fence, which a dry run does meet, is about the
+// session rather than the file).
 func settingsAccessWrite(ctx context.Context, lc *localcfg.Config, o settingsWriteOptions, target settingsTarget, what string) error {
+	if o.dryRun {
+		return nil
+	}
 	if target.layer != settingsLayerRepo {
 		return settingsAccessGate(ctx, lc, what)
 	}
@@ -116,13 +132,17 @@ func settingsAccessJudge(ctx context.Context, in accesslib.Input, action accessl
 // A checkout whose repository cannot be told — no origin remote, an origin that
 // is not a github or bitbucket URL — is refused rather than guessed at: the
 // write is a repository's own settings, and a repository this command cannot
-// name is one it cannot say the caller is an admin of.
+// name is one it cannot say the caller is an admin of. The refusal names the two
+// ways out, and both are real: a `--repo owner/name` writes the checkout this
+// machine remembers for that repository, not the anonymous one the command runs
+// in — the same route settingsRepoFile takes — so the remedy for a checkout
+// nothing remembers is its own origin remote.
 func settingsAccessRepo(ctx context.Context, lc *localcfg.Config, o settingsWriteOptions) (string, error) {
 	repo := o.repo
 	if repo == "" {
 		var err error
 		if repo, err = originRepo(ctx); err != nil {
-			return "", userErr("this checkout's repository cannot be told from its origin, so the role this write needs cannot be resolved (%v): pass --repo owner/name", err)
+			return "", userErr("this checkout's repository cannot be told from its origin (%v), so the repository whose settings this write would change — and the role that write needs — cannot be named: add the origin remote (git remote add origin <url>), or write it from a checkout this machine remembers with --repo owner/name", err)
 		}
 	}
 	return canonicalRepoArg(lc, repo)
