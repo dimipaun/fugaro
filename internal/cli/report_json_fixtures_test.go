@@ -464,6 +464,15 @@ var jsonCases = map[string]jsonCase{
 			return []string{"runs", "ls"}
 		},
 	},
+	"runs show": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			// The chain rig: three runs of one chain with the budget on, which
+			// is what gives the document its limit, its spend and its layers.
+			showRig(t)
+			return []string{"runs", "show", showTip}
+		},
+	},
 	"runs stats": {
 		reads: true,
 		run: func(t *testing.T) []string {

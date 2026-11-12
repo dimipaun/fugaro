@@ -342,6 +342,7 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	"fugaro restore":             {args: []string{"proj-2", "root"}},
 	"fugaro review show":         {args: []string{"run-1"}},
 	"fugaro run":                 {args: []string{"do something"}},
+	"fugaro runs show":           {args: []string{"run-1"}},
 	"fugaro secrets rm":          {args: []string{"NAME"}},
 	"fugaro secrets set":         {args: []string{"NAME"}},
 	// The intake's two families take the same NAME as the pair above, and their
