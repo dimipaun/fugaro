@@ -1160,6 +1160,15 @@ func (s *policyMigrateStage) Check(ctx context.Context) (initflow.Status, error)
 	if err != nil {
 		return initflow.Status{}, err
 	}
+	// The node's version and the credentials service's process move together:
+	// a run that replaces no service may not raise the node either, or the
+	// service deployed on the project refuses every cascade and
+	// Bitbucket-proxied call until a later update succeeds
+	// (init_stages.go's credentialsMoveHeld has the whole argument).
+	var held string
+	if m != nil && m.moved != nil {
+		held = s.e.credentialsMoveHeld()
+	}
 	switch {
 	case !published && m == nil:
 		return initflow.Status{State: initflow.Done, Detail: policyNoneDetail()}, nil
@@ -1171,6 +1180,8 @@ func (s *policyMigrateStage) Check(ctx context.Context) (initflow.Status, error)
 		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("no policy is published at %s, and the local config states %s, which only the node carries: this run publishes the project's first node, after your confirmation", projectpolicy.PathShared(), strings.Join(firstPublishNodeOnlyMembers(s.e.lc), " and "))}, nil
 	case m == nil:
 		return initflow.Status{State: initflow.Done, Detail: fmt.Sprintf("the published policy is version %d", projectpolicy.Version)}, nil
+	case held != "":
+		return initflow.Status{State: initflow.Skipped, Detail: fmt.Sprintf("the published policy is version %d and this run holds it there: %s, and the service that reads the published node on every cascade and Bitbucket-proxied call refuses a node its own binary does not understand — %s, run from the owner's own session, migrates the node and replaces the service in one run", m.from, held, selfCommand()+" update")}, nil
 	case m.generations != nil:
 		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("the published policy at %s has moved past the generation this machine's config was written from (%s)", projectpolicy.PathShared(), m.generations.text())}, nil
 	case m.record != "":
@@ -1286,6 +1297,18 @@ func (s *policyMigrateStage) Apply(ctx context.Context, env initflow.Env) (initf
 	}
 	if m == nil {
 		return initflow.Outcome{Detail: "No changes"}, nil
+	}
+	// The write's own precondition, before the gate is asked and before the
+	// confirmation: a node whose version rises is written by a run that will
+	// replace the service reading it, and the image that replacement pins is
+	// resolved here, before the write, so a registry read or a signature this
+	// run cannot make fails the run with the node exactly where it was
+	// (credentialsResolveBeforeRaise; a run that replaces nothing at all never
+	// reaches this line, Check having held the stage back).
+	if m.moved != nil {
+		if err := s.e.credentialsResolveBeforeRaise(ctx); err != nil {
+			return initflow.Outcome{}, err
+		}
 	}
 	admitted, err := s.gateStep(ctx, m)
 	if err != nil {

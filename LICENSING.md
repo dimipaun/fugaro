@@ -43,8 +43,14 @@ parts of the core moved there, and each is business-licensed where it now lives:
 and its stage tripwires in `ee/governance/`, `fugaro report` in `ee/report/`, and the coordinator in
 `ee/coordinator/`. **The central orchestrators and the hosted MCP server are born here** (D435, T20):
 they were never in the core, so nothing of theirs moved, and they are business-licensed from the
-start. No release before 0.13.0 carries it; from 0.13.0 the binaries a release ships (the
-archives and the Homebrew cask) are built with the `ee` tag and carry its code beside the MIT core.
+start. No release before 0.13.0 carries it; from 0.13.0 a release publishes two archives, and a build with
+the `ee` tag — the mixed-licence one — is the only one that does. `fugaro_<version>_<os>_<arch>.tar.gz`
+is built with that tag: the MIT core plus the code under this directory, and it is the binary the
+Homebrew cask installs and the one `fugaro update`, the console's CLI discovery and the plugin pin
+follow. `fugaro-core_<version>_<os>_<arch>.tar.gz` is the same binary built without it — the core
+above, under the MIT licence alone, with no `ee/` code and no Subscription terms in or beside it —
+for a user who wants neither; no cask points at it, and it is a download rather than a second
+install path (the owner's ruling of 2026-11-11).
 Nothing outside `ee/` imports anything under it: its first file is the assembly point `ee/register`, which only a build with the `ee` build
 tag compiles in, through [`cmd/fugaro/ee_on.go`](cmd/fugaro/ee_on.go).
 

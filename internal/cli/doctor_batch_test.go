@@ -4,33 +4,67 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // The Batch half of `fugaro doctor` (plan 2026-10-19-compute-backend.md Task 8
-// step 5, design compute-backend.md §4.4). Every check fires only for an
-// installation that carries a batch block, and every one of them is a warning:
-// nothing in this build can select backend: cloud-batch (internal/localcfg
-// refuses the name, Global Constraint 12), so these report work in progress
-// rather than a broken installation. Task 10 is the task that turns the block
-// on and decides which of them the enable must satisfy.
+// step 5, design compute-backend.md §4.4; Task 10 step 2 turns the same checks
+// into the gate). Every check fires only for an installation that carries a
+// batch block, and its severity is what the installation's own selection
+// decides (batchSeverity): a hard failure with no severity for a config that
+// selects backend: cloud-batch -- which is the gate the enable hands over:
+// every one of them has to pass -- and a warning for one that merely carries
+// the block while it runs on Cloud Run.
 
-// batchRigFakes are the three fakes a Batch installation's checks read, plus
-// the rig's own CRM fake (already pointed at by resource_manager).
+// batchRigFakes are the fakes a Batch installation's checks read, plus the
+// rig's own CRM and Cloud Run fakes (already pointed at by resource_manager
+// and run).
 type batchRigFakes struct {
-	compute *gcpfake.Compute
-	logging *gcpfake.Logging
-	usage   *gcpfake.ServiceUsage
+	compute   *gcpfake.Compute
+	logging   *gcpfake.Logging
+	usage     *gcpfake.ServiceUsage
+	iam       *gcpfake.IAM
+	scheduler *gcpfake.Scheduler
+	ar        *gcpfake.ArtifactRegistry
 }
+
+// newBatchFakes starts one of each.
+func newBatchFakes(t *testing.T) batchRigFakes {
+	t.Helper()
+	return batchRigFakes{compute: gcpfake.NewCompute(t), logging: gcpfake.NewLogging(t),
+		usage: gcpfake.NewServiceUsage(t), iam: gcpfake.NewIAM(t),
+		scheduler: gcpfake.NewScheduler(t), ar: gcpfake.NewArtifactRegistry(t)}
+}
+
+// The installation's own names, as the block records them and as the fakes
+// above are given them.
+const (
+	batchRunAccount    = "fugaro-runs@proj-1234.iam.gserviceaccount.com"
+	batchReaperAccount = "fugaro-reaper@proj-1234.iam.gserviceaccount.com"
+	batchPreloadFamily = "fugaro-preload-abc12345"
+	batchSocketGID     = 989
+	batchJobRepo       = "fugaro"
+	// batchRegion is the installation's own region and batchSchedulerRegion
+	// the one the reaper's schedule lives in: Cloud Scheduler does not serve
+	// every Cloud Run region, so an installation recording no scheduler_region
+	// has the check resolve it (gcp.SchedulerRegion), and for us-east5 that is
+	// us-east4 -- the region the fake below places the job in.
+	batchRegion          = "us-east5"
+	batchSchedulerRegion = "us-east4"
+)
 
 // batchBlock is a batch block whose every value is this installation's own:
 // the anchors the shared-config check applies would refuse anything else, and
-// the names are what the Compute fake below is given.
+// the names are what the fakes below are given. socket_gid is set, so the gid
+// comparison is a comparison and not the recorded-zero case.
 const batchBlock = `batch:
   image: us-east5-docker.pkg.dev/proj-1234/fugaro/fugaro:1
   machine_type: e2-standard-4
@@ -38,26 +72,127 @@ const batchBlock = `batch:
   network: projects/proj-1234/global/networks/fugaro
   subnetwork: projects/proj-1234/regions/us-east5/subnetworks/fugaro
   service_account: fugaro-runs@proj-1234.iam.gserviceaccount.com
+  socket_gid: 989
 `
 
-// batchProvisioned is what the three fakes hold once the installation's apply
-// and its preload build have run: the family, the network and the subnetwork,
-// the log sink routing to the installation's bucket with both arms, and every
-// API enabled (the fake answers ENABLED unless a test disables one).
-func batchProvisioned(t *testing.T, f batchRigFakes) {
-	t.Helper()
-	f.compute.AddImageFamily("fugaro-preload-abc12345")
-	f.compute.AddNetwork("fugaro")
-	f.compute.AddSubnetwork("us-east5", "fugaro")
-	f.logging.AddSink("proj-1234", infra.LogSink,
-		"logging.googleapis.com/projects/proj-1234/locations/global/buckets/fugaro",
-		`(resource.type="cloud_run_job" AND labels."fugaro"="managed") OR (`+batchSinkArm+`)`)
+// batchStep is one thing the installation's apply, its compute root's IAM and
+// its preload build put in place, named so a case can be built without exactly
+// one of them (the plan's "a fake that answers 'absent' and then 'present'").
+type batchStep struct {
+	name string
+	add  func(t *testing.T, r *doctorRig, f batchRigFakes)
 }
 
-// withBatch writes the rig's local config with batchBlock and the three
-// endpoints its checks read, plus whatever extra YAML the test wants (the
-// launcher lists, a log view). withBatchBlock is the same with a block of the
-// test's own, for a case that is about the block itself.
+// The names of the steps the gate test builds its worlds without, and the
+// steps of the two invocations that are not part of the list above (the
+// schedule is a Scheduler job and the reaper job's own get is what reads it).
+const (
+	batchStepFamily   = "the preload image family's generation"
+	batchStepNetwork  = "the network"
+	batchStepSubnet   = "the subnetwork"
+	batchStepSink     = "the log sink's arms"
+	batchStepExcl     = "the log exclusion's arms"
+	batchStepRepo     = "the job image's repository"
+	batchStepRunAcct  = "the run account and its display name"
+	batchStepPolicy   = "the launcher grant and the run account's roles"
+	batchStepActAs    = "the launchers' actAs on the run account"
+	batchStepReaperAC = "the reaper's account"
+	batchStepReaperRR = "the reaper's role and its five permissions"
+	batchStepReaperJo = "the reaper's Cloud Run job"
+	batchStepReaperSc = "the reaper's schedule"
+)
+
+// batchSteps is the whole list, in the order doctor checks them.
+func batchSteps() []batchStep {
+	return []batchStep{
+		{batchStepFamily, func(_ *testing.T, _ *doctorRig, f batchRigFakes) {
+			f.compute.AddImageFamilyLabels(batchPreloadFamily, map[string]string{infra.SocketGIDLabel: strconv.Itoa(batchSocketGID)})
+		}},
+		{batchStepNetwork, func(_ *testing.T, _ *doctorRig, f batchRigFakes) { f.compute.AddNetwork("fugaro") }},
+		{batchStepSubnet, func(_ *testing.T, _ *doctorRig, f batchRigFakes) { f.compute.AddSubnetwork(batchRegion, "fugaro") }},
+		{batchStepSink, func(_ *testing.T, _ *doctorRig, f batchRigFakes) {
+			f.logging.AddSink("proj-1234", infra.LogSink,
+				"logging.googleapis.com/projects/proj-1234/locations/global/buckets/fugaro", batchBothArms)
+		}},
+		{batchStepExcl, func(_ *testing.T, _ *doctorRig, f batchRigFakes) {
+			f.logging.AddExclusion("proj-1234", infra.LogExclusion, batchBothArms)
+		}},
+		{batchStepRepo, func(_ *testing.T, _ *doctorRig, f batchRigFakes) {
+			f.ar.AddRepository("proj-1234", batchRegion, batchJobRepo, nil)
+		}},
+		{batchStepRunAcct, func(_ *testing.T, _ *doctorRig, f batchRigFakes) {
+			f.iam.AddServiceAccount("proj-1234", batchRunAccount, "Fugaro job app")
+		}},
+		{batchStepPolicy, func(_ *testing.T, r *doctorRig, _ batchRigFakes) {
+			r.crm.SetPolicy("proj-1234", batchProvisionedPolicy()...)
+		}},
+		{batchStepActAs, func(_ *testing.T, _ *doctorRig, f batchRigFakes) {
+			f.iam.SetServiceAccountPolicy("proj-1234", batchRunAccount,
+				gcpfake.Binding{Role: batchActAsRole, Members: []string{batchLauncher}})
+		}},
+		{batchStepReaperAC, func(_ *testing.T, _ *doctorRig, f batchRigFakes) {
+			f.iam.AddServiceAccount("proj-1234", batchReaperAccount, "Fugaro reaper")
+		}},
+		{batchStepReaperRR, func(_ *testing.T, _ *doctorRig, f batchRigFakes) {
+			f.iam.AddRole("proj-1234", infra.ReaperRoleID, "Fugaro reaper", false)
+			f.iam.SetRolePermissions("projects/proj-1234/roles/"+infra.ReaperRoleID, infra.ReaperPermissions...)
+		}},
+		{batchStepReaperJo, func(_ *testing.T, r *doctorRig, _ batchRigFakes) {
+			r.run.SetJobJSON(infra.ReaperJob, `{"template":{"template":{"serviceAccount":"`+batchReaperAccount+`"}}}`)
+		}},
+		{batchStepReaperSc, func(_ *testing.T, _ *doctorRig, f batchRigFakes) {
+			f.scheduler.SetJob("proj-1234", batchSchedulerRegion, infra.ReaperSchedulerJob,
+				"https://run.googleapis.com/v2/projects/proj-1234/locations/"+batchRegion+"/jobs/"+infra.ReaperJob+":run", batchReaperAccount)
+		}},
+	}
+}
+
+// batchProvisionedPolicy is the project policy the compute root's apply leaves:
+// the launchers' conditioned grant and the two roles every run account holds.
+func batchProvisionedPolicy() []gcpfake.Binding {
+	return []gcpfake.Binding{
+		batchListerPolicy(batchLauncher),
+		{Role: batchAgentReporterRole, Members: []string{"serviceAccount:" + batchRunAccount}},
+		{Role: batchLogWriterRole, Members: []string{"serviceAccount:" + batchRunAccount}},
+	}
+}
+
+// batchBothArms is the arm pair the installation module's sink and exclusion
+// both carry: Cloud Run's managed lines and the Batch arm beside it.
+var batchBothArms = `(resource.type="cloud_run_job" AND labels."fugaro"="managed") OR (` + batchSinkArm + `)`
+
+// batchProvisioned is what the fakes hold once the installation's apply, the
+// compute root's IAM and the preload build have run, and batchProvisionedWithout
+// is the same with the named steps left out. Both are what the gate test builds
+// its worlds from, and every step in batchSteps is that test's case for the
+// check it belongs to.
+func batchProvisioned(t *testing.T, r *doctorRig, f batchRigFakes) {
+	t.Helper()
+	batchProvisionedWithout(t, r, f)
+}
+
+func batchProvisionedWithout(t *testing.T, r *doctorRig, f batchRigFakes, without ...string) {
+	t.Helper()
+	for _, s := range batchSteps() {
+		if slices.Contains(without, s.name) {
+			continue
+		}
+		s.add(t, r, f)
+	}
+}
+
+// batchLauncher is the one launcher every fixture here grants, and the member
+// the caller's own policy is built from when a test needs a different one.
+const batchLauncher = "user:a@example.com"
+
+// batchLists is the launcher list every fixture writes: a Batch launch is a
+// launcher's action, so the grant is read from a config that names one.
+const batchLists = "terraform: { launchers: [\"" + batchLauncher + "\"] }\n"
+
+// withBatch writes the rig's local config with batchBlock and the endpoints
+// its checks read, plus whatever extra YAML the test wants (the launcher
+// lists, a log view). withBatchBlock is the same with a block of the test's
+// own, for a case that is about the block itself.
 func (r *doctorRig) withBatch(t *testing.T, f batchRigFakes, extra string) {
 	t.Helper()
 	r.withBatchBlock(t, f, batchBlock, extra)
@@ -69,11 +204,21 @@ func (r *doctorRig) withBatchBlock(t *testing.T, f batchRigFakes, block, extra s
 	// it stands in for the installation's project.
 	f.compute.Project = "proj-1234"
 	cfg := strings.Replace(r.cfg, "endpoints: { ",
-		"endpoints: { compute: "+f.compute.URL+"/compute/v1/, logging: "+f.logging.URL+"/, service_usage: "+f.usage.URL+"/, ", 1)
+		"endpoints: { compute: "+f.compute.URL+"/compute/v1/, logging: "+f.logging.URL+"/, service_usage: "+f.usage.URL+"/, "+
+			"iam: "+f.iam.URL+"/, cloud_scheduler: "+f.scheduler.URL+"/, artifact_registry: "+f.ar.URL+"/, ", 1)
 	cfg += block + extra
 	if err := os.WriteFile(r.cfgPath, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// withBatchSelected is withBatch for an installation that SELECTS the backend:
+// the same config plus backend: cloud-batch, which is what makes every failing
+// Batch check a hard failure instead of a warning (batchSeverity, Task 10's
+// step 1 and the gate step 2 hands over).
+func (r *doctorRig) withBatchSelected(t *testing.T, f batchRigFakes, block, extra string) {
+	t.Helper()
+	r.withBatchBlock(t, f, block, "backend: cloud-batch\n"+extra)
 }
 
 // batchListerPolicy is the launchers' conditioned grant, as the compute module
@@ -90,28 +235,51 @@ func batchListerPolicy(launchers ...string) gcpfake.Binding {
 
 // TestDoctorBatchChecksPassOnAProvisionedInstallation: every check is OK for
 // an installation whose apply has run and whose preload build has published a
-// generation. The launchers' grant is read from the rig's own CRM fake, which
-// is why the policy is set here and not by batchProvisioned.
+// generation -- the precondition of the gate, and the state the property test's
+// whole world assumes.
 func TestDoctorBatchChecksPassOnAProvisionedInstallation(t *testing.T) {
-	r, f := newDoctorRig(t), batchRigFakes{compute: gcpfake.NewCompute(t), logging: gcpfake.NewLogging(t), usage: gcpfake.NewServiceUsage(t)}
-	batchProvisioned(t, f)
-	r.withBatch(t, f, "terraform: { launchers: [\"user:a@example.com\"] }\n")
-	r.crm.SetPolicy("proj-1234", batchListerPolicy("user:a@example.com"))
+	r, f := newDoctorRig(t), newBatchFakes(t)
+	batchProvisioned(t, r, f)
+	r.withBatch(t, f, batchLists)
 
 	o := r.runDoctorJSON(t)
-	for _, id := range []string{"batch-apis", "batch-job-definition", "batch-image-family", "batch-network", "batch-subnetwork", "batch-log-sink", "batch-launcher-iam"} {
+	for _, id := range []string{
+		"batch-apis", "batch-job-definition", "batch-cost", "batch-image-family",
+		"batch-network", "batch-subnetwork", "batch-log-sink", "batch-log-exclusion",
+		"batch-job-image", "batch-run-accounts", "batch-run-account-roles",
+		"batch-run-account-actas", "batch-launcher-iam", "batch-reaper-role",
+		"batch-reaper-job", "batch-reaper-schedule",
+		// The boundary is the one line that is NOT ok and must not be: it
+		// describes the plan's own decision (Global Constraint 13) and takes
+		// info, so it is asserted here for its severity and not for a pass.
+		// TestDoctorBatchNamesTheArtifactBoundary is where its text is pinned.
+		"batch-artifact-boundary",
+	} {
 		c, ok := doctorCheckByID(o.Checks, id)
-		if !ok || !c.OK {
-			t.Errorf("check %s = %+v (%v), want ok", id, c, ok)
+		if !ok {
+			t.Errorf("doctor reports no %s check", id)
+			continue
 		}
+		if id == "batch-artifact-boundary" {
+			if c.OK || c.Severity != "info" {
+				t.Errorf("check %s = %+v, want the boundary's info line", id, c)
+			}
+			continue
+		}
+		if !c.OK {
+			t.Errorf("check %s = %+v, want ok", id, c)
+		}
+	}
+	if !o.OK {
+		t.Errorf("a provisioned installation is refused: %+v", failingChecks(o))
 	}
 }
 
 // TestDoctorBatchChecksAreSilentWithoutABatchBlock: an installation that
-// carries no batch block gets none of these checks. The backend's own name
-// cannot be selected in this build, so the block is the only signal there is
-// that an operator intends this backend, and a check on a project nobody
-// provisioned for Batch would be noise.
+// carries no batch block gets none of these checks. Nothing has published the
+// block, so no config could name the account a run's VMs run as, and the block
+// is what an installation's apply writes when the backend is provisioned -- a
+// check on a project nobody provisioned for Batch would be noise.
 //
 // Mutation (drop the lc.Batch == nil gate): this fails.
 func TestDoctorBatchChecksAreSilentWithoutABatchBlock(t *testing.T) {
@@ -130,8 +298,8 @@ func TestDoctorBatchChecksAreSilentWithoutABatchBlock(t *testing.T) {
 // Mutation (drop the state check, or read only one of the two APIs): the
 // assertion on the named service fails.
 func TestDoctorBatchReportsADisabledAPI(t *testing.T) {
-	r, f := newDoctorRig(t), batchRigFakes{compute: gcpfake.NewCompute(t), logging: gcpfake.NewLogging(t), usage: gcpfake.NewServiceUsage(t)}
-	batchProvisioned(t, f)
+	r, f := newDoctorRig(t), newBatchFakes(t)
+	batchProvisioned(t, r, f)
 	f.usage.Disable("batch.googleapis.com")
 	r.withBatch(t, f, "")
 
@@ -157,7 +325,7 @@ func TestDoctorBatchReportsADisabledAPI(t *testing.T) {
 func TestDoctorBatchReportsAMissingImageFamily(t *testing.T) {
 	// The family is the one fact missing: the network and the subnetwork are
 	// there, so this is the one thing the checks report.
-	f := batchRigFakes{compute: gcpfake.NewCompute(t), logging: gcpfake.NewLogging(t), usage: gcpfake.NewServiceUsage(t)}
+	f := newBatchFakes(t)
 	f.compute.AddNetwork("fugaro")
 	f.compute.AddSubnetwork("us-east5", "fugaro")
 	f.logging.AddSink("proj-1234", infra.LogSink,
@@ -176,6 +344,135 @@ func TestDoctorBatchReportsAMissingImageFamily(t *testing.T) {
 		if !strings.Contains(c.Problem, want) {
 			t.Errorf("the warning does not mention %q: %s", want, c.Problem)
 		}
+	}
+}
+
+// TestDoctorBatchComparesTheRecordedSocketGID is step 2's comparison as its
+// own case (plan 2026-10-19-compute-backend.md Task 10): the generation the
+// preload image family serves carries the socket's gid as its own
+// socket-gid label, so the number the installation recorded in
+// batch.socket_gid is checked against the image a run boots and not trusted.
+// Every rebuild re-reads that gid off the builder VM and labels a new
+// generation with it, so a recorded value the image has moved past is a Docker
+// run whose --group-add names a gid the image no longer has.
+//
+// The three cases the plan names, and the three readings they have to keep
+// apart: a recorded gid the image has moved past (refused), a recorded gid the
+// image carries (passes), and a recorded ZERO (not refused) -- zero means this
+// installation recorded no socket at all, which is Task 7's launch refusal's
+// shape and not this gate's, and refusing the whole installation over it would
+// be this gate deciding a question the config already answers.
+//
+// Mutation (drop the comparison and trust batch.socket_gid; refuse a recorded
+// zero): the mismatch case stops failing, or the zero case starts to.
+func TestDoctorBatchComparesTheRecordedSocketGID(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		recorded string
+		label    string
+		want     bool
+	}{
+		{"a recorded gid the image has moved past", "989", "1000", false},
+		{"a recorded gid the image carries", "989", "989", true},
+		{"a recorded zero", "0", "1000", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, f := newDoctorRig(t), newBatchFakes(t)
+			block := strings.Replace(batchBlock, "socket_gid: 989", "socket_gid: "+tc.recorded, 1)
+			// The family's label is the generation's, so it is placed rather
+			// than provisioned: the step above writes the one this fixture's
+			// block records.
+			f.compute.AddImageFamilyLabels(batchPreloadFamily, map[string]string{infra.SocketGIDLabel: tc.label})
+			batchProvisionedWithout(t, r, f, batchStepFamily)
+			r.withBatchSelected(t, f, block, batchLists)
+
+			c, ok := doctorCheckByID(r.runDoctorJSON(t).Checks, "batch-image-family")
+			if !ok {
+				t.Fatal("doctor reports no batch-image-family check")
+			}
+			if c.OK != tc.want {
+				t.Fatalf("with batch.socket_gid %s against %s=%s, the check = %+v, want ok=%v", tc.recorded, infra.SocketGIDLabel, tc.label, c, tc.want)
+			}
+			if tc.want {
+				return
+			}
+			if c.Severity != "" {
+				t.Errorf("the mismatch has severity %q: an installation that selects the backend is refused for it, so it takes doctor's own hard failure", c.Severity)
+			}
+			for _, want := range []string{tc.recorded, tc.label, infra.SocketGIDLabel, "unable to open the socket"} {
+				if !strings.Contains(c.Problem, want) {
+					t.Errorf("the mismatch does not name %q: %s", want, c.Problem)
+				}
+			}
+		})
+	}
+}
+
+// TestDoctorBatchSaysPropagatingForAPolicyItCannotRead is step 3 (plan
+// 2026-10-19-compute-backend.md Task 10): a doctor run against an installation
+// whose apply has just finished can see a binding that is not readable yet
+// (Check 57a measured it), so a refused policy read is reported as a grant that
+// may still be propagating and NOT as a missing one. The two are
+// indistinguishable from here -- a 403 is what both produce -- and reporting
+// the second sends an operator to re-provision an installation that is
+// correctly provisioned.
+//
+// This is the plan's red step: a check that reports a missing grant for a
+// binding that exists but is not readable yet fails here, on the assertion that
+// the message says propagating and on the three phrases a missing-grant finding
+// carries.
+//
+// Mutation (report a denied read as a missing grant): the assertions below
+// fail.
+func TestDoctorBatchSaysPropagatingForAPolicyItCannotRead(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		id   string
+	}{
+		{"the launchers' conditioned grant", "batch-launcher-iam"},
+		{"the run accounts' two project roles", "batch-run-account-roles"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, f := newDoctorRig(t), newBatchFakes(t)
+			batchProvisioned(t, r, f)
+			// The policy is written -- batchProvisioned wrote it -- and the
+			// read of it is refused: the shape a binding written moments ago
+			// produces.
+			r.crm.DenyPolicy("proj-1234")
+			r.withBatchSelected(t, f, batchBlock, batchLists)
+
+			o := r.runDoctorJSON(t)
+			c, ok := doctorCheckByID(o.Checks, tc.id)
+			if !ok {
+				t.Fatalf("doctor reports no %s check", tc.id)
+			}
+			if c.OK {
+				t.Fatalf("%s reads ok for a policy it could not read: %+v", tc.id, c)
+			}
+			if c.Severity != "" {
+				t.Errorf("%s has severity %q: an installation that selects the backend is refused for it", tc.id, c.Severity)
+			}
+			for _, want := range []string{"propagating", "57a", "§8.1 task 9"} {
+				if !strings.Contains(c.Problem, want) {
+					t.Errorf("%s does not say %q: %s", tc.id, want, c.Problem)
+				}
+			}
+			for _, missing := range []string{"do not hold", "without the compute module's condition", "not one of this installation's run accounts"} {
+				if strings.Contains(c.Problem, missing) {
+					t.Errorf("%s reports a missing grant for a policy it could not read (%q): %s", tc.id, missing, c.Problem)
+				}
+			}
+			// Doctor IS refused, and that is the gate working: an installation
+			// that selects the name is refused for a check that could not be
+			// made (batchSeverity's hard failure for the selection), so the
+			// operator fixes the credential and reruns -- which is what the
+			// propagating sentence above sends them to do. What must not
+			// happen, and the assertion above is about, is this being reported
+			// as a grant the installation is missing.
+			if o.OK {
+				t.Errorf("%s reads ok and doctor passes for a policy it could not read", tc.id)
+			}
+		})
 	}
 }
 
@@ -199,8 +496,8 @@ func TestDoctorBatchReportsANetworkOrSubnetworkThatIsNotThere(t *testing.T) {
 		{"subnetwork", true, false, "batch-subnetwork", "projects/proj-1234/regions/us-east5/subnetworks/fugaro"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r, f := newDoctorRig(t), batchRigFakes{compute: gcpfake.NewCompute(t), logging: gcpfake.NewLogging(t), usage: gcpfake.NewServiceUsage(t)}
-			batchProvisioned(t, f)
+			r, f := newDoctorRig(t), newBatchFakes(t)
+			batchProvisioned(t, r, f)
 			if !tc.network || !tc.subnet {
 				// Rebuild the Compute fake without the resource the case is
 				// about, keeping the other one.
@@ -256,7 +553,7 @@ func TestDoctorBatchReportsASinkWithoutTheBatchArm(t *testing.T) {
 		{"no batch arm", true, wantDest, cloudRunArm, batchSinkArm},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r, f := newDoctorRig(t), batchRigFakes{compute: gcpfake.NewCompute(t), logging: gcpfake.NewLogging(t), usage: gcpfake.NewServiceUsage(t)}
+			r, f := newDoctorRig(t), newBatchFakes(t)
 			f.compute.AddImageFamily("fugaro-preload-abc12345")
 			f.compute.AddNetwork("fugaro")
 			f.compute.AddSubnetwork("us-east5", "fugaro")
@@ -298,8 +595,8 @@ func TestDoctorBatchReportsTheLauncherGrant(t *testing.T) {
 		{"denied read", nil, true, "could not read the IAM policy"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r, f := newDoctorRig(t), batchRigFakes{compute: gcpfake.NewCompute(t), logging: gcpfake.NewLogging(t), usage: gcpfake.NewServiceUsage(t)}
-			batchProvisioned(t, f)
+			r, f := newDoctorRig(t), newBatchFakes(t)
+			batchProvisioned(t, r, f)
 			r.withBatch(t, f, "terraform: { launchers: [\""+launcher+"\"] }\n")
 			if tc.policy != nil {
 				r.crm.SetPolicy("proj-1234", tc.policy...)
@@ -343,8 +640,8 @@ func TestDoctorBatchReportsTheLauncherGrant(t *testing.T) {
 // roles.go's removed launcherOnly): doctor reports no batch-launcher-iam check
 // at all and this fails.
 func TestDoctorBatchReportsAnEmptyLauncherList(t *testing.T) {
-	r, f := newDoctorRig(t), batchRigFakes{compute: gcpfake.NewCompute(t), logging: gcpfake.NewLogging(t), usage: gcpfake.NewServiceUsage(t)}
-	batchProvisioned(t, f)
+	r, f := newDoctorRig(t), newBatchFakes(t)
+	batchProvisioned(t, r, f)
 	// The module's own grant, on nobody: the policy is what it is, and the
 	// list the check reads is the config's.
 	r.withBatch(t, f, "")
@@ -372,8 +669,8 @@ func TestDoctorBatchReportsAnEmptyLauncherList(t *testing.T) {
 // launcher is not named and the assertion fails.
 func TestDoctorBatchReportsBothLauncherConditions(t *testing.T) {
 	const excess, absent = "user:a@example.com", "user:b@example.com"
-	r, f := newDoctorRig(t), batchRigFakes{compute: gcpfake.NewCompute(t), logging: gcpfake.NewLogging(t), usage: gcpfake.NewServiceUsage(t)}
-	batchProvisioned(t, f)
+	r, f := newDoctorRig(t), newBatchFakes(t)
+	batchProvisioned(t, r, f)
 	r.withBatch(t, f, "terraform: { launchers: [\""+excess+"\", \""+absent+"\"] }\n")
 	r.crm.SetPolicy("proj-1234",
 		gcpfake.Binding{Role: "roles/batch.jobsEditor", Members: []string{excess}},
@@ -406,8 +703,8 @@ func TestDoctorBatchReportsBothLauncherConditions(t *testing.T) {
 // assertion that the check is ok fails.
 func TestDoctorBatchDoesNotRequireTheGrantOfOperators(t *testing.T) {
 	const launcher, operator = "user:a@example.com", "user:o@example.com"
-	r, f := newDoctorRig(t), batchRigFakes{compute: gcpfake.NewCompute(t), logging: gcpfake.NewLogging(t), usage: gcpfake.NewServiceUsage(t)}
-	batchProvisioned(t, f)
+	r, f := newDoctorRig(t), newBatchFakes(t)
+	batchProvisioned(t, r, f)
 	r.withBatch(t, f, "terraform: { launchers: [\""+launcher+"\"], operators: [\""+operator+"\"] }\n")
 	// The module's own grant, on the module's own member: the launcher, with
 	// the Fugaro job-name condition, and nothing at all for the operator.
@@ -432,8 +729,8 @@ func TestDoctorBatchDoesNotRequireTheGrantOfOperators(t *testing.T) {
 //
 // Mutation (drop the check, or report it as ok): this fails.
 func TestDoctorBatchRefusesAJobDefinitionTheBackendWouldRefuse(t *testing.T) {
-	r, f := newDoctorRig(t), batchRigFakes{compute: gcpfake.NewCompute(t), logging: gcpfake.NewLogging(t), usage: gcpfake.NewServiceUsage(t)}
-	batchProvisioned(t, f)
+	r, f := newDoctorRig(t), newBatchFakes(t)
+	batchProvisioned(t, r, f)
 	// A block with no network or subnetwork: localcfg accepts it (the fields
 	// are optional there), and the backend is what refuses a launch.
 	block := strings.Replace(batchBlock, "  network: projects/proj-1234/global/networks/fugaro\n", "", 1)
@@ -462,8 +759,8 @@ func TestDoctorBatchRefusesAJobDefinitionTheBackendWouldRefuse(t *testing.T) {
 // fake holds this project's own network of that name and answers OK.
 func TestDoctorBatchReadsTheProjectTheResourceNameNames(t *testing.T) {
 	const id = "batch-network"
-	r, f := newDoctorRig(t), batchRigFakes{compute: gcpfake.NewCompute(t), logging: gcpfake.NewLogging(t), usage: gcpfake.NewServiceUsage(t)}
-	batchProvisioned(t, f)
+	r, f := newDoctorRig(t), newBatchFakes(t)
+	batchProvisioned(t, r, f)
 	// The installation's own project has this network; the name points at the
 	// host project, which does not.
 	block := strings.Replace(batchBlock, "  network: projects/proj-1234/global/networks/fugaro\n",
@@ -556,6 +853,493 @@ func TestDoctorBatchSkipsAreNeverPasses(t *testing.T) {
 	}
 }
 
+// TestDoctorBatchRefusesAMintingInstallation is design §1.6's pair, read at
+// the gate: an installation that mints budget tokens cannot launch any run on
+// Batch at all, because every launch carries the budget token's seal key in an
+// environment entry the backend's job definition refuses -- after the token was
+// minted and dropped. Reading the pair here is what the design asks for (an
+// early refusal rather than jobs.create's doorstep), and Task 10 is the enable
+// that made it reachable.
+//
+// The check asks budgetMintOn, the function a launch decides with, so these
+// three configs are the three states of its own answer: a mode that is not off
+// with a database and a signer (mints, and no policy is read), a mode that is
+// off with nothing published (does not mint), and a mode that is off with a
+// published policy (mints -- the arm a config alone cannot answer, and the
+// reason the check reads the node at all).
+//
+// Mutation (drop the check from doctorBatchChecks): the two minting cases read
+// as absent, and every "doctor reports no batch-budget-seal check" assertion
+// fails. Mutation (ask the config arm alone -- budgetBackendOn without the
+// policy read): the published-policy case stops being refused.
+func TestDoctorBatchRefusesAMintingInstallation(t *testing.T) {
+	// budgetYAML is one installation's budget block, with a database of its own
+	// per case: a policy published for one case must not be found by another.
+	budgetYAML := func(t *testing.T, mode string, publish bool) string {
+		t.Helper()
+		db := gcpfake.NewRTDB(t)
+		if publish {
+			db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+			db.Set(projectpolicy.PathShared(), map[string]any{"version": projectpolicy.Version})
+		}
+		return "budget: { mode: " + mode + ", per_run_usd: 5, firebase_project: proj-1234, rtdb_url: " + db.URL + ", token_signer: " + testSigner + " }\n"
+	}
+	for _, tc := range []struct {
+		name    string
+		mode    string
+		publish bool
+		mints   bool
+	}{
+		{name: "a budget mode that mints", mode: "enforce", mints: true},
+		{name: "a budget mode that is off with nothing published", mode: "off"},
+		{name: "a budget mode that is off with a published policy", mode: "off", publish: true, mints: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, f := newDoctorRig(t), newBatchFakes(t)
+			batchProvisioned(t, r, f)
+			r.withBatchSelected(t, f, batchBlock, batchLists+budgetYAML(t, tc.mode, tc.publish))
+			o := r.runDoctorJSON(t)
+			c, ok := doctorCheckByID(o.Checks, "batch-budget-seal")
+			if !ok {
+				t.Fatalf("doctor reports no batch-budget-seal check for an installation that selects the backend")
+			}
+			if !tc.mints {
+				if !c.OK {
+					t.Fatalf("an installation that does not mint is refused by the pair check: %+v", c)
+				}
+				return
+			}
+			if c.OK {
+				t.Fatalf("an installation that mints and selects the backend reads ok: %+v", c)
+			}
+			if c.Severity != "" {
+				t.Errorf("the pair has severity %q, want doctor's own hard failure: an installation that selects the backend is refused for it", c.Severity)
+			}
+			for _, want := range []string{"mints budget tokens", "docs/design/budget-token-channel.md", "§1.6"} {
+				if !strings.Contains(c.Problem, want) {
+					t.Errorf("the finding does not name %q: %s", want, c.Problem)
+				}
+			}
+			// The repair is the installation's own answer, and it is the one
+			// thing provisioning cannot change: this backend stays unselected.
+			for _, want := range []string{"cloud-run", "Task 14"} {
+				if !strings.Contains(c.Fix, want) {
+					t.Errorf("the fix does not name %q: %s", want, c.Fix)
+				}
+			}
+			if !o.OK {
+				// The gate itself: doctor refuses the installation, not merely
+				// one of its lines.
+				if len(failingChecks(o)) == 0 {
+					t.Errorf("doctor is refused with no hard failure to name: %+v", o.Checks)
+				}
+			}
+		})
+	}
+}
+
+// batchGateCondition is one of the conditions `fugaro doctor` refuses an
+// installation that selects backend: cloud-batch for (plan
+// 2026-10-19-compute-backend.md Task 10 step 2, design §4.4 and §8.1 task 9),
+// with the two halves of the plan's own test shape: how to build a world
+// without it ("a fake that answers absent") and a phrase only ITS OWN finding
+// carries, so a case cannot pass on another condition's finding.
+type batchGateCondition struct {
+	name string
+	id   string
+	want string
+	// without are the provisioning steps the absent world is built without.
+	without []string
+	// alter makes the condition absent in a world that has everything else,
+	// for a condition whose prerequisites must still be there (the family's
+	// gid label is only readable against a family that exists).
+	alter func(t *testing.T, r *doctorRig, f batchRigFakes)
+	// block, when set, is the batch block the absent world is written with:
+	// the four conditions that are a VALUE of the block rather than a
+	// resource in the project.
+	block string
+	// absentOnly marks the one condition that is the block's own absence:
+	// `backend: cloud-batch` selected by a config that was never provisioned
+	// for it. Its check exists in the absent world alone -- the whole world
+	// runs the checks below the block instead, and an installation that runs
+	// on cloud-run and carries no block says nothing about Batch at all --
+	// so the two assertions that assume a check in every world are inverted
+	// for it. Leaving it out of the table instead would read as "not a gate
+	// condition", which is the opposite of what it is.
+	absentOnly bool
+}
+
+// batchGateConditions is the whole product of the gate's conditions. A check
+// added to doctorBatchChecks without a case here is a condition nothing proves
+// doctor refuses for -- which is what the plan's property test is for.
+var batchGateConditions = []batchGateCondition{
+	{name: "the batch block itself", id: "batch-block", want: "carries no batch block", absentOnly: true},
+	{name: "the Compute and Batch APIs enabled", id: "batch-apis", want: batchServiceBatch,
+		alter: func(_ *testing.T, _ *doctorRig, f batchRigFakes) { f.usage.Disable(batchServiceBatch) }},
+	{name: "a job definition the backend accepts", id: "batch-job-definition", want: "network and a subnetwork",
+		block: strings.NewReplacer(
+			"  network: projects/proj-1234/global/networks/fugaro\n", "",
+			"  subnetwork: projects/proj-1234/regions/us-east5/subnetworks/fugaro\n", "").Replace(batchBlock)},
+	{name: "a priced machine type", id: "batch-cost", want: "cannot be priced",
+		block: strings.Replace(batchBlock, "machine_type: e2-standard-4", "machine_type: e2-mega-9", 1)},
+	{name: "the preload image family", id: "batch-image-family", want: "does not exist in proj-1234",
+		without: []string{batchStepFamily}},
+	{name: "the gid the family's generation carries", id: "batch-image-family", want: "no readable socket-gid label",
+		alter: func(_ *testing.T, _ *doctorRig, f batchRigFakes) {
+			f.compute.AddImageFamilyLabels(batchPreloadFamily, nil)
+		}},
+	{name: "the network", id: "batch-network", want: "that the batch block names is not in proj-1234",
+		without: []string{batchStepNetwork}},
+	{name: "the subnetwork", id: "batch-subnetwork", want: "that the batch block names is not in proj-1234",
+		without: []string{batchStepSubnet}},
+	{name: "the log sink", id: "batch-log-sink", want: "is not in proj-1234",
+		without: []string{batchStepSink}},
+	{name: "the sink's Batch arm", id: "batch-log-sink", want: "has no Batch arm",
+		alter: func(_ *testing.T, _ *doctorRig, f batchRigFakes) {
+			f.logging.AddSink("proj-1234", infra.LogSink,
+				"logging.googleapis.com/projects/proj-1234/locations/global/buckets/fugaro", batchCloudRunArm)
+		}},
+	{name: "the log exclusion", id: "batch-log-exclusion", want: "is not in proj-1234",
+		without: []string{batchStepExcl}},
+	{name: "the exclusion's Batch arm", id: "batch-log-exclusion", want: "has no Batch arm",
+		alter: func(_ *testing.T, _ *doctorRig, f batchRigFakes) {
+			f.logging.AddExclusion("proj-1234", infra.LogExclusion, batchCloudRunArm)
+		}},
+	{name: "the job image's repository", id: "batch-job-image", want: "is not in proj-1234",
+		without: []string{batchStepRepo}},
+	{name: "the image's repository being a standard one", id: "batch-job-image", want: "whose mode is REMOTE_REPOSITORY",
+		alter: func(_ *testing.T, _ *doctorRig, f batchRigFakes) {
+			f.ar.SetRepositoryMode("proj-1234", batchRegion, batchJobRepo, "REMOTE_REPOSITORY")
+		}},
+	{name: "a secret the installation did not create", id: "batch-secrets", want: "Fugaro did not create",
+		block: batchSecretBlock},
+	{name: "the block naming one of the installation's run accounts", id: "batch-run-accounts", want: "confused deputy",
+		block: strings.Replace(batchBlock, "service_account: "+batchRunAccount, "service_account: "+batchReaperAccount, 1)},
+	{name: "the installation's run accounts", id: "batch-run-accounts", want: "no Fugaro run account at all",
+		without: []string{batchStepRunAcct}},
+	{name: "the run accounts' two project roles", id: "batch-run-account-roles", want: "roles/batch.agentReporter",
+		alter: func(_ *testing.T, r *doctorRig, _ batchRigFakes) {
+			r.crm.SetPolicy("proj-1234", batchListerPolicy(batchLauncher))
+		}},
+	{name: "the launchers' conditioned jobsEditor grant", id: "batch-launcher-iam", want: "without the compute module's condition",
+		alter: func(_ *testing.T, r *doctorRig, _ batchRigFakes) {
+			r.crm.SetPolicy("proj-1234", append([]gcpfake.Binding{
+				{Role: batchLauncherRole, Members: []string{batchLauncher}}}, batchProvisionedPolicy()[1:]...)...)
+		}},
+	{name: "the launchers' actAs on the run account", id: "batch-run-account-actas", want: "cannot act as the run account",
+		alter: func(_ *testing.T, _ *doctorRig, f batchRigFakes) {
+			f.iam.SetServiceAccountPolicy("proj-1234", batchRunAccount)
+		}},
+	{name: "the reaper's account", id: "batch-reaper-role", want: "is not in proj-1234",
+		without: []string{batchStepReaperAC}},
+	{name: "the reaper's custom role", id: "batch-reaper-role", want: "does not exist",
+		without: []string{batchStepReaperRR}},
+	{name: "the reaper's five permissions", id: "batch-reaper-role", want: "is missing the permissions the sweep needs",
+		alter: func(_ *testing.T, _ *doctorRig, f batchRigFakes) {
+			f.iam.SetRolePermissions("projects/proj-1234/roles/"+infra.ReaperRoleID, infra.ReaperPermissions[:4]...)
+		}},
+	{name: "a reaper role that is exactly those five", id: "batch-reaper-role", want: "carries permissions the sweep does not use",
+		alter: func(_ *testing.T, _ *doctorRig, f batchRigFakes) {
+			f.iam.SetRolePermissions("projects/proj-1234/roles/"+infra.ReaperRoleID,
+				append(slices.Clone(infra.ReaperPermissions), "batch.jobs.create")...)
+		}},
+	{name: "the reaper's Cloud Run job", id: "batch-reaper-job", want: "is not in proj-1234",
+		without: []string{batchStepReaperJo}},
+	{name: "the reaper job running as the reaper account", id: "batch-reaper-job", want: "not as the reaper account",
+		alter: func(_ *testing.T, r *doctorRig, _ batchRigFakes) {
+			r.run.SetJobJSON(infra.ReaperJob, `{"template":{"template":{"serviceAccount":"`+batchRunAccount+`"}}}`)
+		}},
+	{name: "the reaper's schedule", id: "batch-reaper-schedule", want: "is not in proj-1234",
+		without: []string{batchStepReaperSc}},
+	{name: "the schedule minting from the reaper account", id: "batch-reaper-schedule", want: "mints its OAuth token from",
+		alter: func(_ *testing.T, _ *doctorRig, f batchRigFakes) {
+			f.scheduler.SetJob("proj-1234", batchSchedulerRegion, infra.ReaperSchedulerJob, "https://example.invalid/", batchRunAccount)
+		}},
+}
+
+// batchCloudRunArm is the installation's sink and exclusion filter with the
+// Cloud Run arm alone: what an installation applied before the Batch arm was
+// added holds.
+const batchCloudRunArm = `resource.type="cloud_run_job" AND labels."fugaro"="managed"`
+
+// TestDoctorBatchGateRefusesAnInstallationThatSelectsTheName is Task 10's
+// property test (plan 2026-10-19-compute-backend.md Task 10, "Tests", in the
+// shape of the managed-projects plan's Task 0.3): over the whole product of the
+// gate's conditions, an installation that fails any one of them is refused.
+//
+// Each case builds three worlds and asserts the three things the enable turns
+// on:
+//
+//   - the whole installation, SELECTING backend: cloud-batch: doctor is not
+//     refused (o.OK), and the condition's own check is ok -- so the list below
+//     is a list of things that are actually checked, not of things this test
+//     happens to name;
+//   - the same world WITHOUT that one condition: doctor is refused (o.OK is
+//     false), the condition's own check carries no severity at all -- doctor's
+//     own hard failure, which is the whole of what Task 10 hands over -- and
+//     its message is its own, matched by a phrase only that finding carries;
+//   - the same absent world on an installation that does NOT select the name
+//     (the same config with backend: cloud-run, the default): the same check
+//     now carries "warning" and doctor is not refused. That is the deliberate
+//     non-change: a batch block is work in progress for an installation
+//     running fine on Cloud Run, and a hard failure there would refuse an
+//     installation this task must not touch.
+//
+// Mutation (drop batchSeverity's selection arm -- return "warning" always):
+// every absent case stops failing hard. Mutation (add a check to
+// doctorBatchChecks without a case here): nothing in this table covers it, and
+// the first case's assertion that the whole installation is not refused is what
+// a check that fails unconditionally would break.
+func TestDoctorBatchGateRefusesAnInstallationThatSelectsTheName(t *testing.T) {
+	// world builds one installation. absent applies the case's own removal
+	// (its block, its skipped steps and its alter) -- and nothing of it is
+	// applied to the whole world, or every case would report its own finding
+	// three times.
+	world := func(t *testing.T, tc batchGateCondition, absent, selected bool) (*doctorRig, doctorOutput) {
+		t.Helper()
+		r, f := newDoctorRig(t), newBatchFakes(t)
+		block := batchBlock
+		if absent {
+			if tc.absentOnly {
+				block = ""
+			} else if tc.block != "" {
+				block = tc.block
+			}
+			batchProvisionedWithout(t, r, f, tc.without...)
+			if tc.alter != nil {
+				tc.alter(t, r, f)
+			}
+		} else {
+			batchProvisioned(t, r, f)
+		}
+		if selected {
+			r.withBatchSelected(t, f, block, batchLists)
+		} else {
+			r.withBatchBlock(t, f, block, batchLists)
+		}
+		return r, r.runDoctorJSON(t)
+	}
+
+	for _, tc := range batchGateConditions {
+		t.Run(tc.name, func(t *testing.T) {
+			// The whole installation, selected: not refused, and this
+			// condition's own check passes.
+			_, whole := world(t, tc, false, true)
+			if !whole.OK {
+				t.Errorf("a fully provisioned installation that selects the backend is refused: %+v", failingChecks(whole))
+			}
+			if c, ok := doctorCheckByID(whole.Checks, tc.id); tc.absentOnly {
+				if ok {
+					t.Errorf("a provisioned installation reports %s: it is the absent world's finding alone (%+v)", tc.id, c)
+				}
+			} else if !ok || !c.OK {
+				t.Fatalf("the provisioned check %s = %+v (%v), want ok: this case's condition is not one doctor checks", tc.id, c, ok)
+			}
+
+			// Without it: refused, hard, with a message of its own.
+			_, absent := world(t, tc, true, true)
+			c, ok := doctorCheckByID(absent.Checks, tc.id)
+			if !ok {
+				t.Fatalf("doctor reports no %s check for %s", tc.id, tc.name)
+			}
+			if c.OK {
+				t.Fatalf("with %s absent, %s reads ok: %+v", tc.name, tc.id, c)
+			}
+			if c.Severity != "" {
+				t.Errorf("with %s absent, %s has severity %q: an installation that selects the backend is refused for it, so it takes doctor's own hard failure and not a warning", tc.name, tc.id, c.Severity)
+			}
+			if !strings.Contains(c.Problem, tc.want) {
+				t.Errorf("the finding for %s is not its own (%q missing): %s", tc.name, tc.want, c.Problem)
+			}
+			if absent.OK {
+				t.Errorf("doctor is not refused for %s: %+v", tc.name, failingChecks(absent))
+			}
+
+			// The same absent world on Cloud Run: a warning, and no refusal.
+			_, cloudRun := world(t, tc, true, false)
+			cr, ok := doctorCheckByID(cloudRun.Checks, tc.id)
+			if tc.absentOnly {
+				// Nothing selects the backend and nothing published a block:
+				// there is no Batch fact to read, so the finding does not
+				// exist and doctor names Batch nowhere. The block is what an
+				// installation's apply writes, so this is the state of every
+				// installation that never asked for the backend.
+				if ok {
+					t.Errorf("an installation that runs on cloud-run and carries no batch block reports %s: %+v", tc.id, cr)
+				}
+				if !cloudRun.OK {
+					t.Errorf("an installation with no batch block and no batch backend is refused: %+v", failingChecks(cloudRun))
+				}
+				return
+			}
+			if !ok {
+				t.Fatalf("doctor reports no %s check for an installation that runs on cloud-run", tc.id)
+			}
+			if cr.OK || cr.Severity != "warning" {
+				t.Errorf("without the backend selected, %s = %+v, want a warning: a batch block is work in progress for an installation that runs on Cloud Run (batchSeverity)", tc.id, cr)
+			}
+			if !cloudRun.OK {
+				t.Errorf("a Batch check refuses an installation that does not select the backend: %+v", failingChecks(cloudRun))
+			}
+		})
+	}
+}
+
+// failingChecks are the checks that fail doctor (no severity and not ok), for a
+// failure message that names what refused the installation rather than the
+// whole list.
+func failingChecks(o doctorOutput) []doctorCheck {
+	var out []doctorCheck
+	for _, c := range o.Checks {
+		if !c.OK && c.Severity == "" {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// TestDoctorBatchRefusesAnImageFromAPullThroughRepository is step 5's fifth
+// entry as its own case (plan 2026-10-19-compute-backend.md Task 10): a
+// published `batch.image` in a pull-through repository of the project OTHER
+// than `fugaro-ghcr` -- the one `internal/cli`'s ParseShared refuses by name
+// and by that name alone, because the reader has no repository list to tell the
+// project's remote repositories from the ones this installation's builds push
+// to (docs/design/shared-config.md §5, TestParseSharedLeavesAnotherPullThroughRepository).
+//
+// The shape this task took is the second of the two the plan's vocabulary
+// allows: the project's remote repositories are refused AS A CLASS, and the
+// gate is where it is read. The gate reads the repository's MODE through this
+// project's own Artifact Registry -- a name-based check (`fugaro-ghcr`, or any
+// other ID) passes every repository an operator adds under another ID, and also
+// passes a standard repository that later becomes a pull-through one -- and a
+// repository that is not a STANDARD_REPOSITORY is a finding, which refuses an
+// installation that selects the backend. The image is the code a run's VMs
+// execute as the run account, so this is the confusion the entry names: the
+// upstream's owner publishes under the name the cache serves, and the VMs run
+// it with that account's grants on the project.
+//
+// Mutation (replace the mode rule with a `fugaro-ghcr` name check): the
+// pull-through case below stops failing, and the standard-repository case in
+// TestParseSharedAcceptsThePositivesTheBatchRefusalsLeaveOpen's own list still
+// passes -- which is exactly the pair that distinguishes the shape.
+func TestDoctorBatchRefusesAnImageFromAPullThroughRepository(t *testing.T) {
+	const (
+		pullThrough = "docker-hub"
+		image       = "us-east5-docker.pkg.dev/proj-1234/" + pullThrough + "/attacker/evil:1"
+	)
+	for _, tc := range []struct {
+		mode string
+		want bool
+	}{
+		{"REMOTE_REPOSITORY", false},
+		{"VIRTUAL_REPOSITORY", false},
+		{"STANDARD_REPOSITORY", true},
+		// A repository that never set the field: the API documents that as the
+		// standard mode, which is what the installation's own repository does.
+		{"", true},
+	} {
+		t.Run("mode "+oneLineCLI(tc.mode), func(t *testing.T) {
+			r, f := newDoctorRig(t), newBatchFakes(t)
+			f.ar.AddRepository("proj-1234", batchRegion, pullThrough, nil)
+			f.ar.SetRepositoryMode("proj-1234", batchRegion, pullThrough, tc.mode)
+			batchProvisioned(t, r, f)
+			r.withBatchSelected(t, f, strings.Replace(batchBlock, "us-east5-docker.pkg.dev/proj-1234/fugaro/fugaro:1", image, 1), batchLists)
+
+			c, ok := doctorCheckByID(r.runDoctorJSON(t).Checks, "batch-job-image")
+			if !ok {
+				t.Fatal("doctor reports no batch-job-image check")
+			}
+			if c.OK != tc.want {
+				t.Fatalf("the job image's repository with mode %q: %+v, want ok=%v", tc.mode, c, tc.want)
+			}
+			if tc.want {
+				return
+			}
+			if c.Severity != "" {
+				t.Errorf("the finding has severity %q: an installation that selects the backend is refused for it", c.Severity)
+			}
+			for _, want := range []string{image, pullThrough, "STANDARD_REPOSITORY", "design compute-backend.md §3.2, §4.4"} {
+				if !strings.Contains(c.Problem, want) {
+					t.Errorf("the finding does not name %q: %s", want, c.Problem)
+				}
+			}
+		})
+	}
+}
+
+// batchSecretBlock is batchBlock with the one `secrets:` entry an installation
+// publishes: an environment variable name and a Secret Manager secret's own
+// resource name, never a value (localcfg's Batch.Secrets).
+var batchSecretBlock = batchBlock + "  secrets: { OPENROUTER_API_KEY: projects/proj-1234/secrets/" + batchSecretID + " }\n"
+
+// batchSecretID is the secret the block above names, and the one the fake is
+// seeded with: a project secret this installation created (the labels
+// internal/infra's own discovery lists them by).
+const batchSecretID = "fugaro-openrouter-key"
+
+// TestDoctorBatchRefusesASecretTheInstallationDidNotCreate is step 5's fourth
+// entry as its own case (plan 2026-10-19-compute-backend.md Task 10): the
+// batch block's `secrets:` entries become the job's secretVariables, the block
+// is published to the runs bucket, and the only thing the reader
+// (internal/cli's ParseShared) can hold them to is that they are secrets of the
+// anchor's project -- it has a name, a GCP project and a bucket, and no way to
+// ask which of that project's secrets this installation created. A writer with
+// objectAdmin on the bucket can therefore name any secret the project holds,
+// and this installation's own launcher would read it and hand its value to a
+// run's agents: step 4's shape, with a secret instead of an account.
+//
+// The shape this task took is the ownership label, which is the same kind of
+// answer step 4 takes from the account's display name: every Fugaro-created
+// secret carries fugaro=managed (gcp.LabelManaged), which is what
+// internal/infra's own discovery lists its secrets by, and a secret of the
+// project without it is not one this installation created whatever its name.
+// The gate refuses an installation that selects the backend for such an entry.
+//
+// Mutation (drop the check; or compare names instead of reading the label): the
+// foreign case stops failing, and the case below of the installation's own
+// secret -- which no name rule could tell from it -- starts failing.
+func TestDoctorBatchRefusesASecretTheInstallationDidNotCreate(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		labels  map[string]string
+		want    bool
+		comment string
+	}{
+		{"a secret this installation created", map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProject: "aurora"}, true,
+			"the labels internal/infra's discovery lists an installation's project secrets by"},
+		{"a secret of the project Fugaro did not create", map[string]string{"owner": "teammate"}, false,
+			"a secret another team's deployment wrote: the block is published, so naming it is what the gate refuses"},
+		{"a secret of the project with no labels at all", nil, false,
+			"a stranger's secret never carries the ownership label"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, f := newDoctorRig(t), newBatchFakes(t)
+			batchProvisioned(t, r, f)
+			r.sm.Seed(batchSecretID, tc.labels, []byte("not-a-real-value"))
+			r.withBatchSelected(t, f, batchSecretBlock, batchLists)
+
+			c, ok := doctorCheckByID(r.runDoctorJSON(t).Checks, "batch-secrets")
+			if !ok {
+				t.Fatal("doctor reports no batch-secrets check")
+			}
+			if c.OK != tc.want {
+				t.Fatalf("the block's secret with labels %v: %+v, want ok=%v (%s)", tc.labels, c, tc.want, tc.comment)
+			}
+			if tc.want {
+				return
+			}
+			if c.Severity != "" {
+				t.Errorf("the finding has severity %q: an installation that selects the backend is refused for it", c.Severity)
+			}
+			for _, want := range []string{batchSecretID, "OPENROUTER_API_KEY", gcp.LabelManaged + "=" + gcp.ManagedValue, "did not create"} {
+				if !strings.Contains(c.Problem, want) {
+					t.Errorf("the finding does not name %q: %s", want, c.Problem)
+				}
+			}
+		})
+	}
+}
+
 // TestDoctorBatchNamesTheArtifactBoundary: Global Constraint 13 asks doctor to
 // name the boundary an artifact-producing run meets on this backend, and this
 // is the check that does it. Informational, never a warning: it describes the
@@ -567,8 +1351,8 @@ func TestDoctorBatchSkipsAreNeverPasses(t *testing.T) {
 // Mutation (drop the check; make it a warning; or drop §8.5 and D11): the
 // named assertion fails.
 func TestDoctorBatchNamesTheArtifactBoundary(t *testing.T) {
-	r, f := newDoctorRig(t), batchRigFakes{compute: gcpfake.NewCompute(t), logging: gcpfake.NewLogging(t), usage: gcpfake.NewServiceUsage(t)}
-	batchProvisioned(t, f)
+	r, f := newDoctorRig(t), newBatchFakes(t)
+	batchProvisioned(t, r, f)
 	r.withBatch(t, f, "")
 
 	c, ok := doctorCheckByID(r.runDoctorJSON(t).Checks, "batch-artifact-boundary")

@@ -523,6 +523,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.tag.outputs.version }}
+          GATE_REQUIRE_CONSOLE: "1"
         run: |
           set -euo pipefail
           scripts/release-gate.sh "v$VERSION"
@@ -1073,6 +1074,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.tag.outputs.version }}
+          GATE_REQUIRE_CONSOLE: "1"
         run: |
           set -euo pipefail
           scripts/release-gate.sh "v$VERSION"

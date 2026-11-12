@@ -1925,12 +1925,19 @@ func TestUpdateWithoutSharedBudgetDoesNotTouchFirebase(t *testing.T) {
 // The first run converges the installation, so the second one's first step with
 // something to do is the rules deploy: on a fixture that has never run, the
 // installation stage's own confirmation comes first, and the answer to it would
-// be the one this test is about.
+// be the one this test is about. The machine's plugin is recorded at this
+// release for the same reason: the plugin stage installs it wherever the command
+// is typed, checkout or not (D955, U8), so a machine with no plugin recorded has
+// its own install as the second run's first thing to do, and the confirmation
+// this test is about is the rules step's.
 func TestUpdateRulesUnconfirmedRefusesPolicyWrite(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir()) // the machine's record is this test's, not the developer's
 	_, db := updateBudgetRig(t)
 	if out, _, err := executeStdin(t, "", "update", "--yes"); err != nil {
 		t.Fatalf("the converging run: %v\n%s", err, out)
 	}
+	checkoutFile(t, filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "plugins", "installed_plugins.json"),
+		`{"version":2,"plugins":{"fugaro@fugaro":[{"scope":"user","version":"0.2.0"}]}}`)
 	puts := db.RulePuts()
 	if puts == 0 {
 		t.Fatal("the converging run deployed no rules: the second run would be declining a deploy that is not there")

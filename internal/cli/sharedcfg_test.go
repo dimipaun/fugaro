@@ -817,7 +817,15 @@ func TestSharedConfigRefusesEveryForbiddenSection(t *testing.T) {
 	// run -- the catalog's own reason, one step out -- and the triage switch
 	// decides which of a review round's findings hold a pull request back
 	// (D1854), which is the floor's reason one level down.
-	for _, k := range []string{"image_map", "bake_repos", "triage"} {
+	//
+	// `backend` joined the list with the enable (plan
+	// 2026-10-19-compute-backend.md Task 10 step 4), for a reason of the same
+	// shape: the checks that judge a `batch:` block are `fugaro doctor`'s and
+	// they read the machine's own config, so a launcher who could write the
+	// choice into the shared file would move every teammate with no local
+	// config onto VMs with a block that same launcher chose and no check ever
+	// saw.
+	for _, k := range []string{"image_map", "bake_repos", "triage", "backend"} {
 		if !slices.Contains(sharedForbidden, k) {
 			t.Errorf("sharedForbidden does not name %s, so a published %s would be read", k, k)
 		}
@@ -836,6 +844,7 @@ func TestSharedNeverPublishedCatchesTheDecodedSections(t *testing.T) {
 		{"image_map", "image_map:\n    acme/app: tools\n"},
 		{"bake_repos", "bake_repos: false\n"},
 		{"triage", "triage: false\n"},
+		{"backend", "backend: cloud-batch\n"},
 		{"clone_urls", "clone_urls:\n    github/acme/app: https://github.com/acme/app\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

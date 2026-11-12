@@ -129,17 +129,27 @@ type Config struct {
 	// this installation, and a remote-shaped entry then refuses.
 	ImageSource string `yaml:"image_source,omitempty"`
 	// BackendName is the compute backend by name (backend.Open's registry
-	// key); empty means backend.CloudRun, the only one implemented
-	// (design m11-setup-and-skills.md §7). Read it through Backend.
+	// key); empty means backend.CloudRun (design m11-setup-and-skills.md
+	// §7). Both cloud-run and cloud-batch are known names; the Batch one is
+	// what `fugaro doctor` reports on for an installation that selects it,
+	// and a config here only records the choice (design compute-backend.md
+	// §4.4). Read it through Backend.
+	//
+	// It is never published: Shared drops it and ParseShared refuses the key,
+	// so the selection is the one the machine running the launch wrote. The
+	// runs bucket's shared file is written by any launcher, and the checks
+	// that hold a `batch:` block -- or the choice itself -- to the
+	// installation's own provisioning are `fugaro doctor`'s, which a launch
+	// does not consult (docs/design/shared-config.md §4).
 	BackendName string `yaml:"backend,omitempty"`
 	// Batch is what the Cloud Batch backend reads: the installation facts a
 	// run's VM is built and placed from (design
 	// docs/design/compute-backend.md §4.4, plan
-	// 2026-10-19-compute-backend.md Task 8 step 2). Only the Batch opener
-	// reads it (internal/cli/cloud.go's cloudOpeners) and nothing selects
-	// that opener yet, so a config that carries this block still runs on
-	// Cloud Run: `backend: cloud-batch` stays refused by validate below until
-	// the enable task.
+	// 2026-10-19-compute-backend.md Task 8 step 2). The Batch opener reads it
+	// (internal/cli/cloud.go's cloudOpeners), and the block is only read by
+	// the backend that was selected: an installation that carries it without
+	// `backend: cloud-batch` still runs on Cloud Run, so nothing here selects
+	// a backend on its own.
 	Batch     *Batch    `yaml:"batch,omitempty"`
 	Build     Build     `yaml:"build"`
 	Terraform Terraform `yaml:"terraform,omitempty"`
@@ -1201,9 +1211,12 @@ const SecretExpiryLayout = "2006-01-02"
 // run's VM and job are built and placed from (design
 // docs/design/compute-backend.md §4.4, plan 2026-10-19-compute-backend.md
 // Task 8 step 2). It is read in one place — internal/cli/cloud.go's Batch
-// opener, which builds internal/backend/batch.Options from it — and
-// `backend: cloud-batch` is refused by validate below until the enable task,
-// so this block selects nothing today.
+// opener, which builds internal/backend/batch.Options from it — and the
+// backend name is what selects that opener: since the enable task (plan
+// 2026-10-19-compute-backend.md Task 10) `backend: cloud-batch` is a known
+// name, and the installation that selects it is what `fugaro doctor` refuses
+// until the Batch provisioning, the IAM, the logs, the cost and the reaper
+// all pass (design §4.4, §8.1 task 9).
 //
 // Most fields are what the compute root's apply already produces and
 // internal/infra/compute.go's ComputeOutputs already decodes (the machine
@@ -2274,17 +2287,8 @@ func (c *Config) validate() error {
 	if !machineTypeRE.MatchString(c.Build.MachineType) {
 		bad("build.machine_type %q is not a machine type such as E2_HIGHCPU_8", c.Build.MachineType)
 	}
-	if c.BackendName != "" && c.BackendName != backend.CloudRun {
-		// cloud-batch is a name this build knows -- internal/backend/batch
-		// speaks it and the fake tests it -- and must not select yet: the
-		// tasks that make a Batch run safe come after Check 57a (design
-		// compute-backend.md §8.1 Task 2, §9). Calling it unknown would be a
-		// different claim, and a wrong one.
-		if c.BackendName == backend.CloudBatch {
-			bad("backend %q is not enabled yet (this build runs %s)", c.BackendName, backend.CloudRun)
-		} else {
-			bad("backend %q is not a known backend (%s)", c.BackendName, backend.CloudRun)
-		}
+	if c.BackendName != "" && !knownBackends[c.BackendName] {
+		bad("backend %q is not a known backend (%s, %s)", c.BackendName, backend.CloudRun, backend.CloudBatch)
 	}
 	validateBatch(bad, c)
 	if t := c.Terraform; t.StateBucket != "" && !bucketRE.MatchString(t.StateBucket) {
@@ -2841,6 +2845,17 @@ func (c *Config) BuildRegion() string {
 	}
 	return c.Region
 }
+
+// knownBackends are the backend names config validation accepts: the names
+// internal/backend.Open resolves, and no others. `cloud-batch` became one of
+// them in the enable task (plan 2026-10-19-compute-backend.md Task 10), and
+// this file accepting the name is all that changed here. `fugaro doctor` is
+// what judges an installation that selects it -- the provisioning, the IAM,
+// the log isolation, the cost table and the reaper -- and it reports what it
+// finds; nothing in this file, and no launch, holds the choice back on that
+// report (design compute-backend.md §4.4, §8.1 task 9; SECURITY.md, "The VM
+// backend, and the Docker daemon it gives a run").
+var knownBackends = map[string]bool{backend.CloudRun: true, backend.CloudBatch: true}
 
 // Backend is the compute backend this config selects: backend.CloudRun
 // when BackendName is unset.

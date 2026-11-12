@@ -24,7 +24,13 @@ import (
 // are the run's work: re-pin the base, and rebuild the repository's own job
 // images on the new pin rather than on the one the records still show.
 func TestUpdateConvergesSlimBase(t *testing.T) {
-	r := newConvergeRig(t, v4Node())
+	// The node is the one this binary writes, and deliberately: this test is
+	// about the base image, and a node one version behind would take doctor's
+	// policy checks out of the run (doctorPolicyChecks returns the skew line
+	// alone), so policy-vs-jobs — the check this fixture exists to fire — would
+	// never be appended and the guard below would fail for a reason that has
+	// nothing to do with the base.
+	r := newConvergeRig(t, staleNode(t))
 	// The fixture is the previous release's base, or the assertions after the
 	// run prove nothing: an installation already on this release's pin would
 	// converge without the images stage touching it.
@@ -33,10 +39,13 @@ func TestUpdateConvergesSlimBase(t *testing.T) {
 		t.Fatalf("the fixture records base_images.base = %s, want the previous release's %s", got, prev)
 	}
 
-	// policy-vs-jobs is the check that fires on the stale base: the job images
-	// the records show were built on the previous release's base, which is what
-	// the images stage has to move.
-	convergeOn(t, r, []string{"policy-vs-jobs", "policy-rules-skew", "plugin-pin"})
+	// The node the previous release published is a version-4 one, so
+	// policy-older-than-binary is the check that fires before the run — and it
+	// is the policy stage's, which migrates the node in place. The stale base
+	// is what the assertions after the run are about: the job images the
+	// records show were built on the previous release's base, which is what the
+	// images stage has to move.
+	convergeOn(t, r, []string{"policy-older-than-binary", "policy-rules-skew", "plugin-pin"})
 
 	// The pin this release's images stage resolves, verifies and records: the
 	// one value whose movement is this installation reaching the slim base.

@@ -189,7 +189,7 @@ const (
 // block, and a row may not name a family command that does not take it (D1178);
 // the row and the reconcile paragraph move together when that command lands.
 const (
-	cfmRegistryRows   = 413
+	cfmRegistryRows   = 416
 	cfmAllowlistNamed = 101
 )
 

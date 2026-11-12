@@ -1643,3 +1643,166 @@ func TestUpsertSeqItemListByKeyRefusesWhatItCannotWriteSafely(t *testing.T) {
 		})
 	}
 }
+
+// TestSetEmptyMappingWritesTheEmptyMappingAndKeepsTheComments is the operation
+// the review floor's last removal needs: `review_floor: {}` is YAML's only
+// spelling of a floor of nothing — block style has no empty form — and what the
+// person wrote around the key stays where they wrote it, the comment block above
+// it and the key's own place in the file included.
+func TestSetEmptyMappingWritesTheEmptyMappingAndKeepsTheComments(t *testing.T) {
+	for _, tc := range []struct {
+		name, doc, want string
+		path            []string
+	}{
+		{
+			"a block mapping",
+			"# the owner's floor\nreview_floor:\n  pro:\n    - l2\nbase_branch: main\n",
+			"# the owner's floor\nreview_floor: {}\nbase_branch: main\n",
+			[]string{"review_floor"},
+		},
+		{
+			"a block mapping that is the file's last entry",
+			"base_branch: main\nreview_floor:\n  pro:\n    - l2\n",
+			"base_branch: main\nreview_floor: {}\n",
+			[]string{"review_floor"},
+		},
+		{
+			"a key the document does not carry",
+			"base_branch: main\n",
+			"base_branch: main\nreview_floor: {}\n",
+			[]string{"review_floor"},
+		},
+		{
+			"a nested key the document does not carry",
+			"a: 1\n",
+			"a: 1\nreview_floor:\n  pro: {}\n",
+			[]string{"review_floor", "pro"},
+		},
+		{
+			"a value that is the empty mapping already",
+			"review_floor: {}\nbase_branch: main\n",
+			"review_floor: {}\nbase_branch: main\n",
+			[]string{"review_floor"},
+		},
+		{
+			"a quoted key",
+			"'review_floor':\n  pro:\n    - l2\n",
+			"'review_floor': {}\n",
+			[]string{"review_floor"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := yamledit.SetEmptyMapping([]byte(tc.doc), tc.path)
+			if err != nil {
+				t.Fatalf("SetEmptyMapping: %v", err)
+			}
+			if string(got) != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+			reparses(t, got)
+			if !has(t, got, tc.path...) {
+				t.Fatalf("%v is not in %q", tc.path, got)
+			}
+		})
+	}
+}
+
+// TestSetEmptyMappingIsANoOpWhenTheEmptyMappingIsAlreadyThere pins the pair of
+// facts a caller branches on: the bytes come back identical, and Changed says
+// so, so a write path can tell "nothing to do" from "wrote the same bytes".
+func TestSetEmptyMappingIsANoOpWhenTheEmptyMappingIsAlreadyThere(t *testing.T) {
+	const doc = "review_floor: {}\n"
+	got, err := yamledit.SetEmptyMapping([]byte(doc), []string{"review_floor"})
+	if err != nil {
+		t.Fatalf("SetEmptyMapping: %v", err)
+	}
+	if !bytes.Equal(got, []byte(doc)) {
+		t.Fatalf("got %q, want the document unchanged", got)
+	}
+	if yamledit.Changed([]byte(doc), got) {
+		t.Fatal("Changed says the no-op wrote something")
+	}
+}
+
+// TestSetEmptyMappingRefusesWhatItCannotReplaceSafely is the other half: a value
+// this operation has no business dropping. A scalar and a sequence are
+// RemoveKey's, and a flow collection with members is a shape the package does
+// not splice into.
+func TestSetEmptyMappingRefusesWhatItCannotReplaceSafely(t *testing.T) {
+	for _, tc := range []struct {
+		name, doc string
+		path      []string
+		reason    yamledit.Reason
+	}{
+		{"no path", "a: 1\n", nil, yamledit.ReasonEmptyPath},
+		{"a scalar value", "review_floor: pro\n", []string{"review_floor"}, yamledit.ReasonReplacesCollection},
+		{"a block sequence", "review_floor:\n  - pro\n", []string{"review_floor"}, yamledit.ReasonReplacesCollection},
+		{"a flow mapping with members", "review_floor: {pro: [l2]}\n", []string{"review_floor"}, yamledit.ReasonReplacesCollection},
+		{"a path that crosses a scalar", "a: 1\n", []string{"a", "review_floor"}, yamledit.ReasonNotAMapping},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := yamledit.SetEmptyMapping([]byte(tc.doc), tc.path)
+			if r := yamledit.ReasonOf(err); r != tc.reason {
+				t.Fatalf("reason = %q, want %q (got %q, %v)", r, tc.reason, got, err)
+			}
+			if !bytes.Equal(got, []byte(tc.doc)) {
+				t.Fatalf("a refusal returned changed bytes: %q", got)
+			}
+		})
+	}
+}
+
+// TestExpandEmptyMappingOpensTheKeyForTheFirstMemberWrittenBack is the second
+// operation the empty mapping needs: a member cannot be spliced into `{}`, so a
+// write that adds the first one back expands the key to block style first — the
+// comment above it and its place in the file kept — and writes under it.
+func TestExpandEmptyMappingOpensTheKeyForTheFirstMemberWrittenBack(t *testing.T) {
+	const doc = "# the owner's floor\nreview_floor: {}\nbase_branch: main\n"
+
+	expanded, err := yamledit.ExpandEmptyMapping([]byte(doc), []string{"review_floor"})
+	if err != nil {
+		t.Fatalf("ExpandEmptyMapping: %v", err)
+	}
+	if want := "# the owner's floor\nreview_floor:\nbase_branch: main\n"; string(expanded) != want {
+		t.Fatalf("got %q, want %q", expanded, want)
+	}
+
+	got, err := yamledit.AddListItem(expanded, []string{"review_floor", "pro"}, "l2")
+	if err != nil {
+		t.Fatalf("AddListItem after the expansion: %v", err)
+	}
+	const want = "# the owner's floor\nreview_floor:\n  pro:\n    - l2\nbase_branch: main\n"
+	if string(got) != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	reparses(t, got)
+}
+
+// TestExpandEmptyMappingLeavesEveryOtherShapeAlone: the operation names one
+// shape, and everything else — a block mapping, a scalar, an absent key — has
+// nothing to expand and comes back byte for byte.
+func TestExpandEmptyMappingLeavesEveryOtherShapeAlone(t *testing.T) {
+	for _, tc := range []struct {
+		name, doc string
+		path      []string
+	}{
+		{"a block mapping", "review_floor:\n  pro:\n    - l2\n", []string{"review_floor"}},
+		{"a key written with no value", "review_floor:\n", []string{"review_floor"}},
+		{"a scalar", "review_floor: pro\n", []string{"review_floor"}},
+		{"a flow mapping with members", "review_floor: {pro: [l2]}\n", []string{"review_floor"}},
+		{"an absent key", "base_branch: main\n", []string{"review_floor"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := yamledit.ExpandEmptyMapping([]byte(tc.doc), tc.path)
+			if err != nil {
+				t.Fatalf("ExpandEmptyMapping: %v", err)
+			}
+			if !bytes.Equal(got, []byte(tc.doc)) {
+				t.Fatalf("got %q, want the document unchanged", got)
+			}
+			if yamledit.Changed([]byte(tc.doc), got) {
+				t.Fatal("Changed says the no-op wrote something")
+			}
+		})
+	}
+}

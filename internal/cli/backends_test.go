@@ -247,12 +247,18 @@ func TestBackendsUnknownSubcommand(t *testing.T) {
 	}
 }
 
-// TestBackendsLsHelpNamesTheRefusedBackend: the command lists a name this build
-// refuses to select, so its help has to say which one that is and why,
-// otherwise the second line of its own output reads as an offer. Both claims
-// are checked against localcfg's real behaviour in the same test, so the help
-// and the refusal cannot drift apart.
-func TestBackendsLsHelpNamesTheRefusedBackend(t *testing.T) {
+// TestBackendsLsHelpSaysWhatGatesTheBatchBackend: `internal/localcfg` accepts
+// the name since the enable task, so what the help has to say is no longer
+// "this build refuses it" -- the second line of the command's own output would
+// read as an offer, and the truth is that the name is real and `fugaro doctor`
+// is what judges an installation that selects it, failing on the provisioning,
+// IAM, logs, cost and reaper checks until they pass. **And the help says what
+// doctor is not**: a report, which no launch reads, so a reader does not take
+// a green doctor for a fence around `fugaro run` (the code review of the
+// enable raised the wording). Both claims are checked against localcfg's real
+// behaviour in the same test, so the help and the acceptance cannot drift
+// apart.
+func TestBackendsLsHelpSaysWhatGatesTheBatchBackend(t *testing.T) {
 	cfg := func(backendName string) []byte {
 		return []byte("version: 1\nname: aurora\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: my-runs\n" +
 			"backend: " + backendName + "\nrepos:\n  acme/app: { provider: github, workflows: [web] }\n")
@@ -260,17 +266,19 @@ func TestBackendsLsHelpNamesTheRefusedBackend(t *testing.T) {
 	if _, err := localcfg.Parse(cfg(backend.CloudRun)); err != nil {
 		t.Fatalf("a config naming %s is refused, and it is the backend this build runs: %v", backend.CloudRun, err)
 	}
-	_, err := localcfg.Parse(cfg(backend.CloudBatch))
-	if err == nil || !strings.Contains(err.Error(), "not enabled yet") {
-		t.Fatalf("a config naming %s: err = %v, want the not-enabled-yet refusal the help describes", backend.CloudBatch, err)
+	if _, err := localcfg.Parse(cfg(backend.CloudBatch)); err != nil {
+		t.Fatalf("a config naming %s: err = %v, want the acceptance the enable task made (what gates the name is fugaro doctor, not config validation)", backend.CloudBatch, err)
 	}
 	out, _, err := execute(t, "backends", "ls", "--help")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{backend.CloudBatch, "not enabled yet", backend.CloudRun} {
+	for _, want := range []string{backend.CloudBatch, "fugaro doctor", backend.CloudRun} {
 		if !strings.Contains(out, want) {
-			t.Errorf("backends ls --help does not mention %q, and it lists a backend this build refuses to select", want)
+			t.Errorf("backends ls --help does not mention %q, and it lists a backend whose selection is accepted while nothing in it says what gates it", want)
 		}
+	}
+	if strings.Contains(out, "not enabled yet") {
+		t.Errorf("backends ls --help still says the name is not enabled yet: %s", out)
 	}
 }
