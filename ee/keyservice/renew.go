@@ -36,7 +36,6 @@ import (
 	"log"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/dimipaun/fugaro/ee/licence"
@@ -119,61 +118,9 @@ func rotationSource(keyID string) string {
 // successor (D2135). It is the time a lost answer needs to be asked for again:
 // the job writes the new secret and then the key, and a crash between the two —
 // or a response the network dropped — leaves a holder whose only credential is
-// the old secret (K4.1).
+// the old secret (K4.1). It is also the life of the store's `Handover`, which is
+// what makes the promise hold on whichever instance the retry reaches.
 const renewalHandover = 24 * time.Hour
-
-// handover is one rotation's answer, held against the key it succeeded.
-//
-// The digest is the *old* key's, so that a caller presenting anything else is
-// refused: the window reopens the answer for the secret that earned it and for
-// no other. The key and the secret are here because a rotation cannot be asked
-// for a second time — the minter would sign a different key with a different
-// secret, and the first one, which the holder may never have received, would be
-// lost.
-type handover struct {
-	digest string
-	key    string
-	secret string
-	until  time.Time
-}
-
-// handovers is the 24 hours after a rotation, held in this process.
-//
-// A durable one is the shared store's (S3.5/S3.7), like every other read the
-// service makes: what a second instance costs is that a replay of a rotation it
-// did not make is refused rather than answered, which is the safe half of the
-// pair — no key is minted and no secret is spent by it.
-type handovers struct {
-	mu   sync.Mutex
-	held map[string]handover
-}
-
-func newHandovers() *handovers {
-	return &handovers{held: map[string]handover{}}
-}
-
-func (h *handovers) put(keyID string, held handover) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.held[keyID] = held
-}
-
-// get answers the handover a key is still inside the window for. One the window
-// has closed goes rather than being kept as a dead entry, and the comparison of
-// the digest is the caller's: what is returned is what was held.
-func (h *handovers) get(keyID string, now time.Time) (handover, bool) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	held, known := h.held[keyID]
-	if !known {
-		return handover{}, false
-	}
-	if !now.Before(held.until) {
-		delete(h.held, keyID)
-		return handover{}, false
-	}
-	return held, true
-}
 
 // holder is a caller that has proved a key: what the store remembers about it,
 // the record of what was issued, the row it was minted from, and whether the
@@ -185,8 +132,11 @@ type holder struct {
 	revoked bool
 	// rotated says the store holds a rotation of this key: a successor was
 	// minted under a new key id, so this key's secret is spent but for the
-	// window its lost answer is still reachable in.
-	rotated bool
+	// window its lost answer is still reachable in. rotatedAt is the instant the
+	// rotation was recorded, which is where that window starts; a record that
+	// carries no instant still says a successor exists.
+	rotated   bool
+	rotatedAt time.Time
 }
 
 // proved answers whether a caller holds the key it names, and it is the whole of
@@ -214,12 +164,13 @@ func (s *Service) proved(ctx context.Context, call RenewalCall) (holder, bool, e
 	var record Record
 	issued := false
 	rotated := false
+	var rotatedAt time.Time
 	for _, candidate := range records {
 		if candidate.KeyID == call.KeyID && !issued {
 			record, issued = candidate, true
 		}
 		if candidate.Source == rotationSource(call.KeyID) {
-			rotated = true
+			rotated, rotatedAt = true, candidate.Issued
 		}
 	}
 	if !issued {
@@ -233,7 +184,7 @@ func (s *Service) proved(ctx context.Context, call RenewalCall) (holder, bool, e
 	if err != nil {
 		return holder{}, false, err
 	}
-	return holder{state: state, record: record, policy: policy, revoked: revoked, rotated: rotated}, true, nil
+	return holder{state: state, record: record, policy: policy, revoked: revoked, rotated: rotated, rotatedAt: rotatedAt}, true, nil
 }
 
 // renewalCall reads one of the two routes' requests: a body under this service's
@@ -348,6 +299,17 @@ func (s *Service) renew(w http.ResponseWriter, r *http.Request) {
 		refuseRenewal(w)
 		return
 	}
+	// Renewals are one at a time in this process, and the read of the key's state
+	// is inside the lock with the writes that follow it: two calls that both read
+	// "no successor yet" would both mint, and only one of the two could be the
+	// rotation the store records — the other's key is one the store holds no
+	// record of, so it is a paid key that can never renew, and answering with it
+	// hands the customer exactly that (TestConcurrentRenewalsMintOneKey). What it
+	// costs is that a renewal waits for the one before it, which is a mint's
+	// round trip; what a lock here cannot reach is a second instance, and the
+	// store's record of the rotation is what answers that one (`recordRotation`).
+	s.renewMu.Lock()
+	defer s.renewMu.Unlock()
 	key, ok, err := s.proved(r.Context(), call)
 	if err != nil {
 		fail(w, err)
@@ -386,9 +348,17 @@ func (s *Service) renew(w http.ResponseWriter, r *http.Request) {
 		// The successor exists and this key's secret is spent. The window is
 		// the one case left, and it is the digest of the secret that earned the
 		// rotation and not of any secret at all.
-		if held, live := s.handed.get(call.KeyID, now); live &&
-			subtle.ConstantTimeCompare([]byte(held.digest), []byte(key.state.RenewalSecretHash)) == 1 {
-			writeAnswer(w, Answer{Status: StatusOK, NewerKey: true, Key: held.key, RenewalSecret: held.secret})
+		if s.answerRotation(w, r.Context(), call, now) {
+			return
+		}
+		// The window is open and the store does not hold the answer: a rotation
+		// recorded a moment ago whose answer is still being written, or one whose
+		// answer was lost with the write that should have kept it. Both are this
+		// service unable to answer yet rather than a secret that is spent, and a
+		// retry is what asks again — a refusal here would tell a holder whose
+		// successor is minutes old that its key is finished.
+		if key.rotatedAt.IsZero() || now.Before(key.rotatedAt.Add(renewalHandover)) {
+			fail(w, errors.New("the rotation of the key "+call.KeyID+" is inside its window and the store does not hold its answer"))
 			return
 		}
 		refuseRenewal(w)
@@ -429,17 +399,60 @@ func (s *Service) renew(w http.ResponseWriter, r *http.Request) {
 	// The buyer's address is carried over: the record is where a later renewal
 	// still finds the only address this licence was ever delivered to (§5.1).
 	record.Email = key.record.Email
-	if err := s.store.SaveIssuance(r.Context(), record); err != nil && !errors.Is(err, ErrAlreadyRecorded) {
+	if err := s.store.SaveIssuance(r.Context(), record); err != nil {
+		if !errors.Is(err, ErrAlreadyRecorded) {
+			fail(w, err)
+			return
+		}
+		// Another instance rotated this key while this one was minting. What was
+		// minted here is not that rotation — the store holds no record of it, so
+		// nothing would let it renew, and answering with it would hand the
+		// customer a paid key that is dead on arrival. The answer is the rotation
+		// that won, which is where the store's handover points.
+		if !s.answerRotation(w, r.Context(), call, now) {
+			fail(w, errors.New("the rotation of the key "+call.KeyID+" was recorded by another instance and the store does not hold its answer yet"))
+		}
+		return
+	}
+	// The handover is written last, after the record, and that is the order that
+	// can be recovered from: a rotation whose answer could not be kept is one the
+	// store records and the holder is told nothing about, and a retry is answered
+	// the same way until the window closes. Writing it first would be the worse
+	// order — a caller could be handed a key whose record had not been written
+	// yet, which is the dead key above.
+	if err := s.store.SaveHandover(r.Context(), Handover{
+		KeyID:         call.KeyID,
+		SecretHash:    key.state.RenewalSecretHash,
+		Key:           minted.Key,
+		RenewalSecret: minted.RenewalSecret,
+		Until:         now.Add(renewalHandover),
+	}, now); err != nil {
 		fail(w, err)
 		return
 	}
-	s.handed.put(call.KeyID, handover{
-		digest: key.state.RenewalSecretHash,
-		key:    minted.Key,
-		secret: minted.RenewalSecret,
-		until:  now.Add(renewalHandover),
-	})
 	writeAnswer(w, Answer{Status: StatusOK, NewerKey: true, Key: minted.Key, RenewalSecret: minted.RenewalSecret})
+}
+
+// answerRotation answers a caller with the rotation its own secret already
+// earned, if the store still holds it inside its window, and it answers whether
+// the caller was answered — the one thing it never does is mint: a second
+// rotation of one key would be a different key with a different secret, and the
+// successor the holder's lost answer carried would be the one nobody could ask
+// for again.
+//
+// The digest held with the handover is the old key's, so the window reopens for
+// the secret that earned it and for no other.
+func (s *Service) answerRotation(w http.ResponseWriter, ctx context.Context, call RenewalCall, now time.Time) bool {
+	held, live, err := s.store.Handover(ctx, call.KeyID, now)
+	if err != nil {
+		fail(w, err)
+		return true
+	}
+	if !live || subtle.ConstantTimeCompare([]byte(held.SecretHash), []byte(digest(call.RenewalSecret))) != 1 {
+		return false
+	}
+	writeAnswer(w, Answer{Status: StatusOK, NewerKey: true, Key: held.Key, RenewalSecret: held.RenewalSecret})
+	return true
 }
 
 // status is the key's own state, as the two routes answer it.

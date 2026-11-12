@@ -189,11 +189,16 @@ type Service struct {
 	auditor    Auditor
 	now        func() time.Time
 	limiter    *throttle
-	// handed is the 24 hours a rotated key's old secret still fetches its
-	// successor in (D2135). It is this process's and not the store's, because
-	// the store keeps no key material (§7.3): renew.go says what a second
-	// instance costs.
-	handed *handovers
+	// renewMu is one renewal at a time in this process. A renewal reads the key's
+	// state, mints and then writes what records the rotation, and two of them in
+	// flight together would both read "no successor yet" and both mint — of which
+	// only one can be the rotation the store records, so the other would answer
+	// with a key nothing would let renew (renew's own comment).
+	//
+	// It is this process's, like pageMu above and for the same reason: what a
+	// second instance does is decided by the store's record of the rotation and
+	// by the handover beside it (D2135), which is where the 24-hour window lives.
+	renewMu sync.Mutex
 	// pageMu is the page's actions one at a time. A minting action is a count,
 	// an audit line and a key, and the count reads the record the key writes:
 	// two of them in flight together would each count a record that does not
@@ -330,7 +335,6 @@ func New(cfg Config, deps Deps) (*Service, error) {
 		auditor:    deps.Auditor,
 		now:        now,
 		limiter:    limiter,
-		handed:     newHandovers(),
 	}, nil
 }
 

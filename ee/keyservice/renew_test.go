@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -191,6 +192,15 @@ func (f *fixture) callFrom(ip, route string, call RenewalCall) *httptest.Respons
 		f.t.Fatalf("encoding the request: %v", err)
 	}
 	return f.rawFrom(ip, route, string(body))
+}
+
+// handovers is how many rotations' answers the store is holding, which is what
+// a test about the window's sweep reads rather than what a route answers.
+func (f *fixture) handovers() int {
+	f.t.Helper()
+	f.store.mu.Lock()
+	defer f.store.mu.Unlock()
+	return len(f.store.handovers)
 }
 
 // answerOf is the answer one route wrote, as the job reads it.
@@ -665,6 +675,167 @@ func TestTheNextKeyCoversTheTermAfterThisOne(t *testing.T) {
 	}
 	if got := spy.minted(); got != 1 {
 		t.Errorf("the minter was asked for %d key(s), want the one renewal: an air-gapped key is never handed a successor", got)
+	}
+}
+
+// TestConcurrentRenewalsMintOneKey: renewals of one key arriving together are
+// one rotation. Without that, two of them read "no successor yet" and both mint,
+// and only one of the two can be the rotation the store records — the other key
+// is one the store holds no record of, so nothing would let it renew, and the
+// customer who installed it holds a paid key that is dead on arrival. Every
+// caller is answered the one successor and the minter is asked once.
+func TestConcurrentRenewalsMintOneKey(t *testing.T) {
+	f, spy := renewing(t)
+	keyID, secret, _ := heldKey(t, f, PolicyTeamMonthly)
+	body, err := json.Marshal(RenewalCall{KeyID: keyID, WorkspaceID: workspaceID, RenewalSecret: secret})
+	if err != nil {
+		t.Fatalf("encoding the request: %v", err)
+	}
+
+	const callers = 4
+	answers := make([]*httptest.ResponseRecorder, callers)
+	var wg sync.WaitGroup
+	for i := range answers {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			req := httptest.NewRequest(http.MethodPost, intakeOrigin+RouteRenew, strings.NewReader(string(body)))
+			req.Header.Set("Content-Type", "application/json")
+			req.RemoteAddr = applicantIP
+			rec := httptest.NewRecorder()
+			f.handler.ServeHTTP(rec, req)
+			answers[i] = rec
+		}(i)
+	}
+	wg.Wait()
+
+	first := answerOf(t, answers[0])
+	if answers[0].Code != http.StatusOK || first.Key == "" {
+		t.Fatalf("a renewal was answered %d (%q), want the successor", answers[0].Code, answers[0].Body.String())
+	}
+	for i, rec := range answers[1:] {
+		if rec.Code != http.StatusOK {
+			t.Fatalf("renewal %d of the same key was answered %d (%q), want the one successor: they arrive together and one rotation is what the store records", i+2, rec.Code, rec.Body.String())
+		}
+		if got := answerOf(t, rec); got.Key != first.Key || got.RenewalSecret != first.RenewalSecret {
+			t.Errorf("renewal %d answered another bundle, want the one rotation: a second mint is a key the store holds no record of", i+2)
+		}
+	}
+	if got := spy.minted(); got != 1 {
+		t.Errorf("the minter was asked for %d key(s) by %d concurrent renewals of one key, want one: only one of them can be the rotation the store records", got, callers)
+	}
+}
+
+// TestASecondInstanceAnswersTheSameRotation: the 24-hour window is the store's
+// and not the process's. A job whose answer was lost asks again hours later, and
+// which instance answers is the load balancer's choice — with the window in one
+// process's memory, that is a refusal for a holder whose successor exists, and
+// the recovery K4.1 plans (retry with the previous secret version) is exactly
+// that ask. The second instance here shares the first's store and nothing else:
+// its own memory, its own minter, its own limiter.
+func TestASecondInstanceAnswersTheSameRotation(t *testing.T) {
+	first, _ := renewing(t)
+	keyID, secret, _ := heldKey(t, first, PolicyTeamMonthly)
+	call := RenewalCall{KeyID: keyID, WorkspaceID: workspaceID, RenewalSecret: secret}
+	answer := answerOf(t, first.call(RouteRenew, call))
+	if answer.Key == "" {
+		t.Fatal("the first instance answered no key, so there is no rotation to replay")
+	}
+
+	second, spy := renewing(t)
+	second.deps.Store = first.store
+	second.start()
+
+	rec := second.call(RouteRenew, call)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the second instance answered the replay %d (%q), want the successor: a retry is answered by whichever instance reaches it", rec.Code, rec.Body.String())
+	}
+	if replayed := answerOf(t, rec); replayed.Key != answer.Key || replayed.RenewalSecret != answer.RenewalSecret {
+		t.Error("the second instance answered a different bundle, want the rotation the first one made: the minter would sign a different key with a different secret, and the successor the lost answer carried would be gone")
+	}
+	if got := spy.minted(); got != 0 {
+		t.Errorf("the second instance minted %d key(s), want none: the rotation exists and a second one is a key nobody was told about", got)
+	}
+}
+
+// TestAnExpiredHandoverIsDropped: the store holds a rotation's successor — the
+// key's own text and its renewal secret — for the window and no longer. What it
+// must not do is keep it until somebody asks about that key again, because the
+// key whose answer was lost is the one nobody asks a second time: an entry left
+// behind is a live credential in the store past the end of the promise. Every
+// read and every write drops what the window has closed on.
+func TestAnExpiredHandoverIsDropped(t *testing.T) {
+	f, _ := renewing(t)
+	ctx := context.Background()
+	rotate := func(policy string) string {
+		t.Helper()
+		keyID, secret, _ := heldKey(t, f, policy)
+		if answerOf(t, f.call(RouteRenew, RenewalCall{KeyID: keyID, WorkspaceID: workspaceID, RenewalSecret: secret})).Key == "" {
+			t.Fatalf("the key %s did not renew", keyID)
+		}
+		return keyID
+	}
+	first := rotate(PolicyTeamMonthly)
+	second := rotate(PolicyTeamMonthly)
+	if _, live, err := f.store.Handover(ctx, first, f.now); err != nil || !live {
+		t.Fatalf("the store answered live=%v err=%v for a rotation made now, want the successor it has just kept", live, err)
+	}
+
+	f.advance(25 * time.Hour)
+	rotate(PolicyTeamMonthly)
+	if got := f.handovers(); got != 1 {
+		t.Errorf("the store holds %d rotation(s)' answers after one past both windows, want the one whose window is open: what is left behind is a key and its secret", got)
+	}
+	for _, keyID := range []string{first, second} {
+		if _, live, err := f.store.Handover(ctx, keyID, f.now); err != nil || live {
+			t.Errorf("the store still answers the rotation of %s (live=%v err=%v) past its window, want none", keyID, live, err)
+		}
+	}
+}
+
+// unrecordedRotations is the store of an instance that lost a rotation to
+// another one: the rotation's record comes back as a source the store already
+// holds, which is the instant between the record and the handover beside it.
+type unrecordedRotations struct {
+	*Memory
+	refuse bool
+}
+
+func (u *unrecordedRotations) SaveIssuance(ctx context.Context, r Record) error {
+	if u.refuse && strings.HasPrefix(r.Source, "rotation:") {
+		return ErrAlreadyRecorded
+	}
+	return u.Memory.SaveIssuance(ctx, r)
+}
+
+// TestARotationTheStoreDidNotRecordIsNeverAnswered: the record is what makes a
+// successor a key the store can renew, so a renewal whose rotation another
+// instance recorded is answered with *that* rotation and never with the key
+// minted here — the store holds no record of it, so every later renewal would
+// refuse it and the customer would install a paid key that is dead on arrival.
+// While the other instance's answer is not in the store yet, the answer is a
+// failure to retry and not a key.
+func TestARotationTheStoreDidNotRecordIsNeverAnswered(t *testing.T) {
+	spy := &v1Spy{}
+	store := &unrecordedRotations{}
+	f := newFixtureWith(t, Production, func(f *fixture) {
+		spy.inner = Minter{Signer: f.signer, Keys: f.keys, Environment: f.env, Now: f.clock}
+		f.deps.MintsV1 = spy
+		store.Memory = f.store
+		f.deps.Store = store
+	})
+	keyID, secret, _ := heldKey(t, f, PolicyTeamMonthly)
+	store.refuse = true
+
+	rec := f.call(RouteRenew, RenewalCall{KeyID: keyID, WorkspaceID: workspaceID, RenewalSecret: secret})
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("a renewal whose rotation was recorded elsewhere was answered %d (%q), want %d: what this instance minted is not the rotation, and a key the store holds no record of is one nothing would let renew", rec.Code, rec.Body.String(), http.StatusInternalServerError)
+	}
+	if body := rec.Body.String(); strings.Contains(body, keyPrefixV1) {
+		t.Errorf("the answer %q carries a key text, want none: the store holds no record of the key this instance minted", body)
+	}
+	if got := spy.minted(); got != 1 {
+		t.Errorf("the minter was asked for %d key(s), want the one this instance minted before it lost the rotation", got)
 	}
 }
 
