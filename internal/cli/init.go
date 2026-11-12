@@ -2699,6 +2699,21 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports, v
 			}
 		}
 	}
+	// The secrets intake's block is the second key this spec never carries, and
+	// it is written by the same run that wrote the service's (init_stages.go's
+	// ensureCredentialsService, through carriedIntake and deployCredentialsService):
+	// every run of init rewrites the root's tfvars from a spec that does not
+	// hold it, so an installation that has the intake would lose the key here
+	// and plan the whole service — its account, its two roles, its invoker
+	// grants and its revision — away, with the URL it alone records. Carried
+	// forward exactly as it was, present or absent, like the service's own
+	// block and for the same HARD RULE reason: one missed `fugaro update` is an
+	// installation whose dynamic secrets stop being written.
+	for _, prev := range documents {
+		if vars, err = infra.CarriedIntake(vars, prev); err != nil {
+			return nil, userErr("reading the installation's tfvars: %v", err)
+		}
+	}
 	// The other key this spec never carries, and for a sharper reason than the
 	// opt-in above: it is the deployer's scope, which is what creates the seven
 	// scoped roles and their seven conditioned bindings, and a document that

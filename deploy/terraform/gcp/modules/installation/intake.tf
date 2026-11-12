@@ -244,6 +244,16 @@ resource "google_cloud_run_v2_service" "intake" {
     containers {
       image = var.intake.image
 
+      # The subcommand of the released image, and the one thing that tells this
+      # service from the credentials service running the same pin: that image's
+      # entrypoint is the binary and its default command is `credentials serve`,
+      # so without these args this container would serve the other service's
+      # routes as the intake's account. `args` replaces the image's command and
+      # no part of its entrypoint, so the process is `fugaro intake serve`
+      # (internal/cli/intake_serve.go) — there is no intake image of its own,
+      # and no release builds one.
+      args = ["intake", "serve"]
+
       resources {
         limits = {
           cpu    = "1"
