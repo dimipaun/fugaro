@@ -131,6 +131,8 @@ first non-Go file under `ee/`.
 - **Produces:** an approved `ee/LICENSE` text with the licensor filled in, handed to L4.1.
 - **Depends on:** nothing. **Blocks:** L4.1 and L0.2. **Not on the 0.11.0 critical path** (T1
   ruling, 2026-10-24).
+- **Status 2026-11-11:** done. The owner answered F3 (a), F3 (b) and D307 (see
+  [reconciliation.md](reconciliation.md), F3).
 
 #### L0.2 — Install the hosted CLA app (OWNER-RUN)
 - **What:** install a hosted CLA app on the repository, give it the CLA text from L0.1, allow-list
@@ -501,6 +503,10 @@ id production verifiers refuse, where each product stores the key and how the co
 the CLI it spawns. It is written against `docs/subscriptions/implementation-plan.md`, not from here.
 The number is not reused.
 
+**Superseded 2026-11-11 by licence-key-v2 ([spec.md](../licence-key-v2/spec.md),
+[reconciliation.md](../licence-key-v2/reconciliation.md)): the key's format and claim set move to
+the v2 `fgk_` keys, and the note's "no revocation" limit is overturned (D2130, D2131).**
+
 - **Files:** `docs/licensing/licence-key.md` (new): D308 as a design (Ed25519 over a JSON claim
   set: licensee, features, expiry, issued; base64url; verified offline in `ee/` code with the
   public key compiled in; the signature is verified over the **raw key bytes before** any JSON is
@@ -601,6 +607,8 @@ The number is not reused.
 - **What:** with counsel, settle the wording every label carries once the release build sets the
   `ee` tag (T3 (b)), and whether a pure-MIT artifact is also published (T3 (c)).
 - **Depends on:** L4.1 (an `ee/LICENSE` exists to point at).
+- **Status 2026-11-11:** T3 (b) is settled (L5.2). T3 (c) is ruled by the owner: **yes, a pure-MIT
+  build is also published**; its task is L5.3, approved by the owner the same day.
 
 #### L5.2 — Label the mixed-licence release
 - **Files:** `.goreleaser.yaml` (`builds[0].tags: [ee]`; the cask's `license` per L5.1),
@@ -619,6 +627,24 @@ The number is not reused.
   `cmd/fugaro/ee_on.go`. **Reviewer tier:** opus + mandatory independent review (licence labels).
   **OWNER-RUN:** no (L5.1 is).
 - **Commit:** `release: the binary carries ee/ code, and every label says so`
+
+#### L5.3 — Publish a pure-MIT build beside the mixed-licence one
+- **What:** the owner's T3 (c) ruling of 2026-11-11. A second archive per platform built without
+  the `ee` tag, labelled MIT only, so a user who wants no `ee/` code downloads it instead of
+  building from source. The Homebrew cask stays on the mixed-licence binary.
+- **Files:** `.goreleaser.yaml` (a second build id without `tags: [ee]`, its own archive name, no
+  `ee/LICENSE` copy, checksums), `scripts/notices_test.go`, `README.md` and `LICENSING.md` (say which
+  archive is which), `website` downloads and licence elements with their tests, `docs/release.md`.
+- **Tests:** a test that the pure-MIT build lists no `ee` tag and its archive carries no
+  `ee/LICENSE`; `TestEETagNeedsTheLabels` still holds for the mixed build; the README, `LICENSING.md`
+  and website pins updated.
+- **Owner's answers, 2026-11-11:** the archive is named `fugaro-core` (files
+  `fugaro-core_<version>_<os>_<arch>.tar.gz`, the binary inside stays `fugaro`); `fugaro update`, the
+  console's CLI discovery and the plugin pin follow the mixed-licence build only; no second
+  Homebrew cask, the cask stays on the mixed build. The owner gave the go for this task.
+- **Depends on:** L5.2. **Reviewer tier:** opus + mandatory independent review (licence labels).
+  **OWNER-RUN:** no.
+- **Commit:** `release: publish a pure-MIT archive beside the mixed-licence one`
 
 ## Parallel execution
 

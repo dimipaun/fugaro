@@ -122,8 +122,8 @@ func TestInitPublishConfigAlone(t *testing.T) {
 	}
 }
 
-// A launcher's --publish-config is refused with the operator text and exit
-// 1, since 0.7.0 only operators may write fugaro/ (bucket-iam.md H8).
+// A launcher's --publish-config is refused with the admin text and exit
+// 1, since 0.7.0 only admins may write fugaro/ (bucket-iam.md H8).
 func TestInitPublishConfigAsLauncherIsRefused(t *testing.T) {
 	r := newInitRig(t)
 	old := sharedBucketOpener
@@ -133,7 +133,7 @@ func TestInitPublishConfigAsLauncherIsRefused(t *testing.T) {
 	t.Cleanup(func() { sharedBucketOpener = old })
 	r.gcs.DenyWrites(initRunsBucket, "fugaro/")
 	_, _, err := executeStdin(t, "", "setup", "--publish-config")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "operator role") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "admin role") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
 }
@@ -154,8 +154,8 @@ func TestInitWarnsWhenSharedConfigPublishIsForbidden(t *testing.T) {
 	if err != nil {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
-	if !strings.Contains(out, "could not publish the shared config") || !strings.Contains(out, "operator role") {
-		t.Fatalf("no warning naming the operator role:\n%s", out)
+	if !strings.Contains(out, "could not publish the shared config") || !strings.Contains(out, "admin role") {
+		t.Fatalf("no warning naming the admin role:\n%s", out)
 	}
 }
 
@@ -711,6 +711,31 @@ func TestSharedConfigRefusesOrchestrator(t *testing.T) {
 	}
 }
 
+// TestSharedConfigRefusesCloneURLs: the clone URL is where a repository's runs
+// clone from, and it is the local config's block (SD5, D842) published through
+// the policy node the runner reads — the file the runner computes the URL from
+// and fails closed on — rather than read from the shared config, which any
+// launcher with objectAdmin on the runs bucket can write. An entry there would
+// let a launcher point every teammate's runs at a URL of its choosing, which is
+// the whole of what the node's own rule (projectpolicy.ValidCloneURLs) exists to
+// refuse. The reader refuses the key by name before the file is parsed, the way
+// review_floor and the catalog are refused.
+func TestSharedConfigRefusesCloneURLs(t *testing.T) {
+	if !slices.Contains(sharedForbidden, "clone_urls") {
+		t.Fatal("sharedForbidden does not name clone_urls, so a published block would be read")
+	}
+	data := validShared() + "clone_urls:\n    github/acme/app: https://github.com/acme/app\n"
+	_, err := ParseShared([]byte(data), sharedAnchor)
+	if err == nil {
+		t.Fatal("a published shared config carrying clone_urls: was accepted")
+	}
+	for _, want := range []string{"clone_urls", "never published", "fugaro update"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+}
+
 // TestSharedConfigRefusesEveryForbiddenSection: the list is the fence, and a
 // name dropped from it is a section the commands would read from a file any
 // launcher with objectAdmin on the runs bucket can write. Each name is put in
@@ -774,6 +799,7 @@ func TestSharedNeverPublishedCatchesTheDecodedSections(t *testing.T) {
 		{"bake_repos", "bake_repos: false\n"},
 		{"triage", "triage: false\n"},
 		{"backend", "backend: cloud-batch\n"},
+		{"clone_urls", "clone_urls:\n    github/acme/app: https://github.com/acme/app\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, err := localcfg.Parse([]byte(validShared() + tc.yaml))

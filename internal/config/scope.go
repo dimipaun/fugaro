@@ -63,6 +63,12 @@ var Scopes = []ScopeRow{
 	// The vision slot (V1, D2003) is a model of the repository's own, as the
 	// three roles are, and a project sets it for every repository of it.
 	{Key: "agent.models.vision", In: InProject | InRepo},
+	// The diagnose slot (D1607): a local diagnosis's model, which a repository
+	// chooses and a project sets for every repository of it, exactly as the
+	// four slots above it are set. It is not a run's key — no stage is the
+	// diagnose one — which is why it is here beside the vision slot rather than
+	// with the roles a run reads.
+	{Key: "agent.models.diagnose", In: InProject | InRepo},
 	// The four crafts (docs/model-crafts/spec.md §3): each craft's model and
 	// the credential or pool its calls go out on. A craft's model is a default
 	// the project sets for every repository of it, as agent.models.* is; its

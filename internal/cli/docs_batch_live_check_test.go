@@ -323,7 +323,7 @@ func TestDocsCheck124SaysWhatTheEnableChanged(t *testing.T) {
 		// The launch half, which the review of the enable asked for: doctor
 		// reports and `fugaro run` does not read it, so the part may not read
 		// as a fence that is not there.
-		"fugaro run reads none of these checks",
+		"`fugaro run` reads none of these checks",
 		"docs/plans/2026-10-19-compute-backend.md",
 		"124b, 124c and 124d are runnable once it has run",
 		"the gate",

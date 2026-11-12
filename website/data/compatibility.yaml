@@ -39,7 +39,7 @@
 #     exists today, and a claim with no path behind it is a claim the page cannot back.
 version: 1
 as_of:
-  cli: v0.22.0
+  cli: v0.23.0
   console: v0.121.0
 never_say:
   - "any model"
@@ -73,7 +73,7 @@ groups:
         note: "A native port is approved through its first slice; the release builds no Windows binary yet."
         evidence: "docs/windows-cli/README.md"
   - id: console
-    title: "Console (Electron)"
+    title: "Console"
     rows:
       - name: "macOS"
         status: supported
@@ -96,7 +96,7 @@ groups:
         note: "The console runs on top of the CLI and inherits its identity; there is no separate console login."
         evidence: "docs/design/desktop-console.md"
   - id: mobile
-    title: "Mobile app (Expo)"
+    title: "Mobile app"
     rows:
       - name: "iOS"
         status: coming-soon
@@ -106,21 +106,24 @@ groups:
       - name: "Android"
         status: coming-soon
         edition: subscription
-        note: "The same Expo codebase as iOS."
+        note: "The same app as iOS."
         evidence: "mobile/app.json"
   - id: agent-harness
     title: "Agent harness"
     rows:
       - name: "Claude Code"
         status: supported
+        edition: core
         note: "The only harness a run drives today."
         evidence: "internal/agent"
       - name: "OpenAI Codex"
         status: roadmap
+        edition: core
         note: "No Codex code exists; it is a non-goal of the multi-model design."
         evidence: "docs/design/m10-multi-model.md"
       - name: "Others"
         status: not-planned
+        edition: core
         note: "No current value in adding more harnesses."
   - id: model-access
     title: "Model access"
@@ -128,29 +131,36 @@ groups:
     rows:
       - name: "OpenRouter"
         status: supported
+        edition: core
         note: "OpenRouter or any Anthropic-compatible endpoint, for the coder and first-line reviewer."
         evidence: "internal/config/providers.go"
       - name: "Anthropic API key"
         status: built-not-enabled
+        edition: core
         note: "The senior and security reviewers, e.g. Opus, on a project's own key. The path is built; this api-key half is not enabled yet, and its live check has not run. The cloud review job the key would serve is admitted — what is still owed there is the live check rather than the code."
         evidence: "internal/cli/review.go"
       - name: "Claude OAuth token (bring your own credentials)"
         status: supported
+        edition: core
         note: "Several named accounts per project, chosen per profile or stage; automatic failover is not claimed. Use of a subscription is subject to the provider's own terms."
         evidence: "internal/config/claude_accounts.go"
       - name: "Direct keys for DeepSeek and other Anthropic-compatible endpoints"
         status: supported
+        edition: core
         note: "A user-named provider entry with its own base URL, models and prices."
         evidence: "docs/multi-model.md"
       - name: "Native OpenAI"
         status: roadmap
+        edition: core
         note: "No native OpenAI provider kind exists."
       - name: "ChatGPT / Codex OAuth"
         status: roadmap
+        edition: core
         note: "The token name is reserved in the OAuth-token design; no code."
         evidence: "docs/design/project-named-oauth-tokens.md"
       - name: "Vertex AI"
         status: supported
+        edition: core
         note: "Claude on Vertex is the default auth, billed to the project's own GCP account. A dollar cap on Vertex is observe-only until Check 20's Vertex facts are recorded."
         evidence: "internal/config/defaults.go"
   - id: cloud
@@ -159,20 +169,24 @@ groups:
     rows:
       - name: "Google Cloud (GCP)"
         status: supported
+        edition: core
         note: "Deliberately GCP-only."
         evidence: "docs/design/v1.md"
       - name: "AWS, Azure"
         status: not-planned
+        edition: core
         note: "No plan today, and no ruling against them: either would mean replacing Firebase."
   - id: backends
     title: "Execution backends"
     rows:
       - name: "Cloud Run jobs (gen 2)"
         status: supported
+        edition: core
         note: "The default backend, on the gen 2 execution environment."
         evidence: "internal/backend/gcp"
       - name: "VM / Cloud Batch"
         status: built-not-enabled
+        edition: core
         note: "Built behind the backend seam, and opt-in per installation: the project config accepts cloud-batch as a known name, and fugaro doctor reports an installation that selects it, failing until the backend's own checks pass. Doctor reports and does not fence: a launch is not blocked by it."
         evidence: "internal/backend/batch"
   - id: forges
@@ -197,23 +211,26 @@ groups:
         edition: subscription
         note: "Self-hosted forges are a plan, not a build."
       - name: "Bitbucket Data Center"
-        status: not-planned
+        status: roadmap
         edition: subscription
-        note: "Ruled out: the Bitbucket integration speaks the Cloud API roots only."
+        note: "The Bitbucket integration speaks the Cloud API roots only today."
         evidence: "docs/bitbucket-workspace-token"
   - id: trackers
     title: "Issue trackers"
     rows:
       - name: "Read and update issues in your own agent"
         status: supported
+        edition: core
         note: "Your own agent reads the tracker through its own MCP servers and hands Fugaro a finished task."
         evidence: "plugin/skills/working/SKILL.md"
       - name: "Tracker access inside a run"
         status: roadmap
+        edition: core
         note: "A run's agent gets no tracker server, and the review stages strip any MCP configuration."
         evidence: "internal/runner/reviewmode.go"
       - name: "Native triggers (label or assign to start a task)"
         status: roadmap
+        edition: subscription
         note: "No webhook layer exists."
   - id: notifications
     title: "Notifications"
@@ -221,20 +238,25 @@ groups:
     rows:
       - name: "Mobile push"
         status: roadmap
+        edition: subscription
         note: "The primary channel for individuals."
         evidence: "docs/mobile/design/push-notifications.md"
       - name: "Slack, channel notifications"
         status: roadmap
+        edition: subscription
         note: "Through an incoming webhook."
       - name: "Microsoft Teams, channel notifications"
         status: roadmap
+        edition: subscription
         note: "Alongside Slack."
       - name: "Slack / Teams interactive threads"
         status: roadmap
+        edition: subscription
         note: "One thread per task, with replies and buttons going back to the agent."
       - name: "Email"
-        status: not-planned
-        note: "No plan for email."
+        status: roadmap
+        edition: subscription
+        note: "Alongside Slack and Teams."
   - id: identity-and-roles
     title: "Identity and roles"
     rows:

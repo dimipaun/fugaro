@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -96,6 +98,34 @@ func anchorOf(data []byte) (project, gcpProject string, ok bool) {
 func isAnchoredFile(data []byte) bool {
 	_, _, ok := anchorOf(data)
 	return ok
+}
+
+// anchorOfProject is the fugaro.yaml anchor an installation's own config
+// stands in for when a read has no checkout to take one from: its project
+// and gcp_project, which is the anchor every layer read keyed by the
+// config alone anchors on (fugaro config layer outside a checkout, and
+// api.go's ProjectLayerOf).
+func anchorOfProject(lc *localcfg.Config) ([]byte, error) {
+	return yaml.Marshal(map[string]string{"project": lc.Name, "gcp_project": lc.GCPProject})
+}
+
+// projectLayerOf is api.go's ProjectLayerOf: findLayer under a project
+// config's own anchor, with the strict options a launch and `fugaro config
+// layer` read with. The note is findLayer's own, so a caller that prints it
+// reports which copy stood in for an unreachable bucket and how old it is.
+func projectLayerOf(ctx context.Context, lc *localcfg.Config) (*config.ProjectLayer, string, error) {
+	if lc == nil || lc.Name == "" || lc.GCPProject == "" {
+		return nil, "this installation's config names no project and gcp_project, so no project layer applies to it", nil
+	}
+	anchor, err := anchorOfProject(lc)
+	if err != nil {
+		return nil, "", remote(err)
+	}
+	fl, err := findLayer(ctx, getenvOS, anchor, lc, layerOptions{}, time.Now())
+	if err != nil {
+		return nil, "", err
+	}
+	return fl.Layer, fl.Note, nil
 }
 
 // findLayer is the project layer that applies to the fugaro.yaml data

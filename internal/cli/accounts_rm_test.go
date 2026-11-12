@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/agentenv"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -104,11 +105,110 @@ func TestAccountsRmRemovesTheDeclarationAndTheProfileEntry(t *testing.T) {
 	}
 }
 
+// TestAccountsRmRefusesWhileAProfileReferencesTheAccount is the red step
+// docs/config-management/implementation-plan.md's G9 names (D1172, spec §3.3):
+// while a profile still names the account the removal is refused, and what the
+// refusal names is the REFERRER it found — the profile the person has to edit —
+// rather than only the key it would remove. Two profiles is the fixture because
+// one name could be a sentence about the key; two is a list of referrers.
+//
+// TestAccountsRmRefusesWhileAProfileListsIt above is the A4 half of the same
+// contract — the refusal, the file that is not written and the state the
+// command would have left — and this is the plan's own claim read off it. The
+// two are held apart on purpose: one asks whether the command refuses at all,
+// this asks what the person reading the refusal is told.
+func TestAccountsRmRefusesWhileAProfileReferencesTheAccount(t *testing.T) {
+	r := newAddRigWith(t, accountsRmLocalShared)
+	before := readFileString(t, r.cfg)
+
+	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--yes")
+	if err == nil {
+		t.Fatalf("the account was removed while two profiles still named it:\n%s", out)
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("exit %d, want a user error: %v", ExitCode(err), err)
+	}
+	for _, referrer := range []string{"ops", "standard"} {
+		if !strings.Contains(err.Error(), referrer) {
+			t.Errorf("the refusal does not name the profile %s it found, so the person told to edit one cannot see which: %v", referrer, err)
+		}
+	}
+	if !strings.Contains(err.Error(), "claude_accounts.team-a") {
+		t.Errorf("the refusal does not name the key it refused to remove: %v", err)
+	}
+	// The step out of the refusal, and not just the reason: the flag that takes
+	// the name out of one profile at a time.
+	if !strings.Contains(err.Error(), "--profile") {
+		t.Errorf("the refusal does not name the flag that takes the name out of a profile: %v", err)
+	}
+	if after := readFileString(t, r.cfg); after != before {
+		t.Errorf("the refused removal wrote %s:\n%s", r.cfg, after)
+	}
+	if got := r.sm.Deleted(); len(got) != 0 {
+		t.Errorf("the refused removal deleted %v", got)
+	}
+}
+
+// accountsRmDeclaredLocal is an account declared with its allow list and no
+// profile listing it: the state `accounts add` leaves when the profile entry is
+// taken away first (accountsRmLocalShared's own removal order), and the only
+// world `accounts rm` reaches its declaration in.
+const accountsRmDeclaredLocal = addRigLocal + `claude_accounts:
+  team-a:
+    allow_data_to:
+      - owner/repo-a
+`
+
+// TestAccountsRmRemovesTheDefinitionAndItsAllowListEntry is G9's second red
+// step (D1172, spec §3.3): the removal takes the account's definition and the
+// `claude_accounts.NAME.allow_data_to` entry written inside it, so no allow
+// list outlives the account it was written for — which is D1172's cost of the
+// alternative stated as a test. The entry is a fact of the block and not a
+// second edit, so what makes the claim true is the pair: the file holds no
+// `claude_accounts` block at all afterwards, and the sentence printed before it
+// goes names the list it took away.
+//
+// TestAccountsRmRemovesTheDeclarationAndTheProfileEntry beside it is A4's own
+// removal; this is the allow-list half, and the sentence is where it is read.
+func TestAccountsRmRemovesTheDefinitionAndItsAllowListEntry(t *testing.T) {
+	r := newAddRigWith(t, accountsRmDeclaredLocal)
+	id := gcp.ProjectSecretID("aurora", config.ClaudeAccountSecret("team-a"))
+
+	out := r.rm(t, "team-a")
+
+	if lc := r.addLocal(t); len(lc.ClaudeAccounts) != 0 {
+		t.Errorf("claude_accounts is %v after the removal, want the block gone with its entry", lc.ClaudeAccounts)
+	}
+	if file := readFileString(t, r.cfg); strings.Contains(file, "claude_accounts") {
+		t.Errorf("the file keeps a claude_accounts block no account is defined in:\n%s", file)
+	}
+	if !strings.Contains(out, "remove claude_accounts.team-a (its allow_data_to was [owner/repo-a])") {
+		t.Errorf("the sentence does not name the allow_data_to entry it takes away:\n%s", out)
+	}
+	if got := accountsAddRow(t, out, "account"); !strings.Contains(got, "claude_accounts.team-a removed, its allow_data_to was [owner/repo-a]") {
+		t.Errorf("the block's account line reads %q, want the allow list it removed named", got)
+	}
+	// The credential behind the entry is addressed in the same run: an
+	// allow-list entry outliving its account is the state D1172's alternative
+	// would leave, and a secret outliving it is the same hole with a price on
+	// it. This fixture declares the account by hand, so the store answers that
+	// the secret is already gone — which is the goal state, and the block says
+	// which secret it was about either way.
+	if got := accountsAddRow(t, out, "secret"); !strings.Contains(got, id) {
+		t.Errorf("the block's secret line reads %q, want the secret %s named", got, id)
+	}
+	if _, err := localcfg.Load(r.cfg); err != nil {
+		t.Fatalf("the config this command wrote does not load: %v", err)
+	}
+}
+
 // accountsRmTypedLocal is the account's typed entry already named by the rest
-// of the config: a craft served by it and a pool whose members list it. Both
-// are the state a removal of the entry must refuse under — the craft because
-// its access would resolve to nothing, the pool because a member that is not
-// defined is the file its own loader rejects.
+// of the config: a craft served by it and a pool whose members list it. The
+// pool is the state a removal of the entry must refuse under — a member no
+// block defines is the file this config's own loader rejects, and `accounts
+// pool rm` is what drops one; the craft's access is not, because no command of
+// this release writes a crafts key, so the entry's own crafts are cleared with
+// it (accountsRmCraftAccesses, and the test below).
 const accountsRmTypedLocal = addRigLocal + `
 credentials:
   - name: team-a
@@ -121,6 +221,17 @@ pools:
   - name: paid
     members:
       - team-a
+`
+
+// accountsRmTypedCraftLocal is the same entry named by a craft alone.
+const accountsRmTypedCraftLocal = addRigLocal + `
+credentials:
+  - name: team-a
+    type: claude-oauth
+crafts:
+  coder:
+    model: deepseek-v4-1
+    access: team-a
 `
 
 // TestAccountsRmTakesTheTypedEntryWithTheAccount is the other end of `accounts
@@ -158,12 +269,12 @@ func TestAccountsRmTakesTheTypedEntryWithTheAccount(t *testing.T) {
 	}
 }
 
-// TestAccountsRmRefusesWhileACredentialIsStillNamed is the same guard at the
-// other end: while a craft is served by the entry or a pool lists it, the
-// removal is refused rather than leaving either pointing at a credential that
-// is gone. The refusal names both fields, because both are what the owner has
-// to point elsewhere first, and nothing is written.
-func TestAccountsRmRefusesWhileACredentialIsStillNamed(t *testing.T) {
+// TestAccountsRmRefusesWhileAPoolStillListsTheCredential is the same guard at
+// the other end for the half that has a remedy: while a pool lists the entry,
+// the removal is refused rather than leaving the pool with a member no block
+// defines, and the refusal names the pool and the command that drops one.
+// Nothing is written.
+func TestAccountsRmRefusesWhileAPoolStillListsTheCredential(t *testing.T) {
 	r := newAddRigWith(t, accountsRmTypedLocal)
 	r.add(t, "team-a", "--repos", "owner/repo-a")
 	before, err := os.ReadFile(r.cfg)
@@ -178,21 +289,55 @@ func TestAccountsRmRefusesWhileACredentialIsStillNamed(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(before, after) {
-		t.Errorf("the command wrote %s while a craft and a pool still named the credential:\n%s", r.cfg, after)
+		t.Errorf("the command wrote %s while a pool still listed the credential:\n%s", r.cfg, after)
 	}
 	if rmErr == nil {
-		t.Fatalf("the account was removed while its typed entry was still named by crafts.coder.access and pools.paid.members")
+		t.Fatalf("the account was removed while its typed entry was still a member of pools.paid.members")
 	}
-	for _, want := range []string{"credentials.team-a", "crafts.coder.access", "pools.paid.members", "nothing was written"} {
+	for _, want := range []string{"credentials.team-a", "pools.paid.members", "accounts pool rm", "nothing was written"} {
 		if !strings.Contains(rmErr.Error(), want) {
 			t.Errorf("the refusal does not say %q: %v", want, rmErr)
 		}
+	}
+	if strings.Contains(rmErr.Error(), "crafts.coder.access") {
+		t.Errorf("the refusal names a craft key no command of this release could have repointed: %v", rmErr)
 	}
 	if got := r.sm.Deleted(); len(got) != 0 {
 		t.Errorf("the command deleted %v while it was refusing", got)
 	}
 	if _, err := localcfg.Load(r.cfg); err != nil {
 		t.Fatalf("the config that command left is one its own next load refuses: %v", err)
+	}
+}
+
+// TestAccountsRmClearsTheCraftThatNamedTheCredential: a craft's access is the
+// one key that names a credential and that no command of this release can write
+// — `fugaro update`'s own conversion writes it (init_craft_migrate.go) and the
+// generic settings path refuses a family-owned row — so refusing here would
+// leave the owner a hand edit as the only way through. The access goes with the
+// entry it named, the sentence names the key it cleared, and the file that is
+// left is one this config's own loader reads.
+func TestAccountsRmClearsTheCraftThatNamedTheCredential(t *testing.T) {
+	r := newAddRigWith(t, accountsRmTypedCraftLocal)
+	r.add(t, "team-a", "--repos", "owner/repo-a")
+
+	out := r.rm(t, "team-a", "--profile", "standard")
+
+	lc := r.addLocal(t)
+	if got := lc.Credentials; len(got) != 0 {
+		t.Errorf("credentials.team-a is still declared after the removal: %v", got)
+	}
+	if got := lc.Crafts.Of(config.CraftCoder).Access; got != "" {
+		t.Errorf("crafts.coder.access = %q, want the key cleared with the entry it named", got)
+	}
+	if got := lc.Crafts.Of(config.CraftCoder).Model; got != "deepseek-v4-1" {
+		t.Errorf("crafts.coder.model = %q, want the model half left alone", got)
+	}
+	if !strings.Contains(out, "clear crafts.coder.access, which named that entry") {
+		t.Errorf("the sentence does not name the craft key it cleared:\n%s", out)
+	}
+	if _, err := localcfg.Load(r.cfg); err != nil {
+		t.Fatalf("the config this command wrote does not load: %v", err)
 	}
 }
 
@@ -558,6 +703,56 @@ func TestAccountsRmRefusesACodingAgentsSession(t *testing.T) {
 	}
 	if got := r.sm.Deleted(); len(got) != 0 {
 		t.Errorf("the refused session deleted %v", got)
+	}
+}
+
+// TestAccountsRmRefusesAnAgentSession is G9's third red step (spec §3.3,
+// D1172): the removal is refused in a coding agent's session, whatever the
+// referrer walk it just made found — the account below is one no profile and no
+// repository names, which is the cleanest walk there is, and the refusal stands
+// anyway, because the refs and the records that walk reads are documents the
+// session writes. --yes does not answer it and nothing is read off the session.
+//
+// TestAccountsRmRefusesACodingAgentsSession beside it is A4's own reading of
+// this fence, on an account a profile serves. This one is the plan's claim at
+// its sharpest — a clean walk is still no evidence — and it loops
+// agentenv.Markers itself rather than one variable, so a marker the tree adds
+// is one this command is held to (accounts_add_agent_test.go's own loop).
+func TestAccountsRmRefusesAnAgentSession(t *testing.T) {
+	r := newAddRigWith(t, accountsRmDeclaredLocal)
+	before := readFileString(t, r.cfg)
+	id := gcp.ProjectSecretID("aurora", config.ClaudeAccountSecret("team-a"))
+
+	for _, marker := range agentenv.Markers {
+		t.Run(marker, func(t *testing.T) {
+			t.Setenv(marker, "1")
+
+			out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--yes")
+			if err == nil {
+				t.Fatalf("a coding agent's session removed an account its own walk read cleanly:\n%s", out)
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Errorf("exit %d, want a user error: %v", ExitCode(err), err)
+			}
+			if !strings.Contains(err.Error(), marker) {
+				t.Errorf("the refusal does not name %s, so nobody knows which variable to unset: %v", marker, err)
+			}
+			if !strings.Contains(err.Error(), "fugaro accounts rm") {
+				t.Errorf("the refusal does not print the command to run at a terminal: %v", err)
+			}
+			if !strings.Contains(err.Error(), "no read a session makes is evidence about origin") {
+				t.Errorf("the refusal does not give the reason a clean walk is still no evidence (%q): %v", accountsRmSessionRule, err)
+			}
+			if !strings.Contains(err.Error(), id) {
+				t.Errorf("the refusal does not name the secret %s it left in place: %v", id, err)
+			}
+			if after := readFileString(t, r.cfg); after != before {
+				t.Errorf("the session wrote %s:\n%s", r.cfg, after)
+			}
+			if got := r.sm.Deleted(); len(got) != 0 {
+				t.Errorf("the session deleted %v", got)
+			}
+		})
 	}
 }
 

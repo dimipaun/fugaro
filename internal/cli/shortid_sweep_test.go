@@ -242,11 +242,13 @@ func seedSweepAgent(t *testing.T, f *endingFixture, id, title string) {
 // the ID through task.ShortRun or saying here why it stays whole. The list is
 // read both ways, so an entry whose site stopped printing a run ID fails too.
 var fullRunIDSites = map[string]string{
-	"cancel.go:printCancel":              "the ID is replaced by its short form at the head of the function, so every sentence under it names the run the way the person typed it",
-	"cloud.go:fullRows":                  "cancel's list is the one place a person copies a whole ID from: cancel acts on nothing else (D1710)",
-	"diagnose.go:followUpLine":           "the details view names, in full, the run a follow-up continues (D1705)",
-	"diagnose.go:printDiagnosis":         "the head of the details view is where a person copies the whole ID (D1705)",
-	"plan_status.go:printPlanStatusPlan": "plan.State.Run is the short suffix already, so the cell carries no full ID",
+	"cancel.go:printCancel":                   "the ID is replaced by its short form at the head of the function, so every sentence under it names the run the way the person typed it",
+	"cloud.go:fullRows":                       "cancel's list is the one place a person copies a whole ID from: cancel acts on nothing else (D1710)",
+	"diagnose.go:followUpLine":                "the details view names, in full, the run a follow-up continues (D1705)",
+	"diagnose.go:printDiagnosis":              "the head of the details view is where a person copies the whole ID (D1705)",
+	"plan_status.go:printPlanStatusPlan":      "plan.State.Run is the short suffix already, so the cell carries no full ID",
+	"troubleshoot.go:printTroubleshoot":       "the ID is a command log's own name, not a cloud run's (D1609), and it is the argument the person types back into `fugaro troubleshoot` to explain this failure again: shortened, what is left is the pid, which identifies nothing",
+	"troubleshoot.go:troubleshootWriteReport": "the report is read beside the evidence folder it sits in, where the log it is about is named by that same ID (D1605, D1609), so a reader can match the two",
 }
 
 // runIDNames are the fields an expression names a run ID by at a print site: a

@@ -123,6 +123,12 @@ func isolateProjects(t *testing.T, dir string) string {
 	// log: one of these per test, so a test can read back the one log its own
 	// run left (onlyLog) instead of TestMain's shared backstop directory.
 	t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+	// The login unit is the one file this CLI keeps that macOS puts under the
+	// person's own home rather than an XDG directory (launchd reads $HOME), and
+	// `fugaro doctor` reads it on every run: without this, a rig would read the
+	// developer's machine — their installed unit turning doctor's one clean
+	// line into a warning, and the two converge steps writing into their login.
+	t.Setenv("HOME", filepath.Join(dir, "home"))
 	t.Setenv("FUGARO_PROJECT", "")
 	t.Setenv("FUGARO_CONFIG", "")
 	projects := filepath.Join(xdg, "fugaro", "projects")

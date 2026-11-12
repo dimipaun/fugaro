@@ -10,8 +10,12 @@
 // resource the change removes or creates unless that resource is one the
 // allowlist admits, so an address on the owner's list never admits a resource
 // nothing judged (D72/D74 — design rows, not a task number: the plan carries
-// no task of its own for this rule). The model's review is not part of it: it
-// is advisory, recorded, and can only ever add a refusal (D60).
+// no task of its own for this rule). D1545 makes the managed gate audit-only
+// for content: a refusal about WHAT a plan contains is recorded and warned
+// rather than stopped (Verdict.Warnings), while the integrity refusals — the
+// plan's own shape (D1549) and a removal of a data-bearing or unclassified
+// type (D1551) — still refuse. The model's review is not part of it: it is
+// advisory, recorded, and can only ever add a refusal (D60).
 package managed
 
 import (
@@ -32,8 +36,9 @@ const (
 	coverGate = "cover"
 	// costGate is the cost list's (Task 1.3): the blocked attributes a plan
 	// states, which tf.ManagedCostRefusals reads. The verdict is where they
-	// are enforced, and nothing else consumes them: Task 3.1's apply reaches
-	// them only through Gate.
+	// are recorded — a blocked entry is a warning D1545 does not stop a plan
+	// for, a flag-only entry is a Flag — and nothing else consumes them:
+	// Task 3.1's apply reaches them only through Gate.
 	costGate = "cost"
 )
 
@@ -115,9 +120,13 @@ type Spec struct {
 }
 
 // Verdict is what the gate decided about one plan. OK is true only when the
-// guard, the cover and the cost list admitted every change; Refusals carries
-// every refusal from them, the guard's first, the cost list's last, each with the gate that made it, the address and the
-// rule's own words for why.
+// guard's refusals and the cover's integrity half are both empty: D1545 makes
+// the managed gate audit-only for content, so a content refusal (the cover's
+// type and grant tables, the delete rule's own reasons for a type D1551 takes)
+// and a blocked cost attribute are recorded in Warnings and never stop a plan.
+// Refusals carries every refusal that does stop it — the guard's first, the
+// cover's integrity half after it — each with the gate that made it, the
+// address and the rule's own words for why.
 //
 // A Verdict is not bound to the plan's bytes: it says nothing about which file
 // it judged. Task 3.1 must hash the saved plan at gate time and re-check that
@@ -129,6 +138,16 @@ type Spec struct {
 type Verdict struct {
 	OK       bool
 	Refusals []Refusal
+	// Warnings are the findings the gate recorded and did not refuse on
+	// (D1545): the guard's content removals (a delete or a replace of a
+	// classified, non-data-bearing type no list admits), the cover's content
+	// refusals (the type and grant tables) and the cost list's blocked
+	// attributes. They never affect OK, and they are not dropped: the command
+	// the gate stands in for records them in the audit record and prints them
+	// (D1025), and `fugaro managed apply` — which writes no record, D1011 —
+	// refuses a plan carrying any of them, folding them into this verdict's
+	// Refusals before it decides (apply.go's gateAndApply).
+	Warnings []Refusal
 	// Flags are the findings of entries that only flag (Task 1.3, D62): recorded
 	// here for whoever confirms, from the cost list's non-blocking findings. They
 	// never affect OK.
@@ -137,19 +156,19 @@ type Verdict struct {
 	// question a person is asked before the apply (Request.Ask). It never
 	// affects OK.
 	Changes Changes
-	// Listable is the addresses the guard refused that a new entry in the
-	// owner's delete list would admit (tf.ListableEntries, which is what the
-	// gate below assigns here, and not the address-only tf.Listable it once
-	// called): a delete or replace of the address's own object that no entry
-	// the list holds already approves. An entry that names an address for
-	// another object is one of these — that removal is refused because the
-	// entry is about a different object, and an entry about this one clears
-	// it, which is what keeps the advice true. The list is empty when the
-	// guard refused only what no entry clears: a moved object, an action it
-	// does not know, a change with no actions, and a removal whose before view
-	// identifies nothing (tf.Identifies), which no entry can be matched
-	// against. When it is empty a refusal must not point at the owner's list
-	// (Request.advice). It never affects OK.
+	// Listable is the addresses the guard's delete rule named — refused or, since
+	// D1545, warned about — that a new entry in the owner's delete list would
+	// admit (tf.ListableEntries, which is what the gate below assigns here, and
+	// not the address-only tf.Listable it once called): a delete or replace of
+	// the address's own object that no entry the list holds already approves. An
+	// entry that names an address for another object is one of these — that
+	// removal is refused because the entry is about a different object, and an
+	// entry about this one clears it, which is what keeps the advice true. The
+	// list is empty when the delete rule named only what no entry clears: a
+	// moved object, an action it does not know, a change with no actions, and a
+	// removal whose before view identifies nothing (tf.Identifies), which no
+	// entry can be matched against. When it is empty a refusal must not point at
+	// the owner's list (Request.advice). It never affects OK.
 	Listable []string
 }
 
@@ -241,8 +260,14 @@ func countChanges(p *tf.Plan) Changes {
 // flag-only finding, which no entry of the real list produces.
 var costFindings = tf.ManagedCosts
 
-// guard is tf.GuardEntriesWithAddresses with no advice of its own; a variable
-// only so a test can make it refuse in words the real guard never writes.
+// guardManaged is tf.GuardManaged: the managed apply's delete rule as D1545
+// and D1551 leave it, with its two answers told apart — the removals that
+// still REFUSE (a data-bearing type, an unclassified type, an object moved
+// here from another address, a change with no actions or an action the guard
+// does not know) and, beside them, the content removals the gate now records
+// and warns (a delete or a replace of a classified, non-data-bearing type no
+// list admits). A variable only so a test can make it refuse in words the real
+// guard never writes.
 //
 // No advice, because the guard's own (tf.AllowDeleteAdvice) names the flag a
 // managed apply refuses, and the sentence a managed refusal ends with is the
@@ -258,8 +283,8 @@ var costFindings = tf.ManagedCosts
 // Spec.Upgrade's addresses are read beside them, and only there: those are
 // replaces the caller matched out of this plan rather than an approval of
 // anything at an address (Spec.Upgrade).
-var guard = func(p *tf.Plan, entries []tf.DeleteEntry, upgrade []string) error {
-	return tf.GuardEntriesWithAddresses(p, entries, upgrade, "")
+var guardManaged = func(p *tf.Plan, entries []tf.DeleteEntry, upgrade []string) (refused, warned []string) {
+	return tf.GuardManaged(p, entries, upgrade)
 }
 
 // Refusal is one refusal of one address: the gate that made it, the address it
@@ -278,13 +303,19 @@ type Refusal struct {
 // second, in that order — what a plan would delete or replace is decided
 // before anything else is asked about it.
 //
-// Every check always runs, so the verdict carries every refusal rather than
-// the first: the guard's list of refused addresses, the cover's list of refused
-// changes and the cost list's blocked attributes (Task 1.3, owned here: the
-// verdict is the only place a block can bite). OK is false when any of them
-// refused anything, and nothing here
-// applies anything — Gate reads a plan and returns, and applying the saved
-// plan is a separate step with its own caller (Tasks 3.1 and 3.2).
+// Every check always runs, so the verdict carries every finding rather than the
+// first: the guard's refused and warned removals, the cover's integrity and
+// content refusals, and the cost list's blocked attributes (Task 1.3, owned
+// here: the verdict is the only place a block bites). D1545 splits them the one
+// way: the guard's refusals and the cover's integrity half are the plan's
+// Refusals and OK is false when either is non-empty; the guard's warned
+// removals, the cover's content refusals and the cost list's blocked attributes
+// are the plan's Warnings and never affect OK. That split is the gate's; what a
+// warning MEANS is the caller's, and the caller whose command writes no audit
+// record refuses the warned plan rather than applying it (apply.go's
+// gateAndApply). Nothing here applies anything — Gate reads a plan and returns,
+// and applying the saved plan is a separate step with its own caller (Tasks 3.1
+// and 3.2).
 //
 // A plan that cannot be read is an error, never a verdict: the caller must not
 // read "no verdict" as "admitted", and a returned Verdict is zero-valued
@@ -295,29 +326,48 @@ func Gate(ctx context.Context, planPath string, spec Spec) (Verdict, error) {
 		return Verdict{}, err
 	}
 	v := Verdict{Changes: countChanges(plan)}
-	guardErr := guard(plan, spec.AllowDelete, spec.Upgrade)
-	if guardErr != nil {
-		v.Refusals = append(v.Refusals, refusals(guardGate, guardLines(guardErr.Error()))...)
+	// The guard's two answers, each carried to its own half of the verdict:
+	// what it refuses stops the plan, and what it warns about is recorded
+	// beside the rest. An empty message is still a refusal — the slices, and
+	// not the parsed refusals, are what OK is read off (the fail-closed rule
+	// this gate has always kept).
+	refused, warned := guardManaged(plan, spec.AllowDelete, spec.Upgrade)
+	if len(refused) > 0 {
+		v.Refusals = append(v.Refusals, refusals(guardGate, refused)...)
+	}
+	// Listable is read off the delete rule's own answers and not off the half
+	// that stops the plan: a caller that refuses the warned removals too —
+	// `fugaro managed apply`, apply.go's gateAndApply, the one reader of this
+	// field — needs the addresses a new entry would admit for exactly those,
+	// and a warning-only verdict leaves them nothing to point at otherwise
+	// (Request.advice).
+	if len(refused) > 0 || len(warned) > 0 {
 		v.Listable = tf.ListableEntries(plan, spec.AllowDelete)
 	}
-	notCovered := spec.notCovered(plan)
-	v.Refusals = append(v.Refusals, refusals(coverGate, notCovered)...)
+	v.Warnings = append(v.Warnings, refusals(guardGate, warned)...)
+	// The cover's own two halves (D1545): the integrity refusals are the
+	// plan's, and the content ones are recorded and warned.
+	integrity, content := spec.notCoveredSplit(plan)
+	v.Refusals = append(v.Refusals, refusals(coverGate, integrity)...)
+	v.Warnings = append(v.Warnings, refusals(coverGate, content)...)
 	// The cost list is a third check on the same plan, run whatever the cover
-	// said: its refusals are the plan's own words about what it states, and a
-	// cover that admits a plan says nothing about what it costs.
-	var costRefused, costFlagged []string
+	// said: its findings are the plan's own words about what it states, and a
+	// cover that admits a plan says nothing about what it costs. A blocked
+	// attribute is recorded and warned (D1545) and only a flag-only finding is
+	// left in Flags for whoever confirms.
+	var costFlagged []string
 	for _, f := range costFindings(plan) {
 		if f.Block {
-			costRefused = append(costRefused, f.String())
+			v.Warnings = append(v.Warnings, refusals(costGate, []string{f.String()})...)
 		} else {
 			costFlagged = append(costFlagged, f.String())
 		}
 	}
-	v.Refusals = append(v.Refusals, refusals(costGate, costRefused)...)
 	v.Flags = refusals(costGate, costFlagged)
-	// Fail closed on the errors themselves, not on the refusals they were
-	// turned into: a guard that errs with an empty message refuses all the same.
-	v.OK = guardErr == nil && len(notCovered) == 0 && len(costRefused) == 0
+	// Fail closed on the two lists themselves, not on the refusals they were
+	// turned into: a gate that returned a line with no readable words in it
+	// refuses all the same.
+	v.OK = len(refused) == 0 && len(integrity) == 0
 	return v, nil
 }
 
@@ -337,21 +387,35 @@ func (s Spec) read(ctx context.Context, planPath string) (*tf.Plan, error) {
 	return p, nil
 }
 
-// notCovered is the scope-and-attribute gate's own list, and a refusal when
-// there is no cover at all: a managed plan is admitted by the managed cover of
-// the project's own allowlist, or by nothing.
+// notCovered is the scope-and-attribute gate's own list, whole, and a refusal
+// when there is no cover at all: a managed plan is admitted by the managed
+// cover of the project's own allowlist, or by nothing. It is notCoveredSplit's
+// two halves in one list, so the two cannot drift; what Gate reads is the
+// split, because the two halves are not the same answer (D1545).
+func (s Spec) notCovered(p *tf.Plan) []string {
+	integrity, content := s.notCoveredSplit(p)
+	return append(integrity, content...)
+}
+
+// notCoveredSplit is notCovered with D1545's two kinds told apart: the cover's
+// content refusals, which the gate now records and warns, in content, and the
+// integrity refusals (D1549) that still refuse, in integrity. The question is
+// asked of whatever cover is here (splitCover): the managed cover, the review's
+// own tf.Cover and internal/cli's stepCover all answer NotCoveredSplit, and one
+// that knows neither keeps its whole answer as integrity, because the
+// fail-closed direction is to refuse something that might have been content.
 //
 // The owner's delete list goes to the cover beside the plan (D72/D74,
-// tf.Deletable): the list Gate hands tf.Guard is handed to the cover too, so
+// tf.Deletable): the list Gate hands the guard is handed to the cover too, so
 // the two halves of the gate cannot be given different ones — a delete admitted
 // by the list one of them was told and not the other's is exactly the plan this
 // rule exists to refuse. A cover that cannot be told it judges no delete, so
 // nothing but the guard stands between a listed address and an unread resource:
 // unjudgedDeletes refuses that case rather than letting the address alone admit
 // it.
-func (s Spec) notCovered(p *tf.Plan) []string {
+func (s Spec) notCoveredSplit(p *tf.Plan) (integrity, content []string) {
 	if s.Cover == nil {
-		return []string{"no cover: a managed plan is admitted by the managed cover of " + s.what() + ", or by nothing"}
+		return []string{"no cover: a managed plan is admitted by the managed cover of " + s.what() + ", or by nothing"}, nil
 	}
 	// The upgrade's own replaces are asked as the creates they make
 	// (tf.WithoutRemovals): the cover refuses a change carrying a delete as one
@@ -360,9 +424,36 @@ func (s Spec) notCovered(p *tf.Plan) []string {
 	// own reading (Spec.Upgrade). A plan with no upgrade is asked as it is.
 	judged := tf.WithoutRemovals(p, s.Upgrade)
 	if d, ok := s.Cover.(tf.Deletable); ok {
-		return d.WithDeleteEntries(s.AllowDelete).NotCovered(judged, s.Imports)
+		// The split is asked of the value WithDeleteEntries returned and not of
+		// s.Cover: the cover that judged the delete list is the value that must
+		// tell the two kinds apart, or a cover that dropped the list on the way
+		// back could warn about a removal nothing was told about. A cover that
+		// is NOT Deletable is asked the same question, and by the same helper:
+		// the cover the run's own review hands the gate is one of those
+		// (internal/cli's stepCover, which implements NotCovered alone), and
+		// refusing to ask it would have made every content refusal of
+		// `fugaro update` an integrity one — the whole task, inert.
+		return splitCover(d.WithDeleteEntries(s.AllowDelete), judged, s.Imports)
 	}
-	return append(s.Cover.NotCovered(judged, s.Imports), s.unjudgedDeletes(p)...)
+	integrity, content = splitCover(s.Cover, judged, s.Imports)
+	return append(integrity, s.unjudgedDeletes(p)...), content
+}
+
+// splitCover asks a cover for its two halves (D1545), falling back to its whole
+// answer as integrity for a cover that cannot tell them apart — the fail-closed
+// direction is to refuse something that might have been content. It is a
+// function and not a method so the same question is asked of the value
+// WithDeleteEntries returned and of the cover itself: the managed cover answers
+// through tf.ManagedCover.NotCoveredSplit, the review's own through
+// tf.Cover.NotCoveredSplit, and a cover that knows neither keeps its whole
+// answer as integrity exactly as it did before the split existed.
+func splitCover(c Cover, p *tf.Plan, imports []tf.ImportKey) (integrity, content []string) {
+	if split, ok := c.(interface {
+		NotCoveredSplit(*tf.Plan, []tf.ImportKey) ([]string, []string)
+	}); ok {
+		return split.NotCoveredSplit(p, imports)
+	}
+	return c.NotCovered(p, imports), nil
 }
 
 // unjudgedDeletes lists every delete or replace of an address the owner's list
@@ -409,31 +500,21 @@ func (s Spec) what() string {
 	return "this project"
 }
 
-// guardLines is the guard's refusal as the list refusals reads: one item per
-// line, without the guard's own header when it has one. The header is the
-// first line of a refusal that lists addresses under it ("the plan would delete
-// or replace N resource(s) ...:"), and the verdict carries the fact per
-// address rather than the guard's summary of it; a one-line refusal (a plan it
-// could not read at all) is carried whole.
-func guardLines(text string) []string {
-	lines := strings.Split(text, "\n")
-	if len(lines) > 1 {
-		return lines[1:]
-	}
-	return lines
-}
-
 // refusals turns a gate's own list into the verdict's: one Refusal per item.
-// An item of the shape both gates write a refused change in, "<address>
-// (<why>)" — the guard with the plan actions it would take, the cover with the
-// rule that refused it — is carried as its address and its why, and so is the
-// guard's own line with a reason beside the actions, "<address> (<actions>):
-// <why>" (the moved object's, and the entries rule's). The two are told apart
-// by the actions between the parentheses and the ": " (tf.ActionsText) and not
-// by the item's last character, since a why may end in ")". Any other item (a
-// gate that refused without listing an address, a plan it could not read at
-// all) is carried whole rather than dropped: a refusal nobody can read is still
-// a refusal.
+// The guard's items arrive one per change already — the guard's own header (a
+// summary line over the addresses, which the guard used to write and a caller
+// used to strip) is no longer written, since the guard now returns the refused
+// changes as a list — so the verdict carries the fact per address rather than
+// the guard's summary of it. An item of the shape both gates write a refused
+// change in, "<address> (<why>)" — the guard with the plan actions it would
+// take, the cover with the rule that refused it — is carried as its address and
+// its why, and so is the guard's own line with a reason beside the actions,
+// "<address> (<actions>): <why>" (the moved object's, and the entries rule's).
+// The two are told apart by the actions between the parentheses and the ": "
+// (tf.ActionsText) and not by the item's last character, since a why may end in
+// ")". Any other item (a gate that refused without listing an address, a plan
+// it could not read at all) is carried whole rather than dropped: a refusal
+// nobody can read is still a refusal.
 //
 // Each item is one refusal however many lines it holds, and each part of it is
 // bounded: an address and the actions beside it are read out of a plan, and

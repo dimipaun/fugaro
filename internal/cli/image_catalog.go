@@ -253,6 +253,29 @@ func publishedCatalog(ctx context.Context, env *cloudEnv) (*config.Catalog, erro
 	return p.ImageCatalog, nil
 }
 
+// effectiveImageMap is the repo-to-image map the project has: this machine's
+// project config when it states one, the published node's otherwise
+// (localcfg's keep rule, D1906), with the published node's read error. It is
+// effectiveCatalog's sibling, read the same way and for the same reason.
+func effectiveImageMap(ctx context.Context, env *cloudEnv) (map[string]string, error) {
+	published, err := publishedImageMap(ctx, env)
+	return env.lc.ImageMapEffective(published), err
+}
+
+// publishedImageMap is the map in the project's published policy node, nil
+// when nothing is published, with the error a node this machine cannot read
+// is.
+func publishedImageMap(ctx context.Context, env *cloudEnv) (map[string]string, error) {
+	p, found, err := env.policy.read(ctx, env.lc)
+	if err != nil {
+		return nil, err
+	}
+	if !found || p == nil {
+		return nil, nil
+	}
+	return p.ImageMap, nil
+}
+
 // catalogEntryDigest is the digest of the image the last build of entry
 // recorded, "" when nothing built it. The record is per repository
 // (gcp.CatalogRecordKey): a catalog build runs as the build account of the
@@ -434,10 +457,12 @@ func newImageRmCmd() *cobra.Command {
 		Short: "Remove an image catalog entry from this machine's project config",
 		Long: "Remove a named image from the project's image catalog, in this machine's\n" +
 			"project config. The removal is refused while a repository's job still runs\n" +
-			"the entry — because a workflow names it (image_name:), or because the\n" +
-			"tag-cover rule picks it for the tags the workflow needs — since that job\n" +
-			"would then be on an image no catalog describes. Point the repository at\n" +
-			"another entry first, run fugaro update, and remove the entry after.\n\n" +
+			"the entry — because a workflow names it (image_name:), because the\n" +
+			"project's image_map gives it to the repository, or because the tag-cover\n" +
+			"rule picks it for the tags the workflow needs — since that job would then\n" +
+			"be on an image no catalog describes. Point the repository at another entry\n" +
+			"first (image_name: in its fugaro.yaml, or fugaro image map set), run\n" +
+			"fugaro update, and remove the entry after.\n\n" +
 			"Nothing is deleted from the registry: the entry's built image stays where\n" +
 			"it is, and the next fugaro update publishes the catalog without the entry.",
 		Args: cobra.ExactArgs(1),
@@ -461,7 +486,19 @@ func runImageRm(cmd *cobra.Command, o cloudOptions, name string) error {
 	if cat == nil || !slices.ContainsFunc(cat.Entries, func(e config.Entry) bool { return e.Name == name }) {
 		return userErr("this project's image catalog has no entry named %s: fugaro image ls lists the entries it has", pluginwire.Printable(name))
 	}
-	who, unasked, err := catalogPointedAt(ctx, onDisk, cat, name)
+	// The map that decides a job's image is the project's *effective* one, and
+	// on a machine whose config does not state one it is the published node's:
+	// the map is a node member, published from whichever machine the owner
+	// wrote it on (D1906), so this file is normally silent about it. Read as
+	// the file alone the guard would see no mapping, fall back to the catalog's
+	// default and remove an entry a job runs; a node this machine cannot read
+	// is refused rather than read as an empty map, because failing open here
+	// deletes something a job may be running.
+	imap, err := effectiveImageMap(ctx, &cloudEnv{lc: onDisk})
+	if err != nil {
+		return remote(policyReadErr(err))
+	}
+	who, unasked, err := catalogPointedAt(ctx, onDisk, cat, imap, name)
 	if err != nil {
 		return err
 	}
@@ -521,25 +558,62 @@ func catalogConfig(ctx context.Context, o cloudOptions) (string, *localcfg.Confi
 
 // catalogPointedAt names the first job that still runs entry, and the
 // repositories whose checkout this machine does not have, whose workflows it
-// therefore cannot judge. A job runs the entry the tag-cover rule picks for
-// it (catalog.Choose): a workflow that names one pins it, and a workflow that
-// needs nothing runs the project's default, so both are pointers at the entry
-// and both are refused.
+// therefore cannot judge. It asks the one resolver every other caller asks
+// (catalog.JobImage), so it sees the mapping the deploy sees: a workflow that
+// names an entry pins it, the project's map gives one to a repository it names
+// (D1906), and a workflow that says nothing runs the catalog's default — each
+// of them a pointer at the entry, and each refused. imap is that mapping, and
+// it is the project's effective one and not this file's: the map is a node
+// member a machine other than this one publishes.
 //
-// A job the rule already refuses is not one of them: it runs no image at all,
-// and a removal cannot leave it on a catalog entry it never had.
-func catalogPointedAt(ctx context.Context, lc *localcfg.Config, cat *config.Catalog, entry string) (string, []string, error) {
-	env := &cloudEnv{lc: lc}
+// A repository with no checkout here is asked about the map alone, and never
+// left unasked: the map is the project's own claim about that repository's job,
+// written and published from whichever machine the owner wrote it on, so a
+// removal that deletes the entry it names leaves the node pointing the
+// repository at an entry that is gone — which refuses that repository's next
+// `fugaro update` and every `fugaro run` of it, whether or not this machine can
+// read its fugaro.yaml. What the missing checkout costs is the rest of the
+// resolution: a repository that names nothing and is not mapped runs the
+// catalog's default only through a workflow this machine cannot read, and
+// asking the default's arm on the zero workflow would refuse every removal for
+// every repository it has no checkout of. That is why the map claim is asked
+// through Selection.Reference, which the map (and a pin) sets and the default's
+// arm does not.
+//
+// The repositories this machine's config does not list are asked last, and the
+// map alone is what can be asked about them: the published node names the
+// repositories the project has, and one of them can be missing here — a
+// teammate's, or one whose repos: entry a person removed on this machine —
+// while its mapping stays in the node, which `fugaro update` publishes and never
+// cross-checks against this file. A value of the map that is the entry is
+// therefore read as the claim it is, whatever key carries it, for a repository
+// that is not listed here: the removal would leave that repository's deploy and
+// every launch of it refusing with catalog.UnknownMappedEntryError, and nothing
+// on this machine would repair it. A repository this config lists is not read
+// that way, because the resolver above already answered about it, and its
+// answer is what its job is; and "lists" is the config's own question
+// (localcfg.Config.RepoFor), because the node's keys are canonical and a
+// repos: key is the operator's spelling, so the two name the same repository in
+// two ways (D1906).
+//
+// A job the resolver gives no entry to is not one of them: it runs no catalog
+// image at all, and a removal cannot leave it on an entry it never had.
+func catalogPointedAt(ctx context.Context, lc *localcfg.Config, cat *config.Catalog, imap map[string]string, entry string) (string, []string, error) {
 	var unasked []string
 	for _, repo := range slices.Sorted(maps.Keys(lc.Repos)) {
 		cfg := checkoutConfig(ctx, repo)
 		if cfg == nil {
+			sel, err := catalog.JobImage(catalog.ImageRequest{
+				Catalog:   cat,
+				ImageMap:  imap,
+				Canonical: repo,
+				Backend:   catalog.Backend(lc.Backend()),
+			})
+			if err == nil && sel.Source == catalog.SourceCatalog && sel.Reference && sel.Entry.Name == entry {
+				return fmt.Sprintf("the job of %s (this project's image_map gives it that entry)", pluginwire.Printable(repo)), nil, nil
+			}
 			unasked = append(unasked, repo)
 			continue
-		}
-		slug := repo
-		if s, err := env.repoSlug(repo, func() *config.Config { return cfg }); err == nil {
-			slug = s
 		}
 		// The workflows are the checkout's, not the local config's list of
 		// names: the image_name: and needs: this asks about live in the
@@ -547,20 +621,40 @@ func catalogPointedAt(ctx context.Context, lc *localcfg.Config, cat *config.Cata
 		// is built from, so a stale list in the local config could not answer
 		// the question anyway.
 		for _, n := range slices.Sorted(maps.Keys(cfg.Workflows)) {
-			w := cfg.Workflows[n]
-			if !catalog.Applies(*cat, w) {
-				continue
-			}
-			choice, err := catalog.Choose(catalog.Job{
-				Catalog: *cat,
-				Repos:   []catalog.Repo{{Slug: slug, Pin: w.ImageName, Needs: w.Needs}},
-				Backend: catalog.Backend(lc.Backend()),
+			sel, err := catalog.JobImage(catalog.ImageRequest{
+				Catalog:   cat,
+				ImageMap:  imap,
+				Canonical: repo,
+				Workflow:  cfg.Workflows[n],
+				Backend:   catalog.Backend(lc.Backend()),
 			})
-			if err != nil || choice.Entry.Name != entry {
+			if err != nil || sel.Source != catalog.SourceCatalog || sel.Entry.Name != entry {
 				continue
 			}
 			return fmt.Sprintf("the workflow %s of %s", pluginwire.Printable(n), pluginwire.Printable(repo)), unasked, nil
 		}
+	}
+	// The map names repositories this config need not: the node is the
+	// project's and this file is one machine's, so a mapping whose repository
+	// is not listed above is still a claim about that repository's job, and the
+	// workflow that would say otherwise is not here to read. The values are
+	// swept whatever their keys are, and in key order so the refusal names the
+	// same repository every time, and the repositories this config DOES list
+	// are skipped: the resolver answered about those above, and its answer is
+	// the job's — a workflow that names an entry beats the map (T1 b), and a
+	// clone or shared job runs the installation's own image and no entry at
+	// all. The skip asks RepoFor, not the map, because the key here is the
+	// node's canonical one and the repos: key is the operator's spelling:
+	// reading the map directly would call a listed repository unlisted over a
+	// capital letter.
+	for _, repo := range slices.Sorted(maps.Keys(imap)) {
+		if imap[repo] != entry {
+			continue
+		}
+		if _, listed := lc.RepoFor(repo); listed {
+			continue
+		}
+		return fmt.Sprintf("the job of %s (this project's image_map gives it that entry)", pluginwire.Printable(repo)), nil, nil
 	}
 	return "", unasked, nil
 }

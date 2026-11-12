@@ -39,8 +39,10 @@
 //     the other name is a call this scan cannot see;
 //   - an attribute write (`setAttribute`, `dataset`, `title`, `className`, `id`)
 //     carries a constant shape or an entry on `ATTRIBUTE_VOCABULARY`;
-//   - an entry can be scoped to one function's body (`within`), so the `note`
-//     helper's own parameter is allowed there and nowhere else;
+//   - an entry can be scoped to the bodies of the functions it names
+//     (`within`), so the `note` helper's own parameter is allowed there and
+//     nowhere else -- and where one argument text is written by two functions
+//     for one reason, both of them are named and nothing else is admitted;
 //   - **no module under `src/renderer` writes an inline style** (Task 6.2): the
 //     `.style` property in any spelling, computed keys included, and
 //     `setAttribute('style', ...)` are offences with no vocabulary behind them,
@@ -95,8 +97,12 @@ const RENDERER = join(__dirname, '..', '..', 'src', 'renderer')
 const SINKS: Readonly<Record<string, number>> = Object.freeze({ literal: 1, note: 2, term: 2 })
 
 /** Entry is why an argument is the console's own word: a reason, or a reason
- * that holds only inside one function's body (`within`). */
-type Entry = string | { readonly within: string; readonly reason: string }
+ * that holds only inside the bodies of the functions `within` names. It is a
+ * list where one argument text is written by two functions for one and the same
+ * reason -- `box.key` is the model's key for a release in the plan drawing's
+ * boxes and in the record's (GV4.1) -- so each of them is still named and the
+ * entry is still scoped to them and nowhere else. */
+type Entry = string | { readonly within: string | readonly string[]; readonly reason: string }
 
 /**
  * CLOSED_VOCABULARY is every non-constant argument a screen hands a sink, with
@@ -290,6 +296,11 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
       reason:
         'one line of the legend: a word of `GRAPH_LEGEND_WORDS` (`graph/model.ts`\'s own `STATE_WORDS`, which is one exhaustive function over the closed `PlanState` union, less the unreachable `stuck`), or `GRAPH_DEPENDS_ON`/`GRAPH_CRITICAL_PATH` for the two kinds of line -- this file\'s own vocabulary and never a document string',
     },
+    GRAPH_SCOPE_FROM_PLAN: {
+      within: 'scopeNode',
+      reason:
+        'the model\'s own word for the mark beside a version that is the **plan\'s** and not a release the record holds (D2114, `graph/model.ts`), written beside the version it belongs to -- the same shape of word `GRAPH_SCOPE_KEPT` is, and it is imported rather than re-spelled so the two cannot drift',
+    },
     'scopeLabel(scope)': {
       within: 'scopeControl',
       reason:
@@ -403,6 +414,25 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
     },
     'read.sentence':
       'the sentence `licenceSaveOutcomeOf` read out of one `licence.save` reply: this file\'s own word for a write that happened (`LICENCE_SAVED_WORD`), the store\'s refusal **through `sanitizeRefusal`** (the verifier\'s own sentence for a key that does not verify, which is the one thing an operator has to be able to read unparaphrased), or this file\'s `LICENCE_UNREADABLE_WORD` for a reply nobody can read -- so no string a document chose reaches the sink',
+  },
+  // The seats section (S4.2) draws the estimate `fugaro seats --json` publishes
+  // beside the seats the licence key carries. It reads its own reply, takes the
+  // key's seat count from the licence section's own model rather than decoding
+  // the key twice, and writes every sentence about the figures itself; the
+  // document's strings reach the window through `putText` (a person, a member,
+  // the sources that named them, the window) and `putReading` (the two figures).
+  'seats.ts': {
+    'model.because':
+      'the section\'s one reason sentence, **through `sanitizeRefusal`** in `drawnRefusal` before it is stored on the model: the CLI\'s own refusal for the read (`SourceRefusal`), or one of this file\'s own sentences for a reply this build cannot read (`SEATS_ABSENT_BECAUSE`, `SEATS_SHAPE_BECAUSE`) -- or `REFUSAL_UNREADABLE` when the sentence cannot be drawn at all, the same three-way door `licence.ts`\'s `model.because` keeps for the same channel',
+    "model.drawn === 'answer' ? 'read' : 'not read'":
+      'whether this section drew an answer at all, in this file\'s own two words: `model.drawn` is the flag `buildSeats` set from the reply it read -- an answer, a refusal, or a shape this build does not know -- so the pair is the console\'s vocabulary and never a string a document chose',
+    'row.why':
+      'a `not_counted` row\'s reason, which `buildSeats` takes from this file\'s own table (`SEATS_WHY_WORDS`, the document\'s two codes -- `unknown_size` and `account` -- in the console\'s words) or answers with `SEATS_WHY_UNREADABLE`; the document\'s code is matched against that closed table and never stored, so a reason a later CLI grew is a console sentence rather than a word an operator would have to interpret',
+    term: {
+      within: 'figure',
+      reason:
+        'the parameter of the `figure` helper itself; every call site passes one of this file\'s own term constants (`SEATS_USED_TERM`, `SEATS_LICENSED_TERM`), which are the console\'s words for the figure beside them',
+    },
   },
 })
 
@@ -661,7 +691,7 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
     'picture.state.view': { within: 'header', reason: '`GraphViewName`, the closed `GRAPH_VIEWS` tuple' },
     'GRAPH_VIEW_NAMES[picture.state.view]': { within: 'header', reason: 'this file\'s own table of what each drawing is called, keyed by the same closed union' },
     'tabKey(option.tab)': {
-      within: 'filter',
+      within: 'streamFilter',
       reason:
         '`tabKey` spells a `GraphTab` as one string -- `all` for the All tab, `stream:<name>` otherwise -- so the attribute tells a stream called `all` from the All tab, which `tabOf` reads back',
     },
@@ -688,7 +718,11 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
       within: 'band',
       reason: 'the same stream key the chip group carries, on the band drawn behind that stream\'s row: `graph/model.ts` never spells a stream name, and the label drawn at the band\'s head is the `Sanitized` one',
     },
-    'box.key': { within: 'releaseBox', reason: '`releaseKey(plan, version)`, this file\'s own join of two ids the model holds as keys -- written as `data-release` and never drawn' },
+    'box.key': {
+      within: ['releaseBox', 'scopeBox'],
+      reason:
+        'a release\'s own **key**, written as `data-release` and never drawn, in the two drawings that have one: the plan drawing\'s box is `releaseKey(plan, version)`, this file\'s own join of two ids the model holds as keys, and the record\'s box (GV4.1) is the key the record wrote for it (`coordinator.ReleaseID`, which is what a task\'s `release` names) and which the model holds, joins on and never spells -- the name a reader sees is the `Sanitized` heading beside it',
+    },
     key: 'the layout key of a card, a row or a chip -- `nodeKey(plan.id, node.id)` or `releaseKey(plan.id, version)`, ids the model holds as **keys** and never spells (`graph/model.ts`\'s header) -- written into `data-key`/`data-chip` and never drawn; the drawn text is the `Sanitized` title beside it',
     "node.words[0] ?? ''": 'the node\'s first `StateWord`, the model\'s own vocabulary, as the `data-state` hook a rule colours; the empty string is a node the model gave no word, which is a state no colour applies to',
     'door.run': 'the run id this console\'s own run list resolved the node\'s suffix to (`doorFor`), which is what `data-run-id` carries and what the entry opens -- a node whose suffix no run ends with, or one two runs end with, carries no attribute at all',
@@ -742,6 +776,21 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
     "node.state.ok ? node.state.text : ''": {
       within: 'scopeNode',
       reason: 'the same value on the node\'s `data-state`, with the word drawn as text beside it for the reason the source row\'s is',
+    },
+    'lane.stream': {
+      within: 'scopeLane',
+      reason:
+        'the stream a lane is for, which `graph/model.ts` holds as the lane\'s **key** and never spells -- written as `data-stream` so a rule can tell two lanes apart, while the heading beside it is the `Sanitized` stream name (or this console\'s own words for a record task that names none)',
+    },
+    "box.state.ok ? box.state.text : ''": {
+      within: 'scopeBox',
+      reason:
+        'the same shape as a source row\'s hook: the record\'s own word for the release (`open` or `finished`, through the `label` class) or the empty string where the sanitizer refused, with the word drawn as text beside it -- a hook a rule keys on, and never a second spelling of a document\'s word',
+    },
+    'need.key': {
+      within: 'scopeNeed',
+      reason:
+        'the document key of the task a dependency names, which is what a selection is compared with (the marker is drawn highlighted when the task that needs or the task that is needed is the selected one) -- written as `data-need` and never drawn; the sentence a reader sees is the model\'s own `Sanitized` label',
     },
     'state.text': {
       within: 'stateWord',
@@ -899,6 +948,19 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
       reason: 'the class list of the `make` helper; every call site passes one of this file\'s own class constants',
     },
   },
+  // The seats section (S4.2) draws one document -- `fugaro seats --json` --
+  // and its strings reach the window through the two doors every screen uses:
+  // `putText` for a person, a member and the sources that named them, and
+  // `putReading` for the two figures. Its own hooks are the operation, the
+  // class list of `make` and the window, which is the document's own days
+  // (through `putText`). What is left is the class list and the section's three
+  // own sentences.
+  'seats.ts': {
+    "classes.join(' ')": {
+      within: 'make',
+      reason: 'the class list of the `make` helper; every call site passes one of this file\'s own class constants',
+    },
+  },
 })
 
 const STRING_LITERAL = /^(?:'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*")$/
@@ -993,7 +1055,9 @@ function within(code: string, name: string, at: number): boolean {
 /** allows is whether an entry admits an argument found at an offset. */
 function allows(entry: Entry | undefined, code: string, at: number): boolean {
   if (entry === undefined) return false
-  return typeof entry === 'string' || within(code, entry.within, at)
+  if (typeof entry === 'string') return true
+  const names = typeof entry.within === 'string' ? [entry.within] : entry.within
+  return names.some((name) => within(code, name, at))
 }
 
 /** isConstantArgument is the shapes that are the console's words by syntax. */
@@ -1313,6 +1377,7 @@ describe('a screen writes only its own vocabulary through literal', () => {
       'reading.ts',
       'retirements.ts',
       'run.ts',
+      'seats.ts',
       'spend.ts',
     ])
   })
@@ -1659,6 +1724,7 @@ describe('no module under src/renderer writes an inline style', () => {
       'screens/reading.ts',
       'screens/retirements.ts',
       'screens/run.ts',
+      'screens/seats.ts',
       'screens/spend.ts',
       'section.ts',
       'skeleton.ts',

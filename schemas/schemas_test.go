@@ -35,6 +35,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/settings"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/tier"
+	"github.com/dimipaun/fugaro/internal/triage"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
 
@@ -3323,6 +3324,73 @@ func TestRecipeSchemaDigestStepsMatchGo(t *testing.T) {
 	}
 }
 
+// TestRecipeSchemaHandOverStepsMatchGo pins the schema's step shape for the
+// hand_over review (the escalation's escalate recipe) against recipe.Parse,
+// position by position: hand_over only removes the fix round after the
+// review, so the review carrying it sits exactly where a review without a
+// bounce sits, and every shape the key contradicts — a bounce, an adversarial
+// step after it, mode: review — is refused by both. A schema wider than the
+// parser accepts a recipe file the CLI would refuse, and one that is narrower
+// refuses a recipe that runs.
+func TestRecipeSchemaHandOverStepsMatchGo(t *testing.T) {
+	sch := compile(t, "recipe.schema.json")
+	const outs = "outputs:\n  globs: [\"out/*.png\"]\n"
+	for _, tc := range []struct{ name, text string }{
+		{"hand over alone", "version: 1\nname: a\nsteps:\n  - review: { hand_over: true }\n"},
+		{"hand over with rounds", "version: 1\nname: a\nsteps:\n  - review: { max_rounds: 1, hand_over: true }\n"},
+		{"check then hand over", "version: 1\nname: a\nsteps:\n  - check: { command: test }\n  - review: { hand_over: true }\n"},
+		{"first line then hand over", "version: 1\nname: a\nsteps:\n  - first_line: {}\n  - review: { hand_over: true }\n"},
+		{"check then first line then hand over", "version: 1\nname: a\nsteps:\n  - check: { command: test }\n  - first_line: {}\n  - review: { hand_over: true }\n"},
+		{"digest then hand over", "version: 1\nname: a\nsteps:\n  - digest: {}\n  - review: { hand_over: true }\n"},
+		{"hand over false", "version: 1\nname: a\nsteps:\n  - review: { hand_over: false }\n"},
+		{"hand over with a bounce", "version: 1\nname: a\nsteps:\n  - first_line: {}\n  - review: { hand_over: true, bounce: first_line }\n"},
+		{"a step after the hand over", "version: 1\nname: a\nsteps:\n  - review: { hand_over: true }\n  - adversarial: {}\n"},
+		{"hand over with an unknown knob", "version: 1\nname: a\nsteps:\n  - review: { hand_over: true, rounds: 2 }\n"},
+		{"hand over twice", "version: 1\nname: a\nsteps:\n  - review: { hand_over: true }\n  - review: { hand_over: true }\n"},
+		{"hand over in mode review", "version: 1\nname: a\nmode: review\nsteps:\n  - review: { hand_over: true }\n"},
+		{"hand over in mode artifact", "version: 1\nname: a\nmode: artifact\n" + outs + "steps:\n  - review: { hand_over: true }\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			schemaOK := sch.Validate(yamlInstance(t, []byte(tc.text))) == nil
+			_, ps := recipe.Parse([]byte(tc.text))
+			if schemaOK != (len(ps) == 0) {
+				t.Errorf("schema ok = %v, recipe.Parse problems = %v", schemaOK, ps)
+			}
+		})
+	}
+}
+
+// TestRecipeSchemaRebaseStepsMatchGo pins the schema's step shape for the
+// rebase step (the escalation's rebase recipe) against recipe.Parse: the step
+// is the whole run — [rebase] in a mode: implement recipe — so anything it is
+// put beside, a second rebase, an option on it, the two modes that pin their
+// own steps, is refused by both. A schema wider than the parser accepts a
+// recipe file the CLI would refuse, and one that is narrower refuses a recipe
+// that runs.
+func TestRecipeSchemaRebaseStepsMatchGo(t *testing.T) {
+	sch := compile(t, "recipe.schema.json")
+	const outs = "outputs:\n  globs: [\"out/*.png\"]\n"
+	for _, tc := range []struct{ name, text string }{
+		{"rebase alone", "version: 1\nname: a\nsteps:\n  - rebase: {}\n"},
+		{"rebase with a null body", "version: 1\nname: a\nsteps:\n  - rebase:\n"},
+		{"implement rebases", "version: 1\nname: a\nmode: implement\nsteps:\n  - rebase: {}\n"},
+		{"rebase then review", "version: 1\nname: a\nsteps:\n  - rebase: {}\n  - review: {}\n"},
+		{"first line then rebase", "version: 1\nname: a\nsteps:\n  - first_line: {}\n  - rebase: {}\n"},
+		{"rebase twice", "version: 1\nname: a\nsteps:\n  - rebase: {}\n  - rebase: {}\n"},
+		{"rebase with an option", "version: 1\nname: a\nsteps:\n  - rebase: { max_rounds: 2 }\n"},
+		{"rebase in mode review", "version: 1\nname: a\nmode: review\nsteps:\n  - rebase: {}\n"},
+		{"rebase in mode artifact", "version: 1\nname: a\nmode: artifact\n" + outs + "steps:\n  - rebase: {}\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			schemaOK := sch.Validate(yamlInstance(t, []byte(tc.text))) == nil
+			_, ps := recipe.Parse([]byte(tc.text))
+			if schemaOK != (len(ps) == 0) {
+				t.Errorf("schema ok = %v, recipe.Parse problems = %v", schemaOK, ps)
+			}
+		})
+	}
+}
+
 // TestRecipeSchemaAdversarialStepsMatchGo pins the schema's step shape for
 // the adversarial step (review level 3, D720) against recipe.Parse, shape by
 // shape: the step comes after the review and last of all, so the schema has
@@ -3690,6 +3758,53 @@ func TestResultSchemaAcceptsCacheFields(t *testing.T) {
 		}
 	}
 	for _, lit := range []string{`,"cache_read_tokens":-1`, `,"cache_write_tokens":"50"`} {
+		if err := validate(lit); err == nil {
+			t.Errorf("schema accepts cost%s", lit)
+		}
+	}
+}
+
+// TestResultSchemaAcceptsModelTokens (G1.1, F8): the run's cost object carries
+// the tokens per model a repricing of the run reads. The field is additive and
+// optional -- a record written before it existed has none, and one whose run no
+// path filled has none either -- and each model's entry carries the same five
+// counts. Pinned here beside the cache totals for their reason: cost's
+// additionalProperties is false, so a field the record writes and the schema
+// does not name is a record the schema rejects.
+func TestResultSchemaAcceptsModelTokens(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	head := `{"version":1,"run_id":"20261027-100000-abcd","status":"succeeded","stage":"writeback","outcome":"ready","cost_usd":1.23,"started_at":"2026-10-27T10:00:00Z","cost":{"model_usd":1.23,"compute_usd":0,"compute_estimated":false,"total_usd":1.23,"estimate":true,"model_basis":"api-list"`
+	validate := func(lit string) error {
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(head + lit + `}}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sch.Validate(inst)
+	}
+	entry := `{"input":1200,"output":340,"cache_read":40000,"cache_write_5m":900,"cache_write_1h":100}`
+	for _, lit := range []string{
+		``, // a record written before the field existed
+		`,"model_tokens":{}`,
+		`,"model_tokens":{"claude-opus-5-5":` + entry + `}`,
+		// A model whose path could not split its cache writes, or that used
+		// none: the counts are zeroes, not absent members.
+		`,"model_tokens":{"claude-haiku-4-5":{"input":10,"output":5,"cache_read":0,"cache_write_5m":0,"cache_write_1h":0}}`,
+		`,"model_tokens":{"claude-opus-5-5":` + entry + `,"claude-haiku-4-5":{"input":10,"output":5,"cache_read":0,"cache_write_5m":0,"cache_write_1h":0}}`,
+	} {
+		if err := validate(lit); err != nil {
+			t.Errorf("schema rejects cost%s: %v", lit, err)
+		}
+	}
+	for _, lit := range []string{
+		// A short entry is a truncated write, not a model that used no
+		// tokens: the writer always writes all five counts.
+		`,"model_tokens":{"claude-opus-5-5":{"input":1200,"output":340,"cache_read":40000,"cache_write_5m":900}}`,
+		`,"model_tokens":{"claude-opus-5-5":{"input":1200,"output":340,"cache_read":40000,"cache_write_5m":900,"cache_write_1h":100,"web_searches":3}}`,
+		`,"model_tokens":{"claude-opus-5-5":{"input":-1,"output":340,"cache_read":40000,"cache_write_5m":900,"cache_write_1h":100}}`,
+		`,"model_tokens":{"claude-opus-5-5":{"input":"1200","output":340,"cache_read":40000,"cache_write_5m":900,"cache_write_1h":100}}`,
+		`,"model_tokens":{"claude-opus-5-5":3}`,
+		`,"model_tokens":[` + entry + `]`,
+	} {
 		if err := validate(lit); err == nil {
 			t.Errorf("schema accepts cost%s", lit)
 		}
@@ -4158,15 +4273,26 @@ func TestTaskSchemaABBlock(t *testing.T) {
 		return sch.Validate(inst)
 	}
 	const pairID = "20261029-120000-abcd"
+	const championRun = "20261028-090000-1a2b"
 	challenger := &task.AB{PairID: pairID, Arm: task.ABArmChallenger, Publish: task.ABPublishNone,
 		Challenger: "invented-challenger-1", ChallengerSource: task.ABChallengerOwner}
+	// The slot and the champion's run (D728, B1.1): a coder pair is the block
+	// A1.1 wrote, spelled with the slot or without it, and a review pair is a
+	// challenger naming the champion it replays (B1.2).
+	coder := *challenger
+	coder.Slot = task.ABSlotCoder
+	reviewer := *challenger
+	reviewer.Slot, reviewer.ChampionRun = task.ABSlotL2, championRun
 	for _, tc := range []struct {
 		name string
 		ab   *task.AB
 	}{
 		{"no block", nil},
 		{"a champion", &task.AB{PairID: pairID, Arm: task.ABArmChampion}},
+		{"a champion of a review pair", &task.AB{PairID: pairID, Arm: task.ABArmChampion, Slot: task.ABSlotL2}},
 		{"a challenger", challenger},
+		{"a coder pair spelled out", &coder},
+		{"a challenger at a review slot", &reviewer},
 	} {
 		if err := validate(t, tc.ab); err != nil {
 			t.Errorf("schema rejects %s: %v", tc.name, err)
@@ -4189,6 +4315,15 @@ func TestTaskSchemaABBlock(t *testing.T) {
 	blankModel.Challenger = " "
 	unknownSource := *challenger
 	unknownSource.ChallengerSource = "repo"
+	unknownSlot := *challenger
+	unknownSlot.Slot = "l4"
+	reviewerNoRun := reviewer
+	reviewerNoRun.ChampionRun = ""
+	reviewerBadRun := reviewer
+	reviewerBadRun.ChampionRun = "not-a-run-id"
+	coderWithRun := coder
+	coderWithRun.ChampionRun = championRun
+	championWithRun := task.AB{PairID: pairID, Arm: task.ABArmChampion, Slot: task.ABSlotL2, ChampionRun: championRun}
 	for _, tc := range []struct {
 		name string
 		ab   *task.AB
@@ -4203,12 +4338,17 @@ func TestTaskSchemaABBlock(t *testing.T) {
 		{"a blank pair_id", &blankPair},
 		{"a blank challenger model", &blankModel},
 		{"an unknown challenger_source", &unknownSource},
+		{"an unknown slot", &unknownSlot},
+		{"a reviewer-slot challenger with no champion run", &reviewerNoRun},
+		{"a reviewer-slot challenger naming no run ID", &reviewerBadRun},
+		{"a coder pair's challenger naming a champion run", &coderWithRun},
+		{"a champion naming a champion run", &championWithRun},
 	} {
 		if err := validate(t, tc.ab); err == nil {
 			t.Errorf("schema accepts %s", tc.name)
 		}
 	}
-	// A key inside the block that is not one of its five, and a block beside
+	// A key inside the block that is not one of its seven, and a block beside
 	// the override the challenger may never travel as: the block is
 	// additionalProperties: false like the document around it, and the
 	// overrides exclusion is task.Spec.Validate's own rule (D555).
@@ -4255,11 +4395,20 @@ func TestResultSchemaABBlock(t *testing.T) {
 		t.Fatalf("schema rejects a record with no ab block: %v", err)
 	}
 	// A challenger records the shadow arm and the patch it uploaded; a
-	// champion records its own arm and its patch.
+	// champion records its own arm and its patch. The slot and the champion's
+	// run are the pair's own facts (D728, B1.1): a coder pair spells the slot
+	// or omits it, and a reviewer pair's challenger names the run it replayed.
 	for _, ab := range []*task.AB{
 		{PairID: base.RunID, Arm: task.ABArmChampion},
+		{PairID: base.RunID, Arm: task.ABArmChampion, Slot: task.ABSlotL2},
 		{PairID: base.RunID, Arm: task.ABArmChallenger, Publish: task.ABPublishNone,
 			Challenger: "invented-challenger-1", ChallengerSource: task.ABChallengerOwner},
+		{PairID: base.RunID, Arm: task.ABArmChallenger, Publish: task.ABPublishNone,
+			Challenger: "invented-challenger-1", ChallengerSource: task.ABChallengerOwner,
+			Slot: task.ABSlotCoder},
+		{PairID: base.RunID, Arm: task.ABArmChallenger, Publish: task.ABPublishNone,
+			Challenger: "invented-challenger-1", ChallengerSource: task.ABChallengerOwner,
+			Slot: task.ABSlotL3, ChampionRun: "20261028-090000-1a2b"},
 	} {
 		rec := base
 		rec.AB = ab
@@ -4331,6 +4480,10 @@ func TestABSchemaEnumsMatchTheGoVocabulary(t *testing.T) {
 		"arm":               {string(task.ABArmChampion), string(task.ABArmChallenger)},
 		"publish":           {string(task.ABPublishNone)},
 		"challenger_source": {string(task.ABChallengerOwner)},
+		// The slot (D728, B1.1) is a vocabulary like the other three: a slot
+		// added to Go and not to the schemas would make every task and record
+		// carrying it schema-invalid, which is the drift this test exists for.
+		"slot": {string(task.ABSlotCoder), string(task.ABSlotL1), string(task.ABSlotL2), string(task.ABSlotL3)},
 	}
 	for _, file := range []string{"task.schema.json", "result.schema.json"} {
 		got := read(file)
@@ -5389,19 +5542,20 @@ func TestSchemasDecodeTheVisionKey(t *testing.T) {
 // own flag and the member is written **only when it is true**; and writability
 // follows from the two refusals that come before the generic path's allowlist
 // (settingsWriteRowHinted) -- a sensitive key is never written by it and neither
-// is a key a family owns -- so a row that says `writable` while it carries an
-// owner word, or while the registry marks it sensitive, is a row no write
-// produces. The fixture this branch corrected spelled `target_layer` "project"
-// on the row whose write lands in `repo` and `""` on two rows that each name a
-// layer, and it said `writable` on two rows that carry an owner word -- the
-// drift this half exists for. **The rule this half restates is the read's own,
-// and its guard is in the package that holds it**: `target_layer` is
-// settingsDefaultLayer's answer, and `owner` and `writable` are
-// settingsFamilyCommands' and settingsWriteRow's, all three set by projectRow
+// is a key a family owns -- so a row that says `writable` while the registry
+// marks it sensitive is a row no write produces. Every row also names an owner,
+// which is the read's answer rather than this package's (D1178). The fixture
+// this branch corrected spelled `target_layer` "project" on the row whose write
+// lands in `repo` and `""` on two rows that each name a layer, and it said
+// `writable` on two rows that carry an owner word -- the drift this half exists
+// for. **The rule this half restates is the read's own, and its guard is in the
+// package that holds it**: `target_layer` is settingsDefaultLayer's answer, and
+// `owner` and `writable` are settingsOwnerCommands' and settingsWriteRow's, all three set by projectRow
 // in internal/cli, so TestSettingsConsoleFixtureOwnerAndWritable
-// (internal/cli/settings_console_fixture_test.go) holds the fixture to those
-// three functions and a change to one of them is red there even where the
-// restatements here stay green.
+// (internal/cli/settings_console_fixture_test.go) holds the fixture to the read
+// that answers with them -- it runs `settings --json` and compares the row it
+// prints, which is the three together -- and a change to one of them is red
+// there even where the restatements here stay green.
 func TestSettingsConsoleFixture(t *testing.T) {
 	const file = "../console/test/fixtures/settings.json"
 	data, err := os.ReadFile(file)
@@ -5494,13 +5648,26 @@ func TestSettingsConsoleFixture(t *testing.T) {
 		if row.TargetLayer != wantLayer {
 			t.Errorf("%s: target_layer = %q, and the narrowest of repo, project and local the key may be set in is %q, which is what a write with no --layer lands in and what the read prints (settingsDefaultLayer)", row.Key, row.TargetLayer, wantLayer)
 		}
-		if row.Writable {
-			if reg.Sensitive {
-				t.Errorf("%s: the fixture says writable, and a sensitive key is refused before the allowlist is asked (settingsWriteRowHinted): the generic path never writes one", row.Key)
-			}
-			if row.Owner != "" {
-				t.Errorf("%s: the fixture carries the owner word %q and says writable, and the read prints an owner word only for a key the generic path does not write (the family that owns it does, settingsRead.projectRow): no row is both", row.Key, row.Owner)
-			}
+		// `owner` is the word for the command that writes the row (D1178): the
+		// generic writer's name on a key the allowlist carries, a family's on a
+		// key it refuses, and, on a key no command edits, the sentence naming
+		// the command that carries its file -- `fugaro setup` and `fugaro
+		// update` for the installation's own, `fugaro config publish`,
+		// `fugaro config init` and `fugaro update` for a file's. The registry
+		// answers the token and this package cannot map it -- the table that
+		// maps it is settingsOwnerCommands, internal/cli's, and so is the
+		// blanking rule beside it for a row the write refuses -- so the one
+		// fact about the word this half can restate is that every row of this
+		// fixture names one. Which word, and the pair it keeps with `writable`,
+		// is the guard's own (settings_console_fixture_test.go, which asks the
+		// read for all three members): a word compared here alone would accept
+		// the generic writer's name on a row the write refuses, which is a row
+		// the read prints none for.
+		if row.Owner == "" {
+			t.Errorf("%s: the fixture names no owner, and every row of the read names the command that writes it (settingsOwnerCommands, D1178)", row.Key)
+		}
+		if row.Writable && reg.Sensitive {
+			t.Errorf("%s: the fixture says writable, and a sensitive key is refused before the allowlist is asked (settingsWriteRowHinted): the generic path never writes one", row.Key)
 		}
 		switch {
 		case reg.Sensitive && row.Sensitive == nil:
@@ -6292,11 +6459,11 @@ func TestReviewArtifactSchemaMatchesStruct(t *testing.T) {
 			t.Errorf("review.schema.json has no %q property: the reviewer is asked for a field the artifact's own schema refuses", key)
 			continue
 		}
-		a, err := json.Marshal(stripDescriptions(askProps[key]))
+		a, err := json.Marshal(stripProse(askProps[key]))
 		if err != nil {
 			t.Fatal(err)
 		}
-		b, err := json.Marshal(stripDescriptions(got))
+		b, err := json.Marshal(stripProse(got))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -6372,24 +6539,26 @@ func TestReviewArtifactSchemaMatchesStruct(t *testing.T) {
 	}
 }
 
-// stripDescriptions is a schema subtree with every "description" removed: the
-// wire schema the reviewer's call carries explains nothing, and comparing the
-// two documents is comparing their rules.
-func stripDescriptions(v any) any {
+// stripProse is a schema subtree with its prose removed — a description, a
+// $comment, a title and the identifiers a document names itself by. The wire
+// schema a call carries explains nothing, and comparing the two documents is
+// comparing their rules: none of those members is one.
+func stripProse(v any) any {
 	switch x := v.(type) {
 	case map[string]any:
 		out := make(map[string]any, len(x))
 		for k, e := range x {
-			if k == "description" {
+			switch k {
+			case "description", "$comment", "title", "$schema", "$id":
 				continue
 			}
-			out[k] = stripDescriptions(e)
+			out[k] = stripProse(e)
 		}
 		return out
 	case []any:
 		out := make([]any, len(x))
 		for i, e := range x {
-			out[i] = stripDescriptions(e)
+			out[i] = stripProse(e)
 		}
 		return out
 	}
@@ -6509,5 +6678,77 @@ func TestTaskSchemaStillRefusesAnUnknownMember(t *testing.T) {
 	}
 	if err := sch.Validate(inst); err == nil {
 		t.Error("schema accepts a chain limit outside overrides")
+	}
+}
+
+// TestTriageSchemaMatchesTheDocument: schemas/triage.schema.json is the
+// published contract for one triage round's verdict (docs/post-review-triage,
+// D1840, D1850), and the judge's own call carries runner.TriageSchema for the
+// document it answers. The two are one shape in two places, and this holds them
+// together: a rule in the document and not in the call is a judge answering to
+// a shape its own reader refuses, and internal/triage's Decode refuses such a
+// document as a whole, which records the round as failed and blocks every
+// finding the mode's table blocks (D1846) — a reason the judge wrapped onto a
+// second line would cost the round its whole verdict rather than being read as
+// the answer it is.
+//
+// The rules are compared one by one, prose dropped: the document explains its
+// members to a human and the call's schema is wire only, and a description is
+// not a rule. What the shape permits is then held to the reader, which is the
+// other half of the same agreement.
+func TestTriageSchemaMatchesTheDocument(t *testing.T) {
+	raw, err := os.ReadFile("triage.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var published, call any
+	if err := json.Unmarshal(raw, &published); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(runner.TriageSchema), &call); err != nil {
+		t.Fatalf("runner.TriageSchema is not JSON: %v", err)
+	}
+	doc, err := json.Marshal(stripProse(published))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ask, err := json.Marshal(stripProse(call))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(doc, ask) {
+		t.Fatalf("schemas/triage.schema.json and runner.TriageSchema are not one shape:\nthe document: %s\nthe call:     %s", doc, ask)
+	}
+
+	// What the agreement is worth, as the reader feels it: a document this
+	// shape permits is a document a run can read, and the refusals the call
+	// states are the reader's own. Each of the four refusals below was a
+	// document the call permitted while the reader refused it as a whole, so
+	// the round was recorded failed and every finding the table blocks blocked.
+	sch := compile(t, "triage.schema.json")
+	const key = "0f1e2d3c4b5a6978"
+	for _, tc := range []struct {
+		name string
+		in   string
+		read bool
+	}{
+		{"the answer the judge writes", `{"version":1,"findings":[{"index":0,"key":"` + key + `","verdict":"defer","reason":"doc drift","group":"docs"},{"index":1,"key":"ffffffffffffffff","verdict":"block","reason":"a real bug"}]}`, true},
+		{"a reason on two lines", `{"version":1,"findings":[{"index":0,"key":"` + key + `","verdict":"block","reason":"one line\nand an instruction"}]}`, false},
+		{"a group on two lines", `{"version":1,"findings":[{"index":0,"key":"` + key + `","verdict":"defer","reason":"x","group":"docs\nmore"}]}`, false},
+		{"a member the verdict does not carry", `{"version":1,"findings":[],"tolerated":[]}`, false},
+		{"a member an entry does not carry", `{"version":1,"findings":[{"index":0,"key":"` + key + `","verdict":"block","reason":"x","round":2}]}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			inst, err := jsonschema.UnmarshalJSON(strings.NewReader(tc.in))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := sch.Validate(inst); (err == nil) != tc.read {
+				t.Errorf("the call's shape permits it = %v, want %v: %v", err == nil, tc.read, err)
+			}
+			if _, err := triage.Decode([]byte(tc.in)); (err == nil) != tc.read {
+				t.Errorf("the reader reads it = %v, want %v: %v", err == nil, tc.read, err)
+			}
+		})
 	}
 }

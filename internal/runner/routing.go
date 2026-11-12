@@ -475,11 +475,11 @@ func (r *run) pinSlots() []pinSlot {
 const stageAdversarial = string(recipe.StepAdversarial)
 
 // stageTriage is the triage stage's name: the judge that weighs a review
-// round's findings before the fix round takes them (D1851, D1854). The runner
-// does not run the stage yet — T-TR6 and T-TR7a/T-TR7b do — and the ladder has
-// to answer for it already, because it is a stage of a mixed run
-// (config.MixedAccountStages): which model it runs is what rung 4 judges the
-// stage's Claude account on (mixedDefaultAccount), against the model the
+// round's findings before the fix round takes them (D1851, D1854). The stage
+// runs in shadow — what it answers is logged and nothing acts on it until
+// T-TR7b — and the ladder answers for it as it does for every stage of a mixed
+// run (config.MixedAccountStages): which model it runs is what rung 4 judges
+// the stage's Claude account on (mixedDefaultAccount), against the model the
 // launch and the job set admitted that account on.
 const stageTriage = "triage"
 
@@ -538,6 +538,34 @@ func stageLevel(stage string) (policy.Level, bool) {
 		return policy.LevelL2, true
 	}
 	return "", false
+}
+
+// stageCraft is the craft a stage's calls go out on (F13): the model assignment
+// whose credential or pool serves it, and so the craft whose pool the walk
+// (poolchoice.go) walks and whose access the stage's own checks read.
+//
+// The mapping is F13's and it is finer than the role slots beside it: the
+// first-line review is the review craft, whose model slot is the coder's
+// (reviewStages) — a level 1 review runs the coder's model on the review
+// craft's access, and reading the role here would send those calls out on the
+// coder's credential. triage runs level 2's model and so the senior review's
+// access, which is stageLevel's reason told about a credential.
+//
+// plan is the coder's: it is the coder's own planning and it is not a stage
+// F13 names, and "" is a stage outside the run's vocabulary, for which the walk
+// answers nothing rather than guessing a craft.
+func stageCraft(stage string) string {
+	switch stage {
+	case "plan", "implement", "fix":
+		return config.CraftCoder
+	case "review_first":
+		return config.CraftReview
+	case "review", stageTriage:
+		return config.CraftSeniorReview
+	case stageAdversarial:
+		return config.CraftSecurityReview
+	}
+	return ""
 }
 
 // stageModel is the model a stage runs: the level's own model when the stage

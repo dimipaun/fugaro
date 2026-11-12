@@ -73,8 +73,13 @@ type Provider struct {
 	// app is the client authenticated AS the App (JWT), used for the reads
 	// only an App's own key authorizes (GET /app). It is nil when the key is
 	// the service's: see appSlug.
-	app  *httpjson.Client
-	warn func(string)
+	app *httpjson.Client
+	// mergeMint is where MarkReady's and Merge's credential comes from (E8,
+	// D2049): the gated mint, installed by UseMergeMint. Nil means this
+	// provider was never given one, and both calls refuse rather than
+	// reaching for the installation token every other call uses.
+	mergeMint gitprov.MergeMinter
+	warn      func(string)
 
 	identityMu     sync.Mutex
 	identityDone   bool   // GET /app gave a definite answer
@@ -203,7 +208,7 @@ func (p *Provider) EnsurePR(ctx context.Context, spec gitprov.PRSpec) (gitprov.P
 		return gitprov.PR{}, err
 	}
 	if existing != nil {
-		return p.update(ctx, *existing, spec.Draft)
+		return p.update(ctx, p.api, *existing, spec.Draft)
 	}
 	pr, err := p.create(ctx, spec)
 	if err != nil {
@@ -267,11 +272,15 @@ func draftUnsupported(err error) bool {
 // draft-looking) PR; a pull request left looking more ready than requested
 // is not safe to leave, so that is a plain error, with the populated PR the
 // caller can still inspect or retry EnsurePR over.
-func (p *Provider) update(ctx context.Context, pr pull, draft bool) (gitprov.PR, error) {
+// c is the client the call is made with, and it is a parameter rather than
+// always p.api because the ladder's ready and merge calls are made with the
+// merge mint's token and not this provider's own credential (E8: merge.go's
+// mergeToken builds that client).
+func (p *Provider) update(ctx context.Context, c *httpjson.Client, pr pull, draft bool) (gitprov.PR, error) {
 	title := gitprov.DraftTitle(pr.Title, false)
 	switch {
 	case draft && !pr.Draft:
-		if err := p.graphql(ctx, convertToDraftMutation, pr.NodeID); err != nil {
+		if err := p.graphql(ctx, c, convertToDraftMutation, pr.NodeID); err != nil {
 			if !draftUnsupportedGraphQL(err) {
 				// Some other failure (a 5xx, a dropped connection, a
 				// permissions error): the PR is unchanged, so return it
@@ -292,14 +301,14 @@ func (p *Provider) update(ctx context.Context, pr pull, draft bool) (gitprov.PR,
 			if title == pr.Title {
 				return gitprov.PR{Number: pr.Number, URL: pr.HTMLURL, Draft: draft, DraftFallback: true}, nil
 			}
-			if perr := p.retitle(ctx, pr.Number, title); perr != nil {
+			if perr := p.retitle(ctx, c, pr.Number, title); perr != nil {
 				return gitprov.PR{Number: pr.Number, URL: pr.HTMLURL, Draft: pr.Draft},
 					fmt.Errorf("could not mark pull request #%d as a draft (graphql: %w) and could not retitle it either: %v", pr.Number, err, perr)
 			}
 			return gitprov.PR{Number: pr.Number, URL: pr.HTMLURL, Draft: draft, DraftFallback: true}, nil
 		}
 	case !draft && pr.Draft:
-		if err := p.graphql(ctx, markReadyMutation, pr.NodeID); err != nil {
+		if err := p.graphql(ctx, c, markReadyMutation, pr.NodeID); err != nil {
 			// The PR is still a draft: the conservative direction, safe for
 			// a retry to heal, so this is a PartialError rather than an
 			// error that hides the PR that already exists.
@@ -313,7 +322,7 @@ func (p *Provider) update(ctx context.Context, pr pull, draft bool) (gitprov.PR,
 		// here leaves the PR's title looking more draft-like than
 		// requested, the conservative direction, so it is a PartialError
 		// with the draft-looking state rather than a plain error.
-		if err := p.retitle(ctx, pr.Number, title); err != nil {
+		if err := p.retitle(ctx, c, pr.Number, title); err != nil {
 			return gitprov.PR{Number: pr.Number, URL: pr.HTMLURL, Draft: true},
 				&gitprov.PartialError{Err: fmt.Errorf("retitling pull request #%d: %w", pr.Number, err)}
 		}
@@ -321,8 +330,8 @@ func (p *Provider) update(ctx context.Context, pr pull, draft bool) (gitprov.PR,
 	return gitprov.PR{Number: pr.Number, URL: pr.HTMLURL, Draft: draft}, nil
 }
 
-func (p *Provider) retitle(ctx context.Context, number int, title string) error {
-	return p.api.Do(ctx, "PATCH", p.repoPath(fmt.Sprintf("/pulls/%d", number)), map[string]any{"title": title}, nil)
+func (p *Provider) retitle(ctx context.Context, c *httpjson.Client, number int, title string) error {
+	return c.Do(ctx, "PATCH", p.repoPath(fmt.Sprintf("/pulls/%d", number)), map[string]any{"title": title}, nil)
 }
 
 // draftUnsupportedGraphQL reports whether err is GitHub's GraphQL API
@@ -341,13 +350,13 @@ func draftUnsupportedGraphQL(err error) bool {
 	return strings.Contains(msg, "draft") && strings.Contains(msg, "not supported")
 }
 
-func (p *Provider) graphql(ctx context.Context, query, id string) error {
-	return p.graphqlDo(ctx, query, map[string]any{"id": id}, nil)
+func (p *Provider) graphql(ctx context.Context, c *httpjson.Client, query, id string) error {
+	return p.graphqlDo(ctx, c, query, map[string]any{"id": id}, nil)
 }
 
 // graphqlDo runs one GraphQL request, and decodes its data into out
 // unless out is nil. GraphQL errors, which come with HTTP 200, are errors.
-func (p *Provider) graphqlDo(ctx context.Context, query string, vars map[string]any, out any) error {
+func (p *Provider) graphqlDo(ctx context.Context, c *httpjson.Client, query string, vars map[string]any, out any) error {
 	var resp struct {
 		Data   json.RawMessage `json:"data"`
 		Errors []struct {
@@ -355,7 +364,7 @@ func (p *Provider) graphqlDo(ctx context.Context, query string, vars map[string]
 		} `json:"errors"`
 	}
 	in := map[string]any{"query": query, "variables": vars}
-	if err := p.api.Do(ctx, "POST", p.graphqlURL, in, &resp); err != nil {
+	if err := c.Do(ctx, "POST", p.graphqlURL, in, &resp); err != nil {
 		return err
 	}
 	if len(resp.Errors) > 0 {
@@ -502,11 +511,17 @@ type pullDetail struct {
 }
 
 func (p *Provider) getPull(ctx context.Context, number int) (pullDetail, gitprov.PRInfo, error) {
+	return p.getPullWith(ctx, p.api, number)
+}
+
+// getPullWith is getPull made with c, for the head-bound calls whose
+// credential is the merge mint's rather than this provider's own (E8).
+func (p *Provider) getPullWith(ctx context.Context, c *httpjson.Client, number int) (pullDetail, gitprov.PRInfo, error) {
 	if number <= 0 {
 		return pullDetail{}, gitprov.PRInfo{}, fmt.Errorf("reading pull request #%d: not a pull request number", number)
 	}
 	var d pullDetail
-	if err := p.api.Do(ctx, "GET", p.repoPath(fmt.Sprintf("/pulls/%d", number)), nil, &d); err != nil {
+	if err := c.Do(ctx, "GET", p.repoPath(fmt.Sprintf("/pulls/%d", number)), nil, &d); err != nil {
 		return pullDetail{}, gitprov.PRInfo{}, fmt.Errorf("reading pull request #%d: %w", number, err)
 	}
 	if d.Number != number {
@@ -537,6 +552,33 @@ func (p *Provider) getPull(ctx context.Context, number int) (pullDetail, gitprov
 func (p *Provider) PullRequest(ctx context.Context, number int) (gitprov.PRInfo, error) {
 	_, info, err := p.getPull(ctx, number)
 	return info, err
+}
+
+// PullRequestByBranch implements gitprov.PRBranchReader: the pull request
+// opened from branch, whatever its state, so `fugaro followups` can tell a
+// merged parent from an open one without trusting a number a job wrote
+// (D1843, F30).
+//
+// state=all rather than find's state=open, because the caller's whole
+// question is whether the parent merged. The list reply has no merged flag —
+// GitHub reports that only on the pull request itself — so the number the
+// list answers with is read back through getPull, which is what decides
+// PRMerged from PRClosed. Two requests either way, and the number the second
+// one names came from the host, never from the record.
+func (p *Provider) PullRequestByBranch(ctx context.Context, branch string) (gitprov.PRInfo, bool, error) {
+	q := url.Values{"head": {p.owner + ":" + branch}, "state": {"all"}, "per_page": {"1"}, "sort": {"created"}, "direction": {"desc"}}
+	var pulls []pull
+	if err := p.api.Do(ctx, "GET", p.repoPath("/pulls?"+q.Encode()), nil, &pulls); err != nil {
+		return gitprov.PRInfo{}, false, fmt.Errorf("finding the pull request for %s: %w", branch, err)
+	}
+	if len(pulls) == 0 {
+		return gitprov.PRInfo{}, false, nil
+	}
+	_, info, err := p.getPull(ctx, pulls[0].Number)
+	if err != nil {
+		return gitprov.PRInfo{}, false, err
+	}
+	return info, true, nil
 }
 
 // FetchPRHead implements gitprov.Provider (design generic-tool §3.6, G12).
@@ -591,7 +633,7 @@ func (p *Provider) updateByNumber(ctx context.Context, spec gitprov.PRSpec) (git
 	if info.SourceBranch != spec.Branch {
 		return pr, fmt.Errorf("pull request #%d is on %s, not %s: %w", info.Number, info.SourceBranch, spec.Branch, gitprov.ErrPRNotOpen)
 	}
-	return p.update(ctx, d.pull, spec.Draft)
+	return p.update(ctx, p.api, d.pull, spec.Draft)
 }
 
 // UpdatePR implements gitprov.Provider. It reads the pull request, then
@@ -627,7 +669,7 @@ func (p *Provider) UpdatePR(ctx context.Context, number int, u gitprov.PRUpdate)
 		}
 	}
 	if u.Draft != nil && *u.Draft != info.Draft {
-		return p.update(ctx, d.pull, *u.Draft)
+		return p.update(ctx, p.api, d.pull, *u.Draft)
 	}
 	return pr, nil
 }

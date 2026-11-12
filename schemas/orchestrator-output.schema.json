@@ -97,7 +97,7 @@
           "type": "integer",
           "minimum": 1,
           "description": "The state document's own schema version (internal/orchestrator.SchemaVersion), written for `node`. A node saved at an older version is migrated by the reader before the summary is generated, and the next write carries the raised version.",
-          "default": 1
+          "default": 2
         },
         "brief": {
           "type": "string",

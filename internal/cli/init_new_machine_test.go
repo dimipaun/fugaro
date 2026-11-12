@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // installationState puts an installation's state object in the rig's state
@@ -108,10 +110,10 @@ func TestAdoptModeNamesMissingRole(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"launcher role, held by: group:eng@example.com",
-		"ask an owner to run: fugaro setup --launcher group:eng@example.com --launcher user:<your-email>",
-		"operator role, held by: nobody",
-		"ask an owner to run: fugaro setup --operator user:<your-email>",
+		"operator role, held by: group:eng@example.com",
+		"ask an owner to run: fugaro setup --operator group:eng@example.com --operator user:<your-email>",
+		"admin role, held by: nobody",
+		"ask an owner to run: fugaro setup --admin user:<your-email>",
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("the output lacks %q:\n%s", want, out.String())
@@ -125,18 +127,22 @@ func TestAdoptModeNamesMissingRole(t *testing.T) {
 }
 
 // A rerun on an installation an older init made (its config, its state, its
-// marks) adopts it without a change: every stage is done or skipped, none
-// changed, and the plan is empty; with the plugin already wired at this
-// release the plugin stage says No changes too. The engines' plans are the
-// ones they always made.
+// marks) adopts it without moving anything of the installation: nothing is
+// applied, the installation stage says No changes, and the engines' plans are
+// the ones they always made. The one write such a run has is the checkout's
+// own: the plugin stage runs in setup as it does in update, so the pin an older
+// fugaro left in the checkout is taken out here too (U5, spec §8) — the
+// migration is the stage's, not the update door's — and that is the change
+// below, with the repository stage still skipped over the fugaro.yaml the
+// default branch has not got.
 func TestAdoptOlderInstallationReportsNoChanges(t *testing.T) {
 	r := newInitRig(t)
 	r.installationState(t)
 	r.script["plan"] = map[string]any{"exit": 0}
 	r.save(t)
 	releaseBuild(t, "0.2.0")
-	// A checkout of a repository this project has not onboarded, whose
-	// settings already carry the plugin at this release.
+	// A checkout of a repository this project has not onboarded, still
+	// carrying the pin an older fugaro left.
 	settings := wiringCheckoutAt(t, "https://bitbucket.org/acme/sandbox.git", "")
 	if err := os.MkdirAll(filepath.Dir(settings), 0o755); err != nil {
 		t.Fatal(err)
@@ -152,16 +158,28 @@ func TestAdoptOlderInstallationReportsNoChanges(t *testing.T) {
 	if len(r.ran(t, "apply")) != 0 {
 		t.Errorf("a rerun applied: %q", r.calls(t))
 	}
+	states, details := map[string]initflow.State{}, map[string]string{}
 	for _, s := range res.Stages {
-		if s.State != "done" && s.State != "skipped" {
-			t.Errorf("stage %s is %s (%s), want done or skipped", s.Name, s.State, s.Detail)
-		}
-		if (s.Name == "installation" || s.Name == "plugin") && !strings.Contains(s.Detail, "No changes") {
-			t.Errorf("stage %s: %q does not say No changes", s.Name, s.Detail)
+		states[s.Name], details[s.Name] = s.State, s.Detail
+		if s.State != "done" && s.State != "skipped" && s.State != "changed" {
+			t.Errorf("stage %s is %s (%s), want done, skipped, or the pin's removal", s.Name, s.State, s.Detail)
 		}
 	}
-	if stateOf(res, "installation") != "done" || stateOf(res, "plugin") != "done" || stateOf(res, "repository") != "skipped" {
-		t.Errorf("stages %+v", res.Stages)
+	for name, state := range map[string]initflow.State{"installation": "done", "plugin": "changed", "repository": "skipped"} {
+		if states[name] != state {
+			t.Errorf("stage %s is %q, want %q\nstages %+v", name, states[name], state, res.Stages)
+		}
+	}
+	if !strings.Contains(details["installation"], "No changes") {
+		t.Errorf("the installation stage says %q, want No changes", details["installation"])
+	}
+	// The plugin stage's whole account is the removal: nothing is installed (no
+	// claude in this rig), and the two entries are what the file lost.
+	if !strings.Contains(details["plugin"], "removed the fugaro@fugaro pin from") {
+		t.Errorf("the plugin stage says %q, want the pin it took out\nstages %+v", details["plugin"], res.Stages)
+	}
+	if got := upgradeRead(t, settings); got != "{}\n" {
+		t.Errorf("the checkout's settings after the run:\n%s\nwant the leftover pin taken out:\n%s", got, "{}\n")
 	}
 }
 
@@ -208,6 +226,72 @@ func TestNothingIsAppliedAfterAnAdoptInTheSameRun(t *testing.T) {
 	e.newMachine = ""
 	if err := e.newMachineGuard(initflow.Installation2); err != nil {
 		t.Errorf("a rerun is the ordinary converge: %v", err)
+	}
+}
+
+// U8 (D954, F23): the plugin stage is machine-local — every write of its own is
+// on this machine — so a cloud stage that stopped in front of it does not take
+// it with it. This is the reader spec §11 is about: a teammate who is not the
+// owner, with the CLI, ADC and a checkout, running the one documented command
+// on a machine whose installation exists and whose local config this run
+// writes. The images stage is the first cloud stage after that adoption and
+// refuses the run that wrote the config (newMachineGuard), which before U8 was
+// the end of the command for them: the plugin was blocked behind it and the one
+// line they were told to run installed nothing.
+//
+// The run keeps the loop's rule otherwise: everything that is not machine-local
+// still waits for the stop, the stage that ran says which one it ran past, and
+// the exit code says the owner's cloud stages are still owed.
+func TestMachineLocalStageRunsPastACloudStopForATeammate(t *testing.T) {
+	r := newInitRig(t)
+	r.installationState(t)
+	r.script["output"] = map[string]any{"stdout": outputsJSON(t)}
+	r.save(t)
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	releaseBuild(t, "0.2.0")
+	f := testutil.NewClaudePluginFake(t, "[]", "[]")
+	f.On(t, "plugins", userInstall("0.2.0"), argsInstall...)
+	e := newMachineEngine(t, r, &initOptions{door: updateDoor.name, yes: true})
+	var out strings.Builder
+	e.r.w = &out
+	useFakeClaude(t, f)
+	images := &engineStage{e: e, name: initflow.Images, skip: func() string { return "" }}
+	repo := &engineStage{e: e, name: initflow.Repository, skip: func() string { return "nothing of this run's to onboard" }}
+	res, err := initflow.Run(t.Context(),
+		[]initflow.Stage{&preflightStage{e}, newInstallationStage(e), images, newPluginStage(e), repo}, e.options())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stateOf(res, initflow.Images) != initflow.NeedsYou {
+		t.Fatalf("the rig's cloud stage did not stop the run: %+v\n%s", res.Stages, out.String())
+	}
+	if got := stateOf(res, initflow.Plugin); got != initflow.Changed {
+		t.Fatalf("the plugin stage is %v, want the machine's own write done despite the stop: %+v\n%s", got, res.Stages, out.String())
+	}
+	if got := stateOf(res, initflow.Repository); got != initflow.Blocked {
+		t.Errorf("the stage behind the plugin is %v, want it waiting for the cloud stop: %+v", got, res.Stages)
+	}
+	var plugin, repoDetail string
+	for _, st := range res.Stages {
+		switch st.Name {
+		case initflow.Plugin:
+			plugin = st.Detail
+		case initflow.Repository:
+			repoDetail = st.Detail
+		}
+	}
+	want := "machine-local: ran although " + initflow.Images + " waits for you"
+	if !strings.HasPrefix(plugin, want) {
+		t.Errorf("the plugin stage says %q, want the run to say it ran past the stop (%q):\n%s", plugin, want, out.String())
+	}
+	if repoDetail != "waits for "+initflow.Images {
+		t.Errorf("a stage that is not machine-local says %q, want it waiting for the stage that stopped", repoDetail)
+	}
+	if !slices.ContainsFunc(callArgs(f.Calls(t)), func(a []string) bool { return slices.Equal(a, addUser("0.2.0")) }) {
+		t.Errorf("the teammate's own machine has no plugin after the command:\n%s", out.String())
+	}
+	if res.ExitCode() != 1 {
+		t.Errorf("exit %d, want 1: the owner's cloud stages are still owed", res.ExitCode())
 	}
 }
 

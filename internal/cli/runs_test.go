@@ -2965,3 +2965,45 @@ func TestLsLeavesARunUnDerivedWhenTheJobCannotSaySo(t *testing.T) {
 		}
 	})
 }
+
+// TestRunRetryIsTheSameChain: a retry is not a new chain. --retry relaunches
+// the stored task as it stands — createTask does not run for one — so the run
+// it starts is that same run, in the chain that task already names, carrying
+// the chain figure it already held, and the retry takes no limits of its own to
+// compute anything else with (D1053, taskFlags). What is left of the chain is
+// resolved at that run's own launch, in the job (L5), where it can read the
+// run's own ledger; nothing here recomputes it, which is why the figure below
+// is the one the stored task has rather than the one this chain has left now.
+//
+// Mutation (a retry that renames the run, or that drops its link and starts a
+// chain of its own): the run id or the previous_run is no longer the stored
+// task's, which this test finds.
+func TestRunRetryIsTheSameChain(t *testing.T) {
+	f := chainRig(t)
+	usd := chainUSD
+	// The chain's record states 4 of its 5 dollars — it has moved on since the
+	// follow-up's task was written — so a computation now would write 1, not
+	// the 3 that task carries.
+	seedChainPRRoot(t, f, chainRun, 4, task.Overrides{MaxUSD: &usd})
+	stored := 3.0
+	spec := followUpSpec(chainFu, chainRun, chainRun, 7)
+	spec.Overrides = task.Overrides{MaxUSD: &stored}
+	seedSpec(t, f, spec, false)
+
+	// The flags that write a task are refused with --retry, the chain ones
+	// among them: a retry has no task to write them into.
+	wantRefused(t, f, "it takes no --max-usd", "run", "--retry", chainFu, "--max-usd", "1")
+	if _, _, err := execute(t, "run", "--retry", chainFu); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("%d executions, want the stored task retried", n)
+	}
+	got := chainTask(t, f, chainFu)
+	if got.RunID != chainFu || got.PreviousRun != chainRun {
+		t.Fatalf("retry = run %s continuing %s, want the same run (%s) continuing the same chain (%s)", got.RunID, got.PreviousRun, chainFu, chainRun)
+	}
+	if o := got.Overrides; o.MaxUSD == nil || *o.MaxUSD != stored {
+		t.Fatalf("overrides = %+v, want the %v dollars the stored task already carried", o, stored)
+	}
+}

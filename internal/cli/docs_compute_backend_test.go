@@ -1086,7 +1086,7 @@ func TestDocsComputeBackendCIReachMatchesTheTree(t *testing.T) {
 		}
 	}
 	ci := readDoc(t, ".github/workflows/ci.yml")
-	if !strings.Contains(ci, "for r in installation firebase repo compute; do") {
+	if !strings.Contains(ci, "for r in installation firebase repo compute") {
 		t.Errorf(".github/workflows/ci.yml's terraform job no longer names compute in its root loop: %s's Global Constraint 3 says it does, and the plan's answer to the design's staged-workflow request rests on it", computeBackendPlan)
 	}
 	// A staged copy is the real file plus one word, so while one exists it is a

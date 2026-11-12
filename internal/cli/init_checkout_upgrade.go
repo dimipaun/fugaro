@@ -252,7 +252,7 @@ func (s *checkoutStage) detail(steps []plannedStep, loc pluginwire.Location) str
 		}
 		names = append(names, p.step.name)
 	}
-	line := fmt.Sprintf("runs fugaro upgrade's own steps for %s: %s", pluginwire.Printable(loc.Root), strings.Join(names, ", "))
+	line := fmt.Sprintf("moves the checkout %s to this release: %s", pluginwire.Printable(loc.Root), strings.Join(names, ", "))
 	if len(skipped) > 0 {
 		line += "; skipped here: " + strings.Join(skipped, "; ")
 	}
@@ -488,7 +488,7 @@ func (e *initEngine) upgradeCtx(env initflow.Env, loc pluginwire.Location) *upgr
 	return &upgradeCtx{
 		cmd: e.r.cmd,
 		w:   e.r.w,
-		o: upgradeOptions{yes: env.Yes, allowFork: o.allowFork, refresh: refreshOptions{
+		o: upgradeOptions{yes: env.Yes, refresh: refreshOptions{
 			imageSource: o.imageSource, expectDigests: o.expectDigests, cloud: o.cloud,
 			// The refresh's own run prints and asks where its command says
 			// (newInitRun), and this stage runs inside the converge's step:

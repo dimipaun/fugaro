@@ -441,6 +441,24 @@ type AgentEntry struct {
 	UpdatedAt      int64  `json:"updatedAt,omitempty"`
 	Spent          Micros `json:"spent,omitempty"`
 	Halted         string `json:"halted,omitempty"`
+	// Mode is the rigor mode the run resolved and From is the layer that won
+	// it (rigor-modes plan T1.7): runstore.RigorRecord's Mode and From, which
+	// the run copies here from its own record so `fugaro watch` can show a
+	// live run's mode — a live row is built from this entry, not from the
+	// record (F40 of docs/rigor-modes/reconciliation.md), and the finished
+	// half of watch reads the record's result.json and needs nothing here.
+	//
+	// The two travel together and are one value: From names the layer Mode
+	// came from, and a reader shows them as one (`fugaro runs ls`'s MODE
+	// column spells the same pair). Neither is an authority — no policy,
+	// admission or budget rule reads them; the run's own record is where the
+	// mode is decided and enforced.
+	//
+	// Rules deployed before the mode reached the registry have no key for
+	// these children and refuse the whole entry with them; Start then drops
+	// both and goes on without them.
+	Mode string `json:"mode,omitempty"`
+	From string `json:"from,omitempty"`
 	// Credential is the name — never the value — of the credential the run's
 	// cascade is currently using (credentials-service plan, task C1.3's rules
 	// child of the same name; C1.16 and C1.19 write it). It is what `fugaro

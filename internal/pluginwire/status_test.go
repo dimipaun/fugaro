@@ -125,6 +125,34 @@ func TestInstalledVersionBestEffort(t *testing.T) {
 	if r := Status(set, "0.2.0", ""); r.Install != CannotCompare {
 		t.Errorf("no path: %q", r.Install)
 	}
+	// Both at once, which is where the report's two questions differ: Install
+	// and Version answer about the install that applies to this checkout, whose
+	// own project-scope install is taken over the machine's user-scope one
+	// (D942), and UserInstall and UserVersion answer about the machine's own
+	// (D949, U2) — the plugin step under --check reads those, because the
+	// install it maintains is the machine's and never the checkout's.
+	both := func(user, project string) string {
+		return `{"version":2,"plugins":{"fugaro@fugaro":[{"scope":"user","version":"` + user + `"},` +
+			`{"scope":"project","version":"` + project + `","projectPath":"` + root + `"}]}}`
+	}
+	if r := Status(set, "0.2.0", installedFile(t, both("0.2.0", "0.1.0"))); r.Install != InstalledDiffers || r.Version != "0.1.0" || r.UserInstall != OK || r.UserVersion != "0.2.0" {
+		t.Errorf("this checkout's own behind beside the machine's current: install=%q version=%q user=%q userVersion=%q", r.Install, r.Version, r.UserInstall, r.UserVersion)
+	}
+	if r := Status(set, "0.2.0", installedFile(t, both("0.1.0", "0.2.0"))); r.Install != OK || r.Version != "0.2.0" || r.UserInstall != InstalledDiffers || r.UserVersion != "0.1.0" {
+		t.Errorf("this checkout's own current beside the machine's behind: install=%q version=%q user=%q userVersion=%q", r.Install, r.Version, r.UserInstall, r.UserVersion)
+	}
+	// A checkout-scoped install alone: what applies to the checkout is read,
+	// and the machine has none.
+	for _, e := range []string{entry("project", "0.2.0", root), entry("project", "0.1.0", root)} {
+		if r := Status(set, "0.2.0", installedFile(t, e)); r.UserInstall != NotInstalled || r.UserVersion != "" {
+			t.Errorf("a checkout-scoped install alone reads as the machine's own: %+v", r)
+		}
+	}
+	// And a machine whose user-scope install is the only one: both answers are
+	// that install.
+	if r := Status(set, "0.2.0", installedFile(t, entry("user", "0.2.0", ""))); r.Install != OK || r.UserInstall != OK || r.UserVersion != "0.2.0" {
+		t.Errorf("the machine's own install alone: %+v", r)
+	}
 	dir := t.TempDir()
 	if r := Status(set, "0.2.0", dir); r.Install != CannotCompare {
 		t.Errorf("a directory: %q", r.Install)
@@ -161,6 +189,29 @@ func TestInstallNotEvaluatedWithoutAPin(t *testing.T) {
 		if r := Status(project(t, c), "0.2.0", installedFile(t, "")); r.Install != "" {
 			t.Errorf("%s: install = %q", c, r.Install)
 		}
+	}
+}
+
+// The machine's own install is read on exactly those checkouts, and on one with
+// no settings file at all: nothing in the tree writes a pin any more (D949, U2),
+// so that is what every checkout looks like now, and fugaro upgrade --check has
+// to answer about the plugin on it. A report that left UserInstall unevaluated
+// there would print "cannot tell" and exit 0 on a machine whose plugin is a
+// release behind, and the upgrade skill would never run the install it exists to
+// run.
+func TestUserInstallIsReadWithoutAWiring(t *testing.T) {
+	noUserConfig(t)
+	behind := `{"version":2,"plugins":{"fugaro@fugaro":[{"scope":"user","version":"0.1.0"}]}}`
+	for name, set := range map[string]string{"no settings file": "", "settings with no pin": `{}`} {
+		t.Run(name, func(t *testing.T) {
+			r := Status(project(t, set), "0.2.0", installedFile(t, behind))
+			if r.Pin != NotWired {
+				t.Fatalf("the fixture is wired: %+v", r)
+			}
+			if r.UserInstall != InstalledDiffers || r.UserVersion != "0.1.0" {
+				t.Errorf("the machine's own install was not read: %+v", r)
+			}
+		})
 	}
 }
 

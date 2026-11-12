@@ -322,9 +322,14 @@ func TestReviewSeamRefusesAnAgentMarkerBeforeItPrintsAnything(t *testing.T) {
 // places that do, and no other file may (the project's creation and billing,
 // the Firestore location, a Cloud Build, replacing a tag, an unlisted
 // repository, a secret and the plugin wiring each keep their own).
+//
+// confirmPlanned counts with them because it is this family's own call: it is
+// what the three plan-confirmation sites ask with, and it is confirmOrdinary
+// for every plan that grants no member the review did not announce
+// (init_review.go, grantsNotAnnounced).
 func TestRunConfirmationCallSites(t *testing.T) {
 	want := map[string]int{"init.go": 7, "init_firebase.go": 2, "init_images.go": 1, "init_rules_stage.go": 1}
-	re := regexp.MustCompile(`\br\.(confirmOrdinary|askOrdinary|runCovers)\(`)
+	re := regexp.MustCompile(`\br\.(confirmOrdinary|confirmPlanned|askOrdinary|runCovers)\(`)
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)
@@ -398,24 +403,20 @@ func (r *initRig) markedRuns(t *testing.T, name, gcp string) {
 // screen the run's one confirmation is shown in, and the banner of a step
 // that asks its own. Only the ordinary steps' banner names both projects (the
 // Firestore location's names the project alone, and the tests that expect it
-// count it themselves), and a step the run's confirmation covered says so on
-// the line under its banner — which is what tells the two apart.
+// count it themselves).
 //
-// The covered line is counted with its own indentation, which is how the step
-// prints it (init_review.go's askOrdinary). The same phrase sits inside the
-// other sentence a step prints, "note: this step is not covered by the run
-// confirmation: …", so the bare phrase counts that one too: a step that asked
-// its own would read as a covered step, and a run with one of each as none.
+// A step the run's confirmation covered prints no banner at all now: it is a
+// step nothing is asked about, and "will do" is what the run has for those
+// (init_review.go's askOrdinary, initRun.willDo).
 func prompts(out string) (run, step int) {
 	run = strings.Count(out, "share ONE confirmation")
-	step = strings.Count(out, "⚠ CONFIRM (project "+initProjectName+", GCP project "+initProject+")") -
-		strings.Count(out, "\n  covered by the run confirmation (")
+	step = strings.Count(out, "⚠ CONFIRM (project "+initProjectName+", GCP project "+initProject+")")
 	return
 }
 
 // A marked project takes the run's one confirmation (the review screen, shown
 // once) for the Viewer-read removal and the apply and the local config; each
-// step still prints its banner and says it was covered.
+// step says what it will do and that the run's confirmation covered it.
 func TestMarkedProjectTakesOneConfirmation(t *testing.T) {
 	r := newInitRig(t)
 	r.markedRuns(t, initProjectName, initProject)
@@ -569,7 +570,7 @@ func TestReviewScreenGolden(t *testing.T) {
 		Launchers: []string{"user:me@example.com"}, Operators: []string{"group:ops@example.com"}}, adminsRead: true, admins: []string{"user:owner@example.com"}}
 	r.o.budgetAdmins = []string{"user:ba@example.com"}
 	r.o.budgetAdminsChanged = true
-	r.o.launchersChanged = true
+	r.o.operatorsChanged = true
 	e.defaulted = "user:me@example.com"
 	e.previewed = []initflow.StageResult{
 		{Name: initflow.Preflight, State: initflow.Done},
@@ -796,9 +797,9 @@ func TestReviewScreenListsEffectiveAccess(t *testing.T) {
 		e.reviewScreen(t.Context(), "test")
 		return b.String()
 	}
-	out := screen(t, &initOptions{launchersChanged: true, operatorsChanged: true, alertEmail: "ops@example.com"}, &localcfg.Config{},
+	out := screen(t, &initOptions{operatorsChanged: true, adminsChanged: true, alertEmail: "ops@example.com"}, &localcfg.Config{},
 		infra.InstallationSpec{Launchers: []string{"user:a@example.com"}, Operators: []string{"user:b@example.com"}}, "")
-	for _, want := range []string{"launchers:      user:a@example.com (from a flag)", "operators:      user:b@example.com (from a flag)", "alert email:    ops@example.com (from a flag)"} {
+	for _, want := range []string{"operators:      user:a@example.com (from a flag)", "admins:         user:b@example.com (from a flag)", "alert email:    ops@example.com (from a flag)"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("flags: lacks %q:\n%s", want, out)
 		}
@@ -806,17 +807,17 @@ func TestReviewScreenListsEffectiveAccess(t *testing.T) {
 	cfg := &localcfg.Config{}
 	cfg.Terraform.AlertEmail = "cfg@example.com"
 	out = screen(t, &initOptions{}, cfg, infra.InstallationSpec{Launchers: []string{"group:eng@example.com"}}, "")
-	for _, want := range []string{"launchers:      group:eng@example.com (from the local config)", "operators:      nobody (from the local config)", "alert email:    cfg@example.com (from the local config)"} {
+	for _, want := range []string{"operators:      group:eng@example.com (from the local config)", "admins:         nobody (from the local config)", "alert email:    cfg@example.com (from the local config)"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("config: lacks %q:\n%s", want, out)
 		}
 	}
-	out = screen(t, &initOptions{launchersChanged: true, operatorsChanged: true}, &localcfg.Config{},
+	out = screen(t, &initOptions{operatorsChanged: true, adminsChanged: true}, &localcfg.Config{},
 		infra.InstallationSpec{Launchers: []string{"user:me@example.com"}, Operators: []string{"user:me@example.com"}}, "user:me@example.com")
-	if !strings.Contains(out, "launchers:      user:me@example.com (default: you)") || !strings.Contains(out, "alert email:    none (not set)") {
+	if !strings.Contains(out, "operators:      user:me@example.com (default: you)") || !strings.Contains(out, "alert email:    none (not set)") {
 		t.Errorf("default:\n%s", out)
 	}
-	if strings.Index(out, "launchers:") > strings.Index(out, "Every Terraform plan is shown as it runs") || !strings.Contains(out, "Fixed, announced and free") {
+	if strings.Index(out, "operators:") > strings.Index(out, "Every Terraform plan is shown as it runs") || !strings.Contains(out, "Fixed, announced and free") {
 		t.Errorf("order or wording:\n%s", out)
 	}
 }
@@ -881,7 +882,7 @@ func TestMarkedProjectUnlistedGrantAsksItsOwn(t *testing.T) {
 // project's registry, and the billing account is named.
 func TestReviewScreenPrintsOnlySafeText(t *testing.T) {
 	var b strings.Builder
-	r := &initRun{cmd: &cobra.Command{}, o: &initOptions{launchersChanged: true, alertEmail: "a\x1b[2Jb@example.com", billingAccount: "AAAA\x1b[31m-BBBB", imageSource: "ghcr.io/ev\x1bil"},
+	r := &initRun{cmd: &cobra.Command{}, o: &initOptions{operatorsChanged: true, alertEmail: "a\x1b[2Jb@example.com", billingAccount: "AAAA\x1b[31m-BBBB", imageSource: "ghcr.io/ev\x1bil"},
 		w: &b, projectName: initProjectName, gcpProject: initProject}
 	lc := &localcfg.Config{Name: initProjectName, GCPProject: initProject, Region: "us-east5", RegistryHost: "us-east5-docker.pkg.dev/" + initProject,
 		BaseImages: map[string]string{"other": "evil.example/\x1b[1mx:1", "base": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:1.2.3"}}
@@ -894,7 +895,7 @@ func TestReviewScreenPrintsOnlySafeText(t *testing.T) {
 	if strings.Contains(out, "\x1b") {
 		t.Fatalf("an escape sequence reached the screen:\n%q", out)
 	}
-	for _, want := range []string{"WARNING: launchers lists domain:example.com", "base image other: ", "OUTSIDE this project's registry", "billing account:", "image source: ghcr.io/ev"} {
+	for _, want := range []string{"WARNING: operators lists domain:example.com", "base image other: ", "OUTSIDE this project's registry", "billing account:", "image source: ghcr.io/ev"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("lacks %q:\n%s", want, out)
 		}
@@ -1187,5 +1188,101 @@ func TestInitRepoAcceptsAForkPinWithTheRecordedOwner(t *testing.T) {
 	c := e.cover()
 	if c.Owner != "acme" || c.Ghcr != infra.GhcrRegistry {
 		t.Errorf("the cover trusts owner %q of repository %q; want acme of %s", c.Owner, c.Ghcr, infra.GhcrRegistry)
+	}
+}
+
+// TestFirebaseCoverSplitKeepsAnUnverifiedProjectIntegrity is the one step whose
+// split is not the cover's own: the Firebase root may be deployed into a
+// project that is not this installation's, and that is the step's own fact
+// about the project the root would write into rather than a rule of the cover
+// about an address. D1549 keeps it an INTEGRITY reason — a project nobody
+// verified as Fugaro's refuses the plan, which is not something a warning may
+// carry — so coverSplitFirebase answers the step's reason as the whole of the
+// integrity half and does not ask the cover at all. A branch that fell through
+// to the cover's own halves would leave the gate with a plan it only warns
+// about, which is the pre-D1545 behaviour for a plan nothing judged: the fixture
+// is therefore a plan the cover DOES have something to say about — a create of a
+// type the installation's modules never write, which D1545 makes a content
+// finding — and the two cases are read off one plan.
+func TestFirebaseCoverSplitKeepsAnUnverifiedProjectIntegrity(t *testing.T) {
+	plan := &tf.Plan{ResourceChanges: []tf.ResourceChange{{
+		Address: "module.firebase.google_something_else.this", Mode: "managed",
+		Type: "google_something_else", ProviderName: "registry.terraform.io/hashicorp/google",
+		Change: tf.Change{Actions: []string{"create"}, After: map[string]any{}},
+	}}}
+	r := &initRun{cmd: NewRootCmd(), o: &initOptions{}, w: &syncBuf{}, projectName: initProjectName, gcpProject: initProject,
+		review: &runReview{state: reviewTaken,
+			cover: func() tf.Cover { return tf.Cover{Projects: []string{initProject}, Region: "us-east5"} },
+			firebase: func(context.Context) (bool, string) {
+				return false, "another project than " + initProject + ", with no Fugaro mark"
+			},
+		}}
+	reason := r.firebaseReason()
+	if reason == "" {
+		t.Fatal("the rig's Firebase project is verified, so it is not the case this test is about")
+	}
+
+	// Unverified: the step's own reason is the integrity half, and the cover is
+	// not asked — the content half is empty although this plan has a finding in
+	// it. The two halves are still the step's whole answer, which is what the
+	// gate and the confirmation must not disagree about.
+	cover := r.coverOfFirebase()
+	integrity, content := cover.NotCoveredSplit(plan, nil)
+	if !reflect.DeepEqual(integrity, []string{reason}) {
+		t.Errorf("an unverified Firebase project's integrity half is %q, want the step's own reason %q", integrity, reason)
+	}
+	if len(content) != 0 {
+		t.Errorf("an unverified Firebase project warned about %q: a project nothing verified as Fugaro's is not a finding to record and apply past (D1549)", content)
+	}
+	if whole := cover.NotCovered(plan, nil); !reflect.DeepEqual(whole, append(append([]string{}, integrity...), content...)) {
+		t.Errorf("the step's whole answer %q is not its two halves %q + %q", whole, integrity, content)
+	}
+
+	// Verified: the cover's own answer, halves and all — the same plan now has a
+	// content finding and nothing refusing it.
+	r.review.firebase = func(context.Context) (bool, string) { return true, "verified as Fugaro's" }
+	cover = r.coverOfFirebase()
+	integrity, content = cover.NotCoveredSplit(plan, nil)
+	if len(integrity) != 0 {
+		t.Errorf("a verified Firebase project refused the plan: %q", integrity)
+	}
+	if len(content) != 1 || !strings.Contains(content[0], "outside the installation's modules") {
+		t.Errorf("a verified Firebase project's content half is %q, want the cover's own finding about the type", content)
+	}
+	if whole := cover.NotCovered(plan, nil); !reflect.DeepEqual(whole, append(append([]string{}, integrity...), content...)) {
+		t.Errorf("the step's whole answer %q is not its two halves %q + %q", whole, integrity, content)
+	}
+}
+
+// TestStepCoverWithNoSplitRefusesItsWholeAnswer is stepCover's other
+// fail-closed branch (D1545): a step cover built without a split — the shape
+// coverOf never makes, since it takes the reasons and the split together off
+// the same review, and the shape a constructor that took one without the other
+// would make — has no way to tell the two kinds apart, so the gate reads its
+// whole answer as the reasons that still refuse. The other direction, the whole
+// answer as CONTENT, is a plan every reason of this step's own cover is applied
+// past with only a warning kept (D1549), which is the one thing the split must
+// never do: it costs a rule. The missing cover is the same branch with both
+// fields nil, and its own sentence is refused the same way rather than read as
+// "nothing to refuse".
+// Mutation (run, restore): return nil, c.NotCovered(p, imports) in
+// stepCover.NotCoveredSplit and the integrity assertion below fails.
+func TestStepCoverWithNoSplitRefusesItsWholeAnswer(t *testing.T) {
+	const reason = "module.installation.google_cloud_run_v2_job.runner (create): the step's own rule"
+	for name, c := range map[string]stepCover{
+		"a cover that answers and cannot split": {notCovered: func(*tf.Plan, []tf.ImportKey) []string { return []string{reason} }},
+		"a cover the gate was never given":      {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			integrity, content := c.NotCoveredSplit(&tf.Plan{}, nil)
+			if len(content) != 0 {
+				t.Errorf("a step cover that cannot split warned about %q: a reason the gate cannot read as content is one it must refuse (D1549)", content)
+			}
+			if want := c.NotCovered(&tf.Plan{}, nil); len(want) == 0 {
+				t.Fatal("the cover answered nothing, so this test is not about the branch it means to pin")
+			} else if !reflect.DeepEqual(integrity, want) {
+				t.Errorf("integrity = %q, want the cover's whole answer %q", integrity, want)
+			}
+		})
 	}
 }

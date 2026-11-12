@@ -7,11 +7,12 @@ package cli
 // D1220-D1247) and implementation-plan.md (O0-O19). Nothing in it pins a
 // command or a flag — BF2's plan names `fugaro runs watch`, which no task here
 // has built. What rots silently is pinned here: the block the decisions
-// live in, the rulings that are not the recommendation (D1235, the retry rule
-// and T7), Q2 answered a second time, the three round-1 questions the owner has
-// now answered, the last tension the answers left open — T7, the daemon-unit
+// live in, the rulings that are not the recommendation (D1235, the retry rule,
+// T7 and T8), Q2 answered a second time, the three round-1 questions the owner
+// now answered, the tension the answers left open — T7, the daemon-unit
 // carve-out of the HARD RULE, ruled on 2026-11-05 and refused in favour of
-// `fugaro update` re-rendering an installed unit — BF2's long-run triage rule
+// `fugaro update` re-rendering an installed unit, and T8, ruled on 2026-11-10,
+// which takes the terminal's typed ask back off that step — BF2's long-run triage rule
 // (D1244-D1247, O14, answered 2026-11-08: the threshold, the three inputs, the
 // three outcomes, the fail-closed reading and the read-only print), the facts a
 // rewrite would quietly drop (D1243's cache writer and O10's level, the 14-day
@@ -121,19 +122,22 @@ func TestDocsStatelessOrchestratorOwnerQuestionsAreAnswered(t *testing.T) {
 }
 
 // The owner's rulings that are not the recommendation have to be readable as
-// deviations: D1235 (pinned above) and the retry rule. A deviation recorded as
-// a recommendation is a record the owner cannot read.
+// deviations: D1235 (pinned above), the retry rule, T7 and T8. A deviation
+// recorded as a recommendation is a record the owner cannot read.
 func TestDocsStatelessOrchestratorDeviationsAreMarked(t *testing.T) {
 	plan := soRead(t, soPlan)
 	readme := soRead(t, soReadme)
 	if !strings.Contains(plan, "Retry rule (2026-11-04, not the recommendation)") {
 		t.Errorf("%s: the retry rule is not marked as not the recommendation", soPlan)
 	}
-	if !strings.Contains(readme, "three rulings are not") {
+	if !strings.Contains(readme, "four rulings are not") {
 		t.Errorf("%s: the README no longer names the rulings that are not the recommendation", soReadme)
 	}
 	if !strings.Contains(readme, "T7") || !strings.Contains(plan, "T7") {
 		t.Errorf("the tension T7 is not named in the README and the plan")
+	}
+	if !strings.Contains(readme, "T8") || !strings.Contains(plan, "T8") {
+		t.Errorf("the tension T8 is not named in the README and the plan")
 	}
 }
 
@@ -226,6 +230,136 @@ func TestDocsStatelessOrchestratorT7IsRuled(t *testing.T) {
 			if strings.Contains(f.text, gone) {
 				t.Errorf("%s: the superseded T7 wording is still there (%q)", f.name, gone)
 			}
+		}
+	}
+}
+
+// T8 is the owner's newest ruling and, like T7, it is not the recommendation:
+// it takes the typed ask T7 had put on the update door's own unit step back off
+// it, because `fugaro update` is the whole upgrade with no extra confirmation
+// prompt. The design's own paragraph still carries T7's wording, so both must
+// now say which of the two stands. What a later edit must not drop: the
+// ruling, its date, that it is not the recommendation, the T7 sentence it
+// overrides (named, not deleted), the consequence stated plainly instead of
+// left for a reader to find, the one place the reversal lives and the two tests
+// that hold it. The code side is pinned too: the step must ask nothing (no
+// prompt call in the file) and must point at this record rather than assert a
+// ruling the folder does not carry.
+func TestDocsStatelessOrchestratorUnitRerenderAsksNothing(t *testing.T) {
+	plan := soRead(t, soPlan)
+	rec := soRead(t, soReconciled)
+	readme := soRead(t, soReadme)
+	// The folder wraps its lines, so a ruling that spans two of them is one
+	// sentence here: collapse the whitespace before looking for it.
+	flat := func(s string) string { return strings.Join(strings.Fields(s), " ") }
+	for _, f := range []struct{ name, text string }{
+		{soPlan, flat(plan)}, {soReconciled, flat(rec)}, {soReadme, flat(readme)},
+	} {
+		if !strings.Contains(f.text, "2026-11-10") {
+			t.Errorf("%s: T8's ruling carries no date", f.name)
+		}
+		if !strings.Contains(f.text, "T8") {
+			t.Errorf("%s: the ruling of 2026-11-10 is not named T8", f.name)
+		}
+		if !strings.Contains(f.text, "not the recommendation") {
+			t.Errorf("%s: T8's ruling is not marked as not the recommendation", f.name)
+		}
+		if !strings.Contains(f.text, "asks nothing at a terminal") {
+			t.Errorf("%s: T8's ruling does not say the step asks nothing at a terminal", f.name)
+		}
+		if !strings.Contains(f.text, "supersede") {
+			t.Errorf("%s: T8 does not say it supersedes T7's typed ask", f.name)
+		}
+		if !strings.Contains(f.text, "a release that changes only the unit's template asks the person nothing") {
+			t.Errorf("%s: T8's consequence is not stated plainly", f.name)
+		}
+	}
+	if !strings.Contains(flat(plan), "supersedes T7's \"a terminal asks for the step's own class, which is `Typed`\" above") {
+		t.Errorf("%s: the superseded T7 sentence is not named as superseded where it stands", soPlan)
+	}
+	if !strings.Contains(readme, "T1-T8") {
+		t.Errorf("%s: the reconciliation's own row still ends the tensions at T7", soReadme)
+	}
+	for _, want := range []string{
+		"TestDocsStatelessOrchestratorUnitRerenderAsksNothing",
+		"TestUpdateRerendersAnInstalledUnitWhenTheTemplateChanged",
+		"`internal/cli/update_unit_stage.go`'s `Apply`",
+		// Where the ruling comes from, and what an owner who does not confirm it
+		// restores: a reader who doubts T8 has to be able to find both without
+		// reading this branch's history.
+		"the owner's instruction of **2026-11-10** carried it into task O9 as one of that task's hard rules",
+		"TestUpdateUnitStepNeedsATypedConfirmation",
+	} {
+		if !strings.Contains(flat(rec), want) {
+			t.Errorf("%s: T8's ruled follow-through %q is gone", soReconciled, want)
+		}
+	}
+	src := stageSource(t, "update_unit_stage.go")
+	// The two helpers that put a question to a person at a terminal: the plain
+	// confirmation and the typed one, whose name is askTyped and not a shorter
+	// spelling of it. A step that asks nothing calls neither.
+	for _, gone := range []string{"r.confirm(", "r.askTyped("} {
+		if strings.Contains(src, gone) {
+			t.Errorf("update_unit_stage.go calls %s: T8 rules that the step asks nothing", gone)
+		}
+	}
+	for _, want := range []string{"2026-11-10", "reconciliation.md", "TestDocsStatelessOrchestratorUnitRerenderAsksNothing"} {
+		if !strings.Contains(src, want) {
+			t.Errorf("update_unit_stage.go does not point at the record of its ruling (%q missing)", want)
+		}
+	}
+}
+
+// The program a re-render writes is the one place this implementation narrowed
+// T7's and T8's reading on its own, so the record has to say so in as many words:
+// who decided it (the implementation, not the owner), what it decided (only a
+// fugaro a release installed may be written into a unit that restarts its
+// program forever), what it did not decide (a re-render that keeps the program
+// still happens from any build, and the setup door keeps the re-point), and
+// where to reverse it. The code side is pinned with it: both clauses of the rule
+// and the two tests that hold it.
+func TestDocsStatelessOrchestratorUnitRepointRule(t *testing.T) {
+	plan := soRead(t, soPlan)
+	rec := soRead(t, soReconciled)
+	flat := func(s string) string { return strings.Join(strings.Fields(s), " ") }
+	for _, want := range []string{
+		"The program a re-render writes (the implementation's own narrowing, 2026-11-11; reported, NOT an owner ruling)",
+		"the update door re-points an installed unit only at a fugaro a release installed",
+		"prints **both paths**",
+		"`fugaro orchestrator install`",
+		"the `setup` door keeps the re-point",
+		"converges under one `fugaro update` (the HARD RULE)",
+		"TestUpdateNeverRepointsAUnitAtABuildThatWillNotBeThereTomorrow",
+		"TestUpdateRerendersAUnitThatNamesAnotherPathOfTheSameInstall",
+		"TestDocsStatelessOrchestratorUnitRepointRule",
+		"`unitMayNameThisBinary` in `internal/cli/init_orchestrator_stage.go`",
+	} {
+		if !strings.Contains(flat(rec), want) {
+			t.Errorf("%s: the re-point rule's %q is gone", soReconciled, want)
+		}
+	}
+	for _, want := range []string{
+		"The program a re-render writes is one a release installed",
+		"prints **both paths**",
+		"the `setup` door keeps the re-point",
+		"This narrowing is the implementation's and not an owner's",
+		"TestUpdateNeverRepointsAUnitAtABuildThatWillNotBeThereTomorrow",
+		"TestUpdateRerendersAUnitThatNamesAnotherPathOfTheSameInstall",
+		"TestUpdateNeverRepoints",
+	} {
+		if !strings.Contains(flat(plan), want) {
+			t.Errorf("%s: the re-point rule's %q is gone", soPlan, want)
+		}
+	}
+	// The test the rule replaced is named nowhere: a plan that still lists it is
+	// one whose Tests line describes a behavior the code no longer has.
+	if strings.Contains(plan, "TestUpdateRerendersWhenTheBinaryPathChanged") {
+		t.Errorf("%s: the plan still names the test the re-point rule replaced", soPlan)
+	}
+	src := stageSource(t, "init_orchestrator_stage.go")
+	for _, want := range []string{"unitMayNameThisBinary(", "unitStepLeavesAnotherProgram(", `Version != "dev"`, "os.TempDir()"} {
+		if !strings.Contains(src, want) {
+			t.Errorf("init_orchestrator_stage.go no longer carries the re-point rule's %q", want)
 		}
 	}
 }
@@ -497,6 +631,100 @@ func TestDocsStatelessOrchestratorLongRunTriageIsFollowedThrough(t *testing.T) {
 		if !strings.Contains(readme, want) {
 			t.Errorf("%s: BF2's %q is gone", soReadme, want)
 		}
+	}
+}
+
+// The outer-loop-escalation plan (2026-11-10) amends this folder rather than
+// replacing it: its ladder's per-mode table replaces D1244's single age key,
+// which was never built; D2036 amends D1246's first reaction; D2041 amends
+// D1245's readiness condition (a draft the daemon may ready); and D2042 amends
+// D1226 (an item's approval covers the ladder's runs). Each row has to stay
+// readable as an amendment — the ruling it amends is kept, and the pointer
+// names who changed it — and the README must stop naming the retired key as
+// the threshold a run fires on.
+func TestDocsStatelessOrchestratorLadderAmendmentsAreRecorded(t *testing.T) {
+	rec := soRead(t, soReconciled)
+	plan := soRead(t, soPlan)
+	readme := soRead(t, soReadme)
+	// The amendments are that plan's answers of 2026-11-10, not settled
+	// rulings: E0 of that plan was gated on the owner confirming its open items
+	// T1, T3 and T4, and this task may only record what the plan states. So each
+	// row says which confirmation it carries, and the switch's default is
+	// marked as the owner's to rule rather than as a decided default.
+	for _, tc := range []struct{ id, want string }{
+		{"D1244", "replaced by D2032 of `docs/outer-loop-escalation`"},
+		{"D1244", "`orchestrator.triage_after` was never built"},
+		{"D1244", "that plan's own open item **T1**"},
+		{"D1245", "D2041 of `docs/outer-loop-escalation`"},
+		{"D1245", "`escalation.ready_drafts`"},
+		{"D1245", "The switch's default is not yet ruled"},
+		{"D1245", "`D2046`"},
+		{"D1246", "D2036 of `docs/outer-loop-escalation`"},
+		{"D1246", "the same **T1** confirmation"},
+		{"D1226", "D2042 of `docs/outer-loop-escalation`"},
+		{"D1226", "that plan's own open item **T4**"},
+	} {
+		row := soRow(rec, tc.id)
+		if row == "" {
+			t.Fatalf("%s: %s has no decision row", soReconciled, tc.id)
+		}
+		if !strings.Contains(row, tc.want) {
+			t.Errorf("%s: the %s row does not record the amendment %q", soReconciled, tc.id, tc.want)
+		}
+	}
+	if !strings.Contains(plan, "Amended by `docs/outer-loop-escalation`") {
+		t.Errorf("%s: O14 is not re-scoped to read the ladder", soPlan)
+	}
+	// The re-scope has to reach the merge call as well as the threshold: that
+	// plan's E8 owns MarkReady, Merge and Checks, so an O14 that still adds its
+	// own Merge reads as a second merge path with none of E8's guards (the
+	// expected head SHA, no bypass flag, E16's mint).
+	for _, want := range []string{
+		"**Nor does this task own the merge call:**",
+		"this task's, per the note above**)",
+		"**that plan's E8 adds the call**",
+	} {
+		if !strings.Contains(plan, want) {
+			t.Errorf("%s: O14 is not reconciled with E8 owning the merge call (%q)", soPlan, want)
+		}
+	}
+	// The non-goal this task deletes from docs/design/v1.md was quoted verbatim
+	// as the tree's current rule in four pages outside this folder, none of them
+	// in E0's file list: the quote is historical now, so each site carries the
+	// amendment beside it rather than reading as the live rule.
+	for _, f := range []string{
+		"docs/central-orchestrator/reconciliation.md",
+		"docs/central-orchestrator/implementation-plan.md",
+		"docs/central-orchestrator/README.md",
+		"docs/forge-authorship-images/reconciliation.md",
+	} {
+		if !strings.Contains(soRead(t, f), "No merge outside the orchestrator's gated rule") {
+			t.Errorf("%s: still quotes the deleted non-goal as the tree's rule, with no amendment", f)
+		}
+	}
+	// The amendment is restated in three places that sit far from the row it
+	// changes — the plan's decisions-summary row and its section 6 owner-answers
+	// summary, and the reconciliation's "BF2's long-run triage rule" paragraph —
+	// and each restatement needs its own pointer: a reader who lands on one of
+	// them instead of the row otherwise takes the retired key for the live
+	// threshold. The O14 note's scope ends with the task's own bullets, so it
+	// cannot cover the two plan summaries above and below it.
+	if !strings.Contains(plan, "**replaced by D2032 of `docs/outer-loop-escalation`, and the key was never built: O14's note below says how**") {
+		t.Errorf("%s: the D1244-D1247 decisions-summary row still presents the retired key as the threshold", soPlan)
+	}
+	if !strings.Contains(plan, "and the key was never built: O14's note above says how**") {
+		t.Errorf("%s: the BF2 owner-answers summary still presents the retired key as the threshold", soPlan)
+	}
+	if !strings.Contains(rec, "`docs/outer-loop-escalation` (D2032), and `orchestrator.triage_after` was never built") {
+		t.Errorf("%s: the BF2 summary paragraph still presents the retired key as the threshold", soReconciled)
+	}
+	// The shared-files row is the fourth restatement: it says what O14 adds to
+	// the file it owns, and the retired key is no longer that.
+	if !strings.Contains(plan, "O14 adds the **local-only** `orchestrator.triage_after` (**replaced by D2032 of `docs/outer-loop-escalation`, and never built**)") {
+		t.Errorf("%s: the shared-files table still records the retired key as what O14 adds", soPlan)
+	}
+	if strings.Contains(readme, "triage_after") {
+		t.Errorf("%s: the README still names the retired key as the threshold a run fires on", soReadme)
 	}
 }
 

@@ -33,12 +33,12 @@ var runnerTimeoutClaims = []struct {
 	{
 		path:    "CONTRIBUTING.md",
 		pending: "CI's `test` job does not give that package the same bound yet.",
-		applied: "CI's `test` job gives that package the same bound, in a step of its own.",
+		applied: "CI gives that package the same bound, on test-shard runners of its own.",
 	},
 	{
 		path:    "docs/dogfooding.md",
 		pending: "CI does not give that package the same bound yet",
-		applied: "CI gives that package the same bound, in a step of its own",
+		applied: "CI gives that package the same bound, on test-shard runners of its own",
 	},
 	{
 		path:    "docs/pending-workflows/README.md",
@@ -50,7 +50,7 @@ var runnerTimeoutClaims = []struct {
 // runnerTestJobCapRE reads the `test` job's own ceiling: the job key, then the
 // first `timeout-minutes:` inside it. The jobs are at two-space indentation
 // and a job's own key is at four, so the capture stops at a step's.
-var runnerTestJobCapRE = regexp.MustCompile(`(?m)^  test:\n(?:.*\n)*?    timeout-minutes: (\d+)\n`)
+var runnerTestJobCapRE = regexp.MustCompile(`(?m)^    timeout-minutes: (\d+)\n`)
 
 // runnerStepBoundRE reads the bound off the step that runs the package on its
 // own.
@@ -73,9 +73,12 @@ func readRunnerCIState(ci string) (runnerCIState, error) {
 	if err != nil {
 		return st, err
 	}
-	if m := runnerTestJobCapRE.FindStringSubmatch(ci); m != nil {
+	if m := runnerTestJobCapRE.FindStringSubmatch(job); m != nil {
 		st.cap, _ = strconv.Atoi(m[1])
 	}
+	// The runners that split the suite name the package in a matrix entry and
+	// run it through one `go test` line that carries the bound.
+	sharded := strings.Contains(job, "pkg: ./internal/runner")
 	steps := 0
 	for _, line := range strings.Split(job, "\n") {
 		if !strings.Contains(line, "go test") {
@@ -87,7 +90,7 @@ func readRunnerCIState(ci string) (runnerCIState, error) {
 		if strings.Contains(line, "grep -v") && strings.Contains(line, "internal/runner") {
 			continue
 		}
-		if !strings.Contains(line, "./internal/runner") {
+		if !strings.Contains(line, "./internal/runner") && !(sharded && strings.Contains(line, `"$PKG"`)) {
 			continue
 		}
 		m := runnerStepBoundRE.FindStringSubmatch(line)
@@ -108,9 +111,14 @@ func readRunnerCIState(ci string) (runnerCIState, error) {
 func runnerTestJob(ci string) (string, error) {
 	lines := strings.Split(ci, "\n")
 	start := -1
-	for i, line := range lines {
-		if line == "  test:" {
-			start = i
+	for _, key := range []string{"  shard:", "  test:"} {
+		for i, line := range lines {
+			if line == key {
+				start = i
+				break
+			}
+		}
+		if start >= 0 {
 			break
 		}
 	}

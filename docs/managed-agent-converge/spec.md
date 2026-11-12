@@ -71,7 +71,7 @@ These are refused in a coding agent's session in a managed project exactly as th
 - **Anything that writes the managed label itself** — including `gcloud projects update … --update-labels fugaro_managed=true` and every other path to a project-label write.
 - **Billing.** `fugaro setup --create-project --billing-account`, the `--link-billing` step, and any write to a billing budget or a billing account. The recorded monthly amount is a fact the marker carries, not something the agent may set or change.
 - **Deleting the project**, and destroying the installation. `fugaro update --forget` and any address that removes the installation's own objects stay owner-run, and the retired project-retirement flow keeps its own refusals — this design adds none and lifts none.
-- **IAM widening**: `--launcher`, `--operator`, `--budget-admin`, and `fugaro allow-delete` (the command that writes the owner's delete list — a session that could write that list could approve its own deletes).
+- **IAM widening**: `--operator`, `--admin`, `--budget-admin`, and `fugaro allow-delete` (the command that writes the owner's delete list — a session that could write that list could approve its own deletes).
 - **`fugaro restore`**, which refuses an agent session today and keeps it.
 - **`fugaro setup` itself**, including `--create-project --managed`: creating a project, linking billing and recording the budget amount are the owner's decisions at their own terminal (D900's answer for the rigor question is the same shape). The agent's door is `update`.
 
@@ -154,7 +154,9 @@ The alternative — leaving the refresh unbounded as `--yes` leaves it — costs
 
 ## 6. Audit: every managed agent apply is recorded (D1014)
 
-**What is recorded.** One object per applied command, at a new family under the runs bucket's owner-only prefix: `gs://fugaro-runs-<gcp-project>/fugaro/managed-audit/<utc-date>/<id>.json`. The unit is the admitted apply and not the invocation: a step `fugaro update`'s propagation retry judges twice writes two objects, one per judged plan — a failed apply created what its plan named, and a record written only for the retry would leave that plan's digest out of the trail rather than in it. The prefix matters: `settings` objects under `runs/` are deleted at 90 days and the bucket is unversioned, so an audit that must outlive a quarter cannot live there; `fugaro/` has no lifecycle rule and is written only by operators.
+**What is recorded.** One object per applied command, at a new family under the runs bucket's owner-only prefix: `gs://fugaro-runs-<gcp-project>/fugaro/managed-audit/<utc-date>/<id>.json`. The unit is the admitted apply and not the invocation: a step `fugaro update`'s propagation retry judges twice writes two objects, one per judged plan — a failed apply created what its plan named, and a record written only for the retry would leave that plan's digest out of the trail rather than in it. The prefix matters: `settings` objects under `runs/` are deleted at 90 days, and the versioning the bucket carries since D1545 (T2's ruling of 2026-11-07, `deploy/terraform/gcp/modules/installation/bucket.tf:25-27`) keeps a deleted object as a noncurrent version only 7 more — the noncurrent rule purges those under `runs/`, `cache/`, `locks/`, `tokens/` and `issues/` and never under `fugaro/` — so an audit that must outlive a quarter cannot live there; `fugaro/` has no lifecycle rule and is written only by operators.
+
+**Which commands record, and which does not.** The set in §3 — `fugaro update`, `config publish`, `project policy publish`, `image refresh`, `settings`, `rigor` and `accounts`, each with its `unset` / `rm` sibling — records, because those are the commands the gate stands in for. **`fugaro managed apply` is not one of them** (D1011): it is the one command this design cites rather than touches, so an apply through it leaves no record for `fugaro doctor` to read. A content finding therefore has nowhere to be recorded on that path, and that command's answer to one is the answer it has always given: it **refuses the plan**, with the finding written into the refusal's own lines like every other rule's (`internal/managed/apply.go` folds the gate's warnings into the verdict it refuses on, which is the behaviour the command had before this design split the two kinds). What it still applies over is the marker's budget-evidence warning alone, which is D1545's one exception and not a finding about the plan.
 
 **What it holds**, and each field is there because a reader acts on it:
 
@@ -164,11 +166,11 @@ The alternative — leaving the refresh unbounded as `--yes` leaves it — costs
 | `command`, `argv` | which command, with every secret-bearing argument absent rather than redacted — the gate never admits a command that takes a secret |
 | `project`, `gcp_project` | the installation the record is about |
 | `plan_digest` | sha256 of the exact plan bytes the gate read, so the applied plan and the judged plan are provably one |
-| `verdict`, `rules` | admitted or refused, and which rules the gate applied |
+| `verdict`, `rules`, `warnings` | admitted, warned or refused; which rules the gate applied; and, for a warned one, the content findings the gate recorded and did not refuse on (D1545) |
 | `marker_version`, `marker_generation` | which creation fact was in force |
 | `delete_list_generation` | which version of the owner's list admitted the deletes, where it was read |
 | `agent_marker` | which environment marker was present — the session's own claim, recorded rather than trusted |
-| `identity` | the account the write ran as (the deployer account for `managed apply`, the operator's own elsewhere) |
+| `identity` | the account the write ran as: the command's own answer where it names one, and otherwise the credentials in force — the operator's own, never the agent's job account, and refused rather than written empty when it cannot be established at all |
 | `at` | when, in UTC |
 
 **Who writes it.** The command itself, with the operator's credentials, **after** the write, and it is written for a refusal too — a gate that refused is the record an owner most wants. A failure to write the record fails the command: an unattended apply that leaves no trail is the state this section exists to end. The record is never written by the agent's job account, whose grants are conditioned to `runs/`, `cache/` and `locks/`.
@@ -180,7 +182,7 @@ The alternative — leaving the refresh unbounded as `--yes` leaves it — costs
 
 **What it is written for** (D1025): **admissions and refusals alike**, in a managed project and in **no other**. A refusal is recorded because an unattended refusal is exactly what an owner wants to see; a project that is not managed writes nothing, because its ordinary typed confirmations are already a person's decision at a terminal and a log of them would be a new data path for a property this design did not create.
 
-**What it is not**: it is not a tamper-proof log. The object is written with the operator's own credentials into a bucket that is unversioned and that any project-level storage writer can rewrite (`SECURITY.md:56`). It is a record of what a session *through this program* did, and §8 says so in the threat model rather than leaving it implied.
+**What it is not**: it is not a tamper-proof log. The object is written with the operator's own credentials into a bucket that any project-level storage writer can rewrite (`SECURITY.md:56`); the versioning D1545 added hardens a deletion into a noncurrent version and does not make the trail tamper-proof, which is what this sentence says and what the record's own reader repeats. It is a record of what a session *through this program* did, and §8 says so in the threat model rather than leaving it implied.
 
 ## 7. How a session learns it is in a managed project (D1015)
 

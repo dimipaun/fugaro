@@ -234,7 +234,7 @@ func (e *initEngine) managedStage(name string) bool {
 //
 // Such a run is refused the gate and keeps today's coding-agent refusal, whole
 // and unmoved, and the reason is the same one §3.2 gives for the flags
-// themselves. --launcher, --operator and --budget-admin are the members the
+// themselves. --operator, --admin and --budget-admin are the members the
 // run's own review lists (accessLists reads them from this run's options into
 // the cover's Listed), so a gate asked with one of them would be judging a
 // plan against the list that argument just wrote: a plan granting that member
@@ -413,6 +413,15 @@ func gateSentence(marker string) string {
 	return initflow.GateProceeded()
 }
 
+// gateContentWarning is the line a gated step prints above the rules the gate
+// recorded and did not refuse on (D1545). It is the whole of what a reader has
+// to understand to read the lines under it — that the plan applies anyway, and
+// that the tables are a tripwire rather than a fence — and it names no flag,
+// no variable and no mark, because a rule that fired is something to read and
+// not something to reach past. It says nothing about the step's confirmation:
+// whether the verdict replaces it is decided after this line and elsewhere.
+const gateContentWarning = "the gate recorded the rules below: they fired and did not refuse this plan, because D1545 makes the cover tables and the guard a tripwire that records and warns, and a blocked cost attribute applies the same way — they are in this step's audit record"
+
 // gateNamesAnIAMCall is the one sentence such a step leaves behind: what is
 // still there, why nothing removed it here, and the door the owner's own run
 // goes through. It is a warning and not a stop, because the step it stands for
@@ -503,13 +512,56 @@ func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey
 		return true, &initflow.GatedError{Reason: gateUnreadable, Err: err, Refusal: initflow.GateRefusedUnread}
 	}
 	class := gateClass()
-	conv := managedmode.ConvergeRefused(doc, class, refusedRules(verdict))
+	// A plan that would retire a project job is refused whatever the verdict
+	// said, and this is the one rule of it that D1545's split does not reach:
+	// the module protects that job from deletion and nothing lifts it, so an
+	// apply removes the launchers' grants and then fails, leaving the job
+	// unlaunchable (infra.RefuseProjectJobDeletes, called beside the guard at
+	// init.go's own guard).
+	//
+	// It is asked HERE because the verdict is what decides whether that guard
+	// runs at all: a step the gate admits skips it (`if !gated`), and D1551
+	// classifies google_cloud_run_v2_job as not data-bearing, so the replace a
+	// profile's removal plans is a warning the gate now admits — the rule would
+	// otherwise be lost with the refusal that used to carry it. The plan is
+	// parsed from the same bytes the gate judged, so the two read one document.
+	//
+	// This is reported in the task's pull request: D1551 decides the delete
+	// rule by TYPE and no type tells the project module's job from any other
+	// Cloud Run job, while this rule reads the ADDRESS. Keeping it refused is
+	// this change's decision, taken because the alternative is an apply that
+	// always fails.
+	if retire := projectJobRefusal(doc); retire != "" {
+		verdict.OK = false
+		verdict.Refusals = append(verdict.Refusals, managedmode.Refusal{Gate: retireGate, Why: retire})
+	}
+	// The gate's three answers are built from the verdict and never beside it
+	// (managed.Converge's own rule): a rule that fired and did not refuse goes
+	// to the Converge's warnings, so the record say which rules they were and
+	// the step still applies (D1545).
+	warnings := ruleLines(verdict.Warnings)
+	conv := managedmode.ConvergeRefused(doc, class, ruleLines(verdict.Refusals))
 	if verdict.OK {
-		conv = managedmode.ConvergeAdmitted(doc, class, admittedRules(upgrade))
+		if len(warnings) == 0 {
+			conv = managedmode.ConvergeAdmitted(doc, class, admittedRules(upgrade, false))
+		} else {
+			conv = managedmode.ConvergeWarned(doc, class, admittedRules(upgrade, true), warnings)
+		}
 	}
 	m, err := g.g.admit(ctx, class, conv)
 	if err != nil {
 		return true, r.gateRefused(err, doc, verdict, cover, imports)
+	}
+	if len(warnings) > 0 {
+		// The tripwire's own line, and it is printed whether or not the
+		// verdict goes on to replace this step's confirmation: a rule that
+		// fired is something the reader of this screen has to be able to see,
+		// and D1545's whole accepted price is that the tables warn instead of
+		// refusing — a warning nobody reads is a refusal that was removed.
+		fmt.Fprintf(r.w, "  %s\n", gateContentWarning)
+		for _, w := range warnings {
+			fmt.Fprintf(r.w, "    %s\n", w)
+		}
 	}
 	// D55's one rule, asked with this run's conditions — a coding agent's
 	// session or the owner's own terminal, which is the whole of who may
@@ -825,6 +877,41 @@ func (r *initRun) applyAndRecord(ctx context.Context, t *tf.TF) error {
 // session reads must not name a shape the step never had.
 const gateUnreadable = "the managed gate did not admit this step: the document it was to judge could not be produced, and a document nobody could read is never applied here (D1012)"
 
+// retireGate is the name the record gives the one rule asked beside the verdict
+// and never by it (retireRefusal): the record's rules are what an owner reads
+// back, and this one has to be told apart from the guard's and the cover's —
+// what it refuses is not a judgement about what the plan contains, and no
+// delete list and no cover table can clear it.
+const retireGate = "retire"
+
+// projectJobRefusal is infra's project-job rule as the gate asks it, "" when the
+// plan does not carry one: a plan that deletes or replaces the Cloud Run job of
+// a project module refuses, and it is D1549's kind of rule rather than D1545's.
+//
+// Why the gate asks it at all. The rule lives in the step's own guard
+// (init.go's guard, which asks it before tf.Guard), and a step the gate ADMITS
+// never reaches that guard — the admission is what replaces the step's decision
+// — so a rule nobody asked beside the verdict is a rule D1545 switched off
+// without meaning to: D1551 classifies google_cloud_run_v2_job as not
+// data-bearing, which makes the replace a removed profile plans a warning, and
+// a warning is not a refusal. Nothing about this rule is content: the plan
+// cannot be applied, so there is no question for the owner to answer.
+//
+// The bytes are the document the gate itself judged, and a document this
+// binary cannot parse is the gate's own failure rather than this one's: it
+// never reaches here (managed.Gate refuses it first), and answering "" keeps
+// this rule from claiming a verdict about bytes nobody read.
+func projectJobRefusal(doc []byte) string {
+	var plan tf.Plan
+	if err := json.Unmarshal(doc, &plan); err != nil {
+		return ""
+	}
+	if err := infra.RefuseProjectJobDeletes(&plan); err != nil {
+		return err.Error()
+	}
+	return ""
+}
+
 // gateRefused is the GatedError of a step this gate did not admit, from the
 // error M6's admit answered with, the plan's own bytes, the verdict they were
 // judged by, and the cover and the imports the gate asked them with.
@@ -1038,31 +1125,53 @@ func gateClass() initflow.ConfirmClass { return initflow.YesOrTyped }
 // digests — and an owner reading it back cannot check a rule against the plan
 // unless the rule says what the gate did. The empty case is the three sentences
 // every record this program wrote before the issues grant holds, unchanged.
-func admittedRules(upgrade []string) []string {
-	const costs = "the cost list blocked no attribute of the plan"
-	if len(upgrade) == 0 {
-		return []string{
-			"the guard refused no delete and no replace, so the plan removes nothing of fugaro's own (the owner's delete list admits no removal in the embedded roots)",
-			"the cover of the embedded roots admitted every change in the plan",
-			costs,
+//
+// warned is true when the verdict recorded CONTENT rules and did not refuse on
+// them (D1545: managed.Converge.Warned). Two of the three sentences above are
+// false of such a plan and are written as what the gate did instead: the guard
+// DID admit every removal of a type D1551's classification does not protect,
+// and the cost list is not asked to refuse a blocked attribute at all. A record
+// may not carry a rule that is false of the plan it digests — a rule an owner
+// cannot check against the plan is worse than no rule — so this parameter is
+// the verdict's own answer and never a caller's preference, and the rules that
+// fired are the record's warnings beside it.
+func admittedRules(upgrade []string, warned bool) []string {
+	guard := "the guard refused no delete and no replace, so the plan removes nothing of fugaro's own (the owner's delete list admits no removal in the embedded roots)"
+	cover := "the cover of the embedded roots admitted every change in the plan"
+	costs := "the cost list blocked no attribute of the plan"
+	if len(upgrade) > 0 {
+		guard = "the guard refused no delete and no replace this binary's own upgrade does not make, so the plan removes nothing of fugaro's own (the owner's delete list admits no removal in the embedded roots)"
+		cover = "the cover of the embedded roots admitted every change in the plan, each of the upgrade's replaces asked as the create it makes (its removal half is this binary's own, and no rule of the cover read it)"
+	}
+	if warned {
+		// The same two facts with the half D1551 and D1545 took out of them:
+		// what the guard did not refuse is what the classification does not
+		// protect, and the cover's integrity rules are the ones that still
+		// refuse.
+		guard = "the guard refused no delete and no replace, so the plan removes nothing of fugaro's own that D1551's classification protects (the owner's delete list admits no removal in the embedded roots)"
+		cover = "the cover of the embedded roots refused no change of this plan that its integrity rules judge — the changes it did not announce did not refuse it, and they are this record's warnings (D1545)"
+		costs = "the cost list refused no attribute of the plan — a blocked attribute did not refuse it, and it is one of this record's warnings (D1545)"
+		if len(upgrade) > 0 {
+			guard = "the guard refused no delete and no replace this binary's own upgrade does not make, so the plan removes nothing of fugaro's own that D1551's classification protects (the owner's delete list admits no removal in the embedded roots)"
+			cover = "the cover of the embedded roots refused no change of this plan that its integrity rules judge, each of the upgrade's replaces asked as the create it makes (its removal half is this binary's own, and no rule of the cover read it) — the changes it did not announce did not refuse it, and they are this record's warnings (D1545)"
 		}
 	}
-	return []string{
-		"the guard refused no delete and no replace this binary's own upgrade does not make, so the plan removes nothing of fugaro's own (the owner's delete list admits no removal in the embedded roots)",
-		"the cover of the embedded roots admitted every change in the plan, each of the upgrade's replaces asked as the create it makes (its removal half is this binary's own, and no rule of the cover read it)",
-		costs,
-		"the replaces this binary's own upgrade makes were matched out of this plan, both halves of each change compared before it was named (infra.LauncherGrantUpgrade): " + safetext.FieldListLine(upgrade),
+	rules := []string{guard, cover, costs}
+	if len(upgrade) > 0 {
+		rules = append(rules, "the replaces this binary's own upgrade makes were matched out of this plan, both halves of each change compared before it was named (infra.LauncherGrantUpgrade): "+safetext.FieldListLine(upgrade))
 	}
+	return rules
 }
 
-// refusedRules is the verdict's refusals as the rules that fired, one per
-// refusal, in the gate's own gate/address/why shape. They are what the
-// refusal sentence names after NotConverged and what the audit record holds,
-// and internal/managed bounds them where it renders them: a rule can quote a
-// plan, and a plan is not this program's text.
-func refusedRules(v managedmode.Verdict) []string {
-	rules := make([]string, 0, len(v.Refusals))
-	for _, ref := range v.Refusals {
+// ruleLines is a verdict's refusals or its warnings as the rules that fired,
+// one per item, in the gate's own gate/address/why shape. They are what the
+// refusal sentence names after NotConverged, what this step prints when the
+// gate warned, and what the audit record holds — and internal/managed bounds
+// them where it renders them: a rule can quote a plan, and a plan is not this
+// program's text.
+func ruleLines(refs []managedmode.Refusal) []string {
+	rules := make([]string, 0, len(refs))
+	for _, ref := range refs {
 		why := ref.Gate + ": " + ref.Why
 		if ref.Address != "" {
 			why = ref.Gate + ": " + ref.Address + " — " + ref.Why

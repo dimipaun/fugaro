@@ -23,12 +23,12 @@ subtree and its rules, **O3** (#1954, `70ec7800`), the state store and the audit
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The owner's spec verbatim: the stateless orchestrator loop and its daemon addendum. Not edited |
-| [reconciliation.md](reconciliation.md) | The spec against the code (F1-F23), the hard questions, the decisions **D1220-D1247** with the owner's answers of 2026-11-04 and 2026-11-08 (BF2: D1244-D1247, the long-run triage rule), the pass of 2026-11-10 (section 8: F24-F29, R1-R3, **D2020-D2022 answered 2026-11-10, as recommended**), the UNVERIFIED list (U1-U12) and the tensions (T1-T7; T6 and T7 closed by the owner's answers, T7 not the recommendation) |
+| [reconciliation.md](reconciliation.md) | The spec against the code (F1-F23), the hard questions, the decisions **D1220-D1247** with the owner's answers of 2026-11-04 and 2026-11-08 (BF2: D1244-D1247, the long-run triage rule), the pass of 2026-11-10 (section 8: F24-F29, R1-R3, **D2020-D2022 answered 2026-11-10, as recommended**), the UNVERIFIED list (U1-U12) and the tensions (T1-T8; T6, T7 and T8 closed by the owner's answers, T7 and T8 not the recommendation) |
 | [implementation-plan.md](implementation-plan.md) | Tasks O0-O19 (O16 split into O16a and O16b on 2026-11-10) in three slices, the parallel levels, the shared-files table, the owner-run Checks 300-305 (300 **PASSED 2026-11-10**) and the owner questions Q1-Q4 |
 
 ## The owner's answers
 
-All of D1220-D1243 were answered on 2026-11-04. Most are the recommendation; **three rulings are not** — D1235, the retry rule and T7 — and Q2 was ruled twice:
+All of D1220-D1243 were answered on 2026-11-04. Most are the recommendation; **four rulings are not** — D1235, the retry rule, T7 and T8 — and Q2 was ruled twice:
 
 - **D1235: cut over at once**, with no shadow week. The old scripts are kept 14 days and the rollback is a documented, manual one (stop the daemon,
   re-arm the sweep, the watcher and the queue scripts); no rollback command is built.
@@ -47,6 +47,11 @@ All of D1220-D1243 were answered on 2026-11-04. Most are the recommendation; **t
   `fugaro orchestrator install` stays as the explicit command — a machine that skipped setup, or a repair — but no release depends on it. The daemon's
   self-restart on a changed binary (it exits when the binary the unit names differs from the one it is running, so launchd or systemd starts the new
   one) and its start-up state migration stay as the plan has them.
+- **T8: ruled 2026-11-10, and not the recommendation — it supersedes T7's terminal ask.** The owner's complaint is that `fugaro update` stays the whole
+  upgrade **with no extra confirmation prompt**, so **the re-render step asks nothing at a terminal**: it prints its line of the plan — the file it
+  re-renders and where it lives — and re-renders it, which is the standing Q2 gave the setup step's line. `--yes` still never covers it, a coding agent's
+  session writes no unit, a run with nobody at it writes no unit, the managed gate is untouched and `update` still never installs one. The consequence is
+  stated rather than hidden: **a release that changes only the unit's template asks the person nothing.**
 - **BF2, 2026-11-08: the long-run triage rule (D1244-D1247), all four the recommendation.** One task, **O14**, and it adds no ruling that is not a
   recommendation; the four outcomes are tried in a fixed order — escalate, then recommend-only, then merge-as-is, then restart: the two that act on the run come after the fail-closed one, so an input nobody could read is a print and never a cancel. The two defaults it rests on are the owner's:
   **merge as-is with follow-ups** — a **finished** run (never one still in flight) whose pull request is **ready**, its whole diff inside the routine trees, green CI,
@@ -55,7 +60,7 @@ All of D1220-D1243 were answered on 2026-11-04. Most are the recommendation; **t
   in a security path, stops the run and asks the owner (a `waiting_on: person` decision). Everything else **fails closed** into the fourth,
   **recommend-only** outcome — BF1's file absent, `CIUnknown`, a truncated path set, a severity the triage does not know — tried before the two that act, so it merges nothing, cancels
   nothing and restarts nothing, and prints what it could not read. Every triage is written to the orchestrator audit log under `<run>:triage` and printed read-only by
-  **`fugaro runs watch`**; until BF1 lands that is every long run (U10), and the threshold it fires on is the person's own local key (`orchestrator.triage_after`, default `2h`, refused when it is not under the run's budget).
+  **`fugaro runs watch`**; until BF1 lands that is every long run (U10), and what fires it is the per-mode ladder table of `docs/outer-loop-escalation` — local-only keys, one set per rigor mode (D2032) — rather than a single age threshold.
 
 D1241 (the person's own credential writes the `orchestrator/` node), D1242 (the terminal Typed confirmation now, a paired-device channel later) and
 D1243 (the session-start print reads a local cache the daemon writes) are all the recommendation, and the gates the plan had put on them are lifted.

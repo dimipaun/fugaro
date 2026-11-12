@@ -1066,6 +1066,106 @@ func TestStartDropsRecipeWhenRulesRefuse(t *testing.T) {
 	}
 }
 
+func TestStartKeepsMode(t *testing.T) {
+	f := newFixture(t)
+	s := f.open()
+	if h, err := s.Admit(context.Background(), budget.AdmitOptions{Gateway: true}); h != nil || err != nil {
+		t.Fatal(h, err)
+	}
+	if err := s.Start(context.Background(), budget.AgentEntry{
+		Repo: "acme/app", Stage: "bootstrap", Mode: "critical", From: "area",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Finish(context.Background(), "succeeded")
+	e, _ := f.db.Value(budget.PathAgent(slug, runID)).(map[string]any)
+	if e == nil || e["mode"] != "critical" || e["from"] != "area" {
+		t.Fatalf("entry = %v", e)
+	}
+}
+
+// Rules deployed before the rigor mode reached the registry refuse its two
+// children, and their $other refuses the whole entry with them (rigor-modes
+// plan T1.7, F40 of the reconciliation): the run writes the entry without
+// them, once, warns the operator, and remembers for the rest of the session.
+// The recipe the entry also carries survives — the newest children are probed
+// first, so a refusal that was never about the recipe does not cost it.
+func TestStartDropsModeWhenRulesRefuse(t *testing.T) {
+	f := newFixture(t)
+	logs := captureLog(f)
+	s := f.open()
+	if h, err := s.Admit(context.Background(), budget.AdmitOptions{Gateway: true}); h != nil || err != nil {
+		t.Fatal(h, err)
+	}
+	f.db.DenyNext(1)
+	if err := s.Start(context.Background(), budget.AgentEntry{
+		Repo: "acme/app", Recipe: "claude-solo", Stage: "bootstrap", Mode: "critical", From: "area",
+	}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if n := strings.Count(logs.String(), "predate the rigor mode"); n != 1 {
+		t.Fatalf("fallback warning logged %d times:\n%s", n, logs.String())
+	}
+	defer s.Finish(context.Background(), "succeeded")
+	e, _ := f.db.Value(budget.PathAgent(slug, runID)).(map[string]any)
+	if e == nil || e["stage"] != "bootstrap" || e["mode"] != nil || e["from"] != nil {
+		t.Fatalf("entry = %v", e)
+	}
+	if e["recipe"] != "claude-solo" {
+		t.Fatalf("the recipe went with the mode: %v", e)
+	}
+	s.Update(func(e *budget.AgentEntry) { e.Stage, e.Mode, e.From = "review", "hotfix", "repo" })
+	waitFor(t, "a heartbeat with the new stage", func() bool {
+		e, _ := f.db.Value(budget.PathAgent(slug, runID)).(map[string]any)
+		return e != nil && e["stage"] == "review"
+	})
+	if e, _ := f.db.Value(budget.PathAgent(slug, runID)).(map[string]any); e["mode"] != nil || e["from"] != nil {
+		t.Fatalf("the mode came back: %v", e)
+	}
+}
+
+// The rules can stop knowing the two children while the run is running: an
+// older Fugaro redeploying its own document over the newer one is the same
+// downgrade checkCascadeKeys exists for, and the marker cannot see it. Start's
+// fallback is not enough there — every heartbeat carries the children again,
+// and the usage report rides in the same patch, so each beat is refused, the
+// grace clock the refusal fails runs out, and the run halts as
+// budget-unavailable: the wrong reason for two facts the dashboard only shows.
+// The heartbeat drops them the way Start does, once, and goes on.
+func TestHeartbeatDropsModeWhenTheRulesRefuseIt(t *testing.T) {
+	f := newFixture(t)
+	logs := captureLog(f)
+	s := f.started(budget.AgentEntry{Stage: "bootstrap", Recipe: "claude-solo", Mode: "critical", From: "area"})
+	if e, _ := f.db.Value(budget.PathAgent(slug, runID)).(map[string]any); e["mode"] != "critical" || e["from"] != "area" {
+		t.Fatalf("Start did not write the children: %v", e)
+	}
+	f.db.DenyKeys("mode") // an older document: no mode child, and $other refuses the whole entry
+	waitFor(t, "a heartbeat to settle without the refused children", func() bool {
+		e, _ := f.db.Value(budget.PathAgent(slug, runID)).(map[string]any)
+		return e != nil && e["stage"] == "bootstrap" && e["mode"] == nil && e["from"] == nil
+	})
+	if n := strings.Count(logs.String(), "predate the rigor mode"); n != 1 {
+		t.Fatalf("fallback warning logged %d times:\n%s", n, logs.String())
+	}
+	// The run goes on: the children are not sent again, so the beats after
+	// this one are accepted and the usage they carry lands. A halt here would
+	// be the budget-unavailable the drop exists to prevent.
+	s.Update(func(e *budget.AgentEntry) { e.Stage, e.Mode, e.From = "review", "hotfix", "repo" })
+	waitFor(t, "a heartbeat with the new stage", func() bool {
+		e, _ := f.db.Value(budget.PathAgent(slug, runID)).(map[string]any)
+		return e != nil && e["stage"] == "review"
+	})
+	if e, _ := f.db.Value(budget.PathAgent(slug, runID)).(map[string]any); e["mode"] != nil || e["from"] != nil {
+		t.Fatalf("the mode came back: %v", e)
+	}
+	if e, _ := f.db.Value(budget.PathAgent(slug, runID)).(map[string]any); e["recipe"] != "claude-solo" {
+		t.Fatalf("the recipe went with the mode: %v", e)
+	}
+	if h, ok := f.nextHalt(200 * time.Millisecond); ok {
+		t.Fatalf("the run was halted: %+v", h)
+	}
+}
+
 // A refusal of both writes is a bad credential, not old rules: the error
 // stands and the operator is not pointed at fugaro update.
 func TestStartRecipeRefusedTwiceIsAnError(t *testing.T) {

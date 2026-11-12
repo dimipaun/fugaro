@@ -393,7 +393,7 @@ func (r *initRun) refreshBuilds(ctx context.Context, p *refreshPlan, t *refreshT
 	// just applied nothing, so unlike init's own first builds it resolves
 	// live and compares that with the build account's own grant (B1), the
 	// same way a standalone fugaro image build does.
-	gitID, err := gitSecretID(ctx, t.lc, t.spec, "the image refresh of "+t.spec.Name)
+	gitID, err := gitSecretID(ctx, t.lc, t.spec, nodePolicy(ctx, &r.policy, t.lc), "the image refresh of "+t.spec.Name)
 	if err != nil {
 		return err
 	}

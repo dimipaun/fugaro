@@ -1,11 +1,10 @@
 # Pending workflow changes
 
-**Two files are pending: `images.yml`** (the images workflow with
-the nightly's republish of an unchanged base skipped, 2026-11-05, issue #1745;
-see `## images.yml` — staged again below) **and `ci.yml`** (the Terraform job's
-root loop with the workspaces work's `workspace` root added, 2026-11-08 — the
-real workflow plus one word, so the root is validated and tested in CI rather
-than only where a person runs it; see `## ci.yml` below).
+**No files are pending.** `images.yml` (the images workflow with
+the nightly's republish of an unchanged base skipped, 2026-11-05, issue #1745)
+and `ci.yml` (the Terraform job's root loop with `workspace` added and the
+longer test timeout) were copied in on 2026-11-11 and their staged copies
+removed; see `## images.yml` and `## ci.yml` below.
 The console's Windows installer pack,
 `console-windows.yml`, was copied in on **2026-11-10** and its staged copy
 removed; it was a release-time job rather than a pull-request check (see
@@ -3002,9 +3001,11 @@ Two honest limits of this diff, both deliberate:
 
 ## `ci.yml`
 
-**Status: staged and pending (2026-11-08, the workspaces work's task W3).** The staged file is the real
+**Status: applied 2026-11-11 (staged copy removed; the loop now names `workspace` and the `test` job runs `-timeout 40m` with `timeout-minutes: 60`).** Below is what was staged on 2026-11-08 (the workspaces work's task W3). The staged file is the real
 `.github/workflows/ci.yml` plus one word, so the copy-in diff is that one line and nothing else.
 `.github/workflows/ci.yml`'s `terraform` job loops over `installation firebase repo compute`, and `deploy/terraform/gcp/roots/workspace` — the workspace's own project, added by the workspaces work's task **W3** (`docs/workspaces/implementation-plan.md`) — is not in that loop: `init -backend=false`, `validate` and `terraform test` reach it only where a person runs them, so the next edit to that root's account, its two-permission database role or the one grant that is the whole of the workspace service's reach lands unvalidated and surfaces as a failed `fugaro update` on a user's machine. The staged copy adds the word `workspace` to the loop and changes nothing else.
+
+**Also staged (2026-11-11): the `test` job's time.** `go test -race -timeout 20m ./...` timed out in `internal/cli` on `main` (runs 42951396656 and 42969953103) while a one-second test was running, so the package simply needs longer than 20 minutes in full (CLAUDE.md puts it near 25). The staged file raises the go test `-timeout` to 40m and the job's `timeout-minutes` to 60, so the copy-in diff is now three lines.
 
 **What the owner runs, once**, the same two commands every staged workflow change here ends with:
 
@@ -3017,7 +3018,7 @@ Two honest limits of this diff, both deliberate:
 
 **What had to move with the 2026-11-08 staging, and did.** The staged file itself; this document's opening line, which names the pending files and their count; `website/README.md`'s last paragraph, which owns the site's half of the same sentence (`website/test/readme.mjs` and `internal/cli/docs_desktop_console_test.go`'s `TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere` hold both to this directory); `internal/cli/docs_compute_backend_test.go`'s `TestDocsComputeBackendCIReachMatchesTheTree`, which refused the staged file's existence while `docs/plans/2026-10-19-compute-backend.md`'s Global Constraint 3 said that plan re-stages nothing — the plan's constraint is amended to say what is true now (a staged copy is here again, for another work's root, and its loop still names `compute`); and `images/cloudbuild_test.go`'s staged-copy guard, which had `compute` written into it and now reads the missing root out of the tree. `CONTRIBUTING.md:25` and `:32` are not moved by the staging itself — they go false when the file is copied in, so they belong in the owner's commit, as before.
 
-**The change outstanding now: the `internal/runner` package's test timeout (2026-10-23, 0.10.2).** CI's `test` job has one test step, `- run: go test -race -timeout 20m ./...`, which gives every package the same 20 minutes. `internal/runner`'s own suite takes about 25 minutes under `GOFLAGS=-p=2`, and a package that overruns `-timeout` is killed and reported as a panic, not as a failing test, so that package can time out in CI as it does for a contributor running the documented `go test -race ./...` (whose `-timeout` is go's 10-minute default).
+**Applied: the `internal/runner` package's test timeout (2026-10-23, 0.10.2; moved onto the sharded runners 2026-11-11, where `runner-0` and `runner-1` each run `-timeout 40m` under the shard job's `timeout-minutes: 60`; what follows is the original request).** CI's `test` job has one test step, `- run: go test -race -timeout 20m ./...`, which gives every package the same 20 minutes. `internal/runner`'s own suite takes about 25 minutes under `GOFLAGS=-p=2`, and a package that overruns `-timeout` is killed and reported as a panic, not as a failing test, so that package can time out in CI as it does for a contributor running the documented `go test -race ./...` (whose `-timeout` is go's 10-minute default).
 
 **What the owner changes**, in the `test` job: that one step becomes the two below, and the job's own cap rises with them.
 

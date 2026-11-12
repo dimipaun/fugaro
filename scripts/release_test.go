@@ -23,8 +23,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
-// releaseRepo is a bare "origin" seeded with this checkout's scripts/ and
-// plugin/ trees, and a clone of it (on main) to run release.sh from.
+// releaseRepo is a bare "origin" seeded with this checkout's scripts/, plugin/
+// and images/ trees, and a clone of it (on main) to run release.sh from.
 type releaseRepo struct {
 	bare  string
 	local string
@@ -42,7 +42,11 @@ func newReleaseRepo(t *testing.T) *releaseRepo {
 	seed := filepath.Join(root, "seed")
 	testutil.Git(t, root, "clone", "--quiet", bare, seed)
 	moduleRoot := testutil.ModuleRoot()
-	for _, name := range []string{"scripts", "plugin"} {
+	// images/ travels with the seed too: scripts/verify-release.sh reads the
+	// tagged tree to decide which images a release published (images/$kind/
+	// Dockerfile, the way images.yml does) and calls images/verify-public.sh
+	// for them, which the fake docker on PATH answers.
+	for _, name := range []string{"scripts", "plugin", "images"} {
 		if err := os.CopyFS(filepath.Join(seed, name), os.DirFS(filepath.Join(moduleRoot, name))); err != nil {
 			t.Fatalf("copying %s: %v", name, err)
 		}
@@ -323,16 +327,20 @@ func releaseProcs(pgid int) string {
 }
 
 // fakeBinDir returns a directory on PATH ahead of the real one, holding the
-// fake gh (and nothing else: git, bash, sed, awk, sort, date stay real).
+// fakes for gh and docker (and nothing else: git, bash, sed, awk, sort, date
+// stay real). The fake docker answers images/verify-public.sh's three calls,
+// which scripts/verify-release.sh makes for every image a release published.
 func fakeBinDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	src, err := os.ReadFile(filepath.Join(testutil.ModuleRoot(), "scripts", "testdata", "fake-gh.sh"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "gh"), src, 0o755); err != nil {
-		t.Fatal(err)
+	for _, name := range []string{"gh", "docker"} {
+		src, err := os.ReadFile(filepath.Join(testutil.ModuleRoot(), "scripts", "testdata", "fake-"+name+".sh"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
 	return dir
 }
@@ -428,7 +436,11 @@ func runRelease(t *testing.T, r *releaseRepo, g *ghState, stdin string, args ...
 	bin := fakeBinDir(t)
 	cmd := exec.Command("bash", append([]string{filepath.Join(r.local, "scripts", "release.sh")}, args...)...)
 	cmd.Dir = r.local
-	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "RELEASE_SH_POLL_SECONDS=1", "RELEASE_RETRY_SECONDS=0")
+	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "RELEASE_SH_POLL_SECONDS=1", "RELEASE_RETRY_SECONDS=0",
+		// The verification release.sh ends with waits on the tag's runs and the
+		// images; the fake answers both at once, and these keep a run whose
+		// wait does not end from hanging a test for 45 minutes.
+		"VERIFY_RELEASE_POLL_SECONDS=1", "VERIFY_RELEASE_TIMEOUT_SECONDS=60")
 	// The helper first and the test's own environment after it, so a test can
 	// unset RELEASE_SH_STREAMS_CMD (an empty value is the default `go run`).
 	cmd.Env = append(cmd.Env, releaseEnv(t)...)
@@ -441,14 +453,11 @@ func runRelease(t *testing.T, r *releaseRepo, g *ghState, stdin string, args ...
 }
 
 // greenChecks is every check scripts/release-gate.sh requires, green, keyed by
-// the check name's stem: the three CLI jobs and `console`, which stands for
-// both check runs the console workflow's matrix reports (Task 4.6 -- the fake
-// answers for both legs from FAKE_GH_CHECK_CONSOLE, so the legs cannot be set
-// apart here). That claim is not left to the reader:
-// TestFakeGHAnswersEveryCheckTheGateRequires reads the gate's own `names` array
-// and fails if a name it holds has no stem here or no arm in the fake.
+// the check name. TestFakeGHAnswersEveryCheckTheGateRequires reads the gate's
+// own `names` array and fails if a name it holds has no key here or no arm in
+// the fake.
 func greenChecks() map[string]string {
-	return map[string]string{"test": "success", "terraform": "success", "rules": "success", "console": "success"}
+	return map[string]string{"test": "success", "terraform": "success", "rules": "success"}
 }
 
 // TestFakeGHAnswersEveryCheckTheGateRequires ties the three lists that have to
@@ -536,7 +545,7 @@ func TestFakeGHAnswersEveryCheckTheGateRequires(t *testing.T) {
 // the quoted strings of its single `names=(...)` array, in the order the script
 // has them. It is how this package's tests read the gate rather than repeating
 // it (the docs test internal/cli/docs_desktop_console_test.go reads the same
-// line, and pins it against the console workflow's matrix).
+// line and pins it to test, terraform and rules).
 func releaseGateNames(t *testing.T, script string) []string {
 	t.Helper()
 	line := ""
@@ -848,6 +857,28 @@ func TestDryRunRefusesWhenGoIsMissing(t *testing.T) {
 	}
 }
 
+// TestReleaseRefusesWhenDockerIsMissing: the release's last step pulls the
+// images the release published, so docker missing is one of the preconditions,
+// refused before the branch, the pull request and the tag -- not after the tag
+// exists, where the verifier would stop with the tag already pushed.
+func TestReleaseRefusesWhenDockerIsMissing(t *testing.T) {
+	r := newReleaseRepo(t)
+	g := newGHState(t, r, greenChecks()).with("PATH=" + pathWithoutDocker(t, fakeBinDir(t)))
+
+	res := runRelease(t, r, g, "", "0.12.0")
+
+	res.requireFailureContaining(t, "docker is not on PATH")
+	if refExists(t, r.bare, "refs/heads/release/v0.12.0") {
+		t.Error("a run refused for docker created the release branch")
+	}
+	if refExists(t, r.bare, "refs/tags/v0.12.0") {
+		t.Error("a run refused for docker tagged the release")
+	}
+	if n := countLog(t, g, "repo view"); n != 0 {
+		t.Errorf("the run reached gh (%d call(s)): docker is refused with the preconditions, before anything outward-facing", n)
+	}
+}
+
 // writeFixtureFile writes name into the fixture checkout, commits it on main
 // and pushes it, so release.sh's clean-tree and main-equals-origin/main
 // preconditions still hold when a test needs one more file on main.
@@ -868,10 +899,31 @@ func writeFixtureFile(t *testing.T, dir, name, content string) {
 // of PATH -- so the absence is built by subtraction.
 func pathWithoutGo(t *testing.T, extra ...string) string {
 	t.Helper()
+	return pathWithoutTools(t, []string{"go", "gofmt"}, extra...)
+}
+
+// pathWithoutDocker is the same subtraction for docker, which the fake bin dir
+// carries: the release refuses without it, because the verifier it ends with
+// pulls the images the release published.
+func pathWithoutDocker(t *testing.T, extra ...string) string {
+	t.Helper()
+	return pathWithoutTools(t, []string{"docker"}, extra...)
+}
+
+// pathWithoutTools returns a directory holding a link to every command on PATH
+// except the names in without, plus the entries in extra first (which must
+// shadow any real one). A name is skipped however many directories hold it, so
+// the absence holds on a machine that has the tool installed in several places.
+func pathWithoutTools(t *testing.T, without []string, extra ...string) string {
+	t.Helper()
+	skip := make(map[string]bool, len(without))
+	for _, name := range without {
+		skip[name] = true
+	}
 	dir := t.TempDir()
 	link := func(src string) {
 		name := filepath.Base(src)
-		if name == "go" || name == "gofmt" {
+		if skip[name] {
 			return
 		}
 		dst := filepath.Join(dir, name)
@@ -1563,23 +1615,6 @@ func TestPreconditionPendingChecksOnMainTimeOut(t *testing.T) {
 	requireNoTag(t, r, res)
 }
 
-// TestPostMergeConsoleCheckFailsFast: the console is in the gate's required
-// set (Task 4.6), so a red console leg on the merge commit stops a release at
-// once, exactly as a red `terraform` does. The gate names the first console
-// name it requires, `console (ubuntu-latest)`, when both legs are red.
-func TestPostMergeConsoleCheckFailsFast(t *testing.T) {
-	r := newReleaseRepo(t)
-	// A long timeout: a conclusive failure must not be waited out.
-	g := newGHState(t, r, greenChecks()).with("FAKE_GH_POST_CONSOLE=failed")
-	start := time.Now()
-	res := runRelease(t, r, g, "y\n", "0.12.0")
-	res.requireFailureContaining(t, "required check 'console (ubuntu-latest)' is failed")
-	if time.Since(start) > 30*time.Second {
-		t.Errorf("a red check was waited out")
-	}
-	requireNoTag(t, r, res)
-}
-
 func TestPostMergeCheckFailsFast(t *testing.T) {
 	r := newReleaseRepo(t)
 	// A long timeout: a conclusive failure must not be waited out.
@@ -1664,11 +1699,6 @@ func TestIdenticalTreeNotAccepted(t *testing.T) {
 		{"head check missing", []string{"FAKE_GH_HEAD_TERRAFORM=missing"}},
 		{"head check pending", []string{"FAKE_GH_HEAD_TEST=pending"}},
 		{"head check cancelled", []string{"FAKE_GH_HEAD_TEST=cancelled"}},
-		// The fallback's set is the target's set, console legs included: a head
-		// that is green on the CLI jobs and red on the console vouches for
-		// nothing (Task 4.6).
-		{"head console check failed", []string{"FAKE_GH_HEAD_CONSOLE=failed"}},
-		{"head console check missing", []string{"FAKE_GH_HEAD_CONSOLE=missing"}},
 		{"PR not merged", []string{"FAKE_GH_PULL_UNMERGED=1"}},
 		{"merge commit is another sha", []string{"FAKE_GH_PULL_MERGE_SHA=0123456789abcdef0123456789abcdef01234567"}},
 	}
@@ -1732,14 +1762,21 @@ func TestIdenticalTreeNeverOverridesTargetFailure(t *testing.T) {
 	requireNoTag(t, r, res)
 }
 
-// TestHeadNotMergeCommit: something else landed on main after the release
-// merge; the script must refuse rather than tag a different commit.
-func TestHeadNotMergeCommit(t *testing.T) {
+// TestTagsMergeCommitWhenMainMoved: something else landed on main after the
+// release merge; the tag still goes on the merge commit, not the tip.
+func TestTagsMergeCommitWhenMainMoved(t *testing.T) {
 	r := newReleaseRepo(t)
 	g := newGHState(t, r, greenChecks()).with("FAKE_GH_ADVANCE_AFTER_MERGE=1")
 	res := runRelease(t, r, g, "y\n", "0.12.0", "--yes")
-	res.requireFailureContaining(t, "is not the release merge commit")
-	requireNoTag(t, r, res)
+	res.requireSuccess(t)
+	tagged := testutil.Git(t, r.bare, "rev-parse", "refs/tags/v0.12.0^{commit}")
+	tip := testutil.Git(t, r.bare, "rev-parse", "refs/heads/main")
+	if tagged == tip {
+		t.Errorf("the tag is on main's tip %s, want the release merge commit", tip)
+	}
+	if !strings.Contains(res.out, "tagging "+tagged+", not the tip") {
+		t.Errorf("expected the script to say it tagged the merge commit:\n%s", res.out)
+	}
 }
 
 func TestBumpCheckFailsAfterMerge(t *testing.T) {
