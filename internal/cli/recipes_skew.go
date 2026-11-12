@@ -1099,8 +1099,8 @@ func checkImageSinceDev(ctx context.Context, env *cloudEnv, slug string, spec *t
 	}
 	refuse := func(why string) error {
 		return userErr("%s needs a job image whose runner knows %s (fugaro %s or later), but the job image of %s workflow %s %s. "+
-			"Run fugaro image refresh --repo %s --workflow %s in its checkout, in your own terminal window, or with --yes from CI or a script (never in a coding agent's session; it verifies %s and pins it by digest through the installation's remote repository, points the daily image check job at it and rebuilds the image)%s",
-			subject, knows, since, spec.Repo, spec.Workflow, why, spec.Repo, spec.Workflow, base, alt)
+			"Run fugaro update in its checkout, in your own terminal window, or with --yes from CI or a script (never in a coding agent's session; its images stage verifies %s, pins it by digest through the installation's remote repository and rebuilds the workflow's image)%s",
+			subject, knows, since, spec.Repo, spec.Workflow, why, base, alt)
 	}
 	b, err := env.recordBucket(ctx)
 	if err != nil {
@@ -1197,7 +1197,7 @@ func baseBranchSkew(ctx context.Context, env *cloudEnv, slug string, spec *task.
 	}
 	drop := func() {
 		spec.BaseBranch = ""
-		fmt.Fprintf(warn, "the job image predates %s and ignores the project's base branch %s; refresh it with fugaro image refresh\n", baseBranchSince, b)
+		fmt.Fprintf(warn, "the job image predates %s and ignores the project's base branch %s; fugaro update in the checkout moves it onto this release's base image\n", baseBranchSince, b)
 	}
 	predates := func(rel string, known bool) bool { return known && imagePredates(rel, baseBranchSince) }
 	if clone == nil {

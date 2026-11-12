@@ -198,7 +198,7 @@ func TestDoctorSaysWhenTheBaseIsMissing(t *testing.T) {
 	}
 	for _, c := range o.Checks {
 		if c.ID == "base-image" {
-			if c.OK || c.Severity != "warning" || !strings.Contains(c.Fix, "fugaro image refresh") {
+			if c.OK || c.Severity != "warning" || !strings.Contains(c.Fix, "fugaro update") {
 				t.Errorf("base-image = %+v", c)
 			}
 			return

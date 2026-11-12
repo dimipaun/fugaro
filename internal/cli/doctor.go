@@ -688,7 +688,7 @@ func doctorBaseImage(lc *localcfg.Config) doctorCheck {
 	}
 	return doctorCheck{ID: "base-image", OK: false, Severity: "warning",
 		Problem: "the local config has no base_images.base (" + config.MigrationDoc + ")",
-		Fix:     "fugaro image refresh   # in the repository's checkout"}
+		Fix:     "fugaro update   # its images stage pins and records this release's base image"}
 }
 
 // doctorOfflineChecks is `fugaro doctor --offline`'s half of the update class:
@@ -2943,7 +2943,7 @@ func doctorPolicyVsJobs(lc *localcfg.Config) *doctorCheck {
 	}
 	return &doctorCheck{ID: "policy-vs-jobs", Severity: "warning",
 		Problem: fmt.Sprintf("the jobs are deployed from the runner image %s, which predates this Fugaro: a policy published at %s is one those runs do not read, so they keep the ceiling from their own environment", pluginwire.Printable(cur), projectpolicy.PathShared()),
-		Fix:     "fugaro image refresh moves the jobs to this release's runner image (then fugaro update --repo . in your own terminal, which is the only path that writes a job's environment)"}
+		Fix:     "fugaro update in your own terminal: its images stage moves the repository onto this release's runner image and its repository stage behind that writes the jobs' environment"}
 }
 
 // adoptOwnFirebaseProject is what every doctor fix whose command is `fugaro

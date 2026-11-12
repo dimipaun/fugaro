@@ -408,7 +408,7 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		if !ok || c.Severity != "warning" {
 			t.Fatalf("policy-vs-jobs = %+v (present %v), want a warning", c, ok)
 		}
-		if !strings.Contains(c.Problem, "0.1.0") || !strings.Contains(c.Fix, "fugaro image refresh") {
+		if !strings.Contains(c.Problem, "0.1.0") || !strings.Contains(c.Fix, "fugaro update") {
 			t.Errorf("the check does not name the recorded image and the command that moves it: %+v", c)
 		}
 		// The other side: a recorded base this release pins is not a warning.
