@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -58,6 +59,26 @@ func accessRunAsUnreadable(t *testing.T) {
 func accessRunNode(t *testing.T, f *launchBudgetFixture, grants ...accesslib.Grant) {
 	t.Helper()
 	f.db.Set(accesslib.PathNode, accessNodeDoc(grants...))
+}
+
+// accessRunUnreachableDB points the fixture's roles database at a port nothing
+// listens on: a network failure, the state rtdb reports as ErrUnavailable
+// rather than as a refusal. It is the same address the shared-config fixtures
+// use to prove a command reaches no network at all.
+func accessRunUnreachableDB(t *testing.T, f *launchBudgetFixture) {
+	t.Helper()
+	path := os.Getenv("FUGARO_CONFIG")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := strings.Replace(string(data), f.db.URL, "http://127.0.0.1:1", 1)
+	if updated == string(data) {
+		t.Fatal("the fixture's config does not name its budget database")
+	}
+	if err := os.WriteFile(path, []byte(updated), 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // accessRunSpec is a launch's task for one repository, the shape
@@ -160,24 +181,65 @@ func TestAccessRunPlacesNobodyIsNotRefused(t *testing.T) {
 	}
 }
 
-// TestAccessRunListsAreTheRolesWithoutANode: an installation with no grants node
-// reads this machine's own two lists as its roles, which is what the node is
-// migrated FROM (RS3) and what `fugaro user ls` prints for it. A member of
-// neither list is refused; a member of the operator list launches.
-func TestAccessRunListsAreTheRolesWithoutANode(t *testing.T) {
+// TestAccessRunListsAreNotTheRoles: an installation whose roles are still only
+// its own terraform lists — no grants node, because RS3's migration has not run
+// over it — is judged by nothing here. The lists are the machine's copy of the
+// roles and not their authority: the node is, and `fugaro update` is what moves
+// them into it. Reading them as roles would make this release the one that
+// changes what an installation which has not updated does, including refusing a
+// credential the lists place by a rule (a service account, F25) that no list can
+// express — the state the previous release behaved in is the state this leaves.
+func TestAccessRunListsAreNotTheRoles(t *testing.T) {
 	noAgentSession(t)
 	f := newLaunchBudget(t, "off")
 	f.appendConfig(t, "terraform:\n  operators: ['user:listed@example.com']\n")
 	env := fileEnv(t, f.cloudFixture)
 
 	accessRunAs(t, "user:stranger@example.com")
-	err := launchPolicyGates(context.Background(), env, appSlug, accessRunSpec("acme/app"), "web", false, false, io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "holds no role") {
-		t.Fatalf("a credential on neither list was not refused: %v", err)
+	if err := launchPolicyGates(context.Background(), env, appSlug, accessRunSpec("acme/app"), "web", false, false, io.Discard); err != nil {
+		t.Fatalf("a machine whose roles are only its own lists judged a launch by them: %v", err)
 	}
 	accessRunAs(t, "user:listed@example.com")
 	if err := launchPolicyGates(context.Background(), env, appSlug, accessRunSpec("acme/app"), "web", false, false, io.Discard); err != nil {
-		t.Fatalf("the machine's own operator was refused: %v", err)
+		t.Fatalf("the listed member's own launch was refused: %v", err)
+	}
+}
+
+// TestAccessRunRolesDatabaseOutageIsNotRefused: the roles database is
+// unreachable — a network failure, a 5xx or a 429, which rtdb reports as its
+// own sentinel and never as a refusal — so nothing is placed and nothing is
+// refused. An outage is not an answer about the caller, and a courtesy check
+// that turned one into a lockout would stop an installation's own people from
+// reading their runs for as long as the endpoint is having a bad day.
+func TestAccessRunRolesDatabaseOutageIsNotRefused(t *testing.T) {
+	noAgentSession(t)
+	f := newLaunchBudget(t, "off")
+	accessRunUnreachableDB(t, f)
+	accessRunAs(t, accessViewer)
+
+	_, _, err := runBudget(t)
+	if err != nil && strings.Contains(err.Error(), "roles") {
+		t.Fatalf("the outage of the roles database was read as a refusal: %v", err)
+	}
+}
+
+// TestAccessRunUnreadableRolesNodeIsRefused is the other side of the outage: a
+// node that ANSWERS and cannot be held whole — a document this build cannot
+// decode — places nobody and is refused rather than half-read, which is F27's
+// fail-closed half. A gate that read it as an empty roster would let the very
+// grants it could not understand through.
+func TestAccessRunUnreadableRolesNodeIsRefused(t *testing.T) {
+	noAgentSession(t)
+	f := newLaunchBudget(t, "off")
+	f.db.Set(accesslib.PathNode, map[string]any{"grants": "not-a-list"})
+	accessRunAs(t, accessViewer)
+
+	_, _, err := runBudget(t)
+	if err == nil || ExitCode(err) == ExitOK {
+		t.Fatalf("the unreadable roles node: err = %v (exit %d), want a refusal", err, ExitCode(err))
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Errorf("%d executions were created for a refused launch", n)
 	}
 }
 

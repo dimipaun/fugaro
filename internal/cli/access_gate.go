@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	accesslib "github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -32,14 +31,26 @@ import (
 // git config: both are the caller's own to write, so either would place
 // anybody.
 //
-// An installation whose roles place NOBODY at all is not refused — no stored
-// grant, no implicit admin, and, where there is no database to hold a node, no
-// `user:` member on either of its own lists. There is nothing to judge against
-// there, and a machine that has never held a role is not one whose owner should
-// be locked out of their own runs by the check that reads it. The gate bites
-// the moment one thing places one member, which every installation that has
-// ever had an operator or an admin does: RS3 migrates those lists into the
-// node, and the lists themselves are read below where there is no node.
+// An installation whose roles place NOBODY at all is not refused. The roles
+// are the grants node's and the implicit admins' (F22), and a machine whose
+// node holds no grant and whose config names no implicit admin has nothing to
+// judge against: refusing there would lock the owner of a machine that has
+// never held a role out of their own runs by the check that reads it. The
+// installation's own terraform lists are deliberately NOT read as roles here.
+// They are the machine's copy and not the authority (localcfg's own words):
+// RS3's migration is what moves them into the node, `fugaro update` is what
+// runs it, and until it has, every credential reads as unplaced — which is
+// the state the previous release behaved in, so the release that adds this
+// check cannot be the one that breaks an installation which has not updated.
+// A node that is there and holds grants, or a config that names an implicit
+// admin, is where the check bites.
+//
+// A roles database that cannot be REACHED is not a refusal either: an outage
+// is not a statement about who the caller is (rtdb's own contract separates it
+// from a refusal: ErrUnavailable against ErrPermission), and the check is a
+// courtesy that must not turn a bad minute into a lockout. A node that answers
+// and cannot be read is a refusal, because then the installation *has* roles
+// this build cannot hold whole (F27's fail-closed half).
 
 // accessCallerLookup is who a command thinks it is, in the "user:<address>" form
 // the grants are written with: access.Caller, the verified address of the
@@ -134,7 +145,7 @@ func accessJudge(ctx context.Context, env *cloudEnv, what string) (in accesslib.
 	return in, caller, true, nil
 }
 
-// accessInput is what the resolver is asked with: the stored grants, the
+// accessInput is what the resolver is asked with: the grants node's pairs, the
 // implicit admins this machine can name, and the published allow_repos. placed
 // is whether anything in it places anybody.
 func accessInput(ctx context.Context, env *cloudEnv) (in accesslib.Input, placed bool, err error) {
@@ -148,29 +159,24 @@ func accessInput(ctx context.Context, env *cloudEnv) (in accesslib.Input, placed
 	return in, len(in.Grants)+len(in.Implicit) > 0, nil
 }
 
-// accessStoredGrants is the grants node's pairs, or what this machine's own
-// lists hold when there is no node to read.
+// accessStoredGrants is the grants node's pairs, and nothing when the
+// installation has no node to read.
 //
-// An absent node and an installation with no database are one state in this
-// reading: the roles are then this machine's own terraform.operators and
-// terraform.admins, which is what the node is migrated FROM (RS3) and what
-// `fugaro user ls` prints for the same installation. What the lists are not is
-// a second opinion about a node that exists — a node is the installation's
-// roles, and a list still naming somebody the node no longer places does not
-// place them here. pair.go reads the same node to the same effect: the grants
-// are what place the caller, and the two lists are only what update migrated
-// into it.
+// The node is the installation's whole roster (RS3 migrates the two terraform
+// lists into it), so this is the only place roles come from: an absent node is
+// an installation whose roles have not moved there yet, which places nobody.
 //
-// A node that is there and cannot be read is a refusal rather than a fallback.
-// D1585 gives the node to a caller holding the database grant, which
-// roles/firebasedatabase.viewer carries to every launcher and operator, so a
-// credential it refuses holds no IAM on this project at all — the
-// repository-scoped user of F29(b), who reaches nothing in the cloud either
-// before RS12. Judging that caller by this machine's own lists would place them
-// with a list they do not hold.
+// What a failed read means is the one distinction here (rtdb's own contract):
+// a refusal is the credential's (D1585 gives the node to a caller holding the
+// database grant, which roles/firebasedatabase.viewer carries to every
+// launcher and operator, so a credential it refuses holds no IAM on this
+// project at all — F29(b), and judging that caller by anything else would
+// place them with something they do not hold); an outage is nobody's, and
+// places nobody; anything else is a node this build cannot hold whole, which
+// is a refusal rather than a half-read roster (F27).
 func accessStoredGrants(ctx context.Context, env *cloudEnv) ([]accesslib.Grant, error) {
 	if env.lc.Budget == nil || env.lc.Budget.RTDBURL == "" {
-		return accessListGrants(env.lc), nil
+		return nil, nil
 	}
 	_, db, err := budgetDBFor(ctx, env.lc)
 	if err != nil {
@@ -180,51 +186,21 @@ func accessStoredGrants(ctx context.Context, env *cloudEnv) ([]accesslib.Grant, 
 	switch {
 	case errors.Is(err, rtdb.ErrPermission):
 		return nil, userErr("the roles could not be read: %s refused this credential's read (%v), and the installation's roles are that node. Every launcher and operator of %s holds it (roles/firebasedatabase.viewer); a repository-scoped pair alone does not, and before RS12 it grants nothing in the cloud either (finding F29b)", accesslib.PathNode, err, safetext.Field(env.lc.Name))
+	case errors.Is(err, rtdb.ErrUnavailable):
+		// The database is unreachable: a 5xx, a 429 or a network failure is not
+		// an answer about the caller, and refusing over one would stop the
+		// installation's own people from reading their runs for as long as the
+		// endpoint is having a bad day. The launch path meets the same outage
+		// one step later, at its own budget read, where a run really cannot
+		// start without an answer.
+		return nil, nil
 	case err != nil:
 		return nil, dbErr(env.lc, err, false)
 	}
 	if !node.Found {
-		return accessListGrants(env.lc), nil
+		return nil, nil
 	}
 	return node.Grants, nil
-}
-
-// accessListGrants is this machine's own two lists as the resolver's grants:
-// terraform.operators at operator and terraform.admins at admin, both at
-// project scope, which is the scope those IAM lists always meant and the shape
-// RS3 migrates into the node.
-//
-// A member that is not a `user:` address is left out, and so is one
-// access.Member refuses: a group:, domain: or serviceAccount: member keeps the
-// IAM grant the installation derives but is not one the CLI can match against a
-// caller (F25), and nothing else on the list is a role either. Both lists may
-// then place nobody, which the caller reads as the check not applying.
-func accessListGrants(lc *localcfg.Config) []accesslib.Grant {
-	if lc == nil {
-		return nil
-	}
-	project := accesslib.Scope{Kind: accesslib.ScopeProject}
-	var out []accesslib.Grant
-	for _, l := range []struct {
-		role    accesslib.Role
-		members []string
-	}{
-		{accesslib.RoleOperator, lc.Terraform.Operators},
-		{accesslib.RoleAdmin, lc.Terraform.Admins},
-	} {
-		for _, m := range l.members {
-			address, ok := strings.CutPrefix(m, "user:")
-			if !ok {
-				continue
-			}
-			member, err := accesslib.Member(address)
-			if err != nil {
-				continue
-			}
-			out = append(out, accesslib.Grant{User: member, Role: l.role, Scope: project})
-		}
-	}
-	return out
 }
 
 // accessAllowRepos is the published policy's allow_repos, or an allow-list that
