@@ -8543,6 +8543,7 @@ Subcommands:
 - `fugaro user add` -- Add a person to the installation's operators or admins
 - `fugaro user grant` -- Give a person a role at a scope
 - `fugaro user ls` -- List the installation's grants, and the role held in a repository
+- `fugaro user offboard` -- Take a member off the installation: their roster grants, and the secrets they stored
 - `fugaro user revoke` -- Take a role and scope pair away from a person
 - `fugaro user rm` -- Remove a person from the installation's operators or admins
 
@@ -8685,6 +8686,55 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | the repository to print the effective role in (provider/owner/name, or owner/name for a repository this machine's config lists) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro user offboard`
+
+Take a member off the installation: their roster grants, and the secrets they stored
+
+Take one member off the installation, named by their email address.
+
+Two things happen, and nothing else does:
+
+  - The roster (the installation's grants node) drops every grant that names
+    the address. The IAM grants are not touched here: an operator's next
+    `fugaro update` removes the invoker grants the roster no longer carries, and
+    writes this machine's own operator and admin lists from it.
+  - The installation's intake deletes the secrets stored under the member's own
+    prefix, found by the owner annotation it wrote (R10). No value is read or
+    printed anywhere: the intake has no route that answers one.
+
+The member's open slips are not ended — the service has no route for that, by
+design: a slip ends by the max-runtime cap the grant recorded, so a run in
+flight is not stopped by this command. A pool that lists them among its allowed
+users keeps the text, and no policy has to be published: a pool is resolved for
+a launcher the roster admits, and this command is what stops admitting them.
+
+Offboarding is an admin's act: the caller has to be a project-scope admin grant
+of the roster itself. An implicit project admin — a GCP owner or editor, a
+budget admin — holds no stored grant and is refused (D1940), exactly as the
+intake refuses them; an admin of that kind takes the stored grant first.
+
+Two members cannot be offboarded this way, and nothing is written when one is
+asked for: the caller themselves (another admin has to offboard you, or a
+project Owner from outside the roster), and the roster's last project admin
+(an installation with no stored admin grant has nobody its own door admits, so
+a project Owner runs `fugaro update --admin` to put one on it first).
+
+Usage: `fugaro user offboard EMAIL`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for offboard |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
 
 Subcommands:
 
