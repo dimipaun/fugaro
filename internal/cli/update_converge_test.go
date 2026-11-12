@@ -95,6 +95,30 @@ func v5Node() map[string]any {
 	return n
 }
 
+// newestRefusedVersion is the newest policy version below this binary's that
+// the reader still refuses and the chain carries forward: a shape-free
+// predecessor is read as it stands (ReadsVersion), so it is not the previous
+// release's node in the sense the update's fixtures need.
+func newestRefusedVersion(t *testing.T) int {
+	t.Helper()
+	v := projectpolicy.Version - 1
+	for projectpolicy.ReadsVersion(v) {
+		v--
+	}
+	if !projectpolicy.Migratable(v) {
+		t.Fatalf("version %d is no longer one the chain carries forward: the fixture needs the newest version that is", v)
+	}
+	return v
+}
+
+// staleNode is the node a release the reader refuses leaves published: the
+// update's policy stage has to migrate it in place.
+func staleNode(t *testing.T) map[string]any {
+	n := v6Node()
+	n["version"] = newestRefusedVersion(t)
+	return n
+}
+
 func newConvergeRig(t *testing.T, node map[string]any) *convergeRig {
 	t.Helper()
 	return newConvergeRigYAML(t, node, refreshYAML)
