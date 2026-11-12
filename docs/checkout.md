@@ -41,7 +41,7 @@ Move the workflow back to `baked` if it needs any of them.
 2. In your own terminal, run `fugaro update --repo .` in the checkout. That redeploys the workflow's job onto the installation's base image and sets `FUGARO_CHECKOUT=clone` in it, which is what tells the run to make its own clone.
 3. Then run the workflow as usual.
 
-Order matters: `fugaro image refresh` only moves a job that is already a clone job (it carries the `FUGARO_CHECKOUT` it must keep); a job deployed from a `baked` `fugaro.yaml` is refused, with `fugaro update --repo` as the fix. `fugaro run` decides `baked` or `clone` for a launch from the `fugaro.yaml` of the checkout you run it in, so run it in the repository's checkout.
+Order matters: `fugaro image refresh` only moves a job that is already a clone job (it carries the `FUGARO_CHECKOUT` it must keep); a job deployed from a `baked` `fugaro.yaml` is refused, with `fugaro update --repo` as the fix. `fugaro run` decides `baked` or `clone` for a launch from the repository's `fugaro.yaml` at the ref the run checks out: run it in the repository's checkout and that file is read out of the checkout with no credential at all, while a launch from outside any checkout of the repository gets it another way ([below](#a-launch-with-no-checkout-of-the-repository)).
 
 ### What is and is not in the checkout
 
@@ -76,10 +76,21 @@ Its FACT lines are the record of both, in the checklist section. `clone` is stil
 
 A third kind, `checkout: shared`, is in `fugaro.yaml`'s schema and in the config format: the workflow's job runs a shared dependency-layer image — one image per resolved dependency set, holding no repository's own source — and the run clones your repository at launch, exactly as `clone` does. **No released fugaro builds or refreshes such an image yet** — 0.15.0 was the release it was to arrive in, and it shipped without it — so `fugaro validate` refuses the key (`no released fugaro builds or refreshes a shared dependency-layer image yet`, at `workflows.<name>.checkout`) and a run of such a workflow does not start: use `checkout: baked` or `checkout: clone` meanwhile.
 
+## A launch with no checkout of the repository
+
+A launch's job is decided from the repository's own `fugaro.yaml` at the ref the run checks out: `workflows.<name>.checkout` says whether the workflow is a `clone` one, the profile it selects says which shared project job it belongs on, and no job's own environment carries either. Run `fugaro run` in the repository's checkout and that file is read out of the checkout, with no credential at all. A launch from a machine that holds no checkout of the repository gets the same file another way — the console's launches always run in the app's own empty directory, and so does `fugaro run --repo …` typed anywhere else — and the order below is the whole of it:
+
+- **A run being continued reuses the job that run recorded.** `fugaro run --retry` and `--pr N` re-launch the workflow of the run they continue, so they target the job recorded in that run's `launch.json`, when the project's published policy computes that name as a shared job. No document is read for them.
+- **Otherwise the ref's `fugaro.yaml` is read through the installation's credentials service**, as you, the operator: on that one path the service mints a read-only token for that repository and the launcher reads that one file at the ref the run checks out. The CLI holds no provider credential of its own for it, no App key and no environment variable ([git-providers.md](git-providers.md)), and the read is refused in a coding agent's session, as every read made with your own credential is.
+- **A provider no shared job serves proceeds on the per-repository job**, which is the same job the checkout path gives for the same repository: no shared job holds a Bitbucket credential, so there is no document to decide anything from.
+
+Falling back to the deployed job's own `FUGARO_CHECKOUT` — or to its image being `base_images.base` — cannot close this: either one says only whether the job is a `clone` one, and the workflow's `job_profile` is in the repository's file and nowhere in the job's environment.
+
+Everything else is **refused**, naming the cause and the checkout as the way out. A read that fails is not a reason to guess: a run placed on a job the project's policy did not choose carries no profile, and nothing downstream catches it. An installation that has published no profiles is untouched — there the per-repository job is the only job there is — and so is a ref whose tree carries no `fugaro.yaml`: such a repository selects no clone workflow and no profile.
+
 ## Known gaps
 
-Three smaller gaps are carried from this feature's review and are **not** closed yet. None of them changes what a `baked` workflow does today:
+Two smaller gaps are carried from this feature's review and are **not** closed yet. Neither of them changes what a `baked` workflow does today:
 
-- **`fugaro run --repo <owner/name>` from outside the checkout is refused** once the project has published profiles. `fugaro run` reads `checkout` from the `fugaro.yaml` of the checkout it runs in, not from the job it is about to run, so from elsewhere it cannot tell a clone workflow from a baked one and will not guess which job the launch belongs on: it stops and names both causes (the working directory is not the repository's checkout, or its `fugaro.yaml` could not be read). An installation that has published no profiles is untouched — there the per-repository job is the only job there is. Closing the gap properly means falling back to the deployed job's own `FUGARO_CHECKOUT` (or to its image being `base_images.base`), which is what would let a launch from elsewhere decide; until then, run `fugaro run` in the repository's checkout. **This gap is reachable now that `checkout: clone` has shipped**: until the release that carried the flag kept clone jobs from existing at all, and it no longer does.
 - **The base-image freshness check reads your local config.** `fugaro run` compares `base_images.base` as *your* `fugaro.yaml` names it, not the image the deployed job actually runs, so a job whose image drifted (a refresh that has not been run, a hand-edited job) is not caught.
 - **A clone-only repository still gets its own artifact registry**, plus the build account's writer grant, even though nothing is ever built into it. It is inert, and dropping it is a Terraform change (`deploy/terraform/gcp/modules/repo`) that has not been made.
