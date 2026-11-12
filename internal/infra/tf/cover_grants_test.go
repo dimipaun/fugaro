@@ -935,9 +935,11 @@ func TestIntakeAccountIsItsOwnPrincipalKind(t *testing.T) {
 // container of the project riding the ordinary confirmation. The refusal names
 // the account, so an operator's read of it says which grant to write by name.
 //
-// Mutation (verified): the two branches in the unknown-role case removed, a
-// computed role to either account is covered by the module's own custom-role
-// row and this test fails on all six rows.
+// Mutation (verified, run and restored): with the two branches in the
+// unknown-role case removed, the PROJECT rows cover a computed role to either
+// account -- the hole this test is about, since that is the one type whose row
+// names a custom role for these accounts -- and the other three rows stop for
+// the table's own reason instead of the account's, so all six rows fail.
 func TestDynamicAccountsAreRefusedAComputedRole(t *testing.T) {
 	role := customRole(IntakeSecretsRole, "proj-1", []any{"secretmanager.secrets.create", "secretmanager.secrets.delete", "secretmanager.versions.add"})
 	for _, tc := range []struct{ name, member string }{
