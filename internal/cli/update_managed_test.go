@@ -1619,8 +1619,12 @@ func TestUpdateManagedLeavesComputeOwnerRun(t *testing.T) {
 // the one a PERSON at the terminal on a managed project gets.
 //
 // The shape is therefore that person: the installation root planned for a
-// change §4.1 refuses to apply (the removal of a data-bearing bucket), and the fourth read of
-// its saved plan — the credentials stage's own — refused. The two arms are the
+// change the cover refuses to apply (an authoritative IAM resource, D1549's
+// kind, which no release of Fugaro's own tree writes), and the fourth read of
+// its saved plan — the credentials stage's own — refused. The plan is not a
+// removal the owner's own --allow-delete admits, which is what keeps this
+// refusal the plan's instead of the owner's command (initflow's
+// GateRefusedDelete, stage.go). The two arms are the
 // entry's own answer and its mutation: under the gate the step is left for the
 // owner and the run carries on, and with the entry dropped the same refusal
 // stops the run instead and leaves the owner nothing.
@@ -1661,16 +1665,21 @@ func TestUpdateManagedGatesTheCredentialsServiceStage(t *testing.T) {
 			// LeftRefused and not LeftCommand: what the gate leaves the owner
 			// is D1012's refusal step (internal/initflow's stage.go answers a
 			// gate verdict with it), not a command to run — the plan this stage
-			// holds is the installation's own, and no command of the owner's
-			// rebuilds what the gate would not admit.
+			// holds carries no removal the owner's own --allow-delete admits,
+			// so there is no command of theirs that clears what it refuses.
 			left := leftFor(got, initflow.CredentialsService, initflow.LeftRefused)
 			if left == "" {
 				t.Fatalf("the credentials-service stage was not left for the owner:\n%s", got)
 			}
-			for _, want := range []string{"managed gate refused this step", "google_storage_bucket.runs"} {
-				if !strings.Contains(left, want) {
-					t.Errorf("the step left for the owner does not name %q:\n%s", want, left)
-				}
+			if !strings.Contains(left, "managed gate refused this step") {
+				t.Errorf("the step left for the owner does not say the gate refused it:\n%s", left)
+			}
+			// And what it refused is named where a refusal's own words live:
+			// the block above is the brief, and the whole sentence — with the
+			// address the rule was read at — is in the log its line names
+			// (D1352, and leftFor's own note on the two).
+			if whole := got + namedLog(t, got); !strings.Contains(whole, "google_storage_bucket_iam_binding.runs") {
+				t.Errorf("the refusal does not name the resource the plan would write, so it is not this step's refusal:\n%s", whole)
 			}
 		})
 	}
@@ -1696,7 +1705,7 @@ func credentialsStageRun(t *testing.T) (string, int) {
 	r.script["show -json"] = r.script["show"]
 	r.script["plan@installation"] = map[string]any{"exit": 2}
 	admitted := map[string]any{"stdout": planJSON(t, change("module.installation.google_service_account.scheduler", "create"))}
-	refused := map[string]any{"stdout": planJSON(t, change("module.installation.google_storage_bucket.runs", "delete"))}
+	refused := map[string]any{"stdout": planJSON(t, iamBindingCreate())}
 	r.script["show@installation"] = []any{admitted, admitted, admitted, refused}
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"credentials_service": credentialsServiceOutput()})}
 	r.save(t)
