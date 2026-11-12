@@ -13044,11 +13044,12 @@ result.
   nothing has nothing to show here — and the run has to reach its own `result.json`, because a launch on
   its own says nothing about the image it started on.
 - **The stale block is a warning, not a refusal.** A second repository whose own `image:` block is stale is
-  where **D1900** stops being a rule: `fugaro update --repo <that checkout> --plan-only` prints one
-  `warning:` line per ignored key and names the entry that decides the job instead, writes nothing and
-  changes nothing. The check reads that line with `--stale-repo` (the sandbox checkout by default, when you
-  have pointed it at a repository with a stale block). A launch or an update that refuses such a repository
-  instead of warning is the finding: D1900's whole point is that it keeps working.
+  where **D1900** is read: `fugaro update --repo <that checkout> --plan-only` prints one `warning:` line per
+  ignored key and names the entry that decides the job instead, and it writes nothing and changes nothing.
+  The check points at that repository with `--stale-repo`, which is the sandbox checkout unless you name
+  another one — a repository whose own `image:` block is stale is the subject, and the sandbox is only the
+  convenient default. A launch or an update that refuses such a repository instead of warning is the
+  finding: D1900's whole point is that it keeps working.
 
 **What a run costs.** One Cloud Build per catalog entry the check covers — at most four, each billable,
 and the build leases its own cost from the project's budget where the installation has one — plus one
