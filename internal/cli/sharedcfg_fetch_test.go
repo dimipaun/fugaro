@@ -653,7 +653,9 @@ func TestPublishSharedForbiddenExistingObjectIsNotOverwritten(t *testing.T) {
 	newFetchRig(t)
 	gets := 0
 	open := markerOnlyGCS(t, &gets)
+	prev := sharedBucketOpener
 	sharedBucketOpener = func(ctx context.Context, _ string) (*blobx.Bucket, error) { return open(ctx) }
+	t.Cleanup(func() { sharedBucketOpener = prev })
 	lc, err := localcfg.Parse([]byte("version: 1\nname: belong\ngcp_project: fugaro-belong\nregion: us-east5\nruns_bucket: fugaro-runs-fugaro-belong\nregistry_host: us-east5-docker.pkg.dev/fugaro-belong\n"))
 	if err != nil {
 		t.Fatal(err)

@@ -437,6 +437,28 @@ type Spec struct {
 	// task that is not one, and every spec written before the field, so a
 	// spec carrying no mark is byte-identical to the previous release's.
 	Debt bool `json:"debt,omitempty"`
+	// Security is the launch's own request that this run's review be the
+	// strongest one it can be (docs/security-classification, D1517): a task
+	// that says `security: true`, or a launch that passes `--security`,
+	// which is the same request written by the flag instead of by hand.
+	//
+	// It is raise-only: true turns review level 3 on for the run whatever
+	// the paths hold, and false changes nothing — it is not an exemption,
+	// so a run that says false is a run that said nothing, including one
+	// whose diff then matches a row of the list in force (D1517: the field
+	// is a bool that only turns on, so a false is the floor's answer and
+	// not a way to ask for less). There is no fence and no allow-list, for
+	// the same reason `--mode`'s raise needs neither: nothing here can
+	// lower a level.
+	//
+	// False is every task that did not ask, and every spec written before
+	// the field, so a spec carrying false is byte-identical to the previous
+	// release's. A runner before the release that reads `security: true`
+	// refuses the whole spec (Parse decodes with DisallowUnknownFields), so
+	// the launcher gates a launch that would set it (securityRequestSince,
+	// internal/cli/recipes_skew.go) rather than let the run fail at
+	// bootstrap after the task was written.
+	Security bool `json:"security,omitempty"`
 }
 
 // FollowUpOf is the parent a triage follow-up came from: the run whose
