@@ -353,6 +353,16 @@ var consoleReadPaths = map[string]bool{
 	// command's own 90-day window -- and it writes nothing, the remembered
 	// checkouts included, so the console may spawn it.
 	"fugaro seats": true,
+	// The Members view's read (the roles-and-scopes plan's RS7; roles.md
+	// D691(b)): the installation's grants -- each person with the role and the
+	// canonical scope they hold at, the repositories a pattern matches among
+	// those this machine knows, and, with `--repo`, the role each person holds
+	// in one repository. It resolves the checkout the way every cloud read here
+	// does -- to name the installation it lists -- and it writes nothing, the
+	// remembered checkouts included, so the console may spawn it. It is the
+	// read-only half of the roles model: `user grant` and `user revoke` are the
+	// writes, and no row of §5.1 admits either.
+	"fugaro user ls": true,
 	// The one the design names and §5.1 has not carried a row for yet (the
 	// console task adds it); it resolves no checkout today.
 	"fugaro plan graph": true,

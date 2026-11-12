@@ -1647,7 +1647,7 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 			t.Errorf("%s allows the console to spawn %q, but %q is not in consoleReadPaths (internal/cli/project.go): a command on the allow-list is a read, and a read must not write the remembered checkouts", path, argv, cmdPath)
 		}
 	}
-	// Twenty-six commands: the thirteen dashboard reads (logs has two argvs), the
+	// Twenty-seven commands: the thirteen dashboard reads (logs has two argvs), the
 	// rail's `config list --json` (D13's amendment of 2026-10-20), the graph
 	// screen's `plan status --json` (GV2.1), the dependency graph read
 	// `graph --json` (the graph plan's CG9a), the project view's
@@ -1664,9 +1664,12 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 	// screens' CM3: the marks with their trail, and the policy node), the
 	// effective-craft read `craft ls --json` (the model-crafts plan's MC8), the
 	// seat estimate `seats --json` (the subscriptions plan's S4.2, D439) and
-	// the launch `fugaro run` (V2.5.1a).
-	if len(allowed) != 26 {
-		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 26 (logs has two argvs)", path, argvs, len(allowed))
+	// the launch `fugaro run` (V2.5.1a), and the members read
+	// `user ls --json --repo R` (the roles-and-scopes plan's RS7, roles.md
+	// D691(b)), whose one argument is optional and whose two writing relatives,
+	// `user grant` and `user revoke`, the never table below keeps off this list.
+	if len(allowed) != 27 {
+		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 27 (logs has two argvs)", path, argvs, len(allowed))
 	}
 	// The other direction: the list carries §5.1's commands and nothing else,
 	// except the read the design names for the console and §5.1 has not grown

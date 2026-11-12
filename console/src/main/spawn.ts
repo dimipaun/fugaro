@@ -1276,6 +1276,36 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     dirFlag: false,
   },
   {
+    // The Members view's read (the roles-and-scopes plan's RS7; `members.list`,
+    // `src/main/ipc.ts`; the read itself is RS5's). The command is
+    // `fugaro user ls`, so the row's words are the group's word, the subcommand
+    // and the fixed `--json` -- and that is the group's whole reach: `grant`,
+    // `revoke`, `add` and `rm` are each on this module's own never table, so no
+    // argv of `user` but this one can be built.
+    //
+    // **It is a read, and it is the console's strongest kind**: the command
+    // reads this machine's own config and the installation's grants node with
+    // the caller's own credential, prints one document and writes nothing, the
+    // remembered checkouts included (`consoleReadPaths`,
+    // `internal/cli/project.go`). It takes the project flag like every other
+    // cloud read, and it resolves this checkout on the way to the installation
+    // it lists (`takesProject`) -- which is why that entry is the CLI half of
+    // this row and not an afterthought.
+    //
+    // **Its one argument is optional and it is a repository, never a pattern.**
+    // `--repo owner/name` is the role each person holds in one repository; the
+    // command's other state -- the stored pairs and the repositories of this
+    // machine a pattern matches -- is what the caller gets by naming nothing.
+    // The *scope* of a grant is a pattern and lives in the document, not in
+    // this argv: the one word a renderer fills here is the canonical
+    // `owner/name` the `repository` kind closes it to.
+    operation: 'members.list',
+    words: ['user', 'ls', '--json'],
+    takesProject: true,
+    args: [{ key: 'repo', flag: '--repo', kind: 'value' }],
+    dirFlag: false,
+  },
+  {
     // **The launch, and the console's only write** (design §5.1 rule 11, D22).
     // The row is rule 11's argv word for word: `run --task-file - --json
     // --run-id <id> --repo <owner/name> [--title=<T>] [--plan-task=<P>]

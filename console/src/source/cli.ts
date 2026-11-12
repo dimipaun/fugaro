@@ -818,6 +818,21 @@ export class CliSource implements FugaroSource {
     return this.#readDocument('seats.read', args)
   }
 
+  /** listMembers reads `user ls --json`: the installation's grants as the CLI
+   * prints them -- the stored role and scope pairs, the repositories a pattern
+   * matches among those this machine knows, the legacy members this machine's
+   * own config carries, and, with a repository named, the role each person
+   * holds in it (the roles-and-scopes plan's RS7; the read is RS5's). Its one
+   * argument is the repository and it is optional: without it the argv is the
+   * spawn row's own three words and the installation's `--project`, which is
+   * the state the view starts in. Nothing about a role is decided here -- the
+   * document's own words are what a screen draws. It reads this machine's own
+   * config and the installation's grants node with the caller's credential, so
+   * it writes nothing and mints nothing of the host's. */
+  listMembers(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#readDocument('members.list', args)
+  }
+
   /** readSettings reads `settings --json`: the project's settings, each with
    * the value a run gets, the layer that decided it, its default, its state and
    * the three writability facts the row set draws its pencils from (the
@@ -1672,6 +1687,15 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
      * (the read is the bucket and this machine's own config, never a checkout),
      * so a console with an installation and no checkout still answers. */
     readSeats: (args) => read('seats.read', (source) => source.readSeats(args)),
+    /** listMembers has no precondition and no cadence, and both halves are
+     * deliberate. It needs no directory: the read is this machine's own config
+     * and the installation's grants node, never a checkout, so a console with an
+     * installation and no checkout still answers -- and it holds no floor
+     * between two calls either, because a roster is somebody else's edit: an
+     * admin's `fugaro user grant` lands in the node the moment they run it, and
+     * a minute-old answer in front of a newer one would show a role that has
+     * already moved. */
+    listMembers: (args) => read('members.list', (source) => source.listMembers(args)),
     /** readSettings has no precondition and no cadence either: the read is the
      * registry, the project layer's cache, the local config and the checkouts
      * this machine remembers, with no bucket, no database and no host behind

@@ -89,7 +89,7 @@ export const BRIDGE_VERSION = 1
  * nothing failing, because the runtime tests in `test/unit/ipc.test.ts` pin the
  * same sets against the table and the object is built from that table anyway.
  * `satisfies` checks each row's shape without widening anything, so a row that
- * is not a name and a method is still a compile error, and the thirty-eight names
+ * is not a name and a method is still a compile error, and the thirty-nine names
  * stay literal -- which is what makes `ExposedName`, `ExposedMethod` and
  * `ConsoleBridge` below the closed things their comments say they are.
  *
@@ -311,6 +311,18 @@ export const BRIDGE_VERSION = 1
  * consults no key, licence or server -- and what comes back is a count of
  * people: no string of it is a credential, and the two tables it carries are
  * drawn through the classes `src/shared/sanitize.ts` declares.
+ *
+ * **The roles-and-scopes plan's RS7 added the thirty-ninth** (`members.list` /
+ * `listMembers`, the Members view's read of the installation's grants) and left
+ * the other thirty-eight exactly where they were. It sits last, under the seat
+ * estimate, and it is the row whose **one argument is optional**: the repository
+ * a role is asked about, of the canonical `owner/name` kind the other
+ * repository arguments of this surface are. What it names is a repository and
+ * never a pattern -- a grant's *scope* is a pattern, and the CLI's own document
+ * is where one is carried -- so the word a renderer fills here cannot widen what
+ * the read is about. The three members it answers with (a person, a role and a
+ * scope) are somebody else's text carried as data, drawn through the same
+ * classes as everything else.
  */
 export const EXPOSED_OPERATIONS = Object.freeze([
   ['live.watch', 'subscribeLive'],
@@ -489,11 +501,24 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   // seat count, warns when it is above it, and blocks nothing on either number
   // (D439 -- seats are compared, never enforced).
   ['seats.read', 'readSeats'],
+  // The Members view's read (the roles-and-scopes plan's RS7, roles.md D691(b)):
+  // `fugaro user ls --json`, the installation's grants as the CLI prints them --
+  // each stored person with the role and the canonical scope they hold at, the
+  // repositories a pattern matches among those this machine knows, and, when a
+  // repository is named, the role each person holds in it. **It is the `user`
+  // group's one row**, and that is the claim worth reading: `grant`, `revoke`,
+  // `add` and `rm` are each on `src/main/ipc.ts`'s never table, as a command and
+  // as a word of `user`, so this method cannot reach a change of who may do
+  // what -- a role is read here and moved nowhere. Its one argument is the
+  // repository, and it is optional: the command answers about the roster
+  // without it. Nothing in the document is a credential and none of it is
+  // interpreted here: the CLI's own words are what a screen draws.
+  ['members.list', 'listMembers'],
 ] as const) satisfies readonly (readonly [string, string])[]
 
 /**
  * ExposedName is the closed union of the operation names this file exposes --
- * thirty-eight string literals, not `string`. It is the type of the `operations` list
+ * thirty-nine string literals, not `string`. It is the type of the `operations` list
  * a screen switches on, so the closure is what lets a screen be exhaustive.
  */
 export type ExposedName = (typeof EXPOSED_OPERATIONS)[number][0]
@@ -613,9 +638,9 @@ async function invokeOperation(
  *
  * The returned object is not cast into `ConsoleBridge`: it is checked against
  * it, like any other value, and that is the point of the accumulator's type. It
- * is `Record<ExposedMethod, ConsoleMethod>` -- thirty-eight *named* properties,
+ * is `Record<ExposedMethod, ConsoleMethod>` -- thirty-nine *named* properties,
  * because `ExposedMethod` is a union of literals -- so spreading it gives the
- * object literal those thirty-eight properties as properties rather than as an index
+ * object literal those thirty-nine properties as properties rather than as an index
  * signature. (Before that type was literal, this line needed `as ConsoleBridge`
  * to silence the compiler, which is what made the claim untested rather than
  * checked.) The loop is what actually writes them, and a loop is a thing the
@@ -644,7 +669,7 @@ export function createConsoleBridge(ipcRenderer: RendererLike): ConsoleBridge {
  * `exposeInMainWorld` is what keeps rule 5's promise concrete: the renderer gets
  * a copy of this object, in its own world, with `contextIsolation` in between.
  * It cannot reach the preload's scope, `ipcRenderer`, or Node -- only these
- * thirty-eight methods.
+ * thirty-nine methods.
  */
 export function exposeConsoleBridge(
   contextBridge: ContextBridgeLike,
