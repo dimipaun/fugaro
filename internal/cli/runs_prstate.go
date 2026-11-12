@@ -175,8 +175,10 @@ func markPRStates(rows []runview.Row) {
 // number the run's record or its task names — or, for a record that names a
 // pull request whose number it does not carry, the URL, which is the only
 // thing left of it to group by. ok is false for a row that carries no pull
-// request at all: a run that opened none, an artifact run and a review run
-// among them.
+// request at all: a run that opened none, and an artifact run among them. A
+// review job is not one of those — a review of PR N records N, so its row is
+// grouped with that pull request's runs and reads their state, while its own
+// outcome says nothing about it (prVerdict).
 func prGroupKey(r runview.Row) (string, bool) {
 	slug := rowRef(r).Slug
 	switch {
