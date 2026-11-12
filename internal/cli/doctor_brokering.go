@@ -1096,7 +1096,7 @@ func proxiedBitbucketRepos(lc *localcfg.Config) []string {
 // project, which is what the fence exists to bound (R3).
 func doctorIntakeChecks(ctx context.Context, lc *localcfg.Config, sm *gcp.Secrets, pol *crm.Policy, polErr error, roles *iamRoles) []doctorCheck {
 	const id = "secrets-intake"
-	checks := doctorDynamicSecretNameChecks(ctx, lc, sm)
+	checks := doctorDynamicSecretNameChecks(ctx, sm)
 	if polErr != nil {
 		return checks
 	}
@@ -1127,8 +1127,7 @@ func doctorIntakeChecks(ctx context.Context, lc *localcfg.Config, sm *gcp.Secret
 	for _, list := range [][]string{readers, unread, unfenced} {
 		slices.Sort(list)
 	}
-	switch {
-	case !deployed:
+	if !deployed {
 		checks = append(checks, doctorCheck{ID: id, OK: true, Severity: "info",
 			Problem: "no secrets intake is deployed in " + lc.GCPProject + ": no binding of its project policy names " + member})
 	}
@@ -1193,7 +1192,7 @@ func fencedUnderSecretNames(cond *crm.Expr) bool {
 // sweep also lists: the sweep's listing answers "who can read these", and a
 // name is not a reader. A listing that fails is left to the sweep, which
 // reports that failure in its own words.
-func doctorDynamicSecretNameChecks(ctx context.Context, lc *localcfg.Config, sm *gcp.Secrets) []doctorCheck {
+func doctorDynamicSecretNameChecks(ctx context.Context, sm *gcp.Secrets) []doctorCheck {
 	if sm == nil {
 		return nil
 	}
