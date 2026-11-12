@@ -35,11 +35,14 @@ package graph
 //   - TestLocalScopeRefusesAnIdOutsideThePatternBeforeAnyRead: H1's pattern is
 //     checked before the registry file or the node is looked at, and only for a
 //     local scope (CG13c).
+//   - TestOnlyALocalScopeReadsTheEndpoint: a live endpoint beside an
+//     `orchestrator:` scope is not read at all, counted at the transport.
 //   - TestTheEndpointStreamFeedsTheWatch: the endpoint's stream feeds the
 //     document stream — one whole document per tick, rising seq, one stream_id.
 //
-// The source is pure but for the endpoint it reaches, so every one of the first
-// five is a struct literal and a returned value: no fake, no clock and no I/O.
+// The source is pure but for the endpoint it reaches, so every case that is not
+// an endpoint case is a struct literal and a returned value: no fake, no clock
+// and no I/O.
 // The endpoint cases start a real one on loopback, with its registry file in a
 // temp directory, and no case reads a developer's own state directory.
 
@@ -630,6 +633,54 @@ func TestLocalScopeUsesTheLiveEndpoint(t *testing.T) {
 			t.Fatalf("the scope drew %+v, want the node: the endpoint at the file's address is not the daemon that wrote it (D1359)", nodes)
 		}
 	})
+}
+
+// TestOnlyALocalScopeReadsTheEndpoint: the endpoint is the local scope's own
+// half of D1359 and is read for no other kind. An `orchestrator:<id>` scope is
+// one the project's database holds (CG4's rule, D1358), and this machine's
+// daemon may well be serving that very id — what such a scope draws still comes
+// from the node, because a name a database lists is not a claim about which
+// machine runs it, and a document drawn from a local process under a scope the
+// console asked the project for is a read nobody asked for.
+//
+// The count is what holds it, and the control is what makes the count mean
+// something: the same fixture read as `local:` does reach the endpoint, so a
+// zero below is a scope that did not read and not a fixture that had nothing to
+// read.
+func TestOnlyALocalScopeReadsTheEndpoint(t *testing.T) {
+	tickedAt := time.Date(2026, 11, 11, 17, 0, 0, 0, time.UTC)
+	getenv, client := endpointEnv(t)
+	servedDaemon(t, getenv, "o1", stateWith("wi-endpoint"), tickedAt)
+	counted := &countingTransport{base: http.DefaultTransport}
+	client.HTTP = &http.Client{Transport: counted}
+
+	node := stateOf(t, "o1", item("wi-node", "the node's item", "acme/app"))
+	src := OrchestratorSource{ID: "o1", Endpoint: client, Node: node}
+	nodes, _, st, err := src.Nodes()
+	if err != nil {
+		t.Fatalf("reading an orchestrator scope beside a live endpoint: %v", err)
+	}
+	if st.Source != "orchestrator:o1" || st.State != SourceUp || st.AsOf != nil {
+		t.Errorf("the scope is %+v, want orchestrator:o1 up from the node and claiming no age", st)
+	}
+	if len(nodes) != 1 || nodes[0].ID != "wi-node" {
+		t.Fatalf("the scope drew %+v, want the node: an orchestrator scope reads no endpoint", nodes)
+	}
+	if n := counted.count.Load(); n != 0 {
+		t.Errorf("an orchestrator scope made %d requests to the endpoint beside it, want none", n)
+	}
+
+	control := OrchestratorSource{ID: "o1", Local: true, Endpoint: client, Node: node}
+	nodes, _, st, err = control.Nodes()
+	if err != nil {
+		t.Fatalf("reading the local control: %v", err)
+	}
+	if st.AsOf == nil || !st.AsOf.Equal(tickedAt) || len(nodes) != 1 || nodes[0].ID != "wi-endpoint" {
+		t.Fatalf("the local control is %+v with nodes %+v, want the live document: without it the count above proves nothing", st, nodes)
+	}
+	if n := counted.count.Load(); n == 0 {
+		t.Error("the local control reached no endpoint, so the fixture has none to refuse")
+	}
 }
 
 // TestLocalScopeFallsBackToTheNodeAndThenTheCache: `local:<id>` prefers a live

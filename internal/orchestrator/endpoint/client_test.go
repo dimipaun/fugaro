@@ -366,8 +366,10 @@ func TestClientStreamFollowsTheEndpoint(t *testing.T) {
 // TestTheTokenIsNeverPrintedOrLogged is the rule the whole design is written
 // against (F23), held at the end that holds the token: the credential travels
 // in the one Authorization header of every request and appears in no URL, in no
-// error, in no document and in no rendering of the value a caller holds. The
-// registry file is 0600 in a directory that is 0700 for exactly this reason,
+// error, in no document and in no rendering of the value a caller holds — the
+// last of those is every verb, `%#v` included, because the debug verb is the
+// one a person reaches for when something is wrong. The registry file is 0600
+// in a directory that is 0700 for exactly this reason,
 // and a reader that put the value in a query string would undo it in one line
 // -- the URL is what a proxy's access log, a shell's history and this machine's
 // own process list carry.
@@ -416,7 +418,7 @@ func TestTheTokenIsNeverPrintedOrLogged(t *testing.T) {
 	if strings.Contains(string(document), token) {
 		t.Error("the document a read answered with carries the token")
 	}
-	for _, rendered := range []string{fmt.Sprint(live), fmt.Sprintf("%+v", live), fmt.Sprintf("%s", live)} {
+	for _, rendered := range []string{fmt.Sprint(live), fmt.Sprintf("%+v", live), fmt.Sprintf("%s", live), fmt.Sprintf("%#v", live)} {
 		if strings.Contains(rendered, token) {
 			t.Errorf("the value a caller holds renders the token: %s", redact(rendered, token))
 		}

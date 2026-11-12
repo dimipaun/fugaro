@@ -90,10 +90,14 @@ import (
 // the same reason: they drive the same command tree, and without it a read
 // would go to the ambient credentials and a real runs bucket.
 //
-// It also keeps the two directories a command writes out of the developer's own
-// home — $XDG_CACHE_HOME (the update-check cache, and the project-name and
-// layer caches) and $XDG_CONFIG_HOME (checkouts.json, which the console's first
-// run reads) — and tells git not to find this repository's own fugaro.yaml, so
+// It also keeps the directories a command reads and writes out of the
+// developer's own home — $XDG_CACHE_HOME (the update-check cache, and the
+// project-name and layer caches), $XDG_CONFIG_HOME (checkouts.json, which the
+// console's first run reads) and $XDG_STATE_HOME (the run directory a local
+// scope looks in for the endpoint a daemon serves; the reader of that file
+// removes one no endpoint answers for, so a case here could otherwise take a
+// registry file out of the developer's own state directory) — and tells git not
+// to find this repository's own fugaro.yaml, so
 // a command that resolves the checkout's project resolves the fixture's and
 // never the project this repository belongs to.
 //
@@ -106,7 +110,7 @@ func TestMain(m *testing.M) {
 	os.Setenv("HTTPS_PROXY", "http://127.0.0.1:1")
 	os.Setenv("https_proxy", "http://127.0.0.1:1")
 	os.Unsetenv("STORAGE_EMULATOR_HOST")
-	for _, k := range []string{"XDG_CACHE_HOME", "XDG_CONFIG_HOME"} {
+	for _, k := range []string{"XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME"} {
 		if dir, err := os.MkdirTemp("", "fugaro-test-ee-"); err == nil {
 			os.Setenv(k, dir)
 		}

@@ -119,8 +119,9 @@ func (c Client) http() *http.Client {
 // things that accept it, so no document in this package is read through a
 // registry file the handshake did not prove.
 //
-// Its one field is unexported and String is how it renders, so the value cannot
-// carry the token into a log line, an error or a `%+v` of whatever holds it:
+// Its one field is unexported and String and GoString are how it renders — the
+// two verbs a `%v`, a `%+v`, a `%s` and a `%#v` reach — so the value cannot
+// carry the token into a log line, an error or a rendering of whatever holds it:
 // what a caller can do with a Live is make a request. The address in String is
 // not a secret -- every local process can reach the port -- and the credential
 // is.
@@ -131,6 +132,13 @@ type Live struct {
 // String is what a caller may print or log: which endpoint, and never the
 // credential it answers with.
 func (l Live) String() string { return "the local endpoint at " + l.reg.Addr }
+
+// GoString is String for the verb that would otherwise print the struct: `%#v`
+// does not consult String, it prints the fields, and the field here is the
+// Registry the token came out of. A value that cannot carry the credential into
+// a log line has to hold for the verb that prints the most, not only for the one
+// String is asked for.
+func (l Live) GoString() string { return l.String() }
 
 // Lookup reads id's registry file and decides whether a live endpoint is behind
 // it: the file, the handshake, and the removal of a file that fails both of
