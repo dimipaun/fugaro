@@ -89,12 +89,14 @@ fail-closed reading, the same one an unreadable finding gets.
 
 A pull request whose findings were all deferred becomes **ready**: it leaves its
 draft state, its status section is updated and reviewers are requested. Nothing
-merges it. Fugaro has no merge call at all: a person, or the coordinator, merges
-the pull request, and a ready pull request is one fewer step for them rather than
-a change that shipped. Readiness is the same rule it is everywhere else — a
-verified passing test on the final commit, and a deciding review that either
-shipped or left findings the run was allowed to leave — with the deferred set as
-the third way to leave them ([recipes.md](recipes.md) states it for recipes).
+merges it. **No run makes a merge call**: a run publishes the pull request, and
+what merges it is a person, or the coordinator under its own gated rule — at the
+head SHA it readied and judged. A ready pull request is therefore one fewer step
+for that reader rather than a change that shipped. Readiness is the same rule it
+is everywhere else — a verified passing test on the final commit, and a deciding
+review that either shipped or left findings the run was allowed to leave — with
+the deferred set as the third way to leave them ([recipes.md](recipes.md) states
+it for recipes).
 
 A merge that has not happened is what the follow-up command waits for, and it is
 what "ready, not merged" is load-bearing for: the follow-up tasks are filed
@@ -204,5 +206,7 @@ defers nothing, and the cap keeps its older behaviour there.
   command a person (or a later orchestrator) runs; the deferred finding does not
   queue work by itself, and a parent's dependents are not unblocked by anything
   here.
-- **Fugaro does not merge.** A ready pull request is the end of a run's part.
-  Making Fugaro merge is a separate decision and is not part of this.
+- **No run merges.** A ready pull request is the end of a run's part, and what
+  merges it is a person or the coordinator, under the coordinator's own gate.
+  Giving a run a merge verb of its own is a separate decision and is not part of
+  this.

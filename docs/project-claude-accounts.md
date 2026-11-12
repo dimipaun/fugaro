@@ -479,7 +479,7 @@ version, which is the state a disabled-last-version leaves.
 **Changing which account a stage runs on** is a setting, not an edit of the local config by hand.
 The local config keys one account per stage — `stages.<stage>.claude_account`, one key for each
 stage name a run spends a model call on (`plan`, `implement`, `review_first`, `review`,
-`adversarial`, `fix`) — and `fugaro settings` reads it with the layer that decided it (per
+`adversarial`, `triage`, `fix`) — and `fugaro settings` reads it with the layer that decided it (per
 installation):
 
 ```bash

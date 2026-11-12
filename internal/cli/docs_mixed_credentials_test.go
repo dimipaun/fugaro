@@ -488,9 +488,10 @@ func TestSecurityMdStatesTheMixedRunResidual(t *testing.T) {
 // that state it are prose, so only a scan keeps a page a stage behind — the
 // shape that left a two-stage enumeration in the design note, in both spots of
 // the user doc and in this file's own header while §11's headline already said
-// three. Two things are read, in the six files that state the mix: each names
-// the judge, and none carries either of the two stale enumerations, because
-// that is the sentence a reader is sent to when the third stage is dropped.
+// three. Two things are read, in the seven files that state the mix or the
+// stage vocabulary its account keys are written on: each names the judge, and
+// none carries either of the two stale enumerations, because that is the
+// sentence a reader is sent to when the third stage is dropped.
 func TestNoPageEnumeratesTheMixShort(t *testing.T) {
 	for _, path := range []string{
 		"docs/design/mixed-credentials.md",
@@ -499,6 +500,10 @@ func TestNoPageEnumeratesTheMixShort(t *testing.T) {
 		"fugaro.yaml",
 		"docs/api-key-review/reconciliation.md",
 		"docs/model-crafts/reconciliation.md",
+		// The page that lists the stage names a `stages.<stage>.claude_account`
+		// segment may be: the same vocabulary (config.RunStages, which triage
+		// joined with D1851), so it goes stale the same way.
+		"docs/project-claude-accounts.md",
 	} {
 		doc := flattenDoc(readDoc(t, path))
 		// The scan has to move with the pages that state the mix: a file that
