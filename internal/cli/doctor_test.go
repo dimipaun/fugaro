@@ -1892,6 +1892,42 @@ func TestDoctorSaysNothingWhenTheCoderSees(t *testing.T) {
 	}
 }
 
+// TestDoctorSaysNothingWhenTheVisionSlotIsSet: a coder that cannot read an
+// image with a vision model named for the stages that do is the covered state
+// (V7's rewrite is what runs that model), so what the base branch tracks
+// decides nothing and the check stays a measurement. It is the false-positive
+// direction of the warning above: a repository full of pictures is not warned
+// about when something already answers for them.
+func TestDoctorSaysNothingWhenTheVisionSlotIsSet(t *testing.T) {
+	apiKeyRigFiles(t,
+		"agent: { auth: api-key, models: { coder: deepseek/deepseek-v4-flash, vision: deepseek/deepseek-v4-pro } }\nbudget: { mode: enforce, per_run_usd: 20 }\n",
+		map[string]string{"assets/logo.png": "a picture, as far as the check reads one"})
+
+	human, _, err := execute(t, "doctor")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, human)
+	}
+	if strings.Contains(human, "vision-coder") {
+		t.Errorf("the default view printed a measurement:\n%s", human)
+	}
+
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	c, ok := doctorCheckByID(o.Checks, "vision-coder")
+	if !ok || !c.OK || c.Severity != "info" {
+		t.Fatalf("vision-coder = %+v, want an ok measurement: the slot is set", c)
+	}
+	if !strings.Contains(c.Problem, "deepseek/deepseek-v4-pro") {
+		t.Errorf("the measurement does not name the model the slot holds: %s", c.Problem)
+	}
+}
+
 // TestDoctorFlagsStaleScope: the deployed job still mounts the repository's
 // own copy, and the copy Readiness resolves now is the project's (the
 // repository's lost its last version since the last apply). A warning: the
