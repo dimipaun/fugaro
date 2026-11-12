@@ -472,7 +472,7 @@ func (r *run) answer() string {
 	return followup.QuoteAnswer(string(data), r.redactor())
 }
 
-// reportPosted reports whether Fugaro's identity already posted a comment
+// reportPosted reports whether Fugaro's identity already posted a report
 // carrying this run's marker on pr, as when an earlier attempt of this
 // execution posted its report. A listing that fails says no, with a
 // warning: a second report is better than none. Only Self comments
@@ -490,7 +490,10 @@ func (r *run) reportPosted(ctx context.Context, pr gitprov.PR) bool {
 		return false
 	}
 	for _, c := range all {
-		if id, ok := gitprov.FugaroRun(c.Body); c.Self && ok && id == r.rec.RunID {
+		// ReportRun, not FugaroRun: this asks whether this run already posted
+		// its REPORT, and a ladder transition comment naming the run is not
+		// one (E10a's transition can name a run that has posted nothing).
+		if id, ok := gitprov.ReportRun(c.Body); c.Self && ok && id == r.rec.RunID {
 			return true
 		}
 	}

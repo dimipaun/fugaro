@@ -7,10 +7,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -73,6 +75,16 @@ func authorizeQuery(clientID, redirect string) url.Values {
 func (ts *testServer) authorizeRequest(t *testing.T, q url.Values) *httptest.ResponseRecorder {
 	t.Helper()
 	return ts.do(t, httptest.NewRequest(http.MethodGet, AuthorizePath+"?"+q.Encode(), nil))
+}
+
+// authorizeFrom is authorizeRequest from one source, which is the header the
+// platform's own front end sets (registerSource) and what the endpoint's own
+// bound is counted by.
+func (ts *testServer) authorizeFrom(t *testing.T, q url.Values, source string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, AuthorizePath+"?"+q.Encode(), nil)
+	req.Header.Set("X-Forwarded-For", source)
+	return ts.do(t, req)
 }
 
 // The two things the consent page carries and an approval has to present back.
@@ -582,6 +594,378 @@ func TestAnUnknownScopeIsRefusedNotDropped(t *testing.T) {
 		if !strings.HasPrefix(key, clientPrefix) && !strings.HasPrefix(key, requestPrefix) {
 			t.Errorf("a refused scope left %s behind: the refusals happen before the request, the code or any token is written", key)
 		}
+	}
+}
+
+// TestAnAuthorizationWithNoScopeGetsOnlyTheTaskScopes is R1, the resolution the
+// 2026-11-10 pass of the stateless orchestrator's plan states rather than asks
+// (finding F26): an authorization that names no scope is given the task pair
+// and never a state scope.
+//
+// The gap it closes is the one the state scopes open: `requestedScopes`
+// answers the vocabulary when a request carries no scope, so a vocabulary that
+// grew would hand every default sign-in `state:write` — the silent widening
+// D1227's own reason refuses one step earlier ("a tasks:write token must not
+// silently become a state editor"). A state scope is therefore held only when
+// it is asked for by name.
+//
+// The control is an installation that grants every scope this build mints, so
+// the narrowing at the exchange cannot be what keeps the state names out: with
+// both sides wide, the default is the only thing left that decides.
+func TestAnAuthorizationWithNoScopeGetsOnlyTheTaskScopes(t *testing.T) {
+	got, err := requestedScopes("")
+	if err != nil {
+		t.Fatalf("requestedScopes(\"\") = %v; want the default: an authorization that names no scope is a request this server answers", err)
+	}
+	if !slices.Equal(got, DefaultScopes) {
+		t.Errorf("requestedScopes(\"\") = %v; want %v: the default is DefaultScopes and not the whole vocabulary", got, DefaultScopes)
+	}
+	for _, s := range []string{ScopeStateRead, ScopeStateWrite} {
+		if slices.Contains(got, s) {
+			t.Errorf("an authorization naming no scope is given %q: a state scope is held only when it is asked for by name (R1)", s)
+		}
+	}
+
+	cfg := testConfig()
+	cfg.Limits = Limits{Scopes: slices.Clone(ScopeVocabulary)}
+	ts := newTestServerWith(t, cfg)
+	_, tokens := ts.runFlow(t, testClientRedirect)
+	want := strings.Join(DefaultScopes, " ")
+	if tokens.Scope != want {
+		t.Errorf("a default sign-in's token came back with scope %q; want %q", tokens.Scope, want)
+	}
+	record, err := ts.store.LookupByHash(context.Background(), TokenHash(tokens.AccessToken))
+	if err != nil {
+		t.Fatalf("reading the access token's record: %v", err)
+	}
+	if got := strings.Join(record.Token.Limits.Scopes, " "); got != want {
+		t.Errorf("the record of a default sign-in's token carries the scopes %q; want %q: the record is what the resource server enforces on every call, and a record holding a state scope would let a sign-in that asked for none edit the orchestrator's state", got, want)
+	}
+}
+
+// TestTheScopeAClientReadsFromItsRegistrationIsTheDefault is R1 on the path a
+// client actually walks, and the one the default is really read from:
+// registration is the first thing an MCP client does, and the `scope` member of
+// that answer is the set the client then asks the authorization endpoint for.
+// The registration answers DefaultScopes, so a client that does what the server
+// told it asks for the task pair and never for a state scope.
+//
+// The flow below is driven with the string the registration itself answered —
+// not with one this test wrote — because a registration answer that were the
+// whole vocabulary would be read back here and put into the authorization
+// request verbatim. The installation grants the whole vocabulary, so the
+// narrowing at the exchange cannot be what keeps the state names out: what the
+// client asked for is the only thing left that decides.
+//
+// The door an installation is wired with narrows nothing at all
+// (coordinator_serve.go leaves Config.Limits at its zero value), so the two
+// paragraphs above are the whole of the control on this path.
+func TestTheScopeAClientReadsFromItsRegistrationIsTheDefault(t *testing.T) {
+	cfg := testConfig()
+	cfg.Limits = Limits{Scopes: slices.Clone(ScopeVocabulary)}
+	ts := newTestServerWith(t, cfg)
+
+	rec := ts.postJSON(t, RegisterPath, registrationRequest{
+		RedirectURIs: []string{testClientRedirect}, ClientName: "a reader",
+	})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("POST %s answered %d (%s); want 201 with the registration", RegisterPath, rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+	var registration registrationResponse
+	decodeBody(t, rec, &registration)
+	want := strings.Join(DefaultScopes, " ")
+	if registration.Scope != want {
+		t.Fatalf("the registration answered the scope %q; want %q: a client reads this member as the set to ask for, so the whole vocabulary here is the server telling every client to ask for the scope that rewrites the orchestrator's state", registration.Scope, want)
+	}
+
+	q := authorizeQuery(registration.ClientID, testClientRedirect)
+	q.Set("scope", registration.Scope)
+	binding, number := ts.startFlow(t, q)
+	code := codeOf(t, ts.approve(t, binding, number))
+	rec, tokens := ts.exchange(t, url.Values{
+		"grant_type":    {string(GrantAuthorizationCode)},
+		"code":          {code},
+		"redirect_uri":  {testClientRedirect},
+		"client_id":     {registration.ClientID},
+		"code_verifier": {testVerifier},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the exchange answered %d (%s); want a token pair: the scope this test asked for is the one the registration answered", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+	if tokens.Scope != want {
+		t.Errorf("the token came back with scope %q; want %q", tokens.Scope, want)
+	}
+	record, err := ts.store.LookupByHash(context.Background(), TokenHash(tokens.AccessToken))
+	if err != nil {
+		t.Fatalf("reading the access token's record: %v", err)
+	}
+	if got := strings.Join(record.Token.Limits.Scopes, " "); got != want {
+		t.Errorf("the record carries the scopes %q; want %q: a client that asked for exactly what its registration answered holds no state scope, on an installation whose own grant would have allowed one", got, want)
+	}
+}
+
+// TestAScopeAskedForByNameIsTheOnlyWayAStateScopeIsHeld is the other half of
+// R1's sentence, and the half that keeps the state group reachable at all: a
+// state scope is held only when it is asked for by name, and an authorization
+// that asks for one — by a client whose operator wants the state tools, or by a
+// person typing the consent URL — is answered.
+//
+// The installation here is the shape a `fugaro update` wires: no limits of its
+// own, so nothing is narrowed and what the request named is what the token
+// holds. That is what makes this the boundary rather than a second default: the
+// two tests together say that naming nothing gives the task pair, and naming a
+// state scope is the only way one is ever held.
+func TestAScopeAskedForByNameIsTheOnlyWayAStateScopeIsHeld(t *testing.T) {
+	cfg := testConfig()
+	cfg.Limits = Limits{}
+	ts := newTestServerWith(t, cfg)
+
+	clientID, _ := ts.register(t, "an operator's client", testClientRedirect)
+	q := authorizeQuery(clientID, testClientRedirect)
+	q.Set("scope", ScopeTasksRead+" "+ScopeStateRead)
+	binding, number := ts.startFlow(t, q)
+	code := codeOf(t, ts.approve(t, binding, number))
+	rec, tokens := ts.exchange(t, url.Values{
+		"grant_type":    {string(GrantAuthorizationCode)},
+		"code":          {code},
+		"redirect_uri":  {testClientRedirect},
+		"client_id":     {clientID},
+		"code_verifier": {testVerifier},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the exchange answered %d (%s); want a token pair: an authorization that names two scopes this build mints is answerable", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+	want := ScopeTasksRead + " " + ScopeStateRead
+	if tokens.Scope != want {
+		t.Errorf("the token came back with scope %q; want %q: a scope asked for by name is held, and one that was not asked for is not added", tokens.Scope, want)
+	}
+	record, err := ts.store.LookupByHash(context.Background(), TokenHash(tokens.AccessToken))
+	if err != nil {
+		t.Fatalf("reading the access token's record: %v", err)
+	}
+	if got := strings.Join(record.Token.Limits.Scopes, " "); got != want {
+		t.Errorf("the record carries the scopes %q; want %q", got, want)
+	}
+	if slices.Contains(record.Token.Limits.Scopes, ScopeStateWrite) {
+		t.Errorf("the record carries %q, which the request did not name: a scope is minted because it was asked for", ScopeStateWrite)
+	}
+}
+
+// TestAnAuthorizationWithNoScopeNeverHoldsRoadmapWrite is R1 read against the
+// name this task adds: an authorization that names no scope is given the task
+// pair, and roadmap:write is never one of them — on an installation whose own
+// grant is the whole vocabulary, so the default is the only thing that decides.
+//
+// It is the half of D2121 that does not depend on a list. The scope is an
+// operator's, and the operator rule is what a *call* is refused by; this is the
+// earlier gate, and the one a change could reopen without touching a list at
+// all: a default that grew with the vocabulary would hand every sign-in that
+// named no scope the right to rewrite the project's roadmap, on every
+// installation, silently — which is exactly the widening R1 and D1227's own
+// reason refuse one step earlier.
+func TestAnAuthorizationWithNoScopeNeverHoldsRoadmapWrite(t *testing.T) {
+	got, err := requestedScopes("")
+	if err != nil {
+		t.Fatalf("requestedScopes(\"\") = %v; want the default: an authorization that names no scope is a request this server answers", err)
+	}
+	if !slices.Equal(got, DefaultScopes) {
+		t.Errorf("requestedScopes(\"\") = %v; want %v: the default is DefaultScopes and not the whole vocabulary", got, DefaultScopes)
+	}
+	if slices.Contains(got, ScopeRoadmapWrite) {
+		t.Errorf("an authorization naming no scope is given %q: only an operator may hold it, and a default is what everybody who signs in holds (D2121)", ScopeRoadmapWrite)
+	}
+
+	cfg := testConfig()
+	cfg.Limits = Limits{Scopes: slices.Clone(ScopeVocabulary)}
+	ts := newTestServerWith(t, cfg)
+	_, tokens := ts.runFlow(t, testClientRedirect)
+	want := strings.Join(DefaultScopes, " ")
+	if tokens.Scope != want {
+		t.Errorf("a default sign-in's token came back with scope %q; want %q", tokens.Scope, want)
+	}
+	record, err := ts.store.LookupByHash(context.Background(), TokenHash(tokens.AccessToken))
+	if err != nil {
+		t.Fatalf("reading the access token's record: %v", err)
+	}
+	if slices.Contains(record.Token.Limits.Scopes, ScopeRoadmapWrite) {
+		t.Errorf("the record of a default sign-in's token carries %q: the record is what the resource server enforces on every call, and a sign-in that asked for nothing would hold the scope that rewrites the project's roadmap", ScopeRoadmapWrite)
+	}
+}
+
+// TestALauncherCannotObtainRoadmapWrite is D2121 at the authorize endpoint: a
+// person on the installation's launcher list who asks for roadmap:write is
+// refused there, before any code is issued, and the flow ends as an
+// authorization error rather than as a code the client could exchange.
+//
+// The endpoint is where the refusal has to be, and not only the tool call: a
+// token minted for a scope its holder may never use is a token that will be
+// refused later, in the middle of a run, by a rule the operator who minted it
+// had no way to see. The person's own lists are read here — the same
+// resolveIdentity the resource server reads them with — and the answer is the
+// client's own error, with the state it sent unaltered.
+//
+// Every way of not being an operator is here, because the two that are not a
+// launcher asking are the ones a wrong reading of the branch would let through:
+// a person on neither list, and a server whose lists are not there at all. A
+// check written as "a launcher may not" reads the same on the launcher case and
+// admits both. The lists that cannot be read are the installation's fault, and
+// they are the one answer here that is not the client's error.
+//
+// The control is an operator of the same installation asking for the same
+// scope: it is answered, so the refusal above is about who is asking and not
+// about the scope being unobtainable. It is also the second of the two tests
+// the plan's mutation names: drop the operator check and this and
+// TestALauncherTokenWithRoadmapWriteIsRefused are the two that fail.
+func TestALauncherCannotObtainRoadmapWrite(t *testing.T) {
+	cfg := testConfig()
+	cfg.Limits = Limits{Scopes: slices.Clone(ScopeVocabulary)}
+
+	// Who may not hold the scope, four ways. The first is this file's own
+	// identity, a launcher of the installation — the entry the member lists
+	// admit at every other door — and the point of the other two is that the
+	// rule is "an operator" and not "not a launcher": a person on neither list
+	// and a server built with no lists at all are refused by the same branch,
+	// and a build that read a missing roster as "no role worth refusing"
+	// would hand a code holding roadmap:write to whoever asked. The last is the
+	// other side of the same distinction: lists that cannot be read are the
+	// installation's fault and not the person's, and they are answered as a
+	// page (authorize's own 500) rather than as an approval that was refused.
+	for _, tc := range []struct {
+		what       string
+		opts       []ServerOption
+		wantStatus int
+	}{
+		{
+			"a launcher of this installation",
+			[]ServerOption{WithRoster(rosterOf(testLists()))},
+			http.StatusFound,
+		},
+		{
+			"a person on neither of the installation's lists",
+			[]ServerOption{WithRoster(rosterOf(Members{Launchers: []string{"user:somebody-else@example.com"}}))},
+			http.StatusFound,
+		},
+		{
+			"a server built with no member lists at all",
+			[]ServerOption{WithRoster(nil)},
+			http.StatusFound,
+		},
+		{
+			"member lists this installation cannot read",
+			[]ServerOption{WithRoster(rosterFunc(func(context.Context) (Members, error) {
+				return Members{}, errors.New("the installation's published state is not readable")
+			}))},
+			http.StatusInternalServerError,
+		},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			ts := newTestServerOver(t, cfg, func() time.Time { return testNow }, nil, tc.opts...)
+			clientID, _ := ts.register(t, "an operator's client", testClientRedirect)
+			q := authorizeQuery(clientID, testClientRedirect)
+			q.Set("scope", ScopeTasksRead+" "+ScopeRoadmapWrite)
+			binding, number := ts.startFlow(t, q)
+			rec := ts.approve(t, binding, number)
+
+			if tc.wantStatus == http.StatusInternalServerError {
+				if rec.Code != http.StatusInternalServerError {
+					t.Fatalf("a request for %q over member lists that cannot be read answered %d (%s); want 500: the person is not the one who broke, and an approval refused for the installation's fault would send them back to try the same thing again", ScopeRoadmapWrite, rec.Code, strings.TrimSpace(rec.Body.String()))
+				}
+				if body := rec.Body.String(); !strings.Contains(body, "could not be checked against this installation's member lists") {
+					t.Errorf("the page says %q; want it to name what could not be checked, so the operator reading it can tell a roster that is missing from a scope that is withheld", body)
+				}
+			} else if got := oauthErrorOf(t, rec, redirectHost(testClientRedirect)); got != "access_denied" {
+				t.Errorf("a launcher asking for %q was answered %q; want access_denied: the scope is one only an operator may hold, and the refusal belongs at the endpoint that would mint the code (D2121)", ScopeRoadmapWrite, got)
+			}
+			for key := range ts.store.objects(t) {
+				if strings.HasPrefix(key, codePrefix) {
+					t.Errorf("%s is a code written for a scope the person who approved it may not hold: the refusal comes before the code is issued", key)
+				}
+			}
+		})
+	}
+
+	// The same request, by an operator of the same installation: answered, and
+	// the token it mints carries the scope.
+	operators := newTestServerOver(t, cfg, func() time.Time { return testNow }, nil,
+		WithRoster(rosterOf(Members{Launchers: []string{testIdentity}, Operators: []string{testIdentity}})))
+	operatorClient, _ := operators.register(t, "an operator's client", testClientRedirect)
+	opQuery := authorizeQuery(operatorClient, testClientRedirect)
+	opQuery.Set("scope", ScopeTasksRead+" "+ScopeRoadmapWrite)
+	opBinding, opNumber := operators.startFlow(t, opQuery)
+	code := codeOf(t, operators.approve(t, opBinding, opNumber))
+	rec, tokens := operators.exchange(t, url.Values{
+		"grant_type":    {string(GrantAuthorizationCode)},
+		"code":          {code},
+		"redirect_uri":  {testClientRedirect},
+		"client_id":     {operatorClient},
+		"code_verifier": {testVerifier},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("an operator's request for %q answered %d (%s); want a token pair: without this half the refusal above would pass for a scope nothing can obtain", ScopeRoadmapWrite, rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+	if want := ScopeTasksRead + " " + ScopeRoadmapWrite; tokens.Scope != want {
+		t.Errorf("the operator's token came back with scope %q; want %q", tokens.Scope, want)
+	}
+}
+
+// TestApprovalPageNamesRoadmapWrite is what the person approving reads: the
+// page lists every scope the request asks for under its own name *and* in
+// words, and the words for roadmap:write say what it reaches — which plans are
+// published, which release each task ships in, how tasks depend on one another
+// — and that only an operator of this installation is given it.
+//
+// It is the paired phone's view (D2126): the device approves a flow whose scope
+// list it renders, and a list of bare names is a list that asks a person to
+// approve a word they cannot look up. The last case is the page's fail-closed
+// rule: a scope this build mints and has no words for is refused rather than
+// rendered as its name, because a page that cannot say what it is asking for is
+// worse than no page at all.
+func TestApprovalPageNamesRoadmapWrite(t *testing.T) {
+	cfg := testConfig()
+	cfg.Limits = Limits{Scopes: slices.Clone(ScopeVocabulary)}
+	ts := newTestServerOver(t, cfg, func() time.Time { return testNow }, nil,
+		WithRoster(rosterOf(Members{Launchers: []string{testIdentity}, Operators: []string{testIdentity}})))
+
+	clientID, _ := ts.register(t, "an operator's client", testClientRedirect)
+	q := authorizeQuery(clientID, testClientRedirect)
+	q.Set("scope", ScopeRoadmapWrite)
+	rec := ts.authorizeRequest(t, q)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET %s answered %d (%s); want the consent page", AuthorizePath, rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+	page := rec.Body.String()
+	if !strings.Contains(page, ScopeRoadmapWrite) {
+		t.Errorf("the consent page does not name %q: the person approving has to be able to see which scope is being asked for, and the name is what a later reader compares against the metadata document", ScopeRoadmapWrite)
+	}
+	// The fragments carry no apostrophe, because the page is HTML and the
+	// template escapes one: what is asserted is the sentence a person reads.
+	for _, words := range []string{"change the project", "which plans are published, which release each task ships in and how tasks depend on one another", "Only an operator of this installation is given this scope"} {
+		if !strings.Contains(page, words) {
+			t.Errorf("the consent page does not carry %q: the scope is rendered in words, and the words for this one say what it reaches and who may hold it (D2121)", words)
+		}
+	}
+	// Every name the request asked for is listed once, and the page says nothing
+	// about a scope the request did not ask for: the phone renders what it is
+	// being asked to approve.
+	for _, absent := range []string{ScopeStateRead, ScopeStateWrite, ScopeTasksWrite} {
+		if strings.Contains(page, "<strong>"+absent+"</strong>") {
+			t.Errorf("the consent page names %q, which this request did not ask for: the page shows the request's own scopes", absent)
+		}
+	}
+
+	// Every name this build mints has words, which is the property the page
+	// rests on and the one a later scope has to be added with: a vocabulary that
+	// grew without a wording would be a build whose consent page refuses every
+	// flow that asks for the new name.
+	for _, scope := range ScopeVocabulary {
+		if _, ok := scopeWording[scope]; !ok {
+			t.Errorf("the vocabulary holds %q and the page has no words for it: a scope a person is asked to approve is one the page has to be able to describe", scope)
+		}
+	}
+	// And the fail-closed half: a scope with no words cannot be rendered, so the
+	// page is refused rather than shown with a bare name.
+	if words, err := consentScopes([]string{ScopeTasksRead, ScopeTasksRead + "-not-worded"}); err == nil {
+		t.Errorf("consentScopes rendered %v; want a refusal: a page that cannot say what a scope reaches must not be shown as if it had", words)
 	}
 }
 

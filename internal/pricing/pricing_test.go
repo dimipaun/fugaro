@@ -287,3 +287,69 @@ func TestConservativeTierMultiplierIsNeverStandardOrFree(t *testing.T) {
 		}
 	}
 }
+
+// TestImageRateReachesTheTableRow: the owner's image_tokens is a price and it
+// lands on the row the gateway reads the ceiling off, for a model the table
+// knows and for one it does not (D2001, F4). The rates and the ceiling are
+// separate members, so an override that prices only the tokens leaves the
+// ceiling the row already had -- re-pricing a Claude model is not asking for
+// its images to be refused, which is the reading that would take images away
+// from every installation that ever wrote a model_prices row.
+func TestImageRateReachesTheTableRow(t *testing.T) {
+	sixThousand := int64(6000)
+	got, err := testTable().With(Overrides{
+		"deepseek/deepseek-v4.1-flash": {Rates: sonnetLike(), ImageTokens: &sixThousand},
+		"claude-beta-2":                {Rates: sonnetLike(), ImageTokens: &sixThousand},
+		"claude-alpha-1":               {Rates: sonnetLike()},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"deepseek/deepseek-v4.1-flash", "claude-beta-2"} {
+		m, ok := got.Lookup(id)
+		if !ok || m.ImageTokens != 6000 {
+			t.Errorf("%s: ImageTokens = %d (row present: %v), want the owner's 6000", id, m.ImageTokens, ok)
+		}
+	}
+	// The row's own limits survive, exactly as they do for a rate override.
+	if m, _ := got.Lookup("claude-beta-2"); m.ContextTokens != 200_000 || m.MaxOutputTokens != 64_000 {
+		t.Errorf("claude-beta-2's limits did not survive the override: %+v", m)
+	}
+	// A rate-only override leaves the ceiling the row already had.
+	if m, _ := got.Lookup("claude-alpha-1"); m.ImageTokens != 6000 {
+		t.Errorf("claude-alpha-1: ImageTokens = %d, want the 6000 the row already had", m.ImageTokens)
+	}
+}
+
+// TestImageRateZeroStillRefusesAnImage: 0 is a value, not an omission, and it
+// is the ceiling the gateway refuses an image call on (forward.go's image
+// rule). A model the table does not have is added at 0 whether the owner
+// leaves the member out or writes the zero, so pricing a provider's tokens
+// never hands it an image ceiling nobody chose.
+func TestImageRateZeroStillRefusesAnImage(t *testing.T) {
+	zero := int64(0)
+	absent, err := testTable().With(Overrides{"vendor/new-model": {Rates: sonnetLike()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	written, err := testTable().With(Overrides{"vendor/new-model": {Rates: sonnetLike(), ImageTokens: &zero}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if absent.Models["vendor/new-model"].ImageTokens != written.Models["vendor/new-model"].ImageTokens {
+		t.Errorf("left out gives %d but written gives %d: the absence and the explicit zero mean the same",
+			absent.Models["vendor/new-model"].ImageTokens, written.Models["vendor/new-model"].ImageTokens)
+	}
+	for name, tb := range map[string]*Table{"left out": absent, "written as 0": written} {
+		m, ok := tb.Lookup("vendor/new-model")
+		if !ok || m.ImageTokens != 0 {
+			t.Fatalf("%s: ImageTokens = %d (row present: %v), want 0", name, m.ImageTokens, ok)
+		}
+		// What the refusal prevents: images adding nothing to the input
+		// bound, so a call carrying them is reserved as its body alone.
+		body := m.WorstCase(Request{BodyBytes: 1000, MaxTokens: 0})
+		if with := m.WorstCase(Request{BodyBytes: 1000, ImageCount: 4, MaxTokens: 0}); with != body {
+			t.Errorf("%s: four images reserved %d µ$ over the body alone", name, with-body)
+		}
+	}
+}

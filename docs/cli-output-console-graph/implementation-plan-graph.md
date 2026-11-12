@@ -1,10 +1,10 @@
 # Implementation plan: the console dependency graph (part B)
 
-**Status as of 2026-11-10: in progress, 19/30 merged; see [docs/status.md](../status.md) for the current table.** Each task needs the owner's explicit go, by name; answering a decision approved none. This plan builds spec section 2 ([spec.md](spec.md)) as amended by [reconciliation.md](reconciliation.md); the reconciliation wins. It shares **no task** with [implementation-plan-output.md](implementation-plan-output.md) (D1350); the few **files** both plans touch are sequenced by the cross-plan table in [README.md](README.md). **The orchestrator slice (B4) and the endpoint slice (B5) are written but deferred**: B4 waits on `docs/stateless-orchestrator/` (whose tasks O0, O1, O2, O3, O4 and O6 are written on `main`, all merged, O0, O1, O3 and O4 on 2026-11-07 and O2 and O6 on 2026-11-08, and nothing else is), and B5 is built only if a measurement asks for it and the owner says so.
+**Status as of 2026-11-10: in progress, 24/32 merged; see [docs/status.md](../status.md) for the current table.** Each task needs the owner's explicit go, by name; answering a decision approved none, and the one exception is stated below (B5). This plan builds spec section 2 ([spec.md](spec.md)) as amended by [reconciliation.md](reconciliation.md); the reconciliation wins. It shares **no task** with [implementation-plan-output.md](implementation-plan-output.md) (D1350); the few **files** both plans touch are sequenced by the cross-plan table in [README.md](README.md). **The orchestrator slice (B4) and the endpoint slice (B5) are both written.** B4's dependency is on `main`: `docs/stateless-orchestrator/` has O0-O8, O10, O17 and O18 merged (O9 and O12 are open drafts), and **CG4 and CG6 merged on 2026-11-10** (#2207 and #2205), so of B4 only CG5 is left. **B5 is approved: the owner asked for CG13 by name on 2026-11-11**, which waives D1358's "only if a measurement shows" condition, and the endpoint is split into **CG13a, CG13b and CG13c**. The folder's task count is 32 because of that split — 15 in part A, **17 here** — and the merged count does not move with it: CG13 was one of the six tasks left, and it is three of the eight now.
 
 **The owner's answers that shaped it (2026-11-06, all the recommendation):** D1356 keep the plan scope and add `fugaro graph --json` with a coordinator scope that needs no checkout, source-qualified task keys, dedupe only within one namespace, orchestrator scopes when built; D1357 the CLI reads the `orchestrator/` RTDB subtree directly plus the coordinator view; D1358 local orchestrators are found through the daemon's RTDB node and its local cache file, no PID registry and no HTTP endpoint in the first slice; D1359 the trust rules apply if the endpoint is built later; D1360 `graph --watch --json` prints whole snapshots with `stream_id`, a rising `seq` within one child, `source_state` and a periodic keep-alive; D1361 `fugaro graph` and `fugaro orchestrator ls`; D1362 `fugaro graph` lives in `ee/` through `RegisterCommand`, the daemon and `orchestrator ls` stay core.
 
-**Rulings of 2026-11-06 (reconciliation section 3a, all the recommendation):** T1 the orchestrator scopes (CG4-CG6) wait for the stateless plan's reader, so the first graph slice is the coordinator scope only; T2 the CLI reads `orchestrator/` with the person's credential and CG6 is a pin test, no new grant (viewer-role coverage cannot be checked by a rules test: it is the owner-run **Check 314**, only when B4 is scheduled; UNVERIFIED until then); T3 a CLI without the `ee` tag keeps the plan scope and gets a core stub (CG3s). **Assumption still open (not ruled):** T4(a) the reporter decides colour itself (part A); T5(a) a local scope streams the daemon's node and falls back to polling its cache file. **Reading of D1356:** the plan scope stays what it is today, the console's existing `plan.status` read; `fugaro graph` carries the coordinator scope now and the orchestrator and local scopes later. The coordinator view has **no dependency edges** (F17), so the coordinator scope draws nodes grouped by release; edges come with the orchestrator scopes' `depends_on`.
+**Rulings of 2026-11-06 (reconciliation section 3a, all the recommendation):** T1 the orchestrator scopes (CG4-CG6) wait for the stateless plan's reader, so the first graph slice is the coordinator scope only; T2 the CLI reads `orchestrator/` with the person's credential and CG6 is a pin test, no new grant (viewer-role coverage cannot be checked by a rules test: it is the owner-run **Check 314**, and B4 is scheduled — CG4 and CG6 merged on 2026-11-10 — so the check is the owner's to run; UNVERIFIED until then); T3 a CLI without the `ee` tag keeps the plan scope and gets a core stub (CG3s). **Assumption still open (not ruled):** T4(a) the reporter decides colour itself (part A). **T5 is ruled (2026-11-06, the recommendation) and amended on 2026-11-11:** a local scope's read and its watch stream the daemon's RTDB node and fall back to polling its cache file, except that **where a live endpoint exists they prefer it**, with the node and the cache as the fallback for a daemon that predates it or is not running (CG13c; reconciliation section 3a). **Reading of D1356:** the plan scope stays what it is today, the console's existing `plan.status` read; `fugaro graph` carries the coordinator scope now and the orchestrator and local scopes later. The coordinator view has **no dependency edges** (F17), so the coordinator scope draws nodes grouped by release; edges come with the orchestrator scopes' `depends_on`.
 
 ## Conventions every task follows
 
@@ -24,15 +24,15 @@
 | H8 | The console never talks to RTDB and holds no token; it spawns the CLI through an exact argv row | CG9a, CG9b |
 | H9 | The new scopes need no checkout; the plan scope keeps its checkout requirement and its card | CG10 |
 | H10 | The graph draws no write, no URL it built itself, and no state as a colour alone | CG10 |
-| H11 | If the endpoint is ever built it is read-only, loopback only, token on every request, Host check, no CORS, 0600 registry with a start-time nonce, handshake plus lock-file liveness | CG13 (deferred) |
+| H11 | The endpoint (CG13, approved 2026-11-11) is read-only, loopback only, token on every request, Host check, no CORS, 0600 registry with a start-time nonce, handshake plus lock-file liveness | CG13a, CG13b |
 
 ## Slices
 
 - **B1 One-shot graph (ships useful alone):** CG3s core stub, CG1 document, CG2 coordinator source, CG3 `fugaro graph --json`, CG8 contract.
 - **B2 Console, one-shot:** CG9a, CG10.
 - **B3 Live:** CG7 snapshot stream, CG9b, CG11.
-- **B4 Orchestrator scopes (deferred: external dependency):** CG4, CG5, CG6.
-- **B5 Local endpoint (deferred and not approved):** CG13.
+- **B4 Orchestrator scopes (schedulable: its dependency is on `main`):** CG5 (CG4 and CG6 merged on 2026-11-10).
+- **B5 Local endpoint (approved 2026-11-11):** CG13a, CG13b, CG13c.
 - **Owner-run:** CG12.
 
 ## Tasks
@@ -148,58 +148,100 @@
 - **Red step:** the screen never subscribes.
 - **Commit:** `console: the Graph is live`
 
-### CG4. `fugaro orchestrator ls --json` (deferred, B4)
+### CG4. `fugaro orchestrator ls --json` (B4; merged 2026-11-10, #2207)
 
-**Decisions:** D1361, D1358. **Depends on:** **the stateless-orchestrator plan's state schema and reader (O0, merged on `main` on 2026-11-07, and O2 on 2026-11-08, both in `docs/stateless-orchestrator/implementation-plan.md`) and its `fugaro orchestrator` group (O-tasks that register it)**. **Reviewer:** standard. **Not schedulable until the `fugaro orchestrator` group lands.**
+**Decisions:** D1361, D1358. **Depends on:** **the stateless-orchestrator plan's state schema and reader (O0, merged on `main` on 2026-11-07, and O2 on 2026-11-08, both in `docs/stateless-orchestrator/implementation-plan.md`) and its `fugaro orchestrator` group (O5's `internal/cli/orchestrator_cmd.go` and O8's `run`, both merged)**. **Reviewer:** standard. **Merged on `main` on 2026-11-10, #2207**: `internal/cli/orchestrator_ls.go` and `internal/orchestrator/list.go` are it, so B4's remaining task is CG5 (CG6 merged the same day, its own section below).
 
 - **Files (max 4):** `internal/cli/orchestrator_ls.go` (new), `internal/cli/orchestrator_ls_test.go` (new), the cache reader in `internal/orchestrator/` (that plan's package), `console/docs/json-contract.md` **not here** (a later CG8 amendment).
 - **Interfaces:** lists the orchestrators whose RTDB node exists (central and local, with `kind`, `project`, `lease_holder`, `updated_at`) and the local daemon's cache file(s) under `$XDG_CACHE_HOME/fugaro/orchestrator/<id>.json` (found through `localcfg.UserDir(..., DirCache)`), with the cache's freshness stamp; no PID registry, no port (D1358).
 - **Tests:** `TestOrchestratorLsListsNodesAndCaches`, `TestOrchestratorLsStaleCacheIsMarked`, `TestOrchestratorLsJSONVersioned`.
-- **Command (when scheduled):** `go test ./internal/cli/ -run 'TestOrchestratorLs' -count=1`
+- **Command:** `go test ./internal/cli/ -run 'TestOrchestratorLs' -count=1`
 - **Red step:** `fugaro orchestrator ls` is an unknown subcommand of the group.
 - **Commit:** `cli: fugaro orchestrator ls`
 
-### CG5. The orchestrator and local scopes (deferred, B4)
+### CG5. The orchestrator and local scopes (B4)
 
 **Depends on:** CG4, CG3. **Reviewer:** `opus + mandatory independent review` (a reader of a node that holds task titles and notes). 
 
 - **Files (max 4):** `ee/graph/source_orchestrator.go` (new), `ee/graph/source_orchestrator_test.go` (new), `ee/graph/cli/graph.go` (**after CG7 and CG3**), `ee/graph/stream.go` (**after CG7**; both are later-level edits).
-- **Interfaces:** `orchestrator:<id>` reads that node (tasks, `depends_on` as edges, status as state); `local:<id>` reads the cache file and, when watching, the node, polling the cache when the node is unreachable (T5(a)); `all` becomes the union with source-qualified keys.
+- **Interfaces:** `orchestrator:<id>` reads that node (tasks, `depends_on` as edges, status as state); `local:<id>` reads the cache file and, when watching, the node, polling the cache when the node is unreachable (T5(a); **amended 2026-11-11: CG13c puts a live endpoint ahead of both**, so this order is what a machine whose daemon predates the endpoint, or is not running it, reads); `all` becomes the union with source-qualified keys.
 - **Tests:** `TestOrchestratorTasksAndEdges`, `TestLocalScopeFallsBackToTheCache`, `TestUnknownOrchestratorIsRefused`, `TestDependsOnEdgesStayInsideOneOrchestrator`.
-- **Command (when scheduled):** `go test ./ee/graph/... -run 'Orchestrator|LocalScope' -count=1`
+- **Command:** `go test ./ee/graph/... -run 'Orchestrator|LocalScope' -count=1`
 - **Red step:** `graph --source orchestrator:<id>` is refused with "no orchestrator is installed in this build" (CG3's honest refusal).
 - **Commit:** `ee/graph: the orchestrator and local scopes`
 
-### CG6. A rules test: `orchestrator/` is unreadable and unwritable by every run and token identity (deferred, B4, SEC)
+### CG6. A rules test: `orchestrator/` is unreadable and unwritable by every run and token identity (B4, SEC; merged 2026-11-10, #2205)
 
-**Findings:** T2. **Depends on:** the stateless plan's rules task for `orchestrator/` (**O2**, merged on `main` on 2026-11-08, #1945, `5053cbce`). **Reviewer: `opus + mandatory independent review`.**
+**Findings:** T2. **Depends on:** the stateless plan's rules task for `orchestrator/` (**O2**, merged on `main` on 2026-11-08, #1945, `5053cbce`). **Reviewer: `opus + mandatory independent review`.** **Merged on `main` on 2026-11-10, #2205**: `internal/budget/rules/orchestrator_test.go` and the cases this task adds to `internal/budget/rules/emulator_orchestrator_test.go` are it, and the pin holds on the rules document as it ships.
 
 - **Files (max 2):** `internal/budget/rules/orchestrator_test.go` (new, modelled on `coordinator_test.go`), `internal/budget/rules/emulator_orchestrator_test.go` (**created by the stateless plan's O2**; this task adds cases to it, tag `firebase`).
 - **Tests:** `TestOrchestratorNodeIsDeniedToRunAndTokenIdentities`, `TestNoClientWriteUnderOrchestrator`.
-- **Command (when scheduled):** `go test ./internal/budget/rules/ -run 'Orchestrator' -count=1` (and the `firebase`-tagged emulator run, owner or CI as that plan says).
+- **Command:** `go test ./internal/budget/rules/ -run 'Orchestrator' -count=1` (and the `firebase`-tagged emulator run, owner or CI as that plan says).
 - **Red step:** the new cases fail on a rules document that grants a run identity a read of `orchestrator/`.
 - **Mutation:** add a read for a run identity: the first fails. **This is a pin, not a grant (T2(a)).** It cannot check IAM: whether `roles/firebasedatabase.viewer` covers `orchestrator/` is **UNVERIFIED** and is the owner-run **Check 314** below.
 - **Commit:** `rules: pin that no run or token identity touches orchestrator/`
 
-### CG13. The local endpoint (deferred, NOT approved, B5)
+### CG13. The local endpoint (B5; approved 2026-11-11, SEC)
 
-Built **only if** a measurement shows the cache's per-tick freshness is not enough **and** the owner asks. If it is, these rules (D1359) are the task's acceptance, each a named test: `TestEndpointBindsLoopbackPortZero`, `TestTokenOnEveryRequestIncludingTheStream`, `TestConstantTimeTokenCompare`, `TestRefusesAHostOtherThanTheLiteralAddress`, `TestNoCorsHeaders`, `TestRegistryFileModeAndNonce`, `TestLivenessIsHandshakePlusLockNotPID`, `TestStaleFileRemovedOnlyByTheReaderThatFoundItDead`, `TestEndpointIsReadOnly`, `TestTokenInTheQueryStringIsRefused` (the token travels in a header only; a URL with a token is refused and never logged). Files, levels and the reviewer (`opus + mandatory independent review`) are written when it is asked for; it depends on the daemon (stateless plan) and on CG5; macOS and Linux only (the daemon is, D1232). **OWNER-RUN Check 313** (a crash, a reboot and a PID reuse on a real machine).
+**Decisions:** D1358 (its alternative), D1359 (the trust rules). **Findings:** F13, F14, F23, F28. **Depends on:** **CG5** (the local scope it serves, so the endpoint improves a read that works without it) and **the daemon of `docs/stateless-orchestrator/`, which is on `main`**: `internal/orchestrator/` — `state.go` and `patch.go` (O0), `store.go`, `lease.go` and `audit.go` (O3), `tick.go` and `runview.go` (O7), `cache.go` (O8) — and the daemon command itself, `internal/cli/orchestrator_run.go` and `internal/cli/orchestrator_launcher.go` (O8), plus `internal/orchestrator/list.go` and `internal/cli/orchestrator_ls.go` (CG4, merged on 2026-11-10), and `internal/localcfg/platformdirs.go` for the directory the registry sits in. `internal/orchestrator/service/` (O9, an open draft) is **not** needed: the endpoint is started by the daemon process, never by the unit. macOS and Linux only (the daemon is, D1232). **Reviewer: `opus + mandatory independent review`** (a listening socket, a token on disk and a liveness rule).
+
+**The owner asked for it by name on 2026-11-11, so the endpoint is built.** D1358 left it to "only if a measurement shows the cache's per-tick freshness is not enough", and that measurement is **waived rather than met**: the owner's request is the reason, and "NOT approved" no longer describes this slice. What is approved is the **endpoint**; the spec's PID-and-port registry is still refused (D1358), and the daemon's node and its cache file stay the registry for every read but freshness (CG4's `orchestrator ls` reads them, not a port).
+
+**D1359's ten rules are the acceptance, each a named test, and each belongs to exactly one slice:** CG13a's seven — `TestEndpointBindsLoopbackPortZero`, `TestTokenOnEveryRequestIncludingTheStream`, `TestConstantTimeTokenCompare`, `TestRefusesAHostOtherThanTheLiteralAddress`, `TestNoCorsHeaders`, `TestEndpointIsReadOnly`, `TestTokenInTheQueryStringIsRefused` — and CG13b's three — `TestRegistryFileModeAndNonce`, `TestLivenessIsHandshakePlusLockNotPID`, `TestStaleFileRemovedOnlyByTheReaderThatFoundItDead`. CG13c rewires the local scope and carries its own tests.
+
+**OWNER-RUN Check 313** (a crash, a reboot and a PID reuse on a real machine) is named in CG12's table below, and no agent runs any step of it.
+
+#### CG13a. The endpoint server and its token rules (SEC)
+
+**Decisions:** D1359. **Findings:** F23. **Depends on:** CG5 (B5 is built behind the local scope) and the daemon's merged packages above. **Reviewer: `opus + mandatory independent review`** (a listening socket and a token).
+
+- **Files (max 4):** `internal/orchestrator/endpoint/server.go` (new), `internal/orchestrator/endpoint/server_test.go` (new), `internal/orchestrator/endpoint/token.go` (new: the mint and the compare), `internal/orchestrator/endpoint/token_test.go` (new). The package is new and this slice is **inert**: nothing outside its tests starts it (CG13b does, at the daemon's start-up).
+- **Interfaces produced:** `endpoint.Start(ctx, Options{ID string; Snapshot func() (orchestrator.State, time.Time, bool); Log func(error)}) (*Server, error)`, `Server.Addr()`, `Server.Token()`, `Server.Close(ctx)`. One listener on **`127.0.0.1:0`** (`net.Listen("tcp", "127.0.0.1:0")`: the kernel's port is the only one, never a fixed port, and there is no other address to bind), one 32-byte `crypto/rand` token per start (`internal/gateway/gateway.go`'s pattern). Two routes and no third: `GET /state` (one JSON document — the daemon's last tick's state, marshalled with `orchestrator.State`'s own JSON tags, with the server time of that tick beside it, so the local scope decodes the endpoint with the same code as the node and the document carries its own `schema_version`) and `GET /state/stream` (SSE: a whole document per tick whose state moved; the `stream_id`, `seq` and keep-alive vocabulary stays the CLI's own stream, D1360). The token travels in **one header** (`Authorization: Bearer <token>`) on **every** request including the stream; a `?token=` is refused, and that refusal prints neither the query nor the path — everything a refusal made before the token is read writes to the log is its fixed reason, because the request line and the URL of a request nobody has authenticated are strings the caller writes at whatever length it likes — so a token cannot reach a log; the compare is `subtle.ConstantTimeCompare` over the raw bytes; any `Host` other than the literal `127.0.0.1:<port>` — `localhost`, another name, an IPv6 spelling, none at all — is refused **before** the token is read; **no CORS header of any kind** on an answer or a refusal, and `OPTIONS` is a refusal; every method but `GET` is `405`; a caller before the first tick gets `503` and a reason, which is a state and not an exit (H3). The server holds no `Store`, no `Node`, no launcher and no filesystem, so read-only is a property of what it can reach rather than a rule it remembers (F23's "what a hostile local process of the same user can do").
+- **Tests:** the seven above, plus `TestNoSnapshotBeforeTheFirstTickIsAState` and `TestTheRefusalNeverCarriesTheToken`. The package holds more than that list — the token's two, the stream's, and the cases the review rounds added (`TestTheRefusalCarriesNoIdentityHeaders`, `TestAPreTokenRefusalLogsNoneOfTheCallersText`, `TestGeneralOptionsIsRefusedLikeAnyOtherRequest`, `TestCloseEndsAStreamAndReturns`, `TestStartRejectsBadOptions`) — so the command below runs the package rather than a filter over it.
+- **Command:** `go test ./internal/orchestrator/endpoint/ -count=1 -race`
+- **Red step:** the package does not exist, so the seven fail to build.
+- **Mutations:** read the token from the query as well: `TestTokenInTheQueryStringIsRefused` fails; answer a `Host: localhost:<port>`: `TestRefusesAHostOtherThanTheLiteralAddress` fails; give the server one writer route: `TestEndpointIsReadOnly` fails; check the token on `/state` but not on `/state/stream`: `TestTokenOnEveryRequestIncludingTheStream` fails.
+- **Commit:** `feat(orchestrator): the local endpoint, loopback only and a token on every request (CG13a)`
+
+#### CG13b. The registry file, its liveness, and the daemon that serves (SEC)
+
+**Decisions:** D1359. **Findings:** F5, F23, F28. **Depends on:** CG13a. **Reviewer: `opus + mandatory independent review`** (a token on disk and a liveness rule a PID cannot satisfy).
+
+- **Files (max 6):** `internal/orchestrator/endpoint/registry.go` (new: the file's shape, its write and its read), `internal/orchestrator/endpoint/registry_test.go` (new), `internal/orchestrator/endpoint/lock_flock.go` and `internal/orchestrator/endpoint/lock_other.go` (new: the exclusively held lock, with `internal/infra/workdirlock_flock.go`'s build tags — `unix && (!solaris || illumos) && !aix` — and its stated no-op sibling for the same reason), `internal/cli/orchestrator_run.go` (edit: start the endpoint and write the registry once, at start-up, and remove the file on the clean shutdown the daemon already performs), `internal/cli/orchestrator_run_test.go` (edit).
+- **Interfaces:** one file per orchestrator, `<UserDir state>/fugaro/run/<id>.json` (`localcfg.UserDir(getenv, goos, localcfg.DirState)`, the way `orchestrator.CacheDir` places the cache; F23: a runtime directory is not a state directory, and macOS has none) — `<state>/fugaro/run` is created mode **0700** and `Lstat`ed — not a symlink, owned by the effective uid — and the file is `O_CREATE|O_EXCL|O_NOFOLLOW` at mode **0600**, written temp-file-then-rename like the cache, F6a's rule — carrying the id, the pid, the literal `127.0.0.1:<port>`, the token, the **start-time nonce** and the start time. The nonce is 32 random bytes minted beside the token and never reused: it is what makes the file's identity a value rather than a number. Liveness is a **handshake plus an exclusively held lock file, never a PID**: the daemon holds `<id>.lock`'s `flock` for its life, so the kernel drops it on death (a SIGKILL and a power cut alike), and a reader proves a live endpoint by connecting to the literal address, sending the token from the file and reading back the id and the nonce it wrote — a reused pid, or a port another process took over, fails the handshake and the lock both. A file that fails both is removed **only by the reader that read it and found it dead**: nothing sweeps the directory, the daemon never removes another process's file, and the daemon's own clean exit removes its own. A registry that cannot be written is logged and never fails the start-up or a tick (F28: the daemon creates and migrates its own local files, so `fugaro update` still ships no operator step, and a machine whose home is read-only serves no endpoint and reads the node as before).
+- **Tests:** `TestRegistryFileModeAndNonce`, `TestLivenessIsHandshakePlusLockNotPID`, `TestStaleFileRemovedOnlyByTheReaderThatFoundItDead` (the ten's three), plus `TestRunServesAndRemovesItsRegistryOnTheWayOut` and `TestARegistryThatCannotBeWrittenNeverFailsAStart`.
+- **Command:** `go test ./internal/orchestrator/endpoint/ -run 'Registry|Liveness|Stale' -count=1 && go test ./internal/cli/ -run 'TestRun|TestDaemon' -count=1`
+- **Red step:** the daemon starts no listener and writes no file: `TestRegistryFileModeAndNonce` and `TestRunServesAndRemovesItsRegistryOnTheWayOut` fail.
+- **Mutations:** decide liveness from the pid alone: `TestLivenessIsHandshakePlusLockNotPID` fails (a live process that is not the daemon reads as an orchestrator); write the file 0644, or skip the nonce: `TestRegistryFileModeAndNonce` fails; remove a dead file from a sweep of the directory: `TestStaleFileRemovedOnlyByTheReaderThatFoundItDead` fails.
+- **Commit:** `feat(orchestrator): the endpoint's registry file, its nonce and its handshake liveness (CG13b)`
+
+#### CG13c. `fugaro graph`'s local scope reads the endpoint
+
+**Decisions:** D1358, D1359. **Findings:** F14, F21, F23. **Depends on:** CG13a, CG13b, and **CG5** — **`ee/graph/source_orchestrator.go` and `ee/graph/stream.go` are CG5's files, and this task is a later level on both** (one writer per level). **Reviewer: `opus + mandatory independent review`** (it holds the token and decides which document the local scope draws).
+
+- **Files (max 5):** `internal/orchestrator/endpoint/client.go` (new: the reader — lookup, handshake, the read and the stream), `internal/orchestrator/endpoint/client_test.go` (new), `ee/graph/source_orchestrator.go` (**CG5's file**: `local:<id>` tries a live endpoint first), `ee/graph/source_orchestrator_test.go` (**CG5's file**), `ee/graph/stream.go` (**CG5's and CG7's file**: the local scope's live source).
+- **Interfaces:** `endpoint.Client{Getenv func(string) string; GOOS string; HTTP *http.Client}` with `Lookup(ctx, id) (Live, bool, error)` — read the registry file, refuse a file that is not 0600 in a directory that is not 0700 rather than read it, take the lock, handshake, and remove the file only here, and only when both checks failed — `Get(ctx, live) (orchestrator.State, time.Time, error)` and `Stream(ctx, live, func(orchestrator.State, time.Time) error) error`, all three sending the token in the header and never in a URL. The token is never printed, never in an error and never in a document (`safetext` fences what the endpoint sends, H2). `local:<id>` prefers a **live** endpoint, then the node, then the cache — T5(a), amended 2026-11-11 — so a machine whose daemon predates the endpoint, or is not running, reads exactly what CG5 built. The scope id is H1's pattern (CG1's `graph.ParseScope`) while the daemon's id is the project's name, which `internal/orchestrator/validate.go`'s `agentRE` (`^[a-z0-9][a-z0-9_-]{0,63}$`) governs; where the two differ the scope is refused before any read, and the limit is **named rather than widened**: a project whose name carries `_`, or is longer than 40 characters, has no local scope. **The endpoint adds no shape**: it serves the node's own document, so one decoder serves the node, the endpoint and the cache, and a version the release does not read is refused as it is there.
+- **Tests:** `TestLocalScopeUsesTheLiveEndpoint`, `TestLocalScopeFallsBackToTheNodeAndThenTheCache`, `TestLocalScopeRefusesAnIdOutsideThePatternBeforeAnyRead` (H1, with an endpoint live beside it), `TestTheTokenIsNeverPrintedOrLogged`, `TestTheEndpointStreamFeedsTheWatch`.
+- **Command:** `go test ./internal/orchestrator/endpoint/ -run Client -count=1 && go test ./ee/graph/... -run 'LocalScope|LocalEndpoint' -count=1`
+- **Red step:** with a daemon serving beside it, `local:<id>` still polls the cache: `TestLocalScopeUsesTheLiveEndpoint` fails.
+- **Mutations:** send the token in the query string: `TestTheTokenIsNeverPrintedOrLogged` fails; treat a file whose handshake failed as live: `TestLocalScopeUsesTheLiveEndpoint` fails (the scope draws a process that is not the daemon).
+- **Commit:** `ee/graph: the local scope reads the endpoint the daemon serves (CG13c)`
 
 ### CG12. Owner-run checks (no agent performs any step)
 
 | Check | Measures | Who | What the owner types |
 | --- | --- | --- | --- |
 | **312** | The console's Graph against a real project: the scope dropdown, no checkout, live updates, a stale source, and a hard-killed console leaving no orphan `fugaro graph` child | the owner | open the signed console on a project with the coordinator on; `kill -9` the console; `pgrep -fl 'fugaro graph'` a minute later |
-| **313** | Only if CG13 is built: the endpoint on a real machine | the owner | named when the task is |
-| **314** | Only when B4 is scheduled: a person credential with `roles/firebasedatabase.viewer` reads an `orchestrator/` node (T2: UNVERIFIED today) | the owner | named when the orchestrator slice is scheduled |
+| **313** | CG13's endpoint on a real machine: the registry file's mode and nonce, liveness by handshake plus lock rather than a pid, and a crash, a reboot and a pid reuse | the owner | start a daemon (`fugaro orchestrator run`) and note its project's id; `ls -l "${XDG_STATE_HOME:-$HOME/.local/state}/fugaro/run"` (the state directory `localcfg.UserDir` resolves: `$XDG_STATE_HOME` where it is set, `~/.local/state` where it is not, which is the default on macOS — the bare variable would expand to `/fugaro/run`); read `fugaro graph --source local:<id>` once; `kill -9 <pid>`; read the scope again (it must read the node, remove the dead file and never touch a live process that has taken the pid); `ps -o pid,command` until another process holds that pid and read the scope once more; reboot, start a daemon again and repeat |
+| **314** | B4 is scheduled (CG4 and CG6 merged on 2026-11-10): a person credential with `roles/firebasedatabase.viewer` reads an `orchestrator/` node (T2: UNVERIFIED today) | the owner | `fugaro orchestrator ls` against the project's database (CG4's read of that node) |
 
 ## Release actions
 
-None of CG1-CG11 needs a post-deploy step: `fugaro graph` reads what the existing `coordinator status --from-store` reads with the same IAM role, and the console reads it through the CLI. **The release's `### For operators` is "run `fugaro update`"** and nothing more (the `CLAUDE.md` HARD RULE). The orchestrator slice (CG4-CG6) adds the `orchestrator/` rules pin; any rules change the stateless plan ships is that plan's release action, not this one's. The console releases on its own tag, `console-vX.Y.Z`, with its notes in `docs/releases/console/`.
+None of CG1-CG11 needs a post-deploy step: `fugaro graph` reads what the existing `coordinator status --from-store` reads with the same IAM role, and the console reads it through the CLI. **The release's `### For operators` is "run `fugaro update`"** and nothing more (the `CLAUDE.md` HARD RULE). The orchestrator slice (CG4-CG6) adds the `orchestrator/` rules pin; any rules change the stateless plan ships is that plan's release action, not this one's. **The endpoint (CG13) adds no step either**: the daemon starts it, writes its registry under the state directory and removes it on the way out, so `fugaro update` neither installs nor migrates anything for it (F28), and a machine that never runs a daemon never has a file there. The console releases on its own tag, `console-vX.Y.Z`, with its notes in `docs/releases/console/`.
 
 ## Parallel execution
 
-**Edges:** CG3s depends on nothing; CG2, CG8 depend on CG1; CG3 on CG1, CG2; CG7 on CG3; CG9a on CG3, CG8; CG10 on CG9a (not on CG9b: it never edits `entry.ts`); CG9b on CG7, CG9a; CG11 on CG9b, CG10; CG4 on the stateless plan; CG5 on CG4, CG3, CG7; CG6 on the stateless plan.
+**Edges:** CG3s depends on nothing; CG2, CG8 depend on CG1; CG3 on CG1, CG2; CG7 on CG3; CG9a on CG3, CG8; CG10 on CG9a (not on CG9b: it never edits `entry.ts`); CG9b on CG7, CG9a; CG11 on CG9b, CG10; CG4 on the stateless plan (merged 2026-11-10); CG5 on CG4, CG3, CG7; CG6 on the stateless plan (merged 2026-11-10); CG13a on CG5 and the daemon; CG13b on CG13a; CG13c on CG13a, CG13b, CG5.
 
 | Level | Tasks (concurrent) |
 | --- | --- |
@@ -209,17 +251,19 @@ None of CG1-CG11 needs a post-deploy step: `fugaro graph` reads what the existin
 | L3 | CG7, CG9a |
 | L4 | CG10, CG9b |
 | L5 | CG11 |
-| deferred | CG4, CG6 (after the stateless plan), then CG5; CG13 only if asked |
+| B4 (schedulable: its dependency is on `main`; CG4 and CG6 merged 2026-11-10) | CG5 |
+| B5 (approved 2026-11-11) | CG13a, then CG13b, then CG13c (each after CG5; CG13c last) |
 
-**Critical path** (CG3s is off it): CG1 → CG2 → CG3 → CG7 → CG9b → CG11 (then CG12, owner-run). Sequential by nature: the document before its sources and the command; the command before the stream and the console read; `spawn.ts` and `ipc.ts` take one writer per level (CG9a, then CG9b); `graph.ts` one (CG10, then CG11).
+**Critical path** (CG3s is off it): CG1 → CG2 → CG3 → CG7 → CG9b → CG11 (then CG12, owner-run). Sequential by nature: the document before its sources and the command; the command before the stream and the console read; `spawn.ts` and `ipc.ts` take one writer per level (CG9a, then CG9b); `graph.ts` one (CG10, then CG11). **B5 hangs off the same path once CG5 has landed:** CG13a → CG13b → CG13c, then Check 313 (owner-run) — the slice is built on top of the local scope, not in front of it.
 
 **Shared files: no level holds two writers of one file.**
 
 | File | Writers, by level |
 | --- | --- |
 | `ee/graph/document.go` | CG1 (L0) |
-| `ee/graph/cli/graph.go` | CG3 (L2), CG7 (L3), CG5 (deferred) |
-| `ee/graph/stream.go` | CG7 (L3), CG5 (deferred, later) |
+| `ee/graph/cli/graph.go` | CG3 (L2), CG7 (L3), CG5 (B4) |
+| `ee/graph/stream.go` | CG7 (L3), CG5 (B4, later), CG13c (B5, after CG5) |
+| `ee/graph/source_orchestrator.go`, `ee/graph/source_orchestrator_test.go` | CG5 (B4), CG13c (B5, after CG5) |
 | `console/src/main/spawn.ts`, `ipc.ts`, `console/src/preload/index.ts`, `console/src/renderer/entry.ts`, `console/test/unit/ipc.test.ts` | CG9a (L3), CG9b (L4); CG10 and CG11 never edit them |
 | `docs/design/desktop-console.md` | CG9a (L3), CG9b (L4) |
 | `console/test/unit/spawn.test.ts` | CG9a (L3), CG9b (L4) |
@@ -229,9 +273,13 @@ None of CG1-CG11 needs a post-deploy step: `fugaro graph` reads what the existin
 | `ee/register/graph.go`, `ee/clidoc` expectations | CG3 (L2) only |
 | `website/content/cli-reference.md`, `docs/design/v1.md` | **cross-plan**: see the README (CL4, CG3s, CG3, then CL11) |
 | `console/src/source/cli.ts` | CG9a (L3), CG9b (L4) |
+| `internal/cli/orchestrator_run.go`, `internal/cli/orchestrator_run_test.go` | CG13b (B5) only |
+| `internal/orchestrator/endpoint/server.go`, `token.go` | CG13a (B5) only |
+| `internal/orchestrator/endpoint/registry.go`, `lock_flock.go`, `lock_other.go` | CG13b (B5) only |
+| `internal/orchestrator/endpoint/client.go` | CG13c (B5) only |
 
-The tasks in one level that edit `docs/design/desktop-console.md` or a Go docs test: none (CG7 and CG9a at L3 touch disjoint files; CG9a is the only writer of the table at L3).
+The tasks in one level that edit `docs/design/desktop-console.md` or a Go docs test: none (CG7 and CG9a at L3 touch disjoint files; CG9a is the only writer of the table at L3). **CG13a, CG13b and CG13c are three levels of one new package and write disjoint files**: the server and the token, the registry and the lock, the client.
 
 ## What is not in this plan
 
-A write from the graph (drag, retry, halt); a local HTTP endpoint (CG13 is conditional); deleting the plan scope; edges between sources; a new dependency (none is added); the renderer talking to RTDB.
+A write from the graph (drag, retry, halt); **any write or spawn through the endpoint (CG13 is read-only and loopback only)**; a fixed port or mDNS discovery (the endpoint binds port 0, D1359); deleting the plan scope; edges between sources; a new dependency (none is added); the renderer talking to RTDB.

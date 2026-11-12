@@ -59,7 +59,7 @@ type policyDrift struct {
 // config that states nothing for it are one value (the carrier's omitempty is
 // what drops an empty list on the way in). Only the members a config edit has to
 // reach a run through are compared: the keys no command of this release writes
-// into the node (clone_urls, credentials, allow_repos) are the node's own, and
+// into the node (credentials, allow_repos) are the node's own, and
 // `providers` reaches a run through its own job's copy, not through this node
 // (F9), so a config whose only difference is its providers: block is no reason
 // to rewrite what every run of the project is admitted by.
@@ -144,6 +144,20 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy) []policyDri
 	if lc.BakeRepos != nil {
 		add("bake_repos", lc.BakeReposEffective(p.BakeRepos), p.BakeRepos, false)
 	}
+	// The clone URLs reach a run off this node and nowhere else — a job's
+	// environment carries none of them — and the block's source is this file
+	// since SD5 (D842), so a config that states one where the node carries
+	// another is exactly the gap this stage exists to close: without the
+	// comparison, `fugaro project clone-url set` names `fugaro update` and the
+	// update publishes nothing. It is compared by the publisher's own keep rule
+	// (CloneURLsEffective), so a config that writes no block is not reported —
+	// nil would read as a difference against every node that carries one, and
+	// the block is then deliberately the node's own (D844) — while a written
+	// empty block against a node that carries entries is the removal an
+	// operator has to see.
+	if lc.CloneURLs != nil {
+		add("clone_urls", projectpolicy.CloneURLs(lc.CloneURLsEffective(nil)), p.CloneURLs, false)
+	}
 	// The triage switch reaches a run off this node too (D1854), so a config
 	// that states it where the node states the other answer is a difference a
 	// publish closes, and it is compared the bake switch's way: the node's value
@@ -153,6 +167,20 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy) []policyDri
 	// nothing (or true) is exactly the edit this stage exists to carry.
 	if lc.Triage != nil {
 		add("triage", lc.TriageEffective(p.Triage), p.Triage, false)
+	}
+	// The pools' subscription switch reaches a run off this node too (F22,
+	// D1636), so a config that states it where the node states the other answer
+	// is a difference a publish closes, and it is compared the triage switch's
+	// way: the node's value is handed to the publisher's keep rule, so a config
+	// that writes nothing is not reported as a difference — nil would read as
+	// one against a node that states either answer — while a written true
+	// against a node that says nothing (or false) is exactly the edit this
+	// stage exists to carry. Without the row the owner's own act would reach no
+	// run: `settings set subscription_spread true` writes the local config, and
+	// `fugaro update` — the one command that brings an installation forward —
+	// is where the node learns it.
+	if lc.SubscriptionSpread != nil {
+		add("subscription_spread", lc.SubscriptionSpreadEffective(p.SubscriptionSpread), p.SubscriptionSpread, false)
 	}
 	// The orchestrator block is compared by the publisher's own keep rule
 	// (D1239, D1234): a config that states a block that sets a key differs from
@@ -375,7 +403,7 @@ func policyNodeForPublish(ctx context.Context, lc *localcfg.Config, old *project
 	if err := policyContextRefusal(pol, imageContextShipped); err != nil {
 		return nil, nil, nil, err
 	}
-	body, err := policyNodeBytes(pol, base, exists, keepRouting)
+	body, err := policyNodeBytes(pol, base, exists, keepRouting, lc.CloneURLs == nil)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -1090,6 +1118,79 @@ func writeFileAtomicGuarded(cmd *cobra.Command, path string, old, out []byte) er
 		return userErr("re-seeding %s from the published policy node: %v", path, err)
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "%s re-seeded from the published policy node (backup at %s)\n", path, backup)
+	return nil
+}
+
+// cloneURLsToImport is the published node's clone_urls block when this machine's
+// file states none of its own and there is a file to write it into, and nil
+// otherwise (D842, D843, D844).
+//
+// The two nil halves are the two cases the design words: a file that states a
+// block of its own is the operator's answer already, and a node that carries
+// none is an installation that never had the block — no default is seeded into
+// a file nobody wrote (D843). A run with no local config file at all (a shared
+// config, a --config elsewhere) has nothing to write the block into, and the
+// block stays in the node for a machine whose file can hold it.
+func cloneURLsToImport(lc *localcfg.Config, node *projectpolicy.Policy, path string) map[string]string {
+	if path == "" || lc == nil || lc.CloneURLs != nil || node == nil || len(node.CloneURLs) == 0 {
+		return nil
+	}
+	return node.CloneURLs
+}
+
+// importPolicyNodeCloneURLs is D842/D844's migration: the clone_urls block moved
+// out of the node and into the local config, and the first `fugaro update`
+// after that release copies the node's entries into the file, so the operator
+// has one place to change them and this command publishes it from then on.
+//
+// It writes the file with the triple every writer of it uses — the printed
+// entries, a backup, an atomic write — and it asks nothing of its own: it is one
+// step of a run the operator confirmed whole (initflow's own confirmation, which
+// is what `fugaro update` shows the plan under), so a run that declines writes
+// neither the file nor the node. A coding agent's session never reaches here at
+// all, which the stage refuses on the way in (SD9).
+//
+// The entries are printed before the write and not after it: this is the
+// migration that moves a block an operator could see only in the console into a
+// file of their own, and a write they read afterwards is a write they cannot
+// check against what it replaced.
+func (m *policyMigration) importPolicyNodeCloneURLs(w io.Writer) error {
+	if len(m.importCloneURLs) == 0 {
+		return nil
+	}
+	old, err := os.ReadFile(m.path)
+	if err != nil {
+		return userErr("importing the published policy node's clone_urls block into %s: %v", m.path, err)
+	}
+	next := old
+	for _, canonical := range slices.Sorted(maps.Keys(m.importCloneURLs)) {
+		out, err := yamledit.SetScalar(next, []string{"clone_urls", canonical}, m.importCloneURLs[canonical])
+		if err != nil {
+			return userErr("%s cannot take the published policy node's clone_urls block in one edit: write the block in by hand, or set each entry with 'fugaro project clone-url set', then run %s again",
+				m.path, selfCommand()+" update")
+		}
+		next = out
+	}
+	if !yamledit.Changed(old, next) {
+		// The file already holds every entry — an earlier run of this update
+		// wrote them and a later stage re-planned — so there is nothing to back
+		// up, nothing to write and nothing to say.
+		m.lc.CloneURLs = maps.Clone(m.importCloneURLs)
+		return nil
+	}
+	fmt.Fprintf(w, "the published policy node carries the clone_urls block this machine's config file does not; importing it into %s:\n", m.path)
+	for _, canonical := range slices.Sorted(maps.Keys(m.importCloneURLs)) {
+		fmt.Fprintf(w, "  clone_urls %s: %s\n", canonical, m.importCloneURLs[canonical])
+	}
+	backup, err := backupFile(m.path, old, time.Now())
+	if err != nil {
+		return userErr("backing up %s before importing the published policy node's clone_urls block: %v", m.path, err)
+	}
+	if err := writeFileAtomic(m.path, next); err != nil {
+		return userErr("importing the published policy node's clone_urls block into %s: %v", m.path, err)
+	}
+	m.lc.CloneURLs = maps.Clone(m.importCloneURLs)
+	fmt.Fprintf(w, "imported into %s (backup at %s): the file is the block's source from now on, and `%s update` publishes it\n", m.path, backup, selfCommand())
 	return nil
 }
 

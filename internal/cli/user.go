@@ -20,41 +20,49 @@ import (
 )
 
 // fugaro user is a front for the installation's two IAM lists — F42's word
-// for it: the lists exist, and `fugaro setup --launcher/--operator` already
+// for it: the lists exist, and `fugaro setup --operator/--admin` already
 // replaces a whole one, so this command is the way to change ONE member of
 // one of them without holding the other members in a command line. It is the
 // interim of D627: the roles themselves (E0, E4 onward) come later and are a
-// live claim checked by a security service; until then a launcher or an
-// operator is an IAM member on the installation's own roles.
+// live claim checked by a security service; until then an operator or an
+// admin is an IAM member on the installation's own roles.
 //
 // What it is, stated rather than implied:
 //
-//   - It changes the LOCAL config's `terraform.launchers` /
-//     `terraform.operators` and nothing else. Those lists are what an
-//     operator's `fugaro update` applies to the installation, so the change
+//   - It changes the LOCAL config's `terraform.operators` /
+//     `terraform.admins` and nothing else. Those lists are what an
+//     admin's `fugaro update` applies to the installation, so the change
 //     takes effect then and not here. Nothing is applied, no IAM grant is
 //     written and no invitation is sent: the command prints the invite for a
 //     person to paste, which is the spec's rule (the CLI sends no email by
 //     default).
-//   - It writes `user:` members and nothing else. The launcher and operator
+//
+//     Since the roles node exists (RS3, D1581) those two keys are DERIVED:
+//     the node is what an installation's roles are, a converge reads it and
+//     writes the lists it says, and a member written here alone therefore
+//     loses the role in that machine's next update, which says so
+//     (update_access.go's accessDropped). The door that writes the roles,
+//     `fugaro setup --operator/--admin`, names a whole list at a time, and
+//     the scoped per-member door is the roles release's own command.
+//   - It writes `user:` members and nothing else. The operator and admin
 //     roles carry the token signer's own `token_minter` role (F44), and
 //     localcfg's member rule admits `domain:` for these two lists — so a
-//     `domain:` member would hand a whole domain the right to mint a
-//     launcher's identity, which is F42's first trap. `fugaro setup
-//     --launcher` can still write one (it is the owner's whole-list door,
+//     `domain:` member would hand a whole domain the right to mint an
+//     operator's identity, which is F42's first trap. `fugaro setup
+//     --operator` can still write one (it is the owner's whole-list door,
 //     with the confirmation that goes with it); this command refuses, which
 //     is what lets a member be added here without reading the rest of the
 //     list.
 //   - It refuses a stale local list before it writes. The lists live in each
-//     operator's own local config (the `terraform` block is not in the shared
-//     config), so one operator's list that predates a member another operator
+//     admin's own local config (the `terraform` block is not in the shared
+//     config), so one admin's list that predates a member another admin
 //     added would — on the next `fugaro update` — silently revoke that
 //     member, and an add written from the stale list would do it in the same
 //     breath. The two lists are therefore read back from the installation's
 //     own outputs first, and a config that disagrees with them is refused
 //     with the command that settles it (F42's second trap).
 //   - It refuses in a coding agent's session, the way `fugaro allow-delete`
-//     does: an agent holds the operator's credentials and could write the
+//     does: an agent holds the admin's credentials and could write the
 //     config file itself, so the refusal is a speed bump (SECURITY.md's
 //     Owner/Editor bypass) and not a boundary.
 //
@@ -63,7 +71,7 @@ import (
 
 // userListSource is what every refusal and every listing of this command says about
 // where the lists live, so the sentence cannot drift between them.
-const userListSource = "terraform.launchers and terraform.operators in this machine's own project config"
+const userListSource = "terraform.operators and terraform.admins in this machine's own project config"
 
 // userInstallLine is the one install line the invite carries, the same one the
 // README and the console show.
@@ -73,11 +81,11 @@ const userInstallLine = "brew install dimipaun/tap/fugaro"
 func newUserCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "user",
-		Short: "List, add and remove the installation's launchers and operators",
-		Long: `List the installation's launchers and operators, and add a person to one of
+		Short: "List, add and remove the installation's operators and admins",
+		Long: `List the installation's operators and admins, and add a person to one of
 the two lists or remove them from it.
 
-The two lists are ` + userListSource + `. They are what the operator's next
+The two lists are ` + userListSource + `. They are what the admin's next
 fugaro update applies to the installation, so a change made here takes effect
 then, and nothing is applied by this command: no IAM grant is written, no
 repository is touched and no invitation is sent.
@@ -85,15 +93,19 @@ repository is touched and no invitation is sent.
 A member is one person, written as user:<email>. Only user: members are
 written here: domain:, group:, serviceAccount:, allUsers,
 allAuthenticatedUsers and wildcards are refused (reconciliation F42 — the
-launcher and operator roles carry the token signer's own role, so a domain:
-member would grant a whole domain the right to mint a launcher's identity).
-fugaro setup --launcher/--operator remains the door for a whole list, group
+operator and admin roles carry the token signer's own role, so a domain:
+member would grant a whole domain the right to mint an operator's identity).
+fugaro setup --operator/--admin remains the door for a whole list, group
 members included.
+
+Both keys are derived from the installation's grants node, and this command
+writes this machine's file alone: a member added here is dropped by that
+machine's next fugaro update, which says so.
 
 add and rm read the installation's own outputs first and refuse when they
 disagree with this machine's config: a list written here replaces the
 installation's on the next fugaro update, so a config that has not seen the
-members another operator added would drop them.`,
+members another admin added would drop them.`,
 		Args: cobra.NoArgs,
 	}
 	cmd.AddCommand(newUserLsCmd(), newUserAddCmd(), newUserRmCmd())
@@ -106,12 +118,12 @@ func newUserLsCmd() *cobra.Command {
 	var asJSON bool
 	cmd := &cobra.Command{
 		Use:   "ls",
-		Short: "List the installation's launchers and operators",
+		Short: "List the installation's operators and admins",
 		Long: `List the members of ` + userListSource + `, as they are written there now.
 
 It is this machine's own copy of the two lists: no member is fetched from the
 cloud and none is granted, and no Terraform runs. What the installation itself
-holds can differ — a change another operator applied, or one made here and not
+holds can differ — a change another admin applied, or one made here and not
 yet applied by a fugaro update — and only the outputs would tell, which is the
 read add and rm make.
 
@@ -143,14 +155,14 @@ would have made unnecessary.`,
 	return cmd
 }
 
-// newUserAddCmd is `fugaro user add MEMBER --role launcher|operator`.
+// newUserAddCmd is `fugaro user add MEMBER --role operator|admin`.
 func newUserAddCmd() *cobra.Command {
-	return newUserEditCmd("add MEMBER", "Add a person to the installation's launchers or operators", true)
+	return newUserEditCmd("add MEMBER", "Add a person to the installation's operators or admins", true)
 }
 
-// newUserRmCmd is `fugaro user rm MEMBER --role launcher|operator`.
+// newUserRmCmd is `fugaro user rm MEMBER --role operator|admin`.
 func newUserRmCmd() *cobra.Command {
-	return newUserEditCmd("rm MEMBER", "Remove a person from the installation's launchers or operators", false)
+	return newUserEditCmd("rm MEMBER", "Remove a person from the installation's operators or admins", false)
 }
 
 // newUserEditCmd builds add and rm: one member, one list, one direction.
@@ -169,7 +181,7 @@ person typing.
 Both subcommands read the installation's own outputs before they write and
 refuse when they disagree with this machine's config, because this machine's
 lists are what the next fugaro update applies: a config that predates a member
-another operator added would revoke that member. The refusal names the list
+another admin added would revoke that member. The refusal names the list
 that differs and the command that settles it (fugaro update).
 `
 	if add {
@@ -192,7 +204,7 @@ session is refused.`
 		},
 	}
 	addCloudFlags(cmd, &o)
-	cmd.Flags().StringVar(&role, "role", "", "which list to change: launcher or operator (required)")
+	cmd.Flags().StringVar(&role, "role", "", "which list to change: operator or admin (required)")
 	return cmd
 }
 
@@ -201,38 +213,38 @@ session is refused.`
 type userRole string
 
 const (
-	userLauncherRole userRole = "launcher"
 	userOperatorRole userRole = "operator"
+	userAdminRole    userRole = "admin"
 )
 
 // userRoleFlag parses --role. "" is the flag not being passed, which is
 // refused rather than defaulted: there is no safe default between the two.
 func userRoleFlag(s string) (userRole, error) {
 	switch userRole(s) {
-	case userLauncherRole, userOperatorRole:
+	case userOperatorRole, userAdminRole:
 		return userRole(s), nil
 	case "":
-		return "", userErr("--role is required: launcher or operator (it names which of the installation's two lists this changes, and neither is the default)")
+		return "", userErr("--role is required: operator or admin (it names which of the installation's two lists this changes, and neither is the default)")
 	default:
-		return "", userErr("--role %q must be launcher or operator", safetext.Field(s))
+		return "", userErr("--role %q must be operator or admin", safetext.Field(s))
 	}
 }
 
 // members is the list this role names, as the config holds it now.
 func (r userRole) members(lc *localcfg.Config) []string {
-	if r == userOperatorRole {
-		return lc.Terraform.Operators
+	if r == userAdminRole {
+		return lc.Terraform.Admins
 	}
-	return lc.Terraform.Launchers
+	return lc.Terraform.Operators
 }
 
 // set writes list as this role's list in next.
 func (r userRole) set(next *localcfg.Config, list []string) {
-	if r == userOperatorRole {
-		next.Terraform.Operators = list
+	if r == userAdminRole {
+		next.Terraform.Admins = list
 		return
 	}
-	next.Terraform.Launchers = list
+	next.Terraform.Operators = list
 }
 
 // holds reports whether member is on this role's list, read off the same two
@@ -240,10 +252,10 @@ func (r userRole) set(next *localcfg.Config, list []string) {
 // (roles.go). It decides what to print and whether anything is written; it
 // grants nothing.
 func (r userRole) holds(member string, lc *localcfg.Config) bool {
-	if r == userOperatorRole {
-		return operatorMember(member, lc.Terraform.Operators)
+	if r == userAdminRole {
+		return adminMember(member, lc.Terraform.Admins)
 	}
-	return launcherMember(member, lc.Terraform.Launchers)
+	return operatorMember(member, lc.Terraform.Operators)
 }
 
 // userMember validates the MEMBER argument and is the command's ONE rule about
@@ -252,8 +264,8 @@ func (r userRole) holds(member string, lc *localcfg.Config) bool {
 // The list here is localcfg's member rule minus everything that is not one
 // person — and localcfg's rule is deliberately NOT the check, because it
 // admits `domain:` for these two lists while its own budget_admins refuses it
-// (F42): a domain: member would give every account in a domain the launcher
-// and operator roles, the token signer's role among them (F44). group: and
+// (F42): a domain: member would give every account in a domain the operator
+// and admin roles, the token signer's role among them (F44). group: and
 // serviceAccount: are refused for the same reason at this door — a group's
 // membership is not visible here at all, and an account is not a person. The
 // refusal is by the prefix as it is written, so a mixed-case Domain: is not a
@@ -263,7 +275,7 @@ func (r userRole) holds(member string, lc *localcfg.Config) bool {
 // else.
 func userMember(m string) (string, error) {
 	refuse := func(why string) (string, error) {
-		return "", userErr("a member is one person as user:<email> (%s): domain:, group:, serviceAccount:, allUsers, allAuthenticatedUsers and wildcards are refused, because the launcher and operator roles carry the token signer's own role (finding F42); fugaro setup --launcher/--operator is the door for a whole list", why)
+		return "", userErr("a member is one person as user:<email> (%s): domain:, group:, serviceAccount:, allUsers, allAuthenticatedUsers and wildcards are refused, because the operator and admin roles carry the token signer's own role (finding F42); fugaro setup --operator/--admin is the door for a whole list", why)
 	}
 	switch {
 	case m != strings.TrimSpace(m):
@@ -315,10 +327,10 @@ func userEdit(cmd *cobra.Command, o cloudOptions, role, member string, add bool)
 	ctx := cmd.Context()
 	// Before anything is read, and before the member is even looked at: the
 	// refusal is about who is running, which allow_delete.go decides the same
-	// way for the same reason — a coding agent's session holds the operator's
+	// way for the same reason — a coding agent's session holds the admin's
 	// credentials and can write the config file directly.
 	if m := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); m != "" {
-		return userErr("nothing was written: fugaro user add and rm change the installation's launcher and operator lists, which grant the roles a run is launched and a repository onboarded with, so they are run by a person at their own terminal: %s", initflow.AgentRefusal(m))
+		return userErr("nothing was written: fugaro user add and rm change the installation's operator and admin lists, which grant the roles a run is launched and a repository onboarded with, so they are run by a person at their own terminal: %s", initflow.AgentRefusal(m))
 	}
 	// GODEBUG=http2debug makes Go print HTTP requests with their credentials
 	// to stderr, and it is read before main runs (refuseHTTP2Debug). This
@@ -381,8 +393,8 @@ func userEdit(cmd *cobra.Command, o cloudOptions, role, member string, add bool)
 	} else {
 		list = slices.DeleteFunc(list, func(m string) bool { return m == who })
 	}
-	// Removing yourself from the operators is refused, and refused before the
-	// last-operator check below: a caller who is the only operator is told they
+	// Removing yourself from the admins is refused, and refused before the
+	// last-admin check below: a caller who is the only admin is told they
 	// cannot take themselves off the list rather than that the list would be
 	// left empty, because somebody else removing them is the way out of both
 	// and the count is a consequence of whose member this is. meMember turns the
@@ -393,36 +405,36 @@ func userEdit(cmd *cobra.Command, o cloudOptions, role, member string, add bool)
 	// members IAM hands back is lower-cased. An address's case is not part of
 	// who it is, so both sides are placed with the case folded
 	// (sameUserMemberFold) — a guard that read Person-1@Example.test and
-	// user:person-1@example.test as two people would let an operator remove
+	// user:person-1@example.test as two people would let an admin remove
 	// themselves from the one list that is who can be told to settle the
 	// installation. An identity lc.Me cannot tell is refused below rather than
 	// placed: the empty member it would answer is on no list, so reading its
-	// error as "not the caller" is what let an operator remove themselves.
-	if !add && r == userOperatorRole {
+	// error as "not the caller" is what let an admin remove themselves.
+	if !add && r == userAdminRole {
 		// An identity that cannot be read is refused rather than treated as
 		// the empty member: the empty member is on no list (meMember), so the
-		// guard below would let the caller's own member go — an operator
+		// guard below would let the caller's own member go — an admin
 		// removing themselves is exactly what this refusal exists to stop.
 		me, err := lc.Me(ctx)
 		if err != nil {
-			return userErr("nothing was written: fugaro user rm cannot tell whether %s is the identity this invocation is running as, because %v (set user in the local config %s, or git config user.email, and rerun this). An operator must not remove themselves from %s — the operators list is who can be told to settle the installation — so with the identity unread the removal is refused rather than compared against a member that is on no list",
+			return userErr("nothing was written: fugaro user rm cannot tell whether %s is the identity this invocation is running as, because %v (set user in the local config %s, or git config user.email, and rerun this). An admin must not remove themselves from %s — the admins list is who can be told to settle the installation — so with the identity unread the removal is refused rather than compared against a member that is on no list",
 				safetext.Field(who), err, safetext.Field(sel.Path), safetext.Field(onDisk.Name))
 		}
 		caller := meMember(me)
-		if slices.ContainsFunc(lc.Terraform.Operators, func(m string) bool { return sameUserMemberFold(m, caller) }) && sameUserMemberFold(who, caller) {
-			return userErr("you cannot remove yourself from the operators of %s: %s is the identity this invocation is running as, and the operators list is who can be told to settle the installation — run its update, add a member, read its budget — so another operator has to remove you, or a project Owner from outside the list: nothing was written",
+		if slices.ContainsFunc(lc.Terraform.Admins, func(m string) bool { return sameUserMemberFold(m, caller) }) && sameUserMemberFold(who, caller) {
+			return userErr("you cannot remove yourself from the admins of %s: %s is the identity this invocation is running as, and the admins list is who can be told to settle the installation — run its update, add a member, read its budget — so another admin has to remove you, or a project Owner from outside the list: nothing was written",
 				safetext.Field(onDisk.Name), safetext.Field(who))
 		}
 	}
-	// The last operator is refused: the operators list is who can be told to
+	// The last admin is refused: the admins list is who can be told to
 	// settle an installation — run its update, add a member, read its budget —
 	// and a machine's next fugaro update would apply an empty one, dropping
-	// the operator bindings of everyone who was on it. A project Owner can put
+	// the admin bindings of everyone who was on it. A project Owner can put
 	// that right from outside, which is why this is a refusal and not a
-	// break-glass (the launchers list may be emptied: an installation with no
-	// launcher cannot start a run, which its operator can put right here).
-	if !add && r == userOperatorRole && len(list) == 0 {
-		return userErr("removing %s would leave %s with no operator at all: it is the only member of this machine's terraform.operators, and the next fugaro update would apply an empty list and drop every operator binding, so the people it lists would have to be restored by a project Owner from outside. Add the operator who is to take over first, then remove %s: nothing was written",
+	// break-glass (the operators list may be emptied: an installation with no
+	// operator cannot start a run, which its admin can put right here).
+	if !add && r == userAdminRole && len(list) == 0 {
+		return userErr("removing %s would leave %s with no admin at all: it is the only member of this machine's terraform.admins, and the next fugaro update would apply an empty list and drop every admin binding, so the people it lists would have to be restored by a project Owner from outside. Add the admin who is to take over first, then remove %s: nothing was written",
 			safetext.Field(who), safetext.Field(onDisk.Name), safetext.Field(who))
 	}
 	r.set(&next, list)
@@ -442,10 +454,10 @@ func userEdit(cmd *cobra.Command, o cloudOptions, role, member string, add bool)
 // phrase is this role with its article, because the sentences this command
 // prints name it: "a operator" is not one of them.
 func (r userRole) phrase() string {
-	if r == userOperatorRole {
-		return "an operator"
+	if r == userAdminRole {
+		return "an admin"
 	}
-	return "a launcher"
+	return "an operator"
 }
 
 // userAlready is the word the two do-nothing answers share.
@@ -501,8 +513,8 @@ func userFresh(lc *localcfg.Config, outs infra.InstallationOutputs) error {
 		local  []string
 		remote []string
 	}{
-		{"launchers", lc.Terraform.Launchers, outs.Launchers},
-		{"operators", lc.Terraform.Operators, outs.Operators},
+		{"operators", lc.Terraform.Operators, outs.Launchers},
+		{"admins", lc.Terraform.Admins, outs.Operators},
 	} {
 		if sameUserMembers(l.local, l.remote) {
 			continue
@@ -561,14 +573,29 @@ func userInvite(w io.Writer, who string, lc *localcfg.Config) {
 	fmt.Fprintf(w, "  the repository's fugaro.yaml names the project; no setup is needed\n")
 }
 
-// userListDoc is `fugaro user ls --json`: the two lists of one installation.
-// Both arrays are seeded empty and never null: "there are none" is a fact and
-// a null is not (the console's own availability rule for a JSON document).
+// userListDocVersion is `fugaro user ls --json`'s document version. Version 1
+// carried the two lists under the keys the roles were spelled with before this
+// release — `launchers` for the run-starters and `operators` for the admins —
+// and both keys are gone: this document's names (`run_operators`, `admins`) are
+// names it never carried, so no list of version 1 is published under a name a
+// version-1 reader already reads, and the two removals are what the version is
+// for (CLAUDE.md, "a field never changes meaning"). Version 1 is the shape that
+// document had.
+const userListDocVersion = 2
+
+// userListDoc is `fugaro user ls --json`: the two lists of one installation, as
+// the human listing prints them. `run_operators` is the run-starters' list under
+// a name this document never carried: `operators` is the key version 1 held the
+// ADMINS under, so the role's bare word cannot be reused here without handing a
+// version-1 reader the other list. Both arrays are seeded empty and never null:
+// "there are none" is a fact and a null is not (the console's own availability
+// rule for a JSON document).
 type userListDoc struct {
-	Project    string   `json:"project"`
-	GCPProject string   `json:"gcp_project"`
-	Launchers  []string `json:"launchers"`
-	Operators  []string `json:"operators"`
+	Version      int      `json:"version"`
+	Project      string   `json:"project"`
+	GCPProject   string   `json:"gcp_project"`
+	RunOperators []string `json:"run_operators"`
+	Admins       []string `json:"admins"`
 }
 
 // printUserLists prints the two lists: the human listing, or the document.
@@ -577,16 +604,17 @@ func printUserLists(w io.Writer, lc *localcfg.Config, asJSON bool) error {
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
 		return enc.Encode(userListDoc{
+			Version: userListDocVersion,
 			Project: lc.Name, GCPProject: lc.GCPProject,
-			Launchers: userMembers(lc.Terraform.Launchers), Operators: userMembers(lc.Terraform.Operators),
+			RunOperators: userMembers(lc.Terraform.Operators), Admins: userMembers(lc.Terraform.Admins),
 		})
 	}
 	for _, l := range []struct {
 		name    string
 		members []string
 	}{
-		{"launchers", lc.Terraform.Launchers},
 		{"operators", lc.Terraform.Operators},
+		{"admins", lc.Terraform.Admins},
 	} {
 		fmt.Fprintf(w, "%s of %s (%d), as this machine's config lists them:\n", l.name, safetext.Field(lc.Name), len(l.members))
 		for _, m := range l.members {

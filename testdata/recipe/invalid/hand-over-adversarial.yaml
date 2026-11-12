@@ -1,0 +1,5 @@
+version: 1
+name: hand-over-adversarial
+steps:
+  - review: { hand_over: true }
+  - adversarial: {}

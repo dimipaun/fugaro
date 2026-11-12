@@ -729,3 +729,72 @@ func TestRootKeysAndRules(t *testing.T) {
 		t.Errorf("a denied deployment: %v", err)
 	}
 }
+
+// TestRootKeysRefusesARootHoldingAValue: a database whose root holds a value
+// rather than an object is refused rather than read as one with no keys. A root
+// is an object, so a scalar one is some other program's database, and reading
+// it as empty is what would let a caller go on and write into it — which is
+// exactly what infra.DB.Check asks this call before it adopts a database.
+func TestRootKeysRefusesARootHoldingAValue(t *testing.T) {
+	f := gcpfake.NewRTDB(t)
+	f.Set("", "a database this installation did not write")
+	c := newClient(t, f)
+
+	keys, err := c.RootKeys(ctx(t))
+	if err == nil {
+		t.Fatalf("a root holding a value listed %v, and a root that is not an object is not an empty database", keys)
+	}
+	if !strings.Contains(err.Error(), "decoding the root's keys") {
+		t.Errorf("the refusal does not name the root it could not read: %v", err)
+	}
+	// Asking for the root by its empty path is the same read: the tolerance
+	// Keys extends to a node holding a value is for a node below the root,
+	// where a scalar beside the objects is a shape the tree really has, and a
+	// caller that reached the root this way reads it as leniently as RootKeys
+	// does or the refusal above is one path away from being walked around.
+	if keys, err := c.Keys(ctx(t), ""); err == nil {
+		t.Errorf("Keys(ctx, \"\") listed %v for a root holding a value, and a root that is not an object is not an empty database", keys)
+	}
+}
+
+// TestKeysListsOneNodeShallowly: listing the children of one node is a shallow
+// read of that node (what a caller that wants the names and not the values,
+// like a listing of the orchestrators, must do rather than download a subtree),
+// and a node that is absent or holds a value rather than an object has none.
+func TestKeysListsOneNodeShallowly(t *testing.T) {
+	f := gcpfake.NewRTDB(t)
+	c := newClient(t, f)
+	f.Set("orchestrator/belong/state/agent_id", "belong")
+	f.Set("orchestrator/belong/lease/holder", "cloud-run-7")
+	f.Set("orchestrator/aurora/state/agent_id", "aurora")
+	f.Set("config/mode", "observe")
+
+	keys, err := c.Keys(ctx(t), "orchestrator")
+	if err != nil || len(keys) != 2 || keys[0] != "aurora" || keys[1] != "belong" {
+		t.Fatalf("keys = %v, %v (one node's children, sorted)", keys, err)
+	}
+	if reqs := f.Requests(); !strings.Contains(reqs[len(reqs)-1].Query, "shallow=true") {
+		t.Errorf("the subtree was read whole: %v", reqs[len(reqs)-1])
+	}
+	if reqs := f.Requests(); !strings.HasSuffix(reqs[len(reqs)-1].Path, "/orchestrator.json") {
+		t.Errorf("the read was not of the node asked for: %v", reqs[len(reqs)-1])
+	}
+
+	// A node nothing has written, and one holding a value: neither has children,
+	// and neither is an error.
+	if keys, err := c.Keys(ctx(t), "orchestrator/nobody"); err != nil || len(keys) != 0 {
+		t.Errorf("an absent node: %v, %v", keys, err)
+	}
+	if keys, err := c.Keys(ctx(t), "config/mode"); err != nil || len(keys) != 0 {
+		t.Errorf("a node holding a value: %v, %v", keys, err)
+	}
+	if _, err := c.Keys(ctx(t), "orchestrator/bad.key"); err == nil {
+		t.Error("an unescaped key was sent")
+	}
+
+	// The empty path is the root, and the root is RootKeys' read: the same
+	// children, in the same order.
+	if keys, err := c.Keys(ctx(t), ""); err != nil || len(keys) != 2 || keys[0] != "config" || keys[1] != "orchestrator" {
+		t.Errorf("the root by its empty path: %v, %v (the root's keys, sorted)", keys, err)
+	}
+}

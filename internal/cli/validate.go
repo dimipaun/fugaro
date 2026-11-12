@@ -796,11 +796,20 @@ func reviewPreconditionNote(lc *localcfg.Config) string {
 // reverse. What the check does not do is hold the stage accounts to the
 // repository's allow-list: that needs the repository, which a file in hand
 // does not name, and the launch is where it is enforced.
-func stageAccountProblems(lc *localcfg.Config, ecfg *config.Config) []config.Problem {
+//
+// The accounts a cascade file would have refused are skipped, with the one
+// note that says so (config.CascadeSkippedStageAccounts): they are the
+// operator's project-wide keys, and a repository that runs on the cascade's own
+// tiers is not the file they are wrong for.
+func stageAccountProblems(lc *localcfg.Config, ecfg *config.Config) (problems, notes []config.Problem) {
 	if lc == nil || ecfg == nil {
-		return nil
+		return nil, nil
 	}
-	return config.CheckStageAccountMix(ecfg.Agent.Auth, stageAccountsOf(lc), "stages")
+	stages, note := config.CascadeSkippedStageAccounts(ecfg.Agent.Auth, stageAccountsOf(lc))
+	if note != "" {
+		notes = append(notes, config.Problem{Message: note})
+	}
+	return config.CheckStageAccountMix(ecfg.Agent.Auth, stages, "stages"), notes
 }
 
 // catalogSourceProblems are the project's own catalog entries whose
@@ -2041,7 +2050,8 @@ func newValidateCmd() *cobra.Command {
 				problems, warnings = append(problems, rlp...), append(warnings, rlw...)
 				warnings = append(warnings, reviewFloorUnpublishable(lc)...)
 				notes = append(notes, reviewJobNotes(cfg, lc)...)
-				problems = append(problems, stageAccountProblems(lc, ecfg)...)
+				sp, sn := stageAccountProblems(lc, ecfg)
+				problems, notes = append(problems, sp...), append(notes, sn...)
 				problems = append(problems, catalogSourceProblems(lc)...)
 				annotateProjectRecipe(filepath.Dir(path), cfg, problems)
 				if lc != nil && lc.Name == cfg.Project && setsPolicy(cfg) {

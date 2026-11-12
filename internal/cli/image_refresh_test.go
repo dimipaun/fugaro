@@ -604,7 +604,11 @@ func TestRefreshStopsSayWhatFinished(t *testing.T) {
 				if strings.Contains(out, "is done") || strings.Contains(out, "next: run fugaro update --anchor") {
 					t.Errorf("a stopped run ended like a finished one:\n%s", out)
 				}
-				if !strings.Contains(out, "4. builds:") || strings.Index(out, "fugaro image refresh of acme/app") > strings.Index(out, "step 2, base:") {
+				// The plan is the review screen, printed whole before any step
+				// runs: its last row comes before the first step line — a tick
+				// for a step that ended and a cross for the one that failed on
+				// the row below.
+				if i, j := strings.Index(out, "  5. then, if this checkout's"), strings.Index(out, stepLineOf(reportLines(out), "base")); !strings.Contains(out, "4. builds:") || i < 0 || j < 0 || i > j {
 					t.Errorf("the plan is not printed first:\n%s", out)
 				}
 				if calls := r.calls(t); len(calls) != 0 {
@@ -790,8 +794,11 @@ func TestRefreshConfirmationsNeedTheOwnerAndNoFlag(t *testing.T) {
 			if n := len(r.run.Patches()); n != 1 {
 				t.Fatalf("%d patches, want 1 (the check job moved):\n%s", n, out)
 			}
-			if !strings.Contains(out, "updated the daily image check job") {
-				t.Errorf("the check job was not updated:\n%s", out)
+			// The stage's own line is the run's output now (CL6): the screen's
+			// account of step 3 is one step line, and what the stage reports is
+			// in the run's log.
+			if log := writesALog(t, "image-refresh"); !strings.Contains(log, "updated the daily image check job") {
+				t.Errorf("the check job was not updated:\n%s", log)
 			}
 		})
 	}
@@ -839,9 +846,10 @@ func TestRefreshEndsWithTheAnchorNote(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%v\n%s", err, out)
 		}
-		if strings.Join(*ran, ",") != "base,check job,builds" || !strings.Contains(out, "fugaro image refresh of acme/app is done") {
+		if strings.Join(*ran, ",") != "base,check job,builds" {
 			t.Fatalf("ran %v\n%s", *ran, out)
 		}
+		reported(t, out, "base", "check job", "builds")
 		if got := strings.Contains(out, "next: run fugaro update --anchor in this checkout"); got != tc.note {
 			t.Errorf("anchor note %v, want %v:\n%s", got, tc.note, out)
 		}
@@ -852,7 +860,7 @@ func TestRefreshEndsWithTheAnchorNote(t *testing.T) {
 // 2026-10-08 decision: --yes runs the whole command end to end with no
 // terminal at all (a closed stdin, as executeStdin's strings.Reader always
 // is): the plan is printed first, the options every step gets carry yes, and
-// the run ends "is done" with no prompt anywhere.
+// the run ends with the reporter's closing line (CL6) and no prompt anywhere.
 // Mutation (run, restore): drop `if yes { return nil }` from
 // refuseRefreshHere, and this test fails (it is refused for lacking a
 // terminal, same as without --yes).
@@ -879,10 +887,8 @@ func TestRefreshYesRunsEndToEndNoTerminal(t *testing.T) {
 	if seen == nil || !seen.yes {
 		t.Fatalf("the steps did not get yes=true: %+v", seen)
 	}
-	if !strings.Contains(out, "fugaro image refresh of acme/app is done") {
-		t.Errorf("did not finish:\n%s", out)
-	}
-	if i, j := strings.Index(out, "fugaro image refresh of acme/app ("), strings.Index(out, "step 2, base:"); i < 0 || j < 0 || i > j {
+	reported(t, out, "base", "check job", "builds")
+	if i, j := strings.Index(out, "  5. then, if this checkout's"), strings.Index(out, stepLineOf(reportLines(out), "base")); i < 0 || j < 0 || i > j {
 		t.Errorf("the plan is not printed first:\n%s", out)
 	}
 }
@@ -906,7 +912,7 @@ func TestRefreshFinalSummaryRepeatsMissingCheckJob(t *testing.T) {
 				return &refreshTarget{lc: p.lc, cfg: p.cfg}, nil
 			},
 			checkJob: func(_ context.Context, t *refreshTarget) error {
-				fmt.Fprintln(r.w, "  the daily image check job was not found, though this repository's spec has one: run fugaro update --repo in the checkout to deploy it (nothing was updated)")
+				fmt.Fprintln(r.stageDetail(), "  the daily image check job was not found, though this repository's spec has one: run fugaro update --repo in the checkout to deploy it (nothing was updated)")
 				t.checkJobMissing = true
 				return nil
 			},
@@ -918,10 +924,158 @@ func TestRefreshFinalSummaryRepeatsMissingCheckJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if n := strings.Count(out, "was not found"); n < 2 {
-		t.Fatalf("the missing check job is mentioned %d time(s), want at least twice (step 3, and the final summary):\n%s", n, out)
+	// Step 3's own line is the run's output now and the repeated note is on the
+	// screen, where a person reads it (CL6): both are in the run's full output,
+	// and the note still comes before the line the run ends on.
+	log := writesALog(t, "image-refresh")
+	if n := strings.Count(log, "was not found"); n < 2 {
+		t.Fatalf("the run's full output mentions the missing check job %d time(s), want the step's own line and the repeated note:\n%s", n, log)
 	}
-	if i, j := strings.Index(out, "is done"), strings.LastIndex(out, "was not found"); i < 0 || j < 0 || j > i {
-		t.Errorf("the repeated note does not come before the done line:\n%s", out)
+	if !strings.Contains(out, "was not found") {
+		t.Fatalf("the screen no longer repeats that the check job is missing, where the step's own line is the log's alone:\n%s", out)
+	}
+	if i, j := strings.Index(out, "Done in "), strings.LastIndex(out, "was not found"); i < 0 || j < 0 || j > i {
+		t.Errorf("the repeated note does not come before the closing line:\n%s", out)
+	}
+}
+
+// The command's own view (CL6): one line per step in the default view (D1354),
+// the run's own lines kept and shown again under --verbose, the stop sentence
+// the plugin skill quotes kept as the error's own, and the run in a log under
+// the command's name (D1352). The tests drive the command from its argv, as the
+// ones above do; what each stage prints on its own is pinned in
+// image_refresh_steps_test.go.
+
+// refreshWithTheRealCheckJob runs the standalone command over a rig whose third
+// step is the real one: the base step and the builds are stubbed (they need the
+// cloud), while the daily image check job's own line — the stage line the
+// default view stops showing — is the stage's, printed through the run's own
+// output.
+func refreshWithTheRealCheckJob(t *testing.T, args ...string) (string, error) {
+	t.Helper()
+	useVersion(t, "0.5.1")
+	useSelf(t)
+	r := newAnchorModeRig(t, refreshYAML, true)
+	fakeTerminal(t)
+	slug, label := checkJobOwner(t, "github", "acme/app")
+	oldRef, newRef := managedRef("base", "0.4.0"), managedRef("base", "0.5.1")
+	spec, _ := json.Marshal(infra.CheckJobSpec{Repo: "acme/app", BaseImages: map[string]string{"base": oldRef}})
+	r.run.SetJob(gcp.CheckJobName(slug), map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRole: gcp.RoleCheck, gcp.LabelRepo: label}, oldRef)
+	r.run.SetJobEnv(gcp.CheckJobName(slug), map[string]string{infra.CheckSpecEnv: string(spec)})
+	old := newRefreshSteps
+	newRefreshSteps = func(rr *initRun, e *initEngine, p *refreshPlan) refreshSteps {
+		return refreshSteps{
+			base: func(context.Context) error { return nil },
+			reload: func(context.Context) (*refreshTarget, error) {
+				lc := *p.lc
+				lc.BaseImages = map[string]string{"base": newRef}
+				return &refreshTarget{lc: &lc, cfg: p.cfg, kinds: []string{"base"},
+					spec: infra.RepoSpec{Name: "acme/app", Slug: slug, Label: label}}, nil
+			},
+			checkJob: func(ctx context.Context, tg *refreshTarget) error { return rr.refreshCheckJob(ctx, tg) },
+			builds:   func(context.Context, *refreshTarget) error { return nil },
+		}
+	}
+	t.Cleanup(func() { newRefreshSteps = old })
+	out, _, err := executeStdin(t, "", append([]string{"image", "refresh", "--workflow", "app"}, args...)...)
+	return out, err
+}
+
+// TestImageRefreshDefaultIsOneLinePerStep: the default view is the plan, one
+// line per step and the closing line (D1354). The three "step N, name:" headers
+// are gone and each stage's own lines are the run's own output — kept in the
+// log (D1352) and shown again under --verbose — instead of the screen's account
+// of the step.
+func TestImageRefreshDefaultIsOneLinePerStep(t *testing.T) {
+	out, err := refreshWithTheRealCheckJob(t)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	reported(t, out, "base", "check job", "builds")
+	// One line per step and no more: stepName reads a line's leading token, so
+	// three lines are three steps.
+	if got := strings.Join(stepNames(out), ","); got != "base,check,builds" {
+		t.Errorf("the step lines are %q, want one line per step (base, check job, builds):\n%s", got, out)
+	}
+	for _, gone := range []string{
+		"step 2, base:", "step 3, the daily image check job:", "step 4, builds:",
+		"updated the daily image check job",
+	} {
+		if strings.Contains(out, gone) {
+			t.Errorf("the default view still prints %q:\n%s", gone, out)
+		}
+	}
+	// The plan is still printed first, and the reporter's closing line is the
+	// last one: the command's own "is done" is what it replaces.
+	if i, j := strings.Index(out, "fugaro image refresh of acme/app ("), strings.Index(out, markDone+" base"); i < 0 || j < 0 || i > j {
+		t.Errorf("the plan is not printed before the steps (plan at %d, steps at %d):\n%s", i, j, out)
+	}
+	if strings.Contains(out, "is done") {
+		t.Errorf("the run still ends with its own done line rather than the reporter's closing one:\n%s", out)
+	}
+}
+
+// TestImageRefreshVerboseUnchanged: --verbose is today's view — the stream the
+// default view moved into the log reaches the terminal as well — and the steps
+// are the same ones (D1354, G10).
+func TestImageRefreshVerboseUnchanged(t *testing.T) {
+	out, err := refreshWithTheRealCheckJob(t, "--verbose")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, "updated the daily image check job") {
+		t.Errorf("--verbose does not show the run's own lines:\n%s", out)
+	}
+	reported(t, out, "base", "check job", "builds")
+}
+
+// TestImageRefreshStoppedAtStepKeepsItsSentence: the stop message is the
+// plugin skill's (states.md quotes `stopped at step N`, and its own reason
+// names the steps that finished and the rerun line), so the reporter's account
+// is added beside it and never in place of it: the step that failed is the
+// reporter's line, the sentence is the command's error, and the run ends
+// failed.
+func TestImageRefreshStoppedAtStepKeepsItsSentence(t *testing.T) {
+	useVersion(t, "0.5.1")
+	useSelf(t)
+	newAnchorModeRig(t, refreshYAML, true)
+	fakeTerminal(t)
+	ran := fakeSteps(t, "builds", remote(errors.New("503 from the cloud")))
+	out, _, err := executeStdin(t, "", "image", "refresh", "--workflow", "app")
+	if ExitCode(err) != ExitRemoteError {
+		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
+	}
+	const sentence = "fugaro image refresh stopped at step 4 (builds), steps finished: preflight, base, check job; " +
+		"once that is fixed, rerun fugaro image refresh --workflow app in this checkout: finished steps say No changes"
+	if err == nil || !strings.Contains(err.Error(), "503 from the cloud; "+sentence) {
+		t.Errorf("the stop sentence changed or was wrapped: %v", err)
+	}
+	if got := strings.Join(*ran, ","); got != "base,check job,builds" {
+		t.Errorf("ran %s, want base,check job,builds: a step after the stop ran, or one before it did not", got)
+	}
+	if !strings.Contains(out, markFailed+" builds: 503 from the cloud") {
+		t.Errorf("the step that failed is not the reporter's:\n%s", out)
+	}
+	// G8: the failure prints the log's path, and the run closes on the failure
+	// rather than on a done.
+	if !strings.Contains(out, "full output: ") {
+		t.Errorf("the failed run points at no log:\n%s", out)
+	}
+	if lines := reportLines(out); !strings.HasPrefix(lines[len(lines)-1], "Failed in ") {
+		t.Errorf("the run's last line is not the reporter's failure:\n%s", out)
+	}
+}
+
+// TestImageRefreshWritesALog: the run keeps a log under the command's own name
+// (D1352), and the log is the run's full output — the stage line the default
+// view stopped showing is in it.
+func TestImageRefreshWritesALog(t *testing.T) {
+	out, err := refreshWithTheRealCheckJob(t)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	log := writesALog(t, "image-refresh")
+	if !strings.Contains(log, "updated the daily image check job") {
+		t.Errorf("the log does not hold the stage's own line:\n%s", log)
 	}
 }

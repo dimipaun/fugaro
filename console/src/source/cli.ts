@@ -806,6 +806,18 @@ export class CliSource implements FugaroSource {
     return this.#readDocument('models.list', args)
   }
 
+  /** readSeats reads `seats --json`: the advisory estimate of who launches
+   * jobs on this installation, one row per identity it counts and one per
+   * identity it lists and cannot count (subscriptions plan S4.2, D439 and
+   * D433). The argv is the spawn row's own two words and the installation's
+   * `--project`, because the operation takes no argument at all -- the window
+   * is the ruling's own 90 days and no flag moves it. It reads this machine's
+   * own config and the runs of the installation's bucket, so it stores nothing,
+   * sends nothing and mints nothing of the host's. */
+  readSeats(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#readDocument('seats.read', args)
+  }
+
   /** readSettings reads `settings --json`: the project's settings, each with
    * the value a run gets, the layer that decided it, its default, its state and
    * the three writability facts the row set draws its pencils from (the
@@ -1649,6 +1661,17 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
      * so there is no directory on this machine to refuse for and nothing to be
      * gained by holding a floor between two calls. */
     listModels: (args) => read('models.list', (source) => source.listModels(args)),
+    /** readSeats has no precondition and no cadence, and the second half is the
+     * deliberate one: this is the Project tab's **one expensive read** -- the
+     * installation's bucket listed and one `task.json` opened per run of the
+     * last 90 days (`seatsRequesters`, `internal/cli/seats.go`) -- and a floor
+     * between two calls would answer a figure the operator can see is stale
+     * without saying so. The tab reads it once when it opens and once per
+     * refresh, and the estimate moves as runs are minted; nothing here holds a
+     * minute-old count in front of a newer one. It needs no directory either
+     * (the read is the bucket and this machine's own config, never a checkout),
+     * so a console with an installation and no checkout still answers. */
+    readSeats: (args) => read('seats.read', (source) => source.readSeats(args)),
     /** readSettings has no precondition and no cadence either: the read is the
      * registry, the project layer's cache, the local config and the checkouts
      * this machine remembers, with no bucket, no database and no host behind

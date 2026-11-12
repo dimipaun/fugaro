@@ -542,7 +542,7 @@ func pricesDiff(job, now string) string {
 		}
 		return "unreadable copy"
 	}
-	return mapDiff(jo, no, func(a, b pricing.Rates) bool { return reflect.DeepEqual(a, b) })
+	return mapDiff(jo, no, func(a, b pricing.Override) bool { return reflect.DeepEqual(a, b) })
 }
 
 // mapDiff lists the keys of now that job lacks or disagrees with (added,
@@ -629,6 +629,12 @@ func cloudStep(ctx context.Context, u *upgradeCtx) stepResult {
 	}
 	ro := u.o.refresh
 	ro.dir, ro.yes, ro.rerun = u.loc.Root, u.o.yes, u.o.again(u.loc.Root)
+	// This checkout is this step's screen, not the refresh's own: the refresh is
+	// one stage of this run, so it is handed this run's writer — what it prints
+	// takes the step in flight down and puts it back (G1) — and it prints the
+	// headers and the closing line it has always printed rather than an account
+	// of its own beside this run's (refreshStep, refreshOptions.out).
+	ro.out = u.w
 	var plan *refreshPlan
 	ro.onPlan = func(p *refreshPlan) { plan = p }
 	if err := runImageRefresh(u.cmd, ro); err != nil {

@@ -61,11 +61,12 @@ func TestDocsNameUpgrade(t *testing.T) {
 
 // TestDocsDesignListsEveryUpgradeStep: the design doc's step list is what the
 // next reader trusts, and the facts a later edit is most likely to soften are
-// the ones this pins: the five steps in the order they run (the rules step
+// the ones this pins: the four steps in the order they run (the rules step
 // before the policy step, because the policy write is gated on the deployed
-// generation), the owner's ruling that replaced the open decision, and the
-// two truths of the agent-session doors — a session moves no stale pin, and
-// the update door there leaves the checkout for the user and exits 1.
+// generation), the deletion of the pin step the list used to open with, the
+// owner's ruling that replaced the open decision, and the two truths of the
+// agent-session doors — a session moves no stale pin, and the update door
+// there leaves the checkout for the user and exits 1.
 func TestDocsDesignListsEveryUpgradeStep(t *testing.T) {
 	data, err := os.ReadFile("../../docs/design/upgrade.md")
 	if err != nil {
@@ -73,9 +74,12 @@ func TestDocsDesignListsEveryUpgradeStep(t *testing.T) {
 	}
 	doc := string(data)
 	for _, want := range []string{
-		"Each checkout runs five steps in order",
-		"4. **rules**",
-		"5. **policy**",
+		"Each checkout runs four steps in order",
+		"nothing merges the plugin's marketplace and enablement into `.claude/settings.json` any more",
+		"1. **plugin**",
+		"2. **cloud**",
+		"3. **rules**",
+		"4. **policy**",
 		"ONE shared ownership check covers every config-driven budget-database write path",
 		"a stale plugin pin is **not** moved there",
 		"`left_for_you`",
@@ -86,6 +90,14 @@ func TestDocsDesignListsEveryUpgradeStep(t *testing.T) {
 	}
 	if strings.Contains(doc, "OPEN OWNER DECISION") {
 		t.Error("docs/design/upgrade.md still carries the open decision the owner ruled on 2026-10-31")
+	}
+	// The pin step's deletion (D949, U2) is the edit that renumbered this list,
+	// and the doc is where an older reader looks for the command's shape: the
+	// step, its flag and its count stay gone together.
+	for _, gone := range []string{"--allow-fork", "five steps", "runs pin and plugin"} {
+		if strings.Contains(doc, gone) {
+			t.Errorf("docs/design/upgrade.md still says %q", gone)
+		}
 	}
 }
 

@@ -59,11 +59,16 @@ type setting struct {
 	State        string
 	// Sensitive rows carry the set/unset fact and never the value.
 	Sensitive bool
-	// Writable is whether the generic path writes the key, Owner is the
-	// command family that writes a key it does not (the empty string when no
-	// family owns it), and TargetLayer is the layer a write with no --layer
-	// lands in. They are the answer a consumer draws an edit from, and the
-	// write's own answer rather than a second list beside it (D1102).
+	// Writable is whether the generic path writes the key, Owner is the command
+	// that writes the key — `fugaro settings set` where the generic path writes
+	// it, and for a key it does not, the sentence naming the command that
+	// carries the file the key is stated in (settingsOwnerCommands, D1178) —
+	// and TargetLayer is the layer a write with no --layer lands in. The empty
+	// string is the case the refusal blanks: a row naming the default token
+	// whose write refuses it, so neither `settings set` nor a file carries it
+	// (the map spellings' literal `*`, the sensitive rows). They are the answer
+	// a consumer draws an edit from, and the write's own answer rather than a
+	// second list beside it (D1102).
 	Writable    bool
 	Owner       string
 	TargetLayer string
@@ -99,12 +104,18 @@ func (s setting) matches(re *regexp.Regexp) bool {
 // lsNow's are, so such a test must not be parallel.
 var settingsNow = time.Now
 
-// settingsCloudLayers is the read's cloud half: the shared config's refresh,
-// the published policy node and the Realtime Database caps (spec §2.7). It is
-// the one place a read leaves this machine, and it is empty until S2 fills it.
-// --offline is the gate in front of it, so the flag's promise — no bucket, no
-// database — is a property of the read and not of a comment.
-var settingsCloudLayers = func(_ context.Context, _ *settingsRead, _ settingsOptions) error { return nil }
+// settingsCloudLayers is the read's cloud half: the published policy node and
+// the Realtime Database's caps (spec §2.7), read by settings_cloud.go. It is the
+// one place a read leaves this machine — the shared config's refresh is not on
+// this path — and --offline is the gate in front of it, so the flag's promise —
+// no database — is a property of the read and not of a comment.
+//
+// It is a variable rather than a plain call for the same reason settingsNow is:
+// it is the seam a test holds the read's only cloud call by
+// (TestSettingsOfflineReadsNoCloudLayer), and the read's answer for a cloud that
+// cannot be reached is a state on the row, so the seam's error is the one
+// failure that ends the read rather than a note.
+var settingsCloudLayers = readCloudLayers
 
 // settingsRead is one run of the read: the documents it read, the clock it
 // read them at, and what each of them cost.
@@ -122,6 +133,13 @@ type settingsRead struct {
 	layerMS  int64
 
 	repos []repoRead
+
+	// policy and caps are the two cloud layers, each carrying its own state:
+	// one source that cannot be read says nothing about the other. drift is the
+	// keys the published node does not carry what the local config says.
+	policy cloudLayer
+	caps   cloudLayer
+	drift  map[string]bool
 }
 
 // repoRead is one repository scope: its fugaro.yaml resolved, or the reason it
@@ -181,10 +199,14 @@ func readSettings(ctx context.Context, o settingsOptions, now time.Time) (*setti
 	if err := r.readRepos(o); err != nil {
 		return nil, err
 	}
-	if !o.offline {
-		if err := settingsCloudLayers(ctx, r, o); err != nil {
-			return nil, err
-		}
+	if o.offline {
+		// The flag's promise is that every cloud row reads `unread: offline`
+		// rather than disappearing, so the table keeps its shape (spec §2.6):
+		// the two layers are marked here, where the flag is, and the read above
+		// never reaches for one.
+		r.unreadCloud("offline")
+	} else if err := settingsCloudLayers(ctx, r, o); err != nil {
+		return nil, err
 	}
 	return r, nil
 }
@@ -363,6 +385,76 @@ func layerSelected(row settings.Row, want []string) bool {
 	return false
 }
 
+// settingsOwnerCommands is the read's own table (D1178): what the owner column
+// prints, one entry per owner token the registry uses. It is a second table
+// rather than settingsFamilyCommands because that map answers the *write*'s
+// refusal and points a refused key at its family (settings_set.go): its words
+// are those families' bare names, and it carries no entry for the default owner
+// at all, so a read resolved through it printed nothing for every key the
+// generic path writes — the hole F11 was. Widening it is not the repair, and
+// what it is asked is why: a token added to that map for the read's sake is a
+// token a write is then refused for, and this table also owes words for tokens
+// the write answers nothing about. The two keys F11 was written about are
+// history — `config` owned `max_parallel` and `setup` owned `update_check` until
+// this task moved both to the default owner, which the generic path already
+// carried. The design's cost for the second table is the one thing to keep in
+// step: TestSettingsOwnerStringsAreAClosedVocabulary resolves every entry here
+// against the command tree and fails on a token the registry has and this table
+// does not.
+//
+// The default owner names the generic writer, and every family that has a
+// command names it. The families whose keys are the converge's own do not: what
+// a person can run for them is `fugaro setup` or `fugaro update`, so their
+// entries carry the sentence the design asks for rather than a command name a
+// reader would take for the key's own editor and that would not write the key
+// (spec §4). It is display text and no rule reads it.
+//
+// An entry names a command of this binary's tree, and where that command is not
+// the key's own editor the sentence says what it does with the file the key is
+// stated in. The three file tokens are the whole of that shape, one per file a
+// settings key lives in, and each names the command that carries the file rather
+// than the one that applies it afterwards: `fugaro config publish` carries the
+// project layer (D1515 — that row's keys are edited in the file), `fugaro config
+// init` writes the repository's own `fugaro.yaml`, and `fugaro update` writes the
+// machine's own config, where the `config local` rows are stated and which no
+// command edits key by key. One token may not span two files: its sentence would
+// be true of some of its rows, which is what `config`'s was for the six
+// orchestrator rows and the two nudge thresholds until this task moved them to
+// the owners that carry them.
+//
+// `project policy` is that shape's fourth entry and not a file's: the
+// orchestrator block is stated in the machine's own config like the two nudge
+// thresholds beside it, and what its sentence names is the command that carries
+// it from there to the node every run of the project is held to
+// (buildProjectPolicy copies lc.Orchestrator into it). It is a token of its own
+// rather than `project` because that token is a family of the write's map: a row
+// naming it is refused by name of `fugaro project`, and the read prints the bare
+// command D1178 asks a sentence in place of, for keys no `fugaro project`
+// subcommand edits.
+var settingsOwnerCommands = map[string]string{
+	"settings set":      "fugaro settings set",
+	"models":            "fugaro models",
+	"rigor":             "fugaro rigor set",
+	"rigor floor":       "fugaro rigor floor",
+	"accounts":          "fugaro accounts",
+	"secrets":           "fugaro secrets",
+	"project":           "fugaro project",
+	"workspace":         "fugaro workspace",
+	"image map":         "fugaro image map",
+	"project clone-url": "fugaro project clone-url",
+	"setup":             "fugaro setup, which writes the installation's own facts",
+	"update":            "fugaro update, which writes the installation's own generations",
+	"budget":            "fugaro setup, which writes the installation's own budget backend",
+	"config":            "fugaro config publish, which carries the layer file the key is stated in",
+	"config init":       "fugaro config init, which writes the repository's own file",
+	"config local":      "fugaro update, which writes the machine's own config the key is stated in",
+	"project policy":    "fugaro project policy publish, which carries the local config's orchestrator block to the project's node",
+}
+
+// settingsOwnerDefaultToken is the registry's owner for a key no family and no
+// file has claimed: the generic path's, when its allowlist carries the key.
+const settingsOwnerDefaultToken = "settings set"
+
 // projectRow is the key at the project scope: the layer file, the local config
 // or the environment, whichever decides.
 func (r *settingsRead) projectRow(row settings.Row) setting {
@@ -374,6 +466,22 @@ func (r *settingsRead) projectRow(row settings.Row) setting {
 	// row with a varying segment is a map entry the write refuses whatever
 	// list carries it.
 	_, writeErr := settingsWriteRow(row.Key)
+	// The owner is asked of the write as well (D1178): the default token means
+	// "`settings set` writes it", so a row the write refuses may not carry it —
+	// `fugaro settings set` beside `writable: false` says in one breath that the
+	// command writes the key and that it does not, and the console draws exactly
+	// that pair as `written by fugaro settings set, not by the generic path`. A
+	// family's token and the file-carriers' (`config`, `config init`,
+	// `config local`) are untouched by this: their rows are refused by the
+	// generic path and name the command that does write them. The rows left
+	// naming nothing are the map spellings, whose literal `*` the write refuses
+	// while it writes their concrete spellings (`layer.profiles.*.base` against
+	// `layer.profiles.java.base`), and the sensitive rows the generic path
+	// carries under another name.
+	owner := settingsOwnerCommands[row.Owner]
+	if writeErr != nil && row.Owner == settingsOwnerDefaultToken {
+		owner = ""
+	}
 	s := setting{
 		Key:          row.Key,
 		Scope:        "project",
@@ -385,7 +493,7 @@ func (r *settingsRead) projectRow(row settings.Row) setting {
 		State:        stateOK,
 		Sensitive:    row.Sensitive,
 		Writable:     writeErr == nil,
-		Owner:        settingsFamilyCommands[row.Owner],
+		Owner:        owner,
 		TargetLayer:  settingsDefaultLayer(row),
 	}
 	switch {
@@ -444,7 +552,7 @@ func (r *settingsRead) projectRow(row settings.Row) setting {
 	if s.Wins != settings.LayerDefault {
 		s.Levels = append(s.Levels, level{Layer: s.Wins, Value: s.Value, Outcome: "wins"})
 	}
-	return s
+	return r.cloudProjectRow(s, row)
 }
 
 // repoRow is the key at a repository scope. A key of fugaro.yaml is resolved
@@ -456,7 +564,22 @@ func (r *settingsRead) repoRow(row settings.Row, repo repoRead) setting {
 	s.Scope = "repo:" + repo.name
 	s.Levels = nil
 	if repo.state != stateOK {
-		s.State = repo.state
+		// A repository that was not read still answers every key it has no
+		// store of its own for: the row is the project scope's, which already
+		// carries the ceiling the published node clamps it by (cloudProjectRow)
+		// and the caps the database holds. What the repository adds is its
+		// state, and that it says nothing about the database's own keys: a
+		// checkout that is missing or refused does not make kill.global.on
+		// unknown, and those rows keep the state their own layer answered.
+		//
+		// The ceiling is not applied again here: the row already carries the
+		// answer projectRow gave it, at the scope the ceiling belongs to.
+		// nodeCeiling is the Tighten family's rule, and calling it here reads a
+		// key the node sets no ceiling for — budget.max_run_tokens is Replace —
+		// as the node's value with WINS policy, which no run gets.
+		if !settingsCapsKey(row.Key) {
+			s.State = repo.state
+		}
 		return s
 	}
 	if !isYAMLKey(row) || repo.config == nil {
@@ -496,7 +619,7 @@ func (r *settingsRead) repoRow(row settings.Row, repo repoRead) setting {
 	if s.Wins != settings.LayerDefault {
 		s.Levels = append(s.Levels, level{Layer: s.Wins, Value: s.Value, Outcome: "wins"})
 	}
-	return s
+	return r.nodeCeiling(s, row)
 }
 
 // localPath is the path a local row's key takes into the local config file:

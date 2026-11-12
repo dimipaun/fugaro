@@ -686,6 +686,27 @@ type ModelRoles struct {
 	Coder      string `yaml:"coder"`      // implement and fix
 	Reviewer   string `yaml:"reviewer"`   // review
 	Background string `yaml:"background"` // Claude Code's small background requests
+	// Vision is the model a stage runs instead when its own model cannot read
+	// an image (D2000, D2002, D2004). It is not a role: no stage is the vision
+	// one, and the slot never falls back to agent.model, because a text-only
+	// coder is exactly the model that must not answer an image. What makes a
+	// model able to read one is its price row's image rate, so the slot carries
+	// no flag of its own.
+	//
+	// The json tag is what Config.SHA256 hashes: a field without one changes
+	// every configuration hash in the installation, for a key most files do not
+	// set (the Agent.JobProfile precedent).
+	Vision string `yaml:"vision" json:"vision,omitempty"`
+	// Diagnose is the model a local diagnosis runs on (`fugaro troubleshoot`,
+	// D1607). It is not a run's role either: no stage is the diagnose one, the
+	// slot never falls back to agent.model — a diagnosis explains a failure
+	// rather than doing a task, and what a repository runs its stages on is not
+	// the model a person wants reading their log — and nothing applies a
+	// default to it, because the built-in one (DefaultDiagnoseModel) is read by
+	// the command that runs the diagnosis, so a file that writes no such key
+	// keeps the configuration hash it had. The json tag is Vision's, for
+	// Vision's reason.
+	Diagnose string `yaml:"diagnose" json:"diagnose,omitempty"`
 }
 
 // RoleTokens is a per-call output limit for each role.
@@ -745,6 +766,12 @@ func (a Agent) ModelFor(r Role) string {
 	return m
 }
 
+// VisionModel is the model of the vision slot, "" when the run names none. It
+// never falls back to agent.model: the slot is read exactly when a stage's own
+// model cannot read an image, and the model that cannot is the one the fallback
+// would answer with (D2003).
+func (a Agent) VisionModel() string { return a.Models.Vision }
+
 // MaxOutputFor is role r's per-call output limit, 0 for none.
 func (a Agent) MaxOutputFor(r Role) int64 {
 	if r == RoleReviewer {
@@ -753,13 +780,13 @@ func (a Agent) MaxOutputFor(r Role) int64 {
 	return a.MaxOutputTokens.Coder
 }
 
-// PinnedModels are the three models a run under a budget charges through the
-// gateway: the coder's, the reviewer's and the background model's, in the
-// order PinPaths names them. An empty name is one the config pins to nothing
-// (the agent's own default), so callers that judge a pin keep the empty
-// entry rather than dropping it.
+// PinnedModels are the four models a run under a budget charges through the
+// gateway: the coder's, the reviewer's, the background model's and the vision
+// model's, in the order PinPaths names them. An empty name is one the config
+// pins to nothing (the agent's own default), so callers that judge a pin keep
+// the empty entry rather than dropping it.
 func (a Agent) PinnedModels() []string {
-	return []string{a.ModelFor(RoleCoder), a.ModelFor(RoleReviewer), a.Models.Background}
+	return []string{a.ModelFor(RoleCoder), a.ModelFor(RoleReviewer), a.Models.Background, a.VisionModel()}
 }
 
 // Workflow is one buildable unit of the repository, such as a server or a web app.

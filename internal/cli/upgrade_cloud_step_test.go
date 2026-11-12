@@ -794,7 +794,7 @@ func TestUpgradeInAnAgentSessionNeverTouchesTheCloud(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	for _, want := range []string{"pin: done", "cloud: skipped: a coding agent's session (CLAUDECODE is set) never applies cloud changes",
+	for _, want := range []string{"plugin: skipped: claude is not on PATH", "cloud: skipped: a coding agent's session (CLAUDECODE is set) never applies cloud changes",
 		"in your own terminal window, not through the agent, run fugaro upgrade --yes " + root, "or fugaro upgrade " + root + " to be asked at each step"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
@@ -833,8 +833,8 @@ func TestUpgradeLocalNamesTheCloudCommand(t *testing.T) {
 	}
 }
 
-// TestUpgradePassesYesToTheRefresh: the cloud step runs after pin and
-// plugin (skipped here: no claude on PATH), and --yes reaches the refresh
+// TestUpgradePassesYesToTheRefresh: the cloud step runs after the plugin
+// step (skipped here: no claude on PATH), and --yes reaches the refresh
 // unchanged.
 func TestUpgradePassesYesToTheRefresh(t *testing.T) {
 	for _, yes := range []bool{true, false} {
@@ -862,8 +862,8 @@ func TestUpgradePassesYesToTheRefresh(t *testing.T) {
 			if err != nil || seen == nil || seen.yes != yes {
 				t.Fatalf("%v, options %+v\n%s", err, seen, out)
 			}
-			pin, plugin, base, cloud := strings.Index(out, "pin: done"), strings.Index(out, "plugin: skipped"), strings.Index(out, "step 2, base:"), strings.Index(out, "cloud: done")
-			if pin < 0 || plugin < pin || base < plugin || cloud < base || !strings.Contains(out, "  "+root+": pin done, plugin skipped, cloud done, rules skipped, policy skipped") {
+			plugin, base, cloud := strings.Index(out, "plugin: skipped"), strings.Index(out, "step 2, base:"), strings.Index(out, "cloud: done")
+			if plugin < 0 || base < plugin || cloud < base || !strings.Contains(out, "  "+root+": plugin skipped, cloud done, rules skipped, policy skipped") {
 				t.Fatalf("order or summary wrong:\n%s", out)
 			}
 		})
@@ -898,8 +898,14 @@ func TestUpgradeOneCheckoutsCloudFailureDoesNotHideAnother(t *testing.T) {
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "stopped in 1 of 2 checkout(s)") {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
-	if r := pluginwire.Status(otherSettings, "0.5.1", ""); r.Pin != pluginwire.OK || !strings.Contains(out, "  "+other+": pin done, plugin skipped, cloud skipped, rules skipped, policy skipped") {
-		t.Fatalf("the other checkout: %+v\n%s", r, out)
+	// Nothing in the tree writes a pin any more (U2, D949): the other
+	// checkout's own settings come out of the run byte for byte as they went
+	// in, and its steps are named all the same.
+	if got := upgradeRead(t, otherSettings); got != wiredAt("v0.5.0") {
+		t.Errorf("the other checkout's settings changed:\n%s", got)
+	}
+	if !strings.Contains(out, "  "+other+": plugin skipped, cloud skipped, rules skipped, policy skipped") {
+		t.Fatalf("the other checkout:\n%s", out)
 	}
 }
 
@@ -912,9 +918,11 @@ func TestUpgradeTeammateSkipsTheCloud(t *testing.T) {
 	}
 }
 
-// TestUpgradeRerunWhenCurrentIsNothingToDo: pin and cloud both current and
-// plugin skipped (no claude on PATH), so the checkout is "nothing to do": no
-// settings write, and a cloud plan with no base to copy and no build.
+// TestUpgradeRerunWhenCurrentIsNothingToDo: the cloud step is current and the
+// plugin step skipped (no claude on PATH), so the checkout is "nothing to do":
+// no settings write — the pin a checkout still carries is left byte for byte
+// as it was (U2 of docs/plugin-user-scope/implementation-plan.md, D949) — and
+// a cloud plan with no base to copy and no build.
 func TestUpgradeRerunWhenCurrentIsNothingToDo(t *testing.T) {
 	r, root := upgradeRig(t)
 	// This release's own pin, recorded with the owner it is checked
@@ -933,7 +941,7 @@ func TestUpgradeRerunWhenCurrentIsNothingToDo(t *testing.T) {
 	fakeSteps(t, "", nil)
 	out, _, err := executeStdin(t, "", "upgrade", "--yes")
 	if err != nil || upgradeRead(t, settings) != wiredAt("v0.5.1") ||
-		!strings.Contains(out, "pin: current: pinned to v0.5.1") ||
+		!strings.Contains(out, "plugin: skipped: claude is not on PATH") ||
 		!strings.Contains(out, "cloud: current: no base image to pin and no image to rebuild") ||
 		!strings.Contains(out, "nothing to do: "+root) {
 		t.Fatalf("%v\n%s", err, out)

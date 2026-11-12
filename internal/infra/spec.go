@@ -515,6 +515,23 @@ type RepoSpec struct {
 	// decides that against live state, and produces ProjectSecrets.
 	// json:"-": this map never reaches tfvars.
 	ProjectSecretCandidates map[string]string `json:"-"`
+	// ProjectSecretNodeOnly names the entries of ProjectSecretCandidates that
+	// only the published node admits: this machine's local config holds no
+	// entry and no list that makes the name project-wide for this repository,
+	// so the node's own block is the whole answer (SD17, G15).
+	//
+	// The distinction decides the command that stores such a name, and that is
+	// the only reason this map exists: `fugaro secrets set <name>` answers its
+	// scope from the local config alone (internal/cli's projectScopeName), so
+	// for a name only the node admits it refuses --project-wide and its bare
+	// form writes the repository's own copy -- the copy that then wins over
+	// the project's forever, the silent flip project-wide secrets exist to
+	// avoid (design docs/design/project-secrets.md §5). What such a name is
+	// given instead is the run's own door, whose secrets stage stores the
+	// value in the container its own node-read decision picks: SecretFix's
+	// node-only branch, and initsecrets' Left, which spells the same line.
+	// json:"-": this map never reaches tfvars.
+	ProjectSecretNodeOnly map[string]bool `json:"-"`
 	// ProjectSecrets are the logical names Readiness resolved to the
 	// project copy for this repository (repo has no version, project does),
 	// mapped to the project secret ID. This is the field that reaches
@@ -827,10 +844,10 @@ func withDefaults(o InstallationOutputs, lc *localcfg.Config, bucket string) Ins
 	def(&o.RoleIDs.BuildSubmitter, role(RoleBuildSubmitter))
 	def(&o.RoleIDs.TagMover, role(RoleTagMover))
 	if o.Launchers == nil {
-		o.Launchers = slices.Clone(lc.Terraform.Launchers)
+		o.Launchers = slices.Clone(lc.Terraform.Operators)
 	}
 	if o.Operators == nil {
-		o.Operators = slices.Clone(lc.Terraform.Operators)
+		o.Operators = slices.Clone(lc.Terraform.Admins)
 	}
 	if o.Launchers == nil {
 		o.Launchers = []string{}
@@ -900,67 +917,64 @@ func (c *repoCtx) effectiveCatalog() *config.Catalog {
 	return c.lc.ImageCatalogEffective(published)
 }
 
-// catalogJobImage is the image a checkout: baked workflow's job runs, chosen
-// through the tag-cover rule (reconciliation §3.1, D1146, D1155), with the
-// D1146 warning a pin may carry. It is called where the job spec is built —
-// deploy time — because the job's image is fixed once the job exists (F7): a
-// job that started on an image that cannot do its work would die mid-run
-// instead of being refused, and the two refusals of §3.3 are conditions of
-// the project's configuration rather than of one run.
-//
-// Which workflows reach this at all is catalog.Applies, the same predicate the
-// launcher judges the deployed job's image by, so the two cannot disagree about
-// which jobs are the catalog's.
-//
-// The entry the rule chose is then held to D1191: a baked job's image has to
-// hold this repository's checkout, which only an entry a Fugaro build writes
-// can promise, so a prebuilt one is refused here rather than deployed.
+// effectiveImageMap is the repo-to-image map the repository's specs are
+// computed from: the local configuration's when it states one, the published
+// project node's otherwise (localcfg's keep rule, D1906), and nil when the
+// project maps none.
+func (c *repoCtx) effectiveImageMap() map[string]string {
+	var published map[string]string
+	if c.in.Policy != nil {
+		published = c.in.Policy.ImageMap
+	}
+	return c.lc.ImageMapEffective(published)
+}
+
+// imageRequest is the question this repository's workflows are resolved with:
+// the project's effective catalog and map, this repository, the workflow and
+// the installation's backend.
 //
 // The backend is the installation's own, read from the config and not written
 // as a constant: the docker rule is a rule about the backend the job will run
 // on (D1149), and today's only backend is Cloud Run — a config that names
 // cloud-batch is refused where it is read until the task that makes a Batch
 // run safe, which is also the point this line starts meaning something else.
-func (c *repoCtx) catalogJobImage(name string, w config.Workflow) (config.Entry, []string, bool, error) {
-	cat := c.effectiveCatalog()
-	if cat == nil || !catalog.Applies(*cat, w) {
-		return config.Entry{}, nil, false, nil
+func (c *repoCtx) imageRequest(w config.Workflow) catalog.ImageRequest {
+	return catalog.ImageRequest{
+		Catalog:   c.effectiveCatalog(),
+		ImageMap:  c.effectiveImageMap(),
+		Canonical: c.in.Repo,
+		Workflow:  w,
+		Backend:   catalog.Backend(c.lc.Backend()),
 	}
-	choice, err := catalog.Choose(catalog.Job{
-		Catalog: *cat,
-		Repos:   []catalog.Repo{{Slug: c.slug, Pin: w.ImageName, Needs: w.Needs}},
-		Backend: catalog.Backend(c.lc.Backend()),
-	})
-	if err != nil {
-		return config.Entry{}, nil, false, userErr("workflow %s: %w", name, err)
-	}
-	// Which jobs carry a baked checkout is asked as the pair's complement and
-	// not as equality with baked: clone and shared are the two kinds whose
-	// image holds no repository source — the same pair the clone shape's own
-	// writer asks below — and every other value, the empty one a config that
-	// never met the loader's defaults carries included, is a job the runner
-	// provisions as baked. Asking it as equality would leave that value
-	// unjudged here and deploy the job this rule exists to stop.
-	bakedCheckout := w.Checkout != config.CheckoutClone && w.Checkout != config.CheckoutShared
-	if bakedCheckout && !slices.Contains(builtSourceKinds, choice.Entry.Source.Kind) {
-		return config.Entry{}, nil, false, unbuiltOnBaked(name, choice.Entry)
-	}
-	var warnings []string
-	if choice.Warn != "" {
-		warnings = append(warnings, choice.Warn)
-	}
-	return choice.Entry, warnings, true, nil
 }
 
-// builtSourceKinds are the catalog source kinds a Fugaro build writes an image
-// from (PIC4): a Dockerfile at a repository or inline in the catalog. The list
-// is what is built rather than what is not, so a kind added to the catalog
-// later is refused by D1191's rule until someone states that a build writes it.
-// That is the direction the failure is safe in: the list lagging behind a kind
-// the catalog gains refuses a configuration by name, and the sentence names
-// both ways out, where the opposite list would hold a kind to be built that no
-// build in this installation writes — the shape D1191 refuses.
-var builtSourceKinds = []config.SourceKind{config.SourceDockerfile, config.SourceInline}
+// jobImage is the image one workflow's job runs, resolved by the one resolver
+// (catalog.JobImage, D1900, IS1). It is called where the job spec is built —
+// deploy time — because the job's image is fixed once the job exists (F7): a
+// job that started on an image that cannot do its work would die mid-run
+// instead of being refused, and the refusals the resolver raises are
+// conditions of the project's configuration rather than of one run.
+//
+// Which workflows reach this at all is the same resolver the launcher, doctor
+// and the image commands ask, so no two of them can disagree about which jobs
+// the project's images are (F21).
+//
+// An entry it answers with is then held to D1191: a baked job's image has to
+// hold this repository's checkout, which only an entry a Fugaro build writes
+// can promise, so a prebuilt one is refused here rather than deployed. The
+// resolver answers with an entry only for a baked checkout — a clone or shared
+// job's image is the installation's own — so that rule is asked of every entry
+// it answers with, whatever the workflow's checkout kind was spelled as.
+func (c *repoCtx) jobImage(name string, w config.Workflow) (catalog.Selection, error) {
+	sel, err := catalog.JobImage(c.imageRequest(w))
+	if err != nil {
+		return catalog.Selection{}, userErr("workflow %s: %w", name, err)
+	}
+	if sel.Source == catalog.SourceCatalog && !catalog.BuildsImage(sel.Entry) {
+		return catalog.Selection{}, unbuiltOnBaked(name, sel.Entry)
+	}
+	return sel, nil
+}
 
 // unbuiltOnBaked is D1191's refusal, raised where the job spec is built and not
 // by the job (F14). It names the entry, what it is built from and the two ways
@@ -1183,30 +1197,28 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 	lc, slug := c.lc, c.slug
 	variant := gcp.WorkflowVariant(name, token)
 	saID := gcp.ServiceAccountID(slug, variant)
-	// checkout: clone runs the installation's base image directly (design
-	// generic-tool.md §2, G3): there is no per-repository derived image, so
-	// the job's image is base_images.base, not a :latest tag in the
-	// repository's own registry. Every token variant of the workflow runs
-	// the same image. A checkout: shared workflow keeps the derived tag:
-	// the image its job runs is a shared dependency-layer digest from the
-	// lock, which only the operator's machine writes onto the job (design
-	// forge-authorship-images/shared-images.md §6), and no spec can know it.
-	// Until C8b1's refresh writes that digest, the two markers below make a
-	// shared job clone-shaped while this tag — the per-repository image
-	// readiness.go's non-clone branch asks the operator to build — is what
-	// it runs; C8b1 owns replacing both.
-	image := gcp.ImageName(c.registryPath(), slug, name) + ":latest"
-	var warnings []string
-	var entry config.Entry
-	if w.Checkout == config.CheckoutClone {
-		image = lc.BaseImage(config.BaseKind)
-	} else if e, warns, chosen, err := c.catalogJobImage(name, w); err != nil {
-		// §3.3's refusals are raised here, before the job is deployed: a
-		// job whose image cannot do its work would die mid-run instead.
+	// The job's image is the resolver's answer (catalog.JobImage, D1900), told
+	// in this repository's own references: the installation's base image for a
+	// checkout: clone job, which has no per-repository derived image at all
+	// (design generic-tool.md §2, G3) — the same image for every token variant
+	// of the workflow; the shared dependency-layer image for a checkout:
+	// shared job, whose digest only the operator's machine writes onto the job
+	// (design forge-authorship-images/shared-images.md §6, C8b1) and which is
+	// therefore the derived tag here until that refresh exists, the per-
+	// repository image readiness.go's non-clone branch asks the operator to
+	// build; a catalog entry for a job the project's images decide; and the
+	// repository's own derived tag for a project that has no image for the job
+	// yet (O4 b).
+	sel, err := c.jobImage(name, w)
+	if err != nil {
 		return WorkflowSpec{}, err
-	} else if chosen {
-		image, warnings, entry = c.catalogImage(e), warns, e
 	}
+	image := sel.Image(catalog.Images{
+		Base:    lc.BaseImage(config.BaseKind),
+		Repo:    gcp.ImageName(c.registryPath(), slug, name) + ":latest",
+		Catalog: c.catalogImage,
+	})
+	warnings, entry := sel.Warnings, sel.Entry
 	ws := WorkflowSpec{
 		Job:            gcp.JobName(slug, variant),
 		ServiceAccount: ServiceAccount{AccountID: saID, DisplayName: gcp.JobSADisplayName(slug, variant)},
@@ -1245,7 +1257,8 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 	// The image's origin, written for the run on EVERY workflow job: the
 	// catalog entry this job's image came from, and empty on a job the
 	// catalog did not choose (a repository-built image, a checkout: clone or
-	// shared job, whose entry is empty, catalog.Applies refusing both). The
+	// shared job, whose entry is empty, because the resolver answers those
+	// with the base and shared layers and no entry). The
 	// key is written even when empty because the runner reads os.Environ,
 	// which includes a derived image's own ENV: a repository Dockerfile that
 	// sets FUGARO_IMAGE_ENTRY would otherwise run with a stamp the deploy
@@ -1492,9 +1505,9 @@ func Repo(in Inputs) (RepoSpec, error) {
 		// stage keys, or whose project default, declare the one mix the
 		// ruling admits: that repository gets the account's own variant
 		// beside the default, and nothing else changes (WorkflowAccounts).
-		// catalogImage is what catalogJobImage answered for the workflow's
-		// job, read back from the spec it built rather than asked again:
-		// the check below and the job's own image must never disagree about
+		// catalogImage is what jobImage answered for the workflow's job,
+		// read back from the spec it built rather than asked again: the
+		// check below and the job's own image must never disagree about
 		// which jobs are the catalog's.
 		catalogImage := false
 		for _, tok := range WorkflowAccounts(in.Cfg, lc, in.Repo) {
@@ -1541,7 +1554,7 @@ func Repo(in Inputs) (RepoSpec, error) {
 			return RepoSpec{}, err
 		}
 	}
-	rs.ProjectSecretCandidates = c.projectSecretCandidates(rs)
+	rs.ProjectSecretCandidates, rs.ProjectSecretNodeOnly = c.projectSecretCandidates(rs)
 	return rs, nil
 }
 
@@ -1551,12 +1564,33 @@ func Repo(in Inputs) (RepoSpec, error) {
 // ProjectSecretCandidate accepts. Being here says nothing about whether the
 // name actually resolves to the project copy -- Readiness decides that
 // against live state (design docs/design/project-secrets.md §5).
-func (c *repoCtx) projectSecretCandidates(rs RepoSpec) map[string]string {
+//
+// The second answer is the subset only the node admits (RepoSpec's
+// ProjectSecretNodeOnly), asked of each name only once the local config's own
+// answer is no: a name the local config already answers for keeps that answer,
+// and the node is asked about no other.
+//
+// It reads the two facts this context holds and no caller of the predicate
+// alone has -- the repository's provider and the published node -- so the
+// container a job mounts and the container update --repo's secrets stage
+// stores into are one answer and cannot disagree (SD17).
+func (c *repoCtx) projectSecretCandidates(rs RepoSpec) (map[string]string, map[string]bool) {
 	out := map[string]string{}
+	var nodeOnly map[string]bool
 	add := func(logical string) {
 		if id, ok := ProjectSecretCandidate(c.lc, logical, c.in.Repo); ok {
 			out[logical] = id
+			return
 		}
+		id, ok := ProjectSecretCandidateFromNode(c.lc, logical, c.in.Repo, c.provider, c.in.Policy)
+		if !ok {
+			return
+		}
+		out[logical] = id
+		if nodeOnly == nil {
+			nodeOnly = map[string]bool{}
+		}
+		nodeOnly[logical] = true
 	}
 	for _, key := range slices.Sorted(maps.Keys(rs.Workflows)) {
 		for _, logical := range uniqueSecrets(rs.Workflows[key]) {
@@ -1569,9 +1603,9 @@ func (c *repoCtx) projectSecretCandidates(rs RepoSpec) map[string]string {
 		}
 	}
 	if len(out) == 0 {
-		return nil
+		return nil, nil
 	}
-	return out
+	return out, nodeOnly
 }
 
 // ProjectSecretCandidate is the one place that answers "may this repository
@@ -1586,7 +1620,54 @@ func (c *repoCtx) projectSecretCandidates(rs RepoSpec) map[string]string {
 // default at all (D1262). ok is false, id "" otherwise. It is exported
 // because fugaro update's secrets stage (before any RepoSpec exists) needs
 // the identical answer.
+//
+// It is ProjectSecretCandidateFromNode with no published node and no
+// provider in hand, which is the answer a caller that read no node and knows
+// no provider is asking for.
 func ProjectSecretCandidate(lc *localcfg.Config, logical, repo string) (id string, ok bool) {
+	return ProjectSecretCandidateFromNode(lc, logical, repo, "", nil)
+}
+
+// ProjectSecretCandidateFromNode is ProjectSecretCandidate with the two facts
+// only the caller has: the repository's git provider, and the project's
+// published policy node. It adds one source, the node's bitbucket_token block,
+// and it is the read SD17 answers: a machine whose local config holds no
+// project_secrets.bitbucket-token entry no longer needs the owner to copy that
+// entry to it, because the allow-list the owner published is what admits the
+// repository here.
+//
+// The source is narrow on purpose, and each of its four conditions is a rule
+// of its own:
+//
+//   - bitbucket_token is the only block of the node that is derived from
+//     project_secrets (projectpolicy.DeriveBitbucketToken), so it is the only
+//     name the node can answer for at all. Every other name's allow-list lives
+//     in a local file and nowhere else, and a name the node does not carry
+//     must not be read as one that admits nobody -- the local sources above
+//     keep the last word on those.
+//   - the provider must be bitbucket. The node's allow_repos is
+//     bitbucket-qualified by construction (projectpolicy.validBitbucketTokenBlock
+//     refuses any other provider), and the canonical form built below is what
+//     AdmitRepo compares segment against segment -- so a GitHub repository
+//     whose owner/name a Bitbucket entry happens to match would otherwise read
+//     as admitted to a credential it does not use. resolveBitbucketProxied
+//     guards the same way and for the same reason.
+//   - the local config must hold no entry for the name. An entry is the
+//     owner's own decision and the file is its source of truth (D854), so a
+//     machine that carries one keeps the answer it carries -- including the
+//     entry that names another repository, which is not a disagreement to
+//     resolve but the answer. This is resolveBitbucketProxied's rule read on
+//     the allow-list: an entry that is not there is not a disagreement, and
+//     the node is then the only answer.
+//   - the node must admit the repository. An empty allow_repos admits nothing
+//     (projectpolicy.AdmitRepo), which is the deny-all a published block with
+//     an empty list states.
+//
+// A nil node is a caller that read none -- the local-only callers, and
+// update --repo on a machine whose config names no database address -- and
+// then nothing here is added, which is the answer every caller gave before
+// this function existed.
+func ProjectSecretCandidateFromNode(lc *localcfg.Config, logical, repo, provider string, p *projectpolicy.Policy) (id string, ok bool) {
 	if lc == nil || logical == "" {
 		return "", false
 	}
@@ -1616,9 +1697,9 @@ func ProjectSecretCandidate(lc *localcfg.Config, logical, repo string) (id strin
 	if !eligible && namedAccount {
 		eligible = lc.ClaudeAccounts[account].AllowsData(repo)
 	}
-	provider, namedProvider := config.ProviderBySecret(lc.Providers, logical)
+	modelProvider, namedProvider := config.ProviderBySecret(lc.Providers, logical)
 	if !eligible && namedProvider {
-		eligible = lc.Providers[provider].AllowsData(repo)
+		eligible = lc.Providers[modelProvider].AllowsData(repo)
 	}
 	claimed := listed || swept || namedAccount || namedProvider
 	if !eligible && !claimed {
@@ -1630,10 +1711,33 @@ func ProjectSecretCandidate(lc *localcfg.Config, logical, repo string) (id strin
 		// mounts nowhere.
 		eligible = config.AllowedForWorkflowSecret(lc.WorkflowSecrets, logical, repo)
 	}
+	if !eligible && projectSecretFromNode(lc, logical, repo, provider, p) {
+		eligible = true
+	}
 	if !eligible {
 		return "", false
 	}
 	return gcp.ProjectSecretID(lc.Name, logical), true
+}
+
+// projectSecretFromNode is the published node's half of the answer, and it is
+// asked only for the one name the node carries a project_secrets-derived block
+// for. The four conditions are ProjectSecretCandidateFromNode's, in its order.
+func projectSecretFromNode(lc *localcfg.Config, logical, repo, provider string, p *projectpolicy.Policy) bool {
+	if logical != config.BitbucketSecret || p == nil || p.BitbucketToken == nil {
+		return false
+	}
+	if provider != gitprov.KindBitbucket {
+		return false
+	}
+	if _, listed := lc.ProjectSecrets[logical]; listed {
+		return false
+	}
+	canonical, err := projectpolicy.Canonical(provider, repo)
+	if err != nil {
+		return false
+	}
+	return projectpolicy.AdmitRepo(p.BitbucketToken.AllowRepos, canonical)
 }
 
 // MountSecretID is the one place that answers "which secret ID does this

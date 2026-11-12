@@ -19,6 +19,14 @@ const DefaultTimeout = 30 * time.Second
 // maxErrorBody is how much of an error response StatusError keeps.
 const maxErrorBody = 512
 
+// MaxReplyBytes bounds one response body this client reads. It is exported
+// because a caller that reads a large object through this client — a git blob,
+// base64 inside a JSON object — has to know the ceiling its own reads are
+// under: a file whose encoding does not fit is a body this client truncates,
+// and the caller can refuse it by name instead of leaving the truncation to
+// surface as a decoding error.
+const MaxReplyBytes = 10 << 20
+
 var defaultHTTP = &http.Client{Timeout: DefaultTimeout}
 
 // Client sends JSON requests to one REST API.
@@ -187,7 +195,7 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) (http
 		return nil, err
 	}
 	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, MaxReplyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("%s %s: reading response: %w", method, path, err)
 	}

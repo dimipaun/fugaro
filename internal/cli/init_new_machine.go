@@ -67,11 +67,11 @@ func (r *initRun) newMachineConfig(ctx context.Context, e *initEngine) error {
 	if outs.CoordinatorServiceAccount != "" {
 		next.Terraform.Coordinator = true
 	}
-	if !r.o.launchersChanged && len(next.Terraform.Launchers) == 0 {
-		next.Terraform.Launchers = slices.Clone(outs.Launchers)
-	}
 	if !r.o.operatorsChanged && len(next.Terraform.Operators) == 0 {
-		next.Terraform.Operators = slices.Clone(outs.Operators)
+		next.Terraform.Operators = slices.Clone(outs.Launchers)
+	}
+	if !r.o.adminsChanged && len(next.Terraform.Admins) == 0 {
+		next.Terraform.Admins = slices.Clone(outs.Operators)
 	}
 	r.newMachineBudget(ctx, e, outs, &next)
 	if err := r.configOnly(ctx, e.c, e.t, e.wd, &next, e.spec, e.path, e.old); err != nil {
@@ -88,15 +88,17 @@ func (r *initRun) newMachineConfig(ctx context.Context, e *initEngine) error {
 // newMachineGuard refuses, for a stage that would change the cloud, to apply in
 // the run that wrote a new machine's config: that run's plan from empty
 // defaults must not be applied (newMachineNotes says so). The owner applies; a
-// rerun here, with the config in place, is the ordinary converge. The plugin
-// wiring writes a local file only (.claude/settings.json) and is not guarded:
-// the run still wires the plugin, with its own confirmation.
+// rerun here, with the config in place, is the ordinary converge. The stages
+// that are only this machine's are not guarded (initflow.MachineLocal — the
+// plugin stage): the run still installs the plugin in the reader's own Claude
+// Code, which is what the command they ran came for, and a stage that runs past
+// the cloud stop this refusal makes is one the guard must not stop either.
 func (e *initEngine) newMachineGuard(stage string) error {
-	if e.newMachine == "" || stage == initflow.Installation || stage == initflow.Plugin {
+	if e.newMachine == "" || stage == initflow.Installation || initflow.MachineLocal(stage) {
 		return nil
 	}
 	return &initflow.NeedsYouError{Left: initflow.Left{Stage: stage, Kind: initflow.LeftConsole,
-		Text:     "this run wrote this machine's local config from an existing installation and changed nothing in the cloud; it changes nothing more there from here (only the plugin wiring still writes a local .claude/settings.json): an owner applies changes (the notes above say how), then rerun this once your roles are granted",
+		Text:     "this run wrote this machine's local config from an existing installation and changed nothing in the cloud; it changes nothing more there from here: an owner applies changes (the notes above say how), then rerun this once your roles are granted",
 		Commands: []string{selfCommand() + " " + e.r.o.doorName()}}}
 }
 
@@ -105,14 +107,14 @@ func (e *initEngine) newMachineGuard(stage string) error {
 // do not, that a plan from here must not be applied, and the roles.
 func newMachineNotes(outs infra.InstallationOutputs, door string) []string {
 	lines := []string{
-		"the local config was copied from the installation's outputs: launchers, operators, registry cleanup (on, or dry-run when the outputs say a dry run), log isolation and the budget backend's history account; they do not carry the alert email, the scheduler region, whether cleanup is dry-run or off, or the Firebase project,",
+		"the local config was copied from the installation's outputs: operators, admins, registry cleanup (on, or dry-run when the outputs say a dry run), log isolation and the budget backend's history account; they do not carry the alert email, the scheduler region, whether cleanup is dry-run or off, or the Firebase project,",
 		"so a plan from this machine can differ from what the owner applied and look noisy: do not apply an installation plan from here; ask an owner to run fugaro update, passing --alert-email, --scheduler-region, --registry-cleanup and --firebase-project as they did",
 	}
 	return append(lines, roleNotes(outs, door)...)
 }
 
 // roleNotes names the roles a new member may lack and the one-line command
-// an owner runs to grant them (--launcher and --operator replace the lists,
+// an owner runs to grant them (--operator and --admin replace the lists,
 // so the command carries the current members).
 func roleNotes(outs infra.InstallationOutputs, door string) []string {
 	cmd := func(flag, you string, have []string) string {
@@ -129,8 +131,8 @@ func roleNotes(outs infra.InstallationOutputs, door string) []string {
 		return strings.Join(m, ", ")
 	}
 	return []string{
-		fmt.Sprintf("to launch and watch runs you need the launcher role, held by: %s; if you are not listed, ask an owner to run: %s", list(outs.Launchers), cmd("--launcher", "user:<your-email>", outs.Launchers)),
-		fmt.Sprintf("to onboard repositories you need the operator role, held by: %s; if you are not listed, ask an owner to run: %s", list(outs.Operators), cmd("--operator", "user:<your-email>", outs.Operators)),
+		fmt.Sprintf("to launch and watch runs you need the operator role, held by: %s; if you are not listed, ask an owner to run: %s", list(outs.Launchers), cmd("--operator", "user:<your-email>", outs.Launchers)),
+		fmt.Sprintf("to onboard repositories you need the admin role, held by: %s; if you are not listed, ask an owner to run: %s", list(outs.Operators), cmd("--admin", "user:<your-email>", outs.Operators)),
 	}
 }
 

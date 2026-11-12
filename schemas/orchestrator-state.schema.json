@@ -20,8 +20,8 @@
   "additionalProperties": false,
   "properties": {
     "schema_version": {
-      "const": 1,
-      "$comment": "orchestrator.SchemaVersion. Migrate raises a document written by the release before this one (0) to this value."
+      "const": 2,
+      "$comment": "orchestrator.SchemaVersion. Migrate raises a document written by an earlier release (0, or 1) to this value, one version at a time: 0 is the node from before the schema carried a version, and 1 the node from before the ladder kept its ledger on an item."
     },
     "rev": {
       "type": "integer",
@@ -158,6 +158,65 @@
           "type": "string",
           "maxLength": 600,
           "description": "A line the daemon keeps for whoever reads the item next. It is not part of the spec, so writing one revokes no approval."
+        },
+        "escalation": {
+          "$ref": "#/$defs/escalation",
+          "description": "The ladder's ledger on this item, absent until the ladder first acts on it. The daemon's alone to write, and bookkeeping: a rung change leaves a standing approval where it is."
+        }
+      }
+    },
+    "escalation": {
+      "type": "object",
+      "required": ["rung", "entered_at", "outer_attempts", "transitions"],
+      "additionalProperties": false,
+      "description": "The ladder's ledger on one work item (docs/outer-loop-escalation). Nothing here is free text: every string is a value of a closed vocabulary or a git object name, so a prompt, a finding or a diff has nowhere to sit (G8). Go: internal/orchestrator/state.go.",
+      "properties": {
+        "rung": {
+          "enum": ["R0", "R1", "R2", "R3", "R4"],
+          "description": "The rung the item is at, and the highest it has entered: the ladder does not walk back down, and Apply refuses a patch that tries (escalation.Rung)."
+        },
+        "entered_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the item entered that rung, on the server clock. It is the last transition's own time, so the two cannot disagree."
+        },
+        "outer_attempts": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16,
+          "description": "How many of the ladder's own runs the item has spent — rung 0, the one rung 2, the judge, the review of a rebased head — and never a normal run of the item's recipe, which `approved.attempts` counts (orchestrator.MaxOuterAttempts)."
+        },
+        "transitions": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "description": "The ladder's history, oldest first and append-only: a transition that happened is not rewritten, reordered or dropped, and Apply refuses a patch that tries (orchestrator.MaxEscalationTransitions).",
+          "items": { "$ref": "#/$defs/transition" }
+        }
+      }
+    },
+    "transition": {
+      "type": "object",
+      "required": ["to", "reason", "at"],
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "enum": ["R0", "R1", "R2", "R3", "R4"],
+          "description": "The rung the item left. Absent on the first transition, which is an item entering the ladder: the zero rung is how this document spells \"none\", as escalation.Facts.Reached reads it."
+        },
+        "to": {
+          "enum": ["R0", "R1", "R2", "R3", "R4"],
+          "description": "The rung it entered. Never empty: a transition to nowhere records nothing."
+        },
+        "reason": {
+          "enum": ["age", "attempts", "cost", "churn_new", "churn_same", "hotfix", "critical_path", "rebase", "r2_clean", "r2_findings"],
+          "description": "Why, as one of escalation.Reasons: a code, never a sentence, so the ledger holds no finding text and no model (G8)."
+        },
+        "at": { "type": "string", "format": "date-time", "description": "When it happened, on the server clock." },
+        "head_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{7,64}$",
+          "description": "The head the ladder was looking at, lower-hex and possibly abbreviated as a provider reports it (Bitbucket gives twelve characters). It is what rung 0 is spent by: a head already in the ledger has had its rebase (escalation.Facts.RebasedHeads)."
         }
       }
     },

@@ -32,6 +32,12 @@
         { "type": "array", "prefixItems": [{ "$ref": "#/$defs/check" }, { "$ref": "#/$defs/reviewNoBounce" }, { "$ref": "#/$defs/adversarialNoBounce" }], "items": false, "minItems": 3 },
         { "type": "array", "prefixItems": [{ "$ref": "#/$defs/check" }, { "$ref": "#/$defs/firstLine" }, { "$ref": "#/$defs/reviewBounce" }, { "$ref": "#/$defs/adversarialBounce" }], "items": false, "minItems": 4 },
         { "type": "array", "prefixItems": [{ "$ref": "#/$defs/digest" }, { "$ref": "#/$defs/reviewNoBounce" }], "items": false, "minItems": 2 },
+        { "type": "array", "prefixItems": [{ "$ref": "#/$defs/reviewHandOver" }], "items": false, "minItems": 1 },
+        { "type": "array", "prefixItems": [{ "$ref": "#/$defs/firstLine" }, { "$ref": "#/$defs/reviewHandOver" }], "items": false, "minItems": 2 },
+        { "type": "array", "prefixItems": [{ "$ref": "#/$defs/check" }, { "$ref": "#/$defs/reviewHandOver" }], "items": false, "minItems": 2 },
+        { "type": "array", "prefixItems": [{ "$ref": "#/$defs/check" }, { "$ref": "#/$defs/firstLine" }, { "$ref": "#/$defs/reviewHandOver" }], "items": false, "minItems": 3 },
+        { "type": "array", "prefixItems": [{ "$ref": "#/$defs/digest" }, { "$ref": "#/$defs/reviewHandOver" }], "items": false, "minItems": 2 },
+        { "type": "array", "prefixItems": [{ "$ref": "#/$defs/rebase" }], "items": false, "minItems": 1 },
         { "$ref": "#/$defs/artifactSteps" }
       ]
     },
@@ -116,6 +122,16 @@
     "reviewBounce": {
       "type": "object", "additionalProperties": false, "required": ["review"],
       "properties": { "review": { "type": ["object", "null"], "additionalProperties": false, "properties": { "max_rounds": { "type": "integer", "minimum": 1, "maximum": 10 }, "bounce": { "const": "first_line" } } } }
+    },
+    "reviewHandOver": {
+      "type": "object", "additionalProperties": false, "required": ["review"],
+      "properties": { "review": { "type": "object", "additionalProperties": false, "required": ["hand_over"], "properties": { "max_rounds": { "type": "integer", "minimum": 1, "maximum": 10 }, "hand_over": { "const": true } } } },
+      "description": "A review step that hands the run over (recipe.Step.HandOver, the escalation's escalate recipe): the run ends at that review with the verdict recorded and no fix round after it. hand_over: false is refused (the key is simply not written), and recipe.Parse refuses the key beside bounce: first_line and on a review an adversarial step follows, neither of which this shape admits."
+    },
+    "rebase": {
+      "type": "object", "additionalProperties": false, "required": ["rebase"],
+      "properties": { "rebase": { "type": ["object", "null"], "additionalProperties": false } },
+      "description": "The rebase run's only step (recipe.StepRebase): the runner puts the branch on its base, hands the conflicts to one model stage, runs the workflow's tests again and pushes. recipe.Parse refuses the step anywhere but alone in a mode: implement recipe, and a recipe holding it is its own shape — the step is the whole run, so it needs no review step after it, which is why the oneOf lists it in a variant of its own."
     },
     "reviewModeReview": {
       "type": "object", "additionalProperties": false, "required": ["review"],

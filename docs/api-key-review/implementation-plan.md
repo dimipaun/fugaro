@@ -816,7 +816,7 @@ register.
 
 **Commit:** `docs(checklist): check 330, the api-key review`
 
-### AK9 — the tree's own sentences stop saying a review is served by a Claude account (SEC)
+### AK9 — the tree's own sentences stop saying a review is served by a Claude account (SEC) — **FOLDED INTO MC6, not scheduled here**
 
 **Slice:** none — **off the levels and off the critical path** (§1, §2's `—` rows); **folded into
 MC6 of `docs/model-crafts` on 2026-11-10** (§6 item 12, that folder's D1638 and F26), so this task stays
@@ -891,7 +891,7 @@ what was refused is a security-relevant inaccuracy rather than a wording prefere
 
 **Commit:** `credsvc, cli: the review sentences name the account axis, not a Claude account`
 
-### AK10 — the credential write refuses a bundle the deployed service cannot read (SEC)
+### AK10 — the credential write refuses a bundle the deployed service cannot read (SEC) — **FOLDED INTO MC6, not scheduled here**
 
 **Slice:** none — **off the levels and off the critical path** (§1, §2's `—` rows), **folded into
 MC6 of `docs/model-crafts` on 2026-11-10** (§6 item 12, that folder's D1638 and F26: written and not

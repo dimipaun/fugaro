@@ -77,11 +77,17 @@ commit authors are the owner under **three email addresses on three different do
 the runner identity `Fugaro <fugaro@users.noreply.invalid>` (389) and `dependabot[bot]` (8
 mechanical version bumps; its 14 `Signed-off-by` trailers are the only sign-offs in the
 history). PR authors ever: the owner's account, `app/fugaro-dev`, `app/dependabot`. Commit
-trailers credit AI models as co-authors (about 8,900 `Co-authored-by` lines). No outside human
-contributor appears. *Consequence, for the owner and counsel, not decided here:* (a) whether any
+trailers credit AI models as co-authors (about 8,900 `Co-authored-by` lines). One outside human
+contributor has appeared since: `paulkore` (2 commits, #1665 and #1673, merged 2026-11-03), whose
+pull requests the CLA assistant reported as signed by all committers. A `.mailmap` at the repository root maps the owner's
+billmybank.com and youkno.ai addresses to the lattica.com one for display; the stored commits are unchanged. *Consequence, for the owner and counsel, not decided here:* (a) whether any
 organisation behind the email domains has a claim on work committed under its address; (b)
 how AI-assisted authorship bears on the copyright the enterprise licence rests on. Neither blocks
 the 0.11.0 slice; both bear on D305.
+
+**Answered by the owner, 2026-11-11 (L0.1):** (a) no organisation behind the email domains has a
+claim; (b) AI-assisted authorship needs no change to the licence, the CLA or the commit trailers;
+and D307's notices meet the dependencies' licence terms. This closes L0.1.
 
 **F4 — Rule (internal contradiction): "nothing gets moved out of the core" vs the later
 candidates.** The candidates are already core: `console/` (released, F5), `mobile/`, the
@@ -423,7 +429,8 @@ unused.
   the binary carries code under the enterprise licence; a test (plan L2.1, from 0.11.0) refuses a
   non-empty tag list without those labels, and the label change is its own slice (plan L5) with an
   OWNER-RUN counsel review. (c) A user who wants a pure-MIT binary builds from source without the
-  tag; whether to also publish a pure-MIT artifact is open for that release. (d) The repository's
+  tag; whether to also publish a pure-MIT artifact was open for that release and **the owner ruled
+  2026-11-11: yes, publish a pure-MIT build** beside the mixed-licence one (plan L5.3). (d) The repository's
   `go vet -tags` loop in `ci.yml` does not vet `//go:build ee` files today; the workspaces plan adds
   the tag to it when the first such file lands. (e) The three published images
   (`images/base/Dockerfile`, `images/history/Dockerfile`, `images/credentials/Dockerfile`) each
@@ -432,7 +439,7 @@ unused.
   otherwise (an input for that plan).
 - **O1 — Counsel (OWNER-RUN, task L0.1):** the `ee/LICENSE` text and licensor line (T1), the CLA
   text for the hosted app (D304), F3 (a) and (b), and whether D307's notices meet the dependencies'
-  terms.
+  terms. All answered 2026-11-11 (see F3).
 - **O2 — D301 and GitHub's detector.** F27: GitHub reports `other` for a repository whose root
   `LICENSE` carries a scope statement ahead of the MIT text. D301's statement sits after line 1 but
   is still extra text, so Check 130 will most likely show "other" rather than "MIT" (U1). The owner

@@ -2,8 +2,10 @@ package runner
 
 import (
 	"fmt"
+	"math"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -122,6 +124,14 @@ func (r *run) updateCost() {
 	r.mu.Lock()
 	gateway := r.gw != nil
 	c.UsageUnparsed = r.unparsed
+	// The run's token counts by model, from whichever path filled them
+	// (G1.2, F8): what a reader prices again on another model. Copied, so a
+	// later stage's counts cannot change a cost a reader already holds. nil
+	// when the run recorded none, which is also what the record writes for an
+	// empty map -- a run that made no model call has no figures, and the
+	// difference between that and a call count nobody kept is the record's
+	// (G5).
+	c.ModelTokens = copyModelTokens(r.modelTokens)
 	var notional float64
 	if gateway {
 		// The splits are of the run's whole model figure, notional dollars
@@ -212,6 +222,104 @@ func (r *run) recordAccountStageCost(stage string, claudeUSD float64) {
 		r.rec.CostUSD = (r.gwUsed + r.gwNotional + r.direct).USD()
 	}
 	r.mu.Unlock()
+}
+
+// recordAgentModelTokens takes a stage's own per-model usage into the run's
+// counts. It is the arm of a run with no gateway: an oauth run and an api-key
+// or Vertex run whose budget mode is off send every call straight to the
+// model, so the agent's own result event is the only account of them (F8).
+//
+// A run whose gateway is on takes its counts from the gateway's ledger, in
+// closeGateway, and never from here: the record's contract is that such a
+// run's counts are what its cache totals are summed from, and the calls of a
+// stage the run's stage-scoped Claude OAuth account served are in no such
+// total, so adding this stage's report beside the ledger's would break that
+// sum for exactly the mixed runs that have both arms (P11, P12).
+func (r *run) recordAgentModelTokens(res agent.Result) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.gw != nil {
+		return
+	}
+	for model, u := range res.ModelUsage {
+		// Claude Code reports a stage's cache creations as one count where the
+		// gateway's usage has a 5m write and a 1h write: with no gateway there
+		// is no TTL to keep, so all of it is booked as a 5m write, the way the
+		// budget books the same figure (G1.1, F8).
+		r.addModelTokens(model, runstore.ModelTokenCounts{
+			Input:        u.Input,
+			Output:       u.Output,
+			CacheRead:    u.CacheRead,
+			CacheWrite5m: u.CacheCreation,
+		})
+	}
+}
+
+// addModelTokens adds one stage's counts to the run's per-model map, kind by
+// kind. The caller holds r.mu.
+func (r *run) addModelTokens(model string, add runstore.ModelTokenCounts) {
+	if r.modelTokens == nil {
+		r.modelTokens = map[string]runstore.ModelTokenCounts{}
+	}
+	c := r.modelTokens[model]
+	c.Input = satTokens(c.Input, add.Input)
+	c.Output = satTokens(c.Output, add.Output)
+	c.CacheRead = satTokens(c.CacheRead, add.CacheRead)
+	c.CacheWrite5m = satTokens(c.CacheWrite5m, add.CacheWrite5m)
+	c.CacheWrite1h = satTokens(c.CacheWrite1h, add.CacheWrite1h)
+	r.modelTokens[model] = c
+}
+
+// modelTokenCounts is the gateway's per-model usage as the record carries it:
+// the kinds a repricing reads, with the web searches the gateway also prices
+// left out -- they are charged apart and no token figure carries them
+// (runstore.ModelTokenCounts). nil for a ledger that recorded none, so the
+// record omits the key rather than writing an empty map.
+func modelTokenCounts(by map[string]pricing.Usage) map[string]runstore.ModelTokenCounts {
+	if len(by) == 0 {
+		return nil
+	}
+	out := make(map[string]runstore.ModelTokenCounts, len(by))
+	for m, u := range by {
+		out[m] = runstore.ModelTokenCounts{
+			Input:        u.Input,
+			Output:       u.Output,
+			CacheRead:    u.CacheRead,
+			CacheWrite5m: u.CacheWrite5m,
+			CacheWrite1h: u.CacheWrite1h,
+		}
+	}
+	return out
+}
+
+// satTokens adds two token counts, saturating at the largest int64 and
+// clamping a negative to zero, the way every other sum of these figures does
+// (pricing's satAdd, the gateway's, the budget's). A count that arrives
+// absurd -- a provider reporting near MaxInt64, a result event spelling one
+// negative -- must leave the run's entry bounded and non-negative: the
+// record's schema refuses a negative count, and a result.json a reader
+// refuses is worse than a figure pinned at the ceiling.
+func satTokens(a, b int64) int64 {
+	a, b = max(a, 0), max(b, 0)
+	if a > math.MaxInt64-b {
+		return math.MaxInt64
+	}
+	return a + b
+}
+
+// copyModelTokens is the run's per-model counts as the record carries them,
+// copied so a reader's map and a later stage's accumulation are not the same
+// map. nil for a run that recorded none, so the record omits the key rather
+// than writing the empty map a reader would have to know to read as none.
+func copyModelTokens(by map[string]runstore.ModelTokenCounts) map[string]runstore.ModelTokenCounts {
+	if len(by) == 0 {
+		return nil
+	}
+	out := make(map[string]runstore.ModelTokenCounts, len(by))
+	for m, c := range by {
+		out[m] = c
+	}
+	return out
 }
 
 // usdMicros is a stage's USD figure as the micro-dollars the ledger and the

@@ -913,6 +913,7 @@ func validateAgentModels(a Agent) []Problem {
 	models := []struct{ path, val string }{
 		{"agent.model", a.Model}, {"agent.models.coder", a.Models.Coder},
 		{"agent.models.reviewer", a.Models.Reviewer}, {"agent.models.background", a.Models.Background},
+		{"agent.models.vision", a.VisionModel()}, {"agent.models.diagnose", a.Models.Diagnose},
 	}
 	for _, name := range CraftNames {
 		models = append(models, struct{ path, val string }{"agent.crafts." + name + ".model", a.Crafts.Of(name).Model})

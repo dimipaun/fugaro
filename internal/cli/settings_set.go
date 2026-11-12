@@ -59,6 +59,15 @@ var settingsFamilyCommands = map[string]string{
 	// do. Its refusal names that command rather than `fugaro project`, which
 	// writes the project's other policy keys and not this one.
 	"image map": "fugaro image map",
+	// The clone URLs are a family of one command for the image map's reason and
+	// a second one of its own: an entry is keyed by a canonical repository name
+	// and its value is held to the node's own rule — this repository, on this
+	// provider's host, with no credentials (projectpolicy.ValidCloneURLs) —
+	// so the key and the value are checked against each other there and a
+	// generic scalar write could land a URL a publish refuses. `fugaro project
+	// clone-url` is that command, and the refusal names it rather than
+	// `fugaro project`, which writes the project's other policy keys.
+	"project clone-url": "fugaro project clone-url",
 }
 
 // settingsGenericKeys is the allowlist of spec §4.4: the exact keys `settings
@@ -118,6 +127,12 @@ var settingsGenericKeys = map[string]bool{
 	"default_claude_account":  true,
 	"claude_account_auto":     true,
 	"stages.*.claude_account": true,
+	// The pools' subscription switch (F22, D1636) is here for the account
+	// choice's reason: it is not §4.4's list either, and a registry row no list
+	// carries is a key nobody can write. It is the one write that turns D1622's
+	// inert rule off, so the row carries TypedWhy and the agent-session fence
+	// asks its sentence.
+	"subscription_spread": true,
 	// The pattern above is the registry's shape and this is every stage of the
 	// closed set beside it, one spelling per config.RunStages name: the registry
 	// carries a row for each (internal/settings' stageAccountRows), and a row no
@@ -228,6 +243,16 @@ var settingsGenericKeys = map[string]bool{
 	"layer.ab":                               true,
 	"layer.profiles.*.commands.rerun_failed": true,
 	"layer.profiles.*.cache":                 true,
+	// The four members of a repository's entry a person writes (G10, D1173):
+	// a map of scalars and one list, which is the shape §2 reaches, so they are
+	// this path's rather than `fugaro project repos set`'s. The two members of
+	// that entry `fugaro update` records — vertex and
+	// credentials_service_ready — are NOT here and keep the `project` owner in
+	// the registry: a person writes no record of what a run applied.
+	"repos.*.provider":      true,
+	"repos.*.base_branch":   true,
+	"repos.*.workflows":     true,
+	"repos.*.github_app_id": true,
 }
 
 // settingsGenericPrefixes are the blocks spec §4.4 hands to the generic path
@@ -527,7 +552,7 @@ func settingsRefuseRow(key, registry string, row settings.Row) (settings.Row, er
 		return settings.Row{}, userErr("%s varies with a name this command does not take: a key with a * is a map entry, and a map has no generic form", key)
 	}
 	if !settingsGenericKey(registry) {
-		return settings.Row{}, userErr("%s is not a key the generic path writes: settings set writes spec §4.4's settings (the budget scalars, base_branch, max_parallel, update_check, watch.*, commit_name, commit_email, agent.*, git.*, followup.*, governance.*, default_profile, credentials.*, clone_urls.* and the layer's defaults.*), the account choice (default_claude_account, claude_account_auto, stages.<stage>.claude_account) and a repository's workflows.<name>.* and the project layer's profiles.<name>.*, and refuses the installation's own plumbing — an endpoint, a terraform switch, a generation counter, name or runs_bucket — however it is spelled", key)
+		return settings.Row{}, userErr("%s is not a key the generic path writes: settings set writes spec §4.4's settings (the budget scalars, base_branch, max_parallel, update_check, watch.*, commit_name, commit_email, agent.*, git.*, followup.*, governance.*, default_profile, credentials.*, clone_urls.* and the layer's defaults.*), the account choice (default_claude_account, claude_account_auto, stages.<stage>.claude_account), the pools' subscription switch (subscription_spread) and a repository's workflows.<name>.* and the project layer's profiles.<name>.*, and refuses the installation's own plumbing — an endpoint, a terraform switch, a generation counter, name or runs_bucket — however it is spelled", key)
 	}
 	return row, nil
 }
@@ -540,14 +565,14 @@ func settingsRefuseRow(key, registry string, row settings.Row) (settings.Row, er
 // spelling is what the allowlist and the row's own sentences name.
 //
 // Only a wildcard row the allowlist carries is matched, which is how
-// `stages.*.claude_account` and the blocks D1161 hands this path — a
-// repository's `workflows.*.*` and the project layer's `profiles.*.*` — are
-// reachable at all. The registry's other wildcard rows — the project family's
-// `repos.*.*`, the models family's `providers.*.*` and `model_prices.*.*`, the
-// rigor family's `layer.defaults.rigor.areas.*.*` and the accounts family's
-// `claude_accounts.*.allow_data_to` — are other paths' keys: matching one would
-// hand back a row this command does not write, and the refusal a person gets
-// should be the one about the name, not a row that was never theirs.
+// `stages.*.claude_account`, the D1161 blocks (`workflows.*.*`, `profiles.*.*`)
+// and the four `repos.*` members a person writes (D1173) are reachable at all.
+// The registry's other wildcard rows — the models family's `providers.*.*` and
+// `model_prices.*.*`, the rigor family's `layer.defaults.rigor.areas.*.*`, the
+// accounts family's `claude_accounts.*.allow_data_to` and a run's own records
+// (`repos.*.vertex`, `repos.*.credentials_service_ready`) — are other paths'
+// keys: matching one would hand back a row this command does not write, and the
+// refusal a person gets should be about the name, not a row never theirs.
 func settingsWriteLookup(key string) (settings.Row, string, bool) {
 	if row, found := settings.Lookup(key); found {
 		return row, key, true

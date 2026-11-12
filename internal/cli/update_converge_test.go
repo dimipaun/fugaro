@@ -3,11 +3,13 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -17,6 +19,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/imagebake"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -42,8 +45,12 @@ var argsUpdUser = []string{"plugin", "update", "fugaro@fugaro", "--scope", "user
 //     policy-rules-skew fires and the rules stage has to deploy;
 //   - the local config records the previous release's base image, so
 //     policy-vs-jobs fires and the images stage has to re-pin it;
-//   - the checkout is pinned to the previous release's plugin and has it
-//     installed, so plugin-pin fires and the checkout stage has to move both.
+//   - the checkout still carries the pin the previous release wrote, and that
+//     release's plugin is installed, so plugin-pin fires — the pin is a
+//     leftover nothing in the tree writes any more (U2 of
+//     docs/plugin-user-scope/implementation-plan.md, D949), which this same
+//     run takes out of the checkout (U5) — and the checkout stage has to move
+//     the installation.
 type convergeRig struct {
 	*imagesRig
 	root     string
@@ -249,9 +256,23 @@ func TestUpdateConvergesFromThePreviousRelease(t *testing.T) {
 func converge(t *testing.T, node map[string]any, stale []string) {
 	t.Helper()
 	r := newConvergeRig(t, node)
-	convergeOn(t, r, stale)
-	if got := upgradeRead(t, r.settings); !strings.Contains(got, `"ref": "v`+convergeRelease+`"`) {
-		t.Errorf("the plugin pin is still not this release's:\n%s", got)
+	out := convergeOn(t, r, stale)
+	// The one thing this run writes in the checkout is the pin coming out
+	// (U5's migration, inside this same `fugaro update`): the fixture carries
+	// nothing but the pin, so both entries go and both parent keys with them,
+	// and an empty settings object is left — never a deleted file.
+	if got := upgradeRead(t, r.settings); got != "{}\n" {
+		t.Errorf("the checkout's settings after the run:\n%s\nwant the pin taken out and nothing else moved:\n%s", got, "{}\n")
+	}
+	// And with the pin gone there is nothing stale left for the line every
+	// command prints to say about this checkout: the door the line sends the
+	// reader to is also the door that clears it (U2's review, #2235: until this
+	// migration, a checkout an older release pinned kept printing it).
+	if line := staleLine(pluginwire.Status(r.settings, convergeRelease, installedPlugins())); line != "" {
+		t.Errorf("after fugaro update the staleness line still fires for a checkout the run unpinned: %q", line)
+	}
+	if !strings.Contains(out, "plugin: done: installed "+convergeRelease) {
+		t.Errorf("the plugin step did not converge the install on this release's version:\n%s", out)
 	}
 	// This run onboarded the repository itself (it is the run the anchor writes
 	// fugaro.yaml's gcp_project: line in, which leaves the working tree
@@ -306,10 +327,26 @@ func convergeOn(t *testing.T, r *convergeRig, stale []string) string {
 	}
 
 	after := doctorChecks(t, r.root)
-	for _, id := range []string{"cli-version", "plugin-pin", "base-image", "policy-vs-jobs", "policy-older-than-binary", "policy-rules-skew"} {
+	for _, id := range []string{"cli-version", "base-image", "policy-vs-jobs", "policy-older-than-binary", "policy-rules-skew"} {
 		if c, ok := doctorCheckByID(after.Checks, id); ok && !c.OK {
 			t.Errorf("after fugaro update, doctor's %s check still fires: %s (fix: %s)", id, c.Problem, c.Fix)
 		}
+	}
+	// plugin-pin is asserted the other way round, and the assertion is not an
+	// omission: nothing in this tree writes a pin any more (U2, D949), so what
+	// this run must NOT do is report the pin converged — a version read back
+	// there would be the merge's write coming back. What it does instead is
+	// take the entry out (U5's migration, inside this same `fugaro update`), so
+	// the check reads the same file as a checkout with no marketplace at all.
+	c, ok := doctorCheckByID(after.Checks, "plugin-pin")
+	if !ok {
+		t.Fatalf("after fugaro update, doctor has no plugin-pin check at all: %+v", after.Checks)
+	}
+	if !strings.Contains(c.Problem, "no fugaro marketplace") {
+		t.Errorf("after fugaro update, doctor's plugin-pin check reads %+v, want the checkout read as one with no fugaro marketplace: the run takes the pin out (U5)", c)
+	}
+	if strings.Contains(c.Problem, convergePrev) {
+		t.Errorf("after fugaro update, doctor's plugin-pin check still reads the previous release's pin: %s", c.Problem)
 	}
 	for _, c := range after.Checks {
 		// The per-workflow settings comparison, which is the update's own
@@ -379,6 +416,120 @@ func TestUpdateConvergesPreviousPolicy(t *testing.T) {
 	}
 	if p.BakesRepos() {
 		t.Error("the published node bakes repos, want it not to: the reader every run uses is what a run would act on")
+	}
+}
+
+// TestUpdateConvergesNoCatalogDefault is O4 reading (b) at the door the HARD
+// RULE is about: a project whose image catalog marks no default still converges
+// with `fugaro update` alone. The catalog is the one thing that could take the
+// per-repository image away, so a project that publishes entries without
+// choosing one has to keep the images its workflows were built as — every job
+// on the per-repository tag, and the images stage rebuilding exactly those —
+// rather than stopping on a project that names no entry for a workflow.
+//
+// The alternative the plan rejected, a resolver that refuses when no default
+// exists, would leave this installation needing a second command: `fugaro
+// image build` and a catalog edit before the next `fugaro update`.
+func TestUpdateConvergesNoCatalogDefault(t *testing.T) {
+	const entry = "tools"
+	r := newConvergeRig(t, v4Node())
+	r.appendConfig(t, "image_catalog:\n  entries:\n    - name: "+entry+"\n      tags: [node]\n      source: { kind: inline, inline: \"FROM scratch\\n\" }\n")
+	registerInstallation(t, r.initRig)
+	if p := convergeNode(t, r); p.ImageCatalog != nil {
+		t.Fatalf("the fixture's node already carries a catalog (%v): it is not an installation whose policy predates it", p.ImageCatalog)
+	}
+
+	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+	p := convergeNode(t, r)
+	if p.ImageCatalog == nil || len(p.ImageCatalog.Entries) != 1 || p.ImageCatalog.Entries[0].Name != entry {
+		t.Fatalf("after one fugaro update, the published node's image_catalog = %+v, want the one local entry: the catalog did not reach the node", p.ImageCatalog)
+	}
+	for _, e := range p.ImageCatalog.Entries {
+		if e.Default {
+			t.Errorf("after one fugaro update, the published entry %s is the default, want none: the project's config named no entry for its workflows", e.Name)
+		}
+	}
+	// Two builds reach Cloud Build, one per workflow, and both are the checkout
+	// stage's cloud step's — as in the converge rig's own count above: each of
+	// the two workflows carries a build record of the release behind, so the
+	// repository stage offers no first build (infra.NeedsBuild), and what the
+	// cloud step rebuilds off those records is each workflow's own job image.
+	if n := len(r.builder.specs); n != 2 {
+		t.Fatalf("%d job image(s) reached Cloud Build, want one per workflow, the cloud step's: with no catalog default every workflow keeps its own image", n)
+	}
+	// The pin the fixture records carries a digest the fake source registry
+	// answers differently, so what is compared is the repo:tag the pin names.
+	pinned, _, _ := strings.Cut(pinnedRef("base", convergeRelease), "@")
+	for _, s := range r.builder.specs {
+		if strings.Contains(s.Image, "catalog-"+entry) {
+			t.Errorf("workflow %s was built as %s, want the repository's own derived image: no catalog entry is this project's default, so no job runs one (O4 b)", s.Workflow, s.Image)
+		}
+		if base, _, _ := strings.Cut(s.Base, "@"); base != pinned {
+			t.Errorf("workflow %s was built from %s, want this release's pinned base %s: the rebuild is the per-repository image's", s.Workflow, s.Base, pinned)
+		}
+	}
+}
+
+// TestUpdateConvergesAPrebuiltDefaultBesideAWorkflowsOwnImage is the HARD
+// RULE at the one shape this release's D1900 could have broken: a project whose
+// catalog marks a PREBUILT entry as its default, in a checkout whose workflows
+// wrote a `dockerfile:` of their own. On the release behind those workflows
+// were left out of the catalog entirely, so they ran the image this project
+// builds for them and the installation deployed; D1900 routes every workflow
+// through the catalog, and the default it would have handed such a workflow is
+// an entry the job-spec builder refuses (D1191, infra's unbuiltOnBaked) — so
+// the door would have stopped and asked for a manual config edit, which is the
+// second command the HARD RULE (F15) rules out.
+//
+// The resolver sets that default aside for a workflow that wrote an image of
+// its own (catalog.JobImage), so the installation converges on the images it
+// already runs: no catalog entry is any job's, and the images stage rebuilds
+// exactly the per-repository images the records show. Both workflows write the
+// key, because a workflow that wrote none has no image of its own to keep and
+// is refused in so many words — the shape D1191 exists for, on this release and
+// on the one behind alike.
+func TestUpdateConvergesAPrebuiltDefaultBesideAWorkflowsOwnImage(t *testing.T) {
+	const entry = "standard"
+	yaml := "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: oauth }\nworkflows:\n" +
+		"  app: { dockerfile: .fugaro/app.Dockerfile, commands: { build: sh build.sh, test: sh test.sh } }\n" +
+		"  api: { dockerfile: .fugaro/api.Dockerfile, commands: { build: sh build.sh, test: sh test.sh } }\n"
+	r := newConvergeRigYAML(t, v4Node(), yaml)
+	// The two Dockerfiles the workflows name, as the repository behind had
+	// them: `fugaro validate` reads a workflow's dockerfile: as a file that is
+	// there, so a checkout without them is not the shape this test is about.
+	const def = "ARG FUGARO_BASE\nFROM ${FUGARO_BASE}\nRUN git clone \"$REPO_URL\" /work/repo\n"
+	for _, wf := range []string{"app", "api"} {
+		checkoutFile(t, filepath.Join(r.root, ".fugaro", wf+".Dockerfile"), def)
+	}
+	// The prebuilt default is what the release behind deploys with: the entry
+	// is the project's own image, already built and pushed, so no job of this
+	// installation has a build of it to wait for.
+	r.appendConfig(t, "image_catalog:\n  entries:\n"+
+		"    - name: "+entry+"\n      default: true\n      tags: [node]\n"+
+		"      source: { kind: image, image: ghcr.io/dimipaun/"+entry+":1.0 }\n")
+	registerInstallation(t, r.initRig)
+	if p := convergeNode(t, r); p.ImageCatalog != nil {
+		t.Fatalf("the fixture's node already carries a catalog (%v): it is not an installation whose policy predates it", p.ImageCatalog)
+	}
+
+	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+	p := convergeNode(t, r)
+	if p.ImageCatalog == nil || len(p.ImageCatalog.Entries) != 1 || p.ImageCatalog.Entries[0].Name != entry || !p.ImageCatalog.Entries[0].Default {
+		t.Fatalf("after one fugaro update, the published node's image_catalog = %+v, want the one local entry %s, marked default: the catalog did not reach the node", p.ImageCatalog, entry)
+	}
+	// The same two builds as the converge rig's own count: a workflow that
+	// wrote a dockerfile: keeps the image this project builds for it, so the
+	// cloud step rebuilds each workflow's own job image and no job is handed
+	// the prebuilt entry the catalog marks.
+	if n := len(r.builder.specs); n != 2 {
+		t.Fatalf("%d job image(s) reached Cloud Build, want one per workflow: a workflow that wrote a dockerfile: of its own keeps its own image, because the catalog's default is one its job cannot run", n)
+	}
+	for _, s := range r.builder.specs {
+		if strings.Contains(s.Image, "catalog-"+entry) {
+			t.Errorf("workflow %s was built as %s, want the repository's own derived image: the prebuilt default holds no checkout of this repository, so it is set aside for a job that wrote an image of its own (D1191, D1900)", s.Workflow, s.Image)
+		}
 	}
 }
 
@@ -633,5 +784,118 @@ func TestUpdateConvergesImageBake(t *testing.T) {
 	})
 	if plan.Baked == nil {
 		t.Fatalf("the converged node decides no bake (%s): the map and the switch the one update published are exactly what a build reads for it", plan.Reason)
+	}
+}
+
+// executeConsole runs the command tree with stdout and stderr on ONE writer,
+// which is what a terminal is: the reporter draws its line in flight on stdout
+// and a stage's own notes go to stderr, and both land on the same screen. A
+// test that captures the two separately cannot see one running into the other,
+// which is exactly the defect this seam is here for.
+//
+// writerIsTerminal answers true, so the reporter draws the line in flight (it
+// is what decides colour, and colour decides the spinner).
+func executeConsole(t *testing.T, args ...string) (string, error) {
+	t.Helper()
+	old := writerIsTerminal
+	writerIsTerminal = func(io.Writer) bool { return true }
+	t.Cleanup(func() { writerIsTerminal = old })
+
+	cmd := NewRootCmd()
+	both := &syncBuf{}
+	cmd.SetIn(strings.NewReader(""))
+	cmd.SetOut(both)
+	cmd.SetErr(both)
+	cmd.SetArgs(NormalizeArgs(args))
+	err := cmd.Execute()
+	return both.String(), err
+}
+
+// TestUpdateEndsTheSpinnerLineBeforeTheProjectHeader: the stage's own header
+// ("project: <name> (GCP <id>)") is printed to stderr while the reporter's line
+// in flight is on stdout, and a terminal draws both on the same row. The line
+// has to come down before the header is written, or the person reads
+// "- repositoryproject: <name>" — the stage run into the header, on no line of
+// its own.
+func TestUpdateEndsTheSpinnerLineBeforeTheProjectHeader(t *testing.T) {
+	r := newConvergeRig(t, v4Node())
+	currentRelease(t)
+	skillWarned.Store(false)
+	t.Cleanup(func() { skillWarned.Store(false) })
+	// The log is the run's own file, and XDG_STATE_HOME is the developer's.
+	isolateState(t)
+	_ = r
+
+	out, err := executeConsole(t, "update", "--yes")
+	if err != nil {
+		t.Fatalf("fugaro update failed (exit %d): %v\n%s", ExitCode(err), err, out)
+	}
+	// The header itself, and not every sentence that happens to hold
+	// "project: ": the name and the GCP project in parentheses are what the
+	// first line of every cloud command says.
+	header := regexp.MustCompile(`project: [a-z0-9-]+ \(GCP [a-z0-9-]+\)`)
+	at := header.FindAllStringIndex(out, -1)
+	if len(at) < 2 {
+		t.Fatalf("the run printed the project header %d time(s), want the one at the door and the one each stage prints for its own checkout:\n%s", len(at), out)
+	}
+	for _, m := range at {
+		if col := columnAt(out, m[0]); col != 0 {
+			start := strings.LastIndex(out[:m[0]], "\n") + 1
+			t.Errorf("the project header is not at the start of a line: the line in flight ran into it: %q", out[start:m[1]])
+		}
+	}
+}
+
+// columnAt is the column the byte at i sits in, on a terminal: a carriage
+// return and the reporter's own clear-to-end-of-line both put the cursor back
+// at the start, and nothing else in a run's output does.
+func columnAt(s string, i int) int {
+	line := s[strings.LastIndex(s[:i], "\n")+1 : i]
+	if j := strings.LastIndex(line, "\r"); j >= 0 {
+		line = line[j+1:]
+	}
+	line = ansiRE.ReplaceAllString(line, "")
+	return len(line)
+}
+
+// ansiRE is a terminal escape sequence: what the reporter paints a frame with,
+// and nothing a person reads as a column.
+var ansiRE = regexp.MustCompile("\x1b\\[[0-9;]*[a-zA-Z]")
+
+// TestUpdateNeverSendsThePersonToUpdateFromInsideIt: the converge's plugin
+// stage used to end its wiring with the two notes written for `fugaro
+// update-skills`, which told the person inside `fugaro update` to run the
+// command they were running (the owner's feedback of 2026-11-10). The wiring
+// write and its notes are gone (U2 of docs/plugin-user-scope); both worlds are
+// still read so neither sentence comes back: the fake claude installs the
+// plugin in one, and the other is the machine with no claude on PATH.
+func TestUpdateNeverSendsThePersonToUpdateFromInsideIt(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// noClaude is the machine the install half cannot run on.
+		noClaude bool
+	}{
+		{"claude on PATH, so this run installs it", false},
+		{"no claude on PATH", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_ = newConvergeRig(t, v4Node())
+			currentRelease(t)
+			skillWarned.Store(false)
+			t.Cleanup(func() { skillWarned.Store(false) })
+			if tc.noClaude {
+				noClaudeOnPath(t)
+			}
+
+			out, errOut, err := executeStdin(t, "", "update", "--yes")
+			if err != nil {
+				t.Fatalf("fugaro update failed (exit %d): %v\n%s\n%s", ExitCode(err), err, out, errOut)
+			}
+			for _, bad := range []string{"Run fugaro update to install the plugin for you", "Run fugaro update to refresh it for you"} {
+				if strings.Contains(out, bad) {
+					t.Errorf("the run prints %q: that is the command this run IS\n%s", bad, out)
+				}
+			}
+		})
 	}
 }

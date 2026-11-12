@@ -110,6 +110,14 @@ var cliStages = []cliStage{
 		build: func(e *initEngine) initflow.Stage { return newLayerStage(e) }},
 	{stage: initflow.Checkout, ctor: "newCheckoutStage(", self: true,
 		build: func(e *initEngine) initflow.Stage { return newCheckoutStage(e) }},
+	// The login unit: `setup` installs the first one and `update` re-renders an
+	// installed one, and neither is SelfConfirming — a stage the loop may run
+	// with no terminal at all is the last thing a unit that runs code at every
+	// login may be. noYes: --yes never covers it (the row's ctor is the setup
+	// door's half, which is what the unflagged list and a first run register;
+	// the door is what swaps in newUpdateUnitStage).
+	{stage: initflow.Unit, ctor: "newOrchestratorUnitStage(", noYes: true,
+		build: func(e *initEngine) initflow.Stage { return newOrchestratorUnitStage(e) }},
 	{stage: initflow.Project, ctor: "newProjectStage(", behind: "--create-project", firstRun: true, noYes: true,
 		build: func(e *initEngine) initflow.Stage { return newProjectStage(e) }},
 	{stage: initflow.Compute, ctor: "newComputeStage(", behind: "--provision-batch", noYes: true,
