@@ -289,12 +289,19 @@ func printStep(w io.Writer, r stepResult) {
 	fmt.Fprintf(w, "%s: %s: %s\n", r.name, r.state, r.reason)
 }
 
-// again is the command line that runs this door for path with the flags these
-// steps read, every flag kept: the checkout the user is in (--repo, which is
-// what names a checkout on this door) and, for a check, the checkout as the
-// argument --check takes.
+// again is the command line that runs this door for path with the flags that
+// name this checkout: the checkout the user is in (--repo, which is what names
+// a checkout on this door) and, for a check, the checkout as the argument
+// --check takes.
 // It is what a step's own refusal and the cloud step's blocked reasons name, so
 // the two lines cannot drift from the flags they carry.
+//
+// The cloud step's flags that a deployment is named with (--project,
+// --gcp-project, --region, --config) are kept when they were set, and the
+// installation's own are not: --image-source and --expect-digest set up the
+// installation rather than a repository, so this door refuses them beside
+// --repo (checkRepo, init.go) and beside --check (updateCheckReads). Naming one
+// here would print a line that is refused before anything runs.
 func (o stepOptions) again(path string) string {
 	args := []string{selfCommand(), "update"}
 	if o.check {
@@ -307,7 +314,6 @@ func (o stepOptions) again(path string) string {
 	for _, f := range []struct{ name, v string }{
 		{"config", o.refresh.cloud.config}, {"project", o.refresh.cloud.project},
 		{"gcp-project", o.refresh.cloud.gcpProject}, {"region", o.refresh.cloud.region},
-		{"image-source", o.refresh.imageSource},
 	} {
 		if f.v != "" {
 			args = append(args, "--"+f.name, quoteWord(f.v))

@@ -206,6 +206,43 @@ func TestUpdateCheckRefusesTheConvergeFlags(t *testing.T) {
 	}
 }
 
+// TestTheRerunLineKeepsTheCheckoutFlags is the line a step's own refusal and the
+// cloud step's blocked reasons name (stepOptions.again): every flag on it is one
+// this door accepts where the line is printed, or the reader runs a line that is
+// refused before anything runs. --image-source and --expect-digest set up the
+// installation rather than a repository, and a run that carries them — `fugaro
+// update --image-source ghcr.io/acme` sets up the installation — still names the
+// checkout's own line without them: with them it is the pair --repo refuses
+// (checkRepo, init.go), and beside --check the flag is refused too
+// (updateCheckReads).
+func TestTheRerunLineKeepsTheCheckoutFlags(t *testing.T) {
+	useSelf(t)
+	o := stepOptions{yes: true, refresh: refreshOptions{
+		imageSource:   "ghcr.io/acme",
+		expectDigests: []string{"base=sha256:0000000000000000000000000000000000000000000000000000000000000000"},
+		cloud:         cloudOptions{project: "proj-1234", region: "europe-west1"}}}
+	line := o.again("/home/me/app")
+	for _, installation := range []string{"--image-source", "--expect-digest"} {
+		if strings.Contains(line, installation) {
+			t.Errorf("the line names %s, which sets up the installation and is refused beside --repo: %s", installation, line)
+		}
+	}
+	// The rest of it is the door's own: read the way the door reads it, it
+	// leaves no flag set that checkRepo refuses.
+	door := &initOptions{}
+	cmd := newUpdateCmdWith(door)
+	words := strings.Fields(line)
+	if len(words) < 3 || words[0] != "fugaro" || words[1] != "update" {
+		t.Fatalf("the line does not run this door: %s", line)
+	}
+	if err := cmd.ParseFlags(words[2:]); err != nil {
+		t.Fatalf("the door refuses its own line %q: %v", line, err)
+	}
+	if err := door.checkRepo(); err != nil {
+		t.Errorf("the door refuses its own line %q: %v", line, err)
+	}
+}
+
 // TestUpdateCheckRefusesWhatIsNotACheckout: the mode reads the checkout, so a
 // path that is not one — or a checkout Fugaro is not set up in — is the mode's
 // own refusal, exit 1, and no step is run.
