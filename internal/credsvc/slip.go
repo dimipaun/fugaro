@@ -703,21 +703,20 @@ func (s *Server) grantPool(ctx context.Context, names []string, account string) 
 		return "", nil
 	}
 	launcher := foldedAddress(account)
-	decided := ""
-	governed := false
+	governed, admitted := false, ""
 	for _, pool := range shared.CraftPools {
 		if !grantNamesPool(pool, names) {
 			continue
 		}
 		governed = true
-		if decided == "" && foldedPool(pool).Serves(launcher) {
-			decided = pool.Name
+		if admitted == "" && foldedPool(pool).Serves(launcher) {
+			admitted = pool.Name
 		}
 	}
-	if governed && decided == "" {
+	if governed && admitted == "" {
 		return "", errGrantNotInPool
 	}
-	return decided, nil
+	return admitted, nil
 }
 
 // grantNamesPool reports whether a pool governs one of the names a grant asked
