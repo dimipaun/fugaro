@@ -118,6 +118,17 @@ func poolCraftBlock(credentials string, members ...string) string {
 // before the strategy existed has, and a strategy is the owner's word for how
 // the members are shared out (roundrobin_test.go).
 func poolCraftBlockOf(strategy, credentials string, members ...string) string {
+	return `"craft_credentials": [` + credentials + `],
+		"craft_pools": [` + poolDoc(testPoolName, strategy, members...) + `],
+		"crafts": {"coder": {"access": "` + testPoolName + `"}}`
+}
+
+// poolDoc is ONE pool as the node writes it — the name, the owner a published
+// pool must name (D1936), the strategy when one is asked for and `members` in
+// the order the owner listed them — so that a fixture whose project goes out on
+// two pools of different strategies writes two of these rather than a second
+// copy of the shape (roundrobin_test.go's mixture).
+func poolDoc(name, strategy string, members ...string) string {
 	quoted := make([]string, 0, len(members))
 	for _, m := range members {
 		quoted = append(quoted, `"`+m+`"`)
@@ -126,9 +137,7 @@ func poolCraftBlockOf(strategy, credentials string, members ...string) string {
 	if strategy != "" {
 		written = `, "strategy": "` + strategy + `"`
 	}
-	return `"craft_credentials": [` + credentials + `],
-		"craft_pools": [{"name": "` + testPoolName + `", "owner": "` + testPoolOwner + `"` + written + `, "members": [` + strings.Join(quoted, ", ") + `]}],
-		"crafts": {"coder": {"access": "` + testPoolName + `"}}`
+	return `{"name": "` + name + `", "owner": "` + testPoolOwner + `"` + written + `, "members": [` + strings.Join(quoted, ", ") + `]}`
 }
 
 // testPoolName is the fixture's pool, by the name its crafts' accesses spell.

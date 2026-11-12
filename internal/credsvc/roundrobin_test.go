@@ -64,13 +64,54 @@ func rrSvc(t *testing.T, block string) *svc {
 // inert without it (D1622) — that rule is pool_test.go's to pin, and this file
 // must not be reading a refusal where it means to read a rotation.
 func rrBlock(settings string, members ...string) string {
+	return `"credentials": {` + settings + `},
+		` + poolCraftBlockOf(config.PoolStrategyRoundRobin, rrCredentials(members...), members...) + `,
+		"subscription_spread": true`
+}
+
+// rrMixedBlock is the node's block of a project whose crafts do NOT all go out
+// on one pool: the coder — and the review, which inherits it — on the pool
+// asking for the rotation, the senior review — and the security review, which
+// inherits that — on a second pool that writes no strategy at all, which is
+// D1632's failover.
+//
+// It is the shape offeringStrategy's guard exists for (roundrobin.go): one
+// candidate list is the union of every craft's access (pool.go), so rotating it
+// would apply the first pool's strategy to the second's members.
+func rrMixedBlock(settings string, rotating, pinned []string) string {
+	// A name both pools list is one credential in the node's block, which
+	// defines a credential once (projectpolicy's decoder refuses a repeat).
+	all := append(append([]string{}, rotating...), pinned...)
+	seen := map[string]bool{}
+	names := make([]string, 0, len(all))
+	for _, n := range all {
+		if seen[n] {
+			continue
+		}
+		seen[n] = true
+		names = append(names, n)
+	}
+	return `"credentials": {` + settings + `},
+		"craft_credentials": [` + rrCredentials(names...) + `],
+		"craft_pools": [` + poolDoc(testPoolName, config.PoolStrategyRoundRobin, rotating...) + `, ` +
+		poolDoc(rrPinnedPool, "", pinned...) + `],
+		"crafts": {"` + config.CraftCoder + `": {"access": "` + testPoolName + `"}, "` + config.CraftSeniorReview + `": {"access": "` + rrPinnedPool + `"}},
+		"subscription_spread": true`
+}
+
+// rrPinnedPool is the second pool of the mixture: a name no strategy is written
+// on, so it is served by the cascade's own rule however the pool beside it is
+// served.
+const rrPinnedPool = "acme-pinned"
+
+// rrCredentials is the node's craft_credentials block for a pool of named Claude
+// OAuth accounts, which is every pool these fixtures write.
+func rrCredentials(members ...string) string {
 	entries := make([]string, 0, len(members))
 	for _, m := range members {
 		entries = append(entries, `{"name": "`+m+`", "type": "`+config.CredentialTypeClaudeOAuth+`"}`)
 	}
-	return `"credentials": {` + settings + `},
-		` + poolCraftBlockOf(config.PoolStrategyRoundRobin, strings.Join(entries, ", "), members...) + `,
-		"subscription_spread": true`
+	return strings.Join(entries, ", ")
 }
 
 // rrCalls makes one call per distinct run and answers the credentials they were
@@ -160,6 +201,57 @@ func TestRoundRobinSkipsBackedOffMember(t *testing.T) {
 	}
 	if n := s.up.Count(); n != 3 {
 		t.Errorf("the upstream saw %d requests, want one per run: a skipped member is not probed and not tried", n)
+	}
+}
+
+// TestRoundRobinMixedPoolsResolveToFailover pins the guard that decides whether
+// the rotation is taken up at all (offeringStrategy's pinned, roundrobin.go):
+// a project whose crafts go out on two pools of different strategies is served
+// by the cascade's own rule, because one call's candidate list is the union of
+// every craft's access and rotating it would apply one pool's strategy to
+// another pool's members — a member used out of the order its owner wrote,
+// silently (F12, D1628, D1632).
+//
+// The pool asking for the rotation is the one TestRoundRobinSpreadsAcrossRuns
+// uses, lapsed first member and all, so the two answers are told apart by the
+// same evidence: the rotation takes the three members in the owner's order and
+// the cascade's rule alternates over the two that were never exhausted. Without
+// the guard the second pool's strategy is ignored and this reads the rotation.
+func TestRoundRobinMixedPoolsResolveToFailover(t *testing.T) {
+	s := rrSvc(t, rrMixedBlock(`"fallback": "auto", "stop_after_exhaustion_per_window": false, "concurrency_per_token": 0`,
+		[]string{testAccount, testPoolAccount, rrAccount}, []string{testPoolAccount}))
+	s.hold(testAccount, s.now.Add(-2*time.Hour), s.now.Add(-time.Hour))
+
+	got := rrCalls(t, s, 3)
+	rrWant(t, got, "one of the project's two pools writes no strategy, so this call's list is the cascade's own to order and never the rotation's",
+		testPoolAccount, rrAccount, testPoolAccount)
+
+	if n := s.up.Count(); n != 3 {
+		t.Errorf("the upstream saw %d requests, want one per run: the cascade's rule selects one credential per run here too", n)
+	}
+}
+
+// TestOfferingStrategyIsTheWholeGuard is the guard's truth table, which no
+// fixture can state as plainly: the rotation is taken up for a list every
+// contributor rotated (and for one whose only contributors did), and never for
+// a list any contributor pinned — a pool of the other strategy, a credential
+// named directly, an access that is neither.
+func TestOfferingStrategyIsTheWholeGuard(t *testing.T) {
+	for _, tc := range []struct {
+		rotating, pinned int
+		want             creds.Strategy
+	}{
+		{0, 0, creds.StrategyFailover},
+		{1, 0, creds.StrategyRoundRobin},
+		{4, 0, creds.StrategyRoundRobin},
+		{0, 1, creds.StrategyFailover},
+		{1, 1, creds.StrategyFailover},
+		{2, 2, creds.StrategyFailover},
+	} {
+		if got := offeringStrategy(tc.rotating, tc.pinned); got != tc.want {
+			t.Errorf("offeringStrategy(%d, %d) = %q, want %q: a craft that put a candidate in by anything other than a round-robin pool pins the whole list",
+				tc.rotating, tc.pinned, got, tc.want)
+		}
 	}
 }
 
