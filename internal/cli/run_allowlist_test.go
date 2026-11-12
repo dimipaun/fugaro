@@ -199,7 +199,7 @@ func TestRunRefusesAJobImageThatCannotReadThePolicyNode(t *testing.T) {
 			}
 			for _, want := range []string{
 				fmt.Sprintf("policy version %d", tc.version), "fugaro " + projectpolicy.VersionSince[projectpolicy.Version],
-				tc.base, "acme/app", "web", "fugaro image refresh --repo acme/app --workflow web",
+				tc.base, "acme/app", "web", imageGateRemedy,
 			} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("the refusal does not say %q: %v", want, err)

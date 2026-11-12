@@ -207,7 +207,7 @@ func TestRunRefusesPlanningOnAnOlderBaseImage(t *testing.T) {
 				"knows the planning: block",
 				"fugaro " + planningSince + " or later",
 				"ghcr.io/dimipaun/fugaro-base:" + c.rel + ", release " + c.rel,
-				"fugaro image refresh --repo acme/other --workflow svc",
+				imageGateRemedy,
 				"; or remove the planning: block from fugaro.yaml",
 			} {
 				if !strings.Contains(err.Error(), want) {
@@ -256,7 +256,7 @@ func TestRunRefusesTheLayersPlanningOnAnOlderBaseImage(t *testing.T) {
 	for _, want := range []string{
 		"the project layer's defaults.planning (read for acme/other)",
 		"knows the project layer's defaults.planning",
-		"fugaro image refresh --repo acme/other --workflow " + config.ImplicitWorkflow,
+		imageGateRemedy,
 		"remove defaults.planning from the project layer",
 	} {
 		if !strings.Contains(err.Error(), want) {
