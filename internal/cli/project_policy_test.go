@@ -3631,6 +3631,54 @@ func TestPublishKeepsReviewFloorTheConfigIsSilentAbout(t *testing.T) {
 	}
 }
 
+// TestProjectPolicyPublishKeepsTheModelGrades: the model_grades block is the
+// project's own choice of model for the escalation ladder's two rungs, and no
+// key of this release's config writes one onto the node (buildProjectPolicy),
+// so a publish keeps the node's — the clone_urls, credentials and binaries
+// rule.
+//
+// The finding is the binaries one's (the test below): while the key was
+// unmodelled a publish over a node carrying it was *refused*
+// (publishedPolicyOf's unknown-key refusal, "publishing would drop them"), so a
+// publish that rewrote such a node without the block would be a loosening this
+// release introduced — a rung would find no grade where the owner set one, and
+// the refusal it then makes would tell an owner who did set them to set them.
+// Hand-writing the node is the only way to state the block until the publisher
+// reads the layer's defaults.model_grades (the ladder's own tasks), which is
+// why the fixture writes the node and not the file — and the diff has to say
+// the block was kept, because nothing else in it mentions an unchanged member.
+func TestProjectPolicyPublishKeepsTheModelGrades(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version":     projectpolicy.Version,
+		"allow_repos": []string{"github/acme/app"},
+		"model_grades": map[string]any{
+			"strong":    map[string]any{"model": "anthropic/claude-sonnet-5.5", "access": "openrouter-main"},
+			"strongest": map[string]any{"model": "anthropic/claude-opus-4.6"},
+		},
+	})
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatalf("the publish refused a node carrying a model_grades block: %v", err)
+	}
+	p := publishedPolicy(t, f)
+	if p.ModelGrades == nil {
+		t.Fatal("the published node carries no model_grades: the publish dropped the project's grades")
+	}
+	if got, want := p.ModelGrades.Of(config.GradeStrong), (config.Craft{Model: "anthropic/claude-sonnet-5.5", Access: "openrouter-main"}); got != want {
+		t.Errorf("model_grades.strong = %+v, want %+v: the publish dropped the grade the owner set", got, want)
+	}
+	if got, want := p.ModelGrades.Of(config.GradeStrongest), (config.Craft{Model: "anthropic/claude-opus-4.6"}); got != want {
+		t.Errorf("model_grades.strongest = %+v, want %+v: the publish dropped the grade the owner set", got, want)
+	}
+	if raw := nodeJSON(t, f, projectpolicy.PathShared()); !strings.Contains(raw, `"model_grades"`) {
+		t.Errorf("the node no longer carries the block:\n%s", raw)
+	}
+	if !strings.Contains(out, "model_grades kept: strong anthropic/claude-sonnet-5.5 on openrouter-main, strongest anthropic/claude-opus-4.6") {
+		t.Errorf("the publish does not say the grades were kept:\n%s", out)
+	}
+}
+
 // TestPublishKeepsTheBinariesListWhenTheLocalFileSaysNothing: the binaries
 // block is the owner's grant of the paths a run may add a binary at and of the
 // cap it is held to, and no key of the operator's config states it (D986 keeps

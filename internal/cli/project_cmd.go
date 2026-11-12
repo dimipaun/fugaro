@@ -1159,6 +1159,25 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		// list — so the empty spelling cannot be a node's answer — the carry is
 		// what keeps this binary from being the one that decides.
 		pol.Binaries = old.Binaries
+		// The model grades are kept for the binaries member's reason, and they
+		// are the sharper case of it: no key of this release's config states
+		// them on the node — the project layer's defaults.model_grades is what
+		// the merge reads (internal/policy) and this publisher writes nothing
+		// from it — so the node's block is the only one, and a publish that
+		// wrote a node without it would take the project's choice of model away
+		// from the ladder — silently, since no rung reads a grade in this
+		// release yet. Before this member was modelled the same
+		// node was *refused* rather than rewritten (publishedPolicyOf's
+		// unknown-key refusal, "publishing would drop them"), so a drop here
+		// would be a loosening this release introduced.
+		//
+		// The typed copy is the whole of it, the credentials block's reading
+		// rather than the binaries one: the block is strict inside
+		// (decodeModelGrades), so a member this Fugaro does not model, or a
+		// grade its rules refuse, is refused by publishedPolicyOf before a
+		// publish gets here. It is what the diff reads (printPolicyDiff's kept
+		// line) and what the node is built from.
+		pol.ModelGrades = old.ModelGrades
 	}
 	return pol, keepRouting, nil
 }
@@ -2056,6 +2075,15 @@ func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[
 	if new.Binaries != nil {
 		fmt.Fprintf(out, "  binaries kept: %s\n", binariesText(new.Binaries))
 	}
+	// The model grades are the project's own choice of model for the ladder's
+	// rungs, and no key of this release's config writes them onto the node
+	// (buildProjectPolicy), so a publish keeps them — a fact the operator
+	// reading this diff has to be told, the way the clone URLs' line tells
+	// them: the block is unchanged, so no +/- line above mentions it, and an
+	// operator who hand-wrote a grade would read that silence as "it is gone".
+	if new.ModelGrades != nil {
+		fmt.Fprintf(out, "  model_grades kept: %s\n", modelGradesText(new.ModelGrades))
+	}
 	// The floor is the one member a publish keeps when the config is silent
 	// about it (buildProjectPolicy), and a kept member that prints nothing is
 	// the diff an operator who deleted the key reads as "it is gone": the
@@ -2118,6 +2146,40 @@ func credentialsText(c *projectpolicy.Credentials) string {
 	}
 	if len(parts) == 0 {
 		return "written with every member absent: the defaults"
+	}
+	return strings.Join(parts, ", ")
+}
+
+// modelGradesText is the model_grades block as one line, grade by grade and
+// only the grades the block writes: a grade left out is not a grade at all
+// (config.ModelGrades), and the rung that needs one refuses and asks rather
+// than falling back to anything this line could name, so there is no default
+// spelling to print for the absent one. Each grade renders as
+// internal/policy's gradeText renders it — the model, and the credential or
+// pool its calls go out on when it names one — so an operator reads one
+// wording for a grade wherever one is printed.
+//
+// A block with no grade in it reached here from a value a caller built rather
+// than from a node: decodeModelGrades answers an absent member for a block that
+// writes neither grade, so a node never carries one.
+func modelGradesText(g *projectpolicy.ModelGrades) string {
+	if g == nil {
+		return "none"
+	}
+	var parts []string
+	for _, name := range config.GradeNames {
+		c := g.At(name)
+		if c == nil {
+			continue
+		}
+		line := name + " " + c.Model
+		if c.Access != "" {
+			line += " on " + c.Access
+		}
+		parts = append(parts, line)
+	}
+	if len(parts) == 0 {
+		return "written with no grade in it"
 	}
 	return strings.Join(parts, ", ")
 }
