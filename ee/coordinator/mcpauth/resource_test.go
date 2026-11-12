@@ -81,6 +81,20 @@ func newResourceServer(t *testing.T, opts ...ServerOption) *resourceTest {
 	return &resourceTest{testServer: ts, clock: clock}
 }
 
+// newResourceServerGranting is the front door over an installation that grants
+// the scopes the caller names. It is what a test that drives a row of the
+// catalogue beyond the task pair needs: the default installation grants the
+// task pair, so a state-scope tool is refused at the door rather than reached,
+// and a test about the tool would be a test about the refusal.
+func newResourceServerGranting(t *testing.T, scopes ...string) *resourceTest {
+	t.Helper()
+	clock := &movingClock{at: testNow}
+	cfg := testConfig()
+	cfg.Limits = Limits{Scopes: slices.Clone(scopes)}
+	ts := newTestServerOver(t, cfg, clock.now, nil, WithRoster(rosterOf(testLists())))
+	return &resourceTest{testServer: ts, clock: clock}
+}
+
 // serve registers one tool with the handler the test supplies. The name has to
 // be one the catalogue holds, which is what makes registration a test's way of
 // saying "this tool is served" and nothing more.
@@ -1052,11 +1066,15 @@ func TestAToolAnswerCarriesNoCredential(t *testing.T) {
 		t.Setenv(name, testCredentialPlaceholder)
 	}
 
-	ts := newResourceServer(t)
+	ts := newResourceServerGranting(t, ScopeVocabulary...)
 	for _, spec := range toolCatalogue {
 		ts.serve(t, spec.name, func(ctx context.Context, call Call) (any, error) { return call, nil })
 	}
-	_, tokens := ts.runFlow(t, testClientRedirect)
+	// The token holds every scope v1 mints, because this test is about what a
+	// handler can leak and not about which tool a scope reaches: a call refused
+	// at the door would answer a refusal, and the answer under test is the one
+	// that carries the whole of what the handler was given.
+	_, tokens := ts.runFlowScoped(t, testClientRedirect, strings.Join(ScopeVocabulary, " "))
 	forbidden = append(forbidden, testCredentialPlaceholder, tokens.AccessToken, tokens.RefreshToken)
 
 	for _, spec := range toolCatalogue {

@@ -1787,14 +1787,21 @@ func TestIdenticalTreeNeverOverridesTargetFailure(t *testing.T) {
 	requireNoTag(t, r, res)
 }
 
-// TestHeadNotMergeCommit: something else landed on main after the release
-// merge; the script must refuse rather than tag a different commit.
-func TestHeadNotMergeCommit(t *testing.T) {
+// TestTagsMergeCommitWhenMainMoved: something else landed on main after the
+// release merge; the tag still goes on the merge commit, not the tip.
+func TestTagsMergeCommitWhenMainMoved(t *testing.T) {
 	r := newReleaseRepo(t)
 	g := newGHState(t, r, greenChecks()).with("FAKE_GH_ADVANCE_AFTER_MERGE=1")
 	res := runRelease(t, r, g, "y\n", "0.12.0", "--yes")
-	res.requireFailureContaining(t, "is not the release merge commit")
-	requireNoTag(t, r, res)
+	res.requireSuccess(t)
+	tagged := testutil.Git(t, r.bare, "rev-parse", "refs/tags/v0.12.0^{commit}")
+	tip := testutil.Git(t, r.bare, "rev-parse", "refs/heads/main")
+	if tagged == tip {
+		t.Errorf("the tag is on main's tip %s, want the release merge commit", tip)
+	}
+	if !strings.Contains(res.out, "tagging "+tagged+", not the tip") {
+		t.Errorf("expected the script to say it tagged the merge commit:\n%s", res.out)
+	}
 }
 
 func TestBumpCheckFailsAfterMerge(t *testing.T) {
