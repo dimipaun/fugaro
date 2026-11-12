@@ -6894,3 +6894,60 @@ func TestTriageSchemaMatchesTheDocument(t *testing.T) {
 		})
 	}
 }
+
+// TestTaskSchemaAgreesWithTheTaskDecoder ties task.schema.json's `security`
+// property to the field the Go decoder reads (task.Spec.Security, the request
+// `fugaro run --security` writes; SC10, D1517). The schema is
+// additionalProperties: false and task.Parse decodes with
+// DisallowUnknownFields, so the two are two readers of one document: a
+// property missing from the schema, or named differently from the Go field's
+// json tag, makes every task carrying the request schema-invalid while the
+// runner reads it perfectly — and only the schema's consumers would notice. The
+// document below is marshalled from task.Spec rather than written out, so it
+// reads the Go field's own spelling, and the renamed spelling at the end is
+// refused by both readers, which is what "they agree" means on this field.
+//
+// Mutation (rename the property to `security_level` in
+// schemas/task.schema.json): the document carrying `security` is rejected as an
+// unknown key and this fails.
+func TestTaskSchemaAgreesWithTheTaskDecoder(t *testing.T) {
+	sch := compile(t, "task.schema.json")
+	validate := func(data []byte) error {
+		inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sch.Validate(inst)
+	}
+	spec := task.Spec{Version: 1, RunID: "20261112-120000-abcd", Repo: "acme/app", Ref: "main", Task: "x", Security: true}
+	data, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validate(data); err != nil {
+		t.Fatalf("the schema rejects a task carrying security, which fugaro run --security writes: %v", err)
+	}
+	got, err := task.Parse(data)
+	if err != nil {
+		t.Fatalf("task.Parse refuses the same document: %v", err)
+	}
+	if !got.Security {
+		t.Fatalf("the decoder read the request as off: %s", data)
+	}
+	// A task that did not ask carries no key at all, so the schema's own
+	// required list and the decoder's zero value are the same statement.
+	plain, err := json.Marshal(task.Spec{Version: 1, RunID: "20261112-120000-abcd", Repo: "acme/app", Ref: "main", Task: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validate(plain); err != nil {
+		t.Fatalf("the schema rejects a task that carries no security field: %v", err)
+	}
+	renamed := []byte(strings.Replace(string(data), `"security"`, `"security_level"`, 1))
+	if err := validate(renamed); err == nil {
+		t.Error("the schema accepts the field under a name the decoder does not read")
+	}
+	if _, err := task.Parse(renamed); err == nil {
+		t.Error("the decoder accepts the field under a name the schema does not publish")
+	}
+}

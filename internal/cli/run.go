@@ -272,6 +272,16 @@ type runOptions struct {
 	// against the vocabulary once, in tierFlag, because a value outside it is
 	// a launcher's mistake rather than a run's opinion about its own size.
 	tier string
+	// security is --security: this run's own request to be reviewed at the
+	// strongest level there is (docs/security-classification,
+	// implementation-plan SC10, D1517). It writes task.Spec.Security, which
+	// only turns level 3 on — there is no --no-security, and a task that says
+	// `security: false` changes nothing — so the field is a request and not
+	// an override of the repository's own classification, exactly as --mode
+	// raises a mode and cannot lower one. False (the default) writes no field
+	// and the run's levels are resolved from its configuration and its mode
+	// alone, byte-identical to what the previous release wrote.
+	security bool
 	// noCompression is --no-compression: turn the repository's
 	// agent.compression off for this run only (docs/design/
 	// headroom-compression.md §4). The override is deliberately
@@ -411,6 +421,7 @@ func newRunCmd() *cobra.Command {
 	_ = f.MarkHidden("review-run")
 	f.StringVar(&o.ownerRuled, "owner-ruled", "", "the repository owner's ruling on the findings a run on this PR left for them (OD1): either the text itself, a file, or - for stdin. A follow-up on a pull request whose last run stopped waiting on owner decisions is refused without it, and one whose last run left no such decisions is refused with it: the ruling answers what that run left, and nothing else; it is appended to this run's brief verbatim and recorded in the run")
 	f.IntVar(&o.attempts, "attempts", 0, "launch N (2 to 4) independent runs of the same task, workflow, ref and recipe as a best-of-N batch (bestof-<first run id> unless --batch is given); refused with --pr, --run-id, --retry or a review-mode recipe")
+	f.BoolVar(&o.security, "security", false, "ask for the strongest review this run can get: it turns review level 3 on for the run whatever paths it changed, over the repository's own security: rows and the project layer's always_level_3. It only ever turns the level on — there is no way to ask for less — as --mode raises a mode and never lowers one, and a run that says nothing resolves its levels from its configuration alone")
 	f.BoolVar(&o.noCompression, "no-compression", false, "turn agent.compression off for this run only, overriding fugaro.yaml; there is no flag to turn it on, which is a reviewed fugaro.yaml change")
 	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output")
 	f.BoolVar(&o.noBudgetCheck, "no-budget-check", false, "skip the launch pre-check of the budget (kill switches, missing caps, no headroom); the run is held to the same limits when it starts")
@@ -419,7 +430,7 @@ func newRunCmd() *cobra.Command {
 }
 
 // taskFlags are the flags --retry excludes: the stored task.json supplies them.
-var taskFlags = []string{"repo", "ref", "workflow", "run-id", "batch", "title", "plan-task", "task-file", "total-timeout", "pr", "recipe", "token", "attach", "mode", "path", "tier", "no-compression", "review-levels", "review-run", "max-usd", "max-tokens", "max-time", "max-review-rounds", "continues", "used-usd", "used-tokens", "used-time", "used-review-rounds"}
+var taskFlags = []string{"repo", "ref", "workflow", "run-id", "batch", "title", "plan-task", "task-file", "total-timeout", "pr", "recipe", "token", "attach", "mode", "path", "tier", "security", "no-compression", "review-levels", "review-run", "max-usd", "max-tokens", "max-time", "max-review-rounds", "continues", "used-usd", "used-tokens", "used-time", "used-review-rounds"}
 
 // prFlags are the flags --pr excludes: the previous run on the PR supplies them.
 var prFlags = []string{"ref", "workflow"}
@@ -858,6 +869,19 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 	// so a stored task keeps the block it was launched with.
 	if o.reviewLevels != nil {
 		spec.ReviewLevels = o.reviewLevels
+	}
+	// --security writes the task's own field, on every launch shape below as
+	// --review-levels is: the flag is this launcher's request that the run be
+	// reviewed at the strongest level (D1517), and it is written before
+	// createTask and before the gates that read the task, so a repeated
+	// --run-id with a flag the stored task does not carry is refused as a
+	// different task rather than silently dropped, and freshLaunchGates judges
+	// the image on the field this wrote. A --retry takes no such flag
+	// (taskFlags), so a stored task keeps the request it was launched with.
+	// There is no write of false anywhere: the field only turns the level on,
+	// and a launch that passes no --security carries no field at all.
+	if o.security {
+		spec.Security = true
 	}
 	// The four --max-* chain limits (docs/run-limit-carry-over §2, D1042), on
 	// every launch shape below as --review-levels is, and refused here rather
@@ -1533,7 +1557,7 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 	// the two writes with its model named none (checkNoneModelImage,
 	// launchLevelsConfig).
 	fileCfg := launchLevelsConfig(ctx, env, spec)
-	levelsAsk, err := launchReviewLevelsAsk(ctx, env, spec, fileCfg, levelsRecipe, levelsRecipeUnknown)
+	levelsAsk, err := launchReviewLevelsAsk(ctx, env, spec, fileCfg, levelsRecipe, levelsRecipeUnknown, warn)
 	if err != nil {
 		return config.Inputs{}, err
 	}
@@ -1665,6 +1689,19 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 				tierGateSubject(o, spec), "the tier", "", warn); err != nil {
 				return config.Inputs{}, err
 			}
+		}
+		// The security request, judged on the two homes it has and never
+		// on the flag: the task's own field, which a runner older than
+		// securityRequestSince refuses outright (task.Parse decodes with
+		// DisallowUnknownFields), so a --retry that replays such a task is
+		// gated exactly as the launch that wrote it was, and the project
+		// layer's always_level_3, which the release that constant names is
+		// the first to act on — a job image between the two decodes the
+		// key and would run the project's runs a level short in silence.
+		// It is not the security: block's gate beside it: that one judges
+		// the key being written, this one what reads it.
+		if err := checkCloneSecurityRequestImage(env.lc, spec, fileCfg, warn); err != nil {
+			return config.Inputs{}, err
 		}
 		// The review levels' gate, judged on the run this launch
 		// resolves rather than on a task field: a mode's own level 3, a
@@ -1808,6 +1845,11 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 				tierGateSubject(o, spec), "the tier", "", warn); err != nil {
 				return config.Inputs{}, err
 			}
+		}
+		// The same gate as the clone branch's above, and for the same
+		// reason: see securityRequestSince.
+		if err := checkSecurityRequestImage(ctx, env, slug, spec, fileCfg, kind, warn); err != nil {
+			return config.Inputs{}, err
 		}
 		// The review levels' gate, the same as the clone branch's above
 		// and for the same reason: see reviewLevelsAsk.
