@@ -77,6 +77,15 @@
             "recipe": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$" }
           }
         },
+        "model_grades": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The escalation ladder's two model grades for every repository of the project (docs/outer-loop-escalation, E2, D2039): `strong`, the model the ladder's coder becomes and its merge judge runs on, and `strongest`, the one a critical-path pull request, Critical rigor or Hotfix runs. Each is the pair a craft carries — a model and the credential or pool its calls go out on — and this is the one block of the crafts' kind the project layer may name an access in (config.Scopes): a grade is a model choice the project owns (G3), and a repository's own entry is dropped and recorded by the merge (internal/policy's tightenGrades) rather than honoured, so this layer is where a grade's credential or pool is chosen at all. A grade nobody sets is no grade: the rung that needs one refuses and asks, never a hidden default. Needs fugaro 0.25.0: Fugaro before that release refuses the key, in every repository of the project.",
+          "properties": {
+            "strong": { "$ref": "#/$defs/grade", "description": "the ladder's rung above the run's own model: what its coder becomes and what the merge judge runs" },
+            "strongest": { "$ref": "#/$defs/grade", "description": "the model a critical-path pull request, Critical rigor or Hotfix runs" }
+          }
+        },
         "rigor": {
           "type": "object",
           "additionalProperties": false,
@@ -430,6 +439,15 @@
       "description": "One craft's model. The access is deliberately absent: it names a credential or pool the local config allow-lists, so only the repository's own, PR-reviewed fugaro.yaml may choose among them (config.Scopes, the same rule agent.oauth_token is held to), and a layer that writes one is refused.",
       "properties": {
         "model": { "type": "string", "maxLength": 100, "pattern": "^\\S*$", "description": "the model this craft's calls use" }
+      }
+    },
+    "grade": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "One model grade: the model a rung of the escalation ladder runs and the credential or pool its calls go out on, the pair a craft carries. Unlike $defs/craft, the access is here and may be set — a repository's own entry for a grade is dropped and recorded by the merge (internal/policy's tightenGrades) rather than honoured, so the project layer is the only layer that can choose a grade's credential at all (config.Scopes).",
+      "properties": {
+        "model": { "type": "string", "maxLength": 100, "pattern": "^\\S*$", "description": "the model this grade's rungs run" },
+        "access": { "type": "string", "maxLength": 31, "pattern": "^[a-z](?:[a-z0-9]|-[a-z0-9]){0,30}$", "description": "the credential or pool its calls go out on, by name; the secret is a Secret Manager entry under that name and never appears in a config. An unset access is the project's default credential (D1624)." }
       }
     }
   }

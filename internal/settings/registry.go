@@ -222,6 +222,19 @@ var yamlMeta = map[string]Row{
 	"agent.crafts.security-review.model":  {Owner: "models", Default: unset("the senior review's model"), Doc: docCrafts},
 	"agent.crafts.security-review.access": {Owner: "accounts", Default: unset("the senior review's access"), Doc: docCrafts},
 
+	// The escalation ladder's two model grades (docs/outer-loop-escalation E2,
+	// D2039): the model each rung runs and the credential or pool its calls go
+	// out on, the pair a craft carries. The MERGE column reads replace and the
+	// rule is stricter than that word: a grade is the project's own model
+	// choice, so a repository's entry never decides the value a run gets —
+	// internal/policy records it in the run's ignored list (tightenGrades) and
+	// the project's stands. What a repository's entry says is which model it
+	// would have run, and the record is where that is kept.
+	"model_grades.strong.model":     {Owner: "models", Default: unset("none: a rung whose grade the project sets nowhere refuses and asks"), Doc: docEscalation},
+	"model_grades.strong.access":    {Owner: "accounts", Default: unset("the project's default credential"), Doc: docEscalation},
+	"model_grades.strongest.model":  {Owner: "models", Default: unset("none: a rung whose grade the project sets nowhere refuses and asks"), Doc: docEscalation},
+	"model_grades.strongest.access": {Owner: "accounts", Default: unset("the project's default credential"), Doc: docEscalation},
+
 	"agent.review_rounds": {Default: unset("the run's rigor mode decides (rigor.DefaultRounds)")},
 	"agent.max_budget_usd": {
 		Default: value("25", "config.DefaultMaxBudgetUSD"),
@@ -440,7 +453,13 @@ const (
 	docModels = "docs/multi-model.md"
 	docRigor  = "docs/rigor-modes/spec.md"
 	docCrafts = "docs/model-crafts/spec.md"
-	docImages = "docs/project-image-catalog/spec.md"
+	// docEscalation is the escalation ladder's own document. The two model
+	// grades are stated in the plan rather than in the spec — the spec is the
+	// ladder's design and the plan is where each key it adds is defined (E2,
+	// D2039) — so the rows point at the plan, as docOrchestrator does for the
+	// daemon's guardrails.
+	docEscalation = "docs/outer-loop-escalation/implementation-plan.md"
+	docImages     = "docs/project-image-catalog/spec.md"
 	// docDiagnose is the troubleshooting guide's document: it is written for
 	// the model `fugaro troubleshoot` starts, so it is where the key that
 	// chooses that model is stated (D1607).
@@ -602,6 +621,14 @@ var layerRows = []Row{
 	layerRow("defaults.agent.crafts.senior-review.access", "none: only the local config and the policy node name a credential", "accounts", docCrafts),
 	layerRow("defaults.agent.crafts.security-review.model", "the senior review's model", "models", docCrafts),
 	layerRow("defaults.agent.crafts.security-review.access", "none: only the local config and the policy node name a credential", "accounts", docCrafts),
+	// The grades' layer rows (E2, D2039): the project layer sets both halves
+	// for every repository of it, and a repository's own entry is recorded
+	// rather than applied (internal/policy's tightenGrades). A grade nobody set
+	// is not a model Fugaro chooses for the rung — it refuses and asks.
+	layerRow("defaults.model_grades.strong.model", "none: a rung whose grade the project sets nowhere refuses and asks", "models", docEscalation),
+	layerRow("defaults.model_grades.strong.access", "the project's default credential", "accounts", docEscalation),
+	layerRow("defaults.model_grades.strongest.model", "none: a rung whose grade the project sets nowhere refuses and asks", "models", docEscalation),
+	layerRow("defaults.model_grades.strongest.access", "the project's default credential", "accounts", docEscalation),
 	layerRow("defaults.agent.review_rounds", "the run's rigor mode decides (rigor.DefaultRounds)", "settings set", docLayer),
 	layerRow("defaults.agent.max_budget_usd", "25", "settings set", docLayer),
 	layerRow("defaults.agent.first_line_review", "auto", "settings set", docLayer),

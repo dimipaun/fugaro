@@ -1393,10 +1393,20 @@ func proxiedLaunchSpec() (string, *task.Spec) {
 // after the one the work was first slotted for and not the plan's spent 0.15.0
 // number).
 //
+// The gate is called directly rather than through `fugaro run`, the way the
+// Batch half below is and for a reason of the same kind: the pair of node and
+// image a row's refusal needs — an image older than proxySince, and a node
+// this reader reads — is one no launch has. policyImageGate (run_allowlist.go)
+// judges every readable node's version against the release its image carries,
+// and the oldest version this reader reads is version 5, whose release is
+// 0.23.0: a launch on an image older than proxySince is refused there first,
+// with its own sentence. The lockstep this test exists for is unchanged, and
+// it is asserted here where it lives.
+//
 // The cases beside it are what makes the refusal proxiedness' and not the
-// image's: a repository the published node does not proxy is launched on the
+// image's: a repository the published node does not proxy is admitted on the
 // very same image (G9), and a proxied repository on an image at proxySince or
-// later is launched too. The rows between them take each half of proxiedness
+// later is admitted too. The rows between them take each half of proxiedness
 // away on its own — a node that brokers Bitbucket access but does not admit
 // this repository, an installation that carries no service, and a repository
 // whose own switch is off — because a launch that is not proxied is judged by
@@ -1454,9 +1464,6 @@ func TestLaunchRefusesProxiedRunOnOldImage(t *testing.T) {
 				return
 			case !tc.refused && err != nil:
 				t.Fatalf("a launch that is not proxied (or is on a current image) was refused: %v", err)
-			}
-			if !tc.refused && !launchedAny(f) {
-				t.Error("an admitted launch started no execution")
 			}
 		})
 	}

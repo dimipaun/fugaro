@@ -256,6 +256,15 @@
         "decoupling": { "type": "boolean", "description": "The dependency-breaking pass: the planner asks of every edge whether the dependent needs the other side's interface or its behaviour, and breaks the ones that need only the interface behind a contract task. Absent or true: the pass runs, as it does when nothing sets it. false: the plan is drawn with the task's own work and no pass." }
       }
     },
+    "model_grades": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The escalation ladder's two model grades as THIS repository would set them (docs/outer-loop-escalation, E2, D2039). A grade is a model choice the project owns (G3): the project layer's defaults.model_grades states the grade every repository of the project runs, and an entry written here never decides it — the merge drops it and records it as ignored (internal/policy's tightenGrades, which `fugaro validate` and a run print), so this block says which model the repository would have run, not what a run uses. Writing it is not an error and changes no run. Fugaro before 0.25.0 refuses the key. The file is decoded strictly, so a job image older than the release that reads it fails at bootstrap on a key its runner does not know: `fugaro update --repo` refuses to deploy such a job before any cloud effect, and `fugaro run` refuses the launch from a checkout of the repository.",
+      "properties": {
+        "strong": { "$ref": "#/$defs/craft", "description": "the ladder's rung above the run's own model: what its coder becomes and what the merge judge runs. The project's value wins; this entry is recorded as ignored." },
+        "strongest": { "$ref": "#/$defs/craft", "description": "the model a critical-path pull request, Critical rigor or Hotfix runs. The project's value wins; this entry is recorded as ignored." }
+      }
+    },
     "workflows": {
       "type": "object",
       "minProperties": 1,
