@@ -158,10 +158,12 @@ operators` section:
   (T6.1). The rest is not: Slice 3, which is what would make the mode decide
   readiness, Slice 5's Hotfix gate, ready PR and recorded follow-up task
   (T5.3–T5.5), and Slices 7 and 8.
-- **Not a product document.** When the modes ship they get one —
-  `docs/rigor-modes.md`, the plan's T7.1 — and this folder is where the design
-  and the plan live until then. The two are separate on purpose: a folder that is
-  a plan ages into a design record, and a product document is a promise.
+- **Not a product document — the product document is
+  [`docs/rigor-modes.md`](../rigor-modes.md).** This folder is where the design,
+  the reconciliation and the plan live, and the two are separate on purpose: a
+  folder that is a plan ages into a design record, and a product document is a
+  promise. The promise is written on that page, for a reader who wants to use
+  the modes rather than to build them.
 - **Not the record of what is built.** This folder is documents: the slices say
   what would touch what, and the commits on the branch are what wrote each one.
 
