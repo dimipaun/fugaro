@@ -104,13 +104,18 @@ func TestDefaultPolicyPerTier(t *testing.T) {
 		t.Error("the table answered a policy named by an empty string, want a refusal")
 	}
 
-	// What the lookup answers is a copy: a caller that edits a row before a mint
-	// must not move the policy every later key of that tier is minted under.
+	// What the lookup answers is a copy, down to what the row points at: a caller
+	// that edits a row before a mint must not move the policy every later key of
+	// that tier is minted under.
 	policy, _ := DefaultPolicy(PolicyTeamMonthly)
 	policy.Warnings[0].Roles[0] = "viewer"
 	policy.Warnings[0].From = "never"
+	*policy.CheckInterval = "P30D"
 	again, _ := DefaultPolicy(PolicyTeamMonthly)
 	if again.Warnings[0].Roles[0] != "admin" || again.Warnings[0].From != "grace_start" {
 		t.Errorf("editing a looked-up row changed the table: the next mint of the tier would warn %+v", again.Warnings[0])
+	}
+	if *again.CheckInterval != dailyCheck {
+		t.Errorf("editing a looked-up row's check interval changed the table: the next mint of the tier would check every %q", *again.CheckInterval)
 	}
 }

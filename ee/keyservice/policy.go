@@ -169,11 +169,17 @@ var defaultPolicies = []Policy{
 // DefaultPolicy answers the row a name names. The row is copied out rather than
 // handed over, so that a caller which edits what it was given — a warning
 // appended to the list before a key is minted — cannot change what the next mint
-// of that tier carries.
+// of that tier carries. What the row points at is copied too, for the same
+// reason: a written-through check interval would move the interval every later
+// key of that row is checked at, which is a key's policy changed by a caller.
 func DefaultPolicy(name string) (Policy, bool) {
 	for _, policy := range defaultPolicies {
 		if policy.Name != name {
 			continue
+		}
+		if policy.CheckInterval != nil {
+			interval := *policy.CheckInterval
+			policy.CheckInterval = &interval
 		}
 		if len(policy.Warnings) > 0 {
 			warnings := make([]licence.WarningV1, 0, len(policy.Warnings))

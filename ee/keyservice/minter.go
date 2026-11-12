@@ -196,6 +196,25 @@ var tierMaxTerm = map[string]time.Duration{
 	licence.TierEnterprise: 365*24*time.Hour + RenewalLead,
 }
 
+// termInDays is a request's term as a duration, refused when it is not a term at
+// all or is longer than the tier's ceiling.
+//
+// The ceiling is compared in days and before any duration is built, which is the
+// whole of why this is a function: the term arrives as an int from a wire, and
+// `time.Duration(days) * 24 * time.Hour` wraps for a large enough one. A wrapped
+// term is a small duration that passes a ceiling it should fail, and what the
+// minter would sign is a key whose `paid_through` is before its `issued_at` —
+// the one shape of key §2 says the minter's own clock exists to make impossible.
+func termInDays(days int, tier string, maximum time.Duration) (time.Duration, error) {
+	if days < 1 {
+		return 0, fmt.Errorf("a term of %d day(s) is not a term", days)
+	}
+	if days > int(maximum/(24*time.Hour)) {
+		return 0, fmt.Errorf("%w: %d day(s) is longer than the %s tier allows", licence.ErrLifetime, days, tier)
+	}
+	return time.Duration(days) * 24 * time.Hour, nil
+}
+
 // Mint signs one claim set through the key's API and answers the key text.
 //
 // The claim set is marshalled once and those bytes are both what is signed and
@@ -209,12 +228,9 @@ func (m Minter) Mint(ctx context.Context, req Request) (Minted, error) {
 	if !known {
 		return Minted{}, fmt.Errorf("the tier %q is not one a key can be issued for", req.Tier)
 	}
-	if req.TermDays < 1 {
-		return Minted{}, fmt.Errorf("a term of %d day(s) is not a term", req.TermDays)
-	}
-	term := time.Duration(req.TermDays) * 24 * time.Hour
-	if term > maximum {
-		return Minted{}, fmt.Errorf("%w: %d day(s) is longer than the %s tier allows", licence.ErrLifetime, req.TermDays, req.Tier)
+	term, err := termInDays(req.TermDays, req.Tier, maximum)
+	if err != nil {
+		return Minted{}, err
 	}
 	if req.Seats < 1 {
 		return Minted{}, fmt.Errorf("a key for %d seat(s) is one nobody can install", req.Seats)
@@ -299,12 +315,9 @@ func (m Minter) MintV1(ctx context.Context, req RequestV1) (MintedV1, error) {
 	if days == 0 {
 		days = int(policy.Term / (24 * time.Hour))
 	}
-	if days < 1 {
-		return MintedV1{}, fmt.Errorf("a term of %d day(s) is not a term", days)
-	}
-	term := time.Duration(days) * 24 * time.Hour
-	if term > maximum {
-		return MintedV1{}, fmt.Errorf("%w: %d day(s) is longer than the %s tier allows", licence.ErrLifetime, days, policy.Tier)
+	term, err := termInDays(days, policy.Tier, maximum)
+	if err != nil {
+		return MintedV1{}, err
 	}
 	if req.Seats < 1 {
 		return MintedV1{}, fmt.Errorf("a key for %d seat(s) is one nobody can install", req.Seats)

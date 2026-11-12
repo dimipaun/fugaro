@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -264,9 +265,11 @@ func TestTheV1MinterRefusesWhatItCannotMint(t *testing.T) {
 		// termDays overrides the request's term; the zero value is left to the
 		// case's own edit, so "names no term" is stated where it is meant.
 		termDays int
-		// size is what the key ring answers instead of a signature.
-		size int
-		edit func(*RequestV1, *Minter)
+		// size is what the key ring answers instead of a signature, and err what
+		// it answers instead of one at all.
+		size      int
+		signerErr error
+		edit      func(*RequestV1, *Minter)
 		// signed is how many times the signer must have been asked, and mints
 		// whether the request is one the minter serves.
 		signed int
@@ -276,8 +279,10 @@ func TestTheV1MinterRefusesWhatItCannotMint(t *testing.T) {
 		// notTheCeiling says the refusal has to be the guard's own and not the
 		// tier ceiling's: a policy no row names has no tier, so a missing guard
 		// reads the ceiling as zero and refuses by a rule that is not true of
-		// the request — and the two have different repairs.
+		// the request — and the two have different repairs. ceiling says the
+		// opposite: the refusal has to be the ceiling's.
 		notTheCeiling bool
+		ceiling       bool
 	}{
 		{name: "the request the service builds", termDays: 30, signed: 1, mints: true, term: 30 * day},
 		{name: "a request that names no term", termDays: 0, signed: 1, mints: true, term: 30 * day},
@@ -291,15 +296,22 @@ func TestTheV1MinterRefusesWhatItCannotMint(t *testing.T) {
 		{name: "a negative number of seats", termDays: 30, edit: func(r *RequestV1, _ *Minter) { r.Seats = -3 }},
 		{name: "no organisation", termDays: 30, edit: func(r *RequestV1, _ *Minter) { r.Organisation = "" }},
 		{name: "an organisation of whitespace", termDays: 30, edit: func(r *RequestV1, _ *Minter) { r.Organisation = " \t " }},
-		{name: "a term a day past the tier's ceiling", termDays: 396, edit: func(r *RequestV1, _ *Minter) { r.Policy = PolicyTeamAnnual }},
+		{name: "a term a day past the tier's ceiling", termDays: 396, edit: func(r *RequestV1, _ *Minter) { r.Policy = PolicyTeamAnnual }, ceiling: true},
+		// The term arrives as an int from a wire, so it is a term that cannot be
+		// turned into a duration at all: `time.Duration(days) * 24 * time.Hour`
+		// wraps, and a wrapped term is a short one that passes a ceiling it
+		// should fail — minting a key whose `paid_through` is before its
+		// `issued_at`.
+		{name: "a term too large for a duration", termDays: math.MaxInt, ceiling: true},
 		{name: "a negative term", termDays: -30},
 		{name: "no key id for the environment", termDays: 30, edit: func(_ *RequestV1, m *Minter) { m.Keys = Keys{Staging: stagingKeyID} }},
 		{name: "no signer", termDays: 30, edit: func(_ *RequestV1, m *Minter) { m.Signer = nil }},
+		{name: "a key ring that fails", termDays: 30, signerErr: errors.New("the key ring is unreachable"), signed: 1},
 		{name: "a key ring answering a short signature", termDays: 30, size: 32, signed: 1},
 		{name: "a key ring answering a long signature", termDays: 30, size: 128, signed: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			spy := &signerSpy{priv: f.signer.priv, size: tc.size}
+			spy := &signerSpy{priv: f.signer.priv, size: tc.size, err: tc.signerErr}
 			minter := Minter{Signer: spy, Keys: f.keys, Environment: Production, Now: f.clock}
 			request := valid
 			request.TermDays = tc.termDays
@@ -325,6 +337,9 @@ func TestTheV1MinterRefusesWhatItCannotMint(t *testing.T) {
 			}
 			if tc.notTheCeiling && errors.Is(err, licence.ErrLifetime) {
 				t.Errorf("the minter refused %s by the tier ceiling, want the guard's own refusal: %v", tc.name, err)
+			}
+			if tc.ceiling && !errors.Is(err, licence.ErrLifetime) {
+				t.Errorf("the minter refused %s by some other rule, want the tier ceiling: %v", tc.name, err)
 			}
 		})
 	}
@@ -368,6 +383,19 @@ func TestTheIntakeMintsAV1KeyThroughTheMinterService(t *testing.T) {
 	if got := f.signer.calls; got != 1 {
 		t.Errorf("the minter signed %d key(s), want one", got)
 	}
+
+	t.Run("the route refuses a claim the caller names itself", func(t *testing.T) {
+		body := `{"environment":"production","policy":"team-monthly","workspace_id":"` + workspaceID +
+			`","organisation":"acme.example","seats":3,"term_days":30,"grace_days":9000}`
+		resp, err := srv.Client().Post(srv.URL+RouteMintV1, "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatalf("calling the v1 route: %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("the route answered %d for a request carrying a grace of its own, want 400: a caller that could name a row's own fields would mint a key that never lapses, and they are the row's (D2133, D2138)", resp.StatusCode)
+		}
+	})
 
 	t.Run("an answer without a renewal secret is refused", func(t *testing.T) {
 		bare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
