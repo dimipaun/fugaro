@@ -631,10 +631,12 @@ func coordinatorCallTool(ctx context.Context, client *http.Client, door *coordin
 		// them as documents turned the door's own sentence into "the answer
 		// was not an outcome document".
 		//
-		// Every one of them is this call's and not the installation's (exit
-		// 1): what the door cannot answer for at all is a JSON-RPC error, not
-		// this — an unreadable store is answered as -32603, and a name the
-		// catalogue does not hold as -32602, both handled above.
+		// A refusal is the caller's (exit 1). What the door cannot answer for
+		// at all is not this shape: a store it could not read or write is
+		// answered as -32603, a name the catalogue does not hold as -32602,
+		// and a tool the token may not call as a 403 — all handled above. So
+		// the text here is the tool reading the call, which is why §6.24 says
+		// a call refused before it queues anything has no document at all.
 		return nil, fcli.UserErr("the front door refused %s: %s", name, safetext.OneLine(text))
 	}
 	return json.RawMessage(text), nil
