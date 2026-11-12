@@ -399,10 +399,10 @@ func TestUpdateMigratesTheNodeBeforeItReplacesTheCredentialsService(t *testing.T
 
 // TestUpdateFailsTheCredentialsResolveBeforeItMigratesTheNode is the failure
 // half of the same rule, and the state this branch's review reproduced: the
-// same installation — a version-4 node published, the previous release's
+// same installation — a version-5 node published, the previous release's
 // credentials service deployed — whose credentials image THIS release has not
 // published yet (the state every release is in until its images stage has
-// published it) used to reach the policy stage first, write the version-5 node,
+// published it) used to reach the policy stage first, write the version-6 node,
 // and only then stop at the resolve the move needs. What it left was a node at
 // this version with the previous release's service still on the project: a
 // service that refuses every cascade and Bitbucket-proxied call until a later
@@ -436,8 +436,8 @@ func TestUpdateFailsTheCredentialsResolveBeforeItMigratesTheNode(t *testing.T) {
 	if stage := stoppedStage(out); stage != initflow.Policy {
 		t.Errorf("the run stopped at %q, want the %s stage: the resolve is the write's own precondition, and it may not land after the node has moved — the service the installation runs then refuses every call that reads the node\n%s", stage, initflow.Policy, s)
 	}
-	if v := nodeVersionOn(t, r.db); v != 5 {
-		t.Errorf("the published policy is version %d, want 5: the node moved without the service that reads it, so every cascade and Bitbucket-proxied call of this project is refused until a later update succeeds\n%s", v, s)
+	if v, want := nodeVersionOn(t, r.db), projectpolicy.Version-1; v != want {
+		t.Errorf("the published policy is version %d, want %d: the node moved without the service that reads it, so every cascade and Bitbucket-proxied call of this project is refused until a later update succeeds\n%s", v, want, s)
 	}
 	if got := credentialsServiceEntry(t, r.imagesRig)["image"]; got != recorded {
 		t.Errorf("credentials_service.image = %v, want the recorded %v: a run that resolved no image rewrote the installation's tfvars\n%s", got, recorded, s)
@@ -474,8 +474,8 @@ func TestUpdateInAnAgentSessionHoldsTheNodeAtItsVersion(t *testing.T) {
 	if err != nil && !strings.Contains(s, "left for you") {
 		t.Fatalf("an update in a coding agent's session failed with something other than the steps it leaves for the user: %v\n%s", err, s)
 	}
-	if v := nodeVersionOn(t, r.db); v != 5 {
-		t.Errorf("the published policy is version %d, want 5: the session raised the node in a run that replaces no service, so the previous release's service refuses every call that reads it until a later update succeeds\n%s", v, s)
+	if v, want := nodeVersionOn(t, r.db), projectpolicy.Version-1; v != want {
+		t.Errorf("the published policy is version %d, want %d: the session raised the node in a run that replaces no service, so the previous release's service refuses every call that reads it until a later update succeeds\n%s", v, want, s)
 	}
 	if !strings.Contains(s, "holds it there") || !strings.Contains(s, credentialsSessionHeld) {
 		t.Errorf("the policy stage did not say it held the node where it was, and why:\n%s", s)

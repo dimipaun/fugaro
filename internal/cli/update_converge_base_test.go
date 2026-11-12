@@ -29,7 +29,11 @@ func TestUpdateConvergesSlimBase(t *testing.T) {
 	// policy checks out of the run (doctorPolicyChecks returns the skew line
 	// alone), so policy-vs-jobs — the check this fixture exists to fire — would
 	// never be appended and the guard below would fail for a reason that has
-	// nothing to do with the base.
+	// nothing to do with the base. It is also why no skew check is named below:
+	// with the node at this binary's version there is no policy-older-than-binary
+	// to fire before the run, and the two checks that are stale are the rules
+	// generation and the plugin pin, which every installation between
+	// `brew upgrade` and `fugaro update` carries.
 	r := newConvergeRig(t, v7Node())
 	// The fixture is the previous release's base, or the assertions after the
 	// run prove nothing: an installation already on this release's pin would
@@ -39,13 +43,10 @@ func TestUpdateConvergesSlimBase(t *testing.T) {
 		t.Fatalf("the fixture records base_images.base = %s, want the previous release's %s", got, prev)
 	}
 
-	// The node the previous release published is a version-4 one, so
-	// policy-older-than-binary is the check that fires before the run — and it
-	// is the policy stage's, which migrates the node in place. The stale base
-	// is what the assertions after the run are about: the job images the
-	// records show were built on the previous release's base, which is what the
-	// images stage has to move.
-	convergeOn(t, r, []string{"policy-older-than-binary", "policy-rules-skew", "plugin-pin"})
+	// The stale base is what the assertions after the run are about: the job
+	// images the records show were built on the previous release's base, which
+	// is what the images stage has to move.
+	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
 
 	// The pin this release's images stage resolves, verifies and records: the
 	// one value whose movement is this installation reaching the slim base.

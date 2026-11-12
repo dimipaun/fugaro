@@ -291,8 +291,8 @@ func TestPolicyBackoffCapAboveItsEffectiveInitial(t *testing.T) {
 // said "Version stays 1" (the C1.2 test list named a test that does not exist;
 // the re-review of C1.9/this follow-up corrected the list to this name and
 // TestPlanTestListsNamesOnlyTestsThatExist holds the two together). On this base
-// the policy version is 5 (it moved at 0.8.0, 0.8.5, 0.9.0, 0.14.0 and
-// 0.23.0), so the number in the node below is 5: what the plan is pinning is that the
+// the policy version is 7 (it moved at 0.8.0, 0.8.5, 0.9.0, 0.14.0, 0.23.0,
+// 0.24.0 and 0.25.0), so the number in the node below is 7: what the plan is pinning is that the
 // *number does not move for this task*, and that is what this asserts. See the
 // pull request for the disagreement between the plan's text and the code.
 func TestPolicyCredentialsCarryNoVersionBump(t *testing.T) {

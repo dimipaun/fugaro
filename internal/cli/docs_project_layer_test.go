@@ -508,26 +508,27 @@ func TestNoShippedTextNamesTheRetiredOAuthGate(t *testing.T) {
 
 // TestDocsProjectLayerStatesThePolicyVersionItShips: docs/project-layer.md's
 // reference paragraph said, in the present tense, that "the policy is version 2
-// from fugaro 0.8.5" — and the bump to version 6 raises `projectpolicy.Version`
-// (VersionSince[6] = "0.24.0", the release that states the binaries block in
-// the node), so the sentence must name the version and release this tree
-// writes. The paragraph now leads with version 6 and keeps version 4 as the
-// node that came before it, which is what the table says.
+// from fugaro 0.8.5" — and the bump to version 7 raises `projectpolicy.Version`
+// (VersionSince[7] = "0.25.0", the release that states the escalation ladder's
+// model grades in the node), so the sentence must name the version and release
+// this tree writes. The paragraph now leads with version 7 and keeps version 6
+// as the node that came before it, which is what the table says.
 //
 // The version the page names is read from the constants rather than typed
 // twice, so the next bump fails here instead of shipping a page describing
 // another release's node.
 //
-// Mutation (verified, run and restored): put the old sentence back — "The
-// policy is version 2 from fugaro 0.8.5, the release that enforces a job
-// profile's admission list" — and this test fails naming it.
+// Mutation (verified, run and restored): put back the clause the bump
+// replaced — "the release that states the binaries block in it" for "the
+// release that states the escalation ladder's model grades in it" — and this
+// test fails naming the sentence it wants.
 func TestDocsProjectLayerStatesThePolicyVersionItShips(t *testing.T) {
 	doc := readDoc(t, "docs/project-layer.md")
 	rel, ok := projectpolicy.VersionRelease(projectpolicy.Version)
 	if !ok {
 		t.Fatalf("projectpolicy.VersionSince has no row for Version %d, and this page names the release each version came in", projectpolicy.Version)
 	}
-	want := fmt.Sprintf("**The policy is version %d from fugaro %s, the release that states the binaries block in it**", projectpolicy.Version, rel)
+	want := fmt.Sprintf("**The policy is version %d from fugaro %s, the release that states the escalation ladder's model grades in it**", projectpolicy.Version, rel)
 	if !strings.Contains(doc, want) {
 		t.Errorf("docs/project-layer.md does not say %q: the page describes the node this release writes, and projectpolicy.Version/%d is that node", want, projectpolicy.Version)
 	}
@@ -651,6 +652,13 @@ func TestDocsProjectLayerSaysWhatTiesARepositoryToAProject(t *testing.T) {
 // publisher writes is one the node cannot hold (the review finding on AR0: the
 // row promised a difference at the node that exists only at the publish).
 //
+// E2's `model_grades` row is the same kind of row for the same reason: the
+// member is decoded, validated and accepted by this release and read by no run
+// of it (the ladder's rungs arrive with later tasks), so the row has to say so
+// rather than leave an operator believing a published grade is what their runs
+// spend on — and it has to say that a grade nobody sets is no grade, because
+// that is the answer a rung's refusal prints.
+//
 // The row set is pinned as a list rather than derived from the Policy struct:
 // the table groups the four `budget` members into one row and deliberately
 // leaves out the members whose effect is not a run's (base_branch, credentials,
@@ -660,7 +668,9 @@ func TestDocsProjectLayerSaysWhatTiesARepositoryToAProject(t *testing.T) {
 //
 // Mutation (verified, run and restored): delete the `binaries` row — this fails
 // naming it; put "decoded, validated and accepted, **not applied**" back as the
-// row's whole description without the written-block half — it fails naming that.
+// row's whole description without the written-block half — it fails naming that;
+// delete the `model_grades` row — it fails naming the key the table stopped
+// describing.
 func TestDocsProjectLayerPolicyTableNamesEveryKeyItDescribes(t *testing.T) {
 	const header = "| Policy key | What the run does with it today |"
 	doc := readDoc(t, "docs/project-layer.md")
@@ -690,6 +700,7 @@ func TestDocsProjectLayerPolicyTableNamesEveryKeyItDescribes(t *testing.T) {
 		"allow_repos",
 		"providers",
 		"binaries",
+		"model_grades",
 		"routing",
 		"profiles",
 	}
@@ -707,6 +718,19 @@ func TestDocsProjectLayerPolicyTableNamesEveryKeyItDescribes(t *testing.T) {
 	} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("docs/project-layer.md's `binaries` row lacks %q: the row is where an operator reads what the member does today and what writing an empty one means", want)
+		}
+	}
+	for _, want := range []string{
+		"| `model_grades` | decoded, validated and accepted, **not applied**",
+		"the project's two grades for the escalation ladder",
+		"the model its rung runs and the credential or pool its calls go out on",
+		"A grade nobody sets is no grade: the rung that needs one refuses and asks, never a hidden default",
+		"a repository's `model_grades:` block is dropped and recorded by the merge",
+		"the rungs that spend on it arrive with the ladder's own tasks",
+		"A version-6 reader lists the key as unknown and runs every rung on whatever its own configuration said, which is why the node is version 7",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("docs/project-layer.md's `model_grades` row lacks %q: the row is where an operator reads what the grades do today, that they are the project's own, and what an unset one means", want)
 		}
 	}
 }
