@@ -876,10 +876,10 @@ stale has found a merge that did not.
 
 | Construct | Count | Command |
 | --- | --- | --- |
-| Catalog recipes | 11 | `ls internal/recipe/catalog/*.yaml \| wc -l` |
+| Catalog recipes | 12 | `ls internal/recipe/catalog/*.yaml \| wc -l` |
 | Top-level `fugaro.yaml` keys | 15 | `sed -n '/^  "properties": {/,/^  }/p' schemas/fugaro.schema.json \| grep -c '^    "[a-z_]*": '` |
 | Top-level `fugaro.yaml` keys whose name contains `review` | 0 | `sed -n '/^  "properties": {/,/^  }/p' schemas/fugaro.schema.json \| grep -c '^    "[a-z_]*review[a-z_]*": '` |
-| Config scope rows | 111 | `sed -n '/Scopes = \[\]ScopeRow{/,/^}/p' internal/config/scope.go \| grep -c '{Key:'` |
+| Config scope rows | 113 | `sed -n '/Scopes = \[\]ScopeRow{/,/^}/p' internal/config/scope.go \| grep -c '{Key:'` |
 | Layers a configuration key may be set in | 4 | `sed -n '/The layers a key may be set in/,/^)/p' internal/config/scope.go \| grep -c 'In[A-Z]'` |
 | Blocks the project layer's `defaults:` may set | 5 | `sed -n '/type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -c 'yaml:'` |
 | Fields of `task.Spec.Overrides` | 8 | `sed -n '/type Overrides struct {/,/^}/p' internal/task/task.go \| grep -cE 'yaml:\|json:'` |

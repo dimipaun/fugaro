@@ -165,11 +165,11 @@ func (r *run) mergeJudge(ctx context.Context) (error, failure.Class) {
 		// reads as the veto it is.
 		return err, failure.StageErrorUnexplained
 	}
-	rec := readJudgeVerdict(res, in, r.stageModel(stageMergeJudge))
+	rec, decodeErr := readJudgeVerdict(res, in, r.stageModel(stageMergeJudge))
 	r.rec.MergeJudge = rec
-	if rec.Unreadable {
+	if decodeErr != nil {
 		r.d.Log.Warn("the merge judge's answer could not be read as a verdict; the head is blocked",
-			"failed", !ok, "pr", in.PR, "head", in.Head)
+			"failed", !ok, "pr", in.PR, "head", in.Head, "err", decodeErr)
 	}
 	return nil, ""
 }
@@ -204,23 +204,32 @@ func (r *run) readMergeJudgeInput(ctx context.Context) (MergeJudgeInput, error) 
 // the answer. G1 concedes that a judge can be argued out of a veto by a hostile
 // diff; it does not concede that a diff can write the verdict itself.
 //
-// The red step of E6 answers the naive word here — a merge, when there is
-// nothing to read — and the test that fails on it is
-// TestJudgeMalformedOutputIsBlocked. An unreadable answer is the one direction
-// this function may never fail in, because a judge that failed, timed out, ran
-// out of budget or answered prose is a head rung 3 did not clear.
-func readJudgeVerdict(res agent.Result, in MergeJudgeInput, model string) *runstore.MergeJudge {
+// An unreadable answer is the one direction this function may never fail in,
+// because a judge that failed, timed out, ran out of budget or answered prose
+// is a head rung 3 did not clear: the block below is the veto, the run says on
+// the record that it is one it could not read (Unreadable), and the reason is
+// the sentence D2044 is — so a reader of the record can tell a judge that said
+// blocked from a judge that said nothing this build understood, and neither of
+// them is a merge.
+//
+// The error it answers beside the verdict is why the answer could not be read,
+// for the run's log: the record's reason is the sentence D2044 is and is shown
+// wherever a record is, while a decode error is a message about this build's
+// own document. A run that only logged "unreadable" would leave whoever reads
+// it with a blocked head and nothing to compare the answer against.
+func readJudgeVerdict(res agent.Result, in MergeJudgeInput, model string) (*runstore.MergeJudge, error) {
 	v, err := DecodeMergeJudgeVerdict(res.Structured)
 	if err != nil {
 		return runstore.NewMergeJudge(runstore.MergeJudge{
-			Verdict: runstore.MergeJudgeMergeWithFollowUps,
-			Reason:  "no verdict could be read",
-			Model:   model,
-		})
+			Verdict:    runstore.MergeJudgeBlocked,
+			Reason:     "the judge answered nothing this build could read as a verdict, and an answer nobody can read is a veto (D2044)",
+			Model:      model,
+			Unreadable: true,
+		}), err
 	}
 	v.FollowUps = judgeFollowUpsOfBrief(v.FollowUps, in.Findings)
 	v.Model = model
-	return runstore.NewMergeJudge(v)
+	return runstore.NewMergeJudge(v), nil
 }
 
 // judgeFollowUpsOfBrief is the caller's half of the reader, the split
