@@ -283,28 +283,13 @@ func (e *initEngine) selfFlagUnmanaged(ctx context.Context) error {
 			r.warn(fmt.Sprintf("this run was given a budget and %s is %s, so it was not flagged: %v. The fact where the object is records the budget amount %d %s, and this run was given %d %s — a flag records an amount, it does not edit one — so neither mark was written and the installation stays as it is. Run `fugaro update --budget %d --budget-currency %s --billing-account <account>` again if that is the amount meant: that run finds the fact recording it, writes the missing %s=%s label, and flags the installation in the same command",
 				r.gcpProject, managedReasonFor(answer), why, fact.Budget.Amount, safetext.Field(fact.Budget.Currency), o.budget, safetext.Field(o.budgetCurrency), fact.Budget.Amount, safetext.Field(fact.Budget.Currency), managed.ProjectLabelKey, managed.ProjectLabelValue))
 			return nil
-		case fact.Builds != managed.DefaultImageBuilds:
-			// The amount is the one this run was given, and the other figure the
-			// fact carries is not the one the flag writes: the statement above —
-			// which this run printed before asking for either write — says the
-			// bound is one build per invocation (D1013), and this object holds
-			// the project's applies to another count. Finishing it would make
-			// the project managed at a bound this run never stated, which is the
-			// same harm as recording another amount one step along: the figure
-			// the owner read is not the figure that takes effect. Nothing of
-			// ours writes such an object — a bound other than the default is
-			// recorded by hand, with the label beside it (D1013's own way past
-			// the bound, docs/design/managed-projects.md) — so no command of
-			// ours closes this state, and this run says what is there instead of
-			// naming one that would refuse the same object.
-			r.warn(fmt.Sprintf("this run was given a budget and %s is %s, so it was not flagged: %v. The fact where the object is records the budget amount %d %s, and it holds this project's applies to %d billable builds per invocation, where the flag this step would finish records %d: neither mark was written and the installation stays as it is, because the label would complete a bound this run never stated. Read the object with `gcloud storage cat gs://%s/%s` as the operator and decide: a bound other than the default is one the owner records by hand, with the %s=%s label written beside it, and `fugaro managed unflag %s` takes both marks off so a later `fugaro update --budget %d --budget-currency %s --billing-account <account>` flags the project at the default bound",
-				r.gcpProject, managedReasonFor(answer), why, fact.Budget.Amount, safetext.Field(fact.Budget.Currency), fact.Builds, managed.DefaultImageBuilds, bucket, managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue, r.gcpProject, fact.Budget.Amount, safetext.Field(fact.Budget.Currency)))
-			return nil
 		}
-		// This project's fact, recording the amount this run was given and the
-		// bound the flag records, with the label the only half missing: the
-		// object is left exactly where it is, and the label below finishes what
-		// the earlier run started.
+		// This project's fact, recording the amount this run was given, with the
+		// label the only half missing: the object is left exactly where it is —
+		// whatever version it is, since a version-3 object's build count is one
+		// this build no longer means anything by (D1543) and `fugaro update`'s
+		// own marker step is what rewrites it (update_marker_version.go) — and
+		// the label below finishes what the earlier run started.
 		already = true
 	}
 	what := fmt.Sprintf("wrote gs://%s/%s: %s is a managed project", bucket, managed.MarkerObject, r.projectName)

@@ -24,7 +24,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/image"
 	"github.com/dimipaun/fugaro/internal/imagebake"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
-	"github.com/dimipaun/fugaro/internal/infra/managed"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -71,16 +71,25 @@ type catalogCheckSpec struct {
 	BaseImages map[string]string `json:"base_images"`
 	// MachineType is the machine a build runs on, and BuildRegion the Cloud
 	// Build region it is submitted to (the local config's build settings).
+	// They are what a build's lease is priced at (the estimator reads the
+	// machine's rate in that region), and they are read here rather than from a
+	// config because this job has no checkout.
 	MachineType string `json:"machine_type"`
 	BuildRegion string `json:"build_region"`
-	// MaxImageBuilds is this run's build cap: how many Cloud Builds one run of
-	// this job may submit, whatever the catalog says changed. It is M5's own
-	// bound (managed.MaxImageBuilds' range), zero is the default
-	// (managed.DefaultImageBuilds), and the managed marker's max_image_builds
-	// is what fugaro update renders here — one setting, so a project that
-	// bounds a managed creation's image builds bounds this job's too.
-	MaxImageBuilds int `json:"max_image_builds,omitempty"`
 }
+
+// catalogRunBuildCap is how many builds one run of the catalog check job may
+// submit, whatever the catalog says changed.
+//
+// It is the job's own cap and no longer a project setting: D1013's count lived
+// in the managed marker's max_image_builds and fugaro update rendered it here,
+// and T10 removed the count (D1543) — the marker records no bound, so this is
+// the job's own figure, the same one every installation's marker recorded by
+// default. What bounds a build's cost now is the lease it takes (D1554), and
+// this bounds only how many one night submits: the entries it leaves are
+// recorded with the build-cap reason and are the next run's, exactly as they
+// were when the cap was a project's.
+const catalogRunBuildCap = 1
 
 // catalogCheckRepo is one repository's part of the catalog check job's spec:
 // the facts a build of one of its entries is submitted with, and the entries it
@@ -121,7 +130,11 @@ type catalogCheckRepo struct {
 type catalogJobEnv struct {
 	spec                             catalogCheckSpec
 	name, gcpProject, region, bucket string
-	maxImageBuilds                   int
+	// budgetURL is the installation's budget database, from the same
+	// FUGARO_RTDB_URL every other job of the installation carries: "" on an
+	// installation with no Firebase backend, where a build takes no lease
+	// (openCatalogJobLease says so in one line and submits nothing less).
+	budgetURL string
 }
 
 // readCatalogJobEnv reads the job's spec and its own variables, refusing an
@@ -150,11 +163,8 @@ func readCatalogJobEnv() (catalogJobEnv, error) {
 			return e, fmt.Errorf("%s: the repository %s is incomplete: %s", catalogCheckSpecEnv, pluginwire.Printable(r.Repo), catalogNotInstalledReason)
 		}
 	}
-	e.maxImageBuilds = cmp.Or(s.MaxImageBuilds, int(managed.DefaultImageBuilds))
-	if err := managed.CheckImageBuilds(int64(e.maxImageBuilds)); err != nil {
-		return e, fmt.Errorf("%s: %v", catalogCheckSpecEnv, err)
-	}
 	e.name, e.gcpProject, e.region = os.Getenv("FUGARO_PROJECT"), os.Getenv("FUGARO_GCP_PROJECT"), os.Getenv("FUGARO_REGION")
+	e.budgetURL = os.Getenv(infra.RTDBURLEnv)
 	u, err := url.Parse(os.Getenv("FUGARO_BUCKET"))
 	if e.name == "" || e.gcpProject == "" || e.region == "" || err != nil || u.Scheme != "gs" || u.Host == "" || strings.Trim(u.Path, "/") != "" {
 		return e, fmt.Errorf("FUGARO_PROJECT (the project's name), FUGARO_GCP_PROJECT, FUGARO_REGION and FUGARO_BUCKET (gs://<runs bucket>) must be set, as the catalog check job's spec sets them; %s", catalogNotInstalledReason)
@@ -603,11 +613,13 @@ type catalogAssignment struct {
 //
 // It builds nothing it could not read: an entry's record, its copied definition
 // or its check state that cannot be read is an error for that entry
-// (check-failed, nothing submitted), never "no record, so rebuild". The run's
-// own build cap (the spec's max_image_builds, one by default) bounds how many
-// builds one run may submit, so a bug in a decision cannot spend a project's
-// budget in one night: the entries it leaves are recorded with the build-cap
-// reason and are the next run's.
+// (check-failed, nothing submitted), never "no record, so rebuild". Each
+// submission takes a lease on its estimated cost before it is sent
+// (openCatalogJobLease), so a build the project's caps have no room for is
+// refused by name and is not submitted at all (D1550, D1554); the run's own
+// build cap (catalogRunBuildCap) bounds how many builds one run may submit, so
+// a bug in a decision cannot spend a project's budget in one night: the entries
+// it leaves are recorded with the build-cap reason and are the next run's.
 func runImageCheckCatalogJob(cmd *cobra.Command, o imageCheckOptions) error {
 	ctx := cmd.Context()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -617,7 +629,7 @@ func runImageCheckCatalogJob(cmd *cobra.Command, o imageCheckOptions) error {
 		lg.log("", "", imagecheck.CheckFailed, nil, "", "", oneLine(err.Error()))
 		return remote(err)
 	}
-	lg.maxBuild = e.maxImageBuilds
+	lg.maxBuild = catalogRunBuildCap
 	s := e.spec
 	warn := func(msg string) { fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: %s\n", msg) }
 
@@ -670,7 +682,7 @@ func runImageCheckCatalogJob(cmd *cobra.Command, o imageCheckOptions) error {
 		return catalogFailAll(cmd, ctx, lg, e, bucket, fmt.Errorf("the installed catalog check job has no %s base image: %s", config.BaseKind, catalogNotInstalledReason), now, o.dryRun)
 	}
 	t := &catalogCheckTarget{
-		spec: s, gcpProject: e.gcpProject, region: e.region, maxBuilds: e.maxImageBuilds,
+		spec: s, gcpProject: e.gcpProject, region: e.region, maxBuilds: catalogRunBuildCap,
 		force: o.force, now: now, bucket: bucket, builder: builder, registry: checkRegistry(),
 		base: base, warn: warn,
 	}
@@ -763,14 +775,31 @@ func runImageCheckCatalogJob(cmd *cobra.Command, o imageCheckOptions) error {
 		}
 		state := catalogNextState(ev.prev, ev.d, ev.lastStatus, now)
 		if ev.d.Decision == imagecheck.Rebuild && !o.dryRun && !capped {
-			id, status, serr := t.submit(ctx, w.entry, w.repo, w.slug, ev)
-			if serr != nil {
-				ev.d.Decision, ev.d.Error = imagecheck.CheckFailed, "submitting the rebuild: "+oneLine(serr.Error())
+			lease, lerr := openCatalogJobLease(ctx, cmd.ErrOrStderr(), e, s, w.repo.Repo, w.slug)
+			if lerr != nil {
+				// The lease is taken before the submission, so a cap with no
+				// room, a price the catalog will not give and a database that
+				// will not answer are all refusals of the build itself
+				// (D1550): nothing is submitted, and the next run is the one
+				// that tries again.
+				ev.d.Decision, ev.d.Error = imagecheck.CheckFailed, "leasing the rebuild: "+oneLine(lerr.Error())
+				state = catalogNextState(ev.prev, ev.d, ev.lastStatus, now)
+			} else if id, status, serr := t.submit(ctx, w.entry, w.repo, w.slug, ev); serr != nil {
+				ev.d.Decision, ev.d.Error = imagecheck.CheckFailed, "submitting the rebuild: "+oneLine(withLease(serr, lease.release(ctx)).Error())
 				state = catalogNextState(ev.prev, ev.d, ev.lastStatus, now)
 			} else {
+				// Nothing here watches the build to an end — SubmitCatalog
+				// returns as soon as Cloud Build accepts it — so the whole
+				// reservation is what the day counts (buildLease.settle).
 				submitted++
 				inputs := ev.d.Inputs
 				state.BuildID, state.BuildInputs, state.LastBuildStatus, state.LastBuildAt = id, &inputs, status, &now
+				if lerr := lease.settle(ctx, false); lerr != nil {
+					// The build runs; what failed is the day's counters, and
+					// the entry says which build it was.
+					ev.d.Decision, ev.d.Error = imagecheck.CheckFailed,
+						"submitted Cloud Build build "+id+", but could not record what it reserves: "+oneLine(lerr.Error())
+				}
 			}
 		}
 		if !o.dryRun && !ev.prevUnreadable {

@@ -75,6 +75,32 @@ const (
 	// confirmations instead of applying with no bound — and
 	// TestManagedMarkerBuildsVersionIsRefusedByAnOlderReader pins it.
 	MarkerVersionBuilds = 3
+	// MarkerVersionNoBuilds is the version written when the creation fact
+	// records the budget amount and **no** bound on the billable image builds
+	// its applies may start: the count version 3 carried is gone (D1543), and
+	// what bounds a build now is the lease it takes from the same budget the
+	// runs spend from (T8 of docs/no-prompt-policy's plan, and T10, which
+	// removed the count). It is the budget version plus nothing, and it is a
+	// version of the same object for the reason versions 2 and 3 are: one
+	// thing to find, one thing to prove the bucket for, one thing for a reader
+	// to check.
+	//
+	// Why it is a version and not an edit of version 3: a field was removed,
+	// and removing a field from a format bumps that format's version — a
+	// version-3 object still means what it always meant (a creation whose
+	// applies were held to a recorded count), so this build keeps reading it
+	// as exactly that, and a fact written from here on says by its version
+	// that there is no count in it. The count a version-3 object carries is
+	// read and no longer bounds anything: `fugaro update` converges such a
+	// fact to this version in place (ConvergeMarker), and an installation
+	// that has not been updated yet keeps working, which the HARD RULE
+	// requires.
+	//
+	// A version-1 or version-2 object is left exactly where it is: version 2
+	// already records the amount and no bound, so there is nothing in it to
+	// converge, and version 1 records no amount for a version-4 write to
+	// carry (WriteFlag is what replaces that one, when its owner runs it).
+	MarkerVersionNoBuilds = 4
 
 	// ProjectLabelKey and ProjectLabelValue are the second half of what makes
 	// a project managed: a label on the GCP project itself, written by the
@@ -127,40 +153,33 @@ const (
 	MaxBudgetAmount int64 = 10_000_000
 )
 
-// The range a recorded image build bound lies in, and the bound a marker that
-// records none is read as. The figure is a count of billable Cloud Build jobs
-// — one invocation of `fugaro image refresh` builds one image per repository —
-// and it is the one cost in the managed set that a plan cannot show, which is
-// why D1013 bounds it in the marker rather than in a layer the bounded party
-// could write.
+// The range a recorded image build bound lies in — kept for one caller, and
+// for one reason: the version-3 fact, and only it. Version 3 was the version
+// that carried the bound (D1013), and a version-3 object whose figure is
+// outside this range is not a fact this build wrote, so it is refused rather
+// than believed. Nothing writes a version-3 object any more (D1543 removed
+// the count, and the version this build writes is MarkerVersionNoBuilds), the
+// figure no longer bounds any build, and no caller reads it as a bound: the
+// read's own answer is a fact of the version alone.
 //
-// The floor is one: a bound of zero would permit no build at all, which is
-// what not being managed already answers, and the field is a permission
-// rather than a prohibition. The ceiling is Fugaro's, for MaxBudgetAmount's
-// reason: a thousand images is above any installation's count, and a figure
-// beyond it is a typo or a value written by someone else rather than a bound
-// anything is measured against — it is what keeps 9223372036854775807 from
-// being believed as one.
+// The floor is one and the ceiling is Fugaro's: a bound of zero would permit
+// no build at all, which is what not being managed already answers, and a
+// thousand images is above any installation's count, so 9223372036854775807
+// is a typo or a value written by someone else rather than a bound anything
+// was ever measured against.
 const (
 	MinImageBuilds int64 = 1
 	MaxImageBuilds int64 = 1000
-	// DefaultImageBuilds is the bound both of the owner's paths record, and
-	// the bound a marker that records none is read as: one billable build per
-	// invocation, never "no bound" (D1013's answer, spec §5). It is a value
-	// the read answers rather than an absence a caller could take for
-	// unlimited, which is why a version-1 or version-2 object — a project
-	// marked before this version existed — reads as this and not as nothing.
-	DefaultImageBuilds int64 = 1
 )
 
-// CheckImageBuilds refuses a bound that is not one a managed creation
-// records: a count outside [MinImageBuilds, MaxImageBuilds]. It is a shape
-// check only and it is the same rule on both sides — the write (Marker.Bytes)
-// and the read (readFactObject) — so a value the write would refuse is never
-// believed when read. Zero is refused like any other count below the floor,
-// and that is deliberate: the field's zero value is also what an object that
-// records no bound decodes to, and both are answers this rule must not
-// accept.
+// CheckImageBuilds refuses a bound a version-3 object may not record: a count
+// outside [MinImageBuilds, MaxImageBuilds]. It is a shape check only and it is
+// the same rule on both sides — the write (Marker.Bytes, for the version that
+// carried the field) and the read (readFactObject) — so a value the write
+// would refuse is never believed when read. Zero is refused like any other
+// count below the floor, and that is deliberate: the field's zero value is
+// also what an object that records no bound decodes to, and both are answers
+// this rule must not accept.
 func CheckImageBuilds(builds int64) error {
 	if builds < MinImageBuilds || builds > MaxImageBuilds {
 		return fmt.Errorf("the image build bound %d is outside %d to %d builds", builds, MinImageBuilds, MaxImageBuilds)
@@ -215,12 +234,16 @@ type Marker struct {
 	Version    int     `json:"version"`
 	GCPProject string  `json:"gcp_project"`
 	Budget     *Budget `json:"budget,omitempty"`
-	// MaxImageBuilds is the bound version 3 carries, and it is a plain count
+	// MaxImageBuilds is the bound version 3 carried, and it is a plain count
 	// rather than a pointer because zero is not a bound: the range starts at
 	// MinImageBuilds, so "0" and "the key is absent" are the same reading, and
-	// a version-3 object is refused for either. It is omitted for the
-	// versions that do not carry it, which is what keeps the version-1 and
-	// version-2 objects byte for byte what they were.
+	// a version-3 object is refused for either. It is omitted for every other
+	// version, which is what keeps the version-1, version-2 and version-4
+	// objects byte for byte what they were (and, for version 4, what it is:
+	// the version with no bound in it). Nothing reads this figure as a bound
+	// any more — it is here so that a version-3 object still parses into the
+	// shape it was written in, and so that the shape check can refuse the key
+	// for every version that does not carry it.
 	MaxImageBuilds int64 `json:"max_image_builds,omitempty"`
 }
 
@@ -229,11 +252,11 @@ type Marker struct {
 // whose version and the figures it carries disagree — version 1 carries
 // neither an amount nor a bound (a creation that was not managed never
 // records either, whatever budget it asked Terraform for), version 2 carries
-// the amount, and version 3 carries both, because that is the whole of what
-// each version means. The refusals are what keep the version a fact rather
-// than a decoration: the read believes version 3 for its bound, and a writer
-// that set the version without one would record a managed creation whose
-// applies are unbounded — the state D1013 exists to make impossible.
+// the amount, version 3 carries the amount and the bound, and version 4
+// carries the amount alone, because that is the whole of what each version
+// means. The refusals are what keep the version a fact rather than a
+// decoration: a writer that set a version without the figures that version
+// means would record a creation that is not the one it claims to be.
 func (m Marker) Bytes() ([]byte, error) {
 	switch m.Version {
 	case MarkerVersion:
@@ -266,8 +289,18 @@ func (m Marker) Bytes() ([]byte, error) {
 		if err := CheckImageBuilds(m.MaxImageBuilds); err != nil {
 			return nil, fmt.Errorf("%s: version %d records an image build bound a managed creation could not have chosen: %v", MarkerObject, MarkerVersionBuilds, err)
 		}
+	case MarkerVersionNoBuilds:
+		if m.Budget == nil {
+			return nil, fmt.Errorf("%s: version %d records the budget amount a managed creation records, and this one carries none", MarkerObject, MarkerVersionNoBuilds)
+		}
+		if m.MaxImageBuilds != 0 {
+			return nil, fmt.Errorf("%s: version %d records the budget amount alone and no image build bound, and this one carries one, which only version %d does", MarkerObject, MarkerVersionNoBuilds, MarkerVersionBuilds)
+		}
+		if err := m.Budget.Check(); err != nil {
+			return nil, fmt.Errorf("%s: version %d records a budget the creation could not have chosen: %v", MarkerObject, MarkerVersionNoBuilds, err)
+		}
 	default:
-		return nil, fmt.Errorf("%s: version %d is not one this package writes (%d, %d and %d)", MarkerObject, m.Version, MarkerVersion, MarkerVersionBudget, MarkerVersionBuilds)
+		return nil, fmt.Errorf("%s: version %d is not one this package writes (%d, %d, %d and %d)", MarkerObject, m.Version, MarkerVersion, MarkerVersionBudget, MarkerVersionBuilds, MarkerVersionNoBuilds)
 	}
 	if m.GCPProject == "" {
 		return nil, fmt.Errorf("%s: no GCP project, so nothing says what the fact is about", MarkerObject)
@@ -381,13 +414,11 @@ func insertMarker(ctx context.Context, s *storage.Service, bucket string, gen in
 // is not managed — an ordinary `fugaro setup --create-project --budget …`
 // records no amount, because the fact it writes is the one it wrote before
 // this version existed. It chooses the object's version and nothing else: a
-// write with a budget is version 3, one without is version 1, and there is
-// no third state and no default between them. The image build bound the
-// managed version records is not a parameter for the same reason it is not a
-// question (D1013): no path that writes a managed creation asks the owner
-// for one, so the write records the object's own default
-// (DefaultImageBuilds) — the value the read answers for a marker that
-// records none, written down rather than left to be inferred.
+// write with a budget is version 4, one without is version 1, and there is
+// no third state and no default between them. The image build bound version 3
+// carried is no longer written at all (D1543: a build leases its cost from
+// the budget the runs spend from, and no count bounds it), so no path asks
+// the owner for one and no figure here stands in for one.
 //
 // The caller warns rather than fails when this returns an error: the
 // project exists either way, an unmarked project is the fail-closed
@@ -423,9 +454,9 @@ func writeMarker(ctx context.Context, s *storage.Service, bucket, created, proje
 	if budget != nil {
 		// The version follows what the creation records rather than being set
 		// beside it: Bytes refuses a disagreement either way, and this is the
-		// one place that decides, so a caller cannot write version 3 with no
-		// amount and no bound.
-		m.Version, m.Budget, m.MaxImageBuilds = MarkerVersionBuilds, budget, DefaultImageBuilds
+		// one place that decides, so a caller cannot write version 4 with no
+		// amount.
+		m.Version, m.Budget = MarkerVersionNoBuilds, budget
 	}
 	data, err := m.Bytes()
 	if err != nil {
@@ -594,16 +625,16 @@ func writeManagedLabel(ctx context.Context, c *crm.Service, project, who string)
 //     and as the read proves it before believing an object in it. A bucket
 //     name is global, so without that proof a mark written into a stranger's
 //     bucket would read as a fact about this project.
-//   - the version that carries a budget and the image build bound, and never
-//     version 1. A managed project whose marker records no amount is refused
-//     by the apply-time budget read (Task 4.4: ReadBudget answers ok=false for
-//     version 1 and the apply gate stays closed), so a flag that wrote the
-//     bare fact would lower the guard on a project Fugaro did not create and
-//     buy nothing at all. The amount is the owner's, required and never
-//     defaulted (D64), and it is checked by the marker's own Budget.Check
-//     before anything is written; the bound is the object's own default
-//     (DefaultImageBuilds), for the reason WriteMarker gives — this command
-//     asks the owner for no bound either (D1013).
+//   - the version that carries a budget, and never version 1. A managed
+//     project whose marker records no amount is refused by the apply-time
+//     budget read (Task 4.4: ReadBudget answers ok=false for version 1 and the
+//     apply gate stays closed), so a flag that wrote the bare fact would lower
+//     the guard on a project Fugaro did not create and buy nothing at all. The
+//     amount is the owner's, required and never defaulted (D64), and it is
+//     checked by the marker's own Budget.Check before anything is written. The
+//     version it writes is MarkerVersionNoBuilds, and it carries no bound: the
+//     count D1013 recorded is gone (D1543), and this command asks the owner for
+//     no bound either.
 //   - one replacement, of one object, and of nothing else. An object that is
 //     there and is the version-1 creation fact of THIS project — the state
 //     every `fugaro setup --create-project` without --managed leaves, and the
@@ -665,7 +696,7 @@ func writeFlag(ctx context.Context, s *storage.Service, bucket, project string, 
 		}
 		replaced = true
 	}
-	m := Marker{Version: MarkerVersionBuilds, GCPProject: project, Budget: &budget, MaxImageBuilds: DefaultImageBuilds}
+	m := Marker{Version: MarkerVersionNoBuilds, GCPProject: project, Budget: &budget}
 	data, err := m.Bytes()
 	if err != nil {
 		return false, err
@@ -694,7 +725,7 @@ func alreadyFlagged(bucket, project string, cur []byte) error {
 		switch {
 		case m.GCPProject != project:
 			what = fmt.Sprintf("names project %s, not %s", safetext.Field(m.GCPProject), safetext.Field(project))
-		case m.Version == MarkerVersionBudget || m.Version == MarkerVersionBuilds:
+		case m.Version == MarkerVersionBudget || m.Version == MarkerVersionBuilds || m.Version == MarkerVersionNoBuilds:
 			what = "already records whether it is managed and the budget amount it records"
 		default:
 			what = fmt.Sprintf("is a version %d marker", m.Version)
@@ -724,27 +755,27 @@ func alreadyFlagged(bucket, project string, cur []byte) error {
 // and finish its own write.
 //
 // Ours is that answer: the object is this project's marker, of a version that
-// records an amount, and both figures it records are ones this build accepts.
-// Budget is the amount, and Builds the bound. When Ours is false, the object is
-// either absent or one this build does not believe, and Reason says which — in
-// the words the writers and the read already use, so a caller prints the answer
-// rather than inventing a second account of what is there. An error means the
-// read could not be made at all (the bucket could not be looked at, the object
-// could not be read), and never "nothing is there".
+// records an amount, and the amount it records is one this build accepts. When
+// Ours is false, the object is either absent or one this build does not
+// believe, and Reason says which — in the words the writers and the read
+// already use, so a caller prints the answer rather than inventing a second
+// account of what is there. An error means the read could not be made at all
+// (the bucket could not be looked at, the object could not be read), and never
+// "nothing is there".
 type FlagFact struct {
 	Ours   bool
 	Budget Budget
-	// Builds is the bound the fact holds this project's applies to, and it is
-	// set only when Ours. It is answered exactly as ReadImageBuilds answers it
-	// for the same object: the figure a version-3 marker records, and Default-
-	// ImageBuilds for version 2, which records none — a project marked before
-	// that version existed is held to one build per invocation rather than to
-	// no bound (D1013). It is here because the figure and the amount are not
-	// the same question: a caller that finishes a half-written flag with the
-	// label completes the object as it stands, and an object recording a bound
-	// other than the one its own statement promised is not one to complete.
-	Builds int64
-	Reason string
+	// Version is the marker version the object is, and it is set only when
+	// Ours. The versions that record an amount answer here — 2, 3 and 4 — and
+	// the caller that completes a half-written flag with the label wants it for
+	// one reason: a version-3 object still carries the image build count D1543
+	// removed, and a flag that completed one by writing only the label would
+	// finish an object whose shape this build no longer writes rather than the
+	// one its own statement promised. It reads the version and converges the
+	// object through ConvergeMarker when it has to; nothing here judges the
+	// count, which no longer bounds anything.
+	Version int
+	Reason  string
 }
 
 // ReadFlagFact reads the object half of gcpProject's marks in bucket, without
@@ -788,7 +819,7 @@ func readFlagFact(ctx context.Context, s *storage.Service, bucket, project strin
 	// write that replaces a version-1 creation fact is WriteFlag's, and a
 	// caller here is asking whether this project's fact already records an
 	// amount, which is the whole difference between the two.
-	if m.Version != MarkerVersionBudget && m.Version != MarkerVersionBuilds {
+	if !recordsBudget(m.Version) {
 		return FlagFact{Reason: fmt.Sprintf("gs://%s/%s is a version %d marker, which records no budget amount", bucket, MarkerObject, m.Version)}, nil
 	}
 	if m.Budget == nil {
@@ -797,20 +828,125 @@ func readFlagFact(ctx context.Context, s *storage.Service, bucket, project strin
 	if err := m.Budget.Check(); err != nil {
 		return FlagFact{Reason: fmt.Sprintf("gs://%s/%s records a budget this build refuses (%v)", bucket, MarkerObject, err)}, nil
 	}
-	// And the other figure the version that carries a bound records, judged by
-	// the read's own rule (CheckImageBuilds, which readFactObject applies to the
-	// same key): a version-3 object whose figure this build refuses — including
-	// the zero that is also what an absent key decodes to — is not a fact it
-	// believes, and handing that figure back as the bound a caller may act on
-	// would be believing half of an object the read refuses whole.
-	builds := DefaultImageBuilds
-	if m.Version == MarkerVersionBuilds {
-		if err := CheckImageBuilds(m.MaxImageBuilds); err != nil {
-			return FlagFact{Reason: fmt.Sprintf("gs://%s/%s records an image build bound this build refuses (%v)", bucket, MarkerObject, err)}, nil
-		}
-		builds = m.MaxImageBuilds
+	// The count a version-3 object carries is deliberately NOT judged here: it
+	// no longer bounds anything (D1543), so refusing a fact over it would refuse
+	// an object whose amount is exactly what this read was asked for. The shape
+	// check still judges it for every reader that asks what the object IS
+	// (parseMarker), which is where an unreadable version-3 figure belongs.
+	return FlagFact{Ours: true, Budget: *m.Budget, Version: m.Version}, nil
+}
+
+// recordsBudget reports whether a marker version records a budget amount: 2, 3
+// and 4 do, and 1 does not. It is one function rather than a list repeated at
+// each reader, because a version added later must be answered here once for
+// every reader that asks this question to agree.
+func recordsBudget(version int) bool {
+	return version == MarkerVersionBudget || version == MarkerVersionBuilds || version == MarkerVersionNoBuilds
+}
+
+// ConvergeMarker rewrites an installation's creation fact as the version this
+// build writes, in place, and reports whether it wrote anything.
+//
+// It is `fugaro update`'s marker step (internal/cli's update_marker_version.go)
+// and D1543's second half: the count version 3 carried is gone, so a fact of
+// that version says something this build no longer means by it, and the HARD
+// RULE — `fugaro update` is the whole upgrade and the owner runs no second
+// command — puts the rewrite inside the update that removed the count rather
+// than in the owner's hands. Nothing here is a repair the owner has to know
+// about: what a version-3 fact records that still means anything is its amount,
+// and the write below carries that amount into a version-4 fact unchanged.
+//
+// Three states are left exactly where they are, and none of them is written:
+//
+//   - no object at all: an installation that never wrote a creation fact is not
+//     this step's (a run that creates a project writes one, and a project
+//     flagged by its owner has one too).
+//   - a fact of any version but 3, including the version this build writes:
+//     there is nothing in it this build no longer means, so rewriting it would
+//     be a write with no content — and for a version-1 fact, which records no
+//     amount, there is nothing a version-4 write could carry. `fugaro managed
+//     flag` is what replaces that one, when its owner runs it.
+//   - an object this build cannot read as a marker, or one about another
+//     project: those are ErrRefused, because a rewrite conditioned on an object
+//     the caller did not understand is exactly the write this package refuses.
+//
+// A version-3 object whose own figures this build refuses — no amount, an
+// amount outside the shape, or a count outside it — is refused rather than
+// converged, and that is deliberate. Such an object is one the managed read
+// already refuses whole (readFactObject), so its installation is NOT managed
+// and every apply of it keeps the typed confirmation; rewriting it as a valid
+// version-4 fact would turn a refused marker into an accepted one and open that
+// gate, which is a widening no migration may make on its own. The refusal names
+// the object and what to look at, and `fugaro managed unflag` followed by an
+// update given the budget is the owner's path out of it.
+//
+// The write is conditioned on the generation this call read (insertMarker), so
+// a writer that got there first — the owner's own flag, or another update — is
+// never clobbered: a precondition that does not hold comes back as
+// ErrAlreadyMarked, and the caller warns rather than failing, exactly as it
+// does for every other refusal here.
+func ConvergeMarker(ctx context.Context, s *storage.Service, bucket, project string, number uint64) (wrote bool, err error) {
+	wrote, err = convergeMarker(ctx, s, bucket, project, number)
+	return wrote, safetext.FieldErr(err)
+}
+
+func convergeMarker(ctx context.Context, s *storage.Service, bucket, project string, number uint64) (bool, error) {
+	switch {
+	case bucket == "" || number == 0:
+		return false, refusedf("to converge %s for %s: no runs bucket, or no project number to check it against", MarkerObject, project)
+	case s == nil:
+		return false, refusedf("to converge %s for %s: no storage client", MarkerObject, project)
 	}
-	return FlagFact{Ours: true, Budget: *m.Budget, Builds: builds}, nil
+	if err := proveRunsBucket(ctx, s, bucket, project, MarkerObject, number); err != nil {
+		return false, err
+	}
+	data, gen, ok, err := markerAt(ctx, s, bucket, project)
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		return false, nil
+	}
+	m, perr := parseMarker(data, bucket, project)
+	if perr != nil {
+		return false, refusedf("to converge gs://%s/%s for %s: %v", bucket, MarkerObject, project, perr)
+	}
+	if m.GCPProject != project {
+		return false, refusedf("to converge gs://%s/%s: it names project %s, not %s", bucket, MarkerObject, safetext.Field(m.GCPProject), safetext.Field(project))
+	}
+	if m.Version != MarkerVersionBuilds {
+		return false, nil
+	}
+	// The state the version has to be in for the rewrite to mean anything: a
+	// version-3 fact with an amount this build writes. The count is judged by
+	// the same rule the read judges it with (CheckImageBuilds), because an
+	// object this build refuses whole is not one a migration may quietly make
+	// acceptable (the refusal above says why).
+	if m.Budget == nil {
+		return false, refusedf("to converge gs://%s/%s for %s: it is version %d and records no budget amount, which is not a fact this build wrote — read it with `gcloud storage cat` and write the fact the owner means",
+			bucket, MarkerObject, project, MarkerVersionBuilds)
+	}
+	if err := m.Budget.Check(); err != nil {
+		return false, refusedf("to converge gs://%s/%s for %s: it is version %d and records no budget amount a managed creation could have chosen (%v), so it is not a fact this build wrote — read it with `gcloud storage cat` and write the fact the owner means",
+			bucket, MarkerObject, project, MarkerVersionBuilds, err)
+	}
+	if err := CheckImageBuilds(m.MaxImageBuilds); err != nil {
+		return false, refusedf("to converge gs://%s/%s for %s: it is version %d and records no image build bound this build accepts (%v), so the marker is one the managed read refuses whole and this step leaving it alone, rather than rewriting it as one that read would accept, is deliberate — read it with `gcloud storage cat` and write the fact the owner means",
+			bucket, MarkerObject, project, MarkerVersionBuilds, err)
+	}
+	converged := Marker{Version: MarkerVersionNoBuilds, GCPProject: project, Budget: m.Budget}
+	out, err := converged.Bytes()
+	if err != nil {
+		return false, err
+	}
+	if err := insertMarker(ctx, s, bucket, gen, out); err != nil {
+		if errors.Is(err, ErrAlreadyMarked) {
+			return false, fmt.Errorf("%w: gs://%s/%s was written by someone else between this command's read and its write, so the fact is left as that writer made it and the marker version may still be %d",
+				ErrAlreadyMarked, bucket, MarkerObject, MarkerVersionBuilds)
+		}
+		return false, err
+	}
+	return true, nil
 }
 
 // RemoveMarker removes the creation fact from a project's runs bucket: the
