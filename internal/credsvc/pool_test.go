@@ -56,6 +56,12 @@ func poolBundleDoc(t *testing.T) []byte {
 // the accounts: the budget's credentials block, the craft credentials, the
 // pools, the crafts and the subscription switch.
 //
+// The pools every block here writes are legacy_open, the migration's own
+// marker for a pool that existed before pools carried an owner (D1942): what
+// these tests read is which of a pool's members serves a call, and such a pool
+// serves everyone, where an owner and a roster would answer a question this
+// file does not ask (the grant is slip_pool_test's).
+//
 // The three accounts are offered to both of the fixture's repositories, as
 // testPolicyDoc's are, because a pool member's own admission is the same leg
 // (O4) the cascade's list is narrowed by and a member this repository is not
