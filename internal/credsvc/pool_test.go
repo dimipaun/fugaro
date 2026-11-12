@@ -58,9 +58,17 @@ func poolBundleDoc(t *testing.T) []byte {
 // testPolicyDoc's are, because a pool member's own admission is the same leg
 // (O4) the cascade's list is narrowed by and a member this repository is not
 // admitted to is a member it is not served by.
+//
+// The node is written at the version this Fugaro reads, and its pools name an
+// owner, because Decode refuses the two things an older fixture got away with:
+// a node more than one version behind the reader, and a pool with no owner
+// (version 5's rule, D1936). The owner is the launcher class's own account —
+// what a pool's owner is, and this file's calls are a job's, which ownership
+// does not gate: it is the slip grant that serves the owner and the users the
+// pool names (R10).
 func poolNode(block string) string {
 	return `{
-		"version": 4,
+		"version": 6,
 		"budget": ` + testBudgetDoc + `,
 		"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"],
 		"accounts": {
@@ -99,7 +107,7 @@ func poolCraftBlock(credentials string, members ...string) string {
 		quoted = append(quoted, `"`+m+`"`)
 	}
 	return `"craft_credentials": [` + credentials + `],
-		"craft_pools": [{"name": "` + testPoolName + `", "members": [` + strings.Join(quoted, ", ") + `]}],
+		"craft_pools": [{"name": "` + testPoolName + `", "owner": "` + testLauncherAccount + `", "members": [` + strings.Join(quoted, ", ") + `]}],
 		"crafts": {"coder": {"access": "` + testPoolName + `"}}`
 }
 
@@ -235,7 +243,7 @@ func TestReviewCraftPoolOnlyReviewClass(t *testing.T) {
 				{"name": "`+testAccount+`", "type": "claude-oauth"},
 				{"name": "`+testPoolAccount+`", "type": "claude-oauth"}
 			],
-			"craft_pools": [{"name": "`+testPoolName+`", "members": ["`+testAccount+`", "`+testPoolAccount+`"]}],
+			"craft_pools": [{"name": "`+testPoolName+`", "owner": "`+testLauncherAccount+`", "members": ["`+testAccount+`", "`+testPoolAccount+`"]}],
 			"crafts": {"senior-review": {"access": "`+testPoolName+`"}, "security-review": {"access": "`+testPoolName+`"}},
 			"subscription_spread": true`))
 		s.policy.admissions[s.slug] = decodeTestChild(t,
@@ -290,7 +298,7 @@ func TestSubscriptionPoolInertInCredsvc(t *testing.T) {
 				{"name": "` + testAccount + `", "type": "claude-oauth"},
 				{"name": "` + testPoolAccount + `", "type": "claude-oauth"}
 			],
-			"craft_pools": [{"name": "` + testPoolName + `", "members": ["` + testPoolAccount + `", "` + testAccount + `"]}],
+			"craft_pools": [{"name": "` + testPoolName + `", "owner": "` + testLauncherAccount + `", "members": ["` + testPoolAccount + `", "` + testAccount + `"]}],
 			"crafts": {"coder": {"access": "` + testPoolName + `"}}` + spread
 	}
 
