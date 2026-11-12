@@ -851,7 +851,12 @@ Amended 2026-11-11: `internal/cli/docs_cli_output_test.go`, the CLI output
 work's pin over `docs/design/v1.md`'s §9.2 — the default view, the three
 outcomes, the log with its directory, its retention and its modes, and
 `--verbose` (CL11 of `docs/cli-output-console-graph/implementation-plan-output.md`)
-— moved the table's row from 125 to 126.) They
+— moved the table's row from 125 to 126.
+Amended 2026-11-12: `internal/cli/docs_workspaces_security_test.go`, the
+workspaces folder's pin over SECURITY.md's workspace section — the four
+reachable surfaces, the cap, the cross-project read and spec §8's seven residual
+risks — and over `docs/design/v1.md`'s workspace term (W9), moved the table's
+row from 126 to 127.) They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.
