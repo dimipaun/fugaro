@@ -23,23 +23,26 @@ import (
 // The table is the layer the write lands in, which is what the registry's own
 // Layers decide for each key (internal/settings, confirmed against it):
 //
-//   - the project layer's file, this machine's own project config, the
-//     published layer, the published policy and a project recipe are
-//     project-level surfaces, and they take admin at project scope
-//     (ActionManageProject, F19). An all-repos admin holds no project-level
-//     thing, which is the whole difference between the two admin scopes.
+//   - the project layer's file, the published layer, the published policy and a
+//     project recipe are project-level surfaces, and they take admin at project
+//     scope (ActionManageProject, F19). An all-repos admin holds no
+//     project-level thing, which is the whole difference between the two admin
+//     scopes.
 //   - a repository's own fugaro.yaml takes admin at a scope covering that
 //     repository (ActionManageRepo), which an all-repos admin and a
 //     repository-scoped admin hold over the repositories they name.
-//
-// A `--layer local` write is judged with the project layer rather than left to
-// whoever runs the command: it is this machine's copy of the project's own
-// config, its values are the project's (`max_parallel`, `update_check`, the
-// `repos.*` overrides), and a publish derives parts of it into the published
-// policy. SD18's "a local file the user owns may be edited by the user" is about
-// the file being one person's, edited at their own terminal and by hand, and
-// about a coding agent's session writing nothing — not about the role the write
-// takes.
+//   - a `--layer local` write is not judged: it edits this machine's own
+//     project config, the file the person at this terminal owns, and SD18
+//     answered that question as it stands — "anyone may edit their own file;
+//     the boundary stays IAM at publish", with enforcing roles locally rejected
+//     because a file the user owns cannot carry the enforcement
+//     (docs/settings-commands spec §8). Its values reach the project only
+//     through a write that IS judged here — the publish of the layer and the
+//     `update` that applies this machine's lists — and those run with the cloud
+//     permissions of whoever runs them, which is what SD18's "at publish" means.
+//     The layer file a `--layer project` write edits is the project's own copy
+//     of its guardrails and is judged with it, because F19 names the project
+//     layer itself.
 //
 // Who the caller is comes from the credential and never from this machine's
 // config or git (finding F21), and it is read through userCallerLookup, the one
