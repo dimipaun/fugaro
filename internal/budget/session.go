@@ -642,3 +642,11 @@ func (s *Session) IDToken() func() string { return s.tok.Token }
 // so far, for the run record.
 func (s *Session) GrantedMicros() Micros  { s.mu.Lock(); defer s.mu.Unlock(); return s.granted }
 func (s *Session) ReleasedMicros() Micros { s.mu.Lock(); defer s.mu.Unlock(); return s.released }
+
+// HeartbeatEvery is the cadence this session beats at: the interval its
+// configuration named, or DefaultHeartbeatEvery when it named none (Open
+// settles that once, so a reader here never has to). A caller that has to
+// beat alongside the session -- the runner's keep-warm request, D1934 -- reads
+// the cadence here rather than respelling the default beside it, so the two
+// beats of one run are one number.
+func (s *Session) HeartbeatEvery() time.Duration { return s.cfg.HeartbeatEvery }

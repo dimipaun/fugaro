@@ -1,10 +1,11 @@
 # Check 511 — the owner's steps (a request every N seconds keeps one instance up, U4)
 
 **Status: written by task DS0.2 of the dynamic-delivery plan; run by the owner, task DS0.3. **RUN
-2026-11-12 in fugaro-dev:** the 15 s beat held one instance up for the whole 300 s window (the result
-block is recorded in the register, "Check 511"). **No agent runs any step of it**, and no agent may:
-what it measures is a live Cloud Run service's own instance behaviour, which nothing in this tree can
-answer.
+2026-11-12 in fugaro-dev, exit 2:** the 15 s beat kept the service warm for the whole 300 s window with
+no cold start, and the run's own verdict is "could not measure" because its `instance-ids` row came back
+empty — so the timing is settled and the one-instance reading is not (the result block is recorded in
+the register, "Check 511"). **No agent runs any step of it**, and no agent may: what it measures is a
+live Cloud Run service's own instance behaviour, which nothing in this tree can answer.
 
 The check is `scripts/live-checks/check511.sh` (its sibling test is
 `scripts/live-checks/check511_test.sh`, which drives it against fake tools only and never a real
@@ -107,4 +108,5 @@ by the container itself and **none of them paying a cold start** (min 109 ms, me
 `idle-cost` read 1511 ms — the opening request, the one that could pay a cold start, and did.
 `instance-ids` came back **empty**: the entries the check read carried no instance id it could use, so
 the run cannot say how many instances answered, and the owner ruled that row not part of the decision.
-So U4's timing is answered at the interval DS1.5 reuses — and its one-instance reading is not.
+The run therefore exited **2** — a row it could not measure, not a pass — and U4's timing is what it
+settled, at the interval DS1.5 reuses; its one-instance reading is not.

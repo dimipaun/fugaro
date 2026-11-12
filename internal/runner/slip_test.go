@@ -19,6 +19,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/pricing"
 )
 
@@ -150,8 +151,11 @@ func claimAnswer() slipReply {
 // slipRun is a cascade run that holds a slip: the service's URL, the slip's id
 // and a metadata server in its environment, and the budget session that is the
 // identity the service verifies the claim with. edit, when set, sees the run
-// last -- after the environment, the way svcRun's own callers do it.
-func slipRun(t *testing.T, svc *slipService, answer func(n int, r *http.Request, body []byte) slipReply, edit func(*run)) *run {
+// last -- after the environment, the way svcRun's own callers do it -- and
+// beatEvery, when set, is the session's own heartbeat: the beat's cadence is
+// the session's (slipBeatEvery), so this is how a test beats faster than the
+// 15 s a run really keeps.
+func slipRun(t *testing.T, svc *slipService, answer func(n int, r *http.Request, body []byte) slipReply, edit func(*run), beatEvery ...time.Duration) *run {
 	t.Helper()
 	if svc == nil {
 		svc = newSlipService(t, answer)
@@ -175,7 +179,7 @@ func slipRun(t *testing.T, svc *slipService, answer func(n int, r *http.Request,
 			edit(r)
 		}
 	})
-	r.sess = svcSession(t)
+	r.sess = svcSessionOn(t, gcpfake.NewRTDB(t), beatEvery...)
 	// A run's own end stops the beat (Run's deferred cleanup does it on every
 	// path out of it), so a fixture's beat is stopped here: one that outlived
 	// its test would keep asking this stand-in for the length of the next
@@ -559,12 +563,13 @@ func TestBackoffOnServiceError(t *testing.T) {
 // waits for the beat's goroutine, so nothing of a finished run is still in
 // flight.
 func TestHeartbeatStopsWithRun(t *testing.T) {
-	restore := slipBeatEvery
-	slipBeatEvery = 2 * time.Millisecond
-	t.Cleanup(func() { slipBeatEvery = restore })
+	// The beat's cadence is the session's (slipBeatEvery), so a session that
+	// beats every 2 ms is a run whose keep-warm request is read here instead of
+	// waited for.
+	const beatEvery = 2 * time.Millisecond
 
 	svc := newSlipService(t, nil)
-	r := slipRun(t, svc, nil, nil)
+	r := slipRun(t, svc, nil, nil, beatEvery)
 	r.claimSlip(context.Background())
 	if got := len(svc.claims()); got != 1 {
 		t.Fatalf("the service saw %d claim calls, want one", got)
@@ -578,7 +583,7 @@ func TestHeartbeatStopsWithRun(t *testing.T) {
 	}
 	beats := svc.beats()
 	if len(beats) < 2 {
-		t.Fatalf("the run sent %d beats over %s, want one every %s", len(beats), 10*time.Second, slipBeatEvery)
+		t.Fatalf("the run sent %d beats over %s, want one every %s", len(beats), 10*time.Second, beatEvery)
 	}
 	for _, b := range beats {
 		if b.method != http.MethodPost || b.header.Get(credsvc.HeaderSlip) != slipFixtureID {
@@ -594,9 +599,51 @@ func TestHeartbeatStopsWithRun(t *testing.T) {
 	if settled < 2 {
 		t.Fatalf("the run sent %d beats before it stopped", settled)
 	}
-	time.Sleep(20 * slipBeatEvery)
+	time.Sleep(20 * beatEvery)
 	if got := len(svc.beats()); got != settled {
 		t.Errorf("the run sent %d beats after it stopped (had %d): the beat outlives the run", got, settled)
+	}
+}
+
+// TestBeatGoesToTheServiceTheSlipWasClaimedAt: the beat is the one call of the
+// run that re-sends the claim secret every interval, and the slip's id is
+// public where the secret is not (F22). What keeps the secret pointed at one
+// host is that every call after the claim goes to the service the claim
+// answered from -- the URL checked once, at the claim -- and never to one read
+// again out of the job's environment. An environment rewritten under a live
+// run (an update, a launcher, anything that edits the job spec) must not move
+// the secret with it.
+func TestBeatGoesToTheServiceTheSlipWasClaimedAt(t *testing.T) {
+	const beatEvery = 2 * time.Millisecond
+
+	claimed := newSlipService(t, nil)
+	elsewhere := newSlipService(t, nil)
+	r := slipRun(t, claimed, nil, nil, beatEvery)
+	r.claimSlip(context.Background())
+	if r.slipHold() == nil {
+		t.Fatal("the run holds no slip: the beat this test reads was never started")
+	}
+
+	// The job's environment now names another service, as a rewrite of the job
+	// spec between two of the run's calls would.
+	env := make([]string, 0, len(r.d.Env))
+	for _, kv := range r.d.Env {
+		if !strings.HasPrefix(kv, credentialsServiceURLEnv+"=") {
+			env = append(env, kv)
+		}
+	}
+	r.d.Env = append(env, credentialsServiceURLEnv+"="+elsewhere.URL)
+
+	// Several intervals of the fixture's cadence: a beat that re-derived its
+	// URL from the environment has sent the claim secret to the host named
+	// there by now.
+	time.Sleep(50 * beatEvery)
+	beats := claimed.beats()
+	if len(beats) == 0 {
+		t.Fatalf("the service the slip was claimed at saw no beat over %s, want one every %s", 50*beatEvery, beatEvery)
+	}
+	if calls := elsewhere.seen(""); len(calls) != 0 {
+		t.Errorf("the beat reached %s, the host the environment names now: the run's calls go to the service its claim was answered from", elsewhere.URL)
 	}
 }
 

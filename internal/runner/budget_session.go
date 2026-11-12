@@ -177,11 +177,20 @@ const (
 )
 
 // slipBeatEvery is how often the beat asks the service to read the slip back
-// (D1934). It is the budget session's own cadence rather than a second number:
-// one request per 15 s is what kept an instance up in Check 511, and the
-// registry's beat keeps the same interval. A var so a test does not wait for
-// it.
-var slipBeatEvery = budget.DefaultHeartbeatEvery
+// (D1934): the budget session's own cadence, read off the session rather than
+// respelled beside it, because one request per interval is what kept an
+// instance up in Check 511 and the registry's beat is that same interval. A
+// hold exists only under a session -- the claim is bound to the identity the
+// session is -- so the default is the answer for a run that somehow has none.
+func (r *run) slipBeatEvery() time.Duration {
+	r.mu.Lock()
+	sess := r.sess
+	r.mu.Unlock()
+	if sess == nil {
+		return budget.DefaultHeartbeatEvery
+	}
+	return sess.HeartbeatEvery()
+}
 
 // slipClient is the client the run's own calls to the credentials service are
 // made with: it never follows a redirect, because the call carries the job's
@@ -992,6 +1001,12 @@ func slipRouteAbsent(status int) bool {
 // It is a no-op for a run that holds no slip, which is every run of an
 // installation without the slip routes and every run whose claim did not land:
 // there is nothing to keep warm with, and the run proceeds without it.
+//
+// The beat's own context is detached from the run's: the run's end is what
+// ends the beat, and that is stopSlipBeat -- the one call that both cancels
+// this context and waits for the goroutine -- rather than a cancellation
+// reaching it from anywhere else. A beat that outlived the run would be a
+// request of a finished run, and the service counts what reaches it.
 func (r *run) startSlipBeat(ctx context.Context) {
 	r.slipMu.Lock()
 	hold := r.slip
@@ -999,13 +1014,13 @@ func (r *run) startSlipBeat(ctx context.Context) {
 		r.slipMu.Unlock()
 		return
 	}
-	beatCtx, cancel := context.WithCancel(ctx)
+	beatCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	done := make(chan struct{})
 	hold.cancel, hold.done = cancel, done
 	r.slipMu.Unlock()
 	go func() {
 		defer close(done)
-		t := time.NewTicker(slipBeatEvery)
+		t := time.NewTicker(r.slipBeatEvery())
 		defer t.Stop()
 		for {
 			select {

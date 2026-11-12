@@ -117,7 +117,7 @@ named tests only.
 - **Interfaces:** consumes DS1.3; the runner claims at its own start, keeps the claim secret in memory only, sends a keep-warm request while the run lives (D1934), retries credential and proxy requests with backoff; the slip is not exported to the agent's environment (G5; the agent can still read the runner's, F22).
 - **Tests:** `TestClaimAtRunnerStart`, `TestSlipNotExportedToAgentEnv`, `TestBackoffOnServiceError`, `TestHeartbeatStopsWithRun`.
 - **Command:** `go test ./internal/runner/ -run 'TestBackoffOnServiceError|TestClaimAtRunnerStart|TestHeartbeatStopsWithRun|TestSlipNotExportedToAgentEnv' -count=1 -timeout 15m`
-- **Depends on:** DS1.3, DS0.3 (Check 511 passed on 2026-11-12: a request every 15 s held one instance up for a 300 s window, so U4's timing is answered at the interval this task reuses — see the register's "Check 511"). **Commit:** `runner: claim the slip, keep the service warm (D1933, D1934)`
+- **Depends on:** DS1.3, DS0.3 (Check 511 ran on 2026-11-12 and exited 2 — its `instance-ids` row came back empty, so the one-instance reading is not settled: what it did settle is the timing, a request every 15 s keeping the service warm for a 300 s window with no cold start, which is the interval this task reuses — see the register's "Check 511"). **Commit:** `runner: claim the slip, keep the service warm (D1933, D1934)`
 - **Red step:** `TestSlipNotExportedToAgentEnv` fails if the variable is exported to the agent.
 - **Tier:** opus + mandatory independent review.
 
