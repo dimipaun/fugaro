@@ -144,6 +144,7 @@ type Stage struct {
 	Name            string // implement, review, fix
 	Model           string // the role's model (main agent and subagents)
 	Background      string // the background model; "" when unset
+	Vision          string // the run's agent.models.vision, which the image refusal names; not a pin, and "" when unset
 	MaxOutputTokens int64  // bounds max_tokens on Model's requests only; 0: none
 }
 
