@@ -312,13 +312,14 @@ func TestAllDeferredLevelThreeRoundEndsTheRun(t *testing.T) {
 // effect when the run ended and not a log of every deferral a judge ever wrote
 // (D1850). Level 2 deferred the finding and ended its level on it; the
 // adversarial round found the same finding again — the key is what says it is
-// the same one — and blocked it, so it is not a follow-up any more and the block
-// is empty, while the log keeps both rounds.
+// the same one — and blocked it, so the judge's deferral is not a follow-up any
+// more, while the log keeps both rounds.
 //
 // Level 3's round is also the run's last and the run is out of rounds, so the
 // stop is what settles the finding that round blocked: a correctness finding is
 // not one the stop holds out for (D30), and the record's accepted block is where
-// it lands instead — once, and in no follow-up list.
+// the merge is stated. What files the finding is then the cap and not the judge
+// whose word was taken back (T-TR8): one entry, and the cap's own source.
 func TestAReversedDeferralIsNotFiled(t *testing.T) {
 	cfg := startupCfg(t, 1, "  levels: { l3: { model: senior-model } }\n  adversarial_rounds: 1\n")
 	h := newHarness(t, cfg, nil)
@@ -338,8 +339,16 @@ func TestAReversedDeferralIsNotFiled(t *testing.T) {
 	if tr := rec.Triage; tr == nil || len(tr.Rounds) != 2 {
 		t.Fatalf("the record's triage block = %+v, want the log of both rounds", rec.Triage)
 	}
-	if rec.Deferred != nil {
-		t.Errorf("the record's deferred block = %+v, want none: the round that blocks a finding takes its deferral back", rec.Deferred)
+	d := deferredOf(rec)
+	if len(d) != 1 {
+		t.Fatalf("the record's deferred block = %+v, want the one entry the cap filed", rec.Deferred)
+	}
+	entry, ok := d[findingKeyOf("feature.txt", "unbounded retry loop in the fetch path")]
+	if !ok {
+		t.Fatalf("the record's deferred block = %+v, want the finding the round blocked", rec.Deferred)
+	}
+	if entry.Source != runstore.TriageSourceCap {
+		t.Errorf("the entry = %+v, want the cap's own source: the round that blocked a finding takes the judge's deferral back, and the cap is what files the finding the run ended on", entry)
 	}
 	if rec.Outcome != runstore.OutcomeReady {
 		t.Errorf("rec = %+v, want ready: the finding level 3 blocked is one the stop takes", rec)
@@ -353,7 +362,9 @@ func TestAReversedDeferralIsNotFiled(t *testing.T) {
 // follow-up and not two (D1850). The round below leaves the same two findings
 // twice — the fix between them settled neither in the judge's reading — and its
 // blocking finding buys the second round, so the deferred one is placed on
-// twice. The record keeps it once.
+// twice. The record keeps it once, under the judge whose round made it, and the
+// second round is the run's last: the cap files the other finding, which is the
+// round's leftover (T-TR8).
 func TestARepeatedDeferralIsFiledOnce(t *testing.T) {
 	h := newHarness(t, startupCfg(t, 2, ""), nil)
 	rec, err := h.run(t,
@@ -370,14 +381,22 @@ func TestARepeatedDeferralIsFiledOnce(t *testing.T) {
 	if rec.Deferred == nil {
 		t.Fatal("the record's deferred block is empty, want the finding both rounds deferred")
 	}
-	if got := rec.Deferred.Total; got != 1 {
-		t.Errorf("the record says the run deferred %d findings, want the one finding it deferred twice", got)
+	if got, want := rec.Deferred.Total, len(deferredOf(rec)); got != want {
+		t.Errorf("the record says the run deferred %d findings and holds %d entries, want one entry per finding", got, want)
 	}
-	if got := len(rec.Deferred.Findings); got != 1 {
-		t.Errorf("the record holds %d deferrals, want one entry per finding", got)
+	d := deferredOf(rec)
+	repeated, ok := d[findingKeyOf("feature.txt", trivialSummary)]
+	if !ok {
+		t.Fatalf("the record's deferred block = %+v, want the finding both rounds deferred", rec.Deferred)
 	}
-	if d := rec.Deferred.Findings[0]; d.Key != findingKeyOf("feature.txt", trivialSummary) {
-		t.Errorf("the deferral = %+v, want the finding both rounds deferred", d)
+	if repeated.Source != runstore.TriageSourceTable {
+		t.Errorf("the deferral = %+v, want the table's own entry: the two rounds deferred one finding, not two, and the mode's row is what let it through", repeated)
+	}
+	if len(d) != 2 {
+		t.Fatalf("the record's deferred block = %+v, want the finding both rounds deferred and the one the cap left open", rec.Deferred)
+	}
+	if other, ok := d[findingKeyOf("feature.txt", "unbounded retry loop in the fetch path")]; !ok || other.Source != runstore.TriageSourceCap {
+		t.Errorf("the record's deferred block = %+v, want the finding the run's last round left filed by the cap", rec.Deferred)
 	}
 }
 
@@ -681,23 +700,31 @@ func TestTheStopsCheapRoundDeferralIsNotCountedTwice(t *testing.T) {
 // table decides everything make no triage call (D1851, D1855), and the switch
 // the repository wrote cannot put the stage back into them. Both runs buy the
 // fix round a tolerated-only round has always bought, and neither records a
-// deferral.
+// triage block.
+//
+// What the cap leaves open is the one difference between them (D1845, T-TR8):
+// POC's run ends on its cheap round with nothing left to spend on the finding
+// it tolerated, so the cap files it, while Critical's tolerates nothing and
+// has nothing to file (D7).
 func TestPOCAndCriticalLoopUnchanged(t *testing.T) {
 	cases := []struct {
 		mode   string
 		stages []string
 		steps  []step
+		// wantDeferred is how many findings the run's cap files: POC's one,
+		// Critical's none.
+		wantDeferred int
 	}{
 		// POC runs the cheap loop alone and ends the run after the fix its round
 		// asked for.
-		{"poc", []string{"implement", "review_first", "fix"}, []step{implement("feature"), reviewScored("changes", trivialFinding()), fixStep}},
+		{"poc", []string{"implement", "review_first", "fix"}, []step{implement("feature"), reviewScored("changes", trivialFinding()), fixStep}, 1},
 		// Critical turns level 3 on for every run (rigor.defaultLevels), so its
 		// script answers the adversarial round too. Its level 2 has both rounds
 		// to spend, which is where the fix a tolerated-only round has always
 		// bought is visible.
 		{"critical", []string{"implement", "review", "fix", "review", "adversarial"}, []step{
 			implement("feature"), reviewScored("changes", trivialFinding()), fixStep, review("ship", 0), review("ship", 0),
-		}},
+		}, 0},
 	}
 	for _, c := range cases {
 		t.Run(c.mode, func(t *testing.T) {
@@ -712,8 +739,11 @@ func TestPOCAndCriticalLoopUnchanged(t *testing.T) {
 			if got := countStage(rec, "fix"); got != 1 {
 				t.Errorf("%d fix stages, want the round's fix bought as it always was", got)
 			}
-			if rec.Triage != nil || rec.Deferred != nil {
-				t.Errorf("%s triaged or deferred something: %+v / %+v", c.mode, rec.Triage, rec.Deferred)
+			if rec.Triage != nil {
+				t.Errorf("%s made a triage call: %+v", c.mode, rec.Triage)
+			}
+			if got := len(deferredOf(rec)); got != c.wantDeferred {
+				t.Errorf("%s deferred %d findings, want %d: %+v", c.mode, got, c.wantDeferred, rec.Deferred)
 			}
 		})
 	}
