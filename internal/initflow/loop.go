@@ -242,6 +242,12 @@ type loop struct {
 	// behind it saying the same thing, and the account is not eleven copies of
 	// it (the owner's feedback of 2026-11-09).
 	waits []StageResult
+	// ranPast is the stop the stage being recorded ran past, and it is set for
+	// that stage alone: the loop holds no reporter's state, and what the line
+	// has to say is one fact about one stage (ranPastStop, MachineLocal). The
+	// plan view does not read it: it runs nothing, so nothing runs past a stop
+	// there, and what a reader of the plan sees is what the run would do.
+	ranPast *stop
 }
 
 // defaultProgram is what the run's lines name when the caller names no
@@ -469,14 +475,44 @@ type stop struct {
 
 // blocker is the first stop before name that name may not run past, nil when
 // it runs past every one of them. It is the whole of the gating rule: the
-// stages are linear, and the tolerance is the stopped stage's own (RunsPastStop).
+// stages are linear, and the tolerance is the stopped stage's own
+// (RunsPastStop) — beside the one exception a stage carries itself, a stage
+// that is only this machine's (MachineLocal), which the cloud stopping in
+// front of it does not touch.
 func blocker(name string, stops []stop) *stop {
+	if MachineLocal(name) {
+		return nil
+	}
 	for i := range stops {
 		if !stops[i].yours || !RunsPastStop(name, stops[i].name) {
 			return &stops[i]
 		}
 	}
 	return nil
+}
+
+// ranPastStop is the stop a machine-local stage is running past, nil when it
+// is running past none. It is the same exception blocker makes, read the other
+// way round, and it is what the stage's own line says: a stage that ran while
+// the run was stopped is a stage a reader would otherwise believe had waited
+// (MachineLocal).
+func ranPastStop(name string, stops []stop) *stop {
+	if !MachineLocal(name) || len(stops) == 0 {
+		return nil
+	}
+	return &stops[0]
+}
+
+// ranPastText is what a machine-local stage's line says about the stop it ran
+// past, in the words the rest of the run uses for that stage's own row: the
+// step the user still owes ("waits for you"), or a stage that stopped for
+// another reason — a failure, a stage whose own check reported it blocked —
+// which is not the reader's to clear.
+func ranPastText(s *stop) string {
+	if s.yours {
+		return "machine-local: ran although " + s.name + " waits for you"
+	}
+	return "machine-local: ran although " + s.name + " stopped"
 }
 
 // stoppedYours is whether name is one of the stops of stops that is the user's
@@ -522,10 +558,12 @@ func (l *loop) converge(ctx context.Context, stages []Stage) error {
 	paused := ""     // the stage that paused for billing: what needs billing waits for it
 	for _, s := range stages {
 		name := s.Name()
+		l.ranPast = nil
 		if b := blocker(name, stops); b != nil {
 			l.record(StageResult{Name: name, State: Blocked, Detail: "waits for " + b.name})
 			continue
 		}
+		l.ranPast = ranPastStop(name, stops)
 		if paused != "" && NeedsBilling(name) {
 			l.record(StageResult{Name: name, State: WaitingForBilling, Detail: "waiting for billing"})
 			continue
@@ -785,6 +823,17 @@ func (l *loop) needsYou(stage, detail string, lf Left) {
 // the run in the middle of an apply. A run with no reporter records exactly
 // what it recorded before, and the plan view's rows are not a run at all.
 func (l *loop) record(r StageResult) {
+	if l.ranPast != nil && !waitingState(r.State) {
+		// The stage ran although the run was stopped: the line says so before
+		// whatever the stage has to say about itself, because that is the fact
+		// a reader of this run cannot get anywhere else — every stage behind a
+		// stop says it waited, and this one did not.
+		if r.Detail == "" {
+			r.Detail = ranPastText(l.ranPast)
+		} else {
+			r.Detail = ranPastText(l.ranPast) + "; " + r.Detail
+		}
+	}
 	l.res.Stages = append(l.res.Stages, r)
 	if l.o.Report == nil || !l.executing {
 		return
