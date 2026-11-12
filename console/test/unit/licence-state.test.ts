@@ -6,12 +6,13 @@
 // What this file holds, and why each part is a test rather than an argument:
 //
 //   - **the refused class is the table's, not a list of names.** The lapse takes
-//     two operations away -- `run.launch` and `settings.edit` -- and it must
-//     classify them by the column their own rows carry (`refusedAfterLapse`),
+//     three operations away -- `run.launch`, `settings.edit` and GV3.2's
+//     `roadmap.move` -- and it must classify them by the column their own rows
+//     carry (`refusedAfterLapse`),
 //     because the design's rule is that a later cancel, whose row differs from
 //     the launch's in exactly that field, must not be refused the day it is
 //     added. A gate built from a list beside the table would pass every case
-//     below and fail that one, so the set is asserted here twice: as the two
+//     below and fail that one, so the set is asserted here twice: as the three
 //     names, and as the rows the column marks;
 //   - **the refusal happens in the main process, before any child exists.** The
 //     renderer is not the gate: the channels come from the operation table and
@@ -113,8 +114,10 @@ const OPERATIONS: readonly ConsoleOperation[] = CONSOLE_OPERATIONS
 
 /** THE_REFUSED is the lapsed state's whole class, written out as a literal so
  * the column is checked against the design rather than against itself: T12 takes
- * the console's launch and its configuration change away, and nothing else. */
-const THE_REFUSED: readonly OperationName[] = ['run.launch', 'settings.edit']
+ * the console's launch and its configuration change away, and GV3.2 adds the
+ * console's third write -- the move of a task between the record's releases
+ * (design section 5.1 rule 14) -- and nothing else does. */
+const THE_REFUSED: readonly OperationName[] = ['run.launch', 'settings.edit', 'roadmap.move']
 
 /** THE_KEPT is every other operation: the non-vacuity guard for a wrapper that
  * refused the whole surface. */
@@ -132,14 +135,18 @@ const EMPTY_PAYLOADS: readonly OperationName[] = THE_KEPT.filter((name) => {
 })
 
 /**
- * WELL_FORMED is what the registrar's own schema accepts for the two refused
+ * WELL_FORMED is what the registrar's own schema accepts for the three refused
  * operations. The tests that go through the bridge for a refusal are about the
  * gate, and a payload the schema refuses would answer a refusal this file is not
- * about; `ipc.test.ts` holds the same two payloads for the same reason.
+ * about; `ipc.test.ts` holds the same three payloads for the same reason. The
+ * move's two ids are a document key and a release key as the graph document
+ * spells them (contract section 6.22) -- the gate never reads them, and the
+ * source behind this fake handler is never reached.
  */
 const WELL_FORMED: Readonly<Record<string, Record<string, unknown>>> = Object.freeze({
   'run.launch': { installation: 'sandbox', repository: 'acme/app', task: 'do the thing' },
   'settings.edit': { op: 'set', key: 'budget.cap_usd', value: '25' },
+  'roadmap.move': { node: 'coordinator:plans/gv/T1', toRelease: 'a'.repeat(64), confirmed: true },
 })
 
 /** recordingIpcMain is Electron's `ipcMain`, as far as the registrar uses it: a
@@ -251,18 +258,18 @@ describe('the five states a licence reply puts the console in', () => {
 })
 
 describe('the refused class is the table\'s column', () => {
-  it('marks exactly the two operations the design takes away, and no other row', () => {
+  it('marks exactly the three operations the design takes away, and no other row', () => {
     const marked = OPERATIONS.filter((operation) => operation.refusedAfterLapse === true).map(
       (operation) => operation.name,
     )
     expect([...marked].sort()).toEqual([...THE_REFUSED].sort())
   })
 
-  it('names the target installation on the launch row, and on no other of the two', () => {
-    // The second column the gate reads, and the reason the two rows are not
+  it('names the target installation on the launch row, and on none of the other two', () => {
+    // The second column the gate reads, and the reason the rows are not
     // decided the same way: the launch acts on the installation its payload
-    // names, and the settings write acts on the installation the console is
-    // driving. `assertReachableSurface` (`ipc.ts`) holds the column's *shape*
+    // names, and the settings write and the roadmap move act on the installation
+    // the console is driving. `assertReachableSurface` (`ipc.ts`) holds the column's *shape*
     // -- a required `installationName` argument of the same row -- and this
     // holds the *set*: a settings write given an installation argument would ask
     // the store about a name its own payload never carries.
@@ -274,6 +281,7 @@ describe('the refused class is the table\'s column', () => {
     ).toEqual([
       ['run.launch', 'installation'],
       ['settings.edit', undefined],
+      ['roadmap.move', undefined],
     ])
   })
 
@@ -299,14 +307,15 @@ describe('the refused class is the table\'s column', () => {
 })
 
 describe('the lapse, at the handler', () => {
-  it('refuses the launch and the settings write in the main process, and reaches no source', async () => {
+  it('refuses the launch, the settings write and the roadmap move in the main process, and reaches no source', async () => {
     const { bridge, reached } = lapsedConsole(() => AT['lapsed'] as LicenceReply)
     for (const name of THE_REFUSED) {
       const reply = await bridgeMethod(bridge, name)(WELL_FORMED[name])
       expect(reply, name).toEqual({ ok: false, reason: LAPSE_REFUSAL })
     }
-    // **The point of the gate**: neither operation reached its handler, so no
-    // child was spawned and no setting was read or written. A gate applied after
+    // **The point of the gate**: none of the three reached its handler, so no
+    // child was spawned, no setting was read or written, and the record the move
+    // would have written is untouched. A gate applied after
     // the handler answers the identical sentence and has already spawned.
     expect(reached).toEqual([])
   })
@@ -357,6 +366,7 @@ describe('the lapse, at the handler', () => {
     }
     expect(reached).not.toContain('run.launch')
     expect(reached).not.toContain('settings.edit')
+    expect(reached).not.toContain('roadmap.move')
   })
 
   it('works in full within the grace, which is what the grace is for', async () => {

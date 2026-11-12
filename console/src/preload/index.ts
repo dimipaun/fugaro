@@ -89,7 +89,7 @@ export const BRIDGE_VERSION = 1
  * nothing failing, because the runtime tests in `test/unit/ipc.test.ts` pin the
  * same sets against the table and the object is built from that table anyway.
  * `satisfies` checks each row's shape without widening anything, so a row that
- * is not a name and a method is still a compile error, and the thirty-eight names
+ * is not a name and a method is still a compile error, and the thirty-nine names
  * stay literal -- which is what makes `ExposedName`, `ExposedMethod` and
  * `ConsoleBridge` below the closed things their comments say they are.
  *
@@ -537,7 +537,7 @@ export const EXPOSED_OPERATIONS = Object.freeze([
 
 /**
  * ExposedName is the closed union of the operation names this file exposes --
- * thirty-eight string literals, not `string`. It is the type of the `operations` list
+ * thirty-nine string literals, not `string`. It is the type of the `operations` list
  * a screen switches on, so the closure is what lets a screen be exhaustive.
  */
 export type ExposedName = (typeof EXPOSED_OPERATIONS)[number][0]
@@ -657,9 +657,9 @@ async function invokeOperation(
  *
  * The returned object is not cast into `ConsoleBridge`: it is checked against
  * it, like any other value, and that is the point of the accumulator's type. It
- * is `Record<ExposedMethod, ConsoleMethod>` -- thirty-eight *named* properties,
+ * is `Record<ExposedMethod, ConsoleMethod>` -- thirty-nine *named* properties,
  * because `ExposedMethod` is a union of literals -- so spreading it gives the
- * object literal those thirty-eight properties as properties rather than as an index
+ * object literal those thirty-nine properties as properties rather than as an index
  * signature. (Before that type was literal, this line needed `as ConsoleBridge`
  * to silence the compiler, which is what made the claim untested rather than
  * checked.) The loop is what actually writes them, and a loop is a thing the
@@ -688,7 +688,7 @@ export function createConsoleBridge(ipcRenderer: RendererLike): ConsoleBridge {
  * `exposeInMainWorld` is what keeps rule 5's promise concrete: the renderer gets
  * a copy of this object, in its own world, with `contextIsolation` in between.
  * It cannot reach the preload's scope, `ipcRenderer`, or Node -- only these
- * thirty-eight methods.
+ * thirty-nine methods.
  */
 export function exposeConsoleBridge(
   contextBridge: ContextBridgeLike,

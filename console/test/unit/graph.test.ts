@@ -1468,13 +1468,16 @@ describe('the graph screen and its navigation', () => {
     // The scope is part of the state a tab is opened in for the same reason the
     // tab is: the plan scope reads this checkout's plans, so it is what the
     // screen opens on (H9), and a state that left it out would open on a scope
-    // `scopeOf` invents.
+    // `scopeOf` invents. `move` is the sheet a drag or a drop puts up (GV3.2),
+    // and the screen opens with none: a console that opened on a confirmation
+    // would be asking about a move nobody made.
     expect(GRAPH_INITIAL_STATE).toEqual({
       tab: null,
       view: 'graph',
       selected: null,
       expanded: [],
       zoom: 1,
+      move: null,
       scope: GRAPH_SCOPE_PLAN,
     })
   })

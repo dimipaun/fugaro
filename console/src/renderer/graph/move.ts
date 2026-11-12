@@ -36,7 +36,7 @@ import type { Sanitized } from '../../shared/sanitize'
 import { sanitizeText } from '../../shared/sanitize'
 import { UNAVAILABLE_MARK } from '../../shared/availability'
 import { wireTextClass } from '../../shared/schema'
-import type { RoadmapMoveAnswer } from '../../source/source'
+import type { RoadmapMoveAnswer, RoadmapMoveOutcome } from '../../source/source'
 import type { ScreenElement, ScreenFactory } from '../screens/graph'
 
 /** MoveRequest is everything a renderer is allowed to say about a move: the
@@ -59,6 +59,98 @@ export type MoveRead =
   | { readonly ok: true; readonly answer: RoadmapMoveAnswer }
   | { readonly ok: false; readonly sentence: string }
 
+/**
+ * moveAnswerOf reads one `roadmap.move` answer off the bridge, **closed**: the
+ * contract's members and every one of their types, with a move's two sides either
+ * a `{key, name}` pair or the `null` §6.25 writes for a task in no release.
+ *
+ * **An answer this build cannot read is `null`.** A confirmation is a promise
+ * about what the confirming click spawns, and an answer read in part is a
+ * command line drawn from a document the record did not quite say: the sheet
+ * then says it could not read the answer instead of drawing the fields it did
+ * find. `status` is the one member judged as well, and for the strongest reason
+ * of the set -- it is what a screen decides from whether the move applied, and a
+ * word this build does not hold is a newer CLI's status whose meaning it cannot
+ * read (`MOVE_OUTCOME_WORDS` is the vocabulary, and it is the whole of it).
+ *
+ * The preview and the write are one operation precisely so that what is drawn
+ * and what runs are the same argv (`ipc.ts`), and this reader is the renderer's
+ * half of that agreement: nothing here rebuilds a word of the command line, it
+ * is the answer's own array or nothing.
+ */
+export function moveAnswerOf(raw: unknown): RoadmapMoveAnswer | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null
+  const answer = raw as Record<string, unknown>
+  const refusal = nullableText(answer['refusal'])
+  const sentence = nullableText(answer['sentence'])
+  if (refusal === undefined || sentence === undefined) return null
+  const argv = answer['argv']
+  if (!Array.isArray(argv) || argv.some((word) => typeof word !== 'string')) return null
+  const task = answer['task']
+  if (typeof task !== 'object' || task === null) return null
+  const held = task as Record<string, unknown>
+  const key = text(held['key'])
+  const id = text(held['id'])
+  const title = text(held['title'])
+  if (key === null || id === null || title === null) return null
+  const from = moveSideOf(answer['from'])
+  const to = moveSideOf(answer['to'])
+  if (from === undefined || to === undefined) return null
+  const outcome = moveOutcomeOf(answer['outcome'])
+  if (outcome === undefined) return null
+  return {
+    refusal,
+    argv: argv as readonly string[],
+    task: { key, id, title },
+    from,
+    to,
+    outcome,
+    sentence,
+  }
+}
+
+/** text is one member that must be a string, and `null` where it is anything
+ * else -- the answer is refused by the caller, which is the one place that
+ * decides. */
+function text(raw: unknown): string | null {
+  return typeof raw === 'string' ? raw : null
+}
+
+/** nullableText is one of the answer's optional members: a string, or the
+ * `null` the contract writes where there is none. It answers `undefined` for a
+ * member that is neither, which is what tells "nothing set" from "not this
+ * shape". */
+function nullableText(raw: unknown): string | null | undefined {
+  return raw === null ? null : (text(raw) ?? undefined)
+}
+
+/** moveSideOf is one side of a move: the record's key and its name for a release
+ * box, the `null` of a task in no box, or `undefined` for a shape this build
+ * does not read. */
+function moveSideOf(raw: unknown): { readonly key: string; readonly name: string } | null | undefined {
+  if (raw === null) return null
+  if (typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const side = raw as Record<string, unknown>
+  const key = text(side['key'])
+  const name = text(side['name'])
+  if (key === null || name === null) return undefined
+  return { key, name }
+}
+
+/** moveOutcomeOf is §6.24's document, or `undefined` for one this build cannot
+ * read -- its status included. */
+function moveOutcomeOf(raw: unknown): RoadmapMoveOutcome | null | undefined {
+  if (raw === null) return null
+  if (typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const outcome = raw as Record<string, unknown>
+  const status = MOVE_STATUSES.find((each) => each === outcome['status'])
+  const request = text(outcome['request'])
+  const reason = nullableText(outcome['reason'])
+  const current = nullableText(outcome['current'])
+  if (status === undefined || request === null || reason === undefined || current === undefined) return undefined
+  return { status, request, reason, current }
+}
+
 /** MovePort is the one door the flow knocks on: `FugaroSource.roadmapMove`, and
  * nothing else. It is a port rather than the source itself because the flow must
  * not be able to reach a read, a feed or a run, and because a test's port can
@@ -67,16 +159,29 @@ export interface MovePort {
   move(args: MoveRequest & { readonly confirmed: boolean }): Promise<MoveRead>
 }
 
+/** MoveTarget is one release box a task can be moved to, as the drawing already
+ * knows it: the record's key for the box, and the name its heading is drawn
+ * with. It is what the keyboard's own way into a move is built from -- a select
+ * of the boxes -- because a drag is a pointer's gesture and nothing else
+ * (design section 4.3): the mouse drops a task on a box, and the keyboard
+ * chooses one from this list. */
+export interface MoveTarget {
+  readonly key: string
+  readonly name: Sanitized
+}
+
 /** MoveSheet is what the confirmation draws: the request in hand and what the
  * record answered it with.
  *
- * `answer` and `sentence` are never both set and are never both unset: an answer
- * is the record's own reply, and the sentence is the console's for a call that
- * was refused before it queued anything (a task no read listed, a box no read
- * listed, a reply this build cannot read). A sheet that held both would draw a
- * refusal beside a command line that was never run. */
+ * `answer` and `sentence` are never both set while a request is in hand: an
+ * answer is the record's own reply, and the sentence is the console's for a call
+ * that was refused before it queued anything (a task no read listed, a box no
+ * read listed, a reply this build cannot read). A sheet that held both would
+ * draw a refusal beside a command line that was never run. */
 export interface MoveSheet {
-  readonly request: MoveRequest
+  /** `request` is the move in hand, or `null` for the sheet a keyboard opened
+   * with no target chosen yet (`movePhaseOf`'s `choosing`). */
+  readonly request: MoveRequest | null
   readonly answer: RoadmapMoveAnswer | null
   readonly sentence: string | null
 }
@@ -135,12 +240,23 @@ export const MOVE_READING_WORD = 'asking the record'
  * It is this module's own sentence -- the record's words are nowhere in it. */
 export const MOVE_UNREADABLE_WORD = 'the console could not read this move’s answer'
 
-/** MOVE_OUTCOME_WORDS is §6.24's four statuses as the sheet's own words, so a
- * screen draws a status rather than parsing the contract's spelling. A status
- * this build does not hold is absent, and the sheet then draws
- * `MOVE_UNREADABLE_WORD`: a newer CLI's status is a value whose meaning this
- * build does not know, and drawing its word would be reading it. */
-export const MOVE_OUTCOME_WORDS: Readonly<Record<string, string>> = Object.freeze({
+/** MOVE_OPEN_LABEL is the row button's word, and MOVE_TARGET_LABEL names the
+ * select it opens. */
+export const MOVE_OPEN_LABEL = 'Move…'
+export const MOVE_TARGET_LABEL = 'move this task to'
+
+/** MOVE_STATUSES is §6.24's four statuses, and it is the **whole** vocabulary
+ * this build reads: `moveAnswerOf` refuses an answer carrying any other word,
+ * because a status is what a screen decides from -- whether the move applied,
+ * and so whether a way back is offered -- and a word this build does not hold is
+ * a meaning it cannot read. A newer CLI's status is read as "this answer is not
+ * this build's", which is the one answer that draws no button. */
+export const MOVE_STATUSES = Object.freeze(['applied', 'refused', 'failed', 'pending'] as const)
+export type MoveStatus = (typeof MOVE_STATUSES)[number]
+
+/** MOVE_OUTCOME_WORDS is those four statuses as the sheet's own words, so a
+ * screen draws a word rather than parsing the contract's spelling. */
+export const MOVE_OUTCOME_WORDS: Readonly<Record<MoveStatus, string>> = Object.freeze({
   applied: 'the record applied the move',
   refused: 'the record refused the move',
   failed: 'the move failed',
@@ -157,10 +273,16 @@ export const MOVE_CONFIRM_CLASS = 'graph-move-confirm'
 export const MOVE_CANCEL_CLASS = 'graph-move-cancel'
 export const MOVE_UNDO_CLASS = 'graph-move-undo'
 export const MOVE_STATUS_CLASS = 'graph-move-status'
+/** MOVE_OPEN_CLASS is the button a record task's row carries: the keyboard's and
+ * the screen reader's way into a move, which a drag cannot be. */
+export const MOVE_OPEN_CLASS = 'graph-move-open'
+/** MOVE_TARGET_CLASS is the select of the boxes a move may go to, drawn while
+ * the sheet is choosing one. */
+export const MOVE_TARGET_CLASS = 'graph-move-target'
 
 /** MOVE_PHASES is the sheet's own state as one attribute, so a rule and a test
  * read which of the three sheets is drawn rather than inferring it. */
-export const MOVE_PHASES = Object.freeze(['preview', 'reading', 'refused', 'answered'] as const)
+export const MOVE_PHASES = Object.freeze(['choosing', 'preview', 'reading', 'refused', 'answered'] as const)
 export type MovePhase = (typeof MOVE_PHASES)[number]
 
 /** MoveField is one named field of the confirmation: the console's own label,
@@ -240,12 +362,23 @@ export function inverseOf(answer: RoadmapMoveAnswer): MoveRequest {
   return { node: answer.task.key, toRelease: answer.from === null ? '' : answer.from.key }
 }
 
-/** movePhaseOf is which of the four sheets one is: the reading state while the
- * record is being asked, the refusal when a call never reached it, the preview
- * when a command line is in hand and nothing has run, and the answer when the
- * record has spoken. */
+/**
+ * movePhaseOf is which of the five sheets one is.
+ *
+ * `choosing` is the sheet a **keyboard** opened: a record task's row carries a
+ * button, and pressing it puts up the list of boxes with nothing sent yet -- so
+ * the phase is the state with no request, no answer and no sentence, and its
+ * select is what turns a keyboard's choice into the request a preview is made
+ * from.
+ *
+ * The other four are the reading state while the record is being asked, the
+ * refusal when a call never reached it (or came back with the record's own
+ * refusal), the preview when a command line is in hand and nothing has run, and
+ * the answer when the record has spoken.
+ */
 export function movePhaseOf(sheet: MoveSheet, reading: boolean): MovePhase {
   if (reading) return 'reading'
+  if (sheet.request === null && sheet.answer === null && sheet.sentence === null) return 'choosing'
   if (sheet.sentence !== null) return 'refused'
   if (sheet.answer !== null && sheet.answer.outcome !== null) return 'answered'
   if ((sheet.answer?.refusal ?? null) !== null) return 'refused'
@@ -371,14 +504,11 @@ function sheetSentence(sheet: MoveSheet): Sanitized | null {
 }
 
 /** statusOf is the record's own answer as the sheet's words: §6.24's status
- * through `MOVE_OUTCOME_WORDS`, with what the record said alongside it. A status
- * this build does not hold is `null`, and the sheet says it could not read the
- * answer rather than drawing a word whose meaning it does not know. */
+ * through `MOVE_OUTCOME_WORDS`, with what the record said alongside it. */
 function statusOf(answer: RoadmapMoveAnswer): string | null {
   const outcome = answer.outcome
   if (outcome === null) return null
   const word = MOVE_OUTCOME_WORDS[outcome.status]
-  if (word === undefined) return null
   const because = outcome.reason
   return because === null || because === '' ? word : `${word}: ${because}`
 }
@@ -399,8 +529,8 @@ function statusOf(answer: RoadmapMoveAnswer): string | null {
  * so a person cannot confirm a move, undo one or re-run one by pressing a button
  * that is not there.
  */
-export function moveSheet(factory: ScreenFactory, sheet: MoveSheet): ScreenElement {
-  const reading = sheet.answer === null && sheet.sentence === null
+export function moveSheet(factory: ScreenFactory, sheet: MoveSheet, targets: readonly MoveTarget[] = []): ScreenElement {
+  const reading = sheet.answer === null && sheet.sentence === null && sheet.request !== null
   const phase = movePhaseOf(sheet, reading)
   const root = make(factory, 'section', MOVE_SHEET_CLASS)
   root.setAttribute('data-phase', phase)
@@ -412,6 +542,28 @@ export function moveSheet(factory: ScreenFactory, sheet: MoveSheet): ScreenEleme
   const sentence = sheetSentence(sheet)
   if (phase === 'reading') drawn(root, factory, 'p', sanitizeText(MOVE_READING_WORD, 'label', 'the reading word'), 'graph-move-sentence')
   else if (sentence !== null) drawn(root, factory, 'p', sentence, 'graph-move-sentence')
+
+  if (phase === 'choosing') {
+    // **The keyboard's own way in.** A drag is a pointer's gesture and this
+    // console has no pointer-only control (design section 4.3): the row's own
+    // button opens this list, and the option a person chooses is the request the
+    // preview is made from. The value of an option is the record's key and never
+    // a word of a command: even here, what leaves the renderer is an id.
+    const options = make(factory, 'select', MOVE_TARGET_CLASS)
+    options.setAttribute('aria-label', MOVE_TARGET_LABEL)
+    for (const target of targets) {
+      const option = literal(make(factory, 'option'), target.name.ok ? target.name.text : UNAVAILABLE_MARK)
+      option.setAttribute('value', target.key)
+      options.append(option)
+    }
+    // The unassign is a target like any other: a task in a box is taken out of
+    // it by choosing this, and the request then carries the empty string the
+    // operation declares for it.
+    const none = literal(make(factory, 'option'), MOVE_UNASSIGNED_WORD)
+    none.setAttribute('value', '')
+    options.append(none)
+    root.append(options)
+  }
 
   const answer = sheet.answer
   if (answer !== null) {
@@ -435,16 +587,9 @@ export function moveSheet(factory: ScreenFactory, sheet: MoveSheet): ScreenEleme
     root.append(command)
 
     const status = statusOf(answer)
-    const statusCell = make(factory, 'p', MOVE_STATUS_CLASS)
     if (status !== null) {
-      literal(statusCell, status)
-      root.append(statusCell)
-    } else if (answer.outcome !== null) {
-      // A status this build has no word for: the answer was read as far as its
-      // document and no further, and the sheet says so rather than drawing the
-      // contract's spelling as if it were the console's vocabulary.
-      literal(statusCell, MOVE_UNREADABLE_WORD)
-      root.append(statusCell)
+      const statusCell = make(factory, 'p', MOVE_STATUS_CLASS)
+      root.append(literal(statusCell, status))
     }
   }
 

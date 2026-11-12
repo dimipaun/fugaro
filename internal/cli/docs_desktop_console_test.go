@@ -1512,6 +1512,14 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		// the console's first write and the one thing this table is a fence
 		// against, spelled as rule 11's exact argv and nothing else.
 		"run --task-file - --json --run-id <run id> --repo <owner/name> [--title=<T>] [--plan-task=<P>] --project <name> [--config <path>]",
+		// The record's move (the dependency-graph plan's GV3.2, the
+		// `roadmap.move` operation, rule 14): one task of the project's roadmap
+		// record into a release box or out of one. The two flag words carry the
+		// record's own keys -- `--to` the box the task was dropped on, `--expect`
+		// the release the same document recorded for it -- and the positional is
+		// that document's own `id`, so the row spells the command's argv and
+		// names the argument in its parenthesis, as the `graph --json` row does.
+		"coordinator roadmap move --json TASK --to <release> --expect <release>",
 	}
 	rows := docTableAfter(t, path, doc, "| Allowed argv (exact, in this order) |")
 	got := map[string]bool{}
@@ -1646,7 +1654,7 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 			t.Errorf("%s allows the console to spawn %q, but %q is not in consoleReadPaths (internal/cli/project.go): a command on the allow-list is a read, and a read must not write the remembered checkouts", path, argv, cmdPath)
 		}
 	}
-	// Twenty-six commands: the thirteen dashboard reads (logs has two argvs), the
+	// Twenty-seven commands: the thirteen dashboard reads (logs has two argvs), the
 	// rail's `config list --json` (D13's amendment of 2026-10-20), the graph
 	// screen's `plan status --json` (GV2.1), the dependency graph read
 	// `graph --json` (the graph plan's CG9a), the project view's
@@ -1662,10 +1670,12 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 	// `managed status --json` and `project policy show --json` (the managed
 	// screens' CM3: the marks with their trail, and the policy node), the
 	// effective-craft read `craft ls --json` (the model-crafts plan's MC8), the
-	// seat estimate `seats --json` (the subscriptions plan's S4.2, D439) and
-	// the launch `fugaro run` (V2.5.1a).
-	if len(allowed) != 26 {
-		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 26 (logs has two argvs)", path, argvs, len(allowed))
+	// seat estimate `seats --json` (the subscriptions plan's S4.2, D439), the
+	// launch `fugaro run` (V2.5.1a) and the record's move
+	// `coordinator roadmap move` (the dependency-graph plan's GV3.2, rule 14,
+	// and the third row that is not a read at all).
+	if len(allowed) != 27 {
+		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 27 (logs has two argvs)", path, argvs, len(allowed))
 	}
 	// The other direction: the list carries §5.1's commands and nothing else,
 	// except the read the design names for the console and §5.1 has not grown
@@ -1833,7 +1843,10 @@ func consoleSpelledNumber(t *testing.T, spelled string) int {
 //     `graph.watch`, the surface's one long-lived child -- to the thirty-seven
 //     it carried from 2026-11-09, and the subscriptions plan's S4.2 -- the
 //     Project tab's seat estimate, `seats.read`, the surface's one read whose
-//     child walks the runs bucket -- to the thirty-eight rule 5 carries
+//     child walks the runs bucket -- to the thirty-eight rule 5 carried from
+//     2026-11-11, and the dependency-graph plan's GV3.2 -- the record's move,
+//     `roadmap.move`, the surface's third write and the first operation whose
+//     arguments a renderer supplies -- to the thirty-nine rule 5 carries
 //     today.
 //   - **every row of spawn.ts's `SPAWN_COMMANDS` is admitted by rule 6's table**:
 //     the row's own words lead some row of the design's table **and what that row
@@ -1939,16 +1952,19 @@ func TestDocsDesktopConsoleDesignSurfaceIsTheConsoleSource(t *testing.T) {
 // consoleLaunchPaths is §5.1's allow-list written as an exemption rather
 // than as a hole: the writers the console spawns are deliberately absent from
 // consoleReadPaths -- a write is not a read and must not be -- and this map is
-// where each one is named instead. There are two: `fugaro run` is the launch
-// (rule 11, D22), and `fugaro settings set`/`fugaro settings unset` are the
+// where each one is named instead. There are three: `fugaro run` is the launch
+// (rule 11, D22), `fugaro settings set`/`fugaro settings unset` are the
 // settings write (the settings-edit plan's C3, D1103, rule 12), whose row on
 // §5.1's table is the `set` form and whose two words share this one entry's
-// reason. The exemption is the security claim, so it sits beside the reason:
-// a table that grew a third writer comes back here and says so.
+// reason, and `fugaro coordinator roadmap move` is the record's move (the
+// dependency-graph plan's GV3.2, rule 14), whose row the same task added on
+// 2026-11-12. The exemption is the security claim, so it sits beside the
+// reason: a table that grew another writer comes back here and says so.
 var consoleLaunchPaths = map[string]bool{
-	"fugaro run":            true,
-	"fugaro settings set":   true,
-	"fugaro settings unset": true,
+	"fugaro run":                      true,
+	"fugaro settings set":             true,
+	"fugaro settings unset":           true,
+	"fugaro coordinator roadmap move": true,
 }
 
 // planPhaseRow returns the "What ships" cell of the project-centric plan's

@@ -154,7 +154,8 @@ function aPort(source: CliSource): MovePort {
   return {
     move: async (args): Promise<MoveRead> => {
       try {
-        return { ok: true, answer: await source.roadmapMove(args) }
+        const { node, toRelease, confirmed } = args
+        return { ok: true, answer: await source.roadmapMove({ node, toRelease, confirmed }) }
       } catch (error) {
         return { ok: false, sentence: error instanceof Error ? error.message : String(error) }
       }
@@ -391,7 +392,7 @@ describe('undo is the inverse move', () => {
     const moved = await flow.preview({ node: NODE, toRelease: OTHER })
     expect(moved.answer?.outcome, 'the record did not apply the move').toBeNull()
     const applied = await flow.confirm()
-    expect(applied.answer?.outcome?.status).toBe('applied')
+    expect(applied?.answer?.outcome?.status).toBe('applied')
     // **What the confirmation drew is what the child got**, held against the
     // child's own account of its argv rather than against this file's two
     // spellings of one command.
