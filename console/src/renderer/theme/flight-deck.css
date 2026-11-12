@@ -2853,13 +2853,32 @@ button.graph-fit:hover {
   color: var(--text);
 }
 
-/* The canvas takes the panel's width and the picture's ratio decides its height,
- * which is what `viewBox` is for: the element has no width or height attribute
- * of its own. The ground is the page's own `--bg` rather than a surface, so the
- * cards and the bands are the only raised things in the picture. */
+/* The pane is the canvas's own scroll area, and it is the floor under the
+ * picture's scale (D735). The canvas carries its minimum size as geometry --
+ * `minimumCanvas`, the whole picture at `GRAPH_MIN_SCALE`, which is 195 px of a
+ * 260 px card -- so the pane has something to overflow exactly when the panel is
+ * narrower than that. Above it there is nothing to scroll: `width: auto` with
+ * `min-width: 100%` then draws the canvas at the panel's own width, which is
+ * what the element did before the pane existed.
+ *
+ * **It wraps the canvas and nothing else**, so a screen with no picture -- the
+ * list, or the coordinator scope -- grows no scroll area it never uses. */
+div.graph-canvas-pane {
+  overflow-x: auto;
+}
+
+/* The canvas takes the panel's width while the panel is at least as wide as the
+ * picture's own floor, and the picture's ratio decides its height, which is what
+ * `viewBox` is for. Under the floor the element keeps the `width`/`height`
+ * geometry `graph.ts` wrote on it (`minimumCanvas`) and overflows the pane
+ * instead of shrinking: a card drawn narrower than 195 px is a title nobody can
+ * read, and a picture read sideways is still a picture. The ground is the page's
+ * own `--bg` rather than a surface, so the cards and the bands are the only
+ * raised things in the picture. */
 section.graph svg.graph-canvas {
   display: block;
-  width: 100%;
+  width: auto;
+  min-width: 100%;
   height: auto;
   background-color: var(--bg);
   background-image: radial-gradient(var(--line) 1px, transparent 1px);

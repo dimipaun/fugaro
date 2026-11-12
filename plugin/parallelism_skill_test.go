@@ -249,6 +249,13 @@ func graphCarriesEdge(doc plan.Document, task, needs string) bool {
 // the measure is finished, reviewed runs, and the only true order between them
 // is a real dependency. A skill that drifts to tokens spent, or that drops one
 // of the techniques, would leave `/jobmax` launching a graph nobody kept wide.
+//
+// The stub technique is pinned by its clause as well as its name: the skill
+// bolds the name, so the two are one phrase to a reader and two strings here,
+// and a skill that keeps "stubs and fakes" while dropping "so neither side
+// waits" has kept a word for stubbing and lost the reason the edge goes away —
+// a stub written to be waited on leaves the dependent waiting on the side the
+// contract was meant to free.
 func TestParallelismSkillDefinesJobMax(t *testing.T) {
 	skill, err := os.ReadFile(parallelismSkillPath)
 	if err != nil {
@@ -262,6 +269,7 @@ func TestParallelismSkillDefinesJobMax(t *testing.T) {
 	for _, technique := range []string{
 		"contracts first",
 		"stubs and fakes",
+		"so neither side waits",
 		"wide and shallow",
 	} {
 		if !strings.Contains(text, technique) {

@@ -233,6 +233,26 @@ func backOffDecision(status string) (decision, reason string, ok bool) {
 // nothing else about it moved (F4).
 const ReasonCatalogDefinition = "catalog-definition"
 
+// ReasonCatalogContext is the catalog trigger for a moved build context: the
+// digest the copy staged beside the Dockerfile is not the one the entry's last
+// build recorded. It is a reason of its own rather than part of
+// ReasonCatalogDefinition's, which means the copied definition's bytes changed:
+// the context is a second input, and a night when both moved records both, so
+// an operator reading the decisions can tell a Dockerfile edit from a
+// repository edit (D1402). The whole context tree is the trigger — a change
+// anywhere under it moves the digest — and there is no narrower path list
+// (F18, D1401).
+const ReasonCatalogContext = "catalog-context"
+
+// ReasonCatalogTemplate is the catalog trigger for a changed build template:
+// the template the entry's last build ran is not the one a rebuild would run
+// now. It is the catalog's own half of the workflow check's image-config
+// trigger, whose salt covers the embedded build template and the fugaro
+// version: without it a release that adds a build step changes how every
+// catalog image is built and rebuilds no entry at all, because the copied
+// definition and the context it builds are the same bytes (F33, D1402).
+const ReasonCatalogTemplate = "catalog-template"
+
 // CatalogRecordState is one catalog entry's build record, as
 // internal/backend/gcp's record step writes it to
 // CatalogRecordKey(slug, entry) and this check reads it: which copy the
@@ -250,18 +270,25 @@ type CatalogRecordState struct {
 	// They are new fields rather than a reuse of source_commit (D1400): a
 	// reader that knows that field already would read a context's commit as
 	// the commit the definition came from.
-	SourceCommit         string    `json:"source_commit"`
-	ContextCommit        string    `json:"context_commit"`
-	ContextSHA256        string    `json:"context_sha256"`
-	DefinitionGeneration int64     `json:"definition_generation"`
-	DefinitionSHA256     string    `json:"definition_sha256"`
-	BaseRef              string    `json:"base_ref"`
-	BaseDigest           string    `json:"base_digest"`
-	Image                string    `json:"image"`
-	ContentTag           string    `json:"content_tag"`
-	ImageDigest          string    `json:"image_digest"`
-	BuildID              string    `json:"build_id"`
-	BuiltAt              time.Time `json:"built_at"`
+	SourceCommit         string `json:"source_commit"`
+	ContextCommit        string `json:"context_commit"`
+	ContextSHA256        string `json:"context_sha256"`
+	DefinitionGeneration int64  `json:"definition_generation"`
+	DefinitionSHA256     string `json:"definition_sha256"`
+	// TemplateSalt is gcp.TemplateSalt of the binary that submitted the build
+	// — the digest of the embedded build template and the fugaro version, which
+	// is how the engine builds a catalog image rather than what the entry
+	// holds. The check compares it with its own, so a release that changes the
+	// build reaches the entries built by the release behind (F33, D1402). It is
+	// "" on a record whose build stated none.
+	TemplateSalt string    `json:"template_salt"`
+	BaseRef      string    `json:"base_ref"`
+	BaseDigest   string    `json:"base_digest"`
+	Image        string    `json:"image"`
+	ContentTag   string    `json:"content_tag"`
+	ImageDigest  string    `json:"image_digest"`
+	BuildID      string    `json:"build_id"`
+	BuiltAt      time.Time `json:"built_at"`
 }
 
 // CatalogRecordVersion is the CatalogRecordState schema version the catalog
@@ -298,6 +325,19 @@ type CatalogInputs struct {
 	// DefinitionSHA256 is the sha256 of the definition in the runs bucket
 	// now: config.CatalogDockerfileKey's object, as the caller read it.
 	DefinitionSHA256 string
+	// ContextSHA256 is the digest of the build context the entry names, as the
+	// copy staged it (config.CatalogContextHashKey): the caller reads it from
+	// the bucket, never from the repository, so the check sees that a context
+	// moved without holding a git credential (D1401). It is "" for an entry
+	// that names no context, and a record that predates the entry's context
+	// carries "" too, which is not the same as an unchanged one: the entry is
+	// rebuilt once and records it.
+	ContextSHA256 string
+	// TemplateSalt is gcp.TemplateSalt of the build a rebuild would run — the
+	// caller's own binary. "" leaves the template out of the trigger, which is
+	// what a caller that knows no template states, the way the workflow
+	// check's TemplateSalt does.
+	TemplateSalt string
 	// BaseRef is the base the entry would be built FROM and BaseDigest its
 	// current digest ("" when it couldn't be read).
 	BaseRef, BaseDigest string
@@ -321,9 +361,19 @@ type CatalogInputs struct {
 // does.
 type CatalogInputsFingerprint struct {
 	DefinitionSHA256 string `json:"definition_sha256"`
-	BaseRef          string `json:"base_ref"`
-	BaseDigest       string `json:"base_digest"`
-	Lockfiles        bool   `json:"lockfiles,omitempty"`
+	// ContextSHA256 is the context's own identity, so the back-off tells one
+	// build's inputs from another's: a failed build of one context is not the
+	// failure of a build of another, and a context that moved and moved back
+	// is the inputs the last build already ran with.
+	ContextSHA256 string `json:"context_sha256,omitempty"`
+	// TemplateSalt is the template the build would run, for the same reason:
+	// a failed build of the old template is not the failure of a build of the
+	// new one, and a template that moved and moved back is the inputs the last
+	// build already ran with.
+	TemplateSalt string `json:"template_salt,omitempty"`
+	BaseRef      string `json:"base_ref"`
+	BaseDigest   string `json:"base_digest"`
+	Lockfiles    bool   `json:"lockfiles,omitempty"`
 }
 
 // Equal reports whether f and o are the same inputs.
@@ -343,11 +393,11 @@ type CatalogDecision struct {
 
 // DecideCatalog evaluates one catalog entry's triggers, in the order the
 // workflow check evaluates them: force, the definition the last build read,
-// the base, the baked repository's dependency files, then the image's age.
-// Every trigger that fires is recorded, and the reasons keep that order, so a
-// night when both the definition and the base moved records
-// catalog-definition before base. It makes no calls: the caller reads
-// everything first.
+// the build context it read, the template the build would run, the base, the
+// baked repository's dependency files, then the image's age. Every trigger
+// that fires is recorded, and the reasons keep that order, so a night when
+// both the definition and the base moved records catalog-definition before
+// base. It makes no calls: the caller reads everything first.
 //
 // An entry is backed off exactly as a workflow is (backOffDecision): when a
 // trigger fires and the last build of these very inputs is known, a build
@@ -359,8 +409,9 @@ type CatalogDecision struct {
 func DecideCatalog(in CatalogInputs) CatalogDecision {
 	d := CatalogDecision{Entry: in.Entry, Decision: Skip}
 	d.Inputs = CatalogInputsFingerprint{
-		DefinitionSHA256: in.DefinitionSHA256, BaseRef: in.BaseRef,
-		BaseDigest: in.BaseDigest, Lockfiles: in.Lockfiles,
+		DefinitionSHA256: in.DefinitionSHA256, ContextSHA256: in.ContextSHA256,
+		TemplateSalt: in.TemplateSalt,
+		BaseRef:      in.BaseRef, BaseDigest: in.BaseDigest, Lockfiles: in.Lockfiles,
 	}
 	var fired, notes []string
 	if in.Force {
@@ -375,6 +426,15 @@ func DecideCatalog(in CatalogInputs) CatalogDecision {
 	} else {
 		if in.DefinitionSHA256 != rec.DefinitionSHA256 {
 			fired = append(fired, ReasonCatalogDefinition)
+		}
+		if in.ContextSHA256 != rec.ContextSHA256 {
+			fired = append(fired, ReasonCatalogContext)
+		}
+		// The salt is left out when the caller states none, so a caller that
+		// knows no template never fires this trigger on a record it cannot
+		// compare with (the workflow check's own rule).
+		if in.TemplateSalt != "" && in.TemplateSalt != rec.TemplateSalt {
+			fired = append(fired, ReasonCatalogTemplate)
 		}
 		switch {
 		case in.BaseRef != rec.BaseRef:

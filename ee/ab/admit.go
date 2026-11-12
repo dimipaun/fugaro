@@ -156,32 +156,8 @@ func Admit(cfg config.Config, layer config.AB, repo string, eff policy.Effective
 			refuse(ReasonChampionModel)
 			continue
 		}
-		if !eff.Allows(c) {
-			refuse(ReasonNotAllowed)
-			continue
-		}
-		agent := challengerAgent(cfg.Agent, c)
-		if ps := config.CheckProviderPolicy(agent, nil, repo, providers, prices); len(ps) > 0 {
-			refuse(providerReason(c, repo, providers, prices))
-			continue
-		}
-		// The provider policy answers for the models it is about: a name with
-		// no route and no "/" is not its business, and that is where Claude
-		// Code's own aliases live ("opus", "sonnet", "haiku"). A run under a
-		// budget refuses such a coder pin (config.CheckPins, "is an alias:
-		// with a budget, name a model ID"), and a sampled run always has a
-		// budget (D573), so an alias challenger is refused here rather than
-		// halted there.
-		if pricing.IsAlias(c) {
-			refuse(ReasonVariant)
-			continue
-		}
-		if ps := config.CheckProviderAuth(agent, providers); len(ps) > 0 {
-			refuse(ReasonNeedsAPIKey)
-			continue
-		}
-		if ps := config.CheckProviderGateway(agent, "", providers, policyMode(eff)); len(ps) > 0 {
-			refuse(ReasonNeedsEnforce)
+		if why := refuseModel(cfg, c, repo, eff, providers, prices); why != "" {
+			refuse(why)
 			continue
 		}
 		return c, true, ""
@@ -189,12 +165,49 @@ func Admit(cfg config.Config, layer config.AB, repo string, eff policy.Effective
 	return "", false, why
 }
 
-// challengerAgent is the champion's agent with the challenger in the coder
-// slot, which is the run D555 describes: the runner applies ab.challenger to
-// the coder role only, so the reviewer, the background model and the auth are
-// the champion's, and the checks above judge the challenger as the run that
-// will make the calls.
-func challengerAgent(a config.Agent, model string) config.Agent {
+// refuseModel is why this repository may not send its code to model as a coder
+// in this run, in the closed vocabulary above, or "" when it may: the run's
+// allow-list, the provider policy, the pin rule and the credential and gateway
+// a provider's call needs. It is the per-model half of Admit, and it is the
+// same half the judge model passes (A5.2's JudgeAdmit, O2): a judge is one more
+// place a pair's code goes, so it answers to the same rule a challenger does,
+// and the two callers share it rather than each keeping a copy that could drift.
+//
+// The champion's own model is not asked about here: that the challenger is the
+// champion's model (ReasonChampionModel) is a fact about the pair, and D555's
+// rule, while the judge has no arm to be the same as.
+func refuseModel(cfg config.Config, model, repo string, eff policy.Effective, providers map[string]config.ModelProvider, prices *pricing.Table) string {
+	if !eff.Allows(model) {
+		return ReasonNotAllowed
+	}
+	agent := coderAgent(cfg.Agent, model)
+	if ps := config.CheckProviderPolicy(agent, nil, repo, providers, prices); len(ps) > 0 {
+		return providerReason(model, repo, providers, prices)
+	}
+	// The provider policy answers for the models it is about: a name with no
+	// route and no "/" is not its business, and that is where Claude Code's own
+	// aliases live ("opus", "sonnet", "haiku"). A run under a budget refuses
+	// such a coder pin (config.CheckPins, "is an alias: with a budget, name a
+	// model ID"), and a sampled run always has a budget (D573), so an alias is
+	// refused here rather than halted there.
+	if pricing.IsAlias(model) {
+		return ReasonVariant
+	}
+	if ps := config.CheckProviderAuth(agent, providers); len(ps) > 0 {
+		return ReasonNeedsAPIKey
+	}
+	if ps := config.CheckProviderGateway(agent, "", providers, policyMode(eff)); len(ps) > 0 {
+		return ReasonNeedsEnforce
+	}
+	return ""
+}
+
+// coderAgent is the champion's agent with model in the coder slot, which is the
+// run D555 describes: the runner applies ab.challenger to the coder role only,
+// so the reviewer, the background model and the auth are the champion's, and the
+// checks above judge the model as the run that will make the calls. A judge
+// model is judged the same way, from the run it is launched for.
+func coderAgent(a config.Agent, model string) config.Agent {
 	return config.Agent{Auth: a.Auth, Models: config.ModelRoles{Coder: model}}
 }
 

@@ -126,8 +126,8 @@
     },
     "requested_by": { "type": "string" },
     "mode": {
-      "enum": ["implement", "review", "artifact"],
-      "description": "The resolved recipe's mode, written by the launching CLI (\"artifact\" today; an implement or review recipe writes nothing, so those specs are unchanged). The runner selects the run's shape from it at bootstrap, before the recipe is resolved, and cross-checks it against the resolved recipe afterwards. Needs a 0.8.0 runner, which is why an artifact launch at a job image older than that is refused at launch."
+      "enum": ["implement", "review", "artifact", "evaluate"],
+      "description": "The resolved recipe's mode, written by the launching CLI (\"artifact\" and \"evaluate\" today; an implement or review recipe writes nothing, so those specs are unchanged). The runner selects the run's shape from it at bootstrap, before the recipe is resolved, and cross-checks it against the resolved recipe afterwards. Needs a 0.8.0 runner, which is why an artifact launch at a job image older than that is refused at launch; \"evaluate\" is the judge run's mode (docs/model-ab-testing A5.2) and needs the runner that carries it."
     },
     "rigor": {
       "enum": ["poc", "startup", "pro", "critical", "hotfix"],

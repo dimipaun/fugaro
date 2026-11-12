@@ -49,16 +49,14 @@ func atVersion(doc string, v int) json.RawMessage {
 // into the call's refusal (server.go's servePolicy).
 func TestRTDBPolicyServesAShapeFreePredecessor(t *testing.T) {
 	twin := decodeTestPolicy(t, testPolicyDoc())
+	if !projectpolicy.ReadsVersion(projectpolicy.Version - 1) {
+		t.Fatal("the version below this one is no longer a shape-free step behind: the row below needs the newest version that still is")
+	}
 	for _, tc := range []struct {
 		name    string
 		version int
 		refused bool
 	}{
-		// The versions are read off the chain and not spelled out: the row
-		// below this one has to be a SHAPE-FREE step (migrate.go's
-		// shapeFreeSteps), and a literal that the bump of Version left behind
-		// names a node the reader refuses and carries instead — served at this
-		// release's number, which is what the assertion here used to fail on.
 		{"this release's node", projectpolicy.Version, false},
 		{"the node one shape-free step behind", projectpolicy.Version - 1, false},
 		{"a node the chain cannot read across", 3, true},

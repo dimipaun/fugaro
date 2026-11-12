@@ -693,14 +693,18 @@ func (r *run) beginGatewayStage(name string) {
 
 // stageSpec is the set the gateway admits while a stage runs: the model the
 // stage's own pins name (stageModel — a review level's own model is its
-// stage's, L4.5), the background model, and the stage's output limit per call.
-// A set that named the role slot where the pins name a level's own model would
-// refuse every call of the stage as not pinned for it.
+// stage's, L4.5), the background model, the run's vision slot and the stage's
+// output limit per call. A set that named the role slot where the pins name a
+// level's own model would refuse every call of the stage as not pinned for it.
+// The vision slot is carried and not pinned: an image the stage's own model
+// cannot reserve is refused either way, and what the slot changes is the
+// sentence the owner reads (the gateway's image refusal, V4, D2009).
 func (r *run) stageSpec(name string) gateway.Stage {
 	return gateway.Stage{
 		Name:            name,
 		Model:           r.stageModel(name),
 		Background:      r.backgroundModel(),
+		Vision:          r.cfg.Agent.VisionModel(),
 		MaxOutputTokens: r.cfg.Agent.MaxOutputFor(stageRole(name)),
 	}
 }

@@ -487,12 +487,12 @@ resource "google_cloud_run_v2_service" "credentials" {
       # The review class's admitted set (C3.9a): the installation's
       # review-only job variants, as the same kind of document — the
       # {profile, provider, account} triple each variant's job and service
-      # account are derived from, plus the Claude account the variant's calls
-      # are served by. It is the same rule as the table above and the same
+      # account are derived from, plus the value of the account axis the
+      # variant's calls are served by. It is the same rule as the table above and the same
       # reason: the emails are that derivation's output, so a list of them
       # here would be a second spelling that can drift from the accounts the
-      # deployer creates. The one thing the triple cannot carry is the Claude
-      # account the pairing serves a review call by, and the service cannot
+      # deployer creates. The one thing the triple cannot carry is the value
+      # of the account axis the pairing serves a review call by, and the service cannot
       # read the published policy for it (D143: a revision's start-up depends
       # on no installation state), so it travels here.
       #

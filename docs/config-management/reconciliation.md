@@ -19,7 +19,7 @@ project config** — a sentence it prints and exits on — so the figures below
 are counted from the registry in this tree through the same predicate the write path uses, which is
 what the guard at the end of this section re-runs.
 
-- **F1 — the registry is 423 rows and the generic writer carries 181 of them.** 101 by name
+- **F1 — the registry is 424 rows and the generic writer carries 181 of them.** 101 by name
   (`internal/cli/settings_set.go:105`), made of the thirteen §4.4 names (the four budget scalars,
   `base_branch`, `max_parallel`, `update_check`, `commit_name`, `commit_email`, `layer.default_profile`,
   and D873's three account keys — `default_claude_account`, `claude_account_auto` and the wildcard
@@ -39,7 +39,7 @@ what the guard at the end of this section re-runs.
   and 80 through the nine prefixes
   (`internal/cli/settings_set.go:266`: `agent.`, `git.`, `followup.`, `governance.`, `watch.`,
   `layer.defaults.`, `layer.governance.`, `credentials.`, `clone_urls.`): 13 + 7 + 2 + 1 + 37 + 36 + 1 + 4 = 101.
-  **242 rows have no generic writer**, and the audit's whole subject is which of them are a defect and
+  **243 rows have no generic writer**, and the audit's whole subject is which of them are a defect and
   which are the installation's own plumbing (F13, D1182). The count moved from 390 by the image setup
   skill's two rows: the map (D1906) is the `image map` family's and one row, so it is not carried here,
   and the bake switch above is — and it moved again by the stop rule's two rows,
@@ -59,7 +59,16 @@ what the guard at the end of this section re-runs.
   carried by the `accounts` family before it. The image rate (docs/vision-model, V2)
   added one on top of them — `model_prices.*.image_tokens`, the member that prices a provider's
   images — and it is the first row of that block no prefix and no name in this list reaches, so the
-  registry is one row wider still and the rows without a generic writer are one more for it. A key
+  registry is one row wider still and the rows without a generic writer are one more for it. The
+  account aliases (docs/account-aliases, AL0) moved both once more, and by one row the list does not
+  reach: `claude_account_aliases` is the block the choice keys above may name in place of an account,
+  local-only for `claude_account_auto`'s reason (D2090). Its row is one of the two nudge thresholds'
+  shape rather than a family's: D2096 gives the write that repoints one to `fugaro accounts alias
+  set/rm`, which converges the node and the job set with it, and no such command exists while the
+  block is landed — so the row's owner is `config local`, the token for a key stated in the machine's
+  own config that no command edits key by key, and it moves to the `accounts` family with the command
+  (D2096 leaves no second door: the generic path refuses the key, so the edit is the file's until
+  then) — the registry is one row wider and the rows without a generic writer are one more again. A key
   the registry carries and this list does not is
   refused by `settings set` whatever it is, and a row claiming a family is pointed at that command
   before this list is asked, so the figures are the allowlist's own and move only when it moves. It moved by three more rows to

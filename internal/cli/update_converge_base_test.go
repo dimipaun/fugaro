@@ -29,12 +29,8 @@ func TestUpdateConvergesSlimBase(t *testing.T) {
 	// policy checks out of the run (doctorPolicyChecks returns the skew line
 	// alone), so policy-vs-jobs — the check this fixture exists to fire — would
 	// never be appended and the guard below would fail for a reason that has
-	// nothing to do with the base. It is also why no skew check is named below:
-	// with the node at this binary's version there is no policy-older-than-binary
-	// to fire before the run, and the two checks that are stale are the rules
-	// generation and the plugin pin, which every installation between
-	// `brew upgrade` and `fugaro update` carries.
-	r := newConvergeRig(t, v7Node())
+	// nothing to do with the base.
+	r := newConvergeRig(t, staleNode(t))
 	// The fixture is the previous release's base, or the assertions after the
 	// run prove nothing: an installation already on this release's pin would
 	// converge without the images stage touching it.

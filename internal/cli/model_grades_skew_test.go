@@ -211,7 +211,7 @@ func TestRunRefusesModelGradesOnAnOlderBaseImage(t *testing.T) {
 				"knows the model_grades: block",
 				"fugaro " + modelGradesSince + " or later",
 				"ghcr.io/dimipaun/fugaro-base:" + c.rel + ", release " + c.rel,
-				"fugaro image refresh --repo acme/other --workflow svc",
+				imageGateRemedy,
 				"; or remove the model_grades: block from fugaro.yaml",
 			} {
 				if !strings.Contains(err.Error(), want) {
@@ -261,7 +261,7 @@ func TestRunRefusesTheLayersModelGradesOnAnOlderBaseImage(t *testing.T) {
 	for _, want := range []string{
 		"the project layer's defaults.model_grades (read for acme/other)",
 		"knows the project layer's defaults.model_grades",
-		"fugaro image refresh --repo acme/other --workflow " + config.ImplicitWorkflow,
+		imageGateRemedy,
 		"remove defaults.model_grades from the project layer",
 	} {
 		if !strings.Contains(err.Error(), want) {

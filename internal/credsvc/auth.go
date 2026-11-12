@@ -585,9 +585,9 @@ func NewAuthenticator(cfg AuthConfig) (*Authenticator, error) {
 		shared[folded] = true
 	}
 	// The review set is read the same way, and it is held to one rule more:
-	// the account name a review call is served by is never empty, because an
-	// empty one is a credential no bundle holds and a pairing that could only
-	// refuse.
+	// the value of the account axis a review call is served by is never empty,
+	// because an empty one is a credential no bundle holds and a pairing that
+	// could only refuse.
 	review := make(map[string]ReviewJobAccount, len(cfg.ReviewJobAccounts))
 	for _, ra := range cfg.ReviewJobAccounts {
 		folded, ok := foldEmail(ra.Email)
@@ -595,11 +595,11 @@ func NewAuthenticator(cfg AuthConfig) (*Authenticator, error) {
 			return nil, errors.New("credsvc: a review job service account is not a printable ASCII email address")
 		}
 		if ra.Account == "" {
-			return nil, errors.New("credsvc: a review job account names no Claude account, so no call of it could be served")
+			return nil, errors.New("credsvc: a review job account names no value on the account axis, so no call of it could be served")
 		}
 		if prev, dup := review[folded]; dup {
 			if prev.Account != ra.Account {
-				return nil, errors.New("credsvc: the same review job service account is bound to two Claude accounts")
+				return nil, errors.New("credsvc: the same review job service account is bound to two values of the account axis")
 			}
 			continue
 		}

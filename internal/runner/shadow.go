@@ -396,6 +396,7 @@ func (r *run) shadowFinalize(ctx context.Context) error {
 	dec := Decide(records, sha, decidedRound, pol, r.rec.OwnerDecisions)
 	r.rec.Tolerated = r.toleratedRecord(pol, decidedRound)
 	r.rec.Accepted = r.acceptedRecord(pol, decidedRound)
+	r.recordCapDeferrals()
 	// The answer is replaced whole here for the champion's reason (finalize,
 	// runner.go): the one reason this fires on is Decide's own, and the kind it
 	// came with is the one the replacement keeps (Decision, D995).

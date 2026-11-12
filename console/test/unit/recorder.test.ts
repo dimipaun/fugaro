@@ -333,7 +333,7 @@ describe("the recorder's arguments", () => {
           { exists: () => true, consoleRoot: '/a/b/console' },
         ),
       ),
-    ).toMatch(/\/a\/b\/console\/test\/fixtures\/x\.ndjson exists/)
+    ).toContain(`${resolve('/a/b/console', 'test/fixtures/x.ndjson')} exists`)
   })
 
   it('accepts an invocation, resolving the paths it was given', () => {
@@ -365,7 +365,7 @@ describe("the recorder's arguments", () => {
     })
     // `--dir` is resolved against the current directory too, so a relative
     // checkout is a plan the spawner can use.
-    expect(full('--dir', '../sandbox').directory).toBe('/home/operator/src/fugaro/sandbox')
+    expect(full('--dir', '../sandbox').directory).toBe(resolve('/home/operator/src/fugaro/sandbox'))
     // `--name=value` is the same flag, and the defaults are the documented ones.
     const inline = opts(`--out=${OUT}`, '--project=sandbox', '--gcp-project=fixture-gcp-1', '--duration=30')
     expect(inline.project).toBe('sandbox')
@@ -864,7 +864,7 @@ describe('the whole tool', () => {
     expect(code).toBe(0)
     expect(lines.join('\n')).toContain('recording normal for 30s')
     expect(lines.join('\n')).toContain('argv: <binary> watch --json --project (')
-    expect(lines.join('\n')).toContain(`wrote ${CWD}/${OUT}: 1 records`)
+    expect(lines.join('\n')).toContain(`wrote ${resolve(CWD, OUT)}: 1 records`)
     const [entry] = written
     expect(entry?.path).toBe(resolve(CWD, OUT))
     // Nothing is printed about the documents themselves: the owner's scrollback
