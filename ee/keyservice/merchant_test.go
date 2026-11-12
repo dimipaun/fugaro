@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strings"
 	"testing"
@@ -330,6 +331,72 @@ func TestAnEventThatDoesNotSayWhatToMintIsRefused(t *testing.T) {
 	}
 	if got := len(f.mail.sent); got != mailed {
 		t.Errorf("a seat change naming no seats mailed %d message(s) in all, want the purchase's one", got)
+	}
+}
+
+// TestASeatChangeThatNamesNoWorkspaceIsRefused: TN2 and §5.1 — the workspace
+// binding is a claim every v1 key carries, and the seat change's own event is
+// where its binding comes from, so an event that names none is one this service
+// cannot serve. It is refused and not dropped: a customer who has paid for a
+// seat change receives nothing if it is dropped quietly, and the 500 is what
+// puts it in front of the merchant's retry and the deploy's alerting. Nothing is
+// minted, so no key is mailed that every verifier would refuse, and the seats
+// the customer holds are the ones they keep.
+//
+// The reason is asserted, and not only the refusals, because the refusals alone
+// do not hold this guard: the minter refuses an empty workspace id itself, so a
+// seat change that got past this line would answer the same 500 with nothing
+// signed, nothing mailed and nothing recorded, and only the sentence the service
+// logged would differ. That sentence is this guard's — it names the seat change
+// and what it could not serve — and it is the whole of what a deploy has to go
+// on when a mapping stops carrying the binding (S3.7).
+func TestASeatChangeThatNamesNoWorkspaceIsRefused(t *testing.T) {
+	f := newFixture(t)
+	f.purchase("evt-1", "acme.example", 5, 365)
+	signed, mailed, held := f.signer.calls, len(f.mail.sent), len(f.records())
+
+	var logged strings.Builder
+	previous := log.Writer()
+	log.SetOutput(&logged)
+	defer log.SetOutput(previous)
+
+	f.advance(day)
+	rec := f.deliver(Event{
+		ID:           "evt-2",
+		Type:         EventSeatChange,
+		Mode:         ModeFor(f.env),
+		OccurredAt:   f.now,
+		Subscription: "sub-acme.example",
+		Organisation: "acme.example",
+		Email:        buyerAddress("acme.example"),
+		Seats:        9,
+		TermDays:     365,
+	})
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("a seat change naming no workspace was answered %d, want 500: the merchant's retry and the owner's alerting are what see an event this service cannot serve", rec.Code)
+	}
+	if got := f.signer.calls; got != signed {
+		t.Errorf("a seat change naming no workspace signed %d key(s) in all, want the purchase's one: a key minted without the binding TN2 requires is one every verifier refuses", got)
+	}
+	if got := len(f.mail.sent); got != mailed {
+		t.Errorf("a seat change naming no workspace mailed %d message(s) in all, want the purchase's one", got)
+	}
+	if got := len(f.records()); got != held {
+		t.Errorf("a seat change naming no workspace recorded %d key(s) in all, want the purchase's one", got)
+	}
+	sub, stored, err := f.store.Subscription(context.Background(), "sub-acme.example")
+	if err != nil || !stored {
+		t.Fatalf("reading the subscription: held=%v, err=%v", stored, err)
+	}
+	if sub.Seats != 5 {
+		t.Errorf("a seat change naming no workspace left the subscription holding %d seat(s), want the 5 the customer bought", sub.Seats)
+	}
+
+	line := logged.String()
+	for _, want := range []string{ErrNoClaims.Error(), "the seat change evt-2"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("the refusal was logged as %q, want it to name %q: the guard is the only place the seat change's own reason is written, and the minter's own refusal would read as something else", line, want)
+		}
 	}
 }
 
