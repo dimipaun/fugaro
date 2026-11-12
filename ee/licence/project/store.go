@@ -21,10 +21,15 @@
 // (D524).
 //
 // **A viewer reads the state and never the key.** View carries what a status
-// shows -- tier, seats, expiry, the state the clock puts the key in, and the
-// last revocation check -- and no part of a key: not its text, not the note the
-// key carries for admins, and not the renewal secret's hash. A key text is
-// reachable only through Keys, the store's own read.
+// shows -- tier, seats, expiry, the state the clock and the last check put the
+// key in, and that check's record -- and no part of a key: not its text, not
+// the note the key carries for admins, and not the renewal secret's hash. A key
+// text is reachable only through Keys, the store's own read.
+//
+// The object is the project's only copy of a key, so it is never written
+// blind: every write is a compare-and-set against the object the writer read
+// (mutate), which is what keeps a person's `licence set` and the renewal job's
+// install from dropping each other's key.
 //
 // What this store accepts, because it is the runs bucket (the plan's "Limits
 // this plan accepts"): every identity that reads the bucket can copy the key,
@@ -54,6 +59,10 @@ const (
 	// object, and the renewal job's account needs a grant on one name.
 	Object = "fugaro/licence.json"
 
+	// contentType is what every write of the object declares, so a reader that
+	// serves it is serving JSON whatever the bytes decode to.
+	contentType = "application/json"
+
 	// maxKeys is how many keys the project holds. Two, because a renewal's
 	// 30-day overlap arrives before the key it follows has run out, and both
 	// stay so that the key which applies is chosen by its expiry rather than by
@@ -70,6 +79,13 @@ const (
 	// record, and anyone who can write the runs bucket can replace it with
 	// something larger.
 	maxObjectBytes = 64 << 10
+
+	// maxWriteAttempts is how many times a write that lost its race re-reads
+	// and tries again. The writers here are a person and a daily job, so a
+	// second attempt almost always lands; a bucket that keeps taking the object
+	// away is refused rather than looped on, because the caller has to hear
+	// that its key is not recorded.
+	maxWriteAttempts = 3
 )
 
 // The three answers a revocation check records. They are written by the
@@ -79,7 +95,9 @@ const (
 const (
 	// CheckOK is a check the server answered, with the key still good.
 	CheckOK = "ok"
-	// CheckRevoked is a check the server answered with a revocation.
+	// CheckRevoked is a check the server answered with a revocation. The key it
+	// names is Free from then on (spec section 6 step 6), whatever the clock
+	// says about its term.
 	CheckRevoked = "revoked"
 	// CheckUnreachable is a check that never reached the server. The key stays
 	// valid: only an explicit answer revokes (D2140).
@@ -100,12 +118,20 @@ const (
 
 // ErrObject is the project's licence object being one this store cannot use: a
 // shape or a version it does not read, more keys than the renewal's overlap
-// installs, or a bucket that refused the read or the write.
+// installs, a bucket that refused the read or the write, or a write that kept
+// losing its race.
 var ErrObject = errors.New("licence: the project's licence object cannot be used")
 
-// Check is the last revocation check's record: when it ran, what it answered,
-// and how many checks in a row could not reach the server (D2140).
+// Check is the last revocation check's record: what was checked, when it ran,
+// what it answered, and how many checks in a row could not reach the server
+// (D2140).
 type Check struct {
+	// KeyID is the key_id the check was asked about. A revocation is about that
+	// key and no other, which is what lets a reissue -- a new key_id after a
+	// leak, the case the server reissues for -- take effect while the revoked
+	// key is still in the object beside it. The renewal job knows the key it
+	// asks about, and RecordCheck refuses an answer that does not name one.
+	KeyID string `json:"key_id,omitzero"`
 	// At is when the check ran.
 	At time.Time `json:"at"`
 	// Status is one of the three answers above.
@@ -136,6 +162,17 @@ func (r record) keys() [][]byte {
 	return keys
 }
 
+// snapshot is the object as one read found it: the record it decodes to, the
+// bytes it was written as, and the generation the bucket held it at. The three
+// are what a write has to match to be a write of this object, and a snapshot
+// with held false is a bucket that has none.
+type snapshot struct {
+	rec  record
+	raw  []byte
+	gen  int64
+	held bool
+}
+
 // Store is the project-level store over one installation's runs bucket.
 type Store struct{ bucket *blobx.Bucket }
 
@@ -159,11 +196,11 @@ func New(b *blobx.Bucket) *Store { return &Store{bucket: b} }
 // all where no key is installed: the no-key state is the store being empty
 // rather than an error (D2143).
 func (s *Store) Keys(ctx context.Context) ([][]byte, error) {
-	rec, err := s.read(ctx)
+	snap, err := s.read(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return rec.keys(), nil
+	return snap.rec.keys(), nil
 }
 
 // Install writes one key beside the keys the project already holds, keeping the
@@ -177,56 +214,61 @@ func (s *Store) Keys(ctx context.Context) ([][]byte, error) {
 //
 // An object this store cannot read refuses the install rather than being
 // replaced: the object is the project's only copy of a key, and overwriting
-// what cannot be read is how a key is lost.
+// what cannot be read is how a key is lost. So does a write that keeps losing
+// its race with the bucket's other writer.
 func (s *Store) Install(ctx context.Context, raw []byte) error {
 	key := strings.TrimSpace(string(raw))
 	if key == "" {
 		return fmt.Errorf("%w: the key to install is empty", ErrObject)
 	}
-	rec, err := s.read(ctx)
-	if err != nil {
-		return err
-	}
-	for _, held := range rec.Keys {
-		if held == key {
-			return nil
+	return s.mutate(ctx, func(rec record) (record, bool, error) {
+		for _, held := range rec.Keys {
+			if held == key {
+				return rec, false, nil
+			}
 		}
-	}
-	rec.Keys = append(rec.Keys, key)
-	if len(rec.Keys) > maxKeys {
-		rec.Keys = rec.Keys[len(rec.Keys)-maxKeys:]
-	}
-	return s.write(ctx, rec)
+		rec.Keys = append(rec.Keys, key)
+		if len(rec.Keys) > maxKeys {
+			rec.Keys = rec.Keys[len(rec.Keys)-maxKeys:]
+		}
+		return rec, true, nil
+	})
 }
 
-// RecordCheck writes what a revocation check answered. The unreachable counter
-// is the store's and not a caller's: an unreachable answer raises the streak
-// and any answer clears it, and LastOK moves only where the server answered --
-// which is what the 30-day warning counts from (D2140).
-func (s *Store) RecordCheck(ctx context.Context, at time.Time, status string) error {
+// RecordCheck writes what a revocation check answered about one key. The
+// unreachable counter is the store's and not a caller's: an unreachable answer
+// raises the streak and any answer clears it, and LastOK moves only where the
+// server answered -- which is what the 30-day warning counts from (D2140).
+//
+// keyID is the key the check was asked about, and it is required: a revocation
+// that named no key would revoke nothing (Active weighs it against the key that
+// applies), and a check that cannot say what it checked is a caller's bug
+// rather than a record.
+func (s *Store) RecordCheck(ctx context.Context, at time.Time, status, keyID string) error {
 	switch status {
 	case CheckOK, CheckRevoked, CheckUnreachable:
 	default:
 		return fmt.Errorf("%w: %q is not a revocation check's answer", ErrObject, status)
 	}
-	rec, err := s.read(ctx)
-	if err != nil {
-		return err
+	if keyID == "" {
+		return fmt.Errorf("%w: a check does not name the key it was checked against", ErrObject)
 	}
-	// Silence raises the streak and leaves LastOK where the server last
-	// answered; any answer ends the streak and moves LastOK to this check.
-	check := Check{At: at, Status: status, Failures: 1}
-	if status != CheckUnreachable {
-		check.Failures, check.LastOK = 0, at
-	} else if prev := rec.Check; prev != nil {
-		check.Failures, check.LastOK = prev.Failures+1, prev.LastOK
-	}
-	rec.Check = &check
-	return s.write(ctx, rec)
+	return s.mutate(ctx, func(rec record) (record, bool, error) {
+		// Silence raises the streak and leaves LastOK where the server last
+		// answered; any answer ends the streak and moves LastOK to this check.
+		check := Check{KeyID: keyID, At: at, Status: status, Failures: 1}
+		if status != CheckUnreachable {
+			check.Failures, check.LastOK = 0, at
+		} else if prev := rec.Check; prev != nil {
+			check.Failures, check.LastOK = prev.Failures+1, prev.LastOK
+		}
+		rec.Check = &check
+		return rec, true, nil
+	})
 }
 
-// Applied is the key that applies, the state the clock puts it in, and the
-// store it came from.
+// Applied is the key that applies, the state the clock and the last check put
+// it in, and the store it came from.
 //
 // Claims is the whole claim set, the note the key carries for admins and the
 // renewal secret's hash included: it is the installation's own key, read by
@@ -237,6 +279,10 @@ type Applied struct {
 	Claims licence.ClaimsV1
 	State  licence.State
 	Source Source
+	// Revoked is the applied key being the one the last check answered revoked
+	// for, which is why State is Free rather than what the clock makes of the
+	// term.
+	Revoked bool
 }
 
 // Active answers the key that applies now: the project's own where it holds
@@ -244,6 +290,10 @@ type Applied struct {
 // The per-machine keys are the ones the CLI's own store holds
 // (licence.Store.Keys), and a console that handed one to a child changes
 // nothing: the project's answers where there is one.
+//
+// The last check is applied to the key it named: a revoked key is Free
+// whatever its term says (spec section 6 step 6), and a revocation recorded for
+// another key -- the one a reissue replaced -- leaves the applied key alone.
 //
 // A project store whose every key is refused answers the first refusal rather
 // than falling back to the machine's -- the project is the installation's
@@ -256,11 +306,11 @@ type Applied struct {
 // what the key's required `workspace_id` is checked against, and a store that
 // took it from the key would be comparing the key with itself.
 func (s *Store) Active(ctx context.Context, now time.Time, ring licence.Keyring, firebaseProjectID string, machine [][]byte) (Applied, error) {
-	rec, err := s.read(ctx)
+	snap, err := s.read(ctx)
 	if err != nil {
 		return Applied{}, err
 	}
-	return apply(now, ring, firebaseProjectID, rec.keys(), machine)
+	return apply(now, ring, firebaseProjectID, snap.rec.keys(), machine, snap.rec.Check)
 }
 
 // View is a project's licence as a reader who is not an admin sees it: the
@@ -272,11 +322,17 @@ type View struct {
 	// Seats is what the key's organisation bought. It is compared and shown
 	// here and enforced only on the `ee` surfaces (D2132, held with K3.4).
 	Seats int
-	// PaidThrough is the end of the paid period; State is what the clock makes
-	// of it beside the key's own grace.
+	// PaidThrough is the end of the paid period. State is what the clock makes
+	// of it beside the key's own grace, and what the last check makes of the
+	// key: a revoked key is Free here as it is in Active.
 	PaidThrough time.Time
 	// State is active, grace or expired against the clock the reader passed.
 	State licence.State
+	// Revoked says the state above is the last check's answer rather than the
+	// term's: the key that applies was revoked. It is what a status says out
+	// loud, since Free from a revocation and Free from an expiry are the same
+	// behaviour and different news.
+	Revoked bool
 	// Kind is paid, trial or comped.
 	Kind string
 	// RenewalMode is the key's own claim (auto, manual or none; spec.md section
@@ -292,7 +348,9 @@ type View struct {
 	// Check is the last revocation check the project ran -- the installation's
 	// record and not one key's, so a key installed after a check carries that
 	// check's figures until the next check replaces them -- and HasCheck says
-	// whether there is one at all: a project that never checked has none.
+	// whether there is one at all: a project that never checked has none. What
+	// the record revokes is the key it names, so a carried record whose key_id
+	// is not the applied key's changes nothing here.
 	Check    Check
 	HasCheck bool
 }
@@ -303,11 +361,11 @@ type View struct {
 // carries for admins and the renewal secret's hash are all absent by
 // construction rather than by a caller's care.
 func (s *Store) View(ctx context.Context, now time.Time, ring licence.Keyring, firebaseProjectID string, machine [][]byte) (View, error) {
-	rec, err := s.read(ctx)
+	snap, err := s.read(ctx)
 	if err != nil {
 		return View{}, err
 	}
-	applied, err := apply(now, ring, firebaseProjectID, rec.keys(), machine)
+	applied, err := apply(now, ring, firebaseProjectID, snap.rec.keys(), machine, snap.rec.Check)
 	if err != nil {
 		return View{}, err
 	}
@@ -316,76 +374,127 @@ func (s *Store) View(ctx context.Context, now time.Time, ring licence.Keyring, f
 		Seats:       applied.Claims.Seats,
 		PaidThrough: applied.Claims.PaidThrough,
 		State:       applied.State,
+		Revoked:     applied.Revoked,
 		Kind:        applied.Claims.Kind,
 		RenewalMode: applied.Claims.RenewalMode,
 		Source:      applied.Source,
 	}
-	if rec.Check != nil {
-		view.Check, view.HasCheck = *rec.Check, true
+	if snap.rec.Check != nil {
+		view.Check, view.HasCheck = *snap.rec.Check, true
 	}
 	return view, nil
 }
 
-// read answers the object. A missing object is the no-key state and not an
-// error: an installation whose owner never installed a key has no object at all
-// (the licence package's rule for its own file, one store over).
-func (s *Store) read(ctx context.Context) (record, error) {
-	data, _, err := s.bucket.ReadMaxStrict(ctx, Object, maxObjectBytes)
+// read answers the object as the bucket holds it. A missing object is the
+// no-key state and not an error: an installation whose owner never installed a
+// key has no object at all (the licence package's rule for its own file, one
+// store over).
+func (s *Store) read(ctx context.Context) (snapshot, error) {
+	data, gen, err := s.bucket.ReadMaxStrict(ctx, Object, maxObjectBytes)
 	if errors.Is(err, blobx.ErrNotExist) {
-		return record{}, nil
+		return snapshot{}, nil
 	}
 	if err != nil {
-		return record{}, fmt.Errorf("%w: reading %s: %w", ErrObject, Object, err)
+		return snapshot{}, fmt.Errorf("%w: reading %s: %w", ErrObject, Object, err)
 	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	var rec record
 	if err := dec.Decode(&rec); err != nil {
-		return record{}, fmt.Errorf("%w: %s does not decode as this store's object (%v)", ErrObject, Object, err)
+		return snapshot{}, fmt.Errorf("%w: %s does not decode as this store's object (%v)", ErrObject, Object, err)
 	}
 	// The decode runs to the end of the object, as the key's own does
 	// (decodeClaimsV1): a second value, or the stray brace a hand-edited object
 	// leaves, is an object this store cannot place rather than one it reads and
 	// ignores the rest of.
 	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
-		return record{}, fmt.Errorf("%w: %s carries more than one JSON value", ErrObject, Object)
+		return snapshot{}, fmt.Errorf("%w: %s carries more than one JSON value", ErrObject, Object)
 	}
 	if rec.V != recordVersion {
-		return record{}, fmt.Errorf("%w: %s is a version %d object, and this Fugaro writes and reads version %d", ErrObject, Object, rec.V, recordVersion)
+		return snapshot{}, fmt.Errorf("%w: %s is a version %d object, and this Fugaro writes and reads version %d", ErrObject, Object, rec.V, recordVersion)
 	}
 	if len(rec.Keys) > maxKeys {
-		return record{}, fmt.Errorf("%w: %s holds %d keys, and the renewal's overlap installs two at the most (T26)", ErrObject, Object, len(rec.Keys))
+		return snapshot{}, fmt.Errorf("%w: %s holds %d keys, and the renewal's overlap installs two at the most (T26)", ErrObject, Object, len(rec.Keys))
 	}
-	return rec, nil
+	return snapshot{rec: rec, raw: data, gen: gen, held: true}, nil
 }
 
-// write puts the object back. The write is unconditional, as the shared
-// config's is (internal/cli/sharedcfg.go), because the writers that can meet
-// here are a person running `fugaro licence set`, who holds objectAdmin over
-// fugaro/, and -- from K4.2 -- the renewal job's own service account, whose
-// grant is this one object. A launcher is not among them: it holds objectUser
-// on runs/, tokens/ and issues/ and reads the rest of the bucket, so this
-// object is not its to write (docs/design/bucket-iam.md section 3). Two such
-// writers racing lose one write rather than corrupt the object, and the rules
-// that matter -- one shape, at most two keys -- are held on the read.
-//
-// An object larger than the read accepts is refused here, so a store never
-// writes one it could not read back: the object is the project's only copy of
-// its licence, and a write that poisoned every later read would be the licence
-// lost to a key nothing verifies anyway.
-func (s *Store) write(ctx context.Context, rec record) error {
-	rec.V = recordVersion
-	data, err := json.Marshal(rec)
+// mutate reads the object, applies f, and writes the result back only where the
+// bucket still holds the object it read. Two writers meet here -- a person
+// running `fugaro licence set` and the renewal job's own account -- and both
+// append to the same record, so a write that landed on a stale read would drop
+// the other's key, which for a renewal is a key already paid for and whose
+// secret has already been rotated. A lost race therefore re-reads and runs f
+// again; a bucket that keeps taking the object away is refused, because the
+// caller has to hear that its key was not recorded.
+func (s *Store) mutate(ctx context.Context, f func(record) (record, bool, error)) error {
+	var lost error
+	for attempt := 0; attempt < maxWriteAttempts; attempt++ {
+		snap, err := s.read(ctx)
+		if err != nil {
+			return err
+		}
+		rec, write, err := f(snap.rec)
+		if err != nil {
+			return err
+		}
+		if !write {
+			return nil
+		}
+		switch err := s.commit(ctx, snap, rec); {
+		case err == nil:
+			return nil
+		case errors.Is(err, blobx.ErrConflict):
+			lost = err
+		default:
+			return err
+		}
+	}
+	return fmt.Errorf("%w: %s is being written by someone else: %w", ErrObject, Object, lost)
+}
+
+// commit writes rec back where the bucket still holds the object snap read: a
+// create where there was none, a generation-matched replace where there was.
+// The bytes are bounded here, so a store never writes an object it could not
+// read back -- the object is the project's only copy of its licence, and a
+// write that poisoned every later read would be the licence lost to a key
+// nothing verifies anyway. A lost race is returned as blobx.ErrConflict for
+// mutate to weigh; anything else is this store's own refusal.
+func (s *Store) commit(ctx context.Context, snap snapshot, rec record) error {
+	data, err := marshal(rec)
 	if err != nil {
-		return fmt.Errorf("%w: the object could not be written: %v", ErrObject, err)
+		return err
 	}
-	if len(data) > maxObjectBytes {
-		return fmt.Errorf("%w: the object to write is %d bytes, and %s is read with a limit of %d", ErrObject, len(data), Object, maxObjectBytes)
+	if !snap.held {
+		if _, err := s.bucket.Create(ctx, Object, data, contentType); err != nil {
+			if errors.Is(err, blobx.ErrExists) {
+				return blobx.ErrConflict
+			}
+			return fmt.Errorf("%w: writing %s: %w", ErrObject, Object, err)
+		}
+		return nil
 	}
-	if err := s.bucket.Put(ctx, Object, data, "application/json"); err != nil {
+	if _, err := s.bucket.ReplaceIf(ctx, Object, data, snap.gen, snap.raw); err != nil {
+		if errors.Is(err, blobx.ErrConflict) {
+			return err
+		}
 		return fmt.Errorf("%w: writing %s: %w", ErrObject, Object, err)
 	}
 	return nil
+}
+
+// marshal is the object's bytes: the version this build writes, and a size the
+// read accepts.
+func marshal(rec record) ([]byte, error) {
+	rec.V = recordVersion
+	data, err := json.Marshal(rec)
+	if err != nil {
+		return nil, fmt.Errorf("%w: the object could not be written: %v", ErrObject, err)
+	}
+	if len(data) > maxObjectBytes {
+		return nil, fmt.Errorf("%w: the object to write is %d bytes, and %s is read with a limit of %d", ErrObject, len(data), Object, maxObjectBytes)
+	}
+	return data, nil
 }
 
 // apply is the rule the two stores are ordered by: the project's keys decide
@@ -393,12 +502,12 @@ func (s *Store) write(ctx context.Context, rec record) error {
 // none. Both readings are the licence package's own (its `active`): among the
 // keys that verify, the one with the later paid_through, and a set whose every
 // key is refused answers the first refusal, because that is the one a person
-// has to act on.
-func apply(now time.Time, ring licence.Keyring, firebaseProjectID string, projectKeys, machineKeys [][]byte) (Applied, error) {
+// has to act on. The last check is then weighed against the key that won.
+func apply(now time.Time, ring licence.Keyring, firebaseProjectID string, projectKeys, machineKeys [][]byte, check *Check) (Applied, error) {
 	claims, state, err := firstKey(now, ring, firebaseProjectID, projectKeys)
 	switch {
 	case err == nil:
-		return Applied{Claims: claims, State: state, Source: SourceProject}, nil
+		return revoked(Applied{Claims: claims, State: state, Source: SourceProject}, check), nil
 	case !errors.Is(err, licence.ErrNoKey):
 		return Applied{}, err
 	}
@@ -406,7 +515,21 @@ func apply(now time.Time, ring licence.Keyring, firebaseProjectID string, projec
 	if err != nil {
 		return Applied{}, err
 	}
-	return Applied{Claims: claims, State: state, Source: SourceMachine}, nil
+	return revoked(Applied{Claims: claims, State: state, Source: SourceMachine}, check), nil
+}
+
+// revoked applies the last check to the key that answers: a check that answered
+// revoked about this key makes it Free, which is expiry's own state (spec
+// section 6 step 6: revocation behaves as Free; D2140: only an answer revokes).
+// A record that names another key -- the leaked key a reissue replaced, with the
+// reissue still in the object beside it -- leaves this key alone, and so does a
+// record that names no key at all.
+func revoked(a Applied, check *Check) Applied {
+	if check == nil || check.Status != CheckRevoked || check.KeyID == "" || check.KeyID != a.Claims.KeyID {
+		return a
+	}
+	a.State, a.Revoked = licence.Expired, true
+	return a
 }
 
 // firstKey places one set of keys: the one that applies among those that verify

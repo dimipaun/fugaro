@@ -300,11 +300,11 @@ func TestTheStoreRefusesWhatItCannotRead(t *testing.T) {
 	}
 }
 
-// TestTheStoreRefusesAnEmptyKeyAndAnUnknownAnswer pins the two refusals the
-// store makes on what it is handed rather than on what it reads: an install
-// with no text, and a check whose answer is not one of the three. Neither
-// writes the object, so a caller that got one wrong leaves the project's
-// licence as it was.
+// TestTheStoreRefusesAnEmptyKeyAndAnUnknownAnswer pins the refusals the store
+// makes on what it is handed rather than on what it reads: an install with no
+// text, a check whose answer is not one of the three, and a revocation that
+// names no key. None writes the object, so a caller that got one wrong leaves
+// the project's licence as it was.
 func TestTheStoreRefusesAnEmptyKeyAndAnUnknownAnswer(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
@@ -319,8 +319,11 @@ func TestTheStoreRefusesAnEmptyKeyAndAnUnknownAnswer(t *testing.T) {
 			t.Errorf("installing %q = %v, want ErrObject: an install with no key is nothing to write", empty, err)
 		}
 	}
-	if err := r.store.RecordCheck(ctx, at(1), "maybe"); !errors.Is(err, ErrObject) {
+	if err := r.store.RecordCheck(ctx, at(1), "maybe", "lk_test_any"); !errors.Is(err, ErrObject) {
 		t.Errorf("recording a check that answered %q = %v, want ErrObject: the three answers are the store's, and a fourth is not a check", "maybe", err)
+	}
+	if err := r.store.RecordCheck(ctx, at(1), CheckRevoked, ""); !errors.Is(err, ErrObject) {
+		t.Errorf("recording a revocation that names no key = %v, want ErrObject: a revocation that named no key would revoke nothing (Active weighs it against the key that applies)", err)
 	}
 
 	keys, err := r.store.Keys(ctx)
@@ -333,6 +336,72 @@ func TestTheStoreRefusesAnEmptyKeyAndAnUnknownAnswer(t *testing.T) {
 	}
 	if view.HasCheck {
 		t.Errorf("a refused check left the record %+v, want none recorded", view.Check)
+	}
+}
+
+// TestTheStoreNeverDropsAConcurrentWrite is the object's compare-and-set: the
+// project's licence has two writers -- a person running `licence set` and the
+// renewal job's install -- and both append to the same keys, so a write that
+// landed on a stale read would drop the other's key. A renewal dropped that way
+// is a key already paid for whose secret has already been rotated.
+func TestTheStoreNeverDropsAConcurrentWrite(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	m := newMinted(t)
+	renewed := m.key(t, func(c *licence.ClaimsV1) { c.KeyID = "lk_test_renewed"; c.PaidThrough = at(300) })
+	mine := m.key(t, func(c *licence.ClaimsV1) { c.KeyID = "lk_test_mine"; c.PaidThrough = at(30) })
+
+	// The renewal lands between this writer's read and its write, which is what
+	// mutate has to notice: the closure runs after the read and before commit.
+	interleaved := true
+	err := r.store.mutate(ctx, func(rec record) (record, bool, error) {
+		if interleaved {
+			interleaved = false
+			if err := r.store.Install(ctx, []byte(renewed)); err != nil {
+				return record{}, false, err
+			}
+		}
+		rec.Keys = append(rec.Keys, mine)
+		return rec, true, nil
+	})
+	if err != nil {
+		t.Fatalf("a write beside a concurrent install: %v", err)
+	}
+	keys, err := r.store.Keys(ctx)
+	if err != nil {
+		t.Fatalf("reading the keys back: %v", err)
+	}
+	if !sameKeys(keys, []string{renewed, mine}) && !sameKeys(keys, []string{mine, renewed}) {
+		t.Errorf("after a write that raced an install the store holds %v, want both keys: a lost race re-reads rather than overwriting what it did not read", text(keys))
+	}
+
+	// A bucket that keeps handing the object to someone else makes the write
+	// refuse: a caller has to hear that its key is not recorded rather than be
+	// told a write landed.
+	fighting := newRig(t)
+	attempts := 0
+	err = fighting.store.mutate(ctx, func(rec record) (record, bool, error) {
+		attempts++
+		someone := "fgk_someone_else_" + strconv.Itoa(attempts)
+		put := []byte(`{"v":1,"keys":["` + someone + `"]}`)
+		if err := fighting.bucket.Put(ctx, Object, put, "application/json"); err != nil {
+			return record{}, false, err
+		}
+		rec.Keys = append(rec.Keys, mine)
+		return rec, true, nil
+	})
+	if !errors.Is(err, ErrObject) {
+		t.Errorf("a write that lost every attempt = %v, want ErrObject", err)
+	}
+	if attempts != maxWriteAttempts {
+		t.Errorf("the write was attempted %d times, want the %d it is bounded by", attempts, maxWriteAttempts)
+	}
+	keys, err = fighting.store.Keys(ctx)
+	if err != nil {
+		t.Fatalf("reading the keys back: %v", err)
+	}
+	if !sameKeys(keys, []string{"fgk_someone_else_" + strconv.Itoa(maxWriteAttempts)}) {
+		t.Errorf("after a write that never landed the store holds %v, want only the other writer's last key", text(keys))
 	}
 }
 
@@ -456,7 +525,7 @@ func TestAViewerReadsTheStateNotTheKey(t *testing.T) {
 	if err := r.store.Install(ctx, []byte(key)); err != nil {
 		t.Fatalf("installing a key: %v", err)
 	}
-	if err := r.store.RecordCheck(ctx, at(1), CheckOK); err != nil {
+	if err := r.store.RecordCheck(ctx, at(1), CheckOK, "lk_test_viewer"); err != nil {
 		t.Fatalf("recording a check: %v", err)
 	}
 
@@ -465,12 +534,12 @@ func TestAViewerReadsTheStateNotTheKey(t *testing.T) {
 		t.Fatalf("View: %v", err)
 	}
 	if view.Tier != licence.TierTeam || view.Seats != 7 || !view.PaidThrough.Equal(at(365)) ||
-		view.State != licence.Active || view.Kind != licence.KindPaid ||
+		view.State != licence.Active || view.Revoked || view.Kind != licence.KindPaid ||
 		view.RenewalMode != licence.RenewalAuto || view.Source != SourceProject {
 		t.Errorf("the view reads %+v, want the installed key's tier, seats, expiry, state, kind, renewal mode and the project as the source", view)
 	}
-	if !view.HasCheck || view.Check.Status != CheckOK || !view.Check.At.Equal(at(1)) || view.Check.Failures != 0 || !view.Check.LastOK.Equal(at(1)) {
-		t.Errorf("the view's check record reads %+v, want the ok check recorded at one day", view.Check)
+	if !view.HasCheck || view.Check.Status != CheckOK || view.Check.KeyID != "lk_test_viewer" || !view.Check.At.Equal(at(1)) || view.Check.Failures != 0 || !view.Check.LastOK.Equal(at(1)) {
+		t.Errorf("the view's check record reads %+v, want the ok check recorded at one day for the key it checked", view.Check)
 	}
 
 	shown := fmt.Sprintf("%v %+v %#v", view, view, view)
@@ -491,7 +560,7 @@ func TestAViewerReadsTheStateNotTheKey(t *testing.T) {
 	// The shape is the pin: a field added to the view has to be weighed against
 	// "a viewer reads the state, never the key", and this is where that is
 	// decided rather than in a command's rendering.
-	want := []string{"Tier", "Seats", "PaidThrough", "State", "Kind", "RenewalMode", "Source", "Check", "HasCheck"}
+	want := []string{"Tier", "Seats", "PaidThrough", "State", "Revoked", "Kind", "RenewalMode", "Source", "Check", "HasCheck"}
 	if got := fieldNames(reflect.TypeOf(view)); !reflect.DeepEqual(got, want) {
 		t.Errorf("the view's fields are %v, want %v: every one of them is something a status shows, and a key, a note for admins or the renewal secret's hash is none of them", got, want)
 	}
@@ -566,7 +635,7 @@ func TestAViewerReadsTheStateNotTheKey(t *testing.T) {
 		// clears it and moves LastOK: that pair is what warns admins after 30
 		// days without a word from the server (D2140).
 		for day := 2; day <= 4; day++ {
-			if err := r.store.RecordCheck(ctx, at(day), CheckUnreachable); err != nil {
+			if err := r.store.RecordCheck(ctx, at(day), CheckUnreachable, "lk_test_viewer"); err != nil {
 				t.Fatalf("recording an unreachable check: %v", err)
 			}
 		}
@@ -581,7 +650,7 @@ func TestAViewerReadsTheStateNotTheKey(t *testing.T) {
 			t.Errorf("three unreachable checks moved LastOK to %s, want the day-one answer it counts from (D2140)", view.Check.LastOK)
 		}
 
-		if err := r.store.RecordCheck(ctx, at(5), CheckRevoked); err != nil {
+		if err := r.store.RecordCheck(ctx, at(5), CheckRevoked, "lk_test_viewer"); err != nil {
 			t.Fatalf("recording a revoked answer: %v", err)
 		}
 		view, err = r.store.View(ctx, at(5), m.ring, testFirebaseProject, nil)
@@ -592,11 +661,26 @@ func TestAViewerReadsTheStateNotTheKey(t *testing.T) {
 			t.Errorf("an answer after silence reads %+v, want the streak cleared and the answer's own time in LastOK", view.Check)
 		}
 
+		// And that answer is about the key it names: the installation is Free
+		// while that key applies, whatever the clock says about its term (spec
+		// section 6 step 6).
+		if view.State != licence.Expired || !view.Revoked {
+			t.Errorf("a key the server revoked reads state %s and revoked %t at day five, want it Free: a revocation behaves as expiry, and the clock alone says active", view.State, view.Revoked)
+		}
+		if applied, err := r.store.Active(ctx, at(5), m.ring, testFirebaseProject, nil); err != nil {
+			t.Fatalf("Active: %v", err)
+		} else if applied.State != licence.Expired || !applied.Revoked || applied.Claims.Seats != 7 {
+			t.Errorf("Active over a revoked key reads %+v, want the key's claim set in the state Free, so a caller that shows who bought it still can", applied)
+		}
+
 		// The record is the installation's and not one key's (View's own
 		// contract): the renewal's next key, which is what a key arriving after
 		// a check is, carries that check's figures -- the streak and LastOK
 		// count the project's silence, and an install does not run a check. That
 		// carry is what K3.2 shows and what D2140's 30-day warning counts from.
+		// What it does not carry is the revocation: that is about the key_id the
+		// check named, so a reissue after a leak is free of the leaked key's
+		// answer.
 		fresh := m.key(t, func(c *licence.ClaimsV1) {
 			c.KeyID = "lk_test_installed_after_a_check"
 			c.PaidThrough = at(390)
@@ -611,12 +695,61 @@ func TestAViewerReadsTheStateNotTheKey(t *testing.T) {
 		if applied.Claims.KeyID != "lk_test_installed_after_a_check" {
 			t.Fatalf("the installed key did not apply: Active answers %q", applied.Claims.KeyID)
 		}
+		if applied.State != licence.Active || applied.Revoked {
+			t.Errorf("a key installed after its predecessor was revoked reads %+v, want it active: the revocation names the key that was checked, and a reissue is a different key", applied)
+		}
 		view, err = r.store.View(ctx, at(5), m.ring, testFirebaseProject, nil)
 		if err != nil {
 			t.Fatalf("View: %v", err)
 		}
 		if !view.HasCheck || !view.Check.At.Equal(at(5)) || view.Check.Failures != 0 || !view.Check.LastOK.Equal(at(5)) {
 			t.Errorf("a key installed after a check reads %+v, want the project's record carried and not reset", view.Check)
+		}
+		if view.State != licence.Active || view.Revoked {
+			t.Errorf("the view of the reissued key reads state %s and revoked %t, want it active", view.State, view.Revoked)
+		}
+	})
+
+	t.Run("a revocation is about the key it names", func(t *testing.T) {
+		// Both keys of an overlap are in the object, and the server revoked the
+		// one that applies: the other one has not been checked and cannot stand
+		// in -- what answers is the key the last check was about.
+		revoked := newRig(t)
+		first := m.key(t, func(c *licence.ClaimsV1) { c.KeyID = "lk_test_first"; c.PaidThrough = at(30) })
+		second := m.key(t, func(c *licence.ClaimsV1) { c.KeyID = "lk_test_second"; c.PaidThrough = at(300) })
+		for _, key := range []string{first, second} {
+			if err := revoked.store.Install(ctx, []byte(key)); err != nil {
+				t.Fatalf("installing a key: %v", err)
+			}
+		}
+		if err := revoked.store.RecordCheck(ctx, at(1), CheckRevoked, "lk_test_second"); err != nil {
+			t.Fatalf("recording a revocation: %v", err)
+		}
+		applied, err := revoked.store.Active(ctx, at(2), m.ring, testFirebaseProject, nil)
+		if err != nil {
+			t.Fatalf("Active: %v", err)
+		}
+		if applied.Claims.KeyID != "lk_test_second" || applied.State != licence.Expired || !applied.Revoked {
+			t.Errorf("with the later-expiring key revoked, Active answers %q in state %s (revoked %t), want that key and Free", applied.Claims.KeyID, applied.State, applied.Revoked)
+		}
+
+		// A check about the other key in the object leaves this one alone: the
+		// revocation is the checked key's, not the object's.
+		other := newRig(t)
+		for _, key := range []string{first, second} {
+			if err := other.store.Install(ctx, []byte(key)); err != nil {
+				t.Fatalf("installing a key: %v", err)
+			}
+		}
+		if err := other.store.RecordCheck(ctx, at(1), CheckRevoked, "lk_test_first"); err != nil {
+			t.Fatalf("recording a revocation: %v", err)
+		}
+		applied, err = other.store.Active(ctx, at(2), m.ring, testFirebaseProject, nil)
+		if err != nil {
+			t.Fatalf("Active: %v", err)
+		}
+		if applied.Claims.KeyID != "lk_test_second" || applied.State != licence.Active || applied.Revoked {
+			t.Errorf("with the shorter key revoked, Active answers %q in state %s (revoked %t), want the key that applies and active: a revocation names one key_id", applied.Claims.KeyID, applied.State, applied.Revoked)
 		}
 	})
 }
