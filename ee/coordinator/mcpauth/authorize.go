@@ -110,7 +110,7 @@ gave when it registered, and nothing in this installation checked it.</p>
 <p>If you allow it, the authorization code will be sent to
 <strong>{{.Host}}</strong>.</p>
 <p>It will be able to:</p>
-<ul>{{range .Scopes}}<li>{{.}}</li>{{end}}</ul>
+<ul>{{range .Scopes}}<li><strong>{{.Name}}</strong> — {{.Words}}</li>{{end}}</ul>
 <p>This flow's number is <strong>{{.Number}}</strong>. Approve this flow on the
 device this installation paired with you: that device takes this number, and
 the sign-in its own session produces is what proves who is approving. Reading
@@ -269,6 +269,15 @@ func (s *Server) serveAuthorizeRequest(w http.ResponseWriter, r *http.Request) {
 		s.redirectError(w, r, redirectURI, state, oauthError(oidc.ErrInvalidScope(), err.Error()))
 		return
 	}
+	// The page's own scope list, read before anything is recorded: a build
+	// that cannot describe a scope it mints has no page a person may approve
+	// from, and the refusal is the installation's own fault rather than the
+	// client's request.
+	words, err := consentScopes(scopes)
+	if err != nil {
+		refusePage(w, http.StatusInternalServerError, "This authorization request cannot be shown: this server has no words for one of the scopes it mints, so the page a person approves from cannot say what they would be approving.")
+		return
+	}
 
 	id, err := NewID()
 	if err != nil {
@@ -297,7 +306,7 @@ func (s *Server) serveAuthorizeRequest(w http.ResponseWriter, r *http.Request) {
 	writeConsentPage(w, consentView{
 		ClientName: consentClientName(client),
 		Host:       redirectHost(redirectURI),
-		Scopes:     scopes,
+		Scopes:     words,
 		Number:     number,
 		RequestID:  id,
 		Action:     AuthorizePath,
@@ -436,6 +445,37 @@ func (s *Server) servePageAnswer(w http.ResponseWriter, r *http.Request, form ur
 		return
 	}
 
+	// D2121's check, and this is the only moment it can be made: the identity
+	// the code would act for is known here and nowhere earlier — the GET
+	// verifies nothing about a person, and the device's act is the device's —
+	// and it is made before the code is minted, so a person who may not hold a
+	// scope this installation serves to its operators alone is told so and no
+	// code is ever issued for it.
+	//
+	// The lists are read for the same reason the door reads them, and the
+	// answer is the same answer the door gives the token the code would be
+	// exchanged for: what the installation's lists decide at the door, this
+	// decides before the code exists, so a withheld scope is never a scope a
+	// token held for a moment. A roster this installation cannot read is the
+	// installation's fault and not the person's, and it is answered as one —
+	// the distinction authorize's own 500s make.
+	for _, held := range taken.Scopes {
+		if !OperatorOnlyScope(held) {
+			continue
+		}
+		role, err := s.resolveIdentity(r.Context(), taken.Approval.Identity)
+		if err != nil && !errors.Is(err, ErrIdentityOffTheLists) {
+			refusePage(w, http.StatusInternalServerError, "This approval could not be checked against this installation's member lists.")
+			return
+		}
+		if err != nil || !role.Operator {
+			s.redirectError(w, r, taken.RedirectURI, taken.State, oauthError(oidc.ErrAccessDenied(),
+				"the scope "+held+" is one only an operator of this installation may hold, and the person who approved this request is not one"))
+			return
+		}
+		break
+	}
+
 	code, err := NewValue()
 	if err != nil {
 		refusePage(w, http.StatusInternalServerError, "This approval could not be recorded.")
@@ -470,7 +510,7 @@ func (s *Server) servePageAnswer(w http.ResponseWriter, r *http.Request, form ur
 // ASCII lower case, and the fold is this endpoint's own: it is not the rule the
 // project's own lists are read by, and nothing here claims the CLI agrees with
 // it. `internal/cli/roles.go` places and compares a member exactly
-// (`operatorMember` and `launcherMember` are a `slices.Contains` over the text),
+// (`adminMember` and `operatorMember` are a `slices.Contains` over the text),
 // `internal/cli/user.go`'s `userMember` writes the member it was handed without
 // folding it, and the one comparison over these members that folds at all is the
 // local self-removal guard's `strings.EqualFold` — a Unicode fold, which is what
@@ -518,10 +558,17 @@ func firstOf(q url.Values, names ...string) string {
 	return ""
 }
 
-// requestedScopes reads the scope parameter against D927's closed vocabulary,
-// and answers the whole vocabulary when the client asked for none: an
-// authorization request with no scope asks for the default, and the default
-// here is what the front door mints.
+// requestedScopes reads the scope parameter against the closed vocabulary, and
+// answers DefaultScopes when the client asked for none: an authorization
+// request with no scope asks for the default, and the default here is what the
+// front door mints.
+//
+// The default is DefaultScopes and not the vocabulary (R1). The two were one
+// list while the vocabulary was the task pair; with the state pair in it, a
+// default read off the vocabulary would hand every sign-in that named no scope
+// the scope that writes the orchestrator's state — which is D1227's own reason
+// for the split, read one step further: a `tasks:write` token must not silently
+// become a state editor, and neither must a token that asked for nothing.
 //
 // A scope outside the vocabulary is refused and named rather than dropped. A
 // server that ignored one would leave its holder believing it holds a
@@ -529,7 +576,7 @@ func firstOf(q url.Values, names ...string) string {
 func requestedScopes(raw string) ([]string, error) {
 	fields := strings.Fields(raw)
 	if len(fields) == 0 {
-		return slices.Clone(ScopeVocabulary), nil
+		return slices.Clone(DefaultScopes), nil
 	}
 	out := make([]string, 0, len(fields))
 	for _, s := range fields {
@@ -547,10 +594,54 @@ func requestedScopes(raw string) ([]string, error) {
 type consentView struct {
 	ClientName string
 	Host       string
-	Scopes     []string
+	Scopes     []scopeWord
 	Number     string
 	RequestID  string
 	Action     string
+}
+
+// scopeWord is one scope as the page a person reads shows it: the name a client
+// asked for, and what holding it lets that client do, in words.
+type scopeWord struct {
+	Name  string
+	Words string
+}
+
+// scopeWording is what each name in the vocabulary is shown as (M5, M5b).
+//
+// **Why the page spells the scopes out.** The page is the whole of what a
+// person approves — the device approves the flow, and this page is where the
+// person reads what they are approving — and a list of `tasks:write` beside
+// `state:read` is a list only the person who minted the names can read. The
+// roadmap write (D2121) is the one scope here whose holder can change the
+// project for every repository in it, so what a paired phone is shown has to
+// say what approving it means rather than leave it to a name.
+//
+// Every name in the vocabulary is here, and a name this map does not hold
+// fails the page rather than being shown unworbed (consentScopes): the
+// vocabulary is closed and a build that minted a name it cannot describe is a
+// build whose page would show a permission with no sentence beside it, which
+// is the one thing a page a person approves from must not do.
+var scopeWording = map[string]string{
+	ScopeTasksRead:    "read this project's runs: their status, their logs and their results",
+	ScopeTasksWrite:   "start runs and stop them, which spends this project's budget",
+	ScopeStateRead:    "read the orchestrator's generated state and its audit log",
+	ScopeStateWrite:   "change the orchestrator's state, which no tool of this server does yet",
+	ScopeRoadmapWrite: "change the project's roadmap: which plans are published, which release each task ships in and how tasks depend on one another. Only an operator of this installation is given this scope.",
+}
+
+// consentScopes is the scope list the page renders, in the order the client
+// asked for them, or the refusal of a scope this build cannot describe.
+func consentScopes(scopes []string) ([]scopeWord, error) {
+	out := make([]scopeWord, 0, len(scopes))
+	for _, s := range scopes {
+		words, known := scopeWording[s]
+		if !known {
+			return nil, fmt.Errorf("mcpauth: the scope %q is one this build mints and has no words for", s)
+		}
+		out = append(out, scopeWord{Name: s, Words: words})
+	}
+	return out, nil
 }
 
 // consentClientName is the name shown for a client that gave none. RFC 7591

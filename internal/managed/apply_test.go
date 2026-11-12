@@ -1211,7 +1211,7 @@ func TestManagedRefusalKeepsUntrustedTextToOneLineAndEndsWithItsAdvice(t *testin
 func noFlagName(t *testing.T, s string) {
 	t.Helper()
 	for _, flag := range []string{
-		"--allow-delete", "--allow-job-delete", "--launcher", "--operator", "--alert-email",
+		"--allow-delete", "--allow-job-delete", "--operator", "--admin", "--alert-email",
 		"--budget", "--billing-account", "--yes", "--non-interactive", "--managed",
 	} {
 		if strings.Contains(s, flag) {

@@ -13,7 +13,9 @@ exactly what is broken. The user typing the command is the consent: Fugaro never
 starts an agent on its own when something fails.
 
 The agent explains and prints. It never applies a fix, and nothing it writes is
-executed.
+executed. Which model answers is a configuration key: `agent.models.diagnose`
+in a repository's `fugaro.yaml`, `defaults.agent.models.diagnose` in the
+project layer that reaches it, and Fugaro's own choice when neither sets it.
 
 ## The four outcomes
 
@@ -127,8 +129,9 @@ from, and what you could not check.
 - **A configuration answer** gives the exact command that fixes it. A fix
   command is printed, never run. Fugaro checks a printed `fugaro` command
   against its own command tree before it shows it as runnable; anything else is
-  shown as text marked as unchecked, so do not print a command the person should
-  run blindly. Prefer one command over a list, and say what it will change.
+  shown as text marked `not checked: do not run blindly`, so do not print a
+  command the person should run blindly. Prefer one command over a list, and say
+  what it will change.
 - **A bug answer** gives an issue report the person can post: a summary, the
   steps that led to the failure, the shortest log extract that shows it, and the
   version and commit.

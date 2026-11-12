@@ -723,7 +723,7 @@ func TestDecodeModelPricesAgreeWithTheCatalog(t *testing.T) {
 	}
 
 	// The catalogue's reading of the same bytes, field by field.
-	want := map[string]pricing.Rates{"claude-sonnet-5-5": ov["claude-sonnet-5-5"], "claude-opus-5-5": ov["claude-opus-5-5"]}
+	want := map[string]pricing.Rates{"claude-sonnet-5-5": ov["claude-sonnet-5-5"].Rates, "claude-opus-5-5": ov["claude-opus-5-5"].Rates}
 	for id, r := range want {
 		got := p.Prices[id]
 		if *got.InputPerM != r.InputPerM || *got.OutputPerM != r.OutputPerM {

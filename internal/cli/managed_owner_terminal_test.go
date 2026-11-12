@@ -10,6 +10,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // managed_owner_terminal_test.go is the owner's ruling of 2026-11-06 as the
@@ -593,6 +594,122 @@ func TestManagedOwnerTerminalLayerPublishReadsTheDiffBeforeTheNote(t *testing.T)
 	}
 }
 
+// managedPinUpdate is the rig the three tests below run on: a managed project,
+// the gate read once beside the loop, and a checkout the release before this one
+// left a pin in. The rig's own config lists the checkout's repository, so the
+// removal's gate is one the checkout passes (pluginStage.pinGate): what these
+// tests are about is who is at the terminal, not whether the write is the run's
+// to make.
+func managedPinUpdate(t *testing.T, terminal bool) (*initEngine, *syncBuf, string) {
+	t.Helper()
+	const release = "0.5.1"
+	cfg := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	f := testutil.NewClaudePluginFake(t, "[]", "[]")
+	f.On(t, "plugins", userInstall(release), argsInstall...)
+
+	_, e, out, _ := managedTerminalUpdate(t, true, terminal)
+	// After the rig, whose own release is the one it starts with: this test's
+	// machine has the plugin this release installs, so the pin's removal is the
+	// stage's whole something-to-do.
+	releaseBuild(t, release)
+	e.lc.Repos = map[string]localcfg.Repo{"acme/app": {Provider: "github"}}
+	settings := wiringCheckout(t, pinnedAmongOthers)
+	checkoutFile(t, filepath.Join(cfg, "plugins", "installed_plugins.json"),
+		`{"version":2,"plugins":{"fugaro@fugaro":[{"id":"fugaro@fugaro","version":"`+release+`","scope":"user","enabled":true}]}}`)
+	useFakeClaude(t, f)
+	return e, out, settings
+}
+
+// TestManagedOwnerTerminalPinRemovalWritesWithoutAsking: the pin an older
+// fugaro left is one of the checkout writes the gate has no document for
+// (pluginStage.remove, the arm writeAnchor and confirmWrite put in the same
+// place), so the owner at their own terminal on a managed project is asked
+// nothing and types nothing: the diff above the sentence is the whole of what
+// they read, the file is written, and nothing reads the run's own input. The
+// two halves of the stage move apart here — the removal is the checkout's, and
+// the machine's own install is made either way.
+func TestManagedOwnerTerminalPinRemovalWritesWithoutAsking(t *testing.T) {
+	e, out, settings := managedPinUpdate(t, true)
+	if !e.r.gateStandsIn() {
+		t.Fatalf("the rig's gate did not stand in for the run:\n%s", out)
+	}
+
+	res := runPlugin(t, e)
+	if got := upgradeRead(t, settings); got != pinnedAmongOthersGone {
+		t.Errorf("the owner's own terminal did not take the pin out:\n%s\nwant:\n%s\n%s", got, pinnedAmongOthersGone, out)
+	}
+	if !strings.Contains(out.String(), initflow.OwnerProceeded()) {
+		t.Errorf("the removal does not say why nothing was typed:\n%s", out)
+	}
+	for _, no := range []string{"[y/N]", "confirmed by --yes", "Type " + initProjectName} {
+		if strings.Contains(out.String(), no) {
+			t.Errorf("a managed project's own terminal read %q:\n%s", no, out)
+		}
+	}
+	if stateOf(res, initflow.Plugin) != initflow.Changed {
+		t.Errorf("the stage reads %+v, want the pin taken out:\n%s", res.Stages, out)
+	}
+}
+
+// TestManagedOwnerTerminalPinRemovalRefusesAnAgentSession is the same write in
+// the session the gate admits and the marker does not: the removal's arms are
+// read in the order the whole task is about (spec §8, and U2's own rule), so
+// the coding agent's marker is answered before the gate's verdict is — a gate
+// that stood in for the run is a verdict about a document, and this is the
+// checkout's own file. The write is refused, the file is untouched, and the
+// sentence the session reads is the refusal every agent session meets, not the
+// owner's.
+func TestManagedOwnerTerminalPinRemovalRefusesAnAgentSession(t *testing.T) {
+	e, out, settings := managedPinUpdate(t, true)
+	if !e.r.gateStandsIn() {
+		t.Fatalf("the rig's gate did not stand in for the run:\n%s", out)
+	}
+	// The marker goes in after the read, as in every other test here: it is
+	// what a run's session is, and the gate's read is not a second one.
+	t.Setenv(agentMarkers[0], "1")
+
+	if _, err := newPluginStage(e).Apply(t.Context(), initflow.Env{}); err != nil {
+		t.Fatalf("a coding agent's session was refused with an error rather than a line to run: %v\n%s", err, out)
+	}
+	if got := upgradeRead(t, settings); got != pinnedAmongOthers {
+		t.Errorf("a coding agent's session on a managed project wrote the checkout:\n%s", got)
+	}
+	if !strings.Contains(out.String(), initflow.AgentRefusal(agentMarkers[0])) {
+		t.Errorf("the session does not read the refusal:\n%s", out)
+	}
+	if strings.Contains(out.String(), initflow.OwnerProceeded()) {
+		t.Errorf("a coding agent's session read the owner's own sentence:\n%s", out)
+	}
+}
+
+// TestManagedOwnerTerminalPinRemovalRefusesWithNobodyAtTheTerminal is the pipe
+// half of the same case, and it is the one that matters most: stdin carries no
+// marker, so a managed run nobody is at reads exactly like the owner's own
+// session, and the terminal is the whole of what tells them apart. The removal
+// is not made, the file is untouched, and what the run prints is the line to do
+// it by hand — the same line every checkout write prints where nobody is at the
+// terminal — and nothing of the owner's own sentence (T7, docs/no-prompt-policy).
+func TestManagedOwnerTerminalPinRemovalRefusesWithNobodyAtTheTerminal(t *testing.T) {
+	e, out, settings := managedPinUpdate(t, false)
+	if !e.r.gateStandsIn() {
+		t.Fatalf("the rig's gate did not stand in for the run:\n%s", out)
+	}
+
+	if _, err := newPluginStage(e).Apply(t.Context(), initflow.Env{}); err != nil {
+		t.Fatalf("a managed run nobody is at failed rather than leaving the write:\n%s", out)
+	}
+	if got := upgradeRead(t, settings); got != pinnedAmongOthers {
+		t.Errorf("a run nobody is at wrote the checkout:\n%s", got)
+	}
+	if !strings.Contains(out.String(), "nothing was written: to take the pin out yourself") {
+		t.Errorf("the run nobody is at does not say how to take the pin out:\n%s", out)
+	}
+	if strings.Contains(out.String(), initflow.OwnerProceeded()) {
+		t.Errorf("a run nobody is at read the sentence written for the owner's own terminal:\n%s", out)
+	}
+}
+
 // TestManagedOwnerTerminalLayerRefusesAnAgentSession is the layer stage's own
 // half of the same case, driven at its own call: a coding agent's session
 // writes nothing there and reads no sentence of the owner's, and the
@@ -810,5 +927,29 @@ func TestManagedOwnerTerminalDataLossKeepsTheOwnersTerminal(t *testing.T) {
 				t.Errorf("the destructive step does not say why nothing is typed:\n%s", out)
 			}
 		})
+	}
+}
+
+// TestManagedOwnerTerminalOrdinaryStepSaysWillDo: a step that no confirmation
+// is asked for does not print the banner a question is shown under. The
+// managed gate prints its own sentence two lines below — "this project is
+// managed, so this step takes no confirmation" — and a ⚠ CONFIRM banner above
+// it says the opposite (the owner's feedback of 2026-11-10). What the step
+// prints instead is the converge's own word for work nobody is asked about:
+// the one its plan view's status uses.
+func TestManagedOwnerTerminalOrdinaryStepSaysWillDo(t *testing.T) {
+	_, e, out, _ := managedTerminalUpdate(t, true, true)
+	e.r.review = &runReview{state: reviewTaken}
+
+	const what = "pins 1 base image(s) to this release's image at the digest its cosign signature was verified for"
+	ok, err := e.r.askOrdinary(what, "")
+	if err != nil || !ok {
+		t.Fatalf("a managed project's own terminal was not let through with nothing typed: %v\n%s", err, out)
+	}
+	if strings.Contains(out.String(), "⚠ CONFIRM") {
+		t.Errorf("a step nothing is asked about printed the confirmation banner:\n%s", out)
+	}
+	if !strings.Contains(out.String(), "will do (project "+initProjectName+", GCP project "+initProject+"): "+what) {
+		t.Errorf("the step does not say in the run's own words what it will do:\n%s", out)
 	}
 }

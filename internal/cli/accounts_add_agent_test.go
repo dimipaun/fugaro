@@ -173,3 +173,55 @@ func TestAccountsAddRotationRerunAsksNothing(t *testing.T) {
 		t.Errorf("the converged run does not close on its ready line:\n%s", out)
 	}
 }
+
+// TestAccountsAddWideningAllowDataToIsRefusedInASession is G9's fourth red step
+// (docs/config-management/implementation-plan.md §G9, D1172, spec §3.3): what
+// `accounts add` writes is `claude_accounts.NAME.allow_data_to`, so a widening
+// of it — a --repos naming a repository beyond the checkout this command runs
+// in — is refused in a coding agent's session, where the bounded declaration
+// beside it is admitted. The pair is the claim: what refuses is the widening
+// and not the command, which is the half D868 gives this family and the gate
+// keeps (accounts_managed.go).
+//
+// The two halves run in the same managed world on purpose. In an ordinary
+// installation the session is refused the command whole
+// (TestAccountsAddRefusesInAnAgentSession above), which says nothing about the
+// widening: a build that refused the bounded declaration too would pass there.
+// The deeper halves of each — the record the gate files, the rules it names —
+// are TestAccountsAddManagedAdmitsTheDeclarationInAnAgentSession's and
+// TestAccountsAddManagedRefusesAWideningInAnAgentSession's; this is the
+// sentence a session reads, against the same command that is admitted.
+func TestAccountsAddWideningAllowDataToIsRefusedInASession(t *testing.T) {
+	t.Run("the bounded declaration is admitted", func(t *testing.T) {
+		r := newManagedAddRig(t, addRigLocal, addMarksManaged)
+		t.Setenv(accountsAddAgent, "1")
+
+		out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "owner/repo-a", "--yes")
+		if lc := r.addLocal(t); !slices.Equal(lc.ClaudeAccounts["team-a"].AllowDataTo, []string{"owner/repo-a"}) {
+			t.Errorf("claude_accounts.team-a.allow_data_to = %v, want the bounded list this checkout's origin names: %v\n%s", lc.ClaudeAccounts["team-a"].AllowDataTo, err, out)
+		}
+		// The session's run ends at the one step no gate admits — the token —
+		// and that is the admitted declaration's cost, not this test's subject:
+		// what it is here for is the file, which a widening never writes.
+		if err == nil || err.Error() != accountsAddRefusalToken {
+			t.Errorf("the admitted declaration did not end at the token step: %v\n%s", err, out)
+		}
+	})
+
+	t.Run("the widening is refused", func(t *testing.T) {
+		r := newManagedAddRig(t, managedAddLocalWide(t), addMarksManaged)
+		before := readFileString(t, r.cfg)
+		t.Setenv(accountsAddAgent, "1")
+
+		out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "owner/repo-a,acme/other", "--yes")
+		if err == nil {
+			t.Fatalf("a session widened allow_data_to beyond the checkout it runs in:\n%s", out)
+		}
+		if err.Error() != accountsAddRefusalWidening {
+			t.Errorf("the widening's refusal is:\n%q\nwant:\n%q", err.Error(), accountsAddRefusalWidening)
+		}
+		if after := readFileString(t, r.cfg); after != before {
+			t.Errorf("the refused widening wrote %s:\n%s", r.cfg, after)
+		}
+	})
+}

@@ -728,7 +728,7 @@ func TestInitWritesLocalConfigAndBackup(t *testing.T) {
 		t.Fatal(err)
 	}
 	base := "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-0123abc"
-	out, _, err := executeStdin(t, "", "setup", "--yes", "--base-image", base, "--launcher", "user:launcher@example.com", "--alert-email", "ops@example.com")
+	out, _, err := executeStdin(t, "", "setup", "--yes", "--base-image", base, "--operator", "user:launcher@example.com", "--alert-email", "ops@example.com")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -738,7 +738,7 @@ func TestInitWritesLocalConfigAndBackup(t *testing.T) {
 	}
 	if lc.RunsBucket != initRunsBucket || lc.RegistryHost != "us-east5-docker.pkg.dev/proj-1234" || lc.LogView != initLogView ||
 		lc.SchedulerRegion != "us-east4" || lc.Terraform.StateBucket != initStateBucket || lc.BaseImage("base") != base ||
-		!slices.Equal(lc.Terraform.Launchers, []string{"user:launcher@example.com"}) || lc.Terraform.AlertEmail != "ops@example.com" {
+		!slices.Equal(lc.Terraform.Operators, []string{"user:launcher@example.com"}) || lc.Terraform.AlertEmail != "ops@example.com" {
 		t.Fatalf("local config = %+v", lc)
 	}
 	if lc.Build.ServiceAccount != "" {

@@ -39,7 +39,7 @@ func catalogReadiness(t *testing.T, f *cloud, spec RepoSpec, shipped bool) (Repo
 	// The policy gate is a different question (D11) and this fixture carries
 	// no Firebase backend, so the project has published no policy here.
 	ex.PolicyExists = false
-	got, missing, err := Readiness(context.Background(), f.c, spec, ex, false)
+	got, missing, err := Readiness(context.Background(), f.c, spec, ex, false, "update")
 	if err != nil {
 		t.Fatal(err)
 	}

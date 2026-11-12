@@ -259,7 +259,7 @@ type run struct {
 	// fugaro.yaml during the run changes neither.
 	spend  Spend
 	policy policy.Effective
-	// govLayers are the three layers the policy merge consumed, kept as they
+	// govLayers are the four layers the policy merge consumed, kept as they
 	// were handed to it: the effective policy cannot say which of them asked
 	// for a governance key, and a build whose hook ignores governance resolves
 	// none of them, so the layers themselves are what "somebody wrote this"
@@ -291,6 +291,10 @@ type run struct {
 	// for this run (accountchoice.go, D874): off unless the owner's published
 	// policy turns it on, and the account each stage has reached.
 	accounts accountChoice
+	// pools is the ordered failover the stage-start pool choice keeps for this
+	// run (poolchoice.go, MC5): off unless a craft's access names a pool, and
+	// the member each stage has reached.
+	pools poolChoice
 	// mu guards halt, cancelled, failReason, failClass, tokens, gatewayTokens
 	// and haltStage: the cancel watcher and, with the gateway, its halt
 	// callback record into them from other goroutines. Whichever of a halt
@@ -370,6 +374,15 @@ type run struct {
 	lastStage    *gateway.StageReport
 	modelBy      map[string]pricing.Micros
 	routeBy      map[string]pricing.Micros
+	// modelTokens is the run's token counts by model, from whichever path
+	// filled them: the gateway's per-call usage under the model it priced
+	// each call for, taken from its ledger when it closes, or, with no
+	// gateway, the agent's own per-model usage, taken stage by stage (G1.2,
+	// F8). The record carries them so `fugaro estimate` can price the run's
+	// own usage again on another model. Empty until one of the two fills it,
+	// which for a gateway run is its last step, as the cache totals beside
+	// them are.
+	modelTokens  map[string]runstore.ModelTokenCounts
 	routed       bool // the gateway has provider routes, so route_by exists
 	reported     pricing.Micros
 	unreconciled pricing.Micros
@@ -490,6 +503,14 @@ type run struct {
 	// what bounds and clips it and a second append would build on the bounded
 	// list.
 	triageRounds []runstore.TriageRound
+	// deferred is the deferrals that took effect, in the order the findings were
+	// first deferred in, across every round and level (T-TR7b, D1850). It is the
+	// raw list the record's block is rebuilt from wherever it changes — a judged
+	// round's placements, and the round no judge weighed that takes a finding
+	// back (forgetRoundDeferred) — for the reason triageRounds is: NewDeferred is
+	// what bounds and clips it, and a second append would build on the bounded
+	// list.
+	deferred []runstore.DeferredFinding
 	// rigorRaise is the last raise the run's mode took during the run, set by
 	// the moment that took it (noteRigorRaise, rigor.go) and nil while the mode
 	// has never risen above the one bootstrap resolved. It is kept here because
@@ -2683,7 +2704,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if err := r.startBudgetBackend(ctx); err != nil {
 		return err
 	}
-	if err := r.checkBudget(); err != nil {
+	if err := r.checkBudget(ctx); err != nil {
 		// These checks judged the challenger as this run's coder
 		// (applyChallenger), so the policy refusing *that* pin is the arm's
 		// own refusal and is recorded as one (D556) rather than as
@@ -3178,7 +3199,11 @@ func (r *run) readRepoFile(rel string) (string, error) {
 func (r *run) systemPromptData() PromptData {
 	pd := PromptData{Branch: r.rec.Branch, Base: r.cfg.Git.BaseBranch, StateDir: r.d.StateDir,
 		NoWorkflows: r.providerKind == gitprov.KindGitHub, Checkpoints: r.checkpointsOn(),
-		LintConfigured: strings.TrimSpace(r.wf.Commands.Lint) != ""}
+		LintConfigured: strings.TrimSpace(r.wf.Commands.Lint) != "",
+		// The brief is the coder's, and "implement" is one of its stages: the
+		// answer is the coder's own model, never a review stage's, which is
+		// why denyBinaryReads' review half cannot reach it (D2014).
+		NoImageReads: r.denyBinaryReads("implement")}
 	if r.follow != nil {
 		pd.FollowUp = followup.SystemPromptLines(r.promptData())
 	}
@@ -3536,23 +3561,43 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 			return false
 		}
 		// The judge weighs this round's findings (T-TR7a, D1840): it is called
-		// after the round is recorded and before anything acts on it, and what
-		// it answers is logged and nothing else — the fix below, Decide above
-		// the loop and the pull request's body all read the round exactly as
-		// they did before it existed. A judge the run could not make is a
-		// stage failure like any other, and the loop stops on it: nothing of
-		// the round is acted on by a run that is already over.
-		if !r.triageRound(ctx, round, policy.LevelL2, v) {
+		// after the round is recorded and before anything acts on it. A judge
+		// the run could not make is a stage failure like any other, and the loop
+		// stops on it: nothing of the round is acted on by a run that is already
+		// over.
+		triaged, ok := r.triageRound(ctx, round, policy.LevelL2, v)
+		if !ok {
 			return false
+		}
+		// The round's deferrals are kept beside its findings, on the round
+		// readiness and the held-back rule read it through: a round whose
+		// findings a judge deferred whole is not a round the mode blocks on, and
+		// neither rule can read that off the recorded verdict word, which is
+		// still `changes` (F21).
+		r.lastSenior.Deferred = triaged.Deferred
+		r.seniorLevelLast.Deferred = triaged.Deferred
+		// Every finding of the round is a follow-up: there is nothing left for
+		// this level to fix and nothing left to review, so the level ends on
+		// this round and readiness reads it as the tolerated one it is (F21).
+		// The loop goes on to the next enabled level, which this return does not
+		// skip: the plan walks its steps, and level 3's is one of them.
+		if triaged.Judged && triaged.AllDeferred {
+			return true
 		}
 		// OD1: a round that asks for changes and names nothing but decisions
 		// only the owner can make is where the loop stops. No fix round is
 		// dispatched — there is nothing a coder could change — and no further
 		// round is bought, because the reviewer would be asked the same
 		// question about the same unchanged code. The decisions are recorded
-		// and the run ends waiting for them (ownerStop).
-		if v.Verdict != "ship" && allOwner(v.Findings) {
-			r.ownerStop(ctx, v.Findings)
+		// and the run ends waiting for them (ownerStop). What it reads is what
+		// the round still blocks on, and a deferred finding is not one of those:
+		// a round that defers a finding beside a needs_owner one is a round of
+		// the owner's alone by this rule, and the run stops here on it (T-TR7b,
+		// TestNeedsOwnerFindingStillStopsTheLoopWhenTriaged) — the fixer has
+		// nothing to change for either finding, and the deferred one is filed as
+		// the follow-up it is.
+		if v.Verdict != "ship" && allOwner(triaged.fixable(v)) {
+			r.ownerStop(ctx, triaged.fixable(v))
 			return false
 		}
 		// hand_over: this review is where the run ends (recipe.Step.HandOver,
@@ -3595,7 +3640,7 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 			r.timeStop()
 			return false
 		}
-		if sessionID, ok = r.fix(ctx, v, sys, sessionID); !ok {
+		if sessionID, ok = r.fix(ctx, triaged.fixable(v), sys, sessionID); !ok {
 			return false
 		}
 		if st.Bounce && st.FirstRounds > 0 {
@@ -3662,15 +3707,23 @@ func (r *run) adversarialLoop(ctx context.Context, st planStep, reviewPrompt, sy
 		// rounds: level 3's findings are judged too (D1847), whichever level
 		// decides readiness. A judge that failed the run stops this loop the
 		// same way.
-		if !r.triageRound(ctx, round, policy.LevelL3, v) {
+		triaged, ok := r.triageRound(ctx, round, policy.LevelL3, v)
+		if !ok {
 			return false
+		}
+		// Level 3's own deferrals, kept on the round readiness reads it through
+		// exactly as level 2's are (seniorLoop): it is the deciding level of a
+		// run whose mode enabled it.
+		r.lastSenior.Deferred = triaged.Deferred
+		if triaged.Judged && triaged.AllDeferred {
+			return true
 		}
 		// OD1, exactly as seniorLoop stops: level 3 is the deciding level of a
 		// run whose mode enabled it, so a round that names only the owner's
 		// decisions stops the run here rather than buying a fix round and a
 		// further adversarial review of code that cannot change.
-		if v.Verdict != "ship" && allOwner(v.Findings) {
-			r.ownerStop(ctx, v.Findings)
+		if v.Verdict != "ship" && allOwner(triaged.fixable(v)) {
+			r.ownerStop(ctx, triaged.fixable(v))
 			return false
 		}
 		if v.Verdict == "ship" || round >= r.adversarialRounds(st) {
@@ -3691,7 +3744,7 @@ func (r *run) adversarialLoop(ctx context.Context, st planStep, reviewPrompt, sy
 			r.timeStop()
 			return false
 		}
-		if sessionID, ok = r.fix(ctx, v, sys, sessionID); !ok {
+		if sessionID, ok = r.fix(ctx, triaged.fixable(v), sys, sessionID); !ok {
 			return false
 		}
 		if st.Bounce && st.FirstRounds > 0 {
@@ -3872,13 +3925,20 @@ func (r *run) seniorRound(ctx context.Context, round int, reviewPrompt string) (
 	return Verdict{}, false, true
 }
 
-// fix runs a fix stage for review v in the implement session and reports the
-// session to go on with, and whether the loop may continue.
-func (r *run) fix(ctx context.Context, v Verdict, sys, sessionID string) (string, bool) {
+// fix runs a fix stage for the findings a review round still blocks on, in the
+// implement session, and reports the session to go on with and whether the loop
+// may continue.
+//
+// It takes the findings and not the round (T-TR7b): a deferred finding is a
+// follow-up and never this round's work, and the caller is what knows which
+// findings those are — the judge's answer and the mode's table, applied inside
+// the floor (triageOutcome.fixable). A round that deferred everything never
+// reaches here at all; the loop ends on it.
+func (r *run) fix(ctx context.Context, findings []Finding, sys, sessionID string) (string, bool) {
 	if r.sessionID != "" {
 		sessionID = r.sessionID
 	}
-	req := agent.Request{Prompt: FixPrompt(v), AppendSystemPrompt: sys}
+	req := agent.Request{Prompt: FixPrompt(findings), AppendSystemPrompt: sys}
 	if sessionID == "" {
 		// No session exists to resume: a Fixed check gate (gate.go) skipped
 		// implement entirely, so this fix is the run's first real agent
@@ -3989,13 +4049,35 @@ func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sess
 		// round that answered no verdict has none to weigh, so it is skipped
 		// rather than judged on findings nothing named. A judge that failed
 		// the run ends this loop, which is the session's own return.
-		if parsed && !r.triageRound(ctx, round, policy.LevelL1, v) {
-			return sessionID, false
+		var triaged triageOutcome
+		if parsed {
+			var ok bool
+			if triaged, ok = r.triageRound(ctx, round, policy.LevelL1, v); !ok {
+				return sessionID, false
+			}
+			// The cheap round's deferrals are kept beside it wherever the round
+			// itself is kept, its findings' own record: a stop that cuts level 2
+			// off leaves this round for finalize to read (decidingRound), and the
+			// policy built for a round must be able to count what a judge took out
+			// of it. Where that policy is the stop's own split the deferrals are
+			// already in it and are not added again (withDeferred), so this is the
+			// round kept whole and not a second reading of it.
+			r.firstLineLast.Deferred = triaged.Deferred
+			if decides {
+				r.lastSenior.Deferred = triaged.Deferred
+			}
 		}
 		if sum.Verdict != "changes" {
 			return sessionID, true
 		}
-		if allOwner(v.Findings) {
+		// Every finding of the cheap round is a follow-up: this level ends on
+		// the round, no fix is bought for it, and the loop goes on to the outer
+		// level, whose review is what decides (F21). The stop's rounds half is
+		// not set here — the level did not spend its rounds, it settled them.
+		if triaged.Judged && triaged.AllDeferred {
+			return sessionID, true
+		}
+		if allOwner(triaged.fixable(v)) {
 			// OD1: the round names nothing but decisions only the owner can
 			// make, so the cheap loop fixes nothing here. Where it decides
 			// readiness — a run whose level 2 and level 3 are both off (POC) —
@@ -4003,7 +4085,7 @@ func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sess
 			// handed on and that level's review is what decides, the first line
 			// advising it and never overruling it (seniorReview).
 			if decides {
-				r.ownerStop(ctx, v.Findings)
+				r.ownerStop(ctx, triaged.fixable(v))
 				return sessionID, false
 			}
 			return sessionID, true
@@ -4019,7 +4101,7 @@ func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sess
 			return r.firstLineStop(sessionID)
 		}
 		var more bool
-		if sessionID, more = r.fix(ctx, v, sys, sessionID); !more {
+		if sessionID, more = r.fix(ctx, triaged.fixable(v), sys, sessionID); !more {
 			return sessionID, false
 		}
 	}
@@ -4460,6 +4542,16 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 		r.fail("stage " + name + ": " + reason)
 		return agent.Result{}, false, errors.New(reason)
 	}
+	// The stage's own credential or pool (poolchoice.go, MC5): the craft this
+	// stage's calls go out on, the pool member that serves it, and a stage
+	// whose pool serves nothing yet or names a member this job does not hold
+	// refused here rather than run as another credential. The member is the one
+	// the run's own route for the stage's model already carries; the check
+	// decides whether the pool lets it serve at all.
+	if _, reason := r.checkStagePool(ctx, name); reason != "" {
+		r.fail("stage " + name + ": " + reason)
+		return agent.Result{}, false, errors.New(reason)
+	}
 	// With the gateway on, nothing the agent or the repository wrote since
 	// the last stage may send Claude Code around it.
 	if r.gatewayOn() {
@@ -4689,6 +4781,10 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	} else {
 		r.rec.CostUSD += res.CostUSD
 	}
+	// The stage's own per-model tokens, which a run with no gateway has no
+	// other account of (G1.2, F8): it ignores the report of a gateway run,
+	// whose counts are the gateway's per-call sums.
+	r.recordAgentModelTokens(res)
 	r.updateCost()
 	// The relay has seen the whole stream by now, so its counts of the
 	// stage's sub-agent tool calls and of the most times one identical shell
@@ -4934,7 +5030,12 @@ func (r *run) stageErrorText(text string) string {
 // agent's own text -- which the skill's own loose "usage limit" match reads
 // there anyway -- while naming an allowance a run never spent is a claim the
 // reason has no business making.
-var oauthLimitPhrases = []string{"claude ai usage limit", "hit your limit", `"type":"rate_limit_error"`}
+//
+// It is the claude-oauth row of exhaustionSignals (F5), which is where those
+// shapes are recorded and where every other credential type's are: the name is
+// kept because this is what the allowance's own readers cite, and it is a view
+// of that one table rather than a second list to keep in step.
+var oauthLimitPhrases = signalPhrases(config.CredentialTypeClaudeOAuth)
 
 // subscriptionUsageLimit reports whether a stage's own text says it stopped on
 // the OAuth account's subscription usage limit rather than on anything about

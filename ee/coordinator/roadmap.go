@@ -448,31 +448,67 @@ func roadmapDocument(raw json.RawMessage, out any) bool {
 	return strictDecode(raw, out) == nil
 }
 
+// roadmapIndex is one read of the record as the dangling rule asks about it:
+// the qualified task ids the plan documents carry, and the release keys the
+// release documents carry. The rule is written once, here, because two things
+// ask it — the read that reports the dangling ids and the writer that prunes
+// them (D2115) — and a second copy of it would be a second answer to the one
+// question, drifting apart where nobody looks.
+type roadmapIndex struct {
+	tasks    map[string]bool
+	releases map[string]bool
+}
+
+func indexRoadmap(r Roadmap) roadmapIndex {
+	idx := roadmapIndex{tasks: map[string]bool{}, releases: map[string]bool{}}
+	for _, p := range r.Plans {
+		for _, task := range p.Tasks {
+			idx.tasks[p.Plan+"/"+task.ID] = true
+		}
+	}
+	for _, rel := range r.Releases {
+		idx.releases[ReleaseID(rel.Stream, rel.ID)] = true
+	}
+	return idx
+}
+
+// assignment reports whether an assignment dangles: the task it names is in no
+// plan document, or the release it names is not one the record holds.
+func (i roadmapIndex) assignment(a Assignment) bool {
+	return !i.tasks[a.Task] || !i.releases[a.Release]
+}
+
+// edge reports whether an edge dangles: either of its ends is a task no plan
+// document carries. It is the tasks that are asked, not the ids the read
+// happens to call dangling: an assignment naming a release that is gone is
+// dangling and the task it names is a task the plans still carry, and an edge
+// between two of those is not an edge with a missing end.
+func (i roadmapIndex) edge(e Edge) bool {
+	return !i.tasks[e.Task] || !i.tasks[e.Needs]
+}
+
+// carriesTask reports whether the plans hold a task. It is the question the
+// prune asks apart from `dangling`: a document dangles when its task is gone
+// or when its release is, and only the first is a fact the plans can date —
+// the writer stamps a mark on the one and never touches the other.
+func (i roadmapIndex) carriesTask(task string) bool { return i.tasks[task] }
+
 // danglingIDs names the qualified task ids no plan document carries, over
 // every assignment and edge of one read (D2115). A task's own assignment
 // naming a release the record does not hold dangles too, and it is the task
 // that is named rather than the release: the release is gone and the
 // assignment is what is left pointing at it.
 func danglingIDs(r Roadmap) []string {
-	known := map[string]bool{}
-	for _, p := range r.Plans {
-		for _, task := range p.Tasks {
-			known[p.Plan+"/"+task.ID] = true
-		}
-	}
-	releases := make(map[string]bool, len(r.Releases))
-	for _, rel := range r.Releases {
-		releases[ReleaseID(rel.Stream, rel.ID)] = true
-	}
+	idx := indexRoadmap(r)
 	var out []string
 	for _, a := range r.Assignments {
-		if !known[a.Task] || !releases[a.Release] {
+		if idx.assignment(a) {
 			out = append(out, a.Task)
 		}
 	}
 	for _, e := range r.Edges {
 		for _, id := range []string{e.Task, e.Needs} {
-			if !known[id] {
+			if !idx.tasks[id] {
 				out = append(out, id)
 			}
 		}

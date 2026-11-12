@@ -331,17 +331,18 @@ func TestNarrowRefusesAProjectWindowItCannotRead(t *testing.T) {
 	}
 }
 
-// TestUnknownScopeIsRefusedNotIgnored pins D927: the v1 vocabulary is
-// tasks:read and tasks:write, and a value outside it is refused where the
-// token is written rather than dropped, because a scope a server silently
-// ignored would be a token whose holder believes it holds a permission it
-// does not — and because a scope, once minted, is a wire contract that cannot
-// be withdrawn without breaking tokens.
+// TestUnknownScopeIsRefusedNotIgnored pins D927 as D1227 amended it: a value
+// outside the closed vocabulary is refused where the token is written rather
+// than dropped, because a scope a server silently ignored would be a token
+// whose holder believes it holds a permission it does not — and because a
+// scope, once minted, is a wire contract that cannot be withdrawn without
+// breaking tokens.
 func TestUnknownScopeIsRefusedNotIgnored(t *testing.T) {
-	// roadmap:write is the scope the console's blocked write would want
-	// (D927): it is a real name the design deliberately leaves out of v1, so
-	// it is refused and not quietly read as one of the two that exist.
-	for _, s := range []string{"roadmap:write", "tasks:Read", "TASKS:READ", "tasks", "read", " tasks:read", "tasks:read "} {
+	// roadmap:read is the reading half the console's graph could want and v1
+	// does not mint (D2121 mints the write alone, and the record is read
+	// through the person's own credential): it is a near miss of a name that
+	// does exist, so it is refused and never quietly read as roadmap:write.
+	for _, s := range []string{"roadmap:read", "tasks:Read", "TASKS:READ", "tasks", "read", " tasks:read", "tasks:read "} {
 		lim := mcpauth.Limits{MinRigor: rigor.POC, Scopes: []string{mcpauth.ScopeTasksRead, s}}
 		err := lim.Validate()
 		if !errors.Is(err, mcpauth.ErrUnknownScope) {
@@ -370,12 +371,12 @@ func TestUnknownScopeIsRefusedNotIgnored(t *testing.T) {
 	// the project's check with the token's own removed.
 	_, err = (mcpauth.Limits{
 		MinRigor: rigor.POC,
-		Scopes:   []string{mcpauth.ScopeTasksRead, "roadmap:write"},
+		Scopes:   []string{mcpauth.ScopeTasksRead, "roadmap:read"},
 	}).Narrow(mcpauth.Limits{Scopes: []string{mcpauth.ScopeTasksRead}})
 	if !errors.Is(err, mcpauth.ErrUnknownScope) {
 		t.Errorf("Narrow() with an unknown token scope = %v; want ErrUnknownScope", err)
 	}
-	if !strings.Contains(err.Error(), "roadmap:write") {
+	if !strings.Contains(err.Error(), "roadmap:read") {
 		t.Errorf("Narrow() = %q; want it to name the token's scope", err)
 	}
 
@@ -383,7 +384,7 @@ func TestUnknownScopeIsRefusedNotIgnored(t *testing.T) {
 	// policy that names a scope outside the vocabulary is refused and named,
 	// rather than quietly intersecting the scope away — which would be the
 	// same silent narrowing, one layer out.
-	project := mcpauth.Limits{Scopes: []string{mcpauth.ScopeTasksRead, "roadmap:write"}}
+	project := mcpauth.Limits{Scopes: []string{mcpauth.ScopeTasksRead, "roadmap:read"}}
 	_, err = (mcpauth.Limits{
 		MinRigor: rigor.POC,
 		Scopes:   []string{mcpauth.ScopeTasksRead},
@@ -391,7 +392,7 @@ func TestUnknownScopeIsRefusedNotIgnored(t *testing.T) {
 	if !errors.Is(err, mcpauth.ErrUnknownScope) {
 		t.Fatalf("Narrow() against a project naming an unknown scope = %v; want ErrUnknownScope", err)
 	}
-	if !strings.Contains(err.Error(), "roadmap:write") {
+	if !strings.Contains(err.Error(), "roadmap:read") {
 		t.Errorf("Narrow() = %q; want it to name the project's scope", err)
 	}
 
@@ -408,15 +409,82 @@ func TestUnknownScopeIsRefusedNotIgnored(t *testing.T) {
 	if !strings.Contains(err.Error(), "the project grants none of the token's scopes") {
 		t.Errorf("Narrow() = %q; want it to name the project's grant as the cause", err)
 	}
+}
 
-	// The vocabulary itself is exactly the two names D927 mints, so a later
-	// change that widened it is a decision and not an edit.
-	if !slices.Equal(mcpauth.ScopeVocabulary, []string{"tasks:read", "tasks:write"}) {
-		t.Errorf("ScopeVocabulary = %v; want tasks:read and tasks:write", mcpauth.ScopeVocabulary)
+// TestScopeVocabularyNamesTheStateScopes is the vocabulary itself, pinned to
+// the five names the decisions mint: D927's task pair, D1227's state pair —
+// the amendment the stateless orchestrator's O16a lands — and D2121's roadmap
+// write, which P9d adds. A later change that widened it is a decision and not
+// an edit, which is why the list is written out here rather than compared with
+// itself.
+//
+// The default is pinned beside it and against it, because the two are one
+// question (R1): `requestedScopes` answers an authorization that names no
+// scope out of DefaultScopes, so a default that grew with the vocabulary would
+// hand every sign-in the state scope the vocabulary exists to keep away from
+// it — and a name in the default that the vocabulary does not mint would be a
+// token a build could not read back at all.
+func TestScopeVocabularyNamesTheStateScopes(t *testing.T) {
+	want := []string{"tasks:read", "tasks:write", "state:read", "state:write", "roadmap:write"}
+	if !slices.Equal(mcpauth.ScopeVocabulary, want) {
+		t.Errorf("ScopeVocabulary = %v; want %v: D1227 adds the state pair to D927's two and D2121 the roadmap write, and a name outside the list is refused at the mint and at the door", mcpauth.ScopeVocabulary, want)
 	}
 	for _, s := range mcpauth.ScopeVocabulary {
 		if !mcpauth.KnownScope(s) {
 			t.Errorf("KnownScope(%q) is false", s)
 		}
+	}
+	if !slices.Equal(mcpauth.DefaultScopes, []string{"tasks:read", "tasks:write"}) {
+		t.Errorf("DefaultScopes = %v; want tasks:read and tasks:write: an authorization that names no scope must not be handed a state scope (R1)", mcpauth.DefaultScopes)
+	}
+	for _, s := range mcpauth.DefaultScopes {
+		if !mcpauth.KnownScope(s) {
+			t.Errorf("DefaultScopes names %q, which the vocabulary does not mint: the default is read back by the same build that wrote it", s)
+		}
+	}
+}
+
+// TestRoadmapWriteIsKnownAndNotADefault is D2121 at the vocabulary: the
+// roadmap write is a name v1 mints, and it is not a name an authorization
+// that asks for nothing is handed.
+//
+// The two halves are one question. A vocabulary that did not carry the name
+// would refuse a client that asked for it as though it had misspelled a scope
+// the server does serve, and the surface it names is one this door serves
+// (the seven roadmap tools), so the name is a wire contract like the other
+// four. A default that carried it would hand every sign-in the right to
+// rewrite the project's roadmap, which is the silent widening R1 refuses read
+// one step further — and the more so here than for the state pair, because
+// the default is what a client that names no scope at all is answered with.
+//
+// The literal is written out because the name itself is the contract a
+// console and a phone ask for by (M12, GV4.1).
+func TestRoadmapWriteIsKnownAndNotADefault(t *testing.T) {
+	if mcpauth.ScopeRoadmapWrite != "roadmap:write" {
+		t.Errorf("ScopeRoadmapWrite = %q; want %q: the name is what a client asks for and what a token's limits carry", mcpauth.ScopeRoadmapWrite, "roadmap:write")
+	}
+	if !mcpauth.KnownScope(mcpauth.ScopeRoadmapWrite) {
+		t.Errorf("KnownScope(%q) is false: the roadmap tools are served under this scope, so a token that holds it has to be mintable", mcpauth.ScopeRoadmapWrite)
+	}
+	if !slices.Contains(mcpauth.ScopeVocabulary, mcpauth.ScopeRoadmapWrite) {
+		t.Errorf("ScopeVocabulary = %v does not name %q: a scope the server serves and its own vocabulary does not mint is refused at the door on every call", mcpauth.ScopeVocabulary, mcpauth.ScopeRoadmapWrite)
+	}
+	if slices.Contains(mcpauth.DefaultScopes, mcpauth.ScopeRoadmapWrite) {
+		t.Errorf("DefaultScopes = %v names %q: an authorization that names no scope must not be handed the roadmap write (D2121, R1)", mcpauth.DefaultScopes, mcpauth.ScopeRoadmapWrite)
+	}
+
+	// A token minted with it alone is a token this build writes and reads
+	// back: the scope reaches the roadmap tools and nothing else, which is
+	// what makes it narrower than the task pair rather than wider.
+	only := mcpauth.Limits{MinRigor: rigor.POC, Scopes: []string{mcpauth.ScopeRoadmapWrite}}
+	if err := only.Validate(); err != nil {
+		t.Errorf("Validate() with %q alone = %v; want it admitted: the scope is in the vocabulary", mcpauth.ScopeRoadmapWrite, err)
+	}
+	narrowed, err := only.Narrow(mcpauth.Limits{Scopes: []string{mcpauth.ScopeRoadmapWrite}})
+	if err != nil {
+		t.Fatalf("Narrow() down to %q = %v; want the scope kept", mcpauth.ScopeRoadmapWrite, err)
+	}
+	if !slices.Equal(narrowed.Scopes, []string{mcpauth.ScopeRoadmapWrite}) {
+		t.Errorf("Narrow() scopes = %v; want %q alone: holding the roadmap write is not holding a task scope", narrowed.Scopes, mcpauth.ScopeRoadmapWrite)
 	}
 }

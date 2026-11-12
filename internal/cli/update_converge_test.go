@@ -3,11 +3,13 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -16,6 +18,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -43,10 +46,10 @@ var argsUpdUser = []string{"plugin", "update", "fugaro@fugaro", "--scope", "user
 //     policy-vs-jobs fires and the images stage has to re-pin it;
 //   - the checkout still carries the pin the previous release wrote, and that
 //     release's plugin is installed, so plugin-pin fires — the pin is a
-//     leftover nothing in the tree moves any more (U2 of
-//     docs/plugin-user-scope/implementation-plan.md, D949), which U5's
-//     migration takes out — and the checkout stage has to move the
-//     installation.
+//     leftover nothing in the tree writes any more (U2 of
+//     docs/plugin-user-scope/implementation-plan.md, D949), which this same
+//     run takes out of the checkout (U5) — and the checkout stage has to move
+//     the installation.
 type convergeRig struct {
 	*imagesRig
 	root     string
@@ -254,12 +257,19 @@ func converge(t *testing.T, node map[string]any, stale []string) {
 	t.Helper()
 	r := newConvergeRig(t, node)
 	out := convergeOn(t, r, stale)
-	// Nothing in the tree writes a pin any more (U2, D949): the settings the
-	// checkout carried come out of the run byte for byte as they went in, and
-	// what the run moves is the plugin Claude Code has installed, at user
-	// scope — the one the plugin stage is about now.
-	if got := upgradeRead(t, r.settings); got != wiredAt("v"+convergePrev) {
-		t.Errorf("the checkout's settings changed, and nothing writes a pin any more:\n%s", got)
+	// The one thing this run writes in the checkout is the pin coming out
+	// (U5's migration, inside this same `fugaro update`): the fixture carries
+	// nothing but the pin, so both entries go and both parent keys with them,
+	// and an empty settings object is left — never a deleted file.
+	if got := upgradeRead(t, r.settings); got != "{}\n" {
+		t.Errorf("the checkout's settings after the run:\n%s\nwant the pin taken out and nothing else moved:\n%s", got, "{}\n")
+	}
+	// And with the pin gone there is nothing stale left for the line every
+	// command prints to say about this checkout: the door the line sends the
+	// reader to is also the door that clears it (U2's review, #2235: until this
+	// migration, a checkout an older release pinned kept printing it).
+	if line := staleLine(pluginwire.Status(r.settings, convergeRelease, installedPlugins())); line != "" {
+		t.Errorf("after fugaro update the staleness line still fires for a checkout the run unpinned: %q", line)
 	}
 	if !strings.Contains(out, "plugin: done: installed "+convergeRelease) {
 		t.Errorf("the plugin step did not converge the install on this release's version:\n%s", out)
@@ -323,14 +333,20 @@ func convergeOn(t *testing.T, r *convergeRig, stale []string) string {
 		}
 	}
 	// plugin-pin is asserted the other way round, and the assertion is not an
-	// omission: the pin this fixture carries is a leftover no run writes or
-	// moves any more (U2, D949), so what this run must NOT do is report it
-	// converged — a pass here would be the merge's write coming back. The
-	// fixture is asserted stale above, with every other id, and still stale
-	// here. U5's migration is what takes the entry out, inside this same
-	// `fugaro update`, and this is the assertion it flips.
-	if c, ok := doctorCheckByID(after.Checks, "plugin-pin"); !ok || c.OK {
-		t.Errorf("after fugaro update, doctor's plugin-pin check reads %+v: the fixture still carries the previous release's pin and nothing in this tree moves one, so the check must still fire (U5's migration is what removes the entry)", c)
+	// omission: nothing in this tree writes a pin any more (U2, D949), so what
+	// this run must NOT do is report the pin converged — a version read back
+	// there would be the merge's write coming back. What it does instead is
+	// take the entry out (U5's migration, inside this same `fugaro update`), so
+	// the check reads the same file as a checkout with no marketplace at all.
+	c, ok := doctorCheckByID(after.Checks, "plugin-pin")
+	if !ok {
+		t.Fatalf("after fugaro update, doctor has no plugin-pin check at all: %+v", after.Checks)
+	}
+	if !strings.Contains(c.Problem, "no fugaro marketplace") {
+		t.Errorf("after fugaro update, doctor's plugin-pin check reads %+v, want the checkout read as one with no fugaro marketplace: the run takes the pin out (U5)", c)
+	}
+	if strings.Contains(c.Problem, convergePrev) {
+		t.Errorf("after fugaro update, doctor's plugin-pin check still reads the previous release's pin: %s", c.Problem)
 	}
 	for _, c := range after.Checks {
 		// The per-workflow settings comparison, which is the update's own
@@ -723,4 +739,117 @@ func doctorChecks(t *testing.T, root string) doctorOutput {
 		t.Fatalf("doctor --json: %v (err %v)\n%s\n%s", jerr, err, out, errOut)
 	}
 	return o
+}
+
+// executeConsole runs the command tree with stdout and stderr on ONE writer,
+// which is what a terminal is: the reporter draws its line in flight on stdout
+// and a stage's own notes go to stderr, and both land on the same screen. A
+// test that captures the two separately cannot see one running into the other,
+// which is exactly the defect this seam is here for.
+//
+// writerIsTerminal answers true, so the reporter draws the line in flight (it
+// is what decides colour, and colour decides the spinner).
+func executeConsole(t *testing.T, args ...string) (string, error) {
+	t.Helper()
+	old := writerIsTerminal
+	writerIsTerminal = func(io.Writer) bool { return true }
+	t.Cleanup(func() { writerIsTerminal = old })
+
+	cmd := NewRootCmd()
+	both := &syncBuf{}
+	cmd.SetIn(strings.NewReader(""))
+	cmd.SetOut(both)
+	cmd.SetErr(both)
+	cmd.SetArgs(NormalizeArgs(args))
+	err := cmd.Execute()
+	return both.String(), err
+}
+
+// TestUpdateEndsTheSpinnerLineBeforeTheProjectHeader: the stage's own header
+// ("project: <name> (GCP <id>)") is printed to stderr while the reporter's line
+// in flight is on stdout, and a terminal draws both on the same row. The line
+// has to come down before the header is written, or the person reads
+// "- repositoryproject: <name>" — the stage run into the header, on no line of
+// its own.
+func TestUpdateEndsTheSpinnerLineBeforeTheProjectHeader(t *testing.T) {
+	r := newConvergeRig(t, v4Node())
+	currentRelease(t)
+	skillWarned.Store(false)
+	t.Cleanup(func() { skillWarned.Store(false) })
+	// The log is the run's own file, and XDG_STATE_HOME is the developer's.
+	isolateState(t)
+	_ = r
+
+	out, err := executeConsole(t, "update", "--yes")
+	if err != nil {
+		t.Fatalf("fugaro update failed (exit %d): %v\n%s", ExitCode(err), err, out)
+	}
+	// The header itself, and not every sentence that happens to hold
+	// "project: ": the name and the GCP project in parentheses are what the
+	// first line of every cloud command says.
+	header := regexp.MustCompile(`project: [a-z0-9-]+ \(GCP [a-z0-9-]+\)`)
+	at := header.FindAllStringIndex(out, -1)
+	if len(at) < 2 {
+		t.Fatalf("the run printed the project header %d time(s), want the one at the door and the one each stage prints for its own checkout:\n%s", len(at), out)
+	}
+	for _, m := range at {
+		if col := columnAt(out, m[0]); col != 0 {
+			start := strings.LastIndex(out[:m[0]], "\n") + 1
+			t.Errorf("the project header is not at the start of a line: the line in flight ran into it: %q", out[start:m[1]])
+		}
+	}
+}
+
+// columnAt is the column the byte at i sits in, on a terminal: a carriage
+// return and the reporter's own clear-to-end-of-line both put the cursor back
+// at the start, and nothing else in a run's output does.
+func columnAt(s string, i int) int {
+	line := s[strings.LastIndex(s[:i], "\n")+1 : i]
+	if j := strings.LastIndex(line, "\r"); j >= 0 {
+		line = line[j+1:]
+	}
+	line = ansiRE.ReplaceAllString(line, "")
+	return len(line)
+}
+
+// ansiRE is a terminal escape sequence: what the reporter paints a frame with,
+// and nothing a person reads as a column.
+var ansiRE = regexp.MustCompile("\x1b\\[[0-9;]*[a-zA-Z]")
+
+// TestUpdateNeverSendsThePersonToUpdateFromInsideIt: the converge's plugin
+// stage used to end its wiring with the two notes written for `fugaro
+// update-skills`, which told the person inside `fugaro update` to run the
+// command they were running (the owner's feedback of 2026-11-10). The wiring
+// write and its notes are gone (U2 of docs/plugin-user-scope); both worlds are
+// still read so neither sentence comes back: the fake claude installs the
+// plugin in one, and the other is the machine with no claude on PATH.
+func TestUpdateNeverSendsThePersonToUpdateFromInsideIt(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// noClaude is the machine the install half cannot run on.
+		noClaude bool
+	}{
+		{"claude on PATH, so this run installs it", false},
+		{"no claude on PATH", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_ = newConvergeRig(t, v4Node())
+			currentRelease(t)
+			skillWarned.Store(false)
+			t.Cleanup(func() { skillWarned.Store(false) })
+			if tc.noClaude {
+				noClaudeOnPath(t)
+			}
+
+			out, errOut, err := executeStdin(t, "", "update", "--yes")
+			if err != nil {
+				t.Fatalf("fugaro update failed (exit %d): %v\n%s\n%s", ExitCode(err), err, out, errOut)
+			}
+			for _, bad := range []string{"Run fugaro update to install the plugin for you", "Run fugaro update to refresh it for you"} {
+				if strings.Contains(out, bad) {
+					t.Errorf("the run prints %q: that is the command this run IS\n%s", bad, out)
+				}
+			}
+		})
+	}
 }

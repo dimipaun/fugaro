@@ -13,6 +13,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
@@ -129,6 +130,14 @@ func (r *run) imageEnv(declared []string) map[string]string {
 // It is read once, at bootstrap, and the answer is what every reader of a
 // stage's credential stands on: the stage's own environment (stageAgentEnv),
 // its pins (stagePins) and its managed settings (writeManagedSettings).
+//
+// A node that names another account than the one this run was launched with
+// does not move the stage (D2094): a repoint moves new launches only, so the
+// stage is served with the run's own account — held to the node's admission of
+// it where the node states one (admitStageAccount) — and the difference is
+// logged. That is the one window a repoint leaves open
+// (docs/account-aliases/reconciliation.md F3), and the same window a hand edit
+// of a stage key opens.
 func (r *run) resolveMixedStages(ctx context.Context) (map[string]string, error) {
 	if r.cfg == nil || r.cfg.Agent.Auth != "api-key" {
 		// The mix exists to give an api-key run a Claude review credential it
@@ -171,6 +180,24 @@ func (r *run) resolveMixedStages(ctx context.Context) (map[string]string, error)
 			}
 			name = def
 		}
+		// The node may name an account this run was not launched with: a
+		// repoint published between this run's launch and its bootstrap, or a
+		// hand edit of the key. A repoint moves new launches only (spec §5, the
+		// owner's ruling), so the stage keeps the account the run's launch
+		// resolved and the difference is logged; the fallback is held to the
+		// node's admission of that account below. Serving the stage with the
+		// node's new name would run it as an account this run holds no token of
+		// — the job this run is in is not that account's own job, which is the
+		// only one that mounts its token — and would write an account into the
+		// record that did not answer it.
+		if own := r.launchAccount(); own != "" && name != own {
+			if err := r.admitStageAccount(p, stage, own, name); err != nil {
+				return nil, err
+			}
+			r.d.Log.Info("the stage keeps the account this run was launched with",
+				"stage", stage, "account", own, "policy_account", name)
+			name = own
+		}
 		// A stage the account serves goes straight to Anthropic on the account's
 		// token, so it can only run a Claude model. A stage model a provider
 		// route claims would be handed to Anthropic under a model Anthropic does
@@ -186,6 +213,74 @@ func (r *run) resolveMixedStages(ctx context.Context) (map[string]string, error)
 		out[stage] = name
 	}
 	return out, nil
+}
+
+// launchAccount is the Claude OAuth account this run was launched with: the
+// resolved account its task carries (spec.OAuthToken, mixedRunAccount in
+// internal/cli), the account every gate of that launch was made for and the one
+// its stage accounts, its record and its budget were resolved under. "" is a
+// run that holds no named account — the unsuffixed default included
+// (claudeAccountOf) — and a run no task describes.
+func (r *run) launchAccount() string {
+	if r.spec == nil {
+		return ""
+	}
+	return claudeAccountOf(r.spec.OAuthToken)
+}
+
+// admitStageAccount holds the account a repointed mixed stage falls back to to
+// the node's own admission (D2094): the account may keep serving the stage only
+// where the published policy's accounts.<name>.allow_repos admits this
+// repository — the same list the launch asks before it starts anything
+// (claudeAccountAllowed, internal/cli) — so a repoint cannot widen a token's
+// reach past what the node now admits. stage and node are the two names a
+// refusal names, so an operator reading it sees which key moved.
+//
+// Where the node describes no list for the account there is nothing to hold the
+// stage to, and the stage keeps the launch's account on the admission the launch
+// itself made (claudeAccountMembership over claude_accounts.<name>.allow_data_to,
+// internal/cli). That is not a leniency: a node that says nothing about the
+// account is the ordinary shape of a mixed project, not an anomaly — the
+// accounts block is derived from the profiles that name an account
+// (projectpolicy.DeriveAccounts), while claude_account_stages is copied from the
+// owner's config whole, and the mix's account need be named by no profile at all
+// (its job is the repository's own variant, internal/infra's mixedStageAccounts).
+// Refusing an in-flight run there would be the cost ruling D2094 chose against —
+// a repoint that fails a launched, not-yet-bootstrapped run closed
+// (docs/account-aliases/reconciliation.md F3 and its alternative (c)).
+//
+// The repository the list is read about is named the way this run's own job
+// names it, which is the pair the rest of the run reads: a project job's
+// provider is the one its own name pins (job.Provider, as checkProviderAdmission
+// and stageAccountCandidates read it) and a per-repository run's is the kind the
+// slug it was launched with derives (providerForSlug). A run admitted to a
+// project job is therefore judged by its job's provider and not by its slug.
+func (r *run) admitStageAccount(p *projectpolicy.Policy, stage, own, node string) error {
+	acct, ok := p.Accounts[own]
+	if !ok {
+		return nil
+	}
+	intro := fmt.Sprintf("the %s stage is %q in the published policy and this run was launched with %q: a repoint moves new launches only (D2094), so this run keeps the account its launch resolved, and it may keep it only where the node still admits this repository to that account", stage, node, own)
+	kind := ""
+	if job, project := r.projectJob(); project {
+		kind = job.Provider
+	} else if k, ok := providerForSlug(r.d.Store.Slug(), r.spec.Repo); ok {
+		kind = k
+	}
+	canonical := ""
+	if kind != "" {
+		var err error
+		if canonical, err = projectpolicy.Canonical(kind, r.spec.Repo); err != nil {
+			return err
+		}
+	}
+	if canonical == "" {
+		return fmt.Errorf("%s, and this run's repository (%s) cannot be named the way the published policy writes repositories, so the node's accounts.%s.allow_repos cannot be applied to it. The run stops here rather than keeping the stage on an account whose admission the node does state and this run cannot read — the halt checkProjectJobAccount makes when it cannot name a project job's repository either", intro, r.spec.Repo, own)
+	}
+	if projectpolicy.AdmitRepo(acct.AllowRepos, canonical) {
+		return nil
+	}
+	return fmt.Errorf("%s: accounts.%s.allow_repos is %s, and %s is not one of them. The run stops rather than serving the stage as an account this run was not launched with (%q), whose token no job this run is in mounts, or with a token the node does not admit for this repository", intro, own, strings.Join(acct.AllowRepos, ", "), canonical, node)
 }
 
 // mixedDefaultAccount is rung 4's account for a stage: the project's
@@ -357,11 +452,65 @@ func (r *run) providerServedReview() bool {
 	return r.reviewClassRun() && r.pairingNamesTheProjectsProviderKey()
 }
 
+// denyBinaryReads reports whether stage's managed settings deny a Read of an
+// image file: a review stage always — its built input names a binary with its
+// size and never attaches it, and the reviewer must not Read what it would
+// then send — and any other stage whose own model is priced without an image
+// rate, which is the model the gateway refuses an image for (D2014). Denying
+// the read is what keeps such a stage from dying on a refused request: Claude
+// Code puts what it read into the next Messages body as a base64 image block.
+//
+// The second answer is the gateway's, so it is only given where the gateway
+// carries the stage: a run whose calls reach no gateway writes no managed
+// settings file at all (writeManagedSettings' own first rule) and has nothing
+// to refuse an image, and a stage the run's Claude OAuth account serves goes
+// straight to Anthropic on that account's token (stageDirect), which serves
+// the image. A price row alone would answer no for a model the run's table
+// does not carry — one the gateway does serve, priced at the table's maximum
+// and refused an image (forward.go's modelFor) — and a coder that is denied a
+// read nothing refuses, and told of a fix that changes nothing in its
+// installation, is a coder that learns to read past the rule.
+func (r *run) denyBinaryReads(stage string) bool {
+	if config.IsReviewStage(stage) {
+		return true
+	}
+	if !r.gatewayOn() || r.stageDirect(stage) {
+		return false
+	}
+	model := r.stageModel(stage)
+	// A stage pinned to no model runs Claude Code's own default, which no
+	// price row of this run names: the gateway prices whatever the request
+	// names, and that is an Anthropic model with an image rate in every
+	// configuration this program ships, so the read is not denied on a guess.
+	if model == "" {
+		return false
+	}
+	return !r.modelTakesImages(model)
+}
+
+// modelTakesImages reports whether model can send an image, which is one fact
+// about it: its price row's image rate (D2000). That is the question the
+// gateway's own image rule asks before it refuses a call
+// (internal/gateway/forward.go) and the ceiling the reservation counts an
+// image with (pricing/worst.go), so the two answers cannot disagree. A run
+// with no price table of its own — the budget off, with no overrides — is
+// answered by the embedded table, the one every run starts from; the built-in
+// provider catalog prices no image at all (its own D8), so a route's model is
+// one without a rate.
+func (r *run) modelTakesImages(model string) bool {
+	t := r.spend.Prices
+	if t == nil {
+		t = pricing.Embedded()
+	}
+	m, ok := t.Lookup(model)
+	return ok && m.ImageTokens > 0
+}
+
 // writeManagedSettings writes the managed settings for stage: the gateway's
 // variables, the pins, and the stage's deny list — the web tools for every
-// stage, and the binary reads for a review stage, whose reviewer would
-// otherwise be free to Read a changed PNG and have the gateway refuse the
-// image block that puts in the next request (agent.deniedBinaryReads). It
+// stage, and the image reads for a stage that cannot send one (denyBinaryReads),
+// which would otherwise be free to Read a PNG and have the gateway refuse the
+// image block that puts in the next request (agent.imageReadExtensions). It
 // does nothing without the gateway: a budget-off run writes no file, and so
 // carries no deny rule at all. A failure is an error, since the settings are
 // what keep a repository's own settings from rerouting the agent.
@@ -404,7 +553,7 @@ func (r *run) writeManagedSettings(stage string, pins map[string]string) error {
 			vars[k] = v
 		}
 	}
-	write, deny := agent.WriteManagedSettings, agent.DenyRules(true, config.IsReviewStage(stage))
+	write, deny := agent.WriteManagedSettings, agent.DenyRules(true, r.denyBinaryReads(stage))
 	if r.review || stage == stageTriage {
 		// A review-mode run's stage reads a pull request's own head, so the
 		// settings it is launched under are the review posture (D894(a)):

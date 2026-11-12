@@ -70,8 +70,18 @@ import type { LayoutGraph, LayoutRequest, Positions, RouteSection, WorkerLike } 
 import { WORKER_URL } from '../graph/layout-client'
 import { GraphLayout, edgeKey, nodeKey } from '../graph/layout'
 import { STATE_WORDS, buildGraphModel, buildScopeModel } from '../graph/model'
-import type { GraphColumn, GraphModel, GraphNode, GraphPlan, GraphRelease, GraphTab, StateWord } from '../graph/model'
-import type { ScopeModel, ScopeNode, ScopeRelease, ScopeSource } from '../graph/model'
+import { GRAPH_SCOPE_FROM_PLAN } from '../graph/model'
+import type {
+  GraphColumn,
+  GraphModel,
+  GraphNode,
+  GraphPlan,
+  GraphRelease,
+  GraphTab,
+  GraphTabOption,
+  StateWord,
+} from '../graph/model'
+import type { ScopeBox, ScopeLane, ScopeModel, ScopeNeed, ScopeNode, ScopeRelease, ScopeSource } from '../graph/model'
 import { disabledWrite } from '../writes'
 
 // ---------------------------------------------------------------------------
@@ -535,10 +545,17 @@ export interface GraphPicture {
 
 /** ScopePicture is the coordinator drawing's inputs: the scope's own model, the
  * same state, and the same notice. It carries positions' counterpart by carrying
- * **no positions at all**: this scope has no edges to place (F17), so there is
- * nothing for the engine to answer and nothing that can fail -- which is also why
- * it carries no run list, since a coordinator node names no run of this console's
- * own and a door would open nothing. */
+ * **no positions at all**: nothing in this scope is laid out, so there is nothing
+ * for the engine to answer and nothing that can fail -- which is also why it
+ * carries no run list, since a coordinator node names no run of this console's
+ * own and a door would open nothing.
+ *
+ * The record's dependencies are drawn **as words beside a task** and not as lines
+ * between two cards (GV4.1): a marker names the stream and the box the needed
+ * task is in, which is what a reader can still act on when the tab they are
+ * looking at is the one stream the other task is not in. That is why the scope
+ * needs no positions even now that its document carries edges -- the picture is
+ * still a reading. */
 export interface ScopePicture {
   readonly model: ScopeModel
   readonly state: GraphState
@@ -1224,14 +1241,33 @@ function appendNotice(parent: ScreenElement, factory: ScreenFactory, notice: str
  * press and no panel to wait for.
  */
 function filter(factory: ScreenFactory, picture: GraphPicture): ScreenElement {
+  return streamFilter(factory, picture.model.tabs, picture.model.tab)
+}
+
+/**
+ * streamFilter is the stream filter as both scopes draw it: one segment per
+ * stream, then All, with a press or an arrow key choosing the graph that follows
+ * (GV4.1 draws it for the coordinator scope's lanes as well as for the plan
+ * scope's columns, which is why the loop is here rather than in either caller).
+ *
+ * **Every tab of both scopes carries the same key and the same hooks.** `tabKey`
+ * spells a tab as `all` or `stream:<name>`, so a stream of a checkout that calls
+ * itself `all` is not the All tab, and `tabOf` reads the pair back -- which is
+ * what lets the entry wire a press without knowing which scope drew the strip.
+ */
+function streamFilter(
+  factory: ScreenFactory,
+  options: readonly GraphTabOption[],
+  chosenTab: GraphTab,
+): ScreenElement {
   const group = make(factory, 'div', 'graph-filter')
   group.setAttribute('role', 'group')
   group.setAttribute('aria-label', GRAPH_FILTER_LABEL)
-  for (const option of picture.model.tabs) {
+  for (const option of options) {
     const button = cell(group, factory, 'button', 'graph-tab')
     button.setAttribute('type', 'button')
     button.setAttribute('data-tab', tabKey(option.tab))
-    const chosen = option.tab === picture.model.tab
+    const chosen = option.tab === chosenTab
     button.setAttribute('aria-pressed', chosen ? 'true' : 'false')
     button.setAttribute('tabindex', chosen ? '0' : '-1')
     drawInto(button, option.label)
@@ -2025,20 +2061,24 @@ export function renderGraph(factory: GraphFactory, picture: GraphPicture, theme:
 // ---------------------------------------------------------------------------
 
 /**
- * renderScopeGraph draws the **coordinator** scope: the sources with their own
- * states, then the nodes grouped by release, then the read's warnings.
+ * renderScopeGraph draws the **coordinator** scope: the record's stream tabs, the
+ * sources with their own states, the record's lanes with their release boxes and
+ * their unplaced tasks, then the stored view's records grouped by release, then
+ * the read's warnings (GV4.1).
  *
- * **It asks the engine for nothing and draws no canvas.** The coordinator's view
- * holds no edges (F17), so there is no picture to place: the reading *is* the
- * drawing, and a worker asked for coordinates nobody draws would be a process
- * started for nothing -- and a second failure mode (`GraphScreen.build`'s list
- * fallback) for a drawing that cannot fail.
+ * **It asks the engine for nothing and draws no canvas.** Nothing here is placed:
+ * the reading *is* the drawing, and a worker asked for coordinates nobody draws
+ * would be a process started for nothing -- and a second failure mode
+ * (`GraphScreen.build`'s list fallback) for a drawing that cannot fail. The
+ * record's dependencies are drawn as markers beside the task that needs them, for
+ * the same reason and for one more: a lane drawing has no room for a line, and a
+ * marker survives the stream filter the tabs apply.
  *
  * It is the plan drawing's sibling and not its variant: the two share the
- * section, the tooltip of the pull request number, the busy slot and the scope
- * control, and nothing else. A plan's cards, bands, boxes and edges are facts
- * about one checkout's document, and the coordinator's document has none of
- * them.
+ * section, the tooltip of the pull request number, the busy slot, the scope
+ * control and the stream filter's own control, and nothing else. A plan's cards,
+ * bands, boxes and edges are facts about one checkout's document, and the
+ * coordinator's document has none of them.
  */
 export function renderScopeGraph(factory: ScreenFactory, picture: ScopePicture, theme: GraphTheme): ScreenElement {
   const root = make(factory, 'section', 'graph')
@@ -2047,16 +2087,19 @@ export function renderScopeGraph(factory: ScreenFactory, picture: ScopePicture, 
   // `renderGraph`'s reason: the scope control starts a read of its own.
   cell(root, factory, 'div', BUSY_SLOT_CLASS)
   root.append(scopeHeader(factory, picture))
+  const tabs = scopeTabs(factory, picture)
+  if (tabs !== null) root.append(tabs)
   const sources = scopeSources(factory, picture.model)
   if (sources !== null) root.append(sources)
-  if (picture.model.releases.length === 0) {
+  if (picture.model.releases.length === 0 && picture.model.lanes.length === 0) {
     // A scope with no node at all is its own sentence and never an empty frame:
     // a coordinator whose every source is down answers with no node, and the
     // source rows above this sentence are what tell that apart from an
     // installation that is simply quiet.
     literal(cell(root, factory, 'p', 'graph-empty'), GRAPH_SCOPE_EMPTY)
   }
-  for (const release of picture.model.releases) root.append(scopeRelease(factory, release))
+  for (const lane of picture.model.lanes) root.append(scopeLane(factory, picture, lane))
+  for (const release of picture.model.releases) root.append(scopeRelease(factory, picture, release))
   for (const warning of picture.model.warnings) drawn(root, factory, 'p', warning, 'graph-warning')
   if (picture.model.notShown > 0) {
     literal(cell(root, factory, 'p', 'graph-not-shown'), notShownNote(picture.model.notShown))
@@ -2068,11 +2111,13 @@ export function renderScopeGraph(factory: ScreenFactory, picture: ScopePicture, 
  * scopeHeader draws the coordinator drawing's heading, its one control and the
  * notice.
  *
- * **There is no stream filter here**, and that is a fact about the document
- * rather than a simplification: the streams are `plan status`'s own vocabulary
- * and the coordinator's view names none of them, so a filter would be a control
- * that cannot change the drawing. The view and fit controls are the canvas's --
- * the list is the other drawing of a *picture*, and there is no picture here.
+ * **The stream filter is the record's**, drawn by `scopeTabs` under this header
+ * and only when the document names a stream (GV4.1): the coordinator's **stored
+ * view** names no stream at all -- its records carry a release string and nothing
+ * else -- so a filter built from it would be a control that cannot change the
+ * drawing, and before the record existed this scope drew none. The view and fit
+ * controls are the canvas's -- the list is the other drawing of a *picture*, and
+ * there is no picture here.
  */
 function scopeHeader(factory: ScreenFactory, picture: ScopePicture): ScreenElement {
   const element = make(factory, 'header', 'graph-header')
@@ -2127,15 +2172,115 @@ function scopeSource(factory: ScreenFactory, source: ScopeSource): ScreenElement
   return row
 }
 
+/**
+ * scopeTabs draws the record's own stream filter: one segment per lane, then All
+ * -- the document's streams and then everything at once, which is the order and
+ * the control `filter` already draws for the plan scope (GV4.1).
+ *
+ * **It is the plan scope's segmented control and not a second one**: the two draw
+ * the same classes, the same `data-tab` keys (`tabKey`/`tabOf`), the same
+ * `aria-pressed` and the same roving `tabindex`, so the entry wires a press or an
+ * arrow key here exactly as it does there. What differs is what a tab costs: the
+ * plan scope asks the engine for a layout, and this scope answers from the
+ * document in hand -- it has no positions that depend on the filter.
+ *
+ * It draws nothing when the document names no stream, and that is what keeps a
+ * scope this console read before the record existed drawing exactly the picture
+ * it always drew: a filter with no stream to filter is a control that cannot
+ * change the drawing.
+ */
+function scopeTabs(factory: ScreenFactory, picture: ScopePicture): ScreenElement | null {
+  if (picture.model.tabs.length === 0) return null
+  return streamFilter(factory, picture.model.tabs, picture.model.tab)
+}
+
+/**
+ * scopeLane draws one stream of the record: its own heading, then a release box
+ * per release in it, then the tasks nobody has placed (D2114).
+ *
+ * **A task in no box is drawn rather than left out.** The record writes no
+ * document for an unplaced task, so a drawing that only had boxes would drop
+ * every task a person has not yet moved -- which is most of them on a project
+ * that has just published a plan. They are drawn under the console's own word
+ * for the group, beside the plan's version and marked "from the plan", because
+ * that version is the artifact's own target and not a release the record holds
+ * (D2114).
+ */
+function scopeLane(factory: ScreenFactory, picture: ScopePicture, lane: ScopeLane): ScreenElement {
+  const section = make(factory, 'section', 'graph-scope-lane')
+  section.setAttribute('data-stream', lane.stream)
+  drawn(section, factory, 'h2', lane.heading, 'graph-scope-lane-heading')
+  for (const box of lane.boxes) section.append(scopeBox(factory, picture, box))
+  if (lane.unassigned.length > 0) {
+    const group = cell(section, factory, 'section', 'graph-scope-unassigned')
+    drawn(group, factory, 'h3', lane.unassignedHeading, 'graph-scope-unassigned-heading')
+    const list = cell(group, factory, 'ul', 'graph-scope-nodes')
+    for (const node of lane.unassigned) list.append(scopeNode(factory, picture, node))
+  }
+  return section
+}
+
+/**
+ * scopeBox draws one release box: the record's own name for it, the state the
+ * record calls it as a **word** (H10, design §3.5: a finished release is read off
+ * a greyscale screenshot and never off a tone), and the tasks placed in it.
+ *
+ * `data-release` is the record's key for the box -- what a task's own `release`
+ * names, so a rule or a test can join the two -- and `data-state` is the record's
+ * own word or the empty string where the sanitizer refused it, exactly as a
+ * source row's two hooks are: a hook a rule keys on, and never a second spelling
+ * of a document's word.
+ */
+function scopeBox(factory: ScreenFactory, picture: ScopePicture, box: ScopeBox): ScreenElement {
+  const section = make(factory, 'section', 'graph-scope-box')
+  section.setAttribute('data-release', box.key)
+  section.setAttribute('data-state', box.state.ok ? box.state.text : '')
+  drawn(section, factory, 'h3', box.heading, 'graph-scope-box-name')
+  stateWord(section, factory, box.state, 'graph-word')
+  const list = cell(section, factory, 'ul', 'graph-scope-nodes')
+  for (const node of box.nodes) list.append(scopeNode(factory, picture, node))
+  return section
+}
+
 /** scopeRelease is one release's group: its heading -- the version, or the
- * console's own words for a node that names none -- and the nodes in it. */
-function scopeRelease(factory: ScreenFactory, release: ScopeRelease): ScreenElement {
+ * console's own words for a node that names none -- and the nodes in it. It
+ * groups the **stored view's** records, which name a release string their own
+ * repository wrote; the record's own tasks are drawn in their stream's lanes
+ * (GV4.1). */
+function scopeRelease(factory: ScreenFactory, picture: ScopePicture, release: ScopeRelease): ScreenElement {
   const section = make(factory, 'section', 'graph-scope-release')
   section.setAttribute('data-release', release.release)
   drawn(section, factory, 'h2', release.heading, 'graph-scope-heading')
   const list = cell(section, factory, 'ul', 'graph-scope-nodes')
-  for (const node of release.nodes) list.append(scopeNode(factory, node))
+  for (const node of release.nodes) list.append(scopeNode(factory, picture, node))
   return section
+}
+
+/**
+ * scopeNeed is one dependency of a record task, drawn as a word under its row
+ * (GV4.1): the stream and the box the needed task is in, so a reader who is
+ * looking at one stream still sees what the task waits on.
+ *
+ * **It carries the two hooks a tone needs and no tone of its own yet.**
+ * `data-need-on` is set when the task that needs or the task that is needed is
+ * the selected one -- the marker a rule would draw lit and every other faint,
+ * which is what makes a row of several dependencies readable -- and `data-cross`
+ * says the two ends are in different streams or different boxes, the case the
+ * lane drawing cannot show on its own. Nothing selects either hook in this
+ * release: the words are the channel the fact travels in (H10), and a rule that
+ * dims them is the styling task's, along with §2.11's inventory entry for them.
+ *
+ * The key is a **key** and never spelled: it is what the selection is compared
+ * with, and what a reader sees is the `Sanitized` sentence beside it.
+ */
+function scopeNeed(factory: ScreenFactory, picture: ScopePicture, node: ScopeNode, need: ScopeNeed): ScreenElement {
+  const element = make(factory, 'span', 'graph-scope-need')
+  element.setAttribute('data-need', need.key)
+  const on = need.key === picture.state.selected || node.key === picture.state.selected
+  element.setAttribute('data-need-on', on ? 'true' : 'false')
+  if (need.cross) element.setAttribute('data-cross', 'true')
+  drawInto(element, need.label)
+  return element
 }
 
 /**
@@ -2169,16 +2314,33 @@ function scopeRelease(factory: ScreenFactory, release: ScopeRelease): ScreenElem
  * saw only the row would read a figure from an older snapshot as one of this
  * one's. `data-kept` is the hook the words come with, in the same two-channel
  * shape every state in this console has (H10).
+ *
+ * **A record task's three own members are drawn beside the same title** (GV4.1):
+ * the record's `dangling` mark, the plan's own `version` with the console's
+ * "from the plan" beside it, and one marker per dependency. Each is a word and
+ * not a tone, and each is drawn from the model's `Sanitized` value -- the screen
+ * composes none of them.
  */
-function scopeNode(factory: ScreenFactory, node: ScopeNode): ScreenElement {
+function scopeNode(factory: ScreenFactory, picture: ScopePicture, node: ScopeNode): ScreenElement {
   const row = make(factory, 'li', 'graph-scope-node')
   row.setAttribute('role', 'listitem')
   row.setAttribute('data-key', node.key)
   row.setAttribute('data-source', node.source.ok ? node.source.text : '')
   row.setAttribute('data-state', node.state.ok ? node.state.text : '')
   if (node.kept !== null) row.setAttribute('data-kept', 'true')
+  if (node.dangling !== null) row.setAttribute('data-dangling', 'true')
   drawn(row, factory, 'span', node.title, 'graph-scope-title')
   if (node.kept !== null) drawn(row, factory, 'span', node.kept, 'graph-scope-kept')
+  if (node.dangling !== null) drawn(row, factory, 'span', node.dangling, 'graph-scope-dangling')
+  // The plan's own target, and the mark that says **whose** it is (D2114): the
+  // record draws no version of its own on a release, so a number beside a task
+  // the record places in no box is the artifact's, and a reader is told so
+  // rather than left to match it against a box. The wire carries it for no task
+  // inside a box, which is why this mark is drawn where no box answers.
+  if (node.version !== null) {
+    drawn(row, factory, 'span', node.version, 'graph-scope-version')
+    literal(cell(row, factory, 'span', 'graph-scope-version-mark'), GRAPH_SCOPE_FROM_PLAN)
+  }
   drawn(row, factory, 'span', node.kind, 'graph-scope-kind')
   if (node.repo.ok && node.repo.text !== '') drawn(row, factory, 'span', node.repo, 'graph-scope-repo')
   if (node.pullRequest !== null) {
@@ -2186,6 +2348,7 @@ function scopeNode(factory: ScreenFactory, node: ScopeNode): ScreenElement {
     number.setAttribute('title', GRAPH_PR_NO_LINK_REASON)
   }
   stateWord(row, factory, node.state, 'graph-word')
+  for (const need of node.needs) row.append(scopeNeed(factory, picture, node, need))
   return row
 }
 
@@ -2252,6 +2415,11 @@ export class GraphScreen {
    * switching back to a scope this console already read never means a blank
    * panel, and never draws one scope's document as the other's. */
   private scope: ScopeModel | null = null
+  /** scopeView is the view `scope` was built from, and it is held for the one
+   * thing a model cannot answer: a **tab** (GV4.1). The coordinator scope has no
+   * engine to ask, so narrowing it is a rebuild of the drawing from the document
+   * in hand -- which is why the document is kept beside the model it made. */
+  private scopeView: GraphView | null = null
   private runs: readonly string[] = []
   private feed: readonly RunView[] = []
   private model: GraphModel | null = null
@@ -2327,7 +2495,11 @@ export class GraphScreen {
    */
   loadScope(view: GraphView, notice: string | null = null): ScreenElement | null {
     this.state = { ...this.state, scope: GRAPH_SCOPE_ALL }
-    this.scope = buildScopeModel(view, this.scope)
+    this.scopeView = view
+    // The tab in hand is handed on, and a stream this document does not carry
+    // reads as All inside the model: a filter chosen for a stream the record
+    // dropped between two reads must not draw an empty picture.
+    this.scope = buildScopeModel(view, this.scope, this.state.tab)
     this.notice = notice
     return this.redraw()
   }
@@ -2410,9 +2582,20 @@ export class GraphScreen {
   /** narrow chooses a tab. The graph is a different graph afterwards -- fewer
    * plans, fewer tasks, fewer edges -- so this is a read of the same document
    * rather than a redraw of the same picture, and the cache answers it with a
-   * layout of its own. */
+   * layout of its own.
+   *
+   * **The coordinator scope answers without asking anything** (GV4.1): its lanes
+   * are drawn and not laid out, so a tab is a filter of the document in hand and
+   * the model is built again from it. That is the one place the two scopes differ
+   * about a tab, and it is a fact about the drawings rather than a choice: there
+   * is no engine in this scope to ask, and nothing about it can fail. */
   async narrow(tab: GraphTab): Promise<ScreenElement | null> {
     this.state = { ...this.state, tab }
+    if (this.state.scope === GRAPH_SCOPE_ALL) {
+      if (this.scopeView === null) return null
+      this.scope = buildScopeModel(this.scopeView, this.scope, tab)
+      return this.redraw()
+    }
     return this.build()
   }
 
@@ -2461,6 +2644,7 @@ export class GraphScreen {
   forget(): void {
     this.document = null
     this.scope = null
+    this.scopeView = null
     this.model = null
     this.positions = null
     this.feed = []

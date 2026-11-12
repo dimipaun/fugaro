@@ -96,10 +96,12 @@ will not write over it; remove it with `fugaro project policy publish --delete`,
 again with this Fugaro — after reading the list you are about to lose with `fugaro project policy
 show`, because a publish with no node seeds the list from your config: a repository you had added
 by hand (`fugaro project repos add`) is dropped, and one you had removed (`fugaro project repos
-rm`) comes back when the config still names it. The node's `clone_urls` block (no command of this
-release writes one) and any `routing` block a person wrote go with it, since a publish carries
-them only from a node it replaces. Repair the list from the diff the publish prints (`fugaro
-project repos add` / `rm`), per installation; a shared job's runs halt in between.
+rm`) comes back when the config still names it. The node's `clone_urls` block and any `routing`
+block a person wrote go with it, since a publish carries them only from a node it replaces —
+`clone_urls` excepted when your own config states a block of its own, which `fugaro project
+clone-url set` writes and the publish that follows takes from there. Repair the list from the diff
+the publish prints (`fugaro project repos add` / `rm`), per installation; a shared job's runs halt
+in between.
 
 ### What ties a repository to a project
 
@@ -198,6 +200,7 @@ Each key may be set only in the layers listed; the project layer refuses the res
 | `agent.models.reviewer` | project, repo |  |
 | `agent.models.background` | project, repo |  |
 | `agent.models.vision` | project, repo |  |
+| `agent.models.diagnose` | project, repo |  |
 | `agent.crafts.coder.model` | project, repo |  |
 | `agent.crafts.coder.access` | repo | it names a credential or pool the local config (never the project layer) allow-lists, so only the repository's own, PR-reviewed fugaro.yaml may choose among them — the same reason agent.oauth_token is refused here |
 | `agent.crafts.review.model` | project, repo |  |

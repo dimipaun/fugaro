@@ -12,6 +12,13 @@ import (
 // SharedMaxBytes caps the published file when read back.
 const SharedMaxBytes = 64 << 10
 
+// SharedVersion is the version of the published shared config (Shared), and it
+// is not ConfigVersion: what ConfigVersion 2 renamed is the terraform block,
+// which the published copy does not carry, and a version a reader does not know
+// is refused by name — so the published document keeps the spelling every
+// Fugaro of this installation can read, however new the file it came from is.
+const SharedVersion = 1
+
 // Shared is the installation-wide, non-secret part of the config, the part
 // that is published to the runs bucket. It drops what is owner-only
 // (terraform:), personal (user:, commit_name:, commit_email:, endpoints:), derived (bucket_url, the
@@ -67,6 +74,17 @@ const SharedMaxBytes = 64 << 10
 // result is only marshalled, and Marshal only reads.
 func (c *Config) Shared() *Config {
 	s := *c
+	// The published document is version 1 whatever the file it was read from
+	// says, because the version is what a READER refuses by name and the
+	// published document is the one thing here a teammate's older Fugaro meets
+	// first: ConfigVersion 2 renamed the two lists in the terraform block, and
+	// this copy carries no terraform block at all (dropped on the next line),
+	// so nothing in it is version 2's. Publishing this machine's 2 would stop
+	// every teammate whose Fugaro is not upgraded yet with "version 2 is newer
+	// than the 1 this Fugaro writes ... then run fugaro update" — a sentence
+	// naming a command they cannot run until the shared config they are
+	// refused by is readable again.
+	s.Version = SharedVersion
 	s.Terraform = Terraform{}
 	s.User = ""
 	// commit_name and commit_email are personal for the reason user: is
@@ -99,6 +117,14 @@ func (c *Config) Shared() *Config {
 	// who could write this key into the runs bucket's shared file would be
 	// choosing where a run sends the Bitbucket token.
 	s.BitbucketAPIRoots = nil
+	// CloneURLs is the owner's policy too, and travels the same way: `fugaro
+	// project policy publish` copies it into the policy node, which the runner
+	// reads and fails closed on. A launcher who could write this key into the
+	// runs bucket's shared file would be choosing where every teammate's runs
+	// clone from (SD5, D842), which is the directory the run's own slug, locks
+	// and budget session name. ParseShared refuses the key besides, because a
+	// shared config carrying it was not written by the converge.
+	s.CloneURLs = nil
 	// Profiles are the owner's policy, published through `fugaro project
 	// policy publish` into the policy node — not through the shared config a
 	// launcher can write (the node is what the runner reads and fails closed
@@ -188,6 +214,11 @@ func (c *Config) Shared() *Config {
 	s.DefaultClaudeAccount = ""
 	s.ClaudeAccountStages = nil
 	s.ClaudeAccountAuto = false
+	// The subscription switch goes with them, for their reason and one of its
+	// own: it is the owner's own act about the terms his subscriptions are held
+	// under (D1622), and a launcher who could write it into the shared file
+	// could spread a project across subscriptions nobody agreed to spread.
+	s.SubscriptionSpread = nil
 	// The workspace keys are local-only, and the pin is the sharpest of them:
 	// the shared file is written into the runs bucket, which any launcher of
 	// the project can write, so a launcher who could put a workspace_pin there

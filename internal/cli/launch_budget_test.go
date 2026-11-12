@@ -39,10 +39,23 @@ type launchBudgetFixture struct {
 
 func newLaunchBudget(t *testing.T, mode string) *launchBudgetFixture {
 	t.Helper()
+	return newLaunchBudgetWith(t, mode)
+}
+
+// newLaunchBudgetWith is newLaunchBudget with extra members written into its
+// budget block, which is where an installation's own per-run caps live: the
+// token cap (budget.max_run_tokens) is the one a chain read has no database
+// counterpart for, and the one a test about an unreadable ledger turns on.
+func newLaunchBudgetWith(t *testing.T, mode string, members ...string) *launchBudgetFixture {
+	t.Helper()
 	iam := gcpfake.NewIAMCredentials(t)
 	iam.AddSigner(testSigner)
 	f := &launchBudgetFixture{cloudFixture: newCloudFixture(t, "iam_credentials: "+iam.URL+"/"), db: gcpfake.NewRTDB(t), iam: iam}
-	f.appendConfig(t, "budget: { mode: "+mode+", per_run_usd: 5, firebase_project: proj-1234, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
+	extra := ""
+	for _, m := range members {
+		extra += m + ", "
+	}
+	f.appendConfig(t, "budget: { mode: "+mode+", per_run_usd: 5, "+extra+"firebase_project: proj-1234, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
 		", firebase_api_key: "+settingsFakeAPIKey+" }\n")
 	f.db.Set("fugaro/project", "aurora")
 	// The database a real installation runs against carries Fugaro's own mark

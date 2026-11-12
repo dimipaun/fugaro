@@ -87,6 +87,83 @@ func TestModelPricesCatalogJSON(t *testing.T) {
 	}
 }
 
+// TestProjectPriceBlockDecodesTheImageRate: D2001's member is part of the
+// price block, so the node carries it under the same RTDB-safe key as the
+// rates and the catalogue's own parser reads it back — internal/runner prices
+// a run with policyOverrides, which is ParseOverrides over this block's
+// CatalogJSON, so a ceiling the node holds and the parser does not see would
+// be an owner's number nothing prices by. The member is a pointer on the node
+// as it is everywhere else: an entry that leaves it out has no ceiling to
+// read, and one written as 0 has to survive the encoding as a ceiling of 0
+// rather than be dropped by omitempty and read back as "unset" — the two mean
+// opposite things.
+func TestProjectPriceBlockDecodesTheImageRate(t *testing.T) {
+	const id = "deepseek/deepseek-v4.1-flash"
+	sixThousand, zero := int64(6000), int64(0)
+	p := &Policy{Version: Version, Budget: Budget{Mode: "enforce"}, Prices: Prices{
+		id:               {InputPerM: rate(1), OutputPerM: rate(2), ImageTokens: &sixThousand},
+		"claude-mine-1":  {InputPerM: rate(1), OutputPerM: rate(5), ImageTokens: &zero},
+		"claude-plain-1": {InputPerM: rate(1), OutputPerM: rate(5)},
+	}}
+	raw, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The node's own spelling: the escaped key, and the member named as the
+	// block documents it.
+	var doc struct {
+		Prices map[string]map[string]json.RawMessage `json:"model_prices"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	entry, ok := doc.Prices[escKey(id)]
+	if !ok {
+		t.Fatalf("the node has no %q member: %s", escKey(id), raw)
+	}
+	if got, ok := entry["image_tokens"]; !ok || string(got) != "6000" {
+		t.Errorf("image_tokens = %s (present: %v), want 6000: %s", got, ok, raw)
+	}
+	if got, ok := doc.Prices["claude-mine-1"]["image_tokens"]; !ok || string(got) != "0" {
+		t.Errorf("an explicit 0 was not written: %s (present: %v): %s", got, ok, raw)
+	}
+	if _, ok := doc.Prices["claude-plain-1"]["image_tokens"]; ok {
+		t.Errorf("an entry with no ceiling wrote one: %s", raw)
+	}
+
+	// It reads back onto the model it names, and the catalogue's own parser
+	// takes the same number off the document the run is priced with.
+	back, found, err := Decode(raw)
+	if err != nil || !found {
+		t.Fatalf("Decode(%s) = (%v, %v, %v)", raw, back, found, err)
+	}
+	got := back.Prices[id]
+	if got.ImageTokens == nil || *got.ImageTokens != 6000 {
+		t.Errorf("the decoded entry = %+v, want image_tokens 6000", got)
+	}
+	if e := back.Prices["claude-mine-1"].ImageTokens; e == nil || *e != 0 {
+		t.Errorf("the explicit 0 decoded as %v, want 0", e)
+	}
+	if e := back.Prices["claude-plain-1"].ImageTokens; e != nil {
+		t.Errorf("an entry with no ceiling decoded as %d, want nil", *e)
+	}
+	cat, err := back.Prices.CatalogJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	o, err := pricing.ParseOverrides(string(cat))
+	if err != nil {
+		t.Fatalf("the catalogue's own parser refused the block: %v", err)
+	}
+	if r := o[id]; r.ImageTokens == nil || *r.ImageTokens != 6000 {
+		t.Errorf("ParseOverrides(%s) = %+v, want image_tokens 6000 under the model ID", cat, r)
+	}
+	if r := o["claude-mine-1"]; r.ImageTokens == nil || *r.ImageTokens != 0 {
+		t.Errorf("ParseOverrides(%s) = %+v, want the explicit 0", cat, r)
+	}
+}
+
 // TestModelPricesCatalogJSONOfAnEmptyBlock: a block with no model in it is an
 // empty object, as the doc says and as the node's own encoding (MarshalJSON)
 // writes it. json.Marshal of a nil map is the literal `null`, and the

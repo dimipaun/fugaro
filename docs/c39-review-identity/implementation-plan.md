@@ -535,7 +535,7 @@ for review size, not for sequencing.
   eighth name is therefore read as an **optional** value, outside that loop (C3.9g2), where an absent or
   empty value is an empty verifier list. Check 96's own sentence — "the seven names the config builder
   reads" — stays true, and so does the guard that reads it
-  (`internal/cli/docs_check96_test.go:436`–`:437`).
+  (`internal/cli/docs_check96_test.go:567`–`:571`).
 - **The tests that hold it, and why they move together.** `TestGoldenCredentialsServiceCarriesItsNames` —
   today `TestGoldenCredentialsServiceCarriesItsSevenNames`
   (`internal/infra/tf/credentials_golden_test.go:95`), the name this change renames because its `want` map
