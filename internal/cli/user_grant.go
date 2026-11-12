@@ -106,7 +106,7 @@ func newUserPairCmd(grant bool) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   use,
 		Short: short,
-		Long: `` + pairWord(grant) + ` one role and scope pair to or from one person, in the
+		Long: `` + pairWord(grant) + ` one role and scope pair ` + pairTo(grant) + ` one person, in the
 installation's own record of who may do what: the grants node at
 config/admin/access, which is what its next fugaro update derives the
 installation's IAM lists from.
@@ -118,21 +118,13 @@ list of repository patterns ("github/acme/api", "github/acme/*"). A person may
 hold several pairs, and the highest role whose scope covers a repository is the
 role they hold there.
 
---role and --scope are both required and neither has a default: a default would
-decide a grant, and revoking a pair means naming the pair.
+--role and --scope are both required and neither has a default: ` + pairDefault(grant) + `.
 
 The command reads the grants node with its ETag, judges, and writes
 conditionally on that ETag, so a change another admin made in the meantime is
 re-read and re-judged rather than overwritten. It refuses:
 
-  - a grant wider than your own scope, or at a role above your own: a grant is
-    a subset of the grantor's scope (a repository admin holding github/acme/api-*
-    cannot grant github/acme/*);
-  - a revoke or a demotion outside the scope your own admin covers (a
-    repository admin cannot revoke a project-scope pair);
-  - a change that would leave the installation with no project admin at all,
-    your own demotion or removal included.
-
+` + pairRefuses(grant) + `
 Writing the node needs roles/firebasedatabase.admin, held by the GCP project's
 owners and editors and by terraform.budget_admins — an admin stored in the node
 holds no database write of its own (D1592), so the command refuses for them
@@ -158,6 +150,43 @@ func pairWord(grant bool) string {
 		return "Give"
 	}
 	return "Take"
+}
+
+// pairTo is the direction's preposition.
+func pairTo(grant bool) string {
+	if grant {
+		return "to"
+	}
+	return "from"
+}
+
+// pairDefault says why the two flags have none, in the direction's own words: a
+// default for a grant decides a grant, and a revoke that guessed the pair would
+// take away one nobody named.
+func pairDefault(grant bool) string {
+	if grant {
+		return "a default would decide a grant"
+	}
+	return "naming the pair is what a revoke is"
+}
+
+// pairRefuses is the list of refusals, in the direction's own terms: what a
+// grant must be a subset of is the grantor's scope, and what a revoke needs is
+// admin over the pair it names. The last rule is both directions' — a grant at
+// a lower role over a pair already held empties the project admin's role
+// exactly as a revoke does (F17.2).
+func pairRefuses(grant bool) string {
+	if grant {
+		return "  - a grant wider than your own scope, or at a role above your own: a grant is\n" +
+			"    a subset of the grantor's scope (a repository admin holding github/acme/api\n" +
+			"    cannot grant github/acme/*);\n" +
+			"  - a grant that would take the installation's last project admin away, your own\n" +
+			"    demotion included.\n"
+	}
+	return "  - a pair outside the scope your own admin covers (a repository admin cannot\n" +
+		"    revoke a project-scope pair);\n" +
+		"  - a revoke that would take the installation's last project admin away, your own\n" +
+		"    removal included.\n"
 }
 
 func pairDone(grant bool) string {
