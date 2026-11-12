@@ -55,6 +55,7 @@ import { inert } from '../support/fakeSecrets'
 import { CRASH_START_FAILED, scrubCrashEvent, startCrashReportingSafely, type CrashEvent } from '../../src/main/crash'
 import { CONSOLE_CRASH_DSN } from '../../src/main/crash-dsn'
 import { CLOSE_TIMEOUT_MS, startCrashReporting } from '../../src/main/crash-electron'
+import { itHostRoute } from '../support/hostRoute'
 
 /** harness is the shared state the mocked SDK writes into. It is `vi.hoisted`
  * because the factory below is hoisted above this file's imports, so it cannot
@@ -640,7 +641,7 @@ describe('what the client is told', () => {
     expect(rejection.slice(rejection.indexOf('function handleRejection'))).not.toMatch(/mode === "none"/)
   })
 
-  it('sends every event under the release the symbol upload files the maps under', () => {
+  itHostRoute('sends every event under the release the symbol upload files the maps under', () => {
     // The one property symbolication cannot survive without (the owner's ruling
     // of 2026-11-02): the source maps are uploaded under
     // `--release <console/package.json's version>` and an event is looked up under

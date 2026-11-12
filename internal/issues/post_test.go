@@ -80,6 +80,43 @@ func TestPostStripsIdentity(t *testing.T) {
 	}
 }
 
+// TestPostExcludesFailedCommand: the command whose failure produced the issue
+// is the one header field that is a person's own line — a path, a host, a flag
+// value, whatever they typed — so it stays on the machine (D1722, F4). The post
+// is a projection built field by field, and this pins every form the command
+// could leave in: the title, the body, the preview a person reads, and the
+// fallback link, which carries the post's bytes into a browser.
+func TestPostExcludesFailedCommand(t *testing.T) {
+	i := issueSample()
+	i.FailedCommand = "fugaro run --repo acme/widget --note db-7.internal"
+	record, err := Marshal(i)
+	if err != nil {
+		t.Fatalf("marshalling the record: %v", err)
+	}
+	if !strings.Contains(string(record), i.FailedCommand) {
+		t.Fatalf("the record does not carry the failed command, so this test pins nothing:\n%s", record)
+	}
+	p := BuildPost(i, nil)
+	for _, doc := range []struct{ what, text string }{
+		{"the title", p.Title},
+		{"the body", p.Body},
+		{"the preview", Preview(p)},
+		{"the fallback link", NewIssueURL(p)},
+	} {
+		if strings.Contains(doc.text, i.FailedCommand) {
+			t.Errorf("%s carries the failed command:\n%s", doc.what, doc.text)
+		}
+	}
+	// The words of it, too, and not only the whole line: a builder that copied
+	// the command into the body and cut it would be caught here, and the link is
+	// where a body that did carry them would show them.
+	for _, part := range []string{"acme/widget", "db-7.internal"} {
+		if strings.Contains(p.Title+p.Body, part) || strings.Contains(NewIssueURL(p), url.QueryEscape(part)) {
+			t.Errorf("the post carries %q, which only the record's header holds:\n%s", part, p.Title+p.Body)
+		}
+	}
+}
+
 // TestPostReRedacts: the text of an issue is redacted on its way into the
 // public post as well, whoever wrote it and whatever the record already lost
 // (F5). The rows are the sample secrets built from fragments, planted in every

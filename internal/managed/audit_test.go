@@ -143,6 +143,68 @@ func TestManagedAuditRefusalIsStillRecorded(t *testing.T) {
 	}
 }
 
+// The ruling of 2026-11-11's second half: a refusal's record holds the content
+// findings the gate raised BESIDE the rules that stopped it, which is what the
+// second item of #2232's "Reported, not decided" asked for — a refusal that
+// dropped them kept the gate's refusals and threw away what it saw about the
+// rest of the plan. The verdict stays `refused`: the plan was not applied, and
+// the findings in the record are carried rather than acted on.
+func TestManagedAuditRefusalCarriesTheFindingsRaisedBesideIt(t *testing.T) {
+	s, _ := auditStorage(t)
+	doc := []byte(`{"version":1,"keys":{}}`)
+	const rule = "the plan removes a bucket that holds state"
+	const finding = "the plan sets a cost attribute the tables do not carry"
+	rec := AuditRecordFor(auditApply(), ConvergeRefusedWithWarnings(doc, initflow.YesOrTyped, []string{rule}, []string{finding}))
+
+	got, _, _ := auditRoundTrip(t, s, rec)
+	if got.Verdict != AuditRefused {
+		t.Errorf("the record's verdict is %q, want %q: nothing applied this document", got.Verdict, AuditRefused)
+	}
+	if !slices.Contains(got.Rules, rule) {
+		t.Errorf("the record's rules are %q, and the rule that refused is not among them", got.Rules)
+	}
+	if !slices.Contains(got.Warnings, finding) {
+		t.Errorf("the record's warnings are %q, and the finding raised beside the refusal is not among them", got.Warnings)
+	}
+	if got.PlanDigest != digest(doc) {
+		t.Errorf("the record's plan_digest is %q, want the sha256 of the bytes the gate read (%q)", got.PlanDigest, digest(doc))
+	}
+}
+
+// The record's shape is additive, and this is the reader's half of that promise
+// (the ruling of 2026-11-11; "a field never changes meaning"): an object written
+// before the `warnings` field existed — which is every record of a build that
+// predates it, and so most of an installation's family — still reads, with the
+// verdict it was written under and no findings. The bytes are written here by
+// hand rather than by this build, because an older build's writer is not here to
+// produce them, and a test that wrote the record through AuditRecordFor would be
+// asking whether this build can read its own output.
+func TestParseAuditRecordReadsARecordOlderThanTheWarningsField(t *testing.T) {
+	older := []byte(`{"version":1,"command":"fugaro update","argv":["update"],"project":"aurora",` +
+		`"gcp_project":"proj-1234","plan_digest":"` + strings.Repeat("a1", 32) + `","verdict":"admitted",` +
+		`"rules":["every change is in the cover tables"],"marker_version":2,"marker_generation":"17",` +
+		`"delete_list_generation":"42","identity":"user:operator@example.invalid","at":"2026-11-03T09:30:00Z"}`)
+	got, err := ParseAuditRecord(older)
+	if err != nil {
+		t.Fatalf("a record of the shape before the warnings field does not read: %v", err)
+	}
+	if got.Verdict != AuditAdmitted {
+		t.Errorf("the older record's verdict is %q, want %q", got.Verdict, AuditAdmitted)
+	}
+	if len(got.Warnings) != 0 {
+		t.Errorf("the older record reads with the warnings %q, want none", got.Warnings)
+	}
+	if got.PlanDigest != strings.Repeat("a1", 32) || got.DeleteListGeneration != "42" || !slices.Contains(got.Rules, "every change is in the cover tables") {
+		t.Errorf("the older record's own fields did not survive the read: %+v", got)
+	}
+	// A refused record of the older shape reads too, so the addition is not
+	// something the two verdicts of the day before depend on differently.
+	refused := []byte(strings.Replace(string(older), `"verdict":"admitted"`, `"verdict":"refused"`, 1))
+	if _, err := ParseAuditRecord(refused); err != nil {
+		t.Errorf("a refused record of the shape before the warnings field does not read: %v", err)
+	}
+}
+
 // The digest is of the bytes the gate READ (D1022), not of a re-render and not
 // of the command's arguments: the judged document and the applied one are
 // provably one artifact, and one byte of difference is a different record.

@@ -172,7 +172,7 @@ fences, are `src/demo/`'s; the words the owner pastes into the Play form are
 | `src/feed/` | The feed reader: the four granted families and the gate every read passes (`paths.js`), the wire node shapes (`nodes.js`), the contract's document rules (`document.js`) and the two figures the phone recomputes (`recompute.js`), the screen's rules (`view.js`) and the reader itself (`reader.js`). `index.js` is the one door; `fixtures/nodes.js` is the synthetic recording the tests read. |
 | `src/jobs/` | The job list (P3.3): the field table (`fields.js`), the project's row (`row.js`), the heartbeat line (`heartbeat.js`), the list and its wiring (`list.js`), what the screen says (`lines.js`) and the scope scan (`scope.test.js`). `index.js` is the one door; the section below is the rule sheet. |
 | `src/audio/` | The voice ports and their fakes (P3.4): the capture path (`audio-in.js`), transcription (`stt.js`), speech output (`tts.js`), the transcript-to-message rule (`message.js`) and the pipeline that wires them (`pipeline.js`). **No engine, no device, no SDK**: `index.js` is the one door, and its test scans the directory for exactly that. |
-| `src/voice-session/` | The voice session's state machine (VS0.1–VS0.3 of `docs/mobile/voice-session/implementation-plan.md`): the event contract — the six kinds, their fields and the audio routes exactly as the spec's §5 writes them, plus the one field P8 adds (`interruptionBegan.suspended`, so a suspension notification is not read as a call) (`events.js`) — and the machine that reduces it (`machine.js`) — §4's table as one pure function, `reduce(state, event, ctx)`, with `ctx` carrying `{ now, resumeTimeoutMs, pipeline }`. **No clock, no timer, no I/O and no stored `speaking`**: `listening`/`speaking` are asked of P3.4's pipeline on every call that enters the pair (D205, D206, F3), §8's three minutes is a `tick` the caller injects, and D201 is open so the timeout is the caller's value with no default here. `index.js` is the one door, and its test scans the directory for exactly that — including two fences of its own: a paused session reaches no credential and no mailbox call (F24: nothing here resolves into `src/accounts/` or `src/mailbox/`, and the module's own code imports nothing outside its directory) and no file here carries words the user said (F9, D213). Nothing in the app imports it yet: the controller that drives it is VS1.1, and the native port that emits §5's events is VS1.2. Approved by the owner on 2026-10-22 (D205 answered as recommended; **VS0.1–VS0.3 and nothing else**). |
+| `src/voice-session/` | The voice session (VS0.1–VS0.3 and VS1.1 of `docs/mobile/voice-session/implementation-plan.md`; only VS0 is approved, and VS1.1's controller is written ahead of its gate — the row's last sentence is where that stands): the event contract — the six kinds, their fields and the audio routes exactly as the spec's §5 writes them, plus the one field P8 adds (`interruptionBegan.suspended`, so a suspension notification is not read as a call) (`events.js`) — the machine that reduces it (`machine.js`) — §4's table as one pure function, `reduce(state, event, ctx)`, with `ctx` carrying `{ now, resumeTimeoutMs, pipeline }` — and the controller the app talks to (`session.js`, VS1.1): `createVoiceSession({ machine, screen, pipeline, native, now, resumeTimeoutMs, title })` drives the port first and then P3.5's screen on `start()`, pushes one `updateStatus` per state or mute change (D217), and runs the teardown every way of ending the session needs. **No clock, no timer, no I/O and no stored `speaking`**: `listening`/`speaking` are asked of P3.4's pipeline on every call that enters the pair (D205, D206, F3), §8's three minutes is a `tick` the caller injects, and D201 is open so the timeout is the caller's value with no default here. `index.js` is the one door, and its test scans the directory for exactly that — including two fences of its own: a paused session reaches no credential and no mailbox call (F24: nothing here resolves into `src/accounts/` or `src/mailbox/`, and the module's own code imports nothing outside its directory) and no file here carries words the user said (F9, D213). The controller is not on that door yet and nothing in the app imports it: the construction site is VS1.3, and the native port that emits §5's events is VS1.2. Approved by the owner on 2026-10-22 (D205 answered as recommended; **VS0.1–VS0.3 and nothing else**). **VS1.1 is not approved**: the plan's OWNER APPROVAL GATE is passed for VS0 and for nothing else, VS1 still waits on **D213** (VS1.2's reporting shape), and `session.js` is written ahead of that gate rather than under it — so this row describes what is in the tree, not a task the owner has approved. |
 | `src/voice/` | The voice screen (P3.5) and the spoken confirmation (P6.12): the interrupt switch and the pure decision it gates (`interrupt.js`), the screen itself — the queue, P1.4's offline refusal, P1.2's lease and D122's microphone state (`screen.js`) — the adapter that puts P3.4's pipeline behind P3.6's speaker port (`speaker.js`), and the dialogue that routes a transcript, speaks a read-back and waits (`dialogue.js`). **No engine, no device, no database**: `index.js` is the one door, and its test scans the directory for exactly that. |
 | `src/boundary.test.js` | The scan that says **which files may write a credential** (below). |
 | `src/dependencies.test.js` | The scan that says **which packages the app is made of**: `expo`, `react` and `react-native` are declared, every bare import under `index.js` and `src/` is declared, and `package-lock.json` is the lockfile `npm ci` installs. It is what makes `eas build` able to find an SDK. |
@@ -409,6 +409,43 @@ resolution — the owner's declaration of **2026-10-20** ("write it, it's OK":
 the app uses only standard/exempt encryption), made after `eas build` printed
 that it cannot write that key into a dynamic config — while **the owner answers
 Apple's other export questions in App Store Connect**.
+
+**Which primitives the app uses, now that pairing added some.** The pairing
+plan's §13 asks this file to say so, because the declaration of 2026-10-20 was
+made for an app whose only cryptography was the platform's TLS. Two things
+changed, and they are the facts that declaration has to be re-affirmed against:
+
+* **Pairing** (`src/pairing/`) performs **X25519** key agreement and opens an
+  **AES-256-GCM** envelope with a key derived by **HKDF-SHA-256**. `hkdf.js`
+  and `aes.js` are the tree's own implementations, `key.js` and `envelope.js`
+  take X25519 as an injected port, and `envelope.test.js` opens an envelope the
+  **Go command sealed**, so the two ends are checked against each other and not
+  only against vectors. **Nothing supplies that port yet**: the app's
+  dependency is `@noble/curves` — whose `ed25519.js` subpath also exports
+  `x25519`, the line the entry has to write — and `index.js` still builds the
+  pairing seam as `pairingScreen: null`, so no code path in the app performs
+  X25519 today and the primitive arrives with that wiring.
+* **The licence verifier** (`src/licence/`) verifies an **Ed25519** signature,
+  through `@noble/curves` — the app's one cryptographic dependency, pinned
+  exact and MIT in the lockfile (`src/dependencies.test.js`).
+
+Everything else the app does over the network is the platform's TLS, and
+nothing here is a cipher the app invented: the envelope's construction is the
+CLI's (`internal/budget/token/device.go`), and the phone is the second
+implementation of it.
+
+**What those facts mean for the declaration is the owner's answer, not this
+file's.** `ITSAppUsesNonExemptEncryption: false` is the claim that the app uses
+**no** non-exempt encryption, and the paragraph above is why that claim's
+*basis* has moved even if its answer has not: pairing's key agreement and AEAD
+are the app's own code — `hkdf.js` and `aes.js` are this tree's implementations,
+and X25519 arrives as a bundled library rather than from the platform — where
+the 2026-10-20 answer was made about an app whose cryptography was the
+platform's TLS and nothing else. Whether these primitives are exempt, and so
+whether `false` still holds, is the owner's to re-affirm, which is what the
+pairing plan's §13 asks for and what this section exists to be given against.
+Nothing in this repository submits anything: no App Store Connect answer, no
+self-classification report and no store form is written from here.
 
 ## The mailbox client, and the app's write set
 

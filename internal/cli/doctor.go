@@ -22,6 +22,7 @@ import (
 	iam "google.golang.org/api/iam/v1"
 	"google.golang.org/api/option"
 
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/basepin"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
@@ -65,6 +66,21 @@ type doctorCheck struct {
 	// about what the default view hides. A check that carries none is a
 	// passing check nothing prints.
 	Class string `json:"class,omitempty"`
+	// Skipped marks a check `fugaro doctor --offline` did not run, because its
+	// answer needs a credential, Terraform or the network (D945, D946, spec §7
+	// of docs/plugin-user-scope). It is the one member that flag adds to this
+	// document, it is absent on every ordinary run, and it is additive within
+	// the document's existing version: no member changes meaning, so every
+	// reader outside this binary (the console's §6.4) is unaffected.
+	//
+	// A skipped check is never ok — `ok: false` with a problem saying what
+	// could not be read — and it is never a failure either: its severity is
+	// "info", so checksFail passes it with or without --strict. That pair is
+	// the whole contract a reader needs to tell "checked and fine" from "not
+	// checked": the one is `ok: true`, the other `skipped: true`, and a check
+	// that silently reported ok would be the pass the `unread` marker exists to
+	// prevent, in the flag a session-start nudge reads.
+	Skipped bool `json:"skipped,omitempty"`
 	// unread marks a check whose own line says a fact could not be read, or is
 	// unknown: doctorClassOf reads it and never files such a check as a
 	// measurement, because an unknown filed as a measurement prints as part of
@@ -246,9 +262,10 @@ func newDoctorCmd() *cobra.Command {
 		asJSON              bool
 		showAll             bool
 		security            bool
+		offline             bool
 	)
 	cmd := &cobra.Command{
-		Use:   "doctor [--json] [--all] [--security] [--plugin] [--strict]",
+		Use:   "doctor [--json] [--all] [--security] [--plugin] [--strict] [--offline]",
 		Short: "Check that Fugaro is set up and ready, without changing anything",
 		Long: `doctor only ever reads: the environment, Terraform, the local project config
 and its installation's billing and IAM policy (with a budget backend, who can
@@ -280,10 +297,28 @@ so, and a bucket read that does not answer leaves its image line out instead
 of failing the command.
 
 --plugin checks only the plugin's wiring: offline, no credentials, safe for
-CI. --strict makes a stale, unpinned, foreign or unwired plugin fail the
-command; the informational states ("not installed", "cannot compare") never
-do, with or without --strict. A repository's CI runs
-fugaro doctor --plugin --strict.
+CI. --strict makes a stale, unpinned or foreign plugin fail the command. A
+checkout that never opted in to the pin is informational rather than a
+failure, because nothing in the tree writes a pin any more and that checkout is
+the normal one; "cannot compare" — a development build, an unreadable install
+record — is informational too. "not installed" is a warning, because the
+plugin on this machine is what carries the skills. A repository's CI runs
+fugaro doctor --plugin --strict; with --strict the install on the machine is
+not evaluated at all, because a runner has no Claude Code.
+
+--offline checks the update class and nothing else, and it makes no cloud call,
+no network call and no secret read: the plugin's wiring and the install on this
+machine, the login unit that runs the orchestrator daemon, and the base image
+this checkout resolves to where a local installation is configured to answer
+it. Every check whose answer lives in the project's Realtime Database or the
+runs bucket — the published policy, the deployed rules, and whether a
+workflow's job was built from the image settings it resolves to now — and the
+one that asks whether a newer release is available, is skipped rather than
+guessed: it comes back with skipped true and ok false, and
+a problem saying what could not be read, and it fails nothing, with or without
+--strict. A reader of --json should take ok true as "checked and fine" and
+skipped true as "not checked"; that pair is the whole contract. It is the
+check the Fugaro skills run at the start of a session.
 
 With no local Fugaro installation configured, doctor says so and names
 fugaro setup as the fix, rather than guessing at a project.
@@ -300,22 +335,23 @@ the flags.
 Exit 1 when a check fails, with the one-line fix to run.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runDoctor(cmd, cloud, dir, plugin, strict, asJSON, checkApp, checkBitbucketToken, doctorView{all: showAll, security: security})
+			return runDoctor(cmd, cloud, dir, plugin, strict, asJSON, checkApp, checkBitbucketToken, offline, doctorView{all: showAll, security: security})
 		},
 	}
 	addCloudFlags(cmd, &cloud)
 	cmd.Flags().StringVar(&dir, "dir", ".", "a directory in the checkout, for the plugin wiring")
 	cmd.Flags().BoolVar(&plugin, "plugin", false, "check only the plugin's wiring (offline, no credentials)")
+	cmd.Flags().BoolVar(&offline, "offline", false, "check the update class's local checks and record a skip for each check that needs a credential or the network: no cloud call, no network call, no secret read (the session-start check the skills run)")
 	cmd.Flags().BoolVar(&checkApp, "check-github-app", false, "also check each recorded GitHub App is installed with the permissions runs ask for: reads the App's private key from Secret Manager with your own credentials, in memory only, for one signed token (refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it)")
 	cmd.Flags().BoolVar(&checkBitbucketToken, "check-bitbucket-token", false, "also check the credentials service's bundle holds a Bitbucket token and that Bitbucket still accepts it: reads the bundle with your own credentials, in memory only, for one GET /repositories/<repo> per proxied repository (refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it)")
-	cmd.Flags().BoolVar(&strict, "strict", false, "fail on a stale, unpinned, foreign or unwired plugin (CI mode)")
+	cmd.Flags().BoolVar(&strict, "strict", false, "fail on a stale, unpinned or foreign plugin (CI mode); an un-wired checkout is information, not a failure")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print machine-readable output")
 	cmd.Flags().BoolVar(&showAll, "all", false, "print every check, the informational and audit lines included")
 	cmd.Flags().BoolVar(&security, "security", false, "also print the IAM and security sweep (who may read a credential, who may sign a budget token, what a launcher may start)")
 	return cmd
 }
 
-func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnly, strict, asJSON, checkApp, checkBitbucketToken bool, view doctorView) error {
+func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnly, strict, asJSON, checkApp, checkBitbucketToken, offline bool, view doctorView) error {
 	ctx := cmd.Context()
 	// Before anything is read: neither the App's key nor the bundle's Bitbucket
 	// token is read in a coding agent's session.
@@ -332,17 +368,25 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 
 	var pluginReport pluginwire.Report
 	var pluginChecks []doctorCheck
-	if loc, ok := pluginwire.Locate(dir); ok {
+	loc, inCheckout := pluginwire.Locate(dir)
+	if inCheckout {
 		pluginReport = pluginwire.Status(loc.Settings, Version, installedPlugins())
 		if pluginOnly && strict {
 			// CI mode: a runner has no Claude Code install, so "installed
-			// differs", "not installed" are not evaluated (design §4.5).
+			// differs", "not installed" are not evaluated (design §4.5). The
+			// machine's own install is zeroed with the checkout's: since D942
+			// it is what answers plugin-install on a checkout that carries no
+			// release-tag pin, and a runner that reports "no plugin on this
+			// machine" is the CI failure this mode exists to avoid.
 			pluginReport.Install, pluginReport.Version = "", ""
+			pluginReport.UserInstall, pluginReport.UserVersion = "", ""
 		}
 		pluginChecks = append(pluginDoctorChecks(pluginReport), pluginSettingsChecks(loc.Settings)...)
 	} else {
 		// Not inside a checkout there is no wiring to find: a warning (so
-		// --strict fails, as update-skills --check does), never silence.
+		// --strict fails, as update-skills --check does), never silence. D942
+		// keeps it: a caller that asked doctor inside no checkout asked a
+		// question about a checkout.
 		pluginChecks = []doctorCheck{{ID: "plugin-pin", Severity: "warning",
 			Problem: pluginwire.Printable(dir) + " is not in a checkout (no .git above it), so the Fugaro plugin wiring cannot be checked",
 			Fix:     "run doctor inside the repository, or pass --dir"}}
@@ -352,7 +396,20 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	if pluginOnly {
 		// --plugin is documented offline and safe for CI: no credentials, no
 		// network call of any kind. cli-version would need one, so it is
-		// skipped here; the full run below always includes it.
+		// skipped here; the full run below always includes it. It answers
+		// first whatever else was asked: it is the plugin's own view, and
+		// --offline is a wider one.
+		o.OK = !checksFail(o.Checks, strict)
+		return emitDoctor(cmd, o, asJSON, view)
+	}
+	if offline {
+		// The update class and nothing else, answered from this machine: the
+		// plugin checks are already in (they are the class's own and they are
+		// local), and doctorOfflineChecks adds the rest of it, one recorded
+		// skip for each check whose answer is not a file here (D945, D951).
+		// Nothing below this line runs: the cloud half is what --offline
+		// promises not to touch.
+		o.Checks = append(o.Checks, doctorOfflineChecks(ctx, cloudOpts, loc, inCheckout)...)
 		o.OK = !checksFail(o.Checks, strict)
 		return emitDoctor(cmd, o, asJSON, view)
 	}
@@ -595,6 +652,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 			if c := doctorModelKeyInAgent(lc, rf); c != nil {
 				o.Checks = append(o.Checks, *c)
 			}
+			o.Checks = append(o.Checks, doctorVisionChecks(ctx, co.Root, lc, rf, repo)...)
 		} else {
 			if len(lc.ClaudeAccounts) > 0 {
 				// The repository itself could not be determined (no origin
@@ -631,7 +689,102 @@ func doctorBaseImage(lc *localcfg.Config) doctorCheck {
 	}
 	return doctorCheck{ID: "base-image", OK: false, Severity: "warning",
 		Problem: "the local config has no base_images.base (" + config.MigrationDoc + ")",
-		Fix:     "fugaro image refresh   # in the repository's checkout"}
+		Fix:     "fugaro update   # its images stage pins and records this release's base image"}
+}
+
+// doctorOfflineChecks is `fugaro doctor --offline`'s half of the update class:
+// the checks that answer from a file on this machine, and one recorded skip for
+// each of the class's checks that does not (D945, D951; the contract is D946,
+// docs/plugin-user-scope/spec.md §7).
+//
+// The class is the owner's own list, the one doctorUpdatePrefixes already
+// computes, because it is the list of what `fugaro update` puts right: the
+// plugin's wiring and the plugin on this machine (both already in o.Checks
+// before this runs, which is why they are not here), the login unit, the base
+// image, each workflow's job image, and the three policy checks. Three kinds
+// are dropped and said to be dropped, because their answer is not a file here:
+//
+//   - cli-version asks whether a newer release is available, which is a network
+//     call, and --offline makes none (D952: the network stays opt-in, and the
+//     skills never ask the user's permission to reach it on their behalf).
+//   - the three policy checks read the project's Realtime Database (the
+//     published node, the deployed rules generation) and, for policy-vs-jobs,
+//     what its jobs last ran: none of it is local, and reading it needs
+//     credentials.
+//   - image-config-<workflow> compares the local resolution with the build
+//     record in the runs bucket, which needs credentials too. Its ID is per
+//     workflow, so the workflow names are read from the checkout's own
+//     fugaro.yaml over the cache alone (doctorOfflineWorkflows): a checkout no
+//     config speaks for names none, which is what the ordinary run does as
+//     well.
+//
+// A skip carries severity "info" and OK false, which is the pair the contract
+// is made of: it never fails doctor, with or without --strict, and it is never
+// read as "checked and found fine".
+func doctorOfflineChecks(ctx context.Context, o cloudOptions, loc pluginwire.Location, inCheckout bool) []doctorCheck {
+	ask := "run `fugaro doctor` without `--offline` to ask it"
+	skip := func(id, problem string) doctorCheck {
+		return doctorCheck{ID: id, Skipped: true, Severity: "info", Problem: problem, Fix: ask}
+	}
+	out := []doctorCheck{
+		skip("cli-version", "whether a newer Fugaro release is available is the one fact that needs the network, and --offline makes no network call"),
+		doctorOrchestratorUnit(),
+	}
+	// The local project config, with no fallback to the shared one: selectFrom
+	// never fetches it (o.sharedOK is set by selectProject alone), and a
+	// config that is only published to the runs bucket is one --offline
+	// cannot see.
+	var lc *localcfg.Config
+	if co, err := resolveCheckout(ctx, ""); err == nil {
+		if _, c, err := selectFrom(o, co, false); err == nil {
+			lc = c
+		}
+	}
+	if lc == nil {
+		out = append(out, skip("base-image", "this machine has no local Fugaro installation to read the base image from, and --offline does not fetch the shared config from the runs bucket"))
+	} else {
+		out = append(out, doctorBaseImage(lc))
+	}
+	for _, name := range doctorOfflineWorkflows(ctx, loc, inCheckout, lc) {
+		out = append(out, skip("image-config-"+name, "whether workflow "+name+"'s job image is the one this checkout resolves to now is recorded in the runs bucket, which --offline does not read"))
+	}
+	out = append(out,
+		skip("policy-rules-skew", "which generation of the security rules the project's database has deployed is a fact of that database, and --offline reads no database"),
+		skip("policy-vs-jobs", "whether this checkout's jobs are old enough to miss a published policy is a fact of the project's database and of what its jobs last ran, and --offline reads neither"),
+		skip("policy-older-than-binary", "the published policy node lives in the project's Realtime Database, and --offline reads no database"),
+	)
+	return out
+}
+
+// doctorOfflineWorkflows are the workflow names the checkout's own config
+// resolves to with the cache alone, for which the ordinary run emits an
+// image-config-<workflow> check: the offline run records one skipped check per
+// name, because the ID carries the name and nothing else in this run can
+// supply it. The layer is resolved with layerOptions.Offline, which reads the
+// cache and never the bucket, so this stays inside the flag's promise, and the
+// names are imageConfigWorkflows' — the predicate the ordinary run judges
+// those checks by — over the image selection this run can read
+// (offlineImageConfigWorkflows). Not every workflow of the file is one of
+// them: a workflow that builds from a dockerfile: and one the project's image
+// catalog gives an image to never get an image-config- check at all, so naming
+// them here listed checks that do not exist and counted them in the default
+// view's "N checks not run by --offline". A config that does not resolve names
+// none: the ordinary run emits no image-config-<workflow> check for such a
+// checkout either (doctorLayerChecks needs a valid fugaro.yaml and a resolved
+// file), so silence here is the same silence and not a second one.
+func doctorOfflineWorkflows(ctx context.Context, loc pluginwire.Location, inCheckout bool, lc *localcfg.Config) []string {
+	if !inCheckout {
+		return nil
+	}
+	data, err := readFugaroYAML(filepath.Join(loc.Root, "fugaro.yaml"))
+	if err != nil {
+		return nil
+	}
+	rf, err := resolveFugaroYAML(ctx, data, lc, layerOptions{Offline: true, Lenient: true})
+	if err != nil || rf.Cfg == nil {
+		return nil
+	}
+	return offlineImageConfigWorkflows(ctx, loc.Root, rf.Cfg, lc)
 }
 
 // doctorOrchestratorUnit reports the login unit that runs the orchestrator
@@ -766,7 +919,8 @@ func doctorProviderZDR(lc *localcfg.Config) *doctorCheck {
 //
 // The credentials service's image is resolved the same way and through the
 // same binary, and since 0.15.0 an ordinary `fugaro update` re-pins it
-// (init_stages.go's pinCredentialsImage): an installation that opted in needs
+// (init_stages.go's moveCredentialsImage, in the credentials-service stage): an
+// installation that opted in needs
 // cosign on PATH for an upgrade that names no flag, which is why the message
 // names that path as well.
 //
@@ -1235,7 +1389,25 @@ func printableNames(names []string) []string {
 // jobConfigCopyNote documents (internal/cli/upgrade_cloud.go): the one
 // fugaro update --repo that refreshes the default job refreshes every named
 // account's variant of it too, so a finding here is never the only one.
+//
+// An installation that does not run on Cloud Run says nothing, and that is
+// Task 10's step 5 disposition for the gcp.New this function builds by hand
+// rather than through the seam: the check is about an APPLIED job's mounted
+// references, and on `backend: cloud-batch` there is no applied job to be
+// stale. Batch creates a job per run and a job is single-use
+// (internal/backend/batch/batch.go's Timeouts, design compute-backend.md
+// §2.3), so the config a launch reads is the config that run's job is built
+// from, at the moment it launches -- there is no earlier apply whose mounted
+// reference could have moved since, which is the whole of what this check
+// finds on Cloud Run. Reading the Cloud Run API on the other backend would
+// list the installation's internal jobs (the history job, the reaper) and no
+// workflow job at all, so the loop below would find nothing whatever the
+// state of the secrets; naming the backend is what makes that explicit rather
+// than incidental.
 func doctorProjectSecretScopeCheck(ctx context.Context, lc *localcfg.Config, facts doctorRepoSecrets, listed []secretEntry, project []gcp.SecretInfo) *doctorCheck {
+	if lc.Backend() != backend.CloudRun {
+		return nil
+	}
 	if lc.Endpoints.NoAuth && lc.Endpoints.Run == "" {
 		// Fakes only, and no fake for Cloud Run: there is nothing to read,
 		// and an empty endpoint would send the call to Google.
@@ -1932,6 +2104,23 @@ func authOf(rf *resolvedFile) string {
 }
 
 // pluginDoctorChecks turns a plugin report's states into doctor checks.
+//
+// plugin-install asks the checkout's own question where the checkout carries a
+// release-tag pin — the install that applies there, against the ref the
+// repository asked for — and the machine's question everywhere else: the
+// plugin installed at user scope, against this binary's release (D942). The
+// second is the whole question in the repositories this check is read in now:
+// nothing in the tree writes a pin any more (D949), so a checkout without one
+// is the normal checkout, and reporting nothing about the plugin there would
+// leave the one fact the owner acts on unreported.
+//
+// Its "not installed" state is raised to a warning here rather than in
+// pluginwire, whose Severity is what `update-skills --check` exits on and
+// which keeps "not installed" informational for its own reader (a teammate who
+// has not opened the folder yet is not a failure of the command that lists
+// wiring). For doctor the state is a different one: the plugin on this machine
+// is what carries the skills, `fugaro update` is what installs it, and a
+// measurement nothing acts on is the silent pass the classes exist to prevent.
 func pluginDoctorChecks(r pluginwire.Report) []doctorCheck {
 	var out []doctorCheck
 	add := func(id string, s pluginwire.State) {
@@ -1939,7 +2128,11 @@ func pluginDoctorChecks(r pluginwire.Report) []doctorCheck {
 			return
 		}
 		c := doctorCheck{ID: id, OK: s == pluginwire.OK, Fix: s.Fix()}
-		switch s.Severity() {
+		sev := s.Severity()
+		if id == "plugin-install" && s == pluginwire.NotInstalled {
+			sev = pluginwire.SeverityWarning
+		}
+		switch sev {
 		case pluginwire.SeverityInfo:
 			c.Severity = "info"
 		case pluginwire.SeverityWarning:
@@ -1950,9 +2143,22 @@ func pluginDoctorChecks(r pluginwire.Report) []doctorCheck {
 		}
 		out = append(out, c)
 	}
+	install, _ := pluginInstallState(r)
 	add("plugin-pin", r.Pin)
-	add("plugin-install", r.Install)
+	add("plugin-install", install)
 	return out
+}
+
+// pluginInstallState is the install plugin-install reports, and whether it is
+// the checkout's own question (a release-tag pin is there to compare with) or
+// this machine's (D942): the pin's install where the report carries one, the
+// user-scope install everywhere else — a checkout that is un-wired, unpinned or
+// foreign has no ref for the checkout's question to be asked against.
+func pluginInstallState(r pluginwire.Report) (pluginwire.State, bool) {
+	if r.Install != "" {
+		return r.Install, true
+	}
+	return r.UserInstall, false
 }
 
 // pluginStateProblem is the one-line problem text for a plugin state, the
@@ -1962,7 +2168,15 @@ func pluginStateProblem(id string, s pluginwire.State, r pluginwire.Report) stri
 	case id == "plugin-pin" && r.Detail != "":
 		return r.Detail
 	case id == "plugin-install" && s == pluginwire.InstalledDiffers:
-		return fmt.Sprintf("the installed plugin is %s, the pin is %s", r.Version, r.Ref)
+		if _, fromPin := pluginInstallState(r); fromPin {
+			return fmt.Sprintf("the installed plugin is %s, the pin is %s", r.Version, r.Ref)
+		}
+		return fmt.Sprintf("the plugin Claude Code has installed for this machine is %s, and this fugaro is %s", r.UserVersion, r.Binary)
+	case id == "plugin-install" && s == pluginwire.NotInstalled:
+		if _, fromPin := pluginInstallState(r); fromPin {
+			return string(s)
+		}
+		return "no Fugaro plugin is installed in Claude Code at user scope, so this machine has none of the Fugaro skills"
 	}
 	return string(s)
 }
@@ -2025,9 +2239,17 @@ func printDoctorChecks(w io.Writer, checks []doctorCheck) {
 // severity, the id, the whole problem and the whole fix. --all prints every
 // check this way, and --security prints the security half of the sweep this
 // way, since what it answers is long by nature and a clipped answer does not.
+//
+// A skipped check says "skipped" where the others say their severity: it is
+// the one word that tells a reader of --all which lines `--offline` did not
+// ask (D946), and its own problem says why. --json carries the same fact as
+// the `skipped` member, which is what a script reads.
 func doctorCheckLine(c doctorCheck) string {
 	line := c.ID + ": "
-	if c.Severity != "" {
+	switch {
+	case c.Skipped:
+		line = "skipped " + line
+	case c.Severity != "":
 		line = c.Severity + " " + line
 	}
 	line += c.Problem
@@ -2722,7 +2944,7 @@ func doctorPolicyVsJobs(lc *localcfg.Config) *doctorCheck {
 	}
 	return &doctorCheck{ID: "policy-vs-jobs", Severity: "warning",
 		Problem: fmt.Sprintf("the jobs are deployed from the runner image %s, which predates this Fugaro: a policy published at %s is one those runs do not read, so they keep the ceiling from their own environment", pluginwire.Printable(cur), projectpolicy.PathShared()),
-		Fix:     "fugaro image refresh moves the jobs to this release's runner image (then fugaro update --repo . in your own terminal, which is the only path that writes a job's environment)"}
+		Fix:     "fugaro update in your own terminal: its images stage moves the repository onto this release's runner image and its repository stage behind that writes the jobs' environment"}
 }
 
 // adoptOwnFirebaseProject is what every doctor fix whose command is `fugaro

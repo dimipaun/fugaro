@@ -258,12 +258,14 @@ func openCloudFor(ctx context.Context, lc *localcfg.Config) (*cloudEnv, error) {
 // no entry here fails closed, naming the entries there are, rather than
 // falling back to Cloud Run.
 //
-// The Batch entry is registered and never selected: internal/localcfg refuses
-// `backend: cloud-batch` until the task that turns it on (design
-// compute-backend.md §8.1), so no installation reaches it. It is wired here
-// and not in a test because the seam's second implementation has to be opened
-// from an installation's own facts -- its run account, its network, its
-// recorded socket gid -- and this is the only place that holds them.
+// The Batch entry is reached exactly as the Cloud Run one is: by a project
+// config that names it, which internal/localcfg accepts since the enable
+// (design compute-backend.md §8.1 task 9) and which `fugaro doctor` reports on
+// -- the gate Task 10 puts in front of the choice is doctor's verdict, read by
+// the operator, and this map is what a launch reaches either way. It is wired here and not in a test because the seam's second
+// implementation has to be opened from an installation's own facts -- its run
+// account, its network, its recorded socket gid -- and this is the only place
+// that holds them.
 func cloudOpeners(lc *localcfg.Config, runOpts gcp.Options) map[string]backend.Opener {
 	return map[string]backend.Opener{
 		backend.CloudRun: func(ctx context.Context) (backend.Backend, error) { return gcp.New(ctx, runOpts) },
@@ -796,6 +798,19 @@ func (e *cloudEnv) checkExecution(ctx context.Context, x *backend.Execution, nam
 // checkExecution's correlation of ls/logs/diagnose/--retry/follow-up) must
 // treat "not a workflow name" as "no job can be derived from it", never as a
 // reason to crash.
+//
+// It is gcp's function and it is not a Cloud-Run-only path (Task 10's step 5,
+// third entry): the variant is what a workflow is CALLED once an account is
+// attached, and both backends name a run's job and label it with the same
+// string -- Batch's job id is `fugaro-<slug>-<variant>-<hash>`
+// (batch.JobID) and its labels carry the variant as gcp.LabelWorkflow
+// (batch.Labels), which is what its Terraform module and the reaper read it
+// back as. Only one caller derives a name a backend would have to have
+// deployed -- `gcp.JobName(slug, variant)` for the job `fugaro update --repo`
+// applies per repository -- and that one is behind an assertion that the
+// selected backend keeps deployed jobs at all (run.go's jobImageReader, whose
+// other arm is Batch; TestTheWorkflowVariantIsTheNameBothBackendsDeriveFrom
+// pins the sharing).
 func jobWorkflow(workflow, token string) (variant string, ok bool) {
 	defer func() {
 		if recover() != nil {

@@ -54,8 +54,16 @@
 // `LicenceRead`, so a caller in the main process has a sentence to draw instead
 // of an exception to catch. `now` is an argument for the same reason the clock
 // is nowhere in here -- a state is a fact about a key and a moment.
+//
+// **The v1 key is read beside this one.** `verifyLicenceKeyV1`, at the end of
+// this file, verifies the licence-key-v2 format (`fgk_<payload>.<signature>`,
+// decisions D2130 and D2146) against the same kind of keyring, and the two
+// formats are read by two functions that share no rule -- only the part
+// decoder, because a part is a part in either. The console keeps working with
+// the old shape until K7.3 removes it, and a text of one shape is refused by the
+// other's verifier rather than half-read by it.
 
-import { createPublicKey, verify as edVerify } from 'node:crypto'
+import { createPublicKey, verify as edVerify, type KeyObject } from 'node:crypto'
 
 import { LITERAL_PLACEHOLDER, sanitizeText } from '../shared/sanitize'
 
@@ -337,4 +345,624 @@ export function latestLicence(
     }
   }
   return latest === null ? null : { ok: true, claims: latest.claims, state: latest.state }
+}
+
+// The v1 key, `fgk_<payload>.<signature>`, is the licence-key-v2 format (spec
+// sections 3, 4 and 6; decision D2130), whose Go verifier is
+// `ee/licence/keyv1.go` (K1.1) and whose vectors the two are read against are
+// `ee/licence/testdata/vectors_v1.json` (K1.4).
+//
+// Three rules of that design shape the code below, and each is a case in
+// `test/unit/licence.test.ts` rather than a reading of this comment:
+//
+//   1. **The id travels inside the payload.** The older format wrote it in the
+//      clear in front of the payload, which is what let that verifier consult the
+//      keyring before decoding anything. A v1 key has no such part: `kid` and `v`
+//      are read out of the payload first -- they are what chooses the public key
+//      and decides whether this build reads the key at all -- and the claim set
+//      is decoded only after the signature over the payload's raw bytes has
+//      verified. So every refusal is one fixed sentence and echoes **no** text
+//      out of the payload, the id included: until the signature has verified,
+//      every character of the payload is text its author chose.
+//   2. **Unknown fields are ignored, and only here** (D2146). Every other wire
+//      format this project writes decodes strictly; the spec's "unknown optional
+//      fields are ignored" is a named exception for a *signed* key, so that a
+//      field a later v1 mint adds has a safe default in a build that predates it.
+//      A known field of the wrong type is still refused, and so is a payload that
+//      is not one claim set.
+//   3. **The workspace binds the key** (D2134 as amended by TN2): `workspace_id`
+//      is required and compared with the Firebase project id the caller passes,
+//      which is the workspace the key is read in.
+//
+// `check_interval` is validated and never used: whether to contact the licence
+// server is the renewal job's (K4.1), and this verifier makes no network call at
+// all.
+
+/** V1_PREFIX is what makes a v1 key recognisable in a log, a secret scanner and
+ * a support ticket, which is the whole reason the format carries it (spec
+ * section 3.1). */
+export const V1_PREFIX = 'fgk_'
+
+/** V1_VERSION is the only policy version this verifier reads. A higher one is
+ * refused with `V1_UPGRADE_MESSAGE` and is never read as anything else: it is
+ * not a fall back to Free (spec section 4). */
+export const V1_VERSION = 1
+
+/** V1_UPGRADE_MESSAGE is the spec's refusal for a key of a version this build
+ * does not read, word for word (section 4), so that the sentence a console
+ * draws is the sentence the CLI and the licence site's pages state. */
+export const V1_UPGRADE_MESSAGE =
+  'This licence key requires a newer version of Fugaro. Upgrade Fugaro to use it.'
+
+/** LicenceV1State is what a v1 key is against a `now`: inside its paid term,
+ * inside the grace the key itself carries, or past both (spec section 6).
+ * `active` is the v1 name for the older format's `valid` above; the other two
+ * are the names both formats write, because the state a key is in is one name
+ * shared by every reader of the key. */
+export type LicenceV1State = 'active' | 'grace' | 'expired'
+
+/** LicenceV1RenewalMode and LicenceV1Kind are the closed lists the two named
+ * claims are checked against. What each mode makes an installation do is the
+ * renewal job's (K4.1); this verifier places the name. */
+export type LicenceV1RenewalMode = 'auto' | 'manual' | 'none'
+export type LicenceV1Kind = 'paid' | 'trial' | 'comped'
+
+/**
+ * LicenceV1Refusal names why a v1 key was refused, in the words the Go
+ * verifier's sentinels and this one share: the two read one key text, and a key
+ * one refuses has to be refused by the other for the same reason. A caller that
+ * has to say *why* draws this name; a caller drawing a sentence uses the read's
+ * `reason`.
+ */
+export type LicenceV1Refusal =
+  | 'malformed'
+  | 'unknown-key-id'
+  | 'signature'
+  | 'claims'
+  | 'lifetime'
+  | 'newer-version'
+  | 'workspace'
+  | 'duration'
+
+/** LicenceV1Warning is one warning window: the roles it reaches and the moment
+ * it opens at, counted from the start of the key's grace. This verifier carries
+ * it; what reads one is K3.5. */
+export interface LicenceV1Warning {
+  readonly roles: readonly string[]
+  readonly from: string
+}
+
+/**
+ * LicenceV1Claims is the claim set a v1 payload holds, claim for claim, in the
+ * payload's own spelling -- unlike the older format's camel-case claims above,
+ * because this claim set is the format and not a shape this console chose: the
+ * vectors, the licence server and the Go verifier all spell these names, and a
+ * translation layer here would be one more place a claim could change meaning.
+ *
+ * Every field is the whole of it: an unknown field is ignored (rule 2 above),
+ * and a field a payload omits or nulls takes the value a Go decoder would have
+ * left in it -- an empty string, 0, or `null` for `check_interval`, which is how
+ * a key says it never checks. `organisation` is what the key was issued to and
+ * nothing compares it with the installation it is read at; `seats` is compared
+ * and shown, never enforced here (D2132 held with K3.4); `note` is free text for
+ * admins only. `renewal_secret_hash` is a hash and never the secret (D2135).
+ */
+export interface LicenceV1Claims {
+  readonly v: number
+  readonly kid: string
+  readonly key_id: string
+  readonly workspace_id: string
+  readonly organisation: string
+  readonly tier: LicenceTier
+  readonly seats: number
+  readonly issued_at: string
+  readonly paid_through: string
+  readonly grace_days: number
+  readonly renewal_mode: LicenceV1RenewalMode
+  readonly renew_before_days: number
+  readonly check_interval: string | null
+  readonly renewal_secret_hash: string
+  readonly warnings: readonly LicenceV1Warning[]
+  readonly kind: LicenceV1Kind
+  readonly note: string
+}
+
+/** LicenceV1Read is one v1 key's answer: the claims and the state they put the
+ * key in, or the refusal's name and the sentence for it. A refusal carries no
+ * claim set and no state, so a caller cannot read anything out of a key this
+ * verifier refused. */
+export type LicenceV1Read =
+  | { readonly ok: true; readonly claims: LicenceV1Claims; readonly state: LicenceV1State }
+  | { readonly ok: false; readonly refusal: LicenceV1Refusal; readonly reason: string }
+
+/** LicenceV1Decoded is one payload's answer inside the verifier: the claim set
+ * every check has passed, or the refusal the payload itself answered -- the ones
+ * that need neither the keyring nor the clock. */
+type LicenceV1Decoded = { readonly claims: LicenceV1Claims } | { readonly refusal: LicenceV1Refusal }
+
+/** V1_RENEWAL_MODES and V1_KINDS are the closed lists behind the two types
+ * above, as `TIERS` is behind `LicenceTier`. */
+const V1_RENEWAL_MODES: readonly string[] = Object.freeze(['auto', 'manual', 'none'])
+const V1_KINDS: readonly string[] = Object.freeze(['paid', 'trial', 'comped'])
+
+function isV1RenewalMode(value: string): value is LicenceV1RenewalMode {
+  return V1_RENEWAL_MODES.includes(value)
+}
+
+function isV1Kind(value: string): value is LicenceV1Kind {
+  return V1_KINDS.includes(value)
+}
+
+/** DAY_MS and MAX_INTERVAL_DAYS are the two numbers the v1 checks do their
+ * arithmetic in. The longest span a duration holds is the Go verifier's bound,
+ * computed the same way and for the same reason: a `check_interval` or a
+ * `grace_days` past it is refused or clamped rather than wrapped into a window
+ * far shorter than the key states. */
+const DAY_MS = 86_400_000
+const MAX_INTERVAL_DAYS = Math.floor((2 ** 62) / (24 * 60 * 60 * 1e9))
+
+/** ZERO_INSTANT_MS is Go's zero time, 0001-01-01T00:00:00Z: what its decoder
+ * leaves in a `time.Time` field a payload omits or nulls. A key with no
+ * `paid_through` is therefore a key long past its grace rather than a refusal,
+ * and the two verifiers have to agree about which. */
+const ZERO_INSTANT_MS = Date.parse('0001-01-01T00:00:00Z')
+
+/**
+ * V1_REFUSALS is each refusal's sentence, and every one is fixed: no v1 refusal
+ * names a value out of the payload (rule 1 above). `newer-version` is the one
+ * sentence the format pins, and it is the spec's, not this file's.
+ */
+const V1_REFUSALS: Readonly<Record<LicenceV1Refusal, string>> = Object.freeze({
+  malformed: 'the licence key is not an fgk_ key of a payload and a signature',
+  'unknown-key-id': 'the licence key names a signing key this console does not hold',
+  signature: 'the licence key’s signature does not verify',
+  claims: 'the licence key’s claims are not a claim set this console reads',
+  lifetime: 'the licence key claims a term longer than its tier allows',
+  'newer-version': V1_UPGRADE_MESSAGE,
+  workspace: 'the licence key is bound to a different workspace',
+  duration: 'the licence key’s check interval is not a duration this console reads',
+})
+
+/** refuseV1 is every v1 refusal: the name a caller compares and the sentence a
+ * caller draws, kept together so the two cannot drift apart. */
+function refuseV1(refusal: LicenceV1Refusal): LicenceV1Read {
+  return { ok: false, refusal, reason: V1_REFUSALS[refusal] }
+}
+
+/**
+ * verifyLicenceKeyV1 reads one v1 key against one keyring at one moment.
+ *
+ * The order is the design's and not an implementation choice: `kid` and `v` are
+ * read out of the payload (nothing else can be, the id that names the keyring
+ * entry being a claim inside it), the signature is verified over the payload's
+ * raw bytes before any claim is read, the version is compared before the claim
+ * set is decoded, and the claim set is held to the workspace and the tier's
+ * ceiling before the state is read -- so a key outside the three states is
+ * refused rather than given one.
+ *
+ * `firebaseProjectId` is the workspace's own Firebase project id, read by the
+ * caller from the project's config in the same read as the key (TN2); an empty
+ * one never accepts a key. The ring is last so that it may default while the
+ * workspace may not: a key is bound to one workspace, and there is no such thing
+ * as a default one.
+ */
+export function verifyLicenceKeyV1(
+  raw: string,
+  now: Date,
+  firebaseProjectId: string,
+  keyring: LicenceKeyring = PRODUCTION_KEYRING,
+): LicenceV1Read {
+  // A key arrives by paste as often as from a file, and neither adds meaning to
+  // the whitespace around it; whitespace inside one is a part that is not
+  // base64url.
+  const trimmed = raw.trim()
+  if (!trimmed.startsWith(V1_PREFIX)) return refuseV1('malformed')
+  const parts = trimmed.slice(V1_PREFIX.length).split('.')
+  if (parts.length !== 2) return refuseV1('malformed')
+  const payload = decodePart(parts[0] ?? '')
+  const signature = decodePart(parts[1] ?? '')
+  if (payload === null || signature === null) return refuseV1('malformed')
+
+  const text = textOf(payload)
+  const head = peekV1(text)
+  if (head === null) return refuseV1('malformed')
+
+  // `Object.hasOwn`, for the older verifier's reason: an id is text out of an
+  // unverified payload, and `keyring['constructor']` is not a public key.
+  const entry = Object.hasOwn(keyring, head.kid) ? keyring[head.kid] : undefined
+  const key = entry === undefined ? null : ed25519KeyOf(entry)
+  if (key === null) return refuseV1('unknown-key-id')
+
+  // A signature that is not 64 bytes is a signature that does not verify, which
+  // is the answer the Go verifier gives it too. The length is held here rather
+  // than left to the verifier: a throw out of `edVerify` would be an exception
+  // in the main process, and this module's contract is an answer.
+  if (signature.length !== 64 || !edVerify(null, payload, key, signature)) return refuseV1('signature')
+
+  // Past this line the payload is the one the ring signed, so what it says is a
+  // claim rather than a guess. The version is read before the claim set is
+  // decoded, so a key of a version this build does not know is refused with the
+  // upgrade message whatever shape its payload has.
+  if (head.v > V1_VERSION) return refuseV1('newer-version')
+  if (head.v < V1_VERSION) return refuseV1('claims')
+
+  const decoded = decodeClaimsV1(text ?? '', firebaseProjectId)
+  if ('refusal' in decoded) return refuseV1(decoded.refusal)
+  return { ok: true, claims: decoded.claims, state: stateV1Of(decoded.claims, now.getTime()) }
+}
+
+/** ed25519KeyOf is a keyring entry as an Ed25519 public key, or `null` for one
+ * that is not. The ring is the build's own, so such an entry is a defect in this
+ * console rather than in the key -- and it is still an answer, because a throw
+ * here would be an exception in the main process. */
+function ed25519KeyOf(pem: string): KeyObject | null {
+  try {
+    const key = createPublicKey(pem)
+    return key.asymmetricKeyType === 'ed25519' ? key : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * peekV1 reads the two claims that have to be known before the signature can be
+ * verified: the key id that names the keyring entry, and the policy version that
+ * decides whether this build reads the key at all. Everything else waits until
+ * the signature has verified.
+ *
+ * A payload that is not a JSON object, or that carries no id, names no keyring
+ * entry and no claim that can be placed, so the text is refused as malformed --
+ * and the refusal carries none of the payload. `v` is read as the integer the
+ * format writes it as: a payload spelling it any other way names no version this
+ * verifier can compare and is malformed rather than read as a version it might
+ * be. That is still a refusal and never a fall back to Free; what it is not is
+ * the upgrade message, which is reserved for a key that says which version it
+ * is.
+ *
+ * **Two divergences from the Go verifier, both deliberate, and neither is
+ * reachable by a key anyone minted.**
+ *
+ *   1. Go's decoder reads one JSON value and leaves whatever follows it to the
+ *      claim decode, so a payload of a claim set with junk after it is refused
+ *      there as `claims`; this reader parses the payload whole and refuses it
+ *      here, as `malformed`. Both refuse the text -- the name differs, the
+ *      answer does not -- and no vector in the shared file carries one.
+ *   2. `JSON.parse` reads `1.0` and `1e0` as the number 1, where Go's decoder
+ *      refuses any number spelled with a fraction or an exponent in an integer
+ *      field (`ErrClaims`). Nothing is left of the spelling once the text is
+ *      parsed, so this reader answers the value, and a hand-written key
+ *      spelling an integer that way is refused by the CLI and read here. It is
+ *      left as it is rather than closed by reading the payload's text again
+ *      with a JSON scanner of this file's own: Go's encoder writes an integer
+ *      as `1`, the licence service is the only signer, and a scanner would be
+ *      a second parser in the main process for a shape no key has.
+ *      `test/unit/licence.test.ts` pins this reading, so it is a case rather
+ *      than a surprise.
+ */
+function peekV1(payload: string | null): { readonly kid: string; readonly v: number } | null {
+  if (payload === null) return null
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(payload)
+  } catch {
+    return null
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null
+  const head = parsed as Record<string, unknown>
+
+  const kid = claimOf(head, 'kid')
+  if (typeof kid !== 'string' || kid === '') return null
+  // A field the payload omits or nulls is the zero value Go's decoder leaves in
+  // it, which is a version this build does not read rather than a malformed
+  // text.
+  const raw = claimOf(head, 'v')
+  const version = raw === undefined || raw === null ? 0 : raw
+  if (typeof version !== 'number' || !Number.isSafeInteger(version)) return null
+  return { kid, v: version }
+}
+
+/**
+ * decodeClaimsV1 reads the claim set out of a payload whose signature has
+ * already verified, and holds it to the format's terms: unknown fields are
+ * ignored (D2146), a known field of the wrong type is refused, and the checks
+ * run in the Go verifier's order -- the workspace it binds to, the three named
+ * claims, the check interval, the tier's ceiling.
+ *
+ * That order is what decides which of two faults a key with both answers, and it
+ * is why the claim set is constructed last: a claim set this function answers is
+ * one every check has already passed.
+ */
+function decodeClaimsV1(payload: string, firebaseProjectId: string): LicenceV1Decoded {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(payload)
+  } catch {
+    return { refusal: 'claims' }
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return { refusal: 'claims' }
+  const claims = parsed as Record<string, unknown>
+
+  const v = integerClaim(claimOf(claims, 'v'))
+  const kid = stringClaim(claimOf(claims, 'kid'))
+  const keyId = stringClaim(claimOf(claims, 'key_id'))
+  const workspaceId = stringClaim(claimOf(claims, 'workspace_id'))
+  const organisation = stringClaim(claimOf(claims, 'organisation'))
+  const tier = stringClaim(claimOf(claims, 'tier'))
+  const seats = integerClaim(claimOf(claims, 'seats'))
+  const issuedAt = stampClaim(claimOf(claims, 'issued_at'))
+  const paidThrough = stampClaim(claimOf(claims, 'paid_through'))
+  const graceDays = integerClaim(claimOf(claims, 'grace_days'))
+  const renewalMode = stringClaim(claimOf(claims, 'renewal_mode'))
+  const renewBeforeDays = integerClaim(claimOf(claims, 'renew_before_days'))
+  const checkInterval = intervalClaim(claimOf(claims, 'check_interval'))
+  const renewalSecretHash = stringClaim(claimOf(claims, 'renewal_secret_hash'))
+  const warnings = warningsClaim(claimOf(claims, 'warnings'))
+  const kind = stringClaim(claimOf(claims, 'kind'))
+  const note = stringClaim(claimOf(claims, 'note'))
+
+  // One condition rather than seventeen: every field of the claim set, so that a
+  // claim added to this format is a field this line is missing and not a field
+  // nobody reads.
+  if (
+    v === null ||
+    kid === null ||
+    keyId === null ||
+    workspaceId === null ||
+    organisation === null ||
+    tier === null ||
+    seats === null ||
+    issuedAt === null ||
+    paidThrough === null ||
+    graceDays === null ||
+    renewalMode === null ||
+    renewBeforeDays === null ||
+    checkInterval === undefined ||
+    renewalSecretHash === null ||
+    warnings === null ||
+    kind === null ||
+    note === null
+  ) {
+    return { refusal: 'claims' }
+  }
+
+  if (workspaceId === '') return { refusal: 'claims' }
+  if (workspaceId !== firebaseProjectId) return { refusal: 'workspace' }
+  if (!isTier(tier)) return { refusal: 'claims' }
+  if (!isV1RenewalMode(renewalMode)) return { refusal: 'claims' }
+  if (!isV1Kind(kind)) return { refusal: 'claims' }
+  if (checkInterval !== null && !readableIntervalV1(checkInterval)) return { refusal: 'duration' }
+  // The bound is the module's one table, measured from the key's own
+  // `issued_at`. Its number is the same as the older format's for the same
+  // reason -- the longest key either format mints is a renewal that lands on the
+  // first day it may -- and it bounds one key's length from a date the minter
+  // chooses, which is the accepted limit both formats state. A term that runs
+  // backwards is left to the state it produces rather than refused for its
+  // length.
+  if (stampInstant(paidThrough) - stampInstant(issuedAt) > TIER_MAX_LIFETIME_DAYS[tier] * DAY_MS) {
+    return { refusal: 'lifetime' }
+  }
+
+  return {
+    claims: {
+      v,
+      kid,
+      key_id: keyId,
+      workspace_id: workspaceId,
+      organisation,
+      tier,
+      seats,
+      issued_at: issuedAt,
+      paid_through: paidThrough,
+      grace_days: graceDays,
+      renewal_mode: renewalMode,
+      renew_before_days: renewBeforeDays,
+      check_interval: checkInterval,
+      renewal_secret_hash: renewalSecretHash,
+      warnings,
+      kind,
+      note,
+    },
+  }
+}
+
+/** claimOf reads one claim the way Go's decoder reads it: the name is matched
+ * case-insensitively, and where a payload spells it more than once -- under two
+ * cases, or twice exactly -- the last spelling is the value that survives, so it
+ * is the value this verifier reads. `JSON.parse` folds an exact duplicate by
+ * itself; two cases of a name are two keys, and the order they are read back in
+ * is the order the payload spells them in.
+ *
+ * The tolerance is Go's and not a convenience here: a signed key that says
+ * `"tier":"team"` and later `"Tier":"enterprise"` is an enterprise key to the
+ * CLI, and a console that read `team` would draw a tier the key does not grant.
+ */
+function claimOf(claims: Record<string, unknown>, name: string): unknown {
+  let found: unknown
+  let spellings = 0
+  for (const key of Object.keys(claims)) {
+    if (key.toLowerCase() !== name) continue
+    found = claims[key]
+    spellings += 1
+  }
+  return spellings === 0 ? undefined : found
+}
+
+/** stringClaim, integerClaim, stampClaim and intervalClaim read one claim the way
+ * Go's decoder leaves it: a field the payload omits or nulls is the field's zero
+ * value -- an empty string, 0, no stamp -- and a field of another type is a
+ * decode error, which `null` says here. `intervalClaim` answers `undefined` for
+ * that error because `null` is a value this claim has: it is how a key says it
+ * never checks. */
+function stringClaim(value: unknown): string | null {
+  if (value === undefined || value === null) return ''
+  return typeof value === 'string' ? value : null
+}
+
+function integerClaim(value: unknown): number | null {
+  if (value === undefined || value === null) return 0
+  // An integer past the range JavaScript holds exactly is refused rather than
+  // read as another one: a claim is a number a decision is made about, and a
+  // value this process cannot hold exactly is not the value the key states.
+  return typeof value === 'number' && Number.isSafeInteger(value) ? value : null
+}
+
+/** RFC3339 is the stamp shape the format writes its two times in: its fields are
+ * captured, because the shape is not enough. `Date.parse` reads spellings the
+ * format does not write -- a date with no time, a time with no zone -- and it
+ * also *rolls over* a stamp that names a day or an hour that does not exist,
+ * which is the worse half: `2026-02-31`, a 29 February of a common year and
+ * `24:00:00` are all a day the calendar does not have, and V8 answers with the
+ * next day rather than with nothing. Go's `time.Parse` -- what decodes every key
+ * the CLI reads -- refuses each of them, so a key whose `paid_through` is one of
+ * them would be a state here and a refusal there. */
+const RFC3339 = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})$/
+
+/** stampInstantOf reads a stamp's own fields into an instant in milliseconds, or
+ * `null` for one the format does not write -- the fields of the instant read
+ * back out and held to the fields spelled, which is what closes the rollover
+ * above.
+ *
+ * The instant is built on the year 2000 and moved to its own year afterwards:
+ * `Date.UTC` reads a year below 100 as a year of the 1900s, and 2000 is a leap
+ * year whether the stamp's own year is or not -- one where a `February 29` can
+ * be built at all, and then moved to the year spelled, which is what holds that
+ * day to it. Every field is refused by that comparison and none by a range check
+ * of its own: `Date` has no invalid field, only fields that carry into the next
+ * day, and carrying is what the read-back catches. */
+function stampInstantOf(stamp: string): number | null {
+  const fields = RFC3339.exec(stamp)
+  if (fields === null) return null
+  const year = Number(fields[1])
+  const month = Number(fields[2])
+  const day = Number(fields[3])
+  const hour = Number(fields[4])
+  const minute = Number(fields[5])
+  const second = Number(fields[6])
+  const zone = fields[7] ?? ''
+  // Go's parser bounds the offset as it bounds the hour ("time zone offset hour
+  // out of range"), so `+25:00` is not a stamp either verifier reads.
+  const offsetHours = zone === 'Z' ? 0 : Number(zone.slice(1, 3))
+  const offsetMinutes = zone === 'Z' ? 0 : Number(zone.slice(4, 6))
+  if (offsetHours > 23 || offsetMinutes > 59) return null
+
+  const probe = new Date(Date.UTC(2000, month - 1, day, hour, minute, second))
+  probe.setUTCFullYear(year)
+  if (
+    probe.getUTCFullYear() !== year ||
+    probe.getUTCMonth() !== month - 1 ||
+    probe.getUTCDate() !== day ||
+    probe.getUTCHours() !== hour ||
+    probe.getUTCMinutes() !== minute ||
+    probe.getUTCSeconds() !== second
+  ) {
+    return null
+  }
+  const offset = zone.startsWith('-') ? -1 : 1
+  return probe.getTime() - offset * (offsetHours * 60 + offsetMinutes) * 60_000
+}
+
+function stampClaim(value: unknown): string | null {
+  if (value === undefined || value === null) return ''
+  if (typeof value !== 'string' || stampInstantOf(value) === null) return null
+  return value
+}
+
+function intervalClaim(value: unknown): string | null | undefined {
+  if (value === undefined || value === null) return null
+  return typeof value === 'string' ? value : undefined
+}
+
+/** stampInstant is a claim's stamp as an instant in milliseconds; a stamp the
+ * payload omitted is Go's zero time, which is what `stampClaim` left there --
+ * and a stamp it refused is that same zero, since no read of a refused payload
+ * reaches here. */
+function stampInstant(stamp: string): number {
+  return stampInstantOf(stamp) ?? ZERO_INSTANT_MS
+}
+
+/** warningsClaim reads the warnings list, and rolesClaim one window's roles.
+ * They are a carrier: what reads a window is K3.5, and what this verifier holds
+ * is that the payload's shape is the one the format declares, so that a key it
+ * answers is a key the CLI answers too. */
+function warningsClaim(value: unknown): readonly LicenceV1Warning[] | null {
+  if (value === undefined || value === null) return []
+  if (!Array.isArray(value)) return null
+  const warnings: LicenceV1Warning[] = []
+  for (const item of value) {
+    if (typeof item !== 'object' || item === null || Array.isArray(item)) return null
+    const window = item as Record<string, unknown>
+    const roles = rolesClaim(claimOf(window, 'roles'))
+    const from = stringClaim(claimOf(window, 'from'))
+    if (roles === null || from === null) return null
+    warnings.push({ roles, from })
+  }
+  return warnings
+}
+
+function rolesClaim(value: unknown): readonly string[] | null {
+  if (value === undefined || value === null) return []
+  if (!Array.isArray(value)) return null
+  const roles: string[] = []
+  for (const role of value) {
+    if (typeof role !== 'string') return null
+    roles.push(role)
+  }
+  return roles
+}
+
+/**
+ * readableIntervalV1 answers whether a `check_interval` is one of the two ISO
+ * 8601 forms the format writes (F16): `P<n>D` and `P<n>W`, and nothing else.
+ * `PT1H`, `P1M` and a duration spelled any other way are refused rather than
+ * approximated, because an interval that means something other than what it says
+ * is worse than a key that will not load. A zero-length interval is a duration
+ * and not a refusal; `null` is how a key says it never checks at all.
+ */
+function readableIntervalV1(text: string): boolean {
+  if (text.length < 3 || text[0] !== 'P') return false
+  const days = decimalDays(text.slice(1, -1))
+  if (days === null) return false
+  if (text.endsWith('D')) return true
+  // The week form holds a seventh of the bound, as it does in the Go verifier:
+  // past it, the days multiplied by seven are a span no duration holds.
+  if (text.endsWith('W')) return days <= Math.floor(MAX_INTERVAL_DAYS / 7)
+  return false
+}
+
+/** decimalDays reads a run of ASCII digits as a number of days, refusing an
+ * empty run and one past the longest span a duration holds -- applied digit by
+ * digit, so the accumulation cannot pass the bound before the check that would
+ * refuse it. */
+function decimalDays(text: string): number | null {
+  if (text === '') return null
+  let days = 0
+  for (let index = 0; index < text.length; index += 1) {
+    const digit = text.charCodeAt(index) - 48
+    if (digit < 0 || digit > 9) return null
+    days = days * 10 + digit
+    if (days > MAX_INTERVAL_DAYS) return null
+  }
+  return days
+}
+
+/** graceMsOf is a key's own grace, clamped as the Go verifier clamps it: past
+ * the longest span a duration holds, the grace is that span and the key stays in
+ * grace for as long as this verifier can say, rather than wrapping into a window
+ * shorter than the key states. A negative `grace_days` is no grace at all, and
+ * the grace is the key's own number rather than one compiled in here, which is
+ * what lets a trial carry none and an air-gapped key carry thirty (D2133,
+ * D2138). */
+function graceMsOf(days: number): number {
+  if (days <= 0) return 0
+  return Math.min(days, MAX_INTERVAL_DAYS) * DAY_MS
+}
+
+/** stateV1Of places a key against the clock: inside its paid term, inside the
+ * grace it carries, or past both (spec section 6). A key past its grace is still
+ * *read*, because the lapse is a state the console draws and not an error. */
+function stateV1Of(claims: LicenceV1Claims, nowMs: number): LicenceV1State {
+  const paidThrough = stampInstant(claims.paid_through)
+  if (nowMs <= paidThrough) return 'active'
+  if (nowMs - paidThrough <= graceMsOf(claims.grace_days)) return 'grace'
+  return 'expired'
 }

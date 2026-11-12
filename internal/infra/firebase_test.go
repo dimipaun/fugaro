@@ -149,6 +149,66 @@ func TestCoordinatorTfvarsGolden(t *testing.T) {
 	checkGolden(t, "firebase-coordinator.tfvars.json", data)
 }
 
+// The viewer list ON (roles.md §4, RS4): the installation every owner already
+// deploys, with a read-only roster beside its launchers and operators, and the
+// two fixtures the golden plans of that state are made from. Like the
+// coordinator's, they are fixtures of their own and not cases of the two above,
+// because the list is empty on every installation that names no viewer: those
+// plan exactly the fixtures above, byte for byte what they planned before the
+// viewer's role existed.
+//
+// The list is what the Terraform gates the viewer's role and grants on
+// (modules/installation/iam.tf), so these two documents are the only ones that
+// plan them, and TestGoldenViewerPlans reads them back.
+func TestViewerTfvarsGolden(t *testing.T) {
+	spec := projectJobSpec(t)
+	h, err := History(parseLC(t, m4LocalConfig+m5Additions))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.DeployJob, h.FirebaseProject, h.RTDBURL = true, "aurora-fp", "https://aurora-fp-default-rtdb.firebaseio.com"
+	spec.EnableBudget, spec.History = true, &h
+	spec.Viewers = []string{"user:viewer@example.com", "group:auditors@example.com"}
+	data, err := InstallationVars(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkGolden(t, "installation-viewers.tfvars.json", data)
+
+	inst := installationSpec(t)
+	inst.Launchers = []string{"user:launcher@example.com"}
+	inst.Operators = []string{"user:operator@example.com", "user:launcher@example.com"}
+	inst.Viewers = []string{"user:viewer@example.com", "group:auditors@example.com"}
+	fs, err := Firebase(inst, FirebaseInputs{FP: "aurora-fp",
+		Admins:         []string{"user:owner@example.com", "group:editors@example.com", "user:owner@example.com"},
+		BudgetAdmins:   []string{"user:extra@example.com"},
+		HistoryAccount: "fugaro-history@proj-1234.iam.gserviceaccount.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err = FirebaseVars(fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkGolden(t, "firebase-viewers.tfvars.json", data)
+}
+
+// TestViewerListRefusesDomain is roles.md §8 R1's check on the viewer list,
+// which is the check the Firebase root's members already get: a `domain:`
+// member is not a principal anyone can read as a person, so the list that
+// grants a read of every run refuses it before Terraform sees it — with the
+// module's own variable refusing it too, so no spelling of the value reaches a
+// plan.
+func TestViewerListRefusesDomain(t *testing.T) {
+	inst := installationSpec(t)
+	inst.Viewers = []string{"domain:example.com"}
+	if _, err := Firebase(inst, FirebaseInputs{FP: "aurora-fp"}); err == nil {
+		t.Fatal("the Firebase root accepted a domain: viewer")
+	} else if !strings.Contains(err.Error(), "viewers") || !strings.Contains(err.Error(), "domain:example.com") {
+		t.Errorf("the refusal does not name the viewer list and the member: %v", err)
+	}
+}
+
 // TestTheCoordinatorIsOffByDefault is the security review's first finding
 // (MAJOR-1): a budget installation that has not opted in gets no coordinator
 // account, so no grant, no job and no schedule — and the Firebase root is
@@ -1307,12 +1367,18 @@ func TestNoJobAccountHoldsTheDatabase(t *testing.T) {
 		`"serviceAccount:${var.workspace_service_account}"`: true,
 	}
 	// A grant spelled `member = each.value` binds whatever its own for_each
-	// iterates, so the set is half the member: only these two locals are the
+	// iterates, so the set is half the member: only these three locals are the
 	// installation's people, and a grant iterating anything else — a
 	// var.job_accounts, or a set a later edit adds — is not one of them. The
 	// member expression alone cannot tell the two apart, which is why the walk
 	// reads the for_each.
-	peopleLocals := map[string]bool{"local.people": true, "local.admins": true}
+	//
+	// local.readers is the people with the viewer list (RS4, roles.md §4):
+	// the viewer's own grant of roles/firebasedatabase.viewer, which is the
+	// read the role is named for and no write. It is a local of its own and
+	// not the people widened, so the minter's grant, which is what would let
+	// a viewer claim an identity, still iterates local.people alone.
+	peopleLocals := map[string]bool{"local.people": true, "local.admins": true, "local.readers": true}
 	members := databaseRoleMembers(t, "gcp/modules/firebase")
 	if len(members) == 0 {
 		t.Fatal("the Firebase module binds no database role: the walk is reading the wrong files")
@@ -1327,7 +1393,7 @@ func TestNoJobAccountHoldsTheDatabase(t *testing.T) {
 		t.Errorf("%s: the Firebase root binds a database role to %s with for_each = %q, and the principals it may bind one to are the people, the history account, the coordinator's account and the workspace's", key, grant.member, grant.forEach)
 	}
 
-	// The two `each.value` grants are the people, and the people are these four
+	// The `each.value` grants are the people, and the people are these five
 	// member lists and nothing else: a job's or the front door's account
 	// reaching a database role through a local would leave the member
 	// expressions above unchanged.
@@ -1337,6 +1403,8 @@ func TestNoJobAccountHoldsTheDatabase(t *testing.T) {
 			"local.people is the launchers and the operators, the two member lists internal/infra's CheckFirebaseMembers refuses a Fugaro account in"},
 		{`(?m)^\s*admins\s*=\s*toset\(concat\(var\.admins,\s*var\.budget_admins\)\)\s*$`,
 			"local.admins is the admins and the budget admins, for the same reason"},
+		{`(?m)^\s*readers\s*=\s*setunion\(local\.people,\s*toset\(var\.viewers\)\)\s*$`,
+			"local.readers is the people with the viewer list and nothing else, the third member list the same check refuses a Fugaro account in"},
 	} {
 		if !regexp.MustCompile(want.re).MatchString(src) {
 			t.Errorf("the Firebase module's members are not exactly what the grants assume: %s", want.why)

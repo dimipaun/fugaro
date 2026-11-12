@@ -129,17 +129,27 @@ type Config struct {
 	// this installation, and a remote-shaped entry then refuses.
 	ImageSource string `yaml:"image_source,omitempty"`
 	// BackendName is the compute backend by name (backend.Open's registry
-	// key); empty means backend.CloudRun, the only one implemented
-	// (design m11-setup-and-skills.md §7). Read it through Backend.
+	// key); empty means backend.CloudRun (design m11-setup-and-skills.md
+	// §7). Both cloud-run and cloud-batch are known names; the Batch one is
+	// what `fugaro doctor` reports on for an installation that selects it,
+	// and a config here only records the choice (design compute-backend.md
+	// §4.4). Read it through Backend.
+	//
+	// It is never published: Shared drops it and ParseShared refuses the key,
+	// so the selection is the one the machine running the launch wrote. The
+	// runs bucket's shared file is written by any launcher, and the checks
+	// that hold a `batch:` block -- or the choice itself -- to the
+	// installation's own provisioning are `fugaro doctor`'s, which a launch
+	// does not consult (docs/design/shared-config.md §4).
 	BackendName string `yaml:"backend,omitempty"`
 	// Batch is what the Cloud Batch backend reads: the installation facts a
 	// run's VM is built and placed from (design
 	// docs/design/compute-backend.md §4.4, plan
-	// 2026-10-19-compute-backend.md Task 8 step 2). Only the Batch opener
-	// reads it (internal/cli/cloud.go's cloudOpeners) and nothing selects
-	// that opener yet, so a config that carries this block still runs on
-	// Cloud Run: `backend: cloud-batch` stays refused by validate below until
-	// the enable task.
+	// 2026-10-19-compute-backend.md Task 8 step 2). The Batch opener reads it
+	// (internal/cli/cloud.go's cloudOpeners), and the block is only read by
+	// the backend that was selected: an installation that carries it without
+	// `backend: cloud-batch` still runs on Cloud Run, so nothing here selects
+	// a backend on its own.
 	Batch     *Batch    `yaml:"batch,omitempty"`
 	Build     Build     `yaml:"build"`
 	Terraform Terraform `yaml:"terraform,omitempty"`
@@ -188,6 +198,23 @@ type Config struct {
 	// choose among by name (design docs/design/named-oauth-tokens.md).
 	// Only the owner sets them, here, never in fugaro.yaml.
 	ClaudeAccounts map[string]config.ClaudeAccount `yaml:"claude_accounts,omitempty"`
+	// ClaudeAccountAliases are the names the choice keys may hold instead of an
+	// account's own name, each pointing at one account of claude_accounts (or
+	// at "default" for the unsuffixed account), so moving every key that names
+	// the alias to another account is one edit (docs/account-aliases/spec.md
+	// §1, D2090, D2092, D2093). Only the owner sets them, here, never in
+	// fugaro.yaml, the project layer or the shared config, for claude_accounts'
+	// own reason: an alias is resolved by whoever writes the name out or holds
+	// one to a rule, and a key a launcher could write would be a way around
+	// that account's allow_data_to. The alias never reaches the node, the task,
+	// the run record or a job by its own name — the publish resolves the members
+	// it copies there (internal/cli's configAccountValues and project_cmd), the
+	// launch resolves the flag, the stage keys and the project default before
+	// the allow-list is asked (claudeAccountFor), and the job set resolves the
+	// variant it builds (internal/infra's mixedStageAccounts and
+	// mixedDefaultAccount) — so this block is local config and nothing else
+	// moves with it.
+	ClaudeAccountAliases map[string]string `yaml:"claude_account_aliases,omitempty"`
 	// Credentials are the installation's named credentials (design
 	// docs/model-crafts/spec.md §1): a name a craft's access speaks and the
 	// type of the provider that serves it, whose secret value this file never
@@ -729,11 +756,33 @@ func (c *Config) choiceRefProblem(name string) string {
 	if config.AxisNonAccountValue(name) {
 		return config.NonAccountChoiceMessage(name)
 	}
+	// An alias is the other name these keys may hold (docs/account-aliases,
+	// D2091, D2092): the key keeps the alias as written, and whoever reads it
+	// resolves it through ResolveAccount before asking anything else — the
+	// allow-list included — so the lookup below would refuse a name this file
+	// does define. The alias's own name and target rules are
+	// ValidateAccountAliases', applied where the block is loaded; asking them
+	// again here would be a second copy of them.
+	if _, ok := c.ClaudeAccountAliases[name]; ok {
+		return ""
+	}
 	if _, ok := c.ClaudeAccounts[name]; ok {
 		return ""
 	}
 	return fmt.Sprintf("the account %q is not defined here: this key names an account of this file's claude_accounts block, where the account's own allow_data_to decides which repositories may use its token, or %q for the unsuffixed default account — define it as claude_accounts: {%s: {allow_data_to: [owner/name]}}, or drop the key",
 		pluginwire.Printable(name), config.DefaultClaudeAccount, pluginwire.Printable(name))
+}
+
+// ResolveAccount is name resolved through this file's aliases: the account a
+// reader has to work with, and the alias the name came through ("" when it was
+// no alias at all). It is the one step every reader of a choice key takes —
+// the launch, the publish and the job set — and it is taken BEFORE the result
+// is held to the account's own allow_data_to, so the allow-list is always asked
+// about the account the run will hold and never about the alias (F6). A reader
+// that holds an alias back rather than resolving it, or resolves it after the
+// allow-list, is the shape this method exists to keep out of the tree.
+func (c *Config) ResolveAccount(name string) (account, alias string) {
+	return config.ResolveAccountAlias(c.ClaudeAccountAliases, name)
 }
 
 // Mailbox is the mailbox block: what the mailbox consumer needs from the
@@ -1162,9 +1211,12 @@ const SecretExpiryLayout = "2006-01-02"
 // run's VM and job are built and placed from (design
 // docs/design/compute-backend.md §4.4, plan 2026-10-19-compute-backend.md
 // Task 8 step 2). It is read in one place — internal/cli/cloud.go's Batch
-// opener, which builds internal/backend/batch.Options from it — and
-// `backend: cloud-batch` is refused by validate below until the enable task,
-// so this block selects nothing today.
+// opener, which builds internal/backend/batch.Options from it — and the
+// backend name is what selects that opener: since the enable task (plan
+// 2026-10-19-compute-backend.md Task 10) `backend: cloud-batch` is a known
+// name, and the installation that selects it is what `fugaro doctor` refuses
+// until the Batch provisioning, the IAM, the logs, the cost and the reaper
+// all pass (design §4.4, §8.1 task 9).
 //
 // Most fields are what the compute root's apply already produces and
 // internal/infra/compute.go's ComputeOutputs already decodes (the machine
@@ -2235,17 +2287,8 @@ func (c *Config) validate() error {
 	if !machineTypeRE.MatchString(c.Build.MachineType) {
 		bad("build.machine_type %q is not a machine type such as E2_HIGHCPU_8", c.Build.MachineType)
 	}
-	if c.BackendName != "" && c.BackendName != backend.CloudRun {
-		// cloud-batch is a name this build knows -- internal/backend/batch
-		// speaks it and the fake tests it -- and must not select yet: the
-		// tasks that make a Batch run safe come after Check 57a (design
-		// compute-backend.md §8.1 Task 2, §9). Calling it unknown would be a
-		// different claim, and a wrong one.
-		if c.BackendName == backend.CloudBatch {
-			bad("backend %q is not enabled yet (this build runs %s)", c.BackendName, backend.CloudRun)
-		} else {
-			bad("backend %q is not a known backend (%s)", c.BackendName, backend.CloudRun)
-		}
+	if c.BackendName != "" && !knownBackends[c.BackendName] {
+		bad("backend %q is not a known backend (%s, %s)", c.BackendName, backend.CloudRun, backend.CloudBatch)
 	}
 	validateBatch(bad, c)
 	if t := c.Terraform; t.StateBucket != "" && !bucketRE.MatchString(t.StateBucket) {
@@ -2318,6 +2361,16 @@ func (c *Config) validate() error {
 		if msg := config.ModelIDProblem(c.Crafts.Of(name).Model); msg != "" {
 			bad("crafts.%s.model: %s", name, msg)
 		}
+	}
+	// The aliases the account-choice keys may hold (docs/account-aliases, D2090,
+	// D2092, D2093): their names are held to credentialNameProblem's rule and
+	// share one namespace with the accounts, the credentials and the pools, and
+	// their targets are one account of claude_accounts or "default". It is
+	// checked here, above the keys that name them, because both rules are about
+	// the names those blocks hold and this is the one place all four are in
+	// hand.
+	for _, p := range config.ValidateAccountAliases(c.ClaudeAccountAliases, c.ClaudeAccounts, c.Credentials, c.Pools) {
+		bad("%s: %s", p.Path, p.Message)
 	}
 	// The account-choice keys are checked against the REFERENCE rule and not
 	// the definition's: each one names an account a run may use, and "default"
@@ -2792,6 +2845,17 @@ func (c *Config) BuildRegion() string {
 	}
 	return c.Region
 }
+
+// knownBackends are the backend names config validation accepts: the names
+// internal/backend.Open resolves, and no others. `cloud-batch` became one of
+// them in the enable task (plan 2026-10-19-compute-backend.md Task 10), and
+// this file accepting the name is all that changed here. `fugaro doctor` is
+// what judges an installation that selects it -- the provisioning, the IAM,
+// the log isolation, the cost table and the reaper -- and it reports what it
+// finds; nothing in this file, and no launch, holds the choice back on that
+// report (design compute-backend.md §4.4, §8.1 task 9; SECURITY.md, "The VM
+// backend, and the Docker daemon it gives a run").
+var knownBackends = map[string]bool{backend.CloudRun: true, backend.CloudBatch: true}
 
 // Backend is the compute backend this config selects: backend.CloudRun
 // when BackendName is unset.

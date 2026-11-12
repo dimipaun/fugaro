@@ -12,7 +12,9 @@
 # every command below to the file its `source:` names (README.md's
 # "## Getting started" or docs/release.md), verbatim; `build` to
 # .goreleaser.yaml's builds[0]; the archive's name template and extension to
-# archives[0]; the Homebrew line to homebrew_casks[0]; the platform list below
+# archives[0], and the archive note to every archive that file builds, under
+# the name that archive's own template gives it; the Homebrew line to
+# homebrew_casks[0]; the platform list below
 # to README.md's "## Requirements" and to .goreleaser.yaml, so that a platform
 # no build produces may appear only marked untested and never as something a
 # reader can install on; each path's own platform list to the source that
@@ -69,7 +71,10 @@ paths:
     name_template: "fugaro_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     extension: tar.gz
     note: >-
-      A tarball for macOS or Linux, amd64 or arm64.
+      A tarball for macOS or Linux, amd64 or arm64. A release publishes two:
+      fugaro_<version>_<os>_<arch>.tar.gz, the binary the Homebrew cask installs
+      and fugaro update follows, and fugaro-core_<version>_<os>_<arch>.tar.gz,
+      the same binary built without the ee/ code and under the MIT licence alone.
 
   - id: cosign
     name: Cosign

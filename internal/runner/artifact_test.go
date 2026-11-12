@@ -28,6 +28,7 @@ import (
 	"golang.org/x/text/unicode/norm"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runner"
@@ -657,6 +658,70 @@ func TestArtifactRunOutcomeIsArtifacts(t *testing.T) {
 	}
 	if rec.Reason != "" {
 		t.Fatalf("reason = %q, want empty for a succeeded run", rec.Reason)
+	}
+}
+
+// TestArtifactRecipeIsRefusedOnTheBatchBackend is step 5 entry 6 of plan
+// 2026-10-19-compute-backend.md, the runner's own arm of the artifact
+// boundary: a run whose JOB is on the cloud-batch backend and whose resolved
+// recipe is mode: artifact is refused before any step runs -- before the plan
+// stage, before the render, before any model call -- and the same recipe as a
+// cloud-run job (and as a job carrying no backend name at all, which is every
+// local run) is not.
+//
+// The runner is the arm that matters and the launcher's ref read is not: what
+// the launcher resolves is the REF's copy of a repository recipe, and the ref
+// can be stale -- a task launched against a base whose recipe was mode:
+// implement an hour ago launches, and the recipe the runner actually reads is
+// this one. Keyed on the platform's own name in the run's environment
+// (backend.BackendEnv, which internal/infra writes into every job), because
+// nothing else inside a run knows which backend its job is on.
+//
+// Mutation (drop the refusal from resolveRecipe): this test fails, and the
+// fake renders out/sizzle.mp4 on a Batch job. Mutation (key it on spec.Mode
+// instead of the resolved recipe): the embedded-task case still passes but a
+// recipe the runner resolved itself -- a repo recipe, a catalog name -- is not
+// refused, which is what the second case below would have caught had the
+// fixture used one; the refusal's own reason names the resolved recipe's name.
+func TestArtifactRecipeIsRefusedOnTheBatchBackend(t *testing.T) {
+	// A plan stage, so the refusal is proved to land before the first stage
+	// rather than merely before the render.
+	refuse := func(t *testing.T, value string) (*harness, *runstore.Record, error) {
+		t.Helper()
+		h := newHarnessFiles(t, renderCfg(t, "", ""), artifactSpec(sizzlePlanRenderYAML), renderScript(sizzleScript))
+		if value != "" {
+			h.deps.Env = append(filterEnv(h.deps.Env, backend.BackendEnv), backend.BackendEnv+"="+value)
+		}
+		rec, err := h.run(t, planStage)
+		return h, rec, err
+	}
+
+	h, rec, err := refuse(t, backend.CloudBatch)
+	if err == nil || rec.Status != runstore.StatusInfraError {
+		t.Fatalf("the batch run = %+v, err = %v", rec, err)
+	}
+	for _, want := range []string{"mode: artifact", "cloud-batch", "an artifact-producing run is never launched on it", "sizzle"} {
+		if !strings.Contains(rec.Reason, want) {
+			t.Errorf("the refusal lacks %q:\n%s", want, rec.Reason)
+		}
+	}
+	if len(h.agent.calls) != 0 {
+		t.Fatalf("%d agent calls, want none before any stage", len(h.agent.calls))
+	}
+	if _, err := os.Stat(filepath.Join(h.deps.WorkDir, "out", "sizzle.mp4")); err == nil {
+		t.Error("the refused run rendered its deliverable")
+	}
+
+	// The same recipe on the other backend, and on a job that names none
+	// (every local run, and every job of a release before this one): run.
+	for _, value := range []string{backend.CloudRun, ""} {
+		h, rec, err := refuse(t, value)
+		if err != nil || rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeArtifacts {
+			t.Fatalf("backend %q: rec = %+v, err = %v", value, rec, err)
+		}
+		if _, err := os.Stat(filepath.Join(h.deps.WorkDir, "out", "sizzle.mp4")); err != nil {
+			t.Errorf("backend %q: the render did not produce its file: %v", value, err)
+		}
 	}
 }
 

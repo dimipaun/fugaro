@@ -374,6 +374,12 @@ type run struct {
 	lastStage    *gateway.StageReport
 	modelBy      map[string]pricing.Micros
 	routeBy      map[string]pricing.Micros
+	// stepSpend is what a mode: evaluate run's registered step has spent and
+	// how many calls it made, accumulated by DirectCall (directcall.go). The
+	// gateway's own accumulators above cover it too, but a stage's timing is
+	// the sum of ITS calls and not of the run's, and nothing beside the step
+	// makes one in that mode (stephook.go's stepTiming).
+	stepSpend stepSpend
 	// modelTokens is the run's token counts by model, from whichever path
 	// filled them: the gateway's per-call usage under the model it priced
 	// each call for, taken from its ledger when it closes, or, with no
@@ -579,9 +585,17 @@ type run struct {
 	stageCkptStop func()
 	// skipPR is set when the check gate already ended the run (clean, or an
 	// infra error of its own, gate.go): finalize, which still runs after,
-	// does nothing more. A review run and an artifact run set it for their
-	// whole lives: neither ever pushes or opens a pull request.
+	// does nothing more. A review run, an artifact run and an evaluate run
+	// set it for their whole lives: none of them ever pushes or opens a pull
+	// request.
 	skipPR bool
+	// evaluate is whether this run is a mode: evaluate run (stephook.go):
+	// set at bootstrap from the task spec's Mode, beside r.review and for the
+	// same reason — the checkout arm is decided before the recipe is read —
+	// and confirmed against the resolved recipe's mode there. Its one step is
+	// a registered one, run with no agent and no checkout of the repository's
+	// own code.
+	evaluate bool
 	// artifact is whether this run is a mode: artifact run (design
 	// artifact-runs.md §3): set at bootstrap from the task spec's Mode,
 	// beside r.review, and confirmed against the resolved recipe's mode
@@ -778,6 +792,8 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 	switch {
 	case r.artifact:
 		r.runArtifactMode(runCtx)
+	case r.evaluate:
+		r.runEvaluateMode(runCtx)
 	case r.review:
 		r.runReviewMode(runCtx)
 	default:
@@ -1605,9 +1621,9 @@ func (r *run) branchClaim() string {
 //
 // The refusal is the branch claim (fb). The credentials service admits a push
 // only for the branch the run's identity names (G6), so a run that pushes --
-// a first run or a follow-up; a review run, an artifact run and a challenger
-// arm push nothing and are not judged -- cannot do its work with an identity
-// that names no branch. Only a launcher older than fugaro branchClaimSince
+// a first run or a follow-up; a review run, an artifact run, an evaluate run
+// and a challenger arm push nothing and are not judged -- cannot do its work
+// with an identity that names no branch. Only a launcher older than fugaro branchClaimSince
 // mints one of those: the claim is the launcher's to write (B1.1), and an
 // identity without it is one that predates the claim. The run stops here,
 // before the clone, rather than at its first push, where the service's refusal
@@ -1630,12 +1646,12 @@ func (r *run) startProxiedGit(ctx context.Context) error {
 		// where the reason is known, instead of at the first git command.
 		return fmt.Errorf("this run's Bitbucket access goes through the installation's credentials service, and this job names no service (%s is not set): the run stops before anything is cloned", providers.EnvCredentialsServiceURL)
 	}
-	// A challenger arm is exempt for the same reason the two run kinds above
-	// are: it publishes nothing, so no push of it needs a branch claim. Left
-	// unexempt it would be refused here, before openProvider, and told to
+	// A challenger arm is exempt for the same reason the three run kinds
+	// above are: it publishes nothing, so no push of it needs a branch claim.
+	// Left unexempt it would be refused here, before openProvider, and told to
 	// upgrade a launcher -- when what is true of it is that a Bitbucket
 	// repository is never a challenger at all (A2.1, mintGitAuth).
-	if !r.review && !r.artifact && !r.shadow && r.branchClaim() == "" {
+	if !r.review && !r.artifact && !r.evaluate && !r.shadow && r.branchClaim() == "" {
 		return fmt.Errorf("this run's Bitbucket access goes through the installation's credentials service (the published policy admits %s with proxy: true), and that service admits a push only for the branch the run's identity names (fb): this identity names none, so the launcher that started this run is older than fugaro %s. Upgrade Fugaro on the machine that launches this repository's runs (brew upgrade dimipaun/tap/fugaro), run 'fugaro update' to bring the installation and the job images to it, and launch it again — the run stops before anything is cloned, and nothing was pushed or changed",
 			r.spec.Repo, branchClaimSince)
 	}
@@ -1710,11 +1726,12 @@ func (r *run) refreshGitAuth(ctx context.Context, minValid time.Duration) error 
 	// itself, and never pushes or opens anything on its behalf. Nor an
 	// artifact run's (design artifact-runs.md §3): its deliverable goes to
 	// the runs bucket, nothing is ever pushed, and the plan stage is the
-	// only agent stage there is. Nor a challenger arm's (A2.1): the runner
-	// pushes nothing for it, and a credential in its environment would be
-	// the one thing this store could still hand a developer's repository
-	// through.
-	if r.env != nil && r.follow == nil && !r.review && !r.artifact && !r.shadow {
+	// only agent stage there is. Nor an evaluate run's (A5.2): it starts no
+	// agent at all, so nothing of it could use one. Nor a challenger arm's
+	// (A2.1): the runner pushes nothing for it, and a credential in its
+	// environment would be the one thing this store could still hand a
+	// developer's repository through.
+	if r.env != nil && r.follow == nil && !r.review && !r.artifact && !r.evaluate && !r.shadow {
 		r.env = gitops.WithVars(r.env, vars)
 	}
 	return nil
@@ -1999,7 +2016,7 @@ const bashTimeoutSlack = 2 * time.Minute
 //
 // A checkout the image baked is not always at the work directory: on the
 // shared image D1900 gives every per-repository job it is at a per-slug path
-// under bakedRepoRoot, and bootstrap makes that path the work directory when it
+// under BakedRepoRoot, and bootstrap makes that path the work directory when it
 // is this run's repository's (openBakedCheckout). Every arm below therefore
 // works on r.d.WorkDir alone.
 //
@@ -2022,18 +2039,33 @@ func (r *run) openCheckout(ctx context.Context, remote string, cloneVars map[str
 	return gitops.CloneBlobless(ctx, r.d.WorkDir, remote, "", env, modelCredentialVars...)
 }
 
-// bakedRepoRoot is the directory a shared image keeps the repositories it baked
+// BakedRepoRoot is the directory a shared image keeps the repositories it baked
 // in: one checkout per repository, named by the repository's storage slug
 // (openBakedCheckout). The name is fixed here rather than discovered because
 // both ends of the layout are Fugaro's own code — the bake step writes these
-// directories, and a run of the image reads them here. Nothing writes them yet:
-// the bake step (IS8b, docs/image-setup-skill) waits on the owner's ruling on
-// O3, so this constant and the per-slug arm below are the contract that step has
-// to meet, and until it does every run falls back to the clone. It is a sibling
-// of the work directory and never a path inside it, because the work directory
-// is the run's own checkout and a repository the image merely carries is not
-// part of it.
-const bakedRepoRoot = "baked"
+// directories (internal/imagebake's Root, which a generated definition spells
+// into the image), and a run of the image reads them here, as a sibling of the
+// work directory. The two ends are one layout only while a job's work directory
+// is what the base image and `fugaro exec` say it is, which is what
+// TestBakedRootIsTheJobWorkDirectorysSibling pins: the constants agreeing is not
+// something either package can check for the other.
+//
+// It is a sibling of the work directory and never a path inside it, because the
+// work directory is the run's own checkout and a repository the image merely
+// carries is not part of it.
+const BakedRepoRoot = "baked"
+
+// BakedDir is where a run whose work directory is workDir finds the checkout a
+// shared image baked for slug: a sibling of the work directory (BakedRepoRoot).
+// It is the path internal/imagebake's generated stage writes into the image and
+// the one openBakedCheckout opens, and it is exported — and openBakedCheckout
+// goes through it — because the layout has one end in each package, so a test
+// is the only place that can hold them together (internal/cli's
+// TestBakedRootIsTheJobWorkDirectorysSibling, over the work directory a job's
+// image actually starts in).
+func BakedDir(workDir, slug string) string {
+	return filepath.Join(filepath.Dir(workDir), BakedRepoRoot, slug)
+}
 
 // openBakedCheckout settles the checkout this run finds in its image, before
 // anything of the run can use it.
@@ -2041,7 +2073,7 @@ const bakedRepoRoot = "baked"
 // A checkout in the image is not one this run made, and which repository it is
 // a checkout OF is not a property of the path it sits at. The run therefore
 // opens the work directory when it holds a checkout and, otherwise, the
-// directory the image baked this run's own repository at (bakedRepoRoot,
+// directory the image baked this run's own repository at (BakedRepoRoot,
 // named by the run's storage slug) — and never another repository's, which is
 // the half of the shared image's layout that a single clone at a fixed path
 // could not do (D1900: a per-repository job runs the project's catalog image,
@@ -2080,7 +2112,7 @@ func (r *run) openBakedCheckout(ctx context.Context) error {
 	}
 	repo, err := gitops.Open(r.d.WorkDir, nil)
 	if err != nil {
-		dir := filepath.Join(filepath.Dir(r.d.WorkDir), bakedRepoRoot, slug)
+		dir := BakedDir(r.d.WorkDir, slug)
 		// No checkout at the work directory: this run's own repository is at
 		// its own baked path on a shared image, and a run that has none there
 		// either has no baked checkout at all.
@@ -2261,6 +2293,13 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if spec.Mode == recipe.ModeArtifact {
 		r.artifact = true
 	}
+	// An evaluate run's shape comes from the task spec's mode too, and for
+	// the same reason: its checkout arm is decided before the recipe is read,
+	// and a mode: evaluate recipe holds one registered step and no
+	// repository command.
+	if spec.Mode == recipe.ModeEvaluate {
+		r.evaluate = true
+	}
 	if err := stateDirOutsideCheckout(r.d.WorkDir, r.d.StateDir); err != nil {
 		return err
 	}
@@ -2428,6 +2467,21 @@ func (r *run) bootstrap(ctx context.Context) error {
 				return fmt.Errorf("checking out %s: %w", spec.Ref, err)
 			}
 		}
+	case r.evaluate:
+		// mode: evaluate checks no branch out (stephook.go): its step runs no
+		// repository command and reads no file of the tree, so unlike review
+		// mode — whose provision reads the mise config from the working tree
+		// — a clone job's clone is left exactly as --no-checkout made it. The
+		// configuration still comes from the base branch, as a review run's
+		// does: the task's ref names the configuration a repository recipe
+		// and the workflow come from, never a tree this run would read. As
+		// for review mode, r.rec.Branch is the branch lock's key alone
+		// (acquireLock), never pushed or read back as a ref.
+		r.rec.Branch = "fugaro/" + spec.RunID
+		r.skipPR = true
+		if cfg, err = r.readBaseConfig(ctx); err != nil {
+			return err
+		}
 	default:
 		branch := "fugaro/" + spec.RunID
 		if err := repo.CheckoutNewBranch(ctx, spec.Ref, branch); err != nil {
@@ -2574,6 +2628,36 @@ func (r *run) bootstrap(ctx context.Context) error {
 		return fmt.Errorf("recipe %s is mode: %s, but the task says mode: %s", rrec.Name, rcp.Mode, spec.Mode)
 	}
 	r.artifact, r.out = rcp.Mode == recipe.ModeArtifact, rcp.Outputs
+	// The same assignment for the evaluate mode, and the one that matters: a
+	// spec carrying no mode leaves r.evaluate false through the checkout arm,
+	// and the dispatch below is decided right after this. Without it, a
+	// hand-written task.json naming a mode: evaluate recipe would run the
+	// agent loop over a recipe whose one step is not an agent step.
+	r.evaluate = r.evaluate || rcp.Mode == recipe.ModeEvaluate
+	// The artifact boundary on the Batch backend (plan
+	// 2026-10-19-compute-backend.md Task 10 step 5, Global Constraint 13, design
+	// artifact-runs.md §8.5 and D11): an artifact-producing run is never run on
+	// cloud-batch, because a Batch run's account is not per-repository and the
+	// same run's inputs, artifacts and record would then be readable and
+	// overwritable by every run on the profile.
+	//
+	// This is the arm the launcher's own gate cannot be, and the plan says which
+	// is which: the launch gate reads the REF's copy of the recipe (a repository
+	// recipe by name, resolved in the working tree), and the ref can be stale --
+	// a task launched against a base whose recipe was mode: implement an hour ago
+	// launches, and the runner is the process that actually reads the recipe it
+	// will run. So the runner refuses on the RESOLVED recipe, before any stage
+	// and before any model call, and the gate's ref read stays as defence in
+	// depth beside it rather than as the substitute for it.
+	//
+	// Keyed on FUGARO_BACKEND, which every job of either backend carries
+	// (backend.BackendEnv, written by internal/infra into every job): the
+	// platform a run's job is on is a fact of its own environment, and nothing
+	// else here knows it -- the launch gate runs in the launcher, on the other
+	// side of the job.
+	if r.artifact && r.jobEnv(backend.BackendEnv) == backend.CloudBatch {
+		return fmt.Errorf("recipe %s is mode: artifact, which renders a deliverable into the run's bucket, and this run's job is on the cloud-batch backend: an artifact-producing run is never launched on it, because a Batch run's account is not per-repository -- the same run's inputs, artifacts and record would be readable and overwritable by every run on the profile (docs/design/artifact-runs.md §8.5 and D11, plan 2026-10-19-compute-backend.md Global Constraint 13). Launch an artifact recipe on backend: cloud-run", rrec.Name)
+	}
 	// A task that attached files under a resolved recipe of another mode
 	// fails the run before its first step (design §8.2): the launcher
 	// refuses this for every launch that resolves a recipe, and this is the
@@ -2684,12 +2768,15 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// before the levels would be the recipe's steps rather than the run's.
 	// Nothing between here and the loop reads the plan, so deriving it here
 	// changes nothing else.
-	if !r.artifact {
+	if !r.artifact && !r.evaluate {
 		// An artifact run has no implement/fix/review loop: planOf builds
 		// the ordinary loop's plan and checkPlan demands a trailing review
 		// step, neither of which an artifact recipe's [plan], render shape
 		// has. Its own stage list is read directly (artifactHasPlan), and
-		// the render is the runner's (artifact.go).
+		// the render is the runner's (artifact.go). An evaluate run is out
+		// for the same reason: its plan is its one registered step, which
+		// orderEvaluate has already pinned and the loop that reads a plan
+		// never runs.
 		//
 		// The rounds come from the run's own configuration, which for a shadow
 		// run is the arm's: resolveLevels put the champion's coder back only
@@ -2940,10 +3027,11 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	// The commits this run makes are stamped from here on (A3): the hooks the
 	// agent's stages and the runner's own commits run under, and the author
-	// the repository's git.author opt-in names. A review run and an artifact
-	// run write no trailer: neither pushes a branch of its own, so no commit
-	// of theirs is one of this run's (A3).
-	if !r.review && !r.artifact {
+	// the repository's git.author opt-in names. A review run, an artifact
+	// run and an evaluate run write no trailer: none pushes a branch of its
+	// own and none makes a commit, so no commit of theirs is one of this
+	// run's (A3).
+	if !r.review && !r.artifact && !r.evaluate {
 		if err := r.writeStampHooks(ctx); err != nil {
 			return err
 		}
@@ -5449,6 +5537,10 @@ func (r *run) finalize(ctx context.Context) error {
 	dec := Decide(records, decided, decidedRound, pol, r.rec.OwnerDecisions)
 	r.rec.Tolerated = r.toleratedRecord(pol, decidedRound)
 	r.rec.Accepted = r.acceptedRecord(pol, decidedRound)
+	// The cap's leftovers are filed beside them and before the body is built:
+	// they are what the pull request's body and the report name as the
+	// follow-ups the run left (T-TR8, T-TR9).
+	r.recordCapDeferrals()
 	// The answer is replaced whole rather than having its sentence rewritten:
 	// the one reason this fires on is Decide's own, and the kind it came with is
 	// the one the replacement keeps (Decision, D995).

@@ -71,7 +71,10 @@ func TestServiceForwardsWithSelectedCredential(t *testing.T) {
 	if got := resp.Header.Get(HeaderTier); got != TierA {
 		t.Errorf("%s = %q, want %q", HeaderTier, got, TierA)
 	}
-	if got := resp.Header.Get(HeaderCredential); got != "alice" {
+	// The tier A candidates are never exhausted and the round robin lands in
+	// the offered order, which is the bundle's own document order here: the
+	// default account is its first entry (internal/creds' tie-break, F7).
+	if got := resp.Header.Get(HeaderCredential); got != "default" {
 		t.Errorf("%s = %q, want the credential that answered", HeaderCredential, got)
 	}
 	if got := resp.Header.Get(HeaderSwitch); got != "" {
@@ -90,10 +93,10 @@ func TestServiceForwardsWithSelectedCredential(t *testing.T) {
 	if got := string(s.up.Body(0)); got != callBody(marker) {
 		t.Errorf("the upstream body is %q, want the call's own", got)
 	}
-	if got, want := req.Header.Get("Authorization"), "Bearer "+fakeCred(t, testAccount); got != want {
+	if got, want := req.Header.Get("Authorization"), "Bearer "+fakeCred(t, "default"); got != want {
 		t.Error("the call did not go upstream with the credential that answered it")
 	}
-	if got := req.Header.Get("Authorization"); strings.Contains(got, fakeCred(t, "default")) {
+	if got := req.Header.Get("Authorization"); strings.Contains(got, fakeCred(t, testAccount)) {
 		t.Error("the call went upstream with an account the round robin did not pick")
 	}
 	if got := req.Header.Get("Anthropic-Version"); got != "2023-06-01" {

@@ -91,6 +91,33 @@ func repoOf(t *testing.T, spec CatalogCheckJobSpec, repo string) CatalogCheckRep
 // that has none of its own — and one no repository of this installation names
 // is assigned nowhere rather than to a repository whose account would build
 // another repository's Dockerfile.
+// TestCatalogCheckAssignsAnInlineEntryToTheRepositoryThatRunsIt: an entry with
+// no repository of its own is built by one repository, and which one is not the
+// project's first — it is the repository the project's map puts on the entry,
+// which is the repository a build of it reads to decide whose checkout it bakes
+// (imagebake.Decide). Rebuilding it as any other repository would run as an
+// account that does not reach the checkout the definition bakes, and the
+// nightly job refuses that rather than baking the wrong source; resolving it
+// here is the same answer one step earlier, and it is the one the map already
+// states.
+func TestCatalogCheckAssignsAnInlineEntryToTheRepositoryThatRunsIt(t *testing.T) {
+	_, spec := catalogCheckJob(t, catalogCheckLocal+"image_map:\n  acme/other: scratch\n", 0)
+	app, other := repoOf(t, spec, "acme/app"), repoOf(t, spec, "acme/other")
+	if want := []string{"tools", "prebuilt"}; !slices.Equal(app.Entries, want) {
+		t.Errorf("acme/app builds %v, want %v: the map puts scratch on acme/other", app.Entries, want)
+	}
+	if want := []string{"runtime", "scratch"}; !slices.Equal(other.Entries, want) {
+		t.Errorf("acme/other builds %v, want %v: the repository the map puts the inline entry on is the one its rebuild runs as", other.Entries, want)
+	}
+	// A map entry that names no repository this installation can build with
+	// leaves the entry where it was: there is no account to run it as, and the
+	// job's own guard refuses a definition that bakes another repository.
+	_, spec = catalogCheckJob(t, catalogCheckLocal+"image_map:\n  acme/none: scratch\n", 0)
+	if want := []string{"tools", "scratch", "prebuilt"}; !slices.Equal(repoOf(t, spec, "acme/app").Entries, want) {
+		t.Errorf("acme/app builds %v, want %v: acme/none has no provider kind, so it cannot be the repository an entry is built in", repoOf(t, spec, "acme/app").Entries, want)
+	}
+}
+
 func TestCatalogCheckAssignsEveryEntry(t *testing.T) {
 	cc, spec := catalogCheckJob(t, catalogCheckLocal, 0)
 	if spec.Version != CatalogCheckSpecVersion {

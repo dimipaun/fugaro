@@ -721,7 +721,10 @@ const reviewArtifactTokens = 32000
 // state CSR2's launch refusal mirrors.
 //
 // All three speak for an installation that has named a Claude account, and are
-// silent without one: the review job is the first thing in this design that a
+// silent without one — the account an installation names is what puts a review
+// job on the account axis at all, whose value is that account or, since AK4,
+// the project's own Anthropic key (config.AnthropicKeyAccount), which is not an
+// account: the review job is the first thing in this design that a
 // named account is needed for (D888: the first slice is `fugaro accounts add`
 // plus the review job), and a validate run against an installation that has
 // named none is one whose output this release does not change — the same
@@ -737,7 +740,7 @@ func reviewJobNotes(cfg *config.Config, lc *localcfg.Config) []config.Problem {
 			n, reviewArtifactTokens)})
 	}
 	if cfg.Budget != nil && cfg.Budget.PerRunUSD > 0 {
-		notes = append(notes, config.Problem{Path: "budget.per_run_usd", Message: "is the cap on a run whose model calls reach the gateway, and a review job's do not: it runs on a Claude account, so the only ceiling over it is agent.max_budget_usd — Claude Code's own estimate, accurate for a Claude model and about twenty-five times too high for a provider model (F10). No fugaro.yaml key lowers that estimate: a review job that costs more than this cap is not what refuses it"})
+		notes = append(notes, config.Problem{Path: "budget.per_run_usd", Message: "is the cap on a run whose model calls reach the gateway, and a review job's do not: a review job is served by the value the account axis names rather than by a gateway route, so the only ceiling over it is agent.max_budget_usd — Claude Code's own estimate, accurate for a Claude model and about twenty-five times too high for a provider model (F10). No fugaro.yaml key lowers that estimate: a review job that costs more than this cap is not what refuses it"})
 	}
 	if msg := reviewPreconditionNote(lc); msg != "" {
 		notes = append(notes, config.Problem{Path: "credentials_service", Message: msg})
@@ -1955,9 +1958,10 @@ func newValidateCmd() *cobra.Command {
 				// Task 8 step 4, design §4.4; computeCheckoutProblems is where
 				// the three are put together, and the comment there is why
 				// they are not two calls). The Batch ones return nothing for
-				// every other project: the backend name they are about is
-				// refused by internal/localcfg until the enable task, so no
-				// installation reaches them today. The recipe they read is the
+				// every other project: the backend name they are about is one
+				// config validation accepts since the enable (Task 10), so an
+				// installation that names it really reaches them. The recipe
+				// they read is the
 				// one this checkout resolves the way a launch would
 				// (agent.recipe, else the default): its mode is what decides
 				// whether a run of this repository produces artifacts, which

@@ -284,6 +284,13 @@ func TestSettingsJSONNamesTheFamilyThatOwnsTheOthers(t *testing.T) {
 		{"job_profiles.*.cpu", "fugaro project"},
 		{"batch.secrets", "fugaro secrets"},
 		{"budget.firebase_project", settingsOwnerCommands["budget"]},
+		// The account aliases' row names the file, not the family that will
+		// write it: `fugaro accounts alias set/rm` is what converges the node
+		// and the job set on a repoint (D2096) and it is not in this tree yet,
+		// so a row naming `accounts` would print a command that writes nothing
+		// and refuse the write in that family's name. The entry moves to
+		// `fugaro accounts` with the command.
+		{"claude_account_aliases", settingsOwnerCommands["config local"]},
 	} {
 		row := writableRowOf(t, rows, tc.key, "project")
 		if row.Owner == nil {

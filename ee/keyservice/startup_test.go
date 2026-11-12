@@ -13,6 +13,9 @@ package keyservice
 
 import (
 	"testing"
+	"time"
+
+	"github.com/dimipaun/fugaro/ee/licence"
 )
 
 // TestTheIntakeRefusesToStartInsteadOfServing: each case is one field of one
@@ -51,6 +54,21 @@ func TestTheIntakeRefusesToStartInsteadOfServing(t *testing.T) {
 		{name: "no mailer", serves: "issue a key to an address it never verified", edit: func(_ *Config, d *Deps) { d.Mailer = nil }},
 		{name: "no code-host client", serves: "run an open-source check that reads no repository", edit: func(_ *Config, d *Deps) { d.CodeHost = nil }},
 		{name: "no throttle", serves: "mail on demand from an unauthenticated form", edit: func(c *Config, _ *Deps) { c.Throttle = Limits{} }},
+		{name: "no admin account", serves: "answer the page that mints any key for any tier to whoever asks", edit: func(c *Config, _ *Deps) { c.AdminAccount = " " }},
+		{name: "no admin secret", serves: "accept a page token it did not sign", edit: func(c *Config, _ *Deps) { c.AdminSecret = nil }},
+		{name: "an admin secret too short to sign with", serves: "accept a token a stranger can forge, and a forged token is a mint", edit: func(c *Config, _ *Deps) { c.AdminSecret = []byte("short") }},
+		{name: "admin tokens with no life", serves: "leave a form rendered once submittable for ever", edit: func(c *Config, _ *Deps) { c.AdminTokenTTL = 0 }},
+		{name: "no plan the page reaches", serves: "render a page that can mint nothing the site's forms cannot (§5.5)", edit: func(c *Config, _ *Deps) { c.PagePlans = nil }},
+		{name: "a page plan sharing a name with a form's", serves: "read two plans as one and write a record that names the wrong one", edit: func(c *Config, _ *Deps) { c.PagePlans[0].Name = c.Paid.Name }},
+		{name: "a page plan naming a tier no key is issued for", serves: "mint a key the verifier refuses", edit: func(c *Config, _ *Deps) { c.PagePlans[0].Tier = "gold" }},
+		{name: "no per-tier mint caps", serves: "let one session mint without limit (§6's limits row, D454)", edit: func(c *Config, _ *Deps) { c.MintCaps = nil }},
+		{name: "a tier with no mint cap", serves: "leave one tier of the page's own minting uncapped", edit: func(c *Config, _ *Deps) { delete(c.MintCaps, licence.TierEnterprise) }},
+		{name: "a mint cap of no mints", serves: "render a page whose every mint is refused", edit: func(c *Config, _ *Deps) {
+			c.MintCaps[licence.TierTeam] = Limits{Window: time.Hour}
+		}},
+		{name: "a mint cap over no window", serves: "count a cap over a window of nothing", edit: func(c *Config, _ *Deps) { c.MintCaps[licence.TierTeam] = Limits{Requests: 5} }},
+		{name: "no identity to read", serves: "tell the owner from anyone else on a page that mints", edit: func(_ *Config, d *Deps) { d.Owner = nil }},
+		{name: "no notifier", serves: "leave a queued request for an owner who is never told (§4.5)", edit: func(_ *Config, d *Deps) { d.Notifier = nil }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg, d := base, deps
@@ -59,6 +77,11 @@ func TestTheIntakeRefusesToStartInsteadOfServing(t *testing.T) {
 			cfg.FreeSeat, cfg.OpenSource = copyPlan(base.FreeSeat), copyPlan(base.OpenSource)
 			cfg.FreeMailDomains = append([]string(nil), base.FreeMailDomains...)
 			cfg.CodeHosts = append([]string(nil), base.CodeHosts...)
+			cfg.PagePlans = append([]Plan(nil), base.PagePlans...)
+			cfg.MintCaps = map[string]Limits{}
+			for tier, limit := range base.MintCaps {
+				cfg.MintCaps[tier] = limit
+			}
 			tc.edit(&cfg, &d)
 
 			if _, err := New(cfg, d); err == nil {

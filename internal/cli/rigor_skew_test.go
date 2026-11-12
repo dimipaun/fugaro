@@ -326,7 +326,7 @@ func TestRunRefusesRigorOnAnOlderBaseImage(t *testing.T) {
 				"fugaro.yaml's rigor: block of acme/other",
 				"fugaro " + rigorSince + " or later",
 				"ghcr.io/dimipaun/fugaro-base:" + c.rel + ", release " + c.rel,
-				"fugaro image refresh --repo acme/other --workflow svc",
+				imageGateRemedy,
 				"; or remove the rigor: block from fugaro.yaml",
 			} {
 				if !strings.Contains(err.Error(), want) {
@@ -374,7 +374,7 @@ func TestRunRefusesTheLayersRigorOnAnOlderBaseImage(t *testing.T) {
 	for _, want := range []string{
 		"the project layer's defaults.rigor (read for acme/other)",
 		"knows the project layer's defaults.rigor",
-		"fugaro image refresh --repo acme/other --workflow " + config.ImplicitWorkflow,
+		imageGateRemedy,
 		"remove defaults.rigor from the project layer",
 	} {
 		if !strings.Contains(err.Error(), want) {

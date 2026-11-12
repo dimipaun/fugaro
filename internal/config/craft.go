@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -209,6 +210,54 @@ type Pool struct {
 	// The order is meaningful for both strategies — it is what failover walks
 	// and what round-robin starts from — so it is a list and never a set.
 	Members []string `yaml:"members" json:"members"`
+
+	// Owner is the pool's owner, spelled by email (D1936, R10): the person a
+	// slip naming this pool is served to, and the pool's administrator. It is
+	// the roster's key, not a `sub` — the roster is keyed by email, and the
+	// service resolves it to the `sub` of the person asking for a slip at
+	// grant time — so a value here is a person's address and never a secret.
+	Owner string `yaml:"owner,omitempty" json:"owner,omitempty"`
+	// AllowedUsers are the other people the pool is served to, by email, in
+	// the same vocabulary as Owner. Empty is D1936's default: the owner alone,
+	// which is what a pool of one person's own tokens is (R11 — a per-user
+	// token is never lent, and sharing is a project secret under a pool's
+	// allowed users).
+	AllowedUsers []string `yaml:"allowed_users,omitempty" json:"allowed_users,omitempty"`
+	// LegacyOpen marks a pool that existed before pools carried an owner: the
+	// migration of a published node writes it (D1942), so a pool an
+	// installation already holds is not read as one whose owner is still to be
+	// named. It is a
+	// NEW NAME and not the absence of one: a pool written now must name its
+	// owner where it is published (ValidatePublishedPools), so "no owner" and
+	// "open to everyone" cannot be the same piece of text (F37).
+	LegacyOpen bool `yaml:"legacy_open,omitempty" json:"legacy_open,omitempty"`
+}
+
+// poolEmailRE is the shape a pool's owner and its allowed users are held to:
+// a person's email address, which is the roster's key (D1940, R10). It is
+// deliberately loose — the roster decides who exists, and this refuses only a
+// value no address could be — and it is the local config's own rule for a
+// service account, this package having no second vocabulary for an address.
+var poolEmailRE = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
+
+// Serves reports whether the pool is served to the person with this verified
+// email address, and it is where D1936's two defaults live: the owner alone
+// where the pool names no allowed users, the owner and the allowed users where
+// it names some, and everyone where the pool carries the migration's marker
+// (D1942, LegacyOpen).
+//
+// An ownerless pool that is not legacy-open serves nobody. That is the state a
+// pool is in while it is being written — this package does not refuse it in an
+// installation's own config (ValidatePools' comment says why) — and fail
+// closed is the direction a pool with no one answerable for it must fail in.
+func (p Pool) Serves(email string) bool {
+	if p.LegacyOpen {
+		return true
+	}
+	if email == "" {
+		return false
+	}
+	return email == p.Owner || slices.Contains(p.AllowedUsers, email)
 }
 
 // StrategyOrDefault is the pool's strategy with failover applied: a pool that
@@ -403,6 +452,83 @@ func ValidatePools(pools []Pool, creds []Credential) []Problem {
 				ps = append(ps, Problem{Path: mAt, Message: fmt.Sprintf("no credential of this name is defined in this block: a pool may list only the credentials the same document defines, or the built-in %s", CredentialVertex)})
 			}
 		}
+		ps = append(ps, poolAccessProblems(at, p)...)
+	}
+	return ps
+}
+
+// poolAccessProblems reports the rules a pool's owner block is held to wherever
+// a pool is written: the owner and the allowed users are email addresses, the
+// list holds each of them once, and a pool is either owned or carries the
+// migration's marker and never both (D1936, D1942).
+//
+// Whether an owner is REQUIRED is not one of them: that is a rule of the
+// published policy node alone (ValidatePublishedPools), because an
+// installation's own config is not a thing `fugaro update` may rewrite — a
+// config an upgrade starts refusing is a broken installation, which CLAUDE.md's
+// HARD RULE forbids — and what a pool in it serves is not decided until the
+// pool is published.
+func poolAccessProblems(at string, p Pool) []Problem {
+	var ps []Problem
+	if p.LegacyOpen {
+		if p.Owner != "" {
+			ps = append(ps, Problem{Path: at + ".owner", Message: `a pool marked legacy_open has no owner: the marker is what the migration writes for a pool that predates owners (D1942), and it means everyone the pool served before still is — drop legacy_open and name the owner instead`})
+		}
+		if len(p.AllowedUsers) > 0 {
+			ps = append(ps, Problem{Path: at + ".allowed_users", Message: `a pool marked legacy_open names no allowed users: the marker is what the migration writes for a pool that predates owners, and such a pool is already served to everyone — drop legacy_open, name the owner and the users the pool is for`})
+		}
+		return ps
+	}
+	if msg := poolEmailProblem(p.Owner); msg != "" {
+		ps = append(ps, Problem{Path: at + ".owner", Message: msg})
+	}
+	seen := map[string]bool{}
+	for j, u := range p.AllowedUsers {
+		uAt := fmt.Sprintf("%s.allowed_users[%d]", at, j)
+		if msg := poolEmailProblem(u); msg != "" {
+			ps = append(ps, Problem{Path: uAt, Message: msg})
+			continue
+		}
+		if seen[u] {
+			ps = append(ps, Problem{Path: uAt, Message: "this address is listed twice; a pool lists each allowed user once"})
+			continue
+		}
+		seen[u] = true
+	}
+	return ps
+}
+
+// poolEmailProblem is the shape rule the owner and the allowed users are held
+// to, "" for a value that is an address and for the empty owner of a pool that
+// names none (ValidatePublishedPools is what requires one). The message never
+// echoes the value: it is untrusted text, the same treatment ValidCredentialRef
+// gives a name.
+func poolEmailProblem(email string) string {
+	if email == "" || poolEmailRE.MatchString(email) {
+		return ""
+	}
+	return "must be an email address: a pool's owner and its allowed users are people in the project's roster, which is keyed by email, and the credentials service resolves the address to the account it signs in with"
+}
+
+// ValidatePublishedPools reports every rule a policy node's craft_pools block
+// breaks: ValidatePools' rules and the one only a PUBLISHED pool is held to —
+// it names an owner, or it carries the marker the migration wrote (D1936,
+// D1942, F37).
+//
+// The two functions exist because the two documents are not the same thing. The
+// installation's own config is the owner's own pools and survives an upgrade
+// untouched; the published node is what every run of the project resolves its
+// credentials through, and there a pool nobody owns would be a pool nobody
+// answers for. `fugaro project policy publish` reads the node it is about to
+// replace (publishedPolicyOf) and refuses it here, so a node carrying such a
+// pool is refused rather than served.
+func ValidatePublishedPools(pools []Pool, creds []Credential) []Problem {
+	ps := ValidatePools(pools, creds)
+	for _, p := range pools {
+		if p.Name == "" || p.LegacyOpen || p.Owner != "" {
+			continue
+		}
+		ps = append(ps, Problem{Path: fmt.Sprintf("pools.%s", pluginwire.Printable(p.Name)), Message: "owner is required: a pool is served to its owner and to the users it names, so a pool with no owner serves nobody — name the pool's owner, or mark a pool that predates owners as legacy_open if it is one `fugaro update` migrated"})
 	}
 	return ps
 }
