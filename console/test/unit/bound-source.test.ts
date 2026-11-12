@@ -37,6 +37,7 @@ import {
 import type { BoundInstallation } from '../../src/source/cli'
 import { NO_GRAPH_SCOPE, NO_PLAN_CHECKOUT, SourceRefusal } from '../../src/source/source'
 import type { Snapshot } from '../../src/source/source'
+import { itHostRoute } from '../support/hostRoute'
 
 /** FIRST and SECOND are the two installations the cases below move between. */
 const FIRST: BoundInstallation = {
@@ -738,7 +739,7 @@ describe('a read that finds no installation to run', () => {
     }
   })
 
-  it('refuses through `create` with the resolution’s own kind, whichever of the four it failed as', async () => {
+  itHostRoute('refuses through `create` with the resolution’s own kind, whichever of the four it failed as', async () => {
     // The pin on the one line that carries the kind: `resolveBinary` answers
     // `no-binary` for every refusal it makes -- the WSL route is
     // `resolveInstalledBinary` and nothing in `resolveBinary` reaches it -- so a

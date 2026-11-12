@@ -372,6 +372,24 @@ export const GRAPH_ZOOM_MIN = 0.5
 export const GRAPH_ZOOM_MAX = 8
 
 /**
+ * GRAPH_MIN_SCALE is the smallest scale a picture may be *drawn* at, as the
+ * fraction of a card's own width: at 0.75 a card -- `GRAPH_NODE_WIDTH`, 260 px
+ * -- is drawn 195 px wide, and the title inside it (the theme's `--text-sm`,
+ * 13 px) is drawn at 9.75 px, its footnotes (`--text-xs`, 12 px) at 9 px. Below
+ * that a title wrapped over three lines is a grey block rather than words -- the
+ * reading a picture too wide for its panel used to be forced into, because
+ * fitting the width alone shrinks a wide picture until nothing in it can be read
+ * (D735).
+ *
+ * **It is a floor and not a size.** A picture with room to spare is drawn at the
+ * panel's own width, exactly as it was, and one without it is held at this width
+ * and read by scrolling sideways (`div.graph-canvas-pane`). The alternative --
+ * folding the picture with `elk.layered.wrapping` -- is refused: the layers run
+ * left to right, and wrapping folds them across the axis a reader moves along.
+ */
+export const GRAPH_MIN_SCALE = 0.75
+
+/**
  * GRAPH_REFRESH_MS is how often the plan is re-read while the graph is on screen:
  * 60,000 ms, which is **the cadence GV2.1 gave this read** -- `cli.ts`'s
  * `PLAN_STATUS_MIN_INTERVAL_MS` is how long `plan.status` serves the document it
@@ -1108,6 +1126,24 @@ export function clampZoom(zoom: number): number {
   return Math.min(GRAPH_ZOOM_MAX, Math.max(GRAPH_ZOOM_MIN, zoom))
 }
 
+/**
+ * minimumCanvas is the smallest the picture may be **drawn**: the whole of it at
+ * `GRAPH_MIN_SCALE`, which is the size the canvas carries as its own geometry and
+ * the width the pane around it scrolls at.
+ *
+ * The width is the whole picture's and not one level's or one stream's: the
+ * picture is as wide as its widest row plus the bands and the boxes around it,
+ * and a floor computed from anything narrower would leave the columns that made
+ * it wide drawn under the bound it was supposed to keep.
+ *
+ * It is the picture's own extent and not the frame's: the frame is the picture
+ * scaled by the zoom, and the zoom is the operator's own control -- the one they
+ * use to go below this floor, and the one `GRAPH_ZOOM_MIN` bounds.
+ */
+function minimumCanvas(bounds: Rect): { readonly width: number; readonly height: number } {
+  return { width: bounds.width * GRAPH_MIN_SCALE, height: bounds.height * GRAPH_MIN_SCALE }
+}
+
 /** TAB_ALL is the All tab's key, and TAB_STREAM_PREFIX qualifies a stream's own
  * name as a stream's.
  *
@@ -1354,6 +1390,25 @@ function stage(factory: ScreenFactory, picture: GraphPicture, drawing: ScreenEle
 }
 
 /**
+ * canvasPane is the box the canvas is read through when the picture is wider
+ * than the panel: the canvas keeps its minimum width (its own `width` geometry,
+ * `minimumCanvas`) and this element scrolls sideways to reach the rest of it.
+ *
+ * **It is drawn around the canvas and around nothing else.** The list is not a
+ * picture and has no width of its own to keep, and the coordinator scope draws
+ * no canvas at all, so neither of them grows a scroll area it never uses.
+ *
+ * The scroll direction is the stylesheet's (`overflow-x` in `flight-deck.css`):
+ * the pane is a box, and what a box does with its overflow is a rule rather than
+ * a value this file can write, `style-src 'self'` admitting no inline style.
+ */
+function canvasPane(factory: ScreenFactory, drawing: ScreenElement): ScreenElement {
+  const pane = make(factory, 'div', 'graph-canvas-pane')
+  pane.append(drawing)
+  return pane
+}
+
+/**
  * inspector draws the panel beside the drawing for the task in hand: the task's
  * title, the words its card carries, the stream it is in, its run, what it waits
  * on and what it unblocks, and the two controls the design's panel asks for.
@@ -1575,6 +1630,14 @@ function canvas(factory: GraphFactory, picture: GraphPicture): ScreenElement | n
   svg.setAttribute('role', 'group')
   svg.setAttribute('aria-label', GRAPH_CANVAS_LABEL)
   svg.setAttribute('viewBox', viewBoxOf(bounds, picture.state.zoom))
+  // The canvas's own size, as geometry rather than a style (`style-src 'self'`
+  // backs none): the whole picture at `GRAPH_MIN_SCALE`. It is a **floor** --
+  // the stylesheet's `min-width: 100%` stretches the canvas to the panel
+  // whenever the panel is wider than this, so a picture with room to spare is
+  // drawn exactly as it was, and only one without it is held here and scrolled.
+  const minimum = minimumCanvas(bounds)
+  geometry(svg, 'width', minimum.width)
+  geometry(svg, 'height', minimum.height)
 
   for (const one of bands) svg.append(band(factory, one))
 
@@ -2043,7 +2106,7 @@ export function renderGraph(factory: GraphFactory, picture: GraphPicture, theme:
   }
   const drawnCanvas = canvas(factory, picture)
   if (drawnCanvas !== null) {
-    root.append(stage(factory, picture, drawnCanvas))
+    root.append(stage(factory, picture, canvasPane(factory, drawnCanvas)))
     // The legend is the canvas's key and is drawn only under it: the list spells
     // every word already, and neither kind of line is in it.
     root.append(legend(factory))

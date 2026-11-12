@@ -64,6 +64,7 @@ import { RENDERER_UNREADABLE, startConsole } from '../../src/renderer/app'
 import type { ScreenGate } from '../../src/renderer/app'
 import { CLI_VERSION_BUILT_AGAINST, SKEW_HEADLINES, classifyCliVersion } from '../../src/shared/version'
 import type { CliCompatibility, SkewElement, SkewFactory } from '../../src/shared/version'
+import { itHostRoute } from '../support/hostRoute'
 
 /**
  * assertNoReader is never called and it is not a test: it is the compile-time
@@ -593,7 +594,7 @@ describe('the startup handshake resolves rule 4 for the active installation', ()
   // is the first candidate of rule 4's order that did not answer, and the walk
   // carries on to the well-known locations. What B1 protects is unchanged in
   // substance: the app's own `PATH` is still never asked.
-  it('falls through a stored binary that has gone, to the installed one', async () => {
+  itHostRoute('falls through a stored binary that has gone, to the installed one', async () => {
     const m = machine()
     const resolution = await m.read({ binaryPath: join(m.root, 'gone', 'fugaro'), target: { project: 'gone' } })
     expect(resolution).toMatchObject({ ok: true, path: m.wellKnown.binary, source: 'well-known' })
@@ -608,7 +609,7 @@ describe('the startup handshake resolves rule 4 for the active installation', ()
     expect(m.onPath.reports()).toEqual([])
   })
 
-  it('falls through a stored binary that is not executable, to the installed one', async () => {
+  itHostRoute('falls through a stored binary that is not executable, to the installed one', async () => {
     const m = machine()
     const plain = join(m.root, 'plain-fugaro')
     writeFileSync(plain, '#!/bin/sh\necho 0.8.1\n', { mode: 0o644 })
@@ -620,7 +621,7 @@ describe('the startup handshake resolves rule 4 for the active installation', ()
     expect(m.onPath.reports()).toEqual([])
   })
 
-  it('reads the stored binary with its project, and the spawn log records that project', async () => {
+  itHostRoute('reads the stored binary with its project, and the spawn log records that project', async () => {
     const m = machine()
     const own = installStub(join(m.root, 'own'), { commands: { version: { stdout: '0.9.0\n' } } })
     const resolution = await m.read({ binaryPath: own.binary, target: { project: 'acme' } })
@@ -632,7 +633,7 @@ describe('the startup handshake resolves rule 4 for the active installation', ()
     expect(m.wellKnown.reports()).toEqual([])
   })
 
-  it('with none, walks rule 4 with no project, and never the ambient FUGARO_PROJECT', async () => {
+  itHostRoute('with none, walks rule 4 with no project, and never the ambient FUGARO_PROJECT', async () => {
     const m = machine()
     const resolution = await m.read(null)
     expect(resolution).toMatchObject({ ok: true, path: m.wellKnown.binary })

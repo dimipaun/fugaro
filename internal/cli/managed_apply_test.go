@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -90,6 +91,39 @@ type fakeManagedAssets struct {
 func (f *fakeManagedAssets) List(_ context.Context, gcpProject string) ([]managedmode.Asset, error) {
 	f.asked = append(f.asked, gcpProject)
 	return f.assets, f.err
+}
+
+// managedCleanInventory gives a rig an inventory that reads CLEAN: the two
+// state buckets an installation has, holding exactly the resources the Cloud
+// Asset answer lists. It is what a run that is not D59's fallback looks like,
+// and the fallback is the difference between a coding agent's session applying
+// a plan and being refused for a confirmation it cannot give.
+func managedCleanInventory(t *testing.T, r *initRig) {
+	t.Helper()
+	r.gcs.AddBucket(managedmode.InstallationsStateBucket(initProject), initProjectNumber, map[string]string{"fugaro": "tfstate"})
+	r.gcs.Put(managedmode.InstallationsStateBucket(initProject), infra.StatePrefixInstallation+"/default.tfstate",
+		stateObject(t, "google_storage_bucket", "runs", initRunsBucket))
+	r.gcs.AddBucket(managedmode.ManagedStateBucketName(initProject), initProjectNumber, map[string]string{"fugaro": "tfstate"})
+	r.gcs.Put(managedmode.ManagedStateBucketName(initProject), infra.StatePrefixManaged+"/default.tfstate",
+		stateObject(t, "google_storage_bucket", "data", "fmgd-data"))
+	stubManagedAssets(t, &fakeManagedAssets{assets: []managedmode.Asset{
+		{Name: "//storage.googleapis.com/" + initRunsBucket, Type: "storage.googleapis.com/Bucket"},
+		{Name: "//storage.googleapis.com/fmgd-data", Type: "storage.googleapis.com/Bucket"},
+	}})
+}
+
+// managedAuditRecords is the audit family of this rig's runs bucket, read back
+// through the ONE parser a surface uses (managed.ListAuditRecords) and for the
+// day the rig's own clock files records under: what a managed apply wrote is
+// proved by reading the object's verdict, and never by counting objects — a
+// record of the wrong shape would satisfy a count.
+func managedAuditRecords(t *testing.T, r *initRig) []managedmode.AuditRecord {
+	t.Helper()
+	got, err := managedmode.ListAuditRecords(context.Background(), managedStorage(t, r.gcs), initRunsBucket, managedmode.AuditDate(managedGateTestNow))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got
 }
 
 // stubManagedAssets points the command's whole-project read at assets, for the
@@ -286,6 +320,17 @@ func managedOpenGateRig(t *testing.T) (*initRig, string, func() []string) {
 	operatorADC(t)
 	isolateCredentialDir(t)
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	// The account the audit record names (managed_gate.go's auditIdentity): the
+	// ADC file above is a person's, so the endpoint that answers with an email
+	// is the one that would be asked — and no test contacts a cloud. The two
+	// stubs are the ones every other managed rig makes, and both are what puts
+	// a record on a day a test can read back.
+	oldUser := authenticatedUser
+	authenticatedUser = func(context.Context, *localcfg.Config) (string, error) { return managedGateUser, nil }
+	t.Cleanup(func() { authenticatedUser = oldUser })
+	oldNow := managedGateNow
+	managedGateNow = func() time.Time { return managedGateTestNow }
+	t.Cleanup(func() { managedGateNow = oldNow })
 
 	oldCaller := managedCaller
 	managedCaller = func(context.Context, *localcfg.Config) (string, oauth2.TokenSource, error) {
@@ -352,34 +397,39 @@ func TestManagedApplyRunsPastAnOpenGate(t *testing.T) {
 	}
 }
 
-// TestManagedApplyRefusesAContentFindingAndKeepsNoRecordOfIt is D1545's split
-// as this command answers it, and it is the answer the command has always
-// given: a delete of a type D1551 does not call data-bearing and no list of the
-// owner's admits is a content finding, which the gate records in Warnings for
-// the commands it stands in for. `fugaro managed apply` is not one of them
-// (D1011, the spec's "not a change to managed apply"): it writes no audit
-// record, so the ruling's other half — the finding is recorded and `fugaro
-// doctor` flags it — has nothing to stand on here, and a finding that neither
-// refuses nor reaches doctor would apply the plan with nothing kept in the
-// finding's place. So it is folded into the verdict's refusals (apply.go's
-// gateAndApply) and the session reads it as the refusal it is, in the same
-// lines a refusal is always rendered in. The audit family is read back beside
-// it: this command still writes no record, and a version that started writing
-// one — or that went back to applying the warned plan — fails here rather than
-// in a reader's search for an object that is not there.
-func TestManagedApplyRefusesAContentFindingAndKeepsNoRecordOfIt(t *testing.T) {
+// TestManagedApplyAppliesAContentFindingAndRecordsIt is D1545's split as this
+// command answers it since the owner's ruling of 2026-11-11, which put
+// `fugaro managed apply` in the gate's set: a delete of a type D1551 does not
+// call data-bearing and no list of the owner's admits is a content finding, the
+// gate records it in Warnings rather than refusing on it, and the plan is
+// APPLIED with the finding printed to the session and written into the audit
+// record — the record `fugaro doctor` reads back. Before the ruling this command
+// folded the finding into the verdict's refusals (T9), because it wrote no
+// record and the ruling's other half — "records and warns (AuditRecord,
+// doctor)" — had nothing to stand on here.
+//
+// The record is read back through the parser a surface uses and not counted:
+// the verdict is what a reader acts on, and a run that wrote the findings into
+// an object filed as `admitted` would be the one answer this test must not
+// accept.
+func TestManagedApplyAppliesAContentFindingAndRecordsIt(t *testing.T) {
 	r, root, _ := managedOpenGateRig(t)
+	// A coding agent's session: D55's managed case, so the apply goes on without
+	// a person at a terminal, and the inventory is read clean (below) because the
+	// fallback would keep that confirmation back.
+	agentSession(t)
+	managedCleanInventory(t, r)
 	// The plan a managed cover can read — the configuration it reads the
 	// provisioners, providers and data sources of, and the provider's own
 	// project — whose one change is the removal of a Run job no entry of the
 	// owner's list approves (the rig's allow list holds nothing). That removal
 	// is the gate's content half because google_cloud_run_v2_job is classified
-	// and not data-bearing (D1551), which is exactly the finding this command
-	// refuses and the converge set would record. The job the removal takes away
-	// is the managed project's own — its name carries the prefix and it runs as
-	// one of the project's managed accounts — because a delete is read as the
-	// resource it removes (removed), so a before view that was not this
-	// project's would be refused for that reason instead.
+	// and not data-bearing (D1551), so it is the finding the gate records and
+	// this command applies the plan with. The job the removal takes away is the
+	// managed project's own — its name carries the prefix and it runs as one of
+	// the project's managed accounts — because a delete is read as the resource
+	// it removes (removed), so a before view that was not this project's would
+	// be refused for that reason instead.
 	b, err := json.Marshal(map[string]any{
 		"format_version": "1.2",
 		"configuration": map[string]any{"provider_config": map[string]any{"google": map[string]any{
@@ -400,26 +450,47 @@ func TestManagedApplyRefusesAContentFindingAndKeepsNoRecordOfIt(t *testing.T) {
 	r.script["show"] = map[string]any{"stdout": string(b)}
 	r.save(t)
 
-	out, errOut, _ := execute(t, "managed", "apply", root)
+	out, errOut, err := execute(t, "managed", "apply", root)
+	if err != nil {
+		t.Fatalf("a plan whose only finding is a content one was not applied: %v\n%s", err, out+errOut)
+	}
 	got := out + errOut
 	for _, want := range []string{
-		"nothing was applied: the gate refused the plan of ",
-		"the managed gate refused the plan, so nothing is applied",
+		// The line above the findings, and the findings themselves: the session
+		// that applies the plan reads what left the cover tables while it is
+		// still doing it.
+		"the gate recorded the findings below",
 		"module.managed.google_cloud_run_v2_job.worker",
+		// And it was applied: the finding is a tripwire and not a fence (D1545).
+		"applied the saved plan of " + root,
 	} {
 		if !strings.Contains(got, want) {
-			t.Errorf("the session does not read the content finding as a refusal, missing %q:\n%s", want, got)
+			t.Errorf("the session does not read the content finding and the apply, missing %q:\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, "applies it anyway") {
-		t.Errorf("the session is told the warned plan is applied, which this command does not do:\n%s", got)
+	recs := managedAuditRecords(t, r)
+	if len(recs) != 1 {
+		t.Fatalf("the apply filed %d audit record(s) under %s, and a managed apply files one (the ruling of 2026-11-11): %v",
+			len(recs), managedmode.AuditPrefix, recs)
 	}
-	list, err := managedStorage(t, r.gcs).Objects.List(initRunsBucket).Prefix(managedmode.AuditPrefix).Context(context.Background()).Do()
-	if err != nil {
-		t.Fatal(err)
+	rec := recs[0]
+	if rec.Verdict != managedmode.AuditWarned {
+		t.Errorf("the record's verdict is %q, want %q: the plan was applied with the gate's findings and not admitted by all of them",
+			rec.Verdict, managedmode.AuditWarned)
 	}
-	if len(list.Items) != 0 {
-		t.Errorf("a managed apply wrote %d object(s) under %s, and this command keeps no record (D1011): %v", len(list.Items), managedmode.AuditPrefix, list.Items)
+	if rec.Command != selfCommand()+" managed apply" {
+		t.Errorf("the record names the command %q, want %q", rec.Command, selfCommand()+" managed apply")
+	}
+	if !slices.ContainsFunc(rec.Warnings, func(w string) bool { return strings.Contains(w, "module.managed.google_cloud_run_v2_job.worker") }) {
+		t.Errorf("the record's warnings do not name the finding the session read: %v", rec.Warnings)
+	}
+	if len(rec.Rules) == 0 {
+		t.Error("the record names no rules, and the gate ran three of them")
+	}
+	// The digest is the document the gate judged — the JSON terraform prints for
+	// the saved plan — and not the plan file's own bytes (D1022).
+	if want := fmt.Sprintf("%x", sha256.Sum256(b)); rec.PlanDigest != want {
+		t.Errorf("the record's plan_digest is %q, want the sha256 of the plan JSON the gate read (%s)", rec.PlanDigest, want)
 	}
 }
 
@@ -436,41 +507,63 @@ func TestManagedApplyRefusesAContentFindingAndKeepsNoRecordOfIt(t *testing.T) {
 // The warning is asserted where it is written, from Enable.Warning, and not by
 // re-deriving it here: the five pieces are the sentence's own opening, the
 // read's reason, the owner's two commands and what the warning does here — the
-// apply proceeds, and no audit record of it is written.
+// apply proceeds, and the warning is in the record of it (the ruling of
+// 2026-11-11, which made the sentence's old "keeps no audit record of it"
+// false).
 func TestManagedApplyWarnsWhenTheMarkerRecordsNoBudget(t *testing.T) {
 	r, root, mints := managedOpenGateRig(t)
+	// A coding agent's session with a clean inventory, so the apply reaches the
+	// apply itself rather than a confirmation this session cannot give: what
+	// this test is about is the gate opening with a warning, which is a fact
+	// about the project and not about who is at the terminal.
+	agentSession(t)
+	managedCleanInventory(t, r)
 	// The rig's own marker is a version 2, the open gate the test above runs
 	// past; the world this test is about records no amount, and it names this
 	// project, so the second read IsManaged makes answers "managed" and the one
 	// warning D1545 takes is the one raised.
 	r.gcs.Put(initRunsBucket, "fugaro/managed.json", []byte(`{"version":1,"gcp_project":"proj-1234"}`))
+	// And a plan the gate finds NOTHING about: one create of a bucket of the
+	// root's, under the managed prefix and the project's own provider. The
+	// budget warning is then the only finding the record can carry, which is
+	// what this test is about — the rig's own plan is a refused one (it is the
+	// unmanaged shape, and the gate refuses it before any confirmation), and a
+	// refusal would put the warning in the record beside rules that stopped it.
+	setManagedPlan(t, r)
 
-	out, errOut, _ := execute(t, "managed", "apply", root)
+	out, errOut, err := execute(t, "managed", "apply", root)
 	got := out + errOut
+	if err != nil {
+		t.Fatalf("a gate that opened with the budget warning did not apply: %v\n%s", err, got)
+	}
 	for _, want := range []string{
 		initProjectName + " has no budget recorded (",
 		"records no budget amount for " + initProjectName,
 		"fugaro managed flag <gcp-project-id> --budget N --budget-currency CCC",
 		"fugaro setup --create-project --managed --budget N --budget-currency CCC --billing-account ID",
-		"this apply proceeds on that warning and keeps no audit record of it",
+		"this apply proceeds on that warning, and the warning is in this apply's audit record",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the owner does not read the gate's own warning, missing %q:\n%s", want, got)
 		}
 	}
-	// And the family that warning would be in holds nothing: `fugaro managed apply`
-	// is the one command the audit design cites and does not touch (D1011, the
-	// spec's "not a change to managed apply"), so it is not in the converge set
-	// and the family `fugaro doctor` reads holds nothing about this apply. The
-	// sentence above says exactly that, and this reads the family back to hold
-	// it to it: a wording that went on promising a record would be a reader
-	// sent to an empty prefix.
-	list, err := managedStorage(t, r.gcs).Objects.List(initRunsBucket).Prefix(managedmode.AuditPrefix).Context(context.Background()).Do()
-	if err != nil {
-		t.Fatal(err)
+	// And the record it says the warning is in holds it: the project's own
+	// finding is one of D1545's, so it is written with the plan's own findings
+	// and the step is recorded as one that was applied with findings rather
+	// than as one the gate found nothing about.
+	recs := managedAuditRecords(t, r)
+	if len(recs) != 1 {
+		t.Fatalf("the apply filed %d audit record(s), and a managed apply files one: %v", len(recs), recs)
 	}
-	if len(list.Items) != 0 {
-		t.Errorf("a managed apply wrote %d object(s) under %s, and its own warning says it keeps no record (D1011): %v", len(list.Items), managedmode.AuditPrefix, list.Items)
+	if recs[0].Verdict != managedmode.AuditWarned {
+		t.Errorf("the record's verdict is %q, want %q: the gate opened on a warning and the plan was applied with it",
+			recs[0].Verdict, managedmode.AuditWarned)
+	}
+	if !slices.ContainsFunc(recs[0].Warnings, func(w string) bool { return strings.Contains(w, "has no budget recorded (") }) {
+		t.Errorf("the record's warnings do not carry the budget-evidence warning the session read: %v", recs[0].Warnings)
+	}
+	if len(recs[0].Rules) == 0 {
+		t.Error("the record names no rules, and the gate ran three of them")
 	}
 	// And a warning is not a refusal: the run goes on past the gate to the
 	// steps it guards, which is what "the apply proceeds" promises.

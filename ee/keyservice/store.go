@@ -107,6 +107,59 @@ type Subscription struct {
 	Cancelled    bool      `json:"cancelled"`
 }
 
+// Revocation is one entry of §8's revocation list: a key the licensor has
+// withdrawn, the reason and the instant. Reason is the licensor's own word for
+// it — a refund, a chargeback, a key that leaked — because what reaches the
+// holder is the key's state and never why the licensor ended it.
+//
+// The list only ever grows. A revoked key is never renewed and a leak is
+// reissued as a new key_id with a new entry beside the old one (§8), so nothing
+// here is ever edited back, which is why Revoke refuses to overwrite an entry
+// the store already holds.
+type Revocation struct {
+	KeyID  string    `json:"key_id"`
+	Reason string    `json:"reason"`
+	At     time.Time `json:"at"`
+}
+
+// KeyState is what the service remembers about one issued key that the key's
+// own claims cannot carry: the renewal secret's digest (§7, D2135) and the
+// instant the key last asked the server anything (§8).
+//
+// The digest and never the secret. The secret is the holder's half of a renewal
+// and the store is read by whoever operates the service, so the store keeping
+// the secret itself would make it a list of live renewal credentials — the rule
+// §7.3 already states for a verification token, applied to this one. What is
+// kept is what decides whether a caller who sends the secret is the holder, and
+// nothing else is derivable from it.
+//
+// LastSeen is zero for a key that has never called in, which is not the same as
+// a key that called in long ago: the status endpoint's answer is the key's
+// state and not this, and the instant is what the admin page reads when it asks
+// whether a holder is still checking.
+type KeyState struct {
+	KeyID             string    `json:"key_id"`
+	RenewalSecretHash string    `json:"renewal_secret_hash"`
+	LastSeen          time.Time `json:"last_seen"`
+}
+
+// Trial is one 14-day Team trial handed out under §14: the installation it was
+// issued to, the account that asked, the key it minted and when.
+//
+// Installation is the installation's **Firebase project id** (K2.7) and not a
+// name the request carries: a project id is something a caller has to control a
+// Firebase project to have, and the whole of §14's "one trial per workspace or
+// account" rests on the two fields here being hard to mint twice. Account is
+// the identity the site's sign-in proved (K2.4) — the account that asked, not
+// one the request names. Both are required; a trial with either missing is
+// ErrTrialUnnamed.
+type Trial struct {
+	Installation string    `json:"installation"`
+	Account      string    `json:"account"`
+	KeyID        string    `json:"key_id"`
+	At           time.Time `json:"at"`
+}
+
 // Store is the service's memory. Save is an upsert by the record's own id
 // (Source for an issuance, ID for the rest), except for an issuance the store
 // already holds under that source, which is ErrAlreadyRecorded -- so two
@@ -122,6 +175,15 @@ type Subscription struct {
 // finishes the state the record describes when the merchant redelivers. A
 // backend that can express either pair as one write closes it, which is why the
 // interface is small enough to be given one (S3.5).
+//
+// After Subscriptions come the three things a key's life adds to §7.3's
+// record: the state its renewal is decided from (§7), the revocation list (§8)
+// and the trials handed out (§14). They keep the shape above — whole records
+// that the service filters as it reads — and they meet that limit in the same
+// two ways: an issuance and its key state are two writes, so a mint that dies
+// between them leaves a key the store can revoke and cannot renew (the safe
+// half of the pair), while ClaimTrial is a check and a write that cannot be
+// split, because two asks arriving together would otherwise be two trials.
 type Store interface {
 	SaveIssuance(ctx context.Context, r Record) error
 	Issuances(ctx context.Context) ([]Record, error)
@@ -132,6 +194,14 @@ type Store interface {
 	SaveSubscription(ctx context.Context, s Subscription) error
 	Subscriptions(ctx context.Context) ([]Subscription, error)
 	Subscription(ctx context.Context, id string) (Subscription, bool, error)
+	Revoke(ctx context.Context, r Revocation) error
+	Revocation(ctx context.Context, keyID string) (Revocation, bool, error)
+	Revocations(ctx context.Context) ([]Revocation, error)
+	SaveKeyState(ctx context.Context, s KeyState) error
+	KeyState(ctx context.Context, keyID string) (KeyState, bool, error)
+	TouchKey(ctx context.Context, keyID string, at time.Time) error
+	ClaimTrial(ctx context.Context, t Trial) error
+	Trials(ctx context.Context) ([]Trial, error)
 }
 
 // ErrAlreadyRecorded is a source the store has already minted for. It is a
@@ -139,15 +209,36 @@ type Store interface {
 // and what the caller does is nothing.
 var ErrAlreadyRecorded = errors.New("keyservice: an issuance for that source is already recorded")
 
+// ErrTrialAlreadyClaimed is an installation or an account that has already had
+// its trial (§14). It is one error for both halves on purpose: which of the two
+// matched is a fact about somebody else's account, and the answer to the ask is
+// the same either way.
+var ErrTrialAlreadyClaimed = errors.New("keyservice: that installation or account has already had a trial")
+
+// ErrTrialUnnamed is a trial asked for with no installation or no account.
+// Both are required, and neither has a default: the store cannot count what the
+// caller did not say.
+var ErrTrialUnnamed = errors.New("keyservice: a trial names the installation and the account it is for")
+
+// ErrRevocationUnnamed is a revocation with no key_id. The list is looked up by
+// the key it withdraws, so an entry under the empty string would be the one
+// entry that answers every lookup of an unnamed key — a caller that sent
+// nothing would be told its key is revoked, which is a project dropped to Free
+// by a record nobody meant to write.
+var ErrRevocationUnnamed = errors.New("keyservice: a revocation names the key it withdraws")
+
 // Memory is the store a test drives and the shape a durable one has to keep:
-// the same nine methods and the two rules above. It is safe for concurrent use
-// because the service's handlers are.
+// the same methods and the same rules. It is safe for concurrent use because
+// the service's handlers are.
 type Memory struct {
 	mu            sync.Mutex
 	issuances     []Record
 	applications  []Application
 	verifications []Verification
 	subscriptions map[string]Subscription
+	revocations   map[string]Revocation
+	keys          map[string]KeyState
+	trials        []Trial
 }
 
 func (m *Memory) SaveIssuance(_ context.Context, r Record) error {
@@ -231,4 +322,122 @@ func (m *Memory) Subscription(_ context.Context, id string) (Subscription, bool,
 	defer m.mu.Unlock()
 	s, held := m.subscriptions[id]
 	return s, held, nil
+}
+
+// Revoke records a revocation and refuses to change one it already holds: a
+// refund delivered twice is one revocation, and the key is revoked from the
+// first instant either way. A key the store has never issued can be revoked
+// too — the entry is what the status endpoint answers from, and a key whose
+// issuance is missing from the store is exactly the one whose revocation must
+// not be refused.
+//
+// A revocation with no key_id is the one thing here that is refused, and it is
+// refused rather than dropped: the entry would answer for every key nobody
+// named, and a licensor who writes it has a bug in the event that carried it.
+func (m *Memory) Revoke(_ context.Context, r Revocation) error {
+	if r.KeyID == "" {
+		return ErrRevocationUnnamed
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.revocations == nil {
+		m.revocations = map[string]Revocation{}
+	}
+	if _, held := m.revocations[r.KeyID]; held {
+		return nil
+	}
+	m.revocations[r.KeyID] = r
+	return nil
+}
+
+func (m *Memory) Revocation(_ context.Context, keyID string) (Revocation, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, held := m.revocations[keyID]
+	return r, held, nil
+}
+
+func (m *Memory) Revocations(_ context.Context) ([]Revocation, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]Revocation, 0, len(m.revocations))
+	for _, r := range m.revocations {
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+func (m *Memory) SaveKeyState(_ context.Context, s KeyState) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.keys == nil {
+		m.keys = map[string]KeyState{}
+	}
+	m.keys[s.KeyID] = s
+	return nil
+}
+
+func (m *Memory) KeyState(_ context.Context, keyID string) (KeyState, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, held := m.keys[keyID]
+	return s, held, nil
+}
+
+// TouchKey moves a key's last-seen and nothing else, in one write. The caller
+// that records a sighting is the handler that has just compared a secret's
+// digest, and it holds the digest it read rather than the one it should keep:
+// a read-modify-write here would let a status call in flight put back a digest
+// a rotation had already replaced.
+//
+// A key the store does not hold is left alone rather than given an entry. A
+// sighting of a key whose secret was never recorded says nothing the store
+// wants to keep, and inventing a record for it would put a key in the store
+// with no digest, which is the one key state that could never be renewed.
+//
+// The instant only moves forward. These are the service's own clock's readings
+// and the deploy's instances are separate machines, so a check that took a
+// second longer to arrive can carry an earlier instant than one already
+// recorded — and what the admin page reads is the last time anybody saw the
+// key, which an out-of-order arrival does not change.
+func (m *Memory) TouchKey(_ context.Context, keyID string, at time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	held, known := m.keys[keyID]
+	if !known || !at.After(held.LastSeen) {
+		return nil
+	}
+	held.LastSeen = at
+	m.keys[keyID] = held
+	return nil
+}
+
+// ClaimTrial is §14's one trial per installation and per account, and it is the
+// store that decides it: the two fields are checked and the new trial is
+// appended under the same lock, so two asks arriving together cannot both find
+// the store empty.
+//
+// An unnamed trial is refused before any of that. A claim with an empty
+// installation matches nothing the store already holds, so it would be the one
+// ask that always succeeds, and §14's rule would be given away by a zero value
+// in a caller's request.
+func (m *Memory) ClaimTrial(_ context.Context, t Trial) error {
+	if t.Installation == "" || t.Account == "" {
+		return ErrTrialUnnamed
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, held := range m.trials {
+		if held.Installation == t.Installation || held.Account == t.Account {
+			return ErrTrialAlreadyClaimed
+		}
+	}
+	m.trials = append(m.trials, t)
+	return nil
+}
+
+func (m *Memory) Trials(_ context.Context) ([]Trial, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]Trial(nil), m.trials...), nil
 }
