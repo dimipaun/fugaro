@@ -1068,6 +1068,113 @@ func TestDynamicAccountsAreRefusedAComputedRole(t *testing.T) {
 	}
 }
 
+// dynamicSecretsGrant is the whole fence of the dynamic class, and it is the
+// only one: grantRules' project row says which KIND of principal may hold the
+// intake's write role and the service's prefix accessor, and says nothing about
+// a condition, so without these rows a plan could grant the service's account a
+// project-wide secretmanager.secretAccessor with no condition — every secret of
+// the project, the GitHub App key among them — or bind either role under a
+// wider condition, and one fugaro update confirmation would carry it.
+//
+// The rows hold both halves of what the check compares: the condition's
+// presence (none is a refusal, and the list role carries none because Check 510
+// refused secretmanager.secrets.list under the fence) and its exact spelling
+// (the title and the expression byte for byte, so a wider spelling, a single
+// prefix, another title, a description and a condition the plan has not decided
+// are each their own row). The three shapes the modules write are rows too, so
+// a check that refused everything cannot pass this test.
+//
+// Mutation (verified, run and restored): short-circuiting the accessor before
+// its condition checks — its member and project steps left in place — leaves
+// that holder's six negative rows covered, none of them reported; and dropping
+// the title/expression comparison leaves the wider, single-prefix and
+// other-title rows of BOTH holders covered. The description and the unknown
+// condition are separate steps after the comparison, so those rows still hold
+// under the second mutation.
+func TestDynamicSecretsGrantIsTheNameFence(t *testing.T) {
+	const intake = "serviceAccount:" + IntakeAccountID + "@proj-1.iam.gserviceaccount.com"
+	const service = "serviceAccount:" + CredentialsAccountID + "@proj-1.iam.gserviceaccount.com"
+	const accessor = "roles/secretmanager.secretAccessor"
+	write, lister := dynamicSecretsRole(IntakeSecretsRole), dynamicSecretsRole(SecretListerRole)
+	cond := func(title, expression string, description any) []any {
+		return []any{map[string]any{"title": title, "expression": expression, "description": description}}
+	}
+	fence := dynamicSecretsCondition()
+	// What every wrong spelling of the fence is refused for, whichever part of
+	// it is wrong: the comparison is byte for byte and names the fence it
+	// wanted.
+	const notTheFence = "is the fence, byte for byte"
+
+	for _, holder := range []struct{ name, member, role string }{
+		{"the intake's write role", intake, write},
+		{"the service's prefix accessor", service, accessor},
+	} {
+		for _, tc := range []struct {
+			name             string
+			condition        []any
+			unknownCondition bool
+			covered          bool
+			reason           string
+		}{
+			{name: "under the fence", condition: fence, covered: true},
+			{name: "with no condition", reason: "no condition"},
+			{name: "under a wider expression", condition: cond(gcp.DynamicSecretNamesConditionTitle, `resource.name.startsWith("projects/")`, nil), reason: notTheFence},
+			{name: "under one prefix only", condition: cond(gcp.DynamicSecretNamesConditionTitle, `resource.name.extract("/secrets/{secret}").startsWith("fugaro_u_")`, nil), reason: notTheFence},
+			{name: "under another title", condition: cond("fugaro-dynamic-secret-names", gcp.DynamicSecretNamesCondition(), nil), reason: notTheFence},
+			{name: "under the fence's two prefixes and a description", condition: cond(gcp.DynamicSecretNamesConditionTitle, gcp.DynamicSecretNamesCondition(), "the delivery grammar"), reason: "description"},
+			{name: "under a condition known only after apply", unknownCondition: true, reason: "is not known"},
+		} {
+			after := map[string]any{"member": holder.member, "role": holder.role, "project": "proj-1"}
+			unk := map[string]any{}
+			if tc.condition != nil {
+				after["condition"] = tc.condition
+			}
+			if tc.unknownCondition {
+				after["condition"] = []any{map[string]any{"title": gcp.DynamicSecretNamesConditionTitle}}
+				unk["condition"] = []any{map[string]any{"expression": true}}
+			}
+			ch := rc("google_project_iam_member", after, unk, "create")
+			got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil)
+			if (len(got) == 0) != tc.covered {
+				t.Errorf("%s %s to %s: NotCovered = %q, covered want %v", holder.name, tc.name, holder.member, got, tc.covered)
+				continue
+			}
+			if !tc.covered && !strings.Contains(strings.Join(got, "\n"), tc.reason) {
+				t.Errorf("%s %s to %s stopped for another reason: %q, want %q", holder.name, tc.name, holder.member, got, tc.reason)
+			}
+		}
+	}
+
+	// The lister is the other half: it carries NO condition — Check 510
+	// refused secretmanager.secrets.list under the fence, which is what makes
+	// the permission a role of its own — and it is the one row of the three
+	// that a condition makes a refusal rather than a cover.
+	for _, member := range []string{intake, service} {
+		for _, tc := range []struct {
+			name      string
+			condition []any
+			covered   bool
+		}{
+			{"with no condition", nil, true},
+			{"under the fence", fence, false},
+		} {
+			after := map[string]any{"member": member, "role": lister, "project": "proj-1"}
+			if tc.condition != nil {
+				after["condition"] = tc.condition
+			}
+			ch := rc("google_project_iam_member", after, map[string]any{}, "create")
+			got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil)
+			if (len(got) == 0) != tc.covered {
+				t.Errorf("the lister %s to %s: NotCovered = %q, covered want %v", tc.name, member, got, tc.covered)
+				continue
+			}
+			if !tc.covered && !strings.Contains(strings.Join(got, "\n"), "under a condition") {
+				t.Errorf("the lister %s to %s stopped for another reason: %q, want %q", tc.name, member, got, "under a condition")
+			}
+		}
+	}
+}
+
 // mustRoleKey is grantRules' key for a role as a module writes it, for the
 // table lookups above. It is the cover's own roleKey, so the test cannot
 // disagree with the code about which row a role lands on.
