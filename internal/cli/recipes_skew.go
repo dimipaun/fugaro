@@ -407,6 +407,34 @@ const adversarialSince = "0.16.0"
 // digestSince's and adversarialSince's bullets record.
 const escalationSince = "0.23.0"
 
+// evaluateSince is the first fugaro release whose runner reads a task's mode:
+// evaluate: its task validation accepts the value, its recipe parser knows the
+// mode and the registered step kind the recipe holds, and the run is that one
+// step and nothing else (A5.2, U6). It is judged from the task's own field and
+// not from a recipe's constructs, exactly as artifactsSince is: mode: evaluate
+// is carried by the launcher (chooseRecipe writes the spec's mode for an
+// artifact and an evaluate recipe alike), so every launch that could start a
+// judge run is judged, whatever its recipe's source — an evaluate recipe's text
+// trips none of the parse-time gates (the mode is a 0.7.0 key and the registered
+// step kind reads as any other registered kind), so without this arm the launch
+// would be admitted at recipesSince.
+//
+// A runner before it refuses the task outright: mode is in the spec's own
+// vocabulary (task.Spec.Validate), and "evaluate" is a value it does not know,
+// so the run dies at bootstrap with the launch already paid for and nothing in
+// the bucket judged. Like artifactsSince it carries no shipped flag: refusing
+// every image that predates the mode is exactly the direction this gate wants,
+// and an image with no release tag (a dev build, a hand-pushed one) only warns,
+// the same as for every other *Since constant here.
+//
+// It names 0.24.0, the CLI minor after 0.23.0 ("Tapir"), which main already
+// carries the release notes of and which is not tagged yet: docs/release.md's
+// ("Before you tag") checklist verifies the constant against the tag actually
+// cut, the way digestSince's, adversarialSince's and slotSince's bullets
+// record. A wrong value refuses too late (a launch reaches a runner that
+// refuses its task) or too early (an image that can judge stays blocked).
+const evaluateSince = "0.24.0"
+
 // escalationRecipes are the catalog recipe names whose runner half ships in
 // escalationSince's release: `escalate` (one coder pass, one review, the
 // verdict recorded) and `rebase`, which that release adds, and `merge-judge`,

@@ -502,6 +502,90 @@ func TestSlotSinceHasAReleaseBullet(t *testing.T) {
 	}
 }
 
+// evaluateFixtureKind is the step kind this package's test binary registers as
+// mode: evaluate's own, so that a recipe the launcher resolves can hold a step
+// the parser accepts: the production registration is ee/register's, and an
+// untagged test binary carries none (recipe.RegisterStepKind says a test that
+// owns such a step registers it the same way).
+const evaluateFixtureKind recipe.StepKind = "evaluate_fixture"
+
+func init() {
+	if err := recipe.RegisterStepKind(evaluateFixtureKind, recipe.ModeEvaluate); err != nil {
+		panic("cli_test: " + err.Error())
+	}
+}
+
+// evaluateFixtureRecipe is a project recipe of the judge run's mode: one
+// registered step, which is the whole of what the mode's shape is.
+const evaluateFixtureRecipe = "version: 1\nname: judge-pairs\nmode: evaluate\nsteps:\n  - evaluate_fixture: {}\n"
+
+// TestAnEvaluateLaunchGatesOnTheImageThatKnowsMode: a task carrying mode is
+// refused outright by a runner older than evaluateSince — "evaluate" is not a
+// value its task validation knows, and the decode is strict — so a judge launch
+// must not reach such a job at all, with the launch already paid for and
+// nothing judged. The gate reads the task's own field rather than the recipe's
+// constructs, which is the only thing that can judge this launch: an evaluate
+// recipe's text trips none of the parse-time gates (recipeSinceFor would take
+// it at recipesSince), and the mode is what the launcher writes.
+//
+// Mutation (drop the spec.Mode == ModeEvaluate block from freshLaunchGates):
+// the launch against the 0.7.0 image is admitted and a job starts on a runner
+// that refuses its task.
+func TestAnEvaluateLaunchGatesOnTheImageThatKnowsMode(t *testing.T) {
+	t.Run("a job image older than the mode", func(t *testing.T) {
+		f := newCloudFixture(t)
+		projectRecipesFixture(t, f, map[string]string{"judge-pairs": evaluateFixtureRecipe})
+		writeBuildRecord(t, f, appSlug, "web", release070)
+		wantRefused(t, f, "needs a job image whose runner knows mode: evaluate (fugaro "+evaluateSince+" or later)",
+			"run", "--repo", "acme/app", "--recipe", "judge-pairs", "Judge the pairs the manifest names")
+	})
+	t.Run("a job image at the release", func(t *testing.T) {
+		f := newCloudFixture(t)
+		projectRecipesFixture(t, f, map[string]string{"judge-pairs": evaluateFixtureRecipe})
+		writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+evaluateSince)
+		if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261111-100000-abcd", "--recipe", "judge-pairs", "Judge the pairs the manifest names"); err != nil {
+			t.Fatal(err)
+		}
+		if got := readSpec(t, f, "20261111-100000-abcd").Mode; got != recipe.ModeEvaluate {
+			t.Fatalf("task mode = %q, want %q", got, recipe.ModeEvaluate)
+		}
+	})
+}
+
+// TestEvaluateSinceHasAReleaseBullet: evaluateSince names 0.24.0, which is not
+// tagged, so docs/release.md's Before-you-tag list is what holds the constant
+// to the release actually cut — the job every other *Since constant's bullet
+// does. Nothing else ties the number the gate accepts to the release whose
+// runner reads a task's mode: evaluate, and a release that landed the mode
+// elsewhere would otherwise keep refusing images that run it.
+func TestEvaluateSinceHasAReleaseBullet(t *testing.T) {
+	var bullet string
+	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
+		if strings.HasPrefix(line, "- **Verify `evaluateSince`") {
+			bullet = line
+			break
+		}
+	}
+	if bullet == "" {
+		t.Fatal("docs/release.md's Before-you-tag list has no evaluateSince bullet: the checklist is where a release verifies the constant")
+	}
+	if !strings.Contains(bullet, "currently `\""+evaluateSince+"\"`") {
+		t.Errorf("docs/release.md's evaluateSince bullet does not carry the constant's release (%q)", evaluateSince)
+	}
+	for _, want := range []string{"not tagged yet", "mode: evaluate", "task validation", "recipesSince"} {
+		if !strings.Contains(bullet, want) {
+			t.Errorf("docs/release.md's evaluateSince bullet does not say %q", want)
+		}
+	}
+	// The constant names the release whose runner reads the mode, and the bullet
+	// has to say so: a bullet that promised the recipe alone would have a
+	// release verify against an image that parses the mode and refuses the task
+	// carrying it.
+	if !strings.Contains(bullet, "task") || !strings.Contains(bullet, "A5.2") {
+		t.Errorf("docs/release.md's evaluateSince bullet does not name the runner half the release must carry")
+	}
+}
+
 // TestRecipesSkewRefusesReviewJobOnAnOldImage is E6: a review launch is gated
 // on reviewJobSince, the release whose runner can serve one — the variant
 // deployed beside the coding job, the marker the launch sets, and (CSR13) the

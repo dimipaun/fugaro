@@ -207,9 +207,9 @@ type Spec struct {
 	// judged on the field for that reason rather than on the flag.
 	CompressionOff bool `json:"compression_off,omitempty"`
 	// Mode is the recipe's mode, written by the launcher from the recipe it
-	// resolved ("artifact" today; implement and review write nothing, so
-	// every existing spec is byte-identical to what the previous release
-	// wrote). The runner cannot read the recipe before it reads the
+	// resolved ("artifact" and "evaluate" today; implement and review write
+	// nothing, so every existing spec is byte-identical to what the previous
+	// release wrote). The runner cannot read the recipe before it reads the
 	// configuration, so the spec is what selects the shape at bootstrap —
 	// exactly as ReviewPRs does for mode: review — and the resolved recipe
 	// is cross-checked against it afterwards, both ways.
@@ -1377,9 +1377,9 @@ func (s *Spec) Validate() error {
 	// recipe is implement or review) is legal and means "the runner reads
 	// it from the resolved recipe".
 	switch s.Mode {
-	case "", recipe.ModeImplement, recipe.ModeReview, recipe.ModeArtifact:
+	case "", recipe.ModeImplement, recipe.ModeReview, recipe.ModeArtifact, recipe.ModeEvaluate:
 	default:
-		bad("task spec: mode %q must be %s, %s, %s or empty", s.Mode, recipe.ModeImplement, recipe.ModeReview, recipe.ModeArtifact)
+		bad("task spec: mode %q must be %s, %s, %s, %s or empty", s.Mode, recipe.ModeImplement, recipe.ModeReview, recipe.ModeArtifact, recipe.ModeEvaluate)
 	}
 	// The entries' own shapes only. What an input NAME may be — no absolute
 	// path, no ".." element, no NUL or newline, a length limit, no duplicate
