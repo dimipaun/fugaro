@@ -106,6 +106,12 @@ var secretReaderExceptions = []struct {
 	// (F30; that account's grants are not fenced yet).
 	{id: "E22", keys: []string{"internal/intake/gcp.go"}},
 	{id: "E23", keys: []string{"internal/cli/doctor_batch.go"}},
+	// The viewer list's project grant (RS4 of docs/roles-scopes): the viewer's
+	// read-only job role carries the launcher's own `secretmanager.secrets.list`
+	// and `secretmanager.versions.list` — the read `fugaro secrets ls` needs —
+	// and no way to a value, which is what makes it a row of this table rather
+	// than a permission the role gives up.
+	{id: "E24", keys: []string{"deploy/terraform/gcp/modules/installation/iam.tf google_project_iam_member.viewer"}},
 }
 
 // A key under this prefix names a rule the scan enforces rather than a hit it
