@@ -11110,7 +11110,8 @@ declined keeps is the plain link underneath.
 
 **What you do.** The four paths are the `path` entries of `website/data/landing.yaml`: `/save`,
 `/control`, `/scale` and `/crew`. The check reads them on a **preview channel**, so that what is
-read is not the live site:
+read is not the live site. Each of steps 3 to 5 needs a browser that holds no decision yet, so start
+each one in a fresh profile:
 
 1. Deploy a preview channel and keep the URL it prints:
 
@@ -11129,18 +11130,26 @@ read is not the live site:
    `Install free` (`install_click`), press
    `Chat with the founder` (`whatsapp_click`), and book through the embed the grant has now drawn
    into `#calendly-embed` (`demo_booked`). Each fires **once**.
-5. Then read the analytics-only case: a question already answered is not asked again on that page, so
-   this is a fresh browser profile (or the marketing switch turned off on `/privacy/`, which is where a
-   visitor withdraws one). Open **Cookie Settings**, leave **Analytics** on and **Marketing** off,
-   press **Save my choices**, and read the closing band. The booking is
-   `website/src/components/CampaignCalls.astro`'s plain `Book a demo` link, and no frame is drawn —
-   Calendly's script is fetched after the marketing grant and never before.
+5. Then read the analytics-only case, in another **fresh browser profile** — a question this browser
+   has answered is not asked again, so a step done in a used profile reads the previous step, not
+   this one. Open **Cookie Settings**, and note that the panel is drawn with **nothing ticked**, as
+   a browser holding no decision has both questions open: turn **Analytics** **on**, leave
+   **Marketing** **off** and press **Save my choices**, which writes exactly those two answers.
+   Then press `Install free` and `Chat with the founder` again, and read the closing band. The band
+   carries `website/src/components/CampaignCalls.astro`'s plain `Book a demo` link with no frame
+   under it — Calendly's script is fetched after the marketing grant and never before — so the third
+   event has no booking to come from.
 
-**What a pass looks like.** DebugView shows `install_click`, `whatsapp_click` and `demo_booked`, one
-of each, in step 4; **nothing** in steps 3 and 5; and step 5's band carries the link with no `iframe`
-in it. `demo_booked` is read off a real booking, which is Check 161's test booking when the page was
-arrived at with a campaign source on its URL. A press that fires no event after both grants, an event
-before one, or a second event for one press is the failure.
+**What a pass looks like.** Step 3's DebugView shows no event at all, GA4's script not being fetched
+before the analytics grant. Step 4's shows `install_click`, `whatsapp_click` and `demo_booked`, one
+of each. Step 5's shows `install_click` and `whatsapp_click` for its two presses — analytics alone
+measures them — and **no** `demo_booked`, the band holding the link and no `iframe`; the `page_view`
+that same grant sends for the page itself is not one of the three. The reading is the one the save
+wrote: a save that left **Analytics** off answers both questions **no**, and while its DebugView is
+just as empty as step 3's, it is not this reading and does not stand for it. `demo_booked` is read
+off a real booking, which is Check 161's test booking when the page was arrived at with a campaign
+source on its URL. A press that fires no event after its grant, an event before any grant, a second
+event for one press, or a frame in step 5 is the failure.
 
 **Restore.** Delete the preview channel (`firebase hosting:channel:delete <name> --project
 fugaro-prod`), cancel the test booking in your own Calendly account, and clear the consent decisions
