@@ -4662,7 +4662,7 @@ func launchChainLine(lim *ChainLimits) string {
 	if !lim.Enforced {
 		word = "UNENFORCED"
 	}
-	return fmt.Sprintf("chain %s (%d runs, %s)", oneLine(lim.Chain), lim.RunCount, word)
+	return fmt.Sprintf("chain %s (%d %s, %s)", oneLine(lim.Chain), lim.RunCount, plural(lim.RunCount, "run", "runs"), word)
 }
 
 // recordedLaunch is what a run recorded about its own launch, read without
