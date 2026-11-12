@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See ee/LICENSE for the terms.
 
-// This file is the A/B report (docs/model-ab-testing, plan task A4.3, decisions
-// D560, D563, D564, D565, D562, D570): the rows `fugaro ab` prints, built from
-// run records alone.
+// This file is the A/B report (docs/model-ab-testing, plan tasks A4.3 and A5.4,
+// decisions D560, D563, D564, D565, D562, D570, D553, D561): the rows
+// `fugaro ab` prints, built from the window's run records and from the verdicts
+// its judge runs wrote under their own prefixes.
 //
 // The pairs, the signals and the statistics are ee/ab's; this is where they are
 // grouped so a person can read them, and two promises hold it together.
@@ -521,9 +522,13 @@ type ABJSONRow struct {
 	// JudgeFamilies, JudgeSameFamily, Unjudged and Truncated are the judge's
 	// own figures (A5.4, D553, D561): the families that judged the group,
 	// whether one of them is an arm's own, and the pairs no judge has decided
-	// and the pairs a cut-short patch leaves unjudgeable. Additive beside the
-	// figures A4.3 wrote, which keep their meaning: a reader from before this
-	// field sees the row it always saw (F21).
+	// and the pairs a cut-short patch leaves unjudgeable. The four are additive
+	// under names no earlier reader knows, so one reads the document it always
+	// read — except where the names cannot carry the difference: at Critical the
+	// figures above count only judged pairs (D561), so a group whose judge runs
+	// have not reached a pair reads fewer pairs, wins, losses and ties than the
+	// same records read before A5.4, and Unjudged is the figure that says how
+	// many. Outside Critical nothing about them moved.
 	JudgeFamilies   []string             `json:"judge_families"`
 	JudgeSameFamily bool                 `json:"judge_same_family"`
 	Unjudged        int                  `json:"unjudged"`

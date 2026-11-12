@@ -528,6 +528,11 @@ func IsJudgeRun(rec *runstore.Record) bool {
 // The entries are the object's own, skips included: a pair a judge run left
 // unjudged is one this answers a Verdict for, with no winner, which is exactly
 // what the score needs to know it (Verdict.Judged).
+//
+// An object of another version is an error, read the way this file reads its
+// manifest: a verdict is a claim about a pair, and reading a shape this build
+// does not know as "nothing judged" would drop every pair it decided out of
+// every figure a reader sees (A5.4) rather than say the object is there.
 func JudgeVerdicts(ctx context.Context, bucket *blobx.Bucket, slug, runID string) (map[string]Verdict, error) {
 	data, err := runstore.Open(bucket.Bucket, slug, runID).ReadFile(ctx, runstore.VerdictsName)
 	switch {
@@ -539,6 +544,9 @@ func JudgeVerdicts(ctx context.Context, bucket *blobx.Bucket, slug, runID string
 	var v judgeVerdicts
 	if err := decodeStrict(data, &v); err != nil {
 		return nil, fcli.RemoteErr(fmt.Errorf("reading %s/%s's verdicts: %w", slug, runID, err))
+	}
+	if v.Version != judgeVersion {
+		return nil, fcli.RemoteErr(fmt.Errorf("%s/%s's verdicts at %s are version %d, and this build writes and reads version %d", slug, runID, runstore.VerdictsName, v.Version, judgeVersion))
 	}
 	out := make(map[string]Verdict, len(v.Pairs))
 	for _, pv := range v.Pairs {

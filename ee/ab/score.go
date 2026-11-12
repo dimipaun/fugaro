@@ -2,13 +2,17 @@
 // See ee/LICENSE for the terms.
 
 // Package ab scores the A/B pairs a sampled launch produces, from the two
-// runs' own records and nothing else (docs/model-ab-testing, D559, D561): no
-// model call, no bucket listing, no figure a second read of the same records
-// could answer differently (D563).
+// runs' own records and from the verdicts the repository's judge runs wrote
+// under their own prefixes (docs/model-ab-testing, D559, D561): no model call
+// in scoring, no bucket listing, no figure a second read of the same records
+// and verdicts could answer differently (D563).
 //
 // It is the paid half of the work (D550): the sampler, the challenger
 // admission and the pair launch sit beside it, and everything this package
-// reads was written by the runner before it.
+// reads was written by the runner before it. The judge's answer is the one
+// input a pair's own two records do not carry — a run of its own writes it,
+// after them (A5.2) — which is why a pair at Critical counts only once it is
+// there (A5.4).
 package ab
 
 import (
