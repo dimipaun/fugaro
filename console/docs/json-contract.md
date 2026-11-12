@@ -2038,6 +2038,50 @@ the answer those fields come back as.
 `project_layer` is `launchProjectLayer`: `sha256`, `generation`° (**int64** —
 which one layer the stored task actually carries, and never its text).
 
+**The chain a launch joined is added by D1056, and it is the same block
+`fugaro runs show --json` prints** (`docs/run-limit-carry-over`, L7): `chain`
+(the root run id), `run_count` (**int**), `enforced` (**bool**),
+`limits_read` (**bool**) and `limits[]`, whose rows are `dimension`, `limit`,
+`used`, `remaining` and `source`. The five are inlined from the one
+`ChainLimits` block both documents are written from
+(`internal/cli/runs_show.go`), so a member or a figure the one carries and the
+other lacks is not a state this pair can be in, and the amounts are in the
+dimension's own unit (micro-dollars for the money, whole tokens, seconds and a
+count). `run_count` is the same count on both sides: **the run the launch
+started is one of the chain's runs**, and the reply counts it, which is what
+`runs show` of that `run_id` reads once the run's own record links it into the
+chain — one more than the same read of the run the launch continued.
+`enforced` false means the figures are the run records' rather than the budget
+database's, which is what a chain is when the installation's budget is off
+(D1046).
+
+**The two documents name the chain the run they are about is bounded by.**
+`runs show` reads the chain a run's **record** links it into
+(`follow_up.previous_run`, written as a follow-up's run starts), and the reply
+reads the chain the launch **joined**; for a pull request follow-up those are
+one chain and one read. A chain a caller continued by naming a run of it has no
+record link to write — a stored task carries `previous_run` only with a branch
+and a pull request (`task.Spec.Validate`) — so `runs show` of the run that
+launch started answers a chain of one, that run, while the reply names the
+chain the caller continued, which is the chain the run is limited by (D1045,
+D1052).
+
+**The block is absent for a launch that begins a chain, and for one whose chain
+read failed.** The first is a first run, an attempt of a batch, a retry of a
+task that is its own chain: that launch joins none, its chain is the run the
+reply's own `run_id` names, and a block naming it would read as a chain of one.
+The second is a read that failed outright while the launch went on — the link
+was resolved and the chain gated before the run started, and no later read
+unlaunches it, so a record deleted in between leaves the block out. **A chain
+the bucket can no longer follow is neither of those**: the run that began it
+sits behind a link the bucket holds nothing under, so the reply carries the
+block with an empty `chain` (empty and never absent, as in `runs show`),
+`limits_read` false, and `run_count` the runs the read reached, the run the
+launch started among them. A consumer
+that has to tell the two reasons for an absence apart has the launch it is
+reading the reply of — which link it named is in the text reply and in the
+arguments that produced it — and `runs show` of `run_id` afterwards.
+
 **Four of the fields are the launch's own identity, and the fifth is a version
 of it the console built.** `project` is the Fugaro project the launch was cut
 for. `run` and `run_id` are the same run id under the CLI's two keys, and it is
@@ -2069,16 +2113,23 @@ inside the CLI, not on this surface: a batch launch prints a batch document once
 per attempt (`printBatch`), and the console never asks for one — the batch flag
 is on rule 11's excluded-flag list — so that shape is not this operation's.
 
-**The decoder is closed, and it is the contract's enforcer.** The main process
-reads this document with `decodeLaunchResult`
-(`console/src/main/launchrules.ts`): the keys must be exactly the ones above, the
-types are the ones the CLI writes, `status` must be one of the two words, and
-**an unknown key or a wrong type refuses the whole reply** rather than being
-ignored (rule 11). Every string is kept as text and bounded — nothing here is
+**The decoder names the keys it draws, and a key it does not know is ignored.**
+The main process reads this document with `decodeLaunchResult`
+(`console/src/main/launchrules.ts`): the types of the keys it names are the ones
+the CLI writes, `status` must be one of the two words, and **an unknown key is
+ignored** rather than refusing the reply, while a key it names carrying a value
+of the wrong type is still refused. The reply arrives *after* the spend, and the
+CLI's JSON only grows and never re-means a member, so refusing it over a member
+a newer CLI added would tell the operator that a launch which happened did not
+(the owner's ruling of 2026-10-30, which replaced rule 11's "refuses the whole
+reply" — the chain members above are the kind of addition it was made for). The
+value is built from the named keys alone, so a key this console does not name
+reaches no screen. Every string is kept as text and bounded — nothing here is
 read as a sentence, a path or a link — and the renderer mirrors that decoder
-(`console/src/renderer/screens/launch.ts`'s `launchOutcomeOf`), so a reply with
-a key of its own draws the console's one "unreadable reply" sentence and never a
-partial set of facts. A replayed answer — a second click on the window's own
+(`console/src/renderer/screens/launch.ts`'s `launchOutcomeOf`), so a reply
+carrying a key this console does not know is drawn from the keys it does and
+never as a partial set of facts, and a key of the document's own never becomes
+a figure of its own. A replayed answer — a second click on the window's own
 button, or a re-sent call — is the app's own in-memory record of the first
 `launchResult` and reaches no child at all (design §5.1 rule 11).
 
