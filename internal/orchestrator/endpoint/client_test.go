@@ -446,6 +446,151 @@ func TestClientStreamRefusesAnEventLongerThanADocument(t *testing.T) {
 	}
 }
 
+// peerWithNoTick is a port that has everything the endpoint's answer has but the
+// tick: the id and the nonce the registry file carries, the token it answers to,
+// a 200, a real document -- and no X-Fugaro-Tick, which is the one header an age
+// may come from. It is the shape of an endpoint of another release, and of a
+// process that has taken the port, and what a reader that lost the guard would do
+// with it is date the answer from this machine's clock (D1230).
+//
+// It serves the route it is asked for the body it is given, so the one-shot read
+// and the stream reach the same missing header.
+func peerWithNoTick(t *testing.T, id, nonce, route, body string) Live {
+	t.Helper()
+	token := freshToken(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != route || r.Header.Get(authorizationHeader) != bearerScheme+" "+token {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set(headerOrchestrator, id)
+		w.Header().Set(headerNonce, nonce)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+	return Live{reg: Registry{ID: id, Addr: strings.TrimPrefix(srv.URL, "http://"), Token: token, Nonce: nonce}}
+}
+
+// TestClientRefusesAnAnswerWithNoTick: an answer with no X-Fugaro-Tick is refused
+// rather than dated from this machine's clock. The tick is the endpoint's own
+// stamp of the cycle that produced the document, and it is the only age a local
+// scope draws -- so the zero time reaching a document is a scope claiming
+// 0001-01-01T00:00:00Z as its age, with nothing anywhere saying the answer was
+// unreadable (D1230, T5(a)).
+func TestClientRefusesAnAnswerWithNoTick(t *testing.T) {
+	c, _, _ := clientFor(t)
+	document, err := orchestrator.EncodeState(testState("wi-1"))
+	if err != nil {
+		t.Fatalf("encoding the document the peer serves: %v", err)
+	}
+	live := peerWithNoTick(t, endpointID, freshToken(t), routeState, string(document))
+
+	state, at, err := c.Get(context.Background(), live)
+	if err == nil {
+		t.Fatal("an answer with no tick was read as a state")
+	}
+	if !strings.Contains(err.Error(), "no tick") {
+		t.Errorf("the read ended with %v, want the refusal of an answer with no tick", err)
+	}
+	if !at.IsZero() || len(state.WorkItems) != 0 {
+		t.Errorf("the refusal answered %+v stamped %s, want nothing and no time", state, at)
+	}
+}
+
+// TestClientRefusesAnEventWithNoTick: the same guard on the stream, where the
+// tick arrives as the event's own `id:` line. An event whose `data:` carries a
+// document and no `id:` before it is refused, and the callback is handed nothing:
+// a reader that let it through would hand a document stamped with the zero time
+// to a writer that prints it as the scope's age.
+func TestClientRefusesAnEventWithNoTick(t *testing.T) {
+	c, _, _ := clientFor(t)
+	document, err := orchestrator.EncodeState(testState("wi-1"))
+	if err != nil {
+		t.Fatalf("encoding the document the peer serves: %v", err)
+	}
+	live := peerWithNoTick(t, endpointID, freshToken(t), routeStream, "data: "+string(document)+"\n\n")
+
+	read := 0
+	err = c.Stream(context.Background(), live, func(orchestrator.State, time.Time) error {
+		read++
+		return nil
+	})
+	if err == nil {
+		t.Fatal("an event with no tick ended the stream without an error")
+	}
+	if !strings.Contains(err.Error(), "no tick") {
+		t.Errorf("the stream ended with %v, want the refusal of an event with no tick", err)
+	}
+	if read != 0 {
+		t.Errorf("the reader handed %d events to the callback, want none: an event with no tick has no age to draw", read)
+	}
+}
+
+// redirectingPeer is a port that answers the way a peer holding the registry
+// file's token and nonce can -- a 302 to a second loopback port it runs itself,
+// which is where the credential would arrive next. Go drops the Authorization
+// header on a redirect to another host and keeps it on another port of the same
+// host, so this is the shape that could carry the token past the address the
+// handshake proved (D1359).
+//
+// The target counts what it was asked for, because "never followed" is a fact
+// about bytes and not about an error message: a reader that followed the
+// redirect would be refused by the same identity check, with the token already
+// handed over.
+func redirectingPeer(t *testing.T, id string) (Registry, *atomic.Int64) {
+	t.Helper()
+	reached := &atomic.Int64{}
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reached.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(target.Close)
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+r.URL.Path, http.StatusFound)
+	}))
+	t.Cleanup(redirector.Close)
+	return Registry{ID: id, PID: os.Getpid(), Addr: strings.TrimPrefix(redirector.URL, "http://"),
+		Token: freshToken(t), Nonce: freshToken(t), Started: time.Now().UTC()}, reached
+}
+
+// TestClientFollowsNoRedirect: no request this package makes follows a redirect,
+// so the token reaches only the literal address the registry file names. The
+// handshake is the first request to carry it and the read is the second, and both
+// are checked here: the redirect's target is never reached, and what the two
+// readers make of the 302 is their own refusal and not a document.
+func TestClientFollowsNoRedirect(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("the handshake", func(t *testing.T) {
+		c, _, dir := clientFor(t)
+		reg, reached := redirectingPeer(t, endpointID)
+		writeRegistryFile(t, dir, reg, 0o600)
+		live, ok, err := c.Lookup(ctx, endpointID)
+		if err != nil {
+			t.Fatalf("looking up a port that redirects: %v", err)
+		}
+		if ok {
+			t.Errorf("a port that redirects read as live: %+v", live)
+		}
+		if n := reached.Load(); n != 0 {
+			t.Errorf("the handshake followed a redirect: the port it pointed at was reached %d times, and the token went with it", n)
+		}
+	})
+
+	t.Run("the read", func(t *testing.T) {
+		c, _, _ := clientFor(t)
+		reg, reached := redirectingPeer(t, endpointID)
+		state, at, err := c.Get(ctx, Live{reg: reg})
+		if err == nil {
+			t.Errorf("a redirect was read as a state: %+v stamped %s", state, at)
+		}
+		if n := reached.Load(); n != 0 {
+			t.Errorf("the read followed a redirect: the port it pointed at was reached %d times, and the token went with it", n)
+		}
+	})
+}
+
 // stallingPort is a listener that accepts a connection and never answers it:
 // the process that took a dead daemon's port, which is what the handshake's own
 // timeout exists for. It holds every connection it accepts, so a reader that

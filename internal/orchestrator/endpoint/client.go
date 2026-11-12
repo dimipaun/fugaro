@@ -89,9 +89,13 @@ type Client struct {
 	// timeout of its own: every request here carries a context, which is what
 	// bounds it, and a timeout on the client would end the stream at it -- the
 	// stream is as long as its caller's context and nothing else. The handshake
-	// is the one request whose bound is not the caller's: a nil is handed to
-	// Probe as nil, so handshake's own default client (handshakeTimeout) is what
-	// answers for it.
+	// is the one request whose bound is not the caller's: the client handed to
+	// Probe carries handshakeTimeout of its own when the caller supplied none.
+	//
+	// What a client supplied here is read for is its transport: this package
+	// builds the request's client from it, so its redirect policy is not the
+	// caller's to set (noRedirect, below, is every request's) and its timeout is
+	// not relied on -- the request's own context is the bound.
 	HTTP *http.Client
 }
 
@@ -111,11 +115,39 @@ func (c Client) goos() string {
 	return runtime.GOOS
 }
 
+// noRedirect is the redirect policy of every client this package builds for a
+// request that carries the token. The endpoint serves one route at the literal
+// loopback address the registry file names, so an answer that points somewhere
+// else is not this endpoint's -- and Go drops the Authorization header on a
+// redirect to another host but keeps it on another port of the same host, which
+// is exactly where a second process of this machine can stand. The token is the
+// one thing that must reach no address the handshake did not prove.
+func noRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+
+// http is the client the read and the stream go through: one this package builds
+// from the caller's transport, with the redirect policy above. The caller's
+// client is read and never written to -- a copy carries its transport and
+// nothing else of it is relied on.
 func (c Client) http() *http.Client {
+	hc := &http.Client{CheckRedirect: noRedirect}
 	if c.HTTP != nil {
-		return c.HTTP
+		hc.Transport = c.HTTP.Transport
 	}
-	return &http.Client{}
+	return hc
+}
+
+// handshakeClient is the client the handshake goes through, and it is the one
+// request whose client this package builds even when the caller supplied none:
+// Probe hands a nil to handshake, which would build one with handshake's own
+// timeout and no redirect policy of its own, so the policy is stated here rather
+// than hoped for. The timeout is handshake's own, for the reason it exists -- a
+// process that accepts the connection and never answers -- and Lookup bounds the
+// call with the same constant either way.
+func (c Client) handshakeClient() *http.Client {
+	if c.HTTP != nil {
+		return c.http()
+	}
+	return &http.Client{Timeout: handshakeTimeout, CheckRedirect: noRedirect}
 }
 
 // Live is one live endpoint: the address it answers at and the credential this
@@ -168,7 +200,7 @@ func (l Live) GoString() string { return l.String() }
 func (c Client) Lookup(ctx context.Context, id string) (Live, bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, handshakeTimeout)
 	defer cancel()
-	reg, live, err := Probe(ctx, c.getenv(), c.goos(), id, c.HTTP)
+	reg, live, err := Probe(ctx, c.getenv(), c.goos(), id, c.handshakeClient())
 	if err != nil {
 		return Live{}, false, err
 	}
