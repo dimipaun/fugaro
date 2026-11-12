@@ -32,6 +32,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget"
@@ -1020,6 +1021,11 @@ func syncSourceRepos(ctx context.Context, cmd *cobra.Command, o *projectSyncOpti
 // allow-list entries, and an entry the publisher would refuse is a repository
 // an operator would believe enrolled (infra.InstalledRepos' own rule).
 func syncBitbucketSource(ctx context.Context, cmd *cobra.Command, o *projectSyncOptions) (syncSource, error) {
+	// GODEBUG=http2debug makes Go print every HTTP/2 request with its headers,
+	// this token's Authorization header among them, and GODEBUG is read before
+	// main runs, so it cannot be unset in time: the same one line the App key's
+	// read prints, for the credential this path reads instead.
+	fmt.Fprintf(cmd.ErrOrStderr(), "%s: reads the workspace's access token from stdin or a hidden prompt and holds it in memory only for the listing; GODEBUG=http2debug in your own environment would print the token's Authorization header, so unset it first\n", syncBitbucketFlag)
 	tok, err := readSecret(ctx, cmd.InOrStdin(), cmd.ErrOrStderr(), "the Bitbucket access token", false)
 	if err != nil {
 		return syncSource{}, err
@@ -1030,7 +1036,11 @@ func syncBitbucketSource(ctx context.Context, cmd *cobra.Command, o *projectSync
 		Token: string(tok), BaseURL: bitbucketAPIURL, HTTP: bitbucketAPIClient,
 	})
 	if err != nil {
-		return syncSource{}, remote(fmt.Errorf("listing the repositories of the Bitbucket workspace %s: %w", safetext.Field(o.bitbucket), err))
+		// The provider's answer is the one text on this path this command did
+		// not write, and a refusal carries it out verbatim: a proxy that echoes
+		// what it was sent must not be able to print the token through here.
+		msg := agent.Redact(fmt.Sprintf("listing the repositories of the Bitbucket workspace %s: %v", safetext.Field(o.bitbucket), err), []string{string(tok)})
+		return syncSource{}, remote(errors.New(msg))
 	}
 	repos := make([]string, 0, len(names))
 	for _, name := range names {

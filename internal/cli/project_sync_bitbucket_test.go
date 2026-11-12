@@ -20,8 +20,10 @@ import (
 type bitbucketSyncRig struct {
 	srv   *httptest.Server
 	names []string
-	// status answers every request with this status instead of a listing.
+	// status answers every request with this status instead of a listing, and
+	// body, when set, is what that answer carries.
 	status int
+	body   string
 	// calls is how many requests reached the rig, so a refusal made before
 	// the listing can be shown to have made none.
 	calls int
@@ -40,6 +42,7 @@ func newBitbucketSyncRig(t *testing.T, names ...string) *bitbucketSyncRig {
 		}
 		if g.status != http.StatusOK {
 			w.WriteHeader(g.status)
+			fmt.Fprint(w, g.body)
 			return
 		}
 		values := make([]map[string]any, 0, len(g.names))
@@ -157,8 +160,12 @@ func TestProjectSyncBitbucketTokenNeverFromArgs(t *testing.T) {
 
 	// The same token, typed at the prompt, on the one path that may fail after
 	// it was read: the API's refusal is the answer that quotes the most of
-	// what it was sent, and it must not quote the credential.
+	// what it was sent, and it must not quote the credential. The answer here
+	// echoes the header it was sent — a proxy's debug body — because a
+	// provider's own answer is the one text on this path this command does not
+	// write, and it reaches the operator through the error verbatim.
 	g.status = http.StatusUnauthorized
+	g.body = fmt.Sprintf(`{"errors":[{"detail":"Bearer %s is not accepted"}]}`, token)
 	before = nodeOf(t, f.db)
 	out, errOut, err = executeStdin(t, token+"\n", "project", "sync", "--bitbucket", "acme")
 	if err == nil {
@@ -171,6 +178,26 @@ func TestProjectSyncBitbucketTokenNeverFromArgs(t *testing.T) {
 	}
 	if nodeOf(t, f.db) != before {
 		t.Error("a refused listing changed the policy node")
+	}
+}
+
+// The token travels in an Authorization header, and GODEBUG=http2debug makes
+// Go print every HTTP/2 request with its headers to stderr -- a leak this
+// command cannot unset in time, because GODEBUG is read before main runs. The
+// read says so in one line, as the App key's own read does, before the prompt.
+//
+// Mutation (verified, run and restored): drop the notice line — this test
+// fails, the read that can be printed by the environment saying nothing.
+func TestProjectSyncBitbucketWarnsAboutHTTP2Debug(t *testing.T) {
+	const token = "token-not-a-real-credential-abcdef"
+	bitbucketPolicyFixture(t, "bitbucket/acme/app")
+	newBitbucketSyncRig(t, "acme/new")
+	_, errOut, err := executeStdin(t, token+"\n", "project", "sync", "--bitbucket", "acme")
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	if !strings.Contains(errOut, "http2debug") || !strings.Contains(errOut, syncBitbucketFlag) {
+		t.Errorf("the read's own line does not warn about GODEBUG=http2debug:\n%s", errOut)
 	}
 }
 

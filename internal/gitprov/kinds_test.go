@@ -54,6 +54,7 @@ var forgeKindGoSites = map[string]string{
 	"internal/cli/init_firebase.go":            "the Firebase init's GitHub repositories",
 	"internal/cli/init_repo_target.go":         "init's GitHub App check on the provider a repository already names",
 	"internal/cli/launch_budget.go":            "the proxied-Bitbucket read a launch makes",
+	"internal/cli/project_enroll.go":           "the kind `project sync --bitbucket` lists a workspace's repositories through, and the kind each listed name is canonicalised as",
 	"internal/cli/reviewverify.go":             "reading a pull request's head per provider",
 	"internal/config/validate.go":              "config.Providers, the config-side list, and the per-provider identity checks — held to runner.jobProviderKinds by internal/cli's TestProviderKindsAgreeWithTheConfigsList",
 	"internal/credsvc/bitbucket.go":            "the credentials service's admission of a Bitbucket provider",
