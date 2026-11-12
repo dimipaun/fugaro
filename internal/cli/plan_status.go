@@ -221,7 +221,7 @@ func runPlanStatus(cmd *cobra.Command, o *planStatusOptions) error {
 	plans := make([]plan.PlanRef, 0, len(artifacts))
 	paths := make(map[string]string, len(artifacts)) // plan id -> the artifact that took it
 	for _, path := range artifacts {
-		id := planIDFromPath(path)
+		id := plan.IDFromPath(path)
 		d, err := plan.ReadFile(path)
 		if err != nil {
 			fmt.Fprintf(errw, "warning: %s\n", oneLine(err.Error()))
@@ -339,15 +339,6 @@ func planArtifacts(dir string) ([]string, error) {
 	sort.Strings(out)
 	return out, nil
 }
-
-// planIDFromPath is the join's plan id for an artifact under docs/ (GV1.6's
-// rule i): the id a launch writes before the slash in --plan-task.
-//
-// The rule itself is internal/plan's (plan.IDFromPath), moved there in P9c:
-// the coordinator's publish derives the id the record keys a published plan by
-// from the same artifact, and two copies of a rule this one decides a launch's
-// --plan-task spelling with would be two plans for one graph.
-func planIDFromPath(path string) string { return plan.IDFromPath(path) }
 
 // planRunFacts turns the rows the runs read produced into the facts the join
 // reads. It is the whole seam between the two: everything a job wrote is either
