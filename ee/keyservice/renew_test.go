@@ -66,10 +66,18 @@ func (v *v1Spy) minted() int {
 // signs with.
 func renewing(t *testing.T) (*fixture, *v1Spy) {
 	t.Helper()
+	return renewingWithin(t, Limits{Requests: 50, Window: time.Hour})
+}
+
+// renewingWithin is the same fixture with the intake's rate the test's own,
+// which is what a test about the throttle needs and no other test ever meets.
+func renewingWithin(t *testing.T, limits Limits) (*fixture, *v1Spy) {
+	t.Helper()
 	spy := &v1Spy{}
 	f := newFixtureWith(t, Production, func(f *fixture) {
 		spy.inner = Minter{Signer: f.signer, Keys: f.keys, Environment: f.env, Now: f.clock}
 		f.deps.MintsV1 = spy
+		f.cfg.Throttle = limits
 	})
 	return f, spy
 }
@@ -93,12 +101,20 @@ func freshSecret(t *testing.T) string {
 // renewal test needs a holder rather than a purchase.
 func heldKey(t *testing.T, f *fixture, policy string) (keyID, secret, key string) {
 	t.Helper()
+	return heldKeyIn(t, f, policy, workspaceID)
+}
+
+// heldKeyIn is the same key issued into the workspace named, which is what a
+// renewal is checked against: the successor goes into the key's own workspace,
+// and one that names another is a licence that lives somewhere else.
+func heldKeyIn(t *testing.T, f *fixture, policy, workspace string) (keyID, secret, key string) {
+	t.Helper()
 	ctx := context.Background()
 	minter := Minter{Signer: f.signer, Keys: f.keys, Environment: f.env, Now: f.clock}
 	minted, err := minter.MintV1(ctx, RequestV1{
 		Environment:  f.env,
 		Policy:       policy,
-		WorkspaceID:  workspaceID,
+		WorkspaceID:  workspace,
 		Organisation: "acme.example",
 		Seats:        3,
 	})
@@ -113,12 +129,28 @@ func heldKey(t *testing.T, f *fixture, policy string) (keyID, secret, key string
 	}
 	if err := f.store.SaveKeyState(ctx, KeyState{
 		KeyID:             record.KeyID,
+		WorkspaceID:       workspace,
 		RenewalSecretHash: secretHash(minted.RenewalSecret),
 		LastSeen:          f.now,
 	}); err != nil {
 		t.Fatalf("writing the key's state: %v", err)
 	}
 	return record.KeyID, minted.RenewalSecret, minted.Key
+}
+
+// withoutAWorkspace is the same key's state with its workspace taken away, which
+// is what an issue path that never learned one leaves behind.
+func withoutAWorkspace(t *testing.T, f *fixture, keyID string) {
+	t.Helper()
+	ctx := context.Background()
+	state, held, err := f.store.KeyState(ctx, keyID)
+	if err != nil || !held {
+		t.Fatalf("reading the key's state back: held=%v err=%v", held, err)
+	}
+	state.WorkspaceID = ""
+	if err := f.store.SaveKeyState(ctx, state); err != nil {
+		t.Fatalf("writing the key's state back: %v", err)
+	}
 }
 
 // call posts one renewal or status request the way the customer's job does: a
@@ -136,12 +168,29 @@ func (f *fixture) call(route string, call RenewalCall) *httptest.ResponseRecorde
 // the service must refuse.
 func (f *fixture) raw(route, body string) *httptest.ResponseRecorder {
 	f.t.Helper()
+	return f.rawFrom(applicantIP, route, body)
+}
+
+// rawFrom posts the same body from an address of the test's own, which is what
+// a test about the throttle needs: the address is one of its two buckets.
+func (f *fixture) rawFrom(ip, route, body string) *httptest.ResponseRecorder {
+	f.t.Helper()
 	req := httptest.NewRequest(http.MethodPost, intakeOrigin+route, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req.RemoteAddr = applicantIP
+	req.RemoteAddr = ip
 	rec := httptest.NewRecorder()
 	f.handler.ServeHTTP(rec, req)
 	return rec
+}
+
+// callFrom is one request the job makes, from an address of the test's own.
+func (f *fixture) callFrom(ip, route string, call RenewalCall) *httptest.ResponseRecorder {
+	f.t.Helper()
+	body, err := json.Marshal(call)
+	if err != nil {
+		f.t.Fatalf("encoding the request: %v", err)
+	}
+	return f.rawFrom(ip, route, string(body))
 }
 
 // answerOf is the answer one route wrote, as the job reads it.
@@ -258,6 +307,82 @@ func TestRenewalRefusesAWrongSecret(t *testing.T) {
 	}
 	if after.RenewalSecretHash != before.RenewalSecretHash || !after.LastSeen.Equal(before.LastSeen) {
 		t.Errorf("a refused renewal changed the key's state to %+v from %+v, want it untouched", after, before)
+	}
+}
+
+// TestARenewalMustNameTheWorkspace: §7 has the job send the workspace it is in,
+// and the successor has to bind to one — the verifier refuses a key without it
+// (TN2), so a renewal that named none is answered with the uniform refusal and
+// nothing is minted. The status route is the contrast: it mints nothing and
+// reads no workspace, so the scheduled check answers for a key whatever the
+// project's own config says.
+func TestARenewalMustNameTheWorkspace(t *testing.T) {
+	f, spy := renewing(t)
+	keyID, secret, _ := heldKey(t, f, PolicyTeamMonthly)
+	for _, blank := range []string{"", "   "} {
+		rec := f.call(RouteRenew, RenewalCall{KeyID: keyID, WorkspaceID: blank, RenewalSecret: secret})
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("a renewal naming %q as its workspace was answered %d, want %d: a successor with no workspace is one every verifier refuses", blank, rec.Code, http.StatusForbidden)
+		}
+		if body := rec.Body.String(); body != renewalRefusal+"\n" {
+			t.Errorf("a renewal naming %q was answered %q, want the one refusal %q", blank, body, renewalRefusal)
+		}
+	}
+	if got := spy.minted(); got != 0 {
+		t.Errorf("the minter was asked for %d key(s) by renewals that named no workspace, want none", got)
+	}
+	if rec := f.call(RouteStatus, RenewalCall{KeyID: keyID, RenewalSecret: secret}); rec.Code != http.StatusOK {
+		t.Errorf("the status call was answered %d with no workspace named, want %d: a check answers for the key and not for the project's config", rec.Code, http.StatusOK)
+	}
+}
+
+// TestARenewalStaysInTheKeysOwnWorkspace: D2134 as amended by TN2 — a key is
+// tied to one workspace and moving it is a reissue, so a renewal mints the
+// successor into the workspace the key is bound to and not into the one the
+// request names. Without that, whoever held a key and its secret could bind the
+// next term to a workspace of their choosing, and the claim the verifier checks
+// (K4.1) would be the thief's word rather than the licence's.
+func TestARenewalStaysInTheKeysOwnWorkspace(t *testing.T) {
+	f, spy := renewing(t)
+	keyID, secret, _ := heldKey(t, f, PolicyTeamMonthly)
+	elsewhere := RenewalCall{KeyID: keyID, WorkspaceID: "someone-elses-project", RenewalSecret: secret}
+
+	if rec := f.call(RouteRenew, elsewhere); rec.Code != http.StatusForbidden {
+		t.Errorf("a renewal naming another workspace was answered %d, want %d: a key is tied to one workspace and moving it is a reissue", rec.Code, http.StatusForbidden)
+	} else if body := rec.Body.String(); body != workspaceRefusal+"\n" {
+		t.Errorf("a renewal naming another workspace was answered %q, want %q", body, workspaceRefusal)
+	}
+	if got := spy.minted(); got != 0 {
+		t.Errorf("the minter was asked for %d key(s) by a renewal bound elsewhere, want none", got)
+	}
+
+	mine := RenewalCall{KeyID: keyID, WorkspaceID: workspaceID, RenewalSecret: secret}
+	answer := answerOf(t, f.call(RouteRenew, mine))
+	if answer.Key == "" {
+		t.Fatal("the holder's own renewal answered no key")
+	}
+	claims := v1Verified(t, f, answer.Key)
+	if claims.WorkspaceID != workspaceID {
+		t.Errorf("the successor is bound to %q, want the key's own workspace %q", claims.WorkspaceID, workspaceID)
+	}
+	state, held, err := f.store.KeyState(context.Background(), claims.KeyID)
+	if err != nil || !held {
+		t.Fatalf("reading the successor's state back: held=%v err=%v", held, err)
+	}
+	if state.WorkspaceID != workspaceID {
+		t.Errorf("the successor's state names %q, want %q: a chain that lost its workspace could never renew again", state.WorkspaceID, workspaceID)
+	}
+
+	// A key whose state names no workspace is an issue path's bug and not the
+	// caller's: it is a failure rather than a refusal, and one that mints.
+	orphan, orphanSecret, _ := heldKey(t, f, PolicyTeamAnnual)
+	withoutAWorkspace(t, f, orphan)
+	rec := f.call(RouteRenew, RenewalCall{KeyID: orphan, WorkspaceID: workspaceID, RenewalSecret: orphanSecret})
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("a key bound to no workspace was answered %d, want %d: nothing here can mint into a workspace it does not know", rec.Code, http.StatusInternalServerError)
+	}
+	if got := spy.minted(); got != 1 {
+		t.Errorf("the minter was asked for %d key(s), want the holder's one renewal: a key with no workspace mints nothing", got)
 	}
 }
 
@@ -382,6 +507,64 @@ func TestReplayedRenewalIsIdempotent(t *testing.T) {
 	}
 	if got := answerOf(t, f.call(RouteStatus, call)).NewerKey; !got {
 		t.Error("the status endpoint says there is no newer key after the rotation, want it true")
+	}
+}
+
+// TestAStrangerCannotSpendTheHoldersAllowance: §7.2 — the key's own bucket is
+// spent by a request that has proved the secret and not by one that has merely
+// named the key, because a key id is not a secret: it is what a support ticket
+// quotes and what a log carries, so a bucket charged before the proof would let
+// anyone who has read one spend the holder's whole allowance with wrong-secret
+// calls and have the holder's own renewal refused with the same uniform answer.
+//
+// The half that must not change is the other one: a request that did prove the
+// secret does spend the key's allowance, and the address's bucket is spent by
+// every request, which is what bounds guessing.
+func TestAStrangerCannotSpendTheHoldersAllowance(t *testing.T) {
+	const (
+		stranger  = "198.51.100.9:5000"
+		elsewhere = "198.51.100.10:5000"
+		fresh     = "198.51.100.11:5000"
+	)
+	f, spy := renewingWithin(t, Limits{Requests: 3, Window: time.Hour})
+	keyID, secret, _ := heldKey(t, f, PolicyTeamMonthly)
+
+	for i := 0; i < 3; i++ {
+		rec := f.callFrom(stranger, RouteRenew, RenewalCall{KeyID: keyID, WorkspaceID: workspaceID, RenewalSecret: freshSecret(t)})
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("the stranger's call %d was answered %d, want %d", i+1, rec.Code, http.StatusForbidden)
+		}
+	}
+	holder := RenewalCall{KeyID: keyID, WorkspaceID: workspaceID, RenewalSecret: secret}
+	holderRec := f.callFrom(applicantIP, RouteRenew, holder)
+	if holderRec.Code != http.StatusOK {
+		t.Fatalf("the holder's own renewal was answered %d (%q), want the next key: what a stranger spends is its own address's allowance", holderRec.Code, holderRec.Body.String())
+	}
+	if answer := answerOf(t, holderRec); answer.Key == "" {
+		t.Error("the holder's own renewal answered no key")
+	}
+	if got := spy.minted(); got != 1 {
+		t.Fatalf("the minter was asked for %d key(s), want the holder's one renewal", got)
+	}
+
+	// Two more calls that proved the secret fill the key's allowance, and the
+	// next one is refused by the key's bucket alone: the address it came from is
+	// one nothing has asked from.
+	status := RenewalCall{KeyID: keyID, RenewalSecret: secret}
+	for i := 0; i < 2; i++ {
+		if rec := f.callFrom(elsewhere, RouteStatus, status); rec.Code != http.StatusOK {
+			t.Fatalf("the holder's status call %d was answered %d, want %d", i+1, rec.Code, http.StatusOK)
+		}
+	}
+	rec := f.callFrom(fresh, RouteStatus, status)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("a call past the key's own allowance was answered %d, want %d: a request that proved the secret does spend it", rec.Code, http.StatusForbidden)
+	}
+	if body := rec.Body.String(); body != renewalRefusal+"\n" {
+		t.Errorf("a call past the key's allowance was answered %q, want the one refusal %q: a throttled holder is answered like anyone else", body, renewalRefusal)
+	}
+	if got := spy.minted(); got != 1 {
+		t.Errorf("the minter was asked for %d key(s), want the holder's one renewal: a throttled call mints nothing", got)
 	}
 }
 

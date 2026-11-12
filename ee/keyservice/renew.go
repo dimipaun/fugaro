@@ -14,9 +14,11 @@ package keyservice
 // secret's hash, and the key is read by every reader of the runs bucket, so the
 // hash must not be a signing key — an HMAC keyed by it would have been forgeable
 // by a bucket reader (D2135 as amended). Nothing else about the caller is read:
-// there is no session, no account and no check of the workspace, and the
-// workspace a renewal is minted into is the one the request names, which the
-// customer's own job verifies before it writes the key (K4.1).
+// there is no session and no account. The one thing a renewal takes from the
+// request besides the secret is the workspace the caller is in, and it takes it
+// as a claim to be checked rather than as a fact: the successor is minted into
+// the workspace the key is bound to (TN2, the store's `KeyState`), so a key
+// asked for from somewhere else is refused instead of moved.
 //
 // Every answer here is uniform (§7.1's rule on these routes): a caller that has
 // not proved the secret gets one sentence and one status, whatever was wrong —
@@ -69,9 +71,12 @@ type Answer struct {
 }
 
 // RenewalCall is what both routes read: the key a caller holds, the secret it
-// proves it with, and the workspace a renewal is minted into. The status route
-// reads the first two and ignores the third, because a status answer mints
-// nothing and there is no workspace for it to name.
+// proves it with, and the workspace its installation is in. A renewal is minted
+// into the key's own workspace and this is the check that the caller is there:
+// it names the workspace the request comes from, and one that is not the key's
+// is refused. The status route reads the first two and ignores the third,
+// because a status answer mints nothing and there is no workspace for it to
+// name — a check must answer for a key whatever the project's own config says.
 type RenewalCall struct {
 	KeyID         string `json:"key_id"`
 	WorkspaceID   string `json:"workspace_id"`
@@ -87,6 +92,19 @@ const renewalRefusal = "This request cannot be answered."
 
 func refuseRenewal(w http.ResponseWriter) {
 	http.Error(w, renewalRefusal, http.StatusForbidden)
+}
+
+// workspaceRefusal is the answer to a caller that proved a key's secret and
+// asked for its successor in a workspace that is not the key's own. It is not
+// the uniform refusal because the caller here has proved it holds the key, and
+// what it is being told is its own key's binding: a key is tied to one
+// workspace and moving it is a reissue (D2134 as amended by TN2), so naming
+// another workspace is a request this service cannot serve rather than a
+// renewal to retry.
+const workspaceRefusal = "This key is bound to another workspace, and a renewal keeps it there. Moving an installation to another workspace is a reissue."
+
+func refuseWorkspace(w http.ResponseWriter) {
+	http.Error(w, workspaceRefusal, http.StatusForbidden)
 }
 
 // rotationSource names the record one rotation writes, and it is the store's
@@ -220,13 +238,19 @@ func (s *Service) proved(ctx context.Context, call RenewalCall) (holder, bool, e
 
 // renewalCall reads one of the two routes' requests: a body under this service's
 // own bound, decoded strictly like every other wire format here, and inside the
-// intake's throttle — the key it names and the address it came from, which are
-// the two a caller controls.
+// intake's throttle for the address it came from.
 //
 // Everything it will not read it refuses with the one uniform answer, and the
 // throttle is asked **before** the shape is: a burst of malformed bodies is one
 // address's rate like any other, and a request the throttle refused is counted
 // nowhere (§7.2, `throttle.allow`).
+//
+// The key's own bucket is spent by `charged`, once the secret has been proved,
+// and not here with the address: the key id is what a support ticket quotes and
+// what a log carries, so a bucket keyed on it and spent by any caller would let
+// whoever has read one spend the holder's allowance with wrong-secret calls and
+// have the holder's own renewal refused. Guessing is bounded by the address's
+// bucket, which is the one every request pays.
 func (s *Service) renewalCall(w http.ResponseWriter, r *http.Request) (RenewalCall, bool) {
 	var call RenewalCall
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRequestBytes))
@@ -240,7 +264,7 @@ func (s *Service) renewalCall(w http.ResponseWriter, r *http.Request) (RenewalCa
 		refuseRenewal(w)
 		return RenewalCall{}, false
 	}
-	if !s.limiter.allow("key:"+call.KeyID, "ip:"+clientIP(r)) {
+	if !s.limiter.allow("ip:" + clientIP(r)) {
 		refuseRenewal(w)
 		return RenewalCall{}, false
 	}
@@ -252,6 +276,19 @@ func (s *Service) renewalCall(w http.ResponseWriter, r *http.Request) (RenewalCa
 		return RenewalCall{}, false
 	}
 	return call, true
+}
+
+// charged spends the key's own allowance, which is spent here rather than with
+// the address (renewalCall's comment): only a request that proved the secret is
+// counted against the key, so a holder's allowance cannot be spent by a caller
+// that does not hold the secret, and a holder that asks too often is answered
+// like a stranger.
+func (s *Service) charged(w http.ResponseWriter, call RenewalCall) bool {
+	if !s.limiter.allow("key:" + call.KeyID) {
+		refuseRenewal(w)
+		return false
+	}
+	return true
 }
 
 // status is §8's endpoint: whether a key is still good, and whether a successor
@@ -275,6 +312,9 @@ func (s *Service) status(w http.ResponseWriter, r *http.Request) {
 		refuseRenewal(w)
 		return
 	}
+	if !s.charged(w, call) {
+		return
+	}
 	s.sight(r.Context(), call.KeyID)
 	writeAnswer(w, Answer{Status: key.status(), NewerKey: key.rotated})
 }
@@ -286,8 +326,9 @@ func (s *Service) status(w http.ResponseWriter, r *http.Request) {
 // what makes a leaked secret cost the holder one renewal rather than the
 // licence, and the hash the successor carries is the new secret's, so the old
 // secret authenticates nothing after the window below. Everything else about the
-// key is carried over — the row it was minted from, its workspace, its seats and
-// its organisation — because a renewal is the same licence for a later term.
+// key is carried over — the row it was minted from, its seats, its organisation
+// and its own workspace — because a renewal is the same licence for a later
+// term, and a term bound to another workspace would be a different licence.
 //
 // A row nothing renews is refused: an air-gapped key and a trial carry
 // `renewal_mode: none`, and the whole of that row is that nothing contacts the
@@ -302,6 +343,7 @@ func (s *Service) renew(w http.ResponseWriter, r *http.Request) {
 	// The workspace is required of a renewal and ignored by a status call: the
 	// successor has to bind to one (the verifier refuses a key without it, TN2),
 	// and a request that named none is a request this service cannot mint from.
+	// What it is checked against is the key's own workspace, further down.
 	if strings.TrimSpace(call.WorkspaceID) == "" {
 		refuseRenewal(w)
 		return
@@ -315,6 +357,9 @@ func (s *Service) renew(w http.ResponseWriter, r *http.Request) {
 		refuseRenewal(w)
 		return
 	}
+	if !s.charged(w, call) {
+		return
+	}
 	s.sight(r.Context(), call.KeyID)
 	if key.revoked {
 		writeAnswer(w, Answer{Status: StatusRevoked, NewerKey: key.rotated})
@@ -322,6 +367,18 @@ func (s *Service) renew(w http.ResponseWriter, r *http.Request) {
 	}
 	if key.policy.RenewalMode == licence.RenewalNone {
 		refuseRenewal(w)
+		return
+	}
+	// The key's own workspace is the one the successor goes into, and a state
+	// that names none is an issue path's bug rather than the caller's: nothing
+	// here can mint into a workspace it does not know, and a successor bound to
+	// no workspace is one every verifier refuses (TN2).
+	if key.state.WorkspaceID == "" {
+		fail(w, errors.New("the key "+call.KeyID+" is bound to no workspace, so there is none to mint its successor into (K2.3)"))
+		return
+	}
+	if call.WorkspaceID != key.state.WorkspaceID {
+		refuseWorkspace(w)
 		return
 	}
 	now := s.now()
@@ -344,7 +401,7 @@ func (s *Service) renew(w http.ResponseWriter, r *http.Request) {
 	minted, err := s.mintsV1.MintV1(r.Context(), RequestV1{
 		Environment:  s.cfg.Environment,
 		Policy:       key.policy.Name,
-		WorkspaceID:  call.WorkspaceID,
+		WorkspaceID:  key.state.WorkspaceID,
 		Organisation: key.record.Organisation,
 		Seats:        key.record.Seats,
 		TermDays:     renewalDays(key.record, key.policy, now),
@@ -360,6 +417,7 @@ func (s *Service) renew(w http.ResponseWriter, r *http.Request) {
 	// be asked for again.
 	if err := s.store.SaveKeyState(r.Context(), KeyState{
 		KeyID:             minted.Record.KeyID,
+		WorkspaceID:       key.state.WorkspaceID,
 		RenewalSecretHash: digest(minted.RenewalSecret),
 		LastSeen:          now,
 	}); err != nil {

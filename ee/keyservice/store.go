@@ -129,8 +129,9 @@ type Revocation struct {
 }
 
 // KeyState is what the service remembers about one issued key that the key's
-// own claims cannot carry: the renewal secret's digest (§7, D2135) and the
-// instant the key last asked the server anything (§8).
+// own claims cannot supply to it: the workspace it is bound to (TN2), the
+// renewal secret's digest (§7, D2135) and the instant the key last asked the
+// server anything (§8).
 //
 // The digest and never the secret. The secret is the holder's half of a renewal
 // and the store is read by whoever operates the service, so the store keeping
@@ -139,12 +140,20 @@ type Revocation struct {
 // kept is what decides whether a caller who sends the secret is the holder, and
 // nothing else is derivable from it.
 //
+// WorkspaceID is here because a renewal mints the successor into the key's own
+// workspace and a request's word for it is not proof: the claim is in the key,
+// which only its holder can read, so a service that minted into the workspace
+// the caller named would let whoever holds a key and its secret bind the next
+// term to a workspace of their choosing. A state with no workspace is one no
+// renewal can serve — the issue path that writes this record owes it (K2.3).
+//
 // LastSeen is zero for a key that has never called in, which is not the same as
 // a key that called in long ago: the status endpoint's answer is the key's
 // state and not this, and the instant is what the admin page reads when it asks
 // whether a holder is still checking.
 type KeyState struct {
 	KeyID             string    `json:"key_id"`
+	WorkspaceID       string    `json:"workspace_id"`
 	RenewalSecretHash string    `json:"renewal_secret_hash"`
 	LastSeen          time.Time `json:"last_seen"`
 }
