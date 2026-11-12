@@ -304,6 +304,15 @@ func TestTheV1MinterRefusesWhatItCannotMint(t *testing.T) {
 		// `issued_at`.
 		{name: "a term too large for a duration", termDays: math.MaxInt, ceiling: true},
 		{name: "a negative term", termDays: -30},
+		// A row nothing renews is minted for its own lifetime: a trial is
+		// D2136's fourteen days and an air-gapped key is replaced by hand when
+		// the next year is paid for, so a caller that named either a longer span
+		// would be granting what the row says it does not (section 7, D2138).
+		// The row's own term is still taken, because a caller may say it.
+		{name: "a trial for a term of its own choosing", termDays: 30, edit: func(r *RequestV1, _ *Minter) { r.Policy = PolicyTrial }, notTheCeiling: true},
+		{name: "a trial for its own fourteen days", termDays: 14, edit: func(r *RequestV1, _ *Minter) { r.Policy = PolicyTrial }, signed: 1, mints: true, term: 14 * day},
+		{name: "an air-gapped key for more than its own year", termDays: 366, edit: func(r *RequestV1, _ *Minter) { r.Policy = PolicyEnterpriseAirGapped }, notTheCeiling: true},
+		{name: "an air-gapped key for its own year", termDays: 365, edit: func(r *RequestV1, _ *Minter) { r.Policy = PolicyEnterpriseAirGapped }, signed: 1, mints: true, term: 365 * day},
 		{name: "no key id for the environment", termDays: 30, edit: func(_ *RequestV1, m *Minter) { m.Keys = Keys{Staging: stagingKeyID} }},
 		{name: "no signer", termDays: 30, edit: func(_ *RequestV1, m *Minter) { m.Signer = nil }},
 		{name: "a key ring that fails", termDays: 30, signerErr: errors.New("the key ring is unreachable"), signed: 1},

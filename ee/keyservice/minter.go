@@ -293,7 +293,9 @@ func (m Minter) Mint(ctx context.Context, req Request) (Minted, error) {
 // what a key of it carries. What the request does name is the term in days,
 // because a renewal covers the rest of the term the customer is in rather than a
 // fresh one, and a key of a length the tier does not allow is refused exactly as
-// the older format refuses it.
+// the older format refuses it. Only a row something renews takes that term: a
+// row nothing renews is minted for its own lifetime, since its length is as much
+// the row's as its grace is (D2136, D2138).
 //
 // `issued_at` and `paid_through` are the minter's own clock and that term, which
 // is what keeps a caller from dating a key past its tier's maximum (§2, §9.2).
@@ -310,6 +312,19 @@ func (m Minter) MintV1(ctx context.Context, req RequestV1) (MintedV1, error) {
 	maximum, known := tierMaxTerm[policy.Tier]
 	if !known {
 		return MintedV1{}, fmt.Errorf("the tier %q is not one a key can be issued for", policy.Tier)
+	}
+	// A row that nothing renews is minted for its own lifetime and for no other:
+	// a trial is D2136's fourteen days, and an air-gapped key is replaced by hand
+	// when the customer's next year is paid for (section 7), so neither length is
+	// a caller's to name. Only a row something renews — the job in the customer's
+	// own project, or `fugaro license refresh` — may be given a longer term,
+	// because that renewal covers the rest of the term the customer is in rather
+	// than a fresh period. A period that is neither is a special deal, and a
+	// special deal is the admin page's override of the row rather than a term on
+	// this route (sections 12.1, 13; K2.6).
+	if req.TermDays != 0 && policy.RenewalMode == licence.RenewalNone && req.TermDays != int(policy.Term/(24*time.Hour)) {
+		return MintedV1{}, fmt.Errorf("the %s row runs for its own %d day(s) and the request names %d: nothing renews this row, so its term is the row's and never the caller's (D2136, section 7)",
+			policy.Name, int(policy.Term/(24*time.Hour)), req.TermDays)
 	}
 	days := req.TermDays
 	if days == 0 {
