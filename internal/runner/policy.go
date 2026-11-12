@@ -251,6 +251,19 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 	if err := r.applyRouting(pp, found); err != nil {
 		return err
 	}
+	// The vision slot is applied here, after the switch and before the levels,
+	// for the reasons the switch is applied where it is: the pins it moves are
+	// what the pins renderer renders, the gateway routes and prices, and the
+	// record names, and level 1's own answer is read off the coder's model
+	// (Agent.FirstLineOn) — so a coder moved onto the vision model has its
+	// first-line review resolved against the model the run actually runs. It
+	// comes after the switch because the switch is the owner's routing of the
+	// models the run was configured with, and a pin the switch moved is the pin
+	// the vision rewrite judges: a routed model's row is the route's, and D2016
+	// reads that row.
+	if err := r.applyVision(s.Prices); err != nil {
+		return err
+	}
 	if err := r.resolveLevels(); err != nil {
 		return err
 	}

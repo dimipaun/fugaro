@@ -72,6 +72,9 @@ type arm struct {
 	failing bool
 	// findings is the deciding senior round's count, the round that shipped.
 	findings int
+	// truncated is an arm whose stored patch A2.1 cut short, which A5.1 refuses
+	// to hand a judge: such a pair can never be judged.
+	truncated bool
 	// start overrides the pair's start commit, which is what makes a pair
 	// invalid (R2).
 	start string
@@ -127,6 +130,8 @@ func armRecord(pairID, runID string, armTask task.ABArm, mode rigor.Mode, tr tie
 	if a.halted {
 		rec.Halt = &runstore.Halt{Reason: runstore.HaltRunCap}
 	}
+	rec.PatchObject = "ab/patches/" + runID + ".diff"
+	rec.PatchTruncated = a.truncated
 	return rec
 }
 
@@ -165,7 +170,7 @@ func TestABRows(t *testing.T) {
 		arm{model: abModelAlpha},
 		arm{model: abModelBeta, halted: true})
 
-	rep := BuildAB(records(haltLoss, testLoss, draw, findingsWin, untiered), nil)
+	rep := BuildAB(records(haltLoss, testLoss, draw, findingsWin, untiered), nil, nil)
 
 	if rep.Pairs != 5 {
 		t.Errorf("the report counts %d pairs, want 5: every pair here is valid", rep.Pairs)
@@ -214,7 +219,7 @@ func TestABRows(t *testing.T) {
 	// The same records in another order are the same report: a bucket listing
 	// hands its records over in whatever order it likes.
 	shuffled := records(untiered, findingsWin, draw, testLoss, haltLoss)
-	if other := BuildAB(shuffled, nil); !reflect.DeepEqual(rep, other) {
+	if other := BuildAB(shuffled, nil, nil); !reflect.DeepEqual(rep, other) {
 		t.Errorf("the same records in another order gave a different report:\n%+v\n%+v", rep, other)
 	}
 }
@@ -229,7 +234,7 @@ func TestABReportHasNoPerson(t *testing.T) {
 	p := pair("p1", rigor.Pro, tier.Small,
 		arm{model: abModelAlpha, cost: 1, priced: true},
 		arm{model: abModelBeta, cost: 0.5, priced: true})
-	rep := BuildAB(records(p), nil)
+	rep := BuildAB(records(p), nil, nil)
 	row := oneRow(t, rep)
 
 	markers := []string{"acme/marker-repo", "marker-workflow", "marker-reason", "marker-branch", "example.invalid", "internal/marker/secret.go", "p1-champion", "p1-challenger"}
@@ -278,7 +283,7 @@ func TestABReportSuppressesSmallGroups(t *testing.T) {
 				arm{model: abModelAlpha, cost: 1, priced: true, halted: true},
 				arm{model: abModelBeta, cost: 0.5, priced: true}))
 		}
-		return BuildAB(records(pairs...), nil)
+		return BuildAB(records(pairs...), nil, nil)
 	}
 
 	short := oneRow(t, group(ab.MinRuns-1))
@@ -323,7 +328,7 @@ func TestABReportJSONRecommendation(t *testing.T) {
 		arm{model: abModelAlpha, findings: 2},
 		arm{model: abModelBeta})
 	all := records(append(won, unpriced)...)
-	rep := BuildAB(all, nil)
+	rep := BuildAB(all, nil, nil)
 	if len(rep.Rows) != 2 {
 		t.Fatalf("the report holds %d rows, want 2: %+v", len(rep.Rows), rep.Rows)
 	}
@@ -369,7 +374,7 @@ func TestABReportJSONRecommendation(t *testing.T) {
 
 	// The rate a caller passes is the rate the document reports: a project that
 	// raised Pro's allowance is what the advice was read at.
-	raised := BuildAB(all, map[rigor.Mode]float64{rigor.Pro: 3})
+	raised := BuildAB(all, nil, map[rigor.Mode]float64{rigor.Pro: 3})
 	var raisedOut bytes.Buffer
 	if err := ABJSON(&raisedOut, raised, meta); err != nil {
 		t.Fatalf("ABJSON: %v", err)
@@ -391,12 +396,19 @@ type abJSONDoc struct {
 }
 
 type abJSONRow struct {
-	Mode   string    `json:"mode"`
-	Tier   string    `json:"tier"`
-	Pairs  int       `json:"pairs"`
-	Wins   int       `json:"wins"`
-	Losses int       `json:"losses"`
-	Rec    abJSONRec `json:"recommendation"`
+	Mode   string `json:"mode"`
+	Tier   string `json:"tier"`
+	Pairs  int    `json:"pairs"`
+	Wins   int    `json:"wins"`
+	Losses int    `json:"losses"`
+	// The judge's own figures (A5.4): the families that judged the group,
+	// whether one of them is an arm's, and the pairs no judge has decided and
+	// the pairs a cut-short patch leaves unjudgeable.
+	JudgeFamilies   []string  `json:"judge_families"`
+	JudgeSameFamily bool      `json:"judge_same_family"`
+	Unjudged        int       `json:"unjudged"`
+	Truncated       int       `json:"truncated"`
+	Rec             abJSONRec `json:"recommendation"`
 }
 
 // row is the row of one mode, so a test names the group it is about rather than
@@ -454,7 +466,7 @@ func TestABReportExcludesInvalidPairs(t *testing.T) {
 	followUp := runstore.Record{RunID: "follow-up", Repo: "acme/marker-repo", Rigor: &runstore.RigorRecord{Mode: rigor.Pro}}
 
 	all := append(records(valid1, valid2, skewed, neverStarted), followUp)
-	rep := BuildAB(all, nil)
+	rep := BuildAB(all, nil, nil)
 
 	if rep.Pairs != 2 || len(rep.Rows) != 1 {
 		t.Fatalf("the report counts %d pairs in %d rows, want 2 in 1: %+v", rep.Pairs, len(rep.Rows), rep.Rows)
@@ -474,6 +486,232 @@ func TestABReportExcludesInvalidPairs(t *testing.T) {
 	}
 }
 
+// The model IDs D553's mapping is read on: two Claude IDs, which are one family
+// whatever else they are, and a provider model, whose family is its ID's vendor
+// prefix. The coder models above carry no vendor, so they belong to no family
+// this build can name.
+const (
+	abClaudeOpus   = "claude-opus-5"
+	abClaudeSonnet = "claude-sonnet-5"
+	abDeepSeekV4   = "deepseek/deepseek-v4"
+)
+
+// TestJudgeFamilyFlag is D553's mapping and the honesty it buys: the report
+// names the family of the model that judged a group's pairs — a Claude ID is
+// anthropic, a provider model's family is its ID's vendor prefix — and flags a
+// group where one of those families is also one of the arms'. Blindness removes
+// labels, not style, so the flag is the mitigation rather than a claim that a
+// verdict is unbiased.
+func TestJudgeFamilyFlag(t *testing.T) {
+	t.Run("a Claude judge beside a Claude arm is flagged", func(t *testing.T) {
+		p := pair("p1", rigor.Pro, tier.Small,
+			arm{model: abClaudeOpus},
+			arm{model: abDeepSeekV4})
+		rep := BuildAB(records(p), map[string]ab.Verdict{
+			"p1": {Winner: ab.WinChallenger, Reason: "clarity", JudgeModel: abClaudeSonnet},
+		}, nil)
+		row := oneRow(t, rep)
+		if !slices.Equal(row.JudgeFamilies, []string{"anthropic"}) {
+			t.Errorf("the judge families read %v, want [anthropic]: a Claude ID belongs to the anthropic family whatever model it is", row.JudgeFamilies)
+		}
+		if !row.SameFamily {
+			t.Error("the same-family flag is false: the judge's family is the champion's own, which is what the flag is for (D553)")
+		}
+
+		var table bytes.Buffer
+		if err := ABTable(&table, rep, ABMeta{Project: "proj-1234", Source: "run-records"}); err != nil {
+			t.Fatalf("ABTable: %v", err)
+		}
+		if !strings.Contains(table.String(), "anthropic") || !strings.Contains(table.String(), "yes") {
+			t.Errorf("the table does not name the judge's family and flag it:\n%s", table.String())
+		}
+	})
+
+	t.Run("a judge from another family is not flagged", func(t *testing.T) {
+		p := pair("p1", rigor.Pro, tier.Small,
+			arm{model: abClaudeOpus},
+			arm{model: abClaudeSonnet})
+		rep := BuildAB(records(p), map[string]ab.Verdict{
+			"p1": {Winner: ab.WinTie, JudgeModel: abDeepSeekV4},
+		}, nil)
+		row := oneRow(t, rep)
+		if !slices.Equal(row.JudgeFamilies, []string{"deepseek"}) {
+			t.Errorf("the judge families read %v, want [deepseek]: a provider model's family is its ID's vendor prefix", row.JudgeFamilies)
+		}
+		if row.SameFamily {
+			t.Error("the same-family flag is true: neither arm is a deepseek model")
+		}
+	})
+
+	t.Run("every family that judged the group is named once, in order", func(t *testing.T) {
+		// A group whose window spans a change of ab.judge_model: both judges are
+		// named, deduplicated and sorted, and the flag is read over all of them.
+		first := pair("p1", rigor.Pro, tier.Small,
+			arm{model: abClaudeOpus}, arm{model: abModelAlpha})
+		second := pair("p2", rigor.Pro, tier.Small,
+			arm{model: abClaudeOpus}, arm{model: abModelAlpha})
+		rep := BuildAB(records(first, second), map[string]ab.Verdict{
+			"p1": {Winner: ab.WinChallenger, JudgeModel: abDeepSeekV4},
+			"p2": {Winner: ab.WinChallenger, JudgeModel: abClaudeSonnet},
+		}, nil)
+		row := oneRow(t, rep)
+		if !slices.Equal(row.JudgeFamilies, []string{"anthropic", "deepseek"}) {
+			t.Errorf("the judge families read %v, want [anthropic deepseek]", row.JudgeFamilies)
+		}
+		if !row.SameFamily {
+			t.Error("the same-family flag is false: the champion is a Claude model and one of the judges is anthropic too")
+		}
+	})
+
+	t.Run("an ID with no family is in no figure", func(t *testing.T) {
+		// An alias nothing routes, and a coder model with no vendor: neither
+		// names a family, and a flag is about two models sharing one.
+		p := pair("p1", rigor.Pro, tier.Small,
+			arm{model: abModelAlpha}, arm{model: abModelBeta})
+		rep := BuildAB(records(p), map[string]ab.Verdict{
+			"p1": {Winner: ab.WinChallenger, JudgeModel: abModelGamma},
+		}, nil)
+		row := oneRow(t, rep)
+		if len(row.JudgeFamilies) != 0 {
+			t.Errorf("the judge families read %v, want none: a model ID with no vendor has no family this build can name", row.JudgeFamilies)
+		}
+		if row.SameFamily {
+			t.Error("the same-family flag is true: an ID with no family shares nothing")
+		}
+	})
+
+	t.Run("a group no judge has reached names no family", func(t *testing.T) {
+		p := pair("p1", rigor.Pro, tier.Small,
+			arm{model: abClaudeOpus}, arm{model: abClaudeSonnet})
+		row := oneRow(t, BuildAB(records(p), nil, nil))
+		if len(row.JudgeFamilies) != 0 || row.SameFamily {
+			t.Errorf("a group with no verdict carries families %v and the flag %v, want an empty list and false", row.JudgeFamilies, row.SameFamily)
+		}
+	})
+
+	t.Run("a judge model's escapes never reach the terminal", func(t *testing.T) {
+		// ab.judge_model is the owner's, but the ID that reaches here came out
+		// of a verdicts object in the bucket, and its vendor prefix is the text
+		// before the first "/": an OSC 52 introducer in it would otherwise be
+		// printed for the operator's terminal to obey.
+		p := pair("p1", rigor.Pro, tier.Small,
+			arm{model: abClaudeOpus}, arm{model: abDeepSeekV4})
+		rep := BuildAB(records(p), map[string]ab.Verdict{
+			"p1": {Winner: ab.WinChallenger, JudgeModel: "\x1b]52;c;aGFjaw==\x07vendor/model"},
+		}, nil)
+		var table bytes.Buffer
+		if err := ABTable(&table, rep, ABMeta{Project: "proj-1234", Source: "run-records"}); err != nil {
+			t.Fatalf("ABTable: %v", err)
+		}
+		if strings.ContainsAny(table.String(), "\x1b\x07") {
+			t.Errorf("the table carries the judge model's escape bytes to the terminal:\n%q", table.String())
+		}
+		if !strings.Contains(table.String(), "vendor") {
+			t.Errorf("the table loses the family with the escape: want it to read vendor:\n%s", table.String())
+		}
+	})
+
+	t.Run("the JSON carries the same two figures", func(t *testing.T) {
+		p := pair("p1", rigor.Pro, tier.Small,
+			arm{model: abClaudeOpus}, arm{model: abDeepSeekV4})
+		rep := BuildAB(records(p), map[string]ab.Verdict{
+			"p1": {Winner: ab.WinChallenger, JudgeModel: abClaudeSonnet},
+		}, nil)
+		var out bytes.Buffer
+		if err := ABJSON(&out, rep, ABMeta{Project: "proj-1234", Source: "run-records"}); err != nil {
+			t.Fatalf("ABJSON: %v", err)
+		}
+		row := decodeABJSON(t, out.Bytes()).row(t, "pro")
+		if !slices.Equal(row.JudgeFamilies, []string{"anthropic"}) || !row.JudgeSameFamily {
+			t.Errorf("the document's row carries %v and %v, want [anthropic] and true:\n%s", row.JudgeFamilies, row.JudgeSameFamily, out.String())
+		}
+	})
+}
+
+// TestUnjudgedCountPerGroup is the figure D561 leaves a reader: the group's
+// pairs no judge has decided, counted per group, and the pairs a cut-short patch
+// leaves unjudgeable beside them (A5.1). At Critical an unjudged pair is in no
+// figure at all, so the row's pairs and its unjudged count add up to the group's
+// valid pairs there; in every other mode a pair is decided on the hard signals
+// whether or not a judge has read it, and the count is what says how much of the
+// group the judge's own answers cover.
+func TestUnjudgedCountPerGroup(t *testing.T) {
+	pro := func(id string, champion, challenger arm) abPair {
+		return pair(id, rigor.Pro, tier.Small, champion, challenger)
+	}
+	critical := func(id string, champion, challenger arm) abPair {
+		return pair(id, rigor.Critical, tier.Small, champion, challenger)
+	}
+	alpha := arm{model: abModelAlpha, cost: 1, priced: true}
+	beta := arm{model: abModelBeta, cost: 1, priced: true}
+
+	// Pro: three pairs, two the judge decided and one it has not reached.
+	// Critical: three pairs, one decided — the other two stay out of every
+	// figure and are the row's unjudged count.
+	all := records(
+		pro("p1", alpha, beta), pro("p2", alpha, beta), pro("p3", alpha, beta),
+		critical("p4", alpha, beta), critical("p5", alpha, beta), critical("p6", alpha, beta),
+	)
+	rep := BuildAB(all, map[string]ab.Verdict{
+		"p1": {Winner: ab.WinChallenger, JudgeModel: abClaudeSonnet},
+		"p2": {Winner: ab.WinChallenger, JudgeModel: abClaudeSonnet},
+		"p4": {Winner: ab.WinTie, JudgeModel: abClaudeSonnet},
+	}, nil)
+
+	if len(rep.Rows) != 2 {
+		t.Fatalf("the report holds %d rows, want 2 (Pro/Small and Critical/Small): %+v", len(rep.Rows), rep.Rows)
+	}
+	byMode := map[string]ABRow{}
+	for _, row := range rep.Rows {
+		byMode[row.Mode] = row
+	}
+	proRow, criticalRow := byMode["pro"], byMode["critical"]
+
+	// Every pair here is two arms that agree on every signal, so the signals tie
+	// it: the judge said the challenger took two of them, and a verdict never
+	// moves a winner (D561).
+	if proRow.Pairs != 3 || proRow.Wins != 0 || proRow.Ties != 3 {
+		t.Errorf("the Pro group counts %d pairs, %d wins and %d ties, want 3, 0 and 3: outside Critical a pair counts whether or not a judge has read it", proRow.Pairs, proRow.Wins, proRow.Ties)
+	}
+	if proRow.Unjudged != 1 {
+		t.Errorf("the Pro group reads %d unjudged, want 1: the pair no judge run reached", proRow.Unjudged)
+	}
+	if proRow.Truncated != 0 {
+		t.Errorf("the Pro group reads %d truncated, want 0: both patches are whole", proRow.Truncated)
+	}
+
+	if criticalRow.Pairs != 1 || criticalRow.Ties != 1 {
+		t.Errorf("the Critical group counts %d pairs and %d ties, want 1 and 1: only the judged pair is in its figures (D561)", criticalRow.Pairs, criticalRow.Ties)
+	}
+	if criticalRow.Unjudged != 2 {
+		t.Errorf("the Critical group reads %d unjudged, want 2: the pairs no judge has decided, which its pairs and its unjudged count add up to", criticalRow.Unjudged)
+	}
+	if rep.Pairs != proRow.Pairs+criticalRow.Pairs {
+		t.Errorf("the report counts %d pairs, want %d: the rows' pairs, and a pair at Critical that no judge has decided is in none of them", rep.Pairs, proRow.Pairs+criticalRow.Pairs)
+	}
+
+	// A patch A2.1 cut short is a fact about the pair: it is counted wherever the
+	// pair is read, whatever the mode, and A5.1 refuses to hand such a diff to a
+	// judge, so the pair stays unjudged for as long as it is in the window.
+	short := pro("q1", arm{model: abModelAlpha, cost: 1, priced: true, truncated: true}, beta)
+	row := oneRow(t, BuildAB(records(short), nil, nil))
+	if row.Pairs != 1 || row.Unjudged != 1 || row.Truncated != 1 {
+		t.Errorf("a group of one cut-short pair reads %d pairs, %d unjudged and %d truncated, want 1, 1 and 1: the pair counts on the signals and no judge can ever reach it", row.Pairs, row.Unjudged, row.Truncated)
+	}
+
+	var out bytes.Buffer
+	if err := ABJSON(&out, rep, ABMeta{Project: "proj-1234", Source: "run-records"}); err != nil {
+		t.Fatalf("ABJSON: %v", err)
+	}
+	doc := decodeABJSON(t, out.Bytes())
+	if got := doc.row(t, "critical"); got.Unjudged != 2 || got.Truncated != 0 {
+		t.Errorf("the document's Critical row reads %d unjudged and %d truncated, want 2 and 0:\n%s", got.Unjudged, got.Truncated, out.String())
+	}
+	if got := doc.row(t, "pro"); got.Unjudged != 1 {
+		t.Errorf("the document's Pro row reads %d unjudged, want 1:\n%s", got.Unjudged, out.String())
+	}
+}
+
 // abRowStrings is every string a row carries, the recommendation's own words
 // included, so a test can hold them all to the vocabulary the report promises.
 func abRowStrings(r ABRow) []string {
@@ -489,6 +727,13 @@ func collectStrings(v reflect.Value, out *[]string) {
 	case reflect.Struct:
 		for i := 0; i < v.NumField(); i++ {
 			collectStrings(v.Field(i), out)
+		}
+	case reflect.Slice:
+		// A list of strings is strings a row carries: the judge families are
+		// read off model IDs, so they are held to the vocabulary like the model
+		// columns they come from.
+		for i := 0; i < v.Len(); i++ {
+			collectStrings(v.Index(i), out)
 		}
 	}
 }

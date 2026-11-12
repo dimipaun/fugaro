@@ -41,13 +41,33 @@ func pairArm(runID, pairID string, arm task.ABArm) runstore.Record {
 
 // onePair scores the pair the two arms make, through Pairs, so a test that
 // moves a validity fact sees no pair at all rather than a scored one.
+//
+// A judge has read the pair: every test here is about how the hard signals
+// rank, and at Critical a pair no judge has decided is not scored at all
+// (D561), so a test that wants the signals read hands over a verdict — a tie,
+// which is a judgement like any other and never a signal (TestCriticalNeedsVerdict
+// and TestVerdictShownBesideSignals are the two that move the verdict itself).
 func onePair(t *testing.T, mode rigor.Mode, champion, challenger runstore.Record) Result {
+	t.Helper()
+	return onePairJudged(t, mode, judgedVerdict(WinTie), champion, challenger)
+}
+
+// judgedVerdict is a verdict as a judge run writes one (A5.2): the arm it took,
+// a tie for the judge that could not tell the two arms apart, and the model
+// that answered (D553).
+func judgedVerdict(w Winner) Verdict {
+	return Verdict{Winner: w, JudgeModel: "judge-model"}
+}
+
+// onePairJudged is onePair with the judge's own answer, the zero Verdict for a
+// pair no judge has decided.
+func onePairJudged(t *testing.T, mode rigor.Mode, v Verdict, champion, challenger runstore.Record) Result {
 	t.Helper()
 	pairs := Pairs([]runstore.Record{champion, challenger})
 	if len(pairs) != 1 {
 		t.Fatalf("Pairs over one pair's two arms returned %d pairs, want 1", len(pairs))
 	}
-	return Score(pairs[0], mode)
+	return Score(pairs[0], mode, v)
 }
 
 // rounds is a record's senior review rounds: one round per findings count,
@@ -400,7 +420,7 @@ func TestFollowUpCountIsContextOnly(t *testing.T) {
 	if pairs[0].ChampionFollowUps != 2 {
 		t.Errorf("ChampionFollowUps = %d, want 2", pairs[0].ChampionFollowUps)
 	}
-	if got := Score(pairs[0], rigor.Critical).Winner; got != WinTie {
+	if got := Score(pairs[0], rigor.Critical, judgedVerdict(WinTie)).Winner; got != WinTie {
 		t.Errorf("winner = %q, want %q: the follow-up count is context", got, WinTie)
 	}
 }
@@ -647,4 +667,125 @@ func TestPairVerifiedNeedsACleanTree(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestCriticalNeedsVerdict is D561's own line: at Critical the hard signals are
+// not enough on their own — they miss design quality on work that passes its
+// tests — so a pair no judge has decided does not count. It is taken by no arm
+// and enters no figure at all, and the count of such pairs is the report's to
+// show beside the row (A5.4). The requirement is Critical's: every other mode is
+// decided on the signals whether or not a judge has reached the pair.
+func TestCriticalNeedsVerdict(t *testing.T) {
+	champion := pairArm("run-champion", "pair-1", task.ABArmChampion)
+
+	// The champion's signals take the pair, so a test reading a winner knows
+	// whether the signals were read at all.
+	challenger := pairArm("run-challenger", "pair-1", task.ABArmChallenger)
+	challenger.Halt = &runstore.Halt{Reason: runstore.HaltRunCap, Scope: "run"}
+
+	t.Run("an unjudged pair does not count", func(t *testing.T) {
+		res := onePairJudged(t, rigor.Critical, Verdict{}, champion, challenger)
+		if res.Counted {
+			t.Errorf("an unjudged Critical pair counts: %+v", res)
+		}
+		if res.Winner != "" {
+			t.Errorf("winner = %q, want none: a pair that does not count is taken by no arm", res.Winner)
+		}
+		// The signals are read anyway: the pair is short by a judge and by
+		// nothing about the two runs, and a reader sees what it would have been
+		// decided on.
+		if res.Champion.Halted || !res.Challenger.Halted {
+			t.Errorf("halts read as champion %v, challenger %v, want false and true: the signals are read for a pair that does not count", res.Champion.Halted, res.Challenger.Halted)
+		}
+		if res.Verdict.Judged() {
+			t.Errorf("the zero verdict reads as judged: %+v", res.Verdict)
+		}
+	})
+
+	t.Run("the same pair counts at Pro", func(t *testing.T) {
+		res := onePairJudged(t, rigor.Pro, Verdict{}, champion, challenger)
+		if !res.Counted || res.Winner != WinChampion {
+			t.Errorf("the pair counts as %v and is taken by %q at Pro, want true and %q: the judge is required at Critical and at no other mode (D561)", res.Counted, res.Winner, WinChampion)
+		}
+	})
+
+	t.Run("a mode outside the vocabulary does not ask for one", func(t *testing.T) {
+		res := onePairJudged(t, rigor.Mode("paranoid"), Verdict{}, champion, challenger)
+		if !res.Counted {
+			t.Error("a pair at a mode the vocabulary does not hold does not count: the requirement is Critical's own (D561), and no other mode's reading asks a judge")
+		}
+	})
+
+	t.Run("a judged pair counts, tie or not", func(t *testing.T) {
+		// A judge that could not tell the arms apart decided the pair: what D561
+		// requires is a verdict, and a tie is one. No answer moves the winner,
+		// which the signals set.
+		for name, v := range map[string]Verdict{
+			"a judge that took the challenger":       judgedVerdict(WinChallenger),
+			"a judge that took the champion":         judgedVerdict(WinChampion),
+			"a judge that could not tell them apart": judgedVerdict(WinTie),
+		} {
+			t.Run(name, func(t *testing.T) {
+				res := onePairJudged(t, rigor.Critical, v, champion, challenger)
+				if !res.Counted {
+					t.Fatalf("a judged Critical pair does not count: %+v", res)
+				}
+				if res.Winner != WinChampion {
+					t.Errorf("winner = %q, want %q: the verdict is shown beside the signals, which are what rank the pair", res.Winner, WinChampion)
+				}
+			})
+		}
+	})
+
+	t.Run("a skipped verdict is no judgement", func(t *testing.T) {
+		// A5.2 writes a skip for every pair a judge run left alone: the pair is
+		// one no judge has read, whatever the reason it was passed over.
+		for _, skip := range []string{skipIdentified, skipTruncated, skipTooLarge, skipUnreadable, skipCallFailed} {
+			res := onePairJudged(t, rigor.Critical, Verdict{Skipped: skip, JudgeModel: "judge-model"}, champion, challenger)
+			if res.Counted || res.Winner != "" {
+				t.Errorf("a pair skipped as %q counts as %q: a skipped pair is one no judge decided", skip, res.Winner)
+			}
+		}
+	})
+}
+
+// TestVerdictShownBesideSignals is the other half of D561: the verdict is shown
+// beside the hard signals and never weighed with them. The signals rank the
+// pair — they are what a mode reads — and the judge's answer is carried on the
+// same Result, whole and unchanged, so a reader sees both rather than one folded
+// into the other by a weight nobody chose.
+func TestVerdictShownBesideSignals(t *testing.T) {
+	champion := pairArm("run-champion", "pair-1", task.ABArmChampion)
+	challenger := pairArm("run-challenger", "pair-1", task.ABArmChallenger)
+	challenger.Halt = &runstore.Halt{Reason: runstore.HaltRunCap, Scope: "run"}
+
+	t.Run("a verdict that disagrees is carried as the judge wrote it", func(t *testing.T) {
+		v := Verdict{Winner: WinChallenger, Reason: "clarity", JudgeModel: "judge-model"}
+		for _, mode := range []rigor.Mode{rigor.POC, rigor.Startup, rigor.Pro, rigor.Critical} {
+			res := onePairJudged(t, mode, v, champion, challenger)
+			if res.Winner != WinChampion {
+				t.Errorf("%s: winner = %q, want %q: the halted arm loses on the signals whatever a judge answered", mode, res.Winner, WinChampion)
+			}
+			if res.Verdict != v {
+				t.Errorf("%s: the verdict reads %+v, want %+v: it is shown beside the signals and never rewritten by them", mode, res.Verdict, v)
+			}
+		}
+	})
+
+	t.Run("a judge that gave no reason is carried that way too", func(t *testing.T) {
+		v := judgedVerdict(WinTie)
+		if res := onePairJudged(t, rigor.Pro, v, champion, challenger); res.Verdict != v {
+			t.Errorf("the verdict reads %+v, want %+v", res.Verdict, v)
+		}
+	})
+
+	t.Run("a pair no judge decided carries the zero verdict and still counts", func(t *testing.T) {
+		res := onePairJudged(t, rigor.Pro, Verdict{}, champion, challenger)
+		if res.Verdict != (Verdict{}) || res.Verdict.Judged() {
+			t.Errorf("the verdict reads %+v, want nothing: no judge has reached this pair", res.Verdict)
+		}
+		if !res.Counted || res.Winner != WinChampion {
+			t.Errorf("the pair counts as %v and is taken by %q at Pro, want true and %q: outside Critical the signals decide a pair no judge has read (D561)", res.Counted, res.Winner, WinChampion)
+		}
+	})
 }

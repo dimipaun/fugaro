@@ -1,12 +1,17 @@
 package runner_test
 
 import (
+	"context"
+	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/runner"
+	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
 func lookup(m map[string]string) func(string) (string, bool) {
@@ -153,5 +158,56 @@ func TestProvidersFromEnvRefusesDamage(t *testing.T) {
 		if got, err := runner.ProvidersFromEnv(lookup(map[string]string{runner.ModelProvidersEnv: v})); err == nil {
 			t.Errorf("%s: accepted %+v", name, got)
 		}
+	}
+}
+
+// TestAVisionModelIsRoutedAndPriced (V7, D2002, D2008): the model a run names
+// for images is a pin like any other, so the route that claims it is registered
+// off the run's pins (gatewayRoutes) and the run's table prices its calls from
+// the route's own row. The coder here is a Claude model the owner has priced
+// away its images (an explicit 0, the table's own "images refused"), so the run
+// reaches the provider only through the vision model: without the rewrite the
+// route would never be registered, because no pin of the run would name a model
+// it claims.
+//
+// Mutation (skip the coder's slot in the rewrite): the stage runs the coder's
+// own model, whose images the owner priced away, and its call is refused before
+// any route is in play — no call reaches the provider and this test is red.
+func TestAVisionModelIsRoutedAndPriced(t *testing.T) {
+	const vision = "deepseek/deepseek-v4-vision"
+	prices := `{"` + sonnet + `": {"input_per_m": 2, "output_per_m": 10, "image_tokens": 0},` +
+		`"` + vision + `": {"input_per_m": 1, "output_per_m": 2, "image_tokens": 1500}}`
+	use := pricing.Usage{Input: 1000, Output: 500}
+	cfg := withVision(t, gwConfig(t, "  first_line_review: off\n  first_line_rounds: 1\n"), vision)
+	g := routeRun(t, cfg, "enforce", "50", []string{"deepseek/*"}, prices,
+		[]anthropicfake.Reply{anthropicfake.Compat{}.MessageOK(vision, use)}, "acme/app")
+	if m, ok := g.deps.Spend.Prices.Lookup(vision); !ok || m.ImageTokens == 0 {
+		t.Fatalf("the run's table has no image rate for %s: the route's row is what makes it a model a stage may run for an image", vision)
+	}
+	var status int
+	var body string
+	reads := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		status, body = postImage(t, req, vision)
+		if status != 200 {
+			return agent.Result{}, fmt.Errorf("the image call was refused (%d): %s", status, body)
+		}
+		return implement("feature")(t, ctx, req)
+	}
+	rec, err := g.run(t, reads, review("ship", 0))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("the image call was answered %d %s; rec = %+v, err = %v", status, body, rec, err)
+	}
+	// The provider's own endpoint saw it, and Anthropic's did not: a routed
+	// model whose route is missing goes direct, on a key that cannot serve it.
+	if g.compat.Count() != 1 || g.fake.Count() != 0 {
+		t.Fatalf("the provider saw %d calls and Anthropic %d, want the vision model's one call routed to its provider", g.compat.Count(), g.fake.Count())
+	}
+	m, ok := g.deps.Spend.Prices.Lookup(vision)
+	if !ok {
+		t.Fatalf("no price row for %s", vision)
+	}
+	one := m.Rates.Cost(use).USD()
+	if len(rec.Stages) == 0 || rec.Stages[0].Model != vision || micros(t, rec.Stages[0].ModelUSD) != micros(t, one) {
+		t.Fatalf("stages = %+v, want the coder's stage on %s for $%v", rec.Stages, vision, one)
 	}
 }

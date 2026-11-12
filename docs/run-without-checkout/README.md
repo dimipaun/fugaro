@@ -1,6 +1,6 @@
 # Launching a run for a repository without its checkout
 
-**Status: design answered by the owner 2026-11-04; plan only; A0 and A1 landed (2026-11-10, the person read set and the file-at-a-ref reader); A2–A4, B1–B2, C1 and D1 not started; no other task approved.**
+**Status: design answered by the owner 2026-11-04; A0, A1, A2 and A3 landed (2026-11-10, the person read set, the file-at-a-ref reader, the launch's decision and its read at the forge), A4 landed (2026-11-12, a retry and a follow-up reuse the recorded job) and B1 landed with these pages (2026-11-12); B2, C1 and D1 not started; no other task approved.**
 
 Every decision is answered — **D915 included**, the question the code itself raised, answered
 2026-11-04 and landed with A0 — and each answer is recorded with its date and its reason beside the
@@ -112,9 +112,9 @@ task that needs one takes D920 and re-checks this line's facts rather than its c
 
 ## What this design does not do
 
-- **No code beyond A0 and A1, and no other task approved.** The plan's tasks carry red steps so that the
-  first one to be approved can start red, but A0 and A1 are the ones that have landed (2026-11-10) and
-  nothing else here is scheduled.
+- **No code beyond A0–A4, and no other task approved.** The plan's tasks carry red steps, and A0–A3
+  landed on 2026-11-10 and A4 on 2026-11-12; B1 changes these pages and no code, and B2, C1 and D1 are
+  not scheduled.
 - **No live step of any kind.** Nothing in this design asks the owner to apply Terraform by hand, to
   touch a real installation or to make a cloud call, and nothing asks for a command beyond the one every
   release already asks for, `fugaro update` — which is what redeploys the credentials service A0 changes

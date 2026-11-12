@@ -697,7 +697,7 @@ func TestUserLsListsBoth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var doc userListDoc
+	var doc userLsDoc
 	if err := json.Unmarshal([]byte(js), &doc); err != nil {
 		t.Fatalf("the --json document: %v\n%s", err, js)
 	}
