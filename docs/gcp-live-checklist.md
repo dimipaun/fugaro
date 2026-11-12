@@ -868,6 +868,9 @@ probe account carries predefined grants only).
 | 410 | The failure line, and a diagnosis of a real failed run with no setup ([`docs/diagnose-agent/`](diagnose-agent/implementation-plan.md), its **Check 410** and task **T-DG10**; **D1604** and **D1609** for the line — T-DG9's task — and **D1602**, **D1603**, **D1605** and **D1606** for the diagnosis T-DG8's command runs): a real failed `fugaro update` prints `Something went wrong. Run: fugaro troubleshoot <id>` naming that run's own log, and `fugaro troubleshoot <id>` then returns a diagnosis — an outcome, an evidence folder holding the log, the doctor's output, the version and the effective configuration — on a machine with no installation, no `fugaro setup` and no login beyond the credential the command resolves itself; one idempotent script with `--dry-run`, and a project, region or account naming `belong` refused by name | See "Check 410" below; **you** run it, on your own machine and your own installation, against a project the check makes up and reads back as **NOT FOUND** — **never `belong`** — and **no agent runs any step of it** | Nothing is created: every call the probe's update makes is against a project that does not exist, and your own installation is the subject of none of them. **One model call** on your own credential (the diagnosis), bounded by the command's own `--max-turns` and `--max-budget-usd` (D1613), plus one anonymous source fetch. **OWNER-RUN, NOT RUN.** |
 | 411 | The source a machine with no `git` gets, and the version it records ([`docs/diagnose-agent/`](diagnose-agent/implementation-plan.md), its **Check 411** and task **T-DG10**; **D1610**, **D1611**, **F9** and **F21**): the same command, on a PATH built to hold **no `git` at all** and with the GitHub token variables unset, fetches the source as an **anonymous tarball** rather than by clone, and the recorded version matches — `kind: tarball`, a version that is the installed build's own (the release's version, or the tag when the binary carries no commit, D1611), `may_not_match` false — over a tree whose `go.mod` is there; the fetch happens **before** the credential is acted on, so an offline machine still gets its source | See "Check 411" below; **you** run it, on your own machine and your own installation, on the PATH it mirrors from your own minus `git`, against the same made-up project as 410 — **never `belong`** — and **no agent runs any step of it** | Nothing is created; the tarball fetch is one anonymous read of the public repository. **One model call** on your own credential, unless the diagnosis takes its offline path — which this check records as such rather than reading as a finding. **OWNER-RUN, NOT RUN.** |
 | 412 | A log carrying an instruction and a token, read as data ([`docs/diagnose-agent/`](diagnose-agent/implementation-plan.md), its **Check 412** and task **T-DG10**; **D1602**, **F5** and **F20**, on T-DG2's redaction and T-DG7's read-only child): two lines are planted in a real failed run's own log — an instruction to run a command that would create a file in the check's scratch directory, and a token generated at run time that the check never prints — and the log the agent was handed holds the instruction and `[REDACTED]` and not the token, the child was started with `--tools Read,Grep,Glob` and `--restricted`, every tool it used is one of the three (read from the client's own stream, through a wrapper the check puts first on PATH), the file the instruction named was never created, and the token is in neither the answer, the evidence folder nor the report | See "Check 412" below; **you** run it, on your own machine and your own installation, against the same made-up project as 410 — **never `belong`** — and **no agent runs any step of it** | Nothing is created, and the plant is two lines in one log inside a scratch directory removed at the end. **One model call** on your own credential over a log built to make it misbehave, bounded as 410's is. **OWNER-RUN, NOT RUN.** |
+| 500 | The image setup skill end to end ([`docs/image-setup-skill/`](image-setup-skill/implementation-plan.md), its **Check 500** and task **IS13**; **D1903** for the cap the skill keeps and **D1900** for the warning a repository with a stale `image:` block gets): the owner runs the `fugaro:images` skill in their own session, and the check then reads the proposal back with `fugaro image ls --json` and `fugaro image survey --json` — at most four entries, which nothing in the CLI enforces — builds each entry it covers with `fugaro image build` through **Cloud Build**, launches one run from the checkout of a repository the catalog covers and reaches that run's own `result.json`, so the run started on a baked image and the record's `baked_commit` names the build it started on; and reads the warning a second repository whose own `image:` block is ignored gets | See "Check 500" below; `bash scripts/live-checks/check-500.sh --sandbox <a sandbox repository checkout>` is the whole of it, its sibling test `scripts/live-checks/check-500_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** (`fugaro-dev`) and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call); **no agent runs any step of it** | At most four Cloud Builds — one per catalog entry the check covers — one sandbox run and what its task costs: **billable**, plus the skill's own session, which is yours to run. The check creates nothing in the cloud of its own choosing (the entries it builds are the ones the catalog already lists) and the run's pull request and branch are left open for you to close. **OWNER-RUN, NOT RUN.** |
+| 501 | The slim base, reached by the one command that is the whole upgrade ([`docs/image-setup-skill/`](image-setup-skill/implementation-plan.md), its **Check 501** and task **IS13**; **IS4**'s base, and the rule that `fugaro update` is the whole upgrade): the installation's base pin, read before and after `fugaro update` — run by the owner at their own terminal with no `--yes`, so the rebuild of the checkout's workflow images is answered by them in its own confirmation — and then one run on the sandbox that reaches its `result.json`, with the record's `image.built_at` at or after the moment the update started — the start, not the end, because the update waits for its own rebuilds before it returns: a pin the update moved says nothing about a run until a job starts on an image the upgrade built, and one whose image predates the update is the reading that the rebuild was declined | See "Check 501" below; `bash scripts/live-checks/check-501.sh --sandbox <a sandbox repository checkout>` is the whole of it, its sibling test `scripts/live-checks/check-501_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** (`fugaro-dev`) and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call, and the update is refused in such a checkout); **no agent runs any step of it** | What `fugaro update` costs on your installation — among its steps, the rebuild of the checkout's workflow images, billable and asked for on its own — plus one sandbox run and what its task costs. The check writes no pin, no config and no policy of its own: the only write is the update, whose steps you answer. **OWNER-RUN, NOT RUN.** |
+| 292 | A catalog entry whose source names a build `context:` is built with the repository's files in it ([`docs/catalog-build-context/`](catalog-build-context/implementation-plan.md) §6, its **Check 292** and task **CB5**; that folder's **F22**, **F29**, **F30**, **F32** and **F33**, and **D1402**, **D1403**, **D1408** and **D1409**; the amendment it folds into is [`docs/project-image-catalog/context-design.md`](project-image-catalog/context-design.md), its §A5, §A6, §C3, §C4, §C5 and the fold-in at §11): one entry built from a repository's Dockerfile in a **subdirectory**, whose `COPY` reaches a file of the repository — the build the catalog could not run before this work — read back four ways: the built image **contains the copied file**, the record names **one** commit (`source_commit` and `context_commit` the same, and the image's `org.opencontainers.image.revision` that commit), the staged context **fires** the nightly decision with the `catalog-context` reason and the rebuild it submits is pinned to the staged commit, and after that rebuild the same entry decides **without** that reason. **What the plan's own step 4 cannot be run as written is the point of the section below:** the trigger's subject is the digest the operator's own copy **staged**, not the branch, so a pushed commit fires nothing by itself — the check is written against the code and says so | See "Check 292" below; **you** run it, on the **sandbox installation and the sandbox repository only, never `belong`**, from the sandbox repository's checkout, and **no agent runs any step of it** (there is **no script**: the check is the steps below) | One Cloud Build that runs (`fugaro image build <entry>`), one submitted-and-cancelled before its steps run (the staging that leaves the record behind), and the one rebuild the project's catalog check job submits when the entry fires: **all billable, and the rebuild is the point of the step**. Nothing is granted, no run is launched and no model is called, so there is no run spend. Two commits are pushed to the sandbox repository's branch and reverted (a third when step 5 loses its race with the build it cancels), and the entry, its staged objects, its record, its check state and its image are the check's own — the entry and its objects are removed in the Restore, the image is left in the shared registry (`fugaro image rm` never deletes one). **OWNER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -13001,6 +13004,170 @@ reading). A key the run never reached reads `FAIL — not reached`.
 **What waits on it.** **DS1.5** (the keep-warm heartbeat in the runner): a failed 511 stops it and
 returns to the owner as a decision, because the interval is what that task would otherwise assume.
 
+## Check 500: the image setup skill end to end (sandbox project `fugaro-dev` and the sandbox repository only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **IS13** of
+[docs/image-setup-skill/implementation-plan.md](image-setup-skill/implementation-plan.md) — its "Checks
+(reserved 500-509)" — and **run by you**: what it measures is a skill run in your own session and the
+images Cloud Build makes of what that skill proposed, and neither is something an offline run can answer.
+The check is `scripts/live-checks/check-500.sh` (its sibling test
+`scripts/live-checks/check-500_test.sh` drives it against fake `gcloud` and `fugaro` only), the owner
+types `bash scripts/live-checks/check-500.sh --sandbox <a sandbox repository checkout>`, and **no agent
+runs any step of it** — the skill is yours to run, and a check that ran it for you would be proposing the
+thing it measures. Nothing here goes near the dev installation: a project or region naming `belong` is
+refused by name before a single call, which is what **never `belong`** means on this row.
+
+**What it settles.** **D1900** — a repository's own `image:` key is ignored once the project's catalog
+decides the job's image, and a repository that carries a stale one is told so rather than refused — and
+**D1903** — the cap of four images is the skill's, which nothing in the CLI enforces. Both are read from
+the outside: the catalog the skill left, the builds the cloud makes of it, and one run that starts on the
+result.
+
+- **The proposal, read back rather than assumed.** `fugaro image ls --json` is the catalog as it stands —
+  the entries, their tags, the default and the digest each entry's last build recorded — and `fugaro image
+  survey --json` is the other half of the skill's own loop: the repositories, their signals and the
+  mapping. The check reads both and proposes nothing: it builds the entries the catalog already lists, and
+  it invents no entry of its own.
+- **The cap is a reading, not an assumption.** At most four entries. The skill stops grouping at four, the
+  catalog does not care, and nothing in the CLI refuses a fifth — so the count is kept here, and a project
+  whose catalog holds five is the finding D1903 says no code will make for you.
+- **The builds are the cloud's.** `fugaro image build` for each entry the check covers, through
+  **Cloud Build**: a local Docker build proves nothing about the entry's runtime contract or the account it
+  is built as, which is the whole reason the skill never builds locally. A catalog entry's Dockerfile is
+  built from the repository it belongs to and the CLI refuses a build from another repository by name, so
+  the check needs one checkout per entry: `CHECK500_CHECKOUT_<entry>` names them, every other entry is
+  built from `--sandbox`, and an entry with no checkout is a row the check could not measure rather than a
+  finding about the entry.
+- **The run is the reading.** One run is launched from the checkout of a repository the catalog covers, and
+  it is a run on a baked image: the record's `baked_commit` is the baked checkout's HEAD when the job
+  started, so a non-empty one is the outside evidence that the image carried the repository, which is what
+  makes the build worth paying for. It is read only where the project bakes at all — a project that bakes
+  nothing has nothing to show here — and the run has to reach its own `result.json`, because a launch on
+  its own says nothing about the image it started on.
+- **The stale block is a warning, not a refusal.** A second repository whose own `image:` block is stale is
+  where **D1900** is read: `fugaro update --repo <that checkout> --plan-only` prints one `warning:` line per
+  ignored key and names the entry that decides the job instead, and it writes nothing and changes nothing.
+  The check points at that repository with `--stale-repo`, which is the sandbox checkout unless you name
+  another one — a repository whose own `image:` block is stale is the subject, and the sandbox is only the
+  convenient default. A launch or an update that refuses such a repository instead of warning is the
+  finding: D1900's whole point is that it keeps working.
+
+**What a run costs.** One Cloud Build per catalog entry the check covers — at most four, each billable,
+and the build leases its own cost from the project's budget where the installation has one — plus one
+sandbox run and what its task costs, which is a real run with a real pull request. The check writes no
+catalog entry, no mapping and no switch: those are the skill's writes and yours, made in your own session.
+On disk it is one scratch directory, removed at the end. `CHECK500_SKIP_BUILDS=1` reads the catalog and
+launches the run without spending a build, which is what to use for a second pass.
+
+**The commands.**
+
+```sh
+bash scripts/live-checks/check-500.sh --dry-run
+bash scripts/live-checks/check-500.sh --sandbox <a sandbox repository checkout>
+bash scripts/live-checks/check-500.sh --sandbox <a sandbox repository checkout> --stale-repo <another checkout>
+```
+
+Progress goes to stderr and one `CHECK 500 RESULT` block goes to stdout at the end: paste that block here
+and nothing else. **Exit `0`** is every criterion that was measured holding; **`1`** is a measured
+criterion that did not hold, or a guard that stopped the check — a catalog holding more than four entries,
+an entry whose build recorded no digest, a run that refused, a stale repository told nothing; **`2`** is the
+check not being able to measure (a tool missing, the checkout not being one, the catalog or the record
+unreadable, the run never ending). A key the run never reached reads `FAIL — not reached`. The knobs are
+`CHECK500_DRY_RUN`, `CHECK500_KEEP_SCRATCH`, `CHECK500_SANDBOX`, `CHECK500_STALE_REPO`,
+`CHECK500_CHECKOUT_<entry>`, `CHECK500_TASK`, `CHECK500_RECIPE`, `CHECK500_SKIP_BUILDS`,
+`CHECK500_REGION` (us-east5: the guard that refuses a project or region naming `belong` reads it),
+`CHECK500_MAX_BUILDS` (4: the most Cloud Builds the check will spend, one per entry — an entry past it is
+not built and its build row fails, which is the same count as the skill's own cap),
+`CHECK500_BUILD_TIMEOUT_SECONDS` (1800), `CHECK500_RUN_TIMEOUT_SECONDS` (3600),
+`CHECK500_UPDATE_TIMEOUT_SECONDS` (900), `CHECK500_POLL_SECONDS` (15),
+`CHECK500_DOCTOR_TIMEOUT_SECONDS` (180), `CHECK500_CLI_TIMEOUT_SECONDS` (180) and
+`CHECK500_LAUNCH_TIMEOUT_SECONDS` (600).
+
+**What waits on it.** IS2 and IS8b — the two tasks of the folder that are still open pull requests — and
+the removal work the same reconciliation parked (R2-R10, D1900): this check is the first outside reading of
+the skill's own proposal on a project that is not the author's, and a finding here is what reopens either.
+
+## Check 501: the slim base, reached by the one command that is the whole upgrade (sandbox project `fugaro-dev` and the sandbox repository only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **IS13** of
+[docs/image-setup-skill/implementation-plan.md](image-setup-skill/implementation-plan.md) — its "Checks
+(reserved 500-509)" — and **run by you**: nothing below is a claim that the upgrade moves a base and a run
+starts on it, and what it measures is a real `fugaro update` at your own terminal followed by a real
+sandbox run. The check is `scripts/live-checks/check-501.sh` (its sibling test
+`scripts/live-checks/check-501_test.sh` drives it against fake `gcloud` and `fugaro` only), the owner types
+`bash scripts/live-checks/check-501.sh --sandbox <a sandbox repository checkout>`, and what it runs is the
+owner's own two commands in the owner's own session: run `fugaro update` in the sandbox checkout, then
+`fugaro run` from it, with the update's questions answered by you and by nobody else — **no agent runs any
+step of it**, and the check passes no `--yes` precisely so that you are the person it asks. A project or
+region naming `belong` is refused by name, and the update is refused in such a checkout — **never `belong`**
+is the first thing this row says.
+
+**What it settles.** That the slim base of this release is what an installation actually runs on, read in
+two steps rather than one: the base pin `fugaro update` leaves in the local config, and then a run whose
+own record says its image was built by the upgrade. The first alone is a claim about a config file;
+the second is the reading that a job starts on it.
+
+- **The pin, before and after.** `fugaro doctor --json` reports the installation the checkout belongs to
+  and the base pin it records (`project.base_images.base`). It is read twice — once as the check starts and
+  once after the update — because the one command is the whole upgrade: what it leaves is what the
+  installation is on. An installation whose config records no base pin is a finding here too, and it is the
+  same one doctor's own `local-config-base` check makes.
+- **The update is yours to answer.** `fugaro update`, run in the checkout the check was pointed at, with no
+  `--yes` and its output echoed to your terminal as it is written: its review, its Terraform and the
+  rebuild of the checkout's workflow images are answered by you in its own confirmation, and the check
+  never answers one for you. It keeps the transcript in the scratch directory and reads the exit status —
+  that is all. A failed update is a finding, and the rows below still say what the installation it left is
+  on, because that is the state a reader has to know about.
+- **The pin the update left.** Read again with the same command, and the row says which of the two happened:
+  the ref moved to this release's base, or the installation was already on it and there was nothing to move.
+  Neither is a finding; a config that records no base at all after the update is.
+- **The run is what proves it.** One sandbox run launched from the checkout the update converged, followed
+  with `fugaro runs ls --repo <the repository the launch named> --json` until the run is terminal — a record
+  read while a run is still working is whatever was there before — and then its `result.json`, read from
+  the runs bucket at the key that listing's own row gives (`runs/<the repository's slug>/<run>/result.json`,
+  where the slug is **one path segment** and not the `owner/name` the launch names) and checked against the
+  run id this check launched, because a record read by listing alone could be another run's.
+- **The image's own build time.** The record's `image.built_at` against the moment the update **started**:
+  at or after it, the job started on an image the upgrade built, which is the outside evidence that the base
+  pin the update left is what a run really starts on. Before it, the job ran the image the installation
+  already had — usually because the rebuild the update offered was declined — and that is the row that says
+  so. The start and not the end, because `fugaro update` waits for its own rebuilds before it returns: a
+  rebuilt image's build time is always inside the update's own window, so a comparison against the end would
+  read a run on the rebuilt image as a declined rebuild — failing exactly when the upgrade worked. A
+  record that carries no build time at all (an image built before the field existed, or a job running the
+  base image directly) is reported as a row the check could not date rather than as a finding.
+
+**What a run costs.** What `fugaro update` costs on your installation — among its steps, the rebuild of the
+checkout's base-derived workflow images (each is built FROM the installation's base), billable and asked for
+on its own — plus one sandbox run and what its task costs, with the pull request it opens. The check writes
+no pin, no config and no policy of its own: the only
+write is the update, whose steps you answer. On disk it is one scratch directory, removed at the end.
+`CHECK501_SKIP_UPDATE=1` measures the pin and the run without running the upgrade, which is what to use on
+a machine that has just been updated.
+
+**The commands.**
+
+```sh
+bash scripts/live-checks/check-501.sh --dry-run
+bash scripts/live-checks/check-501.sh --sandbox <a sandbox repository checkout>
+```
+
+The update runs in the foreground, so its questions and Ctrl-C reach it: that is the bound an interactive
+command should have, and there is no timeout knob for it. Progress goes to stderr and one `CHECK 501 RESULT`
+block goes to stdout at the end: paste that block here and nothing else. **Exit `0`** is every criterion
+that was measured holding; **`1`** is a measured criterion that did not hold, or a guard that stopped the
+check — a failed update, an installation with no base pin, a record that is not this run's, an image built
+before the update; **`2`** is the check not being able to measure (a tool missing, the checkout not being
+one, a read that did not answer, the run never ending). A key the run never reached reads `FAIL — not
+reached`. The knobs are `CHECK501_DRY_RUN`, `CHECK501_KEEP_SCRATCH`, `CHECK501_SANDBOX`, `CHECK501_TASK`,
+`CHECK501_RECIPE`, `CHECK501_SKIP_UPDATE`, `CHECK501_DOCTOR_TIMEOUT_SECONDS` (180),
+`CHECK501_RUN_TIMEOUT_SECONDS` (3600), `CHECK501_POLL_SECONDS` (15), `CHECK501_CLI_TIMEOUT_SECONDS` (180),
+`CHECK501_LAUNCH_TIMEOUT_SECONDS` (600) and `CHECK501_REGION` (us-east5).
+
+**What waits on it.** Nothing gates on it: it is the outside reading of the release's own upgrade path, and
+the one to take again whenever `fugaro update` changes what it pins or what it rebuilds — the rebuild the
+check dates the run's image against is the step an installation notices by hand.
+
 ## Check 410: the failure line, and a diagnosis with no setup (your own machine, your own installation; never `belong`; run by you; NOT RUN)
 
 **NOT RUN.** Written by task **T-DG10** of
@@ -13162,6 +13329,68 @@ child never starting, a row it could not read). A key the run never reached read
 
 **What waits on it.** Nothing gates on it: it is the outside reading of the two rules T-DG2 and T-DG7 are
 built from, and the one a person can take over the log that actually failed on their machine.
+
+## Check 292: a catalog entry whose source names a `context:` is built with the repository's files in it, and what its rebuild is pinned to (sandbox installation and sandbox repository only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **CB5** of [`docs/catalog-build-context/implementation-plan.md`](catalog-build-context/implementation-plan.md) §6 — the last thing that work owes, and not a gate on its release — with that folder's **F22**, **F29**, **F30** and **F32** and its **D1402**, **D1403**, **D1408** and **D1409**; the amendment it folds into is [`docs/project-image-catalog/context-design.md`](project-image-catalog/context-design.md), whose §A5, §A6, §C3, §C4, §C5 and §11 are the design of record. The rule is **built** — CB1–CB4 merged (CB4 is #2374) — and **no step of it has been run on a real installation yet**. It is **OWNER-RUN**: **no agent runs any step of it**, every step is yours, and **there is no script** — the check is the steps below. It carries **no secret-shaped value at all**: the Dockerfile copies a file the check wrote itself, and nothing any step prints is a credential.
+
+**What the check confirms.** One catalog entry whose source is a Dockerfile **in a subdirectory** with a `context:`, one build, one nightly decision, and four facts read back:
+
+- the entry publishes with **nothing new asked** of the operator, and the **copy** — not `fugaro update` — is what stages the definition, the pinned commit and the context's digest;
+- the built image **contains the copied file**: the `COPY` that reaches a file of the repository is the fact the whole feature is about, and a catalog build could not run it before this work;
+- the entry's record names **one** commit — `source_commit` and `context_commit` are the same value, both the commit the copy pinned — and the image's `org.opencontainers.image.revision` label is that same commit: the "one record of what was built" the issue's first bullet asks for;
+- the staged context **fires** the nightly decision with the `catalog-context` reason, the rebuild it submits is pinned to the **staged** commit, and the entry then converges — a second decision on the same entry carries no `catalog-context`, because the rebuild's record and the staged copy now agree.
+
+**Why step 5 is not the plan's own step 4, and why that is the reading this check exists to take.** The plan writes step 4 as "a commit that changes a file **under the context directory** and nothing else, pushed to the branch, makes the nightly catalog check decide `Rebuild` with the `catalog-context` reason — and a commit outside the context directory, with the entry's Dockerfile unchanged, does not". The second half is true of the code and the first is not: the project's catalog check job reads **no branch at all** — `internal/cli/image_check_catalog.go` reads two staged objects out of the runs bucket (`builds/catalog/<entry>/context-sha256` and `.../source-commit`) and never opens the provider, which is what keeps that job credential-less (D1401) — and a context entry's rebuild is pinned to the commit the copy staged, so a pushed commit fires **nothing** until a copy stages it and no build records it. The divergence is recorded in the design's fold-in (`context-design.md` §11) and in the PR that carried it, not smoothed over here; the check below reads the trigger where the code puts it.
+
+**One thing the entry must **not** be set to.** Do not mark the entry `--default` and do not give it a tag a sandbox repository's `needs:` names: this check launches **no run**, and an entry that covers a job would move that job's image and make the check read readiness and a redeployment it is not about.
+
+**What it costs, and what it leaves.** Three Cloud Builds, each reserved against the project's budget the way every build is: the one in step 3 that runs to `SUCCESS`, the `--no-wait` submission in step 5 that is cancelled before its record step (the staging is the point of it, and it bills for what it ran), and the **rebuild the check job itself submits** when the entry fires — that third one is the reading, not overhead. **No run is launched and no model is called**, so there is no run spend; nothing is granted, no secret is written, and no value any step prints is a credential. What is left behind is the check's own: two commits pushed to the sandbox branch (a third if step 5's race is lost), the entry, and its staged objects, record and check state — all reverted in the Restore — plus its image, which stays in the installation's shared registry because `fugaro image rm` never deletes one.
+
+1. **Cleanup first, and the state the Restore puts back.** In the sandbox checkout record: the sandbox repository's `fugaro.yaml` and the branch you push to, the project's catalog as it stands (`fugaro image ls`), the region, the sandbox's jobs (`gcloud run jobs list --region <region>`), the runs bucket (the project config's `runs_bucket`) and the repository's storage slug (`builds/<slug>/catalog/<entry>/` is where its record is; the slug is the one `fugaro doctor` or an existing `builds/` listing shows). **FACT:** that state, and the catalog's entries before this check adds one.
+
+2. **The entry, its `context:`, and the file its Dockerfile copies.** On the branch the copy reads — **pushed to the remote**, because the copy reads the provider and not your working tree — add a Dockerfile in a **subdirectory** and a file it copies out of the context:
+
+   ```
+   ci/Dockerfile:
+   FROM <the base the sandbox's own jobs run today>
+   COPY scripts/marker.sh /opt/team/scripts/marker.sh
+
+   ci/scripts/marker.sh:
+   check 292's marker
+   ```
+
+   **The subdirectory is load-bearing and it is the one thing this check's shape adds to the plan's**: `context: .` is legal and is the issue's own example, but a repository-root context makes a commit "outside the context" impossible to write, and the negative half of the reading needs one.
+
+   Then the entry, from the sandbox repository's checkout: `fugaro image add <name> --dockerfile <owner>/<sandbox repo>:ci/Dockerfile --tags context-check` — a tag no repository's `needs:` names, so the entry covers no job — which writes this machine's project config and builds nothing. Then add the member **by hand** to that entry's `source` in the same file: `context: ci/`. **No command writes it**: `fugaro image add` has no `--context` flag, and no other command writes the entry's `source.context` either, so this one member is an edit of the file. The project config decodes strictly (`internal/localcfg`'s `KnownFields(true)`), so `fugaro image ls` reading the entry back is what says the edit is a document this binary parses. Then `fugaro update`. **FACT:** `fugaro image ls`'s line for the entry. **FACT:** the published node's entry carries `context: ci/` — `fugaro project policy show --json` prints the node, and the member is under that entry's `source` — and **`fugaro update` staged nothing**: `gcloud storage ls "gs://<runs bucket>/builds/catalog/<entry>/"` names no object a build did not write. The plan's own step 1 has that the other way round; what stages the definition, the pinned commit and the context's digest is the build in step 3 (`internal/cli/catalog_copy.go`'s `writeCatalogDockerfile`, whose one caller is `fugaro image build`).
+
+   **A refusal here is the gate, not this check failing.** `fugaro update` publishes the node through the one function both doors take (`policyNodeForPublish`), and while `imageContextShipped` is false that build is refused with a sentence saying no released fugaro reads the key yet (`policyContextRefusal`, the same fact readiness reads). This check can only be run from a CLI at or after the release that flips it — D1403's release, and the flip is the commit that says so in its notes — so a run met by that refusal is a run on the release behind: take the current CLI and its `fugaro update`, and the node publishes. The refusal is worth pasting back anyway: it is the gate being read on a real installation, which is the half of CB5's own work that has no live step otherwise.
+
+3. **The build, and the copied file in the image.** `fugaro image build <name>` from the sandbox repository's checkout — the Cloud Build, which asks you nothing: it prints the entry it is about to build and reserves the build's estimated cost against the project's budget (the typed confirmation is gone from every session). **FACT:** the `built <image>@<digest>` line. Then the reading the issue is about, in the image that build wrote — the entry's `catalog-<name>` in the installation's shared registry, and `gcloud auth configure-docker <region>-docker.pkg.dev` first if your daemon needs the registry login:
+
+   ```sh
+   docker run --rm --entrypoint cat <the built image> /opt/team/scripts/marker.sh
+   ```
+
+   **FACT:** the file's own bytes, printed out of the image the catalog built — the `COPY` of a file **in the context** that no catalog build could reach before this work — and they are the bytes of the commit you pushed.
+
+4. **One commit, in the record and in the label.** Read the entry's record out of the runs bucket — `gcloud storage cat "gs://<runs bucket>/builds/<slug>/catalog/<entry>/image.json"` — and the image's own label, which the build step stamps with the commit it built (`--label "org.opencontainers.image.revision=$$commit"`, `images/derived/cloudbuild.yaml`). **FACT:** `source_commit` and `context_commit` are **the same commit**, and it is the commit you pushed; `context_sha256` is a 64-hex string, not empty and **not** the Dockerfile's `definition_sha256`; `template_salt` is there and is not empty. **FACT:** that label — `docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' <the built image>` — is the same commit, one record of what was built and not two that can disagree.
+
+5. **The staged copy, and the decision it fires.** Push a commit that changes a file **under `ci/`** and nothing else — the marker file itself is the simplest (`ci/scripts/marker.sh`, one changed line) — so the entry's Dockerfile bytes are unchanged and the only thing that moved is the context. Then stage a copy whose build does **not** record it: `fugaro image build <name> --no-wait`, and cancel that build before it finishes — `gcloud builds cancel <the build id --no-wait printed> --region <region>`. The staging happens before the submission and the record is written by the build's own last step, so cancelling after the submission and before the record step is exactly the state the trigger is about: the staged digest and commit are the **new** commit, and the record still names the previous one. **Losing that race is not a failed step**: a build that finished wrote the new record, the staged copy and the record agree, and the next decision is quiet — push one more commit under `ci/` and run the same two commands. Either way the entry converges. Then run the project's own catalog check job once, as its schedule does:
+
+   ```sh
+   gcloud run jobs execute fugarochk-catalog --region <region> --wait
+   gcloud logging read 'resource.type=cloud_run_job AND resource.labels.job_name=fugarochk-catalog AND resource.labels.location=<region> AND jsonPayload.event="catalog-check"' \
+     --limit=50 --freshness=15m --format='value(jsonPayload.decision, jsonPayload.reasons, jsonPayload.message)'
+   ```
+
+   The filter and the format matter here: the job prints one JSON line per entry on **stdout**, Cloud Run takes a JSON line as a structured entry, so it lands in **`jsonPayload`** and not in `textPayload` — `--format='value(textPayload)'` prints empty rows. That is the field the installation's own alert is built on (`deploy/terraform/gcp/modules/installation/alert.tf`, `jsonPayload.event="catalog-check"`), and it is why the read above selects the event rather than grepping a stream.
+
+   **FACT:** the entry's JSON line from that run — `"decision":"rebuild"` with `"reasons"` carrying **`catalog-context`** (it may carry `base` as well if the installation's base image moved since step 3; what must be there is the context's reason), and its `"message"` naming the Cloud Build it submitted. **FACT:** the rebuild's own record — `context_commit` and `source_commit` both the **new** commit, `context_sha256` the new digest — and the rebuilt image's `org.opencontainers.image.revision`, the same new commit. Then run the check job once more, with the same two commands. **FACT:** no `catalog-context` for the entry — the staged copy and the record agree again, so the entry converges on what was staged — which is where the schedule's own promise ends today, per the paragraph above.
+
+6. **Restore.** Push the sandbox branch back — the commits this check made go with it — remove the entry (`fugaro image rm <name>`; it refuses while a job still runs the entry, which is why step 2 keeps it off every `needs:`) and publish with `fugaro update`, then `fugaro update --repo <the sandbox repository>` so its jobs are back on the config step 1 recorded. The entry's staged objects, its record and its check state are the check's own and live under `builds/`: `gcloud storage rm "gs://<runs bucket>/builds/catalog/<entry>/*"` and `gcloud storage rm "gs://<runs bucket>/builds/<slug>/catalog/<entry>/*"` remove them — the second is the record and the `check.json` beside it, which is where the check's own back-off lives — so the next nightly run has nothing of this entry to decide and no back-off of the check's to read. **Do not remove `builds/image-lock.json`**: that lock is the project's, shared with every other entry, and it is not this check's to delete. The **image** stays in the installation's shared registry: `fugaro image rm` never deletes one, and deleting it is not this check's to do. **FACT:** `fugaro image ls` reads the catalog as step 1 recorded it, and `fugaro doctor` is quiet.
+
+**Paste back:** every `FACT` line above — the entry's `fugaro image ls` line, the built image's reference and digest, the record's `source_commit`, `context_commit`, `context_sha256` and `template_salt`, the image's `org.opencontainers.image.revision`, the check job's two lines for the entry with their `decision` and `reasons`, and the copied file's bytes as the image holds them — and **never a secret and never a token value**: this check prints none, and the one file it reads out of the image is one it wrote. Until this check runs, the feature is built and **unverified live**: the two things no hermetic test can hold are a real provider's tree read at a real commit (the tree read and the digest it produces) and a real Cloud Build carrying a context through the clone step and `docker build --file` — which is exactly what steps 3 to 5 measure. **Never run any step against `belong`**: this is the sandbox installation and the sandbox repository only, and no agent runs any step of it.
 
 ## Check 230: the author, the committer and the trailers, on GitHub and on Bitbucket (two sandbox repositories carrying `git.author: launcher`, a third with no such key, and their forges; never `belong`; run by you; NOT RUN)
 

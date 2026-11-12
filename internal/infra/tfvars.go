@@ -339,6 +339,40 @@ type CredentialsServiceSpec struct {
 	URL string `json:"url,omitempty"`
 }
 
+// IntakeSpec is the installation root's var.intake (D1931, DS2.2, DS4.1): the
+// secrets intake's own account and Cloud Run service, and the image it runs.
+// It is not the outputs' IntakeService (spec.go), which is what a reader gets
+// back: that object carries the name and the region, and this one carries what
+// the module needs to create them.
+//
+// One release, one pin, two services: the intake is a subcommand of the
+// released binary (`fugaro intake serve`, internal/cli), so its image is the
+// same digest-pinned reference the credentials service's block carries and no
+// resolve of its own — the module's own container sets the args that pick the
+// subcommand and no command of its own, which is how the one image serves both.
+//
+// The block is written by `fugaro update`'s own installation stage
+// (internal/cli's ensureIntakeBlock), never composed from the local config the
+// way CredentialsServiceSpec is: the intake reads no bundle and no database —
+// its account holds two conditioned roles and one object read — so the
+// installation facts the credentials service refuses over are not its, and
+// every run of init rewrites the root's tfvars from a spec that carries this
+// key none, which is why prepare carries it forward (CarriedIntake).
+type IntakeSpec struct {
+	AccountID string `json:"account_id"`
+	Service   string `json:"service"`
+	Image     string `json:"image"`
+	// URL is the service's OWN URL, the audience every caller's Google ID token
+	// is minted for — the one thing that binds such a token to THIS service. It
+	// is empty on the apply that CREATES the service, for the credentials
+	// service's reason: Cloud Run assigns the URL, Terraform refuses an
+	// expression that reads the service's own uri from inside its resource, and
+	// the revision then carries the module's unassigned placeholder (an
+	// .invalid host no ID token is ever minted for) until the same stage reads
+	// the URL back from the module's own output and applies it.
+	URL string `json:"url,omitempty"`
+}
+
 // CredentialsJob is one job of the installation as the credentials service
 // names it: the git provider, the repository and the workflow, where
 // workflow is the JOB's own name — a repository that runs one workflow under
@@ -406,6 +440,17 @@ const (
 	// secrets set` stores a value under it, because the service's document is
 	// written by `fugaro creds set NAME` alone (C1.11, C1.25).
 	CredentialsBundleName = "creds-bundle"
+	// IntakeAccountID and IntakeServiceName are the secrets intake's own two
+	// names (D1931, DS2.2): the account that alone creates, versions and
+	// deletes the dynamic containers, and the Cloud Run service that runs it.
+	// The service's name is what a caller derives the intake's URL from
+	// (internal/cli's secretsIntakeServiceURL) and what the launcher invoker
+	// grants are made on, so it is one literal and not a per-installation
+	// choice. internal/infra/tf's IntakeAccountID is the same literal on the
+	// cover's side, which is what lets the cover hold the account the plan
+	// creates for it.
+	IntakeAccountID   = "fugaro-intake"
+	IntakeServiceName = "fugaro-intake"
 )
 
 // credsImageRE is the image form the module's own validation admits
@@ -1050,6 +1095,167 @@ func carriedCredentialsService(vars, prev []byte, rewrite func(block map[string]
 		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
 	}
 	doc["credentials_service"] = svc
+	return sortedJSON(doc)
+}
+
+// Intake is the secrets intake's block for an installation that has none:
+// the module's own account and service names, running image.
+//
+// The image is the release's, and it is the one the credentials service's
+// block carries: see IntakeSpec — one pin, two services, and the digest form
+// is the module's own rule (var.intake's validation), so a caller that hands
+// in a tag writes a document the plan refuses.
+func Intake(image string) IntakeSpec {
+	return IntakeSpec{AccountID: IntakeAccountID, Service: IntakeServiceName, Image: image}
+}
+
+// SetIntake returns the installation root's tfvars vars with intake set to
+// spec, and every other entry byte-for-byte what it was. It is
+// SetCredentialsService's read-modify-write of the ONE key and for the same
+// reason: the document on disk carries the run's discovery — the live project
+// secrets it found, its legacy registry, its imports — and rebuilding it from a
+// spec would plan that discovery away.
+func SetIntake(vars []byte, spec IntakeSpec) ([]byte, error) {
+	raw, err := json.Marshal(spec)
+	if err != nil {
+		return nil, err
+	}
+	return setVarsKey(vars, "intake", raw)
+}
+
+// IntakeOf returns the block the installation root's tfvars carry for the
+// secrets intake, and false when they carry none (the variable is off), an
+// empty one, or one whose service or image is missing — a block that names no
+// service is not one a URL could be filled into, and the callers that ask are
+// the ones whose next step is a write into it.
+//
+// It is what tells an ordinary run whether this installation has the intake at
+// all, which is a question the run's own config cannot answer: the block is the
+// record of what the earlier apply created.
+func IntakeOf(vars []byte) (IntakeSpec, bool, error) {
+	if vars == nil {
+		return IntakeSpec{}, false, nil
+	}
+	doc, err := varsDoc(vars)
+	if err != nil {
+		return IntakeSpec{}, false, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
+	}
+	block, _ := doc["intake"].(map[string]any)
+	if block == nil {
+		return IntakeSpec{}, false, nil
+	}
+	spec := IntakeSpec{}
+	spec.AccountID, _ = block["account_id"].(string)
+	spec.Service, _ = block["service"].(string)
+	spec.Image, _ = block["image"].(string)
+	spec.URL, _ = block["url"].(string)
+	if spec.Service == "" || spec.Image == "" {
+		return IntakeSpec{}, false, nil
+	}
+	return spec, true, nil
+}
+
+// IntakeURLOf returns the intake.url the installation root's tfvars carry, and
+// "" when they carry none — either because there is no intake at all or because
+// it is the apply that created the service and the module's unassigned
+// placeholder is on the revision.
+//
+// It is what an ordinary run compares the module's output against: the URL is
+// the audience of the intake's callers' ID tokens, and a run that wrote the
+// service without it would leave a revision that admits nobody, however healthy
+// it looks.
+func IntakeURLOf(vars []byte) (string, error) {
+	doc, err := varsDoc(vars)
+	if err != nil {
+		return "", err
+	}
+	block, _ := doc["intake"].(map[string]any)
+	url, _ := block["url"].(string)
+	return url, nil
+}
+
+// SetIntakeURL returns vars with intake.url set to url and every other entry —
+// of the document and of the intake's own block — unchanged (the credentials
+// service's own read-modify-write, SetCredentialsServiceURL).
+//
+// A document with no intake block is refused rather than given one: the URL is
+// one service's, and writing it into a block this function invented would turn
+// the intake on — its account, its two roles, its service and its invoker
+// grants — for an installation whose run never resolved an image for it.
+func SetIntakeURL(vars []byte, url string) ([]byte, error) {
+	doc, err := varsDoc(vars)
+	if err != nil {
+		return nil, err
+	}
+	block, _ := doc["intake"].(map[string]any)
+	if block == nil {
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json carries no intake to set the service's URL on")
+	}
+	block["url"] = url
+	doc["intake"] = block
+	return sortedJSON(doc)
+}
+
+// SetIntakeImage returns vars with the intake's image replaced by image, and
+// every other entry byte-for-byte what it was — SetCredentialsServiceImage's
+// re-pin, on the block that runs the same reference.
+//
+// It is how `fugaro update`'s credentials-service stage moves the intake onto
+// this release with the service it shares the pin with: the two are one
+// reference, and a run that moved only one would leave the intake running the
+// release behind's process against the node this run published — the state
+// credentials.tf's h2c decision and the intake's own node reads both turn on.
+func SetIntakeImage(vars []byte, image string) ([]byte, error) {
+	if !credsImageRE.MatchString(image) {
+		return nil, fmt.Errorf("the secrets intake's image %q must be pinned by digest (ending in @sha256: and 64 lower-case hex digits)", image)
+	}
+	doc, err := varsDoc(vars)
+	if err != nil {
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
+	}
+	block, _ := doc["intake"].(map[string]any)
+	if block == nil {
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json carries no intake to set the image of")
+	}
+	block["image"] = image
+	doc["intake"] = block
+	return sortedJSON(doc)
+}
+
+// CarriedIntake returns vars with the intake entry the document prev carried,
+// when vars carry none of their own — CarriedCredentialsService's carry, on the
+// second variable this side writes and the spec never holds.
+//
+// The block is taken exactly as it is found, its URL included, because the URL
+// is the audience: a run that rebuilt the block from the release's pin alone
+// would put the module's unassigned placeholder back on the revision and stop
+// admitting every caller until the same run's audience fill put it back.
+//
+// prev is that document — infra.Workdir.PrevVars, or the tfvars the workdir
+// holds now, which is where the installation stage's own ensureIntakeBlock
+// wrote the entry a few steps before prepare rewrites the file. An entry is
+// carried forward present or absent: an installation that has the intake keeps
+// it across an ordinary run's rewrite, and one that never had it is unchanged
+// rather than given one by a run that resolved no image for it.
+func CarriedIntake(vars, prev []byte) ([]byte, error) {
+	if prev == nil {
+		return vars, nil // no workdir held one: nothing to carry
+	}
+	previous, err := varsDoc(prev)
+	if err != nil {
+		// A tfvars that cannot be read is not a reason to write a plan that
+		// drops the intake: fail rather than carry nothing forward.
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
+	}
+	block, ok := previous["intake"]
+	if !ok || block == nil {
+		return vars, nil
+	}
+	doc, err := varsDoc(vars)
+	if err != nil {
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
+	}
+	doc["intake"] = block
 	return sortedJSON(doc)
 }
 

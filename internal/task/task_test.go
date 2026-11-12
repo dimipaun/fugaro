@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/escalation"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rigor"
 )
@@ -1708,6 +1709,105 @@ func TestFollowUpOfRefusesAnEmptyRun(t *testing.T) {
 	} {
 		if _, err := Parse([]byte("{" + head + `,"follow_up_of":` + doc + "}")); err != nil {
 			t.Errorf("Parse refused %s: %v", doc, err)
+		}
+	}
+}
+
+// TestTaskModelGradeRoundTrip: the grade a task names (Spec.ModelGrade, E4)
+// survives a marshal and a parse, and a spec that names none carries no key
+// at all — the property every new task field has, since the release before it
+// reads the bytes and refuses an unknown member.
+//
+// The refusals beside it are G11's first half: the field takes one of the
+// ladder's two grade names and never a model or a credential, so a spec that
+// names one is refused where it is written rather than resolved into a call
+// the project never chose.
+func TestTaskModelGradeRoundTrip(t *testing.T) {
+	s := Spec{Version: 1, RunID: "20261112-101500-a1b2", Repo: "acme/server", Ref: "main", Task: "x",
+		ModelGrade: escalation.Strongest}
+	data, err := s.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"model_grade": "strongest"`) {
+		t.Fatalf("model_grade did not survive the marshal: %s", data)
+	}
+	got, err := Parse(data)
+	if err != nil {
+		t.Fatalf("parse of %s: %v", data, err)
+	}
+	if got.ModelGrade != escalation.Strongest {
+		t.Errorf("model_grade = %q, want %q", got.ModelGrade, escalation.Strongest)
+	}
+	// A spec that names no grade is byte-identical to what the release before
+	// the field wrote: no key, not an empty one.
+	none := s
+	none.ModelGrade = ""
+	plain, err := none.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(plain), "model_grade") {
+		t.Errorf("a spec with no grade carries the key: %s", plain)
+	}
+	if _, err := Parse(plain); err != nil {
+		t.Errorf("a spec with no grade is refused: %v", err)
+	}
+	for _, doc := range []string{
+		`"anthropic/claude-opus-5.5"`, // a model ID, which is what G11 forbids here
+		`"openrouter-main"`,           // a credential or pool name
+		`"Strong"`,                    // the name, spelled as an enum is not
+		`"strongest "`,                // a trailing space, which a hand-written task carries
+	} {
+		if _, err := Parse([]byte(`{"version":1,"run_id":"20261112-101500-a1b2","repo":"acme/server","ref":"main","task":"x","model_grade":` + doc + `}`)); err == nil {
+			t.Errorf("model_grade %s: Parse accepted a spec that names no grade", doc)
+		} else if !strings.Contains(err.Error(), "model_grade") {
+			t.Errorf("model_grade %s: refusal %q does not mention the field", doc, err)
+		}
+	}
+}
+
+// TestTaskImportanceRoundTrip: a follow-up's importance (FollowUpOf.Importance,
+// D2040) survives a marshal and a parse, and the field left out is legal and
+// carries no key — a follow-up filed by hand, and every one filed before the
+// field, has no importance rather than a default one, because empty is "nobody
+// classified this" and not "minor".
+func TestTaskImportanceRoundTrip(t *testing.T) {
+	s := Spec{Version: 1, RunID: "20261112-101500-a1b2", Repo: "acme/server", Ref: "main", Task: "x",
+		FollowUpOf: &FollowUpOf{Run: "20261111-090000-3c4d", Keys: []string{"9f2a1c"}, Importance: ImportanceImportant}}
+	data, err := s.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"importance": "important"`) {
+		t.Fatalf("importance did not survive the marshal: %s", data)
+	}
+	got, err := Parse(data)
+	if err != nil {
+		t.Fatalf("parse of %s: %v", data, err)
+	}
+	if got.FollowUpOf == nil || got.FollowUpOf.Importance != ImportanceImportant {
+		t.Errorf("follow_up_of.importance = %+v, want %q", got.FollowUpOf, ImportanceImportant)
+	}
+	// The field left out: legal, and no key on the wire.
+	none := s
+	none.FollowUpOf = &FollowUpOf{Run: s.FollowUpOf.Run, Keys: s.FollowUpOf.Keys}
+	plain, err := none.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(plain), "importance") {
+		t.Errorf("a follow-up with no importance carries the key: %s", plain)
+	}
+	if _, err := Parse(plain); err != nil {
+		t.Errorf("a follow-up with no importance is refused: %v", err)
+	}
+	for _, doc := range []string{`"urgent"`, `"Important"`, `"major"`, `"important "`} {
+		_, err := Parse([]byte(`{"version":1,"run_id":"20261112-101500-a1b2","repo":"acme/server","ref":"main","task":"x","follow_up_of":{"run":"20261111-090000-3c4d","importance":` + doc + `}}`))
+		if err == nil {
+			t.Errorf("importance %s: Parse accepted a value outside the vocabulary", doc)
+		} else if !strings.Contains(err.Error(), "importance") {
+			t.Errorf("importance %s: refusal %q does not mention the field", doc, err)
 		}
 	}
 }

@@ -196,7 +196,11 @@ var notFields = []string{
 	"tool_error",        // a value of a log entry's event
 	"claude_accounts",   // a local-config key (never in --json output: it is operator-only and never published)
 	"agent.oauth_token", // a fugaro.yaml key, not a JSON output field
-	"base_rev",          // a key of the patch document a session sends, not a field of any --json output
+	// The two IAM lists a machine's own project config holds: `fugaro user
+	// ls --json` names its own copies run_operators and admins, and the
+	// working skill names the config keys to say what `user add` writes.
+	"terraform.operators", "terraform.admins",
+	"base_rev", // a key of the patch document a session sends, not a field of any --json output
 }
 
 var fieldTokenRE = regexp.MustCompile("`([a-z][a-z0-9]*(?:(?:_[a-z0-9]+)+|(?:\\.[a-z][a-z0-9_]*(?:\\[\\])?)+)(?:\\.[a-z][a-z0-9_]*)*)`")

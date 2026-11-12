@@ -1619,12 +1619,9 @@ func TestUpdateManagedLeavesComputeOwnerRun(t *testing.T) {
 // the one a PERSON at the terminal on a managed project gets.
 //
 // The shape is therefore that person: the installation root planned for a
-// change the cover refuses to apply (an authoritative IAM resource, D1549's
-// kind, which no release of Fugaro's own tree writes), and the fourth read of
-// its saved plan — the credentials stage's own — refused. The plan is not a
-// removal the owner's own --allow-delete admits, which is what keeps this
-// refusal the plan's instead of the owner's command (initflow's
-// GateRefusedDelete, stage.go). The two arms are the
+// change §4.1 refuses to apply (an authoritative IAM resource, D1549's kind:
+// a bucket removal now leaves the owner a command, T9), and the fourth read of
+// its saved plan — the credentials stage's own — refused. The two arms are the
 // entry's own answer and its mutation: under the gate the step is left for the
 // owner and the run carries on, and with the entry dropped the same refusal
 // stops the run instead and leaves the owner nothing.
@@ -1651,8 +1648,8 @@ func TestUpdateManagedGatesTheCredentialsServiceStage(t *testing.T) {
 				if stopped := stoppedStage(got); stopped != initflow.CredentialsService {
 					t.Fatalf("the run stopped at %s, want the credentials-service stage:\n%s", stopped, got)
 				}
-				if left := leftFor(got, initflow.CredentialsService, initflow.LeftRefused); left != "" {
-					t.Errorf("a stage this door does not gate left the owner the gate's own step, which is the answer the entry exists to give:\n%s", got)
+				if strings.Contains(got, "left for you ("+initflow.CredentialsService+", ") {
+					t.Errorf("a stage this door does not gate left the owner a step, which is the answer the entry exists to give:\n%s", got)
 				}
 				return
 			}
@@ -1662,24 +1659,18 @@ func TestUpdateManagedGatesTheCredentialsServiceStage(t *testing.T) {
 			if s := stoppedStage(got); s != "(the summary names no failed stage)" {
 				t.Fatalf("the run failed at %s: the gate's refusal is the owner's step, not a failure:\n%s", s, got)
 			}
-			// LeftRefused and not LeftCommand: what the gate leaves the owner
-			// is D1012's refusal step (internal/initflow's stage.go answers a
-			// gate verdict with it), not a command to run — the plan this stage
-			// holds carries no removal the owner's own --allow-delete admits,
-			// so there is no command of theirs that clears what it refuses.
+			// LeftRefused and not LeftCommand: the plan carries no removal, so
+			// the owner's --allow-delete admits nothing of it (gateDeleteLeft
+			// finds no listable address) and what the gate leaves is D1012's
+			// refusal step, a verdict with no command to run.
 			left := leftFor(got, initflow.CredentialsService, initflow.LeftRefused)
 			if left == "" {
 				t.Fatalf("the credentials-service stage was not left for the owner:\n%s", got)
 			}
-			if !strings.Contains(left, "managed gate refused this step") {
-				t.Errorf("the step left for the owner does not say the gate refused it:\n%s", left)
-			}
-			// And what it refused is named where a refusal's own words live:
-			// the block above is the brief, and the whole sentence — with the
-			// address the rule was read at — is in the log its line names
-			// (D1352, and leftFor's own note on the two).
-			if whole := got + namedLog(t, got); !strings.Contains(whole, "google_storage_bucket_iam_binding.runs") {
-				t.Errorf("the refusal does not name the resource the plan would write, so it is not this step's refusal:\n%s", whole)
+			for _, want := range []string{"managed gate refused this step", "an authoritative IAM resource"} {
+				if !strings.Contains(left, want) {
+					t.Errorf("the step left for the owner does not name %q:\n%s", want, left)
+				}
 			}
 		})
 	}
@@ -1707,7 +1698,12 @@ func credentialsStageRun(t *testing.T) (string, int) {
 	admitted := map[string]any{"stdout": planJSON(t, change("module.installation.google_service_account.scheduler", "create"))}
 	refused := map[string]any{"stdout": planJSON(t, iamBindingCreate())}
 	r.script["show@installation"] = []any{admitted, admitted, admitted, refused}
-	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"credentials_service": credentialsServiceOutput()})}
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
+		"credentials_service": credentialsServiceOutput(),
+		// The intake this run deploys: its block is written by the same stage,
+		// and its audience comes back from the same outputs.
+		"intake": intakeServiceOutput(),
+	})}
 	r.save(t)
 	r.managedRuns(t, initProjectName, initProject)
 	isolateGateCredentials(t)

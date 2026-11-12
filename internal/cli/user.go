@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	accesslib "github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -81,26 +81,39 @@ const userInstallLine = "brew install dimipaun/tap/fugaro"
 func newUserCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "user",
-		Short: "List, add and remove the installation's operators and admins",
-		Long: `List the installation's operators and admins, and add a person to one of
-the two lists or remove them from it.
+		Short: "Grant, revoke and list the installation's roles, and its two IAM lists",
+		Long: `Grant a person a role at a scope, take one away, and list who holds what.
 
-The two lists are ` + userListSource + `. They are what the admin's next
-fugaro update applies to the installation, so a change made here takes effect
-then, and nothing is applied by this command: no IAM grant is written, no
-repository is touched and no invitation is sent.
+grant and revoke are the roles model's own door: one person, one role and the
+scope the role is held at, written into the installation's grants node at
+` + accesslib.PathNode + `. That node is the installation's record of who may do
+what, and its next fugaro update derives the installation's IAM lists from it.
+The command reads the node with its ETag, judges the change (a grant is a
+subset of the grantor's own scope, a revoke needs admin at a scope covering
+the pair, and the installation keeps at least one project admin), and writes
+conditionally on that ETag, so a change another admin made in the meantime is
+re-read rather than overwritten. Writing the node needs
+roles/firebasedatabase.admin, which the project's owners, editors and
+terraform.budget_admins hold.
 
-A member is one person, written as user:<email>. Only user: members are
-written here: domain:, group:, serviceAccount:, allUsers,
-allAuthenticatedUsers and wildcards are refused (reconciliation F42 — the
-operator and admin roles carry the token signer's own role, so a domain:
-member would grant a whole domain the right to mint an operator's identity).
-fugaro setup --operator/--admin remains the door for a whole list, group
-members included.
+ls lists the stored pairs, the repositories a pattern matches among those this
+machine knows, and — with --repo — the role each person holds in one
+repository.
 
-Both keys are derived from the installation's grants node, and this command
-writes this machine's file alone: a member added here is dropped by that
-machine's next fugaro update, which says so.
+add and rm are the older door, and they change THIS MACHINE's own copy of the
+two IAM lists — ` + userListSource + `. They are what an installation
+with no Firebase budget backend has: there is no grants node there, so the two
+lists are the roles. On an installation that has a node, a member written here
+alone is dropped by that machine's next fugaro update, which says so; use grant
+and revoke.
+
+Every member every subcommand writes is one person, written as user:<email>:
+domain:, group:, serviceAccount:, allUsers, allAuthenticatedUsers and
+wildcards are refused (reconciliation F42 — the operator and admin roles carry
+the token signer's own role, so a domain: member would grant a whole domain the
+right to mint an operator's identity, and a grant cannot be matched against a
+caller the CLI cannot read). fugaro setup --operator/--admin remains the door
+for a whole list, group members included.
 
 add and rm read the installation's own outputs first and refuse when they
 disagree with this machine's config: a list written here replaces the
@@ -108,50 +121,7 @@ installation's on the next fugaro update, so a config that has not seen the
 members another admin added would drop them.`,
 		Args: cobra.NoArgs,
 	}
-	cmd.AddCommand(newUserLsCmd(), newUserAddCmd(), newUserRmCmd())
-	return cmd
-}
-
-// newUserLsCmd is `fugaro user ls`: the two lists, and nothing else.
-func newUserLsCmd() *cobra.Command {
-	var o cloudOptions
-	var asJSON bool
-	cmd := &cobra.Command{
-		Use:   "ls",
-		Short: "List the installation's operators and admins",
-		Long: `List the members of ` + userListSource + `, as they are written there now.
-
-It is this machine's own copy of the two lists: no member is fetched from the
-cloud and none is granted, and no Terraform runs. What the installation itself
-holds can differ — a change another admin applied, or one made here and not
-yet applied by a fugaro update — and only the outputs would tell, which is the
-read add and rm make.
-
-A machine with no project config of its own is refused rather than answered
-with two empty lists: the lists are not in the shared config, and selection's
-fallback to it is a fetch of the runs bucket that only this machine's own file
-would have made unnecessary.`,
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			// A coding agent may run ls, and selection on a machine with no
-			// project config of its own fetches the shared config from the
-			// runs bucket with the person's credentials before the refusal
-			// below: GODEBUG=http2debug would print them to stderr.
-			if err := refuseHTTP2Debug(os.Getenv); err != nil {
-				return err
-			}
-			sel, lc, err := selectProject(cmd.Context(), o)
-			if err != nil {
-				return err
-			}
-			if err := userLocalConfig(sel, lc); err != nil {
-				return err
-			}
-			return printUserLists(cmd.OutOrStdout(), lc, asJSON)
-		},
-	}
-	addCloudFlags(cmd, &o)
-	cmd.Flags().BoolVar(&asJSON, "json", false, "print machine-readable output")
+	cmd.AddCommand(newUserLsCmd(), newUserGrantCmd(), newUserRevokeCmd(), newUserAddCmd(), newUserRmCmd(), newUserOffboardCmd())
 	return cmd
 }
 
@@ -573,42 +543,13 @@ func userInvite(w io.Writer, who string, lc *localcfg.Config) {
 	fmt.Fprintf(w, "  the repository's fugaro.yaml names the project; no setup is needed\n")
 }
 
-// userListDocVersion is `fugaro user ls --json`'s document version. Version 1
-// carried the two lists under the keys the roles were spelled with before this
-// release — `launchers` for the run-starters and `operators` for the admins —
-// and both keys are gone: this document's names (`run_operators`, `admins`) are
-// names it never carried, so no list of version 1 is published under a name a
-// version-1 reader already reads, and the two removals are what the version is
-// for (CLAUDE.md, "a field never changes meaning"). Version 1 is the shape that
-// document had.
-const userListDocVersion = 2
-
-// userListDoc is `fugaro user ls --json`: the two lists of one installation, as
-// the human listing prints them. `run_operators` is the run-starters' list under
-// a name this document never carried: `operators` is the key version 1 held the
-// ADMINS under, so the role's bare word cannot be reused here without handing a
-// version-1 reader the other list. Both arrays are seeded empty and never null:
-// "there are none" is a fact and a null is not (the console's own availability
-// rule for a JSON document).
-type userListDoc struct {
-	Version      int      `json:"version"`
-	Project      string   `json:"project"`
-	GCPProject   string   `json:"gcp_project"`
-	RunOperators []string `json:"run_operators"`
-	Admins       []string `json:"admins"`
-}
-
-// printUserLists prints the two lists: the human listing, or the document.
-func printUserLists(w io.Writer, lc *localcfg.Config, asJSON bool) error {
-	if asJSON {
-		enc := json.NewEncoder(w)
-		enc.SetIndent("", "  ")
-		return enc.Encode(userListDoc{
-			Version: userListDocVersion,
-			Project: lc.Name, GCPProject: lc.GCPProject,
-			RunOperators: userMembers(lc.Terraform.Operators), Admins: userMembers(lc.Terraform.Admins),
-		})
-	}
+// printUserLists prints the two lists of this machine's own config, as they are
+// written there now. It is the listing of an installation with no grants node —
+// no Firebase budget backend, so nothing has migrated them and nothing derives
+// them (RS3's accessNoBackend) — and `fugaro user ls` on such an installation
+// prints it: the roles are these two lists there, and a listing that answered
+// "the node holds nothing" would be a lie about who may do what.
+func printUserLists(w io.Writer, lc *localcfg.Config) error {
 	for _, l := range []struct {
 		name    string
 		members []string

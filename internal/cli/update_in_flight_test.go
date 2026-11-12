@@ -340,6 +340,7 @@ func TestUpdateInFlightLineNamesTheCredentialsServiceWindow(t *testing.T) {
 		r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
 		r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
 			"credentials_service": credentialsServiceOutput(),
+			"intake":              intakeServiceOutput(),
 		})}
 		r.save(t)
 		startRunInFlight(t, r)
