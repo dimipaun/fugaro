@@ -184,15 +184,25 @@ func TestScopesMatchDesignDoc(t *testing.T) {
 		"agent.crafts.senior-review.access":   InRepo,
 		"agent.crafts.security-review.model":  InProject | InRepo,
 		"agent.crafts.security-review.access": InRepo,
-		"agent.review_rounds":                 InProject | InRepo | InOverride,
-		"agent.max_budget_usd":                InProject | InRepo | InOverride,
-		"agent.instructions":                  InRepo,
-		"agent.review":                        InRepo,
-		"agent.max_output_tokens.coder":       InRepo,
-		"agent.max_output_tokens.reviewer":    InRepo,
-		"agent.max_run_tokens":                InRepo,
-		"agent.first_line_review":             InProject | InRepo,
-		"agent.first_line_rounds":             InProject | InRepo,
+		// The escalation ladder's two model grades (docs/outer-loop-escalation
+		// E2, D2039). Both halves of both grades are the project's, and this is
+		// the one key of the crafts' kind whose access the project layer may
+		// name: a repository's entry for a grade is dropped and recorded by the
+		// merge rather than honoured (G3), so the project layer is where a
+		// grade's credential or pool can be chosen at all (whyGrade).
+		"model_grades.strong.model":        InProject | InRepo,
+		"model_grades.strong.access":       InProject | InRepo,
+		"model_grades.strongest.model":     InProject | InRepo,
+		"model_grades.strongest.access":    InProject | InRepo,
+		"agent.review_rounds":              InProject | InRepo | InOverride,
+		"agent.max_budget_usd":             InProject | InRepo | InOverride,
+		"agent.instructions":               InRepo,
+		"agent.review":                     InRepo,
+		"agent.max_output_tokens.coder":    InRepo,
+		"agent.max_output_tokens.reviewer": InRepo,
+		"agent.max_run_tokens":             InRepo,
+		"agent.first_line_review":          InProject | InRepo,
+		"agent.first_line_rounds":          InProject | InRepo,
 		// The per-level review block (L1.3, D722): four keys per level, each
 		// its own row because either layer may set any one of them.
 		"agent.levels.l1.model":    InProject | InRepo,

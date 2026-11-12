@@ -583,7 +583,14 @@ var jsonCellRE = regexp.MustCompile("`([A-Za-z_][A-Za-z0-9_]*)`")
 // coordinator v2 C3's `coordinator show`, whose document and command are both
 // under ee/ — and it is a heading of its own rather than a part of §6.13 because
 // the two document different reads of different shapes. §6.16 is coordinator v2
-// C4's `coordinator intents`, under ee/ for the same reason.
+// C4's `coordinator intents`, under ee/ for the same reason. §6.24 is the
+// coordinator's roadmap group (P9f): `ee/coordinator/cli/roadmap.go` and its
+// login file are where the document and the commands are, and the fields it
+// names are the ones the front door's own outcome document carries, so this
+// build can no more name them than it can the JSON of the five sections above.
+// It has no ee-side counterpart yet, for §6.22's reason: P9f writes no
+// contract test, and the checks the console's own read will want are the ones
+// the task that lands that read writes.
 //
 // Every entry names its command as well as its number. A number alone exempts
 // whatever section is later written at that number: the graph's own section
@@ -597,6 +604,7 @@ var consoleMovedSections = []string{
 	"### 6.15 `fugaro coordinator show",
 	"### 6.16 `fugaro coordinator intents",
 	"### 6.22 `fugaro graph",
+	"### 6.24 `fugaro coordinator roadmap",
 	"## 4. `fugaro report --json`",
 }
 

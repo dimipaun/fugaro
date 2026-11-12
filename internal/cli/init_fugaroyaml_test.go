@@ -438,7 +438,9 @@ func TestRepoStageAnchorUnreadableRecord(t *testing.T) {
 // The bucket itself failing to open: a warning per workflow, never a failure.
 func TestRepoStageAnchorBucketFailure(t *testing.T) {
 	s, out, _ := anchorRig(t, anchorLC(), withAnchor(anchorYAML()), "")
+	prev := openRecordBucket
 	openRecordBucket = func(context.Context, string) (*blobx.Bucket, error) { return nil, errors.New("boom") }
+	t.Cleanup(func() { openRecordBucket = prev })
 	if _, err := s.Apply(t.Context(), initflow.Env{Yes: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -454,8 +456,9 @@ func TestRepoStageAnchorFakeEndpointsSkipTheRecordRead(t *testing.T) {
 	lc.Endpoints.NoAuth = true
 	s, out, _ := anchorRig(t, lc, withAnchor(anchorYAML()), "")
 	old := skipGSOnFakeEndpoints
+	prevRecord := openRecordBucket
+	t.Cleanup(func() { skipGSOnFakeEndpoints, openRecordBucket = old, prevRecord })
 	skipGSOnFakeEndpoints = true
-	t.Cleanup(func() { skipGSOnFakeEndpoints = old })
 	openRecordBucket = func(context.Context, string) (*blobx.Bucket, error) {
 		t.Error("the record bucket was opened against fake endpoints")
 		return nil, errors.New("opened")
