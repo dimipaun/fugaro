@@ -11883,7 +11883,9 @@ service account needs to write the log the token's email claim is read out of (`
 CLOUD_LOGGING_ONLY`, as Fugaro's own image builds do). **Minutes at the terminal, not money**: one
 build and one Cloud Run service that is idle by the time you look. A service or an account of those two
 names that was **already there** is a hard stop before anything is created — this check never adopts,
-grants on or deletes what it did not create.
+grants on or deletes what it did not create — and so is a filtered **list that could not be read**: an
+expired session or a transient API error is not the answer "it is not there", and read that way the
+check would go on over a service or an account of its own names and then delete it.
 
 **The assertions, and the order they are read in.** `gcloud run services get-iam-policy` is read
 **before** anything is called and a public member (`allUsers` or `allAuthenticatedUsers`) in it stops
@@ -11894,10 +11896,12 @@ else ends the run before the throwaway account is created or a token is sent —
 the only thing that sees it. After the grant, the service's own policy is read **back**: it must name
 the throwaway account and nobody else, so a binding that did not land is a stop rather than a 403 the
 block would report as the account having been refused. The build's own record is read for its
-`serviceAccount` field as well as its status, so a 200 earned by another identity cannot pass, and the
-step's line — one line, `CHK195 status=… email=…` — is read out of Cloud Logging, retried while
-ingestion catches up. A build whose line cannot be read is a **failure**, not a pass: nothing about the
-grant was measured.
+`serviceAccount` field as well as its status, so a 200 earned by another identity cannot pass: that
+field is a **resource name** (`projects/<project>/serviceAccounts/<account>`, carrying the address the
+build was submitted with or the account's numeric `uniqueId`), and it is read as the account it ends in
+rather than compared with the address. The step's own line — one line, `CHK195 status=… email=…` — is
+read out of Cloud Logging, retried while ingestion catches up; a build whose line cannot be read is a
+**failure**, not a pass, because nothing about the grant was measured.
 
 **What you type** (the full text is in
 [secrets-brokering/check195-steps.md](secrets-brokering/check195-steps.md)):

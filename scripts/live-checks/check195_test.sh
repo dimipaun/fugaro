@@ -100,6 +100,9 @@ with open(os.path.join(LOG, "gcloud.calls"), "a") as fh:
 
 args = sys.argv[1:]
 CALLER = "fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com"
+# The numeric id the API may put in a build's serviceAccount field instead of the
+# address the build was submitted with.
+UNIQUE_ID = "109876543210987654321"
 
 
 def flag(name, default=""):
@@ -131,6 +134,7 @@ def state_set(k, v):
 # with exit 2. A misspelled or invented flag therefore cannot hide in any call.
 ALLOWED = {
     ("iam", "service-accounts", "list"): ("--project", "--filter", "--format"),
+    ("iam", "service-accounts", "describe"): ("--project", "--format"),
     ("iam", "service-accounts", "create"): ("--project", "--display-name", "--quiet"),
     ("iam", "service-accounts", "delete"): ("--project", "--quiet"),
     ("projects", "get-iam-policy"): ("--format",),
@@ -201,6 +205,10 @@ if sub == ("run", "deploy"):
         die("this check's service must be IAM-only")
     state_set("svc", "1")
 elif sub == ("run", "services", "list"):
+    if mode == "service-list-fails":
+        # A list that failed, with nothing on stdout: the shape that must never
+        # be read as "not there".
+        die("run.services.list was refused: the session has expired")
     if mode == "service-there" or state_get("svc") == "1":
         emit(SVC)
 elif sub == ("run", "services", "describe"):
@@ -227,8 +235,18 @@ elif sub == ("run", "services", "delete"):
 
 # ---------------- the throwaway account and the project's own IAM policy
 elif sub == ("iam", "service-accounts", "list"):
+    if mode == "account-list-fails":
+        die("iam.serviceAccounts.list was refused: the session has expired")
     if mode == "account-there" or state_get("account") == "1":
         emit(CALLER)
+elif sub == ("iam", "service-accounts", "describe"):
+    if "uniqueId" not in flag("--format"):
+        die("unknown --format")
+    if len(positionals) < 4 or positionals[3] != CALLER:
+        die("unknown service account: %s" % " ".join(positionals[3:]))
+    if state_get("account") != "1":
+        die("unknown service account: %s" % CALLER)
+    emit(UNIQUE_ID)
 elif sub == ("iam", "service-accounts", "create"):
     if mode == "account-create-fails":
         die("iam.serviceAccounts.create denied on resource")
@@ -278,7 +296,12 @@ elif sub == ("builds", "submit"):
         state_set("build", "FAILURE\tStep #0: the step exited with non-zero status: 1")
     else:
         state_set("build", "SUCCESS\t")
-    state_set("buildsa", flag("--service-account").split("/serviceAccounts/")[-1])
+    # The account the build ran as, recorded the way the real API reports it: the
+    # RESOURCE NAME the build was submitted with, "projects/<project>/
+    # serviceAccounts/<account>", not the bare address -- and, where the API
+    # resolved the address, the account's numeric uniqueId.
+    state_set("buildsa", "projects/fugaro-dev/serviceAccounts/" + UNIQUE_ID if mode == "build-sa-unique-id"
+              else flag("--service-account"))
     if has("--async"):
         emit("fake-build-1")
 elif sub == ("builds", "describe"):
@@ -558,6 +581,9 @@ test_happy_path() {
   expect_contains "$out" "FACT unauthenticated-request: PASS — an unauthenticated GET on the service's own URL was refused with 401" "happy path: the probe"
   expect_contains "$out" "FACT invoker-grant: PASS" "happy path: the grant, read back"
   expect_contains "$out" "FACT build: PASS" "happy path: the build"
+  # The build's own record reports the account it ran as as a resource name; the
+  # row says which one, so a reader can check the reading by hand.
+  expect_contains "$out" "its own record's serviceAccount field reads 'projects/fugaro-dev/serviceAccounts/fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com'" "happy path: the build row names the field it read"
   expect_contains "$out" "FACT call: PASS" "happy path: the call"
   expect_contains "$out" "fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com" "happy path: the token's email claim is printed"
   expect_contains "$out" "FACT service-deleted: PASS" "happy path: the service is gone"
@@ -637,6 +663,41 @@ test_an_account_already_there_is_a_hard_stop() {
   expect_absent "$(cat "$dir/logs/gcloud.calls")" "run deploy" "account there: nothing was deployed"
 }
 
+# The guard the two tests above rest on: existence is read from a LIST, and a
+# list that FAILED is not the answer "it is not there". Read as absent, the run
+# would go on over a leftover fugaro-chk195 — deploying onto a name that is not
+# this check's and, worse, deleting it in the Restore: exactly what the guard and
+# its "it is not this check's" stops exist to prevent.
+test_a_service_list_that_cannot_be_read_stops_the_run() {
+  local dir=$work/svclistfail
+  prepare "$dir"
+  run195 "$dir" FAKE_GCLOUD_MODE=service-list-fails
+  expect_status "$status" 1 "service list failed: the verdict"
+  expect_contains "$err" "a failed call is not the answer" "service list failed: the stop"
+  expect_contains "$err" "gcloud run services list --project=fugaro-dev --region=us-east5" "service list failed: how to read it by hand"
+  local calls
+  calls=$(cat "$dir/logs/gcloud.calls")
+  expect_absent "$calls" "run deploy" "service list failed: nothing was deployed over the name"
+  expect_absent "$calls" "run services delete" "service list failed: nothing was deleted"
+  expect_absent "$calls" "service-accounts create" "service list failed: nothing else was created"
+}
+
+# And the same for the account: a failed list read as "not there" would have the
+# run create nothing, adopt the account that IS there, grant on it and delete it.
+test_an_account_list_that_cannot_be_read_stops_the_run() {
+  local dir=$work/aclistfail
+  prepare "$dir"
+  run195 "$dir" FAKE_GCLOUD_MODE=account-list-fails
+  expect_status "$status" 1 "account list failed: the verdict"
+  expect_contains "$err" "a failed call is not the answer" "account list failed: the stop"
+  expect_contains "$err" "gcloud iam service-accounts list --project=fugaro-dev --filter=email:fugaro-chk195-caller@" "account list failed: how to read it by hand"
+  local calls
+  calls=$(cat "$dir/logs/gcloud.calls")
+  expect_absent "$calls" "run deploy" "account list failed: nothing was deployed"
+  expect_absent "$calls" "iam service-accounts delete" "account list failed: nothing was deleted"
+  expect_absent "$calls" "builds submit" "account list failed: no build was submitted"
+}
+
 # The grant is read back from the service's OWN policy before the build: a
 # binding that did not land would otherwise turn into a 403 the block would
 # report as the account having been refused, which is a different fact.
@@ -690,6 +751,24 @@ test_a_build_that_ran_as_another_account_is_a_failure() {
   expect_status "$status" 1 "another build account: the verdict"
   expect_contains "$out" "FACT build: FAIL" "another build account: the row"
   expect_contains "$out" "ran as somebody-else@fugaro-dev.iam.gserviceaccount.com" "another build account: the account it ran as"
+}
+
+# The other spelling of the same reading, and the one a real project is most
+# likely to hand back: Cloud Build reports the serviceAccount field as a RESOURCE
+# NAME, and where it resolved the address it carries the account's numeric
+# uniqueId instead. Compared raw, that would report a build that ran as this
+# check's own account as another identity -- a FAIL on the reading S4 stops on --
+# so the reading reduces the field and, for the numeric form, reads the account's
+# own uniqueId.
+test_a_build_read_back_by_its_unique_id_is_a_pass() {
+  local dir=$work/uniqueid
+  prepare "$dir"
+  run195 "$dir" FAKE_GCLOUD_MODE=build-sa-unique-id
+  expect_status "$status" 0 "uniqueId read-back: the verdict"
+  expect_contains "$out" "FACT build: PASS" "uniqueId read-back: the build ran as the throwaway account"
+  expect_contains "$out" "FACT call: PASS" "uniqueId read-back: the call"
+  expect_contains "$(cat "$dir/logs/gcloud.calls")" "iam service-accounts describe fugaro-chk195-caller@fugaro-dev.iam.gserviceaccount.com" "uniqueId read-back: the uniqueId is read from the account itself"
+  expect_absent "$out" "FACT build: FAIL" "uniqueId read-back: not reported as another identity"
 }
 
 # The build's own line is where the email claim is read from. If it cannot be
@@ -797,10 +876,13 @@ t test_every_advertised_knob_is_read
 t test_happy_path
 t test_a_service_already_there_is_a_hard_stop
 t test_an_account_already_there_is_a_hard_stop
+t test_a_service_list_that_cannot_be_read_stops_the_run
+t test_an_account_list_that_cannot_be_read_stops_the_run
 t test_a_grant_that_does_not_land_stops_before_the_build
 t test_a_call_the_service_refuses_is_a_failure
 t test_a_token_for_another_account_is_a_failure
 t test_a_build_that_ran_as_another_account_is_a_failure
+t test_a_build_read_back_by_its_unique_id_is_a_pass
 t test_a_build_whose_line_was_not_read_is_a_failure
 t test_a_grant_that_fails_stops_before_the_build
 t test_a_service_that_cannot_be_deleted_is_a_failure

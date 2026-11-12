@@ -72,6 +72,11 @@ worth knowing by name:
   `fugaro-chk195-caller`) — a hard stop before anything is created: the check never adopts, grants on
   or deletes what it did not create. Look at it, delete it yourself if you know it is a leftover of an
   earlier attempt, and run again.
+- **A list that cannot be read** — the two existence reads above are filtered **lists**, and a list
+  that failed (an expired session, a transient API error, a permission your account does not hold) is
+  a stop of its own, never the answer "it is not there": read that way, the check would go on over a
+  service or an account it did not create and then **delete** it. The stop names the exact list to read
+  by hand.
 - **The grant does not land** (`invoker-grant`) — the service's own policy is read back after the
   binding and must name the throwaway account and nobody else. A binding that did not land is a stop
   rather than a 403 the block would report as the account having been refused, which is a different

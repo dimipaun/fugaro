@@ -486,6 +486,30 @@ field_of() { # field_of TEXT NAME: the value of NAME= in TEXT, or nothing
   printf '%s' "$1" | tr ' ' '\n' | sed -n "s/^$2=//p" | head -n 1
 }
 
+# names_the_caller RESOURCE: whether a build's own serviceAccount field names the
+# throwaway account. Cloud Build reports that field as a RESOURCE NAME —
+# "projects/<project>/serviceAccounts/<account>" — rather than the bare address
+# the build was submitted with, and <account> is the address where the API kept
+# it and the account's numeric uniqueId where it resolved it. Comparing the raw
+# field with the address would report a build that ran as this check's own
+# account as another identity: a false FAIL on the reading S4's build exception
+# rests on. So the field is reduced to its last segment, and a numeric one is
+# read against the account's own uniqueId — which the API will give only for an
+# account that exists, so a build that ran as somebody else still fails.
+names_the_caller() {
+  local v uid
+  v=$(printf '%s' "$1" | tr -d '\r' | sed -e 's/[[:space:]]*$//')
+  v=${v##*/}
+  if [ "$v" = "${CALLER_EMAIL:?}" ]; then return 0; fi
+  case "$v" in
+  "" | *[!0-9]*) return 1 ;;
+  esac
+  uid=$(gcloud iam service-accounts describe "${CALLER_EMAIL:?}" --project="${P:?}" \
+    --format='value(uniqueId)' 2>/dev/null | tr -d '\r' | grep -v '^$' | head -n 1 || true)
+  if [ -n "$uid" ] && [ "$v" = "$uid" ]; then return 0; fi
+  return 1
+}
+
 # sleep_bg: an interruptible wait, so a Ctrl-C during it ends the run at once
 # rather than after the sleep.
 sleep_bg() {
@@ -753,8 +777,12 @@ step_build() {
   done
   # The account the build RAN as, read back from the build's own record rather
   # than taken from the line above: a build that ran as anything else would make
-  # the 200 below a fact about another identity.
+  # the 200 below a fact about another identity. The field is a resource name, so
+  # it is READ as one (names_the_caller) and kept raw for the rows: the raw text
+  # is what a reader sees in `gcloud builds describe`.
   account=$(gcloud builds describe "$BUILD_ID" --project="${P:?}" --format='value(serviceAccount)' 2>/dev/null | tr -d '\r' | head -n 1 || true)
+  local ran_as_caller=no
+  if names_the_caller "$account"; then ran_as_caller=yes; fi
 
   # The build's own line, read whether or not the build passed: the step prints
   # its answer BEFORE it exits non-zero, so a refused call carries both the
@@ -767,15 +795,15 @@ step_build() {
   code=$(field_of "$got" status)
   email=$(field_of "$got" email)
 
-  if [ "$status" = SUCCESS ] && [ "$account" = "$CALLER_EMAIL" ]; then
-    fact build PASS "build ${BUILD_ID} ran as ${CALLER_EMAIL} and ended SUCCESS in about ${waited} s (read back by its status and its own serviceAccount field, not by streaming its log)"
+  if [ "$status" = SUCCESS ] && [ "$ran_as_caller" = yes ]; then
+    fact build PASS "build ${BUILD_ID} ran as ${CALLER_EMAIL} — its own record's serviceAccount field reads '${account}' — and ended SUCCESS in about ${waited} s (read back by its status and that field, not by streaming its log)"
   elif [ "$status" != SUCCESS ]; then
     local said
     said=$(printf '%s\n' "$(cat "$SCRATCH/build-log.txt" 2>/dev/null || true)" | tr -d '\r' \
       | grep -v '^[[:space:]]*$' | tail -n 4 | tr '\n' ' ' | tr -s ' ' | redact | cut -c1-500 || true)
     fact build FAIL "build ${BUILD_ID} (as ${CALLER_EMAIL}) ended ${status} after about ${waited} s: ${detail:-no failure detail}. Its own last lines, for context: ${said:-none read}. Read the whole log with 'gcloud builds log ${BUILD_ID} --project=${P}'. A step that was refused by the front end (403) is the reading this check exists for: the row below carries the status the step got. The account and the service are deleted by this run's Restore"
   else
-    fact build FAIL "build ${BUILD_ID} ended SUCCESS but its own record says it ran as ${account:-nobody this reading can name}, not as ${CALLER_EMAIL}: a 200 earned by another identity is not a statement about the grant this check made. Read 'gcloud builds describe ${BUILD_ID} --project=${P}'"
+    fact build FAIL "build ${BUILD_ID} ended SUCCESS but its own record says it ran as ${account:-nobody this reading can name}, not as ${CALLER_EMAIL}: a 200 earned by another identity is not a statement about the grant this check made. Read 'gcloud builds describe ${BUILD_ID} --project=${P}' — its serviceAccount field is a resource name, and this reading is of the account it ends in"
   fi
 
   case "$code" in
@@ -809,7 +837,7 @@ print_plan() {
   say "  [network] gcloud run services get-iam-policy ${SVC} --format=json  (read back: the account, and nobody else, may invoke it)"
   say "  [local] a ${GRANT_SECONDS} s wait for the grant to take effect"
   say "  [network, writes] gcloud builds submit --project=${P} --no-source --config=${SCRATCH}/cloudbuild.yaml --service-account=projects/${P}/serviceAccounts/${CALLER_EMAIL} --async (nothing is staged anywhere: the build has no source, and the installation's gs://${P}_cloudbuild is not touched)"
-  say "  [network] gcloud builds describe <build id> --project=${P}, every 10 s until the build ends, then once more for its serviceAccount field"
+  say "  [network] gcloud builds describe <build id> --project=${P}, every 10 s until the build ends, then once more for its serviceAccount field — a RESOURCE NAME: this reading reduces it to the account it ends in (the bare address, or the account's numeric uniqueId, which then costs one gcloud iam service-accounts describe) so that a build that ran as somebody else still fails and a build that ran as this check's own account is not reported as another identity"
   say "  [network] gcloud logging read 'resource.type=\"build\" resource.labels.build_id=\"<build id>\"' --project=${P}  (the build's own line: retried while Cloud Logging catches up)"
   say "  [the build itself, which is the point of the check] one step in ${IMAGE}: mint an ID token for the service's URL from the build's own metadata server (http://metadata.google.internal/…/default/identity?audience=<the service URL>&format=full), call the service with it, print CHK195 status=<code> email=<the token's email claim> — never the token — and fail the step when the answer was not 200"
   say "and its Restore (also from the exit trap) would run:"
