@@ -59,29 +59,63 @@ func TestSettingsEscalationKeysRefusedFromAgentSession(t *testing.T) {
 	}
 }
 
-// TestSettingsEscalationLooseningIsTheTypedForm: three of the ladder's keys are
-// the wider direction at a *lower* figure, and the fourth — the cost ceiling —
+// TestSettingsEscalationLooseningIsTheTypedForm: four of the ladder's keys are
+// the wider direction at a *lower* figure, and the fifth — the cost ceiling —
 // at a higher one. The classification is the write path's own answer, read here
 // from the dry run the console draws its dialog from, and the tightening
 // direction is the ordinary write beside it.
+//
+// The rows with no `old` are the first write: a file that states no escalation
+// block is not a file with nothing to lower, because what a run gets today is
+// the shipped table (settingsEscalationBase). Their figures are read off that
+// table — 9 h and three runs before rung 2, 12 h of ceiling, the factor 0.5 —
+// and the `seed` rows state the block's own scalar for a member write that
+// names no member.
 func TestSettingsEscalationLooseningIsTheTypedForm(t *testing.T) {
 	for _, tc := range []struct {
 		key, old, new string
+		seed          string // the file's own block, where it is not this one key
 		widening      bool
 	}{
-		{"escalation.r2_after_hours", "6", "2", true},
-		{"escalation.r2_after_hours", "6", "12", false},
-		{"escalation.r2_after_attempts", "4", "1", true},
-		{"escalation.r2_after_attempts", "4", "9", false},
-		{"escalation.r3_after_hours", "18", "4", true},
-		{"escalation.r3_after_hours", "18", "30", false},
-		{"escalation.cost_ceiling", "40", "80", true},
-		{"escalation.cost_ceiling", "40", "20", false},
-		{"escalation.modes.pro.r2_after_hours", "9", "3", true},
-		{"escalation.modes.pro.r2_after_hours", "9", "14", false},
+		{"escalation.r2_after_hours", "6", "2", "", true},
+		{"escalation.r2_after_hours", "6", "12", "", false},
+		{"escalation.r2_after_attempts", "4", "1", "", true},
+		{"escalation.r2_after_attempts", "4", "9", "", false},
+		{"escalation.r3_after_hours", "18", "4", "", true},
+		{"escalation.r3_after_hours", "18", "30", "", false},
+		{"escalation.cost_ceiling", "40", "80", "", true},
+		{"escalation.cost_ceiling", "40", "20", "", false},
+		{"escalation.modes.pro.r2_after_hours", "9", "3", "", true},
+		{"escalation.modes.pro.r2_after_hours", "9", "14", "", false},
+		// First writes into a file that states no escalation block.
+		{"escalation.r2_after_hours", "", "1", "", true},
+		{"escalation.r2_after_hours", "", "30", "", false},
+		{"escalation.r2_after_attempts", "", "1", "", true},
+		{"escalation.r2_after_attempts", "", "9", "", false},
+		{"escalation.r3_after_hours", "", "1", "", true},
+		{"escalation.r3_after_hours", "", "30", "", false},
+		// A mode's own member over the shipped row for that mode: POC's 3 h.
+		{"escalation.modes.poc.r2_after_hours", "", "1", "", true},
+		{"escalation.modes.poc.r2_after_hours", "", "6", "", false},
+		// A member write over a block that states its scalar and no member.
+		{"escalation.modes.poc.r2_after_hours", "", "2", "escalation:\n  r2_after_hours: 6\n", true},
+		{"escalation.modes.poc.r2_after_hours", "", "10", "escalation:\n  r2_after_hours: 6\n", false},
+		// The critical-path factor is the fourth key whose lower figure is the
+		// wider one, and 0.5 is what a run scales by today.
+		{"escalation.critical_path_factor", "0.5", "0.1", "", true},
+		{"escalation.critical_path_factor", "0.5", "0.9", "", false},
+		{"escalation.critical_path_factor", "", "0.1", "", true},
 	} {
-		t.Run(tc.key+"/"+tc.new, func(t *testing.T) {
-			settingsWriteHomeWith(t, "escalation:\n"+escalationFixtureLine(tc.key, tc.old))
+		t.Run(tc.key+"/"+tc.old+"/"+tc.new, func(t *testing.T) {
+			switch {
+			case tc.seed != "":
+				settingsWriteHomeWith(t, tc.seed)
+			case tc.old != "":
+				settingsWriteHomeWith(t, "escalation:\n"+escalationFixtureLine(tc.key, tc.old))
+			default:
+				// The file carries no escalation block at all.
+				settingsWriteHome(t)
+			}
 			noTerminal(t)
 			doc := settingsDryRunDoc(t, "settings", "set", tc.key, tc.new, "--layer", "local")
 			if doc.Widening != tc.widening {

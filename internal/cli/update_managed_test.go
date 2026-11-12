@@ -1662,8 +1662,8 @@ func TestUpdateManagedGatesTheCredentialsServiceStage(t *testing.T) {
 			// carries a removal (the runs bucket), and a removal is the owner's
 			// own decision rather than the gate's, so the step is the
 			// --allow-delete command and not D1012's "nothing here is yours to
-			// type or to run" refusal (internal/cli/update_managed.go's
-			// removalAdmits).
+			// type or to run" refusal (gateDeleteLeft, the
+			// initflow.GateRefusedDelete arm of update_managed.go).
 			left := leftFor(got, initflow.CredentialsService, initflow.LeftCommand)
 			if left == "" {
 				t.Fatalf("the credentials-service stage was not left for the owner:\n%s", got)

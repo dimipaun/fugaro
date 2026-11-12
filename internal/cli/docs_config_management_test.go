@@ -673,7 +673,7 @@ var cfmGateRows = []cfmGateRow{
 
 // cfmGateFamilies ties a row's first cell to the family command the tree
 // already names for it: `settingsFamilyCommands` is what refuses a write and
-// points its key at that family (`internal/cli/settings_set.go:536`), so a row
+// points its key at that family (`internal/cli/settings_set.go:537`), so a row
 // spelled some other way would be a table whose command no refusal answers
 // with. A row extends its family's own spelling -- `fugaro rigor set` is the
 // spelling itself, `fugaro secrets rm` adds a subcommand to `fugaro secrets` --
