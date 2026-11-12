@@ -1,19 +1,24 @@
 package runner
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
@@ -68,6 +73,120 @@ const (
 	// so the one definition lives there and the two cannot drift.
 	BudgetTokenEnv = gitops.BudgetTokenEnv
 )
+
+// SlipEnv is the variable a run reads its slip's id from: the launcher asks
+// the credentials service for a slip and hands the job its id here (DS1.4,
+// internal/cli's envSlip), and nothing else writes it. A job without it is
+// the run of an installation whose service was not asked for one, and the run
+// proceeds on the path it took before the slip existed.
+//
+// It is spelled here and aliased there rather than closed over, because the
+// two halves are one name: the launcher cannot import this package, so the
+// one definition is the reader's.
+const SlipEnv = "FUGARO_SLIP"
+
+// slipHold is the slip this run took, and the beat that keeps the service
+// that serves it warm while the run lives. id is the name the launcher was
+// granted — public by design, it is in the job's environment and the agent can
+// read it (F22, G3) — and secret is the claim's own credential, which lives
+// here and in the service's memory and nowhere else: not in the environment,
+// not in a log line, not in the record.
+type slipHold struct {
+	id     string
+	secret string
+	// cancel ends the beat and done is closed when its goroutine has
+	// returned, so a caller that waits on it knows nothing of the run is
+	// still in flight. Both are written once, by startSlipBeat, and cleared
+	// by stopSlipBeat; a hold that has not been stopped has both set.
+	cancel context.CancelFunc
+	done   chan struct{}
+	// beatSaid is whether the run has written its one line about a beat that
+	// did not land (beatSlip), so a service that stays unreachable is stated
+	// once rather than every interval. Guarded by slipMu, which the beat's
+	// goroutine and the run both hold.
+	beatSaid bool
+}
+
+// slipAnswer is what one call to the claim route answered: the status, which
+// is a decision whether or not the body was read, and the body itself.
+type slipAnswer struct {
+	status int
+	body   []byte
+}
+
+// The retry of the run's own calls to the credentials service: the claim and,
+// after it, every keep-warm beat. The spec's resilience rule is that a job
+// retries its credential and proxy requests with backoff, and this is where
+// the run's own are retried — the beat with them, since a beat is the same
+// call. What the gateway makes of a model call is not retried here and never
+// (internal/gateway's sendRetryingOnce says why: the service retries inside
+// one answer, a repeated call is a second spend, and an unreachable service is
+// D143's halt).
+//
+// The waits grow, and they are short on purpose: what they step over is a
+// service that is cold-starting, restarting or briefly rate-limited, not an
+// outage — an outage is the grace of the budget session and the run's own
+// stage retry. They are vars so a test measures the backoff instead of
+// spending it.
+var (
+	slipRetryDelays = []time.Duration{250 * time.Millisecond, 1 * time.Second, 4 * time.Second}
+	slipRetryWait   = func(ctx context.Context, d time.Duration) error {
+		t := time.NewTimer(d)
+		defer t.Stop()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-t.C:
+			return nil
+		}
+	}
+)
+
+// The run's own calls have bounds of their own: a service that hangs must not
+// hold the claim past the run's start, and a beat that hangs must not outlive
+// the interval it was sent for.
+const (
+	slipCallTimeout = 30 * time.Second
+	// slipClaimBudget bounds the whole claim, the retries and the waits
+	// between them together. The retry's own waits are short, so it is a
+	// service that accepts the connection and never answers that would
+	// otherwise hold the run's start for one client timeout per attempt; the
+	// run's start is what this bound is for, and what it costs a service that
+	// is merely slow is the run as it was before the slip existed.
+	slipClaimBudget = 90 * time.Second
+	// maxSlipAnswerBytes bounds what the claim route may answer, as the
+	// launcher's grant call bounds its own answer (internal/cli's
+	// maxSlipAnswerBytes): the service is another writer, and an unbounded
+	// answer is one this run renders into memory.
+	maxSlipAnswerBytes = 16 << 10
+	// maxSlipExecutionBytes is internal/credsvc's own bound on the execution
+	// name a claim may report (slip.go's maxSlipExecutionBytes, unexported
+	// there): the service refuses the whole call over a longer value, so this
+	// run reports none rather than a name the service will not read.
+	maxSlipExecutionBytes = 128
+	// maxSlipSecretBytes is the bound the service reads a presented claim
+	// secret by (internal/credsvc's maxHeaderTokenBytes, unexported there):
+	// the same bound as the token this run presents beside it.
+	maxSlipSecretBytes = 512
+)
+
+// slipBeatEvery is how often the beat asks the service to read the slip back
+// (D1934). It is the budget session's own cadence rather than a second number:
+// one request per 15 s is what kept an instance up in Check 511, and the
+// registry's beat keeps the same interval. A var so a test does not wait for
+// it.
+var slipBeatEvery = budget.DefaultHeartbeatEvery
+
+// slipClient is the client the run's own calls to the credentials service are
+// made with: it never follows a redirect, because the call carries the job's
+// own Google ID token and a followed 307 or 308 would carry it to whatever
+// host the Location named (internal/cli's slipClient and internal/gateway's
+// upstreamClient refuse redirects for the same reason), it keeps no cookie
+// jar, and it does not wait on an answer forever.
+var slipClient = &http.Client{
+	Timeout:       slipCallTimeout,
+	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+}
 
 // Backend is how the run reaches the project's budget database. The zero
 // value is no backend.
@@ -608,4 +727,323 @@ func (h redactHandler) WithAttrs(as []slog.Attr) slog.Handler {
 
 func (h redactHandler) WithGroup(name string) slog.Handler {
 	return redactHandler{h: h.h.WithGroup(name), redact: h.redact}
+}
+
+// claimSlip takes this run's slip, once, at its own start, and starts the beat
+// that keeps the instance serving it warm (D1933, D1934). Everything the run
+// does at the service afterwards — every model call the gateway proxies, every
+// beat — presents the claim's secret beside the slip's id, and the service
+// keeps only the hash of it, so the secret lives in this process and nowhere
+// else: not in the job's environment, not in a record, not in a line.
+//
+// The two answers of that route are what a run reads apart: the service
+// answers the call that CLAIMS the slip with the secret, and a later call that
+// presents it with the claim's own reading (D1941). That is why a run claims
+// once and a second claim is not made at all — the service refuses the replay,
+// and a refusal here is a run that holds a slip and cannot use it.
+//
+// Nothing here fails the run. A run whose launcher was granted no slip (no
+// SlipEnv), whose installation has no service to claim at, or whose service
+// refused the call, runs the path it ran before the slip existed, and no more
+// than that: R9's fence is the service's own, which serves a slip-bound
+// credential only under a live claim and fails closed without one, so failing
+// the run here would break runs that work today over a credential they may
+// never ask for (the launcher's own reading of the same state,
+// internal/cli's runSlipEnv).
+func (r *run) claimSlip(ctx context.Context) {
+	if r.slipHold() != nil {
+		return
+	}
+	slipID := envLookup(r.d.Env, SlipEnv)
+	if slipID == "" {
+		// No slip was granted to this launch: an installation whose service
+		// has no slip routes, a launcher that could not reach it, a job that
+		// was started before this release. All of them are the run as it was.
+		return
+	}
+	serviceURL := envLookup(r.d.Env, credentialsServiceURLEnv)
+	if serviceURL == "" {
+		r.d.Log.Warn("this run holds no slip: its job carries " + SlipEnv + " and no " + credentialsServiceURLEnv + ", so the slip cannot be claimed and a credential that only a slip serves is refused at the call (D1933)")
+		return
+	}
+	body, err := json.Marshal(credsvc.SlipClaimRequest{Execution: slipExecution(r.d.Execution)})
+	if err != nil {
+		r.d.Log.Warn("this run holds no slip: the claim call could not be built, so a credential that only a slip serves is refused at the call", "err", r.redact(err.Error()))
+		return
+	}
+	cctx, cancel := context.WithTimeout(ctx, slipClaimBudget)
+	defer cancel()
+	ans, err := r.slipRetryCall(cctx, serviceURL, slipID, "", body)
+	if slipRouteAbsent(ans.status) {
+		// The service does not serve the claim route at all — one release
+		// behind this runner — which is not a refusal of this run: it is the
+		// version skew DS1.4 keeps, and it is quiet because the run proceeds
+		// on the path it took before the slip existed.
+		return
+	}
+	if err != nil {
+		r.d.Log.Warn("this run holds no slip: the installation's credentials service could not be asked for the claim, so a credential that only a slip serves is refused at the call", "err", r.redact(err.Error()))
+		return
+	}
+	if ans.status != http.StatusOK {
+		// A refusal: the service decided, and asking it again answers the
+		// same thing.
+		r.d.Log.Warn("this run holds no slip: the installation's credentials service refused the claim, so a credential that only a slip serves is refused at the call (R9: a slip-bound credential is served under a live claim and never without one)", "status", ans.status)
+		return
+	}
+	var claim credsvc.SlipClaimResponse
+	if err := json.Unmarshal(ans.body, &claim); err != nil {
+		r.d.Log.Warn("this run holds no slip: the credentials service's answer to the claim is not a claim's")
+		return
+	}
+	if !slipSecretUsable(claim.ClaimSecret) {
+		r.d.Log.Warn("this run holds no slip: the credentials service answered the claim with no usable claim secret")
+		return
+	}
+	r.setSlipHold(slipID, claim.ClaimSecret)
+	// Registered before anything can print it: the answer that carried it is
+	// already out of this function, and the beat, the gateway and any failure
+	// after it are redacted of it from here on.
+	r.addSecret(claim.ClaimSecret)
+	r.startSlipBeat(ctx)
+	r.d.Log.Info("this run claimed its slip: the credentials service serves it the credentials the slip names, and this run keeps one instance of it warm for as long as it lives (D1933, D1934)")
+}
+
+// slipSecretUsable reports whether s is one claim secret this run will carry:
+// non-empty, and one printable header value at the bound the service reads a
+// presented one by (internal/credsvc's maxHeaderTokenBytes, which is
+// unexported there and respelled here rather than guessed at). A secret this
+// run cannot present is worse than none: every call would be refused at the
+// service, where no secret at all is the run that never had a slip.
+func slipSecretUsable(s string) bool {
+	return len(s) <= maxSlipSecretBytes && printableToken(s)
+}
+
+// slipExecution is the execution name a claim reports: the short name of the
+// execution this process is in, or nothing when this run cannot read one back
+// (a local invocation has none). The service records it for an operator and
+// decides nothing by it (F7, D1937), and it refuses a call whose execution is
+// not one printable value of its own bound (internal/credsvc's
+// maxSlipExecutionBytes), so a name this run cannot reduce to one is left out
+// of the call rather than sent to be refused.
+func slipExecution(execution string) string {
+	id, ok := backend.ParseExecution(execution)
+	if !ok || id.Name == "" || len(id.Name) > maxSlipExecutionBytes || !printableToken(id.Name) {
+		return ""
+	}
+	return id.Name
+}
+
+// slipRetryCall makes one of this run's own calls to the claim route — the
+// claim, or a beat after it — retrying the answers that are worth asking again
+// about (spec §Resilience: a job retries its credential and proxy requests
+// with backoff).
+//
+// An answer about the call is not retried: a refusal, a slip already claimed,
+// a service that does not serve the route, all answer the same thing to a
+// second call, and the retries would only spend the run's start on it. A
+// service that cannot be reached, one that answers 5xx, and one that answers
+// its rate limit are the three the backoff steps over.
+//
+// The ctx is the call's own budget: a cancelled wait, and an in-flight request
+// whose ctx is cancelled, both end it at once, which is what lets the beat be
+// stopped mid-retry.
+func (r *run) slipRetryCall(ctx context.Context, serviceURL, slipID, secret string, body []byte) (slipAnswer, error) {
+	for attempt := 0; ; attempt++ {
+		ans, err := r.slipPost(ctx, serviceURL, slipID, secret, body)
+		if !slipRetryable(ans.status, err) || attempt >= len(slipRetryDelays) {
+			return ans, err
+		}
+		if werr := slipRetryWait(ctx, slipRetryDelays[attempt]); werr != nil {
+			return ans, werr
+		}
+	}
+}
+
+// slipRetryable reports whether an answer, or the failure to get one, is one
+// the run asks again about. A call that got no answer at all is the service
+// being unreachable — a cold start, a refused connection, a reset — and is the
+// reason this retry exists.
+func slipRetryable(status int, err error) bool {
+	if err != nil {
+		return true
+	}
+	return status == http.StatusTooManyRequests || status >= 500
+}
+
+// slipPost makes one POST to the claim route and reads the answer back, with
+// the identities the service decides a call by: the job's own Google ID token,
+// which Cloud Run IAM admits (D1935), the run's Firebase identity, which is
+// what the claim is bound to (F23), and the job's name, which is recorded and
+// decides nothing. The claim secret travels only when secret is set — the
+// first call presents none, and every call after it presents the one the claim
+// answered.
+//
+// The answer is bounded and the client never follows a redirect, and neither
+// value is read into an error: the secret's own call is the one place it is on
+// any wire but the service's, and a failure here is this run's sentence and
+// not the service's text.
+func (r *run) slipPost(ctx context.Context, serviceURL, slipID, secret string, body []byte) (slipAnswer, error) {
+	job, err := r.jobName()
+	if err != nil {
+		return slipAnswer{}, err
+	}
+	token, err := metadataIDToken(ctx, r.d.Env, serviceURL)
+	if err != nil {
+		return slipAnswer{}, err
+	}
+	r.mu.Lock()
+	sess := r.sess
+	r.mu.Unlock()
+	if sess == nil {
+		return slipAnswer{}, errors.New("this run has no budget identity, which is what the credentials service holds a claim to")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimSuffix(serviceURL, "/")+credsvc.SlipClaimPath, bytes.NewReader(body))
+	if err != nil {
+		return slipAnswer{}, errors.New("the claim call's request could not be built")
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set(gateway.HeaderRunIdentity, sess.IDToken()())
+	req.Header.Set(gateway.HeaderRunJob, job)
+	req.Header.Set(credsvc.HeaderSlip, slipID)
+	if secret != "" {
+		req.Header.Set(credsvc.HeaderSlipClaim, secret)
+	}
+	resp, err := slipClient.Do(req)
+	if err != nil {
+		// A cancelled call is not the service's fault and is not retried:
+		// slipRetryable reads the ctx below.
+		if ctx.Err() != nil {
+			return slipAnswer{}, ctx.Err()
+		}
+		return slipAnswer{}, errors.New("the installation's credentials service could not be reached")
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxSlipAnswerBytes+1))
+	if err != nil {
+		return slipAnswer{status: resp.StatusCode}, errors.New("the credentials service's answer could not be read")
+	}
+	if len(data) > maxSlipAnswerBytes {
+		return slipAnswer{status: resp.StatusCode}, errors.New("the credentials service's answer is larger than a claim's")
+	}
+	return slipAnswer{status: resp.StatusCode, body: data}, nil
+}
+
+// slipRouteAbsent reports whether status is the answer of a service that does
+// not serve the claim route: the 404 its own router gives a path it does not
+// serve (internal/credsvc's servedRoute, which answers 404 rather than 405 for
+// a route asked with another method), and the 405 an intermediary may give a
+// route it holds for another method. It is internal/cli's rule for the grant
+// route, respelled because that package's helper is the launcher's half and
+// this one cannot import it: the two sides of the skew have to read it the
+// same way, and neither is the other's to own.
+func slipRouteAbsent(status int) bool {
+	return status == http.StatusNotFound || status == http.StatusMethodNotAllowed
+}
+
+// startSlipBeat sends the keep-warm request while the run lives: the same call
+// that claimed the slip, presenting the claim secret instead of nothing, which
+// the service answers from the slip it holds without a credential behind it
+// (D1934). One request per interval is what kept an instance up when Check 511
+// measured it, so a run holds its own instance of the service warm rather than
+// paying a cold start on the call that needs a credential.
+//
+// It is a no-op for a run that holds no slip, which is every run of an
+// installation without the slip routes and every run whose claim did not land:
+// there is nothing to keep warm with, and the run proceeds without it.
+func (r *run) startSlipBeat(ctx context.Context) {
+	r.slipMu.Lock()
+	hold := r.slip
+	if hold == nil || hold.done != nil {
+		r.slipMu.Unlock()
+		return
+	}
+	beatCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	hold.cancel, hold.done = cancel, done
+	r.slipMu.Unlock()
+	go func() {
+		defer close(done)
+		t := time.NewTicker(slipBeatEvery)
+		defer t.Stop()
+		for {
+			select {
+			case <-beatCtx.Done():
+				return
+			case <-t.C:
+				r.beatSlip(beatCtx, hold)
+			}
+		}
+	}()
+}
+
+// stopSlipBeat ends the beat and waits for its goroutine: a beat still in
+// flight when the run ends would be a request of a finished run, and the
+// service counts what reaches it. It is safe to call on a run that never held
+// a slip, and safe to call twice.
+func (r *run) stopSlipBeat() {
+	r.slipMu.Lock()
+	hold := r.slip
+	if hold == nil || hold.done == nil {
+		r.slipMu.Unlock()
+		return
+	}
+	cancel, done := hold.cancel, hold.done
+	hold.cancel, hold.done = nil, nil
+	r.slipMu.Unlock()
+	cancel()
+	<-done
+}
+
+// beatSlip asks the service to read the slip back. A failure here is not a
+// run's failure — the run's own calls still present the claim — so it is one
+// warning, once: a beat that cannot land usually cannot land for the rest of
+// the run, and a line per interval would say the same thing every 15 s.
+func (r *run) beatSlip(ctx context.Context, hold *slipHold) {
+	body, err := json.Marshal(credsvc.SlipClaimRequest{Execution: slipExecution(r.d.Execution)})
+	if err != nil {
+		return
+	}
+	ans, err := r.slipRetryCall(ctx, envLookup(r.d.Env, credentialsServiceURLEnv), hold.id, hold.secret, body)
+	switch {
+	case slipRouteAbsent(ans.status):
+		// The service stopped serving the claim route under a run that holds
+		// a slip: a version skew in the middle of a run, which is the
+		// update happening under it (docs/design/update-in-flight.md). There
+		// is nothing to keep warm and no call of the run's is refused by it,
+		// because the route that serves a credential is not this one.
+		return
+	case err != nil:
+		r.slipWarnOnce(hold, "the keep-warm beat could not reach the installation's credentials service, so the instance serving this run may go cold and the next call pays a cold start (D1934)", err)
+	case ans.status != http.StatusOK:
+		r.slipWarnOnce(hold, "the installation's credentials service refused the keep-warm beat, so the instance serving this run may go cold and the next call pays a cold start (D1934)", fmt.Errorf("the service answered %d", ans.status))
+	}
+}
+
+// slipWarnOnce writes the run's one line about a beat that did not land.
+func (r *run) slipWarnOnce(hold *slipHold, msg string, err error) {
+	r.slipMu.Lock()
+	said := hold.beatSaid
+	hold.beatSaid = true
+	r.slipMu.Unlock()
+	if said {
+		return
+	}
+	r.d.Log.Warn(msg, "err", r.redact(err.Error()))
+}
+
+// slipHold is the slip this run took, or nil for a run that holds none.
+func (r *run) slipHold() *slipHold {
+	r.slipMu.Lock()
+	defer r.slipMu.Unlock()
+	return r.slip
+}
+
+// setSlipHold takes the claim. It is written once, by the claim.
+func (r *run) setSlipHold(id, secret string) {
+	r.slipMu.Lock()
+	defer r.slipMu.Unlock()
+	r.slip = &slipHold{id: id, secret: secret}
 }

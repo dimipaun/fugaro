@@ -472,6 +472,15 @@ func (o Options) validate() error {
 		if !validJobName(u.Service.Job) {
 			return errors.New("gateway: the service upstream reports no Cloud Run job name")
 		}
+		// The claim is all or nothing: the service reads a call that
+		// presents a slip's id and no claim secret as a request it does not
+		// read (credsvc.verifyCallSlip), so a run holding half of one would
+		// be refused on every call for a shape this gateway let through. A
+		// run holding neither is the one of an installation whose service
+		// serves no slip route, and is admitted as it always was.
+		if (u.Service.SlipID == "") != (u.Service.SlipClaim == "") {
+			return errors.New("gateway: the service upstream carries half a slip: the slip's id and the claim secret are presented together or not at all")
+		}
 	case "vertex":
 		if u.Token == nil {
 			return errors.New("gateway: the vertex upstream has no token source")

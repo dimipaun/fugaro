@@ -332,6 +332,13 @@ type run struct {
 	// halt from the backend changes nothing. Both guarded by mu.
 	sess   *budget.Session
 	frozen bool
+	// slip is the slip this run claimed at its start and the beat that keeps
+	// the credentials service warm for as long as it lives (DS1.5, D1933,
+	// D1934); nil for a run that holds none, which is every run of an
+	// installation the launcher was granted no slip for. slipMu guards it,
+	// because the beat's own goroutine runs while the run goes on.
+	slip   *slipHold
+	slipMu sync.Mutex
 	// The gateway, when the budget is on for an api-key or vertex run, and
 	// what its stages cost; all guarded by mu. gwUsed is the money its calls
 	// settled -- the run's billed model spend -- and gwNotional is the tier-A
@@ -664,6 +671,11 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 		if p := recover(); p != nil {
 			err = fmt.Errorf("panic: %v", p)
 		}
+		// First, on every path out of here: the keep-warm beat is the one
+		// goroutine of this run that is not waited for anywhere else, and a
+		// request still in flight when the run ends is a request of a
+		// finished run (DS1.5).
+		r.stopSlipBeat()
 		if errors.Is(err, ErrDuplicateExecution) || errors.Is(err, errOwnerUnknown) {
 			// Another execution owns this run, or may: its result.json and
 			// lock are not ours to touch.
@@ -2743,6 +2755,11 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if err := r.startBudgetBackend(ctx); err != nil {
 		return err
 	}
+	// The slip, taken at the run's own start: the session above is the
+	// identity the claim is bound to, and the gateway this run is about to
+	// build presents the claim on every model call (DS1.5, D1933). A run
+	// whose installation has no slip route proceeds without one.
+	r.claimSlip(ctx)
 	if err := r.checkBudget(ctx); err != nil {
 		// These checks judged the challenger as this run's coder
 		// (applyChallenger), so the policy refusing *that* pin is the arm's

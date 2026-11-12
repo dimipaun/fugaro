@@ -119,6 +119,8 @@ func TestServiceConstantsMirrorCredsvc(t *testing.T) {
 		{"the credential's header", gateway.HeaderCredential, credsvc.HeaderCredential},
 		{"the switch's header", gateway.HeaderSwitch, credsvc.HeaderSwitch},
 		{"the probe's header", gateway.HeaderProbe, credsvc.HeaderProbe},
+		{"the slip's header", gateway.HeaderSlip, credsvc.HeaderSlip},
+		{"the claim secret's header", gateway.HeaderSlipClaim, credsvc.HeaderSlipClaim},
 	}
 	for _, h := range headers {
 		if h.gateway != h.wire {
