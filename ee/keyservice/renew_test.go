@@ -841,6 +841,38 @@ func TestAnExpiredHandoverIsDropped(t *testing.T) {
 	}
 }
 
+// TestHandoverWithNoKeyIsRefused: a rotation's answer is read by the key that
+// rotated, so an entry filed under no key at all is the one entry that answers
+// for every key nobody named — and what this record answers with is a key and a
+// renewal secret. The write that could carry no key_id is the service's own
+// (renew.go keeps the successor under the id it rotated), and the store refuses
+// it for the reason it refuses an unnamed revocation rather than keeping it
+// where the sweep would serve it.
+func TestHandoverWithNoKeyIsRefused(t *testing.T) {
+	f, _ := renewing(t)
+	ctx := context.Background()
+	keyID, secret, _ := heldKey(t, f, PolicyTeamMonthly)
+	f.inTheRenewalWindow(t, keyID)
+	if answerOf(t, f.call(RouteRenew, RenewalCall{KeyID: keyID, WorkspaceID: workspaceID, RenewalSecret: secret})).Key == "" {
+		t.Fatalf("the key %s did not renew", keyID)
+	}
+	// The refused record is a real rotation's answer with its key id taken off,
+	// so what the store is asked to refuse is the only unnamed thing about it:
+	// its digest, its key, its secret and its window are the ones the service
+	// wrote moments ago.
+	kept, live, err := f.store.Handover(ctx, keyID, f.now)
+	if err != nil || !live {
+		t.Fatalf("the store answered live=%v err=%v for the rotation just made, want the successor it kept", live, err)
+	}
+	kept.KeyID = ""
+	if err := f.store.SaveHandover(ctx, kept, f.now); !errors.Is(err, ErrHandoverUnnamed) {
+		t.Errorf("a handover that names no key answered %v, want %v", err, ErrHandoverUnnamed)
+	}
+	if _, live, err := f.store.Handover(ctx, "", f.now); err != nil || live {
+		t.Errorf("the refused handover was written anyway: live=%v err=%v", live, err)
+	}
+}
+
 // TestARotationInsideItsWindowWithoutItsAnswerIsRetried: the rotation and the
 // answer beside it are two writes, so there is an instant — and, if the second
 // write fails, a longer stretch — in which the rotation exists and its answer
