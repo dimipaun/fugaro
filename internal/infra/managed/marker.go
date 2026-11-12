@@ -225,11 +225,13 @@ func isCurrencyCode(s string) bool {
 
 // Marker is what MarkerObject holds: the fact, the project it is a fact
 // about, and — in the version a managed creation writes — the amount that
-// creation was required to choose and the bound on the billable image builds
-// its applies may start. Nothing else: the value is never a credential, and
-// the project it names is what keeps a copy of the object in another bucket
-// from being believed (with the bucket's own project number, which is the
-// read's job and internal/infra/project.go's rule: a bucket name is global).
+// creation was required to choose. MaxImageBuilds is the one field outside
+// that: version 3's, kept so an object of that version still parses into the
+// shape it was written in (D1543). Nothing else: the value is never a
+// credential, and the project it names is what keeps a copy of the object in
+// another bucket from being believed (with the bucket's own project number,
+// which is the read's job and internal/infra/project.go's rule: a bucket name
+// is global).
 type Marker struct {
 	Version    int     `json:"version"`
 	GCPProject string  `json:"gcp_project"`

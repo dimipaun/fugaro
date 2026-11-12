@@ -174,10 +174,10 @@ func openBuildLease(ctx context.Context, w io.Writer, lc *localcfg.Config, repo,
 // questions: the ownership question is the one thing in this file that must not
 // have a second wording (requireOwnBudgetDB's own doc says why).
 type leaseArgs struct {
-	w         io.Writer
-	lc        *localcfg.Config
-	repo      string
-	slug      string
+	w       io.Writer
+	lc      *localcfg.Config
+	repo    string
+	slug    string
 	machine string
 	region  string
 	// pricer is built once a lease is really taken, never for a build that will

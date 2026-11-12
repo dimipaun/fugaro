@@ -58,8 +58,8 @@ import (
 //     there. The label is the flag command's own write beside it (WriteManaged-
 //     LabelForFlag), because the read requires both marks. The one refused
 //     write that is not the end of it is this step's own half-written state —
-//     the object recording the amount and the bound the flag writes, the label
-//     missing, which is what a run leaves when its label write fails; it is read
+//     the object recording the amount the flag writes, the label missing, which
+//     is what a run leaves when its label write fails; it is read
 //     without the label (ReadFlagFact), and the label is written to finish it,
 //     so the owner's way out of that state is this same command rather than a
 //     hand-written label
@@ -145,14 +145,7 @@ func (e *initEngine) selfFlagUnmanaged(ctx context.Context) error {
 	// it is the installation's own outputs when the run read them, and the
 	// selected config otherwise — a coding agent's session skips the local
 	// config's write and with it the read those outputs come from.
-	bucket := "fugaro-runs-" + r.gcpProject
-	named := ""
-	switch {
-	case r.res.Outputs != nil:
-		named = r.res.Outputs.RunsBucket
-	case e.lc != nil:
-		named = e.lc.RunsBucketName()
-	}
+	bucket, named := e.runsBucketFor()
 	if named != "" && named != bucket {
 		r.warn(fmt.Sprintf("this run was given a budget and %s is not managed, but its runs bucket is %s, not %s: the managed read only looks for the creation fact in the default bucket name, so nothing was flagged. Check runs_bucket in the project config", r.gcpProject, named, bucket))
 		return nil

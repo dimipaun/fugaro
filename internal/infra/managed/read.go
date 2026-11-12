@@ -438,10 +438,12 @@ func readFactObject(ctx context.Context, s *storage.Service, project, gcpProject
 		}
 	case MarkerVersionBuilds:
 		// Version 3 is the version that carries both figures (D1013), so an
-		// object of it missing either is not a fact this build wrote — and
-		// believing one would be a managed project whose applies are held to
-		// a bound nobody recorded, which is exactly what this version exists
-		// to prevent. Both are judged by the rules the write holds
+		// object of it missing either is not a fact this build wrote. The
+		// count is judged here although nothing bounds a build by it any more
+		// (D1543): what the figure decides now is whether the object IS the
+		// version-3 fact, and half a fact believed as one would leave this
+		// build's own migration (managed.ConvergeMarker) rewriting an object
+		// it never understood. Both are judged by the rules the write holds
 		// (Budget.Check and CheckImageBuilds), and each refused figure is
 		// handed back so the caller can name it.
 		if m.Budget == nil {
