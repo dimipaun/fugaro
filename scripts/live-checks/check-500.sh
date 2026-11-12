@@ -290,25 +290,24 @@ entry_digest() { # entry_digest FILE NAME
   awk -F'\t' -v name="$2" '$1 == "entry" && $2 == name { print $6; exit }' "$1" 2>/dev/null || true
 }
 
-# in_dir DIR CMD...: run one command from the directory it has to be run in. A
-# catalog entry's build is the build of the repository its Dockerfile belongs to
-# — the CLI refuses it from anywhere else by name — and every other command here
-# names the project through the checkout it is run in.
-in_dir() { # in_dir DIR CMD...
-  local dir=$1
-  shift
-  ( cd "$dir" && exec "$@" )
-}
-
-run_bounded() { # run_bounded SECONDS KEY CMD...
-  local secs=$1 key=$2
-  shift 2
+# run_bounded SECONDS KEY DIR CMD...: run one command from the directory it has
+# to be run in and under a bound. A catalog entry's build is the build of the
+# repository its Dockerfile belongs to — the CLI refuses it from anywhere else by
+# name — and every other command here names the project through the checkout it
+# is run in.
+#
+# The child execs, so the pid the bound kills IS the command: a hung cloud call
+# would otherwise outlive the check that gave up on it, which is the one thing
+# the bound exists to prevent. The ERR trap is dropped in it too: this check runs
+# commands whose failing exit status is one of its own readings (a build that
+# fails, a record that is not there), and a trap inherited here would turn each
+# of them into "an internal error" and a status of 2 before the step could
+# report it.
+run_bounded() { # run_bounded SECONDS KEY DIR CMD...
+  local secs=$1 key=$2 dir=$3
+  shift 3
   BOUNDED_TIMED_OUT=no
-  # The ERR trap is dropped in the child: this check runs commands whose failing
-  # exit status is one of its own readings (a build that fails, a record that is
-  # not there), and a trap inherited here would turn each of them into "an
-  # internal error" and a status of 2 before the step could report it.
-  ( trap - ERR; "$@" ) >>"$SCRATCH/$key.out" 2>>"$SCRATCH/$key.err" &
+  ( trap - ERR; cd "$dir" || exit 1; exec "$@" ) >>"$SCRATCH/$key.out" 2>>"$SCRATCH/$key.err" &
   local pid=$! waited=0
   while kill -0 "$pid" 2>/dev/null; do
     [ "$waited" -lt "$secs" ] || break
@@ -374,7 +373,7 @@ step_sandbox() {
   fi
   command -v python3 >/dev/null 2>&1 || die "Check 500 needs python3 to read the --json documents"
   say "reading the installation: fugaro doctor --json, in ${SANDBOX}"
-  run_bounded "$DOCTOR_TIMEOUT" doctor in_dir "$SANDBOX" "$FUGARO_BIN" doctor --json
+  run_bounded "$DOCTOR_TIMEOUT" doctor "$SANDBOX" "$FUGARO_BIN" doctor --json
   if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
     unmeasured sandbox "fugaro doctor --json did not answer in ${SANDBOX} (exit ${BOUNDED_STATUS}): this check cannot read the project this checkout belongs to, and every row below is about that project. Its output is in $SCRATCH/doctor.out and $SCRATCH/doctor.err"
     return 0
@@ -400,7 +399,7 @@ step_catalog() {
     return 0
   fi
   say "reading the catalog: fugaro image ls --json"
-  run_bounded "$CLI_TIMEOUT" catalog in_dir "$SANDBOX" "$FUGARO_BIN" image ls --json
+  run_bounded "$CLI_TIMEOUT" catalog "$SANDBOX" "$FUGARO_BIN" image ls --json
   if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
     unmeasured catalog "fugaro image ls --json did not answer (exit ${BOUNDED_STATUS}): this check cannot read the catalog the skill proposed. Its output is in $SCRATCH/catalog.out and $SCRATCH/catalog.err"
     return 0
@@ -459,7 +458,7 @@ step_survey() {
     return 0
   fi
   say "reading the repositories: fugaro image survey --json (read-only; nothing is cloned)"
-  run_bounded "$CLI_TIMEOUT" survey in_dir "$SANDBOX" "$FUGARO_BIN" image survey --json
+  run_bounded "$CLI_TIMEOUT" survey "$SANDBOX" "$FUGARO_BIN" image survey --json
   if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
     unmeasured survey "fugaro image survey --json did not answer (exit ${BOUNDED_STATUS}): the survey is half of the skill's loop and the only place a rerun's comparison comes from. Its output is in $SCRATCH/survey.out and $SCRATCH/survey.err"
     return 0
@@ -499,7 +498,7 @@ step_builds() {
       continue
     fi
     say "building ${name} from ${checkout} (a real Cloud Build: billable)"
-    run_bounded "$BUILD_TIMEOUT" "build-$name" in_dir "$checkout" "$FUGARO_BIN" image build "$name"
+    run_bounded "$BUILD_TIMEOUT" "build-$name" "$checkout" "$FUGARO_BIN" image build "$name"
     if [ "$BOUNDED_TIMED_OUT" = yes ]; then
       timedout="${timedout:+$timedout, }$name"
       continue
@@ -544,7 +543,7 @@ step_digests() {
     return 0
   fi
   say "reading the digests back: fugaro image ls --json"
-  run_bounded "$CLI_TIMEOUT" digests in_dir "$SANDBOX" "$FUGARO_BIN" image ls --json
+  run_bounded "$CLI_TIMEOUT" digests "$SANDBOX" "$FUGARO_BIN" image ls --json
   if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
     unmeasured digests "fugaro image ls --json did not answer after the builds (exit ${BOUNDED_STATUS}), so this check cannot say which entries recorded a digest. Its output is in $SCRATCH/digests.out and $SCRATCH/digests.err"
     return 0
@@ -580,7 +579,7 @@ step_run() {
     return 0
   fi
   say "launching one run from ${SANDBOX} (a real sandbox run, with what its task costs)"
-  run_bounded "$LAUNCH_TIMEOUT" launch in_dir "$SANDBOX" \
+  run_bounded "$LAUNCH_TIMEOUT" launch "$SANDBOX" \
     "$FUGARO_BIN" run --repo "$SANDBOX" ${RECIPE:+--recipe "$RECIPE"} --json "$TASK"
   if [ "$BOUNDED_TIMED_OUT" = yes ]; then
     unmeasured run-launched "the launch did not finish inside ${LAUNCH_TIMEOUT}s and was ended: what it printed is in $SCRATCH/launch.out and $SCRATCH/launch.err"
@@ -614,7 +613,7 @@ step_terminal() {
   say "waiting for ${RUN_ID} to end (up to ${RUN_TIMEOUT}s; fugaro runs ls --repo ${RUN_SLUG} --json --limit 1)"
   local waited=0 status="" stage=""
   while [ "$waited" -lt "$RUN_TIMEOUT" ]; do
-    run_bounded "$CLI_TIMEOUT" rows in_dir "$SANDBOX" "$FUGARO_BIN" runs ls --repo "$RUN_SLUG" --json --limit 1
+    run_bounded "$CLI_TIMEOUT" rows "$SANDBOX" "$FUGARO_BIN" runs ls --repo "$RUN_SLUG" --json --limit 1
     status=""
     if [ "$BOUNDED_STATUS" = 0 ] && read_json rows "$SCRATCH/rows.out" "$SCRATCH/rows.txt"; then
       status=$(awk -F'\t' -v id="$RUN_ID" '$1 == "row" && $2 == id { print $4; exit }' "$SCRATCH/rows.txt")
@@ -646,7 +645,7 @@ step_result_json() {
   fi
   local key="runs/${RUN_SLUG}/${RUN_ID}/result.json"
   say "reading the record: gcloud storage cat gs://fugaro-runs-${PROJECT}/${key}"
-  run_bounded "$CLI_TIMEOUT" record gcloud storage cat "gs://fugaro-runs-${PROJECT}/${key}" --project="${PROJECT}"
+  run_bounded "$CLI_TIMEOUT" record "$SANDBOX" gcloud storage cat "gs://fugaro-runs-${PROJECT}/${key}" --project="${PROJECT}"
   if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
     fact result-json FAIL "gs://fugaro-runs-${PROJECT}/${key} could not be read (exit ${BOUNDED_STATUS}): a run that ended has a record, and the record is where the run's image is written. What gcloud printed is in $SCRATCH/record.err"
     return 0
@@ -706,7 +705,7 @@ step_stale() {
     return 0
   fi
   say "reading the warning: fugaro update --repo ${STALE_REPO} --plan-only (prints the plan and creates nothing)"
-  run_bounded "$UPDATE_TIMEOUT" stale in_dir "$STALE_REPO" "$FUGARO_BIN" update --repo "$STALE_REPO" --plan-only
+  run_bounded "$UPDATE_TIMEOUT" stale "$STALE_REPO" "$FUGARO_BIN" update --repo "$STALE_REPO" --plan-only
   if [ "$BOUNDED_TIMED_OUT" = yes ]; then
     unmeasured stale-warning "fugaro update --repo ${STALE_REPO} --plan-only did not finish inside ${UPDATE_TIMEOUT}s and was ended: it plans by reading the project, and this is a longer look than a check should take. Its output is in $SCRATCH/stale.out and $SCRATCH/stale.err"
     return 0
