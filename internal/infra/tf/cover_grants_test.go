@@ -926,6 +926,113 @@ func TestIntakeAccountIsItsOwnPrincipalKind(t *testing.T) {
 	}
 }
 
+// The intake's one bucket read is objectViewer on ONE object of the runs
+// bucket — DS2.0's derived admin list — and intakeAdminListGrant is the whole
+// of what narrows it: grantRules' bucket row says only that the intake may hold
+// objectViewer there at all, and grant() sends an intake member to this check
+// INSTEAD of bucketCondition, so a grant that fails it does not fall back to
+// the modules' own shapes. Without the steps below, an unconditioned
+// objectViewer on the runs bucket — every run record, prompt and transcript the
+// installation keeps — would ride the same one confirmation the admin list's
+// read does, and a condition the plan has not decided would read as the
+// modules' own.
+//
+// The rows below say which guard refuses which. Six of them are the narrowing
+// check's own — the missing condition, another object, the whole bucket, the
+// right expression under another title, a description, and a condition the plan
+// has not decided — and the other three are refused before it, each by a guard
+// that has to hold anyway: the bucket has to be one of this run's, and the role
+// has to be the one grantRules' row names for the intake.
+//
+// Mutation (verified, run and restored): intakeAdminListGrant returning "" at
+// its first line leaves those six covered — an unconditioned objectViewer on
+// the whole runs bucket among them — and the test fails on exactly those rows.
+func TestIntakeAdminListGrantIsTheDerivedObjectAlone(t *testing.T) {
+	const intake = "serviceAccount:" + IntakeAccountID + "@proj-1.iam.gserviceaccount.com"
+	const bucket = "fugaro-runs-proj-1"
+	cond := func(title, expression string, description any) []any {
+		c := map[string]any{"title": title, "expression": expression, "description": description}
+		return []any{c}
+	}
+	for _, tc := range []struct {
+		name, role, bucket string
+		condition          []any
+		covered            bool
+		reason             string // for a refusal: the text the stop must carry
+	}{
+		{
+			name: "the derived admin list's one object", role: "roles/storage.objectViewer", bucket: bucket,
+			condition: cond(gcp.IntakeAdminListConditionTitle, IntakeAdminListCondition(bucket), nil), covered: true,
+		},
+		{
+			name: "no condition", role: "roles/storage.objectViewer", bucket: bucket,
+			reason: "no condition",
+		},
+		{
+			name: "a condition on another object of the same bucket", role: "roles/storage.objectViewer", bucket: bucket,
+			condition: cond(gcp.IntakeAdminListConditionTitle, `resource.name == "projects/_/buckets/`+bucket+`/objects/admin/other.json"`, nil),
+			reason:    "not the derived admin list's one object",
+		},
+		{
+			name: "a condition on the whole bucket", role: "roles/storage.objectViewer", bucket: bucket,
+			condition: cond(gcp.IntakeAdminListConditionTitle, `resource.name.startsWith("projects/_/buckets/`+bucket+`/objects/")`, nil),
+			reason:    "not the derived admin list's one object",
+		},
+		{
+			name: "the right expression under another title", role: "roles/storage.objectViewer", bucket: bucket,
+			condition: cond("fugaro-intake-admin-list-2", IntakeAdminListCondition(bucket), nil),
+			reason:    "not the derived admin list's one object",
+		},
+		{
+			name: "a condition with a description", role: "roles/storage.objectViewer", bucket: bucket,
+			condition: cond(gcp.IntakeAdminListConditionTitle, IntakeAdminListCondition(bucket), "the admin list"),
+			reason:    "description",
+		},
+		{
+			name: "a bucket that is not this installation's runs bucket", role: "roles/storage.objectViewer", bucket: "fugaro-runs-fp-2",
+			condition: cond(gcp.IntakeAdminListConditionTitle, IntakeAdminListCondition("fugaro-runs-fp-2"), nil),
+			reason:    "which is not this run's", // an earlier guard, before the intake's own narrowing
+
+		},
+		{
+			name: "another role on the same object", role: "roles/storage.objectUser", bucket: bucket,
+			condition: cond(gcp.IntakeAdminListConditionTitle, IntakeAdminListCondition(bucket), nil),
+			reason:    "a kind of principal the installation's modules do not grant it to", // grantRules' bucket row, before the narrowing
+
+		},
+		{
+			name: "objectAdmin on the same object", role: "roles/storage.objectAdmin", bucket: bucket,
+			condition: cond(gcp.IntakeAdminListConditionTitle, IntakeAdminListCondition(bucket), nil),
+			reason:    "a kind of principal the installation's modules do not grant it to", // grantRules' bucket row, before the narrowing
+
+		},
+		{
+			name: "a condition known only after apply", role: "roles/storage.objectViewer", bucket: bucket,
+			reason: "is not known", // the block is there, its expression is not
+
+		},
+	} {
+		after := map[string]any{"member": intake, "role": tc.role, "bucket": tc.bucket}
+		if tc.condition != nil {
+			after["condition"] = tc.condition
+		}
+		unk := map[string]any{}
+		if tc.name == "a condition known only after apply" {
+			after["condition"] = []any{map[string]any{"title": gcp.IntakeAdminListConditionTitle}}
+			unk["condition"] = []any{map[string]any{"expression": true}}
+		}
+		ch := rc("google_storage_bucket_iam_member", after, unk, "create")
+		got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil)
+		if (len(got) == 0) != tc.covered {
+			t.Errorf("%s: %s to the intake: NotCovered = %q, covered want %v", tc.name, tc.role, got, tc.covered)
+			continue
+		}
+		if !tc.covered && !strings.Contains(strings.Join(got, "\n"), tc.reason) {
+			t.Errorf("%s: %s to the intake stopped for another reason: %q, want %q", tc.name, tc.role, got, tc.reason)
+		}
+	}
+}
+
 // A computed role to either of the dynamic class's two accounts is refused,
 // whatever type carries it: the intake's write role is this module's own custom
 // role, so a plan that bound it as a reference to the role being created would
