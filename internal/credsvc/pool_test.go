@@ -146,12 +146,6 @@ func poolDoc(name, strategy string, members ...string) string {
 	return `{"name": "` + name + `", "owner": "` + testPoolOwner + `"` + written + `, "members": [` + strings.Join(quoted, ", ") + `]}`
 }
 
-// testPoolOwner is the address every fixture pool names as its owner: a
-// PUBLISHED pool that names nobody is refused (D1936), and the owner is read
-// only where a slip is issued, so nothing on the cascade path below depends on
-// which address it is.
-const testPoolOwner = "pool-owner@example.invalid"
-
 // testPoolName is the fixture's pool, by the name its crafts' accesses spell.
 const testPoolName = "acme-pool"
 
