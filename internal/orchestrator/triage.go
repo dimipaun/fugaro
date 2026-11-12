@@ -111,8 +111,8 @@ const (
 	// ReasonRunOver is D1245's first requirement: the record's status is
 	// terminal.
 	ReasonRunOver TriageReason = "run_over"
-	// ReasonPullRequestReady is the pull request being ready for review and
-	// not a draft.
+	// ReasonPullRequestReady is the pull request being open, ready for review
+	// and not a draft, at the head the run pushed.
 	ReasonPullRequestReady TriageReason = "pull_request_ready"
 	// ReasonCommitsPushed is a pushed head and a non-empty changed-path set.
 	ReasonCommitsPushed TriageReason = "commits_pushed"
@@ -251,7 +251,9 @@ type TriageInput struct {
 	// repository to make it would not be this one.
 	Record *runstore.Record
 	// PR is the pull request as the provider answered it: the rule reads
-	// whether it is a draft. nil is no pull request, which is never a merge.
+	// whether it is open, whether it is a draft, and which head it is at. nil
+	// is no pull request, which is never a merge, and a head the provider did
+	// not answer is not the run's own.
 	PR *gitprov.PRInfo
 	// CI is the state of the checks at the commit the run pushed, read by the
 	// caller. The rule never invents one, and CIUnknown is never green.
@@ -374,10 +376,11 @@ func triageRecommendOnly(in TriageInput) (TriageOutcome, bool) {
 
 // triageMergeAsIs is the one outcome that lands work without a person, and it
 // takes every part of D1245's evidence: a run that is over, a pull request
-// ready for review, commits, green CI, the whole changed-path set inside the
-// routine allowlist, and no critical finding or high one in a security path.
-// A finished run that reached here has no progress left to make, so its
-// stall, if it ever had one, is not a restart's (D1244).
+// still open, ready for review and at the head the run pushed, commits, green
+// CI, the whole changed-path set inside the routine allowlist, and no critical
+// finding or high one in a security path. A finished run that reached here has
+// no progress left to make, so its stall, if it ever had one, is not a
+// restart's (D1244).
 //
 // The path set it classifies is the record's own account of the diff, and
 // D1245's premise that a diff cannot be described away is not enforced here:
@@ -401,7 +404,7 @@ func triageMergeAsIs(in TriageInput) (TriageOutcome, bool) {
 	if in.CI != gitprov.CIGreen {
 		return TriageOutcome{}, false
 	}
-	if in.PR == nil || in.PR.Draft {
+	if in.PR == nil || in.PR.Draft || in.PR.State != gitprov.PROpen {
 		return TriageOutcome{}, false
 	}
 	rec := in.Record
@@ -410,6 +413,13 @@ func triageMergeAsIs(in TriageInput) (TriageOutcome, bool) {
 	}
 	paths := rec.ChangedFiles.Bounded()
 	if paths == nil || paths.Truncated || len(paths.Paths) == 0 || rec.PushedHead == "" {
+		return TriageOutcome{}, false
+	}
+	// The head the gate judges is the head it lands (D2041): the CI answer and
+	// the findings both describe the commit the run pushed, so a pull request
+	// that moved past it is judged on evidence about another commit, and a
+	// merge here would land a diff nothing in this input describes.
+	if !gitprov.SameCommit(in.PR.HeadSHA, rec.PushedHead) {
 		return TriageOutcome{}, false
 	}
 	if sensitivity.Classify(paths.Paths) != sensitivity.Routine {

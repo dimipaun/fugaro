@@ -28,6 +28,11 @@ const (
 	triageHead    = "1a2b3c4d"
 	triageRun     = "run-triage"
 	triageRoutine = "docs/design/v1.md"
+	// triageLongHead is a whole commit id, and triageMovedHead one a branch can
+	// have moved on to: the fixture's own head is short, so a test that needs
+	// the provider's twelve-hex abbreviation spells out both sides.
+	triageLongHead  = "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d"
+	triageMovedHead = "9f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c"
 )
 
 // mergeable is the input the rule merges as-is: every field is the positive
@@ -43,7 +48,7 @@ func mergeable() orchestrator.TriageInput {
 			PushedHead:   triageHead,
 			ChangedFiles: &runstore.ChangedFiles{Paths: []string{triageRoutine}, Total: 1},
 		},
-		PR:        &gitprov.PRInfo{Number: 12, Draft: false},
+		PR:        &gitprov.PRInfo{Number: 12, State: gitprov.PROpen, HeadSHA: triageHead, Draft: false},
 		CI:        gitprov.CIGreen,
 		Findings:  orchestrator.Findings{Read: orchestrator.FindingsReadable},
 		Elapsed:   3 * time.Hour,
@@ -664,6 +669,49 @@ func TestTriageNeverMergesADraftPullRequest(t *testing.T) {
 	}
 }
 
+// TestTriageMergesAReadyPullRequestOnlyAtTheHeadTheRunPushed: the CI answer
+// and the findings both describe the commit the run pushed, so the gate is
+// evaluated at that head — D2041's "evaluated at the exact head SHA that is
+// readied, judged and merged, so a push in between refuses the merge" — and a
+// pull request that is closed, already merged or moved past the run is judged
+// on evidence about another commit. Every input is readable in these cases, so
+// the answer is the gate's refusal and not a fail-closed read (D1245).
+func TestTriageMergesAReadyPullRequestOnlyAtTheHeadTheRunPushed(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		break_ func(*orchestrator.TriageInput)
+	}{
+		{name: "closed", break_: func(in *orchestrator.TriageInput) { in.PR.State = gitprov.PRClosed }},
+		{name: "merged", break_: func(in *orchestrator.TriageInput) { in.PR.State = gitprov.PRMerged }},
+		{name: "whose head moved", break_: func(in *orchestrator.TriageInput) { in.PR.HeadSHA = triageMovedHead }},
+		{name: "with no head answer", break_: func(in *orchestrator.TriageInput) { in.PR.HeadSHA = "" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := mergeable()
+			tc.break_(&in)
+
+			got := orchestrator.Triage(in)
+			if got.Kind == orchestrator.MergeAsIs {
+				t.Fatalf("a pull request %s was merged: %+v", tc.name, got)
+			}
+			if !slices.Contains(got.Reasons, orchestrator.ReasonMergeRefused) {
+				t.Errorf("the reasons are %v, want %s: every input was read and the gate refused",
+					got.Reasons, orchestrator.ReasonMergeRefused)
+			}
+		})
+	}
+
+	// The provider's own abbreviation of the run's commit is that commit:
+	// Bitbucket answers twelve hex characters where the record holds the whole
+	// id, and gitprov.SameCommit is the comparison the tree makes of the two.
+	in := mergeable()
+	in.Record.PushedHead = triageLongHead
+	in.PR.HeadSHA = triageLongHead[:12]
+	if got := orchestrator.Triage(in); got.Kind != orchestrator.MergeAsIs {
+		t.Errorf("the provider's abbreviation of the run's own head answered %q: %+v", got.Kind, got)
+	}
+}
+
 // TestTriagePrefersEscalateOverEveryOtherOutcome: escalate is first because it
 // acts on a finding the triage did read, so a run that would also merge, or
 // whose other inputs nobody could read, escalates all the same (D1244).
@@ -864,6 +912,11 @@ func TestTriageMergeGateHoldsOnItsOwn(t *testing.T) {
 		{name: "a red CI", break_: func(in *orchestrator.TriageInput) { in.CI = gitprov.CIRed }},
 		{name: "no pull request", break_: func(in *orchestrator.TriageInput) { in.PR = nil }},
 		{name: "a draft pull request", break_: func(in *orchestrator.TriageInput) { in.PR.Draft = true }},
+		{name: "a closed pull request", break_: func(in *orchestrator.TriageInput) { in.PR.State = gitprov.PRClosed }},
+		{name: "a merged pull request", break_: func(in *orchestrator.TriageInput) { in.PR.State = gitprov.PRMerged }},
+		{name: "a pull request whose state nobody answered", break_: func(in *orchestrator.TriageInput) { in.PR.State = "" }},
+		{name: "a pull request whose head moved", break_: func(in *orchestrator.TriageInput) { in.PR.HeadSHA = triageMovedHead }},
+		{name: "a pull request with no head answer", break_: func(in *orchestrator.TriageInput) { in.PR.HeadSHA = "" }},
 		{name: "a run still in flight", break_: func(in *orchestrator.TriageInput) { in.Record.Status = runstore.StatusRunning }},
 		{name: "a record nobody read", break_: func(in *orchestrator.TriageInput) { in.Record = nil }},
 		{name: "a status this release does not know", break_: func(in *orchestrator.TriageInput) { in.Record.Status = "halfway" }},
