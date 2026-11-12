@@ -564,8 +564,9 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	o.Checks = append(o.Checks, doctorPolicyChecks(ctx, lc, doctorRoutingLayerOf(ctx, rf))...)
 	// The pools the published policy serves (DS3.1, MC1): a legacy-open one is
 	// served to whoever asks and D1942 asks doctor to name it. It reads the
-	// node the policy checks above read, and it is not gated on the credentials
-	// service — pools predate it.
+	// published node for itself — the policy checks above read it through
+	// projectpolicy.Read and answer their own questions from it — and it is not
+	// gated on the credentials service — pools predate it.
 	o.Checks = append(o.Checks, doctorLegacyOpenPoolChecks(ctx, lc)...)
 
 	if lc.Budget != nil && lc.Budget.FirebaseProject != "" {

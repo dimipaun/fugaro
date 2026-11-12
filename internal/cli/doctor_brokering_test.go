@@ -2502,6 +2502,13 @@ func useIntakeIAM(t *testing.T, r *brokeringRig) {
 	role := "projects/" + initProject + "/roles/" + tf.IntakeSecretsRole
 	iam.AddRole(initProject, tf.IntakeSecretsRole, "Fugaro secrets intake (the conditioned writes)", false)
 	iam.SetRolePermissions(role, "secretmanager.secrets.create", "secretmanager.secrets.delete", "secretmanager.versions.add")
+	// Both roles the class defines, as modules/installation/intake.tf does: a
+	// role the fake does not know is one the check reports as unread, and a
+	// lister that cannot be read is a second line about a state the case is not
+	// about.
+	lister := "projects/" + initProject + "/roles/" + tf.SecretListerRole
+	iam.AddRole(initProject, tf.SecretListerRole, "Fugaro secret lister (the names, never a value)", false)
+	iam.SetRolePermissions(lister, "secretmanager.secrets.list")
 }
 
 // setIntakePolicy writes the rig's project policy with bindings beside the
@@ -2518,10 +2525,12 @@ func setIntakePolicy(t *testing.T, r *brokeringRig, bindings ...gcpfake.Binding)
 // intake is the one account that creates, adds a version to and deletes the
 // dynamic containers, and DS2.2 gives it no way to read one: its grants are the
 // two roles of the class, under the name fence. A project policy that gives the
-// account a role carrying secretmanager.versions.access, or binds its write
-// role without the fence, is a finding an operator has to act on; an
-// installation where the account is deployed and fenced, and one where no grant
-// names it at all, are measurements.
+// account a role carrying secretmanager.versions.access — a Secret Manager
+// role, or a basic one, which reads through the project's own grant — or binds
+// its write role without the fence, or names the account without ever giving it
+// the write role, is a finding an operator has to act on; an installation where
+// the account is deployed and fenced, and one where no grant names it at all,
+// are measurements.
 func TestDoctorIntakeHasNoAccessor(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -2545,11 +2554,32 @@ func TestDoctorIntakeHasNoAccessor(t *testing.T) {
 			finding: "name-prefix condition",
 		},
 		{
+			// A basic role reads values through the project's own grant, and
+			// the same run's reader sweep names its holders: a measurement that
+			// called this account reader-free would contradict it.
+			name: "the account holds a basic role",
+			bindings: []gcpfake.Binding{
+				{Role: intakeWriteRole(), Members: []string{intakeMember()}, Condition: intakeFence()},
+				{Role: "roles/owner", Members: []string{intakeMember()}},
+			},
+			finding: "roles/owner",
+		},
+		{
+			// Half an installation: the account is there, the grant that makes
+			// it the class's writer is not. Nothing of the class works, and the
+			// fence the measurement would otherwise report is not bound at all.
+			name: "no binding gives it the write role",
+			bindings: []gcpfake.Binding{
+				{Role: "projects/" + initProject + "/roles/" + tf.SecretListerRole, Members: []string{intakeMember()}},
+			},
+			finding: intakeWriteRole(),
+		},
+		{
 			name: "deployed under the fence",
 			bindings: []gcpfake.Binding{
 				{Role: intakeWriteRole(), Members: []string{intakeMember()}, Condition: intakeFence()},
 			},
-			absent: "reads",
+			absent: "holds no role that reads a secret's value",
 		},
 		{name: "no grant names the account", absent: "no secrets intake is deployed"},
 	} {

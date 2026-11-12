@@ -1090,6 +1090,8 @@ func proxiedBitbucketRepos(lc *localcfg.Config) []string {
 // The accessor is a warning and never a failure: the account is granted one by
 // a hand change or by a root applied before the class existed, and an
 // installation mid-repair must not be failed by doctor (the sweep's own rule).
+// So is a missing write grant, which is the same class of state read the other
+// way round: doctor reports it rather than reading it as a fence that holds.
 // A grant that reads values is the worst of the two states the check reports —
 // it lets the account read what it wrote — and an unfenced write grant is the
 // other: it lets the intake create, version and delete ANY container of the
@@ -1103,25 +1105,29 @@ func doctorIntakeChecks(ctx context.Context, lc *localcfg.Config, sm *gcp.Secret
 	member := intakeAccountMember(lc.GCPProject)
 	writeRole := "projects/" + lc.GCPProject + "/roles/" + tf.IntakeSecretsRole
 	var (
-		deployed bool
-		readers  []string
-		unread   []string
-		unfenced []string
+		deployed   bool
+		writeBound bool
+		readers    []string
+		unread     []string
+		unfenced   []string
 	)
 	for _, b := range pol.Bindings {
 		if b == nil || !slices.Contains(b.Members, member) {
 			continue
 		}
 		deployed = true
-		carries, errText := secretReaderRole(b.Role, roles)
+		carries, errText := intakeReaderRole(b.Role, roles)
 		switch {
 		case errText != "":
 			unread = append(unread, pluginwire.Printable(b.Role))
 		case carries:
 			readers = append(readers, pluginwire.Printable(b.Role))
 		}
-		if b.Role == writeRole && !fencedUnderSecretNames(b.Condition) {
-			unfenced = append(unfenced, pluginwire.Printable(b.Role))
+		if b.Role == writeRole {
+			writeBound = true
+			if !fencedUnderSecretNames(b.Condition) {
+				unfenced = append(unfenced, pluginwire.Printable(b.Role))
+			}
 		}
 	}
 	for _, list := range [][]string{readers, unread, unfenced} {
@@ -1130,6 +1136,16 @@ func doctorIntakeChecks(ctx context.Context, lc *localcfg.Config, sm *gcp.Secret
 	if !deployed {
 		checks = append(checks, doctorCheck{ID: id, OK: true, Severity: "info",
 			Problem: "no secrets intake is deployed in " + lc.GCPProject + ": no binding of its project policy names " + member})
+	}
+	// A binding names the account but none of them is the write role: half an
+	// installation, or a grant taken off by hand. Nothing of the class works in
+	// that state — the account is what creates, versions and deletes the
+	// containers — and the fence is not bound at all, which is the fact the
+	// measurement below would otherwise claim.
+	if deployed && !writeBound {
+		checks = append(checks, doctorCheck{ID: id, Severity: "warning",
+			Problem: "the intake's account " + member + " is deployed but no binding of " + lc.GCPProject + "'s policy gives it " + pluginwire.Printable(writeRole) + ": the account is the one that creates, versions and deletes the dynamic containers (DS2.2), so no credential can be written through it",
+			Fix:     "re-apply the installation root that writes the grant: " + selfCommand() + " update   # modules/installation/intake.tf"})
 	}
 	// One line per role, so each carries the removal command for the grant it
 	// names: gcloud takes one --role per call, and an account holding two of
@@ -1149,11 +1165,25 @@ func doctorIntakeChecks(ctx context.Context, lc *localcfg.Config, sm *gcp.Secret
 			Problem: "could not read what " + strings.Join(unread, ", ") + " carries, so whether the intake's account can read a secret's value through it is unknown, not no",
 			Fix:     "rerun fugaro doctor with access to the project, or as an operator who can read each role (gcloud iam roles describe ROLE)"})
 	}
-	if deployed && len(readers) == 0 && len(unread) == 0 && len(unfenced) == 0 {
+	if writeBound && len(readers) == 0 && len(unread) == 0 && len(unfenced) == 0 {
 		checks = append(checks, doctorCheck{ID: id, OK: true, Severity: "info",
 			Problem: "the secrets intake is deployed in " + lc.GCPProject + ", its account " + member + " holds no role that reads a secret's value, and its write grant is bound under the " + secretname.UserPrefix + "/" + secretname.ProjectPrefix + " name-prefix condition"})
 	}
 	return checks
+}
+
+// intakeReaderRole is secretReaderRole plus the project's basic roles: an
+// owner reads a secret's value through the project's own grant, so an account
+// holding one is an account that reads whatever it wrote, which is the fact
+// this check reports. The sweep leaves basic roles to F3's line, which names
+// every holder of one project-wide; here the question is about one account, and
+// a measurement that said it held no reading role while the same run's F3 line
+// listed it as an owner would be doctor contradicting itself.
+func intakeReaderRole(role string, roles *iamRoles) (bool, string) {
+	if slices.Contains(basicRoles, role) {
+		return true, ""
+	}
+	return secretReaderRole(role, roles)
 }
 
 // intakeAccountMember is the intake's own account as an IAM policy spells it:
