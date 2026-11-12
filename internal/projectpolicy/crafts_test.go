@@ -113,10 +113,10 @@ func TestCraftBlockRoundTrips(t *testing.T) {
 // publish time (project_cmd.go's "publishing would drop them") and a runner of
 // it logs (P8), which is why the publisher keeps them and writes none of them.
 func TestCraftMembersAreUnknownToAReaderThatPredatesThem(t *testing.T) {
-	if Version != 6 {
-		t.Fatalf("the policy Version is %d, and this test's node is written for 6: update both together, deliberately", Version)
+	if Version != 7 {
+		t.Fatalf("the policy Version is %d, and this test's node is written for 7: update both together, deliberately", Version)
 	}
-	raw := []byte(`{"version":6,"budget":{"mode":"observe"},` +
+	raw := []byte(`{"version":7,"budget":{"mode":"observe"},` +
 		`"craft_credentials":[{"name":"acme-main","type":"openrouter"}],` +
 		`"craft_pools":[{"name":"acme-pool","members":["acme-main"],"owner":"owner@example.com"}],` +
 		`"crafts":{"coder":{"model":"claude-opus-5-5","access":"acme-pool"}}}`)

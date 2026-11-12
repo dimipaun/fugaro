@@ -3751,7 +3751,7 @@ func TestRetryOfARunThatNeverLaunchedFallsThroughToTheOtherSources(t *testing.T)
 // check — this follow-up is refused again, and no execution is created.
 func TestRecordedJobIsNotTrustedForItsProfile(t *testing.T) {
 	f := newProjectJobFixture(t)
-	publishPolicy(t, f.launchBudgetFixture, `{"version":4,"allow_repos":["github/acme/*"],`+
+	publishPolicy(t, f.launchBudgetFixture, fmt.Sprintf(`{"version":%d,"allow_repos":["github/acme/*"],`, projectpolicy.Version)+
 		`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h",`+
 		`"allow_repos":["github/acme/other"]}}}`)
 	s := newServiceReadFixture(t)

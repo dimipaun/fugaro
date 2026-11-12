@@ -163,6 +163,15 @@ type InstallationSpec struct {
 	ManageAPIs      bool              `json:"manage_apis"`
 	Launchers       []string          `json:"launchers"`
 	Operators       []string          `json:"operators"`
+	// LauncherAccounts is the launcher class's list (D1938, F25) as the two
+	// services that admit a launcher read it (FUGARO_LAUNCHER_ACCOUNTS): the
+	// bare addresses a Google ID token's email claim holds. It is derived by
+	// launchers.go from the merged launchers list above and never written by
+	// hand, so the class and the invoker grants name the same people (F31).
+	// An installation whose roster names no launcher writes no key at all: the
+	// module's own default is then the empty class, which is what an
+	// installation that never had one already planned.
+	LauncherAccounts []string `json:"launcher_accounts,omitempty"`
 	// Viewers are the installation's read-only people (roles.md §4, RS4):
 	// they read every run, its logs and the project's inventory, and hold no
 	// write and no launch. It is left out of the tfvars when empty, so an
@@ -1420,6 +1429,11 @@ func RepoVars(spec RepoSpec) ([]byte, error) {
 func InstallationVars(spec InstallationSpec) ([]byte, error) {
 	spec.Launchers = launchersWithOperators(spec.Launchers, spec.Operators)
 	spec.Operators = members(spec.Operators, nil)
+	// The launcher class is the same merged list, read as addresses: the
+	// invoker grants below the root are made from the members, the two
+	// services' class check from these, and one derivation is what keeps them
+	// the same people (launchers.go, F31/F36).
+	spec.LauncherAccounts = launcherAccounts(spec.Launchers)
 	spec.Viewers = sortedUnique(spec.Viewers)
 	return sortedJSON(spec)
 }

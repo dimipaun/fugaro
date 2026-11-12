@@ -864,10 +864,12 @@ Amended 2026-11-11:
 `internal/cli/docs_orchestrator_cutover_test.go`, the stateless-orchestrator plan's
 pin over its cutover how-to — the one-time import and the three hand-run
 rollback steps — moved the table's row from 129 to 130.
-Amended 2026-11-12: `internal/cli/docs_checks_500_501_test.go`, the
-image-setup-skill folder's pin over the register's Checks 500 and 501 — the two
-owner-run live checks the plan's IS13 writes, their scripts and their sibling
-tests — moved the table's row from 130 to 131.) They
+Amended 2026-11-11: `abSince`, the launch-image gate the model-A/B work's A3.3
+puts on the pair's own task (`internal/cli/recipes_skew.go`: a runner older than
+the release the ab field landed in refuses the whole task at bootstrap, the
+champion's arm included, so such an image is sampled on without the pair rather
+than launched with it), added one more image-skew `Since` constant and left the
+image-skew row at 38, so it moves to 39; a recount on 2026-11-12 found 40 before this constant and 41 with it, so the row reads 41.) They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.
@@ -875,21 +877,21 @@ stale has found a merge that did not.
 | Construct | Count | Command |
 | --- | --- | --- |
 | Catalog recipes | 11 | `ls internal/recipe/catalog/*.yaml \| wc -l` |
-| Top-level `fugaro.yaml` keys | 14 | `sed -n '/^  "properties": {/,/^  }/p' schemas/fugaro.schema.json \| grep -c '^    "[a-z_]*": '` |
+| Top-level `fugaro.yaml` keys | 15 | `sed -n '/^  "properties": {/,/^  }/p' schemas/fugaro.schema.json \| grep -c '^    "[a-z_]*": '` |
 | Top-level `fugaro.yaml` keys whose name contains `review` | 0 | `sed -n '/^  "properties": {/,/^  }/p' schemas/fugaro.schema.json \| grep -c '^    "[a-z_]*review[a-z_]*": '` |
-| Config scope rows | 107 | `sed -n '/Scopes = \[\]ScopeRow{/,/^}/p' internal/config/scope.go \| grep -c '{Key:'` |
+| Config scope rows | 111 | `sed -n '/Scopes = \[\]ScopeRow{/,/^}/p' internal/config/scope.go \| grep -c '{Key:'` |
 | Layers a configuration key may be set in | 4 | `sed -n '/The layers a key may be set in/,/^)/p' internal/config/scope.go \| grep -c 'In[A-Z]'` |
-| Blocks the project layer's `defaults:` may set | 4 | `sed -n '/type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -c 'yaml:'` |
+| Blocks the project layer's `defaults:` may set | 5 | `sed -n '/type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -c 'yaml:'` |
 | Fields of `task.Spec.Overrides` | 8 | `sed -n '/type Overrides struct {/,/^}/p' internal/task/task.go \| grep -cE 'yaml:\|json:'` |
 | Fields of `task.Spec` or `recipe.Step` whose name is a path | 0 | `{ sed -n '/^type Spec struct {/,/^}/p' internal/task/task.go; sed -n '/^type Step struct {/,/^}/p' internal/recipe/recipe.go; } \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Path\|Glob\|Dir)'` |
 | Sites that compare a finding's severity to a value | 0 | `git grep -n 'Severity ==' -- internal/runner ':!*_test.go' \| wc -l` |
 | Files in `internal/runner` that mention `Severity` at all | 4 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
-| Image-skew `Since` constants | 40 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
+| Image-skew `Since` constants | 43 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
-| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 131 | `ls internal/cli/docs_*_test.go \| wc -l` |
+| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 132 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
-| Published project-policy version | 6 | `sed -n 's/^const Version = //p' internal/projectpolicy/version.go` |
-| Blocks the project layer's `defaults:` may set whose value names a repository | 0 | `sed -n '/^type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -ci repo` |
+| Published project-policy version | 7 | `sed -n 's/^const Version = //p' internal/projectpolicy/version.go` |
+| Blocks the project layer's `defaults:` may set whose value names a repository | 0 | `sed -n '/^type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Repo\|Repos\|Repository)'` |
 | Fields of `gitprov.PRSpec` whose name is a repository | 0 | `sed -n '/^type PRSpec struct {/,/^}/p' internal/gitprov/gitprov.go \| grep -ci repo` |
 | Sites that narrow an installation token to one repository | 1 | `git grep -hc '"repositories": \[\]string{s.repo}' internal/gitprov/github/apptoken.go` |
 | `docs/plans` sections whose heading the deferral pattern matches | 3 | `git grep -hE '^## .*(Deferred\|[Ff]ollow-ups)' -- docs/plans \| wc -l` |
@@ -944,6 +946,16 @@ the row that counts it in the same commit for the same reason: the figure and th
 command beside it are read together, and the command reads the tree the slice
 leaves behind — Slice 1 moved all three (10 keys, 70 scope rows, 3 `defaults:`
 blocks), which is the five-edit shape F7 and F36 price, measured.
+ Amended 2026-11-12: E2 of [docs/outer-loop-escalation/](../outer-loop-escalation/) adds the
+escalation ladder's two model grades, and four rows move at once with them — the top-level
+`model_grades` key (14 to 15), four scope rows (107 to 111) and the project layer's
+`defaults.model_grades` block (4 to 5) — with two more for the `modelGradesSince` launch gate the
+key needs and the policy version that carries it: the image-skew constants (38 to 41) and the
+published policy version (6 to 7). The repository-naming row's figure did not move but its command
+did: the crude `grep -ci repo` counted prose, and the new field's own comment says the grades are
+the project's for every repository of it, so the command counts declared field names at the start
+of a line instead, as the `task.Spec` row above does. Neither the field's name nor its value names
+a repository, which is what the **0** claims.
 
 The **67** is the convention this folder follows: there is no registry test over
 `docs/`, so a folder that wants its documents pinned writes its own file, and

@@ -43,6 +43,7 @@ var migrators = map[int]migrator{
 	3: migrateV3ToV4,
 	4: migrateV4ToV5,
 	5: migrateV5ToV6,
+	6: migrateV6ToV7,
 }
 
 // tooOld names the versions this Fugaro reads but has no migrator for. The
@@ -91,7 +92,10 @@ func Migratable(v int) bool {
 // nothing else: its node is, member for member, the node above it. Version 5
 // is one — the `binaries` block version 6 models is a top-level key no
 // version-5 release wrote, so a version-5 node is a version-6 node that states
-// no grant, which is what a project that never set the key means.
+// no grant, which is what a project that never set the key means. Version 6 is
+// one too: the `model_grades` member version 7 models is a top-level key no
+// version-6 release wrote either, and a node without it sets no grade, which is
+// what the ladder's rungs read as "leave this rung to the owner" (D2039).
 //
 // The counter-examples are version 3 and version 4, and they are why this
 // table is a table and not a rule about numbers. Version 4's step marks every
@@ -102,6 +106,7 @@ func Migratable(v int) bool {
 // sentence, over a node carrying a member of every kind.
 var shapeFreeSteps = map[int]bool{
 	5: true,
+	6: true,
 }
 
 // ReadsVersion reports whether a node written in version v is one this reader
@@ -745,6 +750,36 @@ func migrateV5ToV6(raw json.RawMessage) (json.RawMessage, Change, error) {
 		From:    5,
 		To:      6,
 		Changed: "the version field: 5 to 6",
+		Kept:    keptKeys(doc, "version"),
+	}, nil
+}
+
+// migrateV6ToV7 writes the version field version 7 reads, and nothing else.
+//
+// Version 7 changed what a reader must resolve, not the node's shape: the
+// `model_grades` member is a new top-level key, and a version-6 node without one
+// is a version-7 node that sets no grade — which is what every project that
+// never set the key means, and what the ladder's rungs read as "leave this rung
+// to the owner" (D2039). So the step edits the node's own bytes, and the entries
+// the owner wrote by hand survive it exactly as the steps before it leave them.
+//
+// It carries no Note: the member is absent by default rather than required, so
+// there is nothing for the operator to republish for. A project that wants its
+// rungs on named models publishes them, and a grade nobody set refuses at the
+// rung rather than being filled in with a model this step would have to invent.
+func migrateV6ToV7(raw json.RawMessage) (json.RawMessage, Change, error) {
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return nil, Change{}, fmt.Errorf("projectpolicy: the version-6 node is not a JSON object: %w", err)
+	}
+	out, err := writeVersionField(raw, 6, 7)
+	if err != nil {
+		return nil, Change{}, err
+	}
+	return out, Change{
+		From:    6,
+		To:      7,
+		Changed: "the version field: 6 to 7",
 		Kept:    keptKeys(doc, "version"),
 	}, nil
 }
