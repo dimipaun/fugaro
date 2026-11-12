@@ -25,6 +25,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // testPolicyDocAllowed is testPolicyDoc with the project's own model
@@ -263,6 +264,40 @@ func TestServiceRefusesAMalformedBody(t *testing.T) {
 	}
 	if n := atomic.LoadInt32(&src.reads); n != 0 {
 		t.Errorf("the bundle was read %d times for a malformed request, want 0", n)
+	}
+}
+
+// TestImageRefusalNamesNoSlotForTheCredentialsService (V4, D2009): this
+// service has no stage and no repository configuration — the models it holds a
+// call to are the project's published allow-list (requestPin) — so it has no
+// agent.models.vision to offer the call's owner, and the sentence it answers
+// names the one lever that owner does have, the project's own model_prices.
+// The pin the service passes reaches the same check the gateway's own path
+// does (RequestRefusal), and the image rule tells the two callers apart by that
+// pin alone.
+//
+// Mutation (answer the stage's sentence for every caller): this test is red —
+// the refusal offers a key this caller cannot set.
+func TestImageRefusalNamesNoSlotForTheCredentialsService(t *testing.T) {
+	const customModel = "claude-custom-1"
+	rate := 3.0
+	s := allowedPolicy(t, testModel, customModel)
+	s.policy.shared.Prices = projectpolicy.Prices{customModel: {InputPerM: &rate, OutputPerM: &rate}}
+	body := `{"model":"` + customModel + `","max_tokens":16,"messages":[{"role":"user","content":[` +
+		`{"type":"image","source":{"type":"base64","media_type":"image/png","data":"aGk="}}]}]}`
+	resp, answer := s.call(t, body)
+	if resp.StatusCode != StatusRequestRefused {
+		t.Fatalf("the call is answered %d, want %d: %s", resp.StatusCode, StatusRequestRefused, answer)
+	}
+	e := refusal(t, resp.StatusCode, answer)
+	if !strings.Contains(e.Message, "is priced without an image rate") {
+		t.Errorf("the refusal %q is not the image rule's", e.Message)
+	}
+	if !strings.Contains(e.Message, "model_prices' image_tokens") {
+		t.Errorf("the refusal %q does not name the price lever this caller's owner has", e.Message)
+	}
+	if strings.Contains(e.Message, "agent.models.vision") {
+		t.Errorf("the refusal %q offers a key this caller cannot set: this service has no repository's configuration", e.Message)
 	}
 }
 
