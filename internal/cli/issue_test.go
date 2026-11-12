@@ -457,6 +457,38 @@ func TestIssueListShowsResolved(t *testing.T) {
 	})
 }
 
+// TestIssueListPrintsOnlyAnUploadedURL: the listing's link column is the same
+// one shape `show` prints (F28) and the same one `mine` checks (F11) — a record
+// is a file on this machine, so a URL of any other shape is a line that reads
+// like a link to the issue and is not one. `list` leaves the link out and keeps
+// the rest of the row: the release the fix is in is the record's own and does
+// not depend on the link beside it.
+//
+// The guard is read at the row and not on the way in, which is where it has to
+// be: the folder is read by a strict codec that knows nothing of the store's
+// link rule, so a file this machine holds is the one place a foreign URL
+// reaches the listing.
+func TestIssueListPrintsOnlyAnUploadedURL(t *testing.T) {
+	store := issueState(t)
+	foreign := savedIssue("48231", issues.StatusResolved, true)
+	foreign.URL = "https://evil.test/dimipaun/fugaro/issues/7"
+	foreign.ResolvedIn = "0.22.0"
+	if err := store.Save(foreign); err != nil {
+		t.Fatalf("saving: %v", err)
+	}
+
+	out, _, err := execute(t, "issue", "list")
+	if err != nil {
+		t.Fatalf("issue list: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "evil.test") {
+		t.Errorf("issue list prints a stored URL that is not this project's issue:\n%s", out)
+	}
+	if !strings.Contains(out, string(issues.StatusResolved)) || !strings.Contains(out, "fixed in 0.22.0") {
+		t.Errorf("issue list drops the row along with the link it refuses:\n%s", out)
+	}
+}
+
 // TestIssueListJSONAdditiveFields: `list --json` and `show --json` are the same
 // record document, so the two members the resolver writes reach both of them
 // under names of their own, with no member changing meaning and the record's
