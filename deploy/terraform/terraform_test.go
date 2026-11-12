@@ -242,12 +242,31 @@ func TestNoAuthoritativeIAM(t *testing.T) {
 
 // Secret access is granted per secret, never on the whole project. A plan
 // assertion can't enumerate every resource, so this is a text check.
+//
+// ONE grant of this tree is a project-level secretAccessor, and it is a
+// decision rather than an oversight: the dynamic class's prefix accessor
+// (D1931, DS2.2, credentials.tf). Its containers are named by the callers' own
+// subjects (fugaro_u_<sub>_<name>), so an installation cannot name them when it
+// plans and there is no per-secret grant to write; what bounds the read is the
+// class's one name-prefix condition, which the module takes from the local that
+// the intake's own write binding takes it from (TestServicePrefixAccessorIsConditioned
+// resolves both and holds them byte for byte). The member is the credentials
+// service's own account and the reader is listed (secret_readers_test.go, E23).
+// It is admitted here BY ADDRESS and not by shape: a second project-level
+// secretAccessor, this one renamed, or the same grant moved to another file is
+// refused, and so is this one once it stops carrying the class's condition.
 func TestNoProjectLevelSecretAccessor(t *testing.T) {
+	const allowedPath = "gcp/modules/installation/credentials.tf"
+	const allowedName = "google_project_iam_member.credentials_prefix_accessor"
 	walk(t, func(path string, b []byte) {
 		for _, blk := range resourceBlocks(t, path, b, "google_project_iam_member") {
-			if strings.Contains(blk.body, "secretmanager.secretAccessor") {
-				t.Errorf("%s: %s grants secretmanager.secretAccessor on the project", path, blk.name)
+			if !strings.Contains(blk.body, "secretmanager.secretAccessor") {
+				continue
 			}
+			if path == allowedPath && blk.name == allowedName && strings.Contains(blk.body, "local.dynamic_secret_names_condition.expression") {
+				continue
+			}
+			t.Errorf("%s: %s grants secretmanager.secretAccessor on the project, which only the dynamic class's conditioned prefix accessor may do (%s's %s)", path, blk.name, allowedPath, allowedName)
 		}
 	})
 }
@@ -1639,6 +1658,12 @@ var (
 	// expression here is the plan-shaped half of the suite and
 	// internal/infra/tf/workspace_test.go, which reads main.tf's own grant,
 	// rather than a `terraform validate` of this root.
+	// google_service_account.intake[0] is the secrets intake's own account
+	// (D1931, DS2.2): the account intake.tf creates and the service runs as,
+	// whose own grant list is three rows — the class's conditioned write role,
+	// the shared lister and objectViewer on the derived admin list's one object
+	// — and which holds no secretAccessor, no accessor of any kind and no
+	// secrets.get, so it cannot read a value back (R3).
 	// google_service_account.fugaro_verifier[0] is the installation's verifier
 	// (CSR14, D1068): the one account the credentials service's verify route
 	// admits, and the only grant that names it is roles/run.invoker on that
@@ -1667,7 +1692,7 @@ var (
 	// The narrowing is not what makes the plan covered either:
 	// internal/infra/tf's grant rules do NOT accept an allUsers member, so the
 	// update whose plan carries this grant asks its own typed confirmation.
-	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials|coordinator|mcp_server|fugaro_verifier)\[0\]\.member|google_service_account\.catalog_check\[0\]\.member|google_service_account\.workspace\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|coordinator_account|workspace_service_account|installation\.scheduler_service_account|installation\.catalog_check_service_account)\}")$`)
+	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials|coordinator|mcp_server|fugaro_verifier|intake)\[0\]\.member|google_service_account\.catalog_check\[0\]\.member|google_service_account\.workspace\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|coordinator_account|workspace_service_account|installation\.scheduler_service_account|installation\.catalog_check_service_account)\}")$`)
 
 	// workspaceRolePath and workspaceRoleType name the ONE custom role in this
 	// tree no module creates: the workspace root's own (W3 of the workspaces

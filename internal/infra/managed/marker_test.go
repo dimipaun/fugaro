@@ -2150,18 +2150,67 @@ var runAccountGrants = setOf(
 	`google_secret_manager_secret_iam_member | each.value.role | secret_id=google_secret_manager_secret.project[each.value.secret].secret_id | each.value.member | for_each=merge( { for k, v in local.operator_project_secrets : "${k} secretVersionAdder" => merge(v, { role = "roles/secretmanager.secretVersionAdder" }) }, { for k, v in local.operator_project_secrets : "${k} viewer" => merge(v, { role = "roles/secretmanager.viewer" }) }, ) [local.operator_project_secrets={ for p in setproduct(keys(var.project_secrets), var.operators) : "${p[0]} ${p[1]}" => { secret = p[0], member = p[1] } }] | perms=?`,
 	`google_secret_manager_secret_iam_member | each.value.role | secret_id=google_secret_manager_secret.this[each.value.secret].secret_id | each.value.member | for_each=merge( { for k, v in local.operator_secrets : "${k} secretVersionAdder" => merge(v, { role = "roles/secretmanager.secretVersionAdder" }) }, { for k, v in local.operator_secrets : "${k} viewer" => merge(v, { role = "roles/secretmanager.viewer" }) }, ) [local.operator_secrets={ for p in setproduct(keys(var.repo.secrets), var.installation.operators) : "${p[0]} ${p[1]}" => { secret = p[0], member = p[1] } }] | perms=?`,
 
-	// The read mint's own front door (BB4): the operators, over the user:
-	// members among them, holding roles/run.invoker on the credentials service
-	// so a person can call it at all. Its for_each is a conditional over a
-	// people set the module filters to those members, which this test cannot
+	// The read mint's own front door (BB4, widened by F31 for DS2.2): the
+	// roster's launchers over the user: members among them, holding
+	// roles/run.invoker on the credentials service so a person can call it at
+	// all — a launcher who is not an operator was refused at IAM before any
+	// class inside the process could decide. Its for_each is a conditional over
+	// a people set the module filters to those members, which this test cannot
 	// resolve to a set of people, so it is pinned whole like the three above.
-	// Reviewed as a grant to one of the operators rather than to a run's
-	// credential — each.value is a member the module already grants the runs
-	// bucket to — and the role reaches run services alone: invoking this one
-	// hands the caller a short-lived, read-scoped Bitbucket token for one
-	// repository, and G4's admission inside the service refuses every caller
-	// that is not one of these people.
-	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.credentials_service.service | each.value | for_each=local.credentials_service_on ? toset(local.credentials_read_members) : toset([]) [local.credentials_read_members=[for m in var.operators : m if startswith(m, "user:")]] [local.credentials_service_on=var.credentials_service != null] | perms=`,
+	// Until DS2.2 the set was the operators' own (local.credentials_read_members)
+	// and no wider: the launchers ARE the operators on an installation whose
+	// roster names nobody else (internal/infra's launchersWithOperators), so the
+	// widening is exactly the people the roster names. Reviewed as a grant to
+	// one of them rather than to a run's credential — each.value is a member the
+	// module already grants the runs bucket to — and the role reaches run
+	// services alone: invoking this one hands the caller a short-lived,
+	// read-scoped Bitbucket token for one repository, and the admission inside
+	// the service (G4, F36) refuses every caller that is not one of the class
+	// the roster names.
+	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.credentials_service.service | each.value | for_each=local.credentials_service_on ? local.launcher_invoker_members : toset([]) [local.credentials_service_on=var.credentials_service != null] [local.launcher_invoker_members=toset([for m in var.launchers : m if startswith(m, "user:")])] | perms=`,
+
+	// Reviewed for D1931 (the dynamic secret class, DS2.2): the intake's own
+	// account and the credentials service's two new reaches. Every one of these
+	// rows is a grant on Secret Manager or on one Cloud Run service, and none of
+	// them is a write path to the runs bucket's root or to the marker at
+	// fugaro/managed.json.
+	//
+	// The two class roles are permissions no account of a run holds:
+	// fugaroIntakeSecrets is create, delete and versions.add of the containers
+	// in the grammar's two namespaces and nothing else — no secrets.get, no
+	// versions.access, no setIamPolicy, no iam.* — and the lister is
+	// secretmanager.secrets.list alone, the name-and-metadata read the service
+	// needs because a name condition cannot fence list (F30, Check 510). Neither
+	// role carries a storage permission, a permission to grant a role, an actAs
+	// or a token minting, and each is bound to ONE account: the module narrows
+	// both bindings to its own account and the class's name-prefix condition is
+	// what bounds where the write role reaches (internal/infra/tf's
+	// dynamicSecretsGrant reads that condition byte for byte). A container the
+	// intake creates is not the runs bucket, and the marker object is not a
+	// secret: secretmanager.secrets.create in a project whose condition admitted
+	// every name would still not reach fugaro/managed.json.
+	`google_project_iam_member | "projects/${var.project}/roles/fugaroIntakeSecrets" | project=var.project | google_service_account.intake[0].member | for_each= | perms=secretmanager.secrets.create,secretmanager.secrets.delete,secretmanager.versions.add`,
+	`google_project_iam_member | "projects/${var.project}/roles/fugaroSecretLister" | project=var.project | google_service_account.intake[0].member | for_each= | perms=secretmanager.secrets.list`,
+	// The service's project-level accessor is the read half of the same class,
+	// under the same name-prefix condition (credentials.tf): it reads the values
+	// of the containers the intake wrote and of no other secret of the project —
+	// the bundle's accessor stays the secret-level grant above. secretAccessor
+	// carries no storage permission and no write of any kind.
+	`google_project_iam_member | "roles/secretmanager.secretAccessor" | project=var.project | google_service_account.credentials[0].member | for_each= | perms=`,
+	`google_project_iam_member | "projects/${var.project}/roles/fugaroSecretLister" | project=var.project | google_service_account.credentials[0].member | for_each= | perms=secretmanager.secrets.list`,
+	// The intake's read of the derived admin list (DS2.0): objectViewer on the
+	// runs bucket under the condition that names that ONE object, so it carries
+	// no create, no delete and no update, and the bucket's root is not an object
+	// it may read (the condition admits `objects/<access.PathAdminList>` and
+	// nothing else; the object itself is written by the operator's own update,
+	// not by this account).
+	`google_storage_bucket_iam_member | "roles/storage.objectViewer" | bucket=google_storage_bucket.runs.name | google_service_account.intake[0].member | for_each= | perms=`,
+	// ... and the intake's own front door: the same roles/run.invoker on the
+	// intake service, to the same roster's people, for the read mint's reasons
+	// above. Invoking the intake hands the caller a write of a secret of THEIR
+	// OWN name (the service derives it from the verified sub), and the class
+	// inside the service refuses every caller the roster does not name.
+	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.intake.service | each.value | for_each=local.intake_on ? local.launcher_invoker_members : toset([]) [local.intake_on=var.intake != null] [local.launcher_invoker_members=toset([for m in var.launchers : m if startswith(m, "user:")])] | perms=`,
 
 	// Reviewed for W3 (the workspace's own project): the workspace root's own
 	// grant, the only resource the tree gives that project's service account.
