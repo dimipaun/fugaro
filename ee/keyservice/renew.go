@@ -517,12 +517,28 @@ func (s *Service) sight(ctx context.Context, keyID string) {
 // until that period is nearly over, so one call buys one term and the next waits
 // its turn.
 //
-// What it bounds is the rate and not the payment: which term the customer is in
-// is this key's own `paid_through`, while whether a later one was paid for is
-// the merchant's record of a subscription's end (§5.2) and the store holds no
-// link from a key to the subscription it was minted for. Capping a successor at
-// that subscription's paid-through is the gate that closes the other half, and
-// it belongs to the paths that mint a paid term (K2.5).
+// What it bounds is the rate and not the payment, and that half is open: which
+// term the customer is in is this key's own `paid_through`, while whether a
+// later one was paid for is the merchant's record of a subscription's end
+// (§5.2), and the store holds no link from a key to the subscription it was
+// minted for — `Record.Source` is the merchant event id that first minted it,
+// `renew:<subscription id>:<expires>` for the merchant's own renewal or
+// `rotation:<key id>` for a successor, and the subscription itself is keyed by
+// an id no record carries. So a subscription cancelled after its purchase still
+// renews here, and the successor is a signed term nobody paid for; the
+// merchant's own renewal refuses a cancelled subscription (merchant.Renew), but
+// that is not the door this endpoint answers at.
+//
+// Closing it takes a shape this file does not own: the record carries the
+// subscription the key was minted for — written by the merchant's mint sites and
+// inherited by the successor this endpoint writes — and this gate reads it before
+// the key is minted, answering the key's state and no key once that subscription
+// is cancelled or its end does not cover the term about to be signed. What such a
+// gate does with a key that carries no subscription at all — minted by hand, by
+// the admin page or by the mint tool, and indistinguishable here from a key
+// whose link was never written — is the plan's to say, and no task in it closes
+// this one today: refusing those ends the Enterprise renewals the merchant does
+// not sell (D2141), while allowing them leaves this hole open for exactly them.
 func renewable(record Record, policy Policy, now time.Time) bool {
 	lead := time.Duration(policy.RenewBeforeDays) * 24 * time.Hour
 	return !now.Before(record.Expires.Add(-lead))
