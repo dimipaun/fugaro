@@ -27,6 +27,11 @@ package credsvc
 //     TestGrantRefusedForAnotherOwnersToken is that case, and its fixture
 //     publishes no pool.
 //
+// A roster entry and the caller's own address are compared by this service's
+// own fold (foldEmail) and never byte for byte, on both sides, so a pool whose
+// owner or allowed user is spelled in another case still serves the person it
+// names (TestPoolRosterIsComparedByTheAddressFold).
+//
 // A grant that names several pools is decided one NAME at a time: a roster
 // answers for the names its pool governs and for no other pool's, so a launcher
 // served by one pool is refused the grant that also asks for another pool's
@@ -368,6 +373,77 @@ func TestEachNameIsAuthorisedByThePoolThatGovernsIt(t *testing.T) {
 		if sl.Pool != testPoolName {
 			t.Errorf("the slip records the pool %q, want %q: the first pool of the policy that admitted a name", sl.Pool, testPoolName)
 		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// The roster is compared by this service's own address fold
+// ---------------------------------------------------------------------------
+
+// TestPoolRosterIsComparedByTheAddressFold: a roster entry and the caller's own
+// address are compared folded, so a pool whose owner or allowed user is spelled
+// in another case still serves the person it names.
+//
+// The fold is not decoration. An operator writes a pool's roster by hand into a
+// published node and the installation writes its launcher list by hand into its
+// own config, and nothing canonicalises either of them; a service that compared
+// the two byte for byte would shut an owner out of their own pool, which is the
+// opposite of the failure D1936's gate is for (what it refuses is a person the
+// roster does NOT name). Both sides are folded here, so both sides have a case
+// below — the launcher list spelled one way and the roster the other, the roster
+// as the owner and as an allowed user.
+//
+// The last case is the fold's own edge, and it is the fail-closed side of it: an
+// entry that is no printable-ASCII address is one this service cannot fold, and
+// it names nobody rather than matching a caller by accident.
+func TestPoolRosterIsComparedByTheAddressFold(t *testing.T) {
+	shared := mustSharedToken(t, testPoolCredential)
+	members := []string{testPoolCredential}
+	build := func(t *testing.T, launchers []string, pool config.Pool) *slips {
+		t.Helper()
+		s := newSlips(t, launchers...)
+		s.policy.shared = decodeTestPolicy(t, poolPolicyDoc(t, pool))
+		return s
+	}
+	grantAs := func(t *testing.T, s *slips, email string) (*http.Response, []byte) {
+		t.Helper()
+		return s.grantAs(t, email, testSecondLauncherSub, grantBody(t, s.slug, s.run, testJobSA, 3600, shared))
+	}
+
+	t.Run("the roster is spelled in another case than the launcher list", func(t *testing.T) {
+		s := build(t, []string{"owner@example.invalid"}, config.Pool{
+			Name: testPoolName, Owner: "Owner@Example.INVALID", Members: members,
+		})
+		if resp, answer := grantAs(t, s, "owner@example.invalid"); resp.StatusCode != http.StatusOK {
+			t.Fatalf("the grant is answered %d, want 200: the pool names this person as its owner (D1936): %s", resp.StatusCode, answer)
+		}
+	})
+
+	t.Run("the launcher list is spelled in another case than the roster", func(t *testing.T) {
+		s := build(t, []string{"Owner@Example.INVALID"}, config.Pool{
+			Name: testPoolName, Owner: "owner@example.invalid", Members: members,
+		})
+		if resp, answer := grantAs(t, s, "owner@example.invalid"); resp.StatusCode != http.StatusOK {
+			t.Fatalf("the grant is answered %d, want 200: the pool names this person as its owner (D1936): %s", resp.StatusCode, answer)
+		}
+	})
+
+	t.Run("an allowed user is spelled in another case too", func(t *testing.T) {
+		s := build(t, []string{"Allowed@Example.INVALID"}, config.Pool{
+			Name: testPoolName, Owner: "owner@example.invalid",
+			AllowedUsers: []string{"allowed@example.invalid"}, Members: members,
+		})
+		if resp, answer := grantAs(t, s, "Allowed@Example.INVALID"); resp.StatusCode != http.StatusOK {
+			t.Fatalf("the grant is answered %d, want 200: the pool lists this person among its allowed users (D1936): %s", resp.StatusCode, answer)
+		}
+	})
+
+	t.Run("a roster entry that is no printable-ASCII address names nobody", func(t *testing.T) {
+		s := build(t, []string{"owner@example.invalid"}, config.Pool{
+			Name: testPoolName, Owner: "owner@exämple.invalid", Members: members,
+		})
+		resp, answer := grantAs(t, s, "owner@example.invalid")
+		wantOneGrantRefusal(t, s, resp, answer, "owner@example.invalid", shared, testPoolCredential, testPoolName)
 	})
 }
 
