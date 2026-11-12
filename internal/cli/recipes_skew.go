@@ -1385,6 +1385,57 @@ func baseBranchSkew(ctx context.Context, env *cloudEnv, slug string, spec *task.
 	}
 }
 
+// abSince is the first fugaro release whose runner gives a task's ab block the
+// challenger's half of the pair: the release A2.1's shadow behaviour landed in,
+// where the arm publishes nothing and pushes nothing (D554). A1.1's wire is one
+// release older, and that is what makes the release before this one the worse
+// of the two to write a pair onto rather than the better: a 0.13.0 runner reads
+// the block, has no challenger rule, and runs the arm handed to it as an
+// ordinary run — one that publishes, taking the developer's own PR and the
+// shadow's whole point with it. A runner older than the wire knows no ab field
+// at all, and task.Parse decodes with DisallowUnknownFields, so it refuses the
+// whole task at bootstrap: the champion's arm included, which is the
+// developer's own run.
+const abSince = "0.14.0"
+
+// pairImageWhy is why this launch samples no pair for the job image it will
+// run on (pairOldImage), or "" when the image is one a pair may be written
+// for. It is asked after the planner has answered a pair and before anything
+// of it is written: a pair is dropped here, and never the launch (D554).
+//
+// Every other image gate here judges a field the task carries, and each of
+// them refuses the launch or drops the field, which are the two directions
+// that leave the developer's run intact. This one is asked by the *pair* —
+// a second run this build adds on top of that run — so it answers one closed
+// reason and the champion goes on alone, unmarked: a pair dropped costs a
+// sample, while a pair written onto an image whose runner predates abSince
+// costs the champion the run it was launched for either way: the arm publishes
+// as an ordinary run, or the whole task is refused at bootstrap.
+//
+// The image is judged by both judges baseBranchSkew asks where it read no
+// workflow (its own nil arm, whose reasoning this shares): a checkout: clone
+// job runs the installation's base image itself and a derived one runs the
+// binary of the base its build record was built FROM. This is asked before
+// the gates that resolve a workflow, so neither judge is known to be the
+// job's and both are asked — either one predating drops the pair.
+//
+// An image neither judge can show a release for is one no judge here can date
+// (a development build, a hand-pushed image), and it is sampled on: dropping
+// the pair there would take the feature off every installation built from
+// source, and what that would buy back — a development image whose runner
+// predates the block — is a build from a checkout older than the release that
+// writes pairs.
+func pairImageWhy(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec) string {
+	predates := func(rel string, known bool) bool { return known && imagePredates(rel, abSince) }
+	if rel, known := releaseOf(env.lc.BaseImage(config.BaseKind)); predates(rel, known) {
+		return pairOldImage
+	}
+	if rel, known := recordBaseRelease(ctx, env, slug, spec); predates(rel, known) {
+		return pairOldImage
+	}
+	return ""
+}
+
 // recordBaseRelease is the release of the base image the build record of slug
 // workflow names, and whether a record said so at all.
 func recordBaseRelease(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec) (string, bool) {
