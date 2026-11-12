@@ -59,9 +59,10 @@ var dogfoodingPractices = []struct {
 	{"Merge in dependency order", rigor.Pro},
 	// The salvage: a run that ended a draft over parts it could not run may
 	// still be fine. Startup is the mode whose stop row is that reading —
-	// "merge as-is, follow up the rest" — with the leftovers filed rather than
-	// left to a person, and with the runner and never a person marking the pull
-	// request ready (D11).
+	// "merge as-is, follow up the rest" — a run that opens its pull request
+	// ready with the findings its rounds left named in its status section
+	// rather than fixed, and with the runner and never a person marking that
+	// pull request ready (D11).
 	{"check the PR's CI, mark it ready and merge", rigor.Startup},
 	// The gate: the merge is not what proves the change, the CI on `main` is.
 	// Hotfix is the mode built on that, its post-merge suite being this
