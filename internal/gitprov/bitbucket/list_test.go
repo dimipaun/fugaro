@@ -201,14 +201,28 @@ func TestBitbucketListRefusesMorePagesThanItsBound(t *testing.T) {
 
 // Without a workspace or a token there is nothing to ask, and the refusal says
 // which one is missing rather than sending an anonymous call.
+//
+// Mutation (verified, run and restored): drop either guard — the case it
+// covers fails, the listing calling the API for a workspace it never named or
+// with no credential at all.
 func TestBitbucketListNeedsAWorkspaceAndAToken(t *testing.T) {
-	for _, o := range []ListOptions{
-		{Token: "token-abcdef"},
-		{Workspace: "acme"},
+	f := newListServer(t, []string{"acme/app"})
+	for _, c := range []struct {
+		o    ListOptions
+		want string
+	}{
+		{o: ListOptions{Token: "token-abcdef"}, want: "a workspace is required"},
+		{o: ListOptions{Workspace: "acme"}, want: "an access token is required"},
 	} {
-		if _, err := ListRepositories(context.Background(), o); err == nil {
-			t.Errorf("ListRepositories(%+v) ran with a required field missing", o)
+		_, err := f.list(t, c.o)
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("ListRepositories(%+v) = %v, want the refusal saying %q", c.o, err, c.want)
 		}
+	}
+	// And the refusal comes before the call: a listing that asked anyway would
+	// send an anonymous request, or one for a workspace nobody named.
+	if len(f.seen) != 0 {
+		t.Errorf("a listing with a required field missing made %d calls, want none: %+v", len(f.seen), f.seen)
 	}
 }
 
