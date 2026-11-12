@@ -219,7 +219,10 @@ func TestDocsProjectLayerSaysRoutingIsApplied(t *testing.T) {
 // with it moved with SC10, which landed both halves: the page said the pair
 // "arrives with the forced level" and that `fugaro run` had no `--security`
 // request yet, and both are false now — the switch and the request are
-// resolution inputs, and the flag is what writes the task's own field.
+// resolution inputs, and the flag is what writes the task's own field. The
+// switch's image gate is pinned too: the page named 0.22.0 alone for it, and
+// the release whose runner acts on the key is one more, so a page keeping the
+// old sentence would tell a project that every job image on 0.22.0 is enough.
 //
 // Mutation (verified, run and restored): restore the paragraph's bold lead —
 // "**0.22.0 decodes and validates both halves; no run reads them yet.**" — and
@@ -235,6 +238,7 @@ func TestDocsProjectLayerSaysTheSecurityListIsResolved(t *testing.T) {
 		"it is counted like the floor's rows and never measured",
 		"a row they refuse is dropped from the list rather than matched as written",
 		"`always_level_3` and the per-run request that goes with it turn review level 3 on when the run resolves its levels",
+		"Writing `always_level_3` needs one release more: 0.22.0 decodes the key and acts on nothing",
 	} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("docs/project-layer.md lacks %q: the page is where a reader learns that both halves are read, and by whom", want)

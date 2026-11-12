@@ -7,6 +7,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/orchestrator/sensitivity"
 	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
@@ -77,11 +78,28 @@ import (
 // project whose layer puts every run of it at level 3, is the statement that
 // only turns the level on — the reason there is nothing to warn about here,
 // where the escalation warns about the switch it overrides (escalateSecurity).
+//
+// A mode: review recipe forces nothing, and warns: such a recipe allows exactly
+// one review step and nothing else (recipe.Parse), so the level the request
+// asks for has no step to run in, and config's resolver refuses every other
+// level of it (config's reviewOnlyLevel). Refusing the run over a request it
+// cannot honour would kill a job already paid for — the reachable case is a
+// review run of a project whose layer sets always_level_3, and `fugaro review`
+// goes through the same launch — so the run keeps the levels it resolved and
+// the warning names the request and the reason, which is F9's rule for the
+// escalation's own row. The launcher refuses the launch first where it can
+// (internal/cli's launchReviewLevelsAsk resolves the same force), so what
+// reaches this warning is a task written by hand or launched before it existed.
 func (r *run) securityForcedLevels() []policy.Level {
-	if r.securityRequested() {
-		return []policy.Level{policy.LevelL3}
+	if !r.securityRequested() {
+		return nil
 	}
-	return nil
+	if r.rcp != nil && r.rcp.Mode == recipe.ModeReview {
+		r.d.Log.Warn("the run asks for the strongest review and its recipe is mode: review, which allows exactly one review step and nothing else: review level 3 has no step to run in, so the run keeps the levels it resolved",
+			"recipe", r.rcp.Name)
+		return nil
+	}
+	return []policy.Level{policy.LevelL3}
 }
 
 // securityRequested reports whether this run asks for the strongest review it

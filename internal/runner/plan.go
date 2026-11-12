@@ -64,6 +64,9 @@ type planStep struct {
 // `security: true` and the layer's always_level_3 are read here rather than
 // after the run is under way, so the plan bootstrap builds already carries the
 // adversarial step and nothing about the run changes under the agent's feet.
+// A mode: review recipe is the one run the request cannot hold — the level has
+// no step to run in — and there the force is dropped with a warning rather
+// than failing the run (securityForcedLevels).
 //
 // A run with no mode resolves nothing: the mode is the resolver's first
 // layer, and rigor.Known is false only for a run that never resolved one at

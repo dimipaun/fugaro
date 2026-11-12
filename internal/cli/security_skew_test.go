@@ -519,6 +519,13 @@ func TestSecuritySinceIsTheReleaseSecurityShipsIn(t *testing.T) {
 // runs ignore it. The image gate's own sentence is the part of the old text
 // that is still true, and both keep it.
 //
+// The same descriptions said the layer's always_level_3 arrives with a later
+// release, which SC10 made false: the switch and the per-run request beside it
+// are resolution inputs from 0.23.0 on, and the notWant list below holds the
+// sentences they replace — "arrive with a later release" was already there and
+// never matched, because the schemas wrote "arrives", so the drift stood while
+// the pin passed.
+//
 // Mutation (verified, run and restored): the two descriptions' "no run reads
 // either half yet: what a run matches, and what `fugaro security paths` prints,
 // is still the engine's floor of 43 rows" put back, and this fails naming both
@@ -540,6 +547,9 @@ func TestSecuritySchemasSayTheListInForceIsResolved(t *testing.T) {
 			"is still the engine's floor of 43 rows",
 			"arrive with a later release",
 			"arrive with later releases",
+			"arrives with a later release",
+			"no run reads it yet",
+			"fugaro run has no per-run request",
 		} {
 			if strings.Contains(s, notWant) {
 				t.Errorf("%s still says %q, which the resolution made false: a run, `fugaro security paths` and `fugaro doctor` read the one list in force", path, notWant)

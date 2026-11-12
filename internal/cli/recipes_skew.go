@@ -909,11 +909,13 @@ const securitySince = "0.22.0"
 // checkCloneSecurityRequestImage, judged from the image exactly as the sibling
 // field gates are).
 //
-// The project layer's always_level_3 — the other half of this request, and the
-// half a repository cannot write (D1503) — needs no constant of its own: it is
-// a key of the layer's security: block, so an older runner refuses the whole
-// block and securitySince's three gates already judge the images against it
-// (SetsSecurity).
+// The project layer's always_level_3 is the other half of the same request
+// (D1503) and the same constant judges it: a key of the layer's security:
+// block, which a 0.22.0 release decodes and never acts on, so the switch is
+// inert until the job image is on this constant — the silent non-application
+// noneModelSince and reviewLevelsSince exist for. Both homes are read off the
+// same configuration (securityRequestSources), and the layer's half needs the
+// constant for the behaviour rather than for the key.
 //
 // It names 0.23.0 ("Tapir", the CLI minor after the tagged 0.22.0), which is
 // **not tagged yet**: the release that tags it holds this number to the tag it
@@ -921,8 +923,8 @@ const securitySince = "0.22.0"
 // ("Before you tag") has the checklist verify it.
 const securityRequestSince = "0.23.0"
 
-// securityRequestSubject is what the securityRequestSince gate calls the field
-// it judges: the task's own, not the flag's, as the title's and the plan
+// securityRequestSubject is what the securityRequestSince gate calls the task
+// field it judges: the task's own, not the flag's, as the title's and the plan
 // task's are — a --retry carries no --security (taskFlags) and still carries
 // the field whoever launched that run wrote.
 const securityRequestSubject = "the task's security request (--security, kept by --retry)"
@@ -930,6 +932,69 @@ const securityRequestSubject = "the task's security request (--security, kept by
 // securityRequestKnows names what the job image's runner has to know for that
 // gate's message.
 const securityRequestKnows = "the security field of the task it runs"
+
+// securitySwitchSubject and securitySwitchKnows are that pair for the request's
+// other home, the project layer's always_level_3: the layer's own key, which no
+// repository writes and only the layer's operator can remove.
+const (
+	securitySwitchSubject = "the project layer's security.always_level_3"
+	securitySwitchKnows   = "the project layer's security.always_level_3 switch"
+)
+
+// securityRequestSources reports which homes of the run's request for the
+// strongest review this launch carries: the task's own security field
+// (securityRequestSubject), and the project layer's always_level_3
+// (securitySwitchSubject), which the run resolves at bootstrap too (the
+// runner's securityRequested). Both are judged from the configuration the run
+// will read — launchLevelsConfig, the same text the levels gate resolves — so a
+// launch and the run it starts agree on whether the request is on.
+func securityRequestSources(spec *task.Spec, cfg *config.Config) (fromTask, fromSwitch bool) {
+	return spec.Security, cfg != nil && cfg.Layer != nil && cfg.Layer.Security != nil && cfg.Layer.Security.AlwaysLevel3
+}
+
+// securityRequestNames is the subject and the "knows" of the gate's message for
+// the homes the launch carries, joined as securitySubject joins the two halves
+// of the security: block.
+func securityRequestNames(fromTask, fromSwitch bool) (subject, knows string) {
+	switch {
+	case fromTask && fromSwitch:
+		return securityRequestSubject + " and " + securitySwitchSubject,
+			securityRequestKnows + " and " + securitySwitchKnows
+	case fromSwitch:
+		return securitySwitchSubject, securitySwitchKnows
+	}
+	return securityRequestSubject, securityRequestKnows
+}
+
+// securityRequestRaiseOnly is the configuration and the task block with review
+// level 3's own off-switch cleared: the launcher's half of the rule the runner
+// applies to the same request (internal/runner/plan.go's
+// forcedLevelsAreRaiseOnly). The request only turns the level on (D1517), so a
+// layer that wrote `l3: none` does not defeat it, and a launcher that resolved
+// the switch as written would refuse a launch the run it starts runs anyway —
+// D722's refusal of a floored level a layer turned off, raised where the run
+// honours the request instead.
+func securityRequestRaiseOnly(cfg *config.Config, task *config.ReviewLevels) (*config.Config, *config.ReviewLevels) {
+	clear := func(l *config.LevelSetting) *config.LevelSetting {
+		if l == nil || (!l.Off && l.Model != config.NoneModel) {
+			return l
+		}
+		out := *l
+		out.Off = false
+		if out.Model == config.NoneModel {
+			out.Model = ""
+		}
+		return &out
+	}
+	cfgOut := *cfg
+	cfgOut.Agent.Levels.L3 = clear(cfgOut.Agent.Levels.L3)
+	if task == nil {
+		return &cfgOut, nil
+	}
+	block := *task
+	block.L3 = clear(block.L3)
+	return &cfgOut, &block
+}
 
 // asksForRigor reports whether a launch asks for a rigor mode or declares a
 // path: the two task fields a runner older than rigorRequestSince refuses
@@ -1548,15 +1613,32 @@ func levelsBlockAsk(name string, l *config.ReviewLevels) string {
 // the one thing that read could not settle: whether that recipe writes a
 // first-line step of its own. CatalogDefault is read as false: it decides
 // level 1's own default alone, which this gate does not judge.
+//
+// The run's own request for the strongest review is part of this resolution
+// exactly as it is part of the run's (securityRequestSources, the runner's
+// securityForcedLevels, SC10/D1517): it forces review level 3, and the levels'
+// own off-switch for that level is cleared rather than allowed to defeat it
+// (securityRequestRaiseOnly). Mirroring it is what keeps this gate the run's
+// own answer — a launch whose request the run would refuse (a mode: review
+// recipe has no step for the level) is refused here, before the task is
+// written, instead of by the job it was launched into (G2).
 func launchReviewLevelsAsk(ctx context.Context, env *cloudEnv, spec *task.Spec, cfg *config.Config, rcp *recipe.Recipe, recipeUnknown bool) (string, error) {
 	mode := rigor.Resolve(cfg.RigorConfig(), rigor.Request{Mode: rigor.Mode(spec.Rigor), Paths: spec.Paths}).Mode
 	var floor []policy.Level
 	if p, found, err := env.policy.read(ctx, env.lc); err == nil && found && p != nil {
 		floor = p.ReviewFloor[mode]
 	}
-	levels, _, err := config.ResolveLevels(config.LevelInputs{
+	fromTask, fromSwitch := securityRequestSources(spec, cfg)
+	in := config.LevelInputs{
 		Config: cfg, Mode: mode, Floor: floor, Task: spec.ReviewLevels, Recipe: rcp, Providers: env.lc.Providers,
-	})
+	}
+	if fromTask || fromSwitch {
+		// Cloned: ReviewFloor hands out the policy's own slice, and appending
+		// to it would write the forced level into the merged policy.
+		in.Floor = append(slices.Clone(floor), policy.LevelL3)
+		in.Config, in.Task = securityRequestRaiseOnly(cfg, spec.ReviewLevels)
+	}
+	levels, _, err := config.ResolveLevels(in)
 	if err != nil {
 		// Nothing is asked of the image and no task is written: the launch is
 		// the resolution's to refuse, and a refusal carries no levels to read
@@ -1564,6 +1646,14 @@ func launchReviewLevelsAsk(ctx context.Context, env *cloudEnv, spec *task.Spec, 
 		// Refusing here rather than leaving it to the run's bootstrap is what
 		// G2 means by "never launches", and the alternative is a job paid for
 		// a run whose first act is to refuse the task it was given.
+		if fromTask || fromSwitch {
+			// The refusal is config's own (a level a layer turns off under the
+			// floor, a model the allow-list does not name): what this adds is
+			// that the request is why the level was resolved at all, so a
+			// reader is not left looking for a floor nobody set.
+			subject, _ := securityRequestNames(fromTask, fromSwitch)
+			return "", userErr("the run's request for the strongest review (%s) turns review level 3 on, and its review levels do not resolve: %v", subject, err)
+		}
 		return "", userErr("%v", err)
 	}
 	return reviewLevelsAsk(levels, spec.ReviewLevels, cfg, floor, recipeUnknown), nil
@@ -3062,31 +3152,37 @@ func checkCloneSecurityImage(ctx context.Context, env *cloudEnv, spec *task.Spec
 // and for a checkout: clone workflow respectively: the pair the sibling task
 // fields have (checkFollowUpImage, and run.go's own --title and --tier gates).
 //
-// The condition is the field's and not the flag's: a --retry takes no --security
-// (taskFlags) and still carries the request when the run it replays was
-// launched with one, and a task written by hand carries it too. A launch that
-// carries none — every launch that passed no flag over a stored task that
-// carries none — is never gated, so the field is what decides and never the
-// release the CLI building a task happens to be.
+// The condition is the request's and not the flag's: a --retry takes no
+// --security (taskFlags) and still carries the task's field when the run it
+// replays was launched with one, a task written by hand carries it too, and the
+// project layer's always_level_3 is the same request in the other home. A
+// launch that carries none of the three is never gated, so the request is what
+// decides and never the release the CLI building a task happens to be. cfg is
+// the configuration the run will read (launchLevelsConfig), which is where the
+// layer's half is judged.
 //
 // It is not checkSecurityImage's gate: that one judges the configuration the
 // run will read (the repository's and the layer's security: blocks) against
-// securitySince, and this one judges the task against the release whose runner
-// reads the field. A launch can trip either, both, or neither.
-func checkSecurityRequestImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, warn io.Writer) error {
-	if !spec.Security {
+// securitySince, and this one judges what reads it against the release whose
+// runner acts on it. A launch can trip either, both, or neither.
+func checkSecurityRequestImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, cfg *config.Config, kind string, warn io.Writer) error {
+	fromTask, fromSwitch := securityRequestSources(spec, cfg)
+	if !fromTask && !fromSwitch {
 		return nil
 	}
-	return checkImageSince(ctx, env, slug, spec, kind, securityRequestSince, securityRequestSubject, securityRequestKnows, "", warn)
+	subject, knows := securityRequestNames(fromTask, fromSwitch)
+	return checkImageSince(ctx, env, slug, spec, kind, securityRequestSince, subject, knows, "", warn)
 }
 
 // checkCloneSecurityRequestImage is checkSecurityRequestImage for a checkout:
 // clone workflow: see checkCloneImageSince.
-func checkCloneSecurityRequestImage(lc *localcfg.Config, spec *task.Spec, warn io.Writer) error {
-	if !spec.Security {
+func checkCloneSecurityRequestImage(lc *localcfg.Config, spec *task.Spec, cfg *config.Config, warn io.Writer) error {
+	fromTask, fromSwitch := securityRequestSources(spec, cfg)
+	if !fromTask && !fromSwitch {
 		return nil
 	}
-	return checkCloneImageSince(lc, spec, securityRequestSince, securityRequestSubject, securityRequestKnows, "", warn)
+	subject, knows := securityRequestNames(fromTask, fromSwitch)
+	return checkCloneImageSince(lc, spec, securityRequestSince, subject, knows, "", warn)
 }
 
 // warnCoreJobImage warns when the build record of slug's workflow reports a

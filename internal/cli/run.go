@@ -1654,14 +1654,17 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 				return config.Inputs{}, err
 			}
 		}
-		// The security request, judged on the field like the two above
-		// and never on the flag: a runner older than
-		// securityRequestSince refuses a task carrying `security: true`
-		// outright (task.Parse decodes with DisallowUnknownFields), so a
-		// --retry that replays such a task is gated exactly as the launch
-		// that wrote it was. It is not the security: block's gate beside
-		// it: that one judges the configuration, this one the task.
-		if err := checkCloneSecurityRequestImage(env.lc, spec, warn); err != nil {
+		// The security request, judged on the two homes it has and never
+		// on the flag: the task's own field, which a runner older than
+		// securityRequestSince refuses outright (task.Parse decodes with
+		// DisallowUnknownFields), so a --retry that replays such a task is
+		// gated exactly as the launch that wrote it was, and the project
+		// layer's always_level_3, which the release that constant names is
+		// the first to act on — a job image between the two decodes the
+		// key and would run the project's runs a level short in silence.
+		// It is not the security: block's gate beside it: that one judges
+		// the key being written, this one what reads it.
+		if err := checkCloneSecurityRequestImage(env.lc, spec, fileCfg, warn); err != nil {
 			return config.Inputs{}, err
 		}
 		// The review levels' gate, judged on the run this launch
@@ -1809,7 +1812,7 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		}
 		// The same gate as the clone branch's above, and for the same
 		// reason: see securityRequestSince.
-		if err := checkSecurityRequestImage(ctx, env, slug, spec, kind, warn); err != nil {
+		if err := checkSecurityRequestImage(ctx, env, slug, spec, fileCfg, kind, warn); err != nil {
 			return config.Inputs{}, err
 		}
 		// The review levels' gate, the same as the clone branch's above

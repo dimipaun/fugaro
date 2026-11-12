@@ -656,3 +656,71 @@ func TestSecurityFieldCannotLowerTheLevel(t *testing.T) {
 		t.Fatalf("the plan carries no adversarial step: %+v", r.plan)
 	}
 }
+
+// TestSecurityRequestIsNotHonouredByAReviewRecipe: a mode: review recipe allows
+// exactly one review step and nothing else (recipe.Parse), and config's
+// resolver refuses every other level of it — level 3 included — so a run whose
+// request for the strongest review meets such a recipe cannot honour it. The
+// run is not failed for it: the job is paid for by then, the attempt to force
+// the level is what dies, and the level it asks for has nowhere to run. The
+// levels the run resolved stand, and the warning says why (F9's rule for the
+// escalation's own row).
+//
+// Both homes of the request are here, since neither is the recipe's business:
+// the task's own field and the project layer's always_level_3. `fugaro review`
+// is the reachable one — a review run of a project whose layer sets the switch
+// — because the launcher refuses the launch first wherever it can
+// (internal/cli's launchReviewLevelsAsk resolves the same force).
+//
+// Mutation (run and restored): drop the review-only branch from
+// securityForcedLevels — the resolution refuses level 3 and this fails with
+// "level 3 is required by the owner's floor for mode review", the bootstrap
+// death the branch exists to prevent.
+func TestSecurityRequestIsNotHonouredByAReviewRecipe(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		asked func(r *run)
+	}{
+		{"the task's field", func(r *run) { r.spec.Security = true }},
+		{"the layer's always_level_3", func(r *run) {
+			r.cfg.Layer = &config.ProjectLayer{Security: &config.LayerSecurity{AlwaysLevel3: true}}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, _ := securityRun(t, rigor.Pro)
+			r.rcp = parseRecipe(t, "version: 1\nname: review-only\nmode: review\nsteps:\n  - review: { max_rounds: 1 }\n")
+			var logs bytes.Buffer
+			r.d.Log = slog.New(slog.NewTextHandler(&logs, nil))
+			tc.asked(r)
+			resolveAgain(t, r)
+			if levelOn(r.levels, policy.LevelL3) {
+				t.Fatalf("level 3 resolved on for a mode: review recipe, which allows one review step and nothing else: %+v", r.levels)
+			}
+			if hasAdversarialStep(r.plan) {
+				t.Fatalf("the plan carries an adversarial step a review recipe has no place for: %+v", r.plan)
+			}
+			if want := "mode: review"; !strings.Contains(logs.String(), want) {
+				t.Errorf("the dropped request was not warned about (%q absent): %s", want, logs.String())
+			}
+		})
+	}
+}
+
+// TestSecurityRequestIsHonouredByARecipeThatKeepsTheLoop: the review-only
+// tolerance above is the recipe's mode and not a general quieting of the
+// request: a recipe in the implement mode is resolved with level 3 forced on,
+// whatever its steps, because the level's step is one the resolver inserts
+// (O7) where the recipe has none. An implementation that dropped the force
+// wherever a recipe was involved would pass the test above and fail this one.
+func TestSecurityRequestIsHonouredByARecipeThatKeepsTheLoop(t *testing.T) {
+	r, _ := securityRun(t, rigor.Pro)
+	r.rcp = parseRecipe(t, "version: 1\nname: loop\nmode: implement\nsteps:\n  - review: {}\n")
+	r.spec.Security = true
+	resolveAgain(t, r)
+	if !levelOn(r.levels, policy.LevelL3) {
+		t.Fatalf("an implement-mode recipe dropped the run's own security request: %+v", r.levels)
+	}
+	if !hasAdversarialStep(r.plan) {
+		t.Fatalf("the plan carries no adversarial step: %+v", r.plan)
+	}
+}
