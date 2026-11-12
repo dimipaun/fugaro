@@ -2845,3 +2845,38 @@ func TestEscalationSinceHasAReleaseBullet(t *testing.T) {
 		}
 	}
 }
+
+// TestPairImageWhy: a pair is dropped when either judge of the job image — the
+// installation's base image or the base its build record was built FROM —
+// predates abSince, and sampled on when neither can show a release at all.
+//
+// Mutation (run, restored): drop the record judge in pairImageWhy — the
+// record rows that expect pairOldImage fail.
+func TestPairImageWhy(t *testing.T) {
+	const base = "ghcr.io/dimipaun/fugaro-base:"
+	spec := &task.Spec{Version: 1, RunID: "20261007-100000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x"}
+	for _, tc := range []struct{ name, baseImage, recordRef, want string }{
+		{"no judge can date the image", "", "-", ""},
+		{"old base image", base + "0.13.9", "-", pairOldImage},
+		{"base image at abSince", base + abSince, "-", ""},
+		{"old record base", "", base + "0.13.9", pairOldImage},
+		{"record base at abSince", "", base + abSince, ""},
+		{"record base is a dev build", "", "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c", ""},
+		{"record names no base", "", "", ""},
+		{"current base, old record", base + abSince, base + "0.13.9", pairOldImage},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newCloudFixture(t)
+			env := fileEnv(t, f)
+			if tc.baseImage != "" {
+				env.lc.BaseImages = map[string]string{config.BaseKind: tc.baseImage}
+			}
+			if tc.recordRef != "-" {
+				writeBuildRecord(t, f, appSlug, "web", tc.recordRef)
+			}
+			if got := pairImageWhy(context.Background(), env, appSlug, spec); got != tc.want {
+				t.Fatalf("pairImageWhy = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
