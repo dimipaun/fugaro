@@ -1710,9 +1710,21 @@ func TestDoctorProjectSecretStoredPassesWithEitherCopy(t *testing.T) {
 // splice in) and whose local config offers one provider serving deepseek/*.
 func apiKeyRig(t *testing.T, lines string) *doctorRig {
 	t.Helper()
+	return apiKeyRigFiles(t, lines, nil)
+}
+
+// apiKeyRigFiles is apiKeyRig with files of the caller's own committed on the
+// checkout's base branch: the checks that read a repository's tree rather than
+// its working copy (D1518) need them there before the clone is made.
+func apiKeyRigFiles(t *testing.T, lines string, extra map[string]string) *doctorRig {
+	t.Helper()
 	r := newDoctorRig(t)
 	yaml := strings.Replace(cliMinimalYAML, "workflows:", lines+"workflows:", 1)
-	dir := checkoutWith(t, map[string]string{"fugaro.yaml": yaml})
+	files := map[string]string{"fugaro.yaml": yaml}
+	for name, body := range extra {
+		files[name] = body
+	}
+	dir := checkoutWith(t, files)
 	testutil.Git(t, dir, "remote", "set-url", "origin", "https://github.com/acme/app.git")
 	addLocalLines(t, r, "providers:\n  openrouter:\n    kind: anthropic-compat\n    base_url: https://openrouter.ai/api\n"+
 		"    auth: bearer\n    secret: openrouter-api-key\n    models: [\"deepseek/*\"]\n"+
@@ -1791,6 +1803,92 @@ func doctorWarnsForTheOptionalAnthropicKey(t *testing.T, lines string) {
 	}
 	if stored, ok := doctorCheckByID(o.Checks, "project-secret-stored"); ok && !stored.OK {
 		t.Fatalf("project-secret-stored = %+v: the optional key is not the red gate", stored)
+	}
+}
+
+// TestDoctorWarnsWhenTheCoderCannotSeeAndTheRepoHasImages is D2011's warning: a
+// coder priced without an image rate, no vision slot, and a base branch that
+// tracks a picture. The stage that reads one pays for its work and is refused
+// by the gateway mid-run (V5's checkImages is the run's half of the same rule),
+// so this is a warning — the default view prints it, and --strict fails on it —
+// and it names the coder, the slot, the file and the repository in the command
+// that fixes it.
+func TestDoctorWarnsWhenTheCoderCannotSeeAndTheRepoHasImages(t *testing.T) {
+	apiKeyRigFiles(t,
+		"agent: { auth: api-key, models: { coder: deepseek/deepseek-v4-flash } }\nbudget: { mode: enforce, per_run_usd: 20 }\n",
+		map[string]string{"assets/logo.png": "a picture, as far as the check reads one"})
+
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	c, ok := doctorCheckByID(o.Checks, "vision-coder")
+	if !ok || c.OK || c.Severity != "warning" {
+		t.Fatalf("vision-coder = %+v", c)
+	}
+	for _, want := range []string{"deepseek/deepseek-v4-flash", "agent.models.vision is unset", "origin/main", "assets/logo.png"} {
+		if !strings.Contains(c.Problem, want) {
+			t.Errorf("the warning does not say %q: %s", want, c.Problem)
+		}
+	}
+	if !strings.Contains(c.Fix, "models use acme/app vision") {
+		t.Errorf("the fix does not name the command that sets the slot: %s", c.Fix)
+	}
+	if !strings.Contains(c.Fix, "image_tokens") {
+		t.Errorf("the fix does not name the price half of it: %s", c.Fix)
+	}
+	// A warning is an item of the default view whatever its ID: one a reader
+	// only met under --all would be the silent pass this check exists to
+	// prevent.
+	human, _, _ := execute(t, "doctor")
+	if !strings.Contains(human, "warning vision-coder:") {
+		t.Errorf("the default view does not print the warning:\n%s", human)
+	}
+}
+
+// TestDoctorSaysNothingWhenTheCoderSees: a coder whose price row carries an
+// image rate reads a picture itself (D2016), so the slot is beside the point
+// and the check is a measurement — never a finding, and not one line of the
+// default view, images at the base branch or not. --all and --json carry it,
+// so a reader who asks does learn the state.
+func TestDoctorSaysNothingWhenTheCoderSees(t *testing.T) {
+	apiKeyRigFiles(t,
+		"agent: { auth: api-key, models: { coder: claude-sonnet-5-5 } }\nbudget: { mode: enforce, per_run_usd: 20 }\n",
+		map[string]string{"assets/logo.png": "a picture, as far as the check reads one"})
+
+	human, _, err := execute(t, "doctor")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, human)
+	}
+	if strings.Contains(human, "vision-coder") {
+		t.Errorf("the default view printed a measurement:\n%s", human)
+	}
+
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	c, ok := doctorCheckByID(o.Checks, "vision-coder")
+	if !ok || !c.OK || c.Severity != "info" {
+		t.Fatalf("vision-coder = %+v, want an ok measurement: this coder reads an image itself", c)
+	}
+	if !strings.Contains(c.Problem, "image rate") {
+		t.Errorf("the measurement does not say what lets the coder read one: %s", c.Problem)
+	}
+	all, _, err := execute(t, "doctor", "--all")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, all)
+	}
+	if !strings.Contains(all, "vision-coder") {
+		t.Errorf("--all does not print the measurement:\n%s", all)
 	}
 }
 

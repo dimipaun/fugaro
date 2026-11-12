@@ -595,6 +595,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 			if c := doctorModelKeyInAgent(lc, rf); c != nil {
 				o.Checks = append(o.Checks, *c)
 			}
+			o.Checks = append(o.Checks, doctorVisionChecks(ctx, co.Root, lc, rf, repo)...)
 		} else {
 			if len(lc.ClaudeAccounts) > 0 {
 				// The repository itself could not be determined (no origin

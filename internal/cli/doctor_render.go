@@ -838,9 +838,19 @@ var doctorShorts = map[string]doctorShort{
 	"project-secret-optional":           {"a workflow's optional key is not stored, and a run of it needs one.", "run `claude setup-token` and `fugaro secrets set anthropic-api-key`"},
 	"provider-open-to-every-repository": {"a provider's key may be mounted into every repository.", "narrow it: list the repositories in its allow_data_to, then run `fugaro update --repo .` in each"},
 	"provider-secret-name":              {"a provider's key is stored under a name Fugaro's convention does not give it.", "rename nothing: name a new provider's key `<provider>-api-key`"},
-	"billing-api":                       {"the Cloud Billing API is disabled on the project, so doctor and run cannot read the billing state.", ""},
-	"terraform":                         {"terraform is not on the PATH.", "install terraform 1.9 or later"},
-	"docker":                            {"docker is not on the PATH.", "install docker"},
+	// The vision warning spells the coder, the slot and every image file the
+	// base branch tracks, so on a repository with more than one picture it is
+	// longer than one screen line: the clip cut it where the file names are,
+	// which is the one part the reader has to act on. The short form says the
+	// state in one line and leaves the files to --all and --json, while the fix
+	// stays the check's own: it carries the repository in a command that can be
+	// pasted. Only the warning reaches the default view — the check's three ok
+	// states are measurements, and --all prints their own sentence whole — so
+	// this line is written for that one state.
+	"vision-coder": {"the coder model cannot read an image and agent.models.vision is unset, and this repository tracks image files at its base branch.", ""},
+	"billing-api":  {"the Cloud Billing API is disabled on the project, so doctor and run cannot read the billing state.", ""},
+	"terraform":    {"terraform is not on the PATH.", "install terraform 1.9 or later"},
+	"docker":       {"docker is not on the PATH.", "install docker"},
 
 	// The security sweep's warnings. They are printed in the default view — a
 	// warning-severity finding is never hidden — and their own sentence names a
