@@ -157,6 +157,12 @@ type InstallationSpec struct {
 	ManageAPIs      bool              `json:"manage_apis"`
 	Launchers       []string          `json:"launchers"`
 	Operators       []string          `json:"operators"`
+	// LauncherAccounts is the launcher class's list (D1938, F25) as the two
+	// services that admit a launcher read it (FUGARO_LAUNCHER_ACCOUNTS): the
+	// bare addresses a Google ID token's email claim holds. It is derived by
+	// launchers.go from the merged launchers list above and never written by
+	// hand, so the class and the invoker grants name the same people (F31).
+	LauncherAccounts []string `json:"launcher_accounts"`
 	// LauncherBucketCondition limits the launchers' write grant on the runs
 	// bucket to runs/, tokens/ and issues/ (gcp.LauncherBucketCondition).
 	LauncherBucketCondition Condition       `json:"launcher_bucket_condition"`
@@ -1405,6 +1411,11 @@ func RepoVars(spec RepoSpec) ([]byte, error) {
 func InstallationVars(spec InstallationSpec) ([]byte, error) {
 	spec.Launchers = launchersWithOperators(spec.Launchers, spec.Operators)
 	spec.Operators = members(spec.Operators, nil)
+	// The launcher class is the same merged list, read as addresses: the
+	// invoker grants below the root are made from the members, the two
+	// services' class check from these, and one derivation is what keeps them
+	// the same people (launchers.go, F31/F36).
+	spec.LauncherAccounts = launcherAccounts(spec.Launchers)
 	return sortedJSON(spec)
 }
 
