@@ -4358,6 +4358,38 @@ func launchDetail(w io.Writer, res launchResult) error {
 	return nil
 }
 
+// recordedLaunch is what a run recorded about its own launch, read without
+// writing anything: launch.json as it stands, or — when the CLI that launched
+// the run died before writing one — the launch the run's own record names,
+// result.json's execution through backend.ParseExecution, which is what
+// existingLaunch's backfill is built from. staged tells the two apart.
+//
+// It has two callers and that is the point: the "already launched" check
+// below, and the job a launch continuing this run reuses (project_job.go,
+// spec.md §8, D907). The two cannot disagree about what a run's job was, and
+// the decision — which runs before the claim is taken, where a launch may not
+// write — reads the same answer without writing it: only existingLaunch
+// backfills.
+func recordedLaunch(ctx context.Context, s *runstore.Store) (*runstore.Launch, bool, error) {
+	if l, err := s.ReadLaunch(ctx); err == nil {
+		return l, false, nil
+	} else if !errors.Is(err, runstore.ErrNotFound) {
+		return nil, false, remote(err)
+	}
+	rec, err := s.ReadRecord(ctx)
+	if errors.Is(err, runstore.ErrNotFound) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, remote(err)
+	}
+	l := &runstore.Launch{Version: 1, Execution: rec.Execution, LaunchedAt: rec.StartedAt}
+	if id, ok := backend.ParseExecution(rec.Execution); ok {
+		l.Job = id.Job
+	}
+	return l, true, nil
+}
+
 // existingLaunch is the run's launch, or nil when it has not launched. When
 // the CLI that launched died before writing launch.json, it backfills one
 // from result.json, where the runner records the same canonical execution
@@ -4372,41 +4404,35 @@ func existingLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, spec 
 		}
 		return nil
 	}
-	if l, err := s.ReadLaunch(ctx); err == nil {
+	l, staged, err := recordedLaunch(ctx, s)
+	if err != nil || l == nil {
+		return nil, err
+	}
+	if !staged {
 		if err := check(l.Execution); err != nil {
 			return nil, err
 		}
 		return l, nil
-	} else if !errors.Is(err, runstore.ErrNotFound) {
-		return nil, remote(err)
 	}
-	rec, err := s.ReadRecord(ctx)
-	if errors.Is(err, runstore.ErrNotFound) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, remote(err)
-	}
-	if rec.Execution == "" {
+	if l.Execution == "" {
 		// It ran already, with no cloud execution (a local run against this
 		// bucket): never launch it again. Nothing to backfill, and nothing
 		// is stored: a run with no launch.json has no plan task for any
 		// reader to find, the same way it has no launcher (LaunchedBy).
-		return &runstore.Launch{Version: 1, RunID: runID, LaunchedAt: rec.StartedAt}, nil
+		return &runstore.Launch{Version: 1, RunID: runID, LaunchedAt: l.LaunchedAt}, nil
 	}
-	if err := check(rec.Execution); err != nil {
+	if err := check(l.Execution); err != nil {
 		return nil, err
 	}
 	// The backend is the one this command selected, read from its codec, not
 	// the constant Cloud Run's: a backfilled launch of a run that ran
 	// elsewhere must be recorded as that backend's, or fugaro logs, cancel
 	// and diagnose read the record against the wrong platform's names
-	// (design compute-backend.md §2.5).
-	l := &runstore.Launch{Version: 1, RunID: runID, Backend: launchBackend(env.be), Execution: rec.Execution, PlanTask: spec.PlanTask, LaunchedAt: rec.StartedAt}
-	if id, ok := backend.ParseExecution(rec.Execution); ok {
-		l.Job = id.Job
-	}
-	if err := s.WriteLaunch(ctx, l); errors.Is(err, runstore.ErrExists) {
+	// (design compute-backend.md §2.5). The execution and the job are the
+	// run's own record's (recordedLaunch); the run id and the plan task are
+	// this call's, as they are for a fresh launch.
+	backfill := &runstore.Launch{Version: 1, RunID: runID, Backend: launchBackend(env.be), Execution: l.Execution, Job: l.Job, PlanTask: spec.PlanTask, LaunchedAt: l.LaunchedAt}
+	if err := s.WriteLaunch(ctx, backfill); errors.Is(err, runstore.ErrExists) {
 		if l, err = s.ReadLaunch(ctx); err != nil {
 			return nil, remote(err)
 		}
@@ -4414,7 +4440,7 @@ func existingLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, spec 
 	} else if err != nil {
 		return nil, remote(err)
 	}
-	return l, nil
+	return backfill, nil
 }
 
 // catalogDockerAsk answers whether this run needs a Docker daemon because the
@@ -4771,7 +4797,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	// this CLI cannot read costs no claim to release — and it is resolved
 	// before the mint, because it is what the token's window is measured
 	// against.
-	job, err := env.launchProjectJobFor(ctx, spec)
+	job, err := env.launchProjectJobFor(ctx, slug, spec)
 	if err != nil {
 		return res, err
 	}

@@ -3555,3 +3555,263 @@ func TestServiceReadSelectsTheProfileTheRefNames(t *testing.T) {
 		t.Fatalf("the launch ran on %s/%s, want the fast/github job the ref's job_profile names", profile, provider)
 	}
 }
+
+// A4: the job the run being continued recorded (D907, spec.md §2 source 2).
+//
+// A launch that continues a run — a --retry of a stored follow-up, a --pr
+// follow-up of a run that launched — reuses the job that run recorded, and it
+// is asked first: ahead of the checkout's document, ahead of the read at the
+// forge, and ahead of the refusals both would otherwise make. What it reuses
+// is a name out of the runs bucket, so nothing here is judged by it: the
+// runner's own placement checks are what judge the job a run starts in
+// (spec.md §8, §12, O2), and these four tests are the decision, its two
+// sources of truth and its own boundary.
+
+// seedLaunchedOn stores run id of repo as a run that launched on job: its
+// task.json, an execution of that job, and the launch.json a launch there
+// writes — the record source 2 reads. The execution is closed, so the run is
+// not one a launch counts as active.
+func seedLaunchedOn(t *testing.T, f *cloudFixture, slug, id, job string) string {
+	t.Helper()
+	ctx := context.Background()
+	b, err := blob.OpenBucket(ctx, f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	exec := startRunExecution(f, job, slug, id)
+	f.run.SetState(exec, backend.StateSucceeded)
+	s := runstore.Open(b, slug, id)
+	if err := s.CreateTask(ctx, firstRunSpec(id)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteLaunch(ctx, &runstore.Launch{Version: 1, RunID: id, Backend: "cloud-run",
+		Execution: exec, Job: job, LaunchedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	return exec
+}
+
+// projectJobRefSelectsFast publishes the fixture's standard profile beside a
+// second one, fast, and points the ref's document at fast: the document a
+// launch reads and the job a run recorded then disagree, which is the state
+// D907's decision is about (spec.md §8: a continuation stays on the job it
+// continues, and the runner's own checks are what judge the document that
+// moved under it).
+func projectJobRefSelectsFast(t *testing.T, f *projectJobFixture) *serviceReadFixture {
+	t.Helper()
+	policy := strings.Replace(projectJobPolicy,
+		`"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h"}`,
+		`"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h"},`+
+			`"fast":{"provider":"github","cpu":4,"memory":"8Gi","timeout_class":"6h"}`, 1)
+	publishPolicy(t, f.launchBudgetFixture, policy)
+	fast := gcp.ProjectJobName("fast", "github", "")
+	f.run.AddProjectJob(fast, "fast", "github", "", "4", "8Gi")
+	f.run.SetJobTimeout(fast, projectJobTimeout+backend.TaskTimeoutSlack)
+	s := newServiceReadFixture(t)
+	s.document = strings.Replace(projectJobRepoYAML, "  web:\n    checkout: clone\n",
+		"  web:\n    checkout: clone\n    job_profile: fast\n", 1)
+	if !strings.Contains(s.document, "job_profile: fast") {
+		t.Fatal("the fixture has no web: workflow to put a job_profile under")
+	}
+	s.use(t, f.cloudFixture)
+	return s
+}
+
+// TestRetryFromOutsideTheCheckoutReusesTheRecordedJob is A4's red step: a
+// --retry of a run whose task continues a run that launched on the shared
+// project job, from a directory that holds no checkout of the repository,
+// lands on the job that run's launch.json records. The retried run's own store
+// holds no launch, and the document at the ref names another profile by now —
+// so on main the launch follows that document to a job the run it continues
+// never ran on, which is the job change D907 refuses to make.
+//
+// The one read the launch still makes is the launch's own gates', which judge
+// the workflow's kind and image by the document at the ref (A3): the record is
+// the job decision's source, not a document that replaces the read.
+//
+// Mutation (run, restore): drop the continuedJob call in launchProjectJobFor —
+// the launch lands on the fast/github job this ref names.
+func TestRetryFromOutsideTheCheckoutReusesTheRecordedJob(t *testing.T) {
+	f := newProjectJobFixture(t)
+	projectJobRefSelectsFast(t, f)
+	root, fu := wallRunIDAt(3, "090000", "aaaa"), wallRunIDAt(0, "120000", "f00d")
+	seedLaunchedOn(t, f.cloudFixture, appSlug, root, f.job)
+	writeRecord(t, f.cloudFixture, root, prRecord(root, "", 7, 1))
+	// The stored follow-up: it never launched, which is why a --retry reaches
+	// it at all (a run that launched is answered "already launched").
+	seedSpec(t, f.cloudFixture, followUpSpec(fu, root, root, 7), false)
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+
+	if _, _, err := execute(t, "run", "--retry", fu); err != nil {
+		t.Fatalf("a --retry of a run that continues one which launched on the shared job, from a directory with no checkout: %v", err)
+	}
+	if profile, provider, _ := launchedProjectJob(t, f.cloudFixture); profile != "standard" || provider != "github" {
+		t.Fatalf("the launch ran on %s/%s, want the standard/github job run %s records", profile, provider, root)
+	}
+	if calls := f.run.RunRequests(); len(calls) != 1 || calls[0].Env["FUGARO_RUN"] != appSlug+"/"+fu {
+		t.Errorf("the launch is not of the retried run: %+v", calls)
+	}
+}
+
+// TestFollowUpFromOutsideTheCheckoutReusesThePreviousRunsJob is the same
+// decision on a --pr follow-up, which continues the run the chain's newest
+// record names (spec.PreviousRun, newFollowUpSpec) rather than the task it is
+// stored under. The ref's document is read once — the gates' read, memoized —
+// and the job is not that document's answer.
+//
+// Mutation (run, restore): drop the continuedJob call in launchProjectJobFor —
+// the launch lands on the fast/github job this ref names.
+func TestFollowUpFromOutsideTheCheckoutReusesThePreviousRunsJob(t *testing.T) {
+	f := newProjectJobFixture(t)
+	s := projectJobRefSelectsFast(t, f)
+	root, fu := wallRunIDAt(3, "090000", "aaaa"), wallRunIDAt(0, "120000", "f00d")
+	seedLaunchedOn(t, f.cloudFixture, appSlug, root, f.job)
+	writeRecord(t, f.cloudFixture, root, prRecord(root, "", 7, 1))
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fu, "also rename x"); err != nil {
+		t.Fatalf("a --pr follow-up of a run that launched on the shared job, from a directory with no checkout: %v", err)
+	}
+	if profile, provider, _ := launchedProjectJob(t, f.cloudFixture); profile != "standard" || provider != "github" {
+		t.Fatalf("the launch ran on %s/%s, want the standard/github job run %s records", profile, provider, root)
+	}
+	if spec := readSpec(t, f.cloudFixture, fu); spec.PreviousRun != root || spec.PR != 7 {
+		t.Fatalf("the follow-up's task = %+v, want it continuing %s on PR 7", spec, root)
+	}
+	if mints, reads := s.counts(); mints != 1 || reads != 1 {
+		t.Errorf("the launch made %d mint(s) and %d read(s), want one of each: the gates' read of the ref's document, and no second one for the job", mints, reads)
+	}
+}
+
+// TestRetryOfARunThatNeverLaunchedFallsThroughToTheOtherSources is the
+// decision's boundary: a run that never launched recorded no job, so a --retry
+// of it is decided by the document like any first launch. Both consequences
+// are pinned, because "no record" must not become "the per-repository job":
+// with no credentials service the launch keeps A2/A3's refusal, and with one
+// the document at the ref decides, at the cost of the read.
+func TestRetryOfARunThatNeverLaunchedFallsThroughToTheOtherSources(t *testing.T) {
+	t.Run("no credentials service", func(t *testing.T) {
+		f := newProjectJobFixture(t)
+		const run = "20261110-120000-aaaa"
+		seedSpec(t, f.cloudFixture, firstRunSpec(run), false)
+		isolateCache(t)
+		testutil.IsolateGit(t)
+		t.Chdir(t.TempDir())
+
+		_, _, err := execute(t, "run", "--retry", run)
+		if ExitCode(err) != ExitUserError {
+			t.Fatalf("err = %v, want a user error", err)
+		}
+		for _, want := range []string{"acme/app", "checkout", "credentials service"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal does not say %q: %v", want, err)
+			}
+		}
+		if calls := f.run.RunRequests(); len(calls) != 0 {
+			t.Errorf("the refused launch asked Cloud Run for %d job(s): %+v", len(calls), calls)
+		}
+	})
+	t.Run("a credentials service", func(t *testing.T) {
+		f := newProjectJobFixture(t)
+		s := newServiceReadFixture(t)
+		s.use(t, f.cloudFixture)
+		const run = "20261110-120001-bbbb"
+		seedSpec(t, f.cloudFixture, firstRunSpec(run), false)
+		isolateCache(t)
+		testutil.IsolateGit(t)
+		t.Chdir(t.TempDir())
+
+		if _, _, err := execute(t, "run", "--retry", run); err != nil {
+			t.Fatalf("a --retry of a run that never launched, on an installation with a credentials service: %v", err)
+		}
+		if profile, provider, _ := launchedProjectJob(t, f.cloudFixture); profile != "standard" || provider != "github" {
+			t.Fatalf("the launch ran on %s/%s, want the standard/github job the ref's fugaro.yaml selects", profile, provider)
+		}
+		if mints, reads := s.counts(); mints != 1 || reads != 1 {
+			t.Errorf("the launch made %d mint(s) and %d read(s), want exactly one of each: the launch read the document, because nothing recorded a job", mints, reads)
+		}
+	})
+}
+
+// TestRecordedJobIsNotTrustedForItsProfile is what the recorded job is and is
+// not: a name out of the runs bucket, placed as it stands. The profile it
+// belongs to is never re-judged here — the same launch reading the document
+// would be refused, because the profile the ref selects does not admit this
+// repository (profileAdmissionRefusal) — and what judges the run is the
+// runner's own placement check, which reads the ref's fugaro.yaml after
+// cloning and halts rather than widening (spec.md §8, §12). Red against main,
+// where the follow-up is refused before any execution exists.
+//
+// Mutation (run, restore): move the continuedJob call below the admission
+// check — this follow-up is refused again, and no execution is created.
+func TestRecordedJobIsNotTrustedForItsProfile(t *testing.T) {
+	f := newProjectJobFixture(t)
+	publishPolicy(t, f.launchBudgetFixture, `{"version":4,"allow_repos":["github/acme/*"],`+
+		`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h",`+
+		`"allow_repos":["github/acme/other"]}}}`)
+	s := newServiceReadFixture(t)
+	s.use(t, f.cloudFixture)
+	root, fu := wallRunIDAt(3, "090000", "aaaa"), wallRunIDAt(0, "120000", "f00d")
+	seedLaunchedOn(t, f.cloudFixture, appSlug, root, f.job)
+	writeRecord(t, f.cloudFixture, root, prRecord(root, "", 7, 1))
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fu, "also rename x"); err != nil {
+		t.Fatalf("a follow-up of a run recorded on a job whose profile no longer admits this repository: %v", err)
+	}
+	if profile, provider, _ := launchedProjectJob(t, f.cloudFixture); profile != "standard" || provider != "github" {
+		t.Fatalf("the launch ran on %s/%s, want the standard/github job run %s records", profile, provider, root)
+	}
+}
+
+// TestARunRecordedOnItsRepositoriesOwnJobIsNotReusedAsAProjectJob is the
+// boundary of what a record may decide, and the ordinary case of a record that
+// decides nothing: the job name a launch writes down is the platform's own, the
+// job its execution started on, so a run of a repository on its own job records
+// the per-repository name — not a project job of any profile, and not this
+// launch's to reuse. The tuple (slug, workflow, account) of that job is the
+// backend's to derive from THIS launch's own spec.
+//
+// The witness is the credentials service's address, which a launch on a named
+// job withholds (credentialsServiceLaunchEnv) and a repository's own job is
+// handed: it is the fetch path a cascade repository clones by, so a
+// continuation sent down the shared path stops before it clones. The ref's tree
+// carries no document, so the per-repository job is the document decision's own
+// answer too — what this test tells apart is the path, not the job's name, which
+// the two share.
+//
+// Mutation (run, restore): drop projectJobOfRecord's ok from continuedJob, and
+// reuse the recorded name through the shared path — the execution carries no
+// credentials service address.
+func TestARunRecordedOnItsRepositoriesOwnJobIsNotReusedAsAProjectJob(t *testing.T) {
+	f := newProjectJobFixture(t)
+	s := newServiceReadFixture(t)
+	s.document = ""
+	s.use(t, f.cloudFixture)
+	markRepoCredentialsServiceReady(t, f.cloudFixture)
+	root, fu := wallRunIDAt(3, "090000", "aaaa"), wallRunIDAt(0, "120000", "f00d")
+	perRepo := gcp.JobName(appSlug, "web")
+	seedLaunchedOn(t, f.cloudFixture, appSlug, root, perRepo)
+	writeRecord(t, f.cloudFixture, root, prRecord(root, "", 7, 1))
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fu, "also rename x"); err != nil {
+		t.Fatalf("a follow-up of a run recorded on its repository's own job: %v", err)
+	}
+	calls := f.run.RunRequests()
+	if len(calls) != 1 || calls[0].Job != perRepo {
+		t.Fatalf("the launch made %d jobs.run calls (%+v), want one on the per-repository job %s that run %s records", len(calls), calls, perRepo, root)
+	}
+	if got := calls[0].Env[providers.EnvCredentialsServiceURL]; got != s.srv.URL {
+		t.Errorf("the execution carries %s = %q, want %q: a repository on its own job is handed the address it fetches the repository by, and a launch placed on a named job is handed none", providers.EnvCredentialsServiceURL, got, s.srv.URL)
+	}
+}
