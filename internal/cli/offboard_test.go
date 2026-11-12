@@ -22,6 +22,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/intake"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
 // offboardRig is one fixture installation: its database, and the member every
@@ -110,6 +111,22 @@ func rosterGrantsOf(t *testing.T, db *gcpfake.RTDB) []accesslib.Grant {
 	return grants
 }
 
+// offboardLocalConfig is the fixture's own project config, as the command reads
+// it: the write's last-admin refusal names the installation, so a test that
+// calls the write directly hands it the same config the command would.
+func offboardLocalConfig(t *testing.T) *localcfg.Config {
+	t.Helper()
+	raw, err := os.ReadFile(os.Getenv("FUGARO_CONFIG"))
+	if err != nil {
+		t.Fatalf("reading the fixture's config: %v", err)
+	}
+	lc, err := localcfg.Parse(raw)
+	if err != nil {
+		t.Fatalf("the fixture's config does not parse: %v", err)
+	}
+	return lc
+}
+
 // rosterNames reports whether any stored grant names the member.
 func rosterNames(grants []accesslib.Grant, member string) bool {
 	for _, g := range grants {
@@ -118,6 +135,101 @@ func rosterNames(grants []accesslib.Grant, member string) bool {
 		}
 	}
 	return false
+}
+
+// TestOffboardRefusesSelfOffboard: an admin does not take themselves off the
+// roster, and the refusal lands before anything is written or swept. F17.2
+// keeps `fugaro user rm`'s self-removal ruling for this door, and the reason
+// transfers whole: the caller's own admin grant is what admitted them, so this
+// is the one act from here that can leave the installation with no project
+// admin at all. The roster below holds a second project admin, so what is
+// refused is self-removal itself and not the last-admin rule — an installation
+// that still has an admin does not let one go this way either — and the
+// caller's own stored secrets are left alone.
+func TestOffboardRefusesSelfOffboard(t *testing.T) {
+	r := newOffboardRig(t, offboardAdmin,
+		rosterGrant(offboardAdmin, "admin", "project"),
+		rosterGrant("deputy@example.com", "admin", "project"),
+		rosterGrant(offboardMemberAddress, "operator", "project"),
+	)
+	seen := fakeIntakeCalls(t, nil)
+
+	out, _, err := execute(t, "user", "offboard", offboardAdmin)
+	if err == nil {
+		t.Fatalf("an admin took themselves off the roster:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "identity this invocation is running as") {
+		t.Errorf("the refusal does not say the member named is the caller this command runs as: %v", err)
+	}
+	if !strings.Contains(err.Error(), "F17.2") {
+		t.Errorf("the refusal does not name the rule it is the roster's own version of: %v", err)
+	}
+	if len(*seen) != 0 {
+		t.Errorf("the refused command still called the intake (%d calls): nothing of the caller's may be swept before the member is placed", len(*seen))
+	}
+	grants := r.roster(t)
+	for _, want := range []string{"user:" + offboardAdmin, "user:deputy@example.com", "user:" + offboardMemberAddress} {
+		if !rosterNames(grants, want) {
+			t.Errorf("the refused self-offboarding dropped %s's grant too, and it writes nothing:\n%v", want, grants)
+		}
+	}
+}
+
+// TestOffboardRefusesEmptyingTheAdminList drives the write's own half of F17.2:
+// a roster whose project-scope admin grants would be gone is not landed, because
+// the admin list the next `fugaro update` publishes from that node is what
+// admits anybody to this command and to the intake's shared prefix (D1940), and
+// an empty one also drops every admin binding on the apply.
+//
+// The rule lives in the write rather than in the command's own checks, and this
+// test drives it there, because the command's path cannot reach it: the caller
+// holds the project-scope admin grant that admitted them, so the only drop that
+// empties the published list is one that takes the caller's own grant off, and
+// the self-refusal above refuses that first. What the write adds is the node
+// being written — a retry may be landing on a roster whose other admins were
+// just removed — which is what this calls it with.
+//
+// A node whose admin list is ALREADY empty is not refused: this write did not
+// empty it, and a refusal there would shut a door that is already shut. The
+// second half of the test is that boundary.
+func TestOffboardRefusesEmptyingTheAdminList(t *testing.T) {
+	r := newOffboardRig(t, offboardAdmin,
+		rosterGrant(offboardAdmin, "admin", "project"),
+		rosterGrant(offboardMemberAddress, "operator", "project"),
+	)
+	cl, err := newBudgetClient(t.Context(), r.db.URL, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lc := offboardLocalConfig(t)
+
+	// The roster's only project-scope admin grant is the one the write is asked
+	// to take off.
+	if _, err := offboardWriteRoster(t.Context(), cl, lc, accessNode(t, r.db), "user:"+offboardAdmin); err == nil {
+		t.Fatalf("the write landed a roster with no project-scope admin grant left")
+	} else if !strings.Contains(err.Error(), "no project-scope admin grant") {
+		t.Errorf("the refusal does not say what the roster would be left without: %v", err)
+	}
+	if grants := r.roster(t); !rosterNames(grants, "user:"+offboardAdmin) {
+		t.Errorf("the refused write took the last project admin off the roster anyway:\n%v", grants)
+	}
+
+	// The already-empty roster: no project admin is on it, so nothing this write
+	// does can empty it, and the drop lands.
+	setRosterOn(t, r.db,
+		rosterGrant(offboardMemberAddress, "operator", "project"),
+		rosterGrant("viewer@example.com", "viewer", "all-repos"),
+	)
+	dropped, err := offboardWriteRoster(t.Context(), cl, lc, accessNode(t, r.db), "user:"+offboardMemberAddress)
+	if err != nil {
+		t.Fatalf("the write refused a roster whose admin list was already empty, which this write did not empty: %v", err)
+	}
+	if dropped != 1 {
+		t.Errorf("the write reports %d grants dropped, want the member's one", dropped)
+	}
+	if grants := r.roster(t); rosterNames(grants, "user:"+offboardMemberAddress) {
+		t.Errorf("the member is still on the roster:\n%v", grants)
+	}
 }
 
 // TestOffboardRosterWriteSurvivesAConcurrentGrant drives the write the command
@@ -146,7 +258,7 @@ func TestOffboardRosterWriteSurvivesAConcurrentGrant(t *testing.T) {
 		rosterGrant("deputy@example.com", "admin", "project"),
 	)
 
-	dropped, err := offboardWriteRoster(t.Context(), cl, stale, "user:"+offboardMemberAddress)
+	dropped, err := offboardWriteRoster(t.Context(), cl, offboardLocalConfig(t), stale, "user:"+offboardMemberAddress)
 	if err != nil {
 		t.Fatalf("the write gave up on a roster another admin had moved: %v", err)
 	}

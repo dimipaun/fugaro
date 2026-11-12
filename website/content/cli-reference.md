@@ -8428,6 +8428,12 @@ of the roster itself. An implicit project admin — a GCP owner or editor, a
 budget admin — holds no stored grant and is refused (D1940), exactly as the
 intake refuses them; an admin of that kind takes the stored grant first.
 
+Two members cannot be offboarded this way, and nothing is written when one is
+asked for: the caller themselves (another admin has to offboard you, or a
+project Owner from outside the roster), and the roster's last project admin
+(an installation with no stored admin grant has nobody its own door admits, so
+a project Owner runs `fugaro update --admin` to put one on it first).
+
 Usage: `fugaro user offboard EMAIL`
 
 Flags:

@@ -47,6 +47,21 @@
 // (F17.3, D1940), the same fail-closed direction the intake's own admin check
 // takes.
 //
+// TWO OF THEM ARE THE ROSTER'S OWN RULE and not this command's taste (F17.2,
+// docs/roles-scopes/reconciliation.md): the last project admin is not removed,
+// and self-removal stays refused, which is `fugaro user rm`'s ruling for the two
+// lists it edits and holds here for the node those lists are derived from. Both
+// are refused BEFORE anything is written, so a refused offboarding leaves the
+// roster and the member's prefix exactly as it found them. The last-admin case is
+// narrower here than it looks, and deliberately still checked: the caller
+// necessarily holds a project-scope admin grant — that is what admitted them — so
+// the only write that can empty the published admin list is one that takes the
+// caller's own grant off, which the self-refusal above it catches first. What the
+// check in the write adds is the picture that is actually being written: a roster
+// re-read after a precondition failure may be one whose other admins another
+// admin has just removed, and the rule is about the node that lands, not about
+// the one this command first read.
+//
 // THE TWO AUTHORITIES ARE NOT THE SAME READ, and the difference is the order's
 // reason. This command asks the roster itself (access.Read, live) while the
 // intake asks the DERIVED list `fugaro update` publishes from that roster
@@ -114,7 +129,13 @@ a launcher the roster admits, and this command is what stops admitting them.
 Offboarding is an admin's act: the caller has to be a project-scope admin grant
 of the roster itself. An implicit project admin — a GCP owner or editor, a
 budget admin — holds no stored grant and is refused (D1940), exactly as the
-intake refuses them; an admin of that kind takes the stored grant first.`,
+intake refuses them; an admin of that kind takes the stored grant first.
+
+Two members cannot be offboarded this way, and nothing is written when one is
+asked for: the caller themselves (another admin has to offboard you, or a
+project Owner from outside the roster), and the roster's last project admin
+(an installation with no stored admin grant has nobody its own door admits, so
+a project Owner runs ` + "`fugaro update --admin`" + ` to put one on it first).`,
 		Args: func(_ *cobra.Command, args []string) error {
 			switch {
 			case len(args) == 0:
@@ -190,9 +211,19 @@ func userOffboard(cmd *cobra.Command, o cloudOptions, email string) error {
 	if !offboardIsAdmin(node.Grants, me) {
 		return offboardNeedsAdmin(node, lc, me)
 	}
+	// Self-removal is refused, and refused before the write: the caller holds
+	// the admin grant that admitted them, so this is the one act that can empty
+	// the roster's admin set from here, and F17.2 gives it the same answer
+	// `fugaro user rm` gives the two lists. Nothing has been written and the
+	// sweep has not run, so a refused offboarding of yourself leaves both halves
+	// alone — which is why the message can say so.
+	if me == member {
+		return userErr("nothing was offboarded: %s is the identity this invocation is running as, and an admin does not take themselves off the roster of %s — the roster is who can be told to settle the installation (run its update, add a member, offboard one), so another admin has to offboard you, or a project Owner from outside the roster (F17.2): nothing was written, and none of your stored secrets were swept",
+			safetext.Field(address), safetext.Field(lc.Name))
+	}
 
 	w := cmd.OutOrStdout()
-	dropped, err := offboardWriteRoster(ctx, db, node, member)
+	dropped, err := offboardWriteRoster(ctx, db, lc, node, member)
 	if err != nil {
 		return err
 	}
@@ -288,11 +319,25 @@ func offboardDropGrants(grants []accesslib.Grant, member string) ([]accesslib.Gr
 // reason. A node that changed under the retry is also why the count comes from
 // the write and not from the first read: it is the number of grants the
 // installation no longer holds, which is what the line claims.
-func offboardWriteRoster(ctx context.Context, db *rtdb.Client, node accesslib.Node, member string) (int, error) {
+func offboardWriteRoster(ctx context.Context, db *rtdb.Client, lc *localcfg.Config, node accesslib.Node, member string) (int, error) {
 	for range 3 {
 		next, dropped := offboardDropGrants(node.Grants, member)
 		if dropped == 0 {
 			return 0, nil
+		}
+		// F17.2's other half, and it is asked of the node being written rather
+		// than of the one first read: the rule is that the roster does not land
+		// with an empty admin list, and a retry may be writing onto a roster
+		// whose other admins have just been removed. The list is access.Admins',
+		// which is the same derivation `fugaro update` publishes from the node
+		// (D1940) and not a count written here — so what this refuses is exactly
+		// the list the installation would go without. It is a comparison of two
+		// non-empty-to-empty moves and not "is the member an admin": a node whose
+		// admin list is ALREADY empty is not emptied by this write, and refusing
+		// there would shut a door that is already shut.
+		if len(accesslib.Admins(node.Grants)) > 0 && len(accesslib.Admins(next)) == 0 {
+			return 0, userErr("nothing was offboarded: offboarding %s would leave %s's roster with no project-scope admin grant, and the admin list the next `%s update` publishes from it would be empty — every admin binding would be dropped, and no stored grant would admit anybody to this command or to the intake's shared prefix (F17.2, D1940) — so a project Owner from outside the roster runs `%s update --admin` to put an admin on it first: nothing was written",
+				safetext.Field(member), safetext.Field(lc.Name), selfCommand(), selfCommand())
 		}
 		err := accesslib.WriteIfMatch(ctx, db, next, node.ETag)
 		switch {
