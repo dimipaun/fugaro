@@ -181,6 +181,29 @@ const COORDINATOR_SWEEP_SOURCE = readFileSync(
   'utf8',
 )
 
+/**
+ * MEMBERS_SOURCE is `internal/cli/user_ls.go`, read the same way and for the
+ * same reason (the roles-and-scopes plan's RS7): it is the one file the Members
+ * view's document is written in, and `test/fixtures/members.json` stands for
+ * one `fugaro user ls --json` answer.
+ */
+const MEMBERS_SOURCE = readFileSync(
+  fileURLToPath(new URL('../../../internal/cli/user_ls.go', import.meta.url)),
+  'utf8',
+)
+
+/**
+ * MEMBERS is `test/fixtures/members.json`: one `user ls --json` document,
+ * invented from the structs above rather than recorded (no recording carries a
+ * grant whose scope matches a repository and one whose scope matches none).
+ * Its keys are pinned against the structs at the end of this file; there is no
+ * decoder beside that pin, because RS7 lands the read and its fixture and the
+ * Members view itself is a later task's.
+ */
+const MEMBERS: JSONDoc = JSON.parse(
+  readFileSync(join('test', 'fixtures', 'members.json'), 'utf8'),
+) as JSONDoc
+
 /** structTag is one field's `json:` tag: the key it writes, and whether the tag
  * carries `omitempty`. */
 interface StructTag {
@@ -2265,5 +2288,39 @@ describe('the declared intents document (coordinator v2 C4)', () => {
     // they lack: the three shapes share no top-level key but `repos`, and the
     // stored view's `repos` members carry `stored`/`view` rather than `intents`.
     expect(decodeCoordinatorIntents({ repo: 'owner/repo-a', stored: true }).ok).toBe(false)
+  })
+})
+
+describe('the Members view’s document (roles-and-scopes RS7)', () => {
+  it('lists every key of the document and of each object in it, read off the structs', () => {
+    // The read this fixture stands for is `fugaro user ls --json`, and
+    // `internal/cli/user_ls.go` is the one file its shape is written in, so a
+    // key the CLI gains without the fixture gaining it is a column a Members
+    // view would silently draw nothing for -- and a key the fixture carries
+    // that no struct writes is a value no read could ever print. Both
+    // directions, as in the plan document's own pin above, and in the structs'
+    // declaration order: the fixture is written in it, so `Object.keys` of the
+    // parsed document is comparable to the tags rather than merely sortable.
+    const pairs: readonly (readonly [readonly StructTag[], readonly string[], string])[] = [
+      [structTags(MEMBERS_SOURCE, 'userLsDoc', 'internal/cli/user_ls.go'), Object.keys(MEMBERS), 'the document'],
+      [
+        structTags(MEMBERS_SOURCE, 'userLsGrant', 'internal/cli/user_ls.go'),
+        Object.keys((MEMBERS.grants as JSONDoc[])[0] ?? {}),
+        'grants[]',
+      ],
+      [
+        structTags(MEMBERS_SOURCE, 'userLsEffective', 'internal/cli/user_ls.go'),
+        Object.keys((MEMBERS.effective as JSONDoc[])[0] ?? {}),
+        'effective[]',
+      ],
+      [
+        structTags(MEMBERS_SOURCE, 'userLsLegacyMember', 'internal/cli/user_ls.go'),
+        Object.keys((MEMBERS.legacy as JSONDoc[])[0] ?? {}),
+        'legacy[]',
+      ],
+    ]
+    for (const [tags, keys, what] of pairs) {
+      expect(tags.map((tag) => tag.key), what).toEqual([...keys])
+    }
   })
 })

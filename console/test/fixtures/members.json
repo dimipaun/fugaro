@@ -1,0 +1,49 @@
+{
+  "version": 2,
+  "project": "example-project",
+  "gcp_project": "example-gcp-project",
+  "run_operators": ["operator@example.com", "second-operator@example.com"],
+  "admins": ["admin@example.com"],
+  "grants": [
+    {
+      "user": "admin@example.com",
+      "role": "admin",
+      "scope": "project",
+      "known": ["example-owner/example-repo", "example-owner/other-repo"]
+    },
+    {
+      "user": "operator@example.com",
+      "role": "operator",
+      "scope": "example-owner/*",
+      "known": ["example-owner/example-repo", "example-owner/other-repo"]
+    },
+    {
+      "user": "second-operator@example.com",
+      "role": "operator",
+      "scope": "example-owner/example-repo",
+      "known": ["example-owner/example-repo"]
+    },
+    {
+      "user": "reviewer@example.com",
+      "role": "viewer",
+      "scope": "all-repos",
+      "known": ["example-owner/example-repo", "example-owner/other-repo"]
+    },
+    {
+      "user": "elsewhere@example.com",
+      "role": "viewer",
+      "scope": "another-owner/*",
+      "known": []
+    }
+  ],
+  "effective": [
+    { "user": "admin@example.com", "repo": "example-owner/example-repo", "role": "admin" },
+    { "user": "operator@example.com", "repo": "example-owner/example-repo", "role": "operator" },
+    { "user": "second-operator@example.com", "repo": "example-owner/example-repo", "role": "operator" },
+    { "user": "reviewer@example.com", "repo": "example-owner/example-repo", "role": "viewer" }
+  ],
+  "legacy": [
+    { "member": "operators@example.com", "role": "operator" },
+    { "member": "admins@example.com", "role": "admin" }
+  ]
+}

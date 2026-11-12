@@ -104,6 +104,12 @@ describe('the stub’s command keys', () => {
       // the installation's bucket -- its key is the command word, because the
       // 90 days it is measured over and the `--json` are the row's own words.
       'seats',
+      // The roles-and-scopes plan's RS7 (`members.list` / `listMembers`): the
+      // Members view's roster read. Its key is the command path, `user ls`,
+      // because the `--json` is the row's own word and the `user` group's other
+      // words -- `grant`, `revoke`, `add`, `rm` -- are on no row of this table
+      // and sit on the never table instead.
+      'user ls',
       'run',
     ])
     // The console's one spawn table, which since the owner's design ruling of
