@@ -101,6 +101,18 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 	var gov policy.Governance
 	if l := cfg.Layer; l != nil {
 		gov = l.Governance.Policy()
+		// The project layer's model grades ride the same layer and for the
+		// same reason (E4, D2039): they are a model choice the project owns
+		// (G3), and the layer the job carries is where a run holds the owner's
+		// own answer to what `strong` and `strongest` resolve to. The
+		// published node replaces them below when it writes them — it is what
+		// the owner says now, where this copy is what he said when the job was
+		// deployed — and a layer under the ceiling can never set one
+		// (policy.tightenGrades). Nothing else fills a layer's grades, so this
+		// is what makes policy.Effective.Grades non-empty for a run at all: a
+		// task that names a grade reads it there (applyGrade), and a grade the
+		// project sets nothing for is the refusal D2039 makes the rung's own.
+		ceiling.Grades = gradesOf(l.Defaults.ModelGrades)
 	}
 	ceiling.Governance = gov.WithDefaults()
 	// The project's own policy, when it has published one, *is* the ceiling
@@ -226,6 +238,16 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 	// the floor is the merged policy's (G1), and the models a level names are
 	// read off the pins the switch left, so a resolution taken before the
 	// rewrite would answer about the IDs it replaced.
+	//
+	// The task's grade is applied first of the three, before the switch and
+	// before the levels: it writes a pin, and a pin written after the switch
+	// would be one the switch never judged (an owner who routes the grade's
+	// model would find the run sending it direct), while a pin written after
+	// the levels would leave level 1 — which runs the coder's model — on the
+	// model the grade replaced.
+	if err := r.applyGrade(); err != nil {
+		return err
+	}
 	if err := r.applyRouting(pp, found); err != nil {
 		return err
 	}
@@ -741,6 +763,25 @@ func (r *run) policyCeiling(pp *projectpolicy.Policy, env policy.Layer, c Spend)
 			set[policy.KeyBinariesMaxBytes] = true
 		}
 	}
+	// The project's model grades ride the ceiling for the floor's reason
+	// (E4, D2039): they are the owner's own answer to which model each rung of
+	// the ladder runs and which credential or pool its calls go out on, and
+	// the node is the one object a launcher cannot write. The copy the job
+	// carries stood here until the node speaks (resolvePolicy), and the node
+	// replaces it whole rather than member by member, because a grade is one
+	// choice in two halves (policy.Grade): a node that rewrote `strong`'s
+	// model while the job's copy kept its credential would put two owners'
+	// answers on one grade.
+	//
+	// The keys are named in `set`, so result.json sources them as the node's
+	// and not as a ceiling that carried no grade at all — the reading the
+	// binaries block above takes for the same reason.
+	if g := pp.ModelGrades; g != nil && !g.Empty() {
+		ceiling.Grades = gradesOf(*g)
+		for name := range ceiling.Grades {
+			set[policy.ModelGradeKey(name)] = true
+		}
+	}
 	if len(pp.Prices) > 0 {
 		o, err := policyOverrides(pp)
 		if err != nil {
@@ -796,6 +837,31 @@ func policySources(e *policy.Effective, fromPolicy map[string]bool) {
 			e.Ignored[i].Source = policy.SourcePolicy
 		}
 	}
+}
+
+// gradesOf is a project's model grades as a policy layer carries them: the
+// two names a layer writes, each with the model and the credential or pool the
+// grade's calls go out on (policy.Grade, which is config.Craft's pair).
+//
+// The two packages spell the same block and neither may import the other —
+// config is the file's vocabulary and policy is the merge's, and config sits
+// above policy — so the conversion lives here, at the one place a run hands
+// the owner's grades to the merge. A grade with no model is left out rather
+// than carried: it is not a grade at all (policy.tightenGrades reads it the
+// same way, and the decoder refuses one where the block is written), and a run
+// that carried it would answer "the project sets this grade" for a name it
+// cannot resolve.
+func gradesOf(g config.ModelGrades) policy.Grades {
+	out := policy.Grades{}
+	for _, name := range config.GradeNames {
+		if c := g.At(name); c != nil && c.Model != "" {
+			out[name] = policy.Grade{Model: c.Model, Access: c.Access}
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // FileLayer is what a fugaro.yaml says about policy: the run's own layer,
