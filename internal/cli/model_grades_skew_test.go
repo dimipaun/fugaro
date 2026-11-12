@@ -54,6 +54,38 @@ func TestModelGradesSinceIsTheReleaseTheKeyShipsIn(t *testing.T) {
 	}
 }
 
+// TestModelGradesSinceHasAReleaseBullet: modelGradesSince names 0.25.0, which
+// is not tagged, so docs/release.md's Before-you-tag list is what holds the
+// constant to the release actually cut — the job every other *Since constant's
+// bullet does, and the one this constant's own comment claims. The test above
+// pins the constant to the release this work is slotted for, and it stays green
+// at any number: what a release that cut the key elsewhere would have to move
+// is this constant, and the bullet is where the person cutting it reads that.
+func TestModelGradesSinceHasAReleaseBullet(t *testing.T) {
+	var bullet string
+	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
+		if strings.HasPrefix(line, "- **Verify `modelGradesSince`") {
+			bullet = line
+			break
+		}
+	}
+	if bullet == "" {
+		t.Fatal("docs/release.md's Before-you-tag list has no modelGradesSince bullet: the checklist is where a release verifies the constant")
+	}
+	if !strings.Contains(bullet, "currently `\""+modelGradesSince+"\"`") {
+		t.Errorf("docs/release.md's modelGradesSince bullet does not carry the constant's release (%q)", modelGradesSince)
+	}
+	// Both homes, both gates and the two directions a wrong value fails in: a
+	// bullet that named the repository's block alone would have a release verify
+	// the constant against an image that reads fugaro.yaml and refuses the
+	// layer, which is the half that reaches every repository of the project.
+	for _, want := range []string{"model_grades", "defaults.model_grades", "gateModelGrades", "checkModelGradesImage", "checkCloneModelGradesImage", "not tagged yet"} {
+		if !strings.Contains(bullet, want) {
+			t.Errorf("docs/release.md's modelGradesSince bullet does not say %q", want)
+		}
+	}
+}
+
 // TestUpdateRepoRefusesModelGradesOnAnOlderBaseImage is modelGradesSince's gate
 // in fugaro update --repo, the same shape as planningSince's: both files are
 // decoded with KnownFields by every release, so a runner older than the key dies
