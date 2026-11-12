@@ -182,8 +182,15 @@ const (
 // between an entry's canonical name and its URL, which is the node's own rule
 // (projectpolicy.ValidCloneURLs) -- so it is a row the registry carries and this
 // list does not.
+//
+// Outer-loop escalation's E2 moved it by eight the same way and in the same
+// direction: the escalation ladder's two model grades are four rows for a
+// repository's own `model_grades.*` key and four for the project layer's
+// `defaults.model_grades.*`, and not one of them is in the allowlist -- the
+// block is the project's own model choice (G3), and a repository's entry is
+// dropped and recorded by the merge rather than written by it.
 const (
-	cfmRegistryRows   = 415
+	cfmRegistryRows   = 423
 	cfmAllowlistNamed = 101
 )
 

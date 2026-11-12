@@ -19,7 +19,7 @@ project config** — a sentence it prints and exits on — so the figures below
 are counted from the registry in this tree through the same predicate the write path uses, which is
 what the guard at the end of this section re-runs.
 
-- **F1 — the registry is 415 rows and the generic writer carries 181 of them.** 101 by name
+- **F1 — the registry is 423 rows and the generic writer carries 181 of them.** 101 by name
   (`internal/cli/settings_set.go:105`), made of the thirteen §4.4 names (the four budget scalars,
   `base_branch`, `max_parallel`, `update_check`, `commit_name`, `commit_email`, `layer.default_profile`,
   and D873's three account keys — `default_claude_account`, `claude_account_auto` and the wildcard
@@ -39,7 +39,7 @@ what the guard at the end of this section re-runs.
   and 80 through the nine prefixes
   (`internal/cli/settings_set.go:266`: `agent.`, `git.`, `followup.`, `governance.`, `watch.`,
   `layer.defaults.`, `layer.governance.`, `credentials.`, `clone_urls.`): 13 + 7 + 2 + 1 + 37 + 36 + 1 + 4 = 101.
-  **234 rows have no generic writer**, and the audit's whole subject is which of them are a defect and
+  **242 rows have no generic writer**, and the audit's whole subject is which of them are a defect and
   which are the installation's own plumbing (F13, D1182). The count moved from 390 by the image setup
   skill's two rows: the map (D1906) is the `image map` family's and one row, so it is not carried here,
   and the bake switch above is — and it moved again by the stop rule's two rows,
@@ -64,7 +64,10 @@ what the guard at the end of this section re-runs.
   refused by `settings set` whatever it is, and a row claiming a family is pointed at that command
   before this list is asked, so the figures are the allowlist's own and move only when it moves. It moved by three more rows to
   415 with DS3.1 of docs/secrets-brokering/dynamic-delivery/'s three `pools.*` rows (a pool's owner, its
-  roster and its legacy-open marker), which the generic writer carries none of.
+  roster and its legacy-open marker), which the generic writer carries none of, and by eight more to
+  423 with E2 of docs/outer-loop-escalation/'s two model grades (four rows for a repository's own
+  `model_grades.*` key and four for the project layer's `defaults.model_grades.*`, which the merged
+  tree writes and the generic writer carries none of, the whole block being the project's own).
 - **F2 — `fugaro rigor` does not exist.** There is no `newRigorCmd` in `internal/cli`, no `rigor` cobra
   command and no `floor` subcommand, while the registry names `rigor` (`internal/settings/registry.go:266`)
   and `rigor floor` (`:682`) as the owners of keys. Two of the registry's owner strings name a command a
