@@ -46,6 +46,19 @@
 // an implicit project admin, which holds no stored grant and is therefore refused
 // (F17.3, D1940), the same fail-closed direction the intake's own admin check
 // takes.
+//
+// THE TWO AUTHORITIES ARE NOT THE SAME READ, and the difference is the order's
+// reason. This command asks the roster itself (access.Read, live) while the
+// intake asks the DERIVED list `fugaro update` publishes from that roster
+// (access.PathAdminList, D1940), which by that decision lags a role change until
+// the next update runs. So a roster admin whose grant the last update did not
+// publish passes this check, has the roster half land — it is printed first, and
+// it is why the sweep comes second rather than only after a refused intake call
+// — and is then refused by the intake, whose own message is the one the operator
+// sees. The roster is not rolled back, deliberately: an address with no grant is
+// off the installation whatever the sweep did, and a half-done offboarding that
+// says which half landed is safer to read than a rollback that could resurrect a
+// grant an admin meant to remove.
 
 package cli
 
@@ -191,7 +204,7 @@ func userOffboard(cmd *cobra.Command, o cloudOptions, email string) error {
 	}
 	fmt.Fprintf(w, "the member's open slips are not ended by this command: a slip ends by the max-runtime cap the grant recorded, so a run in flight is not stopped here\n")
 
-	deleted, err := offboardSweep(ctx, o, member, address)
+	deleted, err := offboardSweep(ctx, o, address)
 	if err != nil {
 		// The roster half has already landed and is printed above: the error is
 		// the intake's own refusal (userErr or remote) and is returned as it
@@ -310,7 +323,7 @@ func offboardWriteRoster(ctx context.Context, db *rtdb.Client, node accesslib.No
 // and the deletion is made by the intake's account, which is the only writer
 // that holds one under the two prefixes. Nothing here reads a value, and the
 // answer carries names and no version's payload.
-func offboardSweep(ctx context.Context, o cloudOptions, member, address string) ([]string, error) {
+func offboardSweep(ctx context.Context, o cloudOptions, address string) ([]string, error) {
 	serviceURL, err := secretsIntakeServiceURL(ctx, o)
 	if err != nil {
 		return nil, err
@@ -328,8 +341,9 @@ func offboardSweep(ctx context.Context, o cloudOptions, member, address string) 
 }
 
 // offboardIsAdmin reports whether member holds a project-scope admin grant of
-// the roster: the rule the command's own check and its test share, so the two
-// cannot spell "an admin" two ways.
+// the roster. The rule is access's own resolution and not a comparison written
+// here, so "an admin" is spelled once in this tree: a grant at another scope,
+// or none at all, is not an admin of the installation (D1935).
 func offboardIsAdmin(grants []accesslib.Grant, member string) bool {
 	return accesslib.EffectiveAtProject(accesslib.Input{Grants: grants}, member) == accesslib.RoleAdmin
 }

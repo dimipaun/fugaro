@@ -13,13 +13,13 @@ package cli
 import (
 	"context"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
 	accesslib "github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
-	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/intake"
 )
@@ -120,6 +120,48 @@ func rosterNames(grants []accesslib.Grant, member string) bool {
 	return false
 }
 
+// TestOffboardRosterWriteSurvivesAConcurrentGrant drives the write the command
+// makes when another admin moved the roster between this command's read and its
+// write: the node it read no longer matches, so the write is refused, the roster
+// is read again and the drop is computed again — and the count the command
+// reports is the count of the write that landed, not of the picture it first
+// read. Landing the first picture instead would undo the grant the other admin
+// added while this one ran, which is the whole reason the write is conditional
+// (F23).
+func TestOffboardRosterWriteSurvivesAConcurrentGrant(t *testing.T) {
+	r := newOffboardRig(t, offboardAdmin,
+		rosterGrant(offboardAdmin, "admin", "project"),
+		rosterGrant(offboardMemberAddress, "operator", "project"),
+	)
+	cl, err := newBudgetClient(t.Context(), r.db.URL, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := accessNode(t, r.db)
+	// Another admin writes the roster, adding a grant, while this command holds
+	// the picture above.
+	setRosterOn(t, r.db,
+		rosterGrant(offboardAdmin, "admin", "project"),
+		rosterGrant(offboardMemberAddress, "operator", "project"),
+		rosterGrant("deputy@example.com", "admin", "project"),
+	)
+
+	dropped, err := offboardWriteRoster(t.Context(), cl, stale, "user:"+offboardMemberAddress)
+	if err != nil {
+		t.Fatalf("the write gave up on a roster another admin had moved: %v", err)
+	}
+	if dropped != 1 {
+		t.Errorf("the write reports %d grants dropped, want 1: the count is what the write that landed removed, and the roster it landed on held the member once", dropped)
+	}
+	grants := r.roster(t)
+	if rosterNames(grants, "user:"+offboardMemberAddress) {
+		t.Errorf("the member is still on the roster after the retry:\n%v", grants)
+	}
+	if !rosterNames(grants, "user:deputy@example.com") {
+		t.Errorf("the retry landed the picture the command first read and undid the grant another admin added while it ran:\n%v", grants)
+	}
+}
+
 // TestOffboardDeletesPrefix: offboarding names the member by their address, the
 // intake sweeps the prefix that address owns — the admin-only form of the
 // delete route, found by the owner annotation the intake wrote when the
@@ -177,8 +219,11 @@ func TestOffboardDeletesPrefix(t *testing.T) {
 // TestOffboardRefusedForNonAdmin: offboarding is an admin's act, and the admin
 // is the roster's own: a caller holding an operator's grant is refused, nothing
 // is removed from the intake and the roster is left exactly as it was. The
-// refusal names what is missing and the direction it fails in — an implicit
-// project admin holds no stored grant and is refused here too (D1940).
+// refusal names what is missing and the direction it fails in: the check passes
+// no implicit set to access's resolution, so a project's GCP owner or editor —
+// which holds no stored grant — resolves to no role and is refused here as the
+// intake refuses them (D1940). This fixture is the stored-grant case; the
+// implicit one is the same line of code with nothing in Input.Implicit.
 func TestOffboardRefusedForNonAdmin(t *testing.T) {
 	r := newOffboardRig(t, "operator@example.com",
 		rosterGrant(offboardAdmin, "admin", "project"),
@@ -241,6 +286,15 @@ func TestOffboardDropsMemberFromRoster(t *testing.T) {
 	if len(grants) != 2 {
 		t.Errorf("the roster holds %d grants, want the two the member did not hold:\n%v", len(grants), grants)
 	}
+	// And in the node's own order: the drop keeps the grants around the removed
+	// ones as it found them, so an admin who reads the node after the write sees
+	// their own roster with one address gone rather than a reordered one.
+	if len(grants) == 2 {
+		got := []string{grants[0].User, grants[1].User}
+		if want := []string{"user:" + offboardAdmin, "user:deputy@example.com"}; !slices.Equal(got, want) {
+			t.Errorf("the roster reads %v, want the surviving grants in the order they were stored (%v)", got, want)
+		}
+	}
 }
 
 // TestOffboardDeletesPrefixAndEndsSlips: the sweep is the whole prefix, and it
@@ -275,14 +329,10 @@ func TestOffboardDeletesPrefixAndEndsSlips(t *testing.T) {
 	if !strings.Contains(out, "max-runtime cap") {
 		t.Errorf("the command does not say the member's open slips end by their max-runtime cap:\n%s", out)
 	}
-	// The two slip routes this release serves, and no third one: a slip is
-	// granted and claimed, and there is no end route for offboarding to call.
-	// credsvc's TestServedRoutesAreExactly holds the service to the same set.
-	for _, path := range []string{credsvc.SlipPath, credsvc.SlipClaimPath} {
-		if path == "" || !strings.HasPrefix(path, "/v1/slip") {
-			t.Errorf("the slip route %q is not one the service serves: the slip surface is the grant and the claim", path)
-		}
-	}
+	// A slip is granted and claimed, and there is no end route for this command
+	// to call: the one call asserted above is what pins that from here, and
+	// credsvc's TestServedRoutesAreExactly holds the service's own side of it
+	// (credsvc.SlipPath and credsvc.SlipClaimPath are the whole slip surface).
 }
 
 // TestPoolLosesRemovedMembers: offboarding does not rewrite the published
