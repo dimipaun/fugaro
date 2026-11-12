@@ -33,8 +33,9 @@ import (
 // §11.1-§11.2, rung 2), or, since 2026-11-05, by the project's
 // `default_claude_account` where that stage's own model is an Anthropic one
 // (rung 4, which an `oauth` run also uses for every stage) — and use it for
-// the senior `review` (level 2) and the adversarial `adversarial` (level 3)
-// stages only.
+// the three stages of the mix and no others: the senior `review` (level 2), the
+// adversarial `adversarial` (level 3) and the `triage` judge that weighs a
+// round's findings before the fix takes them (D1851).
 // The stage rule is an allow-list rather than a denylist, so every other stage
 // is refused: `implement`, `review_first` (level 1 is the cheap first line and
 // runs on the coder's model), `fix`, `plan`, and any stage a later recipe adds.
@@ -60,6 +61,25 @@ import (
 // Path A "Missing" list named gaps the tree does not have (F4, F9).
 // TestDocsMultiModelNamesTheReviewOnTheRunsOwnKey and
 // TestDocsMixedCredentialsCorrectsTheStaleMissingList are those two pins.
+
+// rungTwoKeys is the mix's allow-list as the documents enumerate the stage keys
+// that name the account: `stages.review.claude_account`,
+// `stages.adversarial.claude_account` or `stages.triage.claude_account`. A page
+// that stops at the two reviews sends a reader who wants the judge on the
+// account to a key it believes is refused, so the enumeration is read off the
+// launch's own list (config.MixedAccountStages) rather than spelled again here:
+// a stage that joins or leaves the mix fails the pins that use this, and the
+// pages are corrected with it.
+func rungTwoKeys(stages []string) string {
+	quoted := make([]string, 0, len(stages))
+	for _, stage := range stages {
+		quoted = append(quoted, "`stages."+stage+".claude_account`")
+	}
+	if len(quoted) < 2 {
+		return strings.Join(quoted, "")
+	}
+	return strings.Join(quoted[:len(quoted)-1], ", ") + " or " + quoted[len(quoted)-1]
+}
 
 // TestDocsMixedCredentialsRecordsTheRuling: the design note carries the rule
 // as its own section, with the stages it may serve, the two it may never
@@ -99,6 +119,16 @@ func TestDocsMixedCredentialsRecordsTheRuling(t *testing.T) {
 		strings.Join(quoted[:len(quoted)-1], ", ")+" and "+quoted[len(quoted)-1])
 	if !strings.Contains(section, permitted) {
 		t.Errorf("%s §11 does not state the allow-list as %q: the account may serve exactly those stages, and a rule that lists refusals instead lets the next stage a recipe adds read as permitted", path, permitted)
+	}
+	// The rung-2 keys are enumerated where the reader learns how the account is
+	// named, and an enumeration that stops at the two reviews is what a stage
+	// joining the mix leaves behind: the sentence is read with the list's own
+	// names, so `triage` leaving this clause fails here rather than after an
+	// operator has been told the key for it is refused.
+	rungTwo := "`stages.<stage>.claude_account` on " +
+		strings.Join(quoted[:len(quoted)-1], ", ") + " or " + quoted[len(quoted)-1]
+	if !strings.Contains(section, rungTwo) {
+		t.Errorf("%s §11 does not name the rung-2 keys as %q: the stage's own key is what names the account, on every stage of the allow-list and not only on the first two", path, rungTwo)
 	}
 	for _, want := range []string{
 		// The rule, the one credential it permits and the two keys that may
@@ -277,8 +307,13 @@ func TestDocsMultiModelRecordsTheReviewAccountException(t *testing.T) {
 		"one",
 		"`review`",
 		"`adversarial`",
+		"`triage`",
 		"`review_first`",
 		"design/mixed-credentials.md",
+		// The bullet names the keys that decide the mix, so a reader who meets
+		// the rule here is sent to the stage's own key for all three stages and
+		// not only for the reviews.
+		rungTwoKeys(config.MixedAccountStages),
 	} {
 		if !strings.Contains(bullet, want) {
 			t.Errorf("%s §5's refusal bullet never says %q: a reader who takes it for the whole rule reads a mixed run as refused", path, want)
@@ -311,6 +346,7 @@ func TestDocsMultiModelRecordsTheReviewAccountException(t *testing.T) {
 		// further (the owner's ruling of 2026-11-05).
 		"by the project's `default_claude_account` where that stage's own model is an Anthropic one",
 		"stages.review.claude_account",
+		rungTwoKeys(config.MixedAccountStages),
 		"the default is a way in for those three stages and for no others",
 		// The run's own anthropic-api-key mount is not a third credential of
 		// this kind: it is what an api-key job already carries for the gateway.

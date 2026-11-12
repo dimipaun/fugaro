@@ -20,7 +20,7 @@ The spec calls the four model assignments "roles", which collides with the user 
 | Pool, failover | `claude_account_auto` + the ordered account list: ordered failover "never mid-stage", dormant until the provider's terms are confirmed (`docs/accounts-add` D874/D875). For the cascade of credentials, `internal/credsvc/cascade.go` (`Select`, `retryPool`, `probeDue`). |
 | Pool, round-robin | **Nothing.** |
 | Craft (model + access per role) | Model: `agent.models.coder/reviewer/background` (`config.ModelRoles`), per-level `model` in `--review-levels`, and routes (`fugaro models`: `ls/add/use/rm/search`, `docs/models-commands`, `docs/multi-model.md`, `route_fee_pct`, `model_prices`). Access: `default_claude_account`, `stages.<stage>.claude_account` (`localcfg.Config.DefaultClaudeAccount`, `ClaudeAccountStages`; policy mirror `projectpolicy.DefaultClaudeAccount`, `ClaudeAccountStages`), and the record's `stage_accounts` (D876). |
-| Inheritance | Partly: `config.StageRole` maps `implement`, `fix` and `review_first` to the coder role and `review` and `adversarial` to the reviewer role. A level with no setting takes the configuration's answer. |
+| Inheritance | Partly: `config.StageRole` maps `implement`, `fix` and `review_first` to the coder role and `review`, `adversarial` and `triage` to the reviewer role. A level with no setting takes the configuration's answer. |
 | Effective view | `fugaro models ls`, `fugaro accounts ls`; no command shows a role's model *and* access with where each came from. |
 | Layering within guardrails | `internal/policy` merge, only tightening wins; the project layer (`internal/projectpolicy`). |
 | Migration | `fugaro update` converges config and policy (CLAUDE.md HARD RULE). |
