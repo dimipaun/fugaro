@@ -1648,8 +1648,8 @@ func TestUpdateManagedGatesTheCredentialsServiceStage(t *testing.T) {
 				if stopped := stoppedStage(got); stopped != initflow.CredentialsService {
 					t.Fatalf("the run stopped at %s, want the credentials-service stage:\n%s", stopped, got)
 				}
-				if left := leftFor(got, initflow.CredentialsService, initflow.LeftRefused); left != "" {
-					t.Errorf("a stage this door does not gate left the owner the gate's own step, which is the answer the entry exists to give:\n%s", got)
+				if strings.Contains(got, "left for you ("+initflow.CredentialsService+", ") {
+					t.Errorf("a stage this door does not gate left the owner a step, which is the answer the entry exists to give:\n%s", got)
 				}
 				return
 			}
