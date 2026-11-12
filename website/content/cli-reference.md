@@ -4485,7 +4485,7 @@ Subcommands:
 - `fugaro project repos` -- The project's allow-list: which repositories may run
 - `fugaro project routing` -- The project's Claude routing switch: where a run's Claude calls go
 - `fugaro project show` -- Show the effective project: caps, policy, allow-list, repositories running now
-- `fugaro project sync` -- Offer the GitHub App's installed repositories that the allow-list does not admit
+- `fugaro project sync` -- Offer the provider's repositories that the allow-list does not admit
 
 ## `fugaro project clone-url`
 
@@ -5204,31 +5204,45 @@ This command has no subcommands.
 
 ## `fugaro project sync`
 
-Offer the GitHub App's installed repositories that the allow-list does not admit
+Offer the provider's repositories that the allow-list does not admit
 
-Ask GitHub which repositories the project's GitHub App is installed on (the
-App API, with the App's own credentials) and offer the ones the published
+Ask the provider which repositories it holds and offer the ones the published
 allow_repos does not admit, as one list written in one batch: nothing is
 asked, and what was written is printed after the write. The accepted list is
 written through the same ETag-guarded write `project repos add` uses; entries
 are only ever added, so a sync never un-enrolls a repository — including one
-the App is not installed on at all (another provider's, or one whose
-installation was removed). A repository the list already admits, a pattern
-included, is not offered: its runs are admitted already.
+the provider does not hold at all (another provider's, or one whose access was
+removed). A repository the list already admits, a pattern included, is not
+offered: its runs are admitted already.
 
-Reading the App's private key is --github-app-key: without it, nothing is
-read. Under it the key is read from the project's github-app-key secret with
-your own credentials and held in memory only to sign the App's 9-minute JWT
-(never printed, never passed as an argument, never in an error), and the
-flag is refused in a coding agent's session. The App ID is a number, not a
-secret: --github-app-id, or the one this machine's config already holds.
+The provider is GitHub's App by default: the repositories the App is installed
+on, read with the App's own credentials. Reading the App's private key is
+--github-app-key: without it, nothing is read. Under it the key is read from
+the project's github-app-key secret with your own credentials and held in
+memory only to sign the App's 9-minute JWT (never printed, never passed as an
+argument, never in an error), and the flag is refused in a coding agent's
+session. The App ID is a number, not a secret: --github-app-id, or the one
+this machine's config already holds.
 
-Usage: `fugaro project sync [--github-app-id <id>] [--github-app-key] [--yes]`
+--bitbucket <workspace> lists that workspace's repositories instead, through
+Bitbucket's own API, and --bitbucket-project narrows the listing to one
+project of it. The token is a workspace or project access token, read from
+stdin or from a hidden prompt and never from an argument — an argument is in
+the process's command line, where every process on the machine reads it, and
+in the shell's history — and it is held in memory only for the listing.
+
+--check prints the difference and writes nothing, whichever provider lists:
+the published allow-list is read and left exactly as it was.
+
+Usage: `fugaro project sync [--bitbucket <workspace>] [--bitbucket-project <key>] [--check] [--github-app-id <id>] [--github-app-key] [--yes]`
 
 Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--bitbucket` | string | "" | no | list this Bitbucket workspace's repositories instead of the GitHub App's, with a Bitbucket access token read from stdin or a hidden prompt (never from an argument) |
+| `--bitbucket-project` | string | "" | no | narrow --bitbucket to one project of that workspace (its project key) |
+| `--check` | bool | `false` | no | print what would be added and write nothing |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `--github-app-id` | string | "" | no | the GitHub App's ID (a number, not a secret); default: the one this machine's config holds |
