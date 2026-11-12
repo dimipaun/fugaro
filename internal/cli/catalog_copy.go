@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/catalog"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/imagebake"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
@@ -49,32 +51,80 @@ const catalogDockerfileType = "text/plain; charset=utf-8"
 // process resolved a moment earlier, and the values it staged are what tells
 // it the copy it read back is this one and not another publisher's
 // (refuseMixedCatalogCopy).
-func writeCatalogDockerfile(ctx context.Context, b *blobx.Bucket, open gitprov.Opener, kind string, e config.Entry) (catalog.Resolved, error) {
+//
+// bake is the stage this build appends to the definition — the checkout of the
+// repository the build runs for (imagebake, the image setup skill's bake step,
+// IS8b) — and it is composed here rather than added to a build request because
+// the copy is the one definition every reader of this entry reads: the build
+// that pins it, the record it writes, and the nightly check that rebuilds it
+// from the same object. A copy an installation's next build resolves
+// identically is not rewritten, so republishing an unchanged definition does
+// not churn the object either.
+//
+// The second result is the slug of a checkout the copy this call replaced baked
+// and the definition it wrote does not, "" when the write dropped no bake. The
+// bake is the one part of a copy that is not the entry's own bytes, so a build
+// that composes none and finds one there is replacing another repository's
+// stage: every job of the entry clones at start once it is off the image, and
+// the plan the caller prints says nothing about it — the write happened at an
+// entry that plan is quiet about (imagebake.Plan.Notable). The caller says it
+// out loud (noteBakeDropped); a definition that already carries a bake does not
+// differ from what a build composes, so nothing is dropped and no line is owed.
+func writeCatalogDockerfile(ctx context.Context, b *blobx.Bucket, open gitprov.Opener, kind string, e config.Entry, bake imagebake.Plan) (catalog.Resolved, string, error) {
 	// The keys first: a name that is not one is refused before any credential
 	// is used to read a definition, and the refusal is the helper's own
 	// sentence (it does not repeat the name, which is what reached it).
 	key, err := config.CatalogDockerfileKey(e.Name)
 	if err != nil {
-		return catalog.Resolved{}, err
+		return catalog.Resolved{}, "", err
 	}
 	var commitKey, hashKey string
 	if e.Source.Context != "" {
 		if commitKey, err = config.CatalogContextCommitKey(e.Name); err != nil {
-			return catalog.Resolved{}, err
+			return catalog.Resolved{}, "", err
 		}
 		if hashKey, err = config.CatalogContextHashKey(e.Name); err != nil {
-			return catalog.Resolved{}, err
+			return catalog.Resolved{}, "", err
 		}
 	}
 	src, err := catalog.Resolve(ctx, open, kind, e)
 	if err != nil {
-		return catalog.Resolved{}, err
+		return catalog.Resolved{}, "", err
 	}
-	if err := writeCatalogObject(ctx, b, key, src.Dockerfile, catalogDockerfileType, catalog.MaxDockerfileBytes, catalogCopyLead); err != nil {
-		return catalog.Resolved{}, err
+	fetchLen := len(src.Dockerfile)
+	data, err := imagebake.Append(src.Dockerfile, bake)
+	if err != nil {
+		return catalog.Resolved{}, "", err
+	}
+	// The composed bytes are bounded here and not only where the entry's own
+	// were resolved: every reader of this object reads it with this same limit
+	// (catalog.MaxDockerfileBytes), so an object over it is one the nightly
+	// check fails forever and one this call could not rewrite -- an unreadable
+	// copy has no generation to condition on. A definition inside the bound can
+	// leave it by the generated stage alone, which is the case this refuses.
+	if len(data) > catalog.MaxDockerfileBytes {
+		return catalog.Resolved{}, "", fmt.Errorf("the catalog entry %s: its Dockerfile is %d bytes and the generated checkout stage takes it to %d, more than the %d a definition may be; shorten the definition",
+			pluginwire.Printable(e.Name), fetchLen, len(data), catalog.MaxDockerfileBytes)
+	}
+	// The result carries the composed bytes: they are what the bucket holds
+	// after this call, and what the caller's read-back is compared with.
+	src.Dockerfile = data
+	// What this write takes off the copy, read before it is written: the copy
+	// holds a stage and the composed definition does not, so the repository that
+	// composed it has a job on this image that finds no checkout from now on.
+	dropped := ""
+	if old, _, rerr := b.ReadMax(ctx, key, catalog.MaxDockerfileBytes); rerr == nil && !bytes.Equal(old, data) {
+		if before, baked := imagebake.BakedSlug(old); baked {
+			if _, still := imagebake.BakedSlug(data); !still {
+				dropped = before
+			}
+		}
+	}
+	if err := writeCatalogObject(ctx, b, key, data, catalogDockerfileType, catalog.MaxDockerfileBytes, catalogCopyLead); err != nil {
+		return catalog.Resolved{}, "", err
 	}
 	if e.Source.Context == "" {
-		return src, nil
+		return src, dropped, nil
 	}
 	// The two values are a commit and a digest: short, and read back by a
 	// build's own substitution and by the check. They are written after the
@@ -82,12 +132,12 @@ func writeCatalogDockerfile(ctx context.Context, b *blobx.Bucket, open gitprov.O
 	// and the digest last: it is the object the check reads, and an entry
 	// whose digest is staged is an entry whose context was read whole.
 	if err := writeCatalogObject(ctx, b, commitKey, []byte(src.Commit), catalogIdentityType, catalogIdentityBytes, catalogCommitLead); err != nil {
-		return catalog.Resolved{}, err
+		return catalog.Resolved{}, "", err
 	}
 	if err := writeCatalogObject(ctx, b, hashKey, []byte(src.ContextHash), catalogIdentityType, catalogIdentityBytes, catalogHashLead); err != nil {
-		return catalog.Resolved{}, err
+		return catalog.Resolved{}, "", err
 	}
-	return src, nil
+	return src, dropped, nil
 }
 
 // refuseMixedCatalogCopy refuses a copy that is not the one this command

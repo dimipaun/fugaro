@@ -22,7 +22,8 @@
 
 import { createHash } from 'node:crypto'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
-import { join, relative } from 'node:path'
+import { join, relative, sep } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
@@ -33,7 +34,7 @@ function inert(...fragments: readonly string[]): string {
   return fragments.join('')
 }
 
-const ROOT = new URL('../..', import.meta.url).pathname
+const ROOT = fileURLToPath(new URL('../..', import.meta.url))
 
 /**
  * SHAPES are the credential families a scanner looks for: the forges' token
@@ -351,7 +352,7 @@ describe('the console\'s DSN is one public constant in one file, and the only on
       if (!DSN_SCANNED_EXTENSIONS.some((extension) => file.endsWith(extension))) continue
       scanned.push(file)
       for (const hit of dsnFindings(readFileSync(file, 'utf8'))) {
-        carriers.push(relative(ROOT, file))
+        carriers.push(relative(ROOT, file).split(sep).join('/'))
         found.push(`${relative(ROOT, file)}:${hit}`)
       }
     }

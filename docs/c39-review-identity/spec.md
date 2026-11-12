@@ -845,9 +845,11 @@ is *another command*. This slice's reading of it, stated because a reviewer must
   service's variable is built by the same run from that node: the update's credentials stage
   (`internal/cli/init_credentials.go`) reads it and hands the list to `internal/infra/tfvars.go`'s
   `Credentials()` (`:290`), which takes the local configuration's own list when it states one and the node's
-  otherwise — the keep rule §5.4 states, applied here because the credentials stage runs before the policy
-  stage (`internal/cli/init_stages.go:168`–`:187`): what it reads is the node the previous `fugaro update`
-  left, which is exactly where a second operator's machine finds a list its own config does not carry. Nothing
+  otherwise — the keep rule §5.4 states, applied here because this member is written by the installation
+  stage, which runs before the policy one, and the read behind it is memoized for the whole run
+  (`init.go`'s `effectiveVerifiers` through `CarriedCredentialsService`): what it reads is the node the
+  previous `fugaro update` left, which is exactly where a second operator's machine finds a list its own
+  config does not carry. Nothing
   is added to the upgrade for it: no
   command, no flag and no second local configuration file, and an installation whose published policy names
   no verifier keeps the variable null and the route unreachable while the service starts as it does today.

@@ -121,6 +121,7 @@ func followUpReport(rec *runstore.Record, location string, tail *LogTail, fu *Fo
 	// T4.2, D9, F19).
 	b.WriteString(rigorLine(rec.Rigor))
 	b.WriteString(toleratedSection(rec))
+	b.WriteString(deferralsSection(rec))
 	b.WriteString(testsLine(rec))
 	if rec.Cost != nil {
 		b.WriteString(CostLine(*rec.Cost) + "\n\n")
@@ -353,6 +354,62 @@ func toleratedSection(rec *runstore.Record) string {
 	}
 	b.WriteString("\n")
 	return b.String()
+}
+
+// deferralsSection is the report's list of the findings the run did not fix
+// and left to a follow-up (T-TR9, D1843): the same lines the pull request's
+// status section carries, under the report's own heading, plus the command
+// that files them.
+//
+// "" for a record carrying no block, which is every run that deferred nothing
+// — and for a block holding no entry, which a hand-edited record can carry: a
+// section over an empty list would claim a decision no run made.
+func deferralsSection(rec *runstore.Record) string {
+	df := rec.Deferred
+	if df == nil || len(df.Findings) == 0 {
+		return ""
+	}
+	return "#### Deferred (follow-ups)\n\n" + deferralLines(df) + "\n" + followupsLine(rec.RunID) + "\n"
+}
+
+// deferralLines is one line per finding whose deferral took effect: the key it
+// is known by (the one a follow-up task carries), the reviewer's own summary
+// of the finding and the one-line why the deferral took effect, with a line
+// saying how many more the run deferred where the record's cap cut the list
+// (runstore.MaxDeferred). The pull request's status section and the report
+// carry the same lines, which is why they are built here once and not in
+// either renderer.
+//
+// The summary and the why are the reviewer's and the judge's words about an
+// untrusted diff, and the record is launcher-writable, so both go through
+// inlineText: a sentence carrying a newline would end its own bullet — and a
+// line after it would be read as Markdown of the report's — and a mention or a
+// marker in one must not reach the report as either.
+func deferralLines(df *runstore.DeferredFindings) string {
+	var b strings.Builder
+	for _, f := range df.Findings {
+		fmt.Fprintf(&b, "- `%s`: %s — %s\n", inlineText(f.Key), inlineText(f.Summary), inlineText(f.Reason))
+	}
+	if df.Total > len(df.Findings) {
+		// The list is not the whole answer, and it says so rather than passing
+		// its last line off as the last finding the run deferred. The gap is
+		// not always the record's cap: NewDeferred also drops an entry a
+		// follow-up cannot be built from, so what is unlisted is "some of" the
+		// total and never the run's last ones.
+		fmt.Fprintf(&b, "- and %s the record does not list, of %s this run deferred\n",
+			Plural(df.Total-len(df.Findings), "finding"), Plural(df.Total, "finding"))
+	}
+	return b.String()
+}
+
+// followupsLine is the sentence both the pull request and the report end the
+// deferral list with: the command that turns the findings into follow-up tasks
+// (T-TR10), which refuses until the pull request is merged, so the sentence
+// says whose act the merge is (D1842: a run marks its pull request ready and
+// never merges it) and names the run exactly, because a lookup resolves an
+// ending only once one accepts it.
+func followupsLine(runID string) string {
+	return fmt.Sprintf("Run `fugaro followups %s` after merging: it turns these findings into follow-up tasks, and refuses until this pull request is merged.\n", inlineText(runID))
 }
 
 // toleratedCell renders a reviewer's title into the one table cell it can

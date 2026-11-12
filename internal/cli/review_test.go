@@ -75,7 +75,13 @@ func newReviewFixture(t *testing.T) *projectJobFixture {
 func newReviewFixtureAt(t *testing.T, service string) *projectJobFixture {
 	t.Helper()
 	f := newProjectJobServingFixture(t)
-	setBaseImage(t, reviewAdmissionSince)
+	// nodeRelease and not reviewAdmissionSince: the fixture publishes a policy,
+	// so its installation's base image has to be one whose runner reads the
+	// node's version (policyImageGate) — reviewAdmissionSince is older than the
+	// release that introduced it, and an installation cannot hold a node its
+	// own base image cannot read. The admission E7's half is about still holds:
+	// it is a floor, and the node's own release is above it.
+	setBaseImage(t, nodeRelease)
 	f.appendConfig(t, "credentials_service: { url: "+credentialsServiceFixtureURL+" }\n")
 	isolateState(t)
 	writeInstallationServiceImage(t, os.Getenv("XDG_STATE_HOME"), initProject, service)
@@ -96,7 +102,7 @@ func setBaseImage(t *testing.T, tag string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	old := "fugaro-base:" + sealSince
+	old := "fugaro-base:" + nodeRelease
 	if !strings.Contains(string(data), old) {
 		t.Fatalf("the fixture's local config no longer names the base image %q:\n%s", old, data)
 	}
@@ -322,7 +328,7 @@ func TestReviewShowPrintsTheArtifactAndItsMarkdown(t *testing.T) {
 // what makes this the missing half alone.
 func TestReviewStillRefusesWhenTheCredentialsServiceIsOff(t *testing.T) {
 	f := newProjectJobServingFixture(t)
-	setBaseImage(t, reviewAdmissionSince)
+	setBaseImage(t, nodeRelease)
 	projectJobCheckoutYAML(t, projectJobOAuthRepoYAML)
 
 	wantReviewRefused(t, f.cloudFixture, []string{"--pr", "7", "--token", "acme-personal"},

@@ -19,8 +19,9 @@
 // cannot vouch for.
 //
 // The operations are generic: a path of mapping keys, and sequence items.
-// SetScalar, RemoveKey, AddListItem, RemoveListItem, UpsertSeqItemByKey and
-// RemoveSeqItemByKey return new bytes and never write a file. An operation that
+// SetScalar, SetEmptyMapping, ExpandEmptyMapping, RemoveKey, AddListItem,
+// RemoveListItem, UpsertSeqItemByKey and RemoveSeqItemByKey return new bytes and
+// never write a file. An operation that
 // changes nothing returns the input unchanged, byte for byte — Changed tells
 // that apart from a write of the same bytes — and a refusal returns the input
 // unchanged with an error beside it, never a half-applied edit.
@@ -58,8 +59,11 @@
 //     than re-formatted: a collection that runs across lines or holds a
 //     comment, a member whose own value is a collection, and an empty `{}`,
 //     whose shape the first member written into it would decide. `settings: {}`
-//     is not rewritten into block style, and no edit is written inside a flow
-//     sequence. A flow collection an edit only removes along with the line that
+//     is not rewritten into block style by any edit that walks into it, and no
+//     edit is written inside a flow sequence. The pair that names the empty
+//     mapping is the exception, and it writes the shape whole: SetEmptyMapping
+//     writes one, and ExpandEmptyMapping turns one back into the block spelling
+//     a member can be written under. A flow collection an edit only removes along with the line that
 //     holds it is fine, as long as it stays on one line. A flow collection
 //     where a value would be replaced is this class; a block mapping or
 //     sequence there is ReasonReplacesCollection.
@@ -197,6 +201,73 @@ func SetScalar(src []byte, path []string, value string) ([]byte, error) {
 	}
 	if err := verified(op, path, out, func(root *yaml.Node) bool {
 		return scalarIs(resolve(root, path), value) && d.sameFlowSiblings(path, root)
+	}); err != nil {
+		return src, err
+	}
+	return out, nil
+}
+
+// SetEmptyMapping sets path to an empty mapping. `{}` is YAML's only spelling of
+// one: block style has no empty form, and a key written with nothing after it is
+// a null scalar and not a mapping. The mappings on the way are created the way
+// SetScalar creates them, and a key the document does not carry is written
+// `key: {}` where the mapping it belongs in ends.
+//
+// A value already there is replaced only when it is a block mapping, whose bytes
+// and comments the empty mapping takes the place of — the key's own line and the
+// comment block above it stay where the document wrote them, so the key keeps
+// its place in the file. A value that is already the empty mapping is left
+// alone, byte for byte. Every other shape is refused: a scalar and a sequence
+// are RemoveKey's, and a flow collection with members is a shape this package
+// does not splice into (ReasonFlowCollection).
+func SetEmptyMapping(src []byte, path []string) ([]byte, error) {
+	const op = "SetEmptyMapping"
+	if err := checkPath(op, path); err != nil {
+		return src, err
+	}
+	d, err := open(op, src)
+	if err != nil {
+		return src, err
+	}
+	out, err := d.setEmptyMapping(op, path)
+	if err != nil {
+		return src, err
+	}
+	if err := verified(op, path, out, func(root *yaml.Node) bool {
+		v := resolve(root, path)
+		return v != nil && v.Kind == yaml.MappingNode && len(v.Content) == 0
+	}); err != nil {
+		return src, err
+	}
+	return out, nil
+}
+
+// ExpandEmptyMapping rewrites the empty mapping at path as a key written with no
+// value, which is block style's spelling of the same empty mapping. It is the
+// edit that makes the key writable into again: a member cannot be spliced into
+// `{}`, and AddListItem needs a key it can open a block under. Nothing else
+// moves — the key's line and the comment block above it stay where they were —
+// and a value that is not the empty mapping, an absent key included, is left
+// alone.
+func ExpandEmptyMapping(src []byte, path []string) ([]byte, error) {
+	const op = "ExpandEmptyMapping"
+	if err := checkPath(op, path); err != nil {
+		return src, err
+	}
+	d, err := open(op, src)
+	if err != nil {
+		return src, err
+	}
+	out, err := d.expandEmptyMapping(op, path)
+	if err != nil {
+		return src, err
+	}
+	if err := verified(op, path, out, func(root *yaml.Node) bool {
+		// The post-condition is the absence of the shape, not the presence of a
+		// particular one: an edit that found nothing to expand writes nothing,
+		// and the value it left is a block mapping, a scalar or no value at all.
+		v := resolve(root, path)
+		return v == nil || v.Kind != yaml.MappingNode || len(v.Content) != 0
 	}); err != nil {
 		return src, err
 	}
@@ -556,6 +627,136 @@ func (d *doc) setEntryValue(op string, e *entry, value, path string) ([]byte, er
 		return nil, refuse(op, path, ReasonFlowCollection)
 	}
 	return nil, refuse(op, path, ReasonReplacesCollection)
+}
+
+// setEmptyMapping walks path, creating the mappings it does not find, and writes
+// the empty mapping at the end of it.
+func (d *doc) setEmptyMapping(op string, path []string) ([]byte, error) {
+	if d.root == nil {
+		return d.openRoot(chain(path, 0, d.step, emptyMappingLeaf())), nil
+	}
+	cur := d.root
+	for i := 0; i < len(path)-1; i++ {
+		out, next, done, err := d.descend(op, cur, path, i, emptyMappingLeaf())
+		if err != nil {
+			return nil, err
+		}
+		if done {
+			return out, nil
+		}
+		cur = next
+	}
+	if err := d.mappingHolding(op, cur, pathString(path)); err != nil {
+		return nil, err
+	}
+	return d.setEmptyEntry(op, cur, path[len(path)-1], pathString(path))
+}
+
+// setEmptyEntry writes one key of an existing mapping as an empty mapping.
+func (d *doc) setEmptyEntry(op string, m *yaml.Node, key, path string) ([]byte, error) {
+	if m.Style&yaml.FlowStyle != 0 {
+		return nil, refuse(op, path, ReasonFlowCollection)
+	}
+	e, err := d.find(op, m, key, path)
+	if err != nil {
+		return nil, err
+	}
+	if e == nil {
+		if mergeKey(m) {
+			return nil, refuse(op, path, ReasonMergeKey)
+		}
+		line := indentOf(d.entryIndent(m)) + renderKey(key) + ": {}"
+		return d.appendBlock(op, m, []string{line})
+	}
+	if err := d.anchorFree(op, e, path); err != nil {
+		return nil, err
+	}
+	v := e.value
+	if v.Kind == yaml.MappingNode && len(v.Content) == 0 {
+		// A `{}` already: nothing to write, and the caller's Changed tells that
+		// apart from a write of the same bytes.
+		return d.src, nil
+	}
+	if v.Kind != yaml.MappingNode || v.Style&yaml.FlowStyle != 0 {
+		return nil, refuse(op, path, ReasonReplacesCollection)
+	}
+	// Everything the value wrote goes, and nothing else does: the key's line,
+	// the comment block above it, the key's own place in the file and the line
+	// break that closes its last line all stay, so what is left is the key, its
+	// colon and the empty mapping.
+	colon, err := d.keyColon(op, e, path)
+	if err != nil {
+		return nil, err
+	}
+	end, err := d.nodeEnd(op, v)
+	if err != nil {
+		return nil, err
+	}
+	return splice(d.src, colon+1, d.lines.contentEnd(d.lines.lineOf(end)), []byte(" {}")), nil
+}
+
+// expandEmptyMapping rewrites the empty mapping at path as a key written with no
+// value, which is block style's spelling of the same empty mapping and the shape
+// an item can be written under.
+func (d *doc) expandEmptyMapping(op string, path []string) ([]byte, error) {
+	chain, found, err := d.walk(op, path)
+	if err != nil || !found {
+		return d.src, err
+	}
+	e := chain[len(chain)-1].e
+	if err := d.anchorFree(op, e, pathString(path)); err != nil {
+		return nil, err
+	}
+	v := e.value
+	if v.Kind != yaml.MappingNode || v.Style&yaml.FlowStyle == 0 || len(v.Content) != 0 {
+		return d.src, nil
+	}
+	colon, err := d.keyColon(op, e, pathString(path))
+	if err != nil {
+		return nil, err
+	}
+	end, err := d.nodeEnd(op, v)
+	if err != nil {
+		return nil, err
+	}
+	return splice(d.src, colon+1, end, nil), nil
+}
+
+// keyColon returns the offset of the `:` that ends the key of an entry, which is
+// where the entry's value begins. A key is quoted or plain, and a plain one ends
+// at the first `:` followed by a space, a tab or the line's end — the rule YAML
+// itself splits `key: value` on, so a key that carries a colon of its own is
+// measured the way the reader measures it.
+func (d *doc) keyColon(op string, e *entry, path string) (int, error) {
+	start, err := d.offset(e.key)
+	if err != nil {
+		return 0, withOp(err, op)
+	}
+	rest := d.src[start:d.lines.contentEnd(d.lines.lineOf(start))]
+	end := 0
+	switch {
+	case e.key.Style&yaml.DoubleQuotedStyle != 0:
+		end = quotedEnd(rest, '"', '\\')
+	case e.key.Style&yaml.SingleQuotedStyle != 0:
+		end = quotedEnd(rest, '\'', '\'')
+	default:
+		for i := 0; i < len(rest); i++ {
+			if rest[i] != ':' {
+				continue
+			}
+			if i+1 == len(rest) || rest[i+1] == ' ' || rest[i+1] == '\t' {
+				end = i
+				break
+			}
+		}
+	}
+	for end < len(rest) && (rest[end] == ' ' || rest[end] == '\t') {
+		end++
+	}
+	if end >= len(rest) || rest[end] != ':' {
+		return 0, refuse(op, path, ReasonUnlocatable)
+	}
+	return start + end, nil
 }
 
 // removeKey removes the entry at path, and with it whatever RemoveOptions asks

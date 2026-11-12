@@ -116,8 +116,9 @@ func TestDynamicDeliveryDocsPinned(t *testing.T) {
 		stepsRef   string
 		script     string
 		scriptTest string
+		ran        bool
 	}{{
-		number: "510", steps: check510Steps, stepsRef: check510StepsLink, script: check510Script, scriptTest: check510ScriptTest,
+		number: "510", ran: true, steps: check510Steps, stepsRef: check510StepsLink, script: check510Script, scriptTest: check510ScriptTest,
 	}, {
 		number: "511", steps: check511Steps, stepsRef: check511StepsLink, script: check511Script, scriptTest: check511ScriptTest,
 	}} {
@@ -125,12 +126,16 @@ func TestDynamicDeliveryDocsPinned(t *testing.T) {
 		if row == "" {
 			t.Fatalf("%s's register has no `| %s |` row: Check %s is written below it, and the table is where a reader finds it", liveChecksDoc, c.number, c.number)
 		}
+		rowState := "OWNER-RUN, NOT RUN."
+		if c.ran {
+			rowState = "OWNER-RUN, RUN "
+		}
 		for _, want := range []string{
 			dynamicDeliveryPlanRef,
 			"DS0.2",
 			c.stepsRef,
 			c.script,
-			"OWNER-RUN, NOT RUN.",
+			rowState,
 			"no agent runs any step of it",
 		} {
 			if !strings.Contains(row, want) {
@@ -140,8 +145,12 @@ func TestDynamicDeliveryDocsPinned(t *testing.T) {
 
 		section := checkSection(t, register, c.number)
 		flat := strings.ToLower(flattenDoc(section))
+		sectionState := "**not run.**"
+		if c.ran {
+			sectionState = "**run 20"
+		}
 		for _, want := range []string{
-			"**not run.**",
+			sectionState,
 			"no agent runs any step of it",
 			c.stepsRef,
 			c.script,
@@ -188,6 +197,10 @@ func TestDynamicDeliveryDocsPinned(t *testing.T) {
 		{check511Steps, "511", check511Script, check511ScriptTest},
 	} {
 		steps := flattenDoc(readDoc(t, c.path))
+		stepsState := "**NOT RUN"
+		if c.number == "510" {
+			stepsState = "The re-run of 2026-11-12"
+		}
 		for _, want := range []string{
 			c.script,
 			c.scriptTest,
@@ -196,7 +209,7 @@ func TestDynamicDeliveryDocsPinned(t *testing.T) {
 			"--dry-run",
 			"bash " + c.script,
 			"No agent runs any step of it",
-			"**NOT RUN",
+			stepsState,
 		} {
 			if !strings.Contains(steps, want) {
 				t.Errorf("%s does not say %q: a steps file that leaves out its own script, the register it records into or the fact that no agent runs it is a file a reader cannot follow", c.path, want)

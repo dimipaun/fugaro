@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/pricing"
 )
 
 // oauthRoute is a route shaped the way validateRoutes accepts one, with its
@@ -435,12 +436,20 @@ func TestExportedRequestRefusal(t *testing.T) {
 	const serverTool = `{"model":"claude-sonnet-5-5","max_tokens":16,"messages":[{"role":"user","content":"hi"}],` +
 		`"tools":[{"type":"web_search_20260209","name":"web_search"}]}`
 	pin := RequestPin{Models: []string{"claude-haiku-4-5"}, Where: "the project's model allow-list"}
+	// An image on a model the table prices without an image rate, for the pin
+	// a caller with no stage behind it passes: the sentence names the price
+	// lever and no vision slot (D2009, the credentials service's own case).
+	// The prices are overridePrices', a model_prices row with no image_tokens
+	// member.
+	noSlotImage := RequestPin{Models: []string{"claude-custom-1"}, Where: "the project's model allow-list"}
+	imageBody := msgBlocks("claude-custom-1", 16, imageBlock("aGk="))
 
 	cases := []struct {
-		name string
-		body string
-		pin  RequestPin
-		want string
+		name   string
+		body   string
+		pin    RequestPin
+		prices *pricing.Table
+		want   string
 	}{
 		{name: "no pin accepts", body: body, want: ""},
 		{name: "the pin's own model accepts", body: body, pin: RequestPin{Models: []string{sonnet}, Where: "x"}, want: ""},
@@ -454,10 +463,15 @@ func TestExportedRequestRefusal(t *testing.T) {
 			body: serverTool, pin: RequestPin{Models: []string{sonnet}, Where: "x"},
 			want: `tool type web_search_20260209 is not allowed (the budget allows only client tools)`,
 		},
+		{
+			name: "an image with no vision slot names the price lever alone",
+			body: imageBody, pin: noSlotImage, prices: overridePrices(t),
+			want: "model claude-custom-1 is priced without an image rate (the price table's image_tokens, a per-image token ceiling): an image block can't be reserved without one. price that model's images with model_prices' image_tokens",
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, err := RequestRefusal([]byte(c.body), "", c.pin, nil, nil)
+			got, err := RequestRefusal([]byte(c.body), "", c.pin, c.prices, nil)
 			if err != nil {
 				t.Fatalf("RequestRefusal: %v", err)
 			}

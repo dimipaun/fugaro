@@ -212,7 +212,11 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		// publisher's delete-then-publish (what the line named before the policy
 		// stage existed) costs the node what a publish rebuilds from the
 		// operator's own config.
-		doctorPolicyRig(t, doctorPolicy(func(p *projectpolicy.Policy) { p.Version = projectpolicy.Version - 1 }), "")
+		//
+		// The version is two steps back rather than the step immediately below
+		// this one: that step's node is shape-free, so this reader reads it
+		// (ReadsVersion) and there is no skew for doctor to report at all.
+		doctorPolicyRig(t, doctorPolicy(func(p *projectpolicy.Policy) { p.Version = projectpolicy.Version - 2 }), "")
 		c, ok := doctorChecksByID(t)["policy-older-than-binary"]
 		if !ok || c.Severity != "warning" {
 			t.Fatalf("policy-older-than-binary = %+v (present %v), want a warning", c, ok)

@@ -74,9 +74,10 @@ import (
 // project reviewing less, which is why every rule above refuses rather than
 // repairs.
 //
-// The `fugaro rigor` group is created by whichever of this task, G7 (`fugaro
-// rigor floor`) and the settings design's S7 lands first, and each of the others
-// adds its own subcommand to it.
+// The `fugaro rigor` group was created by whichever of this task, G7 (`fugaro
+// rigor floor`) and the settings design's S7 landed first — this one — and each
+// of the others adds its own subcommand to it: G7's `floor` is in
+// rigor_floor.go, and S7 was closed as G7's duplicate on 2026-11-10.
 
 // rigorOptions are `fugaro rigor set`'s flags. It takes no --layer (D830: the
 // path is derived and there is nothing to choose) and no --dry-run (the
@@ -119,6 +120,7 @@ command to run at your own terminal, and your own terminal writes it and asks
 nothing.`,
 	}
 	cmd.AddCommand(newRigorSetCmd())
+	cmd.AddCommand(newRigorFloorCmd())
 	return cmd
 }
 
@@ -144,8 +146,8 @@ your own terminal, ` + "`--yes`" + ` included, and your own terminal writes it a
 nothing. ` + "`hotfix`" + ` is refused in either form, naming ` + "`fugaro run --mode hotfix`" + `.
 
 The command prints the review floor beside the write, and it cannot lower it:
-the floor is outside every layer, and the command that changes one is not built
-yet.
+the floor is outside every layer, and ` + "`fugaro rigor floor`" + ` is the command that
+changes one.
 
 It writes one file: this machine's own project layer file, whose path is
 derived from the selected project's name. A project that has published no layer
@@ -332,13 +334,12 @@ func runRigorSet(cmd *cobra.Command, name string, o rigorOptions) error {
 		}
 	}
 	// The review floor is outside every layer, so this command cannot lower it
-	// and does not try: what it does is say where the floor stands (SD10, D1170's
-	// own separation of the two nouns). SD10 names the command that changes one,
-	// `fugaro rigor floor`, and that command is G7's and is not in this tree:
-	// naming it here would send a person to a command that prints this group's
-	// own help, so the line says the floor is where it is and that no command
-	// changes one yet. The name goes back when G7 lands, in its own words.
-	fmt.Fprintf(cmd.OutOrStdout(), "review floor: %s; this command cannot lower it: the floor is outside every layer, and the command that changes one is not built yet\n", rigorFloorLine(lc))
+	// and does not try: what it does is say where the floor stands and name the
+	// command that changes one (SD10, D1170's own separation of the two nouns).
+	// That command is `fugaro rigor floor`, G7's, and it landed beside this one:
+	// the line named no command while it did not exist, because sending a person
+	// to a name that printed this group's own help is worse than saying nothing.
+	fmt.Fprintf(cmd.OutOrStdout(), "review floor: %s; this command cannot lower it: the floor is outside every layer, and `fugaro rigor floor` is the command that changes one\n", rigorFloorLine(lc))
 	edit := settingsEdit{
 		Path:     target.path,
 		Old:      old,
@@ -399,8 +400,8 @@ func runRigorSet(cmd *cobra.Command, name string, o rigorOptions) error {
 // names `fugaro update` — the Layer stage that seeds the file from the published
 // layer.
 //
-// The document it writes carries the three anchor keys, whose values are the
-// installation's own (`localcfg.Config`'s Version, Name and GCPProject) and
+// The document it writes carries the three anchor keys — the layer format's own
+// version, which is 1, with the installation's Name and GCPProject — and
 // nothing else of that file: the rest of it (`region`, `runs_bucket`,
 // `base_images`, `image_source`, `backend`) are keys the layer does not have,
 // and the layer parser refuses any top-level key outside its own set. The
@@ -426,7 +427,10 @@ func rigorCreateLayerFile(ctx context.Context, lc *localcfg.Config) (string, []b
 	if _, _, exists, err := layerPublishedRead(ctx, lc, recordReadURL(lc)); err != nil || exists {
 		return path, nil, nil
 	}
-	shell := []byte(fmt.Sprintf("version: %d\nproject: %s\ngcp_project: %s\n", lc.Version, lc.Name, lc.GCPProject))
+	// The version is the layer format's, not the local config's
+	// (localcfg.ConfigVersion): the two documents are separate formats, and the
+	// layer parser refuses anything but 1 (config.validateLayer).
+	shell := []byte(fmt.Sprintf("version: 1\nproject: %s\ngcp_project: %s\n", lc.Name, lc.GCPProject))
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return "", nil, userErr("creating %s: %v", path, err)
 	}

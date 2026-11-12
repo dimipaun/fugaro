@@ -4,8 +4,8 @@ package cli
 //
 // docs/diagnose-agent/ holds the owner's spec verbatim, a reconciliation with
 // decisions D1600-D1614 answered (D1615-D1619 reserved and unused) and a plan
-// whose Checks 410-412 are taken. Eight tasks of that plan are written and
-// two are not, so these tests pin
+// whose Checks 410-412 are taken. Nine tasks of that plan are written and one
+// is not, so these tests pin
 // only what rots silently: a decision row with an empty answer cell, a row in
 // the reserved tail, a check number the plan no longer holds, a current status
 // line that stops naming the part that is built, and a first-written status line
@@ -15,7 +15,8 @@ package cli
 // test fails naming D1605; add a D1615 row -> fails naming D1615; remove
 // "Check 411" from the plan -> the checks test fails; take "T-DG5" out of the
 // current status line -> the status test fails naming it, and the same for
-// "T-DG3", "T-DG4", "T-DG6", "T-DG7" and "T-DG8" -- every task named here is one each current status line
+// "T-DG3", "T-DG4", "T-DG6", "T-DG7", "T-DG8" and "T-DG9" -- every task named
+// here is one each current status line
 // has to keep naming while its files are in the tree, and each of the last
 // three was dropped by a later line before this guard named it.
 
@@ -34,8 +35,9 @@ const (
 	dgaTail  = 1619
 	// dgaStatusNow marks the folder's current status line, the one a reader of
 	// the directory sees first. Every folder in this repository dates a later
-	// status line, so the guards below read that line rather than the kept one.
-	dgaStatusNow = "**Status (2026-11-11):"
+	// status line, so the guards below read that line rather than the kept one:
+	// T-DG8's and T-DG9's both landed on 2026-11-11, and the later one says so.
+	dgaStatusNow = "**Status (2026-11-11, later):"
 	// dgaStatus is that line's own first sentence as written before the first
 	// task landed. It is pinned in the line kept below the current one: the
 	// folder's history is kept rather than rewritten, and the claim has to stay
@@ -99,8 +101,9 @@ func dgaStatusLine(t *testing.T, f string) string {
 
 // TestDocsDiagnoseAgentStatusAndChecks: the folder states its own state in one
 // current line per document, and that line has to move with the tree. T-DG3's,
-// T-DG4's, T-DG5's, T-DG6's, T-DG7's and T-DG8's files landed while both said
-// nothing was implemented, so the current line names the tasks that are written and the
+// T-DG4's, T-DG5's, T-DG6's, T-DG7's, T-DG8's and T-DG9's files landed while
+// both said nothing was implemented, so the current line names the tasks that
+// are written and the
 // first-written line is kept below it, still reading as what was true then. The
 // clauses checked
 // here are the two a reader decides on: what is built, and that the rest of the
@@ -110,7 +113,7 @@ func dgaStatusLine(t *testing.T, f string) string {
 func TestDocsDiagnoseAgentStatusAndChecks(t *testing.T) {
 	for _, f := range []string{"README.md", "implementation-plan.md"} {
 		line := dgaStatusLine(t, f)
-		for _, want := range []string{"T-DG3", "T-DG4", "T-DG5", "T-DG6", "T-DG7", "T-DG8", "no other task is approved"} {
+		for _, want := range []string{"T-DG3", "T-DG4", "T-DG5", "T-DG6", "T-DG7", "T-DG8", "T-DG9", "no other task is approved"} {
 			if !strings.Contains(line, want) {
 				t.Errorf("%s%s: the current status line does not say %q, so the folder reads as if that task's files were not in the tree, or as if the rest of the plan were approved: %s", dgaDir, f, want, line)
 			}

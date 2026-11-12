@@ -45,7 +45,7 @@ import (
 // installs, the repository stage stops needs-you, and the checkout runs past
 // that stop to park its cloud half.
 func TestInitPluginStageMovesInAgentSessionAheadOfARepositoryStop(t *testing.T) {
-	r := newConvergeRigYAML(t, v4Node(), convergeLegacyYAML)
+	r := newConvergeRigYAML(t, v5Node(), convergeLegacyYAML)
 	currentRelease(t)
 	// The staleness line is once per process; an earlier test's run may have
 	// spent it.

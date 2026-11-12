@@ -236,14 +236,18 @@ func (r *run) unreadablePolicy(err error) error {
 		// Version is not the legacy path, that is the marker's job). Both
 		// stop the run the same way, because the ceiling a policy sets is not
 		// something a run may fall back from — and each is worded for its own
-		// direction, by projectpolicy.SkewSentence with ReaderRunner: a
-		// refresh of the image for the first, a policy published again from a
-		// release this image understands for the second. Telling the operator
-		// of a node that is merely behind to refresh the image would send
-		// them to a move that changes nothing (the review finding on this
-		// change); the runner can make neither move mid-run, so the operator
-		// does, which is why the message is the shared sentence plus the
-		// remedy for this direction (P8).
+		// state, by projectpolicy.SkewSentence with ReaderRunner: a refresh of
+		// the image for a node ahead of it, and for one behind it whichever
+		// move its version allows — `fugaro update`'s in-place rewrite for a
+		// node the migration chain carries, a policy published again from a
+		// release this image understands for one below the chain's first step.
+		// Telling the operator of a node that is merely behind to refresh the
+		// image would send them to a move that changes nothing (the review
+		// finding on this change), and telling them to delete a node the chain
+		// would have carried forward costs what only the node holds; the
+		// runner can make none of these moves mid-run, so the operator does,
+		// which is why the message is the shared sentence plus the remedy for
+		// this state (P8).
 		return fmt.Errorf("%s: %s", projectpolicy.SkewSentence(ve, projectpolicy.ReaderRunner), projectpolicy.PathShared())
 	}
 	return fmt.Errorf("the project's policy at %s could not be read (%s, which marks the deployed rules at generation %d): the run does not start on a ceiling the policy did not set: %s",

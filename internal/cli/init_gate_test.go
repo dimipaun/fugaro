@@ -33,8 +33,16 @@ func neverRun(t *testing.T) func(context.Context) error {
 // A freshly cloned third-party repository whose fugaro.yaml names this
 // project is not onboarded, nor wired, in the modes that give no confirmation
 // at all — --non-interactive without --yes, --json, and a pipe — whatever the
-// answer waiting on stdin: both stages are needs-you with the one-line opt-in,
-// nothing is written, and the engine (every cloud call) is never reached.
+// answer waiting on stdin: the repository stage is needs-you with the one-line
+// opt-in, nothing is written, and the engine (every cloud call) is never
+// reached.
+//
+// The plugin stage is not part of that any more (D955, U8): the plugin it
+// installs is this machine's own, the same one for every checkout, and a
+// stranger's repository is not a checkout write of its to judge — so it says
+// nothing about the repository, and the run reaches the repository stage behind
+// it. The wire the old wording was about is the checkout's own, and this
+// checkout carries no pin for the stage to take out.
 //
 // --yes is not one of these modes any more: D12's answer of 2026-10-20 makes
 // onboarding an unlisted repository an ordinary covered row in BOTH front
@@ -45,6 +53,7 @@ func neverRun(t *testing.T) func(context.Context) error {
 // by the refusal matrix (setup_refusals_test.go).
 func TestHostileCloneNeedsOwnConfirmation(t *testing.T) {
 	releaseBuild(t, "0.2.0")
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir()) // the machine's plugin is this test's, not the developer's
 	yaml := checkoutYAML("github", "oauth", "aurora", "")
 	dir := repoCheckout(t, githubOrigin, yaml)
 	t.Chdir(dir)
@@ -64,12 +73,15 @@ func TestHostileCloneNeedsOwnConfirmation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if stateOf(res, "plugin") != initflow.NeedsYou {
-			t.Fatalf("%s: the plugin stage is %+v, want needs-you: a repository nobody opted in is not wired", c.name, res.Stages)
+		if got := stateOf(res, "plugin"); got == initflow.NeedsYou {
+			t.Fatalf("%s: the plugin stage is %+v, want the machine's own install: a stranger's repository is not a write of its to judge", c.name, res.Stages)
+		}
+		if d := stageDetailOf(res, "plugin"); strings.Contains(d, setupDoor.name) || strings.Contains(d, "not one of project") {
+			t.Fatalf("%s: the plugin stage reads %q, want nothing about the checkout's repository", c.name, d)
 		}
 		// The repository stage's own state is the loop's: needs-you where it
-		// is asked (the plan-only run), blocked behind the plugin where the
-		// run stops at the first stage that needs the user.
+		// is asked (the plan-only run), blocked behind a stop where the run
+		// stops at a stage that needs the user.
 		switch stateOf(res, "repository") {
 		case initflow.NeedsYou, initflow.Blocked:
 		default:
@@ -83,8 +95,8 @@ func TestHostileCloneNeedsOwnConfirmation(t *testing.T) {
 				t.Errorf("%s: the opt-in line: %q", c.name, lf.Text)
 			}
 		}
-		if !strings.Contains(res.Stages[0].Detail, "repository stage was not reached") {
-			t.Errorf("detail %q", res.Stages[0].Detail)
+		if d := stageDetailOf(res, "repository"); !strings.Contains(d, "repository stage was not reached") {
+			t.Errorf("%s: the repository stage's own line is %q", c.name, d)
 		}
 		if _, err := os.Stat(filepath.Join(dir, ".claude", "settings.json")); err == nil {
 			t.Fatal("the plugin was wired into an unknown repository")
@@ -468,9 +480,13 @@ func TestKnownNameOnAnotherHostIsUnknown(t *testing.T) {
 
 // A checkout shipping its own .git/config can rewrite its origin so that git
 // resolves it to a known github.com repository: the raw URL and the resolved
-// one must agree, else it is unknown, and no flag opts it in.
+// one must agree, else it is unknown, and no flag opts it in. The stop is the
+// repository stage's own, and the plugin stage in front of it is not stopped by
+// it (D955, U8): what that stage installs is the machine's own plugin, and the
+// checkout's origin is not a document it reads.
 func TestInsteadOfRewrittenOriginIsUnknown(t *testing.T) {
 	releaseBuild(t, "0.2.0")
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir()) // the machine's plugin is this test's, not the developer's
 	dir := repoCheckout(t, "https://evil.example/acme/app.git", checkoutYAML("github", "oauth", "aurora", ""))
 	f, err := os.OpenFile(filepath.Join(dir, ".git", "config"), os.O_APPEND|os.O_WRONLY, 0)
 	if err != nil {
@@ -488,8 +504,11 @@ func TestInsteadOfRewrittenOriginIsUnknown(t *testing.T) {
 	rs := newRepositoryStage(e)
 	rs.engineStage.run = neverRun(t)
 	res, err := initflow.Run(t.Context(), []initflow.Stage{newPluginStage(e), rs}, e.options())
-	if err != nil || stateOf(res, "plugin") != initflow.NeedsYou || !strings.Contains(res.Stages[0].Detail, "rewritten by git config") {
+	if err != nil {
 		t.Fatalf("%v %+v", err, res.Stages)
+	}
+	if st := stateOf(res, "repository"); st != initflow.NeedsYou || !strings.Contains(stageDetailOf(res, "repository"), "rewritten by git config") {
+		t.Fatalf("the repository stage reads %+v, want the rewritten origin's own stop", res.Stages)
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".claude")); err == nil {
 		t.Error("a rewritten-origin checkout was wired")

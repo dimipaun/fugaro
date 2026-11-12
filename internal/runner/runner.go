@@ -259,7 +259,7 @@ type run struct {
 	// fugaro.yaml during the run changes neither.
 	spend  Spend
 	policy policy.Effective
-	// govLayers are the three layers the policy merge consumed, kept as they
+	// govLayers are the four layers the policy merge consumed, kept as they
 	// were handed to it: the effective policy cannot say which of them asked
 	// for a governance key, and a build whose hook ignores governance resolves
 	// none of them, so the layers themselves are what "somebody wrote this"
@@ -509,6 +509,14 @@ type run struct {
 	// what bounds and clips it and a second append would build on the bounded
 	// list.
 	triageRounds []runstore.TriageRound
+	// deferred is the deferrals that took effect, in the order the findings were
+	// first deferred in, across every round and level (T-TR7b, D1850). It is the
+	// raw list the record's block is rebuilt from wherever it changes — a judged
+	// round's placements, and the round no judge weighed that takes a finding
+	// back (forgetRoundDeferred) — for the reason triageRounds is: NewDeferred is
+	// what bounds and clips it, and a second append would build on the bounded
+	// list.
+	deferred []runstore.DeferredFinding
 	// rigorRaise is the last raise the run's mode took during the run, set by
 	// the moment that took it (noteRigorRaise, rigor.go) and nil while the mode
 	// has never risen above the one bootstrap resolved. It is kept here because
@@ -2008,7 +2016,7 @@ const bashTimeoutSlack = 2 * time.Minute
 //
 // A checkout the image baked is not always at the work directory: on the
 // shared image D1900 gives every per-repository job it is at a per-slug path
-// under bakedRepoRoot, and bootstrap makes that path the work directory when it
+// under BakedRepoRoot, and bootstrap makes that path the work directory when it
 // is this run's repository's (openBakedCheckout). Every arm below therefore
 // works on r.d.WorkDir alone.
 //
@@ -2031,18 +2039,33 @@ func (r *run) openCheckout(ctx context.Context, remote string, cloneVars map[str
 	return gitops.CloneBlobless(ctx, r.d.WorkDir, remote, "", env, modelCredentialVars...)
 }
 
-// bakedRepoRoot is the directory a shared image keeps the repositories it baked
+// BakedRepoRoot is the directory a shared image keeps the repositories it baked
 // in: one checkout per repository, named by the repository's storage slug
 // (openBakedCheckout). The name is fixed here rather than discovered because
 // both ends of the layout are Fugaro's own code — the bake step writes these
-// directories, and a run of the image reads them here. Nothing writes them yet:
-// the bake step (IS8b, docs/image-setup-skill) waits on the owner's ruling on
-// O3, so this constant and the per-slug arm below are the contract that step has
-// to meet, and until it does every run falls back to the clone. It is a sibling
-// of the work directory and never a path inside it, because the work directory
-// is the run's own checkout and a repository the image merely carries is not
-// part of it.
-const bakedRepoRoot = "baked"
+// directories (internal/imagebake's Root, which a generated definition spells
+// into the image), and a run of the image reads them here, as a sibling of the
+// work directory. The two ends are one layout only while a job's work directory
+// is what the base image and `fugaro exec` say it is, which is what
+// TestBakedRootIsTheJobWorkDirectorysSibling pins: the constants agreeing is not
+// something either package can check for the other.
+//
+// It is a sibling of the work directory and never a path inside it, because the
+// work directory is the run's own checkout and a repository the image merely
+// carries is not part of it.
+const BakedRepoRoot = "baked"
+
+// BakedDir is where a run whose work directory is workDir finds the checkout a
+// shared image baked for slug: a sibling of the work directory (BakedRepoRoot).
+// It is the path internal/imagebake's generated stage writes into the image and
+// the one openBakedCheckout opens, and it is exported — and openBakedCheckout
+// goes through it — because the layout has one end in each package, so a test
+// is the only place that can hold them together (internal/cli's
+// TestBakedRootIsTheJobWorkDirectorysSibling, over the work directory a job's
+// image actually starts in).
+func BakedDir(workDir, slug string) string {
+	return filepath.Join(filepath.Dir(workDir), BakedRepoRoot, slug)
+}
 
 // openBakedCheckout settles the checkout this run finds in its image, before
 // anything of the run can use it.
@@ -2050,7 +2073,7 @@ const bakedRepoRoot = "baked"
 // A checkout in the image is not one this run made, and which repository it is
 // a checkout OF is not a property of the path it sits at. The run therefore
 // opens the work directory when it holds a checkout and, otherwise, the
-// directory the image baked this run's own repository at (bakedRepoRoot,
+// directory the image baked this run's own repository at (BakedRepoRoot,
 // named by the run's storage slug) — and never another repository's, which is
 // the half of the shared image's layout that a single clone at a fixed path
 // could not do (D1900: a per-repository job runs the project's catalog image,
@@ -2089,7 +2112,7 @@ func (r *run) openBakedCheckout(ctx context.Context) error {
 	}
 	repo, err := gitops.Open(r.d.WorkDir, nil)
 	if err != nil {
-		dir := filepath.Join(filepath.Dir(r.d.WorkDir), bakedRepoRoot, slug)
+		dir := BakedDir(r.d.WorkDir, slug)
 		// No checkout at the work directory: this run's own repository is at
 		// its own baked path on a shared image, and a run that has none there
 		// either has no baked checkout at all.
@@ -2611,6 +2634,30 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// hand-written task.json naming a mode: evaluate recipe would run the
 	// agent loop over a recipe whose one step is not an agent step.
 	r.evaluate = r.evaluate || rcp.Mode == recipe.ModeEvaluate
+	// The artifact boundary on the Batch backend (plan
+	// 2026-10-19-compute-backend.md Task 10 step 5, Global Constraint 13, design
+	// artifact-runs.md §8.5 and D11): an artifact-producing run is never run on
+	// cloud-batch, because a Batch run's account is not per-repository and the
+	// same run's inputs, artifacts and record would then be readable and
+	// overwritable by every run on the profile.
+	//
+	// This is the arm the launcher's own gate cannot be, and the plan says which
+	// is which: the launch gate reads the REF's copy of the recipe (a repository
+	// recipe by name, resolved in the working tree), and the ref can be stale --
+	// a task launched against a base whose recipe was mode: implement an hour ago
+	// launches, and the runner is the process that actually reads the recipe it
+	// will run. So the runner refuses on the RESOLVED recipe, before any stage
+	// and before any model call, and the gate's ref read stays as defence in
+	// depth beside it rather than as the substitute for it.
+	//
+	// Keyed on FUGARO_BACKEND, which every job of either backend carries
+	// (backend.BackendEnv, written by internal/infra into every job): the
+	// platform a run's job is on is a fact of its own environment, and nothing
+	// else here knows it -- the launch gate runs in the launcher, on the other
+	// side of the job.
+	if r.artifact && r.jobEnv(backend.BackendEnv) == backend.CloudBatch {
+		return fmt.Errorf("recipe %s is mode: artifact, which renders a deliverable into the run's bucket, and this run's job is on the cloud-batch backend: an artifact-producing run is never launched on it, because a Batch run's account is not per-repository -- the same run's inputs, artifacts and record would be readable and overwritable by every run on the profile (docs/design/artifact-runs.md §8.5 and D11, plan 2026-10-19-compute-backend.md Global Constraint 13). Launch an artifact recipe on backend: cloud-run", rrec.Name)
+	}
 	// A task that attached files under a resolved recipe of another mode
 	// fails the run before its first step (design §8.2): the launcher
 	// refuses this for every launch that resolves a recipe, and this is the
@@ -3602,23 +3649,43 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 			return false
 		}
 		// The judge weighs this round's findings (T-TR7a, D1840): it is called
-		// after the round is recorded and before anything acts on it, and what
-		// it answers is logged and nothing else — the fix below, Decide above
-		// the loop and the pull request's body all read the round exactly as
-		// they did before it existed. A judge the run could not make is a
-		// stage failure like any other, and the loop stops on it: nothing of
-		// the round is acted on by a run that is already over.
-		if !r.triageRound(ctx, round, policy.LevelL2, v) {
+		// after the round is recorded and before anything acts on it. A judge
+		// the run could not make is a stage failure like any other, and the loop
+		// stops on it: nothing of the round is acted on by a run that is already
+		// over.
+		triaged, ok := r.triageRound(ctx, round, policy.LevelL2, v)
+		if !ok {
 			return false
+		}
+		// The round's deferrals are kept beside its findings, on the round
+		// readiness and the held-back rule read it through: a round whose
+		// findings a judge deferred whole is not a round the mode blocks on, and
+		// neither rule can read that off the recorded verdict word, which is
+		// still `changes` (F21).
+		r.lastSenior.Deferred = triaged.Deferred
+		r.seniorLevelLast.Deferred = triaged.Deferred
+		// Every finding of the round is a follow-up: there is nothing left for
+		// this level to fix and nothing left to review, so the level ends on
+		// this round and readiness reads it as the tolerated one it is (F21).
+		// The loop goes on to the next enabled level, which this return does not
+		// skip: the plan walks its steps, and level 3's is one of them.
+		if triaged.Judged && triaged.AllDeferred {
+			return true
 		}
 		// OD1: a round that asks for changes and names nothing but decisions
 		// only the owner can make is where the loop stops. No fix round is
 		// dispatched — there is nothing a coder could change — and no further
 		// round is bought, because the reviewer would be asked the same
 		// question about the same unchanged code. The decisions are recorded
-		// and the run ends waiting for them (ownerStop).
-		if v.Verdict != "ship" && allOwner(v.Findings) {
-			r.ownerStop(ctx, v.Findings)
+		// and the run ends waiting for them (ownerStop). What it reads is what
+		// the round still blocks on, and a deferred finding is not one of those:
+		// a round that defers a finding beside a needs_owner one is a round of
+		// the owner's alone by this rule, and the run stops here on it (T-TR7b,
+		// TestNeedsOwnerFindingStillStopsTheLoopWhenTriaged) — the fixer has
+		// nothing to change for either finding, and the deferred one is filed as
+		// the follow-up it is.
+		if v.Verdict != "ship" && allOwner(triaged.fixable(v)) {
+			r.ownerStop(ctx, triaged.fixable(v))
 			return false
 		}
 		// hand_over: this review is where the run ends (recipe.Step.HandOver,
@@ -3661,7 +3728,7 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 			r.timeStop()
 			return false
 		}
-		if sessionID, ok = r.fix(ctx, v, sys, sessionID); !ok {
+		if sessionID, ok = r.fix(ctx, triaged.fixable(v), sys, sessionID); !ok {
 			return false
 		}
 		if st.Bounce && st.FirstRounds > 0 {
@@ -3728,15 +3795,23 @@ func (r *run) adversarialLoop(ctx context.Context, st planStep, reviewPrompt, sy
 		// rounds: level 3's findings are judged too (D1847), whichever level
 		// decides readiness. A judge that failed the run stops this loop the
 		// same way.
-		if !r.triageRound(ctx, round, policy.LevelL3, v) {
+		triaged, ok := r.triageRound(ctx, round, policy.LevelL3, v)
+		if !ok {
 			return false
+		}
+		// Level 3's own deferrals, kept on the round readiness reads it through
+		// exactly as level 2's are (seniorLoop): it is the deciding level of a
+		// run whose mode enabled it.
+		r.lastSenior.Deferred = triaged.Deferred
+		if triaged.Judged && triaged.AllDeferred {
+			return true
 		}
 		// OD1, exactly as seniorLoop stops: level 3 is the deciding level of a
 		// run whose mode enabled it, so a round that names only the owner's
 		// decisions stops the run here rather than buying a fix round and a
 		// further adversarial review of code that cannot change.
-		if v.Verdict != "ship" && allOwner(v.Findings) {
-			r.ownerStop(ctx, v.Findings)
+		if v.Verdict != "ship" && allOwner(triaged.fixable(v)) {
+			r.ownerStop(ctx, triaged.fixable(v))
 			return false
 		}
 		if v.Verdict == "ship" || round >= r.adversarialRounds(st) {
@@ -3757,7 +3832,7 @@ func (r *run) adversarialLoop(ctx context.Context, st planStep, reviewPrompt, sy
 			r.timeStop()
 			return false
 		}
-		if sessionID, ok = r.fix(ctx, v, sys, sessionID); !ok {
+		if sessionID, ok = r.fix(ctx, triaged.fixable(v), sys, sessionID); !ok {
 			return false
 		}
 		if st.Bounce && st.FirstRounds > 0 {
@@ -3938,13 +4013,20 @@ func (r *run) seniorRound(ctx context.Context, round int, reviewPrompt string) (
 	return Verdict{}, false, true
 }
 
-// fix runs a fix stage for review v in the implement session and reports the
-// session to go on with, and whether the loop may continue.
-func (r *run) fix(ctx context.Context, v Verdict, sys, sessionID string) (string, bool) {
+// fix runs a fix stage for the findings a review round still blocks on, in the
+// implement session, and reports the session to go on with and whether the loop
+// may continue.
+//
+// It takes the findings and not the round (T-TR7b): a deferred finding is a
+// follow-up and never this round's work, and the caller is what knows which
+// findings those are — the judge's answer and the mode's table, applied inside
+// the floor (triageOutcome.fixable). A round that deferred everything never
+// reaches here at all; the loop ends on it.
+func (r *run) fix(ctx context.Context, findings []Finding, sys, sessionID string) (string, bool) {
 	if r.sessionID != "" {
 		sessionID = r.sessionID
 	}
-	req := agent.Request{Prompt: FixPrompt(v), AppendSystemPrompt: sys}
+	req := agent.Request{Prompt: FixPrompt(findings), AppendSystemPrompt: sys}
 	if sessionID == "" {
 		// No session exists to resume: a Fixed check gate (gate.go) skipped
 		// implement entirely, so this fix is the run's first real agent
@@ -4055,13 +4137,35 @@ func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sess
 		// round that answered no verdict has none to weigh, so it is skipped
 		// rather than judged on findings nothing named. A judge that failed
 		// the run ends this loop, which is the session's own return.
-		if parsed && !r.triageRound(ctx, round, policy.LevelL1, v) {
-			return sessionID, false
+		var triaged triageOutcome
+		if parsed {
+			var ok bool
+			if triaged, ok = r.triageRound(ctx, round, policy.LevelL1, v); !ok {
+				return sessionID, false
+			}
+			// The cheap round's deferrals are kept beside it wherever the round
+			// itself is kept, its findings' own record: a stop that cuts level 2
+			// off leaves this round for finalize to read (decidingRound), and the
+			// policy built for a round must be able to count what a judge took out
+			// of it. Where that policy is the stop's own split the deferrals are
+			// already in it and are not added again (withDeferred), so this is the
+			// round kept whole and not a second reading of it.
+			r.firstLineLast.Deferred = triaged.Deferred
+			if decides {
+				r.lastSenior.Deferred = triaged.Deferred
+			}
 		}
 		if sum.Verdict != "changes" {
 			return sessionID, true
 		}
-		if allOwner(v.Findings) {
+		// Every finding of the cheap round is a follow-up: this level ends on
+		// the round, no fix is bought for it, and the loop goes on to the outer
+		// level, whose review is what decides (F21). The stop's rounds half is
+		// not set here — the level did not spend its rounds, it settled them.
+		if triaged.Judged && triaged.AllDeferred {
+			return sessionID, true
+		}
+		if allOwner(triaged.fixable(v)) {
 			// OD1: the round names nothing but decisions only the owner can
 			// make, so the cheap loop fixes nothing here. Where it decides
 			// readiness — a run whose level 2 and level 3 are both off (POC) —
@@ -4069,7 +4173,7 @@ func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sess
 			// handed on and that level's review is what decides, the first line
 			// advising it and never overruling it (seniorReview).
 			if decides {
-				r.ownerStop(ctx, v.Findings)
+				r.ownerStop(ctx, triaged.fixable(v))
 				return sessionID, false
 			}
 			return sessionID, true
@@ -4085,7 +4189,7 @@ func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sess
 			return r.firstLineStop(sessionID)
 		}
 		var more bool
-		if sessionID, more = r.fix(ctx, v, sys, sessionID); !more {
+		if sessionID, more = r.fix(ctx, triaged.fixable(v), sys, sessionID); !more {
 			return sessionID, false
 		}
 	}

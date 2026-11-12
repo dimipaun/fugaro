@@ -61,6 +61,7 @@ import type {
 } from '../../src/renderer/screens/spend'
 import { installStub } from './stub'
 import type { Stub } from './stub'
+import { itHostRoute } from '../support/hostRoute'
 
 const PROJECT = 'fugaro'
 const DOLLARS = 1_000_000
@@ -402,7 +403,7 @@ describe('the spend controls', () => {
     expect(SPEND_PICKER_WINDOWS).toEqual(['7d', '30d', '90d', '12w'])
   })
 
-  it('sends the picker’s range as --since and --until, and changes nothing else', async () => {
+  itHostRoute('sends the picker’s range as --since and --until, and changes nothing else', async () => {
     const console = await wired()
     await read(console, SPEND_DEFAULT_CONTROLS)
     await read(console, { ...SPEND_DEFAULT_CONTROLS, since: '30d', until: '2026-10-11' })
@@ -432,7 +433,7 @@ describe('the spend controls', () => {
     expect(spawns(console.logPath).map((line) => line.argv[1])).toEqual(['version', 'report', 'report'])
   })
 
-  it('sends the switch’s word as --by, and changes nothing else', async () => {
+  itHostRoute('sends the switch’s word as --by, and changes nothing else', async () => {
     const console = await wired()
     await read(console, SPEND_DEFAULT_CONTROLS)
     await read(console, { ...SPEND_DEFAULT_CONTROLS, by: 'repo' })
@@ -449,7 +450,7 @@ describe('the spend controls', () => {
     }
   })
 
-  it('re-reads from the new document, and a day the history does not hold is a gap', async () => {
+  itHostRoute('re-reads from the new document, and a day the history does not hold is a gap', async () => {
     const console = await wired()
     const outcome = await read(console, { ...SPEND_DEFAULT_CONTROLS, since: '30d' })
     // The series is the *document's* range: seven days, four of them with no
@@ -484,7 +485,7 @@ describe('the spend controls', () => {
     }
   })
 
-  it('never adds ~$ to a real total, on the first read or after a re-read', async () => {
+  itHostRoute('never adds ~$ to a real total, on the first read or after a re-read', async () => {
     const console = await wired()
     const first = await read(console, SPEND_DEFAULT_CONTROLS)
     const second = await read(console, { ...SPEND_DEFAULT_CONTROLS, since: '30d' })
@@ -514,7 +515,7 @@ describe('the spend controls', () => {
   // The person view (D15).
   // -------------------------------------------------------------------------
 
-  it('carries no --by person, and draws no person row, until the operator turns the knob on', async () => {
+  itHostRoute('carries no --by person, and draws no person row, until the operator turns the knob on', async () => {
     // The mutation this test is written against, named: a default of `on`.
     expect(SPEND_DEFAULT_CONTROLS.persons).toBe(false)
 
@@ -549,7 +550,7 @@ describe('the spend controls', () => {
     expect(spendArguments(back)).toEqual({ ok: true, args: { by: 'day', since: '7d' } })
   })
 
-  it('refuses a person read the knob did not ask for, before any spawn', async () => {
+  itHostRoute('refuses a person read the knob did not ask for, before any spawn', async () => {
     // The other half of the same rule: the switch offering `person` while the
     // knob is off is a state the screen must not be able to turn into a read,
     // however the state was reached.
@@ -573,7 +574,7 @@ describe('the spend controls', () => {
   // words, which flags, and -- the half that matters -- which flags this console
   // can never build. The drawing the document produces is `spend.test.ts`'s.
 
-  it('spawns no by-person read at all while the knob is off', async () => {
+  itHostRoute('spawns no by-person read at all while the knob is off', async () => {
     // The mutation this is written against: a read made whatever the knob says,
     // or a panel built from a read the operator never asked for. With the knob
     // off the screen spawns the report once and nothing else.
@@ -587,7 +588,7 @@ describe('the spend controls', () => {
     ])
   })
 
-  it('reads `runs stats --json --since …` once while the knob is on, and asks for nothing else', async () => {
+  itHostRoute('reads `runs stats --json --since …` once while the knob is on, and asks for nothing else', async () => {
     const console = await wired()
     const outcome = await readWith(console, personView(SPEND_DEFAULT_CONTROLS, true))
 
@@ -615,7 +616,7 @@ describe('the spend controls', () => {
     expect(outcome.model.people?.you).toBe('ada@example.com')
   })
 
-  it('translates the picker’s four windows into the forms `runs stats --since` parses, and never sends a week form', async () => {
+  itHostRoute('translates the picker’s four windows into the forms `runs stats --since` parses, and never sends a week form', async () => {
     // `report --since` takes `Nd` and `Nw`; `runs stats --since` (parseSince,
     // `internal/cli/runs.go`) takes a day count, a Go duration or `0` and has
     // **no week form at all**. The two grammars are asserted here against the
@@ -645,7 +646,7 @@ describe('the spend controls', () => {
     }
   })
 
-  it('refuses a window the by-person read has no form for, and draws the report anyway', async () => {
+  itHostRoute('refuses a window the by-person read has no form for, and draws the report anyway', async () => {
     // A day range and a range with an end are the two states `runs stats` cannot
     // be asked about, and the console refuses rather than approximating: a
     // window it silently altered would be drawn under the picker that holds the
@@ -671,7 +672,7 @@ describe('the spend controls', () => {
     expect(reportSpawns(console.logPath)).toHaveLength(cases.length)
   })
 
-  it('draws its own sentence, with no spawn, when the caller wired no by-person reader', async () => {
+  itHostRoute('draws its own sentence, with no spawn, when the caller wired no by-person reader', async () => {
     // `readSpend`'s fourth parameter is optional, so the three-argument call
     // sites keep working -- and the panel they produce says the truth about
     // itself: this console made no read.
@@ -682,7 +683,7 @@ describe('the spend controls', () => {
     expect(outcome.model.people?.reason).toContain('made no by-person read')
   })
 
-  it('draws the CLI’s own sentence for a refused by-person read, sanitized, beside the report’s figures', async () => {
+  itHostRoute('draws the CLI’s own sentence for a refused by-person read, sanitized, beside the report’s figures', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'fugaro-spend-controls-'))
     const logPath = join(directory, 'spawn.jsonl')
     const stub = installStub(directory, {
@@ -866,7 +867,7 @@ describe('the spend controls', () => {
   // Values the allow-list does not have.
   // -------------------------------------------------------------------------
 
-  it('refuses a window, a day or a breakdown outside its own closed sets, before any spawn', async () => {
+  itHostRoute('refuses a window, a day or a breakdown outside its own closed sets, before any spawn', async () => {
     const cases: readonly (readonly [SpendControls, string, string])[] = [
       [{ ...SPEND_DEFAULT_CONTROLS, since: '36h' }, '36h', 'an hours window the picker does not offer'],
       [{ ...SPEND_DEFAULT_CONTROLS, since: '2026-02-31' }, '2026-02-31', 'a day that does not exist'],
@@ -901,7 +902,7 @@ describe('the spend controls', () => {
     expect(spawns(console.logPath).map((line) => line.argv[1])).toEqual(['version'])
   })
 
-  it('answers a refused read with the CLI’s own sentence, sanitized', async () => {
+  itHostRoute('answers a refused read with the CLI’s own sentence, sanitized', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'fugaro-spend-controls-'))
     const stub = installStub(directory, {
       commands: {

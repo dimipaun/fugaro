@@ -104,9 +104,16 @@ which one the selected project uses:
   cloud-batch  Cloud Batch jobs, one VM per run (the VM backend)
 
 A config that names no backend runs on cloud-run. A config that names
-cloud-batch is refused by this build ("not enabled yet"): the backend and its
-opener are built and tested, and nothing selects them until Fugaro has passed
-the live checklist for it.
+cloud-batch is ACCEPTED: fugaro doctor reports the Batch checks for an
+installation that selects it -- the Compute and Batch APIs, the preloaded boot
+image and the socket gid it records beside it, the network and subnetwork a
+run's VMs are placed in, the log isolation, the run accounts and their grants,
+the price table and the reaper -- and FAILS until every one of them passes.
+What doctor does is report: fugaro run reads none of those checks, so it does
+not hold a launch back, and an installation that selects the name before it is
+provisioned runs anyway (its output stays in _Default and its VMs are left to
+the job's own duration). Run fugaro doctor first, rather than reading a green
+one as a fence around the launcher.
 
 This is a local, read-only lookup: it reads the project config and the backend
 names internal/backend defines, and it calls no cloud API. With --json it

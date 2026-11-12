@@ -175,10 +175,15 @@ func CheckStageSegment(stage, path string) []Problem {
 //
 // Under oauth the keys keep the meaning the accounts design gives them — one
 // account for a stage and another for the rest is what the design's rung 2 is
-// for — so nothing is refused here. Under vertex and cascade a stage account
-// cannot apply at all (neither reaches a Claude OAuth credential), and it is
-// refused rather than ignored, the way a segment outside RunStages is. An
-// unknown auth ("") is not judged: the launch resolves it from a checkout it
+// for — so nothing is refused here. Under vertex a stage account cannot apply
+// at all (vertex reaches no Claude OAuth credential), and it is refused rather
+// than ignored, the way a segment outside RunStages is. Cascade is refused here
+// as well, but the readers that hold the operator's project keys drop them
+// before asking (CascadeSkippedStageAccounts, the exemption of Check 191):
+// those keys are the operator's own, written in the machine's project file and
+// nowhere else, so a cascade repository is told on one line which of them were
+// skipped rather than refused for a project they never chose. An unknown auth
+// ("") is not judged: the launch resolves it from a checkout it
 // may not have yet, and the run itself judges it with the auth it resolves.
 // Every *other* value is refused rather than read as oauth: the auth here can
 // be a committed fugaro.yaml's own bytes (config.AgentOf validates nothing),
@@ -194,6 +199,56 @@ func CheckStageAccountMix(auth string, stages map[string]string, path string) []
 	default:
 		return stageAccountUnderUnknownAuth(auth, stages, path)
 	}
+}
+
+// CascadeSkippedStageAccounts is the stage accounts a run under auth applies,
+// rebuilt without the ones a cascade run never reaches, and the one note line
+// that says which were skipped for it ("" when none were).
+//
+// Under every auth but cascade it is the caller's own map and no note. Under
+// cascade a stage account cannot apply at all — the run's credential is the
+// credentials service's to pick from its own tiers, so no account of the
+// project's reaches a stage (docs/multi-model.md, "The cascade, and the
+// project policy switch") — and the accounts a reader can see here are the
+// *operator's*: `default_claude_account` and `stages.<stage>.claude_account`
+// are written in the operator's own project file and nowhere else (localcfg's
+// Config, which refuses them in the shared file and has no counterpart in a
+// repository's fugaro.yaml, the keys' only other would-be store; the published
+// node's claude_account_stages is the runner's own copy of that file, read
+// under api-key alone). So refusing them under cascade would make one
+// repository's auth invalidate the operator's whole project: the keys are a
+// project-wide default for the stages named, and a cascade repository of the
+// same project never asked for them. They are skipped with a note instead, the
+// way an api-key job's own mounts already skip them
+// (internal/infra/spec.go's mixedStageAccounts), so an operator hears which
+// keys of theirs this run does not read rather than losing the launch to them.
+//
+// What this deliberately does not do is read the accounts' *source*: a
+// repository cannot declare a stage account for itself under any auth — the
+// key does not exist in a repository's file, and an account choice in the
+// shared project file is refused by name (localcfg's sharedForbidden) — so a
+// stage account under cascade is always the operator's project-wide one.
+//
+// The exemption is cascade's, and vertex's refusal (stageAccountUnderOtherAuth)
+// stands as it was: the same argument would cover vertex, since that key can be
+// nothing but the operator's there too, but widening the exemption is a product
+// decision rather than a mechanical one, and the refusal Check 191 met is the
+// cascade one.
+func CascadeSkippedStageAccounts(auth string, stages map[string]string) (map[string]string, string) {
+	if auth != AuthCascade {
+		return stages, ""
+	}
+	var skipped []string
+	for _, stage := range slices.Sorted(maps.Keys(stages)) {
+		if stages[stage] != "" {
+			skipped = append(skipped, stage)
+		}
+	}
+	if len(skipped) == 0 {
+		return stages, ""
+	}
+	return nil, fmt.Sprintf("project stage accounts do not apply to a cascade repository: %s skipped",
+		strings.Join(skipped, ", "))
 }
 
 // stageAccountUnderUnknownAuth refuses a stage account under an agent.auth

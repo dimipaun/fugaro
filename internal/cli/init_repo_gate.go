@@ -319,7 +319,19 @@ func onboardLeft(o originInfo, door string) initflow.Left {
 // agent's session covers nothing. Taking it as
 // an argument is what keeps the sentence from naming a route this run does not
 // have (W5.1).
+//
+// It is unknownBecause plus the one clause only the repository's own stage may
+// say: the plugin stage's pin reads the same gate, and there the repository
+// stage is behind it in the same run and says it itself
+// (init_plugin_stage.go's pinGate).
 func unknownDetail(project string, o originInfo, optIn string) string {
+	return unknownBecause(project, o, optIn) + "; the repository stage was not reached"
+}
+
+// unknownBecause is why the repository is not one this project knows, and how
+// this run's reader can opt it in: the fact and the route, without the clause
+// above about the stage that did not reach them.
+func unknownBecause(project string, o originInfo, optIn string) string {
 	d := "the repository " + pluginwire.Printable(o.typed()) + " is not one of project " + pluginwire.Printable(project) + "'s yet"
 	switch {
 	case o.Rewritten:
@@ -327,7 +339,7 @@ func unknownDetail(project string, o originInfo, optIn string) string {
 	case !o.standardHost():
 		d += " (host " + pluginwire.Printable(o.Host) + " is not a provider's own)"
 	}
-	return d + "; onboarding it creates cloud resources, so it needs your own opt-in" + optIn + "; the repository stage was not reached"
+	return d + "; onboarding it creates cloud resources, so it needs your own opt-in" + optIn
 }
 
 // convergeOptIn is unknownDetail's clause for a stage of a run whose own

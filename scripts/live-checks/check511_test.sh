@@ -122,6 +122,10 @@ config)
 auth)
   if [ "${positional[1]:-}" = "print-identity-token" ]; then
     [ "$mode" = token-fails ] && exit 1
+    if [ "$mode" = person-account ] && [ -n "${audiences:-}" ]; then
+      echo "ERROR: (gcloud.auth.print-identity-token) Invalid account type for \`--audiences\`. Requires valid service account." >&2
+      exit 1
+    fi
     # A stand-in token, never a real one and never printed by the check.
     printf 'stand-in-identity-token-for-%s\n' "${audiences:-none}"
   fi
@@ -489,6 +493,14 @@ test_the_front_end_refusing_the_token_is_not_measured() {
   expect_absent "$(cat "$dir/state/requests.log")" "chk511" "a token that could not be minted: no request is made"
 }
 
+test_a_person_account_gets_a_token_without_audiences() {
+  local dir=$work/person
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=person-account
+  expect_status "$status" 0 "an account that is a person"
+  expect_contains "$out" "FACT container-answers: PASS" "an account that is a person: the container answered"
+}
+
 test_a_request_that_never_completed_is_not_measured() {
   local dir=$work/transport
   prepare "$dir"
@@ -658,6 +670,7 @@ t test_a_service_with_no_url_is_not_measured
 t test_a_min_instance_above_zero_is_a_failure
 t test_an_unknown_min_instance_count_is_not_measured
 t test_the_front_end_refusing_the_token_is_not_measured
+t test_a_person_account_gets_a_token_without_audiences
 t test_a_request_that_never_completed_is_not_measured
 t test_an_answer_that_is_not_the_containers_is_not_measured
 t test_a_cold_start_inside_the_window_is_a_failure
