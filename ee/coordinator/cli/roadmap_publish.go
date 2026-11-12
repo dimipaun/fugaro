@@ -22,6 +22,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/ee/coordinator/mcpauth"
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	fcli "github.com/dimipaun/fugaro/internal/cli"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/image"
@@ -307,6 +308,13 @@ func runCoordinatorPublish(cmd *cobra.Command, o *coordinatorPublishOptions, arg
 	plans := make([]coordinatorPublishResult, len(artifacts))
 	ready := make([]bool, len(artifacts))
 	anyReady := false
+	// published is the plan id each artifact sent so far took, by path order.
+	// A sweep has to hold it: two artifacts that derive one id are one document
+	// in the record, so the second write would replace the first graph with
+	// nothing anywhere saying so, and the record would hold one plan where the
+	// checkout has two. plan status refuses to join them apart for the same
+	// reason; here it is the record's own name that would be overwritten.
+	published := make(map[string]string, len(artifacts))
 	if len(artifacts) > 0 {
 		repo, commit, err := coordinatorProvenance(ctx)
 		if err != nil {
@@ -333,6 +341,19 @@ func runCoordinatorPublish(cmd *cobra.Command, o *coordinatorPublishOptions, arg
 				plans[i] = coordinatorResultOf(plans[i], err)
 				continue
 			}
+			if other, taken := published[trimmed.Plan]; taken {
+				// The first artifact in path order keeps the id and the second
+				// is refused rather than sent: sending it would take the id from
+				// the plan published a moment earlier, silently, and the person
+				// would have one plan in the record and no sign that the other
+				// graph went nowhere. Only an artifact that would be published
+				// takes the id, so a first artifact refused above leaves it free.
+				plans[i] = coordinatorResultOf(plans[i], fcli.UserErr(
+					"%s and %s are both the plan %s; only the first is published",
+					safetext.OneLine(other), safetext.OneLine(rel), safetext.OneLine(trimmed.Plan)))
+				continue
+			}
+			published[trimmed.Plan] = rel
 			documents[i], plans[i].Plan, ready[i] = trimmed, trimmed.Plan, true
 			anyReady = true
 		}
@@ -692,7 +713,12 @@ func coordinatorProvenance(ctx context.Context) (string, string, error) {
 	}
 	repo, ok := coordinatorRepoFromOrigin(origin)
 	if !ok {
-		return "", "", fcli.UserErr("origin %s does not name owner/name, so a published plan could not say which repository it came from", safetext.OneLine(image.HTTPSOrigin(origin)))
+		// The redaction is the core's own helper for this sentence
+		// (internal/cli's `origin %s does not name owner/name`), and it is here
+		// for the origins HTTPSOrigin hands back as they are: a remote of a
+		// scheme it does not know is copied out with whatever userinfo a clone
+		// left in it, and this line is read at a terminal.
+		return "", "", fcli.UserErr("origin %s does not name owner/name, so a published plan could not say which repository it came from", safetext.OneLine(gcp.RedactURL(image.HTTPSOrigin(origin))))
 	}
 	commit, err := coordinatorGit(ctx, "rev-parse", "HEAD")
 	if err != nil {
@@ -731,13 +757,31 @@ func coordinatorCheckCommitted(ctx context.Context, rel string) error {
 	return nil
 }
 
+// coordinatorPublishGitHardening is put before every git call here, as it is
+// before every git this build spawns on a checkout that may be somebody else's
+// (internal/cli's gitHardening and internal/srctree's list — both unexported,
+// and an ee/ package cannot reach either, so the list is written again rather
+// than shared).
+//
+// It is the whole of what stands between a read and a program the checkout
+// chose. `.git/config` is repository content like any other file, and `git
+// status` — the read before every publish — runs the command `core.fsmonitor`
+// names, as the person, on a checkout they may have cloned from anywhere; the
+// hook path and the external transports are the same shape of hazard. `-c`
+// outranks the file, so none of them runs whatever the repository says.
+var coordinatorPublishGitHardening = []string{
+	"-c", "core.hooksPath=" + os.DevNull,
+	"-c", "core.fsmonitor=false",
+	"-c", "protocol.ext.allow=never",
+}
+
 // coordinatorGit runs one git read in the checkout the person is standing in.
 //
 // The prompt is off and the index is not locked, as it is for every git this
 // build spawns: a credential prompt on a machine that has none is a hang rather
 // than a refusal, and a read has no business taking the index's lock.
 func coordinatorGit(ctx context.Context, args ...string) (string, error) {
-	c := exec.CommandContext(ctx, "git", append([]string{"-C", "."}, args...)...)
+	c := exec.CommandContext(ctx, "git", append(append([]string{"-C", "."}, coordinatorPublishGitHardening...), args...)...)
 	c.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0")
 	c.WaitDelay = 5 * time.Second
 	var out, errOut bytes.Buffer

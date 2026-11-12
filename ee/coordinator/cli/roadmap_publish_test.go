@@ -357,6 +357,61 @@ func TestPublishAllSendsEveryArtifact(t *testing.T) {
 	}
 }
 
+// TestPublishAllRefusesASecondArtifactWithOnePlanID: two artifacts that derive
+// one plan id are one document in the record, so a sweep that sent both would
+// have the second silently take the id from the first — one plan in the record
+// where the checkout has two graphs, and nothing anywhere saying which one went
+// nowhere.
+//
+// The rule is plan status's, and so is the sentence's shape: the first artifact
+// in path order keeps the id, and the refusal names both files, because it is
+// the paths that are wrong and a reader has to see which two they are.
+func TestPublishAllRefusesASecondArtifactWithOnePlanID(t *testing.T) {
+	door := publishDoor(t)
+	// docs/plans/ names a file by its stem and anything deeper by its
+	// directory, so these two are the one id plans/foo.
+	publishCheckout(t, map[string]string{
+		"docs/plans/foo.md": "# foo\n",
+		"docs/plans/foo.graph.json": strings.Replace(publishGraph,
+			`"plan": "docs/plans/2026-11-12-the-plan.md"`, `"plan": "docs/plans/foo.md"`, 1),
+		"docs/plans/foo/bar.md": "# bar\n",
+		"docs/plans/foo/bar.graph.json": strings.Replace(publishGraph,
+			`"plan": "docs/plans/2026-11-12-the-plan.md"`, `"plan": "docs/plans/foo/bar.md"`, 1),
+	})
+
+	out, _, err := execute(t, "coordinator", "roadmap", "publish", "--all", "--json")
+	if err == nil {
+		t.Fatalf("a sweep that found one plan id twice returned no error:\n%s", out)
+	}
+	if fcli.ExitCode(err) != fcli.ExitUserError {
+		t.Errorf("exit %d, want a user error: it is the checkout that has to change", fcli.ExitCode(err))
+	}
+	// One write and the one outcome read it is answered with: the second
+	// artifact never reached the door, so nothing took the id from the plan
+	// published a moment earlier.
+	if calls := door.toolCalls(); len(calls) != 2 {
+		t.Fatalf("the door served %v; want the first artifact's write alone", publishTools(calls))
+	}
+	if got := publishSent(t, door.toolCalls()[0]).Plan; got != "plans/foo" {
+		t.Errorf("the sweep published %q; want the first artifact in path order to keep the id", got)
+	}
+	var sent coordinatorPublishDoc
+	if err := json.Unmarshal([]byte(out), &sent); err != nil {
+		t.Fatalf("the --json document: %v\n%s", err, out)
+	}
+	if len(sent.Plans) != 2 {
+		t.Fatalf("the document reported %d plans; want both artifacts, one published and one refused", len(sent.Plans))
+	}
+	if sent.Plans[0].Status != mcpauth.RoadmapApplied || sent.Plans[1].Status != mcpauth.RoadmapRefused {
+		t.Errorf("the sweep reported %q then %q; want the first applied and the second refused", sent.Plans[0].Status, sent.Plans[1].Status)
+	}
+	for _, want := range []string{"docs/plans/foo.graph.json", "docs/plans/foo/bar.graph.json", "plans/foo"} {
+		if !strings.Contains(sent.Plans[1].Reason, want) {
+			t.Errorf("the refusal is %q; want it to name %q, so a reader sees which two files are one plan", sent.Plans[1].Reason, want)
+		}
+	}
+}
+
 // mustJSON marshals a call's arguments for a test that is looking for a string
 // in what was sent.
 func mustJSON(t *testing.T, v any) []byte {
@@ -553,6 +608,94 @@ func TestPublishStaysInTheCheckout(t *testing.T) {
 			t.Errorf("the door was called with %v; a directory outside the checkout is not this checkout's plans", publishTools(calls))
 		}
 	})
+}
+
+// TestPublishRunsNoCommandTheCheckoutNames is the read's own hardening: a
+// checkout is repository content, and `.git/config` is a file its repository
+// writes. `core.fsmonitor` names a program git runs as it refreshes the index —
+// which is exactly what the status read before every publish does — so a
+// checkout cloned from anywhere could have the person run its command for it,
+// with the person's own privileges, at the moment they publish their plan.
+//
+// The marker file is the assertion rather than the flags: it is written by the
+// command the checkout names, so a read that spawned git without
+// `-c core.fsmonitor=false` leaves it behind. **This is a mutation's
+// assertion**: drop that flag from coordinatorPublishGitHardening and this test
+// fails.
+func TestPublishRunsNoCommandTheCheckoutNames(t *testing.T) {
+	door := publishDoor(t)
+	dir, _ := publishCheckout(t, map[string]string{planDoc: "# the plan\n", planArtifact: publishGraph})
+
+	// The script is what a hostile .git/config would name: it touches a file in
+	// the checkout, which is a marker here and would be anything at all on the
+	// person's machine.
+	marker := filepath.Join(dir, "the-checkout-ran-this")
+	script := filepath.Join(dir, "fsmonitor.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\ntouch "+marker+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	c := exec.Command("git", "-C", dir, "config", "core.fsmonitor", script)
+	if out, err := c.CombinedOutput(); err != nil {
+		t.Fatalf("git config: %v\n%s", err, out)
+	}
+
+	out, _, err := execute(t, "coordinator", "roadmap", "publish", planDoc)
+	if err != nil {
+		t.Fatalf("roadmap publish: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("the publish ran a command the checkout's own .git/config named: git read core.fsmonitor here, so a repository can have this command executed as the person who ran it")
+	}
+	if calls := door.toolCalls(); len(calls) != 2 {
+		t.Errorf("the door served %v; want the one publish and its outcome read", publishTools(calls))
+	}
+}
+
+// TestPublishRedactsTheOriginItRefuses: the one sentence this command prints
+// about an origin is read at a terminal, and a remote is a place credentials
+// live — a clone that embedded a token, a URL of a scheme this build does not
+// know, which image.HTTPSOrigin hands back exactly as the checkout wrote it.
+// The core's sentence about the same origin passes it through gcp.RedactURL,
+// and so does this one.
+func TestPublishRedactsTheOriginItRefuses(t *testing.T) {
+	// The credential is a placeholder and not a secret: nothing checks its
+	// shape, and what is asserted is that no part of it is printed.
+	const credential = "the-placeholder-token"
+	for _, tc := range []struct{ name, origin string }{
+		// image.HTTPSOrigin knows the https-ish and the scp-like forms and
+		// hands anything else back exactly as the checkout wrote it, userinfo
+		// and all. Both of these are origins a person can have.
+		{"the git protocol", "git://a-person:" + credential + "@example.invalid/owner/name.git"},
+		{"a scheme this build does not know", "ftp://a-person:" + credential + "@example.invalid/owner/name.git"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			door := publishDoor(t)
+			dir, _ := publishCheckout(t, map[string]string{planDoc: "# the plan\n", planArtifact: publishGraph})
+			c := exec.Command("git", "-C", dir, "remote", "set-url", "origin", tc.origin)
+			if out, err := c.CombinedOutput(); err != nil {
+				t.Fatalf("git remote set-url: %v\n%s", err, out)
+			}
+
+			out, _, err := execute(t, "coordinator", "roadmap", "publish", planDoc)
+			if err == nil {
+				t.Fatalf("a publish from a checkout whose origin is not owner/name returned no error:\n%s", out)
+			}
+			if fcli.ExitCode(err) != fcli.ExitUserError {
+				t.Errorf("exit %d, want a user error", fcli.ExitCode(err))
+			}
+			if said := err.Error(); strings.Contains(said, credential) || strings.Contains(said, "a-person") {
+				t.Errorf("the refusal printed the origin's credential: %s", said)
+			} else if !strings.Contains(said, "does not name owner/name") {
+				t.Errorf("the refusal is %q; want the rule the origin broke", said)
+			}
+			if !strings.Contains(err.Error(), "example.invalid") {
+				t.Errorf("the refusal is %q; want it to name the origin's host, which is not the credential", err)
+			}
+			if calls := door.toolCalls(); len(calls) != 0 {
+				t.Errorf("the door was called with %v; a checkout this build cannot take a repository from publishes nothing", publishTools(calls))
+			}
+		})
+	}
 }
 
 // TestPublishFromAnotherRepositoryIsRefusedWithoutReplaceSource is D2123: a
