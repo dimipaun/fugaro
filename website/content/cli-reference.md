@@ -41,6 +41,7 @@ Subcommands:
 - `fugaro creds` -- Set and list the credentials service's one bundle secret (the owner)
 - `fugaro diagnose` -- Explain how a run went: status, tests, review findings, the agent's last word, logs
 - `fugaro doctor` -- Check that Fugaro is set up and ready, without changing anything
+- `fugaro estimate` -- Reprice one run's recorded tokens on another model
 - `fugaro followups` -- File the findings a merged run deferred as follow-up tasks
 - `fugaro graph` -- Print the project's dependency graph
 - `fugaro help` -- Help about any command
@@ -862,9 +863,16 @@ which one the selected project uses:
   cloud-batch  Cloud Batch jobs, one VM per run (the VM backend)
 
 A config that names no backend runs on cloud-run. A config that names
-cloud-batch is refused by this build ("not enabled yet"): the backend and its
-opener are built and tested, and nothing selects them until Fugaro has passed
-the live checklist for it.
+cloud-batch is ACCEPTED: fugaro doctor reports the Batch checks for an
+installation that selects it -- the Compute and Batch APIs, the preloaded boot
+image and the socket gid it records beside it, the network and subnetwork a
+run's VMs are placed in, the log isolation, the run accounts and their grants,
+the price table and the reaper -- and FAILS until every one of them passes.
+What doctor does is report: fugaro run reads none of those checks, so it does
+not hold a launch back, and an installation that selects the name before it is
+provisioned runs anyway (its output stays in _Default and its VMs are left to
+the job's own duration). Run fugaro doctor first, rather than reading a green
+one as a fence around the launcher.
 
 This is a local, read-only lookup: it reads the project config and the backend
 names internal/backend defines, and it calls no cloud API. With --json it
@@ -2284,10 +2292,28 @@ so, and a bucket read that does not answer leaves its image line out instead
 of failing the command.
 
 --plugin checks only the plugin's wiring: offline, no credentials, safe for
-CI. --strict makes a stale, unpinned, foreign or unwired plugin fail the
-command; the informational states ("not installed", "cannot compare") never
-do, with or without --strict. A repository's CI runs
-fugaro doctor --plugin --strict.
+CI. --strict makes a stale, unpinned or foreign plugin fail the command. A
+checkout that never opted in to the pin is informational rather than a
+failure, because nothing in the tree writes a pin any more and that checkout is
+the normal one; "cannot compare" — a development build, an unreadable install
+record — is informational too. "not installed" is a warning, because the
+plugin on this machine is what carries the skills. A repository's CI runs
+fugaro doctor --plugin --strict; with --strict the install on the machine is
+not evaluated at all, because a runner has no Claude Code.
+
+--offline checks the update class and nothing else, and it makes no cloud call,
+no network call and no secret read: the plugin's wiring and the install on this
+machine, the login unit that runs the orchestrator daemon, and the base image
+this checkout resolves to where a local installation is configured to answer
+it. Every check whose answer lives in the project's Realtime Database or the
+runs bucket — the published policy, the deployed rules, and whether a
+workflow's job was built from the image settings it resolves to now — and the
+one that asks whether a newer release is available, is skipped rather than
+guessed: it comes back with skipped true and ok false, and
+a problem saying what could not be read, and it fails nothing, with or without
+--strict. A reader of --json should take ok true as "checked and fine" and
+skipped true as "not checked"; that pair is the whole contract. It is the
+check the Fugaro skills run at the start of a session.
 
 With no local Fugaro installation configured, doctor says so and names
 fugaro setup as the fix, rather than guessing at a project.
@@ -2303,7 +2329,7 @@ the flags.
 
 Exit 1 when a check fails, with the one-line fix to run.
 
-Usage: `fugaro doctor [--json] [--all] [--security] [--plugin] [--strict]`
+Usage: `fugaro doctor [--json] [--all] [--security] [--plugin] [--strict] [--offline]`
 
 Flags:
 
@@ -2317,11 +2343,65 @@ Flags:
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for doctor |
 | `--json` | bool | `false` | no | print machine-readable output |
+| `--offline` | bool | `false` | no | check the update class's local checks and record a skip for each check that needs a credential or the network: no cloud call, no network call, no secret read (the session-start check the skills run) |
 | `--plugin` | bool | `false` | no | check only the plugin's wiring (offline, no credentials) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--security` | bool | `false` | no | also print the IAM and security sweep (who may read a credential, who may sign a budget token, what a launcher may start) |
-| `--strict` | bool | `false` | no | fail on a stale, unpinned, foreign or unwired plugin (CI mode) |
+| `--strict` | bool | `false` | no | fail on a stale, unpinned or foreign plugin (CI mode); an un-wired checkout is information, not a failure |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro estimate`
+
+Reprice one run's recorded tokens on another model
+
+Reprice one run on another model: the token counts the run recorded, priced
+at the named model's list rates. Nothing is run and nothing is written.
+
+The figure is an ESTIMATE and not the run's bill: it reprices the recorded
+tokens and nothing else, so what a repricing cannot reproduce is left out.
+A call that passed a long-context tier was priced per call, web searches are
+priced apart from the tokens, and a charge settled from a reservation, one
+recorded as unreconciled and a call whose usage could not be read are not in
+the counts at all. The estimate assumes the run would have taken the same
+cache ratio.
+
+The run is named with --run, or found the way `runs ls --pr` finds one: --pr N
+over one repository (--repo, or the local config's only one) and the last
+90d unless --since says otherwise. A pull request with several runs is not
+one figure: they are listed, and one is named with --run.
+
+The model is a row of the price table this project prices runs from -- the
+built-in catalog, with the owner's model_prices over it -- named by its exact
+ID or one of that row's aliases: no prefixes, and no guess at what a nickname
+meant. A model the table has no row for is refused with the IDs it has. The
+date of the table the figure was priced from is printed beside it, and a
+table past its own check window warns.
+
+A run whose record carries no per-model token counts -- one that never
+finalized, or one that finalized before this binary recorded them -- is
+refused: there is nothing to reprice, and no total is estimated in its place.
+
+Usage: `fugaro estimate`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for estimate |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--model` | string | "" | no | the model to price the run's tokens at (a price table model ID) |
+| `--pr` | int | `0` | no | the pull request whose run to reprice (needs one repository) |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--repo` | string | "" | no | the repository a --pr lookup reads (owner/name, or a path inside its checkout) |
+| `--run` | string | "" | no | the run to reprice (<run-id>, <slug>/<run-id>, or an ending) |
+| `--since` | string | `90d` | no | with --pr, only runs started within this long (90d, 36h, 90m; 0 for all) |
 
 Subcommands:
 
@@ -3211,11 +3291,19 @@ no reference every `pending` issue is visited, and the ones already
 filed or set aside are skipped.
 
 The post is built once and printed as it is: the title, the body, and
-the sha256 of the exact bytes. A run without --ask files nothing. --ask
-asks at your own terminal after showing the preview and files exactly
-those bytes; a coding agent's session and a pipe never file, because
-a confirmation nobody can answer is a refusal and never a silent
-proceed.
+the sha256 of the exact bytes. A run without --ask files nothing and
+uploads nothing. --ask asks at your own terminal after showing the
+preview and files exactly those bytes; a coding agent's session and a
+pipe never file, because a confirmation nobody can answer is a refusal
+and never a silent proceed.
+
+--ask uploads this machine's own pending issues first, exactly as
+`issue sync` does, and files the project's own record of a numbered
+issue: the store is the truth once an issue is uploaded. The filing is
+made under a claim on that record, so two people filing one issue at
+the same moment file it once; a claim another submitter holds is
+refused with who holds it and until when, and a record that changed
+after the preview was shown is refused rather than filed unseen.
 
 Filing needs GitHub's own `gh` with an account on github.com. Where it
 is missing, or has no account there, the install command or `gh auth
@@ -5511,7 +5599,155 @@ Flags:
 
 Subcommands:
 
+- `fugaro rigor floor` -- Set or remove the review floor a project's runs are held to
 - `fugaro rigor set` -- Write the project layer's rigor default, or one area rule
+
+## `fugaro rigor floor`
+
+Set or remove the review floor a project's runs are held to
+
+The review floor is the owner's own: per rigor mode, the review levels a run
+of that mode must run whatever a lower layer asks for. It lives in this
+machine's project config (`review_floor`) and `fugaro project policy publish`
+copies it into the policy node the runner fails closed on, so a change here
+reaches runs at the next `fugaro update`.
+
+`fugaro rigor floor show` prints the floor this machine's config sets,
+`fugaro rigor floor set MODE LEVELS` writes one mode's floor and
+`fugaro rigor floor unset MODE` removes it. A removal and a lowering are the
+owner's own step — a floor is a minimum, so taking a level away is a whole
+project reviewing less — and they ask nothing: the write prints what it widens
+and what it writes, and no flag stands in for the owner's own hand. Adding a
+mode the file does not carry, or a level a mode's floor does not carry, asks
+nothing either: it can only require more review.
+
+A coding agent's session is refused both directions outright, whatever the
+flags say, and is shown neither the diff nor the sentence: the command it
+should run at the owner's own terminal is what the refusal prints.
+
+Usage: `fugaro rigor floor`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for floor |
+
+Subcommands:
+
+- `fugaro rigor floor set` -- Write one rigor mode's review floor
+- `fugaro rigor floor show` -- Show the review floor this machine's project config sets
+- `fugaro rigor floor unset` -- Remove one rigor mode's review floor
+
+## `fugaro rigor floor set`
+
+Write one rigor mode's review floor
+
+Write the review levels a run of MODE must run, into this machine's project
+config.
+
+LEVELS is a comma-separated list of `l1`, `l2` and `l3` — the levels
+docs/review-levels names — and the floor is the whole list: a level it drops
+stops being required of every run of that mode.
+
+Adding a mode the file does not carry, or a level the mode's floor does not
+carry, is the ordinary write and asks nothing. Dropping a level is a lowering —
+a whole project reviewing less — and it asks nothing either: `--yes` does
+not stand in for the owner's own hand, and neither does anything else. The
+command refuses an empty LEVELS: a floor with no level in it says nothing, and
+removing the mode's entry is what `fugaro rigor floor unset` is for.
+
+A coding agent's session is refused the write outright, whatever the flags say,
+and is shown neither the diff nor the sentence.
+
+It writes one file: this machine's own project config. The change reaches the
+policy node the runner reads at the next `fugaro update`, whose policy stage
+publishes it.
+
+Usage: `fugaro rigor floor set MODE LEVELS`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `-h`, `--help` | bool | `false` | no | help for set |
+| `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
+| `--yes` | bool | `false` | no | accepted and of no effect: a lowering asks nothing, and no flag stands in for the owner's own hand |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro rigor floor show`
+
+Show the review floor this machine's project config sets
+
+Show the review floor, one line per rigor mode and the levels that mode's runs
+must run.
+
+The read tells apart the two ways a file can name no floor, because they mean
+different things at publish: a file that says nothing about `review_floor` leaves
+the published floor standing — a publish keeps the node's floor when the config
+is silent about one — while a written `review_floor: {}` is a floor of nothing,
+which is what takes the published floor away.
+
+`--json` prints the same answer as a document.
+
+Usage: `fugaro rigor floor show`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `-h`, `--help` | bool | `false` | no | help for show |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro rigor floor unset`
+
+Remove one rigor mode's review floor
+
+Remove the review floor MODE carries: from the next `fugaro update` the
+mode's runs are held to what their rigor mode and the repository ask for, and
+to nothing the owner requires.
+
+That is what the removal of one of several modes does. Removing the file's LAST
+entry leaves the file carrying no mode, and the key stays where it was written
+as the empty mapping — `review_floor: {}` — rather than going with it, because
+the two spellings mean different things at publish: a file that says nothing
+about the key keeps the node's floor (the floor is the member a publish must not
+lower by accident), while the empty mapping is a floor of nothing, and that is
+what takes the published floor away.
+
+A removal is the owner's own step — what it deletes is a floor, and taking it
+away is a whole project reviewing less — and it asks nothing: `--yes` does
+not stand in for the owner's own hand, and neither does anything else. A
+coding agent's session is refused the removal outright, whatever the flags say,
+and is shown neither the diff nor the sentence.
+
+It writes one file: this machine's own project config, and the change reaches
+the policy node at the next `fugaro update`.
+
+Usage: `fugaro rigor floor unset MODE`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `-h`, `--help` | bool | `false` | no | help for unset |
+| `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
+| `--yes` | bool | `false` | no | accepted and of no effect: a removal asks nothing, and no flag stands in for the owner's own hand |
+
+Subcommands:
+
+This command has no subcommands.
 
 ## `fugaro rigor set`
 
@@ -5534,8 +5770,8 @@ your own terminal, `--yes` included, and your own terminal writes it and asks
 nothing. `hotfix` is refused in either form, naming `fugaro run --mode hotfix`.
 
 The command prints the review floor beside the write, and it cannot lower it:
-the floor is outside every layer, and the command that changes one is not built
-yet.
+the floor is outside every layer, and `fugaro rigor floor` is the command that
+changes one.
 
 It writes one file: this machine's own project layer file, whose path is
 derived from the selected project's name. A project that has published no layer
@@ -5683,6 +5919,7 @@ Subcommands:
 
 - `fugaro runs digest` -- Write a closed period's report of this repository into its own docs tree
 - `fugaro runs ls` -- List runs with their status, stage, cost and PR
+- `fugaro runs show` -- Show a run's chain and what is left of its limits
 - `fugaro runs stats` -- Aggregate run records by the person who started each run
 - `fugaro runs summary` -- Count the window's runs and their spend, without reading a run object
 
@@ -5851,6 +6088,55 @@ Flags:
 | `--since` | string | `7d` | no | only runs started within this long (7d, 36h, 90m; 0 for all) |
 | `--state` | string | "" | no | only runs in this state (cancelled, error, failed, halted, infra_error, launching, pending, running, succeeded, unlaunched, unreviewed) |
 | `--watch` | bool | `false` | no | redraw until every run has settled |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro runs show`
+
+Show a run's chain and what is left of its limits
+
+Show the chain RUN (a run ID, <repo-slug>/<run-id>, or the last four or
+more characters of a run ID) belongs to: the run that began it, each
+dimension's limit, what the chain has used of it and what is left, the layer
+each limit's source names, and whether the chain is ENFORCED or UNENFORCED.
+When the run is halted, the halt is printed too.
+
+A chain is the unit of work whose runs share one limit (D1045): the limit is the
+figure the run that began the chain was launched with, and what has been used is
+read off the chain's runs — the dollars and tokens from the budget database's
+per-run ledgers, the wall time and review rounds from the run records. With the
+budget off there is no ledger, the records are the figures, the chain is marked
+UNENFORCED, and the token dimension is reported unmeasured rather than
+approximated.
+
+The wall-time and review-round limits are advisory: no rule enforces them.
+
+The bucket ages a run's objects out, so a chain older than that window has a
+root whose stored task is gone: the chain itself is still shown and its limit is
+reported as one that could not be read (limits_read false) rather than as a chain
+that bounds nothing (limits_read true, an empty limits).
+
+--json prints {version, repo, run, chain, run_count, enforced, limits_read, limits[], halt},
+each limit a {dimension, limit, used, remaining, source} whose amounts are in
+the dimension's own unit: micro-dollars for the money — the unit the budget
+database and the rest of the CLI's documents count it in — whole tokens,
+seconds and a count.
+
+Usage: `fugaro runs show RUN`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for show |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--repo` | string | "" | no | the repository RUN belongs to (owner/name, or a path inside its checkout; needed only for a bare run ID) |
 
 Subcommands:
 
@@ -6119,6 +6405,8 @@ Subcommands:
 - `fugaro secrets ls` -- List the project's (or, with --repo, a repository's) secrets: names, scope and versions, never values
 - `fugaro secrets rm` -- Withdraw a project secret: delete its Secret Manager container and its config entry
 - `fugaro secrets set` -- Store a secret's value, read from stdin or a hidden prompt, as a new version
+- `fugaro secrets shared` -- Store, list and remove the secrets the project shares (an admin's)
+- `fugaro secrets user` -- Store, list and remove the secrets you own
 
 ## `fugaro secrets allow`
 
@@ -6434,6 +6722,260 @@ Flags:
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | work on one repository's own copy, given as owner/name or a path inside its checkout (no value: this checkout's origin); without it, a name that has a project-wide meaning is stored and listed project-wide |
 | `--yes` | bool | `false` | no | confirm the policy write without a prompt (outside a coding agent's session) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro secrets shared`
+
+Store, list and remove the secrets the project shares (an admin's)
+
+Usage: `fugaro secrets shared`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for shared |
+
+Subcommands:
+
+- `fugaro secrets shared ls` -- List the secrets under this prefix: names and dates, never values
+- `fugaro secrets shared rm` -- Remove a secret this prefix holds
+- `fugaro secrets shared set` -- Store a secret's value, read from stdin or a hidden prompt, through the intake
+
+## `fugaro secrets shared ls`
+
+List the secrets under this prefix: names and dates, never values
+
+List the installation's intake's containers under this prefix: the names and
+the dates they were made, and no version's value. The intake has no route that
+answers a value at all, so this command cannot print one whatever it is asked.
+
+Scope: the project's own prefix, fugaro_p_<name>, which the intake serves
+to an admin on the installation's derived admin list and to nobody else
+(D1935, D1940). A caller who is not on it is refused by the intake, by name,
+and nothing is written.
+
+Usage: `fugaro secrets shared ls`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for ls |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro secrets shared rm`
+
+Remove a secret this prefix holds
+
+Remove the container NAME through the installation's intake: the container and
+every version in it, which is the only way back from a value stored under a
+name that was meant for something else.
+
+Scope: the project's own prefix, fugaro_p_<name>, which the intake serves
+to an admin on the installation's derived admin list and to nobody else
+(D1935, D1940). A caller who is not on it is refused by the intake, by name,
+and nothing is written.
+
+Usage: `fugaro secrets shared rm NAME`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for rm |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro secrets shared set`
+
+Store a secret's value, read from stdin or a hidden prompt, through the intake
+
+Store the value of NAME through the installation's secrets intake, as a new
+version: the container is created if it doesn't exist, and a second call with
+the same name rotates it.
+
+The value is read only from stdin: pipe or redirect it in (fugaro secrets shared set
+github-token < token-file), or, when stdin is a terminal, paste it at a hidden
+prompt. It is never taken from an argument, a flag or the environment, and
+never printed. One trailing newline (\n or \r\n) is dropped, and the command
+says so. A value is one line of 4 bytes to 64 KiB with no whitespace at either
+end. The one value that spans lines is the GitHub App key's PEM, and it has no
+business here: `fugaro secrets set github-app-key` is the command that stores
+one, and the intake's two prefixes refuse that name (R7). Ctrl-C at the prompt
+stores nothing and restores the terminal.
+
+The value travels to the intake and is written there by the intake's own
+account: this command sends it over the installation's own endpoint, with the
+person's own Google ID token as the caller, and holds no write of its own in
+Secret Manager.
+
+Scope: the project's own prefix, fugaro_p_<name>, which the intake serves
+to an admin on the installation's derived admin list and to nobody else
+(D1935, D1940). A caller who is not on it is refused by the intake, by name,
+and nothing is written.
+
+The installation's intake is deployed by `fugaro update`: an installation whose
+release predates it, or one whose deployment does not answer the intake's
+routes, is refused with that command as the whole upgrade.
+
+Usage: `fugaro secrets shared set NAME`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for set |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro secrets user`
+
+Store, list and remove the secrets you own
+
+Usage: `fugaro secrets user`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for user |
+
+Subcommands:
+
+- `fugaro secrets user ls` -- List the secrets under this prefix: names and dates, never values
+- `fugaro secrets user rm` -- Remove a secret this prefix holds
+- `fugaro secrets user set` -- Store a secret's value, read from stdin or a hidden prompt, through the intake
+
+## `fugaro secrets user ls`
+
+List the secrets under this prefix: names and dates, never values
+
+List the installation's intake's containers under this prefix: the names and
+the dates they were made, and no version's value. The intake has no route that
+answers a value at all, so this command cannot print one whatever it is asked.
+
+Scope: your own prefix, fugaro_u_<your account id>_<name>. The owner is
+taken from the identity token this command presents and never from anything
+this command says about itself, so no caller can write under another person's
+prefix (R3, R12).
+
+Usage: `fugaro secrets user ls`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for ls |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro secrets user rm`
+
+Remove a secret this prefix holds
+
+Remove the container NAME through the installation's intake: the container and
+every version in it, which is the only way back from a value stored under a
+name that was meant for something else.
+
+Scope: your own prefix, fugaro_u_<your account id>_<name>. The owner is
+taken from the identity token this command presents and never from anything
+this command says about itself, so no caller can write under another person's
+prefix (R3, R12).
+
+Usage: `fugaro secrets user rm NAME`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for rm |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro secrets user set`
+
+Store a secret's value, read from stdin or a hidden prompt, through the intake
+
+Store the value of NAME through the installation's secrets intake, as a new
+version: the container is created if it doesn't exist, and a second call with
+the same name rotates it.
+
+The value is read only from stdin: pipe or redirect it in (fugaro secrets user set
+github-token < token-file), or, when stdin is a terminal, paste it at a hidden
+prompt. It is never taken from an argument, a flag or the environment, and
+never printed. One trailing newline (\n or \r\n) is dropped, and the command
+says so. A value is one line of 4 bytes to 64 KiB with no whitespace at either
+end. The one value that spans lines is the GitHub App key's PEM, and it has no
+business here: `fugaro secrets set github-app-key` is the command that stores
+one, and the intake's two prefixes refuse that name (R7). Ctrl-C at the prompt
+stores nothing and restores the terminal.
+
+The value travels to the intake and is written there by the intake's own
+account: this command sends it over the installation's own endpoint, with the
+person's own Google ID token as the caller, and holds no write of its own in
+Secret Manager.
+
+Scope: your own prefix, fugaro_u_<your account id>_<name>. The owner is
+taken from the identity token this command presents and never from anything
+this command says about itself, so no caller can write under another person's
+prefix (R3, R12).
+
+The installation's intake is deployed by `fugaro update`: an installation whose
+release predates it, or one whose deployment does not answer the intake's
+routes, is refused with that command as the whole upgrade.
+
+Usage: `fugaro secrets user set NAME`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for set |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
 
 Subcommands:
 
@@ -7041,7 +7583,7 @@ Flags:
 | `--plan-only` | bool | `false` | no | stop after showing the plan (never takes --yes: it creates nothing on a flag's word) |
 | `--print-vars` | bool | `false` | no | print the Terraform variables and exit, with no cloud calls and no Terraform (ungated: no discovery, and with --repo no readiness gates) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
-| `--provision-batch` | bool | `false` | no | after the installation's ordinary steps, provision the Batch compute backend into a state of its own (design docs/design/compute-backend.md §8.1 task 6): the Compute and Batch APIs, the run accounts' IAM, the launcher's, reaper's and preload accounts and roles, a Cloud NAT and router, and a preloaded boot image rebuilt on a schedule. It is money (a billable build, a NAT's hours) and permanent, so --yes never covers it and it takes a person at a real terminal; nothing runs it by default, and no run can use the backend until the enable task. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor) |
+| `--provision-batch` | bool | `false` | no | after the installation's ordinary steps, provision the Batch compute backend into a state of its own (design docs/design/compute-backend.md §8.1 task 6): the Compute and Batch APIs, the run accounts' IAM, the launcher's, reaper's and preload accounts and roles, a Cloud NAT and router, and a preloaded boot image rebuilt on a schedule. It is money (a billable build, a NAT's hours) and permanent, so --yes never covers it and it takes a person at a real terminal; nothing runs it by default, and an installation reaches the backend only after this has run and `doctor` passes its gate. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor) |
 | `--publish-config` | bool | `false` | no | publish the shared config to the runs bucket and stop (setup does it after it writes the local config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--registry-cleanup` | string | "" | no | Artifact Registry cleanup: dry-run (the default), on or off |
@@ -7299,8 +7841,9 @@ installed on this machine compares with this binary, and the pin a checkout
 that still carries one holds — the merge that wrote those pins is gone, so a
 pin an older fugaro left is read here (and by fugaro doctor's plugin-pin
 check). It exits 1 on any warning state (outdated, newer, unpinned, foreign,
-not wired, installed differs); "not installed" and "cannot compare" are
-informational.
+installed differs); "not wired" — the normal state of a checkout nothing pins,
+since the merge that wrote those pins is gone — "not installed" and "cannot
+compare" are informational.
 
 Usage: `fugaro update-skills [--check] [--dir D] [--json]`
 

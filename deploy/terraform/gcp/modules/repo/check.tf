@@ -5,9 +5,13 @@
 # workflow has rebuild.check: off.
 #
 # The job mounts the provider credential at latest, which Cloud Run checks
-# when it creates the job, so fugaro update deploys it (with its
-# invoker grant and Scheduler job) only once the credential has a version,
-# or when the job already exists: check.deploy_job is that gate.
+# when it creates the job. check.deploy_job is the gate, and since D1900
+# (2026-11-09) disabled repo-level images it is false for every repository
+# whose cloud holds no check job already: the fugaro image check --job this
+# job runs is disabled, and the image it rebuilt is no job's any more, so a
+# new installation emits none. One that exists stays -- readiness.go reads
+# the live cloud for that -- because retiring it is D1194's separate change
+# and not a quiet release.
 
 locals {
   deploy_check = var.repo.check == null ? false : var.repo.check.deploy_job

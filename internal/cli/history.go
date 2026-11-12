@@ -175,6 +175,21 @@ func runHistorySweep(ctx context.Context, cmd *cobra.Command, getenv func(string
 		return userErr("%v", oneLine(why))
 	}
 
+	// This client is the Cloud Run arm of the sweep's liveness rule, and the
+	// rule's load-bearing half is the run's own heartbeat: budget.Sweeper
+	// keeps a registry entry whose heartbeat is inside its staleness window
+	// whatever the platform says, and this listing only ever ADDS a run the
+	// platform still reports (isLive). On an installation whose runs are on
+	// Batch the listing answers nothing -- a Batch job's execution is not a
+	// Cloud Run execution and never appears here (design compute-backend.md
+	// §2.3) -- so the sweep falls back to exactly the rule that already
+	// carries every live run, the heartbeat the runner writes on either
+	// backend. What that leaves is the window that staleness window bounds,
+	// stated in docs/design/compute-backend.md §9 rather than closed here: the
+	// job's environment carries no backend name to key a refusal on
+	// (deploy/terraform/gcp/modules/installation/history.tf), and its account
+	// holds no Batch read to ask the platform with, so a refusal would have to
+	// be invented out of a fact this process does not have.
 	be, err := gcp.New(ctx, runOpts)
 	if err != nil {
 		return remote(err)

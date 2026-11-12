@@ -299,6 +299,7 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	"fugaro cancel":               {args: []string{"run-1"}},
 	"fugaro creds set":            {args: []string{"NAME"}},
 	"fugaro diagnose":             {args: []string{"run-1"}},
+	"fugaro estimate":             {args: []string{"--run", "run-1", "--model", "claude-opus-5-5"}},
 	"fugaro exec":                 {args: []string{"--bucket", "file:///nonexistent"}},
 	"fugaro followups":            {args: []string{"run-1"}},
 	"fugaro image add":            {args: []string{"base"}},
@@ -341,8 +342,17 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	"fugaro restore":             {args: []string{"proj-2", "root"}},
 	"fugaro review show":         {args: []string{"run-1"}},
 	"fugaro run":                 {args: []string{"do something"}},
+	"fugaro runs show":           {args: []string{"run-1"}},
 	"fugaro secrets rm":          {args: []string{"NAME"}},
 	"fugaro secrets set":         {args: []string{"NAME"}},
+	// The intake's two families take the same NAME as the pair above, and their
+	// bodies are reached the same way: the name is the whole of what stands
+	// between a bare run and the command's own body, which is where the
+	// refusal this world's project selection produces comes from.
+	"fugaro secrets shared rm":  {args: []string{"NAME"}},
+	"fugaro secrets shared set": {args: []string{"NAME"}},
+	"fugaro secrets user rm":    {args: []string{"NAME"}},
+	"fugaro secrets user set":   {args: []string{"NAME"}},
 	// The rigor write reaches its own edit through the layer file the seed writes:
 	// the mode it sets ranks above what the file resolves to, so the fixture is the
 	// ordinary write and not the sensitive one, and the sentence naming the key is
@@ -352,6 +362,14 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 		reaches: "set defaults.rigor.default to critical in",
 		seed:    closedStdinRigorLayerSeed,
 	},
+	// The floor's two leaves, driven to the directions that take a level away — a
+	// removal and a lowering, which are the plan's SEC step and the direction a
+	// confirmation used to stand in front of — and the seed is what puts a floor
+	// in the world for them to take one out of. Neither may print a question
+	// here: no command waits on stdin any more (D1540, D1552, D1555), and the
+	// sentence naming the change is the proof this fixture reaches the write.
+	"fugaro rigor floor set":      {args: []string{"pro", "l2"}, reaches: "set review_floor.pro from l2, l3 to l2 in", seed: closedStdinRigorFloorSeed},
+	"fugaro rigor floor unset":    {args: []string{"pro"}, reaches: "remove review_floor.pro (l2, l3) in", seed: closedStdinRigorFloorSeed},
 	"fugaro settings get":         {args: []string{"a.b"}},
 	"fugaro stats runs":           {args: []string{"--project", "proj-1234"}},
 	"fugaro user add":             {args: []string{"someone@example.com"}},
@@ -467,12 +485,17 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro recipes ls":             "prints the no-project-config refusal",
 	"fugaro report":                 "refuses: the edition is not in this build",
 	"fugaro review":                 "refuses from inside its body: --pr is required, and a bare run names it rather than launching a review",
+	"fugaro rigor floor show":       "reads the selected project's own config and prints the floor it carries, which is the whole of what a bare run does",
 	"fugaro runs digest":            "prints the no-project-config refusal",
 	"fugaro runs ls":                "prints the no-project-config refusal",
 	"fugaro runs stats":             "prints the no-project-config refusal",
 	"fugaro runs summary":           "prints the no-project-config refusal",
 	"fugaro secrets":                "is a name for set, ls and rm: a bare run prints its own usage and returns",
 	"fugaro secrets ls":             "prints the no-project-config refusal",
+	"fugaro secrets shared":         "is a name for set, ls and rm: a bare run prints its own usage and returns",
+	"fugaro secrets shared ls":      "prints the no-project-config refusal",
+	"fugaro secrets user":           "is a name for set, ls and rm: a bare run prints its own usage and returns",
+	"fugaro secrets user ls":        "prints the no-project-config refusal",
 	"fugaro security paths":         "refuses from inside its body: it answers only for the checkout it stands in, and this world's directory names no origin repository",
 	"fugaro settings":               "prints the registry's every row with no project selected, which is the whole of what a bare run does",
 	"fugaro seats":                  "reads the selected project's records for an advisory estimate, and this world selects no project",
@@ -762,6 +785,17 @@ func closedStdinProjectSecretAllowListSeed(repos ...string) func(*testing.T, *bu
 func closedStdinRigorLayerSeed(t *testing.T, _ *budgetFixture) {
 	t.Helper()
 	settingsManagedLayerFile(t, minimalAnchored+"defaults:\n  rigor:\n    default: pro\n")
+}
+
+// closedStdinRigorFloorSeed gives the world's own project config the review
+// floor the two floor leaves take a level out of: the removal and the lowering
+// are the directions that used to ask for the project's name typed at a
+// terminal, and the seed is what puts them within the fixture's reach. Without
+// it both runs would report the floor that is not there, which is a no-op before
+// the write rather than the write this fixture is for.
+func closedStdinRigorFloorSeed(t *testing.T, f *budgetFixture) {
+	t.Helper()
+	f.appendConfig(t, "review_floor:\n  pro: [l2, l3]\n")
 }
 
 // closedStdinWorkflowSeed makes the world's own directory a checkout of a

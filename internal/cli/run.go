@@ -1807,7 +1807,8 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 	// not what built the shared one, and the other branch's is a build
 	// record a repository that adopted a sibling's image never wrote.
 	if shared {
-		if err := checkSharedImageSince(ctx, env, slug, spec, sharedSince, warn); err != nil {
+		if err := checkSharedImageSince(ctx, env, slug, spec, sharedSince,
+			"this checkout: shared workflow", "how to clone for a shared image (FUGARO_CHECKOUT)", warn); err != nil {
 			return config.Inputs{}, err
 		}
 	}
@@ -1897,9 +1898,13 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 	}
 	// The project's policy, read with the operator's own credentials
 	// before anything of this launch is written (plan task 1.5 step 4):
-	// the repository must be admitted, and the policy must not be newer
-	// than this binary. Before createTask and before the launch claim, so
-	// a refused launch leaves no task, no token and no execution behind.
+	// the repository must be admitted, the policy must not be newer than
+	// this binary, and the job image the launch would run — judged on
+	// whichever of the three checkout modes it is, the image lock included
+	// — has to be one whose runner can read the node at all
+	// (policyImageGate). Before
+	// createTask and before the launch claim, so a refused launch leaves
+	// no task, no token and no execution behind.
 	// Outside the --no-budget-check branch, which is deliberate: neither
 	// check is a budget check, so neither is an operator's to skip. After
 	// the budget pre-check, so an unreachable database is refused by the
@@ -1907,7 +1912,7 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 	// refuses it itself, with the node named, when it does not. Before the
 	// attach upload below as well, so a repository the policy does not
 	// admit never gets its inputs into the bucket either.
-	if err := launchPolicyGates(ctx, env, slug, spec); err != nil {
+	if err := launchPolicyGates(ctx, env, slug, spec, kind, clone, shared, warn); err != nil {
 		return config.Inputs{}, err
 	}
 	return caps, nil
@@ -2786,7 +2791,17 @@ func claudeAccountFor(ctx context.Context, env *cloudEnv, repo, flag, stage, ref
 	if refAgent {
 		auth = refAuth
 	}
-	declared := stageAccountsOf(env.lc)
+	// The stage accounts this run applies, and the one note that says which of
+	// the operator's project-wide keys a cascade run skips
+	// (config.CascadeSkippedStageAccounts is the rule and the sentence): the
+	// keys name accounts no rung of this launch reads, and refusing them would
+	// let one repository's auth decide the whole project's config. The note is
+	// printed once per launch, whatever stage asked for it.
+	declared, note := config.CascadeSkippedStageAccounts(auth, stageAccountsOf(env.lc))
+	if note != "" && !env.stageAccountNote {
+		env.stageAccountNote = true
+		fmt.Fprint(launchWarn, noteLine(note))
+	}
 	if ps := config.CheckStageAccountMix(auth, declared, "stages"); len(ps) > 0 {
 		return "", userErr("%s: %s", ps[0].Path, ps[0].Message)
 	}
@@ -2997,8 +3012,9 @@ func stageAccountsOf(lc *localcfg.Config) map[string]string {
 // may have one: oauth, where the accounts design's rung 2 gives a stage an
 // account of its own, and api-key, where the B0 ruling's one account serves the
 // mix's stages: the senior review, the adversarial review and the triage that
-// weighs their findings. Every other auth is "" — vertex and
-// cascade are refused outright by CheckStageAccountMix, and an auth the launch
+// weighs their findings. Every other auth is "" — vertex is refused outright by
+// CheckStageAccountMix, cascade's project-wide accounts are skipped before that
+// rule is asked (config.CascadeSkippedStageAccounts), and an auth the launch
 // cannot resolve yet is not judged on a guess.
 func stageAccountOf(lc *localcfg.Config, auth, stage string) string {
 	if lc == nil || (auth != "oauth" && auth != "api-key") {
@@ -3683,10 +3699,17 @@ func cascadeLaunchRefusal(ctx context.Context, env *cloudEnv, spec *task.Spec) e
 //   - a repository recipe (named, or the one agent.recipe names) is read from
 //     this launcher's working tree, while the runner reads it at the task's
 //     ref -- the repository's base branch unless the launch names another. A
-//     working tree whose recipe is not mode: artifact therefore passes this
-//     gate for a ref whose recipe is. That residual is recorded in the plan's
-//     Task 10 step 5 inventory, which closes it before the name is selectable,
-//     and TestTheArtifactLaunchGateJudgesTheWorkingTreeNotTheRef pins it.
+//     working tree whose recipe is not mode: artifact used to pass this gate
+//     for a ref whose recipe is; since the enable (plan Task 10 step 5 entry 6)
+//     the ref is asked for the name this launcher resolved (repoRecipeAtRef),
+//     so the file the ref holds is judged on its own mode, and a ref this
+//     checkout does not hold is refused fail-closed
+//     (artifactRepoRecipeAtRefRefusal).
+//     TestTheArtifactLaunchGateJudgesTheRefNotTheWorkingTree pins it. That
+//     read is defence in depth and never the closure: it is of this checkout's
+//     last fetch, so a mode: artifact file pushed after it passes here and is
+//     refused by the runner, which reads the recipe the run actually uses
+//     (internal/runner's FUGARO_BACKEND refusal).
 //
 // It has three shapes of its own, because a launch can arrive without a recipe
 // this launcher can read at all: the refusal for a recipe known to be mode:
@@ -3745,6 +3768,27 @@ func checkArtifactLaunch(ctx context.Context, env *cloudEnv, spec *task.Spec) er
 			return userErr("%s", msg)
 		}
 	}
+	if launchBackend(env.be) == backend.CloudBatch {
+		// The same read for the recipes that are a repository FILE rather than
+		// text: the recipe a task names as repo-sourced (fugaro run --recipe,
+		// read from the working tree by repoRecipeFrom) and the one the runner
+		// resolves for a task that names none at all (agent.recipe from the
+		// ref's own fugaro.yaml, else the default name -- resolveRecipe, which
+		// reads agent.recipe for a first run only). Both are read at the task's
+		// ref by the run and from this checkout's working tree here, so the ref
+		// is asked for the name this launcher resolved, as it is asked above for
+		// a carried one: the file it holds is judged on its own mode. This is
+		// defence in depth and not the boundary's closure, because the read is
+		// of this checkout's last fetch -- a same-named mode: artifact file
+		// pushed after it passes here and is refused by the runner.
+		refRcp, err := repoRecipeAtRef(ctx, spec)
+		if err != nil {
+			return userErr("%s", artifactRepoRecipeAtRefRefusal(err, spec.Repo, spec.Ref))
+		}
+		if msg, ok := artifactOnBatchRefusal(backend.CloudBatch, refRcp); ok {
+			return userErr("%s", msg)
+		}
+	}
 	if cfg == nil {
 		return nil
 	}
@@ -3790,6 +3834,58 @@ func carriedRecipeAtRef(ctx context.Context, spec *task.Spec) (*recipe.Recipe, e
 	}
 	if rcp.Name != spec.Recipe.Name {
 		return nil, fmt.Errorf("recipe %s at %s names itself %q; the file name and the name must agree", spec.Recipe.Name, spec.Ref, rcp.Name)
+	}
+	return rcp, nil
+}
+
+// repoRecipeAtRef is the recipe the run will resolve when the one this launch
+// names is a repository FILE rather than text the task carries: the name this
+// launcher resolved -- spec.Recipe's for a repo-sourced recipe, else the
+// default name for a follow-up, else agent.recipe out of the REF's own
+// fugaro.yaml for a first run that names none (internal/runner/recipe.go's
+// resolveRecipe) -- read at the task's ref, which is where the runner reads it
+// and not the working tree this launcher read it from.
+//
+// nil, nil for a launch whose recipe is not one of those: one that carries its
+// own text is carriedRecipeAtRef's, and answers above. A name the ref holds no
+// file for is nil as well, because the runner has its own answer for that (a
+// repo-sourced recipe with no file at the base is refused there, and a first
+// run with none falls back to the catalog). err is non-nil whenever the ref
+// cannot be read at all, which the caller refuses on: nothing here can then say
+// whether the run is an artifact one.
+func repoRecipeAtRef(ctx context.Context, spec *task.Spec) (*recipe.Recipe, error) {
+	name := recipe.DefaultName
+	switch {
+	case spec.Recipe != nil && spec.Recipe.YAML != "":
+		return nil, nil
+	case spec.Recipe != nil:
+		name = spec.Recipe.Name
+	case spec.IsFollowUp():
+		// A follow-up never reads agent.recipe (resolveRecipe), so the name is
+		// the default's and the layer it reads is origin/<ref>'s, which
+		// recipeAtRef tries first.
+	default:
+		cfg, err := refConfigAtRef(ctx, checkoutRoot(ctx, spec.Repo), spec.Ref)
+		if err != nil {
+			return nil, err
+		}
+		if cfg != nil && cfg.Agent.Recipe != "" {
+			name = cfg.Agent.Recipe
+		}
+	}
+	data, found, err := recipeAtRef(ctx, checkoutRoot(ctx, spec.Repo), spec.Ref, name)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, nil
+	}
+	rcp, ps := recipe.Parse(data)
+	if len(ps) > 0 {
+		return nil, fmt.Errorf("recipe %s at %s is invalid: %s", name, spec.Ref, recipe.ProblemsText(ps))
+	}
+	if rcp.Name != name {
+		return nil, fmt.Errorf("recipe %s at %s names itself %q; the file name and the name must agree", name, spec.Ref, rcp.Name)
 	}
 	return rcp, nil
 }
@@ -4262,6 +4358,38 @@ func launchDetail(w io.Writer, res launchResult) error {
 	return nil
 }
 
+// recordedLaunch is what a run recorded about its own launch, read without
+// writing anything: launch.json as it stands, or — when the CLI that launched
+// the run died before writing one — the launch the run's own record names,
+// result.json's execution through backend.ParseExecution, which is what
+// existingLaunch's backfill is built from. staged tells the two apart.
+//
+// It has two callers and that is the point: the "already launched" check
+// below, and the job a launch continuing this run reuses (project_job.go,
+// spec.md §8, D907). The two cannot disagree about what a run's job was, and
+// the decision — which runs before the claim is taken, where a launch may not
+// write — reads the same answer without writing it: only existingLaunch
+// backfills.
+func recordedLaunch(ctx context.Context, s *runstore.Store) (*runstore.Launch, bool, error) {
+	if l, err := s.ReadLaunch(ctx); err == nil {
+		return l, false, nil
+	} else if !errors.Is(err, runstore.ErrNotFound) {
+		return nil, false, remote(err)
+	}
+	rec, err := s.ReadRecord(ctx)
+	if errors.Is(err, runstore.ErrNotFound) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, remote(err)
+	}
+	l := &runstore.Launch{Version: 1, Execution: rec.Execution, LaunchedAt: rec.StartedAt}
+	if id, ok := backend.ParseExecution(rec.Execution); ok {
+		l.Job = id.Job
+	}
+	return l, true, nil
+}
+
 // existingLaunch is the run's launch, or nil when it has not launched. When
 // the CLI that launched died before writing launch.json, it backfills one
 // from result.json, where the runner records the same canonical execution
@@ -4276,41 +4404,35 @@ func existingLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, spec 
 		}
 		return nil
 	}
-	if l, err := s.ReadLaunch(ctx); err == nil {
+	l, staged, err := recordedLaunch(ctx, s)
+	if err != nil || l == nil {
+		return nil, err
+	}
+	if !staged {
 		if err := check(l.Execution); err != nil {
 			return nil, err
 		}
 		return l, nil
-	} else if !errors.Is(err, runstore.ErrNotFound) {
-		return nil, remote(err)
 	}
-	rec, err := s.ReadRecord(ctx)
-	if errors.Is(err, runstore.ErrNotFound) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, remote(err)
-	}
-	if rec.Execution == "" {
+	if l.Execution == "" {
 		// It ran already, with no cloud execution (a local run against this
 		// bucket): never launch it again. Nothing to backfill, and nothing
 		// is stored: a run with no launch.json has no plan task for any
 		// reader to find, the same way it has no launcher (LaunchedBy).
-		return &runstore.Launch{Version: 1, RunID: runID, LaunchedAt: rec.StartedAt}, nil
+		return &runstore.Launch{Version: 1, RunID: runID, LaunchedAt: l.LaunchedAt}, nil
 	}
-	if err := check(rec.Execution); err != nil {
+	if err := check(l.Execution); err != nil {
 		return nil, err
 	}
 	// The backend is the one this command selected, read from its codec, not
 	// the constant Cloud Run's: a backfilled launch of a run that ran
 	// elsewhere must be recorded as that backend's, or fugaro logs, cancel
 	// and diagnose read the record against the wrong platform's names
-	// (design compute-backend.md §2.5).
-	l := &runstore.Launch{Version: 1, RunID: runID, Backend: launchBackend(env.be), Execution: rec.Execution, PlanTask: spec.PlanTask, LaunchedAt: rec.StartedAt}
-	if id, ok := backend.ParseExecution(rec.Execution); ok {
-		l.Job = id.Job
-	}
-	if err := s.WriteLaunch(ctx, l); errors.Is(err, runstore.ErrExists) {
+	// (design compute-backend.md §2.5). The execution and the job are the
+	// run's own record's (recordedLaunch); the run id and the plan task are
+	// this call's, as they are for a fresh launch.
+	backfill := &runstore.Launch{Version: 1, RunID: runID, Backend: launchBackend(env.be), Execution: l.Execution, Job: l.Job, PlanTask: spec.PlanTask, LaunchedAt: l.LaunchedAt}
+	if err := s.WriteLaunch(ctx, backfill); errors.Is(err, runstore.ErrExists) {
 		if l, err = s.ReadLaunch(ctx); err != nil {
 			return nil, remote(err)
 		}
@@ -4318,7 +4440,7 @@ func existingLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, spec 
 	} else if err != nil {
 		return nil, remote(err)
 	}
-	return l, nil
+	return backfill, nil
 }
 
 // catalogDockerAsk answers whether this run needs a Docker daemon because the
@@ -4675,7 +4797,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	// this CLI cannot read costs no claim to release — and it is resolved
 	// before the mint, because it is what the token's window is measured
 	// against.
-	job, err := env.launchProjectJobFor(ctx, spec)
+	job, err := env.launchProjectJobFor(ctx, slug, spec)
 	if err != nil {
 		return res, err
 	}

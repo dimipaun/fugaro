@@ -533,7 +533,7 @@ const reviewJobSince = "0.20.0"
 // CredentialsService holds the service's URL and no version. It is also a
 // record every update writes: the pin is resolved and applied on every
 // installation, whether the service is being deployed or one already deployed
-// is moved onto this release's image (init_stages.go's pinCredentialsImage),
+// is moved onto this release's image (init_stages.go's moveCredentialsImage),
 // where `base_images.base` moves only in an update that handles that base kind
 // at all — outside a checkout with no --base and no catalog build,
 // imagesStage.kinds names none, and a gate on the base image would then refuse
@@ -1099,8 +1099,8 @@ func checkImageSinceDev(ctx context.Context, env *cloudEnv, slug string, spec *t
 	}
 	refuse := func(why string) error {
 		return userErr("%s needs a job image whose runner knows %s (fugaro %s or later), but the job image of %s workflow %s %s. "+
-			"Run fugaro image refresh --repo %s --workflow %s in its checkout, in your own terminal window, or with --yes from CI or a script (never in a coding agent's session; it verifies %s and pins it by digest through the installation's remote repository, points the daily image check job at it and rebuilds the image)%s",
-			subject, knows, since, spec.Repo, spec.Workflow, why, spec.Repo, spec.Workflow, base, alt)
+			"Run fugaro update in its checkout, in your own terminal window, or with --yes from CI or a script (never in a coding agent's session; its images stage verifies %s, pins it by digest through the installation's remote repository and rebuilds the workflow's image)%s",
+			subject, knows, since, spec.Repo, spec.Workflow, why, base, alt)
 	}
 	b, err := env.recordBucket(ctx)
 	if err != nil {
@@ -1197,7 +1197,7 @@ func baseBranchSkew(ctx context.Context, env *cloudEnv, slug string, spec *task.
 	}
 	drop := func() {
 		spec.BaseBranch = ""
-		fmt.Fprintf(warn, "the job image predates %s and ignores the project's base branch %s; refresh it with fugaro image refresh\n", baseBranchSince, b)
+		fmt.Fprintf(warn, "the job image predates %s and ignores the project's base branch %s; fugaro update in the checkout moves it onto this release's base image\n", baseBranchSince, b)
 	}
 	predates := func(rel string, known bool) bool { return known && imagePredates(rel, baseBranchSince) }
 	if clone == nil {
@@ -1313,8 +1313,14 @@ func checkCloneImageSince(lc *localcfg.Config, spec *task.Spec, since, subject, 
 // entry for is not judged: it has not migrated yet (§10), so its job is
 // still on a per-(repository, workflow) image whose runner this gate has
 // nothing to say about.
-func checkSharedImageSince(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, since string, warn io.Writer) error {
-	const subject, knows = "this checkout: shared workflow", "how to clone for a shared image (FUGARO_CHECKOUT)"
+//
+// subject and knows are the caller's, the way checkCloneImageSince's are: the
+// lock is the one record of which image a shared job runs, and more than one
+// key of this release is judged off it (sharedSince's own gate, and the
+// published policy node's version in run_allowlist.go's policyImageGate), so
+// the sentence names what the launch needs that image to know rather than what
+// this function guesses.
+func checkSharedImageSince(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, since, subject, knows string, warn io.Writer) error {
 	refuse := func(why string) error {
 		return userErr("%s needs a job image whose runner knows %s (fugaro %s or later), but the shared image of %s workflow %s %s. "+
 			"Run fugaro update --base base in your own terminal window to move the installation's base image to a current release, then fugaro image refresh --repo %s --workflow %s in its checkout to build the shared image the repository's new dependency key needs and place it on this job",

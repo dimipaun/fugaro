@@ -187,13 +187,18 @@ type AuditRecord struct {
 	PlanDigest string       `json:"plan_digest"`
 	Verdict    AuditVerdict `json:"verdict"`
 	Rules      []string     `json:"rules,omitempty"`
-	// Warnings are the gate's content findings for a step it recorded and
-	// applied anyway (D1545, AuditWarned), and empty for every other verdict.
-	// The field is new and the version is not bumped (AuditVersion): a reader
-	// this build does not update refuses a "warned" verdict as one it cannot
-	// name rather than misplacing it (Validate), so the addition cannot be
-	// misread — and the console and history read this object through the same
-	// version this build writes.
+	// Warnings are the gate's content findings (D1545): the rules a warned step
+	// was applied with (AuditWarned), and — since the ruling of 2026-11-11 that
+	// put `fugaro managed apply` in the gate's set — the findings a REFUSED step
+	// raised beside the rules that stopped it (ConvergeRefusedWithWarnings),
+	// which is why this field is read on a refusal too. It is empty on an
+	// admitted record, and on a refused one whose gate found nothing but the
+	// refusals. The field is new and the version is not bumped (AuditVersion): a
+	// reader this build does not update refuses a "warned" verdict as one it
+	// cannot name rather than misplacing it (Validate), so the addition cannot
+	// be misread — and a reader that knows the field reads it on a refusal the
+	// way it reads it on a warning: the same findings of the same gate, so no
+	// field changes meaning and no name is reused for another one.
 	Warnings             []string  `json:"warnings,omitempty"`
 	MarkerVersion        int       `json:"marker_version"`
 	MarkerGeneration     string    `json:"marker_generation"`
@@ -211,9 +216,12 @@ type AuditRecord struct {
 //
 // The three answers are the gate's own three: a Converge that warns is
 // AuditWarned with its findings in the record (D1545), one that admits is
-// AuditAdmitted, and everything else is AuditRefused. Warned is asked first
-// because such a Converge also passes Refuse (it is applied), and recording it
-// as admitted would drop the reason it was applied anyway.
+// AuditAdmitted, and everything else is AuditRefused — a refusal that carries
+// findings beside its rules (ConvergeRefusedWithWarnings) included, since the
+// findings go into the record the same way under the verdict the gate reached.
+// Warned is asked first because such a Converge also passes Refuse (it is
+// applied), and recording it as admitted would drop the reason it was applied
+// anyway.
 func AuditRecordFor(f AuditFacts, c Converge) AuditRecord {
 	verdict := AuditRefused
 	switch {

@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // installationState puts an installation's state object in the rig's state
@@ -224,6 +226,72 @@ func TestNothingIsAppliedAfterAnAdoptInTheSameRun(t *testing.T) {
 	e.newMachine = ""
 	if err := e.newMachineGuard(initflow.Installation2); err != nil {
 		t.Errorf("a rerun is the ordinary converge: %v", err)
+	}
+}
+
+// U8 (D954, F23): the plugin stage is machine-local — every write of its own is
+// on this machine — so a cloud stage that stopped in front of it does not take
+// it with it. This is the reader spec §11 is about: a teammate who is not the
+// owner, with the CLI, ADC and a checkout, running the one documented command
+// on a machine whose installation exists and whose local config this run
+// writes. The images stage is the first cloud stage after that adoption and
+// refuses the run that wrote the config (newMachineGuard), which before U8 was
+// the end of the command for them: the plugin was blocked behind it and the one
+// line they were told to run installed nothing.
+//
+// The run keeps the loop's rule otherwise: everything that is not machine-local
+// still waits for the stop, the stage that ran says which one it ran past, and
+// the exit code says the owner's cloud stages are still owed.
+func TestMachineLocalStageRunsPastACloudStopForATeammate(t *testing.T) {
+	r := newInitRig(t)
+	r.installationState(t)
+	r.script["output"] = map[string]any{"stdout": outputsJSON(t)}
+	r.save(t)
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	releaseBuild(t, "0.2.0")
+	f := testutil.NewClaudePluginFake(t, "[]", "[]")
+	f.On(t, "plugins", userInstall("0.2.0"), argsInstall...)
+	e := newMachineEngine(t, r, &initOptions{door: updateDoor.name, yes: true})
+	var out strings.Builder
+	e.r.w = &out
+	useFakeClaude(t, f)
+	images := &engineStage{e: e, name: initflow.Images, skip: func() string { return "" }}
+	repo := &engineStage{e: e, name: initflow.Repository, skip: func() string { return "nothing of this run's to onboard" }}
+	res, err := initflow.Run(t.Context(),
+		[]initflow.Stage{&preflightStage{e}, newInstallationStage(e), images, newPluginStage(e), repo}, e.options())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stateOf(res, initflow.Images) != initflow.NeedsYou {
+		t.Fatalf("the rig's cloud stage did not stop the run: %+v\n%s", res.Stages, out.String())
+	}
+	if got := stateOf(res, initflow.Plugin); got != initflow.Changed {
+		t.Fatalf("the plugin stage is %v, want the machine's own write done despite the stop: %+v\n%s", got, res.Stages, out.String())
+	}
+	if got := stateOf(res, initflow.Repository); got != initflow.Blocked {
+		t.Errorf("the stage behind the plugin is %v, want it waiting for the cloud stop: %+v", got, res.Stages)
+	}
+	var plugin, repoDetail string
+	for _, st := range res.Stages {
+		switch st.Name {
+		case initflow.Plugin:
+			plugin = st.Detail
+		case initflow.Repository:
+			repoDetail = st.Detail
+		}
+	}
+	want := "machine-local: ran although " + initflow.Images + " waits for you"
+	if !strings.HasPrefix(plugin, want) {
+		t.Errorf("the plugin stage says %q, want the run to say it ran past the stop (%q):\n%s", plugin, want, out.String())
+	}
+	if repoDetail != "waits for "+initflow.Images {
+		t.Errorf("a stage that is not machine-local says %q, want it waiting for the stage that stopped", repoDetail)
+	}
+	if !slices.ContainsFunc(callArgs(f.Calls(t)), func(a []string) bool { return slices.Equal(a, addUser("0.2.0")) }) {
+		t.Errorf("the teammate's own machine has no plugin after the command:\n%s", out.String())
+	}
+	if res.ExitCode() != 1 {
+		t.Errorf("exit %d, want 1: the owner's cloud stages are still owed", res.ExitCode())
 	}
 }
 

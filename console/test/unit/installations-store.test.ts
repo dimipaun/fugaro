@@ -65,6 +65,8 @@ import { installWslStub } from './wslstub'
 import { classifyCliVersion } from '../../src/shared/version'
 import { privateWorkingDirectory } from '../../src/main/spawn'
 import { SPAWN_LOG_ENV } from '../../src/main/spawnlog'
+import { reportedMode } from '../support/fsMode'
+import { itHostRoute } from '../support/hostRoute'
 
 const HOME = '/Users/owner'
 
@@ -319,7 +321,7 @@ describe('the file’s schema', () => {
     expect(readFileSync(path)).toEqual(before)
   })
 
-  it('refuses a symbolic link at its name, even to a well-formed file (review S8)', () => {
+  itHostRoute('refuses a symbolic link at its name, even to a well-formed file (review S8)', () => {
     const directory = freshDirectory()
     const target = join(directory, 'elsewhere.json')
     writeFileSync(target, fileText([installation()], installation().id))
@@ -333,7 +335,7 @@ describe('the file’s schema', () => {
     expect(() => nodeInstallationFs.readRegularFile(path, MAX_INSTALLATION_FILE_BYTES + 1)).toThrow()
   })
 
-  it('refuses a FIFO at its name without blocking on it (review S8)', () => {
+  itHostRoute('refuses a FIFO at its name without blocking on it (review S8)', () => {
     const directory = freshDirectory()
     const path = join(directory, INSTALLATIONS_FILE_NAME)
     execFileSync('mkfifo', [path])
@@ -434,7 +436,7 @@ describe('the writer', () => {
     const path = join(directory, INSTALLATIONS_FILE_NAME)
     const store = createInstallationFileStore({ path })
     store.save({ version: INSTALLATION_FILE_VERSION, active: null, installations: [installation()] })
-    expect(statSync(path).mode & 0o777).toBe(INSTALLATION_FILE_MODE)
+    expect(statSync(path).mode & 0o777).toBe(reportedMode(INSTALLATION_FILE_MODE))
     const written = readInstallationFile(readFileSync(path, 'utf8'))
     expect(written.ok).toBe(true)
     if (written.ok) expect(written.file.installations).toEqual([installation()])
@@ -508,7 +510,7 @@ describe('validation', () => {
     if (!result.ok) expect(result.reason).toContain('absolute')
   })
 
-  it('walks past a stored binary that is not there, and refuses with the whole list', async () => {
+  itHostRoute('walks past a stored binary that is not there, and refuses with the whole list', async () => {
     // Rule 4's configured path is a **candidate**, not a decision (owner's
     // ruling of 2026-10-20): the store's field is an optional override, so an
     // entry whose binary has since been moved falls through to the well-known
@@ -540,7 +542,7 @@ describe('validation', () => {
     if (!notExecutable.ok) expect(notExecutable.reason).toContain('no fugaro')
   })
 
-  it('carries a stored config path to the CLI without opening or stating it', async () => {
+  itHostRoute('carries a stored config path to the CLI without opening or stating it', async () => {
     // The store's `configPath` is a value a screen *passes on*: the CLI reads the
     // file, and this module checks only that the string is absolute (it becomes
     // an argv element). It is not stat'ed, not opened, and not read -- the
@@ -579,7 +581,7 @@ describe('validation', () => {
     if (!result.ok) expect(result.reason).toContain('is not a directory')
   })
 
-  it('does not store a CLI below the floor', async () => {
+  itHostRoute('does not store a CLI below the floor', async () => {
     // The plan's red step for this half: a store that kept a `0.5.0` stub. The
     // console's floor is 0.6.0, so this is a refusal and not a reduced mode.
     const directory = freshDirectory()
@@ -600,7 +602,7 @@ describe('validation', () => {
     expect(verified).toBe(0)
   })
 
-  it('runs the add’s and the choose’s probes from the private directory, and logs them (review S2)', async () => {
+  itHostRoute('runs the add’s and the choose’s probes from the private directory, and logs them (review S2)', async () => {
     // Design section 3.4 rule 5: with no checkout a child runs from the private
     // directory the console owns -- never `dirname(binaryPath)`, which is
     // `/usr/local/bin` or a directory inside an app bundle. And plan 3.4b step 2:
@@ -632,7 +634,7 @@ describe('validation', () => {
     ])
   })
 
-  it('accepts a CLI that is inside a distribution, and never asks the host about it', async () => {
+  itHostRoute('accepts a CLI that is inside a distribution, and never asks the host about it', async () => {
     // T-C6 of docs/console-windows/implementation-plan.md, and F4's other half.
     // Under a `distro` the installation's `binaryPath` and `checkout` are Linux
     // spellings **inside** the distribution: the host cannot `stat` either of
@@ -714,7 +716,7 @@ describe('validation', () => {
     }
   })
 
-  it('stores a reduced-band CLI and marks it reduced', async () => {
+  itHostRoute('stores a reduced-band CLI and marks it reduced', async () => {
     // 0.9.2 is in the gap below the supported set, which is the reduced band:
     // stored, and marked, because the console may drive it but withholds views.
     const directory = freshDirectory()
@@ -736,7 +738,7 @@ describe('validation', () => {
     expect(Object.keys(result.value.installation)).toEqual(['id', 'project', 'binaryPath'])
   })
 
-  it('shows the CLI’s own refusal when the pairing check fails, and stores nothing', async () => {
+  itHostRoute('shows the CLI’s own refusal when the pairing check fails, and stores nothing', async () => {
     // The pairing check is **the real one**: `verifyCandidate` against the stub
     // binary, so the sentence asserted below is the one the CLI printed rather
     // than a string this test handed in. `verifyCandidate` signals a refusal by
@@ -772,7 +774,7 @@ describe('validation', () => {
 // ---------------------------------------------------------------------------
 
 describe('the launch’s resolution', () => {
-  it('resolves the record’s own binaryPath rather than a host prefix’s fugaro', async () => {
+  itHostRoute('resolves the record’s own binaryPath rather than a host prefix’s fugaro', async () => {
     // V2.5.1a's launch is the one caller that reads an installation's record and
     // then drives a CLI: a record with a `binaryPath` override must be resolved
     // **at that path**, not at whichever `fugaro` the host's well-known
@@ -802,7 +804,7 @@ describe('the launch’s resolution', () => {
     expect(decoy.calls()).toBe(0)
   })
 
-  it('resolves the binary inside the record’s distribution, never on the host', async () => {
+  itHostRoute('resolves the binary inside the record’s distribution, never on the host', async () => {
     // The record's `distro` is the route (T-D1, D2(a)): that record's paths are
     // Linux spellings *inside* the distribution, which this filesystem cannot
     // see at all (F4, F15). A resolution that dropped the field would hand the
@@ -1230,7 +1232,7 @@ describe('a stored installation’s distribution', () => {
     return registry
   }
 
-  it('goes into the file when an installation is validated', async () => {
+  itHostRoute('goes into the file when an installation is validated', async () => {
     // T-D1's carry-through: the candidate named a distribution, the record
     // written for it names the same one. A record that lost it would be read as
     // a **host** installation on the next launch, with Linux paths in it -- the
@@ -1253,7 +1255,7 @@ describe('a stored installation’s distribution', () => {
     if (host.ok) expect(Object.keys(host.value.installation)).not.toContain('distro')
   })
 
-  it('is handed to `deps.verify`, so the pairing check runs inside the distribution', async () => {
+  itHostRoute('is handed to `deps.verify`, so the pairing check runs inside the distribution', async () => {
     // The brief's carry-over: `doctor --json` is the CLI's statement about the
     // checkout it was started in, so a WSL installation's pairing check has to
     // run **where the checkout is** (T-D1). `verify` is handed the distro, and a

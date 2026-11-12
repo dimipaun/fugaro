@@ -13,7 +13,7 @@ import (
 
 // Limits is what one token is allowed to do: the rigor window and the Hotfix
 // flag of spec.md §6, the spend limit D924 puts into the run's own ceiling,
-// and the scopes D927 mints.
+// and the scopes the vocabulary mints.
 //
 // Every field is a bound and never a grant. A token narrows what the project
 // already allows and can never widen it (Narrow), and no field's zero value
@@ -49,18 +49,18 @@ type Limits struct {
 	// value, is unset: the project's cap decides alone, as policy's own caps
 	// read an unset layer.
 	SpendUSD float64
-	// Scopes are the scopes the token holds: D927's two, and nothing else. A
-	// value outside the vocabulary is refused where the token is written and
-	// never dropped silently — a scope is a wire contract, it exists the
+	// Scopes are the scopes the token holds: the closed vocabulary below and
+	// nothing else. A value outside it is refused where the token is written
+	// and never dropped silently — a scope is a wire contract, it exists the
 	// moment a token can hold it, and a server that ignored one would leave
 	// its holder believing it holds a permission it does not.
 	Scopes []string
 }
 
-// The v1 scope vocabulary, exactly the two names the owner lists (D927).
-// roadmap:write is deliberately not here: it is a real name for a surface
-// that does not exist yet, and the console's roadmap-write design is what
-// should decide its scope.
+// The v1 scope vocabulary, exactly the five names the owner's answers list:
+// D927's task pair, the state pair D1227 adds to it to keep a spawn-capable
+// token from being a state editor, and D2121's roadmap write, which is the
+// scope the coordinator's roadmap tools are served under.
 const (
 	// ScopeTasksRead is the status, logs, results and listing half of the
 	// tools.
@@ -68,11 +68,53 @@ const (
 	// ScopeTasksWrite is the submit and cancel half: the tools that spend
 	// money or stop work.
 	ScopeTasksWrite = "tasks:write"
+	// ScopeStateRead is the state group's read half: get_state and
+	// get_events, one orchestrator's brief and its audit log.
+	ScopeStateRead = "state:read"
+	// ScopeStateWrite is the state group's write half: apply_patch, which is
+	// catalogued under this scope and served by nothing (D2021), so that
+	// nothing can register it under another one.
+	ScopeStateWrite = "state:write"
+	// ScopeRoadmapWrite is the coordinator's roadmap write (D2121): the six
+	// tools that queue a change to the project's record — a plan published or
+	// unpublished, a task moved, an edge added or removed, a release written.
+	//
+	// It is a name of its own rather than a reading of the task pair, because
+	// what it reaches is not a run: a token that may start work in one
+	// repository must not be one that may rewrite the project's roadmap, and
+	// the write is the whole of what the scope grants — the record's tools
+	// read the record to refuse a stale `expect` and queue nothing else.
+	ScopeRoadmapWrite = "roadmap:write"
 )
 
 // ScopeVocabulary is the closed set v1 mints, in the order a refusal names
 // it.
-var ScopeVocabulary = []string{ScopeTasksRead, ScopeTasksWrite}
+var ScopeVocabulary = []string{ScopeTasksRead, ScopeTasksWrite, ScopeStateRead, ScopeStateWrite, ScopeRoadmapWrite}
+
+// OperatorOnlyScope reports whether s is a scope only an operator of the
+// installation may hold (D2121).
+//
+// It is one rule in one place because it is read in two, and the two answers
+// have to agree: the authorize endpoint refuses the scope to a person who is
+// not an operator before a code is issued, and the registry refuses every tool
+// that maps to it to a token whose identity is not one — so a record that
+// somehow carries the scope is still served to nobody but an operator. A scope
+// named here is a scope whose holder can change the project for everybody, and
+// the list is the installation's own.
+func OperatorOnlyScope(s string) bool { return s == ScopeRoadmapWrite }
+
+// DefaultScopes is what an authorization that names no scope is given: the task
+// pair, and never a state scope or the roadmap write (R1, D2121).
+//
+// It is a list of its own rather than the whole vocabulary, and that is the
+// point of it: `requestedScopes` answers an unnamed scope out of this, so a
+// vocabulary that grew would otherwise hand every default sign-in a state
+// scope — the silent widening D1227's own reason refuses, read one step
+// further ("a tasks:write token must not silently become a state editor"). A
+// state scope is held only when a client asks for it by name, and the roadmap
+// write is held only by an operator who asked for it by name and was given it
+// (D2121), which is why this list is the one it was before the name existed.
+var DefaultScopes = []string{ScopeTasksRead, ScopeTasksWrite}
 
 // KnownScope reports whether s is a scope v1 mints. It is the only test a
 // scope is put to, so an unknown one cannot be matched as a near miss.
@@ -112,10 +154,12 @@ var (
 	// hit retries the same request.
 	ErrModeRefused = errors.New("the requested rigor mode is outside the token's limits")
 
-	// ErrUnknownScope refuses a scope outside ScopeVocabulary (D927), on
-	// whichever side named it: the vocabulary is closed for the token that
-	// would hold it and for the project policy that would grant it.
-	ErrUnknownScope = errors.New("unknown scope: v1 mints tasks:read and tasks:write only")
+	// ErrUnknownScope refuses a scope outside ScopeVocabulary (D927 as D1227
+	// amended it), on whichever side named it: the vocabulary is closed for the
+	// token that would hold it and for the project policy that would grant it.
+	// The message names every scope v1 mints, because the reader of it is an
+	// operator whose next act is to mint the name it should have carried.
+	ErrUnknownScope = errors.New("unknown scope: v1 mints tasks:read, tasks:write, state:read, state:write and roadmap:write")
 
 	// ErrNoScope refuses limits that reach no tool at all: the token carries
 	// no scope, or the project's policy grants none of the ones it asked
@@ -134,7 +178,7 @@ var (
 //
 // This is where a limit is refused rather than narrowed, because there is no
 // wider side to take: no bound off the axis, no window that admits nothing,
-// no scope outside D927's vocabulary and no set of limits that reaches no
+// no scope outside the vocabulary and no set of limits that reaches no
 // tool. The mint calls it once and refuses the token; nothing downstream has
 // to ask the question again.
 func (l Limits) Validate() error {
@@ -175,7 +219,7 @@ func (l Limits) window() error {
 	return nil
 }
 
-// scopeVocabulary is the D927 check on its own, either side's: a narrowing
+// scopeVocabulary is the vocabulary check on its own, either side's: a narrowing
 // refuses a set of scopes that names a value outside the vocabulary without
 // also asking whether the result is empty, and the token's side and the
 // project's are put to the same test.
@@ -241,7 +285,7 @@ func (l Limits) Admits(mode rigor.Mode) error {
 // reading a page.
 //
 // It reads the scopes the project names as strictly as the token's own: a
-// project policy carrying a value outside D927's vocabulary is refused and
+// project policy carrying a value outside the vocabulary is refused and
 // named rather than intersected away, because a project that seems to grant
 // a scope and quietly does not is the same silent narrowing the refusal
 // exists to prevent — and a project that names no scope at all is unset and

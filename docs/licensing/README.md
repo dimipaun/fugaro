@@ -146,6 +146,22 @@ its own licence file of the same wording ([`console/LICENSE.md`](../../console/L
 [reconciliation.md](reconciliation.md#amendment-2026-10-26-d311)), and each marked per file as D407
 timed.
 
+**Amended 2026-11-11: the note is the v1 text.** [licence-key.md](licence-key.md) is rewritten to the
+key design the [licence-key-v2 plan](../licence-key-v2/implementation-plan.md) and its
+[reconciliation](../licence-key-v2/reconciliation.md) fix (D2130--D2146, F1--F18, TN1--TN5), and it
+supersedes the subscriptions plan's S2.1 and this plan's L3.1 where they name the old claims. The
+format is the spec's `fgk_<payload>.<signature>`; the claim set is K1.1's, with a **required**
+`workspace_id` naming the workspace's Firebase project id, the renewal secret present only as its hash,
+`grace_days` carried by the key, `kind` of `paid`, `trial` or `comped`, and the states `active`,
+`grace` and `expired`. The note gains the policy version and its upgrade-message refusal, the
+unknown-fields exception for signed keys only, and the revocation section: a visible Cloud Scheduler
+job in the customer's own project, a status call and then a renewal, never a revocation on silence, and
+the accepted limits stated beside it -- of which the old note's "no revocation" and its three-part key
+text are gone. The rules the amended decisions keep are carried: the raw bytes before the claims, the
+offline check at `ee/register`, the read-only lapse, the overlap, the tier's maximum lifetime, the
+staging key's refusal and where each product keeps the key. **Nothing is built**: the note is still a
+design, the production keyring is empty, and K1.1's verifier is the first thing that reads a v1 key.
+
 Spec owner: the repository owner. Spec received 2026-10-24; reconciled against `origin/main` at
 `e924481cd` the same day.
 
@@ -154,7 +170,7 @@ Spec owner: the repository owner. Spec received 2026-10-24; reconciled against `
 | [spec.md](spec.md) | The owner's spec, verbatim (no typo fixes) |
 | [reconciliation.md](reconciliation.md) | Findings F1–F27 against the code and the published licence texts, resolutions R1–R8, decisions D300–D310 with the owner's answers (D301 and D303 amended), tensions T1 (ruled), T2 (accepted) and T3 (D303's mixed-licence release), items O1–O3, UNVERIFIED U1–U8. **Where it disagrees with `spec.md`, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Slices L0–L5 (L4.2, L4.3 and L5.1 owner-run), tasks with their tests and dependencies, levels, the critical path, the shared-files table. Nothing in it is approved |
-| [licence-key.md](licence-key.md) | The licence key's design (the subscriptions plan's S2.1, superseding this plan's L3.1): the claim set and the expiry-only rule, the offline check at `ee/register`, the grace and the read-only lapse, the overlapping renewal, the accepted limits, the staging key id, where each product keeps the key and how the console hands it to the CLI it spawns. **A design, not built; no release reads or mounts a key** |
+| [licence-key.md](licence-key.md) | The licence key's design (the licence-key-v2 plan's K1.5, superseding the subscriptions plan's S2.1 and this plan's L3.1): the `fgk_` claim set and the policy version, the offline check at `ee/register`, the grace and the read-only lapse, the overlapping renewal, the visible revocation job and its accepted limits, the staging key id, where each product keeps the key and how the console hands it to the CLI it spawns. **A design, not built; no release reads or mounts a key** |
 | [subscription-terms.md](subscription-terms.md) | The Fugaro Subscription Terms, a draft for counsel (2026-10-27, amended the same day to the owner's answers and edited 2026-10-29 on the owner's ruling D531 so it stops calling the coordinator Core): not reviewed, not in force; prices and other Order Form items in brackets, with the two open owner items and counsel's questions |
 
 ## The numbers this work holds

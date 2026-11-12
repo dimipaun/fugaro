@@ -22,6 +22,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/catalog"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/image"
+	"github.com/dimipaun/fugaro/internal/imagebake"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
@@ -211,6 +212,11 @@ type catalogEvaluation struct {
 	// read back from the one object the build itself reads.
 	definitionSHA256     string
 	definitionGeneration int64
+	// bakedDir is the directory the copied definition bakes its checkout at,
+	// and baked whether it bakes one at all (imagebake.BakedDir): the smoke a
+	// rebuild of this entry runs reads the checkout there.
+	bakedDir string
+	baked    bool
 	// inputs are what imagecheck.CheckCatalog decides the entry from: this
 	// run's read of everything a decision needs, which the pass below hands
 	// the library rather than deciding the entry itself.
@@ -276,6 +282,34 @@ func (t *catalogCheckTarget) evaluate(ctx context.Context, e config.Entry, r cat
 	}
 	sum := sha256.Sum256(def)
 	ev.definitionSHA256, ev.definitionGeneration = hex.EncodeToString(sum[:]), gen
+	// Where the definition this job rebuilds bakes its checkout, when a build
+	// composed one into it (imagebake, the image setup skill's bake step): the
+	// smoke this job submits is the manual build's own spec, and it has to read
+	// the checkout where the image the build produced actually put it.
+	//
+	// The marker names the checkout the definition was composed with, and a
+	// rebuild reproduces that definition only when it runs as the repository
+	// that checkout is of: a build's REPO_URL is this job's repository's
+	// (r.RepoURL), so a marker for another one means the rebuild would clone
+	// the wrong source into that path, under the same tag and the same smoke
+	// the composed definition carried — a checkout nobody downstream could tell
+	// from the right one. The composed stage refuses that REPO_URL itself; this
+	// refuses it a step earlier, before a build is submitted, where the entry,
+	// the checkout and the command that fixes it can be named.
+	ev.bakedDir, ev.baked = imagebake.BakedDir(def)
+	if ev.baked {
+		if bakedSlug, ok := imagebake.BakedSlug(def); !ok || bakedSlug != r.Slug {
+			what, fix := "a checkout at "+pluginwire.Printable(ev.bakedDir),
+				fmt.Sprintf("run fugaro image build %s from that repository's checkout", pluginwire.Printable(e.Name))
+			if repo, known := t.bakedRepoFor(bakedSlug); known {
+				what = "the checkout of " + pluginwire.Printable(repo)
+				fix = fmt.Sprintf("map the entry to it (fugaro image map set %s %s) and run fugaro update, or run fugaro image build %s from its checkout",
+					pluginwire.Printable(repo), pluginwire.Printable(e.Name), pluginwire.Printable(e.Name))
+			}
+			return ev, fmt.Errorf("the catalog entry %s bakes %s, but the installed catalog check job rebuilds the entry as %s: a rebuild has to run as the repository whose checkout the entry bakes, so %s",
+				pluginwire.Printable(e.Name), what, pluginwire.Printable(r.Repo), fix)
+		}
+	}
 
 	checkKey := imagecheck.CatalogCheckKey(slug, e.Name)
 	ev.prevRaw, ev.prevGen, err = t.bucket.Read(ctx, checkKey)
@@ -321,6 +355,21 @@ func (t *catalogCheckTarget) evaluate(ctx context.Context, e config.Entry, r cat
 	return ev, nil
 }
 
+// bakedRepoFor is the repository a baked checkout is of, when this job's spec
+// knows it. The spec lists every repository the catalog builds in — the map is
+// what puts an entry with no repository of its own on one (infra's
+// catalogCheckRepos) — and the marker names the repository that composed the
+// definition. A composing repository this installation does not build in is not
+// in the spec, and the caller falls back to naming the directory.
+func (t *catalogCheckTarget) bakedRepoFor(slug string) (string, bool) {
+	for _, r := range t.spec.Repositories {
+		if r.Slug == slug {
+			return r.Repo, true
+		}
+	}
+	return "", false
+}
+
 // submit submits entry e's rebuild as repository r's build account: the request
 // fugaro image build <entry> sends, with the definition this run read and the
 // commit the entry's record names. The account is r's, and
@@ -341,7 +390,7 @@ func (t *catalogCheckTarget) submit(ctx context.Context, e config.Entry, r catal
 	if err != nil {
 		return "", "", err
 	}
-	selftest, err := catalogSmokeSpec(r, rec.SourceCommit)
+	selftest, err := catalogSmokeSpec(r, rec.SourceCommit, ev.bakedDir)
 	if err != nil {
 		return "", "", err
 	}
@@ -366,10 +415,19 @@ func (t *catalogCheckTarget) submit(ctx context.Context, e config.Entry, r catal
 // one. The config is a stub because an entry is not a workflow and
 // SpecForCloud reads a config only to check that the name it is given exists
 // (it reads the same constant for every workflow).
-func catalogSmokeSpec(r catalogCheckRepo, commit string) ([]byte, error) {
+//
+// bakedDir is where the copied definition put the checkout, when it baked one
+// (imagebake.BakedDir of the same bytes this job read): the manual build
+// submits the same directory for the definition it composed, and a rebuild
+// that looked at /work/repo instead would fail the smoke of an image whose
+// checkout is where the engine bakes it.
+func catalogSmokeSpec(r catalogCheckRepo, commit, bakedDir string) ([]byte, error) {
 	spec, err := image.SpecForCloud(&config.Config{Workflows: map[string]config.Workflow{r.Workflow: {}}}, r.Workflow, commit, r.RepoURL)
 	if err != nil {
 		return nil, err
+	}
+	if bakedDir != "" {
+		spec.RepoDir = bakedDir
 	}
 	return json.Marshal(spec)
 }

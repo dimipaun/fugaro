@@ -61,6 +61,13 @@ func newDoctorRig(t *testing.T) *doctorRig {
 	// Hermetic: a stand-in terraform (CI has none), no real Claude Code
 	// config, and a fixed binary version.
 	withVersion(t, "0.2.0")
+	// The rig models an operator's own machine, and such a machine has the
+	// plugin installed in Claude Code (fugaro update put it there): since D942
+	// plugin-install asks about that install wherever the checkout carries no
+	// release-tag pin, which is every rig, so without this the rig's clean
+	// installations would each carry one warning that has nothing to do with
+	// what they test.
+	installUserPlugin(t, "0.2.0")
 	doctorFakeTerraform(t, dir)
 	path := isolateProjects(t, dir)
 	cfg := "version: 1\nname: aurora\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: fugaro-runs-proj-1234\n" +
@@ -191,7 +198,7 @@ func TestDoctorSaysWhenTheBaseIsMissing(t *testing.T) {
 	}
 	for _, c := range o.Checks {
 		if c.ID == "base-image" {
-			if c.OK || c.Severity != "warning" || !strings.Contains(c.Fix, "fugaro image refresh") {
+			if c.OK || c.Severity != "warning" || !strings.Contains(c.Fix, "fugaro update") {
 				t.Errorf("base-image = %+v", c)
 			}
 			return
@@ -231,13 +238,22 @@ func TestDoctorNamesTheFixLine(t *testing.T) {
 	}
 }
 
-// TestDoctorRefusesCloudBatch: `backend: cloud-batch` is a name this build
-// knows but must not run on yet -- the seam and the fake exist, the tasks
-// that make a Batch run safe (the log sink, the cost of a VM, the reaper)
-// come after the owner's Check 57a measurement (design compute-backend.md
-// §8.1 Task 2, §9). doctor must say so rather than reporting the project
-// healthy and leaving the refusal to a launch.
-func TestDoctorRefusesCloudBatch(t *testing.T) {
+// TestDoctorGatesTheBatchName: `backend: cloud-batch` is a name this build
+// accepts, and an installation that selects it without the provisioning behind
+// it is what `fugaro doctor` refuses -- the enable task
+// (plan 2026-10-19-compute-backend.md Task 10) lifted
+// internal/localcfg's refusal and is what turned those Batch checks into the
+// gate, in one commit, because a Batch run without log routing or a reaper is
+// what the refusal was holding back (design compute-backend.md §4.4, §8.1
+// task 9).
+//
+// This test is the inverted form of the one it replaced: the same config, and
+// where doctor used to fail the config READ ("not enabled yet") it now reads
+// it and fails the INSTALLATION by name. That the name is accepted is what
+// the project being reported at all says -- a config localcfg refused leaves
+// doctor with no installation to check -- and the refusal that follows is the
+// gate's own, at the check the missing provisioning is read from.
+func TestDoctorGatesTheBatchName(t *testing.T) {
 	r := newDoctorRig(t)
 	if err := os.WriteFile(r.cfgPath, []byte(r.cfg+"backend: cloud-batch\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -250,11 +266,24 @@ func TestDoctorRefusesCloudBatch(t *testing.T) {
 	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
 		t.Fatalf("json: %v\n%s", jerr, out)
 	}
-	// doctor cannot check a project whose config it cannot read, so the
-	// refusal is the run's error, and it names the backend that was refused
-	// and the one this build runs.
-	if !strings.Contains(o.Error, "cloud-batch") || !strings.Contains(o.Error, "cloud-run") {
-		t.Fatalf("error = %q, want it to name both backends", o.Error)
+	if strings.Contains(o.Error, "not enabled yet") {
+		t.Fatalf("error = %q: the enable task is what lifted that refusal", o.Error)
+	}
+	if o.Project.Name != "aurora" || o.Project.GCPProject != "proj-1234" {
+		t.Fatalf("project = %+v, want the config read and its project reported", o.Project)
+	}
+	c, ok := doctorCheckByID(o.Checks, "batch-block")
+	if !ok {
+		t.Fatalf("doctor reports no batch-block check for a config that selects the backend and carries none of its facts: %+v", failingChecks(o))
+	}
+	// The config SELECTS the backend, so the finding carries no severity at
+	// all: that, and not a warning, is what refuses the installation
+	// (batchSeverity).
+	if c.OK || c.Severity != "" {
+		t.Errorf("batch-block = %+v, want doctor's own hard failure", c)
+	}
+	if !strings.Contains(c.Problem, "cloud-batch") || !strings.Contains(c.Fix, "--provision-batch") {
+		t.Errorf("batch-block = %+v, want the refusal to name the backend and the one command that provisions it", c)
 	}
 }
 
@@ -284,17 +313,19 @@ func TestDoctorStrictPlugin(t *testing.T) {
 	}
 }
 
-// TestDoctorStrictFailsForeignAndUnpinned: foreign, unpinned and unwired
-// plugin states are reported either way, but only fail doctor with
-// --strict: the repository's CI is where this is meant to be enforced, a
-// developer's machine is not.
+// TestDoctorStrictFailsForeignAndUnpinned: foreign and unpinned plugin states
+// are reported either way, but only fail doctor with --strict: the
+// repository's CI is where this is meant to be enforced, a developer's machine
+// is not. "not wired" is no longer one of them (D942, U3 of
+// docs/plugin-user-scope/implementation-plan.md): nothing in the tree writes a
+// pin any more (D949), so a repository that never opted in is the normal one,
+// and TestDoctorUnwiredCheckoutPassesStrict holds that end.
 func TestDoctorStrictFailsForeignAndUnpinned(t *testing.T) {
 	withVersion(t, "0.2.0")
 	foreign := `{"extraKnownMarketplaces":{"fugaro":{"source":{"source":"github","repo":"someone/fork","ref":"v0.2.0"}}},"enabledPlugins":{"fugaro@fugaro":true}}`
 	for _, tc := range []struct{ name, content string }{
 		{"foreign", foreign},
 		{"unpinned", wiredAt("")},
-		{"not-wired", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root, _ := skillCheckout(t, tc.content)
@@ -305,6 +336,44 @@ func TestDoctorStrictFailsForeignAndUnpinned(t *testing.T) {
 				t.Fatal("--strict: want a failure")
 			}
 		})
+	}
+}
+
+// TestDoctorUnwiredCheckoutPassesStrict: a repository that never opted in to
+// the plugin pin is not a CI failure (D942, reconciliation F21). Its
+// plugin-pin check is informational — the state every checkout fugaro leaves
+// behind is in now that the merge that wrote the pin is deleted (D949) — and
+// the check that does fail a machine, plugin-install, is not evaluated in this
+// mode at all, because the runner that runs it has no Claude Code install.
+// This is the red test of U3: before it, the un-wired checkout failed --strict
+// on plugin-pin, for the wrong reason.
+func TestDoctorUnwiredCheckoutPassesStrict(t *testing.T) {
+	withVersion(t, "0.2.0")
+	root, _ := skillCheckout(t, "")
+	out, _, err := execute(t, "doctor", "--plugin", "--strict", "--json", "--dir", root)
+	if err != nil {
+		t.Fatalf("an un-wired checkout failed --strict: %v\n%s", err, out)
+	}
+	var o doctorOutput
+	if err := json.Unmarshal([]byte(out), &o); err != nil {
+		t.Fatalf("json: %v\n%s", err, out)
+	}
+	pin, ok := doctorCheckByID(o.Checks, "plugin-pin")
+	if !ok || pin.OK || pin.Severity != "info" {
+		t.Fatalf("plugin-pin on an un-wired checkout = %+v, want ok false and info", pin)
+	}
+	// The wiring it could not find is still said, in the check's own words:
+	// informational is not silence.
+	if !strings.Contains(pin.Problem, "settings.json") {
+		t.Errorf("plugin-pin's problem does not say what is missing: %q", pin.Problem)
+	}
+	if !o.OK {
+		t.Fatalf("the verdict is false on an un-wired checkout: %+v", o)
+	}
+	// And a repository that never opted in is not one with something to do:
+	// the default view ends on its ok line.
+	if view, _, err := execute(t, "doctor", "--plugin", "--strict", "--dir", root); err != nil || strings.Contains(view, "things to do") {
+		t.Fatalf("the default view of an un-wired checkout: err %v\n%s", err, view)
 	}
 }
 
@@ -441,10 +510,14 @@ func TestDoctorProviderSecretNameIsInformational(t *testing.T) {
 	}
 }
 
-// TestDoctorNotInstalledIsInformational: a correctly pinned plugin nobody
-// has installed yet is informational, under --strict or not: a teammate who
-// hasn't opened the folder in Claude Code is not a CI failure.
-func TestDoctorNotInstalledIsInformational(t *testing.T) {
+// TestDoctorNotInstalledIsAWarning: the install plugin-install reads is the
+// user-scope one now, so "no plugin on this machine" is a state `fugaro update`
+// repairs and a warning rather than the measurement it was (D942, U3 of
+// docs/plugin-user-scope/implementation-plan.md) — an installation with none of
+// the Fugaro skills is what the reader acts on. Under `--plugin --strict` it is
+// not evaluated at all: that mode is the one a repository's CI runs, and a
+// runner has no Claude Code install to report.
+func TestDoctorNotInstalledIsAWarning(t *testing.T) {
 	withVersion(t, "0.2.0")
 	root, _ := skillCheckout(t, wiredAt("v0.2.0"))
 	out, _, err := execute(t, "doctor", "--plugin", "--json", "--dir", root)
@@ -456,17 +529,47 @@ func TestDoctorNotInstalledIsInformational(t *testing.T) {
 		t.Fatalf("json: %v\n%s", jerr, out)
 	}
 	c, ok := doctorCheckByID(o.Checks, "plugin-install")
-	if !ok || c.OK || c.Severity != "info" {
-		t.Fatalf("plugin-install = %+v", c)
+	if !ok || c.OK || c.Severity != "warning" {
+		t.Fatalf("plugin-install = %+v, want a warning", c)
+	}
+	// The checkout carries a release-tag pin, so the install this reports is
+	// the one that applies there, and the problem is the state's own words.
+	if c.Problem != "not installed" {
+		t.Fatalf("plugin-install problem = %q, want the pin's own state", c.Problem)
 	}
 	if !strings.Contains(c.Fix, "/plugin install fugaro@fugaro") || strings.Contains(c.Fix, "by itself") {
 		t.Fatalf("plugin-install fix = %q", c.Fix)
 	}
+	// A checkout nothing pins asks the machine's question instead, and the
+	// problem says which install answered (D942).
+	unwired, _ := skillCheckout(t, `{}`)
+	uout, _, _ := execute(t, "doctor", "--plugin", "--json", "--dir", unwired)
+	var uo doctorOutput
+	if jerr := json.Unmarshal([]byte(uout), &uo); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, uout)
+	}
+	uc, ok := doctorCheckByID(uo.Checks, "plugin-install")
+	if !ok || uc.OK || uc.Severity != "warning" || !strings.Contains(uc.Problem, "no Fugaro plugin is installed in Claude Code at user scope") {
+		t.Fatalf("an un-wired checkout's plugin-install = %+v, want the user-scope warning", uc)
+	}
+	// A warning is wrong and Fugaro still runs: it fails --strict, not an
+	// ordinary run, which is the change that makes it an update item.
 	if !o.OK {
-		t.Fatalf("an informational state failed doctor: %+v", o)
+		t.Fatalf("a warning must not fail an ordinary run: %+v", o)
 	}
 	if _, _, err := execute(t, "doctor", "--plugin", "--strict", "--dir", root); err != nil {
-		t.Fatalf("--strict: %v", err)
+		t.Fatalf("--plugin --strict evaluated the machine's install: %v", err)
+	}
+	sout, _, err := execute(t, "doctor", "--plugin", "--strict", "--json", "--dir", root)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, sout)
+	}
+	var so doctorOutput
+	if jerr := json.Unmarshal([]byte(sout), &so); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, sout)
+	}
+	if c, ok := doctorCheckByID(so.Checks, "plugin-install"); ok {
+		t.Errorf("--plugin --strict reported %+v: a runner has no Claude Code, so there is no install to compare", c)
 	}
 }
 
@@ -559,6 +662,238 @@ func TestDoctorNeverPrintsSecretValues(t *testing.T) {
 	}
 	if len(o.Secrets) != 1 || o.Secrets[0].Name != "claude-oauth-token" {
 		t.Fatalf("secrets = %+v", o.Secrets)
+	}
+}
+
+// doctorOfflineCheck is one check of `doctor --offline --json`, read the way a
+// reader outside this binary reads it (the console's §6.4, and the skills):
+// the document's own members, not this package's struct, so the test pins the
+// wire shape and not the field one refactor away from it.
+type doctorOfflineCheck struct {
+	ID       string `json:"id"`
+	OK       bool   `json:"ok"`
+	Severity string `json:"severity"`
+	Problem  string `json:"problem"`
+	Class    string `json:"class"`
+	Skipped  bool   `json:"skipped"`
+}
+
+// TestDoctorOffline: the session-start check (D945 to D952, U3 of
+// docs/plugin-user-scope/implementation-plan.md). It is the update class, run
+// with no cloud call of any kind, and every check it cannot answer comes back
+// with skipped true and ok false rather than guessed. This is the red test of
+// the flag: before U3, doctor had no --offline at all.
+func TestDoctorOffline(t *testing.T) {
+	r, dir := doctorCleanRig(t, nil)
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "/nonexistent")
+
+	out, _, err := execute(t, "doctor", "--offline", "--json", "--dir", dir)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var o struct {
+		OK     bool                 `json:"ok"`
+		Checks []doctorOfflineCheck `json:"checks"`
+	}
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	byID := map[string]doctorOfflineCheck{}
+	for _, c := range o.Checks {
+		byID[c.ID] = c
+		if c.Skipped && c.OK {
+			t.Errorf("%s is skipped and ok: a check that was not run may never report ok (D946)", c.ID)
+		}
+		if c.Skipped && c.Problem == "" {
+			t.Errorf("%s is skipped with no problem: a skip has to say what it could not read", c.ID)
+		}
+		if c.Skipped && c.Severity != "info" {
+			t.Errorf("%s is skipped at severity %q: a skip fails nothing, with or without --strict", c.ID, c.Severity)
+		}
+	}
+	// The one that needs the network, named by the plan's red step.
+	cli, ok := byID["cli-version"]
+	if !ok {
+		t.Fatalf("--offline does not report cli-version at all, so a reader cannot tell the lookup did not happen:\n%s", out)
+	}
+	if !cli.Skipped || cli.OK {
+		t.Fatalf("cli-version = %+v, want skipped and not ok: whether a newer release is available is a network call", cli)
+	}
+	if !strings.Contains(cli.Problem, "network") {
+		t.Errorf("cli-version's problem does not say why it was not run: %q", cli.Problem)
+	}
+	// The three the database holds: skipped too, each in its own words.
+	for _, id := range []string{"policy-rules-skew", "policy-vs-jobs", "policy-older-than-binary"} {
+		c, ok := byID[id]
+		if !ok || !c.Skipped || c.OK {
+			t.Errorf("%s = %+v (present %v), want skipped and not ok", id, c, ok)
+		}
+	}
+	// And the checks a file here answers: the plugin pair (the rig's machine
+	// has the plugin at this binary's release), the login unit and the base
+	// image. Not one of them is skipped, and none is a failure.
+	for _, id := range []string{"plugin-pin", "plugin-install", "orchestrator-unit", "base-image"} {
+		c, ok := byID[id]
+		if !ok {
+			t.Errorf("--offline did not answer %s: it is one of the class's local checks:\n%s", id, out)
+			continue
+		}
+		if c.Skipped {
+			t.Errorf("%s was skipped and it answers from this machine: %s", id, c.Problem)
+		}
+	}
+	if !o.OK {
+		t.Fatalf("--offline failed doctor on a machine with nothing wrong:\n%s", out)
+	}
+	// Not one request reached the installation's own fakes: the flag's whole
+	// promise (spec §7). The rig's config points at them, so a run that read
+	// anything at all would show up here.
+	if n := len(r.crm.Requests()) + len(r.billing.Requests()) + len(r.sm.Requests()); n != 0 {
+		t.Fatalf("--offline made %d cloud calls", n)
+	}
+	if _, _, err := execute(t, "doctor", "--offline", "--strict", "--json", "--dir", dir); err != nil {
+		t.Fatalf("--strict failed on skipped checks: %v", err)
+	}
+	// The class the skips are filed in, pinned directly: a skipped check is a
+	// measurement (D946's "counted in no view's total"), never an item and
+	// never a finding. policy-rules-skew stands in for all of them — they are
+	// the update class's IDs, whose own arm sits above the measure ones — and
+	// without this arm the four skips above would be counted in the default
+	// view's pointer line, which is a count of checks that never ran.
+	if got := doctorClassOf(doctorCheck{ID: "policy-rules-skew", Skipped: true, Severity: "info"}); got != doctorClassMeasure {
+		t.Errorf("a skipped policy-rules-skew is %q, want %q: a skip is not a finding", got, doctorClassMeasure)
+	}
+	// The default view never prints a skipped check's own line, and never
+	// claims a check it did not run was checked: the pointer says how many
+	// were left out, and --all is where their own words are.
+	view, _, err := execute(t, "doctor", "--offline", "--dir", dir)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, view)
+	}
+	if strings.Contains(view, "policy-rules-skew") || strings.Contains(view, "cli-version") {
+		t.Errorf("the default view prints a skipped check:\n%s", view)
+	}
+	if !strings.Contains(view, "not run by `--offline`") {
+		t.Errorf("the default view does not say that checks were not run:\n%s", view)
+	}
+	if strings.Contains(view, "more finding") {
+		t.Errorf("the default view counts a skipped check as a finding:\n%s", view)
+	}
+	all, _, err := execute(t, "doctor", "--offline", "--all", "--dir", dir)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, all)
+	}
+	for _, want := range []string{"skipped cli-version: ", "skipped policy-rules-skew: "} {
+		if !strings.Contains(all, want) {
+			t.Errorf("--all does not print %q:\n%s", want, all)
+		}
+	}
+}
+
+// doctorOfflineAnchoredYAML is skillCheckoutYAML with the anchor every other
+// checkout in this file's tests goes without: project aurora in gcp_project
+// proj-1234, which is the rig's own local installation, so findLayer has a
+// project layer to look for and reaches the bucket it lives in.
+const doctorOfflineAnchoredYAML = "version: 1\nproject: aurora\ngcp_project: proj-1234\n" +
+	"git: { provider: github }\nworkflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
+
+// TestDoctorOfflineReadsNoBucket: --offline resolves the checkout's own
+// fugaro.yaml over the cache alone, and never opens the project layer's
+// bucket to do it. The guard is the layerOptions.Offline
+// doctorOfflineWorkflows resolves with, and it is the flag's whole promise
+// (D952, doctor.go's own help: no cloud call, no secret read) -- but no
+// fixture the flag's own test uses can pin it. skillCheckoutYAML names no
+// gcp_project:, so findLayer returns before any bucket is named, and a
+// checkout with no local installation selected is forced offline by findLayer
+// itself (layer_resolve.go). This one is anchored and the rig's installation
+// is selected: the only thing left between the run and a bucket read is the
+// option itself, and noLayerBucketReads fails the test the instant anything
+// opens it.
+//
+// Mutation (run, restore): drop Offline from doctorOfflineWorkflows'
+// layerOptions and this test fails -- with an installation whose endpoints are
+// real it would be a bucket read with this machine's own credentials, which is
+// the reproduction the review recorded (a logging proxy saw the OAuth calls the
+// unmutated build never makes).
+func TestDoctorOfflineReadsNoBucket(t *testing.T) {
+	r := newDoctorRig(t)
+	isolateCache(t)
+	dir := gitCheckout(t, t.TempDir(), doctorOfflineAnchoredYAML)
+	t.Chdir(dir)
+	doctorCleanState(t, r, dir)
+	noLayerBucketReads(t)
+	out, _, err := execute(t, "doctor", "--offline", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	// And the resolution really happened: the workflow names come from this
+	// checkout's own file, one skipped check each, without the bucket. Without
+	// this the test would pass over a run that gave up before the layer.
+	if !strings.Contains(out, `"id": "image-config-app"`) {
+		t.Fatalf("--offline did not name the anchored checkout's workflow:\n%s", out)
+	}
+}
+
+// TestDoctorOfflineImageConfigNamesOnlyComparedWorkflows: the skips name the
+// checks that exist. An image-config-<workflow> check is emitted for a
+// workflow whose per-workflow build record the ordinary run compares, and that
+// is not every workflow in the file: one that builds from a dockerfile: is
+// never compared (the hash covers a tree's blob), and one the project's image
+// catalog gives an image to is judged by its entry's record instead
+// (imageConfigWorkflows). Naming them here listed checks that no run has, and
+// the default view's "N checks not run by `--offline`" counted them.
+//
+// The catalog is the one this machine's own config states — the half of the
+// image selection --offline can read — so the pinned workflow is one this test
+// can expect to be left out; the node's half of that selection is the residual
+// the flag reports rather than guesses at.
+//
+// Mutation (run, restore): return every workflow name from
+// doctorOfflineWorkflows (drop imageConfigWorkflows), and this test fails on
+// both the check list and the count.
+func TestDoctorOfflineImageConfigNamesOnlyComparedWorkflows(t *testing.T) {
+	r := newDoctorRig(t)
+	isolateCache(t)
+	addLocalLines(t, r, doctorCatalogFixture)
+	const yaml = "version: 1\nproject: aurora\ngcp_project: proj-1234\n" +
+		"git: { provider: github }\nworkflows:\n" +
+		"  app: { commands: { build: sh build.sh, test: sh test.sh } }\n" +
+		"  baked: { dockerfile: .fugaro/baked.Dockerfile, commands: { build: sh build.sh, test: sh test.sh } }\n" +
+		"  pinned: { image_name: go, commands: { build: sh build.sh, test: sh test.sh } }\n"
+	dir := gitCheckout(t, t.TempDir(), yaml)
+	t.Chdir(dir)
+	doctorCleanState(t, r, dir)
+	out, _, err := execute(t, "doctor", "--offline", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var o struct {
+		Checks []doctorOfflineCheck `json:"checks"`
+	}
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	named := map[string]bool{}
+	for _, c := range o.Checks {
+		named[c.ID] = true
+	}
+	if !named["image-config-app"] {
+		t.Errorf("--offline does not name image-config-app, the workflow the ordinary run compares:\n%s", out)
+	}
+	for _, id := range []string{"image-config-baked", "image-config-pinned"} {
+		if named[id] {
+			t.Errorf("--offline names %s: no run emits that check for that workflow, so --all would list a check that does not exist", id)
+		}
+	}
+	// The count on the screen is the checks that exist: cli-version and the
+	// three policy checks are the only other skips this rig has (base-image
+	// answers from the local config).
+	view, _, err := execute(t, "doctor", "--offline")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, view)
+	}
+	if !strings.Contains(view, "5 checks not run by `--offline`") {
+		t.Errorf("the default view does not count exactly the five skipped checks:\n%s", view)
 	}
 }
 
@@ -1902,6 +2237,67 @@ func TestDoctorFlagsStaleScopeWhenTheRepoCopyComesBack(t *testing.T) {
 	}
 	if !strings.Contains(c.Problem, "github-app-key") || !strings.Contains(c.Problem, projID) || !strings.Contains(c.Problem, repoID) {
 		t.Fatalf("problem doesn't name the secret and both copies: %q", c.Problem)
+	}
+}
+
+// TestDoctorSecretScopeIsSilentOnABackendWithNoDeployedJob is step 5's second
+// path (plan 2026-10-19-compute-backend.md): `internal/cli/doctor.go`
+// constructs `gcp.New` by hand for the deployed-job read behind
+// project-secret-scope-stale, and lifting the refusal of `backend:
+// cloud-batch` makes that read reachable from an installation that has no
+// deployed Cloud Run workflow job to read at all. The disposition is the
+// check's own: it says nothing on a backend that keeps no applied job, and it
+// still warns on the one that does -- the two arms below are the same fixture
+// with one line of config between them, so the Cloud Run arm is what pins
+// that the guard did not silence the check everywhere.
+//
+// What makes the silence correct rather than a swallowed finding: the check
+// is about a job APPLIED earlier, and Batch creates a job per run and a job is
+// single-use (design compute-backend.md §2.3), so the run's job is built from
+// the config the launch just read -- there is no earlier apply whose mounted
+// reference could have moved since. The doctor run itself still fails on the
+// batch-block gate below, which is not what this case asserts.
+func TestDoctorSecretScopeIsSilentOnABackendWithNoDeployedJob(t *testing.T) {
+	seed := func(t *testing.T) *doctorRig {
+		t.Helper()
+		r := projectSecretsRig(t)
+		slug := mustSlug("github", "acme/app")
+		repoID := gcp.SecretID(slug, "github-app-key")
+		r.sm.Seed(repoID, map[string]string{
+			gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: repoLabel(t, slug), gcp.LabelSecret: "github-app-key"}, nil)
+		projID := putProjectSecret(t, r.sm, "aurora", "github-app-key", []byte("project-value"))
+		// The deployed job's own mounted reference: the project-wide copy,
+		// while the repository's own is the one Readiness resolves now -- the
+		// state TestDoctorFlagsStaleScope warns about.
+		job := gcp.JobName(slug, "app")
+		r.run.SetJobJSON(job, `{"name":"projects/proj-1234/locations/us-east5/jobs/`+job+`",
+		  "template":{"template":{"containers":[{"image":"fake/app","env":[
+		    {"name":"FUGARO_GITHUB_APP_PRIVATE_KEY","valueSource":{"secretKeyRef":{"secret":"`+projID+`","version":"latest"}}}]}]}}}`)
+		return r
+	}
+	for _, tc := range []struct {
+		name      string
+		cfg       string
+		wantCheck bool
+	}{
+		{name: "the backend that deploys a job per workflow", cfg: ""},
+		{name: "the backend that builds one per run", cfg: "backend: cloud-batch\n", wantCheck: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := seed(t)
+			if tc.cfg != "" {
+				addLocalLines(t, r, tc.cfg)
+			}
+			out, _, err := execute(t, "doctor", "--json")
+			var o doctorOutput
+			if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+				t.Fatalf("json: %v\n%s", jerr, out)
+			}
+			_, reported := doctorCheckByID(o.Checks, "project-secret-scope-stale")
+			if reported != tc.wantCheck {
+				t.Fatalf("project-secret-scope-stale reported = %v, want %v (err = %v)\n%s", reported, tc.wantCheck, err, out)
+			}
+		})
 	}
 }
 

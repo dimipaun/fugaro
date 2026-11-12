@@ -189,6 +189,19 @@ var jsonCases = map[string]jsonCase{
 			return []string{"doctor"}
 		},
 	},
+	"estimate": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			f := jsonCloud(t)
+			id := "20260927-100000-abcd"
+			seedEstimateRun(t, f, id, estimateSeed{
+				tokens:   map[string]runstore.ModelTokenCounts{"claude-sonnet-5": {Input: 1_000_000, Output: 10_000}},
+				modelBy:  map[string]float64{"claude-sonnet-5": 4},
+				modelUSD: 4,
+			})
+			return []string{"estimate", "--run", appSlug + "/" + id, "--model", "claude-opus-5-5"}
+		},
+	},
 	"followups": {
 		// The plan and not a launch: the fixture's parent is merged, so
 		// --launch here would file the tasks rather than print them.
@@ -422,6 +435,13 @@ var jsonCases = map[string]jsonCase{
 	"review show": {
 		why: "the read needs a review run's artifact, which the fixture would have to fake a coordinator job to produce",
 	},
+	"rigor floor show": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			jsonCloud(t)
+			return []string{"rigor", "floor", "show"}
+		},
+	},
 	"run": {
 		run: func(t *testing.T) []string {
 			jsonCloud(t)
@@ -442,6 +462,15 @@ var jsonCases = map[string]jsonCase{
 			f := jsonCloud(t)
 			seedRun(t, f, "20260927-100000-abcd", "", "", true)
 			return []string{"runs", "ls"}
+		},
+	},
+	"runs show": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			// The chain rig: three runs of one chain with the budget on, which
+			// is what gives the document its limit, its spend and its layers.
+			showRig(t)
+			return []string{"runs", "show", showTip}
 		},
 	},
 	"runs stats": {
@@ -486,6 +515,16 @@ var jsonCases = map[string]jsonCase{
 			return []string{"secrets", "set", "claude-oauth-token", "--repo", "acme/app"}
 		},
 	},
+	// The intake's two families print the intake's own answer as the document
+	// (printIntakeAnswer), so what --json carries is the service's own wire
+	// shape and no line of the human answer. The rig and the seam are
+	// secrets_intake_test.go's: intakeUserJSONCase and intakeSharedJSONCase.
+	"secrets shared ls":  intakeSharedJSONCase("ls", "", true),
+	"secrets shared rm":  intakeSharedJSONCase("rm", "", false),
+	"secrets shared set": intakeSharedJSONCase("set", intakeTestValue+"\n", false),
+	"secrets user ls":    intakeUserJSONCase("ls", "", true),
+	"secrets user rm":    intakeUserJSONCase("rm", "", false),
+	"secrets user set":   intakeUserJSONCase("set", intakeTestValue+"\n", false),
 	"security paths": {
 		reads: true,
 		run: func(t *testing.T) []string {

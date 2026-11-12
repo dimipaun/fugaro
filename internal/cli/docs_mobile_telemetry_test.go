@@ -374,13 +374,11 @@ func TestTelemetryPlanLinksResolve(t *testing.T) {
 // switch names, and the app's dependency list names the SDKs the switches are
 // read by. The first half is the plan's "nothing here is built" claim from the
 // side a reader can check -- the names an implementer has to write down; the
-// second half moved when P7.1a wired the SDKs in and the third when P7.3 built
-// the allow-list, so what it pins now is that the three packages the plan names
-// are the ones the app declares, and that the module the flags are read in is
-// the one P7.3 wrote, holding the seven events D256's answer fixes. **P7.2's
-// half of that module -- the always-on statement in `notice.js` -- is
-// deliberately not asserted here**: the two tasks are parallel and land
-// independently, and P7.2's own test is where the statement is held.
+// second half moved when P7.1a wired the SDKs in, P7.2 landed the app's
+// statement and P7.3 the allow-list, so what it pins now is that the three
+// packages the plan names are the ones the app declares, and that the module
+// the flags are read in holds both halves: P7.2's `notice.js` and P7.3's
+// `events.js` with the seven events D256's answer fixes.
 func TestTelemetryPlanNamesTheFlagsItDependsOn(t *testing.T) {
 	plan := readDoc(t, telemetryPlan)
 	for _, want := range []string{
@@ -410,6 +408,22 @@ func TestTelemetryPlanNamesTheFlagsItDependsOn(t *testing.T) {
 		if !strings.Contains(pkg, want) {
 			t.Errorf("mobile/package.json does not name %s: P7.1a wired the three packages in, and the plan's Task P7.1 names them as the dependency the flags depend on", want)
 		}
+	}
+	// P7.2 built the module's first half: the statement the app shows and the
+	// privacy URL it refuses -- with `shared/url`'s validator, whose host list
+	// is still the owner's D124 answer and ships empty -- live in
+	// `mobile/src/telemetry/notice.js`, and `mobile/src/app/root.js` renders
+	// them as the shell's last child, after the body. The statement is the half
+	// of it the owner's ruling of 2026-10-30 (D731, which supersedes D255 and
+	// orders the plan's section 6, section 7.4 and P7.2 amended) leaves standing,
+	// and the plan's own status lines and P7.2 section say so -- including that
+	// the task was built ahead of that amendment, and that the statement names
+	// the reporters the build still carries. What the plan's section
+	// 7.4 reads from this directory -- the event module and the scan that holds
+	// it, which admits exactly one collection call site -- is P7.3's, built, and T3.1's.
+	notice := "../../mobile/src/telemetry/notice.js"
+	if _, err := os.Stat(notice); err != nil {
+		t.Errorf("%s is gone: P7.2 ships the app's statement and the privacy link there, and mobile/src/app/root.js renders both", notice)
 	}
 	for _, name := range []string{
 		"mobile/src/telemetry/events.js",

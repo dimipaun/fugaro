@@ -62,10 +62,13 @@
 //      Tests are not scanned — a Go test that spells the host in a fixture is testing a rule
 //      rather than reaching anywhere — and the files in the tree that name it today are recorded
 //      below, one by one, so that every exception is written down rather than inferred: the Go
-//      test, and the console's two files — `onboarding.ts`, which holds the project's own link,
-//      and `window.ts`, which carries only the host in `ALLOWED_EXTERNAL_HOSTS` so that link may
-//      open — neither a service the software reports to (the note below `HOST_NAMING_CONSOLE` gives the reason and the ruling,
-//      and the case that plants a third file proves the rule still holds for every other source).
+//      test, and the three files that hold a link a reader may follow — the console's
+//      `onboarding.ts`, which holds the project's own link, and `window.ts`, which carries only
+//      the host in `ALLOWED_EXTERNAL_HOSTS` so that link may open, and the phone app's
+//      `mobile/src/telemetry/notice.js`, which holds the privacy page's URL — none of them a
+//      service the software reports to (the note below `HOST_NAMING_LINKS` gives each reason and
+//      the ruling, and the case that plants another file proves the rule still holds for every
+//      other source).
 //      The selector carries `.go`, because the CLI and the server are mostly Go: a scan that reads
 //      the tree's scripts and manifests but not its Go source reads everything except the software
 //      this page is about, and it reads enough files to look busy while doing it. The case below
@@ -476,9 +479,9 @@ const REACH_BEARING = /\.(?:go|js|jsx|ts|tsx|mjs|cjs|json|sh)$/
 const NOT_PRODUCTION = /(?:_test\.go|\.test\.(?:js|ts|jsx|tsx|mjs))$/
 
 /** The ways a source reaches a service, as the tokens it would carry to do it. Nothing on
- * `HOST_NAMING_CONSOLE` may carry one: those files are on the allow-list because they hold the
- * project's own link and make no request, and a request grown inside one of them would be exactly
- * what the rule is for while the host it names sits in a file the scan no longer reads. */
+ * `HOST_NAMING_LINKS` may carry one: those files are on the allow-list because they hold a link
+ * the reader may follow and make no request, and a request grown inside one of them would be
+ * exactly what the rule is for while the host it names sits in a file the scan no longer reads. */
 const REACH_CALLS = Object.freeze(['fetch(', '.request(', 'XMLHttpRequest', 'WebSocket', 'EventSource', 'sendBeacon'])
 
 /** Every way a scanned file names something that collects, or []. `files` is `[{ rel, text }]`. */
@@ -652,33 +655,44 @@ export function updateCheckFailures({ page, updatecheckSource, updatewarnSource,
 // test whose fixtures spell the host to test the website-boundary rule itself. It is a test, so
 // the scan skips every `_test.go`; this constant is here so the exception is written down rather
 // than inferred from the filter, and so a production file that starts naming the host is not
-// mistaken for it. The two production files that name it are `HOST_NAMING_CONSOLE`, below.
+// mistaken for it. The production files that name it are `HOST_NAMING_LINKS`, below.
 export const HOST_NAMING_TEST = 'internal/cli/docs_website_boundary_test.go'
 
-// The two production files in the tree that name the site's canonical host and are NOT a finding,
-// and the reason the rule above does not reach them: the console's own link to the project's
-// public website, at the host `site.yaml`'s `canonical_url` states and the owner ruled canonical
-// on 2026-10-17 (`docs/website/implementation-plan.md` Task W2.2, D92), which the owner's ruling
-// of 2026-10-20 put on the console's onboarding screens.
+// The three production files in the tree that name the site's canonical host and are NOT a
+// finding, and the reason the rule above does not reach them. All three name the site's canonical
+// host, the one `site.yaml`'s `canonical_url` states and the owner ruled canonical on 2026-10-17
+// (`docs/website/implementation-plan.md` Task W2.2, D92), as a link a reader may follow:
+//
+//   - the console's link to the project's public website, which the owner's ruling of 2026-10-20
+//     put on the console's onboarding screens: `onboarding.ts` carries the getting-started URL
+//     (`GETTING_STARTED_URL`) and `window.ts` carries the host in the `openExternal` allow-list,
+//     and the console opens that URL by handing it to the *user's own browser* through the OS;
+//   - the phone app's privacy link (`mobile/src/telemetry/notice.js`, the mobile plan's Task
+//     P7.2): `PRIVACY_URL` is the page a reader of that app is owed, and the app hands it to
+//     `shared/url`'s validator before anything may open it (D124). The host list that validator
+//     consults ships empty until the owner answers D124, so the app draws the URL **as text** and
+//     opens nothing at all today.
 //
 // This rule exists for the page's sentence "They talk to your own Google Cloud project, ... and to
 // nothing the Fugaro project operates. Nothing is reported anywhere": a source that names the
-// host has found a service to *report to*. These two do not report anywhere. `window.ts` carries
-// that host in the `openExternal` allow-list and `onboarding.ts` carries the getting-started URL
-// (`GETTING_STARTED_URL`), and the console opens that URL by handing it to the *user's own
-// browser* through the OS — the console itself makes no request, and what the reader then loads is
-// the project's own website, which the page's part one describes rather than a host the software
-// reaches. The sentence's subject is the software's own traffic, and a link the reader chooses to
-// follow is not that; a console that could not link to its own site would be a page the onboarding
-// ruling could not be written about.
+// host has found a service to *report to*. None of these three reports anywhere, and none makes a
+// request: what the reader loads after one of these links is the project's own website, which the
+// page's part one describes rather than a host the software reaches. The sentence's subject is the
+// software's own traffic, and a link the reader chooses to follow is not that; a console that could
+// not link to its own site would be a page the onboarding ruling could not be written about, and an
+// app whose statement could not carry the page it is quoting would be quoting nothing.
 //
-// They are named one by one, with their full paths, so the exemption is exactly these two files
-// and nothing else: the rule stays in force for every other source, and the case below plants a
-// third file under the same directory and watches it refused. What is exempt is the link and not
-// the file: the scan cannot see the host inside an allow-listed file, so the gate also reads both
-// for the ways a source reaches a service (`REACH_CALLS`) and refuses one, which is the only place
-// this rule could be defeated from.
-export const HOST_NAMING_CONSOLE = Object.freeze(['console/src/main/onboarding.ts', 'console/src/main/window.ts'])
+// They are named one by one, with their full paths, so the exemption is exactly these three files
+// and nothing else: the rule stays in force for every other source, and the case below plants
+// another file under the console's own directory and watches it refused. What is exempt is the
+// link and not the file: the scan cannot see the host inside an allow-listed file, so the gate also
+// reads all of them for the ways a source reaches a service (`REACH_CALLS`) and refuses one, which
+// is the only place this rule could be defeated from.
+export const HOST_NAMING_LINKS = Object.freeze([
+  'console/src/main/onboarding.ts',
+  'console/src/main/window.ts',
+  'mobile/src/telemetry/notice.js',
+])
 
 /** The design the console's reporting sentence comes from. `website/test/console.mjs` holds the
  * downloads page's property to the same section, so the two pages state one fact between them
@@ -782,16 +796,17 @@ export function softwareSources(roots = SOFTWARE_ROOTS, base = REPO) {
   return roots
     .flatMap((dir) => sourcesUnder(dir, REACH_BEARING, base))
     .filter((file) => !NOT_PRODUCTION.test(file.rel))
-    .filter((file) => !HOST_NAMING_CONSOLE.includes(file.rel))
+    .filter((file) => !HOST_NAMING_LINKS.includes(file.rel))
 }
 
-/** Every way an allow-listed file (`HOST_NAMING_CONSOLE`) carries a call that reaches a
+/** Every way an allow-listed file (`HOST_NAMING_LINKS`) carries a call that reaches a
  * service, or []. `files` is `[{ rel, text }]`; a file not on the allow-list is the reach scan's
- * business and not this one's. */
+ * business and not this one's. It reads the whole list, so the app's link is held to the same
+ * no-request promise as the console's two. */
 export function allowListedReachFailures(files) {
   const out = []
   for (const { rel, text } of files) {
-    if (!HOST_NAMING_CONSOLE.includes(rel)) continue
+    if (!HOST_NAMING_LINKS.includes(rel)) continue
     for (const call of REACH_CALLS) {
       if (text.includes(call)) {
         out.push(
@@ -1133,7 +1148,7 @@ test('no production source names the host this project operates', () => {
   )
   assert.ok(existsSync(path.join(REPO, HOST_NAMING_TEST)), `the recorded exception ${HOST_NAMING_TEST} is gone: delete the constant and its note in website/test/privacy.mjs`)
 
-  // What the selector reads before the allow-list takes its two files out. An entry that the scan
+  // What the selector reads before the allow-list takes its three files out. An entry that the scan
   // would never read anyway exempts nothing, and the `every` below would not say so: it is true of
   // every path outside `SOFTWARE_ROOTS` — `console/package.json` names the host today and is not
   // read — and of every test. So the check is the selector's own reading and not a prefix test.
@@ -1142,22 +1157,22 @@ test('no production source names the host this project operates', () => {
       .filter((file) => !NOT_PRODUCTION.test(file.rel))
       .map((file) => file.rel),
   )
-  for (const rel of HOST_NAMING_CONSOLE) {
-    assert.ok(existsSync(path.join(REPO, rel)), `the recorded exception ${rel} is gone: delete it from HOST_NAMING_CONSOLE and its note in website/test/privacy.mjs, so the allow-list names only files that exist`)
+  for (const rel of HOST_NAMING_LINKS) {
+    assert.ok(existsSync(path.join(REPO, rel)), `the recorded exception ${rel} is gone: delete it from HOST_NAMING_LINKS and its note in website/test/privacy.mjs, so the allow-list names only files that exist`)
     assert.ok(
       selected.has(rel),
       `${rel} is on the allow-list and the reach scan would never read it: an entry exempts a file the rule already skips, so the exemption hides nothing and the note beside it reads as a live exception (the entries are the production sources the selector reads and nothing else)`,
     )
-    assert.ok(repoFile(rel).includes(FACTS.canonicalHost), `${rel} no longer names ${FACTS.canonicalHost}: it is on the allow-list for the console's own link to the project's website, and a file that has stopped naming the host is an entry that hides nothing`)
+    assert.ok(repoFile(rel).includes(FACTS.canonicalHost), `${rel} no longer names ${FACTS.canonicalHost}: it is on the allow-list for a link it holds to the project's website, and a file that has stopped naming the host is an entry that hides nothing`)
     assert.ok(
       files.every((file) => file.rel !== rel),
-      `${rel} is one of the two recorded exceptions and was scanned as an ordinary production source: the console's link to the project's own website is not a host the software reports to, so the scan must skip it`,
+      `${rel} is one of the recorded exceptions and was scanned as an ordinary production source: a link to the project's own website is not a host the software reports to, so the scan must skip it`,
     )
   }
   // The exemption is the file's own link and not a licence to reach: the scan cannot see the
   // host inside an allow-listed file, so a request grown there would be invisible to the rule
-  // this file exists for. The two are read for the ways a source reaches a service.
-  const reaching = allowListedReachFailures(HOST_NAMING_CONSOLE.map((rel) => ({ rel, text: repoFile(rel) })))
+  // this file exists for. All three are read for the ways a source reaches a service.
+  const reaching = allowListedReachFailures(HOST_NAMING_LINKS.map((rel) => ({ rel, text: repoFile(rel) })))
   assert.deepEqual(reaching, [], reaching.join('\n'))
   const failures = reachFailures(files, FACTS.canonicalHost)
   assert.deepEqual(failures, [], `a source of the software names the host the project operates:\n  ${failures.join('\n  ')}`)
@@ -1527,12 +1542,12 @@ test('a production source that names the host the project operates is refused, a
   )
 })
 
-test('the console’s two recorded exceptions are exactly that, and a third file that names the host is still refused', () => {
+test('the recorded exceptions are exactly those files, and one beside them that names the host is still refused', () => {
   const host = FACTS.canonicalHost
 
-  // The allow-list is two full paths and not a directory, a pattern or a suffix: a new file that
+  // The allow-list is full paths and not a directory, a pattern or a suffix: a new file that
   // names the host, even one beside a recorded exception under `console/src/main/`, is selected
-  // and refused. This is the case that keeps HOST_NAMING_CONSOLE from becoming a hole.
+  // and refused. This is the case that keeps HOST_NAMING_LINKS from becoming a hole.
   const tree = mkdtempSync(path.join(tmpdir(), 'privacy-reach-console-'))
   try {
     const root = path.join(tree, 'console', 'src', 'main')
@@ -1542,7 +1557,7 @@ test('the console’s two recorded exceptions are exactly that, and a third file
     assert.deepEqual(
       scanned,
       ['console/src/main/telemetry.ts'],
-      `the reach scan selected ${JSON.stringify(scanned)}: a console file that is not one of the two recorded exceptions must be selected, so that naming the host there is a finding`,
+      `the reach scan selected ${JSON.stringify(scanned)}: a console file that is not one of the recorded exceptions must be selected, so that naming the host there is a finding`,
     )
     const planted = reachFailures(softwareSources([root], tree), host)
     assert.equal(planted.length, 1, planted.join('\n'))
@@ -1552,27 +1567,30 @@ test('the console’s two recorded exceptions are exactly that, and a third file
     rmSync(tree, { recursive: true, force: true })
   }
 
-  // And in the real tree the exemption is those two files rather than the console: the console's
-  // other sources are still read, and none of them names the host.
-  const consoleSources = softwareSources().filter((file) => file.rel.startsWith('console/src/'))
-  assert.ok(
-    consoleSources.length > 5,
-    `only ${consoleSources.length} console sources were scanned: skipping the two recorded exceptions must not skip the console`,
-  )
-  assert.deepEqual(
-    consoleSources.filter((file) => file.text.includes(host)).map((file) => file.rel),
-    [],
-    `a console source other than the two recorded exceptions names ${host}: the allow-list is those two files, and nothing about the directory they sit in`,
-  )
+  // And in the real tree the exemption is those files rather than the applications: the console's
+  // and the app's other sources are still read, and none of them names the host.
+  const scanned = softwareSources()
+  for (const [prefix, floor] of [['console/src/', 5], ['mobile/src/', 50]]) {
+    const sources = scanned.filter((file) => file.rel.startsWith(prefix))
+    assert.ok(
+      sources.length > floor,
+      `only ${sources.length} sources under ${prefix} were scanned: skipping the recorded exceptions must not skip the rest of the tree`,
+    )
+    assert.deepEqual(
+      sources.filter((file) => file.text.includes(host)).map((file) => file.rel),
+      [],
+      `a source under ${prefix} other than the recorded exceptions names ${host}: the allow-list is those files, and nothing about the directories they sit in`,
+    )
+  }
 })
 
-test('a call that reaches a service inside an allow-listed console file is refused', () => {
+test('a call that reaches a service inside an allow-listed file is refused', () => {
   const host = FACTS.canonicalHost
   const link = `export const GETTING_STARTED_URL = 'https://${host}/getting-started/'\n`
   // The link alone is what the allow-list is for, and it passes.
-  assert.deepEqual(allowListedReachFailures([{ rel: HOST_NAMING_CONSOLE[0], text: link }]), [])
+  assert.deepEqual(allowListedReachFailures([{ rel: HOST_NAMING_LINKS[0], text: link }]), [])
   // Each way of reaching a service, grown inside either allow-listed file, is refused by name.
-  for (const rel of HOST_NAMING_CONSOLE) {
+  for (const rel of HOST_NAMING_LINKS) {
     for (const call of REACH_CALLS) {
       const text = `${link}export function report(body) { return ${call === 'fetch(' ? `fetch('https://${host}/v1/report', { method: 'POST', body })` : `${call} /* https://${host}/v1/report */`} }\n`
       const failures = allowListedReachFailures([{ rel, text }])

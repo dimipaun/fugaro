@@ -10,12 +10,12 @@
 //
 // **What is on the door, and what is deliberately not.** The plan's Files line
 // for VS0.3 is `mobile/src/voice-session/` and its sentence is "exports the
-// machine and the events, and nothing else": the session controller does not
-// exist until VS1.1, and VS1.3 -- the task that constructs it -- widens this
-// file and its test's literal list in the same commit. So what a caller has
-// here is everything needed to *drive* a session and to read the contract
-// (the six kinds, the routes, the states, the reasons, the validator and
-// `reduce`), and nothing that reaches a device, a network or a credential:
+// machine and the events, and nothing else": the session controller (VS1.1) is
+// written but is not on this door, and VS1.3 -- the task that constructs it --
+// widens this file and its test's literal list in the same commit. So what a
+// caller has here is everything needed to *drive* a session and to read the
+// contract (the six kinds, the routes, the states, the reasons, the validator
+// and `reduce`), and nothing that reaches a device, a network or a credential:
 // `index.test.js` scans this directory for exactly that, including F24's fence
 // (a paused session touches no credential) and F9's (no words the user said).
 //

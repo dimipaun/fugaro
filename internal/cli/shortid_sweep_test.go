@@ -127,6 +127,18 @@ var sweepRenderers = []humanRenderer{
 			return execute(t, "diagnose", w.ids["aaaa"])
 		},
 	},
+	{
+		// runs show is the other head that names a run in full for the same
+		// reason, and it is driven here for the same one: the allow-list entry
+		// for its head is a claim about what it prints, not an exemption.
+		name:    "runs show",
+		shows:   []string{"Run:"},
+		details: "the head of a run's details view names the run in full (D1705)",
+		drive: func(t *testing.T) (string, string, error) {
+			w := newSweepWorld(t)
+			return execute(t, "runs", "show", w.ids["aaaa"])
+		},
+	},
 }
 
 // sweepWorld is one fake installation holding the sweep's four runs.
@@ -247,6 +259,7 @@ var fullRunIDSites = map[string]string{
 	"diagnose.go:followUpLine":                "the details view names, in full, the run a follow-up continues (D1705)",
 	"diagnose.go:printDiagnosis":              "the head of the details view is where a person copies the whole ID (D1705)",
 	"plan_status.go:printPlanStatusPlan":      "plan.State.Run is the short suffix already, so the cell carries no full ID",
+	"runs_show.go:printRunsShow":              "the head of the details view is where a person copies the whole ID (D1705)",
 	"troubleshoot.go:printTroubleshoot":       "the ID is a command log's own name, not a cloud run's (D1609), and it is the argument the person types back into `fugaro troubleshoot` to explain this failure again: shortened, what is left is the pid, which identifies nothing",
 	"troubleshoot.go:troubleshootWriteReport": "the report is read beside the evidence folder it sits in, where the log it is about is named by that same ID (D1605, D1609), so a reader can match the two",
 }

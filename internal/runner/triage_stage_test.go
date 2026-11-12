@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -155,12 +156,16 @@ func personaOf(brief string) string {
 // — one round per review round, with the index, key and word the judge
 // answered (D1850). The second review round ships, so the run has a round with
 // no findings and the block keeps it as one.
+//
+// The judge answers `block` here, which is what buys the second review round:
+// an answer that deferred the round whole ends it (T-TR7b), and this case is
+// about the round-by-round log and not about that.
 func TestTriageRunsAfterEachReviewRound(t *testing.T) {
 	h := newHarness(t, startupCfg(t, 2, ""), nil)
 	rec, err := h.run(t,
 		implement("feature"),
 		reviewScored("changes", blockingFinding()),
-		triageStep("defer"),
+		triageStep("block"),
 		fixStep,
 		review("ship", 0),
 		triageStep("defer"),
@@ -192,7 +197,7 @@ func TestTriageRunsAfterEachReviewRound(t *testing.T) {
 	// The word and its source are the judge's own: the mode's table blocks this
 	// finding, so a placement with source table would be the table overriding
 	// the answer rather than the answer standing.
-	if e.Verdict != runstore.VerdictDefer || e.Source != runstore.TriageSourceAgent || e.Reason != "judged for this test" {
+	if e.Verdict != runstore.VerdictBlock || e.Source != runstore.TriageSourceAgent || e.Reason != "judged for this test" {
 		t.Errorf("the entry = %+v, want the judge's own defer with its reason", e)
 	}
 	second := tr.Rounds[1]
@@ -455,72 +460,6 @@ func TestTriageStageFailureEndsTheRun(t *testing.T) {
 	}
 }
 
-// TestShadowTriageDoesNotChangeTheFixPrompt is the shadow slice's own red
-// step: the fixer is handed the round exactly as it was before the stage
-// existed (FixPrompt of the review's verdict), whatever the judge answered.
-func TestShadowTriageDoesNotChangeTheFixPrompt(t *testing.T) {
-	h := newHarness(t, startupCfg(t, 2, ""), nil)
-	_, err := h.run(t,
-		implement("feature"),
-		reviewScored("changes", blockingFinding()),
-		triageStep("defer"),
-		fixStep,
-		review("ship", 0),
-		triageStep("defer"),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	finding, err := json.Marshal(map[string]any{"verdict": "changes", "findings": []any{blockingFinding()}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	v, ok := runner.TryVerdict(agent.Result{Structured: finding})
-	if !ok {
-		t.Fatal("the review's own answer does not read back as a verdict")
-	}
-	if len(h.agent.calls) < 4 {
-		t.Fatalf("%d agent calls, want the implement, review, triage and fix of this run", len(h.agent.calls))
-	}
-	fix := h.agent.calls[3]
-	if fix.Prompt != runner.FixPrompt(v) {
-		t.Errorf("the fixer was handed something other than the review's own verdict:\n--- got ---\n%s\n--- want ---\n%s",
-			fix.Prompt, runner.FixPrompt(v))
-	}
-	if strings.Contains(fix.Prompt, "judged for this test") || strings.Contains(fix.Prompt, "fugaro-triage") {
-		t.Errorf("the judge's own text reached the fixer:\n%s", fix.Prompt)
-	}
-}
-
-// TestShadowTriageWritesNoDeferred: what the judge deferred is in the record's
-// triage block and nowhere else. The record's deferred set is empty — the
-// stage T-TR7b is the one that acts on a verdict — and the pull request's body
-// carries no deferred section.
-func TestShadowTriageWritesNoDeferred(t *testing.T) {
-	h := newHarness(t, startupCfg(t, 2, ""), nil)
-	rec, err := h.run(t,
-		implement("feature"),
-		reviewScored("changes", blockingFinding()),
-		triageStep("defer"),
-		fixStep,
-		review("ship", 0),
-		triageStep("defer"),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if rec.Triage == nil || len(rec.Triage.Rounds) != 2 {
-		t.Fatalf("the record's triage block = %+v, want the two rounds this run judged", rec.Triage)
-	}
-	if rec.Deferred != nil {
-		t.Errorf("the record's deferred set = %+v, want it untouched by the shadow stage", rec.Deferred)
-	}
-	pr := onlyPR(t, h.provider)
-	if strings.Contains(pr.Body, "Deferred") || strings.Contains(pr.Body, "follow-up") {
-		t.Errorf("the pull request's body carries a deferral the stage never acted on:\n%s", pr.Body)
-	}
-}
-
 // TestTriageRequestHasNoToolsAndNoSettingsSources is F25/F29's invariant: the
 // judge reads text and touches nothing, so its request carries the empty tool
 // list and the empty setting-source list — both non-nil, because a nil list is
@@ -712,8 +651,8 @@ func TestTriageSwitchIsReadFromThePublishedNode(t *testing.T) {
 		node string
 		want int
 	}{
-		{"the node turns it off", `{"version":4,"triage":false}`, 0},
-		{"the node leaves it on", `{"version":4,"triage":true}`, 1},
+		{"the node turns it off", fmt.Sprintf(`{"version":%d,"triage":false}`, projectpolicy.Version), 0},
+		{"the node leaves it on", fmt.Sprintf(`{"version":%d,"triage":true}`, projectpolicy.Version), 1},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

@@ -830,11 +830,36 @@ func (r *run) sectionLines(head string, parts ...string) string {
 	id := inlineText(task.ShortRun(r.rec.RunID))
 	out := line + "\n"
 	out += r.ownerPart()
+	out += r.deferredPart()
 	if r.rec.DraftFallback {
 		out += "This host has no draft pull requests: this is a normal pull request marked [DRAFT], so reviews may already have been requested.\n"
 	}
 	return out + fmt.Sprintf("Run `%s` (a stale time here means the run died: `fugaro diagnose %s`)",
 		id, inlineText(r.rec.RunID))
+}
+
+// deferredPart is the section's list of the findings the run did not fix and
+// left to a follow-up (T-TR9, D1843): one line per deferral, the key it is
+// known by, the reviewer's own summary of it and the one-line why the deferral
+// took effect, and the command that files them once a person has merged.
+//
+// What is listed is Record.Deferred, the findings whose deferral took effect:
+// T-TR7b's and T-TR8's own field, which the shadow stage of T-TR7a never
+// writes, so a run that only logged verdicts lists nothing here. "" for a run
+// that deferred nothing at all, rather than a heading over an empty list.
+//
+// The summary and the why are the reviewer's and the judge's words about an
+// untrusted diff, and the record they are read from is launcher-writable, so
+// both go through inlineText: a sentence carrying a newline would end its own
+// bullet and the line after it would be read as Markdown of the section's. The
+// section as a whole is redacted where it is written (settleText), which is
+// what keeps a secret a record carries out of the pull request's body.
+func (r *run) deferredPart() string {
+	df := r.rec.Deferred
+	if df == nil || len(df.Findings) == 0 {
+		return ""
+	}
+	return "**Deferred (follow-ups)**\n" + deferralLines(df) + followupsLine(r.rec.RunID)
 }
 
 // ownerWaiting reports whether the run ended waiting on the owner's decisions

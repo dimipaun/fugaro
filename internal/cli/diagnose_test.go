@@ -25,6 +25,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -2075,6 +2076,56 @@ func TestDiagnoseToleratedTitleIsUntrusted(t *testing.T) {
 	}
 	if !strings.Contains(human, "is stale?Reason:   the run succeeded\n") {
 		t.Errorf("the title is not one-lined onto its own row:\n%s", human)
+	}
+}
+
+// TestDiagnoseShowsTheChainForAHaltedRun: a halted run's first question is how
+// much of its chain's limits is left (D1055), so diagnose prints the block
+// `runs show` prints — the chain, each dimension's limit, used and remaining,
+// the source of each limit and whether the chain is enforced — beside the halt
+// that raises the question. A run that did not halt gets no block: nothing
+// stopped it, so there is no halt for the block to answer.
+func TestDiagnoseShowsTheChainForAHaltedRun(t *testing.T) {
+	f := showRig(t)
+	rec := showRecord(t, f, showTip)
+	rec.Status, rec.Halt = runstore.StatusHalted, &showHalt
+	writeRecord(t, f, showTip, rec)
+
+	out, errOut, err := execute(t, "diagnose", showTip)
+	if err != nil {
+		t.Fatalf("diagnose: %v (%s)", err, errOut)
+	}
+	if !strings.Contains(out, "Halted:   run_cap") {
+		t.Fatalf("diagnose does not name the halt:\n%s", out)
+	}
+	if !strings.Contains(out, showRoot) || !strings.Contains(out, "3 runs, ENFORCED") {
+		t.Errorf("diagnose does not print the chain the halted run is in:\n%s", out)
+	}
+	if got, want := showRow(t, out, "usd"), "4 dollars 2.25 dollars 1.75 dollars chain"; got != want {
+		t.Errorf("usd row = %q, want %q\n%s", got, want, out)
+	}
+
+	js, errOut, err := execute(t, "diagnose", "--json", showTip)
+	if err != nil {
+		t.Fatalf("diagnose --json: %v (%s)", err, errOut)
+	}
+	var d Diagnosis
+	if err := json.Unmarshal([]byte(js), &d); err != nil {
+		t.Fatal(err)
+	}
+	if d.ChainLimits == nil || d.ChainLimits.Chain != showRoot || d.ChainLimits.RunCount != 3 || !d.ChainLimits.Enforced || len(d.ChainLimits.Limits) != 4 {
+		t.Fatalf("json chain = %+v, want the chain %s and its four limits", d.ChainLimits, showRoot)
+	}
+	if d.ChainLimits.Limits[0].Source != policy.SourceChain {
+		t.Errorf("json limits[0].source = %q, want %q", d.ChainLimits.Limits[0].Source, policy.SourceChain)
+	}
+
+	plain, _, err := execute(t, "diagnose", showMid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(plain, "Chain:") {
+		t.Errorf("a run that did not halt prints a chain block:\n%s", plain)
 	}
 }
 

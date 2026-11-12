@@ -968,7 +968,7 @@ const SETTINGS_VERSION_WORD = 'settings --json is version '
  * a family's name, or the sentence naming the command that carries the key's own
  * file: `fugaro setup` or `fugaro update` for the installation's own keys,
  * `fugaro config publish` for a layer-file key and `fugaro config init` for one
- * a checkout's `fugaro.yaml` is opened with (`settingsOwnerCommands`,
+ * a checkout's own config file is opened with (`settingsOwnerCommands`,
  * `internal/cli/settings_read.go`, D1178) -- so the console names no command of
  * its own and keeps no list to drift. The member is drawn on a `writable: false`
  * row only, and the CLI never spells the generic writer on one: a row that did
@@ -1774,7 +1774,7 @@ export function fillProjectsModels(factory: ScreenFactory, model: ProjectsModels
  * sentence naming the command that carries the key's own file -- `fugaro setup`
  * or `fugaro update` for a key that is the installation's own, `fugaro config
  * publish` for a layer-file key and `fugaro config init` for one a checkout's
- * `fugaro.yaml` is opened with (D1178). A document from a CLI that names no
+ * own config file is opened with (D1178). A document from a CLI that names no
  * command on such a row draws no word about one, because the console knows of
  * none.
  *
