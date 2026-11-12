@@ -546,7 +546,6 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 		out.Workflows[name] = ws
 	}
 	if spec.Check != nil {
-		ready := true
 		var unresolved []string
 		// The provider credential's resolved ID, carried by the check job's
 		// own spec so the rebuild it submits names the secret it reads
@@ -581,7 +580,6 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 				continue
 			}
 			unresolved = append(unresolved, logical)
-			ready = false
 			missing = append(missing, Missing{Check: true, Kind: MissingSecret, Deployed: ex.CheckJob,
 				Reason: fmt.Sprintf("secret %s has no version: %s", logical, fix)})
 		}
@@ -603,7 +601,16 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 				out.Check.Env[runner.SecretEnvsVar] = redactionEnvs(out.Check.SecretEnv)
 			}
 		}
-		out.Check.DeployJob = ready || ex.CheckJob
+		// D1900: the per-repository check job is no longer emitted, so a
+		// repository that has none is never given one — a project's images are
+		// what its jobs run, and the check rebuilds the repository's own
+		// derived tag, which they no longer use. One that already exists stays
+		// deployed, and this is the only fact that says so: it is live state,
+		// which is what ex is, and dropping the three addresses from a spec the
+		// state holds them for would make fugaro update plan a retirement
+		// (retire.go) — a deletion, or a second command, and neither is this
+		// change (D1194).
+		out.Check.DeployJob = ex.CheckJob
 		// Paused unless there is at least one workflow and each has a
 		// record, so an empty list fails safe. The spec's runs bucket is
 		// bucketName(lc), the bucket builds record in (lc.RecordBucketURL).

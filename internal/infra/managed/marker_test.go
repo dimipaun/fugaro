@@ -1132,6 +1132,21 @@ resource "google_storage_bucket_iam_member" "job_mixed" {
 }
 `
 		},
+		// The viewer list (RS4 of docs/roles-scopes) is a member list the
+		// modules read, and not a set of people: the write exemption is the
+		// operators' and the launchers' alone (SECURITY.md:56 — the bucket
+		// they hold is their own access, and the storage rules read it), and
+		// a viewer holds a read of every run and nothing that writes.
+		// Widening the operators' own unconditioned write to the viewer list
+		// is how a reader is handed a writer's reach, so the scan must
+		// refuse it: the mutation is what pins var.viewers out of
+		// peopleVars, and it is the operators' grant itself rather than a
+		// new one, so nothing but the exemption can admit it.
+		"the operators' write widened to the viewer list": func(f map[string]string) {
+			f["modules/installation/iam.tf"] = strings.Replace(f["modules/installation/iam.tf"],
+				"resource \"google_storage_bucket_iam_member\" \"runs\" {\n  for_each = toset(var.operators)",
+				"resource \"google_storage_bucket_iam_member\" \"runs\" {\n  for_each = toset(concat(var.operators, var.viewers))", 1)
+		},
 		// A condition that is not narrowing: "true" is a condition and
 		// narrows nothing, and a variable this test does not recognise is no
 		// better — the job grant's own two are the ones the Go side builds.
@@ -2144,24 +2159,96 @@ var runAccountGrants = setOf(
 
 	// The operators' and launchers' grants whose for_each this test does not
 	// resolve to a set of people (a conditional, a merge of pairs): pinned
-	// whole, so a member slipped into one is a different key.
+	// whole, so a member slipped into one is a different key. The log view's
+	// is the one the viewer list reaches too (RS4): the role is
+	// roles/logging.viewAccessor on the isolated view, which is a read of the
+	// runs' logs and of nothing else — the view is the module's own, the role
+	// carries no storage permission and no permission to grant one, and the
+	// member is a member of one of these three sets.
 	`google_cloud_run_v2_job_iam_member | var.job_runner_role | name=google_cloud_run_v2_job.this[0].name | each.value | for_each=var.workflow.deploy_job ? toset(var.launchers) : toset([]) | perms=?`,
-	`google_logging_log_view_iam_member | "roles/logging.viewAccessor" | name=google_logging_log_view.runs[0].name | each.value | for_each=var.log_isolation ? toset(concat(var.launchers, var.operators)) : toset([]) | perms=`,
+	`google_logging_log_view_iam_member | "roles/logging.viewAccessor" | name=google_logging_log_view.runs[0].name | each.value | for_each=var.log_isolation ? toset(concat(var.launchers, var.operators, var.viewers)) : toset([]) | perms=`,
+
+	// The viewer list's own grants (RS4 of docs/roles-scopes): the viewer is
+	// a member list of its own, and peopleVars deliberately does not carry
+	// it, so none of these is admitted by the write exemption — each is a
+	// key here, reviewed as the read it is. They are pinned whole because
+	// every one is a grant to toset(var.viewers), through a local this test
+	// does not resolve to a set of people: the read-only job role (the
+	// launcher's list minus run.executions.cancel, its permissions in the
+	// key), the runs bucket's objectViewer — unconditioned by design, since
+	// listing runs/ needs storage.objects.list, which a condition on an
+	// object's name cannot grant (D683) — and the Firebase project's three:
+	// the database viewer, the spend history's datastore.viewer and the
+	// serviceusage consumer its Firestore calls need.
+	`google_project_iam_member | "projects/${var.project}/roles/fugaroViewer" | project=var.project | each.value | for_each=toset(var.viewers) | perms=run.executions.get,run.executions.list,run.jobs.get,run.jobs.list,run.operations.get,secretmanager.secrets.list,secretmanager.versions.list`,
+	`google_storage_bucket_iam_member | "roles/storage.objectViewer" | bucket=google_storage_bucket.runs.name | each.value | for_each=local.bucket_readers [local.bucket_readers=setunion(local.launchers_only, local.viewers_only)] | perms=`,
+	`google_project_iam_member | "roles/firebasedatabase.viewer" | project=var.project | each.value | for_each=local.readers [local.readers=setunion(local.people, toset(var.viewers))] | perms=`,
+	`google_project_iam_member | "roles/datastore.viewer" | project=var.project | each.value | for_each=setunion(local.readers, local.admins) [local.admins=toset(concat(var.admins, var.budget_admins))] [local.readers=setunion(local.people, toset(var.viewers))] | perms=`,
+	`google_project_iam_member | "roles/serviceusage.serviceUsageConsumer" | project=var.project | each.value | for_each=setunion(local.readers, local.admins) [local.admins=toset(concat(var.admins, var.budget_admins))] [local.readers=setunion(local.people, toset(var.viewers))] | perms=`,
 	`google_secret_manager_secret_iam_member | each.value.role | secret_id=google_secret_manager_secret.project[each.value.secret].secret_id | each.value.member | for_each=merge( { for k, v in local.operator_project_secrets : "${k} secretVersionAdder" => merge(v, { role = "roles/secretmanager.secretVersionAdder" }) }, { for k, v in local.operator_project_secrets : "${k} viewer" => merge(v, { role = "roles/secretmanager.viewer" }) }, ) [local.operator_project_secrets={ for p in setproduct(keys(var.project_secrets), var.operators) : "${p[0]} ${p[1]}" => { secret = p[0], member = p[1] } }] | perms=?`,
 	`google_secret_manager_secret_iam_member | each.value.role | secret_id=google_secret_manager_secret.this[each.value.secret].secret_id | each.value.member | for_each=merge( { for k, v in local.operator_secrets : "${k} secretVersionAdder" => merge(v, { role = "roles/secretmanager.secretVersionAdder" }) }, { for k, v in local.operator_secrets : "${k} viewer" => merge(v, { role = "roles/secretmanager.viewer" }) }, ) [local.operator_secrets={ for p in setproduct(keys(var.repo.secrets), var.installation.operators) : "${p[0]} ${p[1]}" => { secret = p[0], member = p[1] } }] | perms=?`,
 
-	// The read mint's own front door (BB4): the operators, over the user:
-	// members among them, holding roles/run.invoker on the credentials service
-	// so a person can call it at all. Its for_each is a conditional over a
-	// people set the module filters to those members, which this test cannot
+	// The read mint's own front door (BB4, widened by F31 for DS2.2): the
+	// roster's launchers over the user: members among them, holding
+	// roles/run.invoker on the credentials service so a person can call it at
+	// all — a launcher who is not an operator was refused at IAM before any
+	// class inside the process could decide. Its for_each is a conditional over
+	// a people set the module filters to those members, which this test cannot
 	// resolve to a set of people, so it is pinned whole like the three above.
-	// Reviewed as a grant to one of the operators rather than to a run's
-	// credential — each.value is a member the module already grants the runs
-	// bucket to — and the role reaches run services alone: invoking this one
-	// hands the caller a short-lived, read-scoped Bitbucket token for one
-	// repository, and G4's admission inside the service refuses every caller
-	// that is not one of these people.
-	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.credentials_service.service | each.value | for_each=local.credentials_service_on ? toset(local.credentials_read_members) : toset([]) [local.credentials_read_members=[for m in var.operators : m if startswith(m, "user:")]] [local.credentials_service_on=var.credentials_service != null] | perms=`,
+	// Until DS2.2 the set was the operators' own (local.credentials_read_members)
+	// and no wider: the launchers ARE the operators on an installation whose
+	// roster names nobody else (internal/infra's launchersWithOperators), so the
+	// widening is exactly the people the roster names. Reviewed as a grant to
+	// one of them rather than to a run's credential — each.value is a member the
+	// module already grants the runs bucket to — and the role reaches run
+	// services alone: invoking this one hands the caller a short-lived,
+	// read-scoped Bitbucket token for one repository, and the admission inside
+	// the service (G4, F36) refuses every caller that is not one of the class
+	// the roster names.
+	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.credentials_service.service | each.value | for_each=local.credentials_service_on ? local.launcher_invoker_members : toset([]) [local.credentials_service_on=var.credentials_service != null] [local.launcher_invoker_members=toset([for m in var.launchers : m if startswith(m, "user:")])] | perms=`,
+
+	// Reviewed for D1931 (the dynamic secret class, DS2.2): the intake's own
+	// account and the credentials service's two new reaches. Every one of these
+	// rows is a grant on Secret Manager or on one Cloud Run service, and none of
+	// them is a write path to the runs bucket's root or to the marker at
+	// fugaro/managed.json.
+	//
+	// The two class roles are permissions no account of a run holds:
+	// fugaroIntakeSecrets is create, delete and versions.add of the containers
+	// in the grammar's two namespaces and nothing else — no secrets.get, no
+	// versions.access, no setIamPolicy, no iam.* — and the lister is
+	// secretmanager.secrets.list alone, the name-and-metadata read the service
+	// needs because a name condition cannot fence list (F30, Check 510). Neither
+	// role carries a storage permission, a permission to grant a role, an actAs
+	// or a token minting, and each is bound to ONE account: the module narrows
+	// both bindings to its own account and the class's name-prefix condition is
+	// what bounds where the write role reaches (internal/infra/tf's
+	// dynamicSecretsGrant reads that condition byte for byte). A container the
+	// intake creates is not the runs bucket, and the marker object is not a
+	// secret: secretmanager.secrets.create in a project whose condition admitted
+	// every name would still not reach fugaro/managed.json.
+	`google_project_iam_member | "projects/${var.project}/roles/fugaroIntakeSecrets" | project=var.project | google_service_account.intake[0].member | for_each= | perms=secretmanager.secrets.create,secretmanager.secrets.delete,secretmanager.versions.add`,
+	`google_project_iam_member | "projects/${var.project}/roles/fugaroSecretLister" | project=var.project | google_service_account.intake[0].member | for_each= | perms=secretmanager.secrets.list`,
+	// The service's project-level accessor is the read half of the same class,
+	// under the same name-prefix condition (credentials.tf): it reads the values
+	// of the containers the intake wrote and of no other secret of the project —
+	// the bundle's accessor stays the secret-level grant above. secretAccessor
+	// carries no storage permission and no write of any kind.
+	`google_project_iam_member | "roles/secretmanager.secretAccessor" | project=var.project | google_service_account.credentials[0].member | for_each= | perms=`,
+	`google_project_iam_member | "projects/${var.project}/roles/fugaroSecretLister" | project=var.project | google_service_account.credentials[0].member | for_each= | perms=secretmanager.secrets.list`,
+	// The intake's read of the derived admin list (DS2.0): objectViewer on the
+	// runs bucket under the condition that names that ONE object, so it carries
+	// no create, no delete and no update, and the bucket's root is not an object
+	// it may read (the condition admits `objects/<access.PathAdminList>` and
+	// nothing else; the object itself is written by the operator's own update,
+	// not by this account).
+	`google_storage_bucket_iam_member | "roles/storage.objectViewer" | bucket=google_storage_bucket.runs.name | google_service_account.intake[0].member | for_each= | perms=`,
+	// ... and the intake's own front door: the same roles/run.invoker on the
+	// intake service, to the same roster's people, for the read mint's reasons
+	// above. Invoking the intake hands the caller a write of a secret of THEIR
+	// OWN name (the service derives it from the verified sub), and the class
+	// inside the service refuses every caller the roster does not name.
+	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.intake.service | each.value | for_each=local.intake_on ? local.launcher_invoker_members : toset([]) [local.intake_on=var.intake != null] [local.launcher_invoker_members=toset([for m in var.launchers : m if startswith(m, "user:")])] | perms=`,
 
 	// Reviewed for W3 (the workspace's own project): the workspace root's own
 	// grant, the only resource the tree gives that project's service account.
@@ -2437,20 +2524,20 @@ var (
 
 // checkModule is one module call: its source must be one of the modules
 // this test scans (anything else could grant what it likes), and what it
-// passes as a set of people must be one.
+// passes as a member list — the people's or the viewers' — must be one.
 func (s *iamScan) checkModule(p string, b hclBlock, locals map[string]map[string]string) {
 	src := unquote(field(b.body, "source"))
 	target := path.Join(path.Dir(p), src)
 	if !strings.HasPrefix(src, "../") || !strings.HasPrefix(target, "modules/") || strings.Contains(strings.TrimPrefix(target, "modules/"), "/") {
 		s.failf("%s: module %q has source %q, which is not one of the modules this test scans: whatever it grants is unread", p, strings.Join(b.labels, " "), src)
 	}
-	for _, k := range []string{"operators", "launchers", "admins", "budget_admins"} {
+	for _, k := range []string{"operators", "launchers", "admins", "budget_admins", "viewers"} {
 		v := field(b.body, k)
 		if v == "" {
 			continue
 		}
-		if !peopleVars[v] && !peopleSet(v, locals[path.Dir(p)]) {
-			s.failf("%s: module %q passes %s = %s, which is not a set of people: the module grants that set what it grants the people", p, strings.Join(b.labels, " "), k, v)
+		if !memberVars[v] && !memberSet(v, locals[path.Dir(p)]) {
+			s.failf("%s: module %q passes %s = %s, which is not a member list this test reads (memberVars): the module grants that set whatever it grants its members", p, strings.Join(b.labels, " "), k, v)
 		}
 	}
 }
@@ -2773,13 +2860,41 @@ var peopleVars = map[string]bool{
 	"var.installation.operators": true, "var.installation.launchers": true,
 }
 
+// memberVars are the member lists a module call may be handed: the people's,
+// and the viewer list (RS4 of docs/roles-scopes, roles.md §4), which is a
+// member list of its own and holds a read of the runs and their logs. The
+// split is the point of the two maps: checkModule reads memberVars — a call
+// that passes viewers is passing a list the modules mean to read — while
+// memberSet, and so the write exemption of checkRunAccountGrant and
+// checkBucketGrant, reads peopleVars alone. An unconditioned write role
+// granted to toset(var.viewers) is therefore a finding rather than the
+// operators' own documented limit: a viewer's every grant is read-only, and
+// the storage rules that read the operators' grant are not a reason for it.
+var memberVars = map[string]bool{
+	"var.operators": true, "var.launchers": true, "var.admins": true, "var.budget_admins": true,
+	"var.installation.operators": true, "var.installation.launchers": true,
+	"var.viewers": true,
+}
+
 // peopleSet reports whether a for_each expression is a set of people:
-// var.operators and var.launchers, directly or through a locals block. A
+// the variables in peopleVars, directly or through a locals block. A
 // reference to anything else — a service account, a literal, a variable this
 // test does not know — is not one, so each.value over it is not a person.
-func peopleSet(expr string, locals map[string]string) bool { return peopleSetDepth(expr, locals, 0) }
+func peopleSet(expr string, locals map[string]string) bool {
+	return knownSetDepth(expr, locals, peopleVars, 0)
+}
 
-func peopleSetDepth(expr string, locals map[string]string, depth int) bool {
+// memberSet is peopleSet over the member lists a module call may be handed
+// (memberVars): the same expression, read for what a call passes rather than
+// for what a grant may write.
+func memberSet(expr string, locals map[string]string) bool {
+	return knownSetDepth(expr, locals, memberVars, 0)
+}
+
+// knownSetDepth reads expr against the member variables known: the sets of
+// people as a write exemption and as a module call's argument are the same
+// expression read against different lists.
+func knownSetDepth(expr string, locals map[string]string, known map[string]bool, depth int) bool {
 	expr = strings.TrimSpace(expr)
 	// A quoted member anywhere in the expression makes it not a set of
 	// people, whatever variables it also names: setunion(toset(var.operators),
@@ -2798,15 +2913,15 @@ func peopleSetDepth(expr string, locals map[string]string, depth int) bool {
 		switch {
 		case strings.HasPrefix(ref, "local."):
 			v, ok := locals[strings.TrimPrefix(ref, "local.")]
-			if !ok || !peopleSetDepth(v, locals, depth+1) {
+			if !ok || !knownSetDepth(v, locals, known, depth+1) {
 				return false
 			}
-		case peopleVars[ref]:
+		case known[ref]:
 		default:
 			return false // a service account, or a variable nothing here knows
 		}
 	}
-	return true // every reference is a set of people
+	return true // every reference is one of the known member sets
 }
 
 // tfRefRE reads the references a Terraform expression makes: a variable, a
@@ -3319,8 +3434,9 @@ func mapValues(expr string) ([]string, bool) {
 	return out, len(out) > 0
 }
 
-// isPersonSet is whether a member is one of the operators' or launchers' own
-// identities: each.value over a set of people, or a variable that is one.
+// isPersonSet is whether a member is one of the operators', launchers' or
+// viewers' own identities: each.value over a set of people, or a variable that
+// is one.
 func isPersonSet(member, forEach string, locals map[string]string) bool {
 	if member == "each.value" {
 		return peopleSet(forEach, locals)

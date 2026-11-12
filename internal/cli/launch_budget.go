@@ -844,8 +844,9 @@ var newSealKey = token.NewKey
 
 // budgetBranch is the branch the run's identity may push (fb, G6): the branch
 // a first run creates, or the one a follow-up continues. A review run writes
-// only comments on its pull requests and an artifact run produces files, so
-// neither pushes and neither carries a branch — the proxy admits both with no
+// only comments on its pull requests, an artifact run produces files and an
+// evaluate run works on objects the runs bucket already holds, so none of the
+// three pushes and none carries a branch — the proxy admits all three with no
 // fb and refuses every push of theirs (B1.4).
 //
 // The branch a follow-up continues is checked here rather than minted
@@ -857,7 +858,7 @@ var newSealKey = token.NewKey
 // refusal there halts the run. So the pairing is refused at the launch, where
 // nothing has been signed yet; see the arm below.
 func budgetBranch(spec *task.Spec) (string, error) {
-	if spec.ReviewPRs != nil || spec.Mode == recipe.ModeArtifact {
+	if spec.ReviewPRs != nil || spec.Mode == recipe.ModeArtifact || spec.Mode == recipe.ModeEvaluate {
 		return "", nil
 	}
 	if spec.Branch == "" {

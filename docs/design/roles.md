@@ -49,9 +49,9 @@ Three more facts about the lists matter here.
   **never by the rules** (`docs/mobile-auth/reconciliation.md:540`).
 - **A pairing inherits and only lowers.** `--role` defaults to the pairing user's own role and a word
   above it is refused (`docs/plans/2026-10-22-mobile-pairing-cli.md:477`, decision 13, amended
-  2026-10-29). The pairing user's role is read from the CLI's lists, and `pairInheritedRole` maps
-  **both lists** to the device word `operator` — an admin's membership included, since no device word
-  is an admin — because neither list holds a viewer (`internal/cli/pair.go:817`).
+  2026-10-29). The pairing user's role is read from the grants node at **project scope**
+  (`internal/cli/pair.go:862`), and D1588 answers what that is: the highest project-scope role the
+  pairing user holds — a repository role is not one, since a device node records a role and no scope.
 - **A pairing session is a third identity**, the one-shot `pu` claim (`pairingClaim`,
   `internal/budget/rules/rules.go:552`). It reaches the two pairing nodes and nothing else.
 - **A run is not a person.** A run's job account holds no role on the Firebase project
@@ -182,9 +182,10 @@ option is the one with a permanent cost: two words for one thing, in the CLI, th
 variables, `internal/cli/roles.go`'s comments and every operator's config file.
 
 Whatever the owner answers, one thing is already fixed by what exists: `fugaro pair --role` writes
-the device words `viewer`, `operator` and `admin`, and `internal/cli/pair.go:511` maps a launcher and
-an operator *both* to the device word `operator`. The device vocabulary and the IAM vocabulary meet
-there and nowhere else, and the mapping between them is the answer's to state.
+the device words `viewer`, `operator` and `admin`, and the word a pairing writes is the grants' own —
+the pairing user's highest project-scope grant (`internal/cli/pair.go:862`). The two IAM vocabularies
+meet the roles in `fugaro update`'s migration, and which list becomes which role there (D681) is the
+answer's to state.
 
 ## 4. The viewer in the cloud (T16)
 
@@ -196,7 +197,10 @@ just in the console (`:398`).
 What a read-only list would grant:
 
 - `roles/firebasedatabase.viewer` — read the database, as launchers and operators already do;
-- `roles/datastore.viewer` — read the spend history;
+- `roles/datastore.viewer` — read the spend history, and with it
+  `roles/serviceusage.serviceUsageConsumer`, the quota project a Firestore call from the CLI sends as
+  `X-Goog-User-Project`: the same pair the launchers and operators hold, and without it a
+  `datastore.viewer` is a read Firestore refuses;
 - a read-only job role: `run.jobs.get`, `run.jobs.list`, `run.executions.get`, `run.executions.list`,
   `run.operations.get` — the `fugaroLauncher` role **minus** `run.executions.cancel`;
 - `roles/logging.viewAccessor` on the isolated log view, if the owner wants a viewer to read logs;

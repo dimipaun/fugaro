@@ -101,11 +101,41 @@ var secretReaderExceptions = []struct {
 	// The intake's adapter (DS2.1) holds the API the way every reader above
 	// does -- the guard keys on the import, so a writer is a hit like any
 	// other -- and it is the first row here that names a file no value can
-	// come out of: it has no method that reads a payload, and the account
-	// DS2.2 is to have it run as holds no secretAccessor and no secrets.get
-	// (F30; that account's grants are not fenced yet).
+	// come out of: it has no method that reads a payload, and the account it
+	// runs as (E26, DS2.2's) holds no secretAccessor and no secrets.get (F30).
 	{id: "E22", keys: []string{"internal/intake/gcp.go"}},
 	{id: "E23", keys: []string{"internal/cli/doctor_batch.go"}},
+	// The viewer list's project grant (RS4 of docs/roles-scopes): the viewer's
+	// read-only job role carries the launcher's own `secretmanager.secrets.list`
+	// and `secretmanager.versions.list` — the read `fugaro secrets ls` needs —
+	// and no way to a value, which is what makes it a row of this table rather
+	// than a permission the role gives up.
+	{id: "E24", keys: []string{"deploy/terraform/gcp/modules/installation/iam.tf google_project_iam_member.viewer"}},
+	// The credentials service's DYNAMIC half (D1931, DS2.2): the prefix
+	// accessor reads a version's payload, and only of a container the grammar
+	// names -- the condition is what makes it not the project-wide read its
+	// role would otherwise be -- and the lister beside it answers names and
+	// metadata alone, because secretmanager.secrets.list is refused under that
+	// condition (Check 510). E7 is the same account's bundle.
+	{
+		id: "E25",
+		keys: []string{
+			"deploy/terraform/gcp/modules/installation/credentials.tf google_project_iam_member.credentials_prefix_accessor",
+			"deploy/terraform/gcp/modules/installation/credentials.tf google_project_iam_member.credentials_lister",
+		},
+	},
+	// The intake's own account (D1931, DS2.2): create, version-add and delete,
+	// under the SAME prefix condition as E25's accessor -- so it writes only a
+	// container of the grammar -- and list, unconditioned, which answers
+	// metadata and no value. Neither role carries versions.access or
+	// secrets.get, which TestIntakeAccountHasNoAccessor pins.
+	{
+		id: "E26",
+		keys: []string{
+			"deploy/terraform/gcp/modules/installation/intake.tf google_project_iam_member.intake_secrets",
+			"deploy/terraform/gcp/modules/installation/intake.tf google_project_iam_member.intake_lister",
+		},
+	},
 }
 
 // A key under this prefix names a rule the scan enforces rather than a hit it

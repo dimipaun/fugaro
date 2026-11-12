@@ -55,6 +55,12 @@ type Application struct {
 	Repositories []string  `json:"repositories"`
 	Organisation string    `json:"organisation"`
 	At           time.Time `json:"at"`
+	// Decision and DecidedAt are what the owner made of the request and when
+	// (§4.5). What makes an approval mint once is §5.2's record and not this
+	// field: the decision says the request was answered, and the record says a
+	// key exists.
+	Decision  Decision  `json:"decision"`
+	DecidedAt time.Time `json:"decided_at"`
 }
 
 // Verification is one pending link: the address an application is waiting to

@@ -286,6 +286,10 @@
           "type": "string",
           "description": "The model Claude Code's background requests actually reach when the file names none (config.EffectiveBackground). Absent when it is the same as background."
         },
+        "vision": {
+          "type": "string",
+          "description": "The file's own agent.models.vision: the model a stage runs instead when its own model cannot read an image (D2000). Absent when the file sets none, which is the slot's unset state and not an inherited model: it is the one pin with no fallback."
+        },
         "problems": {
           "type": "array",
           "description": "The refusals a launch would give for this repository's pins (config.CheckProviderPolicy), each as the problem's own text.",

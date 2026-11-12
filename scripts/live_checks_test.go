@@ -42,7 +42,13 @@ import (
 // block. Check 401's fake `curl`
 // serves the grants node from the case's own directory and its fake `fugaro`
 // update PRETENDS to be the migration, so a case says what the converge did by
-// writing files.
+// writing files. Checks 410 to 412 drive the diagnosis of a real failed run
+// against a fake `gcloud` (a project that is NOT_FOUND) and a fake `fugaro`
+// whose update fails and leaves a log; 411's fake `fugaro` also writes the
+// source record a machine without git would have fetched, and its PATH is built
+// to hold no git at all, so the case says the check really ran with none; 412's
+// fake `claude` is the client the check wraps, so the wrapper is the real one
+// and the tool log is the child's own.
 var liveCheckScripts = []struct {
 	name string
 	test string
@@ -63,6 +69,9 @@ var liveCheckScripts = []struct {
 	{"check96.sh", "check96_test.sh"},
 	{"check361.sh", "check361_test.sh"},
 	{"check401.sh", "check401_test.sh"},
+	{"check-410.sh", "check-410_test.sh"},
+	{"check-411.sh", "check-411_test.sh"},
+	{"check-412.sh", "check-412_test.sh"},
 	{"check510.sh", "check510_test.sh"},
 	{"check511.sh", "check511_test.sh"},
 }

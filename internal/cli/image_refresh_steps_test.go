@@ -1246,11 +1246,13 @@ func TestRefreshCheckJobApplyErrorStops(t *testing.T) {
 	}
 }
 
-// A missing job (404) is a not-found message naming update --repo when the
-// repository's spec has a check job, and "nothing to update" only when it has
-// none.
 // A missing job (404) is reported and the run continues, with or without
 // --yes (2026-10-08 decision): there is nothing to confirm either way.
+//
+// With a check job in the spec the line says the job is not deployed and names
+// no command: after D1900 (IS2) Readiness deploys no check job for a cloud
+// that holds none, so a remedy here would be a loop. Without one it is the
+// plain "nothing to update".
 func testRefreshCheckJobMissing(t *testing.T, yes bool) {
 	t.Helper()
 	r := newInitRig(t)
@@ -1272,12 +1274,12 @@ func testRefreshCheckJobMissing(t *testing.T, yes bool) {
 	if err := e.r.refreshCheckJob(t.Context(), tg); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "was not found") || !strings.Contains(out.String(), "fugaro update --repo") || strings.Contains(out.String(), "nothing to update") {
+	if !strings.Contains(out.String(), "is not deployed") || strings.Contains(out.String(), "fugaro update") || strings.Contains(out.String(), "nothing to update") {
 		t.Errorf("yes=%v, with a check in the spec:\n%s", yes, out.String())
 	}
 	tg.spec.Check = nil
 	out = at()
-	if err := e.r.refreshCheckJob(t.Context(), tg); err != nil || !strings.Contains(out.String(), "nothing to update") || strings.Contains(out.String(), "was not found") {
+	if err := e.r.refreshCheckJob(t.Context(), tg); err != nil || !strings.Contains(out.String(), "nothing to update") || strings.Contains(out.String(), "is not deployed") {
 		t.Errorf("yes=%v, without a check: %v\n%s", yes, err, out.String())
 	}
 }

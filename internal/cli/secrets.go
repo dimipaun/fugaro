@@ -52,7 +52,7 @@ func newSecretsCmd() *cobra.Command {
 			if len(args) == 0 {
 				return cmd.Help()
 			}
-			return userErr("unknown secrets subcommand; want set, allow, deny, ls or rm (see fugaro secrets --help)")
+			return userErr("unknown secrets subcommand; want set, allow, deny, ls, rm, user or shared (see fugaro secrets --help)")
 		},
 	}
 	// pflag quotes an unknown flag, and a value pasted in the wrong place
@@ -60,7 +60,14 @@ func newSecretsCmd() *cobra.Command {
 	cmd.SetFlagErrorFunc(func(*cobra.Command, error) error {
 		return userErr("unknown or malformed flag; secrets commands take --repo, --project-wide, --json, --config, --project, --gcp-project, --region, --allow-data-to, --proxy, --yes and --dry-run, and never the value")
 	})
-	cmd.AddCommand(newSecretsSetCmd(), newSecretsAllowCmd(), newSecretsDenyCmd(), newSecretsLsCmd(), newSecretsRmCmd())
+	// Two families, and they write different things: set, allow, deny, ls and rm
+	// are the repository's and the project's Secret Manager containers, written
+	// with the person's own project IAM, and user and shared are the intake's
+	// two prefixes, written through the installation's intake
+	// (secrets_intake.go). Neither replaces the other, and every verb says which
+	// it is.
+	cmd.AddCommand(newSecretsSetCmd(), newSecretsAllowCmd(), newSecretsDenyCmd(), newSecretsLsCmd(), newSecretsRmCmd(),
+		newSecretsUserCmd(), newSecretsSharedCmd())
 	return cmd
 }
 
@@ -1717,7 +1724,12 @@ func validateSecret(raw []byte, multiline bool) error {
 	case bytes.IndexByte(raw, 0) >= 0:
 		return userErr("the value holds a NUL byte")
 	case !multiline && bytes.ContainsAny(raw, "\r\n"):
-		return userErr("the value spans several lines; only %s (a PEM) may", multilineSecret)
+		// The sentence names the command that stores a PEM rather than this
+		// one's family, because one of the families that reaches it — the
+		// intake's `secrets user`/`shared` — refuses that name by the grammar
+		// (R7), and a refusal pointing at a name it would refuse again is a
+		// dead end.
+		return userErr("the value spans several lines; the one value that does is %s (a PEM), and `fugaro secrets set %s` is the command that stores it", multilineSecret, multilineSecret)
 	case !multiline && len(bytes.TrimSpace(raw)) != len(raw):
 		return userErr("the value starts or ends with whitespace, most likely a copy-and-paste slip")
 	}

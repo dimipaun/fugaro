@@ -213,7 +213,7 @@ func TestDoctorFlagsAStaleImage(t *testing.T) {
 	ctx := context.Background()
 	rf := resolvedLayerFixture(t, ctx, lc, dir)
 	c := layerCheck(doctorLayerChecks(ctx, lc, dir, rf), "image-config-"+config.ImplicitWorkflow)
-	if c == nil || c.Severity != "warning" || !strings.Contains(c.Problem, "other image settings") || !strings.Contains(c.Fix, "fugaro image build --workflow default") {
+	if c == nil || c.Severity != "warning" || !strings.Contains(c.Problem, "other image settings") || !strings.Contains(c.Fix, "fugaro update") {
 		t.Fatalf("check %+v", c)
 	}
 }

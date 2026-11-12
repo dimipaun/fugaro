@@ -1569,6 +1569,20 @@ const PatchName = "ab/patch.diff"
 // PatchKey is PatchName under prefix (Store.Prefix(), which ends in "/").
 func PatchKey(prefix string) string { return prefix + PatchName }
 
+// ManifestName is a judge run's manifest under its own prefix:
+// runs/<repo-slug>/<judge-run-id>/ab/manifest.json, the complete and unjudged
+// pairs the launcher found. The launcher writes it before the task exists and
+// the judge step reads it back, so the pair it judges is fixed at the launch
+// rather than recomputed at the judge — and writer and reader spell the leaf
+// once, as PatchName is.
+const ManifestName = "ab/manifest.json"
+
+// VerdictsName is where a judge run writes what it decided, under its own
+// prefix and nowhere else: runs/<repo-slug>/<judge-run-id>/ab/verdicts.json.
+// It is the record a later reader scores a pair from, so a reader that spells
+// it differently would report a judged pair as unjudged and judge it again.
+const VerdictsName = "ab/verdicts.json"
+
 // MaxBacklogClosed bounds Record.BacklogClosed. A run closes only what the
 // runs of its own pull request filed for a round, one item a run over a walk
 // the runner bounds at twenty runs, so this is room for every close a real

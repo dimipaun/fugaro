@@ -273,16 +273,24 @@ func stageAccountMember(stage string) string { return "claude_account_stages." +
 // as well, because the publish states nothing for it either
 // (config.AccountStageHeldBack): the member this function reports is the one a
 // publish would write, and a stage held back is not.
+//
+// A key may hold an alias (D2091), and the value reported is the account it
+// resolves to, so that the diff, the widening sentence and the node the publish
+// writes all speak the account rather than a name no job image knows (F4,
+// D2090). This is the same resolution project_cmd.go copies the members with: a
+// name that is no alias is reported unchanged.
 func configAccountValues(lc *localcfg.Config) map[string]string {
 	out := map[string]string{}
 	if lc.DefaultClaudeAccount != "" {
-		out["default_claude_account"] = lc.DefaultClaudeAccount
+		account, _ := lc.ResolveAccount(lc.DefaultClaudeAccount)
+		out["default_claude_account"] = account
 	}
 	for stage, choice := range lc.ClaudeAccountStages {
 		if choice.ClaudeAccount == "" || config.AccountStageHeldBack(stage) {
 			continue
 		}
-		out[stageAccountMember(stage)] = choice.ClaudeAccount
+		account, _ := lc.ResolveAccount(choice.ClaudeAccount)
+		out[stageAccountMember(stage)] = account
 	}
 	return out
 }

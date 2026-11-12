@@ -276,6 +276,24 @@ type Policy struct {
 	// every craft resolves to the project's default credential (D1624).
 	Crafts *config.Crafts `json:"crafts,omitempty"`
 
+	// ModelGrades are the escalation ladder's two grades (E2, D2039): the
+	// model each rung's stronger single pass runs and the credential or pool
+	// its calls go out on, the pair a craft carries. They are on this node
+	// because the node is the project's published word, read by the daemon
+	// that walks the ladder rather than by the process that happens to launch
+	// a rung: which model a rung spends on and whose credential its calls go
+	// out on is a decision the owner publishes, not one a job's environment
+	// carries. The project layer's defaults.model_grades is the other home
+	// D2039 gives them, and a repository's own file may name one, which the
+	// merge drops and records (internal/policy's tightenGrades).
+	//
+	// It is a pointer so that a project that sets no grade writes no member,
+	// which is what every project is in until it names one: the ladder's rungs
+	// then refuse and ask rather than running a model nobody chose, and the
+	// node of a project that never set a grade stays byte for byte what it was
+	// before this member existed.
+	ModelGrades *config.ModelGrades `json:"model_grades,omitempty"`
+
 	// SubscriptionSpread is the project's switch over the pools that list more
 	// than one Claude OAuth subscription (docs/model-crafts/reconciliation.md
 	// F22, D1622, D1636): the successor of the D875 switch `claude_account_auto`
@@ -570,6 +588,7 @@ var knownTopLevelKeys = map[string]bool{
 	"image_map":     true, "bake_repos": true, "image_services": true,
 	"default_claude_account": true, "claude_account_stages": true,
 	"crafts": true, "craft_credentials": true, "craft_pools": true,
+	"model_grades":        true,
 	"subscription_spread": true,
 	"orchestrator":        true, "binaries": true,
 	"triage": true,
@@ -1417,6 +1436,17 @@ func decodeWithKeys(raw []byte, keys map[string]bool) (*Policy, bool, error) {
 			return nil, true, fmt.Errorf("projectpolicy: subscription_spread: %w", err)
 		}
 		p.SubscriptionSpread = &on
+	}
+	// The escalation ladder's two model grades (E2, D2039) are read after the
+	// credentials and the pools for the crafts' reason: a grade names a
+	// credential or pool, and a node that carries one is read in full rather
+	// than against a block this reader has not seen.
+	if graw, ok := doc["model_grades"]; ok && !IsNull(graw) {
+		grades, err := decodeModelGrades(graw)
+		if err != nil {
+			return nil, true, err
+		}
+		p.ModelGrades = grades
 	}
 	// The Bitbucket block is judged *before* the profiles block, and the
 	// profiles against it: a profile that mounts the token admits a subset of

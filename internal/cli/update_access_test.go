@@ -45,8 +45,10 @@ func accessOut(out, errOut string, err error) string {
 	return out + errOut + ErrorText(err)
 }
 
-// accessGrants is the grants node as the fake database holds it.
-func accessGrants(t *testing.T, db *gcpfake.RTDB) []accesslib.Grant {
+// accessNode is the grants node as the fake database holds it, Found included:
+// a node no writer made is what Found false says, and a node the migration
+// derived no grant for is not written at all.
+func accessNode(t *testing.T, db *gcpfake.RTDB) accesslib.Node {
 	t.Helper()
 	cl, err := newBudgetClient(t.Context(), db.URL, true)
 	if err != nil {
@@ -56,7 +58,13 @@ func accessGrants(t *testing.T, db *gcpfake.RTDB) []accesslib.Grant {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return node.Grants
+	return node
+}
+
+// accessGrants is the grants node as the fake database holds it.
+func accessGrants(t *testing.T, db *gcpfake.RTDB) []accesslib.Grant {
+	t.Helper()
+	return accessNode(t, db).Grants
 }
 
 // grantLines renders grants the way the migration's own sentence does, sorted,
@@ -352,6 +360,33 @@ func TestLegacyMemberFormsKeepTheirGrants(t *testing.T) {
 	}
 	if strings.Contains(all, "accessDropped") || strings.Contains(all, "lose the role") {
 		t.Errorf("the run says a member lost the role, and a legacy member keeps its grants:\n%s", all)
+	}
+}
+
+// TestAMigrationWithNoUserMemberWritesNoNode: the state `fugaro pair` sends an
+// operator to `fugaro update` for when that update lands nothing, and the reason
+// the refusal there names the precondition rather than promising the node.
+//
+// A grant holds a person's address, so a `group:`, `domain:` or
+// `serviceAccount:` member is carried forward in the list it came from and never
+// becomes one (F25, migrationGrants): an installation whose two lists name only
+// those forms has nothing to migrate, seedNode computes no seed, and no write is
+// made — the node stays absent, exactly as the run found it. The second update
+// is then as helpless as the first, and the flags are no way out either: they
+// fold into a node and never make one (landFlagLists).
+func TestAMigrationWithNoUserMemberWritesNoNode(t *testing.T) {
+	legacy := []string{"group:eng@example.com", "domain:example.com", "serviceAccount:auto@proj-1234.iam.gserviceaccount.com"}
+	_, db := accessRig(t, legacy, legacy, legacy, legacy)
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	all := accessOut(out, errOut, err)
+	if err != nil {
+		t.Fatalf("fugaro update refused an installation whose lists hold no user member: %v\n%s", err, all)
+	}
+	if node := accessNode(t, db); node.Found {
+		t.Errorf("the migration wrote %v from lists that name no address a grant can hold:\n%s", node.Grants, all)
+	}
+	if strings.Contains(all, "migrated the installation's member lists into the grants node") {
+		t.Errorf("the run says it migrated a roster it derived no grant from:\n%s", all)
 	}
 }
 

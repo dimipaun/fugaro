@@ -13,5 +13,5 @@ paths:
 - Release summary lines in `website/data/release-summaries.yaml` carry no backticks. The changelog prints them as plain text.
 - Every released `docs/releases/vX.Y.Z.md` — every one at or below the CLI stream's `current` in `docs/release-streams.yaml` — needs its line in `release-summaries.yaml`. A file above that version is the next release's notes, written ahead of their release: the changelog renders neither it nor a missing line for it, and no entry carries a "not yet released" state (D1649, `docs/website-changelog/reconciliation.md`).
 - `docs/releases/` may hold only `README.md`, the `vX.Y.Z.md` files and the `console/` and `mobile/` subfolders. `src/lib/changelog.mjs` throws on anything else.
-- `test/privacy.mjs` scans the shipped code for hosts. Only the console files on its allow-list (`onboarding.ts`, `window.ts`) may name fugaro.dev.
+- `test/privacy.mjs` scans the shipped code for hosts. Only the files on its allow-list (`HOST_NAMING_LINKS`: the console's `onboarding.ts` and `window.ts`, and the app's `mobile/src/telemetry/notice.js`, each of which holds the host in a link a reader may follow and makes no request) may name fugaro.dev.
 - Deploying is `scripts/deploy-website.sh` or the website-preview/website-promote workflows, and only with the owner's authorisation. Never deploy from an agent run.

@@ -21,6 +21,16 @@
 //     last test here wires the real controller and the real screens to show
 //     the two together: tap "Try the demo", the banner appears, tap "Leave
 //     demo mode", it goes.
+//   * **the shell says what the app reports, as its last child -- after the
+//     body, and after the demo banner when that is on -- and draws no
+//     control**: the app has no settings screen, so the statement lives on the
+//     shell (P7.2). The words and the URL are `src/telemetry/notice.js`'s --
+//     this file asserts that the shell renders them, that the URL is drawn as
+//     text because the app has no opener and the validator refuses every host
+//     today, and that nothing on the shell is a control a reader can press over
+//     the reports. The statement's own words, and which half of them the
+//     owner's ruling of 2026-10-30 (D731) leaves standing, are that module's
+//     assertions and not this file's.
 //
 // React and react-native are not installed (the Expo toolchain is not
 // available in this environment), so both are fakes. What is tested is the
@@ -34,6 +44,7 @@ import test from 'node:test';
 import { AccountStore, MemorySecureStore, MemorySettingsStore, ResourceRegistry, SecretStore, SettingsStore, secret } from '../accounts/index.js';
 import { createDemoScreen } from '../demo/screen.js';
 import { DEMO_BANNER, LEAVE_DEMO, TRY_DEMO, createDemoMode } from '../demo/index.js';
+import { PRIVACY_URL, STATEMENT } from '../telemetry/notice.js';
 import { createFirstScreen } from './first-screen.js';
 import { APP_TITLE, NO_ACCOUNT, SHELL, createRoot } from './root.js';
 
@@ -106,7 +117,9 @@ function render(root) {
       return;
     }
     if (node === null || typeof node !== 'object') return;
-    if (node.type === Text) text.push(...node.children);
+    // The walk is the whole of it: a `Text`'s children are the strings, and
+    // they arrive here as they are reached. Reading them here as well counted
+    // every one of them twice.
     for (const child of node.children ?? []) walk(child);
   };
   walk(root());
@@ -138,11 +151,23 @@ test('an open account shows its id, and nothing else it was installed with', asy
   await store.switchTo('laptop');
   const shown = render(shellFor({ store }));
   assert.equal(shown.includes('Account: laptop'), true);
+
+  // The statement (P7.2) is the shell's fixed text from `src/telemetry/notice.js`
+  // and nothing about the account goes into it, so the two lines it contributes
+  // are read back as the module's own constants and the account's material is
+  // looked for in what the shell shows besides them. That distinction is not a
+  // convenience: the fixture's `fugaroProject` is the slug "fugaro", which the
+  // privacy URL's own host contains, so a plain search over the whole tree
+  // would report the URL as a leak of the installation's project.
+  const lines = shown.split('\n');
+  assert.deepEqual(lines.filter((line) => line === STATEMENT || line === PRIVACY_URL), [STATEMENT, PRIVACY_URL]);
+
   // The id is D114's label for an installation, and it is not a secret: it is
   // half the name of the Keychain item, so anyone who can read the Keychain
   // already has it. Everything else the installation was built from is not.
+  const besidesNotice = lines.filter((line) => line !== STATEMENT && line !== PRIVACY_URL);
   for (const value of [ID_TOKEN, LAPTOP.firebaseProjectId, LAPTOP.authUid, LAPTOP.fugaroProject]) {
-    assert.equal(shown.includes(value), false, value);
+    assert.equal(besidesNotice.some((line) => line.includes(value)), false, value);
   }
   assert.equal(shown.includes(NO_ACCOUNT), false, 'an open account is not "no account"');
 });
@@ -152,7 +177,45 @@ test('the tree is built from the primitives it was given', () => {
   const tree = root();
   assert.equal(tree.type, View);
   assert.equal(tree.props.type, SHELL.ROOT);
-  assert.deepEqual(tree.children.map((child) => child.props.type), [SHELL.TITLE, SHELL.BODY]);
+  assert.deepEqual(tree.children.map((child) => child.props.type), [SHELL.TITLE, SHELL.BODY, SHELL.NOTICE]);
+});
+
+test('the shell says what the app reports, and draws no control', () => {
+  const tree = shellFor()();
+  const shown = render(() => tree);
+  // The words are `src/telemetry/notice.js`'s, and the shell renders them
+  // rather than a copy: a statement written here twice is a statement that
+  // drifts from the one the page promises.
+  assert.equal(shown.includes(STATEMENT), true);
+  assert.equal(shown.includes(PRIVACY_URL), true);
+
+  const notice = nodesOfType(() => tree, SHELL.NOTICE);
+  assert.equal(notice.length > 0, true, 'the statement is on the shell');
+  // The shell draws no control over the reports: the statement is text, and the
+  // URL is drawn as text because the app has no link opener and the validator
+  // refuses every host today (D124's host list is the owner's and is empty), so
+  // a pressable one here would be a link that opens nothing. The task that
+  // grows the opener reads `notice()`'s verdict; a control drawn here before
+  // then is what this half refuses.
+  for (const node of notice) {
+    assert.equal(node.props.onPress, undefined, 'the statement carries no control');
+    for (const child of node.children ?? []) {
+      assert.equal(child.type === Pressable, false, 'the statement is text, never a button');
+    }
+  }
+  assert.deepEqual(nodesOfType(() => tree, SHELL.LEAVE), [], 'the statement carries no control at all');
+
+  // ... and it is on the shell in both states, last in both: the shell is the
+  // app's only surface, so a statement that only one screen carried would be a
+  // statement a reader could reach the app without seeing -- and the demo
+  // banner is pushed above the body, so "after the body" is a different
+  // position in each state and the assertion is the one that holds in both.
+  const withDemo = shellFor({ state: { active: true } })();
+  assert.equal(render(() => withDemo).includes(STATEMENT), true);
+  for (const [label, root] of [['off', tree], ['on', withDemo]]) {
+    const children = root.children.map((child) => child.props.type);
+    assert.equal(children[children.length - 1], SHELL.NOTICE, `the statement is the shell's last child, with the demo ${label}`);
+  }
 });
 
 test('the demo is off: no banner, no way out, and the first screen', () => {

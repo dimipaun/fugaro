@@ -58,7 +58,13 @@ type InstallOptions struct {
 	SkipAPIs bool
 	// Launchers and Operators are IAM members; nil means the local config's.
 	Launchers, Operators []string
-	Budget               *Budget
+	// Viewers are IAM members too, and nil is empty: no local config key
+	// carries a viewer list, so an installation names one only when a run
+	// derives it from the grants node (roles.md §4, RS4). An installation
+	// that names none plans exactly what it planned before the viewer's
+	// role existed — the module's role and grants are gated on the list.
+	Viewers []string
+	Budget  *Budget
 	// AlertEmail defaults to the local config's; empty means no alert.
 	AlertEmail string
 	// RegistryCleanup is dry-run (the default), on or off.
@@ -157,6 +163,21 @@ type InstallationSpec struct {
 	ManageAPIs      bool              `json:"manage_apis"`
 	Launchers       []string          `json:"launchers"`
 	Operators       []string          `json:"operators"`
+	// LauncherAccounts is the launcher class's list (D1938, F25) as the two
+	// services that admit a launcher read it (FUGARO_LAUNCHER_ACCOUNTS): the
+	// bare addresses a Google ID token's email claim holds. It is derived by
+	// launchers.go from the merged launchers list above and never written by
+	// hand, so the class and the invoker grants name the same people (F31).
+	// An installation whose roster names no launcher writes no key at all: the
+	// module's own default is then the empty class, which is what an
+	// installation that never had one already planned.
+	LauncherAccounts []string `json:"launcher_accounts,omitempty"`
+	// Viewers are the installation's read-only people (roles.md §4, RS4):
+	// they read every run, its logs and the project's inventory, and hold no
+	// write and no launch. It is left out of the tfvars when empty, so an
+	// installation that names no viewer hands Terraform the document it
+	// handed it before the list existed.
+	Viewers []string `json:"viewers,omitempty"`
 	// LauncherBucketCondition limits the launchers' write grant on the runs
 	// bucket to runs/, tokens/ and issues/ (gcp.LauncherBucketCondition).
 	LauncherBucketCondition Condition       `json:"launcher_bucket_condition"`
@@ -280,8 +301,8 @@ type CredentialsServiceSpec struct {
 	// is a hash of (profile, provider, account)
 	// (credsvc.ReviewServiceAccountID), so a list of addresses here would be a
 	// second derivation that can drift from the accounts the deployer creates.
-	// Account is the Claude account the variant's calls are served by, which
-	// the service cannot derive from the triple alone: it is the published
+	// Account is the value of the account axis the variant's calls are served
+	// by, which the service cannot derive from the triple alone: it is the published
 	// policy's own spelling (config.ProjectJobAccounts' mapping, never empty),
 	// and a revision reads no policy at start-up (D143).
 	//
@@ -342,11 +363,13 @@ type CredentialsJob struct {
 // project jobs as the credentials service's environment carries it: the
 // (profile, provider, account) triple the variant's job and service account
 // are derived from (credsvc.ReviewJobName, credsvc.ReviewServiceAccountID),
-// where account is the Claude account the policy's admissions spell — never
-// empty, because the axis spells the profile's no-account job as the empty
-// string and the admissions spell it config.DefaultClaudeAccount
+// where account is the value of the account axis the policy's admissions
+// spell — never empty, because the axis spells the profile's no-account job as
+// the empty string and the admissions spell it config.DefaultClaudeAccount
 // (config.ReviewVariantAccount), which is the value the service's own
-// ReviewJobAccount.Account holds and the pairing resolves a call by.
+// ReviewJobAccount.Account holds and the pairing resolves a call by. It is an
+// account's name or, since AK4, config.AnthropicKeyAccount, the sentinel that
+// names the project's own Anthropic API key and is not an account.
 //
 // It is the review class's own row rather than a ProjectJob: what the service
 // admits a review caller AS is the triple and nothing else, and the variant's
@@ -1230,6 +1253,7 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 		ManageAPIs:      !o.SkipAPIs,
 		Launchers:       members(o.Launchers, lc.Terraform.Operators),
 		Operators:       members(o.Operators, lc.Terraform.Admins),
+		Viewers:         members(o.Viewers, nil),
 		LauncherBucketCondition: Condition{
 			Title:      gcp.LauncherBucketConditionTitle,
 			Expression: gcp.LauncherBucketCondition(bucket),
@@ -1405,6 +1429,12 @@ func RepoVars(spec RepoSpec) ([]byte, error) {
 func InstallationVars(spec InstallationSpec) ([]byte, error) {
 	spec.Launchers = launchersWithOperators(spec.Launchers, spec.Operators)
 	spec.Operators = members(spec.Operators, nil)
+	// The launcher class is the same merged list, read as addresses: the
+	// invoker grants below the root are made from the members, the two
+	// services' class check from these, and one derivation is what keeps them
+	// the same people (launchers.go, F31/F36).
+	spec.LauncherAccounts = launcherAccounts(spec.Launchers)
+	spec.Viewers = sortedUnique(spec.Viewers)
 	return sortedJSON(spec)
 }
 

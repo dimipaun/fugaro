@@ -662,7 +662,7 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 	for _, ra := range cfg.ReviewAccounts {
 		if ra.Email == "" || ra.Account == "" {
-			return nil, errors.New("credsvc: a review job account with no email or no Claude account binds nothing")
+			return nil, errors.New("credsvc: a review job account with no email or no value on the account axis binds nothing")
 		}
 		// Keyed by the folded email, exactly as the verifier keys its own
 		// review table: the account Verify answers with is the CONFIGURED
@@ -676,7 +676,7 @@ func NewServer(cfg Config) (*Server, error) {
 		}
 		if prev, dup := s.review[folded]; dup {
 			if prev.Account != ra.Account {
-				return nil, errors.New("credsvc: the same review job account is bound to two Claude accounts")
+				return nil, errors.New("credsvc: the same review job account is bound to two values of the account axis")
 			}
 			continue
 		}
@@ -1046,8 +1046,19 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.refuseCall(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable, BundleRefusal(err))
 		return
 	}
-	cands, notAdmitted, err := s.candidates(ctx, id, canonical, b)
+	cands, notAdmitted, err := s.candidates(ctx, id, canonical, shared, b)
 	if err != nil {
+		// Two refusals share this branch and they are not the same answer. A
+		// state the caller cannot fix — the admissions or the crafts could not
+		// be read — is this service's own sentence. A narrowing the crafts
+		// leave empty is the operator's configuration, and it carries its own
+		// sentence, built from the published node: the pool, the access and the
+		// switch or the path that would let it serve.
+		var refusal *poolRefusal
+		if errors.As(err, &refusal) {
+			s.refuseCall(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable, refusal.message)
+			return
+		}
 		s.refuseCall(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable, "the repository's admissions could not be read")
 		return
 	}

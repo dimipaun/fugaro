@@ -127,8 +127,8 @@ test('the module is exactly these files, at every depth', () => {
   // A new file here is a new thing the app can import, so it is a deliberate
   // edit to this list. That is what makes "the machine and the events, and
   // nothing else" checkable rather than a claim in a header: the session
-  // controller arrives in VS1.1 as `session.js` plus `session.test.js`, and
-  // this fails until that is written down -- at any depth, which is why the
+  // controller arrived in VS1.1 as `session.js` plus `session.test.js`, and
+  // this failed until that was written down -- at any depth, which is why the
   // walk is recursive.
   assert.deepEqual(FILES, [
     'events.js',
@@ -137,6 +137,8 @@ test('the module is exactly these files, at every depth', () => {
     'index.test.js',
     'machine.js',
     'machine.test.js',
+    'session.js',
+    'session.test.js',
   ]);
 });
 
@@ -308,7 +310,7 @@ function scanned(dir = DIR) {
 
 test('the scan reads the module, and not an empty list', () => {
   const files = production();
-  assert.deepEqual(files.map(([file]) => file), ['events.js', 'index.js', 'machine.js']);
+  assert.deepEqual(files.map(([file]) => file), ['events.js', 'index.js', 'machine.js', 'session.js']);
   for (const [file, text] of files) {
     assert.ok(text.includes('export'), `${file} is real code, not a comment`);
   }
@@ -320,6 +322,8 @@ test('the scan reads the module, and not an empty list', () => {
     'index.js',
     'machine.js',
     'machine.test.js',
+    'session.js',
+    'session.test.js',
   ]);
 });
 

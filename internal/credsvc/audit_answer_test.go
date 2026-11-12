@@ -420,7 +420,7 @@ func TestTheRefusalOfAnUnauditedIssuanceIsAudited(t *testing.T) {
 		"repository": s.slug,
 		"job":        s.job,
 		"caller":     testJobSA,
-		"credential": testAccount,
+		"credential": "default",
 		"tier":       TierA,
 		"purpose":    PurposeForward,
 		"status":     ErrorStateUnavailable,
@@ -717,10 +717,12 @@ func TestEveryRefusalBeforeACredentialAnswersIsAudited(t *testing.T) {
 			},
 			status: StatusUnavailable, errorType: ErrorStateUnavailable,
 			message: markRefusal,
-			// The candidate the fixture's selection answers with — the account
-			// the fixture's child node admits, whose token is a tier-A one — and
-			// the credential this call spent before its mark could be written.
-			credential: testAccount, tier: TierA, upstream: 1,
+			// The candidate the fixture's selection answers with — the first of
+			// the tier-A accounts the fixture's child node admits, which the
+			// round robin takes in the offered order (the bundle's document
+			// order, internal/creds' tie-break) — and the credential this call
+			// spent before its mark could be written.
+			credential: "default", tier: TierA, upstream: 1,
 		},
 	}
 	for _, tc := range cases {

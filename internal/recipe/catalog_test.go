@@ -143,3 +143,61 @@ func TestCatalogTextIsACopy(t *testing.T) {
 		t.Fatalf("second call = %q, want %q", b, want)
 	}
 }
+
+// TestCatalogRecipeRegistered: a registered recipe is a built-in recipe — the
+// name `recipes ls` lists, the text a launch embeds — and it is an addition:
+// the embedded set is untouched, a name the embed already holds is refused,
+// and a second registration of the same name is refused too. The registries
+// this package keeps are process-wide and are restored afterwards, so this
+// test leaves the catalog exactly as the build without a registration has it
+// (TestCatalogIsTheStarterSet pins that, in this same binary).
+func TestCatalogRecipeRegistered(t *testing.T) {
+	steps, recipes := registeredSteps, registered
+	registeredSteps, registered = map[StepKind]string{}, map[string][]byte{}
+	t.Cleanup(func() { registeredSteps, registered = steps, recipes })
+
+	embedded := CatalogNames()
+	const text = "version: 1\nname: judge\nmode: evaluate\nsteps:\n  - judge_fixture: {}\n"
+	if err := RegisterCatalogRecipe("judge", []byte(text)); err == nil {
+		t.Fatal("a catalog recipe whose step kind is not registered was accepted")
+	}
+	if err := RegisterStepKind("judge_fixture", ModeEvaluate); err != nil {
+		t.Fatal(err)
+	}
+	if err := RegisterCatalogRecipe("judge", []byte(text)); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := CatalogText("judge")
+	if !ok || string(got) != text {
+		t.Fatalf("CatalogText(judge) = %q, %v", got, ok)
+	}
+	if !slices.Contains(CatalogNames(), "judge") {
+		t.Errorf("catalog = %v, want the registered recipe in it", CatalogNames())
+	}
+	want := append(slices.Clone(embedded), "judge")
+	slices.Sort(want)
+	if !slices.Equal(CatalogNames(), want) {
+		t.Errorf("catalog = %v, want the embedded set plus judge", CatalogNames())
+	}
+	// The registration is an addition, never a takeover.
+	if err := RegisterCatalogRecipe("judge", []byte(text)); err == nil {
+		t.Error("the same name was registered twice")
+	}
+	if err := RegisterCatalogRecipe("default", []byte(text)); err == nil {
+		t.Error("a recipe the embedded catalog holds was replaced")
+	}
+	if err := RegisterCatalogRecipe("judge", nil); err == nil {
+		t.Error("an empty registration was accepted")
+	}
+	// And the text is judged by this package's own parser: a recipe the build
+	// would refuse is refused here rather than listed by `recipes ls` and
+	// refused by every launch of it.
+	for _, bad := range []string{
+		"version: 1\nname: judge\nmode: evaluate\nsteps:\n  - judge_fixture: { bounce: first_line }\n",
+		"version: 1\nname: judge\nmode: evaluate\nsteps:\n  - ab_judge: {}\n",
+	} {
+		if err := RegisterCatalogRecipe("other", []byte(bad)); err == nil {
+			t.Errorf("a recipe this build refuses was registered: %s", bad)
+		}
+	}
+}
