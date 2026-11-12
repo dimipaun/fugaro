@@ -562,6 +562,12 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	// this backend, and Task 10 is what turns these into the enable's gate.
 	o.Checks = append(o.Checks, doctorBatchChecks(ctx, lc, crmSvc)...)
 	o.Checks = append(o.Checks, doctorPolicyChecks(ctx, lc, doctorRoutingLayerOf(ctx, rf))...)
+	// The pools the published policy serves (DS3.1, MC1): a legacy-open one is
+	// served to whoever asks and D1942 asks doctor to name it. It reads the
+	// published node for itself — the policy checks above read it through
+	// projectpolicy.Read and answer their own questions from it — and it is not
+	// gated on the credentials service — pools predate it.
+	o.Checks = append(o.Checks, doctorLegacyOpenPoolChecks(ctx, lc)...)
 
 	if lc.Budget != nil && lc.Budget.FirebaseProject != "" {
 		iamSvc, err := iam.NewService(ctx, doctorAPIOpts(lc, lc.Endpoints.IAM)...)

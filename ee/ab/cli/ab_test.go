@@ -145,6 +145,90 @@ func TestABCommandReadsTheWindow(t *testing.T) {
 	}
 }
 
+// TestABCommandReadsTheJudgesVerdicts is where A5.4 meets the bucket: the
+// command reads the verdicts from where the judge runs wrote them — each under
+// its own prefix, keyed by pair ID (D559) — and hands them to the report, so a
+// Critical pair counts only once a judge has decided it and the row names the
+// family of the model that did (D553, D561).
+func TestABCommandReadsTheJudgesVerdicts(t *testing.T) {
+	t.Run("a Critical pair counts once a judge run has decided it", func(t *testing.T) {
+		f := newABFixture(t)
+		f.seedPair(t, "pair-one", "20261001-120000-aaaa", "critical", "small", "claude-opus-5", "deepseek/deepseek-v4")
+
+		// No judge run in the window: the pair is in no figure, and the row says
+		// what it is short by rather than reading as a tie.
+		doc := f.jsonAB(t, "--since", "0")
+		row := abRow(t, doc, "critical")
+		if row.Pairs != 0 || row.Unjudged != 1 || row.Ties != 0 {
+			t.Errorf("an unjudged Critical pair reads %d pairs, %d unjudged and %d ties, want 0, 1 and 0", row.Pairs, row.Unjudged, row.Ties)
+		}
+		if len(row.JudgeFamilies) != 0 {
+			t.Errorf("the row names the judge families %v, want none: no judge has read this project's pairs", row.JudgeFamilies)
+		}
+
+		// The judge run's own object: the pair counts, and the family the row
+		// names is the judge's, which is also one of the two arms'.
+		f.seedJudge(t, "20261002-120000-ffff", "claude-sonnet-5",
+			judgeVerdictFixture{PairID: "pair-one", Winner: "challenger", Reason: "clarity"})
+		doc = f.jsonAB(t, "--since", "0")
+		row = abRow(t, doc, "critical")
+		if row.Pairs != 1 || row.Unjudged != 0 {
+			t.Errorf("the judged pair reads %d pairs and %d unjudged, want 1 and 0: a judge has decided it", row.Pairs, row.Unjudged)
+		}
+		if len(row.JudgeFamilies) != 1 || row.JudgeFamilies[0] != "anthropic" || !row.JudgeSameFamily {
+			t.Errorf("the row names the judge families %v and the same-family flag %v, want [anthropic] and true: the judge ran on a Claude model, as the champion did", row.JudgeFamilies, row.JudgeSameFamily)
+		}
+	})
+
+	t.Run("a judgement stands over a skip whichever run the listing reads first", func(t *testing.T) {
+		// A5.2 hands a pair whose judge call failed to the next run
+		// (skipCallFailed), so two objects can name one pair. The rule that the
+		// judgement stands is the same whichever of the two the listing reads
+		// first, in both directions: a figure that turned on the order would not
+		// be the same records, same report (D563).
+		for _, tc := range []struct{ name, skipped, judged string }{
+			{"the skip is the newer run", "20261003-120000-ffff", "20261002-120000-eeee"},
+			{"the judgement is the newer run", "20261002-120000-eeee", "20261003-120000-ffff"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				f := newABFixture(t)
+				f.seedPair(t, "pair-one", "20261001-120000-aaaa", "critical", "small", "model-alpha", "model-beta")
+				f.seedJudge(t, tc.skipped, "deepseek/deepseek-v4",
+					judgeVerdictFixture{PairID: "pair-one", Skipped: "call-failed"})
+				f.seedJudge(t, tc.judged, "claude-sonnet-5",
+					judgeVerdictFixture{PairID: "pair-one", Winner: "tie", Reason: "equivalent"})
+
+				row := abRow(t, f.jsonAB(t, "--since", "0"), "critical")
+				if row.Pairs != 1 || row.Unjudged != 0 {
+					t.Errorf("the pair reads %d pairs and %d unjudged, want 1 and 0: the run that judged it decides it, whichever order the two runs are read in", row.Pairs, row.Unjudged)
+				}
+				if len(row.JudgeFamilies) != 1 || row.JudgeFamilies[0] != "anthropic" {
+					t.Errorf("the row names the judge families %v, want [anthropic]: the run that judged the pair is its judge, and the one that skipped it is no judge of it", row.JudgeFamilies)
+				}
+			})
+		}
+	})
+
+	t.Run("an object this read cannot open is counted and said", func(t *testing.T) {
+		// A judge run whose object is there and unreadable costs the figures it
+		// would have decided, and never the whole table: the pairs read as
+		// unjudged and the warning names how many judge runs are short.
+		f := newABFixture(t)
+		f.seedPair(t, "pair-one", "20261001-120000-aaaa", "critical", "small", "model-alpha", "model-beta")
+		f.seedJudgeRun(t, "20261002-120000-ffff", []byte(`{"version": 1, "judge_model": `))
+
+		doc := f.jsonAB(t, "--since", "0")
+		note := abWarning(t, doc, "verdicts object this read could not open")
+		if !strings.Contains(note, "1 of the window's judge runs") {
+			t.Errorf("the unreadable-object warning reads %q, want it to count the one judge run", note)
+		}
+		row := abRow(t, doc, "critical")
+		if row.Pairs != 0 || row.Unjudged != 1 {
+			t.Errorf("the pair reads %d pairs and %d unjudged, want 0 and 1: the pairs a judge run's object would have decided count as unjudged", row.Pairs, row.Unjudged)
+		}
+	})
+}
+
 // TestABCommandSaysWhatItCouldNotRead: a record the bucket holds and this read
 // cannot use takes its pair out of every figure, and a window wider than the
 // read's cap is read to the cap. Both are said rather than left for a reader to

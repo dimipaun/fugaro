@@ -13,7 +13,9 @@ import (
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -327,6 +329,27 @@ func TestAllowedModelsAllInListRuns(t *testing.T) {
 	setRef(t, h, task.Spec{Ref: "feature"})
 	if rec, err := h.run(t, implement("feature"), review("ship", 0)); err != nil || rec.Status != runstore.StatusSucceeded {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+}
+
+// TestNoVisionModelLeavesTheRunUnchanged (V7, V1): the vision slot is what
+// moves a stage, so a run that names none is the run the resolution does not
+// touch — the coder's stage runs the model the configuration pinned, its calls
+// are admitted on that pin, and the report names it. The rewrite is about the
+// runs whose stages read the pictures their tasks are about, and every other
+// run's resolved configuration is exactly what it was.
+func TestNoVisionModelLeavesTheRunUnchanged(t *testing.T) {
+	g := providerRun(t, providerPinned(t), "enforce", "50",
+		[]anthropicfake.Reply{anthropicfake.Compat{}.MessageOK(deepseek, pricing.Usage{Output: 100})}, "acme/app")
+	var status int
+	var body string
+	rec, err := g.run(t, callDeepseek(&status, &body, implement("feature")), review("ship", 0))
+	if err != nil || rec.Status != runstore.StatusSucceeded || status != 200 {
+		t.Fatalf("a run that names no model for images was changed by the slot: the coder's call was answered %d %s; rec = %+v, err = %v",
+			status, body, rec, err)
+	}
+	if len(rec.Stages) == 0 || rec.Stages[0].Model != deepseek {
+		t.Fatalf("stages = %+v, want the coder's stage on its own model %s", rec.Stages, deepseek)
 	}
 }
 

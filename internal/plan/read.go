@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path"
+	"path/filepath"
 	"slices"
 	"strings"
 	"unicode"
@@ -46,6 +47,40 @@ func ArtifactPath(planPath string) string {
 		ext = planPath[i:]
 	}
 	return strings.TrimSuffix(planPath, ext) + ArtifactSuffix
+}
+
+// DocsDir is the checkout directory a plan's graph artifact sits under. It is
+// spelled here because IDFromPath is the one rule that reads it, and every
+// reader of an artifact derives a plan's id from where it found the file.
+const DocsDir = "docs"
+
+// IDFromPath is a plan's id for a graph artifact under docs/ (GV1.6's rule i):
+// the id a launch writes before the slash in --plan-task, and the name the
+// coordinator's record keys a published plan by.
+//
+// For an artifact directly under docs/ it is the file's stem, for
+// docs/plans/<stem>.graph.json it is "plans/<stem>" — the plan documents in
+// docs/plans/ are named by their date and title rather than by a directory — and
+// for anything deeper it is the directory's path under docs/.
+//
+// The id is where the artifact sits, so moving a plan renames it, which is the
+// trade rule (i) makes: a path is something every reader can compute the same
+// way, and nothing has to be registered anywhere for a plan to have a name.
+// That is also why the rule lives here rather than in one reader: an id two
+// commands derived differently would be two plans for one graph, and the record
+// would hold both.
+func IDFromPath(p string) string {
+	rel := strings.TrimPrefix(filepath.ToSlash(p), DocsDir+"/")
+	stem := strings.TrimSuffix(rel, ArtifactSuffix)
+	dir, file := filepath.Split(stem)
+	dir = strings.TrimSuffix(filepath.ToSlash(dir), "/")
+	switch dir {
+	case "", ".":
+		return file
+	case "plans":
+		return "plans/" + file
+	}
+	return dir
 }
 
 // MaxArtifactBytes is the largest graph artifact this build reads. The file is
