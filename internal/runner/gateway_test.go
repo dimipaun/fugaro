@@ -1330,8 +1330,10 @@ func TestACoderWithoutAnImageRateRunsTheVisionModel(t *testing.T) {
 // agent.models.vision travels into the stage the gateway is told about, so the
 // image refusal a stage meets names the model the owner configured — priced as
 // any model is, and with no image rate of its own — rather than the key to set.
-// The call is still refused and the run still dies: what the slot changes here
-// is the sentence, and V7 is what makes a stage run the vision model at all.
+// V7 is what puts that stage on the vision model, so the call this test makes
+// is the coder's own: an image sent to the model the stage runs, refused
+// because the model the owner named for images has no image rate either, and
+// the sentence says which ID to price.
 //
 // Mutation (drop Vision from stageSpec): the refusal names the key instead of
 // the model and this test is red.
@@ -1343,7 +1345,7 @@ func TestGatewayStageSpecCarriesTheVisionModel(t *testing.T) {
 	g.setTask(t, "Refactor the palette handling in the theme layer")
 	var refusal string
 	reads := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
-		status, body := postImage(t, req, deepseek)
+		status, body := postImage(t, req, vision)
 		refusal = body
 		if status != 400 {
 			t.Errorf("the image call is answered %d, want 400: %s", status, body)
