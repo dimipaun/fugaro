@@ -41,14 +41,17 @@ import {
   MOVE_UNDO_LABEL,
   MoveFlow,
   inverseOf,
+  moveAnswerOf,
   moveFields,
   moveSheet,
   type MovePort,
   type MoveRead,
   type MoveRequest,
   type MoveSheet,
+  type MoveTarget,
 } from '../../src/renderer/graph/move'
-import { MAX_TEXT_LENGTH } from '../../src/shared/sanitize'
+import { UNAVAILABLE_MARK } from '../../src/shared/availability'
+import { MAX_TEXT_LENGTH, sanitizeText } from '../../src/shared/sanitize'
 import { GRAPH_DOCUMENT_VERSION } from '../../src/shared/schema'
 import type { RoadmapMoveAnswer } from '../../src/source/source'
 import { CliSource } from '../../src/source/cli'
@@ -198,12 +201,19 @@ function answer(over: Partial<RoadmapMoveAnswer> = {}): RoadmapMoveAnswer {
 }
 
 /** drawn is one sheet drawn into a document of its own, as the tree a case reads
- * its text and its hooks off. */
-function drawn(sheet: MoveSheet): FakeNode {
+ * its text and its hooks off -- with the targets the screen's own button hands
+ * it, for the sheet a keyboard opens. */
+function drawn(sheet: MoveSheet, targets: readonly MoveTarget[] = []): FakeNode {
   const document = new FakeDocument()
-  const node = (moveSheet(new Surface(document), sheet) as NodeSurface).node
+  const node = (moveSheet(new Surface(document), sheet, targets) as NodeSurface).node
   document.body.appendChild(node)
   return node
+}
+
+/** aTarget is one release box as the screen hands it to the sheet: the record's
+ * key, and the box's name through the class everything drawn goes through. */
+function aTarget(key: string, name: unknown): MoveTarget {
+  return { key, name: sanitizeText(name, 'label', 'a release name') }
 }
 
 /** ofClass is every element under a node carrying one class, in document
@@ -421,5 +431,77 @@ describe('undo is the inverse move', () => {
     expect(stub.reports().at(-1)?.argv).toEqual(wordsOf(BOX, OTHER))
     expect(MOVE_UNDO_LABEL).not.toBe(MOVE_CONFIRM_LABEL)
     expect(MOVE_CANCEL_LABEL).not.toBe(MOVE_CONFIRM_LABEL)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The answer the bridge hands over, and the sheet a keyboard opens
+// ---------------------------------------------------------------------------
+
+describe('the answer is read closed, because a confirmation promises what it spawns', () => {
+  it('reads §6.24’s answer whole, the two sides included', () => {
+    const read = moveAnswerOf({
+      ...answer(),
+      outcome: { status: 'applied', request: 'req-1', reason: null, current: null },
+    })
+    expect(read?.task).toEqual({ key: NODE, id: TASK, title: TITLE })
+    expect(read?.from).toEqual({ key: BOX, name: '0.12.0' })
+    expect(read?.to).toEqual({ key: OTHER, name: '0.13.0' })
+    expect(read?.outcome?.status).toBe('applied')
+    expect(read?.argv).toEqual(answer().argv)
+    // A task the record holds in no box is the contract's `null` and not a
+    // missing member: the sheet names it in the console's own words.
+    expect(moveAnswerOf({ ...answer(), from: null })?.from).toBeNull()
+  })
+
+  it('refuses the whole answer for a status this build does not hold', () => {
+    // `MOVE_STATUSES` is the **whole** vocabulary: a newer CLI's status is a word
+    // whose meaning this build cannot read, and a sheet that drew the rest of the
+    // answer would draw a command line beside a status it guessed. The whole
+    // answer is refused rather than the one member, which is what the sheet's
+    // "could not read" sentence is for (`MOVE_UNREADABLE_WORD`).
+    const newer = {
+      ...answer(),
+      outcome: { status: 'queued-elsewhere', request: 'req-1', reason: null, current: null },
+    }
+    expect(moveAnswerOf(newer)).toBeNull()
+    // A member of the wrong type is not a member either -- the argv is the array
+    // the answer carried or nothing, so no word of a command line is rebuilt here.
+    expect(moveAnswerOf({ ...answer(), argv: ['coordinator', 7] })).toBeNull()
+    expect(moveAnswerOf({ ...answer(), sentence: 7 })).toBeNull()
+    expect(moveAnswerOf('a sentence where an answer goes')).toBeNull()
+    expect(moveAnswerOf(null)).toBeNull()
+  })
+})
+
+describe('the sheet a row’s own button opens', () => {
+  it('offers one option per target and the unassign, and no confirming button', () => {
+    const root = drawn({ request: null, answer: null, sentence: null }, [
+      aTarget(BOX, '0.12.0'),
+      aTarget(OTHER, '0.13.0'),
+    ])
+    const select = ofClass(root, 'graph-move-target')
+    expect(select).toHaveLength(1)
+    const options = everyNode(select[0] as FakeNode).filter((each) => each.tagName === 'OPTION')
+    // The values are the record’s keys and the empty string for the unassign:
+    // what leaves the renderer is an id, and the unassign declares no box at all.
+    expect(options.map((each) => each.getAttribute('value'))).toEqual([BOX, OTHER, ''])
+    // The last option is the unassign, in the console’s own words.
+    expect(options.at(-1)?.textContent).toBe(MOVE_UNASSIGNED_WORD)
+    // **Nothing is confirmed before a request exists**: the choosing sheet is a
+    // list, the way to close it and no more. The confirming button is drawn on a
+    // preview and never here, so a click on this sheet cannot become a write.
+    expect(ofClass(root, 'graph-move-confirm')).toHaveLength(0)
+    expect(ofClass(root, 'graph-move-undo')).toHaveLength(0)
+    expect(ofClass(root, 'graph-move-cancel')).toHaveLength(1)
+  })
+
+  it('offers no empty option for a target the console cannot name', () => {
+    const root = drawn({ request: null, answer: null, sentence: null }, [aTarget(BOX, 7)])
+    const option = everyNode(root).find((each) => each.tagName === 'OPTION')
+    expect(option?.getAttribute('value')).toBe(BOX)
+    // A name the sanitizer refused is drawn as the shared unavailable mark rather
+    // than as an empty label, so the row a person picks is never blank.
+    expect(option?.textContent).toBe(UNAVAILABLE_MARK)
   })
 })
