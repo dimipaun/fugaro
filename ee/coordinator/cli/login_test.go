@@ -5,10 +5,10 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
