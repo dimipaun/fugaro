@@ -203,6 +203,27 @@ func TestAccessSettingsRepoAdminChangesRepoSettingWithinGuardrail(t *testing.T) 
 	if readFileString(t, other) != otherBefore {
 		t.Error("the refused write changed the repository that was not the caller's")
 	}
+
+	// A repository-level write is judged in the repository it lands in, and a
+	// checkout whose origin names none is one this command cannot judge: it is
+	// refused rather than guessed at, and the file it would have edited is
+	// untouched. (An installation with no roles never gets as far as reading the
+	// origin: TestAccessSettingsInstallationWithoutRolesIsUnchanged.)
+	anon := settingsWriteCheckout(t, settingsRepoYAML(""))
+	anonBefore := readFileString(t, anon)
+	_, _, err = execute(t, "settings", "set", "git.base_branch", "develop", "--layer", "repo", "--yes")
+	if err == nil {
+		t.Fatal("a repository-level write landed in a checkout whose repository cannot be told")
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("exit %d, want %d (a user error: nothing was attempted)", ExitCode(err), ExitUserError)
+	}
+	if !strings.Contains(err.Error(), "cannot be told from its origin") || !strings.Contains(err.Error(), "--repo owner/name") {
+		t.Errorf("the refusal does not say what is missing or what to pass: %v", err)
+	}
+	if readFileString(t, anon) != anonBefore {
+		t.Error("the refused write changed the anonymous checkout's file")
+	}
 }
 
 // TestAccessSettingsProjectAdminMakesBothWrites: the project-scope admin is

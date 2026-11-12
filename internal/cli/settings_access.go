@@ -45,14 +45,47 @@ import (
 // than oversights, and the second one is pinned by
 // TestAccessSettingsUnplacedCallerIsTheImplicitAdmin.
 //
-// repo is the canonical repository a repository-level write is about, and it is
-// ignored by a project-level one (Allowed reads the project scope instead).
 // what names the write for the refusal.
-func settingsAccessGate(ctx context.Context, lc *localcfg.Config, action accesslib.Action, repo, what string) error {
+func settingsAccessGate(ctx context.Context, lc *localcfg.Config, what string) error {
 	in, roles, err := settingsAccessInput(ctx, lc)
 	if err != nil || !roles {
 		return err
 	}
+	return settingsAccessJudge(ctx, in, accesslib.ActionManageProject, what, settingsAccessNoRepo)
+}
+
+// settingsAccessWrite is settingsAccessGate for `settings set` and
+// `settings unset`: the layer the write lands in is what makes it a
+// project-level or a repository-level surface, and a repository-level one
+// resolves the canonical repository the write is judged in.
+//
+// It is asked where the write would be made and never before: a key that
+// already reads what was asked for, or one that is not set at all, is no write
+// and needs no role (both commands return before this call).
+func settingsAccessWrite(ctx context.Context, lc *localcfg.Config, o settingsWriteOptions, target settingsTarget, what string) error {
+	if target.layer != settingsLayerRepo {
+		return settingsAccessGate(ctx, lc, what)
+	}
+	in, roles, err := settingsAccessInput(ctx, lc)
+	if err != nil || !roles {
+		return err
+	}
+	return settingsAccessJudge(ctx, in, accesslib.ActionManageRepo, what, func() (string, error) {
+		return settingsAccessRepo(ctx, lc, o)
+	})
+}
+
+// settingsAccessNoRepo is repoOf for a write judged at the project's scope: no
+// repository enters that question.
+func settingsAccessNoRepo() (string, error) { return "", nil }
+
+// settingsAccessJudge is the judgement itself: who is calling, whether the
+// roles this installation has place them at all, and whether they may make the
+// write. repoOf is asked for the repository the write is about only once the
+// caller is placed and only where the action reads one, so neither a checkout
+// whose repository cannot be told nor a repository the caller never named is
+// resolved for a write no role of theirs decides.
+func settingsAccessJudge(ctx context.Context, in accesslib.Input, action accesslib.Action, what string, repoOf func() (string, error)) error {
 	caller, err := userCallerLookup(ctx)
 	if err != nil {
 		return userErr("this command decides what you may change from the credential it is using, and it could not read who that credential belongs to: %v. The caller is the credential and never the local config's `user:` key or git config user.email (finding F21): sign in with gcloud auth application-default login and run this again", err)
@@ -60,29 +93,16 @@ func settingsAccessGate(ctx context.Context, lc *localcfg.Config, action accessl
 	if !settingsAccessPlaces(in, caller) {
 		return nil
 	}
+	repo := ""
+	if action == accesslib.ActionManageRepo {
+		if repo, err = repoOf(); err != nil {
+			return err
+		}
+	}
 	if accesslib.Allowed(in, caller, action, repo) {
 		return nil
 	}
 	return settingsAccessRefused(action, repo, what, userHeldText(userGrantsOf(in.Grants, caller)))
-}
-
-// settingsAccessWrite is settingsAccessGate for `settings set` and
-// `settings unset`: the layer the write lands in is what makes it a
-// project-level or a repository-level surface, and a repository-level one
-// resolves the canonical repository the write is judged in first.
-//
-// It is asked where the write would be made and never before: a key that
-// already reads what was asked for, or one that is not set at all, is no write
-// and needs no role (both commands return before this call).
-func settingsAccessWrite(ctx context.Context, lc *localcfg.Config, o settingsWriteOptions, target settingsTarget, what string) error {
-	if target.layer != settingsLayerRepo {
-		return settingsAccessGate(ctx, lc, accesslib.ActionManageProject, "", what)
-	}
-	repo, err := settingsAccessRepo(ctx, lc, o)
-	if err != nil {
-		return err
-	}
-	return settingsAccessGate(ctx, lc, accesslib.ActionManageRepo, repo, what)
 }
 
 // settingsAccessRepo is the canonical repository a `--layer repo` write is

@@ -18,7 +18,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	accesslib "github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/config"
@@ -216,7 +215,7 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 	// write: admin at project scope (F19). It is asked before the rules and
 	// before every read of the node, so a caller whose roles do not hold it
 	// reads the sentence naming the role rather than anything about the node.
-	if err := settingsAccessGate(ctx, lc, accesslib.ActionManageProject, "", "fugaro project policy publish"); err != nil {
+	if err := settingsAccessGate(ctx, lc, "fugaro project policy publish"); err != nil {
 		return err
 	}
 	if err := requirePolicyRules(ctx, db, lc); err != nil {
