@@ -26,14 +26,14 @@ func migrateFixture(t *testing.T, name string) []byte {
 	return raw
 }
 
-// TestMigrateV3ToV4PreservesHandEditedAllowList: the state this migration
-// exists for. A version-3 node is one today's reader refuses, so an
-// installation that published under 0.13.x can only reach 0.14.0's policy by
-// deleting the node and publishing again — which loses every entry the owner
-// edited by hand. The migrator moves the node forward instead, and everything
-// the node carries survives: the hand-edited allow_repos entry, clone_urls,
-// routing, the profiles and the accounts block.
-func TestMigrateV3ToV4PreservesHandEditedAllowList(t *testing.T) {
+// TestMigrateFromTheOldestNodePreservesHandEditedAllowList: the state this
+// migration exists for. A version-3 node is one today's reader refuses, so an
+// installation that published under 0.13.x can only reach this release's policy
+// by deleting the node and publishing again — which loses every entry the owner
+// edited by hand. The migrator walks the node forward instead, one step per
+// version, and everything the node carries survives: the hand-edited allow_repos
+// entry, clone_urls, routing, the profiles and the accounts block.
+func TestMigrateFromTheOldestNodePreservesHandEditedAllowList(t *testing.T) {
 	raw := migrateFixture(t, "policy-v3-hand-edited.json")
 
 	// The premise, asserted here so the fixture cannot drift into a node this
@@ -81,10 +81,11 @@ func TestMigrateV3ToV4PreservesHandEditedAllowList(t *testing.T) {
 		t.Errorf("accounts.ops.allow_repos = %v, want the account the node carries", got)
 	}
 
-	// The report a caller renders as the diff: one step, 3 to 4, naming what it
-	// kept. Nothing here asks the operator for anything more.
-	if len(changes) != 1 {
-		t.Fatalf("changes = %+v, want the one step this node needed", changes)
+	// The report a caller renders as the diff: a step per version in between,
+	// each naming what it kept. Nothing here asks the operator for anything
+	// more — this node has no pool to mark (the craft blocks came later).
+	if len(changes) != Version-3 {
+		t.Fatalf("changes = %+v, want one step per version from 3 to %d", changes, Version)
 	}
 	if changes[0].From != 3 || changes[0].To != 4 {
 		t.Errorf("changes[0] = %+v, want the step from version 3 to version 4", changes[0])
@@ -108,7 +109,7 @@ func TestMigrateV3ToV4PreservesHandEditedAllowList(t *testing.T) {
 	}
 }
 
-// TestMigrateV3ToV4EditsOnlyTheVersionBytes: the step edits the node in place,
+// TestMigrateEditsOnlyTheBytesItWrites: the steps edit the node in place,
 // so the migration is the owner's document with one field written and not a
 // re-encoding of it. Decoding into a map and marshalling it again would sort
 // the keys, compact the whitespace, escape <, > and &, and fold a repeated key
@@ -117,13 +118,13 @@ func TestMigrateV3ToV4PreservesHandEditedAllowList(t *testing.T) {
 // that is not the one it holds. The fixture carries a block this Fugaro does
 // not model, with a value encoding/json would escape, so the property is
 // pinned rather than argued.
-func TestMigrateV3ToV4EditsOnlyTheVersionBytes(t *testing.T) {
+func TestMigrateEditsOnlyTheBytesItWrites(t *testing.T) {
 	raw := migrateFixture(t, "policy-v3-hand-edited.json")
 	migrated, _, err := Migrate(raw)
 	if err != nil {
 		t.Fatalf("Migrate = %v", err)
 	}
-	want := bytes.Replace(raw, []byte(`"version": 3`), []byte(`"version": 4`), 1)
+	want := bytes.Replace(raw, []byte(`"version": 3`), []byte(`"version": 5`), 1)
 	if !bytes.Equal(migrated, want) {
 		t.Errorf("the migrated node is not the node with its version rewritten:\n got %s\nwant %s", migrated, want)
 	}
@@ -145,12 +146,12 @@ func TestMigrateV3ToV4EditsOnlyTheVersionBytes(t *testing.T) {
 	}
 }
 
-// TestMigrateV3ToV4RoundTripsThroughTheStrictReader: what the migrator writes
+// TestMigrateRoundTripsThroughTheStrictReader: what the migrator writes
 // is a node the current reader reads, and it is the same policy the node was —
 // every field but the version is preserved in meaning, which is what comparing
 // the two decoded documents says. The migrated node is also a fixed point:
 // migrating it again is the no-op.
-func TestMigrateV3ToV4RoundTripsThroughTheStrictReader(t *testing.T) {
+func TestMigrateRoundTripsThroughTheStrictReader(t *testing.T) {
 	raw := migrateFixture(t, "policy-v3-hand-edited.json")
 	migrated, _, err := Migrate(raw)
 	if err != nil {
@@ -162,7 +163,7 @@ func TestMigrateV3ToV4RoundTripsThroughTheStrictReader(t *testing.T) {
 	}
 	// The fixture with its version rewritten by hand is what "nothing but the
 	// version changed" means, and the strict reader is the judge of it.
-	hand := bytes.Replace(raw, []byte(`"version": 3`), []byte(`"version": 4`), 1)
+	hand := bytes.Replace(raw, []byte(`"version": 3`), []byte(`"version": 5`), 1)
 	want, found, err := Decode(hand)
 	if err != nil || !found {
 		t.Fatalf("the hand-rewritten fixture does not decode: (%v, %v)", found, err)
@@ -244,7 +245,7 @@ func TestMigrateRefusesAMalformedNodeUntouched(t *testing.T) {
 		{"a version that is not an integer", `{"version": "3"}`, 0},
 		{"a version written twice", `{"version": 3, "version": 3}`, 0},
 		{"a top-level key written twice", `{"version": 3, "allow_repos": [], "allow_repos": ["github/owner/repo-a"]}`, 0},
-		{"a migrated node the reader refuses", `{"version": 3, "allow_repos": ["nope"]}`, 1},
+		{"a migrated node the reader refuses", `{"version": 3, "allow_repos": ["nope"]}`, Version - 3},
 	} {
 		raw := []byte(tc.raw)
 		migrated, changes, err := Migrate(raw)
@@ -271,8 +272,8 @@ func TestMigrateRefusesAMalformedNodeUntouched(t *testing.T) {
 // and not its own.
 func TestMigrateCurrentIsANoOp(t *testing.T) {
 	for _, raw := range [][]byte{
-		[]byte(`{"version":4,"budget":{"mode":"enforce"},"allow_repos":["github/owner/repo-a"]}`),
-		[]byte(`{"version":4,"allow_repos":["nope"]}`),
+		[]byte(`{"version":5,"budget":{"mode":"enforce"},"allow_repos":["github/owner/repo-a"]}`),
+		[]byte(`{"version":5,"allow_repos":["nope"]}`),
 	} {
 		migrated, changes, err := Migrate(raw)
 		if err != nil {
@@ -310,8 +311,11 @@ func TestMigrateReportsTheBitbucketRepublish(t *testing.T) {
 	if !bytes.Equal(migrated, raw) {
 		t.Errorf("Migrate returned %s, want the input untouched", migrated)
 	}
-	if len(changes) != 1 {
-		t.Fatalf("changes = %+v, want the step that was read, with the move that finishes it", changes)
+	if len(changes) != Version-3 {
+		t.Fatalf("changes = %+v, want the steps that were read, the first with the move that finishes it", changes)
+	}
+	if changes[0].From != 3 || changes[0].To != 4 {
+		t.Fatalf("changes[0] = %+v, want the step from version 3 to version 4, which is the one that reports the move", changes[0])
 	}
 	if !strings.Contains(changes[0].Note, "republish to derive the Bitbucket block") {
 		t.Errorf("changes[0].Note = %q, want it to say republish to derive the Bitbucket block", changes[0].Note)
@@ -382,6 +386,200 @@ func TestEveryOlderVersionHasAMigratorOrARefusal(t *testing.T) {
 		}
 		if msg := SkewSentence(ve, ReaderCLI); !strings.Contains(msg, "--delete") {
 			t.Errorf("policy version %d: SkewSentence = %q, want the older-node remedy the operator is told to run", v, msg)
+		}
+	}
+}
+
+// TestShapeFreeFloorIsTheVersionAfterTheRepublishBump: ShapeFreeFloor is how
+// far back a reader may carry a node when it serves that node and cannot write
+// it, and it is deliberately one version above the chain's first step. The step
+// from the floor down is shape-only, and the node it produces is one a version-4
+// reader enforces the Bitbucket token block by — a block only a republish can
+// put there, which TestMigrateReportsTheBitbucketRepublish says in the step's
+// own words. Carrying it in memory would hand a service a policy the operator
+// never published, so the floor is the version that block arrived in
+// (VersionSince[4]), and a change that makes a step need something the node does
+// not hold moves the floor with it.
+func TestShapeFreeFloorIsTheVersionAfterTheRepublishBump(t *testing.T) {
+	if ShapeFreeFloor != 4 {
+		t.Fatalf("ShapeFreeFloor = %d: version 4 is the version the Bitbucket token block arrived in (VersionSince[4]), and the step below it is the one whose node needs a republish", ShapeFreeFloor)
+	}
+	if !Migratable(ShapeFreeFloor - 1) {
+		t.Errorf("Migratable(%d) = false: the chain does carry the version below the floor — a floor that coincided with the chain's first step would be that step's rule and not this one, which is the service's", ShapeFreeFloor-1)
+	}
+	// The floor is the reader's rule and not the chain's, and the two readers on
+	// either side of it are the two functions: the CLI's carries the version
+	// below the floor forward because its own next stage rewrites the node, and
+	// the service's refuses it because nothing it can do puts the block there.
+	below := []byte(`{"version":3,"budget":{"mode":"enforce"},"allow_repos":["github/owner/repo-a"]}`)
+	if carried, found, err := DecodeCarriedForward(below); err != nil || !found || carried.Version != Version {
+		t.Errorf("DecodeCarriedForward(a version-%d node) = (%v, %v, %v), want it carried to version %d: the writer's own reader answers a question about a node its next stage migrates", ShapeFreeFloor-1, carried, found, err, Version)
+	}
+	var ve *VersionError
+	if p, found, err := DecodeCarriedForwardShapeFree(below); !errors.As(err, &ve) || !found {
+		t.Errorf("DecodeCarriedForwardShapeFree(a version-%d node) = (%v, %v, %v), want the refusal Decode gives for a node that is there", ShapeFreeFloor-1, p, found, err)
+	}
+	// The version at the floor is carried like any other, so the refusal is the
+	// floor and not the service refusing everything it did not publish itself.
+	at := []byte(`{"version":4,"budget":{"mode":"enforce"},"allow_repos":["github/owner/repo-a"]}`)
+	if p, found, err := DecodeCarriedForwardShapeFree(at); err != nil || !found || p.Version != Version {
+		t.Errorf("DecodeCarriedForwardShapeFree(a version-%d node) = (%v, %v, %v), want it carried to version %d", ShapeFreeFloor, p, found, err, Version)
+	}
+}
+
+// TestMigratedPoolStaysLegacyOpen: the pools a version-4 node carries are the
+// pools the installation serves from, and D1942 keeps them serving exactly whom
+// they served before the upgrade. A pool that names no owner is one written
+// before owners existed, so the step marks it legacy-open rather than inventing
+// an owner it cannot know — and the marker is a NAME in the node and not the
+// absence of an owner (F37): a pool written now must name one where it is
+// published, so "no owner" and "open to everyone" must not be the same piece of
+// text. The pool that does name an owner keeps it, and its roster, untouched.
+func TestMigratedPoolStaysLegacyOpen(t *testing.T) {
+	raw := migrateFixture(t, "policy-v4-craft-pools.json")
+	migrated, _, err := Migrate(raw)
+	if err != nil {
+		t.Fatalf("Migrate = %v", err)
+	}
+	p, found, err := Decode(migrated)
+	if err != nil || !found || p == nil {
+		t.Fatalf("the migrated node does not decode: (%v, %v, %v)", p, found, err)
+	}
+	pools := map[string]config.Pool{}
+	for _, pool := range p.CraftPools {
+		pools[pool.Name] = pool
+	}
+	open, ok := pools["claude"]
+	if !ok {
+		t.Fatalf("the migrated node lost the claude pool: %+v", p.CraftPools)
+	}
+	if !open.LegacyOpen {
+		t.Errorf("pools.claude = %+v, want the legacy-open marker the migration writes", open)
+	}
+	if open.Owner != "" {
+		t.Errorf("pools.claude.owner = %q, want none: no step may invent an owner from a node that names none", open.Owner)
+	}
+	if !open.Serves("stranger@example.com") {
+		t.Error("the migrated legacy-open pool serves nobody, so an installation's shared token stopped being served by the upgrade")
+	}
+	// Publishable as it stands: the marker is what the published node's rule
+	// reads, so `fugaro update`'s republish of the migrated node goes through
+	// with the pool still in it.
+	if ps := config.ValidatePublishedPools(p.CraftPools, p.CraftCredentials); len(ps) != 0 {
+		t.Errorf("the migrated node's pools are refused where they are published: %+v", ps)
+	}
+
+	owned, ok := pools["bmb"]
+	if !ok {
+		t.Fatalf("the migrated node lost the bmb pool: %+v", p.CraftPools)
+	}
+	if owned.LegacyOpen || owned.Owner != "owner@example.com" || !slices.Equal(owned.AllowedUsers, []string{"teammate@example.com"}) {
+		t.Errorf("pools.bmb = %+v, want the owner and the roster the node wrote, and no marker", owned)
+	}
+	if !owned.Serves("teammate@example.com") || owned.Serves("stranger@example.com") {
+		t.Errorf("pools.bmb serves the wrong people: %+v", owned)
+	}
+
+	// The marker is written, not inferred: a reader of the node — the console,
+	// a hand edit, the next migration — has to be able to tell a pool that
+	// predates owners from one whose owner the operator has yet to name.
+	if !bytes.Contains(migrated, []byte(`"legacy_open": true`)) {
+		t.Errorf("the migrated node does not spell the marker:\n%s", migrated)
+	}
+}
+
+// TestMigrationFromPreviousVersionConverges: an installation at the version
+// before this one converges to this one under `fugaro update` and nothing else
+// (the HARD RULE, G7). Its published node is a version-4 node — that release's
+// document with the older number in it — and the chain carries it forward to a
+// node the current reader reads, keeps the pools it serves and is a fixed point
+// afterwards, so a second update changes nothing.
+func TestMigrationFromPreviousVersionConverges(t *testing.T) {
+	raw := migrateFixture(t, "policy-v4-craft-pools.json")
+
+	// The premise, asserted here so the fixture cannot drift into a node this
+	// test is not about: the previous version's node is one this reader refuses
+	// as a skew.
+	if _, _, err := Decode(raw); err == nil {
+		t.Fatal("the version-4 fixture decodes with the current reader, so it is not a node this migration is for")
+	} else {
+		var ve *VersionError
+		if !errors.As(err, &ve) || ve.Found != 4 {
+			t.Fatalf("Decode(the version-4 fixture) = %v, want a version-4 skew refusal", err)
+		}
+	}
+
+	migrated, changes, err := Migrate(raw)
+	if err != nil {
+		t.Fatalf("Migrate = %v", err)
+	}
+	p, found, err := Decode(migrated)
+	if err != nil || !found || p == nil {
+		t.Fatalf("the migrated node does not decode: (%v, %v, %v)", p, found, err)
+	}
+	if p.Version != Version {
+		t.Errorf("the migrated node is version %d, want %d", p.Version, Version)
+	}
+	if len(p.CraftPools) != 2 || len(p.CraftCredentials) != 1 || p.Crafts == nil || p.Crafts.Coder.Access != "claude" {
+		t.Errorf("the migrated node's craft blocks = %+v / %+v / %+v, want the pools, the credentials and the access the node carried", p.CraftPools, p.CraftCredentials, p.Crafts)
+	}
+	if !slices.Equal(p.AllowRepos, []string{"github/owner/repo-a"}) || p.Budget.PerRunUSD != 5 {
+		t.Errorf("the migrated node's policy = %+v, want the policy the node carried", p)
+	}
+	// One step per version in between, each naming what it did: this is the
+	// diff `fugaro update` prints.
+	if len(changes) != Version-4 || changes[0].From != 4 || changes[0].To != 5 {
+		t.Fatalf("changes = %+v, want the steps from version 4 to %d", changes, Version)
+	}
+
+	// A fixed point: the next update has nothing to do to this node, which is
+	// what "an installation at the previous version converges" has to mean.
+	again, nochanges, err := Migrate(migrated)
+	if err != nil {
+		t.Fatalf("Migrate(the migrated node) = %v", err)
+	}
+	if len(nochanges) != 0 || !bytes.Equal(again, migrated) {
+		t.Errorf("the second migration reported %+v over %d bytes, want the node back byte for byte", nochanges, len(migrated))
+	}
+}
+
+// TestMigrateWritesTheMarkerOnlyWhereItIsMissing: the step's edit is confined
+// to the pools that need it. An entry that names an owner is the operator's own
+// answer and is left as it was written, and one that already carries the marker
+// — a node a person edited by hand, since no version-4 release writes the
+// member — is not written a second time: the step reports the pools it marked,
+// and a node whose every pool is one of those two comes back with its version
+// field alone rewritten and craft_pools reported as kept.
+func TestMigrateWritesTheMarkerOnlyWhereItIsMissing(t *testing.T) {
+	raw := []byte(`{"version":4,"craft_pools":[` +
+		`{"name":"owned","members":["vertex"],"owner":"owner@example.com"},` +
+		`{"name":"marked","members":["vertex"],"legacy_open":true}]}`)
+	migrated, changes, err := Migrate(raw)
+	if err != nil {
+		t.Fatalf("Migrate = %v", err)
+	}
+	if len(changes) != 1 || changes[0].Changed != "the version field: 4 to 5" {
+		t.Fatalf("changes = %+v, want the step to report the version field alone: no pool of this node needed a marker", changes)
+	}
+	if !slices.Contains(changes[0].Kept, "craft_pools") {
+		t.Errorf("changes[0].Kept = %v, want craft_pools: the step wrote nothing inside it", changes[0].Kept)
+	}
+	p, found, err := Decode(migrated)
+	if err != nil || !found {
+		t.Fatalf("the migrated node does not decode: (%v, %v)", found, err)
+	}
+	for _, pool := range p.CraftPools {
+		switch pool.Name {
+		case "owned":
+			if pool.LegacyOpen {
+				t.Errorf("pools.owned = %+v, want the owner the node named and no marker", pool)
+			}
+		case "marked":
+			if !pool.LegacyOpen {
+				t.Errorf("pools.marked = %+v, want the marker the node already carried", pool)
+			}
+		default:
+			t.Errorf("the migrated node gained a pool: %+v", p.CraftPools)
 		}
 	}
 }

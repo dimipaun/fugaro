@@ -142,7 +142,7 @@ func TestRunLauncherRunsThePolicyGate(t *testing.T) {
 	ctx := context.Background()
 	// A policy that admits a different repository: what refuses below is the
 	// allow-list and not the budget, which the fixture leaves enforcing.
-	publishPolicy(t, f.launchBudgetFixture, `{"version":4,"allow_repos":["github/acme/other"]}`)
+	publishPolicy(t, f.launchBudgetFixture, `{"version":5,"allow_repos":["github/acme/other"]}`)
 	l := f.launcher(t)
 	spec := orchestrator.Spec{ItemID: "wi-1", Title: "land the daemon", Repo: "acme/app", Recipe: "standard", Brief: "This is the launch the policy refuses."}
 	const runID = "20261109-101500-abcd"
@@ -469,7 +469,7 @@ func TestRunLauncherPassesTheCommandsLaunchGates(t *testing.T) {
 			// default mode is pro (Fugaro's own default) is refused on an
 			// image older than the release that reads levels.
 			prepare: func(t *testing.T, f *launcherFixture) {
-				publishPolicy(t, f.launchBudgetFixture, `{"version":4,"allow_repos":["github/acme/*"],"review_floor":{"pro":["l2"]}}`)
+				publishPolicy(t, f.launchBudgetFixture, `{"version":5,"allow_repos":["github/acme/*"],"review_floor":{"pro":["l2"]}}`)
 				writeBuildRecord(t, f.cloudFixture, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+shiftRelease(t, reviewLevelsSince, -1))
 			},
 			want: []string{"the owner's review-level floor", "fugaro " + reviewLevelsSince},

@@ -12,14 +12,14 @@ import (
 // differ in the remedy, so the constants must stay in step.
 func TestSkewMessagesShareTheSentence(t *testing.T) {
 	for name, msg := range map[string]string{
-		"RunnerSkew": RunnerSkew, "RunnerSkewNewer": RunnerSkewNewer,
-		"CLISkew": CLISkew, "CLISkewNewer": CLISkewNewer,
+		"RunnerSkew": RunnerSkew, "RunnerSkewCarried": RunnerSkewCarried, "RunnerSkewNewer": RunnerSkewNewer,
+		"CLISkew": CLISkew, "CLISkewCarried": CLISkewCarried, "CLISkewNewer": CLISkewNewer,
 	} {
 		if len(msg) <= len(Skew) || msg[:len(Skew)] != Skew {
 			t.Errorf("%s does not start with Skew: %q", name, msg)
 		}
 	}
-	if Version != 4 {
+	if Version != 5 {
 		t.Errorf("Version = %d: a version bump needs the plan's skew handling, this test and the CLI's", Version)
 	}
 }
@@ -77,7 +77,22 @@ func TestTheCLISkewRemediesStayApart(t *testing.T) {
 		t.Errorf("CLISkew = %q: fugaro upgrade never upgrades fugaro itself", CLISkew)
 	}
 	if !strings.Contains(CLISkewNewer, "fugaro project policy publish --delete") || !strings.Contains(CLISkewNewer, "publish it again") {
-		t.Errorf("CLISkewNewer = %q, want the delete-then-publish remedy for the older node", CLISkewNewer)
+		t.Errorf("CLISkewNewer = %q, want the delete-then-publish remedy for the older node no step reaches", CLISkewNewer)
+	}
+	// The other older-node state, and the one an operator meets most: a node
+	// the migration chain carries forward is the update's to rewrite in place,
+	// and sending its reader to the delete would cost what only the node holds
+	// (the members a publish rebuilds from this machine's config rather than
+	// from the node). `fugaro update` — never `--firebase-project`, which
+	// writes no policy node at all.
+	if !strings.Contains(CLISkewCarried, "fugaro update") || !strings.Contains(CLISkewCarried, "rewrites the node in place") || !strings.Contains(CLISkewCarried, "keeping the members it carries") {
+		t.Errorf("CLISkewCarried = %q, want the update's in-place rewrite of a node the chain carries", CLISkewCarried)
+	}
+	if strings.Contains(CLISkewCarried, "--delete") || strings.Contains(CLISkewCarried, "--firebase-project") {
+		t.Errorf("CLISkewCarried = %q: a node the chain carries is migrated, not deleted, and the rules-only update writes no policy node", CLISkewCarried)
+	}
+	if !strings.Contains(RunnerSkewCarried, "cannot do it mid-run") || !strings.Contains(RunnerSkewCarried, "fugaro update") {
+		t.Errorf("RunnerSkewCarried = %q, want the update's in-place rewrite and the runner's own limit", RunnerSkewCarried)
 	}
 	// And not the remedy that cannot be carried out: fugaro update
 	// --firebase-project deploys this release's rules template and marker and
@@ -88,13 +103,15 @@ func TestTheCLISkewRemediesStayApart(t *testing.T) {
 	if strings.Contains(CLISkewNewer, "fugaro update --firebase-project") {
 		t.Errorf("CLISkewNewer = %q: fugaro update --firebase-project writes no policy node, so it cannot be the remedy for a node that is behind", CLISkewNewer)
 	}
-	for name, msg := range map[string]string{"CLISkew": CLISkew, "CLISkewNewer": CLISkewNewer} {
+	for name, msg := range map[string]string{"CLISkew": CLISkew, "CLISkewCarried": CLISkewCarried, "CLISkewNewer": CLISkewNewer} {
 		if strings.Contains(msg, "%!") || strings.Count(msg, "%") != 2 {
 			t.Errorf("%s = %q, want exactly the two version placeholders Skew has", name, msg)
 		}
 	}
-	if strings.Contains(CLISkewNewer, "upgrade Fugaro") {
-		t.Errorf("CLISkewNewer = %q: the node is the older side here, so an upgrade is not the remedy", CLISkewNewer)
+	for name, msg := range map[string]string{"CLISkewCarried": CLISkewCarried, "CLISkewNewer": CLISkewNewer} {
+		if strings.Contains(msg, "upgrade Fugaro") {
+			t.Errorf("%s = %q: the node is the older side here, so an upgrade is not the remedy", name, msg)
+		}
 	}
 	if strings.Contains(CLISkew, "init") {
 		t.Errorf("CLISkew = %q: this binary is the older side here, and this release's rules template must not be redeployed over a newer Fugaro's", CLISkew)
@@ -117,16 +134,20 @@ func TestTheCLISkewRemediesStayApart(t *testing.T) {
 // printed one sentence for both directions (the review finding on this change),
 // which told the operator of a node that was merely behind its image to refresh
 // the image — a move that changes nothing, since the node is the side that is
-// old. Four combinations, each pinned against the other three: an older node
-// asks for a policy published again from a release the reader understands
-// (never an upgrade), a newer node asks for the reader to be refreshed (never a
-// delete, which refuses a node written by a newer Fugaro and so is no remedy
-// for one), and the two readers must not borrow each other's remedy, since the
-// CLI is not the image and the image is not the CLI.
+// old. Six combinations, each pinned against the others: a node behind its
+// reader has two states and they take opposite moves — one the migration chain
+// carries forward is rewritten in place by `fugaro update`, and one below the
+// chain's first step is deleted and published again (never an upgrade) — a
+// newer node asks for the reader to be refreshed (never a delete, which refuses
+// a node written by a newer Fugaro and so is no remedy for one), and the two
+// readers must not borrow each other's remedy, since the CLI is not the image
+// and the image is not the CLI.
 func TestSkewSentencePicksByDirectionAndReader(t *testing.T) {
 	olderNode := &VersionError{Found: 0, Understood: Version}
+	carriedNode := &VersionError{Found: Version - 1, Understood: Version}
 	newerNode := &VersionError{Found: Version + 1, Understood: Version}
 	understood, ahead := fmt.Sprintf("version %d", Version), fmt.Sprintf("version %d", Version+1)
+	behind := fmt.Sprintf("version %d", Version-1)
 	for _, tc := range []struct {
 		name    string
 		ve      *VersionError
@@ -135,18 +156,32 @@ func TestSkewSentencePicksByDirectionAndReader(t *testing.T) {
 		notWant []string
 	}{
 		{
-			// The node is behind this binary: nothing is upgraded, and the node
-			// is removed and published again.
-			name: "an older node, the CLI", ve: olderNode, reader: ReaderCLI,
+			// The node is behind this binary and no step reaches it: nothing is
+			// upgraded, and the node is removed and published again.
+			name: "a node no step reaches, the CLI", ve: olderNode, reader: ReaderCLI,
 			want:    []string{"version 0", understood, "fugaro project policy publish --delete", "publish it again"},
-			notWant: []string{"upgrade Fugaro", "fugaro upgrade", "fugaro update --firebase-project", "runner image"},
+			notWant: []string{"upgrade Fugaro", "fugaro upgrade", "fugaro update --firebase-project", "runner image", "rewrites the node in place"},
 		},
 		{
 			// The same node read by an image: the remedy is the operator's and
 			// the run cannot carry it out.
-			name: "an older node, the runner", ve: olderNode, reader: ReaderRunner,
+			name: "a node no step reaches, the runner", ve: olderNode, reader: ReaderRunner,
 			want:    []string{"version 0", understood, "fugaro project policy publish --delete", "publishes one this image understands", "cannot do either mid-run"},
-			notWant: []string{"upgrade Fugaro", "fugaro upgrade", "fugaro update --firebase-project", "refresh the runner image"},
+			notWant: []string{"upgrade Fugaro", "fugaro upgrade", "fugaro update --firebase-project", "refresh the runner image", "rewrites the node in place"},
+		},
+		{
+			// A node the chain carries forward: the update rewrites it in
+			// place, and the delete would cost what only the node holds. This
+			// is the state of every installation between the binary upgrade and
+			// `fugaro update`, and it is the same move doctor names for it.
+			name: "a node the chain carries, the CLI", ve: carriedNode, reader: ReaderCLI,
+			want:    []string{behind, understood, "fugaro update", "rewrites the node in place", "keeping the members it carries"},
+			notWant: []string{"upgrade Fugaro", "fugaro upgrade", "fugaro update --firebase-project", "publish --delete", "runner image"},
+		},
+		{
+			name: "a node the chain carries, the runner", ve: carriedNode, reader: ReaderRunner,
+			want:    []string{behind, understood, "fugaro update", "rewrites the node in place", "cannot do it mid-run"},
+			notWant: []string{"upgrade Fugaro", "fugaro upgrade", "fugaro update --firebase-project", "publish --delete", "refresh the runner image"},
 		},
 		{
 			// The node is ahead of this binary: the upgrade is missing here.

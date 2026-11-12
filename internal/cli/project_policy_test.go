@@ -2891,9 +2891,9 @@ func TestPolicyNodeBytesTreatsANullRoutingMemberAsAbsent(t *testing.T) {
 		pol       *projectpolicy.Policy
 		keep      bool
 	}{
-		{"a null routing member, kept", `{"version": 4, "routing": null}`, quiet, true},
-		{"a null routing member, replaced by the config's switch", `{"version": 4, "routing": null}`, switchOn, false},
-		{"a null claude member, replaced by the config's switch", `{"version": 4, "routing": {"claude": null}}`, switchOn, false},
+		{"a null routing member, kept", `{"version": 5, "routing": null}`, quiet, true},
+		{"a null routing member, replaced by the config's switch", `{"version": 5, "routing": null}`, switchOn, false},
+		{"a null claude member, replaced by the config's switch", `{"version": 5, "routing": {"claude": null}}`, switchOn, false},
 	} {
 		node, err := policyNodeBytes(tc.pol, []byte(tc.old), true, tc.keep, true)
 		if err != nil {
@@ -2937,30 +2937,35 @@ func TestPolicyNodeBytesTreatsANullRoutingMemberAsAbsent(t *testing.T) {
 func TestPolicyNodeBytesRefusesCaseFoldedRoutingMembers(t *testing.T) {
 	pol := &projectpolicy.Policy{Version: projectpolicy.Version}
 	for name, old := range map[string]string{
-		"a case-folded via":    `{"version": 4, "routing": {"claude": {"via": "direct", "VIA": "openrouter"}}}`,
-		"models twice":         `{"version": 4, "routing": {"claude": {"via": "direct", "models": ["claude-sonnet-5-5"], "models": []}}}`,
-		"a case-folded claude": `{"version": 4, "routing": {"CLAUDE": {"via": "direct"}}}`,
+		"a case-folded via":    `{"version": 5, "routing": {"claude": {"via": "direct", "VIA": "openrouter"}}}`,
+		"models twice":         `{"version": 5, "routing": {"claude": {"via": "direct", "models": ["claude-sonnet-5-5"], "models": []}}}`,
+		"a case-folded claude": `{"version": 5, "routing": {"CLAUDE": {"via": "direct"}}}`,
 	} {
 		if _, err := policyNodeBytes(pol, []byte(old), true, true, true); err == nil || !strings.Contains(err.Error(), "routing block") {
 			t.Errorf("%s: policyNodeBytes = %v, want a refusal naming the block", name, err)
 		}
 	}
 	// The other side: a block this Fugaro reads as written is patched as before.
-	if _, err := policyNodeBytes(pol, []byte(`{"version": 4, "routing": {"claude": {"via": "direct"}}}`), true, true, true); err != nil {
+	if _, err := policyNodeBytes(pol, []byte(`{"version": 5, "routing": {"claude": {"via": "direct"}}}`), true, true, true); err != nil {
 		t.Errorf("a well-spelled block: policyNodeBytes = %v, want it written", err)
 	}
 }
 
 // TestProjectPolicyPublishRefusesAnOlderNodeWithAWorkingRemedy: a node this
 // binary cannot read as its own shape — hand-written with no version, or with
-// an older one — is refused rather than replaced, but the refusal must name a
-// remedy that works. "Publish again" is the one it cannot: the publish is what
-// is being refused. Removing the node is the path that does.
+// one below the migration chain's first step — is refused rather than replaced,
+// but the refusal must name a remedy that works. "Publish again" is the one it
+// cannot: the publish is what is being refused. Removing the node is the path
+// that does, for a version no step carries.
+//
+// A version the chain *does* carry takes the other remedy, and the test below
+// this one is that state: there the delete would work but costs what only the
+// node holds, so the publish names the update instead.
 func TestProjectPolicyPublishRefusesAnOlderNodeWithAWorkingRemedy(t *testing.T) {
 	for name, node := range map[string]map[string]any{
-		"no version":    {"budget": map[string]any{"mode": "enforce"}},
-		"version zero":  {"version": 0, "budget": map[string]any{"mode": "enforce"}},
-		"a later shape": {"version": projectpolicy.Version - 1, "budget": map[string]any{"mode": "enforce"}},
+		"no version":                {"budget": map[string]any{"mode": "enforce"}},
+		"version zero":              {"version": 0, "budget": map[string]any{"mode": "enforce"}},
+		"a version no step reaches": {"version": 1, "budget": map[string]any{"mode": "enforce"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newProjectFixture(t, "")
@@ -2986,6 +2991,34 @@ func TestProjectPolicyPublishRefusesAnOlderNodeWithAWorkingRemedy(t *testing.T) 
 				t.Fatalf("publishing after the remedy: %v", err)
 			}
 		})
+	}
+}
+
+// TestProjectPolicyPublishRefusesACarriedNodeWithTheUpdate: the other older
+// state, and the one an operator meets most — a version-4 node is what every
+// installation holds between the binary upgrade and `fugaro update`. The
+// migration chain carries it, so the publish names the update's in-place
+// rewrite rather than the delete: the delete works here, but a publish that
+// follows rebuilds the node from this machine's config and drops the members
+// only the node holds. Doctor's policy-older-than-binary asks the same question
+// of the same node and names the same move.
+func TestProjectPolicyPublishRefusesACarriedNodeWithTheUpdate(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), map[string]any{"version": projectpolicy.Version - 1, "budget": map[string]any{"mode": "enforce"}})
+	_, _, err := execute(t, "project", "policy", "publish")
+	if err == nil {
+		t.Fatal("publishing over an older node was allowed")
+	}
+	for _, want := range []string{"fugaro update", "rewrites the node in place", "keeping the members it carries"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "--delete") {
+		t.Errorf("the refusal names the delete for a node the migration chain carries: %v", err)
+	}
+	if v := f.db.Value(projectpolicy.PathShared()); v == nil {
+		t.Fatal("the node was removed by a refused publish")
 	}
 }
 
@@ -3308,7 +3341,7 @@ func TestProjectPolicyPublishKeepsTheCraftMembers(t *testing.T) {
 	// leaves on the node.
 	node := f.db.Value(projectpolicy.PathShared()).(map[string]any)
 	node["craft_credentials"] = []any{map[string]any{"name": "acme-main", "type": "openrouter"}}
-	node["craft_pools"] = []any{map[string]any{"name": "acme-pool", "strategy": "failover", "members": []any{"acme-main", "vertex"}}}
+	node["craft_pools"] = []any{map[string]any{"name": "acme-pool", "strategy": "failover", "members": []any{"acme-main", "vertex"}, "owner": "owner@example.com"}}
 	node["crafts"] = map[string]any{
 		"coder":           map[string]any{"model": "claude-opus-5-5", "access": "acme-main"},
 		"security-review": map[string]any{"model": "claude-opus-5-5", "access": "acme-pool"},

@@ -120,12 +120,16 @@ the four and leaves the fifth (the console, E2) named.
 The foundation: the canonical shape and the one place it is validated. It is written against the
 node only — nothing reads it yet — so it lands without waiting for anything.
 
-- **Files (6):** `internal/projectpolicy/binaries.go` (new: the `Binaries` carrier, its decode, its
-  validation — the four pattern checks of `rigor.Area.Validate` / `rebuild.paths` **plus the length
+- **Files (6):** `internal/projectpolicy/binaries.go` (the `Binaries` carrier, which AR2 landed; AR0
+  adds the decode and the validation the carrier is read through — the four pattern checks of
+  `rigor.Area.Validate` / `rebuild.paths` **plus the length
   bound** (`MaxAreaPattern`, 200) that `Area.Validate` adds, and the cap's positivity and ceiling),
   `internal/projectpolicy/policy.go` (the member, `knownTopLevelKeys`),
-  `internal/projectpolicy/version.go` (`Version = 5`, `VersionSince[5] = "0.20.0"`), and the three
-  test files `binaries_test.go` (new), `policy_test.go`, `version_test.go`.
+  `internal/projectpolicy/version.go` (`Version = 6`, `VersionSince[6] = "0.20.0"` — **5 is taken**:
+  it landed with the pools' owner and roster, secrets-brokering's DS3.1 in the 0.23.0 release, so
+  this design's bump is 5 → 6), and the three
+  test files `binaries_test.go` (its `Version != 5` tripwire retargeted and then deleted with the
+  test), `policy_test.go`, `version_test.go`.
 - **Red step:** `TestBinariesAllowPatternsAreRefusedAtDecode` fails — `website/public/**.png`,
   `/etc/passwd`, `..`, and an empty entry are all accepted by a decoder that has no such member, and
   the task exists to refuse them where they are written.
@@ -135,7 +139,7 @@ node only — nothing reads it yet — so it lands without waiting for anything.
   where D987 actually distinguishes them), `TestBinariesMaxBytesDefaultsAndLowerOnly`,
   `TestVersionSinceCoversEveryVersion` (already exists;
   it fails until the row lands), and `TestPolicyUnknownKeysStillListsBinariesForAnOlderReader`
-  (the wrong direction: a version-4 reader must list a version-5 node's member, never decode past
+  (the wrong direction: a version-5 reader must list a version-6 node's member, never decode past
   it silently — the bump is what makes the refusal `RunnerSkew` instead, D990).
 - **Bounds:** entries bounded in count and length the way `rigor.MaxAreas` / `MaxAreaPattern` bound
   areas, because the list reaches the run record and the pull request body.
@@ -150,12 +154,12 @@ node only — nothing reads it yet — so it lands without waiting for anything.
   `internal/cli/sharedcfg.go` (`sharedForbidden`, `sharedcfg.go:216`, gains `binaries`),
   `internal/cli/project_cmd.go` (`buildProjectPolicy`, `project_cmd.go:765`, fills the member;
   silence keeps the node's list, a written empty block clears it — `review_floor`'s rule, D987),
-  `internal/projectpolicy/migrate.go` (the version-4 → 5 step: the node keeps its shape and its
+  `internal/projectpolicy/migrate.go` (the version-5 → 6 step: the node keeps its shape and its
   version number moves, the shape-free step `migrateV3ToV4` is the precedent for), and the four test
   files `internal/localcfg/localcfg_test.go`, `internal/cli/project_policy_test.go`,
   `internal/cli/sharedcfg_test.go`, `internal/cli/update_converge_test.go`.
 - **Red step:** `TestInstallationAtThePreviousVersionConvergesBinaries` fails — an installation whose
-  published node is version 4 ends `fugaro update` with a version-5 node carrying its `binaries`
+  published node is version 5 ends `fugaro update` with a version-6 node carrying its `binaries`
   block, and today the publish (both doors) states no `binaries` member, so there is nothing for the
   node to carry.
 - **Tests:** that one, `TestUpdatePolicyStagePublishesTheBinariesBlock` (the `update` door, whose
@@ -174,7 +178,7 @@ node only — nothing reads it yet — so it lands without waiting for anything.
   member has to change that test on purpose.
 - **Hermetic:** a fake Realtime Database, an ETag, `t.TempDir()`. No apply, no deploy, no cloud.
 - **Carries its own `### For operators` note, in its PR body, for the release PR to copy:**
-  "`fugaro update` republishes the project policy as version 5, which carries `binaries` — the paths
+  "`fugaro update` republishes the project policy as version 6, which carries `binaries` — the paths
   a run may add a binary at. Nothing is required of an operator beyond `fugaro update`; the runner
   image is refreshed by the same command, and a project that sets no list keeps refusing every
   uncommitted binary exactly as before." `docs/releases/**` is another stream's file, so the wording
@@ -319,11 +323,11 @@ AR3–AR6 in one slot), and the publish last, in the same release.
 
 ## 5. Operator steps
 
-**One, and it is the existing one: `fugaro update`.** It republishes the project policy as version 5
+**One, and it is the existing one: `fugaro update`.** It republishes the project policy as version 6
 — the node that carries `binaries` — and refreshes the runner image in the same command, in the same
 confirmation, with nothing else to run and nothing to delete. A project that sets no `binaries`
 block is unchanged: the node gains a member it does not use, and the run that leaves a build product
-in the tree is refused exactly as it is today. **The version-4 → 5 convergence is AR1's red step**
+in the tree is refused exactly as it is today. **The version-5 → 6 convergence is AR1's red step**
 (`TestInstallationAtThePreviousVersionConvergesBinaries`), so the HARD RULE's "an installation at
 the previous version converges" is a test this plan owns rather than a hope.
 

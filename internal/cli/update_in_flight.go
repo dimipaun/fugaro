@@ -171,8 +171,18 @@ func (e *initEngine) budgetModeBindsRuns(ctx context.Context, db *rtdb.Client, m
 // A read that failed or a node that is not there is false: with no node there is
 // no switch, and an unreadable one is the silence every other read in this file
 // answers with.
+//
+// It reads through ReadCarriedForward and not Read, and that is the whole of
+// this line's correctness on the upgrade that bumps the policy version: the
+// node every installation holds while this update runs is written in the
+// version behind, so Read would refuse it and answer "no cascade" for the
+// project that has one — and the line would say "no step of it can reach them"
+// about the policy stage, which rewrites the node the credentials service
+// re-reads on every model call of a run in flight. What is asked here is a
+// question about the node rather than a decision by it, which is the difference
+// Read and ReadCarriedForward are two functions for.
 func (e *initEngine) policyReadsLive(ctx context.Context, db *rtdb.Client) bool {
-	p, found, err := projectpolicy.Read(ctx, db)
+	p, found, err := projectpolicy.ReadCarriedForward(ctx, db)
 	if err != nil || !found || p == nil || p.Routing == nil || p.Routing.Claude == nil {
 		return false
 	}

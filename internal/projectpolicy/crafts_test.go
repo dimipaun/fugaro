@@ -2,6 +2,7 @@ package projectpolicy
 
 import (
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -43,10 +44,10 @@ func TestPolicyWithNoCraftsWritesNoMember(t *testing.T) {
 // member for it.
 func TestCraftBlockNormalizesAnEmptyOne(t *testing.T) {
 	for _, raw := range []string{
-		`{"version":4}`,
-		`{"version":4,"crafts":{}}`,
-		`{"version":4,"crafts":null}`,
-		`{"version":4,"crafts":{"coder":{},"review":{}}}`,
+		`{"version":5}`,
+		`{"version":5,"crafts":{}}`,
+		`{"version":5,"crafts":null}`,
+		`{"version":5,"crafts":{"coder":{},"review":{}}}`,
 	} {
 		p, found, err := Decode([]byte(raw))
 		if err != nil || !found || p == nil {
@@ -67,7 +68,7 @@ func TestCraftBlockNormalizesAnEmptyOne(t *testing.T) {
 // and a node that carries a craft keeps it — the model and the access each on
 // their own, since a craft may set one and inherit the other.
 func TestCraftBlockRoundTrips(t *testing.T) {
-	raw := []byte(`{"version":4,"crafts":{"coder":{"model":"claude-opus-5-5","access":"acme-main"},"security-review":{"model":"claude-sonnet-5"}}}`)
+	raw := []byte(`{"version":5,"crafts":{"coder":{"model":"claude-opus-5-5","access":"acme-main"},"security-review":{"model":"claude-sonnet-5"}}}`)
 	p, found, err := Decode(raw)
 	if err != nil || !found || p == nil {
 		t.Fatalf("Decode = (%v, %v, %v), want a policy", p, found, err)
@@ -92,7 +93,7 @@ func TestCraftBlockRoundTrips(t *testing.T) {
 	if err := json.Unmarshal(b, &doc); err != nil {
 		t.Fatal(err)
 	}
-	back, _, err := Decode([]byte(`{"version":4,"crafts":` + string(doc["crafts"]) + `}`))
+	back, _, err := Decode([]byte(`{"version":5,"crafts":` + string(doc["crafts"]) + `}`))
 	if err != nil || back == nil || back.Crafts == nil {
 		t.Fatalf("the member this package wrote does not decode = (%v, %v)", back, err)
 	}
@@ -112,12 +113,12 @@ func TestCraftBlockRoundTrips(t *testing.T) {
 // publish time (project_cmd.go's "publishing would drop them") and a runner of
 // it logs (P8), which is why the publisher keeps them and writes none of them.
 func TestCraftMembersAreUnknownToAReaderThatPredatesThem(t *testing.T) {
-	if Version != 4 {
-		t.Fatalf("the policy Version is %d, and this test's node is written for 4: update both together, deliberately", Version)
+	if Version != 5 {
+		t.Fatalf("the policy Version is %d, and this test's node is written for 5: update both together, deliberately", Version)
 	}
-	raw := []byte(`{"version":4,"budget":{"mode":"observe"},` +
+	raw := []byte(`{"version":5,"budget":{"mode":"observe"},` +
 		`"craft_credentials":[{"name":"acme-main","type":"openrouter"}],` +
-		`"craft_pools":[{"name":"acme-pool","members":["acme-main"]}],` +
+		`"craft_pools":[{"name":"acme-pool","members":["acme-main"],"owner":"owner@example.com"}],` +
 		`"crafts":{"coder":{"model":"claude-opus-5-5","access":"acme-pool"}}}`)
 	p, found, err := Decode(raw)
 	if err != nil || !found || p == nil {
@@ -162,9 +163,67 @@ func TestCraftBlockDecodesStrictly(t *testing.T) {
 		{name: "the default account as an access", block: `{"coder":{"access":"default"}}`, want: "not a credential's name"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			p, _, err := Decode([]byte(`{"version":4,"crafts":` + tc.block + `}`))
+			p, _, err := Decode([]byte(`{"version":5,"crafts":` + tc.block + `}`))
 			if err == nil {
 				t.Fatalf("the block %s was read: %+v", tc.block, p.Crafts)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("the refusal %q does not name %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestAPublishedPoolMustNameItsOwner: the published node is where D1936's owner
+// rule bites, and it is the one document it is a rule of. An installation's own
+// config keeps loading without an owner — a pool written before owners existed
+// still starts a run on the release that bumped the version — so the two
+// validators are not one rule: config.ValidatePools is what a person's own
+// document is held to, and config.ValidatePublishedPools, which this decoder
+// reads a craft_pools block through, adds the one rule only the node has.
+//
+// The marker is the other side of it (D1942): a pool the migration found
+// ownerless comes out carrying legacy_open, and that spelling is what says
+// "this pool predates owners" where a node that names no owner at all is
+// refused whole rather than read as a pool nobody answers for.
+func TestAPublishedPoolMustNameItsOwner(t *testing.T) {
+	const creds = `"craft_credentials":[{"name":"acme-main","type":"openrouter"}],`
+	for _, tc := range []struct {
+		name, pool, want string
+	}{
+		{
+			name: "an ownerless pool",
+			pool: `{"name":"acme-pool","members":["acme-main"]}`,
+			want: "pools.acme-pool: owner is required",
+		},
+		{
+			name: "an ownerless pool that names a roster",
+			pool: `{"name":"acme-pool","members":["acme-main"],"allowed_users":["other@example.com"]}`,
+			want: "pools.acme-pool: owner is required",
+		},
+		{
+			name: "the migration's marker",
+			pool: `{"name":"acme-pool","members":["acme-main"],"legacy_open":true}`,
+		},
+		{
+			name: "an owner",
+			pool: `{"name":"acme-pool","members":["acme-main"],"owner":"owner@example.com"}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := fmt.Sprintf(`{"version":%d,`+creds+`"craft_pools":[%s]}`, Version, tc.pool)
+			p, found, err := Decode([]byte(raw))
+			if tc.want == "" {
+				if err != nil || !found || p == nil {
+					t.Fatalf("Decode = (%v, %v, %v), want the node read", p, found, err)
+				}
+				if len(p.CraftPools) != 1 {
+					t.Errorf("CraftPools = %+v, want the one pool the node writes", p.CraftPools)
+				}
+				return
+			}
+			if err == nil || p != nil {
+				t.Fatalf("a node whose pool is %s was read: %+v", tc.name, p)
 			}
 			if !strings.Contains(err.Error(), tc.want) {
 				t.Errorf("the refusal %q does not name %q", err, tc.want)

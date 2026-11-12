@@ -295,19 +295,22 @@ block is a member `buildProjectPolicy` fills like `review_floor`, so:
 - **The runner and the node move together.** The image refresh is part of the same `fugaro update`
   (behind its own confirmation), so a node that carries `binaries` and an image that reads it arrive
   in one command.
-- **The policy version moves 4 → 5** (§D990 — the recommendation; the owner did not rule on it),
-  `VersionSince` gains its row (`5: "0.20.0"`, the slot of §4 of the plan), and
+- **The policy version moves 5 → 6** (§D990 — the recommendation; the owner did not rule on it). 5 is
+  taken: it landed with the pools' owner and roster (secrets-brokering's DS3.1, the 0.23.0 release),
+  so this design's bump is the one after it and `TestABinariesNodeIsNotReadYet`'s tripwire pins
+  `Version == 5` until it lands.
+  `VersionSince` gains its row (`6: "0.20.0"`, the slot of §4 of the plan), and
   `TestVersionSinceCoversEveryVersion` fails until it does. The convergence test the HARD RULE asks
-  for — an installation at the previous version ends `fugaro update` with a version-5 node published
+  for — an installation at the previous version ends `fugaro update` with a version-6 node published
   — is `TestInstallationAtThePreviousVersionConvergesBinaries`, written with the `…Binaries` suffix
   so it cannot collide with the sibling designs' convergence tests in package `cli`.
-- **The migration is the node's own.** An installation whose published node is version 4 and carries
-  no `binaries` member is not broken by the bump in either direction: a version-5 reader tolerates a
-  node with no `binaries` (the block is optional, absent meaning "admits nothing"), and the version-4
+- **The migration is the node's own.** An installation whose published node is version 5 and carries
+  no `binaries` member is not broken by the bump in either direction: a version-6 reader tolerates a
+  node with no `binaries` (the block is optional, absent meaning "admits nothing"), and the version-5
   node is republished by the same update that refreshes the image. The only operator step is
   `fugaro update`.
 
-**What a version-4 reader makes of a version-5 node, stated plainly.** It refuses the node
+**What a version-5 reader makes of a version-6 node, stated plainly.** It refuses the node
 (`RunnerSkew`) — which is the fail-closed direction and the reason the bump is taken rather than
 tolerated. See §D990 for why, and for the cost of the alternative.
 

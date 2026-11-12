@@ -41,10 +41,10 @@ func TestSubscriptionSpreadRoundTrips(t *testing.T) {
 		raw  string
 		want *bool
 	}{
-		{"written true", `{"version":4,"subscription_spread":true}`, boolp(true)},
-		{"written false", `{"version":4,"subscription_spread":false}`, boolp(false)},
-		{"absent", `{"version":4}`, nil},
-		{"null", `{"version":4,"subscription_spread":null}`, nil},
+		{"written true", `{"version":5,"subscription_spread":true}`, boolp(true)},
+		{"written false", `{"version":5,"subscription_spread":false}`, boolp(false)},
+		{"absent", `{"version":5}`, nil},
+		{"null", `{"version":5,"subscription_spread":null}`, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p, found, err := Decode([]byte(tc.raw))
@@ -77,7 +77,7 @@ func TestSubscriptionSpreadRoundTrips(t *testing.T) {
 				if err := json.Unmarshal(b, &doc); err != nil {
 					t.Fatal(err)
 				}
-				back, _, err := Decode([]byte(`{"version":4,"subscription_spread":` + string(doc["subscription_spread"]) + `}`))
+				back, _, err := Decode([]byte(`{"version":5,"subscription_spread":` + string(doc["subscription_spread"]) + `}`))
 				if err != nil || back == nil || back.SubscriptionSpread == nil {
 					t.Fatalf("the member this package wrote does not decode = (%v, %v)", back, err)
 				}
@@ -96,9 +96,9 @@ func TestSubscriptionSpreadRoundTrips(t *testing.T) {
 // in being "off", which is what a node that is refused never gets to say.
 func TestSubscriptionSpreadDecodesStrictly(t *testing.T) {
 	for _, tc := range []struct{ name, raw, want string }{
-		{"a string", `{"version":4,"subscription_spread":"true"}`, "cannot unmarshal string"},
-		{"a number", `{"version":4,"subscription_spread":1}`, "cannot unmarshal number"},
-		{"an object", `{"version":4,"subscription_spread":{}}`, "cannot unmarshal object"},
+		{"a string", `{"version":5,"subscription_spread":"true"}`, "cannot unmarshal string"},
+		{"a number", `{"version":5,"subscription_spread":1}`, "cannot unmarshal number"},
+		{"an object", `{"version":5,"subscription_spread":{}}`, "cannot unmarshal object"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, _, err := Decode([]byte(tc.raw))

@@ -4304,9 +4304,20 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// internal/infra holds no client that could read it and Repo is a pure
 	// function of its Inputs.
 	//
-	// It is the same read planRepo makes for Readiness's D11 gate, and it is
-	// memoized, so this moves that read earlier rather than adding one. A
-	// read that FAILS is left to planRepo, which stops the run on the same
+	// It reads through repoPolicyRead and not the memoized projectPolicyRead,
+	// and that is what makes the first `fugaro update` after a version bump
+	// converge in one run: this stage runs before the policy stage, so the node
+	// it finds is still written in the version behind, and the carried read
+	// (projectpolicy.ReadCarriedForwardShapeFree) hands it over as the
+	// migration is about to write it. A strict read refuses that node, and a
+	// nil policy here is read by internal/infra as "nothing is proxied" — the
+	// repository root would drop bitbucket_proxied and its published image
+	// catalog and map, and the second `fugaro update` the HARD RULE forbids
+	// would be the one that puts them back. Below projectpolicy.ShapeFreeFloor
+	// the carry is refused with the strict read's own answer, because the node
+	// behind it needs the operator's republish.
+	//
+	// A read that FAILS is left to planRepo, which stops the run on the same
 	// error — except for a node written by an older release, which planRepo
 	// counts as present so the policy stage can migrate it: this side passes
 	// nothing then too, until that stage has migrated the node. Passing
@@ -4318,7 +4329,7 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// contradiction in the configuration, not a change to make, and a plan
 	// that cannot be applied is not a plan — so the refusal lands before the
 	// plan is written, in every mode.
-	p, found, err := r.policy.read(ctx, lc)
+	p, found, err := repoPolicyRead(ctx, lc)
 	in.Policy = repoPolicyInput(lc, p, found, err)
 	if err := checkRepoProject(cfg.Project, outs.ProjectName); err != nil {
 		return err
@@ -4879,14 +4890,15 @@ func checkoutURL(ctx context.Context, root string) (string, error) {
 	return u, nil
 }
 
-// repoPolicyInput is infra.Inputs.Policy from the memoized node read: nil when
-// no node was read — the read failed, or the config names no database address
-// for projectPolicyRead to read (which answers not-found then, the same as a
-// project that published nothing) — and an empty node when the read succeeded
-// and the project has published no policy. Only the second refuses a local
-// entry that proxies a repository the node does not admit: an operator whose
-// config has lost budget.rtdb_url has read no node, and the node they cannot
-// reach must not be taken for one that proxies nothing.
+// repoPolicyInput is infra.Inputs.Policy from the repository stage's own node
+// read (repoPolicyRead): nil when no node was read — the read failed, or the
+// config names no database address for policyReadWith to read (which answers
+// not-found then, the same as a project that published nothing) — and an empty
+// node when the read succeeded and the project has published no policy. Only
+// the second refuses a local entry that proxies a repository the node does not
+// admit: an operator whose config has lost budget.rtdb_url has read no node,
+// and the node they cannot reach must not be taken for one that proxies
+// nothing.
 func repoPolicyInput(lc *localcfg.Config, p *projectpolicy.Policy, found bool, err error) *projectpolicy.Policy {
 	switch {
 	case err != nil, lc.Budget == nil || lc.Budget.RTDBURL == "":

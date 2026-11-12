@@ -66,8 +66,9 @@ type convergeRig struct {
 }
 
 // v4Node is the published node the release before this one leaves behind: the
-// version this binary writes too, so nothing has to be migrated, only the
-// rules generation, the base image and the plugin moved.
+// version the bump to Version 5 landed on top of, so this release's update
+// migrates it as well as moving the rules generation, the base image and the
+// plugin. It is the node every installation holds while that update runs.
 func v4Node() map[string]any {
 	return map[string]any{
 		"version":     4,
@@ -233,11 +234,11 @@ func currentRelease(t *testing.T) {
 // the door stopped at: that is a gap the update door owns, and the one command
 // the user is told to run may not be two.
 func TestUpdateConvergesFromThePreviousRelease(t *testing.T) {
-	// The node the previous release publishes: the version this binary writes
-	// too, so the run moves the rules generation, the base image and the
-	// plugin and leaves the node alone.
+	// The node the previous release publishes: one version behind this
+	// binary, so the run migrates it to Version 5 and moves the rules
+	// generation, the base image and the plugin beside it.
 	t.Run("the node the previous release publishes", func(t *testing.T) {
-		converge(t, v4Node(), []string{"policy-rules-skew", "plugin-pin"})
+		converge(t, v4Node(), []string{"policy-older-than-binary", "policy-rules-skew", "plugin-pin"})
 	})
 	// The node one version back: a v3 node, which an installation that has not
 	// republished since 0.13.0 carries. 0.14.0's operator notes removed that
@@ -586,8 +587,17 @@ func TestEntryServicesOlderReaderConverges(t *testing.T) {
 	}
 }
 
-// convergeNode is the policy node the fixture's installation carries, decoded
-// by the reader a run of the project uses.
+// convergeNode is the policy node the fixture's installation carries, read the
+// way `fugaro update` reads it.
+//
+// Carried forward rather than through Decode alone: the fixture is an
+// installation of the release behind, and the node it carries is the version
+// this binary's own reader refuses until the update has migrated it. The tests
+// that read the node before the door runs are asking what the fixture holds —
+// whether it already carries the key under test — and the refusing reader
+// would fail them on the fixture rather than on the run. Nothing is written
+// back, and that the migration landed is what convergeOn's own
+// policy-older-than-binary check, asserted clean after the run, is for.
 func convergeNode(t *testing.T, r *convergeRig) *projectpolicy.Policy {
 	t.Helper()
 	v := r.db.Value(projectpolicy.PathShared())
@@ -599,7 +609,7 @@ func convergeNode(t *testing.T, r *convergeRig) *projectpolicy.Policy {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, found, err := projectpolicy.Decode(b)
+	p, found, err := projectpolicy.DecodeCarriedForward(b)
 	if err != nil || !found {
 		t.Fatalf("the node at %s does not decode (found=%v): %v", projectpolicy.PathShared(), found, err)
 	}

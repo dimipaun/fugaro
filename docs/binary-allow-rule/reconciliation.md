@@ -282,11 +282,13 @@ already happened once: this design's first draft counted four committers and mis
 the diff finalize already holds is the reading.
 
 **D990 — the policy version.** **Recommended (not ruled on 2026-11-04):** **bump
-`projectpolicy.Version` 4 → 5**, add
-`VersionSince[5] = "0.20.0"` (the slot, implementation-plan.md §4), and carry the convergence test
-the HARD RULE asks for. A version-4
+`projectpolicy.Version` 5 → 6** (the recommendation read 4 → 5 when it was written; 5 landed with
+the pools' owner and roster, secrets-brokering's DS3.1 in the 0.23.0 release, so this design's bump
+is the one after it), add
+`VersionSince[6] = "0.20.0"` (the slot, implementation-plan.md §4), and carry the convergence test
+the HARD RULE asks for. A version-5
 image tolerates a new *top-level* key (it lands in `UnknownKeys`), so tolerating would not be
-fail-open — but it would be **fail-silent**: the owner publishes a path list, the version-4 image
+fail-open — but it would be **fail-silent**: the owner publishes a path list, the version-5 image
 refuses the very file the list admits, and the run ends a draft with nothing saying why. That is the
 "published change that silently does nothing" class `CLAUDE.md`'s HARD RULE forbids, and `fugaro
 update` refreshes the image in the same command, so the lockstep costs the operator nothing.
