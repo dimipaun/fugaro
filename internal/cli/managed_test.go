@@ -1049,6 +1049,7 @@ var initFlagCases = map[string]string{
 	"check-github-app": "OUTSIDE the property: a secret read, refused under a marker (githubapp.go); no confirmation",
 	"allow-delete":     "OUTSIDE the property: feeds tf.Guard, not a confirmation (D74, Task 1.4, is the managed case)",
 	"allow-job-delete": "OUTSIDE the property: changes what a --repo plan holds, not whether it is confirmed",
+	"check":            "OUTSIDE the property: the read-only mode, which runs no step of any stage, so nothing is confirmed and --yes is refused beside it (refuseConvergeFlags, update_check.go). It is `fugaro update`'s alone (D948, U4 of docs/plugin-user-scope/implementation-plan.md) and `fugaro setup` declares it hidden and refuses it by name (setupDoor.foreign), the shape --forget has on that door",
 	"print-vars":       "no cloud call and no confirmation (canAsk is false under it)",
 	"no-build":         "only drops the first image build's offer (a Typed step); takes nothing away from a confirmation",
 	"provision-batch":  "main's compute stage (0.9.5, init_compute.go): registered noYes, its confirmation is the project's name typed (initflow.Typed), so --yes never covers it; added on the merge of main into next-0.8.5, the confirm table does not drive this stage itself",
