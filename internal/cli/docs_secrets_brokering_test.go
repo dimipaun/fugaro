@@ -378,6 +378,53 @@ func TestDocsCheck190IsRegistered(t *testing.T) {
 	}
 }
 
+// TestDocsCheck195IsRegistered: B4.1 writes Check 195, the reading S4's build
+// exception rests on, and the register carries both halves of its registration —
+// a `| 195 |` row in the summary table and a `## Check 195:` section below it —
+// in the same pairing TestDocsCheck190IsRegistered pins for Check 190: a row
+// without its section is a promise of steps that are not written, and a section
+// without its row is a check nothing points at. The section says three things a
+// reader needs and cannot infer: the check is **NOT RUN** (the owner runs it in
+// B4.2, and its answer is the gate S4 stops on), no agent runs any step of it,
+// and the owner's own steps are in the work's own file rather than in the
+// register.
+func TestDocsCheck195IsRegistered(t *testing.T) {
+	register := readDoc(t, liveChecksDoc)
+	if !regexp.MustCompile(`(?m)^\|\s*195\s*\|`).MatchString(register) {
+		t.Errorf("%s's register has no `| 195 |` row: Check 195 is written below it, and the table is where a reader finds it", liveChecksDoc)
+	}
+	heading := "\n## Check 195:"
+	i := strings.Index(register, heading)
+	if i < 0 {
+		t.Fatalf("%s has no `## Check 195:` section: the row above points at steps that have to be there", liveChecksDoc)
+	}
+	// Bounded by the next `## ` heading, so a check written after this one does
+	// not widen what is read here.
+	section := register[i+1:]
+	if end := strings.Index(section, "\n## "); end >= 0 {
+		section = section[:end]
+	}
+	flat := strings.ToLower(flattenDoc(section))
+	for _, want := range []string{
+		// The banner, before the owner's gate (B4.2) has been run: the section
+		// states that nothing has measured this yet.
+		"**not run",
+		// The register's own rule for an owner-run check: no agent runs any step
+		// of it, and the text has to say so.
+		"no agent runs any step of it",
+		// Where the owner's own steps live, so the section does not have to
+		// carry them (and cannot drift from them).
+		"secrets-brokering/check195-steps.md",
+		// The gate: a FAIL here is a decision for the owner and stops S4, which
+		// is the one thing a reader of this row has to know before running it.
+		"stops s4",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("Check 195's section does not say %q: the check is owner-run, not yet run, its steps are the work's own file, and a FAIL stops S4 — a section that leaves any of them out reads as something an agent did or as a reading that is already in", want)
+		}
+	}
+}
+
 // TestDocsSecretReadersStatesTheBitbucketProxysState is task B1.10's pin on the
 // audit's Bitbucket rows. The proxy shipped (B1.5, B1.6, B1.7), so a reader
 // has to learn two things and not one: on a repository the published node

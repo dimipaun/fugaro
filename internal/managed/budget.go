@@ -173,7 +173,10 @@ func ApplyGate(r BudgetRead) (Enable, error) {
 		// budget — which the owner can add at their own terminal — so the apply
 		// proceeds, the gate opens with the warning, and the session reads what
 		// the project is missing and what its owner can do about it (Apply
-		// prints Enable.Warning, and Result carries it). The other cases above
+		// prints Enable.Warning, Result carries it, and apply.go's gateAndApply
+		// puts it in the audit record the apply writes — it is one of the
+		// findings D1545 lists, and a record that dropped it would report the
+		// step as cleaner than the gate found it). The other cases above
 		// are unchanged: a read that errored, an invalid recorded figure and a
 		// project that is not managed all still leave the gate closed, so the
 		// fail-closed direction is kept for every failure that is not this one.
@@ -181,7 +184,7 @@ func ApplyGate(r BudgetRead) (Enable, error) {
 		if reason == "" {
 			reason = "the creation fact records no amount"
 		}
-		warning := fmt.Sprintf("%s has no budget recorded (%s), so the project's own owner can add one by flagging it managed — `fugaro managed flag <gcp-project-id> --budget N --budget-currency CCC`, typed at their own terminal, which replaces this creation fact with the version that records the amount — or a managed project is created with one: `fugaro setup --create-project --managed --budget N --budget-currency CCC --billing-account ID`; this apply proceeds on that warning and keeps no audit record of it",
+		warning := fmt.Sprintf("%s has no budget recorded (%s), so the project's own owner can add one by flagging it managed — `fugaro managed flag <gcp-project-id> --budget N --budget-currency CCC`, typed at their own terminal, which replaces this creation fact with the version that records the amount — or a managed project is created with one: `fugaro setup --create-project --managed --budget N --budget-currency CCC --billing-account ID`; this apply proceeds on that warning, and the warning is in this apply's audit record",
 			safetext.Field(r.Project), reason)
 		return Enable{read: true, warning: warning}, nil
 	}

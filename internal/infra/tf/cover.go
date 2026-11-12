@@ -31,7 +31,7 @@ var allowedTypes = map[string]bool{
 	// service now (DON1, the owner's ruling of 2026-11-05), so the
 	// installation's own plan carries both — which is why the two are covered
 	// by the step that plans it. An agent's session never writes the block
-	// (init_stages.go's pinCredentialsImage returns early under a marker), and
+	// (init_stages.go's ensureCredentialsService returns early under a marker), and
 	// an installation that cannot carry the service gets none.
 	"google_cloud_run_v2_service":            true,
 	"google_cloud_run_v2_service_iam_member": true,

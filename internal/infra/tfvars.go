@@ -963,7 +963,7 @@ func SetCredentialsService(vars []byte, svc CredentialsServiceSpec) ([]byte, err
 // is gone, and a read at this point would answer "nothing to carry" for an
 // installation that has the service (the bug C1.20's review found).
 //
-// The variable is the deploy's own (init_stages.go's pinCredentialsImage), and
+// The variable is the deploy's own (init_stages.go's ensureCredentialsService), and
 // every run of init rewrites the tfvars from its spec — which never sets the
 // key.
 // Carried forward exactly as it was, present or absent, an installation that
@@ -1269,7 +1269,7 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 	}
 	s.CatalogCheck = cc
 	// CredentialsService is deliberately NOT set from the options: the block
-	// is the deploy's own (init_stages.go's pinCredentialsImage), and the
+	// is the deploy's own (init_stages.go's ensureCredentialsService), and the
 	// deploy never comes through here — it read-modify-writes the one key of the document the
 	// installation stage wrote (infra.SetCredentialsService), because a
 	// document rebuilt from a spec would drop the discovery's project_secrets

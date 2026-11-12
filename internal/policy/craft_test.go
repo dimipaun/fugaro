@@ -202,3 +202,72 @@ func TestCraftAccessSelectsWhatTheProjectMakesAvailable(t *testing.T) {
 		t.Fatalf("ignored = %+v, want %+v", e.Ignored, want)
 	}
 }
+
+// TestRepoCanOnlyNarrowTheRoster: a pool's owner and its allowed users are
+// the project's own (F12, D1628). A later layer may drop a user from the
+// project's roster — every roster is a grant, so the smaller one is the
+// tighter — and may not add one, name an owner of its own or mark a pool
+// legacy-open: the last two are D1936's designation and D1942's marker for a
+// pool that predates owners, and neither is a value a repository's file could
+// hold and stay a narrowing.
+func TestRepoCanOnlyNarrowTheRoster(t *testing.T) {
+	project := craftLayer(nil, map[string]CraftPool{"claude": {
+		Owner: "owner@example.com", AllowedUsers: []string{"a@example.com", "b@example.com"}, Members: []string{"c1"},
+	}}, nil)
+
+	// The project's roster and owner reach the merge untouched.
+	e := repo(project, Layer{})
+	if got := e.Craft.Pools["claude"]; got.Owner != "owner@example.com" || !reflect.DeepEqual(got.AllowedUsers, []string{"a@example.com", "b@example.com"}) {
+		t.Fatalf("pool = %+v", got)
+	}
+	if e.Sources[CraftPoolOwnerKey("claude")] != SourceCeiling || e.Sources[CraftPoolAllowedUsersKey("claude")] != SourceCeiling {
+		t.Fatalf("sources = %v", e.Sources)
+	}
+
+	// A roster the repository narrows wins, and the order it writes does not
+	// matter: a roster is a set, not the pool's member list.
+	narrowed := craftLayer(nil, map[string]CraftPool{"claude": {AllowedUsers: []string{"b@example.com"}}}, nil)
+	e = repo(project, narrowed)
+	if got := e.Craft.Pools["claude"].AllowedUsers; !reflect.DeepEqual(got, []string{"b@example.com"}) {
+		t.Fatalf("allowed users = %v", got)
+	}
+	if e.Sources[CraftPoolAllowedUsersKey("claude")] != SourceBranch || len(e.Ignored) != 0 {
+		t.Fatalf("sources = %v ignored = %+v", e.Sources, e.Ignored)
+	}
+	// The project's own roster is not aliased into the result.
+	e.Craft.Pools["claude"].AllowedUsers[0] = "changed"
+	if project.Craft.Pools["claude"].AllowedUsers[0] != "a@example.com" {
+		t.Fatalf("the merge wrote into a layer: %v", project.Craft.Pools["claude"].AllowedUsers)
+	}
+
+	// A user the project does not name is an added grant: the project's roster
+	// stands and the value is recorded with the one in force.
+	e = repo(project, craftLayer(nil, map[string]CraftPool{"claude": {AllowedUsers: []string{"b@example.com", "c@example.com"}}}, nil))
+	if got := e.Craft.Pools["claude"].AllowedUsers; !reflect.DeepEqual(got, []string{"a@example.com", "b@example.com"}) {
+		t.Fatalf("added user won: %v", got)
+	}
+	want := []Ignored{{CraftPoolAllowedUsersKey("claude"), "b@example.com,c@example.com", "a@example.com,b@example.com", SourceCeiling}}
+	if !reflect.DeepEqual(e.Ignored, want) {
+		t.Fatalf("ignored = %+v, want %+v", e.Ignored, want)
+	}
+
+	// An owner, and the legacy-open marker, are not a repository's to write.
+	e = repo(project, craftLayer(nil, map[string]CraftPool{"claude": {Owner: "repo@example.com"}}, nil))
+	if got := e.Craft.Pools["claude"].Owner; got != "owner@example.com" {
+		t.Fatalf("owner = %q", got)
+	}
+	want = []Ignored{{CraftPoolOwnerKey("claude"), "repo@example.com", "owner@example.com", SourceCeiling}}
+	if !reflect.DeepEqual(e.Ignored, want) {
+		t.Fatalf("ignored = %+v, want %+v", e.Ignored, want)
+	}
+
+	e = repo(craftLayer(nil, map[string]CraftPool{"claude": {Members: []string{"c1"}}}, nil),
+		craftLayer(nil, map[string]CraftPool{"claude": {LegacyOpen: true}}, nil))
+	if e.Craft.Pools["claude"].LegacyOpen {
+		t.Fatalf("legacy_open won: %+v", e.Craft.Pools["claude"])
+	}
+	want = []Ignored{{CraftPoolLegacyOpenKey("claude"), "true", "false", SourceCeiling}}
+	if !reflect.DeepEqual(e.Ignored, want) {
+		t.Fatalf("ignored = %+v, want %+v", e.Ignored, want)
+	}
+}

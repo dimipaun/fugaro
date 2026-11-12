@@ -76,12 +76,47 @@ import (
 // installation republishes its policy for version 4; a version-3 node is
 // refused in the other direction too (D477), which is why the shape of this
 // node is version 3's and only what a reader must enforce changed.
-const Version = 4
+//
+// Version 5 (secrets-brokering dynamic-delivery, plan task DS3.1, decisions
+// D1936 and D1942) is the node whose pools carry an owner and the users they
+// are served to: a pool written now names owner and optionally allowed_users
+// (by email — the roster's key, resolved to a `sub` at grant, R10), and the
+// PUBLISHED node refuses a pool that names no owner, because a pool with no
+// owner serves nobody. The shape changes for the first time in this line: it
+// ADDS two members to a craft_pools entry and one more, legacy_open, which is
+// what the migration writes for a pool whose owner no release ever recorded
+// (D1942) — so a version-4 reader, whose pool carrier is strict, refuses a
+// version-5 node on the members inside craft_pools and not merely on a
+// top-level key it would list in UnknownKeys (P8). What a version-5 reader
+// enforces that a version-4 one does not is that owner: a version-4 runner
+// would serve a pool to anyone who asked for a slip naming it, which is the
+// shared token the owner's own answer has to bound. The bump is also what
+// makes the migration run: `fugaro update` carries a version-4 node forward
+// (migrate.go), marking every ownerless pool legacy-open so the upgrade serves
+// exactly whom the installation served before it.
+//
+// Version 6 (binary-allow-rule, plan task AR0; decisions D981-D985 and D990) is
+// the node that carries the project's `binaries` block: binaries.allow (the
+// path globs a run may add a binary at) and binaries.max_bytes (the cap an
+// admitted one is held to, 2 MiB unless the project lowers it). What a
+// version-6 runner enforces and a version-5 one does not is that admission in
+// finalize, where an added binary under an admitted pattern and within the cap
+// is committed rather than held back as a stray file. The block is a
+// *top-level* key, which is exactly the shape P8 tolerates: a version-5 reader
+// lists `binaries` in UnknownKeys and decodes past it, so it would enforce no
+// rule at all while the owner believed a list was published. The bump is what
+// turns that silence into the documented refusal (RunnerSkew on the job side,
+// CLISkew on the operator's). The migration step that carries a version-5 node
+// forward is shape-free (internal/projectpolicy/migrate.go): the node keeps its
+// bytes and only the number moves, because a node with no `binaries` block
+// admits nothing, which is what a project that never set one means.
+const Version = 6
 
 // VersionSince names, for each policy version, the fugaro release that
 // introduced it: 1 is the model itself (0.8.0, internal/cli's policySince), 2
 // is the profile gate above (0.8.5), 3 the account axis (0.9.0), 4 the
-// Bitbucket token block (0.14.0). It sits beside Version because a bump of
+// Bitbucket token block (0.14.0), 5 the pools' owner and roster (0.23.0), 6 the binaries block (0.24.0). It
+// sits beside Version because a bump of
 // Version adds its row in the same change
 // (TestVersionSinceCoversEveryVersion fails until it does), and it is
 // read by every message about a node *ahead* of its reader (SkewSentence, so
@@ -99,6 +134,8 @@ var VersionSince = map[int]string{
 	2: "0.8.5",
 	3: "0.9.0",
 	4: "0.14.0",
+	5: "0.23.0",
+	6: "0.24.0",
 }
 
 // VersionRelease is the release that introduced policy version v, and false
@@ -307,8 +344,8 @@ const (
 	ReaderRunner
 )
 
-// The version-skew messages. Skew is the sentence every reader prints; the four
-// others are its remedies, one per direction of the skew and per reader:
+// The version-skew messages. Skew is the sentence every reader prints; the six
+// others are its remedies, one per state of the skew and per reader:
 //
 //   - CLISkew and RunnerSkew: the node is newer than the reader, so nothing
 //     here can read it and the release that wrote the node is newer than the
@@ -331,10 +368,20 @@ const (
 //     through the same refusal (internal/cli's refuseNewerPolicy, which the
 //     publish path calls before the delete branch), which doctor reports as
 //     policy-newer-than-binary with the upgrade as its fix.
-//   - CLISkewNewer and RunnerSkewNewer: the node is older than the reader.
-//     Nothing is upgraded — the reader is the newer side, so `fugaro upgrade`
-//     would be advice that changes nothing — and the remedy is a new node:
-//     publishing refuses to overwrite a node written in another version
+//   - CLISkewCarried and RunnerSkewCarried: the node is older than the reader
+//     and the migration chain carries it forward (Migratable). Nothing is
+//     upgraded — the reader is the newer side, so `fugaro upgrade` would be
+//     advice that changes nothing — and nothing is deleted either: `fugaro
+//     update`'s policy stage rewrites the node in place at this reader's
+//     version, keeping the members it carries. This is the move `fugaro doctor`
+//     names for the same state (its policy-older-than-binary check asks
+//     Migratable the same question), and it is the state of every installation
+//     between the binary upgrade and `fugaro update`, so it is the one an
+//     operator meets most.
+//   - CLISkewNewer and RunnerSkewNewer: the node is older than the reader and no
+//     migration step reaches it (tooOld: versions 1 and 2, which 0.8.0 and
+//     0.8.5 wrote). Nothing is upgraded here either, and the remedy is a new
+//     node: publishing refuses to overwrite a node written in another version
 //     (internal/cli's publishedPolicyOf, which words the same refusal, and
 //     docs/project-layer.md and `fugaro doctor` carry it too), so the older
 //     node goes first, with `fugaro project policy publish --delete`, and the
@@ -342,23 +389,26 @@ const (
 //     --firebase-project` is deliberately not named in either: it deploys this
 //     release's rules template and marker and never writes
 //     config/policy/shared, so an operator sent to re-run it would come back to
-//     the same refusal. A hand-written node, or one a release before this shape
-//     wrote, is the only way to get here (Decode refuses a version this Fugaro
-//     does not know, and a node below Version is not the legacy path — that is
-//     the marker's job, Read). The runner's own sentence adds that the run
-//     cannot do any of it mid-run: the refusal is the job's, and the operator
-//     who publishes is the one who acts.
+//     the same refusal — while the whole `fugaro update` is, and is named. A
+//     hand-written node, or one a release before this shape wrote, is the only
+//     way to get here (Decode refuses a version this Fugaro does not know, and
+//     a node below Version is not the legacy path — that is the marker's job,
+//     Read). The runner's own sentence adds that the run cannot do any of it
+//     mid-run: the refusal is the job's, and the operator who updates or
+//     publishes is the one who acts.
 //
 // A message that printed one direction's remedy for both sent the operator of a
 // node that was merely behind to upgrade a Fugaro that was already ahead of it
 // (changing nothing), or left the reader of a node that was behind with no move
 // at all. Each takes the found version and the understood one, in that order.
 const (
-	Skew            = "the project policy is version %d; this Fugaro understands version %d"
-	CLISkew         = Skew + "; upgrade Fugaro (brew upgrade dimipaun/tap/fugaro), then fugaro update"
-	CLISkewNewer    = Skew + "; the node is older than this Fugaro: publishing refuses to overwrite a node written in another version, so remove it with 'fugaro project policy publish --delete' and publish it again from this release"
-	RunnerSkew      = Skew + "; refresh the runner image (fugaro upgrade)"
-	RunnerSkewNewer = Skew + "; the node is older than this runner image: publishing refuses to overwrite a node written in another version, so the project's owner removes it with 'fugaro project policy publish --delete' and publishes one this image understands — and the run cannot do either mid-run"
+	Skew              = "the project policy is version %d; this Fugaro understands version %d"
+	CLISkew           = Skew + "; upgrade Fugaro (brew upgrade dimipaun/tap/fugaro), then fugaro update"
+	CLISkewCarried    = Skew + "; the node is older than this Fugaro: run 'fugaro update', whose policy stage rewrites the node in place at this Fugaro's version, keeping the members it carries"
+	CLISkewNewer      = Skew + "; the node is older than this Fugaro: publishing refuses to overwrite a node written in another version, so remove it with 'fugaro project policy publish --delete' and publish it again from this release"
+	RunnerSkew        = Skew + "; refresh the runner image (fugaro upgrade)"
+	RunnerSkewCarried = Skew + "; the node is older than this runner image: the project's owner runs 'fugaro update', whose policy stage rewrites the node in place at this Fugaro's version, keeping the members it carries — and the run cannot do it mid-run"
+	RunnerSkewNewer   = Skew + "; the node is older than this runner image: publishing refuses to overwrite a node written in another version, so the project's owner removes it with 'fugaro project policy publish --delete' and publishes one this image understands — and the run cannot do either mid-run"
 )
 
 // SkewSentence is the one place that words a version skew: the shared sentence
@@ -379,12 +429,24 @@ const (
 // A node ahead of its reader also names the release that introduced its
 // version when VersionSince has a row for it ("; policy version 2 arrived in
 // fugaro 0.8.5"), and nothing more when it does not.
+//
+// A node *behind* its reader has two states, and the chain decides between them
+// (Migratable) rather than this function: a version a step reaches is the
+// update's to rewrite in place, and one below the chain's first step is the
+// publisher's to delete and write again. `fugaro doctor`'s
+// policy-older-than-binary check asks the same question of the same node, so
+// the two cannot advise different moves for one state.
 func SkewSentence(ve *VersionError, reader Reader) string {
+	carried := Migratable(ve.Found)
 	switch {
 	case ve.Found > ve.Understood && reader == ReaderRunner:
 		return fmt.Sprintf(RunnerSkew, ve.Found, ve.Understood) + arrivedClause(ve.Found)
 	case ve.Found > ve.Understood:
 		return fmt.Sprintf(CLISkew, ve.Found, ve.Understood) + arrivedClause(ve.Found)
+	case carried && reader == ReaderRunner:
+		return fmt.Sprintf(RunnerSkewCarried, ve.Found, ve.Understood)
+	case carried:
+		return fmt.Sprintf(CLISkewCarried, ve.Found, ve.Understood)
 	case reader == ReaderRunner:
 		return fmt.Sprintf(RunnerSkewNewer, ve.Found, ve.Understood)
 	default:

@@ -23,6 +23,7 @@
 // the same frame and whose argv is the real `argvFor`'s.
 
 import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it, vi } from 'vitest'
@@ -1495,7 +1496,7 @@ describe('the confirm channels', () => {
     expect(confirmChannel('answer')).toBe('confirm:answer')
     expect(CONFIRM_ENTRY_PATH).toBe('/confirm.html')
     expect(CONFIRM_ENTRY_URL).toBe('app://console/confirm.html')
-    expect(confirmPreloadPath(APP_PATH)).toBe(`${APP_PATH}/dist/preload/confirm.js`)
+    expect(confirmPreloadPath(APP_PATH)).toBe(join(APP_PATH, 'dist', 'preload', 'confirm.js'))
   })
 })
 

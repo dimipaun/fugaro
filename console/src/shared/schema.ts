@@ -3313,6 +3313,48 @@ export interface GraphNode {
   readonly state: string
   readonly release: string
   readonly updated: string | null
+  /** GV4.1's four members, absent from a document a CLI older than that
+   * release printed -- which is why each is read as the empty value it means
+   * and never as a missing document (the console accepts any newer CLI, and an
+   * older one is the case the empty values cover).
+   *
+   * `plan` is the plan document a task belongs to, as the coordinator's roadmap
+   * record names it project-wide (`<plan>/<task>` is the node's `id`), and it
+   * is the one member that marks a node as the record's: the coordinator's
+   * stored view draws nodes of the same source and names no plan. `stream` is
+   * the lane the task is drawn in -- the stream of the release it has been
+   * assigned to, or its own plan's for a task nobody has placed -- and `version`
+   * is the plan's own target, which is a display input for a task the record
+   * draws in no box and never a release it is matched to (the record's releases
+   * carry a name, D2114).
+   * `dangling` is the record's own housekeeping, in both the shapes its reader
+   * names: a task whose plan documents have dropped it and a task whose
+   * assignment names a release the record no longer holds, each kept and marked
+   * rather than dropped (D2115). */
+  readonly plan: string
+  readonly stream: string
+  readonly version: string
+  readonly dangling: boolean
+}
+
+/** GraphReleaseBox is one release of the coordinator's roadmap record (§6.22,
+ * GV4.1): the record's own key for it -- which is what a node's `release` is,
+ * so the join from a task to its box happens here and nowhere else -- the stream
+ * it is in, its id, the name its box is drawn with, the state the record calls
+ * it (`open` or `finished`) and its position in its stream, which is the order
+ * the boxes are drawn in (D2113). There is deliberately no version: a stored
+ * release carries a name, and a plan's own `version` is never matched to one.
+ *
+ * A stream is not a document of its own: the record's streams are the `stream`
+ * members its releases carry, so a document that lists no release names no
+ * stream and draws no lane. */
+export interface GraphReleaseBox {
+  readonly key: string
+  readonly stream: string
+  readonly id: string
+  readonly name: string
+  readonly state: string
+  readonly order: number
 }
 
 /** GraphEdge is one relation between two nodes, by `key`. The document defines
@@ -3337,6 +3379,13 @@ export interface GraphView {
   readonly seq: number
   readonly generatedAt: string
   readonly sources: readonly GraphSourceState[]
+  /** The project's release boxes, as the coordinator's roadmap record holds them
+   * (GV4.1). Empty in a document a CLI older than that release printed, and
+   * empty for a project that has never written a release: both are read as "no
+   * box to draw", which is the reading neither of them makes wrong -- a lane is
+   * drawn only for a stream a box names, so a document without them draws
+   * exactly the picture it drew before this member existed. */
+  readonly releases: readonly GraphReleaseBox[]
   readonly nodes: readonly GraphNode[]
   readonly edges: readonly GraphEdge[]
   readonly warnings: readonly string[]
@@ -3381,7 +3430,41 @@ function graphNodeAt(raw: unknown, index: number, where: string): GraphNode {
     state: stringAt(required(node, 'state', field, where), `${field}.state`, where),
     release: stringAt(required(node, 'release', field, where), `${field}.release`, where),
     updated: graphStampAt(node, 'updated', field, where),
+    // GV4.1's members, read as an older CLI's absence means: a document from a
+    // build before the member is a document whose nodes are not the record's.
+    plan: optionalText(node, 'plan', field, where),
+    stream: optionalText(node, 'stream', field, where),
+    version: optionalText(node, 'version', field, where),
+    dangling: optionalBool(node, 'dangling', field, where),
   }
+}
+
+/** graphReleaseAt decodes one release box (§6.22, GV4.1). Its `state` is the
+ * record's own word and is carried as a string rather than closed here, for the
+ * reason a source's own `state` is: a word this build has not learned yet is a
+ * word a screen shows beside the box's name. */
+function graphReleaseAt(raw: unknown, index: number, where: string): GraphReleaseBox {
+  const field = `releases[${String(index)}]`
+  const box = objectAt(raw, field, where)
+  return {
+    key: stringAt(required(box, 'key', field, where), `${field}.key`, where),
+    stream: stringAt(required(box, 'stream', field, where), `${field}.stream`, where),
+    id: stringAt(required(box, 'id', field, where), `${field}.id`, where),
+    name: stringAt(required(box, 'name', field, where), `${field}.name`, where),
+    state: stringAt(required(box, 'state', field, where), `${field}.state`, where),
+    order: intAt(required(box, 'order', field, where), `${field}.order`, where),
+  }
+}
+
+/** graphReleasesAt reads the document's `releases` member, which a CLI older
+ * than GV4.1 does not write at all: absent and null are the empty list they
+ * mean (the console accepts any newer CLI, so an older one must draw the
+ * picture it always drew), while a key that is there and is not an array is
+ * refused by field name like every other list. */
+function graphReleasesAt(raw: Record<string, unknown>, where: string): readonly GraphReleaseBox[] {
+  const value = raw['releases']
+  if (value === undefined || value === null) return []
+  return arrayAt(value, 'releases', where).map((item, index) => graphReleaseAt(item, index, where))
 }
 
 function graphEdgeAt(raw: unknown, index: number, where: string): GraphEdge {
@@ -3415,6 +3498,7 @@ function graphAt(raw: Record<string, unknown>, where: string): GraphView {
     sources: arrayAt(required(raw, 'sources', '', where), 'sources', where).map((item, index) =>
       graphSourceAt(item, index, where),
     ),
+    releases: graphReleasesAt(raw, where),
     nodes: arrayAt(required(raw, 'nodes', '', where), 'nodes', where).map((item, index) =>
       graphNodeAt(item, index, where),
     ),
