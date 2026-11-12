@@ -503,6 +503,161 @@ func TestAPurchaseWhoseSubscriptionWasNotSavedKeepsItsWorkspace(t *testing.T) {
 	}
 }
 
+// failingIssuances is the store as a deployment that cannot write an issuance,
+// which on this path is the one write between the mail and the record: what the
+// failure leaves is a key in the customer's mailbox that the store has nothing
+// about, and it is a live key in the older format's order and not a harmless
+// duplicate in v1's, because MintV1 makes a fresh key_id every call.
+type failingIssuances struct {
+	*Memory
+	refuse     int
+	duplicated int
+}
+
+func (f *failingIssuances) SaveIssuance(ctx context.Context, r Record) error {
+	if f.duplicated > 0 {
+		f.duplicated--
+		return ErrAlreadyRecorded
+	}
+	if f.refuse > 0 {
+		f.refuse--
+		return errors.New("the store refused the write")
+	}
+	return f.Memory.SaveIssuance(ctx, r)
+}
+
+// mailedBundle is the pair a paid mail carries: the key and, on the line below
+// it, the renewal secret (D2135).
+func mailedBundle(t *testing.T, body string) (key, secret string) {
+	t.Helper()
+	lines := strings.Split(strings.TrimRight(body, "\n"), "\n")
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "fgk_") {
+			if i+1 >= len(lines) || strings.TrimSpace(lines[i+1]) == "" {
+				t.Fatalf("the mail ends on the key line, want the renewal secret below it (D2135): %q", body)
+			}
+			return strings.TrimSpace(line), strings.TrimSpace(lines[i+1])
+		}
+	}
+	t.Fatalf("the mail carries no key line, want the key text itself: %q", body)
+	return "", ""
+}
+
+func newFailingIssuances(t *testing.T) (*fixture, *failingIssuances) {
+	t.Helper()
+	f := newFixtureWith(t, Production, func(f *fixture) {
+		f.store = &Memory{}
+		f.deps.Store = &failingIssuances{Memory: f.store}
+	})
+	return f, f.deps.Store.(*failingIssuances)
+}
+
+// TestAKeyMintedButNotRecordedIsWithdrawn: the paid path mails before it
+// records, which the older format could afford and v1 cannot — a v1 mint makes
+// a fresh key_id and a fresh renewal secret every call, so a key that is mailed
+// and then not recorded is a second live key and not the same key twice. Left
+// live it is one nothing can renew, no refund can name and no operator can see
+// (K2.2, §8), so the failed write withdraws it before it answers.
+func TestAKeyMintedButNotRecordedIsWithdrawn(t *testing.T) {
+	f, store := newFailingIssuances(t)
+	purchase := Event{
+		ID:           "evt-1",
+		Type:         EventPurchase,
+		Mode:         ModeFor(f.env),
+		OccurredAt:   f.now,
+		Subscription: "sub-acme.example",
+		Organisation: "acme.example",
+		WorkspaceID:  workspaceID,
+		Email:        buyerAddress("acme.example"),
+		Seats:        5,
+		TermDays:     365,
+	}
+	store.refuse = 1
+	if rec := f.deliver(purchase); rec.Code != http.StatusInternalServerError {
+		t.Fatalf("a purchase whose issuance write failed was answered %d, want 500", rec.Code)
+	}
+	if got := len(f.mail.sent); got != 1 {
+		t.Fatalf("the failed purchase mailed %d message(s), want the one it minted: the mail is what makes the key live", got)
+	}
+	if got := len(f.records()); got != 0 {
+		t.Fatalf("the failed purchase recorded %d key(s), want none", got)
+	}
+	orphanKey, _ := mailedBundle(t, f.mail.sent[0].Body)
+	orphan := v1Verified(t, f, orphanKey)
+	entry, held, err := f.store.Revocation(context.Background(), orphan.KeyID)
+	if err != nil || !held {
+		t.Fatalf("the unrecorded key %s is not in §8's list (held=%v, err=%v), want it withdrawn: nothing else names it", orphan.KeyID, held, err)
+	}
+	if entry.Reason != ReasonUnrecorded || !entry.At.Equal(f.now) {
+		t.Errorf("the withdrawn key's entry is %+v, want %q at the service's own clock (%s)", entry, ReasonUnrecorded, f.now)
+	}
+	if _, held, _ := f.store.KeyState(context.Background(), orphan.KeyID); held {
+		t.Error("the unrecorded key was given a key state, want none: a key with no issuance is not one to renew")
+	}
+	if _, held, _ := f.store.Subscription(context.Background(), "sub-acme.example"); held {
+		t.Error("the failed purchase saved a subscription, want nothing: the state is written after the key")
+	}
+
+	// The source is unspent, so the merchant's redelivery mints and records the
+	// key the customer actually keeps — a different key from the withdrawn one.
+	f.deliver(purchase)
+	records := f.records()
+	if len(records) != 1 || len(f.mail.sent) != 2 {
+		t.Fatalf("the redelivery left %d record(s) and %d mail(s), want one of each more than the failure left", len(records), len(f.mail.sent))
+	}
+	keptKey, keptSecret := mailedBundle(t, f.mail.sent[1].Body)
+	kept := v1Verified(t, f, keptKey)
+	if kept.KeyID != records[0].KeyID || kept.KeyID == orphan.KeyID {
+		t.Errorf("the redelivery recorded the key %q and mailed %q, want the one it minted now (%q) and not the withdrawn one (%q)", records[0].KeyID, kept.KeyID, kept.KeyID, orphan.KeyID)
+	}
+	state, held, err := f.store.KeyState(context.Background(), kept.KeyID)
+	if err != nil || !held || state.RenewalSecretHash != secretHash(keptSecret) {
+		t.Errorf("the redelivery left the key state %+v (held=%v, err=%v), want the digest of the secret it mailed", state, held, err)
+	}
+	if entry, held, _ := f.store.Revocation(context.Background(), orphan.KeyID); !held || entry.Reason != ReasonUnrecorded {
+		t.Errorf("the withdrawn key's entry is %+v (held=%v), want it still in the list: the list only ever grows", entry, held)
+	}
+}
+
+// TestTheDeliveryThatLosesTheRecordWithdrawsItsOwnKey: two deliveries of one
+// event in flight at once both mint and both mail, and only one records — the
+// other's write is refused (§5.2, S3.5). Its key is in a mailbox and in no
+// record, so it is withdrawn rather than left as a second live licence for one
+// purchase.
+func TestTheDeliveryThatLosesTheRecordWithdrawsItsOwnKey(t *testing.T) {
+	f, store := newFailingIssuances(t)
+	purchase := Event{
+		ID:           "evt-1",
+		Type:         EventPurchase,
+		Mode:         ModeFor(f.env),
+		OccurredAt:   f.now,
+		Subscription: "sub-acme.example",
+		Organisation: "acme.example",
+		WorkspaceID:  workspaceID,
+		Email:        buyerAddress("acme.example"),
+		Seats:        5,
+		TermDays:     365,
+	}
+	store.duplicated = 1
+	if rec := f.deliver(purchase); rec.Code != http.StatusInternalServerError {
+		t.Fatalf("the delivery whose record was already taken was answered %d, want 500: it minted and mailed nothing the store knows about", rec.Code)
+	}
+	if got := len(f.records()); got != 0 {
+		t.Fatalf("the losing delivery recorded %d key(s), want none: the store's answer is the state", got)
+	}
+	if got := len(f.mail.sent); got != 1 {
+		t.Fatalf("the losing delivery mailed %d message(s), want the one its own mint produced", got)
+	}
+	lostKey, _ := mailedBundle(t, f.mail.sent[0].Body)
+	lost := v1Verified(t, f, lostKey)
+	if entry, held, _ := f.store.Revocation(context.Background(), lost.KeyID); !held || entry.Reason != ReasonUnrecorded {
+		t.Errorf("the losing delivery's key %s is %+v (held=%v), want it withdrawn: the winner's key is the one live licence", lost.KeyID, entry, held)
+	}
+	if _, held, _ := f.store.KeyState(context.Background(), lost.KeyID); held {
+		t.Error("the losing delivery wrote a key state for a key it never recorded, want none")
+	}
+}
+
 // TestRenewalKeyIssuesThirtyDaysBeforeExpiry: T26 — the next key issues 30 days
 // before the current one expires, its `issued` is the day the service runs and
 // its `expires` is the end of the term it covers, so the two keys overlap and
@@ -1240,12 +1395,19 @@ func TestEnterpriseIsNotACheckoutPlan(t *testing.T) {
 	// The rows the checkout does sell are the two Team periods, and no term a
 	// merchant event can carry reaches an Enterprise one: a renewal, which
 	// covers what is left of the term the customer is in, is sold under the row
-	// they bought rather than under a longer one.
+	// they bought rather than under a longer one. The month row's floor is a
+	// calendar month and not the thirty days it is nominal, because the merchant
+	// bills a calendar month and February's is 28 days — a refusal here is a 500
+	// the merchant retries for ever, so a customer billed for February would
+	// never be minted a key at all.
 	for _, tc := range []struct {
 		days int
 		want string
 	}{
+		{days: 28, want: PolicyTeamMonthly},
+		{days: 29, want: PolicyTeamMonthly},
 		{days: 30, want: PolicyTeamMonthly},
+		{days: 31, want: PolicyTeamMonthly},
 		{days: 365, want: PolicyTeamAnnual},
 		{days: 395, want: PolicyTeamAnnual},
 	} {
