@@ -112,15 +112,25 @@ The run records every verdict, and the record has two blocks in `result.json`:
   verdict, `table` for the ones the mode's table placed with no judge involved
   (tolerated, floor, a `needs_owner` finding), `fail_safe` for a round whose call
   failed, and `cap` for a deferral a review cap made (below).
-- **`deferred`** — only the findings whose deferral **took effect**, with the key,
-  the summary, the reason and the group each belongs to. This is what the pull
-  request, the report and the follow-up command read; a shadowed or otherwise
-  ineffective verdict is in `triage` and not here.
+- **`deferred`** — the findings a deferral **took effect** for, each with the key,
+  the summary, the reason, the group it belongs to and its **source**: the judge's
+  own deferrals (`agent`), the findings the mode's **table tolerates** (`table` —
+  the judge's reach is only what the table blocks, so a finding the table already
+  lets through is a follow-up with no call behind it, and it is filed as one),
+  and a review cap's (`cap`). A finding the floor or the owner flag holds is in
+  `triage` and never here: it blocked, whatever any verdict said, and a verdict
+  the floor overrode is not a deferral that took effect. This is the block the
+  pull request, the report and the follow-up command read.
 
 The pull request's status section and the run's `report.md` carry a **Deferred
-(follow-ups)** list — one line per finding with its one-line reason — and the
-sentence that names the command that files them. A run that deferred nothing
-gets no such section at all.
+(follow-ups)** list — one line per finding the run left open, with the one-line
+reason it was left, which is the judge's for a deferral, the table's for a
+tolerance and the cap's for a leftover — and the sentence that names the command
+that files them. A run that left nothing open gets no such section at all. A run
+whose stage is off lists no judge's call — no round is weighed, and the finding
+its own table tolerates is recorded where it always was — with the one exception
+below: a run that reaches its review cap still records the cap's leftovers, and
+those are listed here whether the stage is on or off (D1858).
 
 ## Filing the follow-ups: `fugaro followups RUN`
 
