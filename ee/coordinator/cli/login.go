@@ -66,8 +66,16 @@ import (
 // refusals name fields rather than values (M5's rule, SECURITY.md).
 
 // errFrontDoorOff is the installation whose outputs publish no front door:
-// D934's switch is off, and no URL, client or credential exists to reach.
-var errFrontDoorOff = errors.New("this installation has no front door")
+// D934's switch is off, so no URL, client or credential exists to reach. The
+// sentence is the one both commands refuse with, written here rather than at
+// each call site so that login and the roadmap group cannot come to describe
+// the same state differently.
+var errFrontDoorOff = errors.New("this installation's front door is off: its outputs publish no mcp_server URL, so it serves nothing to sign in to or call")
+
+// errNoFrontDoor is that state as a refusal: exit 1, which is what a person
+// who has not enrolled the installation is being told. It wraps the sentinel
+// so that a caller which has to tell this refusal from a failure still can.
+func errNoFrontDoor() error { return fcli.UserErr("%w", errFrontDoorOff) }
 
 // coordinatorKeychain is the operating system's keychain, and the seam the
 // tests replace with keychain.Fake. It is the same seam `fugaro pair` declares
@@ -102,11 +110,12 @@ var coordinatorFrontDoorURL = readCoordinatorFrontDoorURL
 // faketerraform, as internal/cli's own output reads are).
 var coordinatorInstallationOutputs = readInstallationOutputs
 
-// The bounds of the loopback wait. A person reads the URL, signs in, approves
-// the flow on the paired device and continues on the page, so the wait is
-// minutes and not seconds; past it the listener closes and the login is
-// refused rather than left holding a port nobody will answer.
-const coordinatorLoginWait = 5 * time.Minute
+// coordinatorLoginWait bounds the loopback wait. A person reads the URL, signs
+// in, approves the flow on the paired device and continues on the page, so the
+// wait is minutes and not seconds; past it the listener closes and the login is
+// refused rather than left holding a port nobody will answer. It is a var so
+// that the test of that refusal does not spend five minutes proving it.
+var coordinatorLoginWait = 5 * time.Minute
 
 // coordinatorCredentialVersion is the version of the stored credential's
 // document. A later shape is this number and not a field that means something
@@ -730,7 +739,7 @@ func readCoordinatorFrontDoorURL(ctx context.Context, lc *localcfg.Config) (stri
 	}
 	value, ok := raw["mcp_server"]
 	if !ok || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
-		return "", errFrontDoorOff
+		return "", errNoFrontDoor()
 	}
 	var door struct {
 		URL string `json:"url"`

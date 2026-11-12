@@ -383,9 +383,9 @@ func coordinatorOpenDoor(ctx context.Context, cloud *fcli.CloudFlags) (*coordina
 	}
 	url, err := coordinatorFrontDoorURL(ctx, lc)
 	if err != nil {
-		if errors.Is(err, errFrontDoorOff) {
-			return nil, nil, fcli.UserErr("this installation's front door is off (its outputs publish no mcp_server URL), so it serves no roadmap tool: nothing here can reach the record")
-		}
+		// The off state is already a refusal with its own sentence, and it is
+		// returned as it is: it is the same state login refuses, and the two
+		// say the same thing about it.
 		return nil, nil, err
 	}
 	client, err := coordinatorFrontDoorHTTP()
