@@ -46,9 +46,9 @@ const testKeyID = "licence-mint-test-1"
 // ed25519Path is the one crypto package the tool's own sources may name.
 const ed25519Path = "crypto/ed25519"
 
-// testNow is the instant every claim set below is minted at. The tool checks
-// what it minted at the claim set's own `issued`, so nothing in this file needs
-// the machine's clock to be anything in particular.
+// testNow is the instant the old format's claim sets below are minted at. That
+// path reads the clock for nothing, so the instant is pinned: the old tool
+// checks what it minted at the claim set's own `issued`.
 var testNow = time.Unix(1794096000, 0)
 
 // teamClaims is one valid key's claim set: a Team key for a domain, one year
@@ -69,10 +69,15 @@ func teamClaims() licence.Claims {
 const testWorkspaceV1 = "fugaro-mint-test-project"
 
 // testNowV1 is the instant the v1 claim sets below are minted at, in UTC and to
-// the second, because the format writes its times as RFC 3339 stamps. The tool
-// checks what it minted at the claim set's own `issued_at`, so nothing in this
-// file needs the machine's clock to be anything in particular.
-var testNowV1 = time.Unix(1794096000, 0).UTC()
+// the second, because the format writes its times as RFC 3339 stamps. It is read
+// off the machine's clock a day back rather than pinned, because the v1 command
+// does consult that clock: it refuses a claim set whose term has already run out
+// (a stamp in the past moves the instant the verifier's own state check is made,
+// so nothing else catches one), and a pinned instant would be the day that guard
+// starts refusing every test that mints in the past. A day back keeps the stamp
+// in the past -- which is what -issued-at is for, and what the tests assert lands
+// in the key -- while the year-long term is well inside its end.
+var testNowV1 = time.Now().UTC().Truncate(time.Second).Add(-24 * time.Hour)
 
 // teamClaimsV1 is one valid v1 key's claim set with every field of the format
 // set: a Team key for a domain, one year long, renewing automatically, minted
