@@ -1976,9 +1976,11 @@ Flags:
 Subcommands:
 
 - `fugaro coordinator roadmap need` -- Record that one task needs another
+- `fugaro coordinator roadmap publish` -- Put a checkout's plan graphs into the roadmap record
 - `fugaro coordinator roadmap releases` -- Write a stream's releases
 - `fugaro coordinator roadmap request` -- Read back what happened to a roadmap request
 - `fugaro coordinator roadmap unneed` -- Remove a recorded dependency between two tasks
+- `fugaro coordinator roadmap unpublish` -- Remove a published plan from the record
 
 ## `fugaro coordinator roadmap need`
 
@@ -2007,6 +2009,58 @@ Flags:
 | `--reason` | string | "" | yes | why the dependency exists, which a reviewer reads (required) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--task` | string | "" | yes | the qualified task id: <plan>/<task> that needs another (required) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro coordinator roadmap publish`
+
+Put a checkout's plan graphs into the roadmap record
+
+Publish the graph artifact beside a plan document, from any checkout
+(roadmap_publish_plan, D2111).
+
+Read the plan's graph where it sits — `docs/plans/x.md` is described by
+`docs/plans/x.graph.json` — and send it, trimmed to what the record holds
+and carrying where it came from: this repository, the artifact's path and
+the commit HEAD names. A symlink anywhere on the way to the file, a file
+that is not a regular file, and a graph this build refuses all end the run
+before anything is sent; an artifact with uncommitted changes is refused
+too, because what is published is what is committed.
+
+Publishing the same artifact again writes nothing: the record compares the
+document it holds with the one it is sent. `--expect` is the version of the
+plan document you last read, and it is what keeps two people publishing one
+plan from two checkouts from overwriting each other — the second is refused
+and told the version the record holds. Leave it out while the record does
+not hold the plan.
+
+`--all` publishes every graph artifact under the checkout's docs/, each its
+own request. `--releases <file>` imports a release catalogue — this
+repository's `docs/release-streams.yaml` is the one that exists — one
+release per stream, named by the catalogue. It is a flag a person passes
+and never a default: a repository with no such file publishes its plans
+the same way.
+
+Nothing is read from the checkout but the artifact, and nothing leaves it
+but the trimmed document and its provenance.
+
+Usage: `fugaro coordinator roadmap publish [<plan>]`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--all` | bool | `false` | no | publish every graph artifact under the checkout's docs/ |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--expect` | string | "" | no | the version of the plan document you last read; leave it out for a plan the record does not hold |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for publish |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--releases` | string | "" | no | a release catalogue to import, such as docs/release-streams.yaml (never a default) |
 
 Subcommands:
 
@@ -2121,6 +2175,41 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--task` | string | "" | yes | the qualified task id: <plan>/<task> the dependency starts at (required) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro coordinator roadmap unpublish`
+
+Remove a published plan from the record
+
+Remove one plan document from the roadmap record (roadmap_unpublish_plan).
+
+The plan is named by its id — the `plan` field of what `roadmap publish
+--json` printed, which is the part of a task's qualified name before the
+slash. The tasks it carried are left dangling in the assignments and edges
+that still name them, and a reader shows them as dangling until a later
+publish or an unneed removes them (D2115).
+
+`--expect` is the version of the plan document you read before asking to
+remove it. A plan the record does not hold is the state this asks for
+already, so an unpublish of one that is gone is answered rather than
+refused.
+
+Usage: `fugaro coordinator roadmap unpublish <plan>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--expect` | string | "" | no | the version of the plan document you last read; leave it out for a plan the record does not hold |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for unpublish |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
 
 Subcommands:
 
