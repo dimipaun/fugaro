@@ -110,9 +110,9 @@ func labelled(f *gcpfake.CRM, project string) {
 
 func newInitRig(t *testing.T) *initRig {
 	t.Helper()
-	// The converge runs the checkout stage, which runs fugaro upgrade's
-	// plugin step: without this, a rig would install the plugin into the
-	// developer's own Claude Code through whatever claude is on PATH.
+	// The converge runs the plugin step: without this, a rig would install
+	// the plugin into the developer's own Claude Code through whatever claude
+	// is on PATH.
 	noClaudeOnPath(t)
 	r := &initRig{
 		dir: t.TempDir(), gcs: gcpfake.NewGCS(t), ar: gcpfake.NewArtifactRegistry(t), iam: gcpfake.NewIAM(t),

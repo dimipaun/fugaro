@@ -136,7 +136,7 @@ func rulesSeparateFirebaseProject(lc *localcfg.Config) string {
 // writer into the budget database asks, and it is one function so that they
 // cannot drift apart: the rules stage (state), the policy migration of `fugaro
 // update` (init_policy_migrate.go's policyMigrationFor) and the policy step of
-// `fugaro upgrade` (which reaches the migration and nothing else), plus the
+// the retired second door (which reached the migration and nothing else), plus the
 // history job's rollover, which asks it of the environment Terraform gives it
 // (history_rollover.go's historyJobConfig).
 //
@@ -306,7 +306,7 @@ func rulesRead(ctx context.Context, lc *localcfg.Config) (*infra.DB, rulesSkew, 
 // rulesState is one read of the deployed rules for every caller that acts on
 // it: the database to deploy into, the state the deployed rules are in, and the
 // sentence the result carries. The rules stage of `fugaro update` and the rules
-// step of `fugaro upgrade` both go through it, so one installation cannot
+// step of the retired command both went through it, so one installation cannot
 // converge through one front door into a state the other refuses, and declined
 // and program are budgetDBUnadopted's, so each door's skip names what THAT door
 // did not do and the command its own operator can run.

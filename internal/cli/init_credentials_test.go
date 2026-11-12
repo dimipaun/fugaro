@@ -979,7 +979,7 @@ const credsRefreshYAML = "version: 1\nproject: aurora\ngit: { provider: github }
 func upgradeRigWithCascade(t *testing.T) *anchorModeRig {
 	t.Helper()
 	fakeTerraform(t)
-	upgradeEnv(t, "0.5.1")
+	convergeEnv(t, "0.5.1")
 	r := newAnchorModeRig(t, credsRefreshYAML, false)
 	r.appendConfig(t, "  acme/app: { provider: github, workflows: [app], github_app_id: \"12345\" }\n")
 	runs := t.TempDir()
@@ -1015,7 +1015,7 @@ func TestUpgradeNoteNamesTheStage(t *testing.T) {
 	stubCurrentRefresh(t, r)
 	setJobConfigCopyEnv(t, r, "api", nil)
 	fakeSteps(t, "", nil)
-	out, _, err := executeStdin(t, "", "upgrade", "--yes")
+	out, _, err := runCloudStep(t, "--yes")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
