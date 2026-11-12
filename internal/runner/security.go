@@ -54,6 +54,52 @@ import (
 // level's model, the same-model rule, a provider-served effort — because those
 // are about *which* model the level runs and not about whether it runs.
 
+// securityForcedLevels is the levels this run's own request forces on above the
+// owner's floor: review level 3, when the task asked for it or the project
+// layer the task carried answers always_level_3 (SC10, D1517, D1503). It is
+// resolveLevels' forcing input (plan.go), so the request is part of the one
+// resolution a run makes at bootstrap rather than a second pass over it: the
+// levels the record carries, the plan the run builds and every reader of them
+// are the same answer, and the refusals a floored level meets — D722's `none`
+// under the floor, an allowed_models list that does not name the level's model
+// — are raised where the launcher can still be told, which is the answer
+// --review-levels and the escalation's own row get for their levels.
+//
+// The request only turns the level on: `security: false` forces nothing, and it
+// is not an exemption from the escalation (D1517). Nothing here is fenced or
+// allow-listed, exactly as --mode's own raise needs neither: there is no value
+// of it that asks for a weaker review.
+//
+// A layer that wrote the level's own off-switch does not defeat the request:
+// the forced resolution clears it (plan.go's forcedLevelsAreRaiseOnly), which
+// is the raise-only rule the escalation's row is held to as well. The layer's
+// setting is the project's, and a task that asks for the strongest review, or a
+// project whose layer puts every run of it at level 3, is the statement that
+// only turns the level on — the reason there is nothing to warn about here,
+// where the escalation warns about the switch it overrides (escalateSecurity).
+func (r *run) securityForcedLevels() []policy.Level {
+	if r.securityRequested() {
+		return []policy.Level{policy.LevelL3}
+	}
+	return nil
+}
+
+// securityRequested reports whether this run asks for the strongest review it
+// can get: the task carries `security: true`, which is the field `fugaro run
+// --security` writes (D1517), or the project layer the task carried sets
+// security.always_level_3, which is every run of that project (D1503).
+//
+// The layer is the one the run resolved against at bootstrap — r.cfg's, merged
+// over the base branch's own file — so a branch cannot carry the switch that
+// decides its own review, the way it cannot carry the list the escalation
+// classifies against (securityList).
+func (r *run) securityRequested() bool {
+	if r.spec != nil && r.spec.Security {
+		return true
+	}
+	return r.cfg != nil && r.cfg.Layer != nil && r.cfg.Layer.Security != nil && r.cfg.Layer.Security.AlwaysLevel3
+}
+
 // securityBase is the revision the escalation's read starts from: the run's
 // own work (workBase) for a first run, the commit the pull request's base was
 // at when the run started (follow.baseSHA) for a follow-up, so the whole pull

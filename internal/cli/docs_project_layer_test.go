@@ -215,6 +215,12 @@ func TestDocsProjectLayerSaysRoutingIsApplied(t *testing.T) {
 // finding covers it (the review finding on this change — a finding whose fix
 // the reader cannot apply is worse than none).
 //
+// The pinned sentence about `always_level_3` and the per-run request that goes
+// with it moved with SC10, which landed both halves: the page said the pair
+// "arrives with the forced level" and that `fugaro run` had no `--security`
+// request yet, and both are false now — the switch and the request are
+// resolution inputs, and the flag is what writes the task's own field.
+//
 // Mutation (verified, run and restored): restore the paragraph's bold lead —
 // "**0.22.0 decodes and validates both halves; no run reads them yet.**" — and
 // the file where the layer is sketched, and this fails naming both.
@@ -228,7 +234,7 @@ func TestDocsProjectLayerSaysTheSecurityListIsResolved(t *testing.T) {
 		"the one row it reports is one **this repository's own file** wrote that matches no path in the base",
 		"it is counted like the floor's rows and never measured",
 		"a row they refuse is dropped from the list rather than matched as written",
-		"`always_level_3` and the per-run request that belongs to it arrive with the forced level",
+		"`always_level_3` and the per-run request that goes with it turn review level 3 on when the run resolves its levels",
 	} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("docs/project-layer.md lacks %q: the page is where a reader learns that both halves are read, and by whom", want)
@@ -241,6 +247,8 @@ func TestDocsProjectLayerSaysTheSecurityListIsResolved(t *testing.T) {
 		"a written row are computed against that same floor",
 		"cannot be reported until a run resolves the list from the layers",
 		"arrive with the list's resolution (SC9) and the escalation (SC10)",
+		"`fugaro run` has no `--security` request today",
+		"the per-run request that goes with the switch arrives with the escalation below",
 	} {
 		if strings.Contains(doc, notWant) {
 			t.Errorf("docs/project-layer.md still says %q, which the resolution made false: the floor, the project's rows and the repository's are one list, and a run, `fugaro security paths` and `fugaro doctor` all read it", notWant)

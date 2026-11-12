@@ -891,6 +891,46 @@ const gitAuthorSince = "0.14.0"
 // verify it.
 const securitySince = "0.22.0"
 
+// securityRequestSince is the first fugaro release whose runner reads the
+// task's own security field: the request `fugaro run --security` writes, and
+// the same request a hand-written task makes with `security: true` (SC10 of
+// docs/security-classification/implementation-plan.md, D1517). It is the run
+// asking for the strongest review there is, whatever paths it changed.
+//
+// It is not securitySince's constant and cannot be: that one is 0.22.0, the
+// release whose runner reads fugaro.yaml's and the project layer's security:
+// block, and a runner built from it knows the block and refuses the task field
+// — the field is the newer half of the same control, and it is the task that
+// carries it rather than the configuration. task.Parse decodes with
+// DisallowUnknownFields, so a job image older than this release refuses the
+// whole task at bootstrap, after the launch was paid for and with the run left
+// as bytes in the bucket under an id that never starts, which is what the
+// launch's gate refuses first (checkSecurityRequestImage and
+// checkCloneSecurityRequestImage, judged from the image exactly as the sibling
+// field gates are).
+//
+// The project layer's always_level_3 — the other half of this request, and the
+// half a repository cannot write (D1503) — needs no constant of its own: it is
+// a key of the layer's security: block, so an older runner refuses the whole
+// block and securitySince's three gates already judge the images against it
+// (SetsSecurity).
+//
+// It names 0.23.0 ("Tapir", the CLI minor after the tagged 0.22.0), which is
+// **not tagged yet**: the release that tags it holds this number to the tag it
+// cuts, and it moves if this work lands in another release. docs/release.md
+// ("Before you tag") has the checklist verify it.
+const securityRequestSince = "0.23.0"
+
+// securityRequestSubject is what the securityRequestSince gate calls the field
+// it judges: the task's own, not the flag's, as the title's and the plan
+// task's are — a --retry carries no --security (taskFlags) and still carries
+// the field whoever launched that run wrote.
+const securityRequestSubject = "the task's security request (--security, kept by --retry)"
+
+// securityRequestKnows names what the job image's runner has to know for that
+// gate's message.
+const securityRequestKnows = "the security field of the task it runs"
+
 // asksForRigor reports whether a launch asks for a rigor mode or declares a
 // path: the two task fields a runner older than rigorRequestSince refuses
 // outright, and so the condition the launch's own gate is written on. A
@@ -3015,6 +3055,38 @@ func checkCloneSecurityImage(ctx context.Context, env *cloudEnv, spec *task.Spec
 	}
 	subject, alt := securitySubject(spec.Repo, fromRepo, fromLayer)
 	return checkCloneImageSince(env.lc, spec, securitySince, subject, securityKnows(fromRepo, fromLayer), "; or "+alt, warn)
+}
+
+// checkSecurityRequestImage and checkCloneSecurityRequestImage are the launch's
+// securityRequestSince gate, for a workflow whose job image is a derived one
+// and for a checkout: clone workflow respectively: the pair the sibling task
+// fields have (checkFollowUpImage, and run.go's own --title and --tier gates).
+//
+// The condition is the field's and not the flag's: a --retry takes no --security
+// (taskFlags) and still carries the request when the run it replays was
+// launched with one, and a task written by hand carries it too. A launch that
+// carries none — every launch that passed no flag over a stored task that
+// carries none — is never gated, so the field is what decides and never the
+// release the CLI building a task happens to be.
+//
+// It is not checkSecurityImage's gate: that one judges the configuration the
+// run will read (the repository's and the layer's security: blocks) against
+// securitySince, and this one judges the task against the release whose runner
+// reads the field. A launch can trip either, both, or neither.
+func checkSecurityRequestImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, warn io.Writer) error {
+	if !spec.Security {
+		return nil
+	}
+	return checkImageSince(ctx, env, slug, spec, kind, securityRequestSince, securityRequestSubject, securityRequestKnows, "", warn)
+}
+
+// checkCloneSecurityRequestImage is checkSecurityRequestImage for a checkout:
+// clone workflow: see checkCloneImageSince.
+func checkCloneSecurityRequestImage(lc *localcfg.Config, spec *task.Spec, warn io.Writer) error {
+	if !spec.Security {
+		return nil
+	}
+	return checkCloneImageSince(lc, spec, securityRequestSince, securityRequestSubject, securityRequestKnows, "", warn)
 }
 
 // warnCoreJobImage warns when the build record of slug's workflow reports a
