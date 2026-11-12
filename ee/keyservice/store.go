@@ -176,14 +176,14 @@ type Trial struct {
 // backend that can express either pair as one write closes it, which is why the
 // interface is small enough to be given one (S3.5).
 //
-// The methods after Subscriptions are the three a key's life adds to §7.3's
+// After Subscriptions come the three things a key's life adds to §7.3's
 // record: the state its renewal is decided from (§7), the revocation list (§8)
 // and the trials handed out (§14). They keep the shape above — whole records
 // that the service filters as it reads — and they meet that limit in the same
-// two ways: an issuance and its key state are two writes, so a mint that
-// dies between them leaves a key the store can revoke and cannot renew (the
-// safe half of the pair), while ClaimTrial is a check and a write that cannot
-// be split, because two asks arriving together would otherwise be two trials.
+// two ways: an issuance and its key state are two writes, so a mint that dies
+// between them leaves a key the store can revoke and cannot renew (the safe
+// half of the pair), while ClaimTrial is a check and a write that cannot be
+// split, because two asks arriving together would otherwise be two trials.
 type Store interface {
 	SaveIssuance(ctx context.Context, r Record) error
 	Issuances(ctx context.Context) ([]Record, error)
@@ -219,6 +219,13 @@ var ErrTrialAlreadyClaimed = errors.New("keyservice: that installation or accoun
 // Both are required, and neither has a default: the store cannot count what the
 // caller did not say.
 var ErrTrialUnnamed = errors.New("keyservice: a trial names the installation and the account it is for")
+
+// ErrRevocationUnnamed is a revocation with no key_id. The list is looked up by
+// the key it withdraws, so an entry under the empty string would be the one
+// entry that answers every lookup of an unnamed key — a caller that sent
+// nothing would be told its key is revoked, which is a project dropped to Free
+// by a record nobody meant to write.
+var ErrRevocationUnnamed = errors.New("keyservice: a revocation names the key it withdraws")
 
 // Memory is the store a test drives and the shape a durable one has to keep:
 // the same methods and the same rules. It is safe for concurrent use because
@@ -323,7 +330,14 @@ func (m *Memory) Subscription(_ context.Context, id string) (Subscription, bool,
 // too — the entry is what the status endpoint answers from, and a key whose
 // issuance is missing from the store is exactly the one whose revocation must
 // not be refused.
+//
+// A revocation with no key_id is the one thing here that is refused, and it is
+// refused rather than dropped: the entry would answer for every key nobody
+// named, and a licensor who writes it has a bug in the event that carried it.
 func (m *Memory) Revoke(_ context.Context, r Revocation) error {
+	if r.KeyID == "" {
+		return ErrRevocationUnnamed
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.revocations == nil {
@@ -380,11 +394,17 @@ func (m *Memory) KeyState(_ context.Context, keyID string) (KeyState, bool, erro
 // sighting of a key whose secret was never recorded says nothing the store
 // wants to keep, and inventing a record for it would put a key in the store
 // with no digest, which is the one key state that could never be renewed.
+//
+// The instant only moves forward. These are the service's own clock's readings
+// and the deploy's instances are separate machines, so a check that took a
+// second longer to arrive can carry an earlier instant than one already
+// recorded — and what the admin page reads is the last time anybody saw the
+// key, which an out-of-order arrival does not change.
 func (m *Memory) TouchKey(_ context.Context, keyID string, at time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	held, known := m.keys[keyID]
-	if !known {
+	if !known || !at.After(held.LastSeen) {
 		return nil
 	}
 	held.LastSeen = at

@@ -21,11 +21,11 @@ import (
 	"time"
 )
 
-// keyDigest is the digest of a secret generated as the test runs, which is the
+// freshDigest is the digest of a secret generated as the test runs, which is the
 // only shape a test may hand the store (.claude/rules/ee.md, R5: a fixture that
 // looked like a secret would be one). It is a real SHA-256 of real 256 random
 // bits, so what the store compares is the same size of thing the minter writes.
-func keyDigest(t *testing.T) string {
+func freshDigest(t *testing.T) string {
 	t.Helper()
 	secret := make([]byte, 32)
 	if _, err := rand.Read(secret); err != nil {
@@ -55,7 +55,7 @@ func TestRevokedKeyStaysRevoked(t *testing.T) {
 	if err := store.TouchKey(ctx, withdrawn, at.Add(time.Hour)); err != nil {
 		t.Fatalf("the revoked key's next check: %v", err)
 	}
-	if err := store.SaveKeyState(ctx, KeyState{KeyID: withdrawn, RenewalSecretHash: keyDigest(t), LastSeen: at}); err != nil {
+	if err := store.SaveKeyState(ctx, KeyState{KeyID: withdrawn, RenewalSecretHash: freshDigest(t), LastSeen: at}); err != nil {
 		t.Fatalf("writing the revoked key's state: %v", err)
 	}
 	if err := store.SaveIssuance(ctx, Record{Source: "txn_test_refund", KeyID: withdrawn, Seats: 5, Email: "buyer@acme.example", Issued: at}); err != nil {
@@ -126,6 +126,23 @@ func TestRevocationIsIdempotent(t *testing.T) {
 	}
 	if got.Reason != first.Reason || !got.At.Equal(first.At) {
 		t.Errorf("the entry is %+v, want the first revocation %+v", got, first)
+	}
+}
+
+// TestRevocationWithNoKeyIsRefused: a revocation is looked up by the key it
+// withdraws, so an entry filed under no key at all is the entry that answers
+// for every key nobody named — and the answer it gives is "revoked", which
+// lapses a project. A licensor whose event carried no key_id has a bug, and the
+// store says so rather than writing the record that hides it.
+func TestRevocationWithNoKeyIsRefused(t *testing.T) {
+	ctx := context.Background()
+	store := &Memory{}
+	err := store.Revoke(ctx, Revocation{Reason: "refund", At: time.Date(2026, 11, 12, 9, 0, 0, 0, time.UTC)})
+	if !errors.Is(err, ErrRevocationUnnamed) {
+		t.Errorf("a revocation that names no key answered %v, want %v", err, ErrRevocationUnnamed)
+	}
+	if _, held, err := store.Revocation(ctx, ""); err != nil || held {
+		t.Errorf("the refused revocation was written anyway: held=%v err=%v", held, err)
 	}
 }
 
@@ -215,7 +232,7 @@ func TestOneTrialPerAccount(t *testing.T) {
 func TestTheRenewalSecretIsKeptAsADigest(t *testing.T) {
 	ctx := context.Background()
 	store := &Memory{}
-	first, second := keyDigest(t), keyDigest(t)
+	first, second := freshDigest(t), freshDigest(t)
 	if first == second {
 		t.Fatal("two generated secrets hashed to one digest, so this test cannot tell two keys apart")
 	}
@@ -244,14 +261,15 @@ func TestTheRenewalSecretIsKeptAsADigest(t *testing.T) {
 // The handler that records one has just compared the digest, and a
 // read-modify-write would put back the digest it read — the one a rotation may
 // already have replaced — so the touch moves LastSeen in one write and leaves
-// the digest as it stands. A key the store does not hold is not given an entry
-// by a sighting: a record with no digest is one that could never be renewed.
+// the digest as it stands, and it only moves it forward. A key the store does
+// not hold is not given an entry by a sighting: a record with no digest is one
+// that could never be renewed.
 func TestTheLastSeenLeavesTheDigestAlone(t *testing.T) {
 	ctx := context.Background()
 	store := &Memory{}
 	at := time.Date(2026, 11, 12, 9, 0, 0, 0, time.UTC)
 	keyID := "lk_test_checked_in"
-	digest := keyDigest(t)
+	digest := freshDigest(t)
 	if err := store.SaveKeyState(ctx, KeyState{KeyID: keyID, RenewalSecretHash: digest}); err != nil {
 		t.Fatalf("writing the key's state: %v", err)
 	}
@@ -262,6 +280,11 @@ func TestTheLastSeenLeavesTheDigestAlone(t *testing.T) {
 	}
 	if err := store.TouchKey(ctx, "lk_test_never_issued", later); err != nil {
 		t.Fatalf("recording a check for a key the store does not hold: %v", err)
+	}
+	// A check that crossed a clock that stepped back, arriving after one that
+	// carries a later instant, is not the last time anybody saw the key.
+	if err := store.TouchKey(ctx, keyID, at); err != nil {
+		t.Fatalf("recording an out-of-order check: %v", err)
 	}
 
 	got, held, err := store.KeyState(ctx, keyID)
