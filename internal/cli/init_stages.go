@@ -102,6 +102,17 @@ type initEngine struct {
 	// list to hold, outputs that could not be read — and it is cleared by the
 	// write, so a root that runs twice lands it once.
 	accessSeed *accesslib.Node
+
+	// flagFactVersion is the version the self-flag step's own read of the
+	// creation fact answered with, and 0 where that step read nothing
+	// (update_selfflag.go). The marker step asks it beside the gate's version
+	// for the one installation whose fact the gate never saw: the half-written
+	// flag, whose object write succeeded and whose label write then failed. A
+	// run that finishes that flag has read the object — the step could not
+	// complete the object otherwise — so the version the migration needs is
+	// already in hand, and taking a read of its own for it would be the second
+	// read of an object this run has answered once.
+	flagFactVersion int
 }
 
 // environment runs the environment check once (it prints the local
@@ -437,19 +448,28 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 	// printResult for the reason the two above are: what it printed and
 	// recorded belongs to this run's result.
 	e.raiseBudgetMode(ctx)
-	// And D1940's, the last of the three steps this hook owns: the roster's
-	// project-scoped admins, published for the intake that admits a caller to
-	// the shared prefix and may hold no database role (update.go's
-	// writeAdminList). It is here for the reason above — the converge has
-	// applied everything it had, so the roster it reads is the one this run
-	// leaves behind — and it returns no error either: the list is a derived
+	// And D1543's: the creation fact a release behind left at version 3 carries
+	// the image build count this one no longer bounds a build by, and a fact is
+	// migrated where it was written (update_marker_version.go). It is after the
+	// self-flag above for the reason that step has: a run which flags an
+	// installation writes the version this build writes, so the two together
+	// converge any installation the update reaches, and the step itself does
+	// nothing where the fact is already this release's. Like the two above it
+	// returns no error — a fact left behind is one this build still reads — and
+	// it is before printResult for the same reason.
+	e.convergeMarkerVersion(ctx)
+	// And D1940's: the roster's project-scoped admins, published for the intake
+	// that admits a caller to the shared prefix and may hold no database role
+	// (update.go's writeAdminList). It is here for the reason above — the
+	// converge has applied everything it had, so the roster it reads is the one
+	// this run leaves behind — and it returns no error either: the list is a derived
 	// object, and failing an upgrade over one is what the HARD RULE forbids.
 	e.writeAdminList(ctx)
-	// And T-RU5's, the fourth and last: what this release fixes about the
+	// And T-RU5's, the fifth and last: what this release fixes about the
 	// project's filed issues, which is a step of the run and not of the door
 	// (update_resolved.go) because --json's document carries it and is printed
-	// on the next line. It is reached on the same path the three above are —
-	// the converge applied everything it had — and it is the one of the four
+	// on the next line. It is reached on the same path the four above are —
+	// the converge applied everything it had — and it is the one of the five
 	// that no mode has to exclude twice: what it writes to the shared store is
 	// the store's own guarded write, and what it prints is a line nobody has
 	// to act on.
