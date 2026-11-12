@@ -1698,7 +1698,12 @@ func credentialsStageRun(t *testing.T) (string, int) {
 	admitted := map[string]any{"stdout": planJSON(t, change("module.installation.google_service_account.scheduler", "create"))}
 	refused := map[string]any{"stdout": planJSON(t, iamBindingCreate())}
 	r.script["show@installation"] = []any{admitted, admitted, admitted, refused}
-	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"credentials_service": credentialsServiceOutput()})}
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
+		"credentials_service": credentialsServiceOutput(),
+		// The intake this run deploys: its block is written by the same stage,
+		// and its audience comes back from the same outputs.
+		"intake": intakeServiceOutput(),
+	})}
 	r.save(t)
 	r.managedRuns(t, initProjectName, initProject)
 	isolateGateCredentials(t)
