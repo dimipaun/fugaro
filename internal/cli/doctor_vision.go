@@ -71,14 +71,25 @@ func doctorVisionChecks(ctx context.Context, root string, lc *localcfg.Config, r
 		return nil
 	}
 	vision := rf.Cfg.Agent.VisionModel()
-	if m, ok := table.Lookup(coder); ok && m.ImageTokens > 0 {
+	m, ok := table.Lookup(coder)
+	if !ok {
+		// A pin no price row knows never reaches a stage: the launch is refused
+		// before the job starts (config.CheckPins), so the mid-run refusal this
+		// check warns about cannot happen, and a row that does not exist has not
+		// answered what the model reads (D2000). Saying "priced without an image
+		// rate" of it would be a warning with a false consequence and a remedy
+		// that does not end it; `fugaro validate` prints the refusal that does,
+		// and this check leaves the fault to it.
+		return nil
+	}
+	if m.ImageTokens > 0 {
 		return []doctorCheck{doctorVisionReads(coder, vision)}
 	}
 	if vision != "" {
 		return []doctorCheck{doctorVisionSlotCovers(coder, vision)}
 	}
-	ref, files, ok := doctorVisionImageFiles(ctx, root)
-	if !ok {
+	ref, files, listed := doctorVisionImageFiles(ctx, root)
+	if !listed {
 		return nil
 	}
 	if len(files) == 0 {

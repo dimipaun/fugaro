@@ -1715,7 +1715,10 @@ func apiKeyRig(t *testing.T, lines string) *doctorRig {
 
 // apiKeyRigFiles is apiKeyRig with files of the caller's own committed on the
 // checkout's base branch: the checks that read a repository's tree rather than
-// its working copy (D1518) need them there before the clone is made.
+// its working copy (D1518) need them there before the clone is made. The clone
+// is left as the working directory, so a test that needs a different origin
+// remote can re-point it (a repository the local config would refuse to record
+// is still one a checkout can be cloned from).
 func apiKeyRigFiles(t *testing.T, lines string, extra map[string]string) *doctorRig {
 	t.Helper()
 	r := newDoctorRig(t)
@@ -1925,6 +1928,78 @@ func TestDoctorSaysNothingWhenTheVisionSlotIsSet(t *testing.T) {
 	}
 	if !strings.Contains(c.Problem, "deepseek/deepseek-v4-pro") {
 		t.Errorf("the measurement does not name the model the slot holds: %s", c.Problem)
+	}
+}
+
+// TestDoctorQuotesTheRepositoryInTheVisionWarningsFix: the warning's fix is a
+// command the reader pastes, and the repository in it is the origin remote's
+// answer through gitprov.SplitRepo — one slash, and no character set beyond
+// that. A name that reached the line unquoted is a live shell substitution
+// printed by the very check that exists to keep a run from dying mid-flight,
+// so the line is held to the same rule every other doctor fix embedding this
+// repository already follows (quoteWord).
+func TestDoctorQuotesTheRepositoryInTheVisionWarningsFix(t *testing.T) {
+	// The fix is printed to be pasted, so it names the binary as the user ran
+	// it: the literal text below is what a person sees.
+	old := selfCommand
+	selfCommand = func() string { return "fugaro" }
+	t.Cleanup(func() { selfCommand = old })
+
+	apiKeyRigFiles(t,
+		"agent: { auth: api-key, models: { coder: deepseek/deepseek-v4-flash } }\nbudget: { mode: enforce, per_run_usd: 20 }\n",
+		map[string]string{"assets/logo.png": "a picture, as far as the check reads one"})
+	// The name a checkout can be cloned from and the local config would refuse
+	// to record: nothing validates an origin remote against it, which is the
+	// whole reason the line has to quote what doctor read there.
+	testutil.Git(t, ".", "remote", "set-url", "origin", "https://github.com/acme/app$(id).git")
+
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	c, ok := doctorCheckByID(o.Checks, "vision-coder")
+	if !ok || c.OK || c.Severity != "warning" {
+		t.Fatalf("vision-coder = %+v", c)
+	}
+	if want := "models use 'acme/app$(id)' vision <id>"; !strings.Contains(c.Fix, want) {
+		t.Errorf("the fix does not quote the repository, so pasting it runs the name: want %q in\n%s", want, c.Fix)
+	}
+}
+
+// TestDoctorSaysNothingWhenTheCoderIsUnpriced: a coder pin no price row knows
+// is refused at launch (config.CheckPins), before any stage runs, so the
+// mid-run refusal this check warns about cannot happen — and a row that does
+// not exist has not answered what the model reads (D2000), which is the only
+// question the check asks. It says nothing rather than warning with a
+// consequence that cannot come true and a remedy that does not end the fault:
+// fugaro validate is where that pin's own refusal is printed.
+func TestDoctorSaysNothingWhenTheCoderIsUnpriced(t *testing.T) {
+	apiKeyRigFiles(t,
+		"agent: { auth: api-key, models: { coder: deepseek/deepseek-not-priced } }\nbudget: { mode: enforce, per_run_usd: 20 }\n",
+		map[string]string{"assets/logo.png": "a picture, as far as the check reads one"})
+
+	human, _, err := execute(t, "doctor")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, human)
+	}
+	if strings.Contains(human, "vision-coder") {
+		t.Errorf("doctor warned about a pin that never reaches a stage:\n%s", human)
+	}
+
+	out, _, err := execute(t, "doctor", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var o doctorOutput
+	if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+		t.Fatalf("json: %v\n%s", jerr, out)
+	}
+	if c, ok := doctorCheckByID(o.Checks, "vision-coder"); ok {
+		t.Fatalf("vision-coder = %+v, want no check at all: the price row that would answer it does not exist", c)
 	}
 }
 
