@@ -88,10 +88,20 @@ func newResourceServer(t *testing.T, opts ...ServerOption) *resourceTest {
 // and a test about the tool would be a test about the refusal.
 func newResourceServerGranting(t *testing.T, scopes ...string) *resourceTest {
 	t.Helper()
+	return newResourceServerGrantingTo(t, testLists(), scopes...)
+}
+
+// newResourceServerGrantingTo is the same installation with the member lists a
+// test names, which is what a test that has to reach an operator-only scope
+// asks for: the scope is served to an operator alone (D2121), so a token
+// holding it that acts for this file's launcher is refused whatever the
+// installation grants.
+func newResourceServerGrantingTo(t *testing.T, lists Members, scopes ...string) *resourceTest {
+	t.Helper()
 	clock := &movingClock{at: testNow}
 	cfg := testConfig()
 	cfg.Limits = Limits{Scopes: slices.Clone(scopes)}
-	ts := newTestServerOver(t, cfg, clock.now, nil, WithRoster(rosterOf(testLists())))
+	ts := newTestServerOver(t, cfg, clock.now, nil, WithRoster(rosterOf(lists)))
 	return &resourceTest{testServer: ts, clock: clock}
 }
 
@@ -1066,7 +1076,11 @@ func TestAToolAnswerCarriesNoCredential(t *testing.T) {
 		t.Setenv(name, testCredentialPlaceholder)
 	}
 
-	ts := newResourceServerGranting(t, ScopeVocabulary...)
+	// The person is on both lists here, because the token below holds every
+	// scope v1 mints and one of them — the roadmap write — is served to an
+	// operator alone (D2121): a call refused by the operator rule answers a
+	// refusal, and this test is about what a tool that answered can leak.
+	ts := newResourceServerGrantingTo(t, Members{Launchers: []string{testIdentity}, Operators: []string{testIdentity}}, ScopeVocabulary...)
 	for _, spec := range toolCatalogue {
 		ts.serve(t, spec.name, func(ctx context.Context, call Call) (any, error) { return call, nil })
 	}
