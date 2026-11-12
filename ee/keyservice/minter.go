@@ -67,10 +67,17 @@ func (k Keys) For(env Environment) (string, error) {
 	}
 }
 
-// RouteMint is the minter's one route. It is not the intake's: the two are
-// separate services and the intake reaches this one by an authenticated call
-// (§3.2).
+// RouteMint is the minter's route for the older format's claims. It is not the
+// intake's: the two are separate services and the intake reaches this one by an
+// authenticated call (§3.2).
 const RouteMint = "/mint"
+
+// RouteMintV1 is the minter's route for a v1 key minted from a row of the
+// default policy (D2130, D2133). It is a second route rather than a second shape
+// on one, because both bodies decode strictly (CLAUDE.md, "Config and wire
+// formats decode strictly") and one path could only tell them apart by trying
+// one and then the other.
+const RouteMintV1 = "/mint/v1"
 
 // Signer is the minter's one route to a signature: a managed key's signing API.
 // Nothing on this side holds a private key to sign with instead, and the
@@ -110,6 +117,48 @@ type Minted struct {
 // and not read from a store, because there is no store of keys.
 type Mints interface {
 	Mint(ctx context.Context, req Request) (Minted, error)
+}
+
+// RequestV1 is what the service asks the minter for when the key is a v1 one:
+// the row of the default policy it is issued under, the workspace it binds to,
+// and the organisation, seats and term it is for (spec section 3.2).
+//
+// It carries no policy of its own — no grace, no renewal mode, no check
+// interval — because those are the row's (D2133, D2138) and a caller that could
+// name them could mint a key that never checks at all. It carries no date
+// either, for the reason the older request carries none.
+type RequestV1 struct {
+	Environment  Environment `json:"environment"`
+	Policy       string      `json:"policy"`
+	WorkspaceID  string      `json:"workspace_id"`
+	Organisation string      `json:"organisation"`
+	Seats        int         `json:"seats"`
+	// TermDays is the term in days, or 0 for the row's own lifetime. A first
+	// purchase is the plan's period; a renewal names the days from now to the
+	// end of the term the customer is in, which is longer than a fresh period
+	// and still inside the tier's ceiling.
+	TermDays int `json:"term_days"`
+	// Note is free text a key carries and shows admins only.
+	Note string `json:"note"`
+}
+
+// MintedV1 is what the minter answers: the key text and the renewal secret,
+// which are the two lines of the bundle an issue path shows once and never
+// stores (D2135), and the record the caller writes.
+//
+// The secret is here and nowhere else on this side: only its hash went into the
+// key, and a caller that loses it holds a key that can never renew.
+type MintedV1 struct {
+	Key           string `json:"key"`
+	RenewalSecret string `json:"renewal_secret"`
+	Record        Record `json:"record"`
+}
+
+// MintsV1 is the intake's route to a v1 key, beside Mints and for the same
+// reason: the half that is reachable from the internet mints through the
+// minter's own service and holds no signer (Check 174).
+type MintsV1 interface {
+	MintV1(ctx context.Context, req RequestV1) (MintedV1, error)
 }
 
 // Minter is the half that signs. It is built once per process and it signs
@@ -220,6 +269,121 @@ func (m Minter) Mint(ctx context.Context, req Request) (Minted, error) {
 	}, nil
 }
 
+// MintV1 signs one v1 key from a row of the default policy and answers the key
+// text with the renewal secret beside it.
+//
+// The claim set is spec section 3.2's payload, and its policy is the row's and
+// never the caller's: a request names which row (D2133, D2138) and nothing about
+// what a key of it carries. What the request does name is the term in days,
+// because a renewal covers the rest of the term the customer is in rather than a
+// fresh one, and a key of a length the tier does not allow is refused exactly as
+// the older format refuses it.
+//
+// `issued_at` and `paid_through` are the minter's own clock and that term, which
+// is what keeps a caller from dating a key past its tier's maximum (§2, §9.2).
+// The renewal secret is generated here, in the same pass, so that the hash in
+// the key and the secret on the bundle are one secret minted once (D2135).
+func (m Minter) MintV1(ctx context.Context, req RequestV1) (MintedV1, error) {
+	if req.Environment != m.Environment {
+		return MintedV1{}, fmt.Errorf("this minter signs for the %s environment and the request names %q, and the key id it would sign under is the whole of what keeps the two apart", m.Environment, req.Environment)
+	}
+	policy, known := DefaultPolicy(req.Policy)
+	if !known {
+		return MintedV1{}, fmt.Errorf("the policy %q is not one a key is issued under", req.Policy)
+	}
+	maximum, known := tierMaxTerm[policy.Tier]
+	if !known {
+		return MintedV1{}, fmt.Errorf("the tier %q is not one a key can be issued for", policy.Tier)
+	}
+	days := req.TermDays
+	if days == 0 {
+		days = int(policy.Term / (24 * time.Hour))
+	}
+	if days < 1 {
+		return MintedV1{}, fmt.Errorf("a term of %d day(s) is not a term", days)
+	}
+	term := time.Duration(days) * 24 * time.Hour
+	if term > maximum {
+		return MintedV1{}, fmt.Errorf("%w: %d day(s) is longer than the %s tier allows", licence.ErrLifetime, days, policy.Tier)
+	}
+	if req.Seats < 1 {
+		return MintedV1{}, fmt.Errorf("a key for %d seat(s) is one nobody can install", req.Seats)
+	}
+	if strings.TrimSpace(req.Organisation) == "" {
+		return MintedV1{}, errors.New("a key with no organisation does not verify, so it is not minted")
+	}
+	if strings.TrimSpace(req.WorkspaceID) == "" {
+		return MintedV1{}, errors.New("a key with no workspace id is refused by every verifier that reads it (D2134, TN2), so it is not minted")
+	}
+	kid, err := m.Keys.For(m.Environment)
+	if err != nil {
+		return MintedV1{}, err
+	}
+	if m.Signer == nil {
+		return MintedV1{}, errors.New("the minter has no signer: the key ring's API is the only way to a signature and it is not configured")
+	}
+	keyID, err := newKeyID()
+	if err != nil {
+		return MintedV1{}, err
+	}
+	secret, secretHash, err := newRenewalSecret()
+	if err != nil {
+		return MintedV1{}, err
+	}
+	now := time.Now()
+	if m.Now != nil {
+		now = m.Now()
+	}
+	issued := now.UTC()
+	paidThrough := issued.Add(term)
+	claims := licence.ClaimsV1{
+		V:                 versionV1,
+		KID:               kid,
+		KeyID:             keyID,
+		WorkspaceID:       req.WorkspaceID,
+		Organisation:      req.Organisation,
+		Tier:              policy.Tier,
+		Seats:             req.Seats,
+		IssuedAt:          issued,
+		PaidThrough:       paidThrough,
+		GraceDays:         policy.GraceDays,
+		RenewalMode:       policy.RenewalMode,
+		RenewBeforeDays:   policy.RenewBeforeDays,
+		CheckInterval:     policy.CheckInterval,
+		RenewalSecretHash: secretHash,
+		Warnings:          policy.Warnings,
+		Kind:              policy.Kind,
+		Note:              req.Note,
+	}
+	payload, err := json.Marshal(claims)
+	if err != nil {
+		return MintedV1{}, fmt.Errorf("the claim set as the payload a verifier reads: %w", err)
+	}
+	signature, err := m.Signer.Sign(ctx, payload)
+	if err != nil {
+		return MintedV1{}, fmt.Errorf("signing the payload through the key ring's API: %w", err)
+	}
+	if len(signature) != ed25519.SignatureSize {
+		return MintedV1{}, fmt.Errorf("the key ring answered a %d-byte signature, and one this verifier accepts is %d", len(signature), ed25519.SignatureSize)
+	}
+	return MintedV1{
+		Key:           keyTextV1(payload, signature),
+		RenewalSecret: secret,
+		Record: Record{
+			// The key's own id, and not the id of the key ring that signed it:
+			// this is what a revocation and a renewal name (K2.2, K2.3), and a
+			// reissue is a new key under a new one of these.
+			KeyID:        keyID,
+			Plan:         policy.Name,
+			Tier:         policy.Tier,
+			Seats:        req.Seats,
+			Organisation: req.Organisation,
+			Issued:       issued,
+			Expires:      paidThrough,
+		},
+	}, nil
+}
+
 // keyText is the key text the design writes: the key id, the payload and the
 // signature, all three unpadded base64url, in that order (S2.1). It is the same
 // three lines as the owner's mint tool, which this package cannot import
@@ -230,7 +394,29 @@ func keyText(keyID string, payload, signature []byte) string {
 		base64.RawURLEncoding.EncodeToString(signature)
 }
 
-// Handler is the minter's one route: a JSON Request in, a JSON Minted out.
+// The two spellings of the v1 format this side writes, and they are copies of
+// ee/licence's own unexported constants (keyv1.go's `keyPrefixV1` and
+// `versionV1`): that package reads the format and this is the only side that
+// writes it. What holds the two together is that every key these tests mint is
+// read back through licence.VerifyV1, which refuses a text whose prefix or
+// version was spelled wrong here.
+const (
+	keyPrefixV1 = "fgk_"
+	versionV1   = 1
+)
+
+// keyTextV1 is a v1 key as it is written: the `fgk_` prefix, then the payload
+// and the signature, both unpadded base64url (spec section 3.1). The payload is
+// the bytes that were signed, so what this writes is the exact text that
+// signature covers.
+func keyTextV1(payload, signature []byte) string {
+	return keyPrefixV1 +
+		base64.RawURLEncoding.EncodeToString(payload) + "." +
+		base64.RawURLEncoding.EncodeToString(signature)
+}
+
+// Handler is the minter's routes: a JSON request in, a JSON minted key out, one
+// route per format the service mints.
 //
 // It authenticates nothing by itself, and that is the design rather than an
 // omission: the boundary is the platform's, which admits only the intake's
@@ -239,17 +425,10 @@ func keyText(keyID string, payload, signature []byte) string {
 // it). A second check here would be a second thing to keep right, and the two
 // services are one deployment's pair.
 func (m Minter) Handler() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRequestBytes))
-		if err != nil {
-			http.Error(w, "the mint request could not be read", http.StatusBadRequest)
-			return
-		}
-		dec := json.NewDecoder(bytes.NewReader(body))
-		dec.DisallowUnknownFields()
+	mux := http.NewServeMux()
+	mux.HandleFunc(RouteMint, func(w http.ResponseWriter, r *http.Request) {
 		var req Request
-		if err := dec.Decode(&req); err != nil {
-			http.Error(w, "the mint request is not one this service reads", http.StatusBadRequest)
+		if !readRequest(w, r, &req) {
 			return
 		}
 		minted, err := m.Mint(r.Context(), req)
@@ -259,9 +438,48 @@ func (m Minter) Handler() http.Handler {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(minted); err != nil {
-			http.Error(w, "the minted key could not be answered", http.StatusInternalServerError)
-		}
+		writeAnswer(w, minted)
 	})
+	mux.HandleFunc(RouteMintV1, func(w http.ResponseWriter, r *http.Request) {
+		var req RequestV1
+		if !readRequest(w, r, &req) {
+			return
+		}
+		minted, err := m.MintV1(r.Context(), req)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeAnswer(w, minted)
+	})
+	return mux
+}
+
+// readRequest reads one route's body under this service's cap and through the
+// strict decoder every wire format here uses, answering false when the body is
+// not one the route reads. The refusal is written here because the body is the
+// only thing that was wrong, and the route's own refusals are its minter's to
+// word.
+func readRequest(w http.ResponseWriter, r *http.Request, into any) bool {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRequestBytes))
+	if err != nil {
+		http.Error(w, "the mint request could not be read", http.StatusBadRequest)
+		return false
+	}
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(into); err != nil {
+		http.Error(w, "the mint request is not one this service reads", http.StatusBadRequest)
+		return false
+	}
+	return true
+}
+
+// writeAnswer writes one minted key back. What it carries is the minter's own
+// answer and never a claim read out of the request.
+func writeAnswer(w http.ResponseWriter, minted any) {
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(minted); err != nil {
+		http.Error(w, "the minted key could not be answered", http.StatusInternalServerError)
+	}
 }
