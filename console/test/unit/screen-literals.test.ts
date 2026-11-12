@@ -255,6 +255,8 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
         'the sanitizer\'s own answer, which is the one document-shaped string this screen writes: a `Sanitized` value is built in `graph/model.ts` by `sanitizeText` with each field\'s own class and wire path, and `sanitizeText` refuses anything that is not a string -- so this is `version.ts`\'s `versionText` case ("a drawer may write a sanitizer\'s own answer, and it may write nothing else"), and `drawInto` is the only writer of one',
     },
     UNAVAILABLE_MARK: 'the console\'s own unavailable mark (`app.ts`), the other half of `drawInto`\'s pair of outcomes -- the same constant `version.ts` and `projects.ts` draw a refused value as',
+    MOVE_OPEN_LABEL:
+      'this screen\'s own word for the control that opens the move sheet (`graph/move.ts`, `MOVE_OPEN_LABEL`), a module constant of a sibling renderer module: the label the button is drawn with, and never a string a document sent -- what the sheet draws out of the record reaches the screen through `Sanitized` values (`moveFields`), not through this sink',
     word: {
       within: 'markWord',
       reason:
@@ -1707,6 +1709,7 @@ describe('no module under src/renderer writes an inline style', () => {
       'graph/layout-client.ts',
       'graph/layout.ts',
       'graph/model.ts',
+      'graph/move.ts',
       'installations.ts',
       'screens/accountkeys.ts',
       'screens/coordinator.ts',
