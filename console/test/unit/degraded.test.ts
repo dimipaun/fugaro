@@ -79,6 +79,7 @@ import type {
   NoInstallationState,
   RefusedState,
 } from '../../src/renderer/screens/degraded'
+import { itHostRoute } from '../support/hostRoute'
 
 const consoleDir = join(__dirname, '..', '..')
 const fixturePath = join(consoleDir, 'test', 'fixtures', 'degraded.ndjson')
@@ -822,7 +823,7 @@ describe('the console with no installation to read', () => {
     expect(one(tree, 'unavailable-searched-count').classes).toContain('degraded-num')
   })
 
-  it('names what is needed, the install command, and no picker to choose a binary with', () => {
+  itHostRoute('names what is needed, the install command, and no picker to choose a binary with', () => {
     const state = aNoInstallationState('no-binary')
     expect(state.installCommand).toBe(FUGARO_INSTALL_COMMAND)
     expect(state.searched.length).toBeGreaterThan(0)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -48,7 +49,13 @@ import (
 // (finishLaunch's prior == nil block), before the task is stored and before
 // the launch claim: a refused launch leaves nothing behind at all — no task,
 // no token, no claim and no execution.
-func launchPolicyGates(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec) error {
+//
+// baseKind, clone and shared are the workflow's resolved base kind and checkout
+// mode, which the caller has already read (freshLaunchGates), and the second
+// question these gates ask needs them: a node that admits the repository is
+// still a node the job image has to be able to read (policyImageGate), and
+// which image that is depends on the mode.
+func launchPolicyGates(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, baseKind string, clone, shared bool, warn io.Writer) error {
 	// A config that names no database has no policy this launcher can see, and
 	// the read below answers "not found" without a call. That is not read as a
 	// refusal: nothing is blocked until a policy exists (internal/infra's
@@ -104,7 +111,60 @@ func launchPolicyGates(ctx context.Context, env *cloudEnv, slug string, spec *ta
 		// refuse every launch of an installation that has published nothing.
 		return nil
 	}
-	return allowListRefusal(p, kind, spec.Repo)
+	if err := allowListRefusal(p, kind, spec.Repo); err != nil {
+		return err
+	}
+	return policyImageGate(ctx, env, slug, spec, baseKind, clone, shared, p, warn)
+}
+
+// policyImageGate refuses a launch whose job image runs a fugaro that cannot
+// read the published policy node: the node's version is a lockstep like every
+// other gate's, and a runner older than the release that introduced it refuses
+// the whole node at bootstrap — a run that halts on its first read, after an
+// execution exists and an attempt is spent.
+//
+// It is a gate here and not a step of `fugaro update` because the node is one
+// and the job images are many: update migrates the node (its policy stage) and
+// rebuilds the derived images of the *checkout it runs in* (its checkout
+// stage), so every other repository of the project keeps the image it had — and
+// the run of one of those is what this gate stops. The judge is the one every
+// *Since gate uses (checkImageSince for a derived image, checkCloneImageSince
+// for a checkout: clone workflow, whose job image is the installation's base
+// image), and its remedy is the operator's own (`fugaro image refresh`, or
+// `fugaro update --base base`), never a move this launcher can make.
+//
+// The three checkout modes are three judges, and each is the one the launch's
+// own image is on: a `checkout: clone` workflow runs the installation's base
+// image (checkCloneImageSince), a `checkout: shared` workflow runs a shared
+// dependency-layer image, which only the image lock says a repository's job
+// points at (checkSharedImageSince — a derived image's build record is the wrong
+// fact there, and reading it would refuse every shared launch as one with no
+// record at all), and everything else runs a per-repository derived image
+// (checkImageSince). Judging a shared launch with a derived image's record is
+// the trap this branch exists for: that mode's job is on a sibling's image,
+// which the repository itself never built.
+//
+// since is the release that introduced *this node's* version
+// (projectpolicy.VersionSince) and not this binary's: a node one shape-free step
+// behind is read as it stands (ReadsVersion), so a job image at the release that
+// introduced that version runs it, and holding it to a version the node does not
+// carry would refuse a launch that is sound. A version the table does not name
+// is not judged here: the read above already refused a version above this
+// binary's, and a version no release wrote is one no node has.
+func policyImageGate(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, baseKind string, clone, shared bool, p *projectpolicy.Policy, warn io.Writer) error {
+	since := projectpolicy.VersionSince[p.Version]
+	if since == "" {
+		return nil
+	}
+	subject := fmt.Sprintf("the published policy node (version %d)", p.Version)
+	knows := fmt.Sprintf("policy version %d", p.Version)
+	if shared {
+		return checkSharedImageSince(ctx, env, slug, spec, since, subject, knows, warn)
+	}
+	if clone {
+		return checkCloneImageSince(env.lc, spec, since, subject, knows, "", warn)
+	}
+	return checkImageSince(ctx, env, slug, spec, baseKind, since, subject, knows, "", warn)
 }
 
 // allowListRefusal is the launcher's twin of the run's allow-list refusal: the
@@ -179,11 +239,13 @@ func launchCanonical(provider, repo string) (string, error) {
 
 // policySkewRefusal is the policySince gate's message (plan task 1.5 step 4):
 // the sentence the CLI prints for a policy written in a version this Fugaro
-// does not read, the release the skew is about, and the remedy for *this
-// direction* of the skew, which the gate takes from projectpolicy.SkewRemedy —
-// the one place both this package's readers and the runner's word a version
-// skew from, so neither side can tell an operator to upgrade a binary that is
-// already ahead of the node (the review finding on this change).
+// does not read, the release the skew is about, and the remedy for *this state*
+// of the skew — the direction, and for a node behind this binary whichever move
+// its version allows — which the gate takes from projectpolicy.SkewRemedy, the
+// one place both this package's readers and the runner's word a version skew
+// from, so neither side can tell an operator to upgrade a binary that is
+// already ahead of the node (the review finding on this change) or to delete a
+// node the migration chain would have carried forward.
 // launchPolicyGates refuses a launch with it before the execution is created.
 //
 // The release it names is the one that introduced the version on the node when

@@ -170,8 +170,8 @@ as it goes, so a launch that reaches the executable while the unpack is still
 running finds a file open for writing: Linux refuses that with ETXTBSY (and a
 launch that gets there before the file exists at all gets ENOENT). Two
 Playwright workers on a cold `node_modules` did exactly that, which is what made
-the `console (ubuntu-latest)` check — a required check of
-`scripts/release-gate.sh` — fail intermittently (`Error: electron.launch: spawn
+the `console (ubuntu-latest)` check — once a required check of
+`scripts/release-gate.sh`, since removed from it — fail intermittently (`Error: electron.launch: spawn
 ETXTBSY`, run 39174336894 attempt 1, then a red gate). The fetch is therefore
 **hoisted out of the workers**: `playwright.config.ts` names
 `test/support/globalSetup.ts`, which resolves the binary once in Playwright's
@@ -4747,9 +4747,9 @@ create or edit anything under `.github/workflows/`:
   a key of the owner's) and attaches everything to `console-vX.Y.Z`.
 
 **Neither file is in `scripts/release-gate.sh`'s required-check list, and that is
-a decision rather than an omission.** The gate's list is derived from
-`console-tests.yml`'s job set and asserted by `TestReleaseGateRequiresTheConsoleCheck`,
-which refuses a workflow with more than one job — so adding the Linux build to
+a decision rather than an omission.** The gate's list is test, terraform and rules (plus the two console legs when `GATE_REQUIRE_CONSOLE=1`, set only by `console-release.yml`), and
+`TestReleaseGateRequiresTheConsoleCheck` asserts both —
+so adding the Linux build to
 the gate is not a packaging change at all, it is a change to which checks gate a
 release tag, and that is the owner's call. `docs/pending-workflows/README.md`'s
 `## console-linux.yml` section carries the three edits it would take, and the

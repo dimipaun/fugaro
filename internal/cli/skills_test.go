@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dimipaun/fugaro/internal/image"
 	"github.com/dimipaun/fugaro/internal/watch"
 )
 
@@ -25,7 +24,11 @@ type jsonFieldClaim struct {
 }
 
 // skillJSONFields lists every JSON field the skills read. A skill that reads
-// a new one adds it here; a renamed field fails this test.
+// a new one adds it here; a renamed field fails this test. `image build
+// --local --json` is not one any more: a skill never builds locally (the
+// images skill's own rule, F11), and the setup skill's fallback build is Cloud
+// Build's, whose report is text and whose record is read with `image status
+// --json`.
 var skillJSONFields = []jsonFieldClaim{
 	{"validate", validateOutput{}, "valid"},
 	{"validate", validateOutput{}, "problems"},
@@ -34,16 +37,35 @@ var skillJSONFields = []jsonFieldClaim{
 	{"validate", validateOutput{}, "warnings"},
 	{"validate", validateOutput{}, "warnings[].path"},
 	{"validate", validateOutput{}, "warnings[].message"},
-	{"image build --local", image.LocalResult{}, "image"},
-	{"image build --local", image.LocalResult{}, "dockerfile"},
-	{"image build --local", image.LocalResult{}, "commit"},
-	{"image build --local", image.LocalResult{}, "origin"},
-	{"image build --local", image.LocalResult{}, "error"},
-	{"image build --local", image.LocalResult{}, "smoke.passed"},
-	{"image build --local", image.LocalResult{}, "smoke.checks"},
-	{"image build --local", image.LocalResult{}, "smoke.checks[].name"},
-	{"image build --local", image.LocalResult{}, "smoke.checks[].ok"},
-	{"image build --local", image.LocalResult{}, "smoke.checks[].detail"},
+	// The images skill reads the survey: per repository the signals it found
+	// and whether it could be read at all, and its `setup` member — the
+	// catalog, the map and the bake switch — which is what a rerun proposes
+	// its differences against (F16).
+	{"image survey", imageSurveyOut{}, "project"},
+	{"image survey", imageSurveyOut{}, "repos"},
+	{"image survey", imageSurveyOut{}, "repos[].repo"},
+	{"image survey", imageSurveyOut{}, "repos[].provider"},
+	{"image survey", imageSurveyOut{}, "repos[].unread"},
+	{"image survey", imageSurveyOut{}, "repos[].signals"},
+	{"image survey", imageSurveyOut{}, "setup"},
+	{"image survey", imageSurveyOut{}, "setup.catalog"},
+	{"image survey", imageSurveyOut{}, "setup.image_map"},
+	{"image survey", imageSurveyOut{}, "setup.bake_repos"},
+	{"image survey", imageSurveyOut{}, "setup.unread"},
+	// The catalog both image skills read: the entry a job runs, its tags and
+	// the digest the last build of it recorded.
+	{"image ls", catalogLsOut{}, "entries"},
+	{"image ls", catalogLsOut{}, "entries[].name"},
+	{"image ls", catalogLsOut{}, "entries[].tags"},
+	{"image ls", catalogLsOut{}, "entries[].default"},
+	{"image ls", catalogLsOut{}, "entries[].source"},
+	{"image ls", catalogLsOut{}, "entries[].description"},
+	{"image ls", catalogLsOut{}, "entries[].digest"},
+	// The setup skill reads a derived image's record back after the user's
+	// Cloud Build, whose own report is text.
+	{"image status", imageStatusOut{}, "workflows"},
+	{"image status", imageStatusOut{}, "workflows[].repo"},
+	{"image status", imageStatusOut{}, "workflows[].workflow"},
 	{"secrets ls", []secretEntry{}, "[].name"},
 	{"secrets ls", []secretEntry{}, "[].id"},
 	{"secrets ls", []secretEntry{}, "[].versions"},
@@ -161,8 +183,8 @@ func TestLintJSONFieldsExist(t *testing.T) {
 			t.Errorf("%q reported present in validateOutput", bad)
 		}
 	}
-	if !hasJSONField(reflect.TypeOf(image.LocalResult{}), "smoke.checks[].ok") {
-		t.Error("smoke.checks[].ok reported absent from LocalResult")
+	if !hasJSONField(reflect.TypeOf(lsDoc{}), "runs[].status") {
+		t.Error("runs[].status reported absent from lsDoc")
 	}
 }
 

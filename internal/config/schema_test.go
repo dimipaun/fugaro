@@ -272,3 +272,60 @@ func TestSecurityFloorNamesAgreeWithGo(t *testing.T) {
 		})
 	}
 }
+
+// TestSchemaMatchesDecoder: settings.schema.json's DEFAULT column is where an
+// operator reads what a key means before writing it, and the decoder is where
+// the meaning is. A default the schema states and the decoder does not is a
+// sentence nobody can reproduce, which is the same red check
+// TestCatalogSchemaAcceptsTheNewKeys refuses for a key the two disagree about.
+//
+// The three keys a pool gained in policy version 5 (D1936, D1942): `owner` is
+// required of a published pool, `allowed_users` defaults to the owner alone,
+// and `legacy_open` is the migration's marker and no operator's key.
+func TestSchemaMatchesDecoder(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "schemas", "settings.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	defs, _ := doc["$defs"].(map[string]any)
+	kd, _ := defs["keyDefaults"].(map[string]any)
+	props, _ := kd["properties"].(map[string]any)
+	if props == nil {
+		t.Fatal("settings.schema.json has no $defs.keyDefaults.properties")
+	}
+	want := map[string]string{
+		"pools.*.owner":         "unset = required: the pool is served to its owner and the users it names",
+		"pools.*.allowed_users": "unset = only the owner",
+		"pools.*.legacy_open":   "unset = false: only the policy migration writes this, for a pool that predates owners",
+	}
+	for key, def := range want {
+		entry, ok := props[key].(map[string]any)
+		if !ok {
+			t.Errorf("settings.schema.json has no %s: the key the decoder reads is one an operator looks up", key)
+			continue
+		}
+		if got, _ := entry["default"].(string); got != def {
+			t.Errorf("%s: the schema's default is %q, want %q", key, got, def)
+		}
+	}
+	// The schema's own words against the decoder's behaviour: the default it
+	// states for allowed_users is what Serves answers for a pool that names
+	// none, and the marker it states for legacy_open is what it is for.
+	p := Pool{Name: "claude", Members: []string{CredentialVertex}, Owner: "owner@example.com"}
+	if !p.Serves("owner@example.com") || p.Serves("teammate@example.com") {
+		t.Error("allowed_users' stated default is \"only the owner\", and a pool with none serves someone else")
+	}
+	if !(Pool{Name: "claude", Members: []string{CredentialVertex}, LegacyOpen: true}).Serves("teammate@example.com") {
+		t.Error("legacy_open is the marker a migrated pool serves everyone by, and the decoder does not read it that way")
+	}
+	// And the requirement the schema states for owner is the one the published
+	// node is held to — the rule TestNewPoolWithoutOwnerRefused pins, read here
+	// against the sentence an operator has.
+	if ps := ValidatePublishedPools([]Pool{{Name: "claude", Members: []string{CredentialVertex}}}, nil); len(ps) != 1 {
+		t.Errorf("the schema says a pool's owner is required and the decoder answers %v for a published one without", ps)
+	}
+}

@@ -100,7 +100,7 @@ profiles:
 // has in the local config (config.ProjectSecretReaches).
 func sharedJobsPolicyDoc() string {
 	return `{
-		"version": 4,
+		"version": 5,
 		"budget": {"mode": "enforce", "per_run_usd": 5},
 		"allow_repos": ["github/acme/webapp"],
 		"accounts": {
@@ -203,7 +203,7 @@ base_images: {base: us-east5-docker.pkg.dev/` + sharedJobsGCPProject + `/fugaro-
 // installation that has never published one.
 func sharedJobsPolicyDocNoProfiles() string {
 	return `{
-		"version": 4,
+		"version": 5,
 		"budget": {"mode": "enforce", "per_run_usd": 5},
 		"allow_repos": ["github/acme/webapp"],
 		"accounts": {

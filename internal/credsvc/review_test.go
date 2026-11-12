@@ -280,7 +280,7 @@ func TestReviewPairingMayNameTheProjectsAnthropicKey(t *testing.T) {
 // the other's job is not the one for.
 func TestReviewRowsCarryEachAxisValueOfItsOwn(t *testing.T) {
 	doc := `{
-		"version": 4,
+		"version": 5,
 		"budget": ` + testBudgetDoc + `,
 		"allow_repos": ["` + testRepo + `"],
 		"accounts": {

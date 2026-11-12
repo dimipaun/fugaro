@@ -266,7 +266,8 @@ const machineFugaro = ((): string | undefined => {
 })()
 
 describe('the picker’s resolution of the well-known `~` prefix', () => {
-  it.skipIf(machineFugaro !== undefined)(
+  // The shebang stub it finds cannot be started on Windows (test/support/hostRoute.ts).
+  it.skipIf(machineFugaro !== undefined || process.platform === 'win32')(
     `finds the stub CLI in the environment home's ~/.local/bin, and asks the operator for no binary${
       machineFugaro === undefined ? '' : ` (this machine has its own ${machineFugaro})`
     }`,

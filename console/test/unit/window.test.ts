@@ -686,7 +686,9 @@ describe('the app:// handler serves one root and refuses everything else', () =>
     await expect(response.text()).resolves.toBe('no such file in the bundle\n')
   })
 
-  it('answers 500 rather than a document when the read fails for another reason', async () => {
+  // Windows answers an over-long name with ENOENT, which is one of the "there
+  // is no such file" codes, so this failure cannot be provoked there by a name.
+  it.skipIf(process.platform === 'win32')('answers 500 rather than a document when the read fails for another reason', async () => {
     // A name longer than the filesystem allows reaches `readFile` and fails
     // with ENAMETOOLONG, which is not one of the "there is no such file" codes:
     // the reader gets the one-line reason and no document. (A mode-000 file
