@@ -220,7 +220,7 @@ func TestRunRefusesTheLayersJobsOnAnOlderBaseImage(t *testing.T) {
 				"knows the project layer's jobs: block",
 				"fugaro " + jobsSince + " or later",
 				"ghcr.io/dimipaun/fugaro-base:" + c.rel + ", release " + c.rel,
-				"fugaro image refresh --repo acme/other --workflow " + config.ImplicitWorkflow,
+				imageGateRemedy,
 				"; or remove the jobs: block from the project layer and publish it again",
 			} {
 				if !strings.Contains(err.Error(), want) {

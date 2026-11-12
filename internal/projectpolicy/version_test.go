@@ -20,7 +20,7 @@ func TestSkewMessagesShareTheSentence(t *testing.T) {
 			t.Errorf("%s does not start with Skew: %q", name, msg)
 		}
 	}
-	if Version != 6 {
+	if Version != 7 {
 		t.Errorf("Version = %d: a version bump needs the plan's skew handling, this test and the CLI's", Version)
 	}
 }
@@ -253,43 +253,64 @@ func TestDecodeRefusesAVersion3Node(t *testing.T) {
 	}
 }
 
-// TestDecodeReadsAShapeFreePredecessor: version 6 is the binaries block's
-// lockstep (D990), and the step that carries a version-5 node forward moves the
-// number and nothing else (migrateV5ToV6), so a version-5 node is a version-6
-// node whose binaries block is absent — which is what a project that never set
-// the key means, and what a version-5 release could write. Refusing it would be
-// refusing a node this reader reads member for member, and the refusal is a
-// *window* rather than a safety: `fugaro update` re-pins the credentials
-// service to this release in its installation stage (init_stages.go) and
-// migrates the node in its policy stage, which runs after the image builds, so
-// every cascade and Bitbucket-proxied model call in between met a service that
-// refused the node (internal/credsvc refuses the call on the VersionError). The
-// tolerance is ReadsVersion's, and it is the reader's one answer for all three
-// readers — the credentials service, the launcher and the runner.
+// TestDecodeReadsAShapeFreePredecessor: version 7 is the model grades'
+// lockstep (E2, D2039), and the step that carries a version-6 node forward
+// moves the number and nothing else (migrateV6ToV7), so a version-6 node is a
+// version-7 node whose model_grades member is absent — which is what a project
+// that never set a grade means, and what a version-6 release could write.
+// Refusing it would be refusing a node this reader reads member for member, and
+// the refusal is a *window* rather than a safety: `fugaro update` re-pins the
+// credentials service to this release in its installation stage (init_stages.go)
+// and migrates the node in its policy stage, which runs after the image builds,
+// so every cascade and Bitbucket-proxied model call in between met a service
+// that refused the node (internal/credsvc refuses the call on the
+// VersionError). The tolerance is ReadsVersion's, and it is the reader's one
+// answer for all three readers — the credentials service, the launcher and the
+// runner.
 //
 // It is not a general laxness, and the version below shows it: version 3 is
 // still refused by its own test, because that step carries a Note — a profile
 // mounting the Bitbucket credential needs a block only a publish derives — so a
-// version-3 node is not a node a version-5 reader can read.
+// version-3 node is not a node this reader can read. Version 4's step marks the
+// ownerless pools, so it is not shape-free either.
 //
-// The two nodes below are the two spellings a version-5 release could write:
-// the first carries a binaries block (hand-written into a version-5 node, which
-// is a member this release models), and the second carries none. What a
-// version-5 node can never carry is a member this Fugaro does not know — that
+// The two nodes below are the two spellings a version-6 release could write:
+// the first carries a model_grades member (hand-written into a version-6 node,
+// which is a member this release models), and the second carries none. What a
+// version-6 node can never carry is a member this Fugaro does not know — that
 // is refused by UnknownKeys' own rule, version or no version.
 func TestDecodeReadsAShapeFreePredecessor(t *testing.T) {
-	p, found, err := Decode([]byte(`{"version": 5, "budget": {"mode": "enforce"}, "binaries": {"allow": ["brand/*.png"]}}`))
+	p, found, err := Decode([]byte(`{"version": 6, "budget": {"mode": "enforce"}, "model_grades": {"strong": {"model": "anthropic/claude-sonnet-5.5"}}}`))
 	if err != nil || p == nil || !found {
-		t.Fatalf("Decode of a version-5 node = (%v, %v, %v), want the policy and no error: the step from 5 to 6 moves the version field alone, and an update reaches the node before it replaces the process that reads it", p, found, err)
+		t.Fatalf("Decode of a version-6 node = (%v, %v, %v), want the policy and no error: the step from 6 to 7 moves the version field alone, and an update reaches the node before it replaces the process that reads it", p, found, err)
 	}
-	if p.Version != 5 {
-		t.Errorf("the policy reads version %d, want 5: the node's own number is what the readers report", p.Version)
+	if p.Version != 6 {
+		t.Errorf("the policy reads version %d, want 6: the node's own number is what the readers report", p.Version)
 	}
-	if want := []string{"brand/*.png"}; !slices.Equal(p.BinariesAllow(), want) {
-		t.Errorf("BinariesAllow() = %v, want %v: a member a version-5 node carries is read, not dropped", p.BinariesAllow(), want)
+	if got, want := p.ModelGrades.Of("strong").Model, "anthropic/claude-sonnet-5.5"; got != want {
+		t.Errorf("model_grades.strong.model = %q, want %q: a member a version-6 node carries is read, not dropped", got, want)
 	}
 	if len(p.UnknownKeys) != 0 {
 		t.Errorf("UnknownKeys = %v, want none", p.UnknownKeys)
+	}
+
+	p, found, err = Decode([]byte(`{"version": 6, "budget": {"mode": "enforce"}}`))
+	if err != nil || p == nil || !found {
+		t.Fatalf("Decode of a version-6 node with no model_grades member = (%v, %v, %v), want the policy and no error", p, found, err)
+	}
+	if p.ModelGrades != nil {
+		t.Errorf("ModelGrades = %+v, want none: a version-6 node sets no grade, which is what an absent member means", p.ModelGrades)
+	}
+
+	// Both steps in the walk are shape-free, so the node two versions back is
+	// read as well: a version-5 node's members are all members this reader
+	// knows, and the walk is what admits it.
+	p, found, err = Decode([]byte(`{"version": 5, "budget": {"mode": "enforce"}, "binaries": {"allow": ["brand/*.png"]}}`))
+	if err != nil || p == nil || !found {
+		t.Fatalf("Decode of a version-5 node = (%v, %v, %v), want the policy and no error: both steps from 5 to 7 are shape-free", p, found, err)
+	}
+	if want := []string{"brand/*.png"}; !slices.Equal(p.BinariesAllow(), want) {
+		t.Errorf("BinariesAllow() = %v, want %v: a member a version-5 node carries is read, not dropped", p.BinariesAllow(), want)
 	}
 
 	p, found, err = Decode([]byte(`{"version": 5, "budget": {"mode": "enforce"}}`))

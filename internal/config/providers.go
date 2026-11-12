@@ -1081,11 +1081,25 @@ func claimed(providers map[string]ModelProvider, model string) bool {
 // which the three already judge, and one that is off has no model to read
 // (LevelSetting.validate refuses none beside one).
 //
+// The vision slot is a pin of its own too, and one a stage runs rather than
+// only one a rule judges: a coder that cannot read an image runs it (V7,
+// D2002), so a Claude model there under provider pins is a call to Anthropic
+// this rule has to see, exactly as a level's own model is. It is read whether
+// or not this run's coder would move — the image rate that decides that is the
+// price table's, which this rule does not read, and a run that stores a key it
+// ends up not needing is the cheap side of that (PinnedModels, which every
+// other pin rule already reads, holds the same four).
+//
 // Callers ask this only where the gateway is on and enforcing: without it a
 // provider model is refused (CheckProviderGateway) and every call would go to
 // Anthropic, which AnthropicKeyNeeded decides.
 func NeedsAnthropicKey(a Agent, providers map[string]ModelProvider, repo string) bool {
 	models := []string{a.ModelFor(RoleCoder), a.ModelFor(RoleReviewer), EffectiveBackground(a, providers)}
+	if vision := a.VisionModel(); vision != "" {
+		// An unset slot is no model at all, and an empty ID matches no route:
+		// it is left out rather than counted as the direct call it is not.
+		models = append(models, vision)
+	}
 	for _, l := range []*LevelSetting{a.Levels.L1, a.Levels.L2, a.Levels.L3} {
 		if l != nil && l.Model != "" {
 			models = append(models, l.Model)

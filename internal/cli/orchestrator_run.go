@@ -520,6 +520,7 @@ func (d *orchestratorDaemon) newTick(ctx context.Context) (*orchestrator.Tick, e
 		// returns at its nil check: the daemon would stop a run nobody hears
 		// about and pause on a spend question nobody sees.
 		Notifier: orchestrator.LogSink{W: d.out},
+		Triage:   orchestratorTriageSeams(d),
 		Now:      d.db.ServerNow,
 	}, nil
 }

@@ -43,7 +43,8 @@ package credsvc
 //
 // What is deliberately NOT here: the policy, the pools and the slip. Which
 // per-secret names a run may be served is the slip's own list (creds.Slip's
-// Allowed) and is decided where the slip is read (DS1.6, DS3.2); this file
+// Allowed), decided when the slip is issued — DS3.2 authorises it against the
+// pools there, and DS1.6 holds every later call to it; this file
 // reads the name it is handed, and no per-secret name it is not handed can
 // reach a container: the read is by exact name and there is no listing and no
 // search.
