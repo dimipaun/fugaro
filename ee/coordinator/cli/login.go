@@ -683,7 +683,27 @@ func coordinatorTokenRequest(ctx context.Context, client *http.Client, issuer st
 			Error            string `json:"error"`
 			ErrorDescription string `json:"error_description"`
 		}
-		if json.Unmarshal(data, &e) == nil && e.Error != "" {
+		named := json.Unmarshal(data, &e) == nil && e.Error != ""
+		// A 5xx is the door failing rather than refusing, and the door answers
+		// one with an OAuth error body all the same: server_error at a store
+		// it could not read, at a token it could not mint, at a mint it could
+		// not read back. The status is what decides whose failure this is —
+		// the installation's, exit 2, which is what the roadmap group's own
+		// sentence pins — so it is read before the body: taking the body's
+		// error first made a fault of the installation a refusal of the
+		// person's, told them to sign in again for it, and put the credential
+		// out of their hands for a fault no browser can fix.
+		if resp.StatusCode >= http.StatusInternalServerError {
+			said := "the door sent no error of its own"
+			if named {
+				said = e.Error
+				if e.ErrorDescription != "" {
+					said += ": " + e.ErrorDescription
+				}
+			}
+			return coordinatorFrontDoorTokens{}, fcli.RemoteErr(fmt.Errorf("the front door could not answer the token request (%s): %s", resp.Status, said))
+		}
+		if named {
 			return coordinatorFrontDoorTokens{}, fcli.UserErr("the front door refused the token request (%s): %s", e.Error, e.ErrorDescription)
 		}
 		return coordinatorFrontDoorTokens{}, fcli.RemoteErr(fmt.Errorf("the front door refused the token request (%s)", resp.Status))

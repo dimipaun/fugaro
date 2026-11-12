@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -87,6 +88,14 @@ type fakeFrontDoor struct {
 	// cannot read or write its store.
 	faultCode    int
 	faultMessage string
+	// tokenFaultStatus, when set, is the status the token endpoint answers
+	// with, and tokenFaultError the OAuth error it names in the body: the
+	// door's own failure, which it answers at a 5xx as server_error.
+	tokenFaultStatus int
+	tokenFaultError  string
+	// tokenRedirect, when set, is where the token endpoint redirects to
+	// instead of answering.
+	tokenRedirect string
 }
 
 func newFakeFrontDoor(t *testing.T) *fakeFrontDoor {
@@ -150,6 +159,25 @@ func (d *fakeFrontDoor) failMCP(code int, message string) {
 	d.faultCode, d.faultMessage = code, message
 }
 
+// failToken makes the token endpoint answer with the door's own failure: an
+// OAuth error body at the status the real door sends one at, which is a 500
+// and server_error for a store it could not read, a token it could not mint
+// and a mint it could not read back.
+func (d *fakeFrontDoor) failToken(status int, code string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.tokenFaultStatus, d.tokenFaultError = status, code
+}
+
+// redirectToken makes the token endpoint answer a redirect instead of a
+// token, which is what this client must never follow: the request carries the
+// code and the verifier.
+func (d *fakeFrontDoor) redirectToken(to string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.tokenRedirect = to
+}
+
 // answerInVersion moves the number the door answers its documents in, so that
 // a test can put a shape this build does not know on the wire.
 func (d *fakeFrontDoor) answerInVersion(version int) {
@@ -204,7 +232,17 @@ func (d *fakeFrontDoor) token(w http.ResponseWriter, r *http.Request) {
 	}
 	d.mu.Lock()
 	challenge, code, redirect := d.authorizeQuery.Get("code_challenge"), d.code, d.registeredRedirect
+	faultStatus, faultError, elsewhere := d.tokenFaultStatus, d.tokenFaultError, d.tokenRedirect
 	d.mu.Unlock()
+	if elsewhere != "" {
+		w.Header().Set("Location", elsewhere)
+		w.WriteHeader(http.StatusTemporaryRedirect)
+		return
+	}
+	if faultStatus != 0 {
+		writeFakeJSON(w, faultStatus, map[string]string{"error": faultError, "error_description": "the token could not be minted"})
+		return
+	}
 	switch r.Form.Get("grant_type") {
 	case "authorization_code":
 		// The verifier is checked against the challenge the door was given,
@@ -692,6 +730,78 @@ func TestSeveralAnswersToOneLoginDoNotRace(t *testing.T) {
 	}
 }
 
+// TestTheFlowFollowsNoRedirect is the client's rule about the one redirect of
+// this flow: the door's answer to the token request is read where it was
+// asked for and never chased, because the request carries the code and the
+// verifier and a redirect is a door asking this process to send them
+// somewhere else. The second server here is wherever the door points: it must
+// be reached zero times, whatever the answer would have looked like.
+func TestTheFlowFollowsNoRedirect(t *testing.T) {
+	newCloudFixture(t)
+	door := newFakeFrontDoor(t)
+	store := &keychain.Fake{}
+	withFrontDoor(t, door, store)
+	var hits int32
+	elsewhere := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		writeFakeJSON(w, http.StatusOK, map[string]string{"access_token": "access-elsewhere", "refresh_token": "refresh-elsewhere"})
+	}))
+	t.Cleanup(elsewhere.Close)
+	door.redirectToken(elsewhere.URL)
+
+	_, _, err := execute(t, "coordinator", "login", "--scope", "roadmap:write")
+	if err == nil {
+		t.Fatal("a redirect from the token endpoint was followed")
+	}
+	if !strings.Contains(err.Error(), "follows none") {
+		t.Errorf("the refusal is %q; want it to say this client follows no redirect", err)
+	}
+	if n := atomic.LoadInt32(&hits); n != 0 {
+		t.Errorf("the redirect's target was reached %d times; want none — the code and the verifier are this flow's", n)
+	}
+	if len(store.Keys) != 0 {
+		t.Errorf("the keychain holds %v; want nothing from a flow that was answered somewhere else", store.Keys)
+	}
+}
+
+// TestAFaultOfTheTokenEndpointIsTheInstallations is the exit code at the one
+// request every command makes: the door answers a 5xx with an OAuth error body
+// (server_error at a store it could not read, a token it could not mint), and
+// the status decides whose failure that is. Reading the body's error first
+// made it a refusal of the person's — exit 1, with a hint to sign in again —
+// for a fault no browser can fix.
+func TestAFaultOfTheTokenEndpointIsTheInstallations(t *testing.T) {
+	newCloudFixture(t)
+	door := newFakeFrontDoor(t)
+	store := &keychain.Fake{}
+	withFrontDoor(t, door, store)
+	seedCredential(t, store, door, "aurora")
+	door.failToken(http.StatusInternalServerError, "server_error")
+
+	_, _, err := execute(t, "coordinator", "roadmap", "request", "req-1")
+	if err == nil {
+		t.Fatal("a token endpoint that answered 500 exited 0")
+	}
+	if fcli.ExitCode(err) != fcli.ExitRemoteError {
+		t.Errorf("the fault exited %d; want %d — the installation failed, and the credential is not what is wrong", fcli.ExitCode(err), fcli.ExitRemoteError)
+	}
+	if !strings.Contains(err.Error(), "server_error") || !strings.Contains(err.Error(), "500") {
+		t.Errorf("the refusal is %q; want the status and the door's own error", err)
+	}
+	if strings.Contains(err.Error(), "fugaro coordinator login") {
+		t.Errorf("the refusal is %q; want no sign-in hint for a fault of the installation", err)
+	}
+
+	// The same status at login, where the exchange is the failing call.
+	_, _, err = execute(t, "coordinator", "login", "--scope", "roadmap:write")
+	if err == nil {
+		t.Fatal("a login whose exchange was answered 500 exited 0")
+	}
+	if fcli.ExitCode(err) != fcli.ExitRemoteError {
+		t.Errorf("the login fault exited %d; want %d", fcli.ExitCode(err), fcli.ExitRemoteError)
+	}
+}
+
 // TestTheRefreshTokenNeverTouchesAFile is the property the whole design turns
 // on: the token is in the keychain and in no file anywhere the process could
 // have written one. Every directory a process on this machine would reach for
@@ -854,11 +964,15 @@ func TestFrontDoorURLIsReadFromTheInstallationsOutputs(t *testing.T) {
 		outputs string
 		want    string
 		wantErr error
+		// says, when the case is a refusal, is what the refusal has to name:
+		// a case that only asserts "some error" would pass on the wrong one.
+		says string
 	}{
-		{"a front door", `{"mcp_server":{"name":"coordinator","region":"us-east5","url":"https://coordinator-abc-uc.a.run.app"}}`, "https://coordinator-abc-uc.a.run.app", nil},
-		{"a trailing slash", `{"mcp_server":{"url":"https://coordinator-abc-uc.a.run.app/"}}`, "https://coordinator-abc-uc.a.run.app", nil},
-		{"the switch off", `{"mcp_server":null}`, "", errFrontDoorOff},
-		{"an output this build does not read", `{"mcp_server":{"url":""}}`, "", nil},
+		{"a front door", `{"mcp_server":{"name":"coordinator","region":"us-east5","url":"https://coordinator-abc-uc.a.run.app"}}`, "https://coordinator-abc-uc.a.run.app", nil, ""},
+		{"a trailing slash", `{"mcp_server":{"url":"https://coordinator-abc-uc.a.run.app/"}}`, "https://coordinator-abc-uc.a.run.app", nil, ""},
+		{"the switch off", `{"mcp_server":null}`, "", errFrontDoorOff, ""},
+		{"an output this build does not read", `{"mcp_server":{"url":""}}`, "", nil, "names no URL"},
+		{"a plain-http host that is not this machine", `{"mcp_server":{"url":"http://coordinator.example.com"}}`, "", nil, "neither https nor a loopback address"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			coordinatorInstallationOutputs = func(context.Context, *localcfg.Config) (map[string]json.RawMessage, error) {
@@ -877,6 +991,9 @@ func TestFrontDoorURLIsReadFromTheInstallationsOutputs(t *testing.T) {
 			case tc.want == "":
 				if err == nil {
 					t.Fatalf("read answered %q; want a refusal", got)
+				}
+				if tc.says != "" && !strings.Contains(err.Error(), tc.says) {
+					t.Errorf("read refused with %q; want it to name %q", err, tc.says)
 				}
 			default:
 				if err != nil {

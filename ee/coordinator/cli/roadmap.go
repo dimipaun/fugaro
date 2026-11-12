@@ -416,15 +416,21 @@ func coordinatorOpenDoor(ctx context.Context, cloud *fcli.CloudFlags) (*coordina
 // somewhere else is the case worth naming — a recreated front door is the same
 // installation and a different URL — so the sentence says where it was minted
 // when that is not where it is being presented.
+//
+// The hint is for a refusal of the credential and nothing else. A failure of
+// the front door — a 5xx, a connection that did not open — is the
+// installation's, exit 2, and it is returned as it is: telling a person to
+// sign in again for one sends them to a browser that cannot fix it, and a
+// sentence that names the wrong step is worse than the sentence alone.
 func coordinatorSignInAgain(err error, was, now string) error {
+	if fcli.ExitCode(err) != fcli.ExitUserError {
+		return err
+	}
 	hint := "run `fugaro coordinator login --scope roadmap:write` again"
 	if was != "" && was != now {
 		hint = fmt.Sprintf("this credential was minted for %s and the installation's front door is now %s; run `fugaro coordinator login --scope roadmap:write` again", was, now)
 	}
-	if fcli.ExitCode(err) == fcli.ExitUserError {
-		return fcli.UserErr("%v — %s", err, hint)
-	}
-	return fcli.RemoteErr(fmt.Errorf("%w — %s", err, hint))
+	return fcli.UserErr("%v — %s", err, hint)
 }
 
 // coordinatorAwaitOutcome asks the door for the outcome until it is something
