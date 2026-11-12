@@ -593,6 +593,43 @@ func TestJudgeFailedOrTimedOutRunIsBlocked(t *testing.T) {
 		}
 	})
 
+	t.Run("the run's time budget was spent before the stage started", func(t *testing.T) {
+		// A judge run has one stage, so the run's own budget can be spent
+		// before that stage begins — the one case stageOnce refuses with no
+		// error at all, its reason being the sentence it recorded. It is the
+		// "timed out" of this test's name and the case a caller that only
+		// looked at the error would read as a run that judged and said yes.
+		//
+		// The reserve is a millisecond short of the total, which is the
+		// smallest reserve the configuration accepts (it must be shorter than
+		// the total) and leaves the run no time at all.
+		cfg := strings.Replace(gwConfig(t, ""), "finalize_reserve: 30s", "finalize_reserve: 4m59.999s", 1)
+		g := newGWFiles(t, cfg, "observe", "", nil)
+		rec, err := judgeRun(t, g, judgeBriefOf(t, "diff --git a/a.go b/a.go\n+x\n"),
+			judging(func(t *testing.T, _ string) agent.Result {
+				t.Error("the judge stage ran with the run's time budget already spent")
+				return agent.Result{}
+			}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rec == nil {
+			t.Fatal("the run recorded nothing")
+		}
+		if rec.Status != runstore.StatusFailed {
+			t.Fatalf("the run ended %s with reason %q, want the failure a run that never judged is", rec.Status, rec.Reason)
+		}
+		if !strings.Contains(rec.Reason, "time budget exhausted before stage merge_judge") {
+			t.Fatalf("reason = %q, want the budget that ended the stage and the stage it ended", rec.Reason)
+		}
+		if rec.MergeJudge != nil {
+			t.Errorf("the record carries %+v, want no verdict: the stage never ran", rec.MergeJudge)
+		}
+		if v := runner.MergeJudgeOf(rec); v.Verdict != runstore.MergeJudgeBlocked {
+			t.Errorf("the ladder reads the record as %+v, want a block", v)
+		}
+	})
+
 	t.Run("the reader", func(t *testing.T) {
 		// What the two cases above are read through, at the shapes a record
 		// can carry: no record, no verdict, and a verdict this build does not

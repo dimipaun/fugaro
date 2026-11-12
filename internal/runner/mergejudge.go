@@ -158,12 +158,28 @@ func (r *run) mergeJudge(ctx context.Context) (error, failure.Class) {
 		StrictMCPConfig: true,
 	}, stageOpts{Dir: dir})
 	r.countTokens(res)
-	var skipped skippedError
-	if !ok && !errors.As(err, &skipped) {
-		// The run's own failure ended the stage, and it is already recorded
-		// where it happened: this step records no verdict, which the ladder
-		// reads as the veto it is.
-		return err, failure.StageErrorUnexplained
+	if !ok {
+		// The stage did not answer, so this run records no verdict at all, and
+		// the absence is the veto (D2044, G1). The run's own failure ended the
+		// stage and is already recorded where it happened.
+		//
+		// One of stageOnce's endings is not an error: a run whose time budget is
+		// spent before the stage begins is sent here with a nil error and the
+		// sentence recorded for it (runner.go, "time budget exhausted before
+		// stage ..."). Read as a stage that ran, that nil would fall through to
+		// the reader below, record a verdict nobody gave and end the run
+		// succeeded — the one direction this rung may never fail in
+		// (TestJudgeFailedOrTimedOutRunIsBlocked). Where there is no error, the
+		// reason and the class are the pair the failing site wrote, which is how
+		// every other ending of a run reads the same failure (endReviewFailed,
+		// finalize's failed case).
+		if err != nil {
+			return err, failure.StageErrorUnexplained
+		}
+		if reason := r.failure(); reason != "" {
+			return errors.New(reason), r.failureClass()
+		}
+		return errors.New("the merge judge stage did not run"), failure.StageErrorUnexplained
 	}
 	rec, decodeErr := readJudgeVerdict(res, in, r.stageModel(stageMergeJudge))
 	r.rec.MergeJudge = rec
