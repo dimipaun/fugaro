@@ -733,6 +733,27 @@ func TestAViewerReadsTheStateNotTheKey(t *testing.T) {
 			t.Errorf("with the later-expiring key revoked, Active answers %q in state %s (revoked %t), want that key and Free", applied.Claims.KeyID, applied.State, applied.Revoked)
 		}
 
+		// And the checks that follow do not take it back. Silence is not an
+		// answer (D2140), and neither is an answer about another key: anyone who
+		// can block the renewal job's route to the server would otherwise put a
+		// revoked key back to work within a day.
+		if err := revoked.store.RecordCheck(ctx, at(2), CheckUnreachable, "lk_test_second"); err != nil {
+			t.Fatalf("recording an unreachable check: %v", err)
+		}
+		if err := revoked.store.RecordCheck(ctx, at(3), CheckOK, "lk_test_first"); err != nil {
+			t.Fatalf("recording an ok check about the other key: %v", err)
+		}
+		view, err := revoked.store.View(ctx, at(3), m.ring, testFirebaseProject, nil)
+		if err != nil {
+			t.Fatalf("View: %v", err)
+		}
+		if view.State != licence.Expired || !view.Revoked {
+			t.Errorf("after an unreachable check and an ok check about the other key, the revoked key reads state %s (revoked %t), want it still Free: the record of the checks is not the record of the revocations (D2140)", view.State, view.Revoked)
+		}
+		if view.Check.Status != CheckOK || view.Check.KeyID != "lk_test_first" {
+			t.Errorf("the last check reads %+v, want the ok answer about the other key: the latest check is still the latest check", view.Check)
+		}
+
 		// A check about the other key in the object leaves this one alone: the
 		// revocation is the checked key's, not the object's.
 		other := newRig(t)

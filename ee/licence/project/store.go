@@ -31,6 +31,11 @@
 // (mutate), which is what keeps a person's `licence set` and the renewal job's
 // install from dropping each other's key.
 //
+// A key the server has answered revoked is Free here, whatever its term says,
+// and the object keeps that answer: revocation is the one thing the server's
+// word decides on its own (spec section 6 step 6), and the checks that follow it
+// -- a silent one, or one about another key -- do not take it back (D2140).
+//
 // What this store accepts, because it is the runs bucket (the plan's "Limits
 // this plan accepts"): every identity that reads the bucket can copy the key,
 // and the required `workspace_id` (TN2) is what refuses that copy in another
@@ -144,13 +149,24 @@ type Check struct {
 	LastOK time.Time `json:"last_ok,omitzero"`
 }
 
-// record is the object as it is written: the installed keys with the check
-// record beside them, so the whole of a project's licence is one read and one
-// write.
+// record is the object as it is written: the installed keys, the latest check
+// record, and the revocations the server has answered for this project, so the
+// whole of a project's licence is one read and one write.
 type record struct {
 	V     int      `json:"v"`
 	Keys  []string `json:"keys,omitempty"`
 	Check *Check   `json:"last_check,omitempty"`
+	// Revoked is the key_ids the licence server has revoked for this project.
+	// It is kept apart from the latest check because a revocation is not a
+	// check: the next check replaces the record above, and if the answer lived
+	// there, one unreachable check -- anyone able to block the renewal job's
+	// route to the server, or a check about the other key of the overlap --
+	// would put a revoked key back to work. Only an explicit answer revokes
+	// (D2140), and once answered it is not undone here: entries are not pruned
+	// when their key leaves the object, because a leaked key put back by hand
+	// must not come back clean (spec section 8: the old key is revoked and never
+	// renewed).
+	Revoked []string `json:"revoked_key_ids,omitempty"`
 }
 
 // keys answers the record's keys as the bytes a verifier reads.
@@ -160,6 +176,16 @@ func (r record) keys() [][]byte {
 		keys = append(keys, []byte(key))
 	}
 	return keys
+}
+
+// revokes answers whether the server has answered revoked for this key_id.
+func (r record) revokes(keyID string) bool {
+	for _, id := range r.Revoked {
+		if id == keyID {
+			return true
+		}
+	}
+	return false
 }
 
 // snapshot is the object as one read found it: the record it decodes to, the
@@ -263,6 +289,13 @@ func (s *Store) RecordCheck(ctx context.Context, at time.Time, status, keyID str
 			check.Failures, check.LastOK = prev.Failures+1, prev.LastOK
 		}
 		rec.Check = &check
+		// A revocation is recorded beside the check and not in it: the next
+		// check replaces the record, and a revocation the server has answered is
+		// not something a later check -- an unreachable one, or one about another
+		// key -- gets to take back (D2140, spec section 8).
+		if status == CheckRevoked && !rec.revokes(keyID) {
+			rec.Revoked = append(rec.Revoked, keyID)
+		}
 		return rec, true, nil
 	})
 }
@@ -310,7 +343,7 @@ func (s *Store) Active(ctx context.Context, now time.Time, ring licence.Keyring,
 	if err != nil {
 		return Applied{}, err
 	}
-	return apply(now, ring, firebaseProjectID, snap.rec.keys(), machine, snap.rec.Check)
+	return apply(now, ring, firebaseProjectID, snap.rec.keys(), machine, snap.rec.Revoked)
 }
 
 // View is a project's licence as a reader who is not an admin sees it: the
@@ -328,10 +361,11 @@ type View struct {
 	PaidThrough time.Time
 	// State is active, grace or expired against the clock the reader passed.
 	State licence.State
-	// Revoked says the state above is the last check's answer rather than the
-	// term's: the key that applies was revoked. It is what a status says out
-	// loud, since Free from a revocation and Free from an expiry are the same
-	// behaviour and different news.
+	// Revoked says the state above is the server's answer rather than the
+	// term's: the key that applies is one the server revoked. It is what a
+	// status says out loud, since Free from a revocation and Free from an
+	// expiry are the same behaviour and different news -- and it is not undone
+	// by the checks that follow (only an answer revokes, D2140).
 	Revoked bool
 	// Kind is paid, trial or comped.
 	Kind string
@@ -348,9 +382,11 @@ type View struct {
 	// Check is the last revocation check the project ran -- the installation's
 	// record and not one key's, so a key installed after a check carries that
 	// check's figures until the next check replaces them -- and HasCheck says
-	// whether there is one at all: a project that never checked has none. What
-	// the record revokes is the key it names, so a carried record whose key_id
-	// is not the applied key's changes nothing here.
+	// whether there is one at all: a project that never checked has none. It is
+	// the last check and not the revocations: a revocation is kept apart from
+	// the check that brought it (record's Revoked), because the next check --
+	// silent, or about another key -- must not take one back, and Revoked above
+	// is where one shows.
 	Check    Check
 	HasCheck bool
 }
@@ -365,7 +401,7 @@ func (s *Store) View(ctx context.Context, now time.Time, ring licence.Keyring, f
 	if err != nil {
 		return View{}, err
 	}
-	applied, err := apply(now, ring, firebaseProjectID, snap.rec.keys(), machine, snap.rec.Check)
+	applied, err := apply(now, ring, firebaseProjectID, snap.rec.keys(), machine, snap.rec.Revoked)
 	if err != nil {
 		return View{}, err
 	}
@@ -502,12 +538,13 @@ func marshal(rec record) ([]byte, error) {
 // none. Both readings are the licence package's own (its `active`): among the
 // keys that verify, the one with the later paid_through, and a set whose every
 // key is refused answers the first refusal, because that is the one a person
-// has to act on. The last check is then weighed against the key that won.
-func apply(now time.Time, ring licence.Keyring, firebaseProjectID string, projectKeys, machineKeys [][]byte, check *Check) (Applied, error) {
+// has to act on. The project's revocations are then weighed against the key that
+// won.
+func apply(now time.Time, ring licence.Keyring, firebaseProjectID string, projectKeys, machineKeys [][]byte, revokedIDs []string) (Applied, error) {
 	claims, state, err := firstKey(now, ring, firebaseProjectID, projectKeys)
 	switch {
 	case err == nil:
-		return revoked(Applied{Claims: claims, State: state, Source: SourceProject}, check), nil
+		return markRevoked(Applied{Claims: claims, State: state, Source: SourceProject}, revokedIDs), nil
 	case !errors.Is(err, licence.ErrNoKey):
 		return Applied{}, err
 	}
@@ -515,20 +552,25 @@ func apply(now time.Time, ring licence.Keyring, firebaseProjectID string, projec
 	if err != nil {
 		return Applied{}, err
 	}
-	return revoked(Applied{Claims: claims, State: state, Source: SourceMachine}, check), nil
+	return markRevoked(Applied{Claims: claims, State: state, Source: SourceMachine}, revokedIDs), nil
 }
 
-// revoked applies the last check to the key that answers: a check that answered
-// revoked about this key makes it Free, which is expiry's own state (spec
-// section 6 step 6: revocation behaves as Free; D2140: only an answer revokes).
-// A record that names another key -- the leaked key a reissue replaced, with the
-// reissue still in the object beside it -- leaves this key alone, and so does a
-// record that names no key at all.
-func revoked(a Applied, check *Check) Applied {
-	if check == nil || check.Status != CheckRevoked || check.KeyID == "" || check.KeyID != a.Claims.KeyID {
+// markRevoked applies the server's revocations to the key that answers: a key
+// the server has answered revoked for is Free, which is expiry's own state
+// (spec section 6 step 6: revocation behaves as Free; D2140: only an answer
+// revokes, and silence never revokes and never un-revokes). The list is the
+// project's, so a key whose key_id is not on it -- the reissue that replaced a
+// leaked key, with the leaked key still in the object beside it -- is untouched.
+func markRevoked(a Applied, revokedIDs []string) Applied {
+	if a.Claims.KeyID == "" {
 		return a
 	}
-	a.State, a.Revoked = licence.Expired, true
+	for _, id := range revokedIDs {
+		if id == a.Claims.KeyID {
+			a.State, a.Revoked = licence.Expired, true
+			return a
+		}
+	}
 	return a
 }
 
