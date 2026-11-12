@@ -677,8 +677,9 @@ pool ls` says which half serves each member for exactly that reading.
 **A pool of two or more Claude OAuth credentials serves nothing until the owner says otherwise.**
 Fugaro spreads one run across subscriptions only once the project's `subscription_spread` switch is
 on — `fugaro settings set subscription_spread true`, off by default — and while it is off a craft
-whose access names such a pool is **inert**: `fugaro craft ls` marks the row, and a call that would
-have been served by it is refused with the switch named. That is the switch §1's terms question is
+whose access names such a pool is **inert**: `fugaro craft ls` marks the row — it is offline, so it
+reads the switch from this machine's own config, the value `fugaro update` publishes into the node —
+and a call that would have been served by it is refused with the switch named. That is the switch §1's terms question is
 about, kept explicit for the reason the accounts' own agreement gives.
 
 ## 14. Crafts: which model, and whose credential

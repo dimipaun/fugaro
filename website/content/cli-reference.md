@@ -2289,7 +2289,8 @@ resolves to the project's default credential.
 Every half names where it came from: the layer that wrote it (repo, local or
 project), the craft it was inherited from, or default when nothing set it. A
 pool holding two or more Claude OAuth credentials serves nothing until the
-project's subscription-spread switch is on, and the row says so.
+project's subscription-spread switch is on — the switch this machine's own
+config writes — and the row says so.
 
 The read is offline: it reads this checkout's fugaro.yaml, the installation's
 own config and the project layer file the last cloud read cached, and reaches
