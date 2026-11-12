@@ -77,9 +77,13 @@ type fakeFrontDoor struct {
 
 func newFakeFrontDoor(t *testing.T) *fakeFrontDoor {
 	t.Helper()
+	// minted starts at one so that the first token the door mints is not the
+	// one a test seeded: a fixture whose successor is its predecessor would
+	// pass a rotation test that asserted nothing.
 	d := &fakeFrontDoor{
 		t:       t,
 		refresh: "refresh-1",
+		minted:  1,
 		kinds:   map[string]string{},
 	}
 	mux := http.NewServeMux()

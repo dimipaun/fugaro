@@ -464,20 +464,31 @@ func coordinatorReadOutcome(ctx context.Context, client *http.Client, door *coor
 // and the reason is on standard error where a person reads it.
 func coordinatorPrintOutcome(cmd *cobra.Command, asJSON bool, o coordinatorOutcomeDoc) error {
 	if asJSON {
-		return writeCoordinatorJSON(cmd.OutOrStdout(), o)
+		// The document is printed and the exit code is still the status's: a
+		// console that asked for JSON asked for the data, not for a command
+		// that lies about what happened.
+		if err := writeCoordinatorJSON(cmd.OutOrStdout(), o); err != nil {
+			return err
+		}
 	}
 	out := cmd.OutOrStdout()
 	switch o.Status {
 	case mcpauth.RoadmapApplied:
-		fmt.Fprintf(out, "request %s applied\n", o.Request)
+		if !asJSON {
+			fmt.Fprintf(out, "request %s applied\n", o.Request)
+		}
 	case mcpauth.RoadmapRefused:
 		return fcli.UserErr("%s", coordinatorOutcomeSentence(o))
 	case mcpauth.RoadmapFailed:
 		return fcli.RemoteErr(errors.New(coordinatorOutcomeSentence(o)))
 	case mcpauth.RoadmapPending:
-		fmt.Fprintf(out, "request %s is still pending: read it later with `fugaro coordinator roadmap request %s`\n", o.Request, o.Request)
+		if !asJSON {
+			fmt.Fprintf(out, "request %s is still pending: read it later with `fugaro coordinator roadmap request %s`\n", o.Request, o.Request)
+		}
 	default:
-		fmt.Fprintf(out, "request %s: %s\n", o.Request, o.Status)
+		if !asJSON {
+			fmt.Fprintf(out, "request %s: %s\n", o.Request, o.Status)
+		}
 	}
 	return nil
 }
