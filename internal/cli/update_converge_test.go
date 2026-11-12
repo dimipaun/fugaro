@@ -18,6 +18,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
@@ -633,6 +634,35 @@ func TestUpdateKeepsAHandWrittenBinariesBlock(t *testing.T) {
 	}
 	if got := p.BinariesMaxBytes(); got != 1048576 {
 		t.Errorf("after one fugaro update, the node's binaries.max_bytes = %d, want 1048576: the run put the cap back at the ceiling it had been lowered from", got)
+	}
+}
+
+// TestUpdateKeepsAHandWrittenModelGrades is the update door's half of the
+// finding the model_grades keep exists for, the way the binaries test above is
+// for its member: this release models the block and no key of the operator's
+// config writes one onto the node, so the policy stage's publish has to carry
+// the node's grades over rather than rewrite the node without them — silently,
+// since no rung reads a grade in this release yet. Both doors build the node
+// through policyNodeForPublish, so this is the same keep the explicit door's
+// TestProjectPolicyPublishKeepsTheModelGrades pins, reached through the one
+// command the HARD RULE says the whole upgrade is.
+func TestUpdateKeepsAHandWrittenModelGrades(t *testing.T) {
+	node := v7Node()
+	node["model_grades"] = map[string]any{
+		"strong":    map[string]any{"model": "anthropic/claude-sonnet-5.5", "access": "openrouter-main"},
+		"strongest": map[string]any{"model": "anthropic/claude-opus-4.6"},
+	}
+	r := newConvergeRig(t, node)
+	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	p := convergeNode(t, r)
+	if p.ModelGrades == nil {
+		t.Fatal("after one fugaro update, the node carries no model_grades: the run dropped the project's grades")
+	}
+	if got, want := p.ModelGrades.Of(config.GradeStrong), (config.Craft{Model: "anthropic/claude-sonnet-5.5", Access: "openrouter-main"}); got != want {
+		t.Errorf("after one fugaro update, model_grades.strong = %+v, want %+v: the run dropped the grade the owner set", got, want)
+	}
+	if got, want := p.ModelGrades.Of(config.GradeStrongest), (config.Craft{Model: "anthropic/claude-opus-4.6"}); got != want {
+		t.Errorf("after one fugaro update, model_grades.strongest = %+v, want %+v: the run dropped the grade the owner set", got, want)
 	}
 }
 
