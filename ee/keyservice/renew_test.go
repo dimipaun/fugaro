@@ -437,6 +437,10 @@ func TestARenewalStaysInTheKeysOwnWorkspace(t *testing.T) {
 func TestRevokedKeyIsNeverRenewed(t *testing.T) {
 	f, spy := renewing(t)
 	keyID, secret, _ := heldKey(t, f, PolicyTeamMonthly)
+	// Inside its window, so what turns the renewal away below is the revocation
+	// and not the timing: a key a whole term from its window is refused before
+	// the list is ever read.
+	f.inTheRenewalWindow(t, keyID)
 	if err := f.store.Revoke(context.Background(), Revocation{KeyID: keyID, Reason: "refund", At: f.now}); err != nil {
 		t.Fatalf("revoking the key: %v", err)
 	}
@@ -1015,5 +1019,93 @@ func TestChainedRenewalsStopAtOneTerm(t *testing.T) {
 	}
 	if want := paidThrough.Add(policy.Term); !furthest.Equal(want) {
 		t.Errorf("the latest term in the store ends at %s, want %s — the term this key is in plus the one renewal it was entitled to, and not a period per call (T26)", furthest, want)
+	}
+}
+
+// losingHandovers is the store of an instance whose handover write fails while
+// the two writes before it land: the rotation's state and its record are in the
+// store and the answer kept beside them is not.
+type losingHandovers struct{ *Memory }
+
+func (l *losingHandovers) SaveHandover(context.Context, Handover, time.Time) error {
+	return errors.New("the store refused the write")
+}
+
+// TestARenewalIsAnsweredWhenTheHandoverCannotBeKept: the state, the record and
+// the handover are three writes, and a store that refuses the third has already
+// taken the first two — the successor is signed and the store holds its state
+// and its record, which is everything a key needs to renew. Answering the holder
+// with a failure there throws a paid term away and leaves the key unable to
+// rotate again: a retry is asked inside the window the handover was for and is
+// answered the same failure until it closes, and past it the old secret is spent
+// for good. What the holder loses is the retry, so the store's refusal is logged
+// and the key is answered.
+func TestARenewalIsAnsweredWhenTheHandoverCannotBeKept(t *testing.T) {
+	spy := &v1Spy{}
+	store := &losingHandovers{}
+	f := newFixtureWith(t, Production, func(f *fixture) {
+		spy.inner = Minter{Signer: f.signer, Keys: f.keys, Environment: f.env, Now: f.clock}
+		f.deps.MintsV1 = spy
+		store.Memory = f.store
+		f.deps.Store = store
+	})
+	keyID, secret, _ := heldKey(t, f, PolicyTeamMonthly)
+	f.inTheRenewalWindow(t, keyID)
+
+	rec := f.call(RouteRenew, RenewalCall{KeyID: keyID, WorkspaceID: workspaceID, RenewalSecret: secret})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("a renewal whose handover could not be kept was answered %d (%q), want the successor: the key is minted and the store holds its state and its record", rec.Code, rec.Body.String())
+	}
+	answer := answerOf(t, rec)
+	if answer.Key == "" || answer.RenewalSecret == "" {
+		t.Fatal("the answer carries no bundle, want the key and the secret that were minted")
+	}
+	if _, live, err := f.store.Handover(context.Background(), keyID, f.now); err != nil || live {
+		t.Errorf("the store answers live=%v err=%v for the handover it refused to keep, want none", live, err)
+	}
+
+	// The successor is a holder in its own right, and it renews a term later:
+	// what the handover carries is the retry and not the key.
+	successor := v1Verified(t, f, answer.Key).KeyID
+	if _, held, err := f.store.KeyState(context.Background(), successor); err != nil || !held {
+		t.Fatalf("the successor has no state in the store (held=%v err=%v), want the write that makes it a key", held, err)
+	}
+	f.inTheRenewalWindow(t, successor)
+	if answerOf(t, f.call(RouteRenew, RenewalCall{KeyID: successor, WorkspaceID: workspaceID, RenewalSecret: answer.RenewalSecret})).Key == "" {
+		t.Error("the successor did not renew, want the chain to go on")
+	}
+	if got := spy.minted(); got != 2 {
+		t.Errorf("the minter was asked for %d key(s), want the successor's own renewal beside the first", got)
+	}
+}
+
+// TestARequestSpendsItsAddressesAllowanceWhateverItsShape: the address's bucket
+// is what bounds guessing at a secret (§7.2), so it is spent by the request
+// before anything of it is read: a body this service will not parse, a key id it
+// has never issued and a wrong secret each cost the address exactly what a good
+// call costs. A bucket that only counted the requests that reached a key id
+// would serve a flood of bodies nobody parses for free, and the limit that
+// bounds guessing would be the one thing a caller can step around.
+func TestARequestSpendsItsAddressesAllowanceWhateverItsShape(t *testing.T) {
+	f, _ := renewingWithin(t, Limits{Requests: 2, Window: time.Hour})
+	keyID, secret, _ := heldKey(t, f, PolicyTeamMonthly)
+	f.inTheRenewalWindow(t, keyID)
+
+	for _, body := range []string{
+		`key_id=` + keyID,
+		`{"key_id":"` + unknownKeyID + `","workspace_id":"` + workspaceID + `","renewal_secret":"` + freshSecret(t) + `"}`,
+	} {
+		if rec := f.raw(RouteRenew, body); rec.Code != http.StatusForbidden {
+			t.Fatalf("a request the service refuses was answered %d, want %d", rec.Code, http.StatusForbidden)
+		}
+	}
+	// The address's allowance is spent, so the holder's own call from it is
+	// refused like anyone else's: what the bucket counts is the request.
+	rec := f.call(RouteRenew, RenewalCall{KeyID: keyID, WorkspaceID: workspaceID, RenewalSecret: secret})
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("the holder's renewal, from an address whose allowance two requests spent, was answered %d (%q), want %d", rec.Code, rec.Body.String(), http.StatusForbidden)
+	}
+	if body := rec.Body.String(); body != renewalRefusal+"\n" {
+		t.Errorf("a request past the address's allowance was answered %q, want the one refusal %q", body, renewalRefusal)
 	}
 }

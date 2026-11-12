@@ -203,6 +203,15 @@ func (s *Service) proved(ctx context.Context, call RenewalCall) (holder, bool, e
 // have the holder's own renewal refused. Guessing is bounded by the address's
 // bucket, which is the one every request pays.
 func (s *Service) renewalCall(w http.ResponseWriter, r *http.Request) (RenewalCall, bool) {
+	// Spent before anything is read of the request, which is the whole of what
+	// makes the sentence above true: a body this service never parses is as
+	// cheap to serve as a good one, so a bucket that only counted the bodies
+	// that got as far as a key id would let a flood of them be served for free
+	// (TestARequestSpendsItsAddressesAllowanceWhateverItsShape).
+	if !s.limiter.allow("ip:" + clientIP(r)) {
+		refuseRenewal(w)
+		return RenewalCall{}, false
+	}
 	var call RenewalCall
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRequestBytes))
 	if err != nil {
@@ -212,10 +221,6 @@ func (s *Service) renewalCall(w http.ResponseWriter, r *http.Request) (RenewalCa
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&call); err != nil {
-		refuseRenewal(w)
-		return RenewalCall{}, false
-	}
-	if !s.limiter.allow("ip:" + clientIP(r)) {
 		refuseRenewal(w)
 		return RenewalCall{}, false
 	}
@@ -429,11 +434,20 @@ func (s *Service) renew(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// The handover is written last, after the record, and that is the order that
-	// can be recovered from: a rotation whose answer could not be kept is one the
-	// store records and the holder is told nothing about, and a retry is answered
-	// the same way until the window closes. Writing it first would be the worse
-	// order — a caller could be handed a key whose record had not been written
-	// yet, which is the dead key above.
+	// can be recovered from: a rotation whose answer could not be kept is one
+	// whose record and state are written, so the successor renews and the store
+	// can revoke it. Writing it first would be the worse order — a caller could
+	// be handed a key whose record had not been written yet, which is the dead
+	// key above.
+	//
+	// A store that refuses the write is logged and the holder is still answered
+	// the key it minted, the way `sight` answers a caller whose bookkeeping
+	// failed: the successor is signed, its record and its state are in the store,
+	// and throwing it away would take a paid term from a holder whose renewal
+	// succeeded and leave the key unable to rotate again — a retry asks inside
+	// the same window the handover was for, and past it the old secret is spent.
+	// What is lost is the retry, so an answer lost in flight is a successor only
+	// a reissue can replace.
 	if err := s.store.SaveHandover(r.Context(), Handover{
 		KeyID:         call.KeyID,
 		SecretHash:    key.state.RenewalSecretHash,
@@ -441,8 +455,7 @@ func (s *Service) renew(w http.ResponseWriter, r *http.Request) {
 		RenewalSecret: minted.RenewalSecret,
 		Until:         now.Add(renewalHandover),
 	}, now); err != nil {
-		fail(w, err)
-		return
+		log.Printf("keyservice: keeping the answer to the rotation of the key %s: %v", call.KeyID, err)
 	}
 	writeAnswer(w, Answer{Status: StatusOK, NewerKey: true, Key: minted.Key, RenewalSecret: minted.RenewalSecret})
 }
