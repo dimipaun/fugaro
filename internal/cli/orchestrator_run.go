@@ -19,6 +19,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
+	"github.com/dimipaun/fugaro/internal/orchestrator/endpoint"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -137,6 +138,9 @@ func runOrchestratorRun(cmd *cobra.Command, o *orchestratorRunOptions) error {
 		binary: o.binary, running: Version, once: o.once,
 		out: cmd.OutOrStdout(), warn: cmd.ErrOrStderr(),
 		launched: &launchInFlight{},
+		// The endpoint's registry goes under the user's state directory, read
+		// from the process's own environment the way the cached brief is.
+		registryGetenv: os.Getenv, registryGOOS: runtime.GOOS,
 	}
 	d.cache = &orchestrator.BriefCacheWriter{Getenv: os.Getenv, GOOS: runtime.GOOS, ID: id, Log: func(err error) {
 		fmt.Fprintf(d.warn, "orchestrator %s: the session-start cache was not written: %s\n", d.id, safetext.OneLine(err.Error()))
@@ -172,15 +176,69 @@ type orchestratorDaemon struct {
 	launched *launchInFlight
 	out      io.Writer
 	warn     io.Writer
+	// outputLock is what keeps the two a single stream once the local endpoint
+	// is up: see sealOutput.
+	outputLock *sync.Mutex
+	// endpoint is the local endpoint this daemon serves and the registry file
+	// that tells a reader on this machine where it is, nil while none is
+	// running: the daemon is the process that starts and stops it (CG13b).
+	endpoint *servedEndpoint
+	// feed is the last tick the daemon left, which is what the endpoint serves
+	// (see endpointFeed).
+	feed endpointFeed
+	// registryGetenv and registryGOOS are where the endpoint's registry file is
+	// placed: the user's state directory through localcfg.UserDir, and the
+	// platform its fallback is chosen for. They are fields rather than a read
+	// of the environment inside the endpoint for the reason the cache writer's
+	// are: a test passes its own, so no write here can reach a developer's own
+	// state directory. A nil getenv is a daemon that serves no endpoint at all
+	// -- runOrchestratorRun always sets one, and a test that is not about the
+	// endpoint does not.
+	registryGetenv func(string) string
+	registryGOOS   string
 	// wake is where a cycle waits for the next one. Production waits on the
 	// node's own stream and the interval; a test replaces it with one that
 	// ends the loop, which is the only way to run this loop deterministically.
 	wake func(context.Context) error
 }
 
+// sealOutput gives the daemon's two streams one lock, once, for the daemon's
+// life.
+//
+// From the moment the local endpoint is served the warning stream has a second
+// writer: the endpoint reports a request it refused from that connection's own
+// goroutine, while this daemon writes its lines from its loop (CG13b). An
+// io.Writer promises nothing about two goroutines at once, and a test's own
+// buffer promises even less. The streams are wrapped here rather than where the
+// endpoint is started because the run view and the launcher capture these two
+// writers when the first tick is built, before any endpoint exists, and a line
+// they write must be serialised against the endpoint's as well.
+func (d *orchestratorDaemon) sealOutput() {
+	if d.outputLock != nil {
+		return
+	}
+	d.outputLock = new(sync.Mutex)
+	d.out = syncWriter{mu: d.outputLock, w: d.out}
+	d.warn = syncWriter{mu: d.outputLock, w: d.warn}
+}
+
+// syncWriter serialises writes to w, so the daemon's loop and the endpoint's
+// connection goroutines can share one stream.
+type syncWriter struct {
+	mu *sync.Mutex
+	w  io.Writer
+}
+
+func (s syncWriter) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.w.Write(p)
+}
+
 // start is the whole life of the daemon: converge nothing, learn whether an
 // update is due, take the lease, and then tick until something stops it.
 func (d *orchestratorDaemon) start(ctx context.Context) error {
+	d.sealOutput()
 	if due, err := d.updateDue(ctx); err != nil {
 		return err
 	} else if due {
@@ -203,7 +261,128 @@ func (d *orchestratorDaemon) start(ctx context.Context) error {
 	}
 	d.tick = tick
 	fmt.Fprintf(d.out, "orchestrator %s: driving it as %s, one cycle every %s\n", safetext.Field(d.id), safetext.Field(d.holder), d.interval)
+	d.serve(ctx)
+	defer d.unserve(ctx)
 	return d.loop(ctx)
+}
+
+// endpointStopGrace bounds the endpoint's shutdown, which is a listener and the
+// streams on it rather than the daemon's own exit: a reader that has to notice
+// a closed connection must not hold the daemon open past this.
+const endpointStopGrace = 5 * time.Second
+
+// servedEndpoint is one running endpoint with the registry file that names it.
+type servedEndpoint struct {
+	srv    *endpoint.Server
+	holder *endpoint.Holder
+}
+
+// serve starts the local endpoint this daemon answers on and writes its
+// registry file, once, at start-up (CG13b).
+//
+// Nothing here fails the daemon. The endpoint is what a reader on this machine
+// prefers, and the node and the session-start cache are what it reads without
+// one (T5): a listener that cannot bind, or a state directory that cannot be
+// written, is a line in the daemon's output and never a start-up that stops.
+// That is also the whole of what `fugaro update` owes this file (F28): the
+// daemon creates its own local file, so there is nothing to migrate and no
+// operator step, and a machine whose home is read-only drives its id as before.
+func (d *orchestratorDaemon) serve(ctx context.Context) {
+	if d.registryGetenv == nil {
+		return
+	}
+	srv, err := endpoint.Start(ctx, endpoint.Options{ID: d.id, Snapshot: d.feed.snapshot, Log: func(err error) {
+		fmt.Fprintf(d.warn, "orchestrator %s: %s\n", safetext.Field(d.id), safetext.OneLine(err.Error()))
+	}})
+	if err != nil {
+		fmt.Fprintf(d.warn, "orchestrator %s: the local endpoint was not started: %s\n", safetext.Field(d.id), safetext.OneLine(err.Error()))
+		return
+	}
+	holder, err := endpoint.Hold(d.registryGetenv, d.registryGOOS, endpoint.Registry{
+		ID: d.id, PID: os.Getpid(), Addr: srv.Addr(),
+		Token: srv.Token(), Nonce: srv.Nonce(), Started: time.Now().UTC(),
+	})
+	if err != nil {
+		fmt.Fprintf(d.warn, "orchestrator %s: the local endpoint was not started: %s\n", safetext.Field(d.id), safetext.OneLine(err.Error()))
+		closeEndpoint(srv, d.warn)
+		return
+	}
+	d.endpoint = &servedEndpoint{srv: srv, holder: holder}
+	fmt.Fprintf(d.out, "orchestrator %s: the local endpoint answers on %s for a reader on this machine\n", safetext.Field(d.id), srv.Addr())
+}
+
+// unserve is the clean shutdown the daemon already performs, with the
+// endpoint's half of it: the registry file goes first, so no reader is told
+// about an endpoint that is stopping, and the listener closes after it. A
+// failure here is a warning and never an exit code: the process is leaving
+// either way, and a file left behind is one the next reader finds dead.
+func (d *orchestratorDaemon) unserve(ctx context.Context) {
+	e := d.endpoint
+	if e == nil {
+		return
+	}
+	d.endpoint = nil
+	if err := e.holder.Remove(); err != nil {
+		fmt.Fprintf(d.warn, "orchestrator %s: the local endpoint's registry file was not removed: %s\n", safetext.Field(d.id), safetext.OneLine(err.Error()))
+	}
+	closeEndpoint(e.srv, d.warn)
+}
+
+// closeEndpoint stops a listener that is already serving, with a grace of its
+// own rather than the caller's context: one of the exits that reach here is
+// that context ending -- Ctrl-C at a terminal, the unit's SIGTERM -- and a
+// shutdown the cancellation aborted would leave the port bound by a process
+// that is going.
+func closeEndpoint(srv *endpoint.Server, warn io.Writer) {
+	ctx, cancel := context.WithTimeout(context.Background(), endpointStopGrace)
+	defer cancel()
+	if err := srv.Close(ctx); err != nil {
+		fmt.Fprintf(warn, "the local endpoint did not stop cleanly: %s\n", safetext.OneLine(err.Error()))
+	}
+}
+
+// endpointFeed is the last tick the daemon left: the state, the server time it
+// was read at, and whether a cycle has finished at all. It is what the local
+// endpoint serves.
+//
+// It is held in memory rather than read from the node per request because the
+// endpoint exists to save the reader a cloud read: a request that read the
+// database would be the cache file with a listener in front of it.
+type endpointFeed struct {
+	mu     sync.Mutex
+	state  orchestrator.State
+	at     time.Time
+	ticked bool
+}
+
+// snapshot is what the endpoint's Options.Snapshot is: the state of the last
+// cycle and the server time it was read at, or false until a cycle has finished
+// (H3, the endpoint's own 503).
+func (f *endpointFeed) snapshot() (orchestrator.State, time.Time, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.state, f.at, f.ticked
+}
+
+// publish hands the endpoint the state the cycle just left, so a reader on this
+// machine sees the tick the node sees without reading the database itself. It
+// is skipped while no endpoint is running, and a read that fails leaves the
+// endpoint on the tick before: the next cycle tries again.
+func (d *orchestratorDaemon) publish(ctx context.Context) {
+	if d.endpoint == nil {
+		return
+	}
+	s, _, err := d.node.Load(ctx)
+	if err != nil {
+		return
+	}
+	now, ok := d.db.ServerNow()
+	if !ok {
+		return
+	}
+	d.feed.mu.Lock()
+	defer d.feed.mu.Unlock()
+	d.feed.state, d.feed.at, d.feed.ticked = s, now, true
 }
 
 // stateVersion is the schema_version the state node carries, and whether the
@@ -443,6 +622,7 @@ func (d *orchestratorDaemon) loop(ctx context.Context) error {
 		d.refreshCaps(ctx)
 		rep, err := orchestrator.StepWithCache(ctx, d.tick, d.cache)
 		d.report(rep, err)
+		d.publish(ctx)
 		d.rearmBreaker(ctx)
 		if d.once {
 			return d.oneCycle(ctx, err)
