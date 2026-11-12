@@ -1648,8 +1648,8 @@ func TestUpdateManagedGatesTheCredentialsServiceStage(t *testing.T) {
 				if stopped := stoppedStage(got); stopped != initflow.CredentialsService {
 					t.Fatalf("the run stopped at %s, want the credentials-service stage:\n%s", stopped, got)
 				}
-				if left := leftFor(got, initflow.CredentialsService, initflow.LeftCommand); left != "" {
-					t.Errorf("a stage this door does not gate left the owner a command:\n%s", got)
+				if left := leftFor(got, initflow.CredentialsService, initflow.LeftRefused); left != "" {
+					t.Errorf("a stage this door does not gate left the owner the gate's own step, which is the answer the entry exists to give:\n%s", got)
 				}
 				return
 			}
@@ -1659,11 +1659,11 @@ func TestUpdateManagedGatesTheCredentialsServiceStage(t *testing.T) {
 			if s := stoppedStage(got); s != "(the summary names no failed stage)" {
 				t.Fatalf("the run failed at %s: the gate's refusal is the owner's step, not a failure:\n%s", s, got)
 			}
-			// LeftCommand and not LeftRefused: the plan this stage holds is the
-			// installation's own, and the refusal it carries is a removal the
-			// owner has to name, which is the step gateDeleteLeft leaves as the
-			// command that names it (update_managed.go, D1012).
-			left := leftFor(got, initflow.CredentialsService, initflow.LeftCommand)
+			// LeftRefused and not LeftCommand: the plan carries no removal, so
+			// the owner's --allow-delete admits nothing of it (gateDeleteLeft
+			// finds no listable address) and what the gate leaves is D1012's
+			// refusal step, a verdict with no command to run.
+			left := leftFor(got, initflow.CredentialsService, initflow.LeftRefused)
 			if left == "" {
 				t.Fatalf("the credentials-service stage was not left for the owner:\n%s", got)
 			}
