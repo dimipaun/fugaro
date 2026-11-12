@@ -443,7 +443,10 @@ func abCells(r ABRow) []string {
 	}
 	judges, same := "-", "-"
 	if len(r.JudgeFamilies) > 0 {
-		judges = strings.Join(r.JudgeFamilies, ",")
+		// Text is every other cell's treatment and this one is built from a
+		// verdicts object's judge_model, which is text out of the bucket: a
+		// cell printed raw would carry its escapes to the operator's terminal.
+		judges = Text(strings.Join(r.JudgeFamilies, ","))
 	}
 	if r.SameFamily {
 		same = "yes"

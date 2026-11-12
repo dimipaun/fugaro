@@ -163,7 +163,7 @@ func runAB(cmd *cobra.Command, o *abOptions, d Deps) error {
 	if corrupt > 0 {
 		m.Warnings = append(m.Warnings, fmt.Sprintf("%d of the window's runs have a result.json this build cannot read: an arm without a record is in no pair, so the pair it belongs to is in no figure", corrupt))
 	}
-	verdicts, unread := readVerdicts(ctx, env, slugs, recs)
+	verdicts, unread := readVerdicts(ctx, env, slugs, objs)
 	if unread > 0 {
 		m.Warnings = append(m.Warnings, fmt.Sprintf("%d of the window's judge runs have a verdicts object this read could not open: the pairs they decided count as unjudged here, so a Critical pair among them is in no figure", unread))
 	}
@@ -204,7 +204,11 @@ func abRecords(objs []fcli.RunRecord) ([]runstore.Record, int) {
 // The record does not say which repository prefix that is — a read across
 // repositories holds records and their slugs apart — so the slug is derived
 // from the record's repository and the slugs the read covered, the way the run
-// itself derives it (runner.ProviderForSlug).
+// itself derives it (runner.ProviderForSlug). Its run ID is the listing's own
+// and never the record's: the record's is text out of result.json, and it
+// becomes part of an object name (runstore.Open), so a record declaring another
+// run's ID would open another prefix's object — where the listing's ID is the
+// directory the bucket actually holds the run under.
 //
 // A judge run whose object is there and cannot be opened or believed is counted
 // rather than fatal: the figures it would have decided are read as unjudged,
@@ -213,19 +217,20 @@ func abRecords(objs []fcli.RunRecord) ([]runstore.Record, int) {
 // judging the same pairs again would write a second verdict for each. An object
 // that is simply absent is not counted: a judge run that wrote none decided
 // nothing (JudgeVerdicts).
-func readVerdicts(ctx context.Context, cloud *fcli.Cloud, slugs []string, recs []runstore.Record) (map[string]ab.Verdict, int) {
+func readVerdicts(ctx context.Context, cloud *fcli.Cloud, slugs []string, objs []fcli.RunRecord) (map[string]ab.Verdict, int) {
 	verdicts := map[string]ab.Verdict{}
 	unread := 0
-	for _, rec := range recs {
-		if !ab.IsJudgeRun(&rec) {
+	for _, o := range objs {
+		rec := o.Record()
+		if rec == nil || !ab.IsJudgeRun(rec) {
 			continue
 		}
-		slug := slugOfRecord(rec, slugs)
+		slug := slugOfRecord(*rec, slugs)
 		if slug == "" {
 			unread++
 			continue
 		}
-		got, err := ab.JudgeVerdicts(ctx, cloud.RunsBucket(), slug, rec.RunID)
+		got, err := ab.JudgeVerdicts(ctx, cloud.RunsBucket(), slug, o.ID())
 		if err != nil {
 			unread++
 			continue

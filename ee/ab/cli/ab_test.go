@@ -180,6 +180,35 @@ func TestABCommandReadsTheJudgesVerdicts(t *testing.T) {
 		}
 	})
 
+	t.Run("a judgement stands over a skip whichever run the listing reads first", func(t *testing.T) {
+		// A5.2 hands a pair whose judge call failed to the next run
+		// (skipCallFailed), so two objects can name one pair. The rule that the
+		// judgement stands is the same whichever of the two the listing reads
+		// first, in both directions: a figure that turned on the order would not
+		// be the same records, same report (D563).
+		for _, tc := range []struct{ name, skipped, judged string }{
+			{"the skip is the newer run", "20261003-120000-ffff", "20261002-120000-eeee"},
+			{"the judgement is the newer run", "20261002-120000-eeee", "20261003-120000-ffff"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				f := newABFixture(t)
+				f.seedPair(t, "pair-one", "20261001-120000-aaaa", "critical", "small", "model-alpha", "model-beta")
+				f.seedJudge(t, tc.skipped, "deepseek/deepseek-v4",
+					judgeVerdictFixture{PairID: "pair-one", Skipped: "call-failed"})
+				f.seedJudge(t, tc.judged, "claude-sonnet-5",
+					judgeVerdictFixture{PairID: "pair-one", Winner: "tie", Reason: "equivalent"})
+
+				row := abRow(t, f.jsonAB(t, "--since", "0"), "critical")
+				if row.Pairs != 1 || row.Unjudged != 0 {
+					t.Errorf("the pair reads %d pairs and %d unjudged, want 1 and 0: the run that judged it decides it, whichever order the two runs are read in", row.Pairs, row.Unjudged)
+				}
+				if len(row.JudgeFamilies) != 1 || row.JudgeFamilies[0] != "anthropic" {
+					t.Errorf("the row names the judge families %v, want [anthropic]: the run that judged the pair is its judge, and the one that skipped it is no judge of it", row.JudgeFamilies)
+				}
+			})
+		}
+	})
+
 	t.Run("an object this read cannot open is counted and said", func(t *testing.T) {
 		// A judge run whose object is there and unreadable costs the figures it
 		// would have decided, and never the whole table: the pairs read as

@@ -589,6 +589,28 @@ func TestJudgeFamilyFlag(t *testing.T) {
 		}
 	})
 
+	t.Run("a judge model's escapes never reach the terminal", func(t *testing.T) {
+		// ab.judge_model is the owner's, but the ID that reaches here came out
+		// of a verdicts object in the bucket, and its vendor prefix is the text
+		// before the first "/": an OSC 52 introducer in it would otherwise be
+		// printed for the operator's terminal to obey.
+		p := pair("p1", rigor.Pro, tier.Small,
+			arm{model: abClaudeOpus}, arm{model: abDeepSeekV4})
+		rep := BuildAB(records(p), map[string]ab.Verdict{
+			"p1": {Winner: ab.WinChallenger, JudgeModel: "\x1b]52;c;aGFjaw==\x07vendor/model"},
+		}, nil)
+		var table bytes.Buffer
+		if err := ABTable(&table, rep, ABMeta{Project: "proj-1234", Source: "run-records"}); err != nil {
+			t.Fatalf("ABTable: %v", err)
+		}
+		if strings.ContainsAny(table.String(), "\x1b\x07") {
+			t.Errorf("the table carries the judge model's escape bytes to the terminal:\n%q", table.String())
+		}
+		if !strings.Contains(table.String(), "vendor") {
+			t.Errorf("the table loses the family with the escape: want it to read vendor:\n%s", table.String())
+		}
+	})
+
 	t.Run("the JSON carries the same two figures", func(t *testing.T) {
 		p := pair("p1", rigor.Pro, tier.Small,
 			arm{model: abClaudeOpus}, arm{model: abDeepSeekV4})
@@ -625,7 +647,7 @@ func TestUnjudgedCountPerGroup(t *testing.T) {
 
 	// Pro: three pairs, two the judge decided and one it has not reached.
 	// Critical: three pairs, one decided — the other two stay out of every
-	// figure, and one of them is a pair a cut-short patch can never be judged on.
+	// figure and are the row's unjudged count.
 	all := records(
 		pro("p1", alpha, beta), pro("p2", alpha, beta), pro("p3", alpha, beta),
 		critical("p4", alpha, beta), critical("p5", alpha, beta), critical("p6", alpha, beta),

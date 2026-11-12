@@ -167,9 +167,10 @@ func (f *abFixture) publishLayer(t *testing.T, yaml string) {
 // judgeVerdictFixture is one pair's outcome in a verdicts object, as A5.2
 // writes it: the pair it decided, the arm the judge took and the word beside it.
 type judgeVerdictFixture struct {
-	PairID string `json:"pair_id"`
-	Winner string `json:"winner,omitempty"`
-	Reason string `json:"reason,omitempty"`
+	PairID  string `json:"pair_id"`
+	Winner  string `json:"winner,omitempty"`
+	Reason  string `json:"reason,omitempty"`
+	Skipped string `json:"skipped,omitempty"`
 }
 
 // judgeVerdictsFixture is a judge run's verdicts object (runstore.VerdictsName):
