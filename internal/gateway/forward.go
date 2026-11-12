@@ -467,15 +467,18 @@ func (s *Server) check(st Stage, p parsed, m pricing.Model) string {
 }
 
 // pinOf is the gateway's own RequestPin: the stage's two pins, the stage's
-// own max_tokens bound, and the stage's name as the refusal names it. Where is
-// spelled here so that the refusal reads exactly as it did before the check
-// was shared with the credentials service: "model X is not pinned for stage
-// implement".
+// own max_tokens bound, the run's vision slot, and the stage's name as the
+// refusal names it. Where is spelled here so that the refusal reads exactly as
+// it did before the check was shared with the credentials service: "model X is
+// not pinned for stage implement". Vision is handed on as a pointer and always
+// non-nil: this caller has a stage and a repository's configuration behind it,
+// and "" is the run that writes no vision slot (imageRefusal).
 func pinOf(st Stage) RequestPin {
 	return RequestPin{
 		Models:          []string{st.Model, st.Background},
 		Where:           "stage " + st.Name,
 		Model:           st.Model,
+		Vision:          &st.Vision,
 		MaxOutputTokens: st.MaxOutputTokens,
 	}
 }
@@ -548,9 +551,48 @@ func checkRequest(p parsed, m pricing.Model, pin RequestPin, prices *pricing.Tab
 	// in it (run 20261021-002046-31cc). p.images is the request's own count,
 	// so a text-only call on the same model is never refused.
 	if p.images > 0 && m.ImageTokens <= 0 {
-		return fmt.Sprintf("model %s is priced without an image rate (the price table's image_tokens, a per-image token ceiling): an image block can't be reserved without one. model_prices sets token rates only", logValue(p.model))
+		return imageRefusal(p.model, pin, prices)
 	}
 	return ""
+}
+
+// imagePriceFix is the lever every caller of the image rule has: an image
+// ceiling is the owner's to set, and the table the call was judged by carries
+// the project's own model_prices block whichever caller asked (a run's gateway
+// and the credentials service both price a call by it).
+const imagePriceFix = "price that model's images with model_prices' image_tokens"
+
+// visionPin is where the image rule points an owner whose run has no model for
+// an image: the config key internal/config reads as Agent.VisionModel. The
+// gateway spells it rather than reading it, because a repository's
+// configuration is not the gateway's and a name is all a sentence needs.
+const visionPin = "agent.models.vision"
+
+// imageRefusal is the sentence an image on a model with no image rate is
+// refused with, and it names the fix its own caller has (D2009, F15).
+//
+// One rule serves two callers and they have different levers (checkRequest):
+// a run's stage, whose owner configures the repository, and the credentials
+// service, which has no stage, no repository configuration and no vision slot
+// — telling that one to set agent.models.vision would be the same dead end the
+// sentence ended on before it. RequestPin.Vision is what tells them apart: a
+// stage says what the run configured, and the service says nothing at all.
+func imageRefusal(model string, pin RequestPin, prices *pricing.Table) string {
+	s := fmt.Sprintf("model %s is priced without an image rate (the price table's image_tokens, a per-image token ceiling): an image block can't be reserved without one", logValue(model))
+	switch {
+	case pin.Vision == nil:
+		return s + ". " + imagePriceFix
+	case *pin.Vision == "":
+		return s + ". set " + visionPin + " to a model that can read images, and " + imagePriceFix
+	}
+	// The run names a model for images, so the price it needs is that model's:
+	// a stage runs it rather than the model this call named. One already priced
+	// for images needs nothing, and the sentence then stays about the model the
+	// call named, whose own images are the ones that could be priced.
+	if v, _ := modelFor(prices, *pin.Vision); v.ImageTokens <= 0 {
+		return fmt.Sprintf("%s. %s is %s, which is priced without an image rate too: price that ID's images with model_prices' image_tokens", s, visionPin, logValue(*pin.Vision))
+	}
+	return s + ". " + imagePriceFix
 }
 
 // sameModel: the same ID, or two spellings the table resolves to one

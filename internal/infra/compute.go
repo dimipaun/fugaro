@@ -34,9 +34,9 @@ import (
 // routes a Batch job's lines (Task 4, merged), so nothing here touches
 // logging.
 //
-// Nothing in this file is reachable from a run: `backend: cloud-batch` stays
-// refused by config validation until the enable task (§8.1 task 9), and the
-// stage that applies the root is behind its own flag.
+// Nothing in this file is reachable from a run: the stage that applies the
+// root is behind its own flag, so provisioning is the owner's step on a real
+// terminal and never something an update or a launch triggers.
 
 // StatePrefixCompute is where the compute root's state lives in the state
 // bucket: a prefix of its own, so neither root ever reads or writes the
@@ -89,6 +89,39 @@ const (
 	// start, so the image is rebuilt on a schedule, never built once
 	// (§1.2).
 	PreloadSchedulerJob = "fugaro-preload-rebuild"
+	// SocketGIDLabel is the label every generation of the preloaded family
+	// records the boot image's Docker socket gid under (preload.sh's GID_MARKER
+	// line writes it, preload.tf's socket_gid_label names it, and the compute
+	// root outputs the NAME as well). It is a constant here because the enable
+	// task's gate reads the value back: `fugaro doctor` GETs the generation the
+	// family serves and compares that label with the gid the installation
+	// recorded in batch.socket_gid, so this name and the module's are one name
+	// (TestSocketGIDLabelIsTheModules).
+	SocketGIDLabel = "socket-gid"
+	// ReaperJob and ReaperSchedulerJob are the reaper's invocation by name: the
+	// Cloud Run job that runs `fugaro reaper` (as ReaperAccountID) and the Cloud
+	// Scheduler job that starts it every ReapMargin (reaper.tf, design §8.1
+	// Task 11). They are constants for the reason every name in this block is:
+	// the module's own locals are what creates them and `doctor`'s reaper check
+	// is what asks Google whether they exist, so a name that moved in one place
+	// would have doctor read a job nobody created
+	// (TestReaperNamesAreTheModules).
+	//
+	// The job's name does not start with `fugaro-` on purpose (it is not a
+	// workflow's, so `fugaro ls` must not count it) and the Scheduler job's
+	// does (nothing counts a schedule's name). Both are reaper.tf's locals and
+	// the root outputs them (ComputeOutputs.ReaperJob), so the two spellings
+	// exist twice on purpose and this pair is the Go side of that.
+	ReaperJob = "fugaroreap"
+	// ReaperSchedulerJob is the schedule that starts ReaperJob every fifteen
+	// minutes, which is ReapMargin.
+	ReaperSchedulerJob = "fugaro-reaper-sweep"
+	// ReaperPermissions is the reaper's whole surface, exactly as the module's
+	// custom role carries it (modules/compute/iam.tf, held by
+	// TestReaperPermissionsAreTheModules): read and end Batch jobs and the VMs
+	// of a run whose job is gone, and nothing that can create either. There is
+	// no batch.jobs.cancel, and the module's own comment is why -- it is not a
+	// permission Google defines.
 	// PreloadRefreshDaysDefault is how old the preloaded image may be before
 	// the scheduled rebuild replaces it: half the 60 days Batch documents,
 	// so a weekly schedule has a spare attempt inside the lifetime. The
@@ -97,6 +130,18 @@ const (
 	// (TestPreloadRefreshWindowIsInsideTheSupportedLifetime).
 	PreloadRefreshDaysDefault = 30
 )
+
+// ReaperPermissions is the reaper's whole surface, exactly as the module's
+// custom role carries it (modules/compute/iam.tf, held by
+// TestReaperPermissionsAreTheModules): read and end Batch jobs and the VMs of a
+// run whose job is gone, and nothing that can create either. There is no
+// batch.jobs.cancel, and the module's own comment is why -- it is not a
+// permission Google defines, so a role naming it cannot be created at all.
+//
+// A slice rather than a constant because it is a set, and it is here rather
+// than in internal/cli because `doctor`'s reaper check reads the installed role
+// back and this is what it compares the read with.
+var ReaperPermissions = []string{"batch.jobs.list", "batch.jobs.get", "batch.jobs.delete", "compute.instances.list", "compute.instances.delete"}
 
 // ComputeNames is the module's `names` object.
 type ComputeNames struct {

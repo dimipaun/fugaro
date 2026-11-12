@@ -54,14 +54,13 @@ import (
 //
 // What the gate can never do here. It can only narrow. A stage it does not
 // open keeps today's refusal exactly — the secrets stage is never asked about
-// (with a secret, the session has nothing the gate could read), and the
-// Credentials and Compute stages are `noYes` in the stage table and are not
-// gated (spec §4.2: they create an identity and provision money-bearing
-// infrastructure, and neither is a plan the gate can bound). A step whose
-// class is Typed is refused by the Converge itself, whatever the plan looked
-// like (D1026), and a step the gate does not admit falls back to its own
-// confirmation, which in a coding agent's session is the refusal it always
-// was.
+// (with a secret, the session has nothing the gate could read), and the Compute
+// stage is `noYes` in the stage table and is not gated (spec §4.2: it
+// provisions money-bearing infrastructure, which is not a plan the gate can
+// bound). A step whose class is Typed is refused by the Converge itself,
+// whatever the plan looked like (D1026), and a step the gate does not admit
+// falls back to its own confirmation, which in a coding agent's session is the
+// refusal it always was.
 
 // gatedStages are the stages of this run the gate may open (D1016, spec §4.2):
 // the Terraform plan stages, whose steps are the roots Fugaro embeds and whose
@@ -85,9 +84,9 @@ import (
 // through the registry and writes this machine's config — it plans nothing, so
 // the pair this gate judges a Terraform stage with has no document to read),
 // secrets (spec §3.2: never admitted, and an agent's session is where a secret
-// would have to be typed), plugin (local files), credentials and compute
-// (`noYes` in the stage table today and under a managed project), the layer
-// stage and the checkout's own steps.
+// would have to be typed), plugin (local files), compute (`noYes` in the stage
+// table and under a managed project: it provisions money-bearing
+// infrastructure), the layer stage and the checkout's own steps.
 //
 // The workspace stage is here with the policy one, and for the same reason: its
 // document is the node it publishes (docs/workspaces/spec.md §6 — W2's publish
@@ -113,7 +112,23 @@ var gatedStages = map[string]bool{
 	initflow.Repository:    true,
 	initflow.Rules:         true,
 	initflow.Policy:        true,
-	initflow.Workspace:     true,
+	// The credentials-service stage is the installation root planned once more
+	// (the stage after the policy one, whose one change is the service's image),
+	// so its document is a saved plan exactly as Installation2's is — the same
+	// root, the same kinds, and the same gate. Its own position in the run is
+	// not this map's business: the gate judges the plan in front of it, and the
+	// loop reaches this stage after the policy migration either way.
+	//
+	// This entry answers for a PERSON at a terminal and never for a coding
+	// agent's session, which is the opposite of how the entries above read: the
+	// stage's own skip returns credentialsSessionHeld for a marker before the
+	// loop asks this map at all (newCredentialsStage, and every stage is
+	// checked before it is run), so a session reads the refusal it always read
+	// and pays for no read here. What the entry decides is what becomes of the
+	// refusal the stage makes either way — the owner's own step with it, a run
+	// failure without it (TestUpdateManagedGatesTheCredentialsServiceStage).
+	initflow.CredentialsService: true,
+	initflow.Workspace:          true,
 }
 
 // initGate is this run's use of the gate: M6's helper, and the one read of the
@@ -537,16 +552,23 @@ func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey
 	}
 	// The gate's three answers are built from the verdict and never beside it
 	// (managed.Converge's own rule): a rule that fired and did not refuse goes
-	// to the Converge's warnings, so the record say which rules they were and
-	// the step still applies (D1545).
-	warnings := ruleLines(verdict.Warnings)
-	conv := managedmode.ConvergeRefused(doc, class, ruleLines(verdict.Refusals))
-	if verdict.OK {
-		if len(warnings) == 0 {
-			conv = managedmode.ConvergeAdmitted(doc, class, admittedRules(upgrade, false))
-		} else {
-			conv = managedmode.ConvergeWarned(doc, class, admittedRules(upgrade, true), warnings)
-		}
+	// to the Converge's warnings, so the record says which rules they were and
+	// the step still applies (D1545). A REFUSED plan carries them too when the
+	// gate raised them beside the rules that stopped it
+	// (ConvergeRefusedWithWarnings): the record of a refusal names both, so an
+	// owner reads what the gate saw about the rest of the plan and not only what
+	// refused it (the ruling of 2026-11-11). The lines are managed.RuleLines',
+	// the same rendering the record of an apply uses, so a finding reads the
+	// same way wherever it is filed.
+	warnings := managedmode.RuleLines(verdict.Warnings)
+	var conv managedmode.Converge
+	switch {
+	case !verdict.OK:
+		conv = managedmode.ConvergeRefusedWithWarnings(doc, class, managedmode.RuleLines(verdict.Refusals), warnings)
+	case len(warnings) == 0:
+		conv = managedmode.ConvergeAdmitted(doc, class, admittedRules(upgrade, false))
+	default:
+		conv = managedmode.ConvergeWarned(doc, class, admittedRules(upgrade, true), warnings)
 	}
 	m, err := g.g.admit(ctx, class, conv)
 	if err != nil {
@@ -1159,24 +1181,6 @@ func admittedRules(upgrade []string, warned bool) []string {
 	rules := []string{guard, cover, costs}
 	if len(upgrade) > 0 {
 		rules = append(rules, "the replaces this binary's own upgrade makes were matched out of this plan, both halves of each change compared before it was named (infra.LauncherGrantUpgrade): "+safetext.FieldListLine(upgrade))
-	}
-	return rules
-}
-
-// ruleLines is a verdict's refusals or its warnings as the rules that fired,
-// one per item, in the gate's own gate/address/why shape. They are what the
-// refusal sentence names after NotConverged, what this step prints when the
-// gate warned, and what the audit record holds — and internal/managed bounds
-// them where it renders them: a rule can quote a plan, and a plan is not this
-// program's text.
-func ruleLines(refs []managedmode.Refusal) []string {
-	rules := make([]string, 0, len(refs))
-	for _, ref := range refs {
-		why := ref.Gate + ": " + ref.Why
-		if ref.Address != "" {
-			why = ref.Gate + ": " + ref.Address + " — " + ref.Why
-		}
-		rules = append(rules, why)
 	}
 	return rules
 }

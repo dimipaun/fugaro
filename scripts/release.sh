@@ -18,7 +18,7 @@
 # The plan says what that check did, including that it did not run when the
 # checkout holds no module. --timeout-minutes (default 45, a whole number
 # >= 1) bounds each of the two waits: step 3 (the release PR
-# merging) and step 4 (CI's test, terraform, rules and both console checks finishing on the merge
+# merging) and step 4 (CI's test, terraform and rules finishing on the merge
 # commit).
 #
 # The release reads the CLI stream from docs/release-streams.yaml through a
@@ -573,7 +573,7 @@ tagged or changed anywhere.
      none of it: $text_state
   4. the branch would be pushed (a plain push, never a force) and CI dispatched
      on it: gh workflow run ci --ref $branch
-  5. the test, terraform, rules and both console checks would be waited for on
+  5. the test, terraform and rules checks would be waited for on
      the branch tip (up to ${timeout_minutes}m, scripts/release-gate.sh), then
      $tag would be tagged there and pushed
   6. every workflow the tag starts would be waited for, and the published
@@ -841,7 +841,7 @@ Nothing else was changed.
 Without --dry-run this would:
   2. create $branch from main, bump the plugin to $version (scripts/bump-plugin-version.sh), record $version as the cli stream's current in docs/release-streams.yaml (moving its next name when the release opens a new minor), rewrite the two doc lines that name the released version, commit "release: $tag", push it, open a PR to main, and enable squash auto-merge
   3. wait up to ${timeout_minutes}m for that PR to merge
-  4. wait up to ${timeout_minutes}m for the merge commit's test, terraform, rules and console checks, and require them to pass (the release gate)
+  4. wait up to ${timeout_minutes}m for the merge commit's test, terraform and rules checks, and require them to pass (the release gate)
   5. create and push the tag $tag (no prompt: the green release gate on the verified merge commit is the safeguard)
 EOF
   exit 0
@@ -1034,10 +1034,17 @@ esac
 echo "pull request #$pr_number merged as $merge_sha; verifying main"
 git switch --quiet main
 retry_read git pull --quiet --ff-only origin main
-head_sha=$(git rev-parse HEAD)
-if [ "$head_sha" != "$merge_sha" ]; then
-  echo "HEAD ($head_sha) is not the release merge commit ($merge_sha); something else landed on main first, inspect before tagging" >&2
+# The tag goes on the merge commit by its SHA, wherever main's tip is by now:
+# a commit that landed after it is not in the release, and the gate below
+# vouches for the merge commit alone.
+if ! git merge-base --is-ancestor "$merge_sha" origin/main; then
+  echo "the release merge commit ($merge_sha) is not on origin/main; inspect before tagging" >&2
   exit 1
+fi
+head_sha=$merge_sha
+if [ "$(git rev-parse HEAD)" != "$head_sha" ]; then
+  echo "main has moved past the release merge commit; tagging $head_sha, not the tip"
+  git checkout --quiet --detach "$head_sha"
 fi
 scripts/bump-plugin-version.sh --check "$version"
 # CI starts on the merge commit only now, so its checks are usually missing
@@ -1045,7 +1052,7 @@ scripts/bump-plugin-version.sh --check "$version"
 # what is pending, and fails at once on a conclusive failure. It does not wait
 # for CI on a squash-merge commit whose tree equals the green PR head's: it
 # uses the head's checks and says so.
-echo "waiting for test, terraform, rules and the console checks to pass on $head_sha (up to ${timeout_minutes}m)..."
+echo "waiting for test, terraform and rules to pass on $head_sha (up to ${timeout_minutes}m)..."
 GITHUB_SHA="$head_sha" GITHUB_REPOSITORY="$repo" GATE_WAIT_SECONDS="$timeout_seconds" GATE_POLL_SECONDS="$poll_seconds" scripts/release-gate.sh "$tag"
 
 # 5. Summary and confirmation.
@@ -1056,7 +1063,7 @@ Release summary
   tag:     $tag
   name:    $stream_name
   commit:  $head_sha ($subject)
-  checks:  test, terraform, rules and both console checks (console (ubuntu-latest), console (macos-latest)) all succeeded, on $head_sha or on the identical-tree head of the merged PR (scripts/release-gate.sh says which, above)
+  checks:  test, terraform and rules all succeeded, on $head_sha or on the identical-tree head of the merged PR (scripts/release-gate.sh says which, above)
 
 A pushed tag is permanent: the Go module proxy and the public ghcr.io images
 cache vX.Y.Z forever, so it is never moved or re-cut (docs/release.md#rolling-back).

@@ -310,6 +310,105 @@ func TestJobPrefixIsTheModulesInput(t *testing.T) {
 	}
 }
 
+// The socket gid's label name is read by the enable task's gate: `fugaro
+// doctor` GETs the generation the preloaded family serves and compares the
+// label's value with the gid the installation recorded. Both halves of that
+// read are the module's -- the label NAME is `local.socket_gid_label`
+// (preload.tf), the VALUE is what preload.sh writes its marker line with -- so
+// a name that moved in the module and not here, or the other way round, would
+// have doctor read a label no generation carries and refuse every installation.
+func TestSocketGIDLabelIsTheModules(t *testing.T) {
+	b, err := fs.ReadFile(terraform.FS, "gcp/modules/compute/preload.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`(?m)^\s*socket_gid_label\s*=\s*"([^"]+)"\s*$`).FindStringSubmatch(string(b))
+	if m == nil {
+		t.Fatal("preload.tf no longer declares local.socket_gid_label: the label doctor reads the gid back from has no name here")
+	}
+	if m[1] != SocketGIDLabel {
+		t.Errorf("the module labels the gid %q, SocketGIDLabel is %q: doctor would read a label no generation carries", m[1], SocketGIDLabel)
+	}
+	sh, err := fs.ReadFile(terraform.FS, "gcp/modules/compute/preload.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The build writes the marker line the value is read off, and the module
+	// passes the name to it: a build that wrote a literal of its own would
+	// label every generation with a name this constant does not know.
+	if !strings.Contains(string(sh), `GID_MARKER="fugaro-preload-`+SocketGIDLabel+`="`) {
+		t.Errorf("preload.sh's marker line is not built from %q: the value is imaged under a name SocketGIDLabel does not name", SocketGIDLabel)
+	}
+	if !strings.Contains(string(b), "_SOCKET_GID_LABEL = local.socket_gid_label") {
+		t.Error("preload.tf no longer passes local.socket_gid_label to the build")
+	}
+}
+
+// The reaper's invocation is created by the module's own locals and read back
+// by name by the enable task's gate (`fugaro doctor` asks the Cloud Run and the
+// Cloud Scheduler APIs for these two jobs), so the Go side has to spell them
+// the way reaper.tf does. A name that drifted leaves doctor reporting a missing
+// janitor on an installation whose sweep is running.
+func TestReaperNamesAreTheModules(t *testing.T) {
+	b, err := fs.ReadFile(terraform.FS, "gcp/modules/compute/reaper.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tf := string(b)
+	for _, c := range []struct{ local, want, why string }{
+		{"reaper_job", ReaperJob, "the Cloud Run job doctor reads back is not the one the module creates"},
+		{"reaper_scheduler_job", ReaperSchedulerJob, "the Scheduler job doctor reads back is not the one the module creates"},
+	} {
+		m := regexp.MustCompile(`(?m)^\s*` + c.local + `\s*=\s*"([^"]+)"\s*$`).FindStringSubmatch(tf)
+		if m == nil {
+			t.Errorf("reaper.tf no longer declares local.%s", c.local)
+			continue
+		}
+		if m[1] != c.want {
+			t.Errorf("local.%s = %q, the Go side names %q: %s", c.local, m[1], c.want, c.why)
+		}
+	}
+	// The read-back is worth making because the job runs as the reaper account:
+	// doctor compares that field with ReaperAccountID, so a job that left it
+	// unset (and would run as the default Compute account) has to be readable.
+	if !strings.Contains(tf, "service_account = google_service_account.reaper.email") {
+		t.Error("the reaper's Cloud Run job no longer runs as the reaper account: doctor's read-back would compare a field the module stopped writing")
+	}
+	if !strings.Contains(tf, "name        = local.reaper_scheduler_job") {
+		t.Error("the reaper's Scheduler job is no longer named from local.reaper_scheduler_job")
+	}
+}
+
+// The reaper's five permissions are what doctor holds the installed custom role
+// to, so this list and the module's are one list. The permission that cannot
+// exist (batch.jobs.cancel -- Google defines jobs.create, delete, get and list
+// and nothing else) is asserted absent by the module's own test as well; here
+// it is the Go side that must not grow one back.
+func TestReaperPermissionsAreTheModules(t *testing.T) {
+	b, err := fs.ReadFile(terraform.FS, "gcp/modules/compute/iam.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	blk := regexp.MustCompile(`(?s)resource "google_project_iam_custom_role" "reaper" \{(.*?)\n\}`).FindStringSubmatch(string(b))
+	if blk == nil {
+		t.Fatal("modules/compute/iam.tf no longer declares the reaper's custom role")
+	}
+	list := regexp.MustCompile(`(?s)permissions\s*=\s*\[([^\]]*)\]`).FindStringSubmatch(blk[1])
+	if list == nil {
+		t.Fatal("the reaper's role no longer carries a literal permission list")
+	}
+	var got []string
+	for _, m := range regexp.MustCompile(`"([^"]+)"`).FindAllStringSubmatch(list[1], -1) {
+		got = append(got, m[1])
+	}
+	slices.Sort(got)
+	want := slices.Clone(ReaperPermissions)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("the module grants the reaper %v, ReaperPermissions is %v: doctor's read-back would refuse a correctly provisioned installation", got, want)
+	}
+}
+
 // The preload rebuild's start is retried while the scheduler agent's binding
 // on the preload account propagates (57a's measurement: a binding created
 // moments before is not readable everywhere at once), and a refusal that

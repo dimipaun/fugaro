@@ -560,6 +560,10 @@ stays MIT with its own copy of the period helpers.*
 
 #### S2.1 The key design note (licensing L3.1, superseded here)
 
+**Superseded 2026-11-11 by licence-key-v2 ([spec.md](../licence-key-v2/spec.md),
+[reconciliation.md](../licence-key-v2/reconciliation.md)): the key's format and its claim set move
+to the v2 `fgk_` keys, and the note's "no revocation" limit is overturned (D2130, D2131).**
+
 - **Files:** `docs/licensing/licence-key.md` (new), `docs/licensing/README.md`,
   `docs/licensing/implementation-plan.md` (L3.1 marked superseded).
 - **Content:** D308 plus the rulings:
@@ -590,6 +594,11 @@ by O4 (expiry only). A version field may be added later, as a new task. The numb
 
 #### S2.3 The Go verifier
 
+**Superseded 2026-11-11 by licence-key-v2 ([spec.md](../licence-key-v2/spec.md),
+[reconciliation.md](../licence-key-v2/reconciliation.md)): the format and the claim set it verifies
+move to the v2 `fgk_` keys, and the grace it holds is the key's own `grace_days` rather than a fixed
+thirty days (D2130, D2133).**
+
 - **Files:** `ee/licence/key.go` (new), `ee/licence/store.go` (new; the CLI's key file and the
   `FUGARO_LICENCE_KEY` read per S2.1),
   `ee/licence/key_test.go` (new), `ee/licence/testdata/vectors.json` (new; public keys and signed
@@ -616,6 +625,10 @@ by O4 (expiry only). A version field may be added later, as a new task. The numb
 
 #### S2.4 The console's verifier
 
+**Amended 2026-11-11 by licence-key-v2 ([spec.md](../licence-key-v2/spec.md),
+[reconciliation.md](../licence-key-v2/reconciliation.md)): the claim set and format it verifies are
+no longer S2.3's, so its cases follow the v2 `fgk_` key (D2130).**
+
 - **Files:** `console/src/main/licence.ts` (new), `console/test/unit/licence.test.ts` (new).
 - **Tests:** S2.3's cases in TypeScript, with Node's built-in Ed25519.
 - **Command:** `cd console && npm run typecheck && npm run test:unit -- --maxWorkers=2
@@ -625,6 +638,10 @@ by O4 (expiry only). A version field may be added later, as a new task. The numb
 - **Commit:** `console: the offline licence-key verifier`.
 
 #### S2.5 The app's verifier
+
+**Amended 2026-11-11 by licence-key-v2 ([spec.md](../licence-key-v2/spec.md),
+[reconciliation.md](../licence-key-v2/reconciliation.md)): the claim set and format it verifies are
+no longer S2.3's, so its cases follow the v2 `fgk_` key (D2130).**
 
 - **Files:** `mobile/src/licence/index.js` (new; the only entry point), `mobile/src/licence/verify.js`
   (new), `mobile/src/licence/verify.test.js` (new), `mobile/package.json` (one Ed25519 dependency,
@@ -649,6 +666,11 @@ by O4 (expiry only). A version field may be added later, as a new task. The numb
 
 #### S2.7 The console's key entry and hand-off
 
+**Amended 2026-11-11 by licence-key-v2 ([spec.md](../licence-key-v2/spec.md),
+[reconciliation.md](../licence-key-v2/reconciliation.md)): where the key is stored moves to the
+project level — the installation's runs bucket, read by `ee/` code — so this store is no longer the
+key's home (D2137).**
+
 - **Files:**
   - new: `console/src/main/licence-store.ts`, `console/src/renderer/screens/licence.ts`,
     `console/test/unit/licence-store.test.ts`;
@@ -669,6 +691,11 @@ by O4 (expiry only). A version field may be added later, as a new task. The numb
 
 #### S2.8 The app's key entry
 
+**Amended 2026-11-11 by licence-key-v2 ([spec.md](../licence-key-v2/spec.md),
+[reconciliation.md](../licence-key-v2/reconciliation.md)): where the key is stored moves to the
+project level — the installation's runs bucket, read by `ee/` code — so this store is no longer the
+key's home (D2137).**
+
 - **Files:** `mobile/src/licence/store.js` (new), `mobile/src/licence/store.test.js` (new),
   `mobile/src/licence/index.js`, the settings screen S2.1 names. Storage goes through the app's own
   store and **not** `mobile/src/accounts/secure-store.js`, whose `SECRET_ITEMS` list D111/D232 keeps
@@ -681,6 +708,10 @@ by O4 (expiry only). A version field may be added later, as a new task. The numb
 - **Commit:** `mobile: enter and keep the licence key`.
 
 #### S2.9 The production public key in every verifier
+
+**Amended 2026-11-11 by licence-key-v2 ([spec.md](../licence-key-v2/spec.md),
+[reconciliation.md](../licence-key-v2/reconciliation.md)): the keyrings it fills move with the
+format, so the production public half lands in the v2 verifiers (D2130).**
 
 - **Files (agent, on the owner's go, after S3.8):**
   - `ee/licence/keys/production.pub` (new) and its `.license` sibling;
@@ -696,6 +727,10 @@ by O4 (expiry only). A version field may be added later, as a new task. The numb
 
 #### S2.10 The owner's mint tool (interim hand minting, T13)
 
+**Amended 2026-11-11 by licence-key-v2 ([spec.md](../licence-key-v2/spec.md),
+[reconciliation.md](../licence-key-v2/reconciliation.md)): the claim set the tool signs is no
+longer this note's, and follows the v2 `fgk_` key (D2130).**
+
 - **Files:** `ee/licence/mint/` (new): a small command that signs a claim set through the KMS key's
   signing API (never a local private key file), and its tests with a fake signer.
 - **Tests:** `TestMintSignsThroughTheSignerOnly`, `TestMintRefusesAClaimBeyondTheTierLifetime`,
@@ -710,6 +745,11 @@ by O4 (expiry only). A version field may be added later, as a new task. The numb
 ### Slice S3: the key service (owner-operated, built after the entity exists)
 
 #### S3.1 Design and threat model (first)
+
+**Amended 2026-11-11 by licence-key-v2 ([spec.md](../licence-key-v2/spec.md),
+[reconciliation.md](../licence-key-v2/reconciliation.md)): the format and claim set the design
+states are the v2 `fgk_` keys', and its revocation list, its renewal authentication and its sign-in
+are the v2 service's (D2130, D2131, D2135, D2144).**
 
 - **Files:** `docs/design/key-signing-service.md` (new).
 - **Content:**
@@ -737,6 +777,11 @@ by O4 (expiry only). A version field may be added later, as a new task. The numb
 - **Commit:** `docs(design): the key service and its threat model (T13)`.
 
 #### S3.2 The issuing service
+
+**Amended 2026-11-11 by licence-key-v2 ([spec.md](../licence-key-v2/spec.md),
+[reconciliation.md](../licence-key-v2/reconciliation.md)): the keys it issues are the v2 `fgk_`
+keys, so the claims it mints, the per-key renewal secret and the 14-day trial follow the v2 service
+(D2130, D2135, D2136).**
 
 - **Files:** `ee/keyservice/` (new: intake handlers, the minter, the checks, the issuance record,
   tests), with the location per S3.1.
@@ -773,6 +818,11 @@ by O4 (expiry only). A version field may be added later, as a new task. The numb
 
 #### S3.3 The key website's forms
 
+**Amended 2026-11-11 by licence-key-v2 ([spec.md](../licence-key-v2/spec.md),
+[reconciliation.md](../licence-key-v2/reconciliation.md)): the free-seat and open-source forms now
+ask for the workspace's Firebase project id, the key's required `workspace_id` (D2134 as amended by
+TN2).**
+
 - **Files:** `website/src/pages/keys.astro` (new), `website/test/keys.mjs` (new), and the CSP tests
   the owner approves changing.
 - **Content:** the open-source form, the free-seat form and the manual request form, posting to the
@@ -785,6 +835,10 @@ by O4 (expiry only). A version field may be added later, as a new task. The numb
 - **Commit:** `website: the key request forms`.
 
 #### S3.4 The admin page and the manual queue
+
+**Amended 2026-11-11 by licence-key-v2 ([spec.md](../licence-key-v2/spec.md),
+[reconciliation.md](../licence-key-v2/reconciliation.md)): revoke and reissue act on the v2 `fgk_`
+key, whose revocation is what the customer's own job checks (D2131).**
 
 - **Files:** `ee/keyservice/admin.go` (new), `ee/keyservice/queue.go` (new), their tests.
 - **Tests:**
@@ -892,6 +946,11 @@ by O4 (expiry only). A version field may be added later, as a new task. The numb
 ### Slice S6: the lapse state (a later release, with enforcement, T17)
 
 #### S6.1 Design: what read-only keeps
+
+**Amended 2026-11-11 by licence-key-v2 ([spec.md](../licence-key-v2/spec.md),
+[reconciliation.md](../licence-key-v2/reconciliation.md)): the grace the read-only state starts
+after is the key's own `grace_days` rather than a fixed thirty days, and "Free" is the no-key state
+(D2133, D2142).**
 
 - **Files:** `docs/design/lapse-read-only.md` (new).
 - **Content:**

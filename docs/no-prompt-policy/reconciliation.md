@@ -188,7 +188,12 @@ landed with T9:** the installation module's bucket is versioned
 record instead of erasing it, and `fugaro doctor` reads the warning the session was printed. Versioning does
 not separate the record's writer from its eraser — the apply runs as the operator, whose own credentials hold
 `objectAdmin` there — so what it buys is that erasure needs that role, which is what `internal/managed/audit.go`
-says in its own words.
+says in its own words. **And the warning reaches `doctor` on every gated path since the ruling of
+2026-11-11:** `fugaro managed apply` was the one command that wrote no record and so had nowhere to put a
+finding — it refused the plan on a content rule instead — and the ruling puts it in the converge set
+(`docs/managed-agent-converge/spec.md` §3.1, §6; the ruling is recorded beside D1011 in that folder's
+reconciliation), so the command applies with the finding recorded and `fugaro doctor` reads it back like any
+other warned step.
 
 **F16 — Every form of loosening a cap, not only `budget set`.** `budget set` raising a cap (`confirmTyped`),
 `budget resume` (`confirmTyped`), the policy/settings ceilings `PerRunUSD`/`PerDayUSD` (the `Typed` class today:
