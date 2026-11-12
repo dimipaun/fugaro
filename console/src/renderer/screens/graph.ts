@@ -376,10 +376,10 @@ export const GRAPH_ZOOM_MAX = 8
  * fraction of a card's own width: at 0.75 a card -- `GRAPH_NODE_WIDTH`, 260 px
  * -- is drawn 195 px wide, and the title inside it (the theme's `--text-sm`,
  * 13 px) is drawn at 9.75 px, its footnotes (`--text-xs`, 12 px) at 9 px. Below
- * that a title wrapped over three lines is a grey block rather than words,
- * which is the reading a picture too wide for its panel
- * used to be forced into: fitting the width alone shrinks a wide picture until
- * nothing in it can be read (D735).
+ * that a title wrapped over three lines is a grey block rather than words -- the
+ * reading a picture too wide for its panel used to be forced into, because
+ * fitting the width alone shrinks a wide picture until nothing in it can be read
+ * (D735).
  *
  * **It is a floor and not a size.** A picture with room to spare is drawn at the
  * panel's own width, exactly as it was, and one without it is held at this width
