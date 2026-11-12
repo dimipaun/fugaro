@@ -265,6 +265,44 @@ func TestClaimAtRunnerStart(t *testing.T) {
 			t.Error("the run holds a slip it claimed at a URL it will not send its own identity to")
 		}
 	})
+
+	// A claim answered with a secret this run cannot present is a slip the run
+	// does not take: the service reads a presented secret at a bound of its
+	// own, so holding one it would refuse on every call is worse than holding
+	// nothing, which is the run that never had a slip at all. An empty secret,
+	// one that is not a single printable header value, and one past that bound
+	// are the same answer here -- no slip, no beat, and one line saying so.
+	for _, tc := range []struct {
+		name, secret string
+	}{
+		{"an empty secret", ""},
+		{"a secret that is not one header value", "two words"},
+		{"a secret past the bound the service reads one by", strings.Repeat("s", maxSlipSecretBytes+1)},
+	} {
+		t.Run("an unusable claim secret is no slip: "+tc.name, func(t *testing.T) {
+			var logBuf bytes.Buffer
+			body, err := json.Marshal(credsvc.SlipClaimResponse{ClaimSecret: tc.secret, ExpiresAt: time.Now().Add(24 * time.Hour)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			svc := newSlipService(t, func(int, *http.Request, []byte) slipReply {
+				return slipReply{body: string(body)}
+			})
+			r := slipRun(t, svc, nil, func(r *run) {
+				r.d.Log = slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+			})
+			r.claimSlip(context.Background())
+			if r.slipHold() != nil {
+				t.Error("the run holds a slip whose claim secret it cannot present")
+			}
+			if got := len(svc.beats()); got != 0 {
+				t.Errorf("the run kept the service warm %d times for a slip it does not hold", got)
+			}
+			if got := strings.Count(logBuf.String(), "no usable claim secret"); got != 1 {
+				t.Errorf("the run warned about the unusable claim secret %d times, want once: %s", got, logBuf.String())
+			}
+		})
+	}
 }
 
 // TestSlipNotExportedToAgentEnv: the slip reaches the agent as nothing at all
