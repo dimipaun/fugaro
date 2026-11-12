@@ -1,6 +1,6 @@
 # Fugaro: status of every spec under docs/
 
-As of 2026-11-12, read from `main`, the open pull requests and each plan's task list (not from the plans' own status lines, which are stale in about 30 folders). Counts come from commit titles and file checks; "about" marks the approximate ones. **Owner-run** means a live check or step that only the owner performs. Each folder's README links to this page for its current state. The sections run from the nearest to done to the furthest; the finished specs are at the end. CLI 0.23.0 (Tapir) is being cut as this page is written and is not tagged yet.
+As of 2026-11-12, read from `main`, the open pull requests and each plan's task list (not from the plans' own status lines, which are stale in about 30 folders). Counts come from commit titles and file checks; "about" marks the approximate ones. **Owner-run** means a live check or step that only the owner performs. Each folder's README links to this page for its current state. The sections run from the nearest to done to the furthest; the finished specs are at the end. CLI 0.23.0 (Tapir) is released; 0.24.0 is not cut yet.
 
 ## How this page is written
 
