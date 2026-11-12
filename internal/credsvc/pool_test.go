@@ -43,12 +43,18 @@ const (
 // poolBundleDoc is the installation's bundle with testPoolAccount's
 // subscription on it: the default account's token, alice's, bob's and the
 // project's paid key.
-func poolBundleDoc(t *testing.T) []byte {
+func poolBundleDoc(t *testing.T, extra ...string) []byte {
 	t.Helper()
-	return []byte(config.ClaudeOAuthToken + ": " + fakeCred(t, "default") + "\n" +
+	doc := config.ClaudeOAuthToken + ": " + fakeCred(t, "default") + "\n" +
 		config.ClaudeOAuthTokenPrefix + testAccount + ": " + fakeCred(t, testAccount) + "\n" +
-		config.ClaudeOAuthTokenPrefix + testPoolAccount + ": " + fakeCred(t, testPoolAccount) + "\n" +
-		config.AnthropicSecret + ": " + fakeCred(t, "paid") + "\n")
+		config.ClaudeOAuthTokenPrefix + testPoolAccount + ": " + fakeCred(t, testPoolAccount) + "\n"
+	// extra are further named accounts, for a test whose pool reaches past the
+	// two this fixture's pool lists: a rotation is read off the members it
+	// visits (roundrobin_test.go).
+	for _, name := range extra {
+		doc += config.ClaudeOAuthTokenPrefix + name + ": " + fakeCred(t, name) + "\n"
+	}
+	return []byte(doc + config.AnthropicSecret + ": " + fakeCred(t, "paid") + "\n")
 }
 
 // poolNode is the fixture's project node with the test's own keys written into
@@ -60,15 +66,23 @@ func poolBundleDoc(t *testing.T) []byte {
 // testPolicyDoc's are, because a pool member's own admission is the same leg
 // (O4) the cascade's list is narrowed by and a member this repository is not
 // admitted to is a member it is not served by.
-func poolNode(block string) string {
+func poolNode(block string, extra ...string) string {
+	// extra are further accounts the node defines, and they are defined the way
+	// the three above are: a member's admission is the intersection of the
+	// child's list and this block (admittedAccounts), so an account absent here
+	// is an account no pool member can be served from.
+	accounts := []string{config.DefaultClaudeAccount, testAccount, testPoolAccount}
+	accounts = append(accounts, extra...)
+	entries := make([]string, 0, len(accounts))
+	for _, name := range accounts {
+		entries = append(entries, `"`+name+`": {"allow_repos": ["`+testRepo+`", "`+testOtherRepo+`"]}`)
+	}
 	return `{
 		"version": ` + strconv.Itoa(projectpolicy.Version) + `,
 		"budget": ` + testBudgetDoc + `,
 		"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"],
 		"accounts": {
-			"default": {"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"]},
-			"` + testAccount + `": {"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"]},
-			"` + testPoolAccount + `": {"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"]}
+			` + strings.Join(entries, ",\n\t\t\t") + `
 		},
 		` + block + `
 	}`
@@ -96,12 +110,24 @@ func poolSvc(t *testing.T, block string) *svc {
 // one craft key is enough to put the pool under both of a coding run's
 // first-craft stages.
 func poolCraftBlock(credentials string, members ...string) string {
+	return poolCraftBlockOf("", credentials, members...)
+}
+
+// poolCraftBlockOf is poolCraftBlock with the pool's strategy written: "" is
+// the key's absence, which is D1632's failover and the shape every pool written
+// before the strategy existed has, and a strategy is the owner's word for how
+// the members are shared out (roundrobin_test.go).
+func poolCraftBlockOf(strategy, credentials string, members ...string) string {
 	quoted := make([]string, 0, len(members))
 	for _, m := range members {
 		quoted = append(quoted, `"`+m+`"`)
 	}
+	written := ""
+	if strategy != "" {
+		written = `, "strategy": "` + strategy + `"`
+	}
 	return `"craft_credentials": [` + credentials + `],
-		"craft_pools": [{"name": "` + testPoolName + `", "owner": "` + testPoolOwner + `", "members": [` + strings.Join(quoted, ", ") + `]}],
+		"craft_pools": [{"name": "` + testPoolName + `", "owner": "` + testPoolOwner + `"` + written + `, "members": [` + strings.Join(quoted, ", ") + `]}],
 		"crafts": {"coder": {"access": "` + testPoolName + `"}}`
 }
 
