@@ -8,10 +8,11 @@ package cli
 // two lists and the tools that come out of the installation's own environment,
 // and the refusal that keeps a door this build cannot finish from being served.
 //
-// Nothing here touches a cloud: the three clients the command opens — the store,
-// the runs bucket and the verifier — are the frontDoorWiring seam, so a test
-// hands it fakes and the environment is a map rather than the process's own
-// (DoorConfigFromEnv takes os.LookupEnv's shape for exactly that reason).
+// Nothing here touches a cloud: the four clients the command opens — the store,
+// the runs bucket, the database the state group reads and the verifier — are the
+// frontDoorWiring seam, so a test hands it fakes and the environment is a map
+// rather than the process's own (DoorConfigFromEnv takes os.LookupEnv's shape for
+// exactly that reason).
 
 import (
 	"context"
@@ -27,6 +28,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/blobx"
 	fcli "github.com/dimipaun/fugaro/internal/cli"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
 // doorEnv is the environment the installation module renders onto the front
@@ -39,6 +41,7 @@ func doorEnv() map[string]string {
 			`"launchers":["user:dev@example.com"],"operators":["user:owner@example.com"]}`,
 		fcli.EnvProject:     "acme-project",
 		fcli.EnvFirebaseFP:  "acme-project",
+		fcli.EnvRTDBURL:     "https://acme-project-default-rtdb.firebaseio.com",
 		fcli.EnvRunsBucket:  "fugaro-runs-acme-project",
 		envCoordinatorRepos: `[{"provider":"github","repo":"acme/app"}]`,
 	}
@@ -72,11 +75,34 @@ func refusalWiring(t *testing.T) frontDoorWiring {
 			fail("the installation's runs bucket")
 			return nil, errors.New("no cloud")
 		},
+		state: func(context.Context, string) (mcpauth.StateReach, error) {
+			fail("the installation's database")
+			return nil, errors.New("no cloud")
+		},
 		verifier: func(string) (*mcpauth.Verifier, error) {
 			fail("the Firebase key source")
 			return nil, errors.New("no cloud")
 		},
 	}
+}
+
+// doorStateReach is the state reach a test that has to get past the state
+// group's registration hands the wiring: a reach over an empty fake database,
+// which the command builds the two tools over and this test never reads. It is
+// the real reach rather than a stub, because what is being tested is that the
+// command registers the group at all — the reads themselves are
+// mcpauth's own file (state_reach_test.go).
+func doorStateReach(t *testing.T) mcpauth.StateReach {
+	t.Helper()
+	db, err := rtdb.New(gcpfake.NewRTDB(t).URL, rtdb.Auth{IDToken: func() string { return "the test reads nothing" }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reach, err := mcpauth.NewProjectState(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return reach
 }
 
 // cliStore is the store a test that only has to get past NewServer's "is there
@@ -161,7 +187,7 @@ func TestAFrontDoorEntryThatIsNotTheDocumentIsRefused(t *testing.T) {
 // nobody or reads no run. The name is in the refusal because the operator's next
 // move is to look at the module that renders it.
 func TestADoorWithAMissingVariableIsRefusedByName(t *testing.T) {
-	for _, missing := range []string{fcli.EnvProject, fcli.EnvFirebaseFP, fcli.EnvRunsBucket, envCoordinatorRepos} {
+	for _, missing := range []string{fcli.EnvProject, fcli.EnvFirebaseFP, fcli.EnvRTDBURL, fcli.EnvRunsBucket, envCoordinatorRepos} {
 		t.Run(missing, func(t *testing.T) {
 			env := doorEnv()
 			delete(env, missing)
@@ -220,6 +246,9 @@ func TestTheCommandServesTheDoorOnlyAsFarAsThisBuildCarriesIt(t *testing.T) {
 		},
 		bucket: func(_ context.Context, name string) (*blobx.Bucket, error) {
 			return g.Bucket(t, name), nil
+		},
+		state: func(context.Context, string) (mcpauth.StateReach, error) {
+			return doorStateReach(t), nil
 		},
 		verifier: func(firebaseProject string) (*mcpauth.Verifier, error) {
 			return mcpauth.NewVerifier(firebaseProject, cliKeySource{})
