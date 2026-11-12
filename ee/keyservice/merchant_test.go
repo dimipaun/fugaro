@@ -732,6 +732,33 @@ func TestRenewalKeyIssuesThirtyDaysBeforeExpiry(t *testing.T) {
 	}
 }
 
+// TestALeapYearRenewsOneDayAfterTheWindowOpens: the key a renewal mints covers
+// the rest of the term the customer is in and the whole of the next one, so on
+// the window's first day it asks for the subscription's own days plus T26's
+// 30-day lead — and a leap year is 366 days, one past the tier's ceiling of a
+// year plus that lead. The renewal waits the one day rather than asking for a
+// term the minter refuses, which at 500 every trigger would leave a customer
+// whose licence lapses at the end of a term they paid for.
+func TestALeapYearRenewsOneDayAfterTheWindowOpens(t *testing.T) {
+	f := newFixture(t)
+	first := f.purchase("evt-1", "acme.example", 5, 366)
+
+	f.advance(366*day - 30*day)
+	if _, renewed, err := f.svc.Renew(context.Background(), "sub-acme.example"); err != nil || renewed {
+		t.Errorf("the leap year's renewal on the window's first day minted (renewed=%v, err=%v), want nothing: the term it would cover is a day past the tier's ceiling", renewed, err)
+	}
+
+	f.advance(day)
+	minted, renewed, err := f.svc.Renew(context.Background(), "sub-acme.example")
+	if err != nil || !renewed {
+		t.Fatalf("the leap year's renewal the day after answered (renewed=%v, err=%v), want the next key", renewed, err)
+	}
+	wantExpiry := first.Expires.Add(366 * day)
+	if claims := v1Verified(t, f, minted.Key); !claims.PaidThrough.Equal(wantExpiry) {
+		t.Errorf("the renewal covers to %s, want the end of the term it follows (%s): waiting a day moves the mint and never the term", claims.PaidThrough, wantExpiry)
+	}
+}
+
 // TestARenewalMintsOnlyUnderTheRowTheCheckoutSells: the renewal's key is minted
 // under the same rows a purchase is (D442, §12.1), so a subscription whose term
 // is one the checkout does not sell and one whose record names no workspace —
@@ -1409,7 +1436,7 @@ func TestEnterpriseIsNotACheckoutPlan(t *testing.T) {
 		{days: 30, want: PolicyTeamMonthly},
 		{days: 31, want: PolicyTeamMonthly},
 		{days: 365, want: PolicyTeamAnnual},
-		{days: 395, want: PolicyTeamAnnual},
+		{days: 366, want: PolicyTeamAnnual},
 	} {
 		if got, sold := checkoutPolicy(tc.days); !sold || got != tc.want {
 			t.Errorf("a term of %d day(s) is sold under %q (sold=%v), want %q", tc.days, got, sold, tc.want)
@@ -1417,6 +1444,15 @@ func TestEnterpriseIsNotACheckoutPlan(t *testing.T) {
 	}
 	if got, sold := checkoutPolicy(7); sold {
 		t.Errorf("a term of 7 day(s) is sold under %q, want no row: a key minted for a period nobody sells is a licence the customer paid whatever they paid for", got)
+	}
+	// The bound above is the same refusal and matters more: a term past a year
+	// passes the tier's ceiling by nothing and is refused by the minter, so a
+	// purchase carrying one mints nothing and answers 500 to every redelivery
+	// rather than failing once at the checkout.
+	for _, days := range []int{367, 395, 400} {
+		if got, sold := checkoutPolicy(days); sold {
+			t.Errorf("a term of %d day(s) is sold under %q, want no row: the minter refuses past the tier's ceiling, and a 500 every redelivery is not a refusal anybody sees", days, got)
+		}
 	}
 	for _, row := range checkoutRows {
 		if row.policy == PolicyEnterprise || row.policy == PolicyEnterpriseAirGapped {

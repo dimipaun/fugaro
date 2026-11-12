@@ -467,11 +467,15 @@ func (s *Service) purchased(ctx context.Context, e Event) error {
 // refund of the one the customer no longer holds, and a key reissued after a
 // leak would inherit the leak's entry (K2.2, K2.1).
 //
-// The workspace the reissued key binds to is the event's own, and it has to be:
-// the subscription record keeps the term, the seats and the address, and no
-// workspace id — so a seat change whose event names none is refused rather than
-// minted bound to nothing (TN2, §5.1). It is the same binding the purchase
-// carried, out of the same checkout data (S3.7).
+// The workspace the reissued key binds to is the event's own, out of the same
+// checkout data the purchase's came from (S3.7), and a seat change whose event
+// names none is refused rather than minted bound to nothing (TN2, §5.1). The
+// subscription the store holds names one too, written by the purchase and kept
+// current here, so the event's is a second statement of the same binding rather
+// than the only one — and it is the event's that the minted key carries, because
+// a seat change is the merchant's statement of the subscription as it now is.
+// (Whether a nameless event should fall back to the stored binding instead of
+// being refused is a question for the owner, not a decision this path makes.)
 //
 // A cancelled subscription gets nothing here, as it gets nothing from Renew: the
 // key the customer holds keeps working until it expires and no second one is
@@ -644,6 +648,20 @@ func (s *Service) Renew(ctx context.Context, subscriptionID string) (MintedV1, b
 	if !sold {
 		return MintedV1{}, false, fmt.Errorf("%w: the renewal of the subscription %s is for a term the checkout does not sell (D442)", ErrNoClaims, sub.ID)
 	}
+	// The key a renewal mints covers the rest of the term the customer is in and
+	// the whole of the next one, so it is longer than a term: on the window's
+	// first day it asks for the subscription's own days plus T26's 30-day lead,
+	// and the tier's ceiling is exactly a year plus that lead. A leap year is 366
+	// days, so that first day would ask for 396 and the minter would refuse it —
+	// and every trigger after it too, at 500, if this answer were an error rather
+	// than nothing to do. Waiting the one day is what the lead means for a year
+	// that is a day longer, and it keeps `paid_through` exactly the end of the
+	// term the key covers rather than a day short of it.
+	if row, known := DefaultPolicy(policy); known {
+		if maximum, bounded := tierMaxTerm[row.Tier]; bounded && days > int(maximum/(24*time.Hour)) {
+			return MintedV1{}, false, nil
+		}
+	}
 	if sub.WorkspaceID == "" {
 		return MintedV1{}, false, fmt.Errorf("%w: the renewal of the subscription %s, whose record names no workspace (TN2)", ErrNoClaims, sub.ID)
 	}
@@ -690,12 +708,19 @@ var checkoutRows = []struct {
 	// floor is the shortest term this row is sold for, and it is below the
 	// period for the monthly row alone: the merchant bills a **calendar** month,
 	// which February makes 28 days, so a TermDays of 28, 29 or 31 is the month
-	// the customer bought rather than a period nobody sells. The year row has no
-	// such shortage — no calendar year is shorter than 365 days.
-	floor time.Duration
+	// the customer bought rather than a period nobody sells.
+	//
+	// ceiling is the longest, and it is the calendar's own bound for the same
+	// reason: no month is longer than 31 days and no year longer than 366. It is
+	// what keeps a term the minter would refuse out of the checkout — the tier's
+	// ceiling is a year plus T26's lead (395 days), so a term past a year is
+	// minted by nobody, and a purchase carrying one would answer 500 to every
+	// redelivery for ever rather than fail once, visibly, at the checkout.
+	floor   time.Duration
+	ceiling time.Duration
 }{
-	{PolicyTeamMonthly, monthTerm, 28 * 24 * time.Hour},
-	{PolicyTeamAnnual, yearTerm, yearTerm},
+	{PolicyTeamMonthly, monthTerm, 28 * 24 * time.Hour, 31 * 24 * time.Hour},
+	{PolicyTeamAnnual, yearTerm, yearTerm, 366 * 24 * time.Hour},
 }
 
 // checkoutPolicy answers the row one transaction's term is sold under: the
@@ -712,8 +737,9 @@ var checkoutRows = []struct {
 // would never be minted a key at all.
 func checkoutPolicy(termDays int) (string, bool) {
 	policy, sold := "", false
+	term := time.Duration(termDays) * 24 * time.Hour
 	for _, row := range checkoutRows {
-		if time.Duration(termDays)*24*time.Hour >= row.floor {
+		if term >= row.floor && term <= row.ceiling {
 			policy, sold = row.policy, true
 		}
 	}
