@@ -179,11 +179,11 @@ func userOffboard(cmd *cobra.Command, o cloudOptions, email string) error {
 	}
 
 	w := cmd.OutOrStdout()
-	_, dropped := offboardDropGrants(node.Grants, member)
+	dropped, err := offboardWriteRoster(ctx, db, node, member)
+	if err != nil {
+		return err
+	}
 	if dropped > 0 {
-		if err := offboardWriteRoster(ctx, db, node, member); err != nil {
-			return err
-		}
 		fmt.Fprintf(w, "%s is off the roster of %s: %d grants removed\n", safetext.Field(address), safetext.Field(lc.Name), dropped)
 		fmt.Fprintf(w, "the invoker grants come off on the installation's next `%s update`, which also writes this machine's operator and admin lists from the roster: nothing was applied to IAM here\n", selfCommand())
 	} else {
@@ -267,31 +267,37 @@ func offboardDropGrants(grants []accesslib.Grant, member string) ([]accesslib.Gr
 }
 
 // offboardWriteRoster writes the node without the member's grants, conditional
-// on the ETag the read carried (F23). A node that moved under this command is
-// re-read and the drop is computed again — the second admin to write may have
-// added or removed grants of their own, and landing the picture this command
-// read would undo them — and a third attempt is refused rather than retried
-// forever, which is foldFlagLists' rule and for its reason.
-func offboardWriteRoster(ctx context.Context, db *rtdb.Client, node accesslib.Node, member string) error {
+// on the ETag the read carried (F23), and answers how many it dropped. A node
+// that moved under this command is re-read and the drop is computed again — the
+// second admin to write may have added or removed grants of their own, and
+// landing the picture this command read would undo them — and a third attempt is
+// refused rather than retried forever, which is foldFlagLists' rule and for its
+// reason. A node that changed under the retry is also why the count comes from
+// the write and not from the first read: it is the number of grants the
+// installation no longer holds, which is what the line claims.
+func offboardWriteRoster(ctx context.Context, db *rtdb.Client, node accesslib.Node, member string) (int, error) {
 	for range 3 {
-		next, _ := offboardDropGrants(node.Grants, member)
+		next, dropped := offboardDropGrants(node.Grants, member)
+		if dropped == 0 {
+			return 0, nil
+		}
 		err := accesslib.WriteIfMatch(ctx, db, next, node.ETag)
 		switch {
 		case err == nil:
-			return nil
+			return dropped, nil
 		case errors.Is(err, rtdb.ErrPrecondition):
 			again, rerr := accesslib.Read(ctx, db)
 			if rerr != nil {
-				return remote(rerr)
+				return 0, remote(rerr)
 			}
 			node = again
 		case errors.Is(err, rtdb.ErrPermission):
-			return userErr("nothing was offboarded: %s refused the write — taking a member off the roster needs roles/firebasedatabase.admin, held by the project's owners, editors and budget admins: %v", accesslib.PathNode, err)
+			return 0, userErr("nothing was offboarded: %s refused the write — taking a member off the roster needs roles/firebasedatabase.admin, held by the project's owners, editors and budget admins: %v", accesslib.PathNode, err)
 		default:
-			return remote(err)
+			return 0, remote(err)
 		}
 	}
-	return userErr("the roster was written by another admin every time this one tried to take %s off it: nothing was offboarded — run the command again", safetext.Field(member))
+	return 0, userErr("the roster was written by another admin every time this one tried to take %s off it: nothing was offboarded — run the command again", safetext.Field(member))
 }
 
 // offboardSweep deletes the member's whole prefix through the installation's
