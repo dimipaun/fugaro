@@ -226,6 +226,23 @@ func (r *run) applyGrade() error {
 	}
 	a := &r.cfg.Agent
 	a.Models.Coder = grade.Model
+	// What the write lands beside: a recipe may map one role onto the other
+	// (roles:, ApplyRoles, which bootstrap has applied already). The grade is
+	// the task's own model for one rung and the mapping is the repository's
+	// standing default, so the grade stands — the precedence a challenger arm's
+	// coder model already has over the mapping (shadow.go, D555). The mapping
+	// roles: {reviewer: coder} copies the coder's model, so it is applied again
+	// here and the reviewer follows the coder onto the grade; roles: {coder:
+	// reviewer} — premium's "coder on the reviewer's model" — names the coder's
+	// model itself and cannot hold beside a grade, so the mapping is the half
+	// that gives way and the run says so in its log, the way it says a model the
+	// mapping overrides (runner.go, ApplyRoles).
+	if r.rcp != nil && r.rcp.CoderIsReviewer {
+		r.d.Log.Info("the task's model grade replaces the coder model the recipe's roles mapping set",
+			"recipe", r.rcp.Name, "grade", g, "coder", grade.Model)
+	} else if r.rcp != nil && r.rcp.ReviewerIsCoder {
+		ApplyRoles(a, r.rcp)
+	}
 	if grade.Access != "" {
 		a.Crafts.Coder.Access = grade.Access
 	}

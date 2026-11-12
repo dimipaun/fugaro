@@ -1,6 +1,8 @@
 package runner
 
 import (
+	"bytes"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -8,6 +10,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/escalation"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -151,6 +154,58 @@ func TestRoutingGradeAppliesToCoderAndJudge(t *testing.T) {
 	if got := fallback.stageModel("implement"); got != "claude-opus-5-5" {
 		t.Errorf("the coder runs %q, want the grade's model", got)
 	}
+}
+
+// TestRoutingGradeAndTheRecipesRoleMapping (E4): the recipe's roles: mapping
+// and the task's grade both say something about the coder's model, and the two
+// directions end differently. roles: {reviewer: coder} copies the coder's
+// model, so the mapping is applied again after the grade and the reviewer
+// follows the coder onto it — a pair the mapping says runs one model does not
+// split because a rung escalated. roles: {coder: reviewer} — premium's "coder
+// on the reviewer's model" — names the coder's model itself and cannot hold
+// beside the grade, so the grade stands and the run says in its log that the
+// mapping is the half that gave way.
+func TestRoutingGradeAndTheRecipesRoleMapping(t *testing.T) {
+	grades := policy.Grades{config.GradeStrong: {Model: "claude-opus-5-5"}}
+	t.Run("the reviewer runs as the coder", func(t *testing.T) {
+		r := gradedRun(t, escalation.Strong, grades)
+		r.rcp = &recipe.Recipe{Name: "thrifty", ReviewerIsCoder: true}
+		ApplyRoles(&r.cfg.Agent, r.rcp)
+		if got := r.cfg.Agent.Models.Reviewer; got != "claude-sonnet-5-5" {
+			t.Fatalf("the mapping left the reviewer on %q, want the coder's model", got)
+		}
+		if err := r.applyGrade(); err != nil {
+			t.Fatalf("applyGrade: %v", err)
+		}
+		if got := r.cfg.Agent.Models.Coder; got != "claude-opus-5-5" {
+			t.Errorf("the coder runs %q, want the grade's model", got)
+		}
+		if got := r.cfg.Agent.Models.Reviewer; got != "claude-opus-5-5" {
+			t.Errorf("the reviewer runs %q, want the model the coder now runs: roles: {reviewer: coder} says the two are one model, and a grade moves it rather than breaking the pair", got)
+		}
+	})
+	t.Run("the coder runs as the reviewer", func(t *testing.T) {
+		var logs bytes.Buffer
+		r := gradedRun(t, escalation.Strong, grades)
+		r.d.Log = slog.New(slog.NewTextHandler(&logs, nil))
+		r.rcp = &recipe.Recipe{Name: "premium", CoderIsReviewer: true}
+		ApplyRoles(&r.cfg.Agent, r.rcp)
+		if got := r.cfg.Agent.Models.Coder; got != "claude-opus-5" {
+			t.Fatalf("the mapping left the coder on %q, want the reviewer's model", got)
+		}
+		if err := r.applyGrade(); err != nil {
+			t.Fatalf("applyGrade: %v", err)
+		}
+		if got := r.cfg.Agent.Models.Coder; got != "claude-opus-5-5" {
+			t.Errorf("the coder runs %q, want the grade's model: the task's own choice of the coder's model is the more particular of the two", got)
+		}
+		if got := r.cfg.Agent.Models.Reviewer; got != "claude-opus-5" {
+			t.Errorf("the reviewer runs %q, want the model the mapping gave it: the grade is the coder's alone", got)
+		}
+		if !strings.Contains(logs.String(), "model grade replaces the coder model") {
+			t.Errorf("the run did not say the recipe's mapping gave way to the grade: a mapping nothing reports is a mapping the reader will believe is still in force\n%s", logs.String())
+		}
+	})
 }
 
 // TestGradesRideTheCeilingFromThePolicyNode (E4): the grades a run resolves
