@@ -1428,11 +1428,11 @@ locals {
 	// The project's catalog check job's account (D1148): its grant set is
 	// pinned whole by runAccountGrants, which is the only thing that can be.
 	// A tftest cannot enumerate a module's resources, so an extra grant
-	// resource beside the five is invisible to it; this is the mechanical half
-	// that catches one — the mutation adds a project-level role to that very
-	// account, and the finding has to name the grant and the object this whole
-	// test exists for, not merely be some other refusal.
-	t.Run("a sixth grant to the catalog check account", func(t *testing.T) {
+	// resource beside the reviewed rows is invisible to it; this is the
+	// mechanical half that catches one — the mutation adds a project-level
+	// role to that very account, and the finding has to name the grant and the
+	// object this whole test exists for, not merely be some other refusal.
+	t.Run("a further grant to the catalog check account", func(t *testing.T) {
 		files := moduleFiles(t)
 		files["modules/installation/catalogcheck.tf"] += `
 resource "google_project_iam_member" "catalog_check_viewer" {
@@ -1450,9 +1450,10 @@ resource "google_project_iam_member" "catalog_check_viewer" {
 			t.Errorf("a sixth grant to the catalog check account is not refused for what it reaches:\n%s", strings.Join(scan.findings, "\n"))
 		}
 	})
-	// And the other direction: the set is exact, so dropping one of the five
-	// leaves an allowlist entry that no module grants any more, which the scan
-	// reports rather than keeping the reviewed row as if it were still there.
+	// And the other direction: the set is exact, so dropping one of the
+	// reviewed grants leaves an allowlist entry that no module grants any
+	// more, which the scan reports rather than keeping the reviewed row as if
+	// it were still there.
 	t.Run("a reviewed catalog check grant that is gone", func(t *testing.T) {
 		files := moduleFiles(t)
 		path := "modules/installation/catalogcheck.tf"
@@ -2071,6 +2072,28 @@ var runAccountGrants = setOf(
 	// account: the job cannot invoke itself, and this is the one row in this
 	// block that is not the new account's.
 	`google_cloud_run_v2_job_iam_member | "roles/run.invoker" | name=google_cloud_run_v2_job.catalog_check[0].name | google_service_account.scheduler.member | for_each= | perms=`,
+	// The job's database reach (D1554): the installation's own role
+	// fugaroCatalogLease, created in the FIREBASE project and bound to this
+	// account there, whose whole permission list is the instance's two DATA
+	// permissions (pinned by perms, and by
+	// TestCatalogCheckLeaseRoleIsTheTwoDataPermissions beside tf.RolePermissions
+	// and tf.CatalogLeaseRole). It exists because each build the job submits
+	// reserves its estimated cost before Cloud Build is asked for it, and that
+	// reservation is a lease under buildleases/<slug>/<id> — a family the
+	// installation's rules deny whole to every client token, so the writer can
+	// only be an IAM identity with these two permissions on the database.
+	//
+	// What it is not: no instance LIFECYCLE (create, delete, disable, reenable,
+	// undelete) and no list, so a scheduled job nobody is watching cannot
+	// delete the database or the leases that hold every other build's cost,
+	// and no read or write of the runs bucket, the marker's root included.
+	// Realtime Database IAM has no path-level scope, so these two permissions
+	// reach the whole instance — which is exactly what the two other accounts
+	// with a database reach already hold (the coordinator's and the history
+	// job's roles/firebasedatabase.admin), and strictly less than they do. It
+	// is a second role and not a second binding of the credentials service's
+	// so that neither account's reach can grow by the other's needs.
+	`google_project_iam_member | "projects/${var.catalog_check.firebase_project}/roles/fugaroCatalogLease" | project=var.catalog_check.firebase_project | google_service_account.catalog_check[0].member | for_each= | perms=firebasedatabase.instances.get,firebasedatabase.instances.update`,
 	// And the repository root's half: roles/iam.serviceAccountUser on this
 	// repository's BUILD account, which is what makes a build of this
 	// repository's catalog entry run as this repository (D1148's whole point —

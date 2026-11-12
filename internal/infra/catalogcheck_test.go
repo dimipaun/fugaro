@@ -412,6 +412,54 @@ func TestCatalogCheckWritesNoBuildBound(t *testing.T) {
 	}
 }
 
+// TestCatalogCheckCarriesTheFirebaseProjectItsLeaseIsWrittenIn: the job's
+// database role is created in the installation's Firebase project and its
+// lease is written into that project's database, so the one fact reaches two
+// renderings of one plan — the module's variable, which is where the role and
+// its binding are planned, and the job's own spec, which is what the lease
+// proves the database it was handed belongs to (requireOwnBudgetDB). They come
+// from one read of the local config, and an installation whose config names no
+// Firebase project writes neither: no role on a project nobody named, and a
+// job that submits its builds unleased rather than leasing into a database it
+// cannot prove is the installation's (openCatalogJobLease).
+func TestCatalogCheckCarriesTheFirebaseProjectItsLeaseIsWrittenIn(t *testing.T) {
+	// The installation with no budget backend: the key is absent from the
+	// module's variable rather than empty, which is what the module's
+	// catalog_lease_on reads and what its variable's validation admits.
+	cc, spec := catalogCheckJob(t, catalogCheckLocal)
+	if cc.FirebaseProject != "" || spec.FirebaseProject != "" {
+		t.Errorf("an installation with no budget backend names a Firebase project (%q, %q), want neither: there is no database for a lease, and no project to create a role in", cc.FirebaseProject, spec.FirebaseProject)
+	}
+	var vars map[string]any
+	rawVars, err := json.Marshal(cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(rawVars, &vars); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := vars["firebase_project"]; ok {
+		t.Errorf("the module's variable carries firebase_project on an installation with no budget backend: %s", rawVars)
+	}
+
+	lc := parseLC(t, catalogCheckLocal)
+	lc.Budget = &localcfg.Budget{RTDBURL: "https://aurora-fp-default-rtdb.firebaseio.com", FirebaseProject: "aurora-fp"}
+	with, err := CatalogCheck(lc, "fugaro-runs-proj-1234", true)
+	if err != nil {
+		t.Fatalf("CatalogCheck with a budget backend: %v", err)
+	}
+	if got := with.FirebaseProject; got != "aurora-fp" {
+		t.Errorf("the module's firebase_project is %q, want the installation's %q: the job's database role is created and bound in that project", got, lc.Budget.FirebaseProject)
+	}
+	var job CatalogCheckJobSpec
+	if err := json.Unmarshal([]byte(with.Env[CatalogCheckSpecEnv]), &job); err != nil {
+		t.Fatalf("%s: %v", CatalogCheckSpecEnv, err)
+	}
+	if got := job.FirebaseProject; got != "aurora-fp" {
+		t.Errorf("the job's own spec names the Firebase project %q, want %q: the lease proves its database is that project's own before it writes one", got, lc.Budget.FirebaseProject)
+	}
+}
+
 // catalogCheckReposLC is the repository the catalog's entries build in beside
 // m4LocalConfig's own: GitHub, because the entry it is assigned is a
 // Dockerfile's, with the App ID a build of it mints its installation token

@@ -54,11 +54,14 @@ const (
 // publishes no catalog (the module's own null, which plans exactly what the
 // installation planned before the job existed).
 //
-// The job's whole assignment is Env's CatalogCheckSpecEnv: the job's account
-// holds no project role beyond the two data permissions of its own database
-// role (catalogcheck.tf), so it can read neither the published catalog (a
-// database node its account has no role for) nor anything else it would have
-// to decide itself (D1148).
+// The job's whole assignment is Env's CatalogCheckSpecEnv: the published
+// catalog is the project's policy node, whose rules grant a read to a
+// Fugaro-minted client token alone, and the job's account holds no token — the
+// roles it does hold are the build submitter's and the database role its own
+// build leases are written with (catalogcheck.tf, D1554), neither of which is
+// a read the job's code may take — so the catalog has to reach it here, as do
+// the repositories and anything else it would otherwise have to decide itself
+// (D1148).
 type CatalogCheckSpec struct {
 	AccountID       string `json:"account_id"`
 	Job             string `json:"job"`

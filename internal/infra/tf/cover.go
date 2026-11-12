@@ -435,10 +435,30 @@ const VerifierAccountID = "fugaro-verifier"
 // credentials and coordinator accounts' reason: its grants are a project-wide
 // reach that no `fugaro update` confirmation announced, so it is read as a
 // kind of its own (toCatalogCheck) and every role it is given is refused
-// unless a row carries that bit — which is the bucket rows' objectUser one
-// alone, and only through bucketCondition's catalogRecordsGrant, the check
-// that pins the grant to one repository's records condition (D1148).
+// unless a row carries that bit — which ONE row does: the bucket rows'
+// objectUser, and only through bucketCondition's catalogRecordsGrant, the
+// check that pins the grant to one repository's records condition (D1148). Its
+// grant of CatalogLeaseRole below is deliberately NOT a row: a lease role the
+// tables accepted would be one `fugaro update` applied as a plan the review
+// announced, without saying whose reach it grows. Out of the tables, the
+// update that first carries it is a plan the review did not announce — its
+// owner is asked at their terminal, as for the account's other grants, and a
+// coding agent's session is refused.
 const CatalogCheckAccountID = "fugaro-catalog-check"
+
+// CatalogLeaseRole is the custom role the catalog check job's account holds in
+// the installation's Firebase project: the two Realtime Database DATA
+// permissions its build leases are written with (catalogcheck.tf, D1554). It
+// is a SECOND role rather than a second grant of CredentialsDatabaseRole, even
+// though the two pin the same two permissions today, because the two accounts'
+// reach must not be able to grow by the other's needs: a permission the
+// credentials service needs next is not one the unattended nightly job gets,
+// and RolePermissions pins each list on its own.
+//
+// It is created in the Firebase project, which is why roleKey resolves it
+// through that project and not through the installation's alone (Cover.Projects
+// carries a verified Firebase project for the reason).
+const CatalogLeaseRole = "fugaroCatalogLease"
 
 // MCPServerAccountID is the front door's own service account (D920), the one
 // modules/installation/coordinator.tf creates in the installation's project
@@ -471,7 +491,7 @@ const MCPServerStorePrefix = "fugaro-mcpauth-"
 // own account (MCPServerAccountID), for the same reason (toCoordinator,
 // toCatalogCheck, toMCP).
 var (
-	FugaroRoles    = []string{"fugaroLauncher", ViewerRole, "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder", CloudAssetRole, CredentialsDatabaseRole, WorkspaceReadRole, DeployerRole, DeployerStorageRole, DeployerSecretRole, DeployerAccountRole, DeployerAPIKeyRole, DeployerRepositoryRole, DeployerRunJobRole, DeployerSchedulerRole}
+	FugaroRoles    = []string{"fugaroLauncher", ViewerRole, "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder", CloudAssetRole, CredentialsDatabaseRole, CatalogLeaseRole, WorkspaceReadRole, DeployerRole, DeployerStorageRole, DeployerSecretRole, DeployerAccountRole, DeployerAPIKeyRole, DeployerRepositoryRole, DeployerRunJobRole, DeployerSchedulerRole}
 	FugaroAccounts = []string{"fugaro-scheduler", "fugaro-history", "fugaro-token-signer", "fugaro-reaper", "fugaro-preload"}
 )
 
@@ -949,6 +969,16 @@ var RolePermissions = map[string][]string{
 	// installation's database. credentials.tf lists both permissions with their
 	// reasons; TestCredentialsDatabaseRoleIsTheTwoDataPermissions is the pin.
 	CredentialsDatabaseRole: {"firebasedatabase.instances.get", "firebasedatabase.instances.update"},
+	// The catalog check job's database role (D1554): the two permissions
+	// catalogcheck.tf lists, and the same two the credentials role above pins.
+	// They are a second entry and not a shared one on purpose — the two
+	// accounts hold the same surface today, and neither may grow it because the
+	// other needed a permission. The job reads the leases it left behind, the
+	// day's counters and the database's mark, and writes the lease it takes and
+	// settles (internal/budget/lease_build.go); it never touches the instance's
+	// lifecycle, which is what roles/firebasedatabase.admin would hand it.
+	// TestCatalogLeaseRoleIsTheTwoDataPermissions is the pin.
+	CatalogLeaseRole: {"firebasedatabase.instances.get", "firebasedatabase.instances.update"},
 	// The workspace's read of the MEMBER's database (docs/workspaces/
 	// spec.md §5, W7; workspace_access.go): the ONE permission a member's own
 	// Fugaro installation binds, so the workspace's credentials service can
