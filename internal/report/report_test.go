@@ -28,7 +28,9 @@ func notATerminal(io.Writer) bool { return false }
 func aTerminal(io.Writer) bool { return true }
 
 // fakeSink is CL3's log without its file: the reporter only ever writes to it
-// and reads its path.
+// and reads its path. Its path is a name report.OpenLog writes, because the
+// run ID a failure prints is that file's stem (T-DG9), so the line under a
+// failure and the path beside it name the same run.
 type fakeSink struct {
 	mu   sync.Mutex
 	buf  bytes.Buffer
@@ -117,7 +119,7 @@ func TestJSONModePrintsNothingOnStdout(t *testing.T) {
 
 func TestLeftForYouIsNotATick(t *testing.T) {
 	var out bytes.Buffer
-	sink := &fakeSink{path: "/state/fugaro/logs/update-20261107T000000Z-1.log"}
+	sink := &fakeSink{path: "/state/fugaro/logs/update-20261107000000-1.log"}
 	r := New(Options{Out: &out, Getenv: noEnv, NoColor: true, Sink: sink})
 	r.Step("Enable the billing account").Left("run this in your own terminal window")
 	o := r.Summary()
@@ -145,7 +147,7 @@ func TestLeftForYouIsNotATick(t *testing.T) {
 func TestRefusedIsACrossAndNotALeftForYou(t *testing.T) {
 	t.Run("a terminal", func(t *testing.T) {
 		var out bytes.Buffer
-		sink := &fakeSink{path: "/state/fugaro/logs/update-20261109T040741Z-1.log"}
+		sink := &fakeSink{path: "/state/fugaro/logs/update-20261109040741-1.log"}
 		r := New(Options{Out: &out, Getenv: noEnv, IsTerminal: aTerminal, Sink: sink})
 		r.Step("Installation").Refused("the managed gate refused this step")
 		o := r.Summary()
@@ -208,7 +210,7 @@ func TestSummaryUsesTheInjectedClock(t *testing.T) {
 
 func TestFailedStepPrintsContextAndSinkPath(t *testing.T) {
 	var out bytes.Buffer
-	sink := &fakeSink{path: "/state/fugaro/logs/update-20261107T000000Z-1.log"}
+	sink := &fakeSink{path: "/state/fugaro/logs/update-20261107000000-1.log"}
 	r := New(Options{Out: &out, Getenv: noEnv, NoColor: true, Sink: sink})
 	r.Step("Publish the policy").Failed(errors.New("exit status 1"), []string{
 		"Error: permission denied on the policy node",
@@ -232,6 +234,66 @@ func TestFailedStepPrintsContextAndSinkPath(t *testing.T) {
 	}
 }
 
+// TestTheFailureLineNamesTheTroubleshootCommand: a failure under a log prints
+// one line naming the command that explains it, and the run ID it names is the
+// stem of that log — the file's own name, so what a failure prints is what
+// `fugaro troubleshoot` takes with nobody spelling it (T-DG9, D1609). The line
+// reaches the log as well, beside the path it follows: the log is the run's
+// full output (D1352).
+//
+// A run with no log prints none (T6, G7), and neither does a step left for the
+// user nor one the managed gate refused: the sentence says something went
+// wrong, and those two are a step the person owes — they say so in their own
+// words, and a run that exits 1 over them is not a run to explain (G3).
+func TestTheFailureLineNamesTheTroubleshootCommand(t *testing.T) {
+	const id = "update-20261107000000-48213"
+	want := "Something went wrong. Run: fugaro troubleshoot " + id
+
+	t.Run("a failed step under a log", func(t *testing.T) {
+		var out bytes.Buffer
+		sink := &fakeSink{path: "/state/fugaro/logs/" + id + ".log"}
+		r := New(Options{Out: &out, Getenv: noEnv, NoColor: true, Sink: sink})
+		r.Step("Installation").Failed(errors.New("exit status 1"), []string{"Error: quota exceeded"})
+		r.Summary()
+		got := out.String()
+		if n := strings.Count(got, want); n != 1 {
+			t.Errorf("the failure block prints %q %d time(s), want once:\n%q", want, n, got)
+		}
+		if !strings.Contains(sink.String(), want) {
+			t.Errorf("the log holds no %q, so the log a person opens does not say what explains it:\n%q", want, sink.String())
+		}
+	})
+
+	t.Run("no log at all", func(t *testing.T) {
+		var out bytes.Buffer
+		r := New(Options{Out: &out, Getenv: noEnv, NoColor: true})
+		r.Step("Backfill").Failed(errors.New("exit status 1"), []string{"Error: permission denied"})
+		r.Summary()
+		if got := out.String(); strings.Contains(got, "Something went wrong") {
+			t.Errorf("a run that kept no log named a run ID it has none of:\n%q", got)
+		}
+	})
+
+	t.Run("a step the person owes", func(t *testing.T) {
+		for _, tc := range []struct {
+			name string
+			do   func(*Step)
+		}{
+			{"left for you", func(s *Step) { s.Left("run this in your own terminal window") }},
+			{"refused", func(s *Step) { s.Refused("the managed gate refused this step") }},
+		} {
+			var out bytes.Buffer
+			sink := &fakeSink{path: "/state/fugaro/logs/" + id + ".log"}
+			r := New(Options{Out: &out, Getenv: noEnv, NoColor: true, Sink: sink})
+			tc.do(r.Step("Enable the billing account"))
+			r.Summary()
+			if got := out.String(); strings.Contains(got, "Something went wrong") {
+				t.Errorf("a step %s is not a failure, and the block says so:\n%q", tc.name, got)
+			}
+		}
+	})
+}
+
 // TestTheLogHoldsTheRunsOwnLines: the log is the run's full output (D1352), so
 // a command whose own output is its steps keeps them — a run that reported a
 // step and a closing line cannot leave an empty file at the path a failure
@@ -240,7 +302,7 @@ func TestFailedStepPrintsContextAndSinkPath(t *testing.T) {
 func TestTheLogHoldsTheRunsOwnLines(t *testing.T) {
 	now := time.Date(2026, 11, 7, 9, 0, 0, 0, time.UTC)
 	var out bytes.Buffer
-	sink := &fakeSink{path: "/state/fugaro/logs/deploy-20261107T090000Z-1.log"}
+	sink := &fakeSink{path: "/state/fugaro/logs/deploy-20261107090000-1.log"}
 	// A terminal, so the person's copy is styled and the log's is not.
 	r := New(Options{Out: &out, Getenv: noEnv, IsTerminal: aTerminal, Sink: sink, Now: func() time.Time { return now }})
 	r.Step("Publish the policy").Done("published")

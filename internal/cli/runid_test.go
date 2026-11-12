@@ -51,7 +51,8 @@ func wallRunIDAt(daysAgo int, hhmmss, hex string) string {
 // clock the command under test reads — the same helper the guard's mint field
 // names when it complains about a fixed ID:
 //
-//	runs ls, runs ls --pr   lsNow      recentRunID, runIDAt (runs_test.go)
+//	runs ls, runs ls --pr,  lsNow      recentRunID, runIDAt (runs_test.go)
+//	estimate --pr
 //	watch                   watchNow   runID (watch_queued_test.go)
 //	run --pr, run --retry,  wall       wallRunID, wallRunIDAt
 //	stats runs
@@ -468,6 +469,11 @@ var recencyWindows = []recencyWindow{
 		seam: regexp.MustCompile(`lsNow\s*=`), mint: []string{"recentRunID", "runIDAt"}, since: true},
 	{cmd: "runs ls --pr", window: prLookback, run: []string{"runs", "ls", "--pr"},
 		seam: regexp.MustCompile(`lsNow\s*=`), mint: []string{"recentRunID", "runIDAt"}, since: true},
+	// estimate --pr finds the run the way runs ls --pr does, over prLookback
+	// from the same clock (estimate.go's estimateRunOnPR; --run names a run
+	// outright and reads no window).
+	{cmd: "estimate --pr", window: prLookback, run: []string{"estimate", "--pr"},
+		seam: regexp.MustCompile(`lsNow\s*=`), mint: []string{"recentRunID", "runIDAt"}, since: true},
 	// watch: the queued scan lists run IDs by mint time over queuedLookback
 	// and finishedLookback (watch_queued.go), and the degraded view reads
 	// degradedSince (watch.go). All three read watchNow (the scanner through
@@ -527,8 +533,9 @@ var registryKey = regexp.MustCompile(`PathAgent\(`)
 
 // TestNoFixedRunIDsInRecencyTests is the guard for recentRunID: it parses
 // this package's own test sources and fails a test that drives any
-// recency-windowed entry point (recencyWindows: runs ls, watch, run --pr,
-// run --retry, stats runs, report, budget preview) and hard-codes a run ID.
+// recency-windowed entry point (recencyWindows: runs ls, estimate --pr,
+// watch, run --pr, run --retry, stats runs, report, budget preview) and
+// hard-codes a run ID.
 // Such a test is date-lucky: it passes until the clock's window passes the
 // ID's stamp.
 //
