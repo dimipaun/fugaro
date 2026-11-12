@@ -240,6 +240,14 @@ type LayerDefaults struct {
 	Agent    LayerAgent    `yaml:"agent"`
 	Rigor    LayerRigor    `yaml:"rigor"`
 	Planning LayerPlanning `yaml:"planning"`
+	// ModelGrades is the escalation ladder's grades for every repository of
+	// the project (docs/outer-loop-escalation E2, D2039): the model each grade
+	// runs and the credential or pool its calls go out on, the pair a craft
+	// carries. It is a block of its own rather than part of defaults.agent
+	// because it is not an agent role: the ladder picks it per rung at run
+	// time, and a project that names no grade leaves it to the rung, which
+	// refuses and asks (D2039).
+	ModelGrades ModelGrades `yaml:"model_grades"`
 }
 
 // LayerPlanning is defaults.planning (docs/contract-first-decoupling, D1813):
@@ -944,6 +952,9 @@ func validateLayer(l *ProjectLayer, a LayerAnchor) []Problem {
 	}
 	for _, p := range validateAgentModels(Agent{Model: ag.Model, Models: ag.Models, Crafts: ag.Crafts}) {
 		p.Path = "defaults." + p.Path
+		ps = append(ps, p)
+	}
+	for _, p := range ValidateModelGrades(l.Defaults.ModelGrades, "defaults.model_grades") {
 		ps = append(ps, p)
 	}
 	for _, name := range sortedKeys(l.Profiles) {
