@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -290,4 +291,119 @@ func announceSettingsWrite(cmd *cobra.Command, managed bool, what string) error 
 		return userErr("not confirmed; nothing was written")
 	}
 	return nil
+}
+
+// settingsLocalFile is the selected local project config and the file it lives
+// in: what every family that edits the person's own dotfile writes — `models
+// add` and `models rm`, `workspace add`, `project profile` and `project
+// routing`. A project selected from a layer and with no file of its own has
+// nothing to edit, which is a refusal and not an empty edit. what names the
+// commands in that refusal, so each family's sentence names its own commands
+// rather than another family's.
+func settingsLocalFile(what string) (localcfg.Selection, *localcfg.Config, error) {
+	sel, lc, err := settingsSelection()
+	if err != nil {
+		return sel, nil, err
+	}
+	if sel.Path == "" {
+		return sel, nil, userErr("no local project config file is selected: %s edit the selected project's own config file, and this project has none; run fugaro setup, or pass --config", what)
+	}
+	return sel, lc, nil
+}
+
+// settingsSetList makes the sequence at path hold the values want names: the
+// items the file carries and want does not are removed, the ones want names and
+// the file does not carry are appended, and an item both name keeps the place
+// the file gave it. have is the sequence as the caller read it — the config it
+// already parsed — so this composes the editor's own item operations rather
+// than re-reading the document to find them.
+//
+// The one shape yamledit refuses is a member of a flow sequence, which is a
+// shape an operator's own hand writes (docs/git-providers.md teaches one), so
+// the fallback is the same one `secrets allow` makes: the key is written again
+// in the block style this program writes a list in, and the diff shows it.
+func settingsSetList(src []byte, path []string, have, want []string) ([]byte, error) {
+	next := src
+	for _, item := range have {
+		if slices.Contains(want, item) {
+			continue
+		}
+		out, err := yamledit.RemoveListItemWithOptions(next, path, item, yamledit.RemoveOptions{DropEmptyParents: true})
+		if err != nil {
+			return settingsSetListFallback(src, path, want, err)
+		}
+		next = out
+	}
+	for _, item := range want {
+		if slices.Contains(have, item) {
+			continue
+		}
+		out, err := yamledit.AddListItem(next, path, item)
+		if err != nil {
+			return settingsSetListFallback(src, path, want, err)
+		}
+		next = out
+	}
+	return next, nil
+}
+
+// settingsSetListFallback is what a list edit does when the editor refused it:
+// a flow sequence is the one refusal this rewrites, and anything else is the
+// caller's to report.
+func settingsSetListFallback(src []byte, path []string, want []string, err error) ([]byte, error) {
+	if yamledit.ReasonOf(err) != yamledit.ReasonFlowCollection {
+		return nil, err
+	}
+	next, err := yamledit.RemoveKeyWithOptions(src, path, yamledit.RemoveOptions{DropEmptyParents: true})
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range want {
+		if next, err = yamledit.AddListItem(next, path, item); err != nil {
+			return nil, err
+		}
+	}
+	return next, nil
+}
+
+// settingsRewriteList writes one allow-list entry again in the block style this
+// program writes a list in — values under allow_data_to, and the Bitbucket
+// token's proxy written back only when the entry carried it — and is the second
+// half of every edit of the two lists that share it: `project_secrets`/
+// `workflow_secrets` and `claude_accounts`.
+//
+// The entry is taken away whole rather than edited in place because a member
+// cannot be spliced into a flow collection, which is the one shape the editor's
+// item operations refuse (yamledit.ReasonFlowCollection) and the shape
+// docs/git-providers.md teaches the operator to write the Bitbucket allow-list
+// in. The values come from the parsed entry rather than from the command line,
+// so a repository the entry already named is not lost with the shape it was
+// spelled in, and the caller's own diff shows the reformatting beside the edit.
+//
+// The flow collection this cannot take away either is the entry itself being a
+// member of a flow mapping — project_secrets: { bitbucket-token: { ... } }, the
+// whole-file line that page teaches — and no edit of this program reaches one.
+// The entry is not even there to take away, so taking it away answers with the
+// bytes unchanged and no error, and the refusal the operator reads comes from
+// the write that follows; that is why every step below, the removal included,
+// means the same thing by its error (workspaceEditResult).
+func settingsRewriteList(old []byte, block, name string, values []string, proxy bool) ([]byte, error) {
+	path := block + "." + name
+	next, err := yamledit.RemoveKeyWithOptions(old, []string{block, name}, yamledit.RemoveOptions{DropEmptyParents: true})
+	if next, err = workspaceEditResult(path, next, err); err != nil {
+		return nil, err
+	}
+	for _, v := range values {
+		added, addErr := yamledit.AddListItem(next, []string{block, name, "allow_data_to"}, v)
+		if next, err = workspaceEditResult(path, added, addErr); err != nil {
+			return nil, err
+		}
+	}
+	if proxy {
+		scaled, setErr := yamledit.SetScalar(next, []string{block, name, "proxy"}, "true")
+		if next, err = workspaceEditResult(path, scaled, setErr); err != nil {
+			return nil, err
+		}
+	}
+	return next, nil
 }

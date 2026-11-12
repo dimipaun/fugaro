@@ -1,0 +1,369 @@
+{
+  "note": "The claim sets, states and refusals the Go v1 verifier and the console's are both read against (licence-key-v2 plan K1.1, K1.4; spec sections 3, 4 and 6). Every key here is minted by a throwaway test keypair whose private half was generated in the process that wrote this file and never written down; no build trusts it, and ee/licence/keyv1.go's production keyring holds no id at all until S2.9 publishes the owner's production key. `now` is the clock every vector is read at, `firebase_project_id` is the workspace the verifier is asked with, `state` and `claims` are what an accepted key answers, and `refused` is the part a refused one fails on, named as the two verifiers name it.",
+  "now": 1794441600,
+  "firebase_project_id": "fugaro-test-project",
+  "keyring": {
+    "licence-test-fixture-v1": "xWTGTcpezxRuOSeQGopR_Ot8VwLMo8C86Gfq-HQQyts"
+  },
+  "staging": {
+    "note": "The sandbox key: minted under the staging id for tests and for a sandbox installation, and in no production keyring, so a production verifier refuses it for the id alone.",
+    "id": "licence-staging-sandbox-v1",
+    "public_key": "q6BkagXWcvjIJKc07U9rsEebtz3fxFea_M7NouA5q-k"
+  },
+  "vectors": [
+    {
+      "name": "a team key inside its paid term",
+      "key": "fgk_eyJ2IjoxLCJraWQiOiJsaWNlbmNlLXRlc3QtZml4dHVyZS12MSIsImtleV9pZCI6ImxrX3ZlY3RvcnNfMDAwMSIsIndvcmtzcGFjZV9pZCI6ImZ1Z2Fyby10ZXN0LXByb2plY3QiLCJvcmdhbmlzYXRpb24iOiJleGFtcGxlLmNvbSIsInRpZXIiOiJ0ZWFtIiwic2VhdHMiOjUsImlzc3VlZF9hdCI6IjIwMjYtMTAtMTNUMDA6MDA6MDBaIiwicGFpZF90aHJvdWdoIjoiMjAyNy0xMC0xM1QwMDowMDowMFoiLCJncmFjZV9kYXlzIjozMCwicmVuZXdhbF9tb2RlIjoiYXV0byIsInJlbmV3X2JlZm9yZV9kYXlzIjo3LCJjaGVja19pbnRlcnZhbCI6IlAxRCIsInJlbmV3YWxfc2VjcmV0X2hhc2giOiJhLWhhc2gtb2YtdGhlLXJlbmV3YWwtc2VjcmV0LWFuZC1ub3QtdGhlLXNlY3JldCIsIndhcm5pbmdzIjpbeyJyb2xlcyI6WyJhZG1pbiJdLCJmcm9tIjoiZ3JhY2Vfc3RhcnQifV0sImtpbmQiOiJwYWlkIiwibm90ZSI6ImEgdGVzdCBrZXkifQ.wzOuesjWfReH3yetaqP5tX8t2xQpZgn25JduGw4xID_CKBjKqW9vIJsVdrERA5e6jIkrHn3KHitb9yBpRrvMAQ",
+      "state": "active",
+      "claims": {
+        "v": 1,
+        "kid": "licence-test-fixture-v1",
+        "key_id": "lk_vectors_0001",
+        "workspace_id": "fugaro-test-project",
+        "organisation": "example.com",
+        "tier": "team",
+        "seats": 5,
+        "issued_at": "2026-10-13T00:00:00Z",
+        "paid_through": "2027-10-13T00:00:00Z",
+        "grace_days": 30,
+        "renewal_mode": "auto",
+        "renew_before_days": 7,
+        "check_interval": "P1D",
+        "renewal_secret_hash": "a-hash-of-the-renewal-secret-and-not-the-secret",
+        "warnings": [
+          {
+            "roles": [
+              "admin"
+            ],
+            "from": "grace_start"
+          }
+        ],
+        "kind": "paid",
+        "note": "a test key"
+      }
+    },
+    {
+      "name": "a key at the second its paid term ends",
+      "key": "fgk_eyJ2IjoxLCJraWQiOiJsaWNlbmNlLXRlc3QtZml4dHVyZS12MSIsImtleV9pZCI6ImxrX3ZlY3RvcnNfMDAwMSIsIndvcmtzcGFjZV9pZCI6ImZ1Z2Fyby10ZXN0LXByb2plY3QiLCJvcmdhbmlzYXRpb24iOiJleGFtcGxlLmNvbSIsInRpZXIiOiJ0ZWFtIiwic2VhdHMiOjUsImlzc3VlZF9hdCI6IjIwMjUtMTEtMTJUMDA6MDA6MDBaIiwicGFpZF90aHJvdWdoIjoiMjAyNi0xMS0xMlQwMDowMDowMFoiLCJncmFjZV9kYXlzIjozMCwicmVuZXdhbF9tb2RlIjoiYXV0byIsInJlbmV3X2JlZm9yZV9kYXlzIjo3LCJjaGVja19pbnRlcnZhbCI6IlAxRCIsInJlbmV3YWxfc2VjcmV0X2hhc2giOiJhLWhhc2gtb2YtdGhlLXJlbmV3YWwtc2VjcmV0LWFuZC1ub3QtdGhlLXNlY3JldCIsIndhcm5pbmdzIjpbeyJyb2xlcyI6WyJhZG1pbiJdLCJmcm9tIjoiZ3JhY2Vfc3RhcnQifV0sImtpbmQiOiJwYWlkIiwibm90ZSI6ImEgdGVzdCBrZXkifQ.6ZgF2wHTXyN-GSTbiA-A88vOQTPN5DM_Qzna3iTriZpQ1Hj9s7YsTXeoPhRPQTXWEA3B5Mh36MCGyiUCd1MuCg",
+      "state": "active",
+      "claims": {
+        "v": 1,
+        "kid": "licence-test-fixture-v1",
+        "key_id": "lk_vectors_0001",
+        "workspace_id": "fugaro-test-project",
+        "organisation": "example.com",
+        "tier": "team",
+        "seats": 5,
+        "issued_at": "2025-11-12T00:00:00Z",
+        "paid_through": "2026-11-12T00:00:00Z",
+        "grace_days": 30,
+        "renewal_mode": "auto",
+        "renew_before_days": 7,
+        "check_interval": "P1D",
+        "renewal_secret_hash": "a-hash-of-the-renewal-secret-and-not-the-secret",
+        "warnings": [
+          {
+            "roles": [
+              "admin"
+            ],
+            "from": "grace_start"
+          }
+        ],
+        "kind": "paid",
+        "note": "a test key"
+      }
+    },
+    {
+      "name": "a key a second into its grace",
+      "key": "fgk_eyJ2IjoxLCJraWQiOiJsaWNlbmNlLXRlc3QtZml4dHVyZS12MSIsImtleV9pZCI6ImxrX3ZlY3RvcnNfMDAwMSIsIndvcmtzcGFjZV9pZCI6ImZ1Z2Fyby10ZXN0LXByb2plY3QiLCJvcmdhbmlzYXRpb24iOiJleGFtcGxlLmNvbSIsInRpZXIiOiJ0ZWFtIiwic2VhdHMiOjUsImlzc3VlZF9hdCI6IjIwMjUtMTEtMTFUMDA6MDA6MDBaIiwicGFpZF90aHJvdWdoIjoiMjAyNi0xMS0xMVQyMzo1OTo1OVoiLCJncmFjZV9kYXlzIjozMCwicmVuZXdhbF9tb2RlIjoiYXV0byIsInJlbmV3X2JlZm9yZV9kYXlzIjo3LCJjaGVja19pbnRlcnZhbCI6IlAxRCIsInJlbmV3YWxfc2VjcmV0X2hhc2giOiJhLWhhc2gtb2YtdGhlLXJlbmV3YWwtc2VjcmV0LWFuZC1ub3QtdGhlLXNlY3JldCIsIndhcm5pbmdzIjpbeyJyb2xlcyI6WyJhZG1pbiJdLCJmcm9tIjoiZ3JhY2Vfc3RhcnQifV0sImtpbmQiOiJwYWlkIiwibm90ZSI6ImEgdGVzdCBrZXkifQ.6f1j3pX1FAwTGwMOcAlCWUK4ShfRK2LLF5ummZ0A31M-2kVWWjcNQBIeAzBCSTxBb1sLOKUPFT6xazGdurc_Dw",
+      "state": "grace",
+      "claims": {
+        "v": 1,
+        "kid": "licence-test-fixture-v1",
+        "key_id": "lk_vectors_0001",
+        "workspace_id": "fugaro-test-project",
+        "organisation": "example.com",
+        "tier": "team",
+        "seats": 5,
+        "issued_at": "2025-11-11T00:00:00Z",
+        "paid_through": "2026-11-11T23:59:59Z",
+        "grace_days": 30,
+        "renewal_mode": "auto",
+        "renew_before_days": 7,
+        "check_interval": "P1D",
+        "renewal_secret_hash": "a-hash-of-the-renewal-secret-and-not-the-secret",
+        "warnings": [
+          {
+            "roles": [
+              "admin"
+            ],
+            "from": "grace_start"
+          }
+        ],
+        "kind": "paid",
+        "note": "a test key"
+      }
+    },
+    {
+      "name": "a key at the last second of its grace",
+      "key": "fgk_eyJ2IjoxLCJraWQiOiJsaWNlbmNlLXRlc3QtZml4dHVyZS12MSIsImtleV9pZCI6ImxrX3ZlY3RvcnNfMDAwMSIsIndvcmtzcGFjZV9pZCI6ImZ1Z2Fyby10ZXN0LXByb2plY3QiLCJvcmdhbmlzYXRpb24iOiJleGFtcGxlLmNvbSIsInRpZXIiOiJ0ZWFtIiwic2VhdHMiOjUsImlzc3VlZF9hdCI6IjIwMjUtMTAtMTNUMDA6MDA6MDBaIiwicGFpZF90aHJvdWdoIjoiMjAyNi0xMC0xM1QwMDowMDowMFoiLCJncmFjZV9kYXlzIjozMCwicmVuZXdhbF9tb2RlIjoiYXV0byIsInJlbmV3X2JlZm9yZV9kYXlzIjo3LCJjaGVja19pbnRlcnZhbCI6IlAxRCIsInJlbmV3YWxfc2VjcmV0X2hhc2giOiJhLWhhc2gtb2YtdGhlLXJlbmV3YWwtc2VjcmV0LWFuZC1ub3QtdGhlLXNlY3JldCIsIndhcm5pbmdzIjpbeyJyb2xlcyI6WyJhZG1pbiJdLCJmcm9tIjoiZ3JhY2Vfc3RhcnQifV0sImtpbmQiOiJwYWlkIiwibm90ZSI6ImEgdGVzdCBrZXkifQ.StafV8jrKrCOMwKBh_wy5voJx0gkCcIVmxz9k2irgnU4jRTHl4VAdv35laGWtWRD2VPzbwVAS-iDOeUvgcrfBg",
+      "state": "grace",
+      "claims": {
+        "v": 1,
+        "kid": "licence-test-fixture-v1",
+        "key_id": "lk_vectors_0001",
+        "workspace_id": "fugaro-test-project",
+        "organisation": "example.com",
+        "tier": "team",
+        "seats": 5,
+        "issued_at": "2025-10-13T00:00:00Z",
+        "paid_through": "2026-10-13T00:00:00Z",
+        "grace_days": 30,
+        "renewal_mode": "auto",
+        "renew_before_days": 7,
+        "check_interval": "P1D",
+        "renewal_secret_hash": "a-hash-of-the-renewal-secret-and-not-the-secret",
+        "warnings": [
+          {
+            "roles": [
+              "admin"
+            ],
+            "from": "grace_start"
+          }
+        ],
+        "kind": "paid",
+        "note": "a test key"
+      }
+    },
+    {
+      "name": "a key a second past its grace",
+      "key": "fgk_eyJ2IjoxLCJraWQiOiJsaWNlbmNlLXRlc3QtZml4dHVyZS12MSIsImtleV9pZCI6ImxrX3ZlY3RvcnNfMDAwMSIsIndvcmtzcGFjZV9pZCI6ImZ1Z2Fyby10ZXN0LXByb2plY3QiLCJvcmdhbmlzYXRpb24iOiJleGFtcGxlLmNvbSIsInRpZXIiOiJ0ZWFtIiwic2VhdHMiOjUsImlzc3VlZF9hdCI6IjIwMjUtMTAtMTJUMDA6MDA6MDBaIiwicGFpZF90aHJvdWdoIjoiMjAyNi0xMC0xMlQyMzo1OTo1OVoiLCJncmFjZV9kYXlzIjozMCwicmVuZXdhbF9tb2RlIjoiYXV0byIsInJlbmV3X2JlZm9yZV9kYXlzIjo3LCJjaGVja19pbnRlcnZhbCI6IlAxRCIsInJlbmV3YWxfc2VjcmV0X2hhc2giOiJhLWhhc2gtb2YtdGhlLXJlbmV3YWwtc2VjcmV0LWFuZC1ub3QtdGhlLXNlY3JldCIsIndhcm5pbmdzIjpbeyJyb2xlcyI6WyJhZG1pbiJdLCJmcm9tIjoiZ3JhY2Vfc3RhcnQifV0sImtpbmQiOiJwYWlkIiwibm90ZSI6ImEgdGVzdCBrZXkifQ.22kgxWUvuNAhvqH8YVj5--5OgXYROKWvILQ5LF7xBz_3nzq5WnqlMXbw16MyW0zWhR4zDcsJ99URcNDnhWrDBQ",
+      "state": "expired",
+      "claims": {
+        "v": 1,
+        "kid": "licence-test-fixture-v1",
+        "key_id": "lk_vectors_0001",
+        "workspace_id": "fugaro-test-project",
+        "organisation": "example.com",
+        "tier": "team",
+        "seats": 5,
+        "issued_at": "2025-10-12T00:00:00Z",
+        "paid_through": "2026-10-12T23:59:59Z",
+        "grace_days": 30,
+        "renewal_mode": "auto",
+        "renew_before_days": 7,
+        "check_interval": "P1D",
+        "renewal_secret_hash": "a-hash-of-the-renewal-secret-and-not-the-secret",
+        "warnings": [
+          {
+            "roles": [
+              "admin"
+            ],
+            "from": "grace_start"
+          }
+        ],
+        "kind": "paid",
+        "note": "a test key"
+      }
+    },
+    {
+      "name": "a key long past its grace",
+      "key": "fgk_eyJ2IjoxLCJraWQiOiJsaWNlbmNlLXRlc3QtZml4dHVyZS12MSIsImtleV9pZCI6ImxrX3ZlY3RvcnNfMDAwMSIsIndvcmtzcGFjZV9pZCI6ImZ1Z2Fyby10ZXN0LXByb2plY3QiLCJvcmdhbmlzYXRpb24iOiJleGFtcGxlLmNvbSIsInRpZXIiOiJ0ZWFtIiwic2VhdHMiOjUsImlzc3VlZF9hdCI6IjIwMjUtMDgtMTRUMDA6MDA6MDBaIiwicGFpZF90aHJvdWdoIjoiMjAyNi0wOC0xNFQwMDowMDowMFoiLCJncmFjZV9kYXlzIjozMCwicmVuZXdhbF9tb2RlIjoiYXV0byIsInJlbmV3X2JlZm9yZV9kYXlzIjo3LCJjaGVja19pbnRlcnZhbCI6IlAxRCIsInJlbmV3YWxfc2VjcmV0X2hhc2giOiJhLWhhc2gtb2YtdGhlLXJlbmV3YWwtc2VjcmV0LWFuZC1ub3QtdGhlLXNlY3JldCIsIndhcm5pbmdzIjpbeyJyb2xlcyI6WyJhZG1pbiJdLCJmcm9tIjoiZ3JhY2Vfc3RhcnQifV0sImtpbmQiOiJwYWlkIiwibm90ZSI6ImEgdGVzdCBrZXkifQ.zcsvP6AyORwf0lGyftObdMbdDI1ClIR9P2OdS7NI64F2zHaFZ-4OUWhxNQjtdCpuQVn-RfAKZmozA9NFR3TuDw",
+      "state": "expired",
+      "claims": {
+        "v": 1,
+        "kid": "licence-test-fixture-v1",
+        "key_id": "lk_vectors_0001",
+        "workspace_id": "fugaro-test-project",
+        "organisation": "example.com",
+        "tier": "team",
+        "seats": 5,
+        "issued_at": "2025-08-14T00:00:00Z",
+        "paid_through": "2026-08-14T00:00:00Z",
+        "grace_days": 30,
+        "renewal_mode": "auto",
+        "renew_before_days": 7,
+        "check_interval": "P1D",
+        "renewal_secret_hash": "a-hash-of-the-renewal-secret-and-not-the-secret",
+        "warnings": [
+          {
+            "roles": [
+              "admin"
+            ],
+            "from": "grace_start"
+          }
+        ],
+        "kind": "paid",
+        "note": "a test key"
+      }
+    },
+    {
+      "name": "a key at the longest term its tier allows",
+      "key": "fgk_eyJ2IjoxLCJraWQiOiJsaWNlbmNlLXRlc3QtZml4dHVyZS12MSIsImtleV9pZCI6ImxrX3ZlY3RvcnNfMDAwMSIsIndvcmtzcGFjZV9pZCI6ImZ1Z2Fyby10ZXN0LXByb2plY3QiLCJvcmdhbmlzYXRpb24iOiJleGFtcGxlLmNvbSIsInRpZXIiOiJ0ZWFtIiwic2VhdHMiOjUsImlzc3VlZF9hdCI6IjIwMjYtMTAtMTNUMDA6MDA6MDBaIiwicGFpZF90aHJvdWdoIjoiMjAyNy0xMS0xMlQwMDowMDowMFoiLCJncmFjZV9kYXlzIjozMCwicmVuZXdhbF9tb2RlIjoiYXV0byIsInJlbmV3X2JlZm9yZV9kYXlzIjo3LCJjaGVja19pbnRlcnZhbCI6IlAxRCIsInJlbmV3YWxfc2VjcmV0X2hhc2giOiJhLWhhc2gtb2YtdGhlLXJlbmV3YWwtc2VjcmV0LWFuZC1ub3QtdGhlLXNlY3JldCIsIndhcm5pbmdzIjpbeyJyb2xlcyI6WyJhZG1pbiJdLCJmcm9tIjoiZ3JhY2Vfc3RhcnQifV0sImtpbmQiOiJwYWlkIiwibm90ZSI6ImEgdGVzdCBrZXkifQ.5WOrOfb6KAfuAI0XVfjkHF4CJTgBaAy2-dHNVgR0xC968rxuvR0oQ_RCh8kw4xgJu2FHi978YQt9JLmgGwIOCw",
+      "state": "active",
+      "claims": {
+        "v": 1,
+        "kid": "licence-test-fixture-v1",
+        "key_id": "lk_vectors_0001",
+        "workspace_id": "fugaro-test-project",
+        "organisation": "example.com",
+        "tier": "team",
+        "seats": 5,
+        "issued_at": "2026-10-13T00:00:00Z",
+        "paid_through": "2027-11-12T00:00:00Z",
+        "grace_days": 30,
+        "renewal_mode": "auto",
+        "renew_before_days": 7,
+        "check_interval": "P1D",
+        "renewal_secret_hash": "a-hash-of-the-renewal-secret-and-not-the-secret",
+        "warnings": [
+          {
+            "roles": [
+              "admin"
+            ],
+            "from": "grace_start"
+          }
+        ],
+        "kind": "paid",
+        "note": "a test key"
+      }
+    },
+    {
+      "name": "a term a second past the tier's maximum",
+      "key": "fgk_eyJ2IjoxLCJraWQiOiJsaWNlbmNlLXRlc3QtZml4dHVyZS12MSIsImtleV9pZCI6ImxrX3ZlY3RvcnNfMDAwMSIsIndvcmtzcGFjZV9pZCI6ImZ1Z2Fyby10ZXN0LXByb2plY3QiLCJvcmdhbmlzYXRpb24iOiJleGFtcGxlLmNvbSIsInRpZXIiOiJ0ZWFtIiwic2VhdHMiOjUsImlzc3VlZF9hdCI6IjIwMjYtMTAtMTNUMDA6MDA6MDBaIiwicGFpZF90aHJvdWdoIjoiMjAyNy0xMS0xMlQwMDowMDowMVoiLCJncmFjZV9kYXlzIjozMCwicmVuZXdhbF9tb2RlIjoiYXV0byIsInJlbmV3X2JlZm9yZV9kYXlzIjo3LCJjaGVja19pbnRlcnZhbCI6IlAxRCIsInJlbmV3YWxfc2VjcmV0X2hhc2giOiJhLWhhc2gtb2YtdGhlLXJlbmV3YWwtc2VjcmV0LWFuZC1ub3QtdGhlLXNlY3JldCIsIndhcm5pbmdzIjpbeyJyb2xlcyI6WyJhZG1pbiJdLCJmcm9tIjoiZ3JhY2Vfc3RhcnQifV0sImtpbmQiOiJwYWlkIiwibm90ZSI6ImEgdGVzdCBrZXkifQ.SexsA9L31s_185mT0AYTaF_5YVJJWKoUhcgg8KUQe2RBOGbdhaPx178WtLvPAY3Ih0k_tyHemwxSRB-Q6qhOAw",
+      "refused": "lifetime"
+    },
+    {
+      "name": "a signed key carrying a field this build does not know",
+      "key": "fgk_eyJ2IjoxLCJraWQiOiJsaWNlbmNlLXRlc3QtZml4dHVyZS12MSIsImtleV9pZCI6ImxrX3ZlY3RvcnNfMDAwMSIsIndvcmtzcGFjZV9pZCI6ImZ1Z2Fyby10ZXN0LXByb2plY3QiLCJvcmdhbmlzYXRpb24iOiJleGFtcGxlLmNvbSIsInRpZXIiOiJ0ZWFtIiwic2VhdHMiOjUsImlzc3VlZF9hdCI6IjIwMjYtMTAtMTNUMDA6MDA6MDBaIiwicGFpZF90aHJvdWdoIjoiMjAyNy0xMC0xM1QwMDowMDowMFoiLCJncmFjZV9kYXlzIjozMCwicmVuZXdhbF9tb2RlIjoiYXV0byIsInJlbmV3X2JlZm9yZV9kYXlzIjo3LCJjaGVja19pbnRlcnZhbCI6IlAxRCIsInJlbmV3YWxfc2VjcmV0X2hhc2giOiJhLWhhc2gtb2YtdGhlLXJlbmV3YWwtc2VjcmV0LWFuZC1ub3QtdGhlLXNlY3JldCIsIndhcm5pbmdzIjpbeyJyb2xlcyI6WyJhZG1pbiJdLCJmcm9tIjoiZ3JhY2Vfc3RhcnQifV0sImtpbmQiOiJwYWlkIiwibm90ZSI6ImEgdGVzdCBrZXkiLCJlbnRpdGxlbWVudHMiOlsic3NvIl19.d3-U0LlYPj95LrgLW9hHSizaNzfBoVQrR23mwkkncZOE-ZciKAwbLRrVi5_1on-iyS6chuytC5Ujv00XLWp4Ag",
+      "state": "active",
+      "claims": {
+        "v": 1,
+        "kid": "licence-test-fixture-v1",
+        "key_id": "lk_vectors_0001",
+        "workspace_id": "fugaro-test-project",
+        "organisation": "example.com",
+        "tier": "team",
+        "seats": 5,
+        "issued_at": "2026-10-13T00:00:00Z",
+        "paid_through": "2027-10-13T00:00:00Z",
+        "grace_days": 30,
+        "renewal_mode": "auto",
+        "renew_before_days": 7,
+        "check_interval": "P1D",
+        "renewal_secret_hash": "a-hash-of-the-renewal-secret-and-not-the-secret",
+        "warnings": [
+          {
+            "roles": [
+              "admin"
+            ],
+            "from": "grace_start"
+          }
+        ],
+        "kind": "paid",
+        "note": "a test key"
+      }
+    },
+    {
+      "name": "a check interval this verifier does not read",
+      "key": "fgk_eyJ2IjoxLCJraWQiOiJsaWNlbmNlLXRlc3QtZml4dHVyZS12MSIsImtleV9pZCI6ImxrX3ZlY3RvcnNfMDAwMSIsIndvcmtzcGFjZV9pZCI6ImZ1Z2Fyby10ZXN0LXByb2plY3QiLCJvcmdhbmlzYXRpb24iOiJleGFtcGxlLmNvbSIsInRpZXIiOiJ0ZWFtIiwic2VhdHMiOjUsImlzc3VlZF9hdCI6IjIwMjYtMTAtMTNUMDA6MDA6MDBaIiwicGFpZF90aHJvdWdoIjoiMjAyNy0xMC0xM1QwMDowMDowMFoiLCJncmFjZV9kYXlzIjozMCwicmVuZXdhbF9tb2RlIjoiYXV0byIsInJlbmV3X2JlZm9yZV9kYXlzIjo3LCJjaGVja19pbnRlcnZhbCI6IlBUMUgiLCJyZW5ld2FsX3NlY3JldF9oYXNoIjoiYS1oYXNoLW9mLXRoZS1yZW5ld2FsLXNlY3JldC1hbmQtbm90LXRoZS1zZWNyZXQiLCJ3YXJuaW5ncyI6W3sicm9sZXMiOlsiYWRtaW4iXSwiZnJvbSI6ImdyYWNlX3N0YXJ0In1dLCJraW5kIjoicGFpZCIsIm5vdGUiOiJhIHRlc3Qga2V5In0.bXh8iE9IF9bN42GrrdCNsG1lOVIFE40wx3UA1O3AMUdCCDCjokS4wzyYY55uuEILncnTWDf0qRIx-FQ82mqVCA",
+      "refused": "duration"
+    },
+    {
+      "name": "a check interval longer than a duration holds",
+      "key": "fgk_eyJ2IjoxLCJraWQiOiJsaWNlbmNlLXRlc3QtZml4dHVyZS12MSIsImtleV9pZCI6ImxrX3ZlY3RvcnNfMDAwMSIsIndvcmtzcGFjZV9pZCI6ImZ1Z2Fyby10ZXN0LXByb2plY3QiLCJvcmdhbmlzYXRpb24iOiJleGFtcGxlLmNvbSIsInRpZXIiOiJ0ZWFtIiwic2VhdHMiOjUsImlzc3VlZF9hdCI6IjIwMjYtMTAtMTNUMDA6MDA6MDBaIiwicGFpZF90aHJvdWdoIjoiMjAyNy0xMC0xM1QwMDowMDowMFoiLCJncmFjZV9kYXlzIjozMCwicmVuZXdhbF9tb2RlIjoiYXV0byIsInJlbmV3X2JlZm9yZV9kYXlzIjo3LCJjaGVja19pbnRlcnZhbCI6IlA5OTk5OTk5OTk5OTk5OTk5OTk5OUQiLCJyZW5ld2FsX3NlY3JldF9oYXNoIjoiYS1oYXNoLW9mLXRoZS1yZW5ld2FsLXNlY3JldC1hbmQtbm90LXRoZS1zZWNyZXQiLCJ3YXJuaW5ncyI6W3sicm9sZXMiOlsiYWRtaW4iXSwiZnJvbSI6ImdyYWNlX3N0YXJ0In1dLCJraW5kIjoicGFpZCIsIm5vdGUiOiJhIHRlc3Qga2V5In0.0-wfLbctW14SqRq4UN0z7O7C0VrIvLVfqgtwtxhUSDSjivrbw6D2cZzP-JTF0fZxAUyVOkEtKeNVKZOM6spvDQ",
+      "refused": "duration"
+    },
+    {
+      "name": "a grace longer than a duration holds",
+      "key": "fgk_eyJ2IjoxLCJraWQiOiJsaWNlbmNlLXRlc3QtZml4dHVyZS12MSIsImtleV9pZCI6ImxrX3ZlY3RvcnNfMDAwMSIsIndvcmtzcGFjZV9pZCI6ImZ1Z2Fyby10ZXN0LXByb2plY3QiLCJvcmdhbmlzYXRpb24iOiJleGFtcGxlLmNvbSIsInRpZXIiOiJ0ZWFtIiwic2VhdHMiOjUsImlzc3VlZF9hdCI6IjIwMjUtMTAtMDhUMDA6MDA6MDBaIiwicGFpZF90aHJvdWdoIjoiMjAyNi0xMC0xM1QwMDowMDowMFoiLCJncmFjZV9kYXlzIjoxMDk5NTExNjI3Nzc2LCJyZW5ld2FsX21vZGUiOiJhdXRvIiwicmVuZXdfYmVmb3JlX2RheXMiOjcsImNoZWNrX2ludGVydmFsIjoiUDFEIiwicmVuZXdhbF9zZWNyZXRfaGFzaCI6ImEtaGFzaC1vZi10aGUtcmVuZXdhbC1zZWNyZXQtYW5kLW5vdC10aGUtc2VjcmV0Iiwid2FybmluZ3MiOlt7InJvbGVzIjpbImFkbWluIl0sImZyb20iOiJncmFjZV9zdGFydCJ9XSwia2luZCI6InBhaWQiLCJub3RlIjoiYSB0ZXN0IGtleSJ9.pU_zqwlUtQGmMYIVys-b5P5TsnCg98mRdNq-iSjuqq6Iosr4sc2E-Uuckkrn8wtVz77G0tvtyFNb9B-TAIoECw",
+      "state": "grace",
+      "claims": {
+        "v": 1,
+        "kid": "licence-test-fixture-v1",
+        "key_id": "lk_vectors_0001",
+        "workspace_id": "fugaro-test-project",
+        "organisation": "example.com",
+        "tier": "team",
+        "seats": 5,
+        "issued_at": "2025-10-08T00:00:00Z",
+        "paid_through": "2026-10-13T00:00:00Z",
+        "grace_days": 1099511627776,
+        "renewal_mode": "auto",
+        "renew_before_days": 7,
+        "check_interval": "P1D",
+        "renewal_secret_hash": "a-hash-of-the-renewal-secret-and-not-the-secret",
+        "warnings": [
+          {
+            "roles": [
+              "admin"
+            ],
+            "from": "grace_start"
+          }
+        ],
+        "kind": "paid",
+        "note": "a test key"
+      }
+    },
+    {
+      "name": "a key with no workspace id",
+      "key": "fgk_eyJ2IjoxLCJraWQiOiJsaWNlbmNlLXRlc3QtZml4dHVyZS12MSIsImtleV9pZCI6ImxrX3ZlY3RvcnNfMDAwMSIsIndvcmtzcGFjZV9pZCI6IiIsIm9yZ2FuaXNhdGlvbiI6ImV4YW1wbGUuY29tIiwidGllciI6InRlYW0iLCJzZWF0cyI6NSwiaXNzdWVkX2F0IjoiMjAyNi0xMC0xM1QwMDowMDowMFoiLCJwYWlkX3Rocm91Z2giOiIyMDI3LTEwLTEzVDAwOjAwOjAwWiIsImdyYWNlX2RheXMiOjMwLCJyZW5ld2FsX21vZGUiOiJhdXRvIiwicmVuZXdfYmVmb3JlX2RheXMiOjcsImNoZWNrX2ludGVydmFsIjoiUDFEIiwicmVuZXdhbF9zZWNyZXRfaGFzaCI6ImEtaGFzaC1vZi10aGUtcmVuZXdhbC1zZWNyZXQtYW5kLW5vdC10aGUtc2VjcmV0Iiwid2FybmluZ3MiOlt7InJvbGVzIjpbImFkbWluIl0sImZyb20iOiJncmFjZV9zdGFydCJ9XSwia2luZCI6InBhaWQiLCJub3RlIjoiYSB0ZXN0IGtleSJ9.DdFifoOMfGuAt6RZUD5PlbTi_h13hoJZG2AapAYnB07krlEYNK6G4AmO2pgx2QRDttnMKYYsX0e5A3s9tw8cBw",
+      "refused": "claims"
+    },
+    {
+      "name": "a key bound to another workspace",
+      "key": "fgk_eyJ2IjoxLCJraWQiOiJsaWNlbmNlLXRlc3QtZml4dHVyZS12MSIsImtleV9pZCI6ImxrX3ZlY3RvcnNfMDAwMSIsIndvcmtzcGFjZV9pZCI6ImFub3RoZXItZmlyZWJhc2UtcHJvamVjdCIsIm9yZ2FuaXNhdGlvbiI6ImV4YW1wbGUuY29tIiwidGllciI6InRlYW0iLCJzZWF0cyI6NSwiaXNzdWVkX2F0IjoiMjAyNi0xMC0xM1QwMDowMDowMFoiLCJwYWlkX3Rocm91Z2giOiIyMDI3LTEwLTEzVDAwOjAwOjAwWiIsImdyYWNlX2RheXMiOjMwLCJyZW5ld2FsX21vZGUiOiJhdXRvIiwicmVuZXdfYmVmb3JlX2RheXMiOjcsImNoZWNrX2ludGVydmFsIjoiUDFEIiwicmVuZXdhbF9zZWNyZXRfaGFzaCI6ImEtaGFzaC1vZi10aGUtcmVuZXdhbC1zZWNyZXQtYW5kLW5vdC10aGUtc2VjcmV0Iiwid2FybmluZ3MiOlt7InJvbGVzIjpbImFkbWluIl0sImZyb20iOiJncmFjZV9zdGFydCJ9XSwia2luZCI6InBhaWQiLCJub3RlIjoiYSB0ZXN0IGtleSJ9.ZmcYNE2bC1ABzUft30vEgHtTfcnlDxScxQ46g4wcx4fqQFRQNg6dhnhnyPJWrZgO95cqV_mbj6wcytRx8Ku1Dg",
+      "refused": "workspace"
+    },
+    {
+      "name": "a tier this verifier does not know",
+      "key": "fgk_eyJ2IjoxLCJraWQiOiJsaWNlbmNlLXRlc3QtZml4dHVyZS12MSIsImtleV9pZCI6ImxrX3ZlY3RvcnNfMDAwMSIsIndvcmtzcGFjZV9pZCI6ImZ1Z2Fyby10ZXN0LXByb2plY3QiLCJvcmdhbmlzYXRpb24iOiJleGFtcGxlLmNvbSIsInRpZXIiOiJ1bmxpbWl0ZWQiLCJzZWF0cyI6NSwiaXNzdWVkX2F0IjoiMjAyNi0xMC0xM1QwMDowMDowMFoiLCJwYWlkX3Rocm91Z2giOiIyMDI3LTEwLTEzVDAwOjAwOjAwWiIsImdyYWNlX2RheXMiOjMwLCJyZW5ld2FsX21vZGUiOiJhdXRvIiwicmVuZXdfYmVmb3JlX2RheXMiOjcsImNoZWNrX2ludGVydmFsIjoiUDFEIiwicmVuZXdhbF9zZWNyZXRfaGFzaCI6ImEtaGFzaC1vZi10aGUtcmVuZXdhbC1zZWNyZXQtYW5kLW5vdC10aGUtc2VjcmV0Iiwid2FybmluZ3MiOlt7InJvbGVzIjpbImFkbWluIl0sImZyb20iOiJncmFjZV9zdGFydCJ9XSwia2luZCI6InBhaWQiLCJub3RlIjoiYSB0ZXN0IGtleSJ9.qO66AnttZ2WQhzFXgnC54Kp5o37GRy3imCHsxvfsznxkdRQrH-qGWh3mtFWEZBw8OOzmxyV_eW1fcpUNBllbBA",
+      "refused": "claims"
+    },
+    {
+      "name": "a key of a version this build does not read",
+      "key": "fgk_eyJ2IjoyLCJraWQiOiJsaWNlbmNlLXRlc3QtZml4dHVyZS12MSIsImtleV9pZCI6ImxrX3ZlY3RvcnNfMDAwMSIsIndvcmtzcGFjZV9pZCI6ImZ1Z2Fyby10ZXN0LXByb2plY3QiLCJvcmdhbmlzYXRpb24iOiJleGFtcGxlLmNvbSIsInRpZXIiOiJ0ZWFtIiwic2VhdHMiOjUsImlzc3VlZF9hdCI6IjIwMjYtMTAtMTNUMDA6MDA6MDBaIiwicGFpZF90aHJvdWdoIjoiMjAyNy0xMC0xM1QwMDowMDowMFoiLCJncmFjZV9kYXlzIjozMCwicmVuZXdhbF9tb2RlIjoiYXV0byIsInJlbmV3X2JlZm9yZV9kYXlzIjo3LCJjaGVja19pbnRlcnZhbCI6IlAxRCIsInJlbmV3YWxfc2VjcmV0X2hhc2giOiJhLWhhc2gtb2YtdGhlLXJlbmV3YWwtc2VjcmV0LWFuZC1ub3QtdGhlLXNlY3JldCIsIndhcm5pbmdzIjpbeyJyb2xlcyI6WyJhZG1pbiJdLCJmcm9tIjoiZ3JhY2Vfc3RhcnQifV0sImtpbmQiOiJwYWlkIiwibm90ZSI6ImEgdGVzdCBrZXkiLCJzZWF0cyI6ImZpZnR5In0.Q9AdPFNVJ3ZLILkOY-LnMPYK9ooocxhBLJq1RKERh5MFfKd2Q_2hCkajAGyf_sK22mLb1sfnLQLiKcxseGHqDg",
+      "refused": "newer-version"
+    },
+    {
+      "name": "a key id this build does not hold",
+      "key": "fgk_eyJ2IjoxLCJraWQiOiJsaWNlbmNlLXNvbWVvbmUtZWxzZXMta2V5LXYxIiwia2V5X2lkIjoibGtfdmVjdG9yc18wMDAxIiwid29ya3NwYWNlX2lkIjoiZnVnYXJvLXRlc3QtcHJvamVjdCIsIm9yZ2FuaXNhdGlvbiI6ImV4YW1wbGUuY29tIiwidGllciI6InRlYW0iLCJzZWF0cyI6NSwiaXNzdWVkX2F0IjoiMjAyNi0xMC0xM1QwMDowMDowMFoiLCJwYWlkX3Rocm91Z2giOiIyMDI3LTEwLTEzVDAwOjAwOjAwWiIsImdyYWNlX2RheXMiOjMwLCJyZW5ld2FsX21vZGUiOiJhdXRvIiwicmVuZXdfYmVmb3JlX2RheXMiOjcsImNoZWNrX2ludGVydmFsIjoiUDFEIiwicmVuZXdhbF9zZWNyZXRfaGFzaCI6ImEtaGFzaC1vZi10aGUtcmVuZXdhbC1zZWNyZXQtYW5kLW5vdC10aGUtc2VjcmV0Iiwid2FybmluZ3MiOlt7InJvbGVzIjpbImFkbWluIl0sImZyb20iOiJncmFjZV9zdGFydCJ9XSwia2luZCI6InBhaWQiLCJub3RlIjoiYSB0ZXN0IGtleSJ9.RTUhkUZ5Ppgdbl0Xv1bR8tPthpdtCNXGD5vwxgqCyawXH2If9Osq3WwSPZLz919uS_VJiyyuai0JcBQSjZdzAw",
+      "refused": "unknown-key-id"
+    },
+    {
+      "name": "a staging key",
+      "key": "fgk_eyJ2IjoxLCJraWQiOiJsaWNlbmNlLXN0YWdpbmctc2FuZGJveC12MSIsImtleV9pZCI6ImxrX3ZlY3RvcnNfMDAwMSIsIndvcmtzcGFjZV9pZCI6ImZ1Z2Fyby10ZXN0LXByb2plY3QiLCJvcmdhbmlzYXRpb24iOiJleGFtcGxlLmNvbSIsInRpZXIiOiJ0ZWFtIiwic2VhdHMiOjUsImlzc3VlZF9hdCI6IjIwMjYtMTAtMTNUMDA6MDA6MDBaIiwicGFpZF90aHJvdWdoIjoiMjAyNy0xMC0xM1QwMDowMDowMFoiLCJncmFjZV9kYXlzIjozMCwicmVuZXdhbF9tb2RlIjoiYXV0byIsInJlbmV3X2JlZm9yZV9kYXlzIjo3LCJjaGVja19pbnRlcnZhbCI6IlAxRCIsInJlbmV3YWxfc2VjcmV0X2hhc2giOiJhLWhhc2gtb2YtdGhlLXJlbmV3YWwtc2VjcmV0LWFuZC1ub3QtdGhlLXNlY3JldCIsIndhcm5pbmdzIjpbeyJyb2xlcyI6WyJhZG1pbiJdLCJmcm9tIjoiZ3JhY2Vfc3RhcnQifV0sImtpbmQiOiJwYWlkIiwibm90ZSI6ImEgdGVzdCBrZXkifQ.xfhdU4ki2hGZ2bKDuRoR4vLL1Wme7DbF6NfW8qwk-Zv5J1XZ2Ee3vn3zdqDYsOFv9DkVYNVW1UqNzkBscck5AQ",
+      "refused": "unknown-key-id"
+    },
+    {
+      "name": "a payload signed as it is spelled, re-spelled",
+      "key": "fgk_eyJ2IjogMSwia2lkIjoibGljZW5jZS10ZXN0LWZpeHR1cmUtdjEiLCJrZXlfaWQiOiJsa192ZWN0b3JzXzAwMDEiLCJ3b3Jrc3BhY2VfaWQiOiJmdWdhcm8tdGVzdC1wcm9qZWN0Iiwib3JnYW5pc2F0aW9uIjoiZXhhbXBsZS5jb20iLCJ0aWVyIjoidGVhbSIsInNlYXRzIjo1LCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTEzVDAwOjAwOjAwWiIsInBhaWRfdGhyb3VnaCI6IjIwMjctMTAtMTNUMDA6MDA6MDBaIiwiZ3JhY2VfZGF5cyI6MzAsInJlbmV3YWxfbW9kZSI6ImF1dG8iLCJyZW5ld19iZWZvcmVfZGF5cyI6NywiY2hlY2tfaW50ZXJ2YWwiOiJQMUQiLCJyZW5ld2FsX3NlY3JldF9oYXNoIjoiYS1oYXNoLW9mLXRoZS1yZW5ld2FsLXNlY3JldC1hbmQtbm90LXRoZS1zZWNyZXQiLCJ3YXJuaW5ncyI6W3sicm9sZXMiOlsiYWRtaW4iXSwiZnJvbSI6ImdyYWNlX3N0YXJ0In1dLCJraW5kIjoicGFpZCIsIm5vdGUiOiJhIHRlc3Qga2V5In0.wzOuesjWfReH3yetaqP5tX8t2xQpZgn25JduGw4xID_CKBjKqW9vIJsVdrERA5e6jIkrHn3KHitb9yBpRrvMAQ",
+      "refused": "signature"
+    },
+    {
+      "name": "a claim set this build cannot read behind a signature that does not verify",
+      "key": "fgk_eyJ2IjoxLCJraWQiOiJsaWNlbmNlLXRlc3QtZml4dHVyZS12MSIsImtleV9pZCI6ImxrX3ZlY3RvcnNfMDAwMSIsIndvcmtzcGFjZV9pZCI6ImZ1Z2Fyby10ZXN0LXByb2plY3QiLCJvcmdhbmlzYXRpb24iOiJleGFtcGxlLmNvbSIsInRpZXIiOiJ0ZWFtIiwic2VhdHMiOjUsImlzc3VlZF9hdCI6IjIwMjYtMTAtMTNUMDA6MDA6MDBaIiwicGFpZF90aHJvdWdoIjoiMjAyNy0xMC0xM1QwMDowMDowMFoiLCJncmFjZV9kYXlzIjozMCwicmVuZXdhbF9tb2RlIjoiYXV0byIsInJlbmV3X2JlZm9yZV9kYXlzIjo3LCJjaGVja19pbnRlcnZhbCI6IlAxRCIsInJlbmV3YWxfc2VjcmV0X2hhc2giOiJhLWhhc2gtb2YtdGhlLXJlbmV3YWwtc2VjcmV0LWFuZC1ub3QtdGhlLXNlY3JldCIsIndhcm5pbmdzIjpbeyJyb2xlcyI6WyJhZG1pbiJdLCJmcm9tIjoiZ3JhY2Vfc3RhcnQifV0sImtpbmQiOiJwYWlkIiwibm90ZSI6ImEgdGVzdCBrZXkiLCJzZWF0cyI6ImZpdmUifQ.wzOuesjWfReH3yetaqP5tX8t2xQpZgn25JduGw4xID_CKBjKqW9vIJsVdrERA5e6jIkrHn3KHitb9yBpRrvMAQ",
+      "refused": "signature"
+    },
+    {
+      "name": "a payload that is not a claim set",
+      "key": "fgk_dGhpcyBpcyBub3QgYSBjbGFpbSBzZXQ.qaWy8PlolJ9ntJz52V9WrFNFnZqwrDi8KsV_uTzUhx8JmETs-VbMt2y2ZypFAoLqNjyujVH_G9gFenm-ue3qDw",
+      "refused": "malformed"
+    },
+    {
+      "name": "a key text that is not a v1 key",
+      "key": "licence-test-fixture-v1.eyJ0aWVyIjoidGVhbSIsImZlYXR1cmVzIjpbXSwic2VhdHMiOjEsIm9yZ2FuaXNhdGlvbiI6ImV4YW1wbGUuY29tIiwiaXNzdWVkIjoxLCJleHBpcmVzIjo0MDAwMDAwMDAwfQ.WfWGgWlcbOQEaKIOK0liqpPCACNos3objzi1c3U5X0EKZfPkg5GEJJfoc-aZ1nzfrqAj4OY6qT4zmxgkscqsBg",
+      "refused": "malformed"
+    },
+    {
+      "name": "a key text with one part",
+      "key": "fgk_eyJ2IjoxLCJraWQiOiJsaWNlbmNlLXRlc3QtZml4dHVyZS12MSIsImtleV9pZCI6ImxrX3ZlY3RvcnNfMDAwMSIsIndvcmtzcGFjZV9pZCI6ImZ1Z2Fyby10ZXN0LXByb2plY3QiLCJvcmdhbmlzYXRpb24iOiJleGFtcGxlLmNvbSIsInRpZXIiOiJ0ZWFtIiwic2VhdHMiOjUsImlzc3VlZF9hdCI6IjIwMjYtMTAtMTNUMDA6MDA6MDBaIiwicGFpZF90aHJvdWdoIjoiMjAyNy0xMC0xM1QwMDowMDowMFoiLCJncmFjZV9kYXlzIjozMCwicmVuZXdhbF9tb2RlIjoiYXV0byIsInJlbmV3X2JlZm9yZV9kYXlzIjo3LCJjaGVja19pbnRlcnZhbCI6IlAxRCIsInJlbmV3YWxfc2VjcmV0X2hhc2giOiJhLWhhc2gtb2YtdGhlLXJlbmV3YWwtc2VjcmV0LWFuZC1ub3QtdGhlLXNlY3JldCIsIndhcm5pbmdzIjpbeyJyb2xlcyI6WyJhZG1pbiJdLCJmcm9tIjoiZ3JhY2Vfc3RhcnQifV0sImtpbmQiOiJwYWlkIiwibm90ZSI6ImEgdGVzdCBrZXkifQ",
+      "refused": "malformed"
+    },
+    {
+      "name": "a part that is not base64url",
+      "key": "fgk_%%%.%%%",
+      "refused": "malformed"
+    }
+  ]
+}

@@ -57,7 +57,7 @@ func (ps Prices) MarshalJSON() ([]byte, error) {
 // lone ABOVE_INPUT_TOKENS in a tier passed a check whose whole point is that it
 // does not (code review, low).
 var (
-	priceMembers     = []string{"cache_read", "cache_write_1h", "cache_write_5m", "input_per_m", "long_context", "output_per_m", "web_search_per_1k"}
+	priceMembers     = []string{"cache_read", "cache_write_1h", "cache_write_5m", "image_tokens", "input_per_m", "long_context", "output_per_m", "web_search_per_1k"}
 	priceTierMembers = []string{"above_input_tokens", "input_per_m", "output_per_m"}
 )
 

@@ -55,6 +55,46 @@ func TestReportCarriesWhatTheRunTolerated(t *testing.T) {
 	}
 }
 
+// TestReportListsDeferrals: report.md lists what the run did not fix and left
+// to a follow-up — one line per deferral, the key it is known by, the
+// reviewer's own summary and the one-line why — and the command that files
+// them, naming the run exactly. It is the same list the pull request's status
+// section carries (T-TR9, D1843), and it is read from the report a real run
+// stored, not from a hand-built record.
+func TestReportListsDeferrals(t *testing.T) {
+	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "agent:\n", "rigor:\n  default: startup\nagent:\n", 1)
+	h := newHarness(t, cfg, nil)
+	deferredAtRunStart(t,
+		runstore.DeferredFinding{
+			Key: "unbounded-retry", Summary: "unbounded retry loop in the fetch",
+			Reason: "doc drift, and a follow-up can bound it", Source: runstore.TriageSourceAgent,
+		},
+		runstore.DeferredFinding{
+			Key: "cache-cap", Summary: "no bound on the cache",
+			Reason: "the cap left it unjudged", Group: "cache", Source: runstore.TriageSourceCap,
+		},
+	)
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err != nil || rec.Outcome != runstore.OutcomeReady || rec.Deferred == nil {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	raw, err := h.bucket.ReadAll(context.Background(), h.store.Prefix()+"report.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(raw)
+	for _, want := range []string{
+		"#### Deferred (follow-ups)",
+		"- `unbounded-retry`: unbounded retry loop in the fetch — doc drift, and a follow-up can bound it",
+		"- `cache-cap`: no bound on the cache — the cap left it unjudged",
+		"Run `fugaro followups " + runID + "` after merging",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the run's report lacks %q:\n%s", want, got)
+		}
+	}
+}
+
 // TestReportCarriesNoToleratedForARoundTheModeBlocked: the round a run ends on
 // can hold a finding the mode tolerated beside one it blocked on, and the
 // record keeps the first either way (D9). The report must not, because the

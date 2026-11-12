@@ -34,8 +34,8 @@ import (
 //     recorded nobody is 'unknown', never guessed from its task or its
 //     record.
 //   - A caller sees every user only when the installation's own lists place
-//     them as an operator; otherwise they see their own row alone, unless
-//     they ask for the whole table with --all-users. The identity the view is
+//     them as an admin; otherwise they see their own row alone, unless they
+//     ask for the whole table with --all-users. The identity the view is
 //     resolved for and the view itself are printed, so a table never leaves a
 //     reader guessing whose numbers they are looking at.
 //   - The read is bounded. A window can hold every run of every repository in
@@ -65,8 +65,21 @@ type userStatsOptions struct {
 	maxRuns               int
 }
 
+// userStatsDocVersion is `fugaro runs stats --json`'s document version. Version
+// 1 carried whether the installation's own lists place the caller as the
+// privileged role under `operator` -- that role's word before this release, when
+// `terraform.operators` WAS the privileged set. Under the roles' own words
+// `operator` is the runs-only role and the privileged set is the admins
+// (`terraform.admins`), the list this view is resolved from, so a consumer that
+// read version 1's `operator` as the set that word names today would draw the
+// run-starters' answer as the admins'. The member is therefore a new name rather
+// than the old one re-meant, and the document a new version (CLAUDE.md, "a field
+// never changes meaning"). Version 1 is the shape this document had.
+const userStatsDocVersion = 2
+
 // userStatsDoc is runs stats --json's document.
 type userStatsDoc struct {
+	Version int    `json:"version"`
 	Project string `json:"project"`
 	// By is the breakdown asked for ("user").
 	By string `json:"by"`
@@ -76,11 +89,13 @@ type userStatsDoc struct {
 	// one printable line, capped at userstats.MaxIdentityRunes, so a consumer
 	// can match it against rows[].user. It is "" when the caller asked for
 	// every user with --all-users and the CLI could not tell who they are,
-	// which is unavailable rather than a person. Operator says whether the
-	// installation's own lists place You as one.
-	View     string `json:"view"`
-	You      string `json:"you"`
-	Operator bool   `json:"operator"`
+	// which is unavailable rather than a person. Admin says whether the
+	// installation's own lists place You as one -- the admins, the privileged
+	// set the wider view is resolved from, and not the run-starters `operator`
+	// names (userStatsDocVersion).
+	View  string `json:"view"`
+	You   string `json:"you"`
+	Admin bool   `json:"admin"`
 	// Since and Until are the window's own dates (UTC, YYYY-MM-DD); Since is
 	// "" when the window is unbounded (--since 0).
 	Since string `json:"since"`
@@ -141,11 +156,11 @@ func newRunsStatsCmd() *cobra.Command {
 			"$/RUN is COUNTED $ over COUNTED RUNS, the runs that settled a real-dollar cost;\n" +
 			"a notional run, a run with no readable record and a record from before the cost\n" +
 			"breakdown existed are none of them averaged in as a run that cost nothing.\n\n" +
-			"Who sees whom. An operator of the installation -- the identity the local config's\n" +
-			"user: (or git config user.email) names, listed in its terraform.operators, the\n" +
-			"list fugaro doctor's runs-bucket-iam check reads -- sees every user. Anyone else\n" +
-			"sees their own row alone, and --all-users asks for the whole table. An\n" +
-			"installation that names no operators (one from before the 0.7.0 hardening, say)\n" +
+			"Who sees whom. An admin of the installation -- the identity the local config's\n" +
+			"user: (or git config user.email) names, listed in its terraform.admins, one of\n" +
+			"the two lists fugaro doctor's runs-bucket-iam check reads -- sees every user.\n" +
+			"Anyone else sees their own row alone, and --all-users asks for the whole table.\n" +
+			"An installation that names no admins (one from before the 0.7.0 hardening, say)\n" +
 			"places nobody, and the view then stays private: the default is never the wider\n" +
 			"one. Whose numbers a table shows is printed above it.\n\n" +
 			"A private view is the caller's own row. A caller whose identity cannot be told at\n" +
@@ -175,7 +190,7 @@ func newRunsStatsCmd() *cobra.Command {
 			"record -- never launched, cancelled before launch, or a stale claim -- never\n" +
 			"started and is counted in no figure. The count of those is the window's, over\n" +
 			"everyone's runs, and is no more the caller's own than the truncation is.\n\n" +
-			"--json prints {project, by, view, you, operator, since, until, max_runs,\n" +
+			"--json prints {version, project, by, view, you, admin, since, until, max_runs,\n" +
 			"truncated, rows[], totals[], unlaunched, notes}; rows and totals carry {user,\n" +
 			"currency, runs, succeeded, failed, halted, infra_error, other, no_record,\n" +
 			"counted_usd, notional_usd, counted_runs, avg_counted_usd}, and the counts add up:\n" +
@@ -236,9 +251,9 @@ func runRunsStats(cmd *cobra.Command, o *userStatsOptions) error {
 	// person named "unknown" -- including when the identity it did resolve is
 	// nothing but invisible characters (userstats.CallerKey).
 	you := userstats.CallerKey(me)
-	operator := operatorOf(env.lc, me)
+	admin := adminOf(env.lc, me)
 	view := userStatsViewOwn
-	if operator || o.allUsers {
+	if admin || o.allUsers {
 		view = userStatsViewAll
 	}
 	if view == userStatsViewOwn && me == "" {
@@ -287,11 +302,12 @@ func runRunsStats(cmd *cobra.Command, o *userStatsOptions) error {
 	}
 	res := userstats.Aggregate(userStatsRuns(read.runs))
 	return writeUserStats(cmd.OutOrStdout(), userStatsDoc{
+		Version:    userStatsDocVersion,
 		Project:    env.lc.Name,
 		By:         userStatsByUser,
 		View:       view,
 		You:        you,
-		Operator:   operator,
+		Admin:      admin,
 		Since:      dateOrEmpty(from),
 		Until:      until.Format("2006-01-02"),
 		MaxRuns:    o.maxRuns,
@@ -304,7 +320,7 @@ func runRunsStats(cmd *cobra.Command, o *userStatsOptions) error {
 
 // The two views a caller may be shown. They are the ruling's own two, and
 // neither is a guess: userStatsViewOwn is the default whenever the
-// installation's lists do not place the caller as an operator.
+// installation's lists do not place the caller as an admin.
 const (
 	userStatsViewAll = "all"
 	userStatsViewOwn = "own"
@@ -653,12 +669,12 @@ func userStatsNotes(doc userStatsDoc) []string {
 		// The full table names whose numbers it shows: everyone's, said in
 		// words, with the reason this caller is shown them.
 		why := "--all-users asked for it"
-		if doc.Operator {
-			why = "this installation's operators list names you"
+		if doc.Admin {
+			why = "this installation's admins list names you"
 		}
 		notes = append(notes, fmt.Sprintf("view:    every user of this installation (%s; %s): the table below is everyone's numbers, each row named", who, why))
 	} else {
-		notes = append(notes, fmt.Sprintf("view:    your own runs only (%s, and this installation's operators list does not name you): --all-users shows every user's rows", who))
+		notes = append(notes, fmt.Sprintf("view:    your own runs only (%s, and this installation's admins list does not name you): --all-users shows every user's rows", who))
 	}
 	if doc.View == userStatsViewOwn && doc.You == userstats.UnknownUser {
 		// The one identity that is a key and still not a person's: this

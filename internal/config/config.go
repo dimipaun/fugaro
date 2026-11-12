@@ -697,6 +697,16 @@ type ModelRoles struct {
 	// every configuration hash in the installation, for a key most files do not
 	// set (the Agent.JobProfile precedent).
 	Vision string `yaml:"vision" json:"vision,omitempty"`
+	// Diagnose is the model a local diagnosis runs on (`fugaro troubleshoot`,
+	// D1607). It is not a run's role either: no stage is the diagnose one, the
+	// slot never falls back to agent.model — a diagnosis explains a failure
+	// rather than doing a task, and what a repository runs its stages on is not
+	// the model a person wants reading their log — and nothing applies a
+	// default to it, because the built-in one (DefaultDiagnoseModel) is read by
+	// the command that runs the diagnosis, so a file that writes no such key
+	// keeps the configuration hash it had. The json tag is Vision's, for
+	// Vision's reason.
+	Diagnose string `yaml:"diagnose" json:"diagnose,omitempty"`
 }
 
 // RoleTokens is a per-call output limit for each role.

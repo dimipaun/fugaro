@@ -29,6 +29,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/craft"
 	"github.com/dimipaun/fugaro/internal/credsvc"
+	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -100,6 +101,23 @@ type launchResult struct {
 	// ProjectLayer is the project layer the stored task actually carries,
 	// nil when none applies (task.ProjectLayer, embedProjectLayer).
 	ProjectLayer *launchProjectLayer `json:"project_layer,omitempty"`
+	// Pair is the A/B pair this launch sampled (A3.0), nil for a launch that
+	// sampled none; Challenger is the challenger's run id, empty until that
+	// arm has started, and Reason is why nothing was sampled when a planner
+	// was asked and declined.
+	Pair *launchPair `json:"pair,omitempty"`
+}
+
+// launchPair is launchResult's --json view of the A/B decision this launch
+// made: the pair's id and the one batch label both arms carry, the challenger's
+// run once that arm has started, and — for a launch that sampled nothing — the
+// reason it did not (D556: the closed reason a person reads on stderr is in
+// --json too).
+type launchPair struct {
+	ID         string `json:"id,omitempty"`
+	Batch      string `json:"batch,omitempty"`
+	Challenger string `json:"challenger,omitempty"`
+	Reason     string `json:"reason,omitempty"`
 }
 
 // launchProjectLayer is launchResult's --json view of a task's project
@@ -269,6 +287,20 @@ type runOptions struct {
 	// them carries no chain limit at all and its task is byte-identical to
 	// what the previous release wrote (D1041).
 	limits chainLimits
+	// continues is --continues: the run whose chain this launch joins when
+	// nothing else names one (D1045) — the flag a chain with no pull request
+	// is continued by. It is refused with the three flags that name a chain's
+	// previous run themselves (--pr, --retry, --attempts).
+	continues string
+	// The four --used-* figures (D1048), one per dimension, the flags' own
+	// text here and parsed once by chainContinueFlag into used below. Like the
+	// four --max-* ones they are members of runOptions rather than of
+	// chainLimits: a caller's statement of what a chain has already spent is
+	// not a limit the merge judges (a limit may only tighten, and this one may
+	// only raise a charge), and only the chain half of a launch reads it.
+	usedUSD, usedTokens, usedTime, usedReviewRounds string
+	// used is the four figures above, parsed.
+	used chainUsedFigures
 }
 
 func newRunCmd() *cobra.Command {
@@ -337,6 +369,7 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&o.maxTokens, "max-tokens", "", "cap this chain's token total at N tokens, such as 900000: tighten-only, like --max-usd, and recorded in the task's overrides")
 	f.StringVar(&o.maxTime, "max-time", "", "cap this chain's elapsed run time, as a duration such as 45m or 2h: --total-timeout keeps its own meaning and may raise this run's clock, and the two compose as the smaller of the two (the run's clock is min(--total-timeout, this))")
 	f.StringVar(&o.maxReviewRounds, "max-review-rounds", "", "cap this chain's review rounds at N, senior-review iterations included: tighten-only, and never refused against the mode's own number — the rounds a run spends stay the mode's and the recipe's, and this bounds the whole chain")
+	addChainContinueFlags(cmd, &o)
 	f.IntSliceVar(&o.pr, "pr", nil, "continue Fugaro PR N: act on its trusted review comments (TEXT adds instructions); with a mode: review --recipe, review PR N instead (repeatable, 1 to 4, any open PR)")
 	f.StringVar(&o.recipe, "recipe", "", "the recipe (task loop) to run: .fugaro/recipes/NAME.yaml, the project's, or the catalog's ("+strings.Join(recipe.CatalogNames(), ", ")+"); default: agent.recipe in fugaro.yaml, else default; a follow-up (--pr) keeps its previous run's")
 	f.StringVar(&o.token, "token", "", "named Claude account (claude_accounts in the local config) this run uses, for a workflow whose agent.auth is oauth; default: agent.oauth_token in fugaro.yaml, else the repository's default account; a follow-up (--pr) keeps its previous run's account unless this is given explicitly, which overrides it (checked the same way as a first run's)")
@@ -358,7 +391,7 @@ func newRunCmd() *cobra.Command {
 }
 
 // taskFlags are the flags --retry excludes: the stored task.json supplies them.
-var taskFlags = []string{"repo", "ref", "workflow", "run-id", "batch", "title", "plan-task", "task-file", "total-timeout", "pr", "recipe", "token", "attach", "mode", "path", "tier", "no-compression", "review-levels", "review-run", "max-usd", "max-tokens", "max-time", "max-review-rounds"}
+var taskFlags = []string{"repo", "ref", "workflow", "run-id", "batch", "title", "plan-task", "task-file", "total-timeout", "pr", "recipe", "token", "attach", "mode", "path", "tier", "no-compression", "review-levels", "review-run", "max-usd", "max-tokens", "max-time", "max-review-rounds", "continues", "used-usd", "used-tokens", "used-time", "used-review-rounds"}
 
 // prFlags are the flags --pr excludes: the previous run on the PR supplies them.
 var prFlags = []string{"ref", "workflow"}
@@ -370,9 +403,19 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		if o.attempts < 2 || o.attempts > 4 {
 			return userErr("--attempts: use 2 to 4, got %d", o.attempts)
 		}
-		for _, name := range []string{"pr", "run-id", "retry"} {
+		for _, name := range []string{"pr", "run-id", "retry", "continues"} {
 			if cmd.Flags().Changed(name) {
 				return userErr("--attempts launches a fresh batch; it takes no --%s", name)
+			}
+		}
+		// A best-of-N batch is N chains of one run each (D1053), so one
+		// --used-* figure would have to be charged to all N of them or to
+		// none, and neither is what a caller stating one figure means. The
+		// flags the batch does not take are named here, beside the ones that
+		// name a previous run.
+		for _, name := range []string{"used-usd", "used-tokens", "used-time", "used-review-rounds"} {
+			if cmd.Flags().Changed(name) {
+				return userErr("--attempts launches a fresh batch of chains; it takes no --%s", name)
 			}
 		}
 	}
@@ -389,6 +432,15 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 				return userErr("--pr %d: use a pull request number", n)
 			}
 		}
+	}
+	// --pr names the chain's previous run itself, by the pull request the
+	// chain is linkable through, and --continues names one directly (D1045):
+	// two answers to one question are refused rather than merged, since the
+	// second would either be ignored or read a chain the first never named.
+	// --retry does not reach here (it takes no --continues, taskFlags) and
+	// --attempts is refused above.
+	if prSet && o.continues != "" {
+		return userErr("--continues names the run this launch continues, and --pr names the pull request whose chain it joins; pass one of them")
 	}
 	var text string
 	var total time.Duration
@@ -433,6 +485,14 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		// resolves (chainLimitGate). --retry never reaches here: taskFlags
 		// refuses the four with it, since the stored task keeps its own.
 		if err = chainLimitsFlag(cmd, o); err != nil {
+			return err
+		}
+		// --continues and the four --used-* figures, parsed once here and for
+		// the same reason (chainContinueFlag): the syntax is this launcher's
+		// own mistake to refuse, and whether a figure is above what the chain
+		// already used needs the chain read (chainInherit). --retry never
+		// reaches here either: taskFlags refuses the five with it.
+		if err = chainContinueFlag(cmd, o); err != nil {
 			return err
 		}
 		if text, err = taskText(cmd, o.tf, args, prSet); err != nil {
@@ -589,9 +649,10 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	}
 
 	var (
-		spec   *task.Spec
-		slug   string
-		reused bool // a stored follow-up, which the PR's checks never saw run
+		spec     *task.Spec
+		slug     string
+		reused   bool // a stored follow-up, which the PR's checks never saw run
+		firstRun bool // a new task's own launch: the one shape the A/B hook is asked about
 	)
 	switch {
 	case o.retry != "":
@@ -599,6 +660,16 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		reused = err == nil && spec.IsFollowUp()
 	case reviewRecipe != nil:
 		slug, spec, err = reviewSpec(ctx, env, o, reviewRecipe, text, total, cmd.ErrOrStderr())
+		// A review job's repeat is the run the stored task is, as a follow-up's
+		// is (prSpec): the reviewSpec above builds the task from the flags and
+		// the checkout, but the launch then writes the chain's remaining into it
+		// (chainInherit), so a repeat that compared the freshly built task would
+		// be refused as a different one as soon as a run behind the chain spent
+		// or a run in flight aged. Reusing the stored task is what makes the
+		// repeat the launch it repeats rather than a second one refused.
+		if err == nil {
+			spec, reused, err = reuseStored(ctx, env, slug, o, 0, text, total, spec)
+		}
 	case prSet:
 		// --review-run, before prSpec and not after it: the findings are part
 		// of the follow-up's text, which is the whole of what prSpec compares
@@ -621,6 +692,20 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		slug, spec, reused, err = prSpec(ctx, env, o, text, total, cmd.ErrOrStderr())
 	default:
 		slug, spec, err = newSpec(ctx, env, o, text, total, cmd.ErrOrStderr())
+		firstRun = true
+		// A repeated --continues launch is the same run, and what its chain
+		// left it is what its stored task says: that launch wrote the
+		// remaining the chain had at the moment it ran, and a chain read now
+		// answers another figure as soon as a run behind it spends or a run
+		// still in flight ages (runstore's chainSeconds measures an unfinished
+		// run to now). So a repeat is answered from the stored task, the way a
+		// --pr follow-up's is (storedFollowUp): reused when it is this call's
+		// own launch — a --run-id repeat is idempotent as any other — refused
+		// when the run ID holds a different one, and built fresh when it holds
+		// nothing.
+		if err == nil && o.continues != "" {
+			spec, reused, err = reuseStored(ctx, env, slug, o, 0, text, total, spec)
+		}
 	}
 	if err != nil {
 		return err
@@ -638,7 +723,7 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		noteRigorRequest(ctx, o, spec.Repo, cmd.ErrOrStderr())
 	}
 	step := rep.Step("launch")
-	res, err := finishLaunch(ctx, env, o, slug, spec, reused, cmd.ErrOrStderr(), false)
+	res, err := finishLaunch(ctx, env, o, slug, spec, reused, firstRun, cmd.ErrOrStderr(), false)
 	if err != nil {
 		return failStep(rep, step, err)
 	}
@@ -674,7 +759,11 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 // review, 2026-10-13), so a per-attempt re-check here would both re-judge
 // already-leased state and print its notes once per attempt instead of once
 // per batch.
-func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string, spec *task.Spec, reused bool, warn io.Writer, skipBudget bool) (launchResult, error) {
+//
+// plan is whether this launch is a first run's — the one shape the A/B hook
+// is asked about (D558): a follow-up, a review, a retry and every attempt of
+// a batch pass false, and the hook then does not run at all.
+func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string, spec *task.Spec, reused, plan bool, warn io.Writer, skipBudget bool) (launchResult, error) {
 	// The repository's own document for this whole launch, resolved once
 	// before any of it: where the working tree cannot give a fugaro.yaml, the
 	// gates below and the job the launch runs on are judged by the document at
@@ -754,6 +843,17 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 	if err := chainLimitGate(ctx, env, o, spec, reused, warn); err != nil {
 		return launchResult{}, err
 	}
+	// The chain half (docs/run-limit-carry-over L4, D1045/D1047/D1052): what a
+	// launch that does not begin a chain owes — the link it names, the chain's
+	// own limit off the run that began it, what the chain has spent off its
+	// runs' ledgers, and each dimension written as what is left rather than as
+	// the chain's whole limit again. After chainLimitGate, whose figures are
+	// this launch's own request and are what this call holds under the
+	// remaining, and before the gates below, which judge the fields the task
+	// now carries (freshLaunchGates reads the image off them).
+	if err := chainInherit(ctx, env, o, slug, spec, reused, warn); err != nil {
+		return launchResult{}, err
+	}
 	// The compression image gate's own condition, resolved here beside the
 	// write and used by both launch branches below. It is the field's as much
 	// as the configuration's, and the two halves catch different failures: a
@@ -794,8 +894,22 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 	if prior != nil && len(o.attach) > 0 {
 		return launchResult{}, userErr("run ID %s has already launched; --attach uploads a run's files before it starts, so it never adds attachments to a run that already went — use a new run ID", spec.RunID)
 	}
-	if prior == nil && reused {
+	// The check is the pull request link's, and IsFollowUp is the stored task's
+	// own branch: a reused --retry or a reused --pr follow-up carries one, while
+	// a reused --continues task carries none — its link is the run the caller
+	// named and there is no PR to re-read.
+	if prior == nil && reused && spec.IsFollowUp() {
 		if err := recheckFollowUp(ctx, env, slug, spec, warn); err != nil {
+			return launchResult{}, err
+		}
+	}
+	// The other half of that check, for the launch shape whose stored task
+	// carries no link to re-read: what a --continues task was written for is in
+	// no field of it, so the chain the caller names is held to the figures the
+	// stored task carries (recheckContinues). Also only for a run ID that never
+	// launched: one that did is the run the stored task already is.
+	if prior == nil && reused && o.continues != "" {
+		if err := recheckContinues(ctx, env, o, slug, spec); err != nil {
 			return launchResult{}, err
 		}
 	}
@@ -812,6 +926,26 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 		// has: createTask's own, later ReadTask only happens on ErrExists.
 		if err := adoptStoredProjectLayer(ctx, s, spec); err != nil {
 			return launchResult{}, err
+		}
+	}
+	// The A/B hook (A3.0), last of what this launch decides and before its
+	// first gate writes anything: a first run's task is offered to the build's
+	// planner, which answers a pair to sample or nothing at all. The planner
+	// is asked here rather than where the task is built because the task it is
+	// handed carries the project layer the run reads (embedProjectLayer
+	// above), and because a run id whose earlier attempt already launched is
+	// no launch to sample beside (prior).
+	//
+	// A pair the launcher accepts leases both arms' headroom once, so the
+	// champion's own single-run pre-check is skipped below exactly as a
+	// batch's attempts skip it (skipBudget); a pair it refuses, or a planner
+	// that errs, leaves this launch exactly as it was — no ab block, no batch
+	// label, today's single pre-check — with one line saying why (D554).
+	var pair *Pair
+	var pairWhy string
+	if plan && prior == nil {
+		if pair, pairWhy = sampledPair(ctx, env, o, slug, spec, warn); pair != nil {
+			skipBudget = true
 		}
 	}
 	if prior == nil {
@@ -856,7 +990,292 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 	if spec.ProjectLayer != nil {
 		res.ProjectLayer = &launchProjectLayer{SHA256: spec.ProjectLayer.SHA256, Generation: spec.ProjectLayer.Generation}
 	}
+	// The second arm, once the champion has actually gone: the pair's own
+	// pre-check leased both arms, and a champion that turned out to be a run
+	// that already launched samples nothing beside itself.
+	if res.Status == "launched" {
+		switch {
+		case pair != nil:
+			res.Pair = &launchPair{ID: pair.Champion.PairID, Batch: spec.Batch}
+			res.Pair.Challenger = launchChallenger(ctx, env, slug, spec, pair, warn)
+		case pairWhy != "":
+			// Nothing was sampled, and a planner was asked and said why: the
+			// line it printed on stderr is in the document too (D556).
+			res.Pair = &launchPair{Reason: pairWhy}
+		}
+	}
 	return res, nil
+}
+
+// sampledPair asks the build's planner whether this launch samples a pair,
+// and judges what it answers: the room for two runs, the pair's own budget
+// pre-check (D566) and D573's margin. It answers the pair to launch, or nil —
+// and a nil is never a refusal of the launch: the champion goes on alone,
+// unmarked, on the single pre-check every launch makes, with one line saying
+// why (D554).
+func sampledPair(ctx context.Context, env *cloudEnv, o *runOptions, slug string, spec *task.Spec, warn io.Writer) (*Pair, string) {
+	if !planning() {
+		return nil, "" // no planner registered: an untagged launch does none of this
+	}
+	run, why := plannedRun(ctx, env, o, slug, spec)
+	if why != "" {
+		pairSkip(warn, why)
+		return nil, why
+	}
+	pair, err := planLaunch(ctx, env, run)
+	if err != nil {
+		why := "the planner failed: " + oneLineCLI(err.Error())
+		pairSkip(warn, why)
+		return nil, why
+	}
+	if pair == nil {
+		// Not eligible, or the rate's own roll said no. Both are the ordinary
+		// answer of a launch that samples nothing, and neither is worth a line:
+		// most launches of a project with a challenger configured are one.
+		return nil, ""
+	}
+	if pair.Challenger == nil {
+		// The planner's own refusal, with its closed reason (D556). A reason
+		// is the whole of what it has to say, so a pair with none is a
+		// planner bug and is reported as one.
+		why := pair.Skip
+		if why == "" {
+			why = "the planner answered a pair with no challenger"
+		}
+		pairSkip(warn, why)
+		return nil, why
+	}
+	// A launch that attaches files samples nothing. An --attach launch uploads
+	// them under its own run's prefix and a mode: artifact run downloads them
+	// from there (runstore.InputKey), so the challenger — a run id of its own —
+	// would name files that are not in its bucket and die at bootstrap
+	// (runner/artifact.go). The arms cannot be the one run a pair needs them to
+	// be, and a task file that names inputs has the same shape.
+	if len(o.attach) > 0 || len(spec.Inputs) > 0 {
+		why := "the launch attaches files, and a challenger would read them under its own run id, where they are not"
+		pairSkip(warn, why)
+		return nil, why
+	}
+	// The two blocks are the arms they claim, and one pair: the codec below
+	// judges a block's own shape, and an absent block is legal to it, so a
+	// challenger's task with no block at all — or with the champion's arm —
+	// would pass it and launch a second run that publishes (D554).
+	if why := pairArms(pair); why != "" {
+		pairSkip(warn, why)
+		return nil, why
+	}
+	label, why := pairLabel(o.batch, pair)
+	if why != "" {
+		pairSkip(warn, why)
+		return nil, why
+	}
+	// Both arms' blocks are judged here, before either is written: the task
+	// codec refuses a block the runner would refuse at bootstrap
+	// (task.Validate), and a planner's own bug must cost a pair rather than
+	// the champion's run. The probe is the task as it would be written, with
+	// the block and the label this pair brings.
+	probe := *run.Spec
+	probe.Batch = label
+	for _, ab := range []*task.AB{&pair.Champion, pair.Challenger.AB} {
+		probe.AB = ab
+		if err := probe.Validate(); err != nil {
+			why := "the pair is not a pair: " + oneLineCLI(err.Error())
+			pairSkip(warn, why)
+			return nil, why
+		}
+	}
+	if _, err := runstore.RunTime(pair.Challenger.RunID); err != nil {
+		// The error quotes the value, which is the point: what a planner
+		// answered is not a run ID, so there is no ending of one to shorten.
+		why := "the challenger's run id is not one: " + oneLineCLI(err.Error())
+		pairSkip(warn, why)
+		return nil, why
+	}
+	if pair.Challenger.RunID == spec.RunID {
+		why := "the challenger carries the champion's own run id"
+		pairSkip(warn, why)
+		return nil, why
+	}
+	// Room for two, before the money: a pair is two runs at once, and a launch
+	// that cannot hold both starts neither (the shape runAttempts checks for a
+	// batch). The champion's own gate below asks the same question for one run,
+	// so a pair this refuses still starts the champion if there is room for it.
+	if err := checkMaxParallelFor(ctx, env, 2); err != nil {
+		why := oneLineCLI(err.Error())
+		pairSkip(warn, why)
+		return nil, why
+	}
+	if why := env.pairBudgetPrecheck(ctx, slug, spec, warn); why != "" {
+		pairSkip(warn, why)
+		return nil, why
+	}
+	spec.AB = &pair.Champion
+	spec.Batch = label
+	return pair, ""
+}
+
+// plannedRun is what the planner is handed. It answers a reason instead of a
+// run when a figure a pair is judged on cannot be read at all: a pair is
+// never sampled on a number the launcher does not have.
+func plannedRun(ctx context.Context, env *cloudEnv, o *runOptions, slug string, spec *task.Spec) (PlannedRun, string) {
+	cfg := launchLevelsConfig(ctx, env, spec)
+	prices, _, err := priceTable(env.lc, time.Now())
+	if err != nil {
+		return PlannedRun{}, "the price table could not be read: " + oneLineCLI(err.Error())
+	}
+	copied, err := cloneSpec(spec)
+	if err != nil {
+		return PlannedRun{}, "the task could not be copied for the planner: " + oneLineCLI(err.Error())
+	}
+	// The switch that decides whether this job is handed the credentials
+	// service's address, asked of the one function that decides it
+	// (credentialsServiceLaunchEnv, proxiedRepo's last question too); its own
+	// warning is the launch's to word, later and once.
+	auth, deployed := env.repoServiceAuth(ctx, spec, io.Discard)
+	run := PlannedRun{
+		Slug: slug, Repo: spec.Repo, Commit: launchCommit(ctx, spec.Repo, spec.Ref),
+		Spec: copied, Chosen: o.runID != "", Config: cfg,
+		Providers:      mixRoutes(env, spec.Repo, cfg),
+		Prices:         prices,
+		ServiceHeldKey: len(credentialsServiceLaunchEnv(env.lc, "", spec.Repo, auth, deployed)) > 0,
+	}
+	eff, _ := chainLimitPolicyOf(ctx, env, spec, cfg).merge(o.limits.layer())
+	run.Policy = eff
+	return run, ""
+}
+
+// launchCommit is the commit a first run is cut from, for the planner (D571):
+// the ref resolved in this machine's checkout of the repository.
+func launchCommit(ctx context.Context, repo, ref string) string {
+	return commitAt(ctx, checkoutRoot(ctx, repo), ref)
+}
+
+// commitAt is launchCommit's own read: the ref itself when it is already a
+// full commit SHA, else the SHA a checkout has for it, read the way every
+// other read of a ref in a checkout is (the remote-tracking ref first, then
+// the ref itself). Empty where neither is true — a launch from outside a
+// checkout names a branch this machine cannot resolve, and a planner that
+// needs the commit then resolves it itself.
+func commitAt(ctx context.Context, root, ref string) string {
+	if gitops.IsFullSHA(ref) {
+		return ref
+	}
+	if root == "" || ref == "" {
+		return ""
+	}
+	for _, candidate := range []string{"refs/remotes/origin/" + ref, ref} {
+		sha, err := gitRead(ctx, root, "rev-parse", "--verify", "--quiet", "--end-of-options", candidate+"^{commit}")
+		if err == nil && gitops.IsFullSHA(sha) {
+			return sha
+		}
+	}
+	return ""
+}
+
+// cloneSpec is a deep copy of a task, for a planner that may keep or edit what
+// it is handed: the launch writes its own spec, never the copy.
+func cloneSpec(spec *task.Spec) (*task.Spec, error) {
+	data, err := json.Marshal(spec)
+	if err != nil {
+		return nil, err
+	}
+	out := &task.Spec{}
+	if err := json.Unmarshal(data, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// pairArms judges the two blocks a planner answered as the pair they have to
+// be: the champion's arm on the champion, a challenger's arm on the challenger,
+// and one pair id on both. task.Validate judges each block's own shape and
+// treats an absent block as the ordinary unsampled task, so this is the half of
+// the pair it cannot see — and the half that decides whether the second run is
+// a shadow that never publishes (D554) or a record a reader can join to its
+// pair (task.AB.PairID). It answers why the answer is not a pair, or "".
+func pairArms(pair *Pair) string {
+	if pair.Champion.Arm != task.ABArmChampion {
+		return fmt.Sprintf("the champion's block carries the %q arm", oneLine(string(pair.Champion.Arm)))
+	}
+	if pair.Challenger.AB == nil {
+		return "the challenger's task carries no ab block"
+	}
+	if pair.Challenger.AB.Arm != task.ABArmChallenger {
+		return fmt.Sprintf("the challenger's block carries the %q arm", oneLine(string(pair.Challenger.AB.Arm)))
+	}
+	if pair.Champion.PairID != pair.Challenger.AB.PairID {
+		return fmt.Sprintf("the two blocks carry different pair ids (%q and %q)",
+			oneLine(pair.Champion.PairID), oneLine(pair.Challenger.AB.PairID))
+	}
+	return ""
+}
+
+// pairLabel is the one batch label both arms of a pair carry, so a person
+// reads the pair out of `fugaro runs ls --batch`: the launch's own --batch
+// when it has one, else one derived from the pair's id, which has to be a
+// label a task may carry (task.BatchRE).
+func pairLabel(batch string, pair *Pair) (string, string) {
+	if batch != "" {
+		return batch, ""
+	}
+	label := "ab-" + pair.Champion.PairID
+	if !task.BatchRE.MatchString(label) {
+		return "", fmt.Sprintf("the pair's id %q makes no batch label (%s)", oneLine(pair.Champion.PairID), label)
+	}
+	return label, ""
+}
+
+// launchChallenger starts the second arm: the champion's own launched task
+// with the arm's two differences — its run id and its ab block (D555) — so
+// every other field of the two tasks, the project layer and the chain limits
+// among them, is the launch's own and the arms cannot drift apart (D571). It
+// answers the challenger's run id, or "" when the arm could not start: the
+// champion has already gone by then, so nothing about the second arm is
+// allowed to fail the developer's run.
+func launchChallenger(ctx context.Context, env *cloudEnv, slug string, champion *task.Spec, pair *Pair, warn io.Writer) string {
+	arm, err := cloneSpec(champion)
+	if err != nil {
+		pairWarn(warn, "the challenger's task could not be built: "+oneLineCLI(err.Error()))
+		return ""
+	}
+	arm.RunID, arm.AB = pair.Challenger.RunID, pair.Challenger.AB
+	if err := arm.Validate(); err != nil {
+		pairWarn(warn, "the challenger's task is not one: "+oneLineCLI(err.Error()))
+		return ""
+	}
+	s := runstore.Open(env.bucket.Bucket, slug, arm.RunID)
+	if err := createTask(ctx, s, arm); err != nil {
+		pairWarn(warn, "the challenger's task was not stored: "+oneLineCLI(err.Error()))
+		return ""
+	}
+	res, err := launchRun(ctx, env, slug, arm, time.Now())
+	if err != nil {
+		pairWarn(warn, "the challenger did not launch: "+oneLineCLI(err.Error()))
+		return ""
+	}
+	if res.Status != "launched" {
+		// The run id already went, so this is not the pair's second arm:
+		// naming it as one would put a challenger in the champion's record
+		// that this launcher never started, which is the run a batch refuses
+		// to count for the same reason (runAttempts).
+		pairWarn(warn, fmt.Sprintf("run %s had already launched, so no challenger is recorded for this pair",
+			task.ShortRun(oneLine(res.Run))))
+		return ""
+	}
+	return arm.RunID
+}
+
+// pairSkip is the one line a launch prints when it meant to sample a pair and
+// did not: what was wrong, and what happened instead. The champion always
+// reaches the developer (D554).
+func pairSkip(warn io.Writer, why string) {
+	fmt.Fprintf(warn, "ab: no pair sampled: %s; launching the champion alone\n", oneLine(why))
+}
+
+// pairWarn is the one line a launch prints when the second arm alone could not
+// start, after the champion has gone.
+func pairWarn(warn io.Writer, why string) {
+	fmt.Fprintf(warn, "ab: the challenger did not start: %s; the champion is unaffected\n", oneLine(why))
 }
 
 // chainLimitsAsk reports whether the task carries any of the four chain limits.
@@ -1175,6 +1594,15 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		if err := checkClonePlanningImage(ctx, env, spec, warn); err != nil {
 			return config.Inputs{}, err
 		}
+		// The follow-up fields a filed task carries, gated on the fields
+		// themselves: see followUpSince. It comes before the request
+		// below because a task this command files also carries the
+		// parent's recorded mode, and followUpSince is the newer of the
+		// two: the refusal a person can act on names the command they
+		// just ran rather than a --mode flag they never passed.
+		if err := checkCloneFollowUpImage(env.lc, spec, warn); err != nil {
+			return config.Inputs{}, err
+		}
 		// The run's own rigor request, gated on the field the same way:
 		// a runner older than rigorRequestSince refuses a task carrying
 		// rigor or paths outright (task.Parse decodes with
@@ -1316,6 +1744,11 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		// The planning: block, the same shape and the same reason again:
 		// see checkPlanningImage.
 		if err := checkPlanningImage(ctx, env, slug, spec, kind, warn); err != nil {
+			return config.Inputs{}, err
+		}
+		// The same gate as the clone branch's above, and for the same
+		// reason: see followUpSince, and the order is the clone branch's.
+		if err := checkFollowUpImage(ctx, env, slug, spec, kind, warn); err != nil {
 			return config.Inputs{}, err
 		}
 		// The same gate as the clone branch's above, and for the same
@@ -2091,7 +2524,7 @@ func runAttempts(cmd *cobra.Command, env *cloudEnv, o *runOptions, text string, 
 		// skipBudget: the batch's own budget pre-check above already leased
 		// n * MinLaunchHeadroom once; a per-attempt re-check here would both
 		// re-evaluate state it already judged and print its notes n times.
-		res, err := launchAttempt(ctx, env, o, slug, spec, false, warn, true)
+		res, err := launchAttempt(ctx, env, o, slug, spec, false, false, warn, true)
 		if err != nil {
 			failStep(rep, step, err)
 			return reportBatchFailure(cmd, o.batch, n, o.asJSON, results, i, err)
@@ -2353,7 +2786,17 @@ func claudeAccountFor(ctx context.Context, env *cloudEnv, repo, flag, stage, ref
 	if refAgent {
 		auth = refAuth
 	}
-	declared := stageAccountsOf(env.lc)
+	// The stage accounts this run applies, and the one note that says which of
+	// the operator's project-wide keys a cascade run skips
+	// (config.CascadeSkippedStageAccounts is the rule and the sentence): the
+	// keys name accounts no rung of this launch reads, and refusing them would
+	// let one repository's auth decide the whole project's config. The note is
+	// printed once per launch, whatever stage asked for it.
+	declared, note := config.CascadeSkippedStageAccounts(auth, stageAccountsOf(env.lc))
+	if note != "" && !env.stageAccountNote {
+		env.stageAccountNote = true
+		fmt.Fprint(launchWarn, noteLine(note))
+	}
 	if ps := config.CheckStageAccountMix(auth, declared, "stages"); len(ps) > 0 {
 		return "", userErr("%s: %s", ps[0].Path, ps[0].Message)
 	}
@@ -2564,8 +3007,9 @@ func stageAccountsOf(lc *localcfg.Config) map[string]string {
 // may have one: oauth, where the accounts design's rung 2 gives a stage an
 // account of its own, and api-key, where the B0 ruling's one account serves the
 // mix's stages: the senior review, the adversarial review and the triage that
-// weighs their findings. Every other auth is "" — vertex and
-// cascade are refused outright by CheckStageAccountMix, and an auth the launch
+// weighs their findings. Every other auth is "" — vertex is refused outright by
+// CheckStageAccountMix, cascade's project-wide accounts are skipped before that
+// rule is asked (config.CascadeSkippedStageAccounts), and an auth the launch
 // cannot resolve yet is not judged on a guess.
 func stageAccountOf(lc *localcfg.Config, auth, stage string) string {
 	if lc == nil || (auth != "oauth" && auth != "api-key") {
@@ -3596,6 +4040,14 @@ func retrySpec(ctx context.Context, env *cloudEnv, ref string) (string, *task.Sp
 	}
 	if spec.RunID != runID {
 		return "", nil, userErr("run %s/%s holds the task of run %s; it can't be retried", slug, runID, spec.RunID)
+	}
+	// An arm is one half of a pair whose other half is a run of its own, and
+	// the pair is judged from both records (A3.0, D571): replaying one arm as
+	// a lone run would write a record that no pair explains and that the
+	// sampling rules never chose. Refused, like the report run below, rather
+	// than launched as it stands.
+	if spec.AB != nil {
+		return "", nil, userErr("run %s/%s is an A/B %s, and --retry launches the task of a first launch as it stands: a pair is judged from both arms' records, so an arm is never retried alone — launch a new run", slug, runID, spec.AB.Arm)
 	}
 	// A stored task this old may name no workflow at all, and the reader below
 	// is a reader of the launch's document like any other: the ref is this

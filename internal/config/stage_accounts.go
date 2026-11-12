@@ -175,10 +175,15 @@ func CheckStageSegment(stage, path string) []Problem {
 //
 // Under oauth the keys keep the meaning the accounts design gives them — one
 // account for a stage and another for the rest is what the design's rung 2 is
-// for — so nothing is refused here. Under vertex and cascade a stage account
-// cannot apply at all (neither reaches a Claude OAuth credential), and it is
-// refused rather than ignored, the way a segment outside RunStages is. An
-// unknown auth ("") is not judged: the launch resolves it from a checkout it
+// for — so nothing is refused here. Under vertex a stage account cannot apply
+// at all (vertex reaches no Claude OAuth credential), and it is refused rather
+// than ignored, the way a segment outside RunStages is. Cascade is refused here
+// as well, but the readers that hold the operator's project keys drop them
+// before asking (CascadeSkippedStageAccounts, the exemption of Check 191):
+// those keys are the operator's own, written in the machine's project file and
+// nowhere else, so a cascade repository is told on one line which of them were
+// skipped rather than refused for a project they never chose. An unknown auth
+// ("") is not judged: the launch resolves it from a checkout it
 // may not have yet, and the run itself judges it with the auth it resolves.
 // Every *other* value is refused rather than read as oauth: the auth here can
 // be a committed fugaro.yaml's own bytes (config.AgentOf validates nothing),
@@ -194,6 +199,56 @@ func CheckStageAccountMix(auth string, stages map[string]string, path string) []
 	default:
 		return stageAccountUnderUnknownAuth(auth, stages, path)
 	}
+}
+
+// CascadeSkippedStageAccounts is the stage accounts a run under auth applies,
+// rebuilt without the ones a cascade run never reaches, and the one note line
+// that says which were skipped for it ("" when none were).
+//
+// Under every auth but cascade it is the caller's own map and no note. Under
+// cascade a stage account cannot apply at all — the run's credential is the
+// credentials service's to pick from its own tiers, so no account of the
+// project's reaches a stage (docs/multi-model.md, "The cascade, and the
+// project policy switch") — and the accounts a reader can see here are the
+// *operator's*: `default_claude_account` and `stages.<stage>.claude_account`
+// are written in the operator's own project file and nowhere else (localcfg's
+// Config, which refuses them in the shared file and has no counterpart in a
+// repository's fugaro.yaml, the keys' only other would-be store; the published
+// node's claude_account_stages is the runner's own copy of that file, read
+// under api-key alone). So refusing them under cascade would make one
+// repository's auth invalidate the operator's whole project: the keys are a
+// project-wide default for the stages named, and a cascade repository of the
+// same project never asked for them. They are skipped with a note instead, the
+// way an api-key job's own mounts already skip them
+// (internal/infra/spec.go's mixedStageAccounts), so an operator hears which
+// keys of theirs this run does not read rather than losing the launch to them.
+//
+// What this deliberately does not do is read the accounts' *source*: a
+// repository cannot declare a stage account for itself under any auth — the
+// key does not exist in a repository's file, and an account choice in the
+// shared project file is refused by name (localcfg's sharedForbidden) — so a
+// stage account under cascade is always the operator's project-wide one.
+//
+// The exemption is cascade's, and vertex's refusal (stageAccountUnderOtherAuth)
+// stands as it was: the same argument would cover vertex, since that key can be
+// nothing but the operator's there too, but widening the exemption is a product
+// decision rather than a mechanical one, and the refusal Check 191 met is the
+// cascade one.
+func CascadeSkippedStageAccounts(auth string, stages map[string]string) (map[string]string, string) {
+	if auth != AuthCascade {
+		return stages, ""
+	}
+	var skipped []string
+	for _, stage := range slices.Sorted(maps.Keys(stages)) {
+		if stages[stage] != "" {
+			skipped = append(skipped, stage)
+		}
+	}
+	if len(skipped) == 0 {
+		return stages, ""
+	}
+	return nil, fmt.Sprintf("project stage accounts do not apply to a cascade repository: %s skipped",
+		strings.Join(skipped, ", "))
 }
 
 // stageAccountUnderUnknownAuth refuses a stage account under an agent.auth
@@ -359,26 +414,145 @@ func CredentialServingPath(typ string) string {
 // reported by name, so a caller that must say which member it could not place
 // has the name to say it with.
 func PoolServingPaths(p Pool, creds []Credential) (paths, unplaced []string) {
+	seen := map[string]bool{}
+	for _, m := range PoolMembers(p, creds) {
+		switch {
+		case m.Path == "":
+			if !slices.Contains(unplaced, m.Name) {
+				unplaced = append(unplaced, m.Name)
+			}
+		case !seen[m.Path]:
+			seen[m.Path] = true
+			paths = append(paths, m.Path)
+		}
+	}
+	slices.Sort(paths)
+	return paths, unplaced
+}
+
+// PoolMember is one member of a pool as the reader that has to serve it needs
+// it: the credential's name, its type, and the path that serves it
+// (CredentialServingPath). The type is carried beside the path because the two
+// answer different questions — the path is which half of a run can reach the
+// member at all, the type is what that member says when it is spent (F5) and
+// which models it serves (F23).
+type PoolMember struct {
+	Name string
+	Type string
+	// Path is CredentialServingPath(Type), "" for a type neither path serves.
+	Path string
+}
+
+// PoolMembers are the pool's members, in the order the pool lists them, each
+// with its type and path. creds is the credentials block of the document the
+// pool is written in, and a member it does not define is the built-in vertex
+// (D1624) — the one name a pool may list without a layer defining it
+// (config.ValidatePools). The order is the order, not a set: it is what
+// failover walks (D1632).
+//
+// A member of a type nothing serves is carried with an empty Path rather than
+// dropped: a caller that has to refuse it, or to say which member it could not
+// place, has the name to say it with.
+func PoolMembers(p Pool, creds []Credential) []PoolMember {
 	types := map[string]string{}
 	for _, c := range creds {
 		types[c.Name] = c.Type
 	}
-	seen := map[string]bool{}
+	out := make([]PoolMember, 0, len(p.Members))
 	for _, m := range p.Members {
 		typ, ok := types[m]
 		if !ok {
 			typ = CredentialTypeVertex
 		}
-		switch path := CredentialServingPath(typ); {
-		case path == "":
-			if !slices.Contains(unplaced, m) {
-				unplaced = append(unplaced, m)
-			}
-		case !seen[path]:
-			seen[path] = true
-			paths = append(paths, path)
+		out = append(out, PoolMember{Name: m, Type: typ, Path: CredentialServingPath(typ)})
+	}
+	return out
+}
+
+// PoolHasVertexMember is the name of the pool's Vertex member, "" when it has
+// none: the built-in credential needs no secret and its calls are the
+// project's own GCP service, so a pool that lists it cannot be capped by the
+// gateway, and under budget.mode: enforce the pool is refused outright
+// (D1626, F8).
+func PoolHasVertexMember(p Pool, creds []Credential) string {
+	for _, m := range PoolMembers(p, creds) {
+		if m.Type == CredentialTypeVertex {
+			return m.Name
 		}
 	}
-	slices.Sort(paths)
-	return paths, unplaced
+	return ""
+}
+
+// PoolMemberServesModel reports whether THIS member serves the model ID as
+// written (F23, D1637). There is no per-member mapping: a craft names one model
+// string, the routes are resolved once per run (RoutingClaudeFor), and a pool is
+// admitted only if every member can be sent that same string. The member and not
+// its type is the subject, because for an OpenRouter member the answer is the
+// member's OWN provider's: a pool naming two providers, one whose models carry
+// the stage's ID and one whose models carry another, is a pool whose second
+// member cannot be sent the model at all — the run's routes send it to the first
+// (gateway.routeFor, one route per model), so admitting the pool on the
+// strength of a provider the member is not would be admitting a failover onto
+// a route that does not exist.
+//
+// The two spellings are the whole of the rule:
+//
+//   - the credentials that reach Anthropic itself — the OAuth subscription,
+//     the API key — and the Vertex credential, which serves Claude under the
+//     owner's own GCP project, take Claude's own ID (the "claude-*" shape). A
+//     routed model ID is not one of them: "anthropic/<id>" is the spelling a
+//     route claims (CheckClaudeClaim), and a run whose pins carry it has left
+//     the direct path.
+//   - an OpenRouter member takes the model ID its own provider's route claims,
+//     so the model must be one that member's provider serves (Providers is the
+//     run's own set, already narrowed to the repository's providers). Claude
+//     itself is never claimed there except through that one explicit spelling.
+//
+// A type neither path serves serves nothing.
+func PoolMemberServesModel(m PoolMember, model string, providers map[string]ModelProvider) bool {
+	switch m.Type {
+	case CredentialTypeClaudeOAuth, CredentialTypeAnthropic, CredentialTypeVertex:
+		return IsClaudeModel(model) && !routedSpelling(model)
+	case CredentialTypeOpenRouter:
+		p, ok := providers[m.Name]
+		return ok && p.Matches(model)
+	}
+	return false
+}
+
+// routedSpelling is whether the model is written as a provider route's own ID:
+// the one shape a route may claim, which is CheckClaudeClaim's own judgement and
+// never a second copy of it — that function is where the shape is written, and
+// the vendor prefix it is written with belongs to internal/pricing's map
+// (TestRoutingHasOneResolver refuses a file that spells it again). What it reads
+// for this caller is whether a pin has left the direct path at all, which is
+// what makes a route's spelling a model the credentials that reach Anthropic
+// cannot be sent.
+func routedSpelling(model string) bool {
+	return CheckClaudeClaim(model) == ""
+}
+
+// PoolModelProblems is F23's rule at config time (D1637): a pool is admitted
+// only if every member serves the model ID as written, and each member that
+// does not is reported by name. providers is the run's own route set — the one
+// ProvidersFor narrows to a repository — because a member that would serve the
+// model through a provider the repository is not admitted to is a member this
+// repository has no route for. path is where the caller spells the pool (a
+// pool's own name in a credentials block, or the craft's access key), so the
+// problem points at the key that names it.
+//
+// A member of a type neither path serves is not reported here: that is
+// ValidateCredentials' and the serving-path readers' own subject, and a pool
+// whose members cannot be placed is refused there rather than twice.
+func PoolModelProblems(p Pool, creds []Credential, model string, providers map[string]ModelProvider, path string) []Problem {
+	var ps []Problem
+	for _, m := range PoolMembers(p, creds) {
+		if m.Path == "" || PoolMemberServesModel(m, model, providers) {
+			continue
+		}
+		ps = append(ps, Problem{Path: path, Message: fmt.Sprintf(
+			"the pool lists %s, a %s credential, and a pool is admitted only if every member serves the model as written: %s does not serve %s. A craft names one model string and every member is sent it, so there is no per-member mapping — list members that all serve %s (Claude's own ID for the credentials that reach Anthropic and for %s, the provider's own ID for a route's)",
+			m.Name, m.Type, m.Name, model, model, CredentialVertex)})
+	}
+	return ps
 }

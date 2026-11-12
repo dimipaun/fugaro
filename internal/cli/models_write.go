@@ -29,14 +29,7 @@ import (
 // and with no file of its own has nothing to edit, which is a refusal and not
 // an empty edit.
 func modelsLocalFile() (localcfg.Selection, *localcfg.Config, error) {
-	sel, lc, err := settingsSelection()
-	if err != nil {
-		return sel, nil, err
-	}
-	if sel.Path == "" {
-		return sel, nil, userErr("no local project config file is selected: models add and models rm edit the selected project's own config file, and this project has none; run fugaro setup, or pass --config")
-	}
-	return sel, lc, nil
+	return settingsLocalFile("models add and models rm")
 }
 
 // modelsEditLocal is one edit of the selected local project config, checked and
@@ -124,12 +117,21 @@ type modelsPin struct {
 	Role string
 }
 
-// modelsModelPinned is the repositories whose fugaro.yaml pins id in one of the
-// three roles, and the repositories this machine cannot read: one with no
-// checkout here, one whose file does not parse, one whose origin it cannot
-// trust. `models add` reads the first to decide whether to name `models use` as
-// the way to use the model, and `models rm` warns about both.
-func modelsModelPinned(lc *localcfg.Config, id string) (pins []modelsPin, unseen []string) {
+// projectCheckoutConfigs is this project's repositories whose own fugaro.yaml
+// this machine can read, as the configs they resolve to — over the project layer
+// the last cloud read cached, exactly as a run's own file resolves — and the
+// repositories it cannot read: one with no checkout here, one whose file does
+// not parse, one whose origin it cannot trust. Reading them out of the map
+// rather than the map itself is what keeps every caller's order the repository
+// names' own (slices.Sorted(maps.Keys(...))), so two reads of one project cannot
+// disagree about the order they name them in.
+//
+// Three writes ask it about a name a repository's own file selects: `models add`
+// and `models rm` about a pinned model, and `project profile rm` about a
+// workflow's job_profile. None of the three can be answered from the project's
+// config alone, and all three report the second list rather than assuming the
+// unreadable repositories select nothing.
+func projectCheckoutConfigs(lc *localcfg.Config) (map[string]*config.Config, []string) {
 	checkouts, err := localcfg.LoadCheckouts(os.Getenv)
 	if err != nil {
 		checkouts = localcfg.EmptyCheckouts()
@@ -139,6 +141,8 @@ func modelsModelPinned(lc *localcfg.Config, id string) (pins []modelsPin, unseen
 		remembered[localcfg.CheckoutIdentity{Provider: c.Provider, Repo: c.Repo}.Key()] = checkoutPath(c)
 	}
 	layer := modelsLayer(lc.Name)
+	out := map[string]*config.Config{}
+	var unseen []string
 	for _, name := range slices.Sorted(maps.Keys(lc.Repos)) {
 		dir := remembered[checkoutKeyFor(name, remembered)]
 		if dir == "" {
@@ -155,8 +159,20 @@ func modelsModelPinned(lc *localcfg.Config, id string) (pins []modelsPin, unseen
 			unseen = append(unseen, name)
 			continue
 		}
+		out[name] = cfg
+	}
+	return out, unseen
+}
+
+// modelsModelPinned is the repositories whose fugaro.yaml pins id in one of the
+// three roles, and the repositories this machine cannot read. `models add` reads
+// the first to decide whether to name `models use` as the way to use the model,
+// and `models rm` warns about both.
+func modelsModelPinned(lc *localcfg.Config, id string) (pins []modelsPin, unseen []string) {
+	cfgs, unseen := projectCheckoutConfigs(lc)
+	for _, name := range slices.Sorted(maps.Keys(cfgs)) {
 		for _, role := range modelsRoleNames {
-			if modelsRoleModel(cfg.Agent, role) == id {
+			if modelsRoleModel(cfgs[name].Agent, role) == id {
 				pins = append(pins, modelsPin{Repo: name, Role: role})
 			}
 		}

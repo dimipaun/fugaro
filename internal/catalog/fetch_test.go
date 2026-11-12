@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -40,11 +42,16 @@ func (o *fetchOpener) open(_ context.Context, kind, repo string) (gitprov.Provid
 // quietReader is a provider whose read fails without quoting the path back:
 // what a message then prints is the resolver's own, which is what the test
 // below is about (a provider's error carries the path it was given, as the
-// real adapters' do).
+// real adapters' do). It resolves a ref, because a dockerfile read resolves
+// one before it reads anything: the failure under test is the read's.
 type quietReader struct{ gitprov.Provider }
 
 func (quietReader) Contents(context.Context, string, string) ([]byte, error) {
 	return nil, errors.New("the read failed")
+}
+
+func (quietReader) Commit(context.Context, string) (string, error) {
+	return strings.Repeat("a", 40), nil
 }
 
 func dockerfileEntry(name, path, branch string) config.Entry {
@@ -53,12 +60,12 @@ func dockerfileEntry(name, path, branch string) config.Entry {
 	}}
 }
 
-// TestCatalogFetchRejectsAPathOutsideTheRepository: the path a source names
+// TestCatalogResolveRejectsAPathOutsideTheRepository: the path a source names
 // is read out of a repository through the contents API, so anything that is
 // not one clean relative path inside it is refused before a provider is
 // even opened (the fetch's own bound on a SEC read path: PIC1 refuses the
 // same values at publish time, and this is where one reaches an API).
-func TestCatalogFetchRejectsAPathOutsideTheRepository(t *testing.T) {
+func TestCatalogResolveRejectsAPathOutsideTheRepository(t *testing.T) {
 	ctx := context.Background()
 	for _, path := range []string{
 		"../docker/agent.Dockerfile",
@@ -74,7 +81,7 @@ func TestCatalogFetchRejectsAPathOutsideTheRepository(t *testing.T) {
 	} {
 		o := &fetchOpener{p: &fake.Provider{Repo: "acme/app"}, cred: fakeCredential(t)}
 		e := dockerfileEntry("agent", path, "")
-		if _, err := Fetch(ctx, o.open, gitprov.KindGitHub, e); err == nil {
+		if _, err := Resolve(ctx, o.open, gitprov.KindGitHub, e); err == nil {
 			t.Fatalf("the path %q was accepted", path)
 		}
 		if len(o.opened) != 0 {
@@ -83,12 +90,12 @@ func TestCatalogFetchRejectsAPathOutsideTheRepository(t *testing.T) {
 	}
 }
 
-// TestCatalogFetchRefusesARefTheCatalogWouldRefuse: the branch a source
+// TestCatalogResolveRefusesARefTheCatalogWouldRefuse: the branch a source
 // names is held to the rule the catalog's own validation applies
 // (config.ValidBranchName) and not to a narrower one of this package's, so a
 // ref the catalog refuses never reaches a provider and this guard cannot
 // drift below what the catalog checked.
-func TestCatalogFetchRefusesARefTheCatalogWouldRefuse(t *testing.T) {
+func TestCatalogResolveRefusesARefTheCatalogWouldRefuse(t *testing.T) {
 	ctx := context.Background()
 	for _, branch := range []string{
 		"../main",
@@ -101,7 +108,7 @@ func TestCatalogFetchRefusesARefTheCatalogWouldRefuse(t *testing.T) {
 	} {
 		o := &fetchOpener{p: &fake.Provider{Repo: "acme/app"}, cred: fakeCredential(t)}
 		e := dockerfileEntry("agent", "docker/agent.Dockerfile", branch)
-		if _, err := Fetch(ctx, o.open, gitprov.KindGitHub, e); err == nil {
+		if _, err := Resolve(ctx, o.open, gitprov.KindGitHub, e); err == nil {
 			t.Fatalf("the branch %q was accepted", branch)
 		}
 		if len(o.opened) != 0 {
@@ -110,11 +117,11 @@ func TestCatalogFetchRefusesARefTheCatalogWouldRefuse(t *testing.T) {
 	}
 }
 
-// TestCatalogFetchUsesTheExistingCredentialAndLogsNone: a dockerfile source
+// TestCatalogResolveUsesTheExistingCredentialAndLogsNone: a dockerfile source
 // is read through the provider the opener returns — the project's existing
 // credential, at the repository and branch the entry names — and neither the
 // bytes nor a failure carries any of that credential.
-func TestCatalogFetchUsesTheExistingCredentialAndLogsNone(t *testing.T) {
+func TestCatalogResolveUsesTheExistingCredentialAndLogsNone(t *testing.T) {
 	ctx := context.Background()
 	const def = "FROM example.invalid/base\nRUN true\n"
 	cred := fakeCredential(t)
@@ -128,28 +135,28 @@ func TestCatalogFetchUsesTheExistingCredentialAndLogsNone(t *testing.T) {
 
 	// The default branch holds nothing: a fetch that ignored the branch (or
 	// read another repository) cannot produce the definition below.
-	if _, err := Fetch(ctx, o.open, gitprov.KindGitHub, dockerfileEntry("agent", "docker/agent.Dockerfile", "")); err == nil {
+	if _, err := Resolve(ctx, o.open, gitprov.KindGitHub, dockerfileEntry("agent", "docker/agent.Dockerfile", "")); err == nil {
 		t.Fatal("the file was read from the default branch")
 	}
 	if want := []string{"github:acme/app"}; !slices.Equal(o.opened, want) {
 		t.Fatalf("opened %v, want %v", o.opened, want)
 	}
-	data, err := Fetch(ctx, o.open, gitprov.KindGitHub, e)
+	src, err := Resolve(ctx, o.open, gitprov.KindGitHub, e)
 	if err != nil {
-		t.Fatalf("Fetch: %v", err)
+		t.Fatalf("Resolve: %v", err)
 	}
-	if string(data) != def {
-		t.Fatalf("data = %q, want %q", data, def)
+	if string(src.Dockerfile) != def {
+		t.Fatalf("the definition = %q, want %q", src.Dockerfile, def)
 	}
 	if want := []string{"github:acme/app", "github:acme/app"}; !slices.Equal(o.opened, want) {
 		t.Fatalf("opened %v, want %v", o.opened, want)
 	}
-	if strings.Contains(string(data), cred) {
-		t.Fatal("the credential reached the fetched bytes")
+	if strings.Contains(string(src.Dockerfile), cred) {
+		t.Fatal("the credential reached the read bytes")
 	}
 
 	missing := dockerfileEntry("agent", "docker/absent.Dockerfile", "release")
-	_, err = Fetch(ctx, o.open, gitprov.KindGitHub, missing)
+	_, err = Resolve(ctx, o.open, gitprov.KindGitHub, missing)
 	if err == nil {
 		t.Fatal("a file the repository does not hold was read")
 	}
@@ -164,14 +171,14 @@ func TestCatalogFetchUsesTheExistingCredentialAndLogsNone(t *testing.T) {
 	}
 }
 
-// TestCatalogFetchPrintsThePathEscaped: the path a source names is a value a
+// TestCatalogResolvePrintsThePathEscaped: the path a source names is a value a
 // person reads back in a failure, and gitprov.ValidRepoPath deliberately
 // allows formatting (bidi) characters in one, so the resolver escapes it on
 // its way into the message rather than printing whatever it was given.
-func TestCatalogFetchPrintsThePathEscaped(t *testing.T) {
+func TestCatalogResolvePrintsThePathEscaped(t *testing.T) {
 	const bidi = "docker/agent\u202ename.Dockerfile"
 	o := &fetchOpener{p: quietReader{}, cred: fakeCredential(t)}
-	_, err := Fetch(context.Background(), o.open, gitprov.KindGitHub, dockerfileEntry("agent", bidi, ""))
+	_, err := Resolve(context.Background(), o.open, gitprov.KindGitHub, dockerfileEntry("agent", bidi, ""))
 	if err == nil || !strings.Contains(err.Error(), `\u202e`) {
 		t.Fatalf("err = %v, want the path escaped", err)
 	}
@@ -180,10 +187,10 @@ func TestCatalogFetchPrintsThePathEscaped(t *testing.T) {
 	}
 }
 
-// TestCatalogFetchIsBounded: a definition larger than the bound is refused
+// TestCatalogResolveIsBounded: a definition larger than the bound is refused
 // whatever its source, so nothing but a Dockerfile's worth of bytes reaches
 // the bucket a build reads.
-func TestCatalogFetchIsBounded(t *testing.T) {
+func TestCatalogResolveIsBounded(t *testing.T) {
 	ctx := context.Background()
 	big := strings.Repeat("RUN true\n", MaxDockerfileBytes/9+2)
 	if len(big) <= MaxDockerfileBytes {
@@ -193,11 +200,296 @@ func TestCatalogFetchIsBounded(t *testing.T) {
 		p:    &fake.Provider{Repo: "acme/app", State: fake.State{Files: map[string]string{"docker/agent.Dockerfile": big}}},
 		cred: fakeCredential(t),
 	}
-	if _, err := Fetch(ctx, o.open, gitprov.KindGitHub, dockerfileEntry("agent", "docker/agent.Dockerfile", "")); err == nil {
+	if _, err := Resolve(ctx, o.open, gitprov.KindGitHub, dockerfileEntry("agent", "docker/agent.Dockerfile", "")); err == nil {
 		t.Fatal("an oversized definition was fetched")
 	}
-	if _, err := Fetch(ctx, o.open, gitprov.KindGitHub, config.Entry{Name: "agent", Source: config.Source{Kind: config.SourceInline, Inline: big}}); err == nil {
+	if _, err := Resolve(ctx, o.open, gitprov.KindGitHub, config.Entry{Name: "agent", Source: config.Source{Kind: config.SourceInline, Inline: big}}); err == nil {
 		t.Fatal("an oversized inline definition was written from state")
+	}
+}
+
+// contextEntry is a dockerfile entry that names a build context, the source
+// Resolve's context read is about.
+func contextEntry(context string) config.Entry {
+	e := dockerfileEntry("agent", "docker/agent.Dockerfile", "main")
+	e.Source.Context = context
+	return e
+}
+
+// agentDockerfile is the definition the entries here are read from, and
+// contextDir the directory their context names.
+const (
+	agentDockerfile = "FROM example.invalid/base\n"
+	contextDir      = "ci"
+)
+
+// contextFiles is the context tree a commit holds, keyed by the path the read
+// answers with: relative to the context root, which is what the digest is
+// taken over. One of its files is under a subdirectory and one is two levels
+// down, because a context is its whole tree: a read that answered a directory's
+// own entries would leave those files out of the digest, and the nightly check
+// would not see them move (D1401).
+func contextFiles() map[string]string {
+	return map[string]string{"Dockerfile": agentDockerfile, "src/main.go": "package main\n", "src/pkg/deep.go": "package deep\n"}
+}
+
+// contextProvider is a fake provider whose branch "main" resolves to one
+// commit, and whose tree at that commit holds the definition the entry names
+// and the files of its context. The branch itself holds a different
+// definition, so a read at the branch rather than at the commit is not the
+// same read.
+func contextProvider(files map[string]string) *fake.Provider {
+	const sha = "3f2b1c0d9e8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c"
+	tree := map[string]string{"docker/agent.Dockerfile": agentDockerfile}
+	for p, data := range files {
+		tree[contextDir+"/"+p] = data
+	}
+	return &fake.Provider{Repo: "acme/app", State: fake.State{
+		Branches: map[string]map[string]string{"main": {"docker/agent.Dockerfile": "the branch's own\n"}},
+		Commits:  map[string]string{"main": sha},
+		Trees:    map[string]map[string]string{sha: tree},
+	}}
+}
+
+// TestCatalogResolveReadsTheContextAtTheResolvedCommit: the context is read
+// at the commit the branch resolved to — the same commit the Dockerfile was
+// read at — so the digest it stages is the digest of that tree and not of
+// whatever the branch holds now.
+func TestCatalogResolveReadsTheContextAtTheResolvedCommit(t *testing.T) {
+	ctx := context.Background()
+	files := contextFiles()
+	p := contextProvider(files)
+	o := &fetchOpener{p: p, cred: fakeCredential(t)}
+	src, err := Resolve(ctx, o.open, gitprov.KindGitHub, contextEntry("ci"))
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if src.Commit != p.State.Commits["main"] {
+		t.Errorf("the resolved commit is %q, want the commit the branch resolved to", src.Commit)
+	}
+	if string(src.Dockerfile) != agentDockerfile {
+		t.Errorf("the Dockerfile is %q, want the one the commit holds (%q)", src.Dockerfile, agentDockerfile)
+	}
+	if want := contextDigestOf(files); src.ContextHash != want {
+		t.Errorf("the context hash is %q, want the digest of the commit's tree %q", src.ContextHash, want)
+	}
+	// An entry that names no context resolves no hash at all, which is the
+	// shape every entry had before the key existed.
+	if src, err = Resolve(ctx, o.open, gitprov.KindGitHub, dockerfileEntry("agent", "docker/agent.Dockerfile", "main")); err != nil || src.ContextHash != "" {
+		t.Errorf("a context-less entry resolved %q, %v", src.ContextHash, err)
+	}
+}
+
+// contextDigestOf is the digest of a tree written out the way the context's
+// identity is defined — a sha256 over the paths and each file's own digest, in
+// path order — so this test states the definition rather than asking the
+// resolver for its own answer.
+func contextDigestOf(files map[string]string) string {
+	h := sha256.New()
+	for _, p := range slices.Sorted(maps.Keys(files)) {
+		sum := sha256.Sum256([]byte(files[p]))
+		fmt.Fprintf(h, "%s\x00%x\n", p, sum)
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// reverseTreeReader is a provider that answers a context tree in the order its
+// host happened to list it — here, the reverse of the fake's own — so a digest
+// that trusted the read's order would differ from the same tree read the other
+// way round.
+type reverseTreeReader struct{ *fake.Provider }
+
+func (r reverseTreeReader) Tree(ctx context.Context, path, ref string, limit gitprov.TreeLimit) ([]gitprov.TreeFile, error) {
+	files, err := r.Provider.Tree(ctx, path, ref, limit)
+	slices.Reverse(files)
+	return files, err
+}
+
+// TestCatalogResolveDigestsAContextWhateverOrderItIsRead: the digest is a
+// function of the tree and not of the order a host listed it in, so two reads
+// of one context agree — which is what keeps the nightly check from rebuilding
+// an entry nothing changed.
+func TestCatalogResolveDigestsAContextWhateverOrderItIsRead(t *testing.T) {
+	ctx := context.Background()
+	files := contextFiles()
+	one, err := Resolve(ctx, (&fetchOpener{p: contextProvider(files), cred: fakeCredential(t)}).open, gitprov.KindGitHub, contextEntry("ci"))
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	two, err := Resolve(ctx, (&fetchOpener{p: reverseTreeReader{contextProvider(files)}, cred: fakeCredential(t)}).open, gitprov.KindGitHub, contextEntry("ci"))
+	if err != nil {
+		t.Fatalf("Resolve of a tree read in another order: %v", err)
+	}
+	if one.ContextHash != two.ContextHash {
+		t.Errorf("the two reads digest to %q and %q, want one value", one.ContextHash, two.ContextHash)
+	}
+	if len(one.ContextHash) != 64 {
+		t.Errorf("the context hash is %q, want a sha256", one.ContextHash)
+	}
+	// A file that changed is a different tree.
+	changed := contextFiles()
+	changed["src/main.go"] = "package other\n"
+	three, err := Resolve(ctx, (&fetchOpener{p: contextProvider(changed), cred: fakeCredential(t)}).open, gitprov.KindGitHub, contextEntry("ci"))
+	if err != nil {
+		t.Fatalf("Resolve of a changed tree: %v", err)
+	}
+	if three.ContextHash == one.ContextHash {
+		t.Error("a context whose file changed digests to the same value")
+	}
+}
+
+// limitRecorder is a provider that reads a file and resolves a ref, and whose
+// tree read refuses with the bound its caller gave it — so a test can read
+// back the ceiling the resolver applies, which is D1398's own number.
+type limitRecorder struct{ gitprov.Provider }
+
+func (limitRecorder) Contents(context.Context, string, string) ([]byte, error) {
+	return []byte("FROM example.invalid/base\n"), nil
+}
+
+func (limitRecorder) Commit(context.Context, string) (string, error) {
+	return strings.Repeat("a", 40), nil
+}
+
+func (limitRecorder) Tree(_ context.Context, _, _ string, limit gitprov.TreeLimit) ([]gitprov.TreeFile, error) {
+	recorded = limit
+	return nil, fmt.Errorf("the tree is over it: %w", gitprov.ErrTreeTooLarge)
+}
+
+// recorded is the limit the last limitRecorder read was given. It is a
+// package-level value because a provider is handed back through an interface
+// the test cannot reach into, and the test that reads it is one test.
+var recorded gitprov.TreeLimit
+
+// TestCatalogResolveBoundsTheContext: the context is bounded at copy time
+// (D1398) with this package's own ceiling, and a context over it is refused by
+// the entry's name before a build is paid for.
+func TestCatalogResolveBoundsTheContext(t *testing.T) {
+	recorded = gitprov.TreeLimit{}
+	o := &fetchOpener{p: limitRecorder{}, cred: fakeCredential(t)}
+	_, err := Resolve(context.Background(), o.open, gitprov.KindGitHub, contextEntry("ci"))
+	if !errors.Is(err, gitprov.ErrTreeTooLarge) {
+		t.Fatalf("err = %v, want the bound's own error", err)
+	}
+	if !strings.Contains(err.Error(), "agent") {
+		t.Errorf("the refusal %q does not name the entry", err)
+	}
+	if want := (gitprov.TreeLimit{MaxFiles: MaxContextFiles, MaxBytes: MaxContextBytes}); recorded != want {
+		t.Errorf("the read was bounded by %+v, want %+v", recorded, want)
+	}
+}
+
+// TestCatalogResolveRefusesAnEmptyContext: a context that holds no files is
+// refused — a tree read cannot tell an empty directory from one that is not
+// there, and an entry whose context is either is an entry whose context is a
+// mistake.
+func TestCatalogResolveRefusesAnEmptyContext(t *testing.T) {
+	o := &fetchOpener{p: contextProvider(map[string]string{}), cred: fakeCredential(t)}
+	_, err := Resolve(context.Background(), o.open, gitprov.KindGitHub, contextEntry("ci"))
+	if err == nil || !strings.Contains(err.Error(), "agent") {
+		t.Fatalf("err = %v, want a refusal naming the entry", err)
+	}
+}
+
+// noTreeReader reads a file and resolves a ref but cannot read a directory of
+// its repository: what a context entry on such a provider is refused with.
+type noTreeReader struct{ gitprov.Provider }
+
+func (noTreeReader) Contents(context.Context, string, string) ([]byte, error) {
+	return []byte("FROM example.invalid/base\n"), nil
+}
+
+func (noTreeReader) Commit(context.Context, string) (string, error) {
+	return strings.Repeat("a", 40), nil
+}
+
+// TestCatalogResolveRefusesAProviderWithoutATreeReader: a provider that reads
+// a file but no directory is refused by name rather than read as an empty
+// context, which is the same rule the read has for a provider with no file
+// read (TestCatalogResolveRefusesAProviderWithoutAReader).
+func TestCatalogResolveRefusesAProviderWithoutATreeReader(t *testing.T) {
+	o := &fetchOpener{p: noTreeReader{}, cred: fakeCredential(t)}
+	_, err := Resolve(context.Background(), o.open, gitprov.KindGitHub, contextEntry("ci"))
+	if err == nil || !strings.Contains(err.Error(), "agent") || !strings.Contains(err.Error(), "context") {
+		t.Fatalf("err = %v, want a refusal naming the entry and its context", err)
+	}
+}
+
+// noCommitReader reads a file and a directory but cannot resolve a ref: the
+// shape a host without a commit read has, which the resolver refuses rather
+// than reading at the branch it could not pin.
+type noCommitReader struct{ gitprov.Provider }
+
+func (noCommitReader) Contents(context.Context, string, string) ([]byte, error) {
+	return []byte(agentDockerfile), nil
+}
+
+func (noCommitReader) Tree(context.Context, string, string, gitprov.TreeLimit) ([]gitprov.TreeFile, error) {
+	return []gitprov.TreeFile{{Path: "Dockerfile", Data: []byte(agentDockerfile)}}, nil
+}
+
+// TestCatalogResolveRefusesAProviderWithoutACommitReader: a provider that
+// reads a file and a directory but cannot say which commit either was read at
+// is refused by name — the alternative is a copy that stages the branch's
+// bytes under a commit it never resolved, which is the failure D1394 exists to
+// prevent.
+func TestCatalogResolveRefusesAProviderWithoutACommitReader(t *testing.T) {
+	o := &fetchOpener{p: noCommitReader{}, cred: fakeCredential(t)}
+	_, err := Resolve(context.Background(), o.open, gitprov.KindGitHub, contextEntry("ci"))
+	if err == nil || !strings.Contains(err.Error(), "agent") || !strings.Contains(err.Error(), "commit") {
+		t.Fatalf("err = %v, want a refusal naming the entry and the commit it cannot resolve", err)
+	}
+}
+
+// shortCommitReader answers a ref with an abbreviated hash, which is what a
+// host that resolved a ref loosely would give: a value that is not a commit
+// and that a build's `git fetch`, its revision label and its record would each
+// read as something else.
+type shortCommitReader struct{ gitprov.Provider }
+
+func (shortCommitReader) Contents(context.Context, string, string) ([]byte, error) {
+	return nil, errors.New("the definition was read at a ref that is not a commit")
+}
+
+func (shortCommitReader) Tree(context.Context, string, string, gitprov.TreeLimit) ([]gitprov.TreeFile, error) {
+	return nil, errors.New("the context was read at a ref that is not a commit")
+}
+
+func (shortCommitReader) Commit(context.Context, string) (string, error) {
+	return "3f2b1c0", nil
+}
+
+// TestCatalogResolveRefusesARefThatIsNotAFullCommit: the resolved value is
+// held to a full commit before anything is read with it, so a provider that
+// answered an abbreviated hash is refused by name rather than carried into a
+// build, a label and a record that each want a commit. The reads below fail
+// loudly, which is what says neither was made.
+func TestCatalogResolveRefusesARefThatIsNotAFullCommit(t *testing.T) {
+	o := &fetchOpener{p: shortCommitReader{}, cred: fakeCredential(t)}
+	_, err := Resolve(context.Background(), o.open, gitprov.KindGitHub, contextEntry("ci"))
+	if err == nil || !strings.Contains(err.Error(), "agent") || !strings.Contains(err.Error(), "not a full commit") {
+		t.Fatalf("err = %v, want a refusal naming the entry and the value it cannot use", err)
+	}
+}
+
+// TestCatalogResolveReadsAContextWrittenWithItsTrailingSlash: a context is a
+// directory, and the catalog's grammar takes one written the way the key's own
+// example spells it — "ci/" (D1391) — so the read resolves the same tree and
+// stages the same identity as the same context written without the slash.
+func TestCatalogResolveReadsAContextWrittenWithItsTrailingSlash(t *testing.T) {
+	ctx := context.Background()
+	files := contextFiles()
+	plain, err := Resolve(ctx, (&fetchOpener{p: contextProvider(files), cred: fakeCredential(t)}).open, gitprov.KindGitHub, contextEntry("ci"))
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	slashed, err := Resolve(ctx, (&fetchOpener{p: contextProvider(files), cred: fakeCredential(t)}).open, gitprov.KindGitHub, contextEntry("ci/"))
+	if err != nil {
+		t.Fatalf("Resolve of a context written with its trailing slash: %v", err)
+	}
+	if slashed.ContextHash != plain.ContextHash || slashed.Commit != plain.Commit {
+		t.Errorf("the context \"ci/\" resolved %q at %q, want the same as \"ci\": %q at %q",
+			slashed.ContextHash, slashed.Commit, plain.ContextHash, plain.Commit)
 	}
 }
 
@@ -332,7 +624,7 @@ func TestDockerfileSecretArgRefused(t *testing.T) {
 		// not hide the continuation: a build reads ARG NPM_TOKEN here.
 		"FROM example.invalid/base\r\r\nARG NPM_\\\r\r\nTOKEN\r\r\n",
 	} {
-		_, err := Fetch(ctx, nil, gitprov.KindGitHub, inlineEntry(def))
+		_, err := Resolve(ctx, nil, gitprov.KindGitHub, inlineEntry(def))
 		if err == nil {
 			t.Errorf("the inline definition %q was accepted", def)
 		} else if !strings.Contains(err.Error(), "--mount=type=secret") {
@@ -342,7 +634,7 @@ func TestDockerfileSecretArgRefused(t *testing.T) {
 			p:    &fake.Provider{Repo: "acme/app", State: fake.State{Files: map[string]string{"docker/agent.Dockerfile": def}}},
 			cred: fakeCredential(t),
 		}
-		_, err = Fetch(ctx, o.open, gitprov.KindGitHub, dockerfileEntry("agent", "docker/agent.Dockerfile", ""))
+		_, err = Resolve(ctx, o.open, gitprov.KindGitHub, dockerfileEntry("agent", "docker/agent.Dockerfile", ""))
 		if err == nil {
 			t.Errorf("the fetched definition %q was accepted", def)
 		} else if !strings.Contains(err.Error(), "--mount=type=secret") {
@@ -395,7 +687,7 @@ func TestDockerfileSecretArgRefused(t *testing.T) {
 		"FROM example.invalid/base\nENV X=1 CREDENTIALS_FILE=./creds.json\n",
 		"FROM example.invalid/base\nONBUILD ENV GOOGLE_APPLICATION_CREDENTIALS=/dev/null\n",
 	} {
-		if _, err := Fetch(ctx, nil, gitprov.KindGitHub, inlineEntry(def)); err != nil {
+		if _, err := Resolve(ctx, nil, gitprov.KindGitHub, inlineEntry(def)); err != nil {
 			t.Errorf("the definition %q was refused: %v", def, err)
 		}
 	}
@@ -428,7 +720,7 @@ func TestDockerfileUserinfoURLRefused(t *testing.T) {
 		// token is in the project all the same.
 		"FROM example.invalid/base\nRUN echo a \\\n# https://user:" + token + "@example.invalid/x\n b\n",
 	} {
-		_, err := Fetch(ctx, nil, gitprov.KindGitHub, inlineEntry(def))
+		_, err := Resolve(ctx, nil, gitprov.KindGitHub, inlineEntry(def))
 		if err == nil {
 			t.Errorf("the inline definition %q was accepted", def)
 		} else {
@@ -443,7 +735,7 @@ func TestDockerfileUserinfoURLRefused(t *testing.T) {
 			p:    &fake.Provider{Repo: "acme/app", State: fake.State{Files: map[string]string{"docker/agent.Dockerfile": def}}},
 			cred: fakeCredential(t),
 		}
-		_, err = Fetch(ctx, o.open, gitprov.KindGitHub, dockerfileEntry("agent", "docker/agent.Dockerfile", ""))
+		_, err = Resolve(ctx, o.open, gitprov.KindGitHub, dockerfileEntry("agent", "docker/agent.Dockerfile", ""))
 		if err == nil {
 			t.Errorf("the fetched definition %q was accepted", def)
 		} else if strings.Contains(err.Error(), token) {
@@ -456,7 +748,7 @@ func TestDockerfileUserinfoURLRefused(t *testing.T) {
 		"FROM example.invalid/base\nRUN curl -fsSL https://example.invalid/tool.tar.gz | tar xz\n",
 		"FROM example.invalid/base\n# see https://example.invalid/issues/1 for person@example.invalid\n",
 	} {
-		if _, err := Fetch(ctx, nil, gitprov.KindGitHub, inlineEntry(def)); err != nil {
+		if _, err := Resolve(ctx, nil, gitprov.KindGitHub, inlineEntry(def)); err != nil {
 			t.Errorf("the definition %q was refused: %v", def, err)
 		}
 	}
@@ -485,13 +777,13 @@ func TestCatalogReadableNamesTheKindsThatReadAFile(t *testing.T) {
 	}
 }
 
-// TestCatalogFetchRefusesAProviderWithoutAReader: the refusal is the one
+// TestCatalogResolveRefusesAProviderWithoutAReader: the refusal is the one
 // sentence, so an operator who meets the limit at `fugaro image add` meets
 // the one the build itself would have given.
-func TestCatalogFetchRefusesAProviderWithoutAReader(t *testing.T) {
+func TestCatalogResolveRefusesAProviderWithoutAReader(t *testing.T) {
 	o := &fetchOpener{p: noReader{}, cred: fakeCredential(t)}
 	e := dockerfileEntry("agent", "docker/agent.Dockerfile", "main")
-	_, err := Fetch(context.Background(), o.open, "gitlab", e)
+	_, err := Resolve(context.Background(), o.open, "gitlab", e)
 	if err == nil {
 		t.Fatal("a provider with no reader was asked for a file")
 	}

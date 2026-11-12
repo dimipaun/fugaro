@@ -303,12 +303,12 @@ func TestRunAttemptsPartialFailureReportsWhatLaunched(t *testing.T) {
 
 	orig := launchAttempt
 	calls := 0
-	launchAttempt = func(ctx context.Context, env *cloudEnv, o *runOptions, slug string, spec *task.Spec, reused bool, warn io.Writer, skipBudget bool) (launchResult, error) {
+	launchAttempt = func(ctx context.Context, env *cloudEnv, o *runOptions, slug string, spec *task.Spec, reused, plan bool, warn io.Writer, skipBudget bool) (launchResult, error) {
 		calls++
 		if calls == 2 {
 			return launchResult{}, boom
 		}
-		return orig(ctx, env, o, slug, spec, reused, warn, skipBudget)
+		return orig(ctx, env, o, slug, spec, reused, plan, warn, skipBudget)
 	}
 	defer func() { launchAttempt = orig }()
 
@@ -381,9 +381,9 @@ func TestRunAttemptsRefusesAlreadyLaunchedInsideBatch(t *testing.T) {
 
 	orig := launchAttempt
 	calls := 0
-	launchAttempt = func(ctx context.Context, env *cloudEnv, o *runOptions, slug string, spec *task.Spec, reused bool, warn io.Writer, skipBudget bool) (launchResult, error) {
+	launchAttempt = func(ctx context.Context, env *cloudEnv, o *runOptions, slug string, spec *task.Spec, reused, plan bool, warn io.Writer, skipBudget bool) (launchResult, error) {
 		calls++
-		res, err := orig(ctx, env, o, slug, spec, reused, warn, skipBudget)
+		res, err := orig(ctx, env, o, slug, spec, reused, plan, warn, skipBudget)
 		if calls == 2 && err == nil {
 			res.Status = "already-launched"
 		}

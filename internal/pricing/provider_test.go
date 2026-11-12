@@ -89,7 +89,7 @@ func TestUnverifiedPriceWarns(t *testing.T) {
 
 func TestOverrideBeatsEmbedded(t *testing.T) {
 	base := unverifiedTable()
-	o := Overrides{dsID: Rates{InputPerM: 0.11, OutputPerM: 0.22, CacheRead: 0.1}}
+	o := Overrides{dsID: {Rates: Rates{InputPerM: 0.11, OutputPerM: 0.22, CacheRead: 0.1}}}
 	tbl, err := base.With(o)
 	if err != nil {
 		t.Fatal(err)
@@ -124,7 +124,7 @@ func TestMaxOf(t *testing.T) {
 // must not make cache tokens free: they default to the input rate, and the
 // row says so. A Claude row keeps what the owner set.
 func TestOverrideDefaultsZeroCacheRatesOnProviderRow(t *testing.T) {
-	o := Overrides{dsID: Rates{InputPerM: 0.2, OutputPerM: 0.4, CacheRead: 0.1}, "qwen/qwen3-coder": Rates{InputPerM: 1, OutputPerM: 2}}
+	o := Overrides{dsID: {Rates: Rates{InputPerM: 0.2, OutputPerM: 0.4, CacheRead: 0.1}}, "qwen/qwen3-coder": {Rates: Rates{InputPerM: 1, OutputPerM: 2}}}
 	base := Embedded()
 	tbl, err := base.With(o)
 	if err != nil {
@@ -145,7 +145,7 @@ func TestOverrideDefaultsZeroCacheRatesOnProviderRow(t *testing.T) {
 		t.Errorf("added row %+v %v", q.Rates, q.CacheDefaulted)
 	}
 	// Claude rows are the owner's word; nothing is defaulted or warned.
-	c, err := Embedded().With(Overrides{"claude-sonnet-5-5": Rates{InputPerM: 2, OutputPerM: 10}})
+	c, err := Embedded().With(Overrides{"claude-sonnet-5-5": {Rates: Rates{InputPerM: 2, OutputPerM: 10}}})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -71,6 +71,13 @@ type toolSpec struct {
 // cancel_task have their scope decided, and what keeps them out of the served
 // set is that nothing registers a handler for them until the design item that
 // carries them does.
+//
+// The state group's three are here for the same reason the deferred two are:
+// their scopes are decided (D1224's names, D1227's scopes), and a name that is
+// catalogue-mapped but registered by nothing is a tool a client cannot call at
+// all. apply_patch is the one of them no task of this plan serves (D2021), and
+// the scope written beside it is what keeps a later registration from choosing
+// one of its own.
 var toolCatalogue = []toolSpec{
 	{"spawn_task", ScopeTasksWrite, "Start a run on one of the project's repositories, with a prompt, a recipe and a rigor mode"},
 	{"get_task_status", ScopeTasksRead, "The state of one run of this project, from its own run record"},
@@ -93,6 +100,31 @@ var toolCatalogue = []toolSpec{
 	// (ErrOperatorOnly) and not this table's.
 	{"get_audit_record", ScopeTasksRead, "Read one person's audit record: the calls this front door served for them, and how it answered"},
 	{"revoke_family", ScopeTasksWrite, "Revoke one token family: every access and refresh token of it stops working at the next call"},
+
+	// The stateless orchestrator's state group (D1224, D1227): one
+	// orchestrator's generated brief, its audit log, and the patch that would
+	// change it. The first two read the state node and the third would write
+	// it, which is why they map to the two scopes of their own rather than to
+	// the task pair: a token that may start a run is not a token that may read
+	// or rewrite the orchestrator's state (D1227).
+	{"get_state", ScopeStateRead, "One orchestrator's state: the generated brief, the revision the node is at and its schema version"},
+	{"get_events", ScopeStateRead, "One orchestrator's audit log, in the order the server stamped it, optionally since a duration"},
+	{"apply_patch", ScopeStateWrite, "Change one orchestrator's state with a validated patch: catalogued and served by nothing (D2021)"},
+
+	// The coordinator's roadmap group (D2110, D2121): the records that hold a
+	// plan document, a move, an edge and a release, queued for the apply job
+	// (D2118) and registered by nothing yet (P9d is dormant). Every one of them
+	// maps to roadmap:write and to nothing else — a token that may start a run
+	// is not a token that may rewrite the project's roadmap — and the scope is
+	// one only an operator may hold (OperatorOnlyScope), which the registry
+	// enforces on every call below.
+	{"roadmap_publish_plan", ScopeRoadmapWrite, "Publish one plan artifact into the project's roadmap record: the trimmed document, its provenance and the version the publisher read"},
+	{"roadmap_unpublish_plan", ScopeRoadmapWrite, "Remove one published plan from the record, leaving the tasks it carried dangling (D2115)"},
+	{"roadmap_move", ScopeRoadmapWrite, "Put one task in a release, or take it out of one, from the release the caller read"},
+	{"roadmap_need", ScopeRoadmapWrite, "Record that one task needs another across plans or streams, with the reason"},
+	{"roadmap_unneed", ScopeRoadmapWrite, "Remove a recorded dependency between two tasks"},
+	{"roadmap_release_set", ScopeRoadmapWrite, "Write one release of a stream: its name, its state, its position and the version the caller read"},
+	{"roadmap_request", ScopeRoadmapWrite, "Read back the outcome of one roadmap request this client queued: applied, refused with the reason, or failed"},
 }
 
 // catalogueEntry answers the declaration the catalogue holds for a tool name,
@@ -296,10 +328,12 @@ func (r *Registry) List() []Declaration {
 //
 // The order is the only order that is safe: the tool is resolved (a name
 // nothing serves is refused), then the scope the catalogue maps it to is read
-// against the token's own, then the handler runs. A handler therefore cannot
-// be reached by a token that does not hold its scope, whatever a later door
-// does or forgets, and a tool whose scope nobody decided cannot be reached at
-// all, because it could not be registered.
+// against the token's own, then the identity's own rule over that scope (the
+// roadmap write is an operator's, D2121), then the handler runs. A handler
+// therefore cannot be reached by a token that does not hold its scope, nor by
+// one whose holder may not hold it at all, whatever a later door does or
+// forgets, and a tool whose scope nobody decided cannot be reached at all,
+// because it could not be registered.
 func (r *Registry) Call(ctx context.Context, call Call) (any, error) {
 	r.mu.RLock()
 	t, served := r.served[call.Tool]
@@ -313,6 +347,15 @@ func (r *Registry) Call(ctx context.Context, call Call) (any, error) {
 	}
 	if !slices.Contains(call.Scopes, scope) {
 		return nil, fmt.Errorf("mcpauth: %q maps to the scope %q, which this token does not hold: %w", call.Tool, scope, ErrScopeNotHeld)
+	}
+	// A scope only an operator may hold is read against the caller's identity
+	// here, after the scope and never before it: a token that does not hold the
+	// scope is refused for the scope, which says nothing about who may hold it,
+	// and a token that does hold it is served to an operator alone (D2121) —
+	// whatever the record says, which is what makes an installation's lists the
+	// last word rather than the mint.
+	if OperatorOnlyScope(scope) && !call.Role.Operator {
+		return nil, fmt.Errorf("mcpauth: %q maps to the scope %q, which this installation serves to its operators and to nobody else: %w", call.Tool, scope, ErrOperatorOnly)
 	}
 	out, err := t.handler(ctx, call)
 	if err != nil {

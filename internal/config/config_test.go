@@ -701,6 +701,32 @@ func TestVisionSlotIsCheckedLikeTheOthers(t *testing.T) {
 	}
 }
 
+// TestDiagnoseSlotIsCheckedLikeTheOthers (D1607, F17): agent.models.diagnose is
+// the local diagnosis's model, and it is held to the model-ID shape wherever it
+// is written — `fugaro troubleshoot` passes the value straight to the model
+// flag, so a value with a space in it would land as an opaque offline path
+// instead of as a problem at the key the owner edited. It is no run's model:
+// the pins price what a run's calls cost, and a diagnosis runs on this machine,
+// on the person's own credential.
+func TestDiagnoseSlotIsCheckedLikeTheOthers(t *testing.T) {
+	const diagnose = "claude-sonnet-5"
+	cfg, ps := visionAgent(t, visionRoleIDs+", diagnose: "+diagnose)
+	if len(ps) != 0 {
+		t.Fatalf("a repository that writes agent.models.diagnose is refused: %v", ps)
+	}
+	if got := cfg.Agent.Models.Diagnose; got != diagnose {
+		t.Errorf("agent.models.diagnose resolved to %q, want %q", got, diagnose)
+	}
+	if pins := cfg.Agent.PinnedModels(); len(pins) != 4 {
+		t.Errorf("PinnedModels() = %q, want the four run pins: a diagnosis follows no run", pins)
+	}
+
+	_, ps = visionAgent(t, visionRoleIDs+`, diagnose: "bad model!"`)
+	if got := paths(ps); got != "agent.models.diagnose" {
+		t.Errorf("a diagnose value that is not a model ID: problems at %q, want agent.models.diagnose", got)
+	}
+}
+
 // TestVisionSlotIsNotAModelForAnyExistingRole (V1, D2003): a run that writes no
 // vision model is the run it was. The slot resolves to the empty string, it is
 // no role's model, and the JSON every configuration hash is taken over carries
