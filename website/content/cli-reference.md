@@ -6241,6 +6241,7 @@ Subcommands:
 - `fugaro runs show` -- Show a run's chain and what is left of its limits
 - `fugaro runs stats` -- Aggregate run records by the person who started each run
 - `fugaro runs summary` -- Count the window's runs and their spend, without reading a run object
+- `fugaro runs watch` -- Print the triage the daemon would decide about the window's long runs
 
 ## `fugaro runs digest`
 
@@ -6623,6 +6624,63 @@ Flags:
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | only this repository (owner/name, or a path inside its checkout) |
 | `--since` | string | `7d` | no | the window of UTC days ending today (7d, 36h, 90m; a summary is per day, so 0 is refused) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro runs watch`
+
+Print the triage the daemon would decide about the window's long runs
+
+Print, for every run in the window, what the daemon's long-run triage would
+decide about it: the outcome, the closed codes behind it, the input nobody
+could read, and the threshold the decision is taken against.
+
+The window is runs ls's: the same --repo, --all, --mine, --since and --batch,
+and the same listing behind them. Each run of it is read the way the daemon
+reads one — its record from its own storage, its pull request and its checks
+from the host the run's repository is on, and the findings artifact it
+finalized with — and the outcome is the rule's own, so the print is what the
+daemon would decide and not a second opinion about it.
+
+This command changes nothing at all. It writes no record, no audit line, no
+cancel marker and no work item, it merges nothing, it cancels nothing, and it
+has no flag that acts on a run: everything the triage does is the daemon's,
+on its own evidence, and this is the reading a person takes before that.
+
+An input that cannot be read is never an error: the rule answers
+recommend-only, which merges, cancels and restarts nothing, and the print
+names the input — record, findings, changed paths or ci — beside the outcome.
+A run under the threshold is printed as not-due: the rule read nothing about
+it, and that is not one of the four outcomes.
+
+The age is the run's own mint time against now. The daemon ages a run from
+the attempt it recorded in its own database, which this command does not
+read: the two agree to the minute for a run the daemon started, and a run
+somebody else started has no attempt for the daemon to age at all.
+
+--json prints {version, project, threshold_seconds, runs[], warnings}; runs
+carries {run, repo, age_seconds, outcome, reasons[], unreadable,
+without_a_person}.
+
+Usage: `fugaro runs watch`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--all` | bool | `false` | no | every repository in the runs bucket |
+| `--batch` | string | "" | no | only runs of this batch |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for watch |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--mine` | bool | `false` | no | only runs you requested |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--repo` | string | "" | no | only this repository (owner/name, or a path inside its checkout) |
+| `--since` | string | `7d` | no | only runs started within this long (7d, 36h, 90m; 0 for all) |
 
 Subcommands:
 
