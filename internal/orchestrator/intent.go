@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/safetext"
@@ -65,14 +66,68 @@ func dependenciesDone(s State, w WorkItem) bool {
 	return true
 }
 
-// failedUnder reports whether the newest attempt committed under an approval
-// failed, which is the only thing a retry answers. A refusal, a cancellation
-// and a success are not failures, and an attempt that has not reported is not
-// one to retry either.
-func failedUnder(s State, itemID string, approvalAt time.Time) bool {
+// approvalAttempts is the item's attempts committed under one approval, oldest
+// first, and the digest that approval covers.
+//
+// The digest is read off the oldest of them: an intent is declared only when
+// its digest is the approval's own (commitIntent), so the first attempt under
+// an approval is a run of the spec it was given over. That is the only copy of
+// it left once the approval is spent — the write that spends it clears Approved
+// and the marker carries the At alone — which is what lets a rung 1 resume be
+// checked against the spec the person approved.
+func approvalAttempts(s State, itemID string, at time.Time) ([]Intent, Digest, bool) {
+	var attempts []Intent
+	for _, it := range s.Intents {
+		if IntentItem(it.ID) == itemID && it.ApprovalAt.Equal(at) {
+			attempts = append(attempts, it)
+		}
+	}
+	if len(attempts) == 0 {
+		return nil, "", false
+	}
+	slices.SortStableFunc(attempts, func(a, b Intent) int { return IntentAttempt(a.ID) - IntentAttempt(b.ID) })
+	return attempts, attempts[0].SpecDigest, true
+}
+
+// approvalAts is the approvals an item's intents name, each one once, in the
+// order the state carries them.
+func approvalAts(s State, itemID string) []time.Time {
+	var ats []time.Time
+	for _, it := range s.Intents {
+		if IntentItem(it.ID) != itemID || slices.ContainsFunc(ats, it.ApprovalAt.Equal) {
+			continue
+		}
+		ats = append(ats, it.ApprovalAt)
+	}
+	return ats
+}
+
+// normalRunsUnder is how many of an item's attempts under one approval are runs
+// of the spec that approval covers, which is the count ApprovalAttempts bounds
+// (G15, D2042). The person's approval pays for the item's own recipe; a run of
+// another recipe the ladder launched under the same approval — a rebase, the
+// one stronger pass — is the ladder's own, is counted by LadderRuns, and spends
+// nothing of theirs.
+func normalRunsUnder(s State, w WorkItem, approval Approval) int {
+	n := 0
+	for _, it := range s.Intents {
+		if IntentItem(it.ID) == w.ID && it.ApprovalAt.Equal(approval.At) && it.SpecDigest == approval.SpecDigest {
+			n++
+		}
+	}
+	return n
+}
+
+// failedUnder reports whether the newest attempt the approval covers failed,
+// which is the only thing a retry answers. A refusal, a cancellation and a
+// success are not failures, and an attempt that has not reported is not one to
+// retry either. An attempt under the same approval that the approval does not
+// cover — a run of another recipe the ladder launched — is not the item's own
+// last attempt, so it neither answers a retry nor stops one.
+func failedUnder(s State, w WorkItem, approval Approval) bool {
 	newest, found := Intent{}, false
 	for _, it := range s.Intents {
-		if IntentItem(it.ID) != itemID || !it.ApprovalAt.Equal(approvalAt) {
+		if IntentItem(it.ID) != w.ID || !it.ApprovalAt.Equal(approval.At) || it.SpecDigest != approval.SpecDigest {
 			continue
 		}
 		if !found || IntentAttempt(it.ID) > IntentAttempt(newest.ID) {
@@ -84,6 +139,14 @@ func failedUnder(s State, itemID string, approvalAt time.Time) bool {
 
 // approvalCovers reports whether the standing approval is the one an intent
 // spent: recovery re-issues only what a person has not replaced.
+//
+// A ladder intent is covered here like any other attempt of the item's own
+// recipe: a rung 1 resume carries the At of the approval that covers it, which
+// is why a resume a person's approval still stands over is re-issued by
+// approvalCovers and one under an approval a retry spent is re-issued by
+// spentBy. Neither of them reads the ladder at all: what a crash left is an
+// attempt of an item the approval covers (D2042), and a daemon that re-issued
+// only the approval's own two would leave every rung 1 resume abandoned.
 func approvalCovers(w WorkItem, it Intent) bool {
 	a := w.Approved
 	return a != nil && a.At.Equal(it.ApprovalAt) && a.SpecDigest == it.SpecDigest
@@ -92,9 +155,37 @@ func approvalCovers(w WorkItem, it Intent) bool {
 // spentBy reports whether the item's spent marker names the approval this
 // intent spent. Committing a retry's intent clears Approved in the same write,
 // so "the approval still stands" alone would abandon every retry that crashed
-// before its task existed.
+// before its task existed — and every rung 1 resume, which is committed under
+// an approval that is spent already (D2042, G15).
 func spentBy(w WorkItem, it Intent) bool {
 	return w.SpentApprovalAt != nil && w.SpentApprovalAt.Equal(it.ApprovalAt)
+}
+
+// ladderCoveredAt is the At of the approval that covers the ladder's launch on
+// an item: the approval standing on it, or the one a retry spent, which the
+// item's marker names (D2042). It is false for an item with no approval to
+// spend — one nobody has approved, or one a finish cleared — and the ladder
+// launches nothing under it: its runs are the approval's to spend and it has
+// none of its own (G6, F21).
+func ladderCoveredAt(w WorkItem) (time.Time, bool) {
+	if a := w.Approved; a != nil {
+		return a.At, true
+	}
+	if at := w.SpentApprovalAt; at != nil {
+		return *at, true
+	}
+	return time.Time{}, false
+}
+
+// ladderCoveredDigest is the digest that approval covers, read for the launch
+// the ladder is about to make: the one the approval carries while it stands,
+// and, once it is spent, the one the item's attempts under it ran.
+func ladderCoveredDigest(s State, w WorkItem, at time.Time) (Digest, bool) {
+	if a := w.Approved; a != nil {
+		return a.SpecDigest, true
+	}
+	_, covered, ok := approvalAttempts(s, w.ID, at)
+	return covered, ok
 }
 
 // nextAttempt is the attempt a plan may start for an item, or false when there
@@ -102,6 +193,13 @@ func spentBy(w WorkItem, it Intent) bool {
 // approval covers, every dependency done, and an attempt left under it. The
 // first of those attempts needs nothing else, and the one after it is a retry,
 // which needs the newest attempt the approval covers to have failed.
+//
+// What the allowance counts is the approval's own runs and nothing beside them
+// (G15): a run of another recipe the ladder launched under the same At — a
+// rebase, the one stronger pass — is the ladder's, and a person's two attempts
+// are still theirs to spend. A rung 1 resume is not planned here at all
+// (LadderLaunch): the ladder's executor asks for that one, and what this
+// function reads is what a person's approval plans by itself.
 func nextAttempt(s State, w WorkItem) (Action, bool) {
 	approval := w.Approved
 	if approval == nil || !startable(w.Phase) {
@@ -116,7 +214,7 @@ func nextAttempt(s State, w WorkItem) (Action, bool) {
 	if !dependenciesDone(s, w) {
 		return Action{}, false
 	}
-	under := AttemptsUnder(s, w.ID, approval.At)
+	under := normalRunsUnder(s, w, *approval)
 	if under >= approval.Attempts {
 		// The allowance is spent. What opens another one is a person, and the
 		// daemon cannot approve anything on their behalf.
@@ -135,7 +233,7 @@ func nextAttempt(s State, w WorkItem) (Action, bool) {
 		action.Kind = ActionLaunch
 		return action, true
 	}
-	if !failedUnder(s, w.ID, approval.At) {
+	if !failedUnder(s, w, *approval) {
 		// The allowance is not spent, but only a failure is retried: a refusal
 		// is not one, and neither is a run a person stopped.
 		return Action{}, false
