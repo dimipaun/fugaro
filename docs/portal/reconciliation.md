@@ -1,19 +1,18 @@
 # Fugaro portal: reconciliation of the owner's spec against the code
 
 **This file amends [spec.md](spec.md); where the two disagree, this file wins.** Checked against
-`origin/main` at `a07e14262` and the open pull requests #2457 (K2.3) and #2458 (K2.5) on 2026-11-12. It
-numbers **D2180–D2229** (D2180–D2200 used) and **Checks 570–579**, both verified free on `main` and in
-every open pull request's diff. Findings are `F1`…`F36`. Review round 1 corrected several findings; those
-are marked **(round 1)**.
+`origin/main` at `a07e14262` and #2457 (K2.3) and #2458 (K2.5), both merged on 2026-11-12. It
+numbers **D2180–D2229** (D2180–D2204 used) and **Checks 570–579**, both verified free on `main` and in
+every open pull request's diff. Findings are `F1`…`F40`. Review rounds corrected several findings; those
+are marked **(round 1)** or **(round 2)**.
 
 ## What the repo already has
 
 The spec was written without the repo. About a third of it is designed, and part of it is built, under
 the names below: the key service of the subscriptions plan (S3) and the licence key v2 plan
-([docs/licence-key-v2](../licence-key-v2/README.md), 8 of 26 tasks merged, K2.3 in #2457 and K2.5 in
-#2458).
+([docs/licence-key-v2](../licence-key-v2/README.md); K2.3 (#2457) and K2.5 (#2458) merged on 2026-11-12).
 
-| Spec concept | What exists on `main` (or in the open pull request named) |
+| Spec concept | What exists on `main` (#2457 and #2458 included) |
 | --- | --- |
 | Backend with a licence-refresh endpoint | `ee/keyservice` (Go): `service.go` the public intake, `minter.go` the signer half, `merchant.go`, `admin.go`, `checks.go`, `queue.go`, `policy.go`, `store.go`. **No `main`, no KMS-backed signer, no image: nothing is deployable** (the package comment says so). `/renew` and `/status` are #2457 |
 | Key, licence, refresh policy in the key | `ee/licence/keyv1.go`: `fgk_` v1 key, `ClaimsV1` with `key_id`, `workspace_id` (required: the workspace's Firebase project id), `organisation`, `tier`, `seats`, `paid_through`, `grace_days`, `renewal_mode`, `renew_before_days`, `check_interval`, `warnings`, `kind` (`knownKind`: `paid`, `trial`, `comped` only); `VerifyV1`. Shipped in v0.23.0 |
@@ -21,7 +20,7 @@ the names below: the key service of the subscriptions plan (S3) and the licence 
 | Staging licences never validate in production | The key id names the environment; `TestStagingKeyIDIsRefusedV1` |
 | Paddle webhooks: signature, idempotency | `merchant.go`: `VerifySignature` (parses `ts`, **never compares it with now**), the idempotency guard in `apply`, `ModeFor`. `webhook` decodes a **canonical `Event`**, not Paddle's notification body, and answers 200 when decoding fails |
 | Operations key minting, audit | `admin.go` (S3.4, #2382): the owner's account only, a second factor per mint (**D455**), **D454**'s per-tier rate per window that **queues** the excess (`MintCaps`), one audit line per mint (**D456**), and a key is mailed, never stored or rendered (design §7.3) |
-| Policy chosen by the minter | `MintV1` takes the renewal and check policy from the row only ("a caller that could name them could mint a key that never checks"); it draws a new `key_id` and `issued_at` on every mint |
+| Policy chosen by the minter | `MintV1` takes the renewal and check policy from the row only ("a caller that could name them could mint a key that never checks"); it draws a new `key_id` and `issued_at` on every mint, generates the renewal secret itself (D2135) whose hash is a signed claim (`RenewalSecretHash`), and takes the caller's `TermDays` capped at the tier's maximum |
 | Renewal handover | #2457: `Handover{Key, RenewalSecret, Until}` keeps a rotated successor's key and **plaintext** secret for 24 hours; `/renew` sees a successor only through a `rotation:<key_id>` record; it renews any key whose mode is not `none`, with no check on what was paid |
 | Free seat | D440/D432: one free seat per organisation, 3 months, one per email domain, through the `/free-seat` form on `website/src/pages/keys.astro` and email verification (`checks.go`) |
 | Trials, open source | `policy.go` `PolicyTrial` (D2136, 14 days, grace 0); `/open-source` form with proof of control (D452) |
@@ -45,7 +44,9 @@ v2 bundle) was answered on the premise that a reissue is a successor the install
 As built (#2458), a seat change mints through `paid()` with a fresh key and writes no handover, and #2457's
 `/renew` sees a successor only through a rotation record. **D2181 is amended after review by D2200**:
 a reissue for seats or a renewal keeps the entitlement's renewal-secret hash, and `/renew` answers with the
-entitlement's newest key; only a reveal rotates the secret. With that, the spec's "run `fugaro licence
+entitlement's newest key; only a reveal rotates the secret. **D2200 amends D2135** ("the secret is minted once"): the minter
+accepts an existing secret hash for a reissue under the same entitlement (P1.8), and the renewal job (K4.1)
+keeps its secret when `/renew` answers a key without a new one (**round 2**). With that, the spec's "run `fugaro licence
 refresh` after a purchase or seat change" holds.
 
 **F3 (Rule, round 1): "keys are always recoverable in the portal"** against design §7.3. **D2182** (hash
@@ -108,16 +109,19 @@ organisation; operations creates reseller organisations and can relink.
 **F15 (Gap, security, round 1): Paddle granularity and `custom_data`.** Resolved by **D2192**: one Paddle
 subscription per portal workspace (a workspace may be unbound, F25). `custom_data` set in the browser is
 the buyer's to forge (they could name a victim's workspace, then refund). **Resolution:** the API creates
-the Paddle transaction server-side with `custom_data` and hands the overlay only the transaction id; an
-event whose transaction the API did not create is parked for operations; a second active subscription for
+the Paddle transaction server-side with `custom_data` and hands the overlay only the transaction id. An
+event is admitted when its transaction, or the subscription it belongs to, began with a transaction the
+API created (Paddle creates renewals and prorations itself, **round 2**); an event with neither is parked
+for operations; a second active subscription for
 one workspace is refused.
 
 **F16 (Gap, round 1): Paddle events.** `webhook` decodes a canonical shape, so a real Paddle notification
 is dropped with a 200; refunds need a `key_id` Paddle never sends; the route is `/webhook`; the signature's
 timestamp is not checked. **Resolution:** an adapter from Paddle's notification body to the canonical
-event, a refund or chargeback resolved through the subscription or transaction to its entitlement; the raw
-body and signature header stored **before** processing, keyed by event id; a timestamp window of 5
-minutes; a body that does not decode is stored and answered 400 so Paddle retries and operations sees it;
+event, a refund or chargeback resolved through the subscription or transaction to its entitlement; the
+signature and a 5-minute timestamp window verified **first**, then the verified body and its signature
+header stored as received **before** processing, keyed by event id (an undecodable verified body by its
+digest), so a stranger cannot pre-store a forged body under a real event id (**round 2**); a body that does not decode is stored and answered 400 so Paddle retries and operations sees it;
 the route moves to `/api/paddle/webhook`.
 
 **F17 (Gap): deletion.** Resolved by **D2195**: a sole owner cannot delete their account; deleting an
@@ -143,8 +147,9 @@ project-level grant that reaches signing so the owner sees the exposure.
 (one file per area); Go decodes strictly and tests fixtures against them; hand-written TypeScript types
 beside them are tested on the same fixtures. No code generator.
 
-**F21 (Gap, round 1): one hosting config.** The root `firebase.json` is pinned by the preview workflow's
-gate (an agent cannot edit it), by three website tests and by the deploy script's test. **Resolution:**
+**F21 (Gap, round 1): one hosting config.** The root `firebase.json`'s shape (one hosting object, `public`
+`website/dist`) is pinned by the preview workflow's gate, by three website tests and by the deploy
+script's test. **Resolution:**
 the portal has its own `ee/portal/firebase.json`, deployed with `firebase deploy --config`; the root file
 changes only to drop `keys.fugaro.dev` from `form-action` when the forms retire. The portal's CSP admits
 Paddle's, Firebase Auth's, Sentry's and the analytics origins.
@@ -163,7 +168,7 @@ Resend; the Go side adds `cloud.google.com/go/firestore`, `cloud.google.com/go/k
 project id, which exists only after `fugaro setup`, and a buyer may pay first. #2458 refuses a purchase
 event with no `workspace_id`. Resolved by **D2196–D2199**: every grant (purchase, free seat, trial,
 operations, reseller, open source) is an **entitlement** held in the portal; an owner or admin binds it to
-a Firebase project id in the portal or through `fugaro licence login` (the CLI supplies its own project id);
+a Firebase project id in the portal or through `fugaro licence login` (the CLI names its project id; nothing proves it, F37);
 the key is minted at binding. The paid term runs from payment (D2197). An owner or admin may rebind once
 per 30 days, revoking the old key (D2198).
 
@@ -183,8 +188,9 @@ refresh policy"; `MintV1` refuses a caller-named policy so no caller can mint a 
 **F29 (Gap, round 1): revocation across rotations.** A refund revoking the original `key_id` would leave a
 revealed successor valid. **Resolution:** revocation is by entitlement: every key minted for it is revoked.
 
-**F30 (Gap, round 1): reveal must not extend a term.** `MintV1` sets a fresh term from the row. The minter
-accepts an end date that it caps at the row's own term; reveal passes the predecessor's `paid_through`.
+**F30 (Gap, rounds 1 and 2): reveal must not extend a term.** `MintV1` takes the caller's `TermDays`
+capped at the tier's maximum, but it is stateless and cannot know a predecessor's `paid_through`. The API
+passes the days remaining; "reveal never extends" is held by the API, not the minter.
 
 **F31 (Gap, round 1): the sign-in verifier.** `mcpauth.Identity` has only `UID` and `Email` and is pinned
 to one caller (D923). **Resolution:** it gains `Provider`, `AuthTime` and `TenantID` (added fields), its
@@ -206,9 +212,41 @@ per workspace per day (F32), trials (one per workspace and account).
 **F36 (Gap): workspace screens for `licence login`.** K2.4's authorize and device pages are served by the
 SPA, and they list unbound entitlements to bind (D2196).
 
+**F37 (Gap, security, round 2): binding has no proof.** A portal or `licence login` binding takes a
+project id nobody proves (TN3: a workspace's own token is not trusted). Resolved by **D2201** (no proof,
+limit the harm): trials and every one-per rule key on organisation and project id, so another organisation
+naming your id never burns your trial; a phished binding is undone by the owner's rebind. **D2204**
+makes a project id unique across organisations (first binder wins; operations transfers). The two meet in
+**TN-P1**, answered: global uniqueness stands, so a squatter can block a binding until operations
+transfers it.
+
+**F38 (Gap, security, round 2): rebinding multiplies installations.** With rebinding (D2198) and no
+revocation on silence (D2140), a full-term key left on an egress-blocked installation runs to `paid_through`
+plus grace. Resolved by **D2202**: keys of connected entitlements carry at most 30 days to `paid_through`
+and renew through `/renew` while the entitlement runs; air-gapped keys keep their term.
+
+**F39 (Rule, round 2): the free seat for a paying customer.** The terms' §10.2(a) (design §4.2): "a
+Customer that has a Paid Plan has no free seat". Resolved by **D2203**: the first paid entitlement ends
+the organisation's free seat at its key's next renewal; it does not come back.
+
+**F40 (Gap, round 2): smaller resolutions.**
+- One active entitlement per workspace (D2204): a purchase supersedes a trial or free seat there, so the
+  spec's "one key per workspace" holds.
+- A reseller is never a member of its customers' organisations; it invites the customer's first owner.
+- The operations seed is an invitation, and membership binds to the uid at first acceptance.
+- An empty tenant list refuses every `microsoft.com` sign-in. Whether Firebase marks Microsoft addresses
+  verified is settled in P1.3 before invitations ship.
+- Operations can cut a handover short and transfer a project id.
+- Operations sets each reseller's credit limit and wholesale rates.
+- Deletion removes memberships and invitations.
+- The website preview workflow's gate does not pin `.hosting.site`, so a branch's `firebase.json` could
+  target the portal's site: the concrete form of D2194's risk. A staged workflow change pins it.
+
 **Threat model of what the portal adds.**
 1. *The API asks the minter to sign.* The minter is internal-only, invokable by the API's account only,
-   enforces the row, the term cap (F30) and the policy bounds (F28), and logs every signature.
+   enforces the row, the tier's maximum term and the policy bounds (F28), and logs every signature. It is
+   stateless: the predecessor's end (F30) and the entitlement's limits are the API's to hold, so a
+   compromised API mints any row for any workspace (accepted since S3, widened by D2194).
 2. *An operations account* can mint for any organisation: fresh sign-in, owner or admin role, domain and
    tenant lists, D454's queue, every action audited.
 3. *A reseller account* mints for its own customers only, within its credit limit, and never holds a secret.
@@ -242,17 +280,27 @@ SPA, and they list unbound entitlements to bind (D2196).
 | D2197 | When a paid term starts (F25) | At payment | At binding | **2026-11-12: the recommendation.** |
 | D2198 | Rebinding (F25) | Self-serve, once per 30 days, old key revoked | Operations only; unlimited | **2026-11-12: the recommendation.** |
 | D2199 | Which grants are entitlements (F25) | Every source | Paddle purchases only | **2026-11-12: the recommendation.** Amends D2184 |
-| D2200 | Successors after a seat change or renewal (F2) | Keep the secret's hash; `/renew` returns the entitlement's newest key | Each reissue rotates through the handover | **2026-11-12: the recommendation.** Amends D2181 |
+| D2200 | Successors after a seat change or renewal (F2) | Keep the secret's hash; `/renew` returns the entitlement's newest key | Each reissue rotates through the handover | **2026-11-12: the recommendation.** Amends D2181 and D2135 |
+| D2201 | Proof of a binding (F37) | No proof; trials and one-per rules key on org and project | Proof through the installation | **2026-11-12: the recommendation.** Its "never blocks" holds for trials only (TN-P1) |
+| D2202 | Rebind multiplier (F38) | Connected keys at most 30 days, renewed while the entitlement runs | Accept | **2026-11-12: the recommendation.** |
+| D2203 | Free seat after a purchase (F39) | Ends at the next renewal | Keep it (needs counsel) | **2026-11-12: the recommendation.** |
+| D2204 | Workspace, entitlements, project id (F40) | One active entitlement per workspace; project id unique across organisations | Several; shared ids | **2026-11-12: the recommendation.** TN-P1: global uniqueness kept, operations transfers |
 
 What this changes in licence key v2 (amended by this plan's task P9.1, not edited here): K2.4 uses P1.3's
 verifier, registers its routes through P1.0's registry, and its pages are the SPA's (P3.5); K2.6 is
 superseded by P5.1; K2.7 drops its edge on K2.6 and registers through the registry; K3.3 sends the CLI's
 Firebase project id and binds an entitlement; K3.4 follows D2186 with the array order; K5.1 is superseded
-by the portal's screens; K2.5's mail carries a link.
+by the portal's screens; K2.5's mail carries a link; K2.7 keys trials on organisation and project id (D2201); K4.1 keeps its secret
+when `/renew` answers without a new one, and connected keys renew monthly (D2200, D2202).
 
 ## Open tensions and open items for the owner
 
-No two answers conflict. Open items, all the owner's:
+- **TN-P1 (answered 2026-11-12):** D2201 meant another organisation never blocks you; D2204's global
+  uniqueness lets a squatter bind your project id first. Options were uniqueness per organisation
+  (recommended) or global with an operations transfer. **The owner chose global, operations transfers
+  (not the recommendation).**
+
+Open items, all the owner's:
 
 - **Confirm the amended decisions**: D2181 (by D2200) and D2182 (encrypted handover) were re-asked and
   answered; D2184's amendment by D2199 follows the owner's own voucher ruling. D2194's accepted risk is

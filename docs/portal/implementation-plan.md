@@ -1,7 +1,7 @@
 # Fugaro portal: implementation plan
 
-Builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md) (findings F1–F36,
-decisions D2180–D2200).
+Builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md) (findings F1–F40,
+decisions D2180–D2204).
 
 ## Status
 
@@ -18,6 +18,10 @@ The owner's answers that shape this plan (2026-11-12):
   `licence login`, then minted (D2196, D2199). The free seat is an entitlement at sign-up (D2184 as
   amended). A paid term runs from payment (D2197). Rebinding is self-serve once per 30 days (D2198).
   Trials and open source stay, in the portal (D2185).
+- **Binding.** No proof of a project id; trials key on organisation and project (D2201). A project id is
+  unique across organisations, operations transfers it (D2204, TN-P1). One active entitlement per
+  workspace (D2204). Connected keys run at most 30 days and renew (D2202). A purchase ends the free seat
+  (D2203).
 - **Seats.** Admins, then operators in grant order, hold the seats (D2186, held with K3.4).
 - **Operations.** Owners and admins mint after a fresh sign-in (D2187).
 - **Data path.** The SPA reaches data through the API only (D2188).
@@ -87,6 +91,9 @@ The owner's answers that shape this plan (2026-11-12):
   24 hours of a reveal.
 - The operations second factor is the identity provider's (D2187).
 - The free seat's abuse control is the terms and a per-account daily limit on new organisations.
+- A binding is not proven (D2201): a squatter can bind a victim's project id first, until operations
+  transfers it; a phished entitlement is recovered by the owner's rebind.
+- The minter is stateless: a compromised API mints any row for any workspace.
 
 ## Slices and tasks
 
@@ -115,12 +122,13 @@ not exist yet.
   hosting site, and seeds the operations organisation with `--seed-operations <owner address>`. Production
   follows Check 570–575. Depends on: P0.1, P0.2, P0.4, P1.7, P9.2, P2.1.
 - **P0.6 The live checks.** `scripts/live-checks/check-570.sh` … `check-575.sh` on staging. Depends on:
-  P9.4, P0.5.
+  P9.4, P0.5, and licence-key-v2's K2.4, K3.2 and K3.3 (Check 570 runs `licence login` and `refresh`).
 
 ### Slice P1: foundations (inert alone)
 
 - **P1.0 The API mount and dependencies. SECURITY.**
-  - Files: `ee/keyservice/api.go` (new), `ee/keyservice/service.go`, `ee/keyservice/api_test.go` (new).
+  - Files: `ee/keyservice/api.go` (new), `ee/keyservice/service.go`, `ee/keyservice/keyservice_test.go`
+    (the `Deps` fixture), `ee/keyservice/api_test.go` (new).
   - `Handler` mounts an `/api/` registry. Area files call `registerAPI(method, path, h)` from `init`, so no
     later task edits `service.go`. `Deps` and `New` gain every interface later tasks need: the document
     store, the sign-in verifier, the Paddle client, the Scheduler verifier, the handover sealer and the
@@ -153,14 +161,16 @@ not exist yet.
     `portalauth_test.go` (new).
   - The verifier pins audience, issuer and `email_verified`. It compares addresses through `access.Member`
     on both sides and offers `RequireSSO`, `FreshWithin(5*time.Minute)` and the tenant check. It also
-    verifies Cloud Scheduler OIDC tokens, account **and** audience.
+    verifies Cloud Scheduler OIDC tokens, account **and** audience. It settles, against Firebase's
+    documentation and a recorded token shape, whether Microsoft addresses arrive verified, before P2.2.
   - Tests: `TestEmailLinkIsRefusedForOperations` (both `password` and `emailLink`),
     `TestTokenFromAnotherProjectIsRefused`, `TestUnverifiedEmailIsRefused`, `TestStaleSignInIsRefusedForMint`,
-    `TestMicrosoftTenantIsPinned`, `TestSchedulerTokenNeedsItsAccountAndAudience`, plus the existing
+    `TestMicrosoftTenantIsPinned`, `TestEmptyTenantListRefusesMicrosoft`,
+    `TestSchedulerTokenNeedsItsAccountAndAudience`, plus the existing
     `go test ./ee/coordinator/mcpauth/ -tags ee -count=1`.
   - Command: `go test ./ee/keyservice/ ./ee/coordinator/mcpauth/ -tags ee -run 'TestEmailLink|TestTokenFrom|TestUnverified|TestStale|TestMicrosoftTenant|TestSchedulerToken' -count=1` (mcpauth's own suite runs whole).
   - Depends on: none. Commit: `ee: the portal API verifies sign-in, provider and tenant`.
-- **P1.4 The SPA skeleton.**
+- **P1.4 The SPA skeleton. SECURITY** (sign-in code, and it edits the boundary guard's licence test).
   - Files (new, under `ee/portal/`): `package.json`, `package-lock.json`, `tsconfig.json` (each with
     `.license`); `vite.config.ts`, `index.html`; `src/main.tsx`, `src/app.tsx`; `src/routes.ts`, which
     collects `src/screens/*/route.tsx` with `import.meta.glob`; `src/api/client.ts`,
@@ -198,20 +208,24 @@ not exist yet.
 - **P1.7 The deployable programs. SECURITY.**
   - Files (new): `ee/keyservice/cmd/portal-api/main.go`, `ee/keyservice/cmd/minter/main.go`,
     `ee/keyservice/kmssigner.go` and `kmssigner_test.go` (a `Signer` on the KMS API, fake client in
-    tests), `ee/keyservice/config.go` and `config_test.go` (environment and Secret Manager, strict),
+    tests), `ee/keyservice/kmsseal.go` and `kmsseal_test.go` (P1.0's handover sealer on KMS encrypt and
+    decrypt), `ee/keyservice/config.go` and `config_test.go` (environment and Secret Manager, strict),
     `ee/keyservice/cmd/*/Dockerfile`, `ee/keyservice/cloudbuild.yaml` (+ `.license`); also `go.mod`, `go.sum`.
-  - Tests: `TestConfigRefusesUnknownVariables`, `TestKMSSignerVerifiesWithTheKeyring`,
+  - Tests: `TestConfigRefusesUnknownVariables`, `TestKMSSignerVerifiesWithTheKeyring`, `TestKMSSealerRoundTrips`,
     `TestMinterBinaryHoldsNoMailOrMerchantSecret`.
-  - Command: `go test ./ee/keyservice/... -tags ee -run 'TestConfig|TestKMSSigner|TestMinterBinary' -count=1`.
+  - Command: `go test ./ee/keyservice/... -tags ee -run 'TestConfig|TestKMSSigner|TestKMSSealer|TestMinterBinary' -count=1`.
   - Depends on: P1.0, P1.6. Commit: `ee: the portal API and minter programs`.
 - **P1.8 The minter's bounded term and policy. SECURITY.**
   - Files: `ee/keyservice/minter.go`, `ee/keyservice/policy.go`, tests.
   - The minter accepts an end date that it caps at the row's term (F30). It accepts an operations
     `check_interval` within `P1D`–`P30D`, and never none outside the air-gapped row (F28). It adds a
-    `free-seat` row: Team, one seat, `kind: comped`, yearly, auto renewal.
+    `free-seat` row: Team, one seat, `kind: comped`, auto renewal. A reissue under the same entitlement
+    may carry the existing secret hash instead of a new secret (D2200, amending D2135). Every connected
+    row's key runs at most 30 days to `paid_through` (D2202); air-gapped rows keep their term.
   - Tests: `TestMintTermNeverExceedsTheRow`, `TestRequestedEndCapsTheTerm`,
-    `TestOperationsCheckIntervalIsBounded`, `TestFreeSeatRowIsComped`.
-  - Command: `go test ./ee/keyservice/ -tags ee -run 'TestMintTerm|TestRequestedEnd|TestOperationsCheck|TestFreeSeatRow' -count=1`.
+    `TestOperationsCheckIntervalIsBounded`, `TestFreeSeatRowIsComped`, `TestReissueKeepsTheSecretHash`,
+    `TestConnectedKeysRunAtMostThirtyDays`.
+  - Command: `go test ./ee/keyservice/ -tags ee -run 'TestMintTerm|TestRequestedEnd|TestOperationsCheck|TestFreeSeatRow|TestReissueKeeps|TestConnectedKeys' -count=1`.
   - Depends on: #2457, #2458. Commit: `ee: the minter takes a capped end and a bounded check interval`.
 
 ### Slice P2: tenancy
@@ -231,8 +245,8 @@ not exist yet.
   - Files: `ee/keyservice/invites.go`, `api_invites.go`, `resend.go` (a `Mailer` on Resend's API), tests (new).
   - Tests: `TestInvitationIsBoundToItsAddress`, `TestInvitationIsSingleUse`,
     `TestOperationsInviteOutsideTheDomainListIsRefused`, `TestResellerInviteNeedsSSO`,
-    `TestResendMailerSendsNoKey`, `TestAnotherOrgsInvitationsAreRefused`.
-  - Command: `go test ./ee/keyservice/ -tags ee -run 'TestInvitation|TestOperationsInvite|TestResellerInvite|TestResend|TestAnotherOrgsInvitations' -count=1`.
+    `TestResendMailerSendsNoKey`, `TestAnotherOrgsInvitationsAreRefused`, `TestSeedIsAnInvitationBoundAtFirstSignIn`.
+  - Command: `go test ./ee/keyservice/ -tags ee -run 'TestInvitation|TestOperationsInvite|TestResellerInvite|TestResend|TestAnotherOrgsInvitations|TestSeedIs' -count=1`.
   - Depends on: P2.1. Commit: `ee: portal invitations by email`.
 - **P2.3 Tenancy screens.**
   - Files: `ee/portal/src/screens/{orgs,members,settings,sso}/*` and their tests (new).
@@ -243,9 +257,10 @@ not exist yet.
 - **P2.4 Deletion. SECURITY.**
   - Files: `ee/keyservice/deletion.go`, `api_account.go`, tests (new); `ee/portal/src/screens/account/*` (new).
   - Deleting an organisation cancels its subscriptions and revokes every entitlement's keys. Deleting an
-    account deletes the Firebase Auth user through the Identity Toolkit API.
+    account deletes the Firebase Auth user through the Identity Toolkit API, and its memberships and
+    invitations.
   - Tests: `TestSoleOwnerCannotDeleteTheirAccount`, `TestOrgDeletionRevokesAndCancels`,
-    `TestAccountDeletionRemovesTheAuthUser`, `TestAnotherOrgCannotBeDeleted`, `account.test.tsx`.
+    `TestAccountDeletionRemovesTheAuthUser`, `TestDeletionRemovesMembershipsAndInvitations`, `TestAnotherOrgCannotBeDeleted`, `account.test.tsx`.
   - Command: `go test ./ee/keyservice/ -tags ee -run 'TestSoleOwner|TestOrgDeletion|TestAccountDeletion|TestAnotherOrgCannot' -count=1`
     and `cd ee/portal && npx vitest run src/screens/account`.
   - Depends on: P2.1, P3.1, P4.3. Commit: `ee: self-serve account and organisation deletion (D2195)`.
@@ -257,14 +272,20 @@ not exist yet.
     tests (new).
   - A workspace may be unbound. An entitlement records its source, tier, seats, term (from payment,
     D2197) and the workspace it is attached to. Binding takes a Firebase project id and mints through the
-    minter. Rebinding is once per 30 days and revokes the old key (D2198).
+    minter. Rebinding is once per 30 days and revokes the old key (D2198). A project id is bound by one
+    workspace across all organisations (D2204); a workspace has one active entitlement, and a purchase
+    supersedes a trial or free seat there; the first paid entitlement ends the organisation's free seat at
+    its next renewal (D2203).
   - Tests: `TestBindingMintsTheKey`, `TestUnboundEntitlementHasNoKey`, `TestTermRunsFromPayment`,
     `TestRebindIsOncePerThirtyDays`, `TestRebindRevokesTheOldKey`, `TestWorkspaceIDIsAFirebaseProjectID`,
-    `TestOnlyOwnersAndAdminsBind`, `TestAnotherOrgsEntitlementIsRefused`.
-  - Command: `go test ./ee/keyservice/ -tags ee -run 'TestBinding|TestUnbound|TestTermRuns|TestRebind|TestWorkspaceID|TestOnlyOwnersAndAdminsBind|TestAnotherOrgsEntitlement' -count=1`.
+    `TestOnlyOwnersAndAdminsBind`, `TestAnotherOrgsEntitlementIsRefused`, `TestProjectIDIsBoundOnce`,
+    `TestPurchaseSupersedesATrial`, `TestFirstPurchaseEndsTheFreeSeat`.
+  - Command: `go test ./ee/keyservice/ -tags ee -run 'TestBinding|TestUnbound|TestTermRuns|TestRebind|TestWorkspaceID|TestOnlyOwnersAndAdminsBind|TestAnotherOrgsEntitlement|TestProjectIDIs|TestPurchaseSupersedes|TestFirstPurchase' -count=1`.
   - Depends on: P2.1, P1.8. Commit: `ee: entitlements bound to a workspace mint its key (D2196)`.
 - **P3.6 Renewal follows the entitlement. SECURITY.**
-  - Files: `ee/keyservice/renew.go` (from #2457), `ee/keyservice/merchant.go`, tests.
+  - Files: `ee/keyservice/renew.go` (from #2457), `ee/keyservice/merchant.go`, `ee/keyservice/store.go`
+    (lookups by entitlement, the sealed handover), `ee/keyservice/firestore_store.go`,
+    `ee/keyservice/keyservice_test.go` (the `Deps` fixture), tests.
   - A seat change or renewal reissues under the entitlement with the same secret hash, and `/renew`
     answers with the newest key (D2200). `/renew` issues only while the entitlement runs (F27).
     Revocation is by entitlement (F29). The handover bundle is sealed with P1.0's sealer (D2182 as amended).
@@ -286,8 +307,10 @@ not exist yet.
   - Files: `ee/keyservice/api_trial.go`, `api_opensource.go`, tests (new).
   - Both create entitlements. The trial applies K2.7's rule; the open-source request applies `checks.go`'s
     proof check and `queue.go`'s queue, decided in P5.1.
-  - Tests: `TestTrialIsOnePerWorkspaceAndAccount`, `TestOpenSourceRequestQueuesForOperations`.
-  - Command: `go test ./ee/keyservice/ -tags ee -run 'TestTrialIsOne|TestOpenSourceRequest' -count=1`.
+  - Trials key on organisation and project id (D2201).
+  - Tests: `TestTrialIsOnePerWorkspaceAndAccount`, `TestAnotherOrgCannotBurnYourTrial`,
+    `TestOpenSourceRequestQueuesForOperations`.
+  - Command: `go test ./ee/keyservice/ -tags ee -run 'TestTrialIsOne|TestAnotherOrgCannotBurn|TestOpenSourceRequest' -count=1`.
   - Depends on: P3.1, K2.7 (licence-key-v2; not approved). Commit: `ee: trials and open-source requests in the portal (D2185)`.
 - **P3.4 Workspace screens.**
   - Files: `ee/portal/src/screens/workspaces/*` and tests (new).
@@ -298,7 +321,7 @@ not exist yet.
     entitlement shows how to bind; the refresh hint).
   - Command: `cd ee/portal && npx vitest run src/screens/workspaces`.
   - Depends on: P1.4. Commit: `ee: the portal's workspace screens`.
-- **P3.5 `licence login` screens.**
+- **P3.5 `licence login` screens. SECURITY** (the device-approve page is a phishing surface).
   - Files: `ee/portal/src/screens/cli/*` and tests (new).
   - K2.4's authorize and device-approve pages. They list the organisation's unbound entitlements and bind
     the chosen one to the requesting installation's Firebase project id, shown as untrusted text.
@@ -322,16 +345,18 @@ not exist yet.
   - Depends on: P3.1, P1.4. Commit: `ee: Paddle checkout from the portal`.
 - **P4.2 Paddle events. SECURITY.**
   - Files: `ee/keyservice/merchant.go`, `paddleevents.go` (the adapter), `ledger.go`, tests (new).
-  - Paddle's body is stored as received with its signature header before processing. A 5-minute timestamp
-    window applies. The adapter maps the notification to the canonical event; refunds resolve to the
+  - The signature and a 5-minute timestamp window are verified first; the verified body is then stored as
+    received with its header, keyed by event id (an undecodable one by digest), before processing. The adapter maps the notification to the canonical event; refunds resolve to the
     entitlement. A purchase creates an entitlement, never a key (D2196). An undecodable body is stored and
-    answered 400. A transaction the API did not create is parked. The route becomes `/api/paddle/webhook`,
+    answered 400. An event whose transaction or subscription did not begin with a transaction the API created is
+    parked; renewals and prorations of an API-created subscription are admitted. The route becomes `/api/paddle/webhook`,
     and the mail carries a link.
   - Tests: `TestEventIsStoredAsReceivedBeforeProcessing`, `TestStaleTimestampIsRefused`,
     `TestRedeliveryDoesNotDoubleCount`, `TestPaddleBodyMapsToTheEvent`, `TestRefundFindsItsEntitlement`,
     `TestPurchaseCreatesAnEntitlement`, `TestUndecodableEventIsKeptAndRetried`,
-    `TestForeignTransactionIsParked`, `TestLedgerDerivesFromStoredEvents`, `TestPurchaseMailCarriesNoKey`.
-  - Command: `go test ./ee/keyservice/ -tags ee -run 'TestEventIs|TestStaleTimestamp|TestRedelivery|TestPaddleBody|TestRefundFinds|TestPurchaseCreates|TestUndecodable|TestForeignTransaction|TestLedger|TestPurchaseMail' -count=1`.
+    `TestForeignTransactionIsParked`, `TestRenewalOfAnAPISubscriptionIsAdmitted`,
+    `TestUnverifiedBodyIsNeverStored`, `TestLedgerDerivesFromStoredEvents`, `TestPurchaseMailCarriesNoKey`.
+  - Command: `go test ./ee/keyservice/ -tags ee -run 'TestEventIs|TestStaleTimestamp|TestRedelivery|TestPaddleBody|TestRefundFinds|TestPurchaseCreates|TestUndecodable|TestForeignTransaction|TestRenewalOfAnAPI|TestUnverifiedBody|TestLedger|TestPurchaseMail' -count=1`.
   - Depends on: P1.0, P1.2. Commit: `ee: Paddle events kept as received, mapped and ledgered`.
 - **P4.3 Billing mirror, seats and the customer portal. SECURITY.**
   - Files: `ee/keyservice/billing.go`, `api_billing.go`, tests (new).
@@ -354,13 +379,15 @@ not exist yet.
   - Lookups: organisations, workspaces, entitlements, key metadata, purchases and members.
   - Key actions: create an entitlement with any seats and end date, a row and a bounded check interval;
     extend; change seats; comp; revoke.
-  - The open-source queue is decided here, and the domain and tenant lists are set here.
+  - The open-source queue is decided here; the domain and tenant lists are set here; operations can cut
+    a handover short and transfer a project id to another workspace (D2204).
   - Owners and admins only, a fresh sign-in, D454's rate per tier queueing the excess (carried from
     `admin.go`'s `MintCaps`). Supersedes K2.6.
   - Tests: `TestOperationsMemberCannotMint`, `TestMintNeedsAFreshSignIn`,
     `TestOperationsMintsQueueOverTheRate`, `TestEveryOperationsActionIsAudited`,
-    `TestOperationsNeverSeesASecret`, `TestDomainAndTenantListsAreOwnerSet`.
-  - Command: `go test ./ee/keyservice/ -tags ee -run 'TestOperationsMember|TestMintNeeds|TestOperationsMints|TestEveryOperations|TestOperationsNever|TestDomainAndTenant' -count=1`.
+    `TestOperationsNeverSeesASecret`, `TestDomainAndTenantListsAreOwnerSet`,
+    `TestOperationsCutsAHandoverShort`, `TestProjectTransferIsAudited`.
+  - Command: `go test ./ee/keyservice/ -tags ee -run 'TestOperationsMember|TestMintNeeds|TestOperationsMints|TestEveryOperations|TestOperationsNever|TestDomainAndTenant|TestOperationsCuts|TestProjectTransfer' -count=1`.
   - Depends on: P2.1, P3.1, P1.8. Commit: `ee: the operations API (D2187)`.
 - **P5.2 Reports.**
   - Files: `ee/keyservice/reports.go`, `api_reports.go`, tests (new).
@@ -380,9 +407,12 @@ not exist yet.
 
 - **P6.1 Reseller organisations and customers. SECURITY.**
   - Files: `ee/keyservice/resellers.go`, `api_resellers.go`, tests (new).
+  - Operations sets each reseller's credit limit and wholesale rates. A reseller is never a member of its
+    customers' organisations; it invites each customer's first owner.
   - Tests: `TestOnlyOperationsCreatesAResellerOrg`, `TestResellerSeesOnlyItsCustomers`,
-    `TestResellerNeverSeesASecret`, `TestRelinkIsAudited`.
-  - Command: `go test ./ee/keyservice/ -tags ee -run 'TestOnlyOperationsCreatesAReseller|TestResellerSees|TestResellerNever|TestRelink' -count=1`.
+    `TestResellerNeverSeesASecret`, `TestResellerIsNotAMemberOfItsCustomers`, `TestRelinkIsAudited`,
+    `TestCreditLimitAndRatesAreOperationsSet`.
+  - Command: `go test ./ee/keyservice/ -tags ee -run 'TestOnlyOperationsCreatesAReseller|TestResellerSees|TestResellerNever|TestResellerIsNot|TestRelink|TestCreditLimitAndRates' -count=1`.
   - Depends on: P2.2, P5.1. Commit: `ee: resellers and their customers (D2191)`.
 - **P6.2 Reseller entitlements and accrual. SECURITY.**
   - Files: `ee/keyservice/accrual.go`, `api_reseller_keys.go`, tests (new).
@@ -429,7 +459,8 @@ not exist yet.
     `scripts/deploy-portal.sh` (new); `scripts/deploy-portal_test.sh` (new);
     `ee/portal/test/hosting.test.ts` (new); `docs/pending-workflows/portal-tests.yml` (new: vitest, the
     targeted Go tests and the `firestore` emulator suite) and its section in
-    `docs/pending-workflows/README.md`.
+    `docs/pending-workflows/README.md`; `docs/pending-workflows/website-preview.yml` (new: a staged copy of
+    the preview workflow whose gate also refuses `.hosting.site` and `.hosting.target`, F40).
   - The deploy script is OWNER-RUN with `--config ee/portal/firebase.json`, dry-run first, refuses an
     agent session, runs Cloud Build and accepts `--seed-operations`.
   - The root `firebase.json` and the website's tooling are untouched.
@@ -442,6 +473,11 @@ not exist yet.
     `firebase.json` (`form-action` drops `keys.fugaro.dev`).
   - Command: `go test ./ee/keyservice/ -tags ee -count=1` and `cd website && npm run check`.
   - Depends on: P3.3, P5.1, P9.2. Commit: `ee: the portal replaces the key forms and the admin page`.
+- **P9.5 Pin this package's facts.**
+  - Files: `internal/cli/docs_portal_test.go` (new): the number ranges (D2180–D2229, Checks 570–579), every
+    decision row has an answer cell, the levels table matches the Depends-on lines.
+  - Command: `GOFLAGS=-p=2 go test ./internal/cli/ -run DocsPortal -count=1`.
+  - Depends on: none. Commit: `docs: pin the portal plan's numbers and levels`.
 - **P9.4 The live-check scripts.**
   - Files: `scripts/live-checks/check-570.sh` … `check-575.sh` (new), `docs/gcp-live-checklist.md`
     (their entries). Each refuses `fugaro-prod` unless `--production` is given, and refuses an agent
@@ -451,7 +487,7 @@ not exist yet.
 
 ## Parallel execution
 
-External edges: #2457 and #2458 (merging, D2183) before P1.0, P1.2 and P1.8; K2.7 before P3.3; K2.4 before
+External edges: #2457 and #2458 (merged 2026-11-12) before P1.0, P1.2 and P1.8; K2.7 before P3.3; K2.4 before
 P3.5 (both licence-key-v2, not approved; after P9.1 they register through P1.0's registry and depend on it).
 
 Edges:
@@ -467,7 +503,7 @@ Edges:
 
 | Level | Tasks (run together) |
 | --- | --- |
-| 0 | P1.0, P1.1, P1.2, P1.3, P1.5, P1.8, P9.1 |
+| 0 | P1.0, P1.1, P1.2, P1.3, P1.5, P1.8, P9.1, P9.5 |
 | 1 | P1.4, P1.6, P2.1, P4.2 |
 | 2 | P1.7, P2.2, P2.3, P3.1, P3.4, P3.5, P4.4, P5.3, P6.4, P9.2 |
 | 3 | P3.3, P3.6, P4.1, P5.1, P7.1 |
@@ -497,7 +533,9 @@ Files written by more than one task (open pull requests included). Every other f
 | File | Writers (level) |
 | --- | --- |
 | `ee/keyservice/service.go` | #2457 (before 0), P1.0 (0), P9.3 (4) |
-| `ee/keyservice/store.go` | #2457, #2458 (before 0); read, not written, by P1.2 |
+| `ee/keyservice/store.go` | #2457, #2458 (merged); P3.6 (3) |
+| `ee/keyservice/firestore_store.go` | P1.2 (0), P3.6 (3) |
+| `ee/keyservice/keyservice_test.go` | P1.0 (0), P3.6 (3) |
 | `ee/keyservice/merchant.go` | #2458 (before 0), P4.2 (1), P3.6 (3) |
 | `ee/keyservice/renew.go` | #2457 (before 0), P3.6 (3) |
 | `ee/keyservice/minter.go`, `policy.go` | P1.8 (0) |

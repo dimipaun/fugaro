@@ -12,13 +12,14 @@ setup.
 | File | Role |
 | --- | --- |
 | [spec.md](spec.md) | The owner's spec, verbatim |
-| [reconciliation.md](reconciliation.md) | Findings F1–F36 against `origin/main` and #2457/#2458, decisions D2180–D2200 with the owner's answers (2026-11-12), open items, UNVERIFIED. It wins over the spec |
+| [reconciliation.md](reconciliation.md) | Findings F1–F40 against `origin/main` (#2457 and #2458 merged), decisions D2180–D2204 with the owner's answers (2026-11-12), open items, UNVERIFIED. It wins over the spec |
 | [implementation-plan.md](implementation-plan.md) | Slices P0–P9, parallel levels, critical path, shared-files table, Checks 570–575 |
 
-Spec owner: the repository owner. Numbers taken: **D2180–D2229** (D2180–D2200 used), **Checks 570–579**
-(570–575 used), findings F1–F36. No spec typo was fixed.
+Spec owner: the repository owner. Numbers taken: **D2180–D2229** (D2180–D2204 used), **Checks 570–579**
+(570–575 used), findings F1–F40. No spec typo was fixed.
 
 Five decisions were answered against the recommendation: D2180 (all Go), D2181 (keep the v2 bundle), D2182 (hash only,
 rotate), D2183 (merge #2457 and #2458 as planned), D2194 (everything in `fugaro-prod`, kept after round 1 with the risk accepted); D2194 was asked twice and answered against it both times. Amended after review: D2181 (by D2200) and D2182
 (the handover is encrypted), both re-asked and answered. D2184 is amended by the owner's voucher ruling
-(D2196–D2199).
+(D2196–D2199). Tension TN-P1 (D2201 against D2204) was answered against the recommendation: a project
+id is unique across organisations and operations transfers it.
