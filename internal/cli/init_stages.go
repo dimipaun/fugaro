@@ -424,8 +424,15 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 		_ = r.printResult()
 		return userErr("%v", runErr)
 	case res.Failed != nil:
+		// Only this one is the error the account has just printed (its step
+		// line, the log's path, the command that resumes the run), so only this
+		// one is marked as read. A run that failed and then stopped for
+		// something else returns that something else above, and it is the only
+		// statement of how to unblock the run — a refusal's "needs a real
+		// terminal … or pass --yes" — so it reaches the screen like any other
+		// command's error (TestARefusalAfterAFailureStillSaysHowToUnblockIt).
 		_ = r.printResult()
-		return res.Cause
+		return r.failureShown(res.Cause)
 	}
 	// D1553's self-flag, and it is here rather than beside markCreated above
 	// because of what each of the two marks means: markCreated records what a

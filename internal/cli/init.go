@@ -1117,7 +1117,7 @@ func runInit(r *initRun) error {
 		// header written on one terminal without the line coming down first
 		// read as one run-together line (see initRun.notes).
 		o.cloud.stderr = r.notes
-		return r.failureShown(e.converge(cmd.Context()))
+		return e.converge(cmd.Context())
 	}
 
 	// Both records of a managed installation are asked HERE, at the door,
@@ -1546,16 +1546,16 @@ func (r *initRun) stageDetail() io.Writer {
 	return streamOut(r.rep, r.repLog, r.w)
 }
 
-// failureShown marks a failed converge's error as one the screen has already
-// read. The step that failed printed it — whole while the run has no log to
-// keep it in (G5: what it printed is all there is), one clause plus the log's
-// path and the command that resumes the run when it has one — so main's
-// top-level line would be the same error a second time (the owner's feedback of
-// 2026-11-13). A run that stopped for a cause that is not a failure — a
-// refusal, a step left for you — is not this case: the error it returns is the
-// error's whole self, and nothing printed it.
+// failureShown marks a failed stage's error as one the screen has already read:
+// the step line and the account under it are the whole of that error on the
+// terminal, so main's top-level line would be the same failure a second time
+// (the owner's feedback of 2026-11-13). It keeps the log's own copy: what the
+// step printed is the reason cut to a clause, and the log holds it whole. It
+// answers for the error the account carries and no other — a run that failed
+// and then stopped for something else returns that something else untouched
+// (outcome, init_stages.go), because nothing printed it.
 func (r *initRun) failureShown(err error) error {
-	if err == nil || r.res.Failed == nil || r.rep == nil || !r.rep.KeepsLog() {
+	if err == nil || r.rep == nil || !r.rep.KeepsLog() {
 		return err
 	}
 	return &shownError{err: err}
