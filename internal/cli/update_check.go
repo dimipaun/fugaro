@@ -77,6 +77,22 @@ type stepCtx struct {
 	o     stepOptions
 	loc   pluginwire.Location // the checkout's top and its settings file
 	agent string              // the coding agent's marker, "" outside one
+
+	// detail is where a step's prose goes: the log always, the terminal only
+	// under -v, and w itself where the run has no log to write (detailOut). A
+	// step's own line, the confirmations it asks and everything a person has
+	// to read stay on w.
+	detail io.Writer
+}
+
+// detailOut is u.detail with the fallback of the run that has no log: a step
+// built outside the converge (a helper of a test, `fugaro update --check`,
+// update-skills) writes its prose where it writes everything else.
+func (u *stepCtx) detailOut() io.Writer {
+	if u.detail == nil {
+		return u.w
+	}
+	return u.detail
 }
 
 type checkStep struct {

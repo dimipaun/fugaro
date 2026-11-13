@@ -1040,7 +1040,7 @@ func runInit(r *initRun) error {
 			}
 			return userErr("nothing was published: %s", reason)
 		}
-		fmt.Fprintf(r.w, "published the shared config to %s/%s\n", lc.BucketURL(), infra.SharedConfigObject)
+		fmt.Fprintf(r.stageDetail(), "published the shared config to %s/%s\n", lc.BucketURL(), infra.SharedConfigObject)
 		return r.printResult()
 	}
 	spec, err := installOptions(o, lc)
@@ -2164,7 +2164,7 @@ func (r *initRun) confirm(what, undone string) error {
 // no confirmation is taken, two lines under a banner that announced one (the
 // owner's feedback of 2026-11-10).
 func (r *initRun) willDo(what string) {
-	fmt.Fprintf(r.w, "will do (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
+	fmt.Fprintf(r.stageDetail(), "will do (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
 }
 
 // confirmNow is the confirmation a step of this run asks now, and it asks
@@ -2292,7 +2292,7 @@ func (r *initRun) askBanner(what string) (bool, error) {
 	}
 	if r.refresh.asksNothing(r.conditions()) {
 		r.willDo(what)
-		fmt.Fprintf(r.w, "  %s\n", initflow.GateOrdinary())
+		fmt.Fprintf(r.stageDetail(), "  %s\n", initflow.GateOrdinary())
 		return true, nil
 	}
 	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
@@ -2307,9 +2307,9 @@ func (r *initRun) askBanner(what string) (bool, error) {
 	case r.o.ask:
 		// askConfirm printed the question and the answer's own line.
 	case r.o.yes && !r.o.planOnly:
-		fmt.Fprintln(r.w, "  confirmed by --yes")
+		fmt.Fprintln(r.stageDetail(), "  confirmed by --yes")
 	case r.gateStandsIn():
-		fmt.Fprintf(r.w, "  %s\n", initflow.OwnerProceeded())
+		fmt.Fprintf(r.stageDetail(), "  %s\n", initflow.OwnerProceeded())
 	}
 	return true, nil
 }
@@ -2984,7 +2984,7 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		}
 		if !changed {
 			r.res.Changes = &infra.PlanCounts{}
-			fmt.Fprintln(r.w, "No changes: the installation matches the plan.")
+			fmt.Fprintln(r.stageDetail(), "No changes: the installation matches the plan.")
 			if r.o.planOnly {
 				stop = true
 				return nil, nil
@@ -3519,7 +3519,7 @@ func (r *initRun) publishSharedConfig(ctx context.Context, lc *localcfg.Config) 
 		return
 	}
 	if written {
-		fmt.Fprintf(r.w, "published the shared config to %s/%s\n", lc.BucketURL(), infra.SharedConfigObject)
+		fmt.Fprintf(r.stageDetail(), "published the shared config to %s/%s\n", lc.BucketURL(), infra.SharedConfigObject)
 	}
 }
 
@@ -3581,17 +3581,25 @@ func (r *initRun) writeLocalConfig(next *localcfg.Config, path string, old []byt
 	}
 	r.res.Config = path
 	if old != nil && bytes.Equal(old, data) {
-		fmt.Fprintf(r.w, "The local config %s is up to date.\n", path)
+		fmt.Fprintf(r.stageDetail(), "The local config %s is up to date.\n", path)
 		// The keys the migration cannot convert are named here too: the file is
 		// current and still holds them, so they are a state of the file and not
 		// a change this run would make. A converged config has no note at all
 		// (migrateCraftKeys), so this says nothing about one.
 		for _, note := range migrationNotes {
-			fmt.Fprintf(r.w, "note: %s\n", note)
+			fmt.Fprintf(r.stageDetail(), "note: %s\n", note)
 		}
 		return nil
 	}
-	fmt.Fprintf(r.w, "The local config %s changes:\n%s", path, lineDiff(string(old), string(data)))
+	// The diff is what the confirmation below is about: it stays on screen where
+	// that question is really asked (a project whose gate does not stand in),
+	// and under the gate — where nothing is asked of anybody — it is the run's
+	// own account of the file (stageDetail).
+	diff := r.w
+	if r.gateStandsIn() {
+		diff = r.stageDetail()
+	}
+	fmt.Fprintf(diff, "The local config %s changes:\n%s", path, lineDiff(string(old), string(data)))
 	if !confirmed {
 		if err := r.confirmOrdinary("writes the local config "+path+" as shown", "the local config was not changed", ""); err != nil {
 			return err
@@ -3606,14 +3614,14 @@ func (r *initRun) writeLocalConfig(next *localcfg.Config, path string, old []byt
 			return userErr("backing up the local config: %v", err)
 		}
 		r.res.Backup = backup
-		fmt.Fprintf(r.w, "backed up the old local config to %s\n", backup)
+		fmt.Fprintf(r.stageDetail(), "backed up the old local config to %s\n", backup)
 	}
 	if err := writeFileAtomic(path, data); err != nil {
 		return userErr("writing the local config: %v", err)
 	}
-	fmt.Fprintf(r.w, "wrote %s\n", path)
+	fmt.Fprintf(r.stageDetail(), "wrote %s\n", path)
 	for _, note := range migrationNotes {
-		fmt.Fprintf(r.w, "note: %s\n", note)
+		fmt.Fprintf(r.stageDetail(), "note: %s\n", note)
 	}
 	if old == nil {
 		r.noteSecondProject()
@@ -3938,7 +3946,7 @@ func (r *initRun) forget(ctx context.Context, c *infra.Clients, t *tf.TF, wd *in
 			}
 		}
 	} else {
-		fmt.Fprintln(r.w, "No changes: log isolation and registry cleanup are already off.")
+		fmt.Fprintln(r.stageDetail(), "No changes: log isolation and registry cleanup are already off.")
 	}
 	if err := r.confirm("rollback step 2 of 2: removes every address from Terraform's state (terraform state rm module.installation); it destroys nothing",
 		"the state still holds the installation"); err != nil {
@@ -5172,7 +5180,7 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 		}
 		if !changed {
 			r.res.Changes = &infra.PlanCounts{}
-			fmt.Fprintf(r.w, "No changes: %s matches the plan.\n", spec.Name)
+			fmt.Fprintf(r.stageDetail(), "No changes: %s matches the plan.\n", spec.Name)
 			// Nothing was applied, so nothing was retired: only a set the read
 			// proved empty is settled by a plan that changed nothing, because a
 			// non-empty one is settled by the apply below, which is what deletes

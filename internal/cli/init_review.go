@@ -207,15 +207,15 @@ func (r *initRun) askOrdinary(what, notCovered string) (bool, error) {
 		if covered {
 			r.willDo(what)
 			if r.gateStandsIn() {
-				fmt.Fprintf(r.w, "  %s\n", initflow.GateOrdinary())
+				fmt.Fprintf(r.stageDetail(), "  %s\n", initflow.GateOrdinary())
 			} else {
-				fmt.Fprintln(r.w, "  covered by the run confirmation (the review's own question, at this run's terminal)")
+				fmt.Fprintln(r.stageDetail(), "  covered by the run confirmation (the review's own question, at this run's terminal)")
 			}
 			return true, nil
 		}
 		if r.gateStandsIn() && initflow.PersonAtTheTerminal(r.conditions()) {
 			r.willDo(what)
-			fmt.Fprintf(r.w, "  %s\n", initflow.OwnerProceeded())
+			fmt.Fprintf(r.stageDetail(), "  %s\n", initflow.OwnerProceeded())
 			return true, nil
 		}
 	}
@@ -516,6 +516,14 @@ func (e *initEngine) reviewScreen(ctx context.Context, why string) {
 	w := r.w
 	todo := e.todo()
 	managed := r.gateStandsIn()
+	if managed && !o.planOnly {
+		// Under the gate nobody is asked anything, so this screen is the run's
+		// own account of what it does and not a thing a person has to read
+		// before answering: it goes where the rest of the account does, and -v
+		// brings it back. A project whose gate does not stand in keeps it on
+		// screen, because there it IS what the confirmation below is about.
+		w = r.stageDetail()
+	}
 	if managed {
 		fmt.Fprintf(w, "\nReview: project %s (GCP %s) is a managed project, so its steps take no confirmation: the deterministic gate judges each document before it writes.\n",
 			pluginwire.Printable(r.projectName), pluginwire.Printable(r.gcpProject))

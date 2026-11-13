@@ -502,5 +502,9 @@ func (e *initEngine) stepCtx(env initflow.Env, loc pluginwire.Location) *stepCtx
 			in: e.r.in, out: e.r.w}},
 		loc:   loc,
 		agent: e.options().Agent,
+		// What the step says about itself — the claude binary it runs, the
+		// subprocess lines under it — is the converge's own account, not the
+		// step's line: it goes where the rest of the cover does (§9.2).
+		detail: e.r.stageDetail(),
 	}
 }
