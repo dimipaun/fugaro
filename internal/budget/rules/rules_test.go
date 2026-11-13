@@ -789,6 +789,59 @@ func TestDeviceNodesAreClientDenied(t *testing.T) {
 	}
 }
 
+// TestDeviceNodeCarriesNoShapeRule is P2's fourth claim — the plan's red step
+// calls it "the document moved" — and the one its three emulator cases cannot
+// reach: reconciliation §F29 reads the node as `{ ".read": false, ".write":
+// false }` with **no `.validate` over it and no `$other` beneath it**, and that
+// absence, not the fields, is what makes the administered email and the role
+// (D222, D225) children whose arrival changes nothing. No rule reads one, so an
+// entry carrying them is admitted exactly as a bare one is, an installation
+// whose document predates them needs no redeploy, and the deployed document
+// takes no generation.
+//
+// It reads testdata/rules.golden.json rather than Generate() and pins the node's
+// own attributes and everything beneath it, because the byte comparison in
+// TestRulesGolden is satisfied by regenerating the golden — which is exactly how
+// a shape rule arrives: whoever writes it runs UPDATE_GOLDEN=1 in the same
+// change, and the diff is then the only place the generation would be seen. A
+// rule over this node is a generation of its own (§F29's "what would force a
+// generation later", D225's later half), so it has to fail here as well.
+//
+// Hand mutation this fails on: adding `".validate": ...` to the `$uid` entry in
+// rules.json.tmpl and regenerating the golden (the attribute set below), and
+// adding a `$other` child beneath the node (the paths below it).
+func TestDeviceNodeCarriesNoShapeRule(t *testing.T) {
+	raw, err := os.ReadFile(goldenPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("%s is not JSON: %v", goldenPath, err)
+	}
+	node := PathDevices + "/$uid"
+	var found bool
+	var beneath []string
+	walk(doc["rules"], nil, func(path []string, attrs map[string]any) {
+		p := strings.Join(path, "/")
+		switch {
+		case p == node:
+			found = true
+			if len(attrs) != 2 || attrs[".read"] != false || attrs[".write"] != false {
+				t.Errorf("/%s carries %v, want exactly {\".read\": false, \".write\": false}: a rule over the node is a rules generation (§F29), and it is the first one that reads a child of it that D225's later half is for", node, attrs)
+			}
+		case strings.HasPrefix(p, node+"/"):
+			beneath = append(beneath, "/"+p)
+		}
+	})
+	if !found {
+		t.Fatalf("%s carries no /%s: the deployed document denies the node USER's device conjunct reads", goldenPath, node)
+	}
+	if len(beneath) > 0 {
+		t.Errorf("%s names %s beneath /%s: nothing in the document may name a child of the node, or the entry stops being one whose fields are optional", goldenPath, strings.Join(beneath, ", "), node)
+	}
+}
+
 // TestUserClaimRequiresTheDeviceNode: D166's conjunct, in every read and write
 // USER or MAILBOX reaches. The property is the one an operator relies on when
 // they revoke a phone — deleting one child takes every family away at once —
