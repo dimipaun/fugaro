@@ -745,6 +745,51 @@ func TestLadderLaunchResumesOnlyARunThatFailed(t *testing.T) {
 	}
 }
 
+// TestLadderLaunchNeverBesideARunInFlight reads the guard whose other half is
+// the tick's recovery: one run at a time carries an item, so the ladder resumes
+// an item only when nothing of it is going. Here the newest run the approval
+// covers failed and a run of another recipe the ladder launched — a rebase —
+// has not reported. What the item's own runs say is a resume, and the only
+// thing standing in the way is the run in flight: without the check the ladder
+// plans attempt 4 beside it, a second launch under one item and the run id the
+// tick is re-issuing.
+//
+// Mutation: drop the open-attempt read and this item is resumed.
+func TestLadderLaunchNeverBesideARunInFlight(t *testing.T) {
+	now := o6Now()
+	at := now.Add(-2 * time.Hour)
+	s, item := resumableItem(t, "wi-1", now, at)
+	if _, ok := orchestrator.LadderLaunch(s, item, orchestrator.RunView{}, o6Caps()); !ok {
+		t.Fatal("the ladder launches nothing for the item before the rebase was launched")
+	}
+
+	// The rebase the executor launched under the same approval, committed and
+	// not reported: the item carries that attempt and the run id it recorded.
+	item.Attempts = 3
+	item.RunID = "20261107-110000-ffff"
+	rebase := item
+	rebase.Recipe = "rebase"
+	inFlight := s
+	inFlight.WorkItems = []orchestrator.WorkItem{item}
+	inFlight.Intents = append(append([]orchestrator.Intent{}, s.Intents...), orchestrator.Intent{
+		ID:         orchestrator.IntentID("wi-1", 3),
+		RunID:      "20261107-110000-ffff",
+		SpecDigest: orchestrator.SpecDigest(rebase),
+		ApprovalAt: at.UTC(),
+		At:         now.Add(-time.Minute),
+	})
+
+	// The run under test really is going, and the two the approval covers
+	// really did fail: what refuses the launch below is the in-flight attempt
+	// and not one of those.
+	if last := inFlight.Intents[len(inFlight.Intents)-1]; last.Outcome != "" {
+		t.Fatal("the rebase under test has reported, and this test is about a run still in flight")
+	}
+	if a, ok := orchestrator.LadderLaunch(inFlight, item, orchestrator.RunView{}, o6Caps()); ok {
+		t.Fatalf("the ladder launched %+v beside a run it already has in flight", a)
+	}
+}
+
 // TestLadderLaunchRefusesAnItemItIsNotTheResumeFor is the three things the
 // resume reads beside the approval: the rung, the phase and the dependencies.
 // Rung 1 is the floor where the item goes back to its own recipe, and every
