@@ -8,10 +8,9 @@ package keyservice
 // a seat change reissues under a new key id, a refund or a chargeback withdraws
 // the key its event names and every successor a renewal minted from it (§8,
 // D2131 — see `withdrawn` for what that does not stop), a cancellation stops the
-// reissue, and
-// a test-mode event mints a staging key and nothing else. Enterprise is not this
-// path: it is invoiced directly by the entity and its key is the admin page's
-// (D2141, §5.5).
+// reissue, and a test-mode event mints a staging key and nothing else. Enterprise
+// is not this path: it is invoiced directly by the entity and its key is the
+// admin page's (D2141, §5.5).
 //
 // Two rules give this path its shape, and both are about not minting twice: a
 // body is verified **before it is read**, and what was minted for which source
@@ -834,11 +833,12 @@ func (s *Service) paidRequest(policy, workspaceID, organisation string, seats, d
 // paid is the paid path's mint: it asks the minter for one v1 key, mails the
 // bundle to the buyer, and writes the issuance and the key's renewal state.
 //
-// The subscription is the merchant's, and it is written into the record and the
-// key's state because this is the only place either is minted for a subscription
-// and the only place that knows it: the record carries it so that a renewal can
-// tell a licence that is being paid for from one that is not, and the state
-// carries the workspace the successor of that renewal is bound to (TN2, K2.3).
+// The subscription and the workspace are the merchant's own, and they are written
+// into the record and the key's state because this is the only path that mints
+// for a subscription and the only one that knows either: the record's
+// subscription is what lets a renewal tell a licence still being paid for from
+// one that is not, and the state's workspace is the one the successor of that
+// renewal is minted into and a request's word for it is not proof (TN2, K2.3).
 // A key minted without the pair is a key nothing can renew — refused for the
 // subscription by §7's gate and minted into no workspace at all.
 //
