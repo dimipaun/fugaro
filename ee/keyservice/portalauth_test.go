@@ -298,6 +298,34 @@ func TestUnverifiedEmailIsRefused(t *testing.T) {
 	}
 }
 
+// TestAnAddressThatIsNoMemberIsRefused: mcpauth's fold admits any printable
+// ASCII as an address, and access.Member is the stricter rule — exactly one @
+// with a local part and a domain on either side of it. An identity whose member
+// cannot be computed is refused here and not returned with an empty Member,
+// which is the invariant SignIn.Member documents. It is a guard rather than a
+// courtesy: a caller comparing an empty member against a stored record is
+// comparing two empty things, and the record that would match is one nobody
+// wrote.
+func TestAnAddressThatIsNoMemberIsRefused(t *testing.T) {
+	v := portalVerifier(t)
+
+	for _, address := range []string{"no-at-sign", "two@at@signs", "trailing@", "@leading"} {
+		claims := portalClaims()
+		claims["email"] = address
+		signIn, err := v.Verify(context.Background(), signPortalToken(t, portalKey(), portalKid, "RS256", claims))
+		if !errors.Is(err, ErrUnverifiedSignIn) {
+			t.Errorf("the address %q was refused with %v, which is not the portal's sentinel", address, err)
+			continue
+		}
+		if signIn != (SignIn{}) {
+			t.Errorf("the address %q answered %+v beside its refusal, and a refused sign-in carries nothing", address, signIn)
+		}
+		if strings.Contains(err.Error(), address) {
+			t.Errorf("the refusal repeats the address out of the token: %q", err.Error())
+		}
+	}
+}
+
 // TestStaleSignInIsRefusedForMint: D2187's step-up is an age, and the age is
 // `auth_time`'s. A sign-in older than the window is refused, one that attests no
 // sign-in time at all is refused, and one from the future is refused — a token
