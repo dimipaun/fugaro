@@ -459,20 +459,20 @@ const implicitReviewJobTimeout = 3 * time.Hour
 //     token and its reviewer's model calls both come from the service, and a
 //     project without one has nothing for the job to fetch anything from —
 //     checkReviewService refuses that launch before it looks for a job.
-//   - No github coding job in the installation's set: every profile's accounts
-//     carry config.ProjectJobAccounts' empty segment, so a github coding job
-//     holds a no-account entry whose variant is exactly the pair this job would
-//     add (github, the default account — config.ReviewVariantAccount spells that
-//     empty segment "default"). The gate reads the pair rather than the name and
-//     service account it derives, and it suppresses on purpose where the two
-//     differ: a project that declares a github profile already reviews its
-//     repositories on that profile's variant, and requirement 2 leaves its plan
-//     exactly what it was, so no implicit job is added beside it even when the
-//     profile is not named ImplicitReviewProfile. What the wider gate leaves
-//     open is the repository whose workflow names a profile no policy defines,
-//     and that is the launcher half's question (piece 3) rather than this one's:
-//     nothing resolves a review onto this job yet, so an installation with
-//     profiles is not made to carry a job no launch of it reaches.
+//   - No coding job whose review variant IS this job. The gate is the collision
+//     itself (the name and the service account addReviewVariant refuses a
+//     deployment on), and it is the same predicate for the same reason: every
+//     profile's accounts carry config.ProjectJobAccounts' empty segment, so a
+//     github coding job holds an entry whose variant is this job's own triple
+//     (ImplicitReviewProfile, github, config.ReviewVariantAccount's "default")
+//     when — and only when — the profile it belongs to is ImplicitReviewProfile.
+//     A github profile under any other name does NOT suppress the job, and that
+//     is deliberate rather than an oversight: suppressing it there would take
+//     the job out of the set for an installation that already deploys it, and
+//     the plan of the next update would carry its delete — which
+//     RefuseProjectJobDeletes stops the whole update on, with "restore the
+//     profile as it was" as the only way out. Adding a profile is an ordinary
+//     act, so the job stays and the profile's own variants are added beside it.
 //   - A single Github App ID recorded (recordedGitHubAppID): a github job runs
 //     on providers.EnvGitHubAppID and the module refuses a job without it, so an
 //     installation that records none — or two, which recordedGitHubAppID reports
@@ -481,9 +481,6 @@ const implicitReviewJobTimeout = 3 * time.Hour
 //     update that converges today stops converging.
 func implicitReviewVariant(lc *localcfg.Config, coding map[string]ProjectJob, bucket string, vertex bool) (ProjectJob, bool) {
 	if lc.CredentialsService == nil {
-		return ProjectJob{}, false
-	}
-	if slices.ContainsFunc(slices.Collect(maps.Values(coding)), func(j ProjectJob) bool { return j.Provider == githubProvider }) {
 		return ProjectJob{}, false
 	}
 	appID, err := recordedGitHubAppID(lc)
@@ -520,7 +517,13 @@ func implicitReviewVariant(lc *localcfg.Config, coding map[string]ProjectJob, bu
 		},
 		Vertex: vertex,
 	}
-	return reviewVariant(lc, twin), true
+	v := reviewVariant(lc, twin)
+	for _, c := range coding {
+		if t := reviewVariant(lc, c); t.Job == v.Job || t.ServiceAccount.AccountID == v.ServiceAccount.AccountID {
+			return ProjectJob{}, false
+		}
+	}
+	return v, true
 }
 
 // addProjectJob adds j to the job set, refusing a job whose name or service

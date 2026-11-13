@@ -298,11 +298,15 @@ type CredentialsServiceSpec struct {
 	// policy's own spelling (config.ProjectJobAccounts' mapping, never empty),
 	// and a revision reads no policy at start-up (D143).
 	//
-	// It is left out of an installation whose local config names no profile,
-	// which is an installation that deploys no review job and whose service
-	// admits no review caller — the fail-closed state, and not an error: the
-	// class is inert until a profile exists (unlike JobAccounts, which the
-	// service refuses an empty version of).
+	// It is left out of an installation that deploys no review job at all — no
+	// profile, and no credentials service (CredentialsReviewJobAccounts) — which
+	// is an installation whose service admits no review caller: the fail-closed
+	// state, and not an error, because the class is inert until a job of it
+	// exists (unlike JobAccounts, which the service refuses an empty version
+	// of). An installation with no profile and the service on is NOT that
+	// state: it deploys the ONE implicit default review job and carries that
+	// job's row, which is what the owner's requirement of 2026-11-13 asks for
+	// (ProjectReviewJobs' implicitReviewVariant).
 	ReviewJobAccounts []CredentialsReviewJob `json:"review_job_accounts,omitempty"`
 	// VerifierAccounts are the identities that may ask the service whether a
 	// verdict's signature is its own (C3.9g1, D1068): the installation's own

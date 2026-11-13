@@ -17,6 +17,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/credsvc"
+	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -304,6 +306,113 @@ func TestUpdateSetsCredentialsServiceOnEveryInstallation(t *testing.T) {
 	// service is on and every launch goes out without the address.
 	if got := localConfigOf(t, r).CredentialsService; got == nil || got.URL != credentialsServiceURL {
 		t.Errorf("the project config records credentials_service = %+v, want the service's URL %s\n%s", got, credentialsServiceURL, s)
+	}
+}
+
+// credentialsRigRepoLine is the repository the init rig's local config
+// declares, and the line credentialsGitHubRepo replaces.
+const credentialsRigRepoLine = "  acme/sandbox: { provider: bitbucket, base_branch: master, workflows: [web] }"
+
+// credentialsRigGitHubAppID is the App ID the github fixture records: a job on
+// the github provider runs on providers.EnvGitHubAppID, and the module refuses
+// a job without one (modules/project/job.tf), so an installation whose
+// repositories are all Bitbucket is an installation no github job is deployed
+// for — the shape every credentials test above is about, and not this one.
+const credentialsRigGitHubAppID = "123456789"
+
+// credentialsGitHubRepo puts the rig's one repository on the github provider
+// with an App ID recorded, which is what makes the installation one a job on
+// the github provider is deployed for at all.
+func credentialsGitHubRepo(t *testing.T, r *imagesRig) {
+	t.Helper()
+	before := readFileString(t, r.cfg)
+	after := strings.Replace(before, credentialsRigRepoLine,
+		"  acme/sandbox: { provider: github, base_branch: master, workflows: [web], github_app_id: \""+credentialsRigGitHubAppID+"\" }", 1)
+	if after == before {
+		t.Fatalf("the rig's config does not carry the repository line this fixture replaces:\n%s", before)
+	}
+	if err := os.WriteFile(r.cfg, []byte(after), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestTheDeployRunDeploysTheImplicitReviewJob: the run that deploys the
+// credentials service deploys the review job beside it, and the service's own
+// review table names that job's account.
+//
+// The local config is the whole difficulty: the credentials_service block is
+// the opt-in every reader gates on — the implicit default review job
+// (infra's implicitReviewVariant) and the review rows the service is handed
+// (infra.Credentials over infra.CredentialsReviewJobAccounts) — and the run
+// that WRITES the block is the one run whose config does not hold it yet: the
+// block reaches the project config from this run's own outputs, at the end of
+// the run (init.go's writeConfig). A reader that took the config as it stands
+// would therefore compose an installation one run behind the deployment —
+// service first, review job on the NEXT `fugaro update` — and the owner's
+// requirement of 2026-11-13 (`fugaro review --pr N` works out of the box on a
+// project with no profiles) would need a second command for every fresh
+// installation and every installation upgrading from before the service was
+// default-on.
+//
+// Mutation (run, restore): drop the spec's own set from
+// deployCredentialsService (the `e.spec.ProjectReviewJobs` assignment) and the
+// installation's tfvars carry no project_review_jobs — the first assertion;
+// read infra.Credentials off e.lc rather than off credentialsServiceOptedIn and
+// the service's table carries no review row — the second.
+func TestTheDeployRunDeploysTheImplicitReviewJob(t *testing.T) {
+	r := credentialsRig(t)
+	credentialsGitHubRepo(t, r)
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
+	credentialsOutputs(t, r)
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	s := out + errOut
+	if err != nil {
+		t.Fatalf("an ordinary update of an installation with no credentials service failed: %v\n%s", err, s)
+	}
+	name := credsvc.ReviewJobName(infra.ImplicitReviewProfile, "github", config.DefaultClaudeAccount)
+	// The job the run handed terraform, in the tfvars every stage of the run
+	// rewrites from the spec: the installation root's own apply creates it.
+	reviewJob := func(step string) map[string]any {
+		t.Helper()
+		review, _ := r.tfvars(t)["project_review_jobs"].(map[string]any)
+		job, _ := review[name].(map[string]any)
+		if job == nil {
+			t.Fatalf("%s: the installation deploys no review job %s: project_review_jobs = %v\n%s", step, name, review, s)
+		}
+		return job
+	}
+	job := reviewJob("the run that deployed the credentials service")
+	// Built from the installation's own facts: the App ID its repository
+	// records. The address is absent here and present on the second run below,
+	// which is the one-run lag every variant's address has: it is Cloud Run's
+	// answer, this run writes it into the installation's tfvars only after the
+	// apply that creates the service (fillCredentialsAudience), and a job's
+	// environment is composed from the local config, which records the block at
+	// the end of the run (init.go's writeConfig).
+	env, _ := job["env"].(map[string]any)
+	if got := env[providers.EnvGitHubAppID]; got != credentialsRigGitHubAppID {
+		t.Errorf("the review job's %s = %v, want the App ID the installation records (%s)\n%s", providers.EnvGitHubAppID, got, credentialsRigGitHubAppID, s)
+	}
+	// And the service's table names that job's account in the same run: the
+	// table is the set the deployment admits a review caller by, so a row one
+	// run behind its job is a job whose every call is refused.
+	svc := credentialsServiceEntry(t, r)
+	want := []any{map[string]any{"profile": infra.ImplicitReviewProfile, "provider": "github", "account": config.DefaultClaudeAccount}}
+	if rows, _ := svc["review_job_accounts"].([]any); !reflect.DeepEqual(rows, want) {
+		t.Errorf("credentials_service.review_job_accounts = %v, want %v: the row is what binds the deployed account to the credential its calls are served by\n%s", svc["review_job_accounts"], want, s)
+	}
+	// And the project config records the block, which is what makes the NEXT
+	// run compose the same set — with the address on the job, and the job's
+	// account in the table of the service it now records — rather than plan the
+	// job's deletion, which RefuseProjectJobDeletes stops the whole update on.
+	if got := localConfigOf(t, r).CredentialsService; got == nil || got.URL != credentialsServiceURL {
+		t.Fatalf("the project config records credentials_service = %+v, want the service's URL %s\n%s", got, credentialsServiceURL, s)
+	}
+	if _, errOut, err := executeStdin(t, "", "update", "--yes"); err != nil {
+		t.Fatalf("the update after the one that deployed the service failed: %v\n%s", err, errOut)
+	}
+	if got := reviewJob("the update after the deploy")["env"].(map[string]any)[providers.EnvCredentialsServiceURL]; got != credentialsServiceURL {
+		t.Errorf("the review job's %s = %v, want the installation's own audience %s: a launch on a named job is handed no address (credentialsServiceLaunchEnv), so the variant's own deployment is the only place it can come from\n%s", providers.EnvCredentialsServiceURL, got, credentialsServiceURL, s)
 	}
 }
 
