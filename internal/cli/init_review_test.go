@@ -530,7 +530,9 @@ func TestMarkedProjectYesAsBefore(t *testing.T) {
 	if err != nil || strings.Contains(out, "Review:") || strings.Contains(out, "covered by the run confirmation") || len(r.ran(t, "apply")) != 1 {
 		t.Fatalf("%v, calls %q\n%s", err, r.calls(t), out)
 	}
-	if !strings.Contains(out, "confirmed by --yes") {
+	// The sentence that says what covered the ordinary steps is the run's own
+	// account of a step nobody is asked about: the log keeps it (§9.2).
+	if !strings.Contains(out+newestLog(t, "setup"), "confirmed by --yes") {
 		t.Errorf("\n%s", out)
 	}
 }

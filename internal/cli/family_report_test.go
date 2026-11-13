@@ -403,11 +403,17 @@ func TestAccountsAddDefaultIsShort(t *testing.T) {
 		t.Errorf("the run's account does not close on the reporter's summary: %q\nstderr:\n%s", last, errOut)
 	}
 	// The happenings the run still owes the person are not steps and are not
-	// hidden by them (G1): the review screen, and the confirmation the run
-	// answered with --yes.
-	for _, want := range []string{"fugaro accounts add: project aurora", "will do", "CONFIRM"} {
-		if !strings.Contains(errOut, want) {
-			t.Errorf("the run's own reading of itself is gone with the account: %q is not on stderr:\n%s", want, errOut)
+	// hidden by them (G1): the confirmation the run answered with --yes is on
+	// the account it prints, and the review screen's header and the note beside
+	// the steps --yes covered are the run's own account, which its log keeps
+	// (§9.2).
+	if !strings.Contains(errOut, "CONFIRM") {
+		t.Errorf("the confirmation the run answered is not on stderr:\n%s", errOut)
+	}
+	log := familyLog(t, "accounts-add")
+	for _, want := range []string{"fugaro accounts add: project aurora", "will do"} {
+		if !strings.Contains(log, want) {
+			t.Errorf("the run's own reading of itself is gone with the account: %q is on neither the screen nor the log:\n%s", want, log)
 		}
 	}
 	// The block is still the whole of stdout: the answer and nothing a stage
