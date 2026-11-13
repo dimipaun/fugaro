@@ -3248,3 +3248,87 @@ editing a workflow will meet it.
 **Two comments in the applied console workflows spell the Linux artifacts `linux-x64`, and the correction is yours to make at a copy-in.** A published release showed what `electron-builder` actually writes — the target's own word for the architecture, so `Fugaro.Console-X.Y.Z-linux-x86_64.AppImage` and `Fugaro.Console-X.Y.Z-linux-amd64.deb` — and that release corrected `docs/design/desktop-console.md` §7.6, `docs/release.md` and `console/README.md` on 2026-10-24. `.github/workflows/console-release.yml` and `.github/workflows/console-linux.yml` still carry a comment saying `linux-x64` — one line each, and the first of the two is duplicated in the staged copy here, since the two are byte-identical — and no agent run may edit `.github/workflows/` — GitHub refuses the push — so it waits for you: when you next copy `console-release.yml` in, write the two real names into **both** copies in the same commit, the staged one here and the applied one, because `TestDocsConsoleReleaseWorkflowIsStagedAndPinned` requires the two to be byte-identical, and correct `console-linux.yml`'s comment in that same commit.
 
 Dependabot does not watch this directory, and `next` can lag `main`'s Dependabot bumps of the workflow files, so a staged file's pins can differ from the ones `main` has moved to. `TestActionPinsAreFullSHAs` requires every `uses:` **here** to be a full commit SHA; once a staged file is copied in and gone from here, the same test also requires its pins to agree with the other workflows' — `images.yml` is that test's subject, so that comparison is live for it. `TestSharedTestsWorkflowIsStagedAndPinned` requires the same of the pending `shared-tests.yml` (full SHAs, each with its `# vX.Y.Z` beside it). Before copying, compare `grep -h 'uses:' .github/workflows/*.yml docs/pending-workflows/*.yml | sort -u` and keep the NEWER SHA for each action (verify it against the upstream tag with `gh api repos/<owner>/<repo>/git/ref/tags/<tag>`), so the copy never downgrades a pin.
+
+## `ci-hygiene.yml.snippet`
+
+**Status: the snippet is staged and pending.** It is not a workflow of its own
+and never becomes one: `ci-hygiene.yml.snippet` holds the two lines of a step,
+`- name: hygiene` / `run: scripts/ci-hygiene.sh`, that go into
+`.github/workflows/ci.yml`'s `check` job immediately after its last step
+(`- run: go vet -tags firebase ./...`). It was staged on **2026-11-13**, by the
+run that added `scripts/ci-hygiene.sh`, because no agent run may push a
+`.github/workflows/**` change and GitHub refuses the push — the same reason
+every other file here is staged.
+
+**What the step runs.** `scripts/ci-hygiene.sh`, one bash script run from the
+repository root with nothing but git and awk behind it, over the three
+mechanical hazards that took `main`'s CI red over 2026-11-10..13:
+
+- **Rule 1 fails the job** on a tracked file whose name ends in `-E`, `.orig`,
+  `.bak`, `.rej` or `~`, read out of `git ls-files` so it is exactly what a
+  commit would carry. Those are `sed -i`'s and every patch tool's leftovers: a
+  pull request committed two of them in the week of 2026-11-10, they carry no
+  licence notice, and `TestEEFilesCarryTheNotice` and `TestDocsEELicensed`
+  failed `main` for files nobody meant to commit. The tree this check was first
+  run on had one too — `internal/credsvc/slip_pool_test.go-E`, a copy of an
+  older revision of the test beside it, committed by `0518e343` — and it was
+  removed in the same branch as the check.
+- **Rule 2 reports and does not fail** on a `_test.go` literal-year
+  `time.Date(20NN, …)` inside a function that also reaches the process clock —
+  through `time.Now()` in the same function, or through a fixture built with
+  nothing but the test (`newX(t)`), which is how the clock gets chosen for it.
+  The window is the enclosing function, 40 lines either side of the instant:
+  the failure it is modeled on is `TestRotateReturnsAFreshPair`, which minted
+  and rotated at a fixed `2026-11-06` instant while its store read the process
+  clock, and which stopped passing on **2026-11-13** once the family's 7-day
+  idle bound had passed for real (`11fb8575`).
+- **Rule 3 reports and does not fail** on a `_test.go` assertion that bounds
+  `time.Since(...)` by a literal duration under 60s. Every Go package of this
+  module runs under `-race` in the `shard` job, and a bound tight enough to
+  mean something on an idle machine is tight enough to miss on a shared runner:
+  `TestRedactPassesAreBounded` failed for exactly that, and its fix was to
+  compare the cost of a log against the cost of one a quarter its size rather
+  than against a number of seconds.
+
+Rules 2 and 3 report rather than fail because most of what they find is not a
+bug: a fixture that pins its own clock a line later looks the same to a shell
+script as one that never did. The script prints one `warn:` line per hit and
+says so in its summary; promoting either rule to a failure is the one-line
+change its own header describes, once the tree it reports on is clean. The
+counts on this tree at the time of staging are in the pull request that added
+it.
+
+**To copy it in**, from the repository root — copy the two lines into the
+`check` job of `.github/workflows/ci.yml`, after its last step, and then:
+
+```sh
+git rm docs/pending-workflows/ci-hygiene.yml.snippet
+git add .github/workflows/ci.yml
+git commit -m "ci: run the hygiene check in the check job"
+```
+
+**That commit owes this page one line and nothing else.** Unlike every other
+staged file here, this one is not a `.ya?ml` name, so it is not counted as a
+pending workflow: neither this page's opening line, nor `website/README.md`,
+nor `internal/cli`'s docs tests, nor `website/test/readme.mjs` moves when it is
+copied in — all of them read only `.ya?ml` files in this directory. What moves
+is the status line above, which becomes **"`ci-hygiene.yml.snippet` is applied,
+not pending."**, and this section stays as the record of what the step does.
+There is no byte-identity clause for it either: the snippet is a fragment, not
+a copy of the file it goes into.
+
+**The check already runs in CI's shard job today**, before the copy-in:
+`scripts/ci_hygiene_test.go` runs `scripts/ci-hygiene.sh` against this tree and
+fails on a rule 1 violation, and runs `scripts/ci-hygiene_test.sh`, which drives
+the script in fixture repositories in a temp git repo, under `timeout`, with a
+mutation check per rule. The step staged here is what puts the check in the
+`check` job beside gofmt and the vet passes — a second, plugin- and
+workflow-wide place to see it fail, where a stray file is reported as a
+`check`-job failure rather than as a package's test — and what a branch that
+never runs the Go tests (a docs-only change skips `check` and `shard` alike)
+does not get either way.
+
+**Not verified.** The two lines have never run in the workflow: what is
+verified offline is the script and its test, in fixture repositories and
+against this tree. That the step runs in the `check` job is what the first
+dispatch after the copy-in shows.
