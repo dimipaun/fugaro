@@ -81,6 +81,7 @@ func TestLandingSkillClassifiesThreeWays(t *testing.T) {
 		{"why that list cannot answer", "a follow-up's covers only its own commits, the record's list is capped and can end truncated, and the job's own service account writes it"},
 		{"that a finding is not needed for the question", "whether or not a leftover finding sits on it"},
 		{"the unreadable-record case", "no row for it at all, a finding whose impact you cannot read"},
+		{"the case of no row that left a state", "or no row that left the pull request in a state at all (every row `none` or `reviewed`, so there are no test records and no findings to read)"},
 	} {
 		if !strings.Contains(skill, want.text) {
 			t.Errorf("%s never says %s (%q): the three classes are the skill, and one of them losing its fact is a land that should have been a follow-up, or the other way round", landingSkillPath, want.what, want.text)
@@ -89,14 +90,21 @@ func TestLandingSkillClassifiesThreeWays(t *testing.T) {
 }
 
 // TestLandingSkillReadsTheChangeRunsRecord: the listing a reader classifies
-// from carries a finished independent review job's run as well, usually the
-// newest row, and that run built nothing — no test records, no findings, no
-// deferrals — so a reader taking "the last run" for the class's evidence
-// measures a land against a record that has none of it. The skill has to say
-// which row decides and which one is only a second opinion. The row's own
-// account of the paths it changed is deliberately not part of that read: the
-// security question is asked of the change itself, and a row records one run's
-// commits and is written by the run.
+// from carries runs that built nothing beside the one that did, and they are
+// usually the newest rows: a finished independent review job's run (no test
+// records, no findings, no deferrals), and any follow-up that left the pull
+// request as it found it — a rebase that only put the branch back on its base,
+// one that stopped at a gate, one that failed or was refused — all of which
+// end with the outcome `none`. A reader taking "the last run" measures a land
+// against a record that carries none of the class's evidence, and one that
+// read a rebase run would answer land while `fugaro followups <rebase-run>`
+// filed nothing, losing what the building run deferred. So the skill has to
+// name the row that decides, the same pair of outcomes the CLI's own reading
+// of a pull request's state uses (`prVerdict`: `ready` or `draft`), and say
+// that a newer `none` row is skipped. The row's own account of the paths it
+// changed is deliberately not part of that read: the security question is
+// asked of the change itself, and a row records one run's commits and is
+// written by the run.
 func TestLandingSkillReadsTheChangeRunsRecord(t *testing.T) {
 	skill := landingSkillMD(t)
 	for _, want := range []struct{ what, text string }{
@@ -104,7 +112,11 @@ func TestLandingSkillReadsTheChangeRunsRecord(t *testing.T) {
 		{"how to tell it apart", "A review job's run is the one whose `outcome` is `reviewed`"},
 		{"that it is not the run a land is decided from", "it is not the run a land is decided from"},
 		{"what it carries instead", "it carries no test records, no findings and no deferrals"},
-		{"which row decides", "Take those from the run that built the change, the newest row whose `outcome` is not `reviewed`"},
+		{"which row decides", "The run a land is read from is the newest row whose `outcome` is `ready` or `draft`"},
+		{"that a newer `none` row is skipped", "so skip a newer `none` row rather than reading it"},
+		{"what a `none` row is", "Nor is any other row that left the pull request as it found it, and those end `none`"},
+		{"which rows those are", "a follow-up that only put the branch back on its base, one that stopped at a gate, one that failed or was refused, and a review job that ended badly"},
+		{"that followups takes the same row", "take the run `fugaro followups <run>` files from that same row"},
 		{"that its verdict still counts", "as the verdict of a reader who did not write the change"},
 		{"that no row of it is read for the paths", "not of the run's own list of the change"},
 	} {
