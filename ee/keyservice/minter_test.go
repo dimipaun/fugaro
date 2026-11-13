@@ -116,9 +116,9 @@ func TestTheMinersCeilingsAreTheVerifiers(t *testing.T) {
 // own route signs is the claim set of the format licence-key-v2 removed (K7.3),
 // and the things that read it are not this package: the desktop console's own
 // verifier of that format and the mobile app's both parse the payload by field
-// name, in another language, and this side decodes no key text at all. The tags are
-// therefore a wire format, and nothing on this side would notice one of them
-// moving: the fixture round-trip that held them (the licence package's
+// name, in another language, and this side decodes no key text at all. The tags
+// are therefore a wire format, and nothing on this side would notice one of
+// them moving: the fixture round-trip that held them (the licence package's
 // TestVectorsRoundTrip over the committed testdata/vectors.json) read the
 // format K7.3 removed and went with it. The names are pinned here instead, as
 // the text of a payload rather than by decoding into the very struct the
