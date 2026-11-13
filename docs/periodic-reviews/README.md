@@ -132,12 +132,12 @@ reconciliation** ([reconciliation.md](reconciliation.md) §5, E1–E8). They tak
   **no launcher write on `reports/`**: the job is its one writer and a person only reads it. D965 is
   not reopened — what it refused is a schedule written into a repository Fugaro does not own. The
   listing mechanism (`objectListPrefix`) was unverified in this repo, so **an owner-run check proves it
-  before the job's Terraform lands** — and has: it lists the four prefixes the job lists (`runs/<slug>/`,
-  `reports/<slug>/`, `reports/<slug>/<YYYY>/` and `reports/<YYYY>/`), refusing the root
-  listing and `tokens/` and `cache/` — and it is also what fixed the attribute's own value form: its
-  third run (2026-11-13) listed under the relative form and was refused every listing under the
-  full-path one, so the value is the request's own prefix. If a listing the job makes fails, the plan
-  stops and asks.
+  before the job's Terraform lands** — in fact it proves the four prefixes the job lists
+  (`runs/<slug>/`, `reports/<slug>/`, `reports/<slug>/<YYYY>/` and `reports/<YYYY>/`) and the
+  refusals that go with them (the root listing and `tokens/` and `cache/`) — and it is also what
+  settled the attribute's own value form: its third run (2026-11-13) listed under the relative form
+  and was refused every listing under the full-path one, so the value is the request's own prefix. If
+  a listing the job makes fails, the plan stops and asks.
 - **E5 — committing is opt-in and separate.** One normal Fugaro run, on the push path and identity
   runs already have, pulls the stored reports into the designated repository or folder and opens a
   pull request; the read of `reports/` is the **starting person's launcher account**, since no job
