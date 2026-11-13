@@ -93,6 +93,15 @@ func TestRegistryDefaultsMatchApplyDefaults(t *testing.T) {
 		"issues.nudge_recurrence": func() string {
 			return strconv.Itoa((&localcfg.Config{}).NudgeRecurrence())
 		},
+		// The ladder's own two (E3): the minimal local file states no
+		// escalation: block, so each reader reads the loader's own answer back
+		// out — the shipped scale, and the switch that ships off (D2046).
+		"escalation.critical_path_factor": func() string {
+			return strconv.FormatFloat((&localcfg.Config{}).EscalationThresholds().CriticalPathFactor, 'f', -1, 64)
+		},
+		"escalation.ready_drafts": func() string {
+			return strconv.FormatBool((&localcfg.Config{}).EscalationReadyDrafts())
+		},
 		// The two schedules (R13): a layer that states nothing reads as
 		// paused, which is the default the rows claim and the direction that
 		// never starts a job by omission.

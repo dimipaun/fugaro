@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 )
@@ -95,8 +96,10 @@ func (e *initEngine) announceRunsInFlight(ctx context.Context) {
 // update cannot reach a run when it can.
 func (e *initEngine) inFlightSteps(ctx context.Context, db *rtdb.Client) []string {
 	var steps []string
-	managed := e.managedProjectRead(ctx)
-	if e.budgetModeBindsRuns(ctx, db, managed) {
+	// isManaged rather than managed: the package of the same name is read below,
+	// for the two versions the creation fact's step names.
+	isManaged := e.managedProjectRead(ctx)
+	if e.budgetModeBindsRuns(ctx, db, isManaged) {
 		steps = append(steps, fmt.Sprintf("the budget mode's raise to %s, which a run in flight meets at its next lease and which is your own caps taking effect", budget.ModeEnforce))
 	}
 	if e.policyReadsLive(ctx, db) {
@@ -105,7 +108,10 @@ func (e *initEngine) inFlightSteps(ctx context.Context, db *rtdb.Client) []strin
 	if e.credentialsWindowOpens(ctx, db) {
 		steps = append(steps, "the credentials service this update replaces, which reads the published node on every call it serves: this run raises the node's version in one stage and moves the service in the next, and a call landing between the two meets the previous release's service with a node its own binary does not understand")
 	}
-	if e.retireTakesExecutions(managed) {
+	if e.markerConverges(ctx) {
+		steps = append(steps, fmt.Sprintf("the creation fact this update rewrites from version %d to version %d, which a run in flight re-reads per command: that run is the release behind, whose reader refuses a version it does not know, so its own apply keeps the typed confirmation instead of applying under the gate — nothing of the run is rewritten, and no record, ledger or counter of it is touched", managed.MarkerVersionBuilds, managed.MarkerVersionNoBuilds))
+	}
+	if e.retireTakesExecutions(isManaged) {
 		steps = append(steps, "the retirement this update runs, which deletes an orphaned job and takes the executions still running on it")
 	}
 	return steps
@@ -221,6 +227,36 @@ func (e *initEngine) credentialsWindowOpens(ctx context.Context, db *rtdb.Client
 		return false
 	}
 	return credentialsImageStale(releaseVersion(), image)
+}
+
+// markerConverges is whether this update rewrites the installation's creation
+// fact into a version the run in flight does not know: D1543's step converges a
+// version-3 fact to the version this build writes (update_marker_version.go,
+// managed.ConvergeMarker), and the run in flight runs the release behind — the
+// reader that REFUSES the version it is rewritten to rather than reading it as
+// the version-3 shape it resembles. So the clause is the one step of this
+// update that changes what a run in flight makes of the marks: a command of that
+// run that reads the mark between this update's write and its own end answers
+// "not managed" and keeps the typed confirmation it would have applied without.
+// That is the fail-closed direction the reconciliation's F12 asks for, and it is
+// why this is named rather than passed over: nothing of the run is rewritten —
+// its records, its ledger and its counters are untouched, and its every write
+// still lands — but a person who sees a run stop taking the gate deserves to
+// know which step of the update did it.
+//
+// What it asks is the question the step itself is gated on — the installation's
+// fact being version 3 and believed — and not the whole of its decision, as
+// every clause here: whether the bucket the read looks in is the one this run
+// would write to, whether the project's number can be read, and whether the
+// read can be made at all are the step's own, and it warns naming what it left
+// alone. A read that failed, a fact of any other version, and an installation
+// that is not managed are all silence.
+func (e *initEngine) markerConverges(ctx context.Context) bool {
+	if e.c == nil {
+		return false
+	}
+	f, err := managed.ReadMarkFacts(ctx, e.c.Storage, e.c.CRM, e.r.projectName, e.r.gcpProject)
+	return err == nil && f.Managed && f.Version == managed.MarkerVersionBuilds
 }
 
 // retireTakesExecutions is whether this run can retire at all: the two ways one

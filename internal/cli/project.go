@@ -587,7 +587,7 @@ func selectedProjectConfigErr(ctx context.Context) (*localcfg.Config, error) {
 // of its own, that a read the console spawns changes nothing.
 // TestTheUpdateCheckLookupRemembersNothing is what pins this: it runs two
 // commands the console never spawns and that resolve no checkout of their
-// own — bare `fugaro backends` and `fugaro upgrade --check` — from inside an
+// own — bare `fugaro backends` and `fugaro update --check` — from inside an
 // unremembered checkout and asserts no state file, and it fails when this
 // resolver is swapped for selectedProjectConfig. (A test over the console's
 // own reads cannot pin it: consoleReadPaths' context mark stops the recording

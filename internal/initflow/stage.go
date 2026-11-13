@@ -164,10 +164,10 @@ const (
 	// commands or image settings has to be published before that refresh, or
 	// the run builds from the layer the owner just replaced.
 	Layer = "layer"
-	// Checkout is what `fugaro upgrade` does for the checkout `fugaro update`
-	// is run in, as a stage of the converge itself (internal/cli/
-	// init_checkout_upgrade.go, the owner's rule of 2026-10-30: fugaro update
-	// is the whole upgrade, so the two front doors may not be two commands).
+	// Checkout is what `fugaro update` does for the checkout it is run in, as
+	// a stage of the converge itself (internal/cli/init_checkout_upgrade.go,
+	// the owner's rule of 2026-10-30: fugaro update is the whole upgrade, and
+	// one command, so a checkout's half may not be a second command).
 	// It comes after the repository stage, whose onboarding is what the
 	// images it refreshes belong to, and before compute, which stays last.
 	Checkout = "checkout"
@@ -285,7 +285,7 @@ var order = []slot{
 	// layer published after it would leave the run building from the one the
 	// owner just replaced.
 	{name: Layer, needs: []string{Repository}},
-	// The checkout's own step (fugaro upgrade's cloud step) runs after the
+	// The checkout's own step (the cloud step) runs after the
 	// repository stage: the images it refreshes are that repository's, and the
 	// onboarding the repository stage does is what the refresh builds for. The
 	// pin and the plugin are the plugin stage's since U1 (D941,
@@ -531,7 +531,7 @@ type SelfConfirming interface {
 // under a marker with that step's own sentence and left for the user as a
 // named step. A marker stops a run from doing what only a person should
 // confirm: the pin and the plugin are not that — they are the writes the
-// user's own session makes with fugaro upgrade, on files it reads anyway — and
+// user's own session makes with fugaro update, on files it reads anyway — and
 // what reaches outside the machine keeps its refusal, in the step that makes
 // it.
 type LocalUnderAgent interface{ LocalUnderAgent() }

@@ -590,7 +590,9 @@ var jsonCellRE = regexp.MustCompile("`([A-Za-z_][A-Za-z0-9_]*)`")
 // build can no more name them than it can the JSON of the five sections above.
 // It has no ee-side counterpart yet, for §6.22's reason: P9f writes no
 // contract test, and the checks the console's own read will want are the ones
-// the task that lands that read writes.
+// the task that lands that read writes. §6.25 is that group's `move` (GV3.1),
+// under ee/ for the same reason and with the same document; its own test is the
+// ee-side check that holds the section's heading and flags to the command.
 //
 // Every entry names its command as well as its number. A number alone exempts
 // whatever section is later written at that number: the graph's own section
@@ -605,6 +607,13 @@ var consoleMovedSections = []string{
 	"### 6.16 `fugaro coordinator intents",
 	"### 6.22 `fugaro graph",
 	"### 6.24 `fugaro coordinator roadmap",
+	// §6.25 is the same group's `move` (GV3.1): `ee/coordinator/cli/roadmap_move.go`
+	// is where the command and its three arguments are, and its document is
+	// §6.24's own outcome document, so this build can name neither. The
+	// ee-side check that holds the section to the command is the move's own test
+	// (`TestRoadmapMoveIsDocumentedAsTheConsoleReadsIt`), as §6.24's fields are
+	// held by the door's own tests.
+	"### 6.25 `fugaro coordinator roadmap move",
 	"## 4. `fugaro report --json`",
 }
 

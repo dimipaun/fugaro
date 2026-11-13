@@ -1,4 +1,4 @@
-// Package claudeplugin runs the few claude plugin commands fugaro upgrade
+// Package claudeplugin runs the few claude plugin commands fugaro update
 // needs, and nothing else: each argv is one of a fixed set (Allowed), run
 // without a shell, with no input, under a timeout, its output printed made
 // safe for a terminal.

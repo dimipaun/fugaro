@@ -10,8 +10,11 @@
 # entry belongs to, through the actAs grant the repository module makes on it
 # (modules/repo/catalogcheck.tf); this account never builds anything itself, so
 # it holds no registry role, no secret accessor and no key. Its whole reach is
-# the spec in its environment, the four grants below and, in each repository
-# root, the actAs on that repository's build account.
+# the spec in its environment, the five grants below and, in each repository
+# root, the actAs on that repository's build account. One of the five is in the
+# Firebase project and not this one — the database role its build leases are
+# written with (D1554) — and it is created and bound here rather than in the
+# Firebase root, because it is this job's reach and the account is this file's.
 #
 # No log writer grant: this installation's other jobs — the coordinator's and
 # the history job's — hold none, and the log lines the alert policies match
@@ -22,6 +25,17 @@
 # Nothing else in the installation changes for it, and it exists only when
 # fugaro update's tfvars carry catalog_check — an installation whose project
 # publishes no catalog plans exactly what it planned before the job existed.
+
+locals {
+  # The lease, and with it the two resources below, exists exactly when the job
+  # does and the installation has a Firebase project to write it into: no
+  # catalog_check is no job (an installation whose project publishes no
+  # catalog), and an unset firebase_project is an installation with no budget
+  # backend, where a role granted on a project nobody named would be a grant on
+  # a guess (the variable's validation refuses a value that is not a project
+  # ID, so unset is the only empty case).
+  catalog_lease_on = var.catalog_check != null && var.catalog_check.firebase_project != null
+}
 
 # The builds it submits: cloudbuild.builds.create to submit one and
 # cloudbuild.builds.get to read its status, which is the custom role each
@@ -210,4 +224,86 @@ resource "google_cloud_scheduler_job" "catalog_check" {
   }
 
   depends_on = [google_cloud_run_v2_job_iam_member.catalog_check_invoker]
+}
+
+# The job's reach over the Firebase database, which is the only thing outside
+# this project it touches (D1554).
+#
+# Why it needs one at all: each build the job submits reserves its estimated
+# cost before Cloud Build is asked for it, and the reservation is written into
+# buildleases/<slug>/<id> (internal/budget/lease_build.go). That family is
+# denied whole to every client token — no token in this installation writes a
+# lease, and the rules' template says so — so the writer is an IAM identity and
+# nothing else: the account's access token carries the permissions its
+# principal holds, and those are what this role is. It is the same mechanism
+# the credentials service writes its own nodes with (credentials.tf).
+#
+# Why these two permissions and not roles/firebasedatabase.admin, which is
+# what the coordinator's and the history job's accounts hold: Realtime Database
+# IAM has no path-level scope, so a binding reaches the whole instance, and
+# what the role says is which OPERATIONS the account may make. Read at its real
+# size rather than by the code that uses it: the two data permissions read and
+# write EVERY node of the database — the published policy and the caps it is
+# held to included — and the installation's rules do not stand in the way,
+# because IAM bypasses them (SECURITY.md states the same pair for the
+# credentials service's account). The job's code touches the leases and the
+# day's counters it owns and nothing else, and that is a property of the code
+# and not of the grant. What the role does keep out is the instance lifecycle.
+# firebasedatabase.instances.get is the only read there is (the reclaim of a
+# lease a dead CLI left, the day's counters and the database's own mark) and
+# firebasedatabase.instances.update the only write (RTDB has no separate
+# create or delete of a node). admin adds list and the instance LIFECYCLE —
+# create, delete, disable, reenable, undelete — which would let a scheduled
+# job nobody is watching delete the installation's database, or lift the caps
+# it is held to. This role is exactly the credentials service's two
+# permissions and lives in the same project; the difference is the account and
+# the reason, and the two roles stay two so that neither account's reach can
+# grow by the other's needs (internal/infra/tf's RolePermissions pins both).
+#
+# It is created in the Firebase project and not in var.project, which is the
+# two-project shape's whole point: the account is this project's, the database
+# is the Firebase root's (D6), and the binding is cross-project IAM exactly as
+# the credentials service's database role is. An installation that has no
+# Firebase backend writes no firebase_project and gets neither resource: there
+# is no database to grant on, and the job submits its builds unleased, saying
+# so in one line (internal/cli's openCatalogJobLease).
+#
+# The role is spelled literally in the binding, for the reason
+# credentials.tf's own states: google_project_iam_custom_role's name attribute
+# is computed, so a binding through it reaches the plan as an unknown role and
+# internal/infra/tf's cover could not say which role the plan grants.
+# var.catalog_check.firebase_project is known at plan time (the variable's
+# validation), so the literal is.
+#
+# Neither resource is on internal/infra/tf's tables, and that is the design's
+# own rule for this account rather than an omission: the catalog check job is a
+# kind of principal of its own (toCatalogCheck), so no row accepts a grant to
+# it, and the binding below is a grant no row covers. What that
+# costs is a warning and not a confirmation: D1545 makes the cover's grant
+# table a CONTENT site, so the `fugaro update` that first carries this binding
+# records it as a finding, prints it and files a warned audit record that
+# `doctor` reports — and then applies it, a coding agent's session included and
+# with nothing typed. A row would be the quieter of the two: the grant would be
+# covered and announced by the gate's own line (cover.go's
+# CatalogCheckAccountID reads the same fence).
+resource "google_project_iam_custom_role" "catalog_lease" {
+  count = local.catalog_lease_on ? 1 : 0
+
+  project = var.catalog_check.firebase_project
+  role_id = "fugaroCatalogLease"
+  title   = "Fugaro catalog check (database data only)"
+  permissions = [
+    "firebasedatabase.instances.get",    # read: the leases left behind, the day's counters and the database's mark
+    "firebasedatabase.instances.update", # write: the build leases this job takes and settles
+  ]
+}
+
+resource "google_project_iam_member" "catalog_lease" {
+  count = local.catalog_lease_on ? 1 : 0
+
+  project = var.catalog_check.firebase_project
+  role    = "projects/${var.catalog_check.firebase_project}/roles/fugaroCatalogLease"
+  member  = google_service_account.catalog_check[0].member
+
+  depends_on = [google_project_iam_custom_role.catalog_lease]
 }

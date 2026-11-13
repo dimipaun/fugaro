@@ -220,6 +220,11 @@ func credentialsOutputs(t *testing.T, r *imagesRig) {
 	t.Helper()
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
 		"credentials_service": credentialsServiceOutput(),
+		// The second service the same module publishes, and the same rule
+		// applies to it: a run whose tfvars carry the intake and whose outputs
+		// name none is the half-carried state this fixture must not model
+		// (fillCredentialsAudience refuses it).
+		"intake": intakeServiceOutput(),
 	})}
 	r.save(t)
 }
@@ -228,6 +233,19 @@ func credentialsOutputs(t *testing.T, r *imagesRig) {
 // the shape Cloud Run assigns (the service's name, the project number, the
 // region), which is the audience its callers' ID tokens are minted for.
 const credentialsServiceURL = "https://fugaro-credentials-123456789012.us-east5.run.app"
+
+// intakeServiceURL is the same shape for the installation's other Cloud Run
+// service (DS2.2, DS4.1), and a URL of its own: the two services are two
+// audiences, and a caller's ID token is minted for the one it calls.
+const intakeServiceURL = "https://fugaro-intake-123456789012.us-east5.run.app"
+
+// intakeServiceOutput is the secrets intake as the installation root's outputs
+// carry it (the installation root's outputs.tf): credentialsServiceOutput's
+// three members for the second service, which is what the audience fill reads
+// back and what `fugaro secrets user set` derives the intake's URL from.
+func intakeServiceOutput() map[string]any {
+	return map[string]any{"name": infra.IntakeServiceName, "region": "us-east5", "url": intakeServiceURL}
+}
 
 // TestUpdateSetsCredentialsServiceOnEveryInstallation is the RED STEP of this
 // task. On the tree before it, an installation whose tfvars carried no
@@ -575,6 +593,24 @@ func TestAnOnboardingConvergeNamesTheNewRepositoriesJobs(t *testing.T) {
 	r.appendConfig(t, "credentials_service: { url: "+credentialsServiceURL+" }\n")
 	credentialsOutputs(t, r)
 	seedCredentialsService(t, r, oldCredentialsRef("1.2.2"))
+	// The installation root's plan is not empty: this release's run writes the
+	// secrets intake's block into an installation that has none (DS4.1), the
+	// module's intake file is gated on that variable, and the apply that
+	// follows the write creates the service — so an installation stage whose
+	// plan reports no changes while its tfvars gained a service is the shape
+	// the audience fill refuses (TF.Plan's exit code is what says a plan has
+	// something to apply). The plan's content is not what this test is about;
+	// the table the same run's installation apply writes is, and a stage that
+	// plans nothing never reaches it.
+	//
+	// The two reads are scripted apart, as the fake's own contract has them:
+	// "show -json" is the root's state (no plan file) and a root-scoped
+	// "show@installation" is the plan. Without the first, the fallback the
+	// fake documents would hand this plan document to the state read, which
+	// decodes it as an installation that manages nothing.
+	r.script["show -json"] = r.script["show"]
+	r.script["plan@installation"] = map[string]any{"exit": 2}
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.intake", "create"))
 	// The table the deploy left: a repository this machine's config no longer
 	// describes, which is what stands in for "the config has moved on since".
 	setCredentialsJobTable(t, r, []any{map[string]any{
@@ -943,7 +979,7 @@ const credsRefreshYAML = "version: 1\nproject: aurora\ngit: { provider: github }
 func upgradeRigWithCascade(t *testing.T) *anchorModeRig {
 	t.Helper()
 	fakeTerraform(t)
-	upgradeEnv(t, "0.5.1")
+	convergeEnv(t, "0.5.1")
 	r := newAnchorModeRig(t, credsRefreshYAML, false)
 	r.appendConfig(t, "  acme/app: { provider: github, workflows: [app], github_app_id: \"12345\" }\n")
 	runs := t.TempDir()
@@ -979,7 +1015,7 @@ func TestUpgradeNoteNamesTheStage(t *testing.T) {
 	stubCurrentRefresh(t, r)
 	setJobConfigCopyEnv(t, r, "api", nil)
 	fakeSteps(t, "", nil)
-	out, _, err := executeStdin(t, "", "upgrade", "--yes")
+	out, _, err := runCloudStep(t, "--yes")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -1104,15 +1140,20 @@ func TestUpdateRepinsTheCredentialsImageOnAnOrdinaryUpdate(t *testing.T) {
 			t.Errorf("credentials_service.%s = %v, want %v: the re-pin rewrote a fact of the service it does not own", k, svc[k], want)
 		}
 	}
-	// Two applies, and no audience fill: the installation root's own, and the
-	// credentials-service stage's — the root once more, whose one change is
-	// the moved image. The second apply is what the reorder costs (the
-	// owner's ruling of 2026-11-10): the service may not be replaced before
-	// the node it reads per call is one its own binary understands, so its
-	// apply is the stage after the policy migration rather than part of the
-	// installation stage's.
-	if apps := r.ran(t, "apply"); len(apps) != 2 {
-		t.Errorf("applies = %v, want the installation root's and the credentials-service stage's own", apps)
+	// Three applies: the installation root's own, the audience fill's — the
+	// second apply inside the installation stage, which writes the credentials
+	// service's URL and the secrets intake's back from the root's outputs, and
+	// which this run makes because it also deploys the intake (DS4.1: the
+	// installation at the previous version has none, so the block this run
+	// writes is the one whose URL the apply after it carries onto the
+	// revision) — and the credentials-service stage's. That last one is the
+	// root once more, whose one change is the moved image; it is what the
+	// reorder costs (the owner's ruling of 2026-11-10): the service may not be
+	// replaced before the node it reads per call is one its own binary
+	// understands, so its apply is the stage after the policy migration rather
+	// than part of the installation stage's.
+	if apps := r.ran(t, "apply"); len(apps) != 3 {
+		t.Errorf("applies = %v, want the installation root's, the audience fill's own and the credentials-service stage's", apps)
 	}
 
 	// The next ordinary update is the converged one, and it asks the registry
@@ -1155,8 +1196,14 @@ func TestUpdateFirebaseProjectRepinsTheCredentialsImage(t *testing.T) {
 	// stage reads back. credentialsOutputs replaces the rig's script rather
 	// than adding to it, and this is the one test that needs both objects from
 	// the same run, so the two are composed here.
+	//
+	// The intake is part of the first half, and it is not optional: this run
+	// writes the intake's block into an installation that has none (the state
+	// the seed below leaves), and the audience fill refuses the half-carried
+	// state a tfvars block without the output is.
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
 		"credentials_service":     map[string]any{"name": infra.CredentialsServiceName, "region": "us-east5", "url": credentialsServiceURL},
+		"intake":                  intakeServiceOutput(),
 		"history_service_account": historyAccount,
 		"history_job":             nil,
 	})}
@@ -1201,10 +1248,12 @@ func TestTheFirebaseProjectDoorBackfillsTheRecordToo(t *testing.T) {
 	r.fs.SetDatabase("us-east5")
 	r.appendConfig(t, "credentials_service: { url: "+credentialsServiceURL+" }\n")
 	// The installation's own outputs, as the Firebase stage reads them back: the
-	// credentials block this door re-pins AND the history account the stage
-	// needs (the composed script is TestUpdateFirebaseProjectRepinsTheCredentialsImage's).
+	// credentials block this door re-pins, the intake block the audience fill
+	// pairs with the one on disk, AND the history account the stage needs (the
+	// composed script is TestUpdateFirebaseProjectRepinsTheCredentialsImage's).
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
 		"credentials_service":     map[string]any{"name": infra.CredentialsServiceName, "region": "us-east5", "url": credentialsServiceURL},
+		"intake":                  intakeServiceOutput(),
 		"history_service_account": historyAccount,
 		"history_job":             nil,
 	})}
@@ -1261,6 +1310,105 @@ func TestInstallationAtThePreviousVersionConvergesInOneUpdateCredentials(t *test
 	}
 	if r.resolveCalls != 1 {
 		t.Errorf("resolve calls %d, want 1: one update is one resolve, and it is the release's own signed image the run pins", r.resolveCalls)
+	}
+}
+
+// TestUpdateConvergesAnInstallationThatSkippedTheIntakeInOneRun is CLAUDE.md's
+// HARD RULE at the intake's own ordering, and the bug this fixes. The block an
+// installation with no intake gets is written BEFORE the apply that creates the
+// intake's service, so the image in it is the binary that service runs — and a
+// recorded image is a release's, which for an installation that skipped the one
+// the intake shipped in is a binary with no `intake serve` subcommand
+// (intake.tf runs the image with exactly those args). Written from the recorded
+// image, the apply brings up a revision that exits on start and fails; the
+// block is on disk already, so the recorded image is the one every rerun
+// repeats it with and the installation can never be updated again by the one
+// documented command.
+//
+// The end state cannot show the bug — the credentials-service stage re-pins the
+// intake with the service it shares the pin with, so the final tfvars carry
+// this release's image either way — so the assertion is on what the apply RAN
+// WITH (captureApplies). That is the whole of the ordering: the block's image
+// at the moment the service is created from it.
+//
+// Red before the fix: the captured applies carried oldCredentialsRef("0.22.3").
+//
+// The credentials service's OWN image is deliberately still the recorded one
+// in those applies — the published node may not move before the process that
+// reads it is replaced (the owner's ruling of 2026-11-10) — which is why the
+// assertion is the intake's image and not the service's.
+func TestUpdateConvergesAnInstallationThatSkippedTheIntakeInOneRun(t *testing.T) {
+	r := credentialsRig(t)
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.intake", "create"))
+	credentialsOutputs(t, r)
+	// The installation's record: the service, on a release that predates the
+	// intake, and no intake block at all.
+	seedCredentialsService(t, r, oldCredentialsRef("0.22.3"))
+	applies := r.captureApplies(t)
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	s := out + errOut
+	if err != nil {
+		t.Fatalf("one fugaro update of an installation that skipped the release the intake shipped in failed: %v\n%s", err, s)
+	}
+	ran := capturedApplies(t, applies, "installation")
+	if len(ran) == 0 {
+		t.Fatalf("the update applied the installation root not at all, so nothing created the intake the run reports:\n%s", s)
+	}
+	for i, doc := range ran {
+		intake, _ := doc["intake"].(map[string]any)
+		if intake == nil {
+			t.Fatalf("the installation root's apply %d ran with no intake block, so the service the run reports as deployed was never created:\n%v", i+1, doc)
+		}
+		if got, want := intake["image"], r.credentialsRef(); got != want {
+			t.Errorf("the installation root's apply %d ran with intake.image = %v, want %s: the first of these applies is the one that CREATES the intake's service, and the image in the block it reads is the binary that service runs — the recorded one is a release whose binary has no `intake serve` subcommand, so the revision exits on start and the apply fails, with the block already written to make every rerun fail the same way\n%s", i+1, got, want, s)
+		}
+	}
+	// One run converges the installation: both services deployed, each on this
+	// release's verified image, each with its own URL as its audience.
+	intake, _ := r.tfvars(t)["intake"].(map[string]any)
+	if intake == nil {
+		t.Fatalf("the run left the installation with no intake block:\n%s", s)
+	}
+	if got, want := intake["image"], r.credentialsRef(); got != want {
+		t.Errorf("intake.image = %v after one update, want %s", got, want)
+	}
+	if got := intake["url"]; got != intakeServiceURL {
+		t.Errorf("intake.url = %v after one update, want %s: the run's own apply created the service, so the module's output carries its URL, and an intake left without it is reachable by IAM and admits nobody\n%s", got, intakeServiceURL, s)
+	}
+	if got := intake["service"]; got != infra.IntakeServiceName {
+		t.Errorf("intake.service = %v, want %s", got, infra.IntakeServiceName)
+	}
+	svc := credentialsServiceEntry(t, r)
+	if got, want := svc["image"], r.credentialsRef(); got != want {
+		t.Errorf("credentials_service.image = %v after one update, want %s", got, want)
+	}
+	if got := svc["url"]; got != credentialsServiceURL {
+		t.Errorf("credentials_service.url = %v after one update, want %s", got, credentialsServiceURL)
+	}
+	// The resolve is one per run (credentialsResolve is memoized): the intake's
+	// block and the credentials-service stage's move read the same answer, so
+	// pinning the block here costs no second registry read.
+	if r.resolveCalls != 1 {
+		t.Errorf("resolve calls %d after one update, want 1: the intake's pin is the run's own resolve, not a second registry read", r.resolveCalls)
+	}
+
+	// And a SECOND update writes nothing: what the first left is the one
+	// documented command's own output, not a state the next run moves.
+	before := len(r.ran(t, "apply"))
+	r.script["plan"] = map[string]any{"exit": 0}
+	r.setPlanAt(t, "installation")
+	r.setPlan(t)
+	out, errOut, err = executeStdin(t, "", "update", "--yes")
+	s = out + errOut
+	if err != nil {
+		t.Fatalf("the second update of a converged installation failed: %v\n%s", err, s)
+	}
+	if after := len(r.ran(t, "apply")); after != before {
+		t.Errorf("the second update applied %d time(s): a run after a converged update has nothing left to do, and one that applies again is an upgrade nobody finishes\n%s", after-before, s)
+	}
+	if !strings.Contains(s, "No changes") {
+		t.Errorf("the second update does not report a converged installation:\n%s", s)
 	}
 }
 

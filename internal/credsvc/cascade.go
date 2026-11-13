@@ -476,10 +476,24 @@ func (s *Server) auditCall(ctx context.Context, id Identity, purpose, credential
 //
 // The audit status is the refusal's own wire error type, so the run's halt
 // message and the operator's line read the same word for the same refusal.
+//
+// It also writes the diagnosis the audit line cannot carry (logRefusal): which
+// read failed and with what class of error, which is nowhere else once the
+// gateway has turned the typed refusal into one sentence for the agent.
 func (s *Server) refuseCall(ctx context.Context, w http.ResponseWriter, id Identity, purpose, credential, tier string, status int, typ, message string) {
+	s.refuseCallCause(ctx, w, id, purpose, credential, tier, status, typ, message, nil)
+}
+
+// refuseCallCause is refuseCall for a refusal whose cause this code knows: the
+// error the refusal was taken on, carrying the label of the read that failed
+// (labelRead) when one did. The refusal itself is unchanged — the same audited
+// act, the same body and the same status — and the cause reaches the service's
+// own log line and nothing else: no error text, no field of the answer.
+func (s *Server) refuseCallCause(ctx context.Context, w http.ResponseWriter, id Identity, purpose, credential, tier string, status int, typ, message string, cause error) {
 	if err := s.auditCall(ctx, id, purpose, credential, tier, typ); err != nil {
 		s.log.Error("credsvc: a refused call could not be audited", "error", err)
 	}
+	s.logRefusal(ctx, id, typ, status, message, cause)
 	s.refuse(w, status, typ, message)
 }
 
@@ -544,7 +558,8 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, s
 			// rotated away — silently, and with no line that says so. The
 			// sentence is the class and nothing else: no container and no value
 			// is in it.
-			s.refuseCall(ctx, w, id, PurposeForward, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable, perSecretRefusal)
+			s.refuseCallCause(ctx, w, id, PurposeForward, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable,
+				perSecretRefusal, labelRead(readSecret, err))
 			return
 		}
 		if !ok {
@@ -560,7 +575,8 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, s
 		}
 		ans, err := s.send(ctx, cl, e)
 		if err != nil {
-			s.refuseCall(ctx, w, id, PurposeForward, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable, err.Error())
+			s.refuseCallCause(ctx, w, id, PurposeForward, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable,
+				err.Error(), labelRead(readUpstream, err))
 			return
 		}
 
@@ -573,7 +589,8 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, s
 			// the wrong reason.
 			ans.resp.Body.Close()
 			if _, err := sel.Broken(ctx, c.Name); err != nil {
-				s.refuseCall(ctx, w, id, PurposeForward, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable, markRefusal)
+				s.refuseCallCause(ctx, w, id, PurposeForward, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable,
+					markRefusal, err)
 				return
 			}
 			tried = append(tried, Tried{Name: c.Name, Tier: wireTier(c.Tier), Reason: ReasonBroken})
@@ -587,7 +604,8 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, s
 			reset := usageLimitReset(ans.resp.Header, s.now())
 			ans.resp.Body.Close()
 			if _, err := sel.Exhausted(ctx, c.Name, c.Tier, reset); err != nil {
-				s.refuseCall(ctx, w, id, PurposeForward, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable, markRefusal)
+				s.refuseCallCause(ctx, w, id, PurposeForward, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable,
+					markRefusal, err)
 				return
 			}
 			tried = append(tried, Tried{Name: c.Name, Tier: wireTier(c.Tier), Reason: ReasonExhausted})
@@ -650,6 +668,14 @@ const answerUnaudited = "the call could not be audited, so the credential's answ
 // state, so a credential this call found unusable and could not record is a
 // credential the next call is sent to again.
 const markRefusal = "the credential's state could not be recorded"
+
+// selectionUnreadable is what the SERVICE'S OWN LOG says a selection that
+// failed on the state was, in the one case where the sentence the run is sent
+// is another system's text (refusallog.go): a store's error names the node it
+// read, and the run is told it while the log never is. It says only what the
+// read it is written beside says in its own word — the selector's marks, the
+// leases or the run's placement — and claims nothing about which.
+const selectionUnreadable = "the credential's state could not be read"
 
 // answer writes the upstream's answer to the client, with the headers of this
 // contract on it: the tier, the credential's name, and the switch when this
@@ -871,12 +897,30 @@ func (s *Server) refuseSelection(ctx context.Context, w http.ResponseWriter, id 
 		if aerr := s.auditCall(ctx, id, PurposeForward, "", "", ErrorExhaustedUntil); aerr != nil {
 			s.log.Error("credsvc: a refused call could not be audited", "error", aerr)
 		}
-		WriteExhaustedUntil(w, ExhaustedUntil{ResetAt: reset, Tried: tried}, now)
+		ans := ExhaustedUntil{ResetAt: reset, Tried: tried}
+		// The selection's refusal is a refusal like every other and leaves the
+		// same diagnosis (logRefusal). The message is read off the very struct
+		// the answer is written from, so the run and the operator read one
+		// refusal and not two renderings of it.
+		s.logRefusal(ctx, id, ErrorExhaustedUntil, StatusExhaustedUntil, ans.Error(), err)
+		WriteExhaustedUntil(w, ans, now)
 		return
 	}
 	if aerr := s.auditCall(ctx, id, PurposeForward, "", "", ErrorStateUnavailable); aerr != nil {
 		s.log.Error("credsvc: a refused call could not be audited", "error", aerr)
 	}
+	// The operator's line carries the sentence the run is sent, which is this
+	// service's refusal for a selection that found nothing usable (creds'
+	// ErrNoCredential, ErrFallbackForbidden, ErrNoCandidates) — and the CLASS
+	// instead where the sentence is the store's own text, which is what a
+	// labelled failure is (refusallog.go): the store's text names the node it
+	// read, and this line never repeats another system's words. The read label
+	// and the class beside it are what tell those two apart.
+	msg := err.Error()
+	if readOf(err) != "" {
+		msg = selectionUnreadable
+	}
+	s.logRefusal(ctx, id, ErrorStateUnavailable, StatusUnavailable, msg, err)
 	WriteWireError(w, StatusUnavailable, WireError{
 		Error:   ErrorStateUnavailable,
 		Message: err.Error(),

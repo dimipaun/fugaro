@@ -367,7 +367,7 @@ func TestConsoleAllowListedReadsWriteNothing(t *testing.T) {
 // the command did.
 //
 // The two commands below are exactly that — bare `fugaro backends` prints its
-// own help, and `fugaro upgrade --check` is documented as writing nothing —
+// own help, and `fugaro update --check` is documented as writing nothing —
 // and the console spawns neither, so neither is in consoleReadPaths. The
 // read-only resolver is the only thing between them and a write, which is why
 // this is the test that pins selectedProjectConfigReadOnly:
@@ -386,7 +386,7 @@ func TestTheUpdateCheckLookupRemembersNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, args := range [][]string{{"backends"}, {"upgrade", "--check"}} {
+	for _, args := range [][]string{{"backends"}, {"update", "--check"}} {
 		if out, _, err := execute(t, args...); err != nil {
 			t.Logf("%v exited with %v:\n%s", args, err, out)
 		}

@@ -1144,9 +1144,10 @@ the record's plan documents. Run in any checkout of any repository by a person h
 graph artifact in the current checkout — named by `internal/plan/document.go`'s `ArtifactSuffix`,
 under `docs/`, through GV1.6's confined walk (no symlink out of the checkout, no non-regular file,
 the 1 MiB per-artifact limit) — parses it with `internal/plan/read.go`'s `Parse` (a refused artifact
-is refused whole, never half-published), trims it to P9a's shape, gives it its plan id by the rule
-`internal/cli/plan_status.go`'s `planIDFromPath` holds — moved into `internal/plan` so the CLI's two
-readers share one copy — and calls P9d's `roadmap_publish_plan` tool with the document and its
+is refused whole, never half-published), trims it to P9a's shape, gives it its plan id by
+`internal/plan/read.go`'s `IDFromPath` — the rule the plan-status command computed for itself until
+this part moved it into `internal/plan`, so the CLI's two readers share one copy — and calls P9d's
+`roadmap_publish_plan` tool with the document and its
 **provenance**: the checkout's origin repository, the artifact's path and the commit `HEAD` names, a
 working tree with changes to the artifact being refused (D30's "clobber uncommitted work", turned
 around: what is published is what is committed). The provenance is recorded and never read back; no

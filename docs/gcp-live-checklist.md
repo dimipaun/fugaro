@@ -853,8 +853,8 @@ probe account carries predefined grants only).
 | 302 | The cutover to the daemon, and the manual rollback that is the whole of going back ([`docs/stateless-orchestrator/`](stateless-orchestrator/implementation-plan.md), its task **O11** and its Check 302 — the text O2 wrote; **T1**, ruled, and **D1242**, which gates nothing; **D1235**, no shadow week): the cutover run by hand on the owner's own installation, with the spend caps and the kill switch tested **first** and the scripts' **launching stopped** (their watching may stay, because the two share no launch key and both launching the same work would double-launch) — the daemon started, one finished run, one dependency-driven launch and one notification; then, at any point inside the **14 days the scripts stay on disk**, the second half: the manual rollback — `fugaro orchestrator uninstall`, the sweep, the watcher and the queue scripts re-armed, and one launch seen through them. **No rollback command is built**, so those steps are the whole rollback | See "Check 302" below; **you** run it, on your own installation, **never** the sandbox from an agent's session, and **no agent runs any step of it** | One finished run, one dependency-driven launch and one notification, plus the rollback's own launch through the scripts: the run's model spend, and nothing else. The Restore is the check's second half and not an undo of it — the scripts stay on disk for their 14 days, and the owner decides when they are removed. **USER-RUN, NOT RUN.** |
 | 303 | The bounded decision agent, and the cost of one cycle ([`docs/stateless-orchestrator/`](stateless-orchestrator/implementation-plan.md), its task **O12** and its Check 303 — the text O2 wrote; reconciliation **U4**, whose cost is a target until this check measures it; **Q4**, answered 2026-11-04, which makes this check the gate on slice 2): with the owner's own Claude login, one real decision call through the bounded agent — the model that answered it being the classifier's and not the output's — the count caps (6 calls an hour, 40 a day) and the breaker at 3 **proved by spending them**, and the cost of one cycle measured end to end. It runs **before O12 is started, not after**: Q4 approves slice 2 (O12, O13) only once slice 1 has run 14 days **and** this number is in | See "Check 303" below; **you** run it, with your own login, and **no agent runs any step of it** | The one thing here that is genuinely billable: one decision call, plus the calls the caps and the breaker spend proving themselves. Its whole point is the number it produces, which replaces U4's target and Q4's proposed bounds. **USER-RUN, NOT RUN.** |
 | 304 | The handoff between two people ([`docs/stateless-orchestrator/`](stateless-orchestrator/implementation-plan.md), its task **O17** and its Check 304 — the text O2 wrote, the `ee/` command O17 builds): an agent handed from one developer to another by an owner or an admin, on a real installation, with the two people in different sessions — the receiving person holding the agent, the giving person no longer able to act as it, and the project-owned agent that belongs to no person at all behaving as the registered extension it is | See "Check 304" below; **you** run it, on a real installation with a second person, and **no agent runs any step of it** | Two sessions and one handoff: no model call unless the agent is asked to work, and nothing billable in the handoff itself. **USER-RUN, NOT RUN.** |
-| 305 | The MCP state group and its scopes ([`docs/stateless-orchestrator/`](stateless-orchestrator/implementation-plan.md), its task **O16** and its Check 305 — **the text is written when O16's files are named**, and this row and the section below reserve the number, which is never renumbered): `get_state`, `get_events` and `apply_patch` over the state store, behind `state:read` and `state:write`, with `apply_patch` also gated by **D1225**, and with no `spawn_task` anywhere in it (T2) | Not written yet: the registry and the scope files exist (M7 on `main`; T3 and T4 written 2026-11-10), and O16 split in two — **O16a** builds the group dormant and serves nothing, so it has nothing to check, and **O16b**, which serves it once D2020 is answered and the front door is wired, writes "Check 305"; the register's number is held for it | Nothing to run and nothing to expect until the files are named: the number is reserved so that a later task writes the check into the register rather than renumbering it. **USER-RUN, NOT RUN.** |
-| 340 | The prefix-limited listing grant ([`docs/periodic-reviews/`](periodic-reviews/implementation-plan.md) §P8, its Check 340; **R12's, and it gates R12**; `docs/design/bucket-iam.md` §4 — the H3 veto — and §11 item **V7**): which form the `storage.googleapis.com/objectListPrefix` request attribute carries — the request's own prefix (`runs/`, `reports/`) or the bucket's object path (`projects/_/buckets/<bucket>/objects/runs/`) — read as a throwaway service account holding R12's two conditioned bindings (objectViewer on `runs/`, objectUser on `reports/`, each carrying the `resource.name` read clause and the listing clause joined by `\|\|`): that account lists `runs/<slug>/` and `reports/`, reads a `runs/` object, and is refused the root listing, a `tokens/` read and a `tokens/` and a `cache/` listing. The design records the attribute as unverified and no code in this tree reads it, so this is the one reading no test can make: **the wrong form is a grant that lists nothing, and if neither form lists, R12's Terraform does not land and the plan stops and asks** (E4) | See "Check 340" below; `bash scripts/live-checks/check340.sh --project <project> --bucket <sandbox bucket>` is the whole of it — the script creates the throwaway account, grants the two bindings, seeds four objects of its own, reads **both** candidate forms (fourteen rows, the `reports/` row covering the bare prefix and the slug level under it as two calls) and tears every bit of it down again — and **you** run it, on a **sandbox bucket** only, never `belong` (a project or a bucket naming that installation is refused before a single call); **no agent runs any step of it** | Nothing billable and no model call: one throwaway service account, four small objects under `runs/`, `reports/`, `tokens/` and `cache/`, two bucket bindings and one impersonation grant, every one of them removed and read back as gone by the script's own Restore, which runs from its exit trap even on a failed assertion or a Ctrl-C. **USER-RUN, NOT RUN.** Two attempts have been made, both on 2026-11-07 and both exit `2`, aborted — the first with an unreadable block, the second by a `tokens/` listing whose refusal named `storage.objects.get` where the script then accepted only `storage.objects.list`, which stopped the run before the full-path form was ever tried — so **nothing is settled about the attribute and no `PASS` for `list-prefix`** is recorded; the section below records what each run did and did not measure. |
+| 305 | The MCP state group served — the front door's reach into the node ([`docs/stateless-orchestrator/`](stateless-orchestrator/implementation-plan.md), its task **O16b** and its Check 305 — the text O16b wrote into the number the register held; **D2020** (a) and **D2021** (a), answered 2026-11-10, and the reconciliation's **F27**, **R2** and **R3**): with the front door on, a real MCP client holding `state:read` reads `get_state` and `get_events` for the installation's orchestrator — the same documents `fugaro orchestrator state --json` and `fugaro orchestrator events --json` answer — a token holding only `tasks:*` is refused both, `apply_patch` is absent from `tools/list` (D2021 (a); no `spawn_task` anywhere in it, T2), and the front door's own role in the real project is `firebasedatabase.instances.get` and nothing else, bound to `fugaro-mcp@<the installation's project>` and to nobody else, so the account the public service runs as holds no database write. IAM has no path-level scope, so that read reaches the whole database, and what it exposes node by node is the reconciliation's **U11** — no reading here settles it  | See "Check 305" below; the readings are hand-run — a client on the door's own issuer, one `gcloud iam roles describe` and the project's policy read back — and **you** run it, on your own installation with the front door on, **never `belong`**; **no agent runs any step of it**  | Nothing billable and no model call: three MCP calls, one role describe and one policy read, and no run and no image build. Nothing is created, granted or deleted by the check itself, so there is nothing to restore — what it reads is a service the installation already runs, a role it already holds and the node its own orchestrator already wrote. **USER-RUN, NOT RUN.** |
+| 340 | The prefix-limited listing grant ([`docs/periodic-reviews/`](periodic-reviews/implementation-plan.md) §P8, its Check 340; **R12's, and it gates R12**; `docs/design/bucket-iam.md` §4 — the H3 veto — and §11 item **V7**): which value the `storage.googleapis.com/objectListPrefix` request attribute carries, read as a throwaway service account holding R12's two conditioned bindings (objectViewer on `runs/`, objectUser on `reports/`, each carrying the `resource.name` read clause and the listing clause joined by `\|\|`): that account lists the FOUR prefixes R12's design gives the reports job — `runs/<slug>/`, `reports/<slug>/`, `reports/<slug>/<YYYY>/` and `reports/<YYYY>/` — reads a `runs/` object, and is refused the root listing, a `tokens/` read and a `tokens/` and a `cache/` listing. **The third run (2026-11-13) settled the value form: the attribute carries the request's own RELATIVE prefix (`runs/`, `reports/`) — under the full-path form every listing was refused — and that is the only form the script reads any more.** The bare `reports/` prefix that run was refused despite the binding being read back as present is a **DIAGNOSTIC** row, asked three ways and gating nothing, because the job never lists it. **The wrong form is a grant that lists nothing, and if the listings do not hold, R12's Terraform does not land and the plan stops and asks** (E4) | See "Check 340" below; `bash scripts/live-checks/check340.sh --project <project> --bucket <sandbox bucket>` is the whole of it — the script creates the throwaway account, grants the two bindings, seeds five objects of its own, reads the four listings the job makes and the read it makes (one row per listing, every answer its own), records the bare `reports/` prefix as a diagnostic asked three ways, and tears every bit of it down again — and **you** run it, on a **sandbox bucket** only, never `belong` (a project or a bucket naming that installation is refused before a single call); **no agent runs any step of it** | Nothing billable and no model call: one throwaway service account, five small objects under `runs/`, `reports/` (two depths), `tokens/` and `cache/`, two bucket bindings and one impersonation grant, every one of them removed and read back as gone by the script's own Restore, which runs from its exit trap even on a failed assertion or a Ctrl-C. **USER-RUN, NOT RUN.** Three attempts have been made: two on 2026-11-07, both exit `2` and both aborted — the first with an unreadable block, the second by a `tokens/` listing whose refusal named `storage.objects.get` where the script then accepted only `storage.objects.list` — and one on 2026-11-13, exit `1`, the first run that really read the probe and the one that settled the value form (relative) while leaving the bare `reports/` refusal unexplained. **The row stays NOT RUN**: the revision the third run's reading produced has not itself been run, so no `PASS` for `list-prefix` is recorded here yet; the section below records what each run did and did not measure. |
 | 360 | The managed screens show what the CLI says, on a managed project ([`docs/console-managed-screens/`](console-managed-screens/implementation-plan.md), its Check 360 and task **CM12**; **F3** and **D1489**, the owner's ask of 2026-11-07): the Project tab's five later sections — the managed state, the retirements, the account keys, the credentials service and the policy panel — drawn on a real managed project, each within its own read and from the document that read answers with, agreeing with `fugaro managed status --json`, `fugaro settings --json`, `fugaro project policy show --json` and `fugaro doctor`'s policy lines; **no section offers a control that changes anything**, and no token appears anywhere (**D1471**). Its hermetic half is `console/test/e2e/managed.spec.ts`, which walks the same tab against the stub — and the live reading is the one a stub cannot take | See "Check 360" below; there is **no script** — the check is three steps you do by hand in the console and the reading you take from them — and **you** run it, on your own machine, with an installation and a managed project; **no agent runs any step of it** | One `fugaro update` — the same run you would make anyway — plus two reads and one window: no model call, no run and nothing billable. Nothing is created or written by the check itself, so there is nothing to restore. **USER-RUN, NOT RUN.** |
 | 361 | The workspace's own Firebase's sign-in providers ([`docs/workspaces/`](workspaces/spec.md) spec §3's provider pin, and that plan's **W3**): the Identity Platform configuration of the workspace's **own** project, read once over REST and judged against the pin — `google.com` and `password` enabled, `anonymous` and phone-number sign-in off, no other provider enabled, and public sign-up **not** disabled. It is the check W3's design says no hermetic test can hold: the project and its rules come from the installation path, but `fugaro setup`'s Identity Platform step initializes with **no provider** (`IdentityPlatformStep`, `internal/infra/identityplatform.go`) — right for a member's project and wrong for the workspace's — and `refusePublicSignUp` (`internal/cli/init_firebase.go`) refuses an off-pin provider on a workspace's own project by name while never *requiring* the pinned pair, so the providers are enabled by you and this is the read-back. A workspace whose project carries no provider has nobody who can sign in, and one that carries a provider the pin refuses is a sign-in path the exchange never sees | See "Check 361" below; `bash scripts/live-checks/check361.sh --project <the workspace's own project>` is the whole of it — ONE read-only GET, nothing created and nothing deleted, so it is safe to run repeatedly — and **you** run it: a project whose name contains `belong` is refused before any call, and **no agent runs any step of it** | Nothing billable and no model call: one GET of the project's Identity Platform configuration with your own credentials. **USER-RUN, NOT RUN.** |
 | 370 | The security escalation ([`docs/security-classification/`](security-classification/implementation-plan.md) §6, its Check 370; the plan's task **SC6**; reconciliation **D1507**, **D1508**, **D1509** and **D1519**): a run whose own diff touches a path the list in force calls security-sensitive turns review level 3 on for the rest of the run — the adversarial step runs, and the run's record names the matched row's `name`, its `category` and the moment, while the rigor mode stays the mode it was (D1508) — and a run whose diff touches nothing on the list does neither, its record carrying no escalation member. Its reader's half is `fugaro security paths --json` (the same work's task **SC3**, in slice 1: it landed as `cb69f1754`, #1979, and is an ancestor of this checkout) on a project that has published no key: the floor's 43 rows, with `internal/creds/state.go` sensitive and `docs/recipes.md` not — the pair that shows the floor is a **positive list and not the classifier's complement** (F1, F22) — and the same command against a working tree whose `fugaro.yaml` carries a `security` row and a base that does not, which must print the **base's** list (D1518) | See "Check 370" below; **you** run it, on the sandbox installation and the sandbox repository only, **never `belong`**, and **no agent runs any step of it** | Two sandbox runs and three reader commands: **the runs are model calls and real money** and the reader commands are free. Nothing is granted, nothing is written outside the runs' own prefixes, and there is nothing to restore. **USER-RUN, NOT RUN.** |
@@ -868,6 +868,9 @@ probe account carries predefined grants only).
 | 410 | The failure line, and a diagnosis of a real failed run with no setup ([`docs/diagnose-agent/`](diagnose-agent/implementation-plan.md), its **Check 410** and task **T-DG10**; **D1604** and **D1609** for the line — T-DG9's task — and **D1602**, **D1603**, **D1605** and **D1606** for the diagnosis T-DG8's command runs): a real failed `fugaro update` prints `Something went wrong. Run: fugaro troubleshoot <id>` naming that run's own log, and `fugaro troubleshoot <id>` then returns a diagnosis — an outcome, an evidence folder holding the log, the doctor's output, the version and the effective configuration — on a machine with no installation, no `fugaro setup` and no login beyond the credential the command resolves itself; one idempotent script with `--dry-run`, and a project, region or account naming `belong` refused by name | See "Check 410" below; **you** run it, on your own machine and your own installation, against a project the check makes up and reads back as **NOT FOUND** — **never `belong`** — and **no agent runs any step of it** | Nothing is created: every call the probe's update makes is against a project that does not exist, and your own installation is the subject of none of them. **One model call** on your own credential (the diagnosis), bounded by the command's own `--max-turns` and `--max-budget-usd` (D1613), plus one anonymous source fetch. **OWNER-RUN, NOT RUN.** |
 | 411 | The source a machine with no `git` gets, and the version it records ([`docs/diagnose-agent/`](diagnose-agent/implementation-plan.md), its **Check 411** and task **T-DG10**; **D1610**, **D1611**, **F9** and **F21**): the same command, on a PATH built to hold **no `git` at all** and with the GitHub token variables unset, fetches the source as an **anonymous tarball** rather than by clone, and the recorded version matches — `kind: tarball`, a version that is the installed build's own (the release's version, or the tag when the binary carries no commit, D1611), `may_not_match` false — over a tree whose `go.mod` is there; the fetch happens **before** the credential is acted on, so an offline machine still gets its source | See "Check 411" below; **you** run it, on your own machine and your own installation, on the PATH it mirrors from your own minus `git`, against the same made-up project as 410 — **never `belong`** — and **no agent runs any step of it** | Nothing is created; the tarball fetch is one anonymous read of the public repository. **One model call** on your own credential, unless the diagnosis takes its offline path — which this check records as such rather than reading as a finding. **OWNER-RUN, NOT RUN.** |
 | 412 | A log carrying an instruction and a token, read as data ([`docs/diagnose-agent/`](diagnose-agent/implementation-plan.md), its **Check 412** and task **T-DG10**; **D1602**, **F5** and **F20**, on T-DG2's redaction and T-DG7's read-only child): two lines are planted in a real failed run's own log — an instruction to run a command that would create a file in the check's scratch directory, and a token generated at run time that the check never prints — and the log the agent was handed holds the instruction and `[REDACTED]` and not the token, the child was started with `--tools Read,Grep,Glob` and `--restricted`, every tool it used is one of the three (read from the client's own stream, through a wrapper the check puts first on PATH), the file the instruction named was never created, and the token is in neither the answer, the evidence folder nor the report | See "Check 412" below; **you** run it, on your own machine and your own installation, against the same made-up project as 410 — **never `belong`** — and **no agent runs any step of it** | Nothing is created, and the plant is two lines in one log inside a scratch directory removed at the end. **One model call** on your own credential over a log built to make it misbehave, bounded as 410's is. **OWNER-RUN, NOT RUN.** |
+| 500 | The image setup skill end to end ([`docs/image-setup-skill/`](image-setup-skill/implementation-plan.md), its **Check 500** and task **IS13**; **D1903** for the cap the skill keeps and **D1900** for the warning a repository with a stale `image:` block gets): the owner runs the `fugaro:images` skill in their own session, and the check then reads the proposal back with `fugaro image ls --json` and `fugaro image survey --json` — at most four entries, which nothing in the CLI enforces — builds each entry it covers with `fugaro image build` through **Cloud Build**, launches one run from the checkout of a repository the catalog covers and reaches that run's own `result.json`, so the run started on a baked image and the record's `baked_commit` names the build it started on; and reads the warning a second repository whose own `image:` block is ignored gets | See "Check 500" below; `bash scripts/live-checks/check-500.sh --sandbox <a sandbox repository checkout>` is the whole of it, its sibling test `scripts/live-checks/check-500_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** (`fugaro-dev`) and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call); **no agent runs any step of it** | At most four Cloud Builds — one per catalog entry the check covers — one sandbox run and what its task costs: **billable**, plus the skill's own session, which is yours to run. The check creates nothing in the cloud of its own choosing (the entries it builds are the ones the catalog already lists) and the run's pull request and branch are left open for you to close. **OWNER-RUN, NOT RUN.** |
+| 501 | The slim base, reached by the one command that is the whole upgrade ([`docs/image-setup-skill/`](image-setup-skill/implementation-plan.md), its **Check 501** and task **IS13**; **IS4**'s base, and the rule that `fugaro update` is the whole upgrade): the installation's base pin, read before and after `fugaro update` — run by the owner at their own terminal with no `--yes`, so the rebuild of the checkout's workflow images is answered by them in its own confirmation — and then one run on the sandbox that reaches its `result.json`, with the record's `image.built_at` at or after the moment the update started — the start, not the end, because the update waits for its own rebuilds before it returns: a pin the update moved says nothing about a run until a job starts on an image the upgrade built, and one whose image predates the update is the reading that the rebuild was declined | See "Check 501" below; `bash scripts/live-checks/check-501.sh --sandbox <a sandbox repository checkout>` is the whole of it, its sibling test `scripts/live-checks/check-501_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** (`fugaro-dev`) and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call, and the update is refused in such a checkout); **no agent runs any step of it** | What `fugaro update` costs on your installation — among its steps, the rebuild of the checkout's workflow images, billable and asked for on its own — plus one sandbox run and what its task costs. The check writes no pin, no config and no policy of its own: the only write is the update, whose steps you answer. **OWNER-RUN, NOT RUN.** |
+| 292 | A catalog entry whose source names a build `context:` is built with the repository's files in it ([`docs/catalog-build-context/`](catalog-build-context/implementation-plan.md) §6, its **Check 292** and task **CB5**; that folder's **F22**, **F29**, **F30**, **F32** and **F33**, and **D1402**, **D1403**, **D1408** and **D1409**; the amendment it folds into is [`docs/project-image-catalog/context-design.md`](project-image-catalog/context-design.md), its §A5, §A6, §C3, §C4, §C5 and the fold-in at §11): one entry built from a repository's Dockerfile in a **subdirectory**, whose `COPY` reaches a file of the repository — the build the catalog could not run before this work — read back four ways: the built image **contains the copied file**, the record names **one** commit (`source_commit` and `context_commit` the same, and the image's `org.opencontainers.image.revision` that commit), the staged context **fires** the nightly decision with the `catalog-context` reason and the rebuild it submits is pinned to the staged commit, and after that rebuild the same entry decides **without** that reason. **What the plan's own step 4 cannot be run as written is the point of the section below:** the trigger's subject is the digest the operator's own copy **staged**, not the branch, so a pushed commit fires nothing by itself — the check is written against the code and says so | See "Check 292" below; **you** run it, on the **sandbox installation and the sandbox repository only, never `belong`**, from the sandbox repository's checkout, and **no agent runs any step of it** (there is **no script**: the check is the steps below) | One Cloud Build that runs (`fugaro image build <entry>`), one submitted-and-cancelled before its steps run (the staging that leaves the record behind), and the one rebuild the project's catalog check job submits when the entry fires: **all billable, and the rebuild is the point of the step**. Nothing is granted, no run is launched and no model is called, so there is no run spend. Two commits are pushed to the sandbox repository's branch and reverted (a third when step 5 loses its race with the build it cancels), and the entry, its staged objects, its record, its check state and its image are the check's own — the entry and its objects are removed in the Restore, the image is left in the shared registry (`fugaro image rm` never deletes one). **OWNER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -2946,7 +2949,7 @@ fugaro update --firebase-project fugaro-dev --project fugaro
 - `fugaro upgrade` only **reports** drift in the jobs' environment (`internal/cli/upgrade_cloud.go`, `jobConfigCopyNote`: "only fugaro update --repo does"); its `cloud` step is one of four, and there is no `--cloud` flag — the command is plain `fugaro upgrade`;
 - `fugaro image refresh` patches a job's **image** through the API and nothing else (`internal/cli/image_refresh_steps.go`, `refreshCloneJobs`).
 
-⚠ **Use `fugaro image refresh` for the image half, not `fugaro upgrade`.** `fugaro upgrade` does four things, and only the cloud step is this step's: besides the cloud step it **installs or updates the Fugaro plugin in Claude Code at user scope** (its `plugin` step, through the `claude` CLI) and **deploys the project's rules generation and its published policy node** (its `rules` and `policy` steps) — `internal/cli/upgrade.go` is that command's own `Long` text, one paragraph per step: `plugin`, `cloud`, `rules`, `policy`. It **writes nothing in the checkout**: the `pin` step an older Fugaro had, which rewrote the checkout's `.claude/settings.json`, went with the pin merge, so a checkout that still carries one carries a leftover and nothing here puts it back. `fugaro image refresh` is the cloud step alone, so it moves no file and there is nothing to put back. If you run `fugaro upgrade` anyway, step 1's `/tmp/chk49-claude-settings-before.json` is what step 8 compares the checkout's `.claude/settings.json` against, and the plugin this machine ends up with is yours to check by hand (`claude plugin list`, or the marketplace entry in `~/.claude`).
+⚠ **Use `fugaro image refresh` for the image half, not `fugaro upgrade`.** `fugaro upgrade` does four things, and only the cloud step is this step's: besides the cloud step it **installs or updates the Fugaro plugin in Claude Code at user scope** (its `plugin` step, through the `claude` CLI) and **deploys the project's rules generation and its published policy node** (its `rules` and `policy` steps) — `internal/cli/update_check.go` is where that command's four steps live (`checkSteps`): `plugin`, `cloud`, `rules`, `policy`. It **writes nothing in the checkout**: the `pin` step an older Fugaro had, which rewrote the checkout's `.claude/settings.json`, went with the pin merge, so a checkout that still carries one carries a leftover and nothing here puts it back. `fugaro image refresh` is the cloud step alone, so it moves no file and there is nothing to put back. If you run `fugaro upgrade` anyway, step 1's `/tmp/chk49-claude-settings-before.json` is what step 8 compares the checkout's `.claude/settings.json` against, and the plugin this machine ends up with is yours to check by hand (`claude plugin list`, or the marketplace entry in `~/.claude`).
 
 So the rollout is: **release** a runner image carrying Task 1.3, then **`fugaro update --repo`** in the sandbox checkout to write the env, then let the image land. A rollout that skips the middle step is a rollout whose runs never see the pointer at all — the job would carry the new image and no `FUGARO_RTDB_URL`, and every run would fall back to the ceiling in its environment, which is exactly the state step 5 is supposed to change.
 
@@ -12348,7 +12351,7 @@ in the script's own vocabulary, and no document the check read is reproduced.
 installation and every fact passed, so O2's fence is **verified live** for the deployed document and for the person-write against the
 credential-less refusal. The two token identities the rules are really about — a run-scoped job token and a minter-minted custom
 token — stay `TestOrchestratorRefusesEveryTokenWriter`'s: this check holds no such credential and cannot mint one. Checks **301 to 304
-stay the owner's**, and **305 stays reserved** for O16.
+stay the owner's**, and **305 is O16b's**: its text is written below and not run.
 
 ## Check 301: the daemon under launchd and systemd — install, reboot, one lease, and a self-upgrade with no command typed (your own Mac and a Linux machine; run by you; NOT RUN)
 
@@ -12453,24 +12456,59 @@ built.** It is **OWNER-RUN**, with **two people**: no agent runs any step of it.
 
 **Paste back:** who handed what to whom, both sessions' readings, and the refusals — and **never a credential**.
 
-## Check 305: the MCP state group and its scopes — the number is reserved, the text is written when O16's files are named (NOT RUN)
+## Check 305: the MCP state group served — the front door's reach into the node (a real installation with the front door on, never `belong`; run by you; NOT RUN)
 
-**NOT RUN, and not yet written.** Task **O16** of the stateless orchestrator plan
-([`docs/stateless-orchestrator/implementation-plan.md`](stateless-orchestrator/implementation-plan.md)) names **Check 305** and leaves
-its text to the task that names the files: O16 builds `get_state`, `get_events` and `apply_patch` over the state store behind the
-`state:read` and `state:write` scopes, with `apply_patch` also gated by **D1225** and with **no `spawn_task`** anywhere in it (T2), and
-it cannot start until the MCP registry (M7) and its two amendments (T3, the scopes; T4, the threat model) land. **Re-read 2026-11-10:** all three
-have landed, and O16 split — **O16a** builds the scopes and the read tools dormant (nothing served, nothing to check) and **O16b**, which serves
-them once the stateless design's D2020 is answered and the front door is wired, is the task that writes this section. This row and this
-section **reserve the number** — a check's number is allocated once and is never renumbered — so that O16 writes its section into the
-register rather than picking a new one. Nothing is run here until then, and **no agent runs any step of it**.
+**NOT RUN.** Written by task **O16b** of the stateless orchestrator plan
+([`docs/stateless-orchestrator/implementation-plan.md`](stateless-orchestrator/implementation-plan.md), its **O16b** and its Check 305),
+into the number the register had reserved; **D2020** (a) and **D2021** (a) were answered 2026-11-10, and the reconciliation's **F27**,
+**R2** and **R3** are the shape it reads. **Nothing in this section has been run, and it is not a claim that the state group is served.**
+It is **OWNER-RUN**: **no agent runs any step of it**.
+
+One thing has to be there before any of it is read, and it is the installation's own switch: **the front door on** — the `mcp_server` key
+that renders the service, its account and the door's own entry onto the revision (`var.mcp_server`; D934, and the switch the state read
+arrives under). An installation that never asked serves a 404 on every path of the door and has nothing for this check to read.
+
+**What it will read.**
+
+1. **The tools the door lists.** A real MCP client, signed in against the door's own issuer and holding a token whose scopes carry
+   `state:read`, asks for `tools/list`. **FACT:** `get_state` and `get_events` are in the list, and `apply_patch` is **not** — D2021 (a)
+   catalogues it under `state:write` and registers it by nothing, so `fugaro orchestrator patch` and the person's own credential stay the
+   write (D1223) — and no `spawn_task` is anywhere in the list (T2).
+2. **`get_state` beside the CLI.** For an orchestrator the installation's node holds (`fugaro orchestrator ls --json` names it), the call
+   answers what `fugaro orchestrator state --json <id>` answers, member for member. **FACT:** one node, two surfaces — and the document is
+   the project's own loop's: one another loop wrote is refused rather than answered as this project's state.
+3. **`get_events` beside the CLI, and the cut.** The same orchestrator's log, and then the same call with `since` as a duration.
+   **FACT:** the entries are the ones `fugaro orchestrator events --json <id>` prints — one log, one sort, the server's stamp's (D1230) —
+   and the `since` cut is the same one, taken on the database's own clock rather than on the machine the front door happens to run on.
+   The door cleans each entry's free text on the way out (one plain line, cut at the log's own cap), because it is the surface a client
+   that never opened the node reads the log through (R3), so a text a hand-written node left longer arrives at the length the log writes.
+   There is **no cursor** (D1229): a client asks again with a `since`.
+4. **A `tasks:*` token is refused both.** A token holding only the task scopes — the vocabulary's default pair (`tasks:read tasks:write`,
+   F26's R1) — calls `get_state` and `get_events`. **FACT:** both are refused, and the refusal is the scope's: a state scope is held only
+   when it was asked for by name, so a `tasks:write` token is never silently a state reader.
+5. **The role, in the real project.** `gcloud iam roles describe fugaroStateRead --project <the installation's Firebase project>`, and the
+   project's IAM policy read back. **FACT:** the role's permission list is `firebasedatabase.instances.get` **exactly** — not
+   `instances.update`, and no second permission of any kind — and the one binding names the front door's own account
+   (`fugaro-mcp@<the installation's project>`) and nothing else. Realtime Database IAM has no path-level scope (F27), so this one read is a
+   read of the **whole database** — `pairing/`, `mailbox/`, `config/`, `spend/`, `runs/` and the rest of the rules' top-level nodes. What
+   that exposes node by node, and whether any of it sits in the clear, is the reconciliation's **U11**: it is the reading D2020's answer
+   carries as its cost, and no step here settles it.
+
+**Restore.** Nothing is created, granted or deleted: the check reads a service the installation already runs, a role it already holds and
+the node its own orchestrator already wrote. Say what the door listed, what the two documents were beside the CLI's own, and what each
+refusal named.
+
+**Paste back:** the `tools/list` answer, the two documents, the scope refusals, the role's permission list and the policy read-back — and
+**never a credential, and never a token**.
 
 ## Check 340: the prefix-limited listing grant — one script you run (a sandbox bucket only, never `belong`; run by you; NOT RUN)
 
-**NOT RUN.** Written by the task that implemented Check 340 of [periodic-reviews/implementation-plan.md](periodic-reviews/implementation-plan.md)
+**NOT RUN.** Three attempts have been made and none of them is an answer. Written by the task that
+implemented Check 340 of [periodic-reviews/implementation-plan.md](periodic-reviews/implementation-plan.md)
 §P8 (the plan's **E4**) — §P8 names the number and leaves the row and this section to that task, which is the
-register's own rule for a work that reserved none — **no step of it has been run to a reading, and nothing here is a
-claim that it works.** It is the check **R12** waits on: R12's Terraform writes one conditioned binding per prefix for the
+register's own rule for a work that reserved none — and **no `PASS` is recorded for `list-prefix` anywhere
+here**: the third run read the probe and settled the attribute's value form, but the row above stays **NOT RUN**
+until the revision that reading produced has itself been run. It is the check **R12** waits on: R12's Terraform writes one conditioned binding per prefix for the
 reports job, and each binding's listing half names the `storage.googleapis.com/objectListPrefix` request
 attribute. What that attribute **carries** is unverified in this tree — `docs/design/bucket-iam.md` §4's H3 veto
 and its §11 item **V7** record the value form as unverified, and grepping the tree finds the attribute's name in
@@ -12510,21 +12548,52 @@ rows, five under the relative form were reached — four `PASS`ing and the `repo
 nine were not reached at all. **The row 340 above is still NOT RUN and no `PASS` is recorded for `list-prefix`
 anywhere here**: four `PASS`ing criteria and one `FAIL`ed listing are not an answer about the attribute, and the
 full-path form — the only one that could have carried it — was never read. Three faults left that run where it
-stopped, and all three are fixed in the same task: **either permission is a refusal** for the `tokens/` **read**,
+stopped, and all three were fixed in the task that followed it: **either permission is a refusal** for the `tokens/` **read**,
 while the `tokens/` and `cache/` **listings** are asked with a **wildcard** (`gs://<bucket>/tokens/*`) so that gcloud
 sends the **List** request instead of refusing the prefix at the object request it makes first, and they require
 `storage.objects.list`. A denial naming only `storage.objects.get` there says the List request did **not** go out: the
-row is recorded as **NOT OBSERVED** — neither a criterion that held nor one that failed — and it **fails the form**, so
-the run reads on to the end of both forms and then ends **exit `2`** with no string for R12's builder, because the pair
+row is recorded as **NOT OBSERVED** — neither a criterion that held nor one that failed — and it **FAILS the check**, so
+the run ends **exit `2`** with no string for R12's builder, because the pair
 that guards R12's two prefixes is half of what this check runs before R12 to settle and a run that never measured it
 must not read as an answer. A denial for this account about a resource inside this check's own bucket is what makes
 either reading a refusal at all, and every other unclassified failure — an expired session, a 5xx gcloud did not retry,
-a killed call, a denial naming another permission or another bucket's resource — still stops the run;
-**both forms are always read to the end of their criteria**, so a failed criterion is that form's failure alone and
-the answer is decided from the two result sets instead of the first form's first failure, and a form that fails a
-listing no longer keeps the other form from being measured at all; and the **`reports/` criterion lists both
-`gs://<bucket>/reports/<slug>/` and `gs://<bucket>/reports/`**, each answer in its own row, because a clause that
-matches the slug-level prefix but not the bare one is exactly the reading a single folded `FAIL` hides.
+a killed call, a denial naming another permission or another bucket's resource — still stops the run. That task also
+made the run read **both** candidate forms to the end of their criteria and made the `reports/` criterion list both
+`gs://<bucket>/reports/<slug>/` and the bare `gs://<bucket>/reports/`, each answer in its own row — **and both of
+those are history now**: the third run below reached them, answered the form question, and showed the bare prefix not
+to be a listing the job makes, so the revision after it reads the one form and asks the bare prefix only as the
+diagnostic it turned out to be.
+
+**Third run: 2026-11-13, exit `1` — the first run that really read the probe, and the one that settled the value
+form.** The owner ran the script once more, on `fugaro-dev` and a fresh sandbox bucket, and this time the block was
+readable to the end. Under the **relative** form the throwaway account **LISTED** `runs/<slug>/` and
+`reports/<slug>/`, **READ** a `runs/<slug>/<run>/result.json`, was **refused** the bucket root listing, the `tokens/`
+read and the `tokens/` and the `cache/` listings — every criterion that had to hold held, and every one that had to
+be refused came back refused, so the listing clause really does match the request's own relative prefix. Its one
+unexplained reading was the **bare `reports/`** listing: it came back **REFUSED with a denial naming
+`storage.objects.list`** while the bucket policy read back with the owner's own identity showed **the reports binding
+present** — the grant was on the bucket, so the refusal is gcloud resolving the prefix before listing it, another
+request shape, or IAM propagation, and that run's rows cannot tell those apart. Under the **full-path form** — the
+listing clause written with the bucket's own object path — **every listing was refused**: no request attribute ever
+carries that string, so the full-path form is a grant that lists nothing, which is the reading this check exists to
+produce. **The value form is settled: the attribute carries the request's OWN RELATIVE prefix (`runs/`, `reports/`),
+and R12's builder must write that and never the object path.** The run's `list-prefix` row **FAILED** on the bare
+`reports/` row and the run ended **exit `1`** (ruling E4's reading: a criterion failed, not a could-not-tell), and
+what that row is worth comes from the **design**, not from a reading of code: R12's own text says which prefixes the
+reports job lists — R10's loop lists `runs/<slug>/` for a repository's records and writes
+`reports/<slug>/<YYYY>/<key>.md` with the aggregate at `reports/<YYYY>/<key>.md`, and the stored reader R11 is
+designed to list `reports/<slug>/` for the year folders and `reports/<slug>/<YYYY>/` under each, the way
+`internal/cli/runs_digest.go:662` and `:690` read a checkout's folder today
+([periodic-reviews/implementation-plan.md](periodic-reviews/implementation-plan.md) §R12, §R10, §R11) — so the
+job's own listing set is **`runs/<slug>/`, `reports/<slug>/`, `reports/<slug>/<YYYY>/` and `reports/<YYYY>/`, and
+never the bare `reports/` or the bucket root**. **R11 does not exist in this tree** (R12 lands before R7 and R11 by
+the plan's own order), so this is the design's statement of what the job will list and not a measurement of a built
+job: the check reads those four prefixes because that is what R12's Terraform and R11's reader are being built to
+do, and a refusal of the bare `reports/` prefix is a request the design never makes, which is why it must not gate
+R12. That design statement is why the revision this run's reading produced reads the four prefixes the job lists,
+drops the second form, and asks the bare prefix as a **DIAGNOSTIC** that gates nothing. The revision has not itself
+been run, so **the row above is still NOT RUN**: what it needs is one more run of the same command, on a fresh
+sandbox bucket, whose `list-prefix` row is `PASS` and whose Restore confirms the teardown.
 
 **Run it:**
 
@@ -12537,28 +12606,30 @@ name contains `belong` is refused before a single call, and the bucket is read b
 so a mistyped one is a stop rather than a reading. A bucket that is **not there** — gcloud answers `404` and its own
 "bucket does not exist" — is a stop of its own, and both the `bucket-reachable` row and the stop name what to do:
 `gcloud storage buckets create gs://<bucket> --project=<project> --location=us-central1 --uniform-bucket-level-access`
-on a **sandbox** project. **The script never creates the bucket**: it grants IAM on one and writes four objects into
+on a **sandbox** project. **The script never creates the bucket**: it grants IAM on one and writes five objects into
 it, so the bucket has to be yours to throw away, created by you. The script is the whole check and asks you for nothing else. It
 creates a throwaway service account of the run's own (`fugaro-chk340-<hex>`, and it never adopts an account that is
 already there); grants it R12's two conditioned bindings — `roles/storage.objectViewer` under the `runs/` clause
 and `roles/storage.objectUser` under the `reports/` clause, each carrying the `resource.name` read half and the
-listing half joined by `||`, written through `--condition-from-file` so the expression's own bytes survive
-gcloud's comma-splitting; seeds four small objects of its own under `runs/<slug>/`, `reports/<slug>/`,
-`tokens/<slug>/` and `cache/<slug>/`; and then, impersonating that account, reads **both** candidate forms to the
-end of their criteria, **relative** first and **full path** second, whatever the first one did. Each form is read the
-same ways: `runs/<slug>/` must list, `reports/<slug>/` **and** the bare `reports/` must list — two calls, each
-answer recorded in the row, so a clause that matches the slug level and not the bare prefix is visible instead of
-folded into one `FAIL` — one `runs/` object must read, and the root listing and a `tokens/` read and a `tokens/`
+listing half joined by `||`, the listing half written with the **relative** value the third run settled (`runs/` and
+`reports/`) through `--condition-from-file` so the expression's own bytes survive
+gcloud's comma-splitting; seeds five small objects of its own under `runs/<slug>/`, `reports/<slug>/`,
+`reports/<slug>/<YYYY>/` (the year level the job writes to), `tokens/<slug>/` and `cache/<slug>/`; and then,
+impersonating that account, reads the criteria **R12's design gives the reports job**, under that one form:
+`runs/<slug>/` must list, the three reports prefixes the job lists must list — `reports/<slug>/`,
+`reports/<slug>/<YYYY>/` and `reports/<YYYY>/` — **each URL with its own answer in the row**, so a clause that
+matches one level and not another is visible instead of folded into one `FAIL`, one `runs/` object must read, and
+the root listing and a `tokens/` read and a `tokens/`
 and a `cache/` listing must all be refused. The two prefixed listings are asked as **wildcards**
 (`gs://<bucket>/tokens/*`, `gs://<bucket>/cache/*`), which is what makes the **List** request the one that goes out —
 see the paragraph below — and their rows are criteria only when the denial names the permission the missing **listing**
-clause would have carried. The two listings and the read that must succeed are **retried** for
+clause would have carried. The **four listings and the read** that must succeed are **retried** for
 `CHECK340_PROPAGATION_SECONDS` (150 seconds by default) before a failure is recorded, and the four refusals are
-read only once one of those three has held under that form — if none did, they are recorded as **not read**, because
+read only once one of those five has held — if none did, they are recorded as **not read**, because
 a refusal then could be the fresh grant simply not being in effect yet. IAM propagates a fresh grant and its
-condition asynchronously (V7's neighbour, §11 item **V5**), and reading one as a refusal would pick the wrong form —
-the one thing this check must not do. A refusal that is **allowed** instead is a grant wider than R12's two prefixes,
-and it fails that form. And a refusal has to **be** a refusal: the four calls are criteria only when the failure is
+condition asynchronously (V7's neighbour, §11 item **V5**), and reading one as a refusal would record a grant that
+had simply not arrived. A refusal that is **allowed** instead is a grant wider than R12's two prefixes,
+and it fails the check. And a refusal has to **be** a refusal: the four calls are criteria only when the failure is
 the refusal itself, **for this account** and about **a resource inside this check's own bucket**, naming a permission
 the missing clause could have carried: `storage.objects.list` for the root listing, **either** permission for the
 `tokens/` **read** (a read is an object request, so the denial names the object permission the missing clause would
@@ -12570,68 +12641,73 @@ could not measure the clause it exists for (this is the reading the second run d
 clause would hide behind: such a clause would still leave the probe refused, so the row would hold while the veto it
 guards was gone). A **wildcard** names a pattern, so gcloud goes straight to listing with prefix `tokens/`, and a
 denial naming `storage.objects.get` after that says the List request did not go out after all: the row says
-**NOT OBSERVED**, neither a criterion that held nor one that failed, and the form does not pass — the run reads on and
-ends exit `2` rather than exit `0` with R12's string, so the string is only ever handed over off a run that measured
-the pair. A listing that WAS allowed is the opposite reading and fails that form. A call that did not answer instead — a 5xx
+**NOT OBSERVED**, neither a criterion that held nor one that failed, and the check does not pass — the run ends exit
+`2` rather than exit `0` with R12's string, so the string is only ever handed over off a run that measured
+the pair. A listing that WAS allowed is the opposite reading and fails the check. A call that did not answer instead — a 5xx
 gcloud did not retry, an expired session, a killed request, a denial naming **another** permission or **another**
-bucket's resource — stops the run, because recorded as a refusal it would be a criterion nobody observed passing,
-and the form it names is one R12 must not write. A **grant the bucket refuses**, and a **removal it refuses** between the two forms, are a
+bucket's resource — stops the run, because recorded as a refusal it would be a criterion nobody observed passing.
+A **grant the bucket refuses**, and a **removal it refuses**, are a
 third thing again: the run stops there, with exit `2` and an `aborted` row naming the binding, rather than reading a
-permission error as "this form does not list". A refused removal has to stop the run all the same — the previous
-form's conditioned binding is still on the bucket, so the next form would list through the **earlier** clause and the
-answer would name the wrong form — and the flag that says a binding of this run's is on the bucket stays set, so the
-Restore tries the removal again and reads the bucket policy back into its own row either way. A removal that
-**succeeds** is not yet a removal that has **taken effect**: IAM propagates a removal asynchronously too, and both
-forms speak for the same throwaway account, so if the relative form failed for a reason of its own — a criterion
-read past its 150-second window — the full-path form would list and read through the still-active relative clause
-and be answered as the form the attribute carries. The second form is therefore not granted until the account is
-**refused** the listing the first form allowed — read as the account's own reach and not yours — **and refused for
-that reason**: the refusal has to be a denial naming one of the permissions the removal takes away —
-`storage.objects.list`, the listing permission the clause carried, or `storage.objects.get`, which is what gcloud
-names for the very same request when it probes the prefix as an object — the wait's own URL is a plain prefix and not
-a wildcard, so that probe is its first request, and the `tokens/` read is the other criterion that takes either name —
-because that is the reading that says the clause is gone. A listing that failed naming another permission,
-or naming none — an expired session, a 5xx gcloud did not retry, a killed call, and gcloud's own command prefix in
-the message, whose dots read like a permission — is a call that
-did not answer rather than a binding that is gone, so it is retried like a listing that still succeeds: reading it as
-the removal having taken effect is the same wrong answer from the other side, and it is the reading this wait exists
-to refuse. A bucket that has not got there within the same 150-second window — and a call that never answers — stops
-the run with exit `2`, and the `aborted` row quotes whichever of the two it was, because that is a could-not-tell and
-not an answer.
+permission error as "the grant does not list". The removal comes after the criteria, and the flag that says a binding
+of this run's is on the bucket stays set, so the Restore tries the removal again and reads the bucket policy back
+into its own row either way.
+
+**The bare `reports/` prefix is a DIAGNOSTIC row, and it gates nothing.** R12's design never has the reports job
+list it — that design's listings are the four the criteria above hold — so it is asked with no criterion attached to it, three ways, each
+answer recorded in the one `reports-bare-diagnostic` row: (1) `gcloud storage ls gs://<bucket>/reports/`, the plain
+form the third run was refused; (2) `gcloud storage ls gs://<bucket>/reports/*`, the wildcard form, which makes the
+**List** request the one that goes out instead of the object request gcloud makes when it resolves a prefix; and (3)
+a delimiter-style `objects.list` (`?prefix=reports/&delimiter=/`) through the JSON API with this account's own access
+token, which is the request a delimiter listing itself makes — a `200` there beside a gcloud refusal says gcloud's
+own call is what failed rather than the clause, while a `403` naming `storage.objects.list` says the grant really does
+not reach the bare prefix. Each answer is recorded with the permission the denial names, so the row says which of the
+two requests was refused and not merely that one was. The row changes no `PASS`, no `FAIL` and no exit code, and
+**pasting it back is the whole point of it**: it is what the next revision of this check reads, because the third
+run's refusal of it is still unexplained. The one credential-shaped value the script ever touches is the access token
+of that third probe, and it is never a value in the script: `gcloud auth print-access-token` writes it straight into
+a mode-`0600` `curl` config file (in a `umask 077` subshell), the `Authorization` header is appended into that same
+file, and the file is deleted before the row is written — so the token is never in a variable, never on a command
+line, never in the block and never in a `bash -x` trace. `curl` is optional and is used by that probe alone: without
+it the row says the probe was not made and nothing else about the check changes.
 
 **Reading the `CHECK 340 RESULT` block.** The same shape as the other scripted checks': ONE block on stdout, a
-`FACT <key>: PASS|FAIL|INFO — <detail>` line per fact, ending `CHECK 340 RESULT END (exit N)`. The two forms carry
-their own rows — `relative-lists-runs`, `relative-lists-reports`, `relative-reads-runs` and the four refusals, then
-the same under `full-` — and the row that matters is **`list-prefix`**: `PASS` names the form that held and
-prints the exact string R12's builder must write, above the block in one line to copy back. One form passing every
-criterion is enough **unless both do**: no single attribute value starts with both candidate strings, so a bucket
-that lets both forms through contradicts itself and the run stops, exit `2`, rather than naming a form off two result
-sets that disagree. A form that failed a listing is that form's failure alone, and the verdict is taken from the two
-result sets rather than from the first form to stop. `FAIL` says **neither**
-form listed, which is the reading that stops the plan (E4). The bucket-wide `objectViewer` a listing would otherwise
+`FACT <key>: PASS|FAIL|INFO — <detail>` line per fact, ending `CHECK 340 RESULT END (exit N)`. The rows are
+`project`, `bucket`, `belong`, `bucket-reachable`, `account`, `seed`, `lists-runs`, `lists-reports`, `reads-runs`,
+`root-refused`, `tokens-read-refused`, `tokens-list-refused`, `cache-list-refused`, the diagnostic's
+`reports-bare-diagnostic`, then the row that matters, **`list-prefix`**, and last the teardown's own `restore`.
+`PASS` on `list-prefix` says
+every criterion held under the relative form, and it prints the exact string R12's builder must write, above the
+block in one line to copy back: `runs/` for the runs binding and `reports/` for the reports binding, each in
+`api.getAttribute('storage.googleapis.com/objectListPrefix', '').startsWith("<prefix>/")`. `FAIL` says a listing or
+the read did not hold, which is the reading that stops the plan (E4) — so R12's Terraform does not land on it, and
+the block's own rows say which prefix failed and whether the failure came after the full 150-second propagation
+window. The bucket-wide `objectViewer` a listing would otherwise
 need is deliberately **not** a fallback here, because it reads `tokens/` and `cache/` too. `INFO` is the third
-reading, and it is the one no string comes with: **`list-prefix: INFO — not settled`** is what a form whose every
-readable criterion held still gets when the `tokens/` or `cache/` listing came back **NOT OBSERVED**, and the run ends
-exit `2` — the attribute's form is visible in the rows above, but the guard R12's two prefixes exist for was not
-measured, so nothing is handed to R12's builder and the run is not the one that clears R12. Exit `0` means a form
-passed every criterion **and** the Restore confirmed it deleted everything this run made; `1` means none did — or a
-form passed and the Restore could not confirm what it deleted, in which case the block's `restore` row names the
-account and the prefixes to remove by hand — so exit `1` reads as **E4** only when that row passed; and `2` means the
+reading, and it is the one no string comes with: **`list-prefix: INFO — not settled`** is what a run whose every
+readable criterion held still gets when the `tokens/` or `cache/` listing came back **NOT OBSERVED**, and it ends
+exit `2` — the rows above are visible, but the guard R12's two prefixes exist for was not
+measured, so nothing is handed to R12's builder and the run is not the one that clears R12. Exit `0` means every
+criterion passed **and** the Restore confirmed it deleted everything this run made; `1` means a criterion failed — or every
+criterion held and the Restore could not confirm what it deleted, in which case the block's `restore` row names the
+account and what to remove by hand — so exit `1` reads as **E4** only when that row passed; and `2` means the
 run could not tell (a guard stopped it, a tool is missing, a grant or a removal the bucket refused, a refusal that
-came back as a call that did not answer, a removal that had not taken effect in time, a listing that never answered,
+came back as a call that did not answer, a listing that never answered,
 a **`tokens/` or `cache/` listing that came back as the object request** rather than as the List (so the guard was
-never measured), a bucket that let **both** forms through, an internal error ended it) — `2` is not an answer about
-the attribute, and the block's `aborted` row says so. `belong`, `bucket-reachable`, `account` and `seed` say what the run was reading, and `restore` is last.
+never measured), an internal error ended it) — `2` is not an answer about
+the attribute, and the block's `aborted` row says so. `project`, `bucket`, `belong`, `bucket-reachable`, `account` and `seed` say what the run was reading, and `restore` is last.
 
 **Cost.** Nothing billable and no model call: one throwaway service account, two bucket bindings, one impersonation
-grant of yours on that account alone, and four small objects. It never prints a credential, holds none, and the
+grant of yours on that account alone, and five small objects. It never prints a credential, holds none, and the
 `tokens/` object it seeds is a marker this check wrote itself.
 
 **Restore.** The script runs it itself, **from the exit trap too**, so a failed assertion or a Ctrl-C still leaves
 nothing behind: the four slug prefixes are removed, both bucket bindings go with `remove-iam-policy-binding --all`
-(no condition named, so it does not matter which form was granted when the run stopped), your impersonation grant
+(no condition named, so it does not matter which binding was granted when the run stopped), your impersonation grant
 goes, and the account is deleted — bindings first, because a deleted account's members read
-`deleted:serviceAccount:…` and the removes then fail. It reads all four prefixes back afterwards, and — whenever it
+`deleted:serviceAccount:…` and the removes then fail. The year-level object is deleted **by name**
+(`reports/<YYYY>/chk340-<slug>.md`), **never as the `reports/<YYYY>/` prefix**: that prefix holds the owner's own
+reports, and a recursive delete there would take them. It reads the four prefixes and the year object back
+afterwards, and — whenever it
 made an account — the bucket policy and the account too, and says what it found: the policy read is what the PASS
 row's own sentence ("the policy no longer names the account") rests on, so it is made on every run that created the
 account, not only on the runs where the removals had not already been done. The account's presence is read from a
@@ -12647,7 +12723,8 @@ the other side.
 
 **Paste back:** the whole block into row 340 above and to the coordinator, with the `list-prefix` row's string —
 that string is the `<list prefix>` R12's builder writes into the two listing clauses, and it is the only thing
-this check exists to produce.
+this check exists to produce — **and the `reports-bare-diagnostic` row with it**, which is what explains the bare
+`reports/` refusal the third run left open.
 
 **What waits on it.** R12, and behind R12 the reports job's first firing (Check 341) and `fugaro runs digest`'s
 own writing to `reports/` (R10, Open item 5 of [periodic-reviews/implementation-plan.md](periodic-reviews/implementation-plan.md)):
@@ -13001,6 +13078,170 @@ reading). A key the run never reached reads `FAIL — not reached`.
 **What waits on it.** **DS1.5** (the keep-warm heartbeat in the runner): a failed 511 stops it and
 returns to the owner as a decision, because the interval is what that task would otherwise assume.
 
+## Check 500: the image setup skill end to end (sandbox project `fugaro-dev` and the sandbox repository only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **IS13** of
+[docs/image-setup-skill/implementation-plan.md](image-setup-skill/implementation-plan.md) — its "Checks
+(reserved 500-509)" — and **run by you**: what it measures is a skill run in your own session and the
+images Cloud Build makes of what that skill proposed, and neither is something an offline run can answer.
+The check is `scripts/live-checks/check-500.sh` (its sibling test
+`scripts/live-checks/check-500_test.sh` drives it against fake `gcloud` and `fugaro` only), the owner
+types `bash scripts/live-checks/check-500.sh --sandbox <a sandbox repository checkout>`, and **no agent
+runs any step of it** — the skill is yours to run, and a check that ran it for you would be proposing the
+thing it measures. Nothing here goes near the dev installation: a project or region naming `belong` is
+refused by name before a single call, which is what **never `belong`** means on this row.
+
+**What it settles.** **D1900** — a repository's own `image:` key is ignored once the project's catalog
+decides the job's image, and a repository that carries a stale one is told so rather than refused — and
+**D1903** — the cap of four images is the skill's, which nothing in the CLI enforces. Both are read from
+the outside: the catalog the skill left, the builds the cloud makes of it, and one run that starts on the
+result.
+
+- **The proposal, read back rather than assumed.** `fugaro image ls --json` is the catalog as it stands —
+  the entries, their tags, the default and the digest each entry's last build recorded — and `fugaro image
+  survey --json` is the other half of the skill's own loop: the repositories, their signals and the
+  mapping. The check reads both and proposes nothing: it builds the entries the catalog already lists, and
+  it invents no entry of its own.
+- **The cap is a reading, not an assumption.** At most four entries. The skill stops grouping at four, the
+  catalog does not care, and nothing in the CLI refuses a fifth — so the count is kept here, and a project
+  whose catalog holds five is the finding D1903 says no code will make for you.
+- **The builds are the cloud's.** `fugaro image build` for each entry the check covers, through
+  **Cloud Build**: a local Docker build proves nothing about the entry's runtime contract or the account it
+  is built as, which is the whole reason the skill never builds locally. A catalog entry's Dockerfile is
+  built from the repository it belongs to and the CLI refuses a build from another repository by name, so
+  the check needs one checkout per entry: `CHECK500_CHECKOUT_<entry>` names them, every other entry is
+  built from `--sandbox`, and an entry with no checkout is a row the check could not measure rather than a
+  finding about the entry.
+- **The run is the reading.** One run is launched from the checkout of a repository the catalog covers, and
+  it is a run on a baked image: the record's `baked_commit` is the baked checkout's HEAD when the job
+  started, so a non-empty one is the outside evidence that the image carried the repository, which is what
+  makes the build worth paying for. It is read only where the project bakes at all — a project that bakes
+  nothing has nothing to show here — and the run has to reach its own `result.json`, because a launch on
+  its own says nothing about the image it started on.
+- **The stale block is a warning, not a refusal.** A second repository whose own `image:` block is stale is
+  where **D1900** is read: `fugaro update --repo <that checkout> --plan-only` prints one `warning:` line per
+  ignored key and names the entry that decides the job instead, and it writes nothing and changes nothing.
+  The check points at that repository with `--stale-repo`, which is the sandbox checkout unless you name
+  another one — a repository whose own `image:` block is stale is the subject, and the sandbox is only the
+  convenient default. A launch or an update that refuses such a repository instead of warning is the
+  finding: D1900's whole point is that it keeps working.
+
+**What a run costs.** One Cloud Build per catalog entry the check covers — at most four, each billable,
+and the build leases its own cost from the project's budget where the installation has one — plus one
+sandbox run and what its task costs, which is a real run with a real pull request. The check writes no
+catalog entry, no mapping and no switch: those are the skill's writes and yours, made in your own session.
+On disk it is one scratch directory, removed at the end. `CHECK500_SKIP_BUILDS=1` reads the catalog and
+launches the run without spending a build, which is what to use for a second pass.
+
+**The commands.**
+
+```sh
+bash scripts/live-checks/check-500.sh --dry-run
+bash scripts/live-checks/check-500.sh --sandbox <a sandbox repository checkout>
+bash scripts/live-checks/check-500.sh --sandbox <a sandbox repository checkout> --stale-repo <another checkout>
+```
+
+Progress goes to stderr and one `CHECK 500 RESULT` block goes to stdout at the end: paste that block here
+and nothing else. **Exit `0`** is every criterion that was measured holding; **`1`** is a measured
+criterion that did not hold, or a guard that stopped the check — a catalog holding more than four entries,
+an entry whose build recorded no digest, a run that refused, a stale repository told nothing; **`2`** is the
+check not being able to measure (a tool missing, the checkout not being one, the catalog or the record
+unreadable, the run never ending). A key the run never reached reads `FAIL — not reached`. The knobs are
+`CHECK500_DRY_RUN`, `CHECK500_KEEP_SCRATCH`, `CHECK500_SANDBOX`, `CHECK500_STALE_REPO`,
+`CHECK500_CHECKOUT_<entry>`, `CHECK500_TASK`, `CHECK500_RECIPE`, `CHECK500_SKIP_BUILDS`,
+`CHECK500_REGION` (us-east5: the guard that refuses a project or region naming `belong` reads it),
+`CHECK500_MAX_BUILDS` (4: the most Cloud Builds the check will spend, one per entry — an entry past it is
+not built and its build row fails, which is the same count as the skill's own cap),
+`CHECK500_BUILD_TIMEOUT_SECONDS` (1800), `CHECK500_RUN_TIMEOUT_SECONDS` (3600),
+`CHECK500_UPDATE_TIMEOUT_SECONDS` (900), `CHECK500_POLL_SECONDS` (15),
+`CHECK500_DOCTOR_TIMEOUT_SECONDS` (180), `CHECK500_CLI_TIMEOUT_SECONDS` (180) and
+`CHECK500_LAUNCH_TIMEOUT_SECONDS` (600).
+
+**What waits on it.** IS2 and IS8b — the two tasks of the folder that are still open pull requests — and
+the removal work the same reconciliation parked (R2-R10, D1900): this check is the first outside reading of
+the skill's own proposal on a project that is not the author's, and a finding here is what reopens either.
+
+## Check 501: the slim base, reached by the one command that is the whole upgrade (sandbox project `fugaro-dev` and the sandbox repository only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **IS13** of
+[docs/image-setup-skill/implementation-plan.md](image-setup-skill/implementation-plan.md) — its "Checks
+(reserved 500-509)" — and **run by you**: nothing below is a claim that the upgrade moves a base and a run
+starts on it, and what it measures is a real `fugaro update` at your own terminal followed by a real
+sandbox run. The check is `scripts/live-checks/check-501.sh` (its sibling test
+`scripts/live-checks/check-501_test.sh` drives it against fake `gcloud` and `fugaro` only), the owner types
+`bash scripts/live-checks/check-501.sh --sandbox <a sandbox repository checkout>`, and what it runs is the
+owner's own two commands in the owner's own session: run `fugaro update` in the sandbox checkout, then
+`fugaro run` from it, with the update's questions answered by you and by nobody else — **no agent runs any
+step of it**, and the check passes no `--yes` precisely so that you are the person it asks. A project or
+region naming `belong` is refused by name, and the update is refused in such a checkout — **never `belong`**
+is the first thing this row says.
+
+**What it settles.** That the slim base of this release is what an installation actually runs on, read in
+two steps rather than one: the base pin `fugaro update` leaves in the local config, and then a run whose
+own record says its image was built by the upgrade. The first alone is a claim about a config file;
+the second is the reading that a job starts on it.
+
+- **The pin, before and after.** `fugaro doctor --json` reports the installation the checkout belongs to
+  and the base pin it records (`project.base_images.base`). It is read twice — once as the check starts and
+  once after the update — because the one command is the whole upgrade: what it leaves is what the
+  installation is on. An installation whose config records no base pin is a finding here too, and it is the
+  same one doctor's own `local-config-base` check makes.
+- **The update is yours to answer.** `fugaro update`, run in the checkout the check was pointed at, with no
+  `--yes` and its output echoed to your terminal as it is written: its review, its Terraform and the
+  rebuild of the checkout's workflow images are answered by you in its own confirmation, and the check
+  never answers one for you. It keeps the transcript in the scratch directory and reads the exit status —
+  that is all. A failed update is a finding, and the rows below still say what the installation it left is
+  on, because that is the state a reader has to know about.
+- **The pin the update left.** Read again with the same command, and the row says which of the two happened:
+  the ref moved to this release's base, or the installation was already on it and there was nothing to move.
+  Neither is a finding; a config that records no base at all after the update is.
+- **The run is what proves it.** One sandbox run launched from the checkout the update converged, followed
+  with `fugaro runs ls --repo <the repository the launch named> --json` until the run is terminal — a record
+  read while a run is still working is whatever was there before — and then its `result.json`, read from
+  the runs bucket at the key that listing's own row gives (`runs/<the repository's slug>/<run>/result.json`,
+  where the slug is **one path segment** and not the `owner/name` the launch names) and checked against the
+  run id this check launched, because a record read by listing alone could be another run's.
+- **The image's own build time.** The record's `image.built_at` against the moment the update **started**:
+  at or after it, the job started on an image the upgrade built, which is the outside evidence that the base
+  pin the update left is what a run really starts on. Before it, the job ran the image the installation
+  already had — usually because the rebuild the update offered was declined — and that is the row that says
+  so. The start and not the end, because `fugaro update` waits for its own rebuilds before it returns: a
+  rebuilt image's build time is always inside the update's own window, so a comparison against the end would
+  read a run on the rebuilt image as a declined rebuild — failing exactly when the upgrade worked. A
+  record that carries no build time at all (an image built before the field existed, or a job running the
+  base image directly) is reported as a row the check could not date rather than as a finding.
+
+**What a run costs.** What `fugaro update` costs on your installation — among its steps, the rebuild of the
+checkout's base-derived workflow images (each is built FROM the installation's base), billable and asked for
+on its own — plus one sandbox run and what its task costs, with the pull request it opens. The check writes
+no pin, no config and no policy of its own: the only
+write is the update, whose steps you answer. On disk it is one scratch directory, removed at the end.
+`CHECK501_SKIP_UPDATE=1` measures the pin and the run without running the upgrade, which is what to use on
+a machine that has just been updated.
+
+**The commands.**
+
+```sh
+bash scripts/live-checks/check-501.sh --dry-run
+bash scripts/live-checks/check-501.sh --sandbox <a sandbox repository checkout>
+```
+
+The update runs in the foreground, so its questions and Ctrl-C reach it: that is the bound an interactive
+command should have, and there is no timeout knob for it. Progress goes to stderr and one `CHECK 501 RESULT`
+block goes to stdout at the end: paste that block here and nothing else. **Exit `0`** is every criterion
+that was measured holding; **`1`** is a measured criterion that did not hold, or a guard that stopped the
+check — a failed update, an installation with no base pin, a record that is not this run's, an image built
+before the update; **`2`** is the check not being able to measure (a tool missing, the checkout not being
+one, a read that did not answer, the run never ending). A key the run never reached reads `FAIL — not
+reached`. The knobs are `CHECK501_DRY_RUN`, `CHECK501_KEEP_SCRATCH`, `CHECK501_SANDBOX`, `CHECK501_TASK`,
+`CHECK501_RECIPE`, `CHECK501_SKIP_UPDATE`, `CHECK501_DOCTOR_TIMEOUT_SECONDS` (180),
+`CHECK501_RUN_TIMEOUT_SECONDS` (3600), `CHECK501_POLL_SECONDS` (15), `CHECK501_CLI_TIMEOUT_SECONDS` (180),
+`CHECK501_LAUNCH_TIMEOUT_SECONDS` (600) and `CHECK501_REGION` (us-east5).
+
+**What waits on it.** Nothing gates on it: it is the outside reading of the release's own upgrade path, and
+the one to take again whenever `fugaro update` changes what it pins or what it rebuilds — the rebuild the
+check dates the run's image against is the step an installation notices by hand.
+
 ## Check 410: the failure line, and a diagnosis with no setup (your own machine, your own installation; never `belong`; run by you; NOT RUN)
 
 **NOT RUN.** Written by task **T-DG10** of
@@ -13162,6 +13403,68 @@ child never starting, a row it could not read). A key the run never reached read
 
 **What waits on it.** Nothing gates on it: it is the outside reading of the two rules T-DG2 and T-DG7 are
 built from, and the one a person can take over the log that actually failed on their machine.
+
+## Check 292: a catalog entry whose source names a `context:` is built with the repository's files in it, and what its rebuild is pinned to (sandbox installation and sandbox repository only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **CB5** of [`docs/catalog-build-context/implementation-plan.md`](catalog-build-context/implementation-plan.md) §6 — the last thing that work owes, and not a gate on its release — with that folder's **F22**, **F29**, **F30** and **F32** and its **D1402**, **D1403**, **D1408** and **D1409**; the amendment it folds into is [`docs/project-image-catalog/context-design.md`](project-image-catalog/context-design.md), whose §A5, §A6, §C3, §C4, §C5 and §11 are the design of record. The rule is **built** — CB1–CB4 merged (CB4 is #2374) — and **no step of it has been run on a real installation yet**. It is **OWNER-RUN**: **no agent runs any step of it**, every step is yours, and **there is no script** — the check is the steps below. It carries **no secret-shaped value at all**: the Dockerfile copies a file the check wrote itself, and nothing any step prints is a credential.
+
+**What the check confirms.** One catalog entry whose source is a Dockerfile **in a subdirectory** with a `context:`, one build, one nightly decision, and four facts read back:
+
+- the entry publishes with **nothing new asked** of the operator, and the **copy** — not `fugaro update` — is what stages the definition, the pinned commit and the context's digest;
+- the built image **contains the copied file**: the `COPY` that reaches a file of the repository is the fact the whole feature is about, and a catalog build could not run it before this work;
+- the entry's record names **one** commit — `source_commit` and `context_commit` are the same value, both the commit the copy pinned — and the image's `org.opencontainers.image.revision` label is that same commit: the "one record of what was built" the issue's first bullet asks for;
+- the staged context **fires** the nightly decision with the `catalog-context` reason, the rebuild it submits is pinned to the **staged** commit, and the entry then converges — a second decision on the same entry carries no `catalog-context`, because the rebuild's record and the staged copy now agree.
+
+**Why step 5 is not the plan's own step 4, and why that is the reading this check exists to take.** The plan writes step 4 as "a commit that changes a file **under the context directory** and nothing else, pushed to the branch, makes the nightly catalog check decide `Rebuild` with the `catalog-context` reason — and a commit outside the context directory, with the entry's Dockerfile unchanged, does not". The second half is true of the code and the first is not: the project's catalog check job reads **no branch at all** — `internal/cli/image_check_catalog.go` reads two staged objects out of the runs bucket (`builds/catalog/<entry>/context-sha256` and `.../source-commit`) and never opens the provider, which is what keeps that job credential-less (D1401) — and a context entry's rebuild is pinned to the commit the copy staged, so a pushed commit fires **nothing** until a copy stages it and no build records it. The divergence is recorded in the design's fold-in (`context-design.md` §11) and in the PR that carried it, not smoothed over here; the check below reads the trigger where the code puts it.
+
+**One thing the entry must **not** be set to.** Do not mark the entry `--default` and do not give it a tag a sandbox repository's `needs:` names: this check launches **no run**, and an entry that covers a job would move that job's image and make the check read readiness and a redeployment it is not about.
+
+**What it costs, and what it leaves.** Three Cloud Builds, each reserved against the project's budget the way every build is: the one in step 3 that runs to `SUCCESS`, the `--no-wait` submission in step 5 that is cancelled before its record step (the staging is the point of it, and it bills for what it ran), and the **rebuild the check job itself submits** when the entry fires — that third one is the reading, not overhead. **No run is launched and no model is called**, so there is no run spend; nothing is granted, no secret is written, and no value any step prints is a credential. What is left behind is the check's own: two commits pushed to the sandbox branch (a third if step 5's race is lost), the entry, and its staged objects, record and check state — all reverted in the Restore — plus its image, which stays in the installation's shared registry because `fugaro image rm` never deletes one.
+
+1. **Cleanup first, and the state the Restore puts back.** In the sandbox checkout record: the sandbox repository's `fugaro.yaml` and the branch you push to, the project's catalog as it stands (`fugaro image ls`), the region, the sandbox's jobs (`gcloud run jobs list --region <region>`), the runs bucket (the project config's `runs_bucket`) and the repository's storage slug (`builds/<slug>/catalog/<entry>/` is where its record is; the slug is the one `fugaro doctor` or an existing `builds/` listing shows). **FACT:** that state, and the catalog's entries before this check adds one.
+
+2. **The entry, its `context:`, and the file its Dockerfile copies.** On the branch the copy reads — **pushed to the remote**, because the copy reads the provider and not your working tree — add a Dockerfile in a **subdirectory** and a file it copies out of the context:
+
+   ```
+   ci/Dockerfile:
+   FROM <the base the sandbox's own jobs run today>
+   COPY scripts/marker.sh /opt/team/scripts/marker.sh
+
+   ci/scripts/marker.sh:
+   check 292's marker
+   ```
+
+   **The subdirectory is load-bearing and it is the one thing this check's shape adds to the plan's**: `context: .` is legal and is the issue's own example, but a repository-root context makes a commit "outside the context" impossible to write, and the negative half of the reading needs one.
+
+   Then the entry, from the sandbox repository's checkout: `fugaro image add <name> --dockerfile <owner>/<sandbox repo>:ci/Dockerfile --tags context-check` — a tag no repository's `needs:` names, so the entry covers no job — which writes this machine's project config and builds nothing. Then add the member **by hand** to that entry's `source` in the same file: `context: ci/`. **No command writes it**: `fugaro image add` has no `--context` flag, and no other command writes the entry's `source.context` either, so this one member is an edit of the file. The project config decodes strictly (`internal/localcfg`'s `KnownFields(true)`), so `fugaro image ls` reading the entry back is what says the edit is a document this binary parses. Then `fugaro update`. **FACT:** `fugaro image ls`'s line for the entry. **FACT:** the published node's entry carries `context: ci/` — `fugaro project policy show --json` prints the node, and the member is under that entry's `source` — and **`fugaro update` staged nothing**: `gcloud storage ls "gs://<runs bucket>/builds/catalog/<entry>/"` names no object a build did not write. The plan's own step 1 has that the other way round; what stages the definition, the pinned commit and the context's digest is the build in step 3 (`internal/cli/catalog_copy.go`'s `writeCatalogDockerfile`, whose one caller is `fugaro image build`).
+
+   **A refusal here is the gate, not this check failing.** `fugaro update` publishes the node through the one function both doors take (`policyNodeForPublish`), and while `imageContextShipped` is false that build is refused with a sentence saying no released fugaro reads the key yet (`policyContextRefusal`, the same fact readiness reads). This check can only be run from a CLI at or after the release that flips it — D1403's release, and the flip is the commit that says so in its notes — so a run met by that refusal is a run on the release behind: take the current CLI and its `fugaro update`, and the node publishes. The refusal is worth pasting back anyway: it is the gate being read on a real installation, which is the half of CB5's own work that has no live step otherwise.
+
+3. **The build, and the copied file in the image.** `fugaro image build <name>` from the sandbox repository's checkout — the Cloud Build, which asks you nothing: it prints the entry it is about to build and reserves the build's estimated cost against the project's budget (the typed confirmation is gone from every session). **FACT:** the `built <image>@<digest>` line. Then the reading the issue is about, in the image that build wrote — the entry's `catalog-<name>` in the installation's shared registry, and `gcloud auth configure-docker <region>-docker.pkg.dev` first if your daemon needs the registry login:
+
+   ```sh
+   docker run --rm --entrypoint cat <the built image> /opt/team/scripts/marker.sh
+   ```
+
+   **FACT:** the file's own bytes, printed out of the image the catalog built — the `COPY` of a file **in the context** that no catalog build could reach before this work — and they are the bytes of the commit you pushed.
+
+4. **One commit, in the record and in the label.** Read the entry's record out of the runs bucket — `gcloud storage cat "gs://<runs bucket>/builds/<slug>/catalog/<entry>/image.json"` — and the image's own label, which the build step stamps with the commit it built (`--label "org.opencontainers.image.revision=$$commit"`, `images/derived/cloudbuild.yaml`). **FACT:** `source_commit` and `context_commit` are **the same commit**, and it is the commit you pushed; `context_sha256` is a 64-hex string, not empty and **not** the Dockerfile's `definition_sha256`; `template_salt` is there and is not empty. **FACT:** that label — `docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' <the built image>` — is the same commit, one record of what was built and not two that can disagree.
+
+5. **The staged copy, and the decision it fires.** Push a commit that changes a file **under `ci/`** and nothing else — the marker file itself is the simplest (`ci/scripts/marker.sh`, one changed line) — so the entry's Dockerfile bytes are unchanged and the only thing that moved is the context. Then stage a copy whose build does **not** record it: `fugaro image build <name> --no-wait`, and cancel that build before it finishes — `gcloud builds cancel <the build id --no-wait printed> --region <region>`. The staging happens before the submission and the record is written by the build's own last step, so cancelling after the submission and before the record step is exactly the state the trigger is about: the staged digest and commit are the **new** commit, and the record still names the previous one. **Losing that race is not a failed step**: a build that finished wrote the new record, the staged copy and the record agree, and the next decision is quiet — push one more commit under `ci/` and run the same two commands. Either way the entry converges. Then run the project's own catalog check job once, as its schedule does:
+
+   ```sh
+   gcloud run jobs execute fugarochk-catalog --region <region> --wait
+   gcloud logging read 'resource.type=cloud_run_job AND resource.labels.job_name=fugarochk-catalog AND resource.labels.location=<region> AND jsonPayload.event="catalog-check"' \
+     --limit=50 --freshness=15m --format='value(jsonPayload.decision, jsonPayload.reasons, jsonPayload.message)'
+   ```
+
+   The filter and the format matter here: the job prints one JSON line per entry on **stdout**, Cloud Run takes a JSON line as a structured entry, so it lands in **`jsonPayload`** and not in `textPayload` — `--format='value(textPayload)'` prints empty rows. That is the field the installation's own alert is built on (`deploy/terraform/gcp/modules/installation/alert.tf`, `jsonPayload.event="catalog-check"`), and it is why the read above selects the event rather than grepping a stream.
+
+   **FACT:** the entry's JSON line from that run — `"decision":"rebuild"` with `"reasons"` carrying **`catalog-context`** (it may carry `base` as well if the installation's base image moved since step 3; what must be there is the context's reason), and its `"message"` naming the Cloud Build it submitted. **FACT:** the rebuild's own record — `context_commit` and `source_commit` both the **new** commit, `context_sha256` the new digest — and the rebuilt image's `org.opencontainers.image.revision`, the same new commit. Then run the check job once more, with the same two commands. **FACT:** no `catalog-context` for the entry — the staged copy and the record agree again, so the entry converges on what was staged — which is where the schedule's own promise ends today, per the paragraph above.
+
+6. **Restore.** Push the sandbox branch back — the commits this check made go with it — remove the entry (`fugaro image rm <name>`; it refuses while a job still runs the entry, which is why step 2 keeps it off every `needs:`) and publish with `fugaro update`, then `fugaro update --repo <the sandbox repository>` so its jobs are back on the config step 1 recorded. The entry's staged objects, its record and its check state are the check's own and live under `builds/`: `gcloud storage rm "gs://<runs bucket>/builds/catalog/<entry>/*"` and `gcloud storage rm "gs://<runs bucket>/builds/<slug>/catalog/<entry>/*"` remove them — the second is the record and the `check.json` beside it, which is where the check's own back-off lives — so the next nightly run has nothing of this entry to decide and no back-off of the check's to read. **Do not remove `builds/image-lock.json`**: that lock is the project's, shared with every other entry, and it is not this check's to delete. The **image** stays in the installation's shared registry: `fugaro image rm` never deletes one, and deleting it is not this check's to do. **FACT:** `fugaro image ls` reads the catalog as step 1 recorded it, and `fugaro doctor` is quiet.
+
+**Paste back:** every `FACT` line above — the entry's `fugaro image ls` line, the built image's reference and digest, the record's `source_commit`, `context_commit`, `context_sha256` and `template_salt`, the image's `org.opencontainers.image.revision`, the check job's two lines for the entry with their `decision` and `reasons`, and the copied file's bytes as the image holds them — and **never a secret and never a token value**: this check prints none, and the one file it reads out of the image is one it wrote. Until this check runs, the feature is built and **unverified live**: the two things no hermetic test can hold are a real provider's tree read at a real commit (the tree read and the digest it produces) and a real Cloud Build carrying a context through the clone step and `docker build --file` — which is exactly what steps 3 to 5 measure. **Never run any step against `belong`**: this is the sandbox installation and the sandbox repository only, and no agent runs any step of it.
 
 ## Check 230: the author, the committer and the trailers, on GitHub and on Bitbucket (two sandbox repositories carrying `git.author: launcher`, a third with no such key, and their forges; never `belong`; run by you; NOT RUN)
 

@@ -337,10 +337,10 @@ func jsonText(v any) string {
 // file a re-seed writes.
 //
 // It is worked out from the project and the environment rather than handed down,
-// because only one of the two doors that reach the publish holds the path the
-// run selected — `fugaro update`'s engine does, `fugaro upgrade`'s step discards
-// it — and both doors reach the publish through one function
-// (policyMigrationFor). $FUGARO_CONFIG wins when it holds this project, the
+// because the path the run selected is not handed down to the publish — the
+// engine that reaches it holds the run and its flags, and the function below
+// reaches the publish without them (policyMigrationFor). $FUGARO_CONFIG wins
+// when it holds this project, the
 // project's own path under the config directory (localcfg.ProjectPath)
 // otherwise: the two places a project config is. A file that does not load as
 // this project is never taken for it, and a run whose config is somewhere else
