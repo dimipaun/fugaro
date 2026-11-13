@@ -233,10 +233,7 @@ func runEstimate(cmd *cobra.Command, o *estimateOptions) error {
 // estimateRunOnPR is the one run a repository has on a pull request in the
 // window, read the way `runs ls --pr` reads one: its task or its record places
 // it on the pull request, and several runs are listed rather than chosen among
-// (F16). A review run still going is not one of them, though the listing keeps
-// it (onPRListed): its record is the artifact stage's, and until it is written
-// there are no token counts to reprice, so a review enters this read exactly
-// when it joins the pull request's chain.
+// (F16).
 func estimateRunOnPR(ctx context.Context, cmd *cobra.Command, env *cloudEnv, o *estimateOptions, since time.Duration) (runObjects, error) {
 	repo, err := repoArg(ctx, o.cloud, o.repo)
 	if err != nil {

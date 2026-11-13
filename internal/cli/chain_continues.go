@@ -410,11 +410,9 @@ func reviewChainFrom(ctx context.Context, env *cloudEnv, slug string, pr int, wa
 	if err != nil {
 		return "", err
 	}
-	// A review job never pushes, so a review of this pull request is not left by
-	// the filter below either -- these rows hold one while it is going (--pr
-	// keeps it, onPRListed); what is left is the PR's own runs, and only one
-	// that pushed is the run the chain was opened by (resolvePR reads the same
-	// field for the same reason).
+	// A review job never pushes, so it is not in these rows itself; what is left
+	// is the PR's own runs, and only one that pushed is the run the chain was
+	// opened by (resolvePR reads the same field for the same reason).
 	rows = slices.DeleteFunc(rows, func(r runview.Row) bool {
 		return !r.Pushed || (r.TaskPR != pr && !task.BranchRE.MatchString(r.Branch))
 	})

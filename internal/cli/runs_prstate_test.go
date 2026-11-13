@@ -38,7 +38,6 @@ type prStateRuns struct {
 	broken     string // PR 15: a run whose result.json cannot be read
 	rebased    string // PR 16: the run that left the pull request ready
 	rebase     string // PR 16: the newer run, a rebase that said nothing about it
-	reviewed   string // PR 17: the run that left the pull request ready, under review
 	reviewing  string // PR 17: a review run in flight, whose record names no pull request yet
 	noPR       string // a run that opened no pull request
 }
@@ -57,7 +56,6 @@ func seedPRStateRuns(t *testing.T, f *cloudFixture) prStateRuns {
 		broken:     runIDAt(0, "000500", "e001"),
 		rebased:    runIDAt(0, "000700", "1a01"),
 		rebase:     runIDAt(0, "000800", "1b01"),
-		reviewed:   runIDAt(0, "000850", "2a00"),
 		reviewing:  runIDAt(0, "000900", "2a01"),
 		noPR:       runIDAt(0, "000600", "f001"),
 	}
@@ -108,16 +106,10 @@ func seedPRStateRuns(t *testing.T, f *cloudFixture) prStateRuns {
 		Branch: "fugaro/" + r.rebased, FollowUp: &runstore.FollowUp{PR: 16, PreviousRun: r.rebased},
 		PR: &runstore.PRRef{Number: 16, URL: "https://github.com/acme/app/pull/16"}})
 
-	// PR 17: a run that left the pull request ready, and a review of it that is
-	// going. The review's own record names no pull request -- a review writes
-	// one only at the artifact stage, which is what ends the review -- so the
-	// pull request it is on is the one its task names as the subject of the
-	// review, and a run going on it makes the pull request live rather than the
-	// ready the run under the review left behind.
-	seedSpec(t, f, prStateTaskFor(r.reviewed, 17), false)
-	writeRecord(t, f, r.reviewed, &runstore.Record{Version: 1, RunID: r.reviewed, Repo: "acme/app", Workflow: "web",
-		Status: runstore.StatusSucceeded, Outcome: runstore.OutcomeReady, Stage: "finalize",
-		PR: &runstore.PRRef{Number: 17, URL: "https://github.com/acme/app/pull/17"}})
+	// PR 17: a review run that is going. Its own record names no pull request
+	// -- a review writes one only at the artifact stage, which is what ends
+	// the review -- so the pull request it is on is the one its task names as
+	// the subject of the review, and a run going on it is what makes it live.
 	exec = seedSpec(t, f, reviewTaskFor(r.reviewing, 17), true)
 	f.run.SetState(exec, backend.StateRunning)
 	writeRecord(t, f, r.reviewing, &runstore.Record{Version: 1, RunID: r.reviewing, Repo: "acme/app", Workflow: "web",
@@ -170,7 +162,6 @@ func TestRunsLsPRStateVocabulary(t *testing.T) {
 		r.broken:     prStateStalled,
 		r.rebased:    prStateReady, // the rebase below that run said nothing about the pull request
 		r.rebase:     prStateReady,
-		r.reviewed:   prStateLive, // the review going on it decides, not the ready it left behind
 		r.reviewing:  prStateLive, // a review going is a run going on the pull request its task names
 		r.noPR:       "",          // no pull request, no state
 	}
@@ -194,7 +185,7 @@ func TestRunsLsPRStateFilter(t *testing.T) {
 	r := seedPRStateRuns(t, f)
 
 	for state, want := range map[string][]string{
-		prStateLive:    {r.reviewing, r.reviewed, r.live}, // newest first: the review was minted after the running run
+		prStateLive:    {r.reviewing, r.live}, // newest first: the review was minted after the running run
 		prStateReady:   {r.rebase, r.rebased, r.ready, r.readyOld},
 		prStateStalled: {r.broken, r.unlaunched, r.stalled}, // newest first, the listing's own order
 	} {
@@ -397,48 +388,6 @@ func TestPRStateReadsTheTaskWhenTheRunHasNoRecord(t *testing.T) {
 	got, _ := lsJSON(t, "--since", "0")
 	if len(got.Runs) != 1 || got.Runs[0].PRState != prStateLive {
 		t.Fatalf("a running run whose record has not arrived carries %+v, want the live state of the pull request its task names", got.Runs)
-	}
-}
-
-// TestRunsLsPRKeepsAReviewInFlight: --pr N is the pull request's own listing,
-// and a review run of N is a run on N while it is going -- its record names N
-// only at the artifact stage, which is what ends the review -- so the filter
-// reads the number off the task (onPRListed) and keeps it. Without that row the
-// pull request would be listed without the run that is going on it and would
-// read the ready the run under the review left behind, which is the one answer
-// the owner's `live` is about.
-func TestRunsLsPRKeepsAReviewInFlight(t *testing.T) {
-	f := newCloudFixture(t)
-	r := seedPRStateRuns(t, f)
-
-	// A review of several names no single pull request, so no --pr listing is
-	// its listing: it is placed on none of the pull requests it reviews
-	// (reviewPR), the reading continuesPRChain makes of one.
-	both := runIDAt(0, "001000", "3a01")
-	s := firstRunSpec(both)
-	s.Mode = recipe.ModeReview
-	s.ReviewPRs = []int{17, 18}
-	exec := seedSpec(t, f, s, true)
-	f.run.SetState(exec, backend.StateRunning)
-	writeRecord(t, f, both, &runstore.Record{Version: 1, RunID: both, Repo: "acme/app", Workflow: "web",
-		Status: runstore.StatusRunning, Stage: "review", Execution: exec})
-
-	got, _ := lsJSON(t, "--pr", "17", "--since", "0")
-	if ids := runIDs(got.Runs); !slices.Equal(ids, []string{r.reviewing, r.reviewed}) {
-		t.Fatalf("runs ls --pr 17 listed %v, want the pull request's own runs, the review going on it among them", ids)
-	}
-	for _, row := range got.Runs {
-		if row.PRState != prStateLive {
-			t.Errorf("run %s carries pr_state %q under --pr 17, want %q: a review is going on the pull request", row.RunID, row.PRState, prStateLive)
-		}
-	}
-	// The state is the pull request's, so the same rows are the ones --state
-	// live keeps out of this listing.
-	if live, _ := lsJSON(t, "--pr", "17", "--since", "0", "--state", prStateLive); len(live.Runs) != 2 {
-		t.Errorf("runs ls --pr 17 --state live listed %v, want both runs of the live pull request", runIDs(live.Runs))
-	}
-	if none, _ := lsJSON(t, "--pr", "18", "--since", "0"); len(none.Runs) != 0 {
-		t.Errorf("runs ls --pr 18 listed %v, want nothing: no run of PR 18 pushed or was launched for it", runIDs(none.Runs))
 	}
 }
 

@@ -303,8 +303,8 @@ func newLsCmd() *cobra.Command {
 			"them. A page of a grouped listing is a page's total, so --group-by doesn't go\n" +
 			"with --limit, --after or --watch.\n\n" +
 			"--pr N lists the runs on pull request N of one repository (the first run and\n" +
-			"its follow-ups, and a review of it), over the last " + prLookback + " unless --since says\n" +
-			"otherwise; the totals line is then the PR's total cost.",
+			"its follow-ups), over the last " + prLookback + " unless --since says otherwise; the totals\n" +
+			"line is then the PR's total cost.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runLs(cmd, &o) },
 	}
@@ -532,12 +532,12 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 	// A run left out warns only when it might be on the PR: its record
 	// is unreadable and its task doesn't place it on another one.
 	for _, r := range runs {
-		if r.warning != "" && (f.pr == 0 || onPRListed(r.in, f.pr) || r.mayBeOnPR()) {
+		if r.warning != "" && (f.pr == 0 || onPR(r.in, f.pr) || r.mayBeOnPR()) {
 			fmt.Fprint(warn, multiLine(r.warning))
 		}
 	}
 	if f.pr != 0 {
-		runs = slices.DeleteFunc(runs, func(r runObjects) bool { return !onPRListed(r.in, f.pr) })
+		runs = slices.DeleteFunc(runs, func(r runObjects) bool { return !onPR(r.in, f.pr) })
 	}
 	// The debt filter reads the task and nothing else, and it is applied here
 	// rather than beside --mine, --batch and --state because those read the
@@ -597,11 +597,15 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 	// review run's record carries no pull request until the artifact stage
 	// writes one, which is what ends the review
 	// (internal/runner/reviewartifact.go), so while the review is going its
-	// task is the only thing that says which pull request it is on (reviewPR).
+	// task is the only thing that says which pull request it is on. Only a
+	// review of exactly one places its run there: a review of several is on
+	// no single pull request, the reading continuesPRChain makes of a review
+	// launch for the same reason (chain_continues.go), and its artifact is
+	// one verdict about one head.
 	reviewing := map[string]int{}
 	for i := range rows {
-		if pr := reviewPR(runs[i].in.Task); pr != 0 {
-			reviewing[rows[i].RunID] = pr
+		if t := runs[i].in.Task; t != nil && len(t.ReviewPRs) == 1 {
+			reviewing[rows[i].RunID] = t.ReviewPRs[0]
 		}
 	}
 	// The state of each pull request the window holds, set before the filters
@@ -669,35 +673,8 @@ func parallelN(n, workers int, fn func(i int)) {
 
 // onPR reports whether a run is on pull request pr: its task continues
 // it, or its record names it. An error row whose task says so is kept.
-//
-// It is estimate --pr's read, which picks the run to reprice. A review run
-// still going is not one of them there although the listing keeps it
-// (onPRListed): nothing has recorded the tokens of a review that has not ended,
-// so it enters this reading exactly when it enters the pull request's chain,
-// which is what the artifact stage writes (internal/runner/reviewartifact.go).
 func onPR(in runview.Input, pr int) bool {
 	return (in.Task != nil && in.Task.PR == pr) || (in.Record != nil && in.Record.PR != nil && in.Record.PR.Number == pr)
-}
-
-// onPRListed is onPR for the runs listing, which keeps a review run in flight
-// too: a review's task names the pull request it reviews (reviewPR) and neither
-// object onPR reads carries its number until the review ends, so without this a
-// pull request would be listed without the run that is going on it -- under
-// --pr N, which is the pull request's own listing, and to the fold, which reads
-// the going run as what makes it live.
-func onPRListed(in runview.Input, pr int) bool {
-	return onPR(in, pr) || reviewPR(in.Task) == pr
-}
-
-// reviewPR is the pull request a review run was launched to review, and 0 for
-// any other run and for a review of several: several pull requests are several
-// units of work with no one chain between them, which is the reading
-// continuesPRChain makes of a review launch too (chain_continues.go).
-func reviewPR(t *task.Spec) int {
-	if t == nil || len(t.ReviewPRs) != 1 {
-		return 0
-	}
-	return t.ReviewPRs[0]
 }
 
 // mayBeOnPR reports whether a run onPR leaves out could still be on a
