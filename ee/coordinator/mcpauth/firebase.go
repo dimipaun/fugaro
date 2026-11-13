@@ -84,6 +84,10 @@ const (
 	maxProviderBytes = 64
 	// maxTenantBytes bounds `firebase.tenant`, the Identity Platform tenant id.
 	maxTenantBytes = 128
+	// maxDirectoryBytes bounds a Microsoft (Entra ID) directory id. It is a GUID
+	// and the bound is orders of magnitude above one; the value is a claim out
+	// of a token and the reader's own bound is what keeps it a token.
+	maxDirectoryBytes = 128
 )
 
 // ErrUnverifiedIDToken is a Firebase ID token this front door does not admit.
@@ -129,12 +133,27 @@ type Identity struct {
 	AuthTime time.Time
 	// TenantID is `firebase.tenant`: the Identity Platform tenant the sign-in
 	// came from, and empty for a project that runs none. It is the tenant the
-	// CLIENT names at sign-in and not the directory an account lives in, and it
-	// is the ONLY tenant-shaped value a Firebase ID token carries — Firebase
-	// forwards no Microsoft (Entra ID) directory id, so a Microsoft sign-in
-	// carries no directory to pin and a caller whose rule needs one refuses it
-	// (D2207, pinned by ee/keyservice's TestResellerMicrosoftNeedsAPinnedTenant).
+	// CLIENT names at sign-in and NOT the directory an account lives in, which is
+	// DirectoryID: a rule over this value admits whoever names a pinned one, and
+	// ee/keyservice's SSO rule reads the directory and never this (D2207 as
+	// amended on 2026-11-13).
 	TenantID string
+	// DirectoryID is the Microsoft (Entra ID) directory the person's account
+	// lives in: the `tid` of the provider's own report of the sign-in, which
+	// directoryID below reads out of `firebase.sign_in_attributes` and out of
+	// nowhere else. It is empty for every sign-in that carries none — a Google
+	// sign-in, a Microsoft one whose provider forwards no directory — and a
+	// caller whose rule needs a directory refuses it rather than reading the
+	// empty value as one.
+	//
+	// It is inside the SIGNED token, which is the whole point of it (D2207's
+	// amendment, ee/keyservice's TestMicrosoftDirectoryIsPinned): the provider's
+	// own report of where an account lives cannot be chosen by the person signing
+	// in, unlike the Identity Platform tenant above. Where it is read matters as
+	// much as that it is signed: the token's own top level is the custom-claims
+	// namespace, so a `tid` there is a value the project's own writers can mint
+	// and is deliberately not read.
+	DirectoryID string
 }
 
 // Verifier verifies the Firebase ID tokens this installation's project signs.
@@ -266,12 +285,12 @@ func (v *Verifier) VerifyIDToken(ctx context.Context, raw string) (Identity, err
 	if !ok {
 		return Identity{}, fmt.Errorf("%w: the identity's email claim is not an address this front door can read", ErrUnverifiedIDToken)
 	}
-	// The three fields a caller adds its own rules over are READ and never
+	// The four fields a caller adds its own rules over are READ and never
 	// required, which is the line between them and everything above: an absent
-	// or unreadable provider, sign-in time or tenant is not a token this front
-	// door refuses — the launcher and operator lists (D933) never look at one —
-	// and it is answered as absent so that a caller whose rule needs it refuses
-	// it rather than reading an empty value as a match.
+	// or unreadable provider, sign-in time, tenant or directory is not a token
+	// this front door refuses — the launcher and operator lists (D933) never look
+	// at one — and it is answered as absent so that a caller whose rule needs it
+	// refuses it rather than reading an empty value as a match.
 	var authTime time.Time
 	if at, ok := claimInt(claims, "auth_time"); ok {
 		authTime = time.Unix(at, 0)
@@ -283,7 +302,38 @@ func (v *Verifier) VerifyIDToken(ctx context.Context, raw string) (Identity, err
 		Provider:     firebaseClaim(claims, "sign_in_provider", maxProviderBytes),
 		AuthTime:     authTime,
 		TenantID:     firebaseClaim(claims, "tenant", maxTenantBytes),
+		DirectoryID:  directoryID(claims),
 	}, nil
+}
+
+// directoryID reads the Microsoft (Entra ID) directory id a verified token
+// carries, or answers empty.
+//
+// It reads ONE place: `firebase.sign_in_attributes.tid`, where Identity Platform
+// puts a federated provider's own claims. That object is the provider's report
+// of the sign-in, and reading only it is the control rather than a preference: a
+// Firebase ID token's own top level is the CUSTOM-CLAIMS namespace — the `mu`,
+// `fs` and `fr` claims this repository's own project writes live there — so a
+// top-level `tid` is a value any project-side writer of custom claims can mint,
+// and a pin a caller reads it against is one that writer can satisfy. That is
+// the same shape of hole D2207's amendment removed `firebase.tenant` for: an
+// admitted sign-in has to rest on something only the identity provider could
+// have said. A top-level `tid` is therefore ignored and not compared, so one
+// beside the attribute neither admits nor refuses on its own.
+//
+// Which claims a project's Microsoft provider actually forwards is deployment
+// configuration this code can neither see nor check (P0.1 of
+// docs/portal/implementation-plan.md): a provider that forwards no `tid` leaves
+// this empty, and a caller whose rule needs a directory refuses that rather than
+// reading the empty value as one.
+func directoryID(claims map[string]any) string {
+	fb, _ := claims["firebase"].(map[string]any)
+	attrs, _ := fb["sign_in_attributes"].(map[string]any)
+	value, _ := attrs["tid"].(string)
+	if !printableASCII(value, maxDirectoryBytes) {
+		return ""
+	}
+	return value
 }
 
 // firebaseClaim reads one string out of the token's `firebase` claim object.

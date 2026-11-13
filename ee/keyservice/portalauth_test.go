@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -52,9 +53,14 @@ const (
 	portalOtherAccount      = "another-job@portal-project.iam.gserviceaccount.com"
 	portalSchedulerAudience = "https://api.portal.example/api/reminders"
 	portalOtherAudience     = "https://api.portal.example/api/statements"
-	// The Microsoft (Entra ID) directory a sign-in could be pinned to. It is the
-	// test's own value and not a directory anybody owns.
-	portalTenant = "tenant-portal-1"
+	// The Microsoft (Entra ID) directory a sign-in could be pinned to, and an
+	// Identity Platform tenant a client could name at sign-in beside it. Both are
+	// the test's own values and neither is a directory or a tenant anybody owns;
+	// keeping them different is what makes "a client-named tenant never admits"
+	// a case the fixtures can spell.
+	portalDirectory      = "directory-portal-1"
+	portalClientTenant   = "tenant-portal-1"
+	portalOtherDirectory = "directory-someone-else"
 )
 
 // portalNow is the clock every test verifies against, so a token's window and a
@@ -140,13 +146,12 @@ func portalClaims() map[string]any {
 }
 
 // microsoftSignInClaims is the claim set Firebase mints for a Microsoft
-// sign-in, as P1.3 records it before P2.2 reads one: the provider is
-// `microsoft.com`, `firebase.identities` holds the provider's own user id, and
-// the address is the directory's. No Microsoft (Entra ID) directory id is in
-// it — the only tenant-shaped claim Firebase's set carries is `firebase.tenant`,
-// which is Identity Platform's own tenant, the one a client asks for — which is
-// why the tenant check below refuses every Microsoft sign-in a deployment can
-// actually mint (D2207).
+// sign-in, as P1.3 records it: the provider is `microsoft.com`,
+// `firebase.identities` holds the provider's own user id, and the address is the
+// directory's. No Microsoft (Entra ID) directory id is in it, which is the shape
+// a provider that forwards no `tid` leaves behind: a reseller's pinned directory
+// is never satisfied by it and RequireSSO refuses it rather than admitting it by
+// a claim it does not carry (D2207's fallback).
 func microsoftSignInClaims() map[string]any {
 	claims := portalClaims()
 	claims["email"] = "owner@contoso.example"
@@ -157,13 +162,17 @@ func microsoftSignInClaims() map[string]any {
 	return claims
 }
 
-// microsoftTenantClaims is a Microsoft sign-in whose token carries an Identity
-// Platform tenant, which is the only tenant-shaped claim a Firebase ID token
-// has: the pin below is what a reseller's list is compared against, and the
-// recorded shape above is what says a deployment cannot mint one today.
-func microsoftTenantClaims() map[string]any {
+// microsoftDirectoryClaims is a Microsoft sign-in whose verified token reports
+// the Entra directory the account lives in, in the one shape read:
+// `firebase.sign_in_attributes.tid`, where Identity Platform puts a federated
+// provider's own claims. That object is the provider's report of the sign-in,
+// which is what makes it the value a reseller's list can be pinned to — unlike
+// `firebase.tenant`, the Identity Platform tenant a client names at sign-in, and
+// unlike a `tid` in the token's own custom-claims level, neither of which the
+// rule reads (D2207 as amended on 2026-11-13).
+func microsoftDirectoryClaims() map[string]any {
 	claims := microsoftSignInClaims()
-	claims["firebase"].(map[string]any)["tenant"] = portalTenant
+	claims["firebase"].(map[string]any)["sign_in_attributes"] = map[string]any{"tid": portalDirectory}
 	return claims
 }
 
@@ -401,118 +410,193 @@ func TestStaleSignInIsRefusedForMint(t *testing.T) {
 	}
 }
 
-// TestMicrosoftTenantIsPinned: D2207's condition for a reseller. A Microsoft
-// sign-in is admitted only from a tenant on the organisation's list, so a
-// directory nobody pinned is refused however valid the token is — and what the
-// list entry pins is the Identity Platform tenant, which is a directory only
-// when that tenant's app registration is single-tenant (portalauth.go's
-// comment).
-func TestMicrosoftTenantIsPinned(t *testing.T) {
+// TestMicrosoftDirectoryIsPinned: D2207's condition for a reseller, as the
+// owner's ruling of 2026-11-13 pins it. A Microsoft sign-in is admitted only
+// when the VERIFIED token's Microsoft (Entra ID) directory id (`tid`, read out
+// of `firebase.sign_in_attributes`) is on the organisation's list, so a
+// directory nobody pinned is refused however valid the token is.
+//
+// This is also the task's mutation check, and the fixture is what makes it one:
+// the admitted token carries a client-named Identity Platform tenant that is NOT
+// on the pinned list (asserted below), so an implementation comparing
+// signIn.TenantID against the list refuses the token and the admission assertion
+// fails. (Verified by hand — the comparison swapped to TenantID, the admission
+// line failing, then restored.)
+func TestMicrosoftDirectoryIsPinned(t *testing.T) {
 	v := portalVerifier(t)
-	signIn := portalSignIn(t, v, microsoftTenantClaims())
-	if signIn.Provider != "microsoft.com" || signIn.TenantID != portalTenant {
-		t.Fatalf("the verified sign-in is %q from tenant %q, and the token named microsoft.com and %q", signIn.Provider, signIn.TenantID, portalTenant)
+	claims := microsoftDirectoryClaims()
+	claims["firebase"].(map[string]any)["tenant"] = portalClientTenant
+	signIn := portalSignIn(t, v, claims)
+	if signIn.Provider != "microsoft.com" || signIn.DirectoryID != portalDirectory {
+		t.Fatalf("the verified sign-in is %q from directory %q, and the token named microsoft.com and %q", signIn.Provider, signIn.DirectoryID, portalDirectory)
+	}
+	if signIn.TenantID != portalClientTenant {
+		t.Fatalf("the verified sign-in carries tenant %q, and the token named %q", signIn.TenantID, portalClientTenant)
 	}
 
-	reseller := SSORule{MicrosoftTenants: []string{portalTenant}}
+	reseller := SSORule{MicrosoftDirectories: []string{portalDirectory}}
+	if slices.Contains(reseller.MicrosoftDirectories, signIn.TenantID) {
+		t.Fatalf("the pinned list holds the token's client-named tenant (%q): the mutation this test exists for — reading the tenant instead of the directory — would then pass it too", signIn.TenantID)
+	}
 	if err := v.RequireSSO(signIn, reseller); err != nil {
-		t.Errorf("a reseller refused a Microsoft sign-in from the tenant it pinned: %v", err)
+		t.Errorf("a reseller refused a Microsoft sign-in from the directory it pinned: %v", err)
 	}
 
-	unlisted := SSORule{MicrosoftTenants: []string{"tenant-someone-else"}}
+	unlisted := SSORule{MicrosoftDirectories: []string{portalOtherDirectory}}
 	err := v.RequireSSO(signIn, unlisted)
 	if err == nil {
-		t.Fatalf("a reseller admitted a Microsoft sign-in from a tenant it did not pin (%s)", portalMarker)
+		t.Fatalf("a reseller admitted a Microsoft sign-in from a directory it did not pin (%s)", portalMarker)
 	}
-	if !errors.Is(err, ErrTenantNotPinned) {
-		t.Errorf("a tenant outside the list was refused with %v, which is not the tenant sentinel", err)
+	if !errors.Is(err, ErrDirectoryNotPinned) {
+		t.Errorf("a directory outside the list was refused with %v, which is not the directory sentinel", err)
 	}
-	if strings.Contains(err.Error(), portalTenant) {
-		t.Errorf("the refusal repeats the tenant out of the token: %q", err.Error())
+	message := err.Error()
+	if strings.Contains(message, portalDirectory) || strings.Contains(message, portalClientTenant) {
+		t.Errorf("the refusal repeats a value out of the token: %q", message)
+	}
+	if !strings.Contains(message, "tid") {
+		t.Errorf("the refusal %q does not name the `tid` claim the pin is read from: the old text named the tenant, and the person reading it has to be told which value the rule is about", message)
+	}
+
+	// A `tid` in the token's own claim set is a CUSTOM claim and not a directory:
+	// that level is the namespace this project writes `mu`, `fs` and `fr` in, so
+	// a pin read from it is one any project-side writer of custom claims can
+	// satisfy — `firebase.tenant`'s hole in another claim, which is why the
+	// reader ignores it (mcpauth's `directoryID`, TestATopLevelTidIsNotADirectory).
+	top := microsoftSignInClaims()
+	top["tid"] = portalDirectory
+	err = v.RequireSSO(portalSignIn(t, v, top), reseller)
+	if err == nil {
+		t.Fatalf("a reseller admitted a Microsoft sign-in whose token names the pinned directory in its own claim set, which is a value any project-side writer of custom claims can mint (%s)", portalMarker)
+	}
+	if !errors.Is(err, ErrDirectoryNotPinned) {
+		t.Errorf("a custom-claim tid was refused with %v, which is not the directory sentinel", err)
 	}
 }
 
-// TestEmptyTenantListRefusesMicrosoft: F40's rule, and the state a reseller is
-// actually in (this file's recorded shape): with no tenant pinned, every
-// Microsoft sign-in is refused rather than admitted by an empty list.
-func TestEmptyTenantListRefusesMicrosoft(t *testing.T) {
+// TestAClientNamedTenantNeverAdmitsMicrosoft: the hole #2515's fourth review
+// round found, held shut. `firebase.tenant` is the Identity Platform tenant the
+// CLIENT names when it calls the SDK — a door and not an identity — so a token
+// that names the pinned value there, or any tenant at all, is refused unless its
+// VERIFIED `tid` is on the list.
+func TestAClientNamedTenantNeverAdmitsMicrosoft(t *testing.T) {
+	v := portalVerifier(t)
+	reseller := SSORule{MicrosoftDirectories: []string{portalDirectory}}
+
+	// The client names the pinned value itself: the token carries the tenant and
+	// no directory, which is the shape the old rule admitted.
+	named := microsoftSignInClaims()
+	named["firebase"].(map[string]any)["tenant"] = portalDirectory
+	err := v.RequireSSO(portalSignIn(t, v, named), reseller)
+	if err == nil {
+		t.Fatalf("a reseller admitted a Microsoft sign-in whose client-named tenant is the pinned directory and whose token carries no tid (%s)", portalMarker)
+	}
+	if !errors.Is(err, ErrDirectoryNotPinned) {
+		t.Errorf("a token with a client-named tenant and no directory was refused with %v, which is not the directory sentinel", err)
+	}
+
+	// A client-named tenant beside a directory that is not the pinned one: the
+	// tenant cannot carry the admission either, and the directory is what is
+	// read.
+	beside := microsoftDirectoryClaims()
+	beside["firebase"].(map[string]any)["tenant"] = portalDirectory
+	beside["firebase"].(map[string]any)["sign_in_attributes"] = map[string]any{"tid": portalOtherDirectory}
+	err = v.RequireSSO(portalSignIn(t, v, beside), reseller)
+	if err == nil {
+		t.Fatalf("a reseller admitted a Microsoft sign-in from an unpinned directory because its client-named tenant was the pinned value (%s)", portalMarker)
+	}
+	if !errors.Is(err, ErrDirectoryNotPinned) {
+		t.Errorf("an unpinned directory beside a pinned client-named tenant was refused with %v, which is not the directory sentinel", err)
+	}
+
+	// And the same token with no tenant at all is the ordinary admission: what
+	// this test refuses is the tenant as a route in and not the sign-in.
+	if err := v.RequireSSO(portalSignIn(t, v, microsoftDirectoryClaims()), reseller); err != nil {
+		t.Errorf("a reseller refused a Microsoft sign-in from the directory it pinned: %v", err)
+	}
+}
+
+// TestEmptyDirectoryListRefusesMicrosoft: F40's rule, and the state a reseller
+// is actually in when its provider forwards no `tid` (this file's recorded
+// shape): with no directory pinned, every Microsoft sign-in is refused rather
+// than admitted by an empty list.
+func TestEmptyDirectoryListRefusesMicrosoft(t *testing.T) {
 	v := portalVerifier(t)
 
 	for name, rule := range map[string]SSORule{
-		"the zero rule":  {},
-		"nil list":       {MicrosoftTenants: nil},
-		"an empty list":  {MicrosoftTenants: []string{}},
-		"another tenant": {MicrosoftTenants: []string{"tenant-1", "tenant-2"}},
+		"the zero rule":     {},
+		"nil list":          {MicrosoftDirectories: nil},
+		"an empty list":     {MicrosoftDirectories: []string{}},
+		"another directory": {MicrosoftDirectories: []string{portalOtherDirectory, "directory-2"}},
 	} {
-		err := v.RequireSSO(portalSignIn(t, v, microsoftTenantClaims()), rule)
+		err := v.RequireSSO(portalSignIn(t, v, microsoftDirectoryClaims()), rule)
 		if err == nil {
-			t.Errorf("%s: a Microsoft sign-in was admitted with no tenant pinned (%s)", name, portalMarker)
+			t.Errorf("%s: a Microsoft sign-in was admitted with no directory pinned (%s)", name, portalMarker)
 			continue
 		}
-		if !errors.Is(err, ErrTenantNotPinned) {
-			t.Errorf("%s: refused with %v, which is not the tenant sentinel", name, err)
+		if !errors.Is(err, ErrDirectoryNotPinned) {
+			t.Errorf("%s: refused with %v, which is not the directory sentinel", name, err)
 		}
 	}
 }
 
 // TestOperationsAcceptsGoogleOnly: D2207's answer for the operations
 // organisation. Google is admitted, and a Microsoft sign-in is refused even
-// when its tenant is one the rule lists — the list cannot widen the operations
-// organisation, because the rule is Google alone.
+// when its directory is one the rule lists — the list cannot widen the
+// operations organisation, because the rule is Google alone.
 func TestOperationsAcceptsGoogleOnly(t *testing.T) {
 	v := portalVerifier(t)
-	operations := SSORule{Operations: true, MicrosoftTenants: []string{portalTenant}}
+	operations := SSORule{Operations: true, MicrosoftDirectories: []string{portalDirectory}}
 
 	if err := v.RequireSSO(portalSignIn(t, v, portalClaims()), operations); err != nil {
 		t.Errorf("the operations organisation refused a Google sign-in: %v", err)
 	}
 
-	err := v.RequireSSO(portalSignIn(t, v, microsoftTenantClaims()), operations)
+	err := v.RequireSSO(portalSignIn(t, v, microsoftDirectoryClaims()), operations)
 	if err == nil {
-		t.Fatalf("the operations organisation admitted a Microsoft sign-in whose tenant it pinned (%s): D2207 makes operations Google only", portalMarker)
+		t.Fatalf("the operations organisation admitted a Microsoft sign-in whose directory it pinned (%s): D2207 makes operations Google only", portalMarker)
 	}
 	if !errors.Is(err, ErrSSORequired) {
 		t.Errorf("operations refused a Microsoft sign-in with %v, which is not the sentinel the SPA opens its SSO dialog from", err)
 	}
 }
 
-// TestResellerMicrosoftNeedsAPinnedTenant: the same reseller rule over the
-// Microsoft sign-in Firebase ACTUALLY mints — the recorded shape, whose token
-// carries no tenant because Firebase forwards no Microsoft directory id. D2207's
-// fallback follows: a reseller organisation is Google-only until the owner gives
-// a directory a tenant Firebase can carry, AND backs that tenant's Microsoft
-// provider with a single-tenant app registration for that one directory — the
-// half that makes a pinned tenant id stand for a directory rather than for
-// whichever tenant a client asked for (portalauth.go's comment). This test holds
-// the fallback's own half: the shape a deployment can mint today is refused.
-func TestResellerMicrosoftNeedsAPinnedTenant(t *testing.T) {
+// TestResellerMicrosoftNeedsAPinnedDirectory: the same reseller rule over a
+// Microsoft sign-in whose token carries no directory — the recorded shape, and
+// the shape a provider that forwards no `tid` leaves behind. D2207's fallback
+// follows: a reseller organisation is Google-only until the owner pins a
+// directory its Microsoft provider puts into the token, because a list over
+// anything else — the Identity Platform tenant a client names — is a rule the
+// client satisfies (portalauth.go's comment). This test holds the fallback's own
+// half: the shape that carries no directory is refused.
+func TestResellerMicrosoftNeedsAPinnedDirectory(t *testing.T) {
 	v := portalVerifier(t)
 	signIn := portalSignIn(t, v, microsoftSignInClaims())
-	if signIn.TenantID != "" {
-		t.Fatalf("the recorded Microsoft sign-in carries tenant %q, and P1.3's finding is that Firebase mints none: a reseller's pinned list can then be satisfied, which would change D2207's fallback and the reason for it", signIn.TenantID)
+	if signIn.DirectoryID != "" {
+		t.Fatalf("the recorded Microsoft sign-in carries directory %q, and this shape carries none: a reseller's pinned list can then be satisfied, which would change D2207's fallback and the reason for it", signIn.DirectoryID)
 	}
 
-	reseller := SSORule{MicrosoftTenants: []string{portalTenant}}
+	reseller := SSORule{MicrosoftDirectories: []string{portalDirectory}}
 	err := v.RequireSSO(signIn, reseller)
 	if err == nil {
-		t.Fatalf("a reseller admitted the Microsoft sign-in a deployment can mint, which carries no tenant to pin (%s)", portalMarker)
+		t.Fatalf("a reseller admitted the Microsoft sign-in a deployment can mint, which carries no directory to pin (%s)", portalMarker)
 	}
-	if !errors.Is(err, ErrTenantNotPinned) {
-		t.Errorf("the recorded Microsoft sign-in was refused with %v, which is not the tenant sentinel", err)
+	if !errors.Is(err, ErrDirectoryNotPinned) {
+		t.Errorf("the recorded Microsoft sign-in was refused with %v, which is not the directory sentinel", err)
 	}
 
 	// A list whose one entry is the empty string is what an empty line in an
 	// owner's config writes, and it must refuse this sign-in: the token carries
-	// no tenant, so the empty entry would otherwise match it and admit every
-	// Microsoft sign-in a deployment can mint — the fallback above, undone by
-	// one blank line.
-	blank := SSORule{MicrosoftTenants: []string{""}}
+	// no directory, so the empty entry would otherwise match it and admit every
+	// Microsoft sign-in of this shape — the fallback above, undone by one blank
+	// line.
+	blank := SSORule{MicrosoftDirectories: []string{""}}
 	err = v.RequireSSO(signIn, blank)
 	if err == nil {
-		t.Fatalf("a reseller whose pinned list is one empty entry admitted a Microsoft sign-in carrying no tenant (%s)", portalMarker)
+		t.Fatalf("a reseller whose pinned list is one empty entry admitted a Microsoft sign-in carrying no directory (%s)", portalMarker)
 	}
-	if !errors.Is(err, ErrTenantNotPinned) {
-		t.Errorf("an empty list entry was refused with %v, which is not the tenant sentinel", err)
+	if !errors.Is(err, ErrDirectoryNotPinned) {
+		t.Errorf("an empty list entry was refused with %v, which is not the directory sentinel", err)
 	}
 
 	// The rule refuses the provider and not the person: the same reseller
@@ -529,28 +613,32 @@ func TestResellerMicrosoftNeedsAPinnedTenant(t *testing.T) {
 // Deps.SignIn, so it is the production path by which the API's routes reach
 // every rule in this file, and signInOf/callerOf are the one place a fact can be
 // lost between the seam's Caller and the VerifiedSignIn the rules are written
-// over. Every field of the conversion is pinned in both directions, and each of
-// the three facts a rule reads is read once through the seam rather than out of
-// the conversion's own struct: a field dropped here compiles, fails closed, and
+// over. Every field of the conversion is pinned in both directions, and each
+// fact a rule reads is read once through the seam rather than out of the
+// conversion's own struct: a field dropped here compiles, fails closed, and
 // refuses a person who did nothing wrong.
 func TestTheSeamCarriesEveryFactOfASignIn(t *testing.T) {
 	ctx := context.Background()
 	v := portalVerifier(t)
 	seam := PortalSignIn{Verifier: v}
 
-	// A Microsoft sign-in carrying a tenant, which is the case all three carried
-	// facts are legible on: a Google sign-in has no tenant and is admitted by
-	// every rule.
-	caller, err := seam.Verify(ctx, signPortalToken(t, portalKey(), portalKid, "RS256", microsoftTenantClaims()))
+	// A Microsoft sign-in carrying both a client-named Identity Platform tenant
+	// and the Entra directory the verified token reported, which is the case
+	// every carried fact is legible on: a Google sign-in has neither and is
+	// admitted by every rule.
+	claims := microsoftDirectoryClaims()
+	claims["firebase"].(map[string]any)["tenant"] = portalClientTenant
+	caller, err := seam.Verify(ctx, signPortalToken(t, portalKey(), portalKid, "RS256", claims))
 	if err != nil {
 		t.Fatalf("the seam refused a token this project signed: %v", err)
 	}
 	want := Caller{
-		UID:      portalUID,
-		Email:    "owner@contoso.example",
-		Provider: signInMicrosoft,
-		AuthTime: portalNow.Add(-time.Minute),
-		TenantID: portalTenant,
+		UID:         portalUID,
+		Email:       "owner@contoso.example",
+		Provider:    signInMicrosoft,
+		AuthTime:    portalNow.Add(-time.Minute),
+		TenantID:    portalClientTenant,
+		DirectoryID: portalDirectory,
 	}
 	if caller.UID != want.UID {
 		t.Errorf("the seam's caller names the account %q, want the token's subject %q", caller.UID, want.UID)
@@ -565,7 +653,10 @@ func TestTheSeamCarriesEveryFactOfASignIn(t *testing.T) {
 		t.Errorf("the seam's caller carries the sign-in instant %s, want the token's auth_time %s: the freshness rule reads it", caller.AuthTime, want.AuthTime)
 	}
 	if caller.TenantID != want.TenantID {
-		t.Errorf("the seam's caller carries the tenant %q, want the token's %q: a reseller's pinned list is compared against it", caller.TenantID, want.TenantID)
+		t.Errorf("the seam's caller carries the client-named tenant %q, want the token's %q", caller.TenantID, want.TenantID)
+	}
+	if caller.DirectoryID != want.DirectoryID {
+		t.Errorf("the seam's caller carries the directory %q, want the token's verified tid %q: D2207's reseller rule reads it", caller.DirectoryID, want.DirectoryID)
 	}
 
 	// The other direction, whole: a caller the seam answered, as the sign-in the
@@ -577,16 +668,16 @@ func TestTheSeamCarriesEveryFactOfASignIn(t *testing.T) {
 
 	// And each rule reads what it carried, through the seam rather than through
 	// the conversion alone: an operations organisation admits a Microsoft sign-in
-	// nowhere, a reseller's list admits this one for the tenant the token pinned
-	// and refuses it for a tenant nobody did.
+	// nowhere, and a reseller's list admits this one for the directory the
+	// verified token reported and refuses it for a directory nobody pinned.
 	if err := seam.RequireSSO(caller, SSORule{Operations: true}); !errors.Is(err, ErrSSORequired) {
 		t.Errorf("an operations rule answered a Microsoft caller %v, want the SSO refusal", err)
 	}
-	if err := seam.RequireSSO(caller, SSORule{MicrosoftTenants: []string{portalTenant}}); err != nil {
-		t.Errorf("a reseller's list that pins this sign-in's tenant refused it (%v): the provider and the tenant did not cross the seam", err)
+	if err := seam.RequireSSO(caller, SSORule{MicrosoftDirectories: []string{portalDirectory}}); err != nil {
+		t.Errorf("a reseller's list that pins this sign-in's directory refused it (%v): the provider and the directory did not cross the seam", err)
 	}
-	if err := seam.RequireSSO(caller, SSORule{MicrosoftTenants: []string{"tenant-nobody-pinned"}}); !errors.Is(err, ErrTenantNotPinned) {
-		t.Errorf("a reseller's list pinning another tenant answered %v, want the tenant refusal: the rule read the caller's own tenant", err)
+	if err := seam.RequireSSO(caller, SSORule{MicrosoftDirectories: []string{portalOtherDirectory}}); !errors.Is(err, ErrDirectoryNotPinned) {
+		t.Errorf("a reseller's list pinning another directory answered %v, want the directory refusal: the rule read the caller's own directory", err)
 	}
 	if err := v.FreshWithin(signInOf(caller), 5*time.Minute); err != nil {
 		t.Errorf("a sign-in a minute old was not fresh within five minutes (%v): the instant did not cross the seam", err)
@@ -602,8 +693,8 @@ func TestTheSeamCarriesEveryFactOfASignIn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the seam refused a Google token this project signed: %v", err)
 	}
-	if google.Provider != signInGoogle || google.TenantID != "" {
-		t.Errorf("a Google sign-in arrived as provider %q and tenant %q, want google.com and no tenant", google.Provider, google.TenantID)
+	if google.Provider != signInGoogle || google.TenantID != "" || google.DirectoryID != "" {
+		t.Errorf("a Google sign-in arrived as provider %q, tenant %q and directory %q, want google.com with neither", google.Provider, google.TenantID, google.DirectoryID)
 	}
 	if err := seam.RequireSSO(google, SSORule{Operations: true}); err != nil {
 		t.Errorf("an operations rule refused a Google caller: %v", err)

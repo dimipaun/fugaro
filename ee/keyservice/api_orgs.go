@@ -235,7 +235,7 @@ func refuseOrgAccess(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, errNoSuchOrganisation):
 		refuseAPI(w, http.StatusNotFound, "not_found", "This organisation is not one you may read.")
-	case errors.Is(err, ErrSSORequired), errors.Is(err, ErrTenantNotPinned):
+	case errors.Is(err, ErrSSORequired), errors.Is(err, ErrDirectoryNotPinned):
 		refuseAPI(w, http.StatusForbidden, "sso_required", "This organisation's members sign in with Google or Microsoft. Sign in that way to use it.")
 	default:
 		failAPI(w, err)
