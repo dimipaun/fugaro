@@ -59,7 +59,8 @@ const (
 	// same shape the review half already pairs with, and for the reason F40
 	// gives: a shared account names no single repository the way a
 	// per-repository job's does, so the binding is the identity's own
-	// repository plus the profile's list (pairShared). It is bound to the
+	// repository plus the two gates that admit it, the row's list and the
+	// project's own answer for the profile (pairShared). It is bound to the
 	// account Verify answered with, exactly as the review class is: the
 	// identity's profile comes from the verifier's own row and never from
 	// anything the caller sent.
@@ -405,24 +406,30 @@ func (s *Server) pairReview(ctx context.Context, id Identity) (string, error) {
 // pairShared is the shared class's pairing, and the answer is the canonical
 // repository every check after it is made against (G21, F40): the repository is
 // the run identity's own slug, the slug is resolved through the installation's
-// table, and it must be one the calling job's profile is bound to — the
-// repositories the row carries, which are the published profile's own
-// allow_repos (SharedJobAccountFor).
+// table, and it must be one the calling job's profile admits.
 //
-// The binding is the row's list and not a read of the live profile, and that is
-// a deliberate difference from pairReview's admission: the mint leaves the
-// policy unread on purpose (C2.1, D145 — its whole admission is the two
-// identities, the binding and the stop switch), so a pairing that read the node
-// would drag a policy read onto every mint. What narrows a shared caller's
-// tier-A credentials is the account axis, and that one IS read live
-// (admittedAccounts): a profile whose accounts were republished is answered
-// from what is published now.
+// Two gates, and BOTH are needed. The row's own list is the deployment's
+// statement of what this job was deployed for, and it is the published
+// profile's allow_repos (SharedJobAccountFor). That list is not the verdict on
+// its own — projectpolicy.ProfileAllowRepos says so in its own words: a
+// profile's list may be wider than the project's spell for spell, and reading
+// it alone "would admit every repository the project denies while the profile's
+// own list is the wider of the two". The verdict is projectpolicy.Admits, the
+// provider and the project's allow_repos and the profile's list together, and
+// it is read live from the node the service already serves calls from: a
+// repository the project never enrolled is refused here, where every route —
+// the model path, tier B and the mint alike — is held to it, and not only where
+// a tier-A credential would have been chosen.
 //
-// A repository the row's list does not admit is refused: the profile's list is
-// a deny-all when it is empty (projectpolicy.AdmitRepo), so a profile that
-// names no repository serves no shared caller at all — fail-closed, and the
-// same answer an unbound account gets.
-func (s *Server) pairShared(id Identity) (string, error) {
+// An unreadable node, and a profile the node does not define, are refusals and
+// never a fallback to the row alone (D143): the row is the deployment's, and
+// the project's own answer is the one that says a repository may be served.
+//
+// A repository neither list admits is refused: an empty list is a deny-all
+// (projectpolicy.AdmitRepo), so a profile that names no repository serves no
+// shared caller at all — fail-closed, and the same answer an unbound account
+// gets.
+func (s *Server) pairShared(ctx context.Context, id Identity) (string, error) {
 	sa, ok := s.sharedAccount(id.JobAccount)
 	if !ok {
 		// The verifier answered a class this service's own table does not
@@ -437,6 +444,26 @@ func (s *Server) pairShared(id Identity) (string, error) {
 	}
 	if !projectpolicy.AdmitRepo(sa.Repos, canonical) {
 		return "", fmt.Errorf("%w: the run identity's repository is not one the calling job's profile is bound to", ErrUnverified)
+	}
+	p, found, err := s.cfg.Policy.Shared(ctx)
+	if err != nil || !found {
+		return "", fmt.Errorf("%w: the project's policy could not be read, so the repository's admission could not be checked", ErrUnavailable)
+	}
+	admits, err := p.Admits(sa.Profile, canonical)
+	if err != nil {
+		// The row names a profile the published node does not define: the
+		// deployment and the project's document disagree, and a repository is
+		// never admitted by a profile nobody defines.
+		return "", fmt.Errorf("%w: the calling job's profile is not one the project's policy defines", ErrUnavailable)
+	}
+	if !admits {
+		// Which gate closed is not this sentence's business, and deliberately
+		// not: the project's enrollment, the profile's own list and the
+		// profile's provider are one verdict (projectpolicy.Admits), and a
+		// caller that is not of that profile is told the same thing whichever
+		// of the three answered no — an operator has AdmissionRefusal's own
+		// sentence for the reason, where the fix is.
+		return "", fmt.Errorf("%w: the run identity's repository is not one the project admits on the calling job's profile", ErrUnverified)
 	}
 	return canonical, nil
 }

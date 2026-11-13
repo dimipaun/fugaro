@@ -134,7 +134,7 @@ func (p *Policy) ProfileAllowRepos(profile string) ([]string, error) {
 // name", and reading it as the verdict admits every repository the project's
 // list denies while the profile's list is the wider one.
 //
-// Admits has one caller outside tests, and it is the one that counts:
+// Admits has two callers outside tests, and the first is the one that counts:
 // AdmissionRefusal, which the run's own admission check makes on a project job
 // — internal/runner's admissionCheck, before any git credential exists and
 // before the lock — so a repository this profile does not admit never runs on
@@ -145,6 +145,14 @@ func (p *Policy) ProfileAllowRepos(profile string) ([]string, error) {
 // the launcher's twin of *this* gate is profileAdmissionRefusal in the same
 // file, called where the launcher decides which job a launch runs on
 // (launchProjectJobFor), which is where a launch's profile is known.
+//
+// The second is the credentials service's shared class (internal/credsvc's
+// pairShared), and it is the same gate read on the serving side: a shared
+// project job serves several repositories, and the profile its row carries is
+// held to the project's enrollment here as well, so a repository the project
+// never allowed is never handed the job's GitHub write token or its model
+// credential. It is read live, per call, because the node is the one the
+// service already serves calls from.
 // ProfileAllowRepos answers the narrower question a message or a listing asks
 // ("what does this profile name"), never the verdict. A profile's list is
 // validated strictly where it is published (validProfiles) because this is the

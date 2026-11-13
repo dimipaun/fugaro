@@ -992,7 +992,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// list. What is handed to the mint is spelled the way a review
 		// caller's is, and for the same reason: the account names no
 		// repository, so the pairing's answer is the repository.
-		repo, err := s.pairShared(id)
+		repo, err := s.pairShared(ctx, id)
 		if err != nil {
 			s.refusePairing(ctx, w, id, purpose, credential, err)
 			return
@@ -1085,8 +1085,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// fixes the repository the token is scoped to — and the operator's stop
 		// flag has been read, so a stopped service mints nothing. It reads the
 		// bundle itself, because the App key is in it, and it reads no policy
-		// and consults no cascade: an installation token is not a model
-		// credential and no tier or admission has anything to say about it.
+		// of its own and consults no cascade: an installation token is not a
+		// model credential and no tier has anything to say about it. The one
+		// policy this route is held to was read by the pairing above, and only
+		// for a shared caller (pairShared): the project's answer for the calling
+		// job's profile is what says that repository may be served, and the mint
+		// reads no policy here because the gate belongs to the class's binding
+		// rather than to the route.
 		//
 		// The review class reaches this endpoint too, and what it is served
 		// here is the class's own decision (mintPermissions, D1065): CSR1's

@@ -264,9 +264,12 @@ const (
 	// half, internal/credsvc's ClassShared). It is the review document's own
 	// shape over the coding axis, and it differs from it in the one member
 	// the class's binding needs: the repositories the profile is bound to,
-	// which is what G21 holds a shared caller's identity to, and which the
-	// service cannot read for itself at pairing time (the mint reads no
-	// policy at all, C2.1).
+	// which is what G21 holds a shared caller's identity to. They are the
+	// profile's own allow_repos, and they are the narrower of the binding's two
+	// gates: the pairing holds the caller to this list AND to the project's own
+	// answer for the profile (projectpolicy.Admits, read live, because a
+	// profile's list may be wider than the project's spell for spell and this
+	// list alone is not a gate).
 	//
 	// The accounts are DERIVED from the first three fields
 	// (credsvc.SharedJobAccountFor), for the reason the review document gives:
@@ -946,9 +949,13 @@ func credentialsServiceReviewJobAccounts(raw, gcpProject string) ([]credsvc.Revi
 // the one member the coding class needs that the review class does not: the
 // repositories G21 holds a shared caller's run identity to. They are the
 // profile's own allow_repos as the installation published them, and they
-// travel here because the service cannot read them at pairing time — the mint
-// reads no policy at all (C2.1, D145) — where the review class resolves its
-// repository from the run identity's slug alone (RepositoryTableFor).
+// travel here so that the row says what the job was deployed for without a
+// read of its own. They are not the binding's verdict, which the pairing takes
+// from the project's own answer for the profile (projectpolicy.Admits): a
+// profile's list may be wider than the project's, and it is the project's
+// enrollment that says a repository may be served. The review class needs no
+// such member because it resolves its repository from the run identity's slug
+// alone (RepositoryTableFor).
 //
 // The account may be absent, which is the axis's spelling of the default
 // account, and each row's service account is derived from the first three

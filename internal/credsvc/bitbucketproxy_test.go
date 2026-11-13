@@ -1329,6 +1329,44 @@ func proxyReviewPolicyDoc(t *testing.T) string {
 	}`
 }
 
+// proxySharedCodingPolicyDoc is the review fixture's own document with the one
+// thing a SHARED caller's pairing needs and a review caller's does not: the
+// profiles block, defining the profile the class's row names, serving this
+// fixture's provider (bitbucket) and admitting the fixture's repository. The
+// project's enrollment and the token's block are the review document's, so
+// everything else about the fixture's policy is unchanged.
+//
+// It is written here rather than in proxyReviewPolicyDoc because a review
+// caller's pairing never reads a profile: adding one to every review test's
+// document would be a change to fixtures that have nothing to say about it.
+func proxySharedCodingPolicyDoc(t *testing.T) string {
+	t.Helper()
+	repo := testCanonical(t, testBitbucketRepo)
+	both := `["` + repo + `", "` + testCanonical(t, proxySiblingRepo) + `"]`
+	body := `{"provider": "bitbucket", "cpu": 2, "memory": "8Gi", "timeout_class": "6h",
+			"allow_repos": ["` + repo + `"]}`
+	// The default profile is defined because every policy must define it, and
+	// it is given the same body: the service reads the profile the class's row
+	// names, and a fixture whose two profiles differed would answer a
+	// deployment reading the wrong one with a repository it does not admit.
+	profiles := `"` + projectpolicy.DefaultProfileName + `": ` + body
+	if sharedCodingProfile != projectpolicy.DefaultProfileName {
+		profiles += `, "` + sharedCodingProfile + `": ` + body
+	}
+	return `{
+		"version": 5,
+		"budget": ` + testBudgetDoc + `,
+		"allow_repos": ` + both + `,
+		"accounts": {
+			"default": {"allow_repos": ` + both + `},
+			"` + testReviewAccount + `": {"allow_repos": ` + both + `}
+		},
+		"profiles": {` + profiles + `},
+		"credentials": {"fallback": "auto"},
+		"bitbucket_token": {"allow_repos": ` + both + `, "proxy": true}
+	}`
+}
+
 // proxyReviewSvc is the installation under test for the REVIEW-only job
 // (C3.9a): the caller is that job's own service account, its run identity names
 // the pull requests it reviews and no branch (reviewRunToken), and the
@@ -1701,6 +1739,16 @@ func TestSharedCodingCallerRefusedOnTheBitbucketRoute(t *testing.T) {
 		// pairing's: the same row the verifier admits the caller by, which is
 		// what a deployment hands both (SharedJobAccountsFor).
 		cfg.SharedAccounts = []SharedJobAccount{{Email: testSharedSA, Profile: sharedCodingProfile, Repos: []string{testCanonical(t, testBitbucketRepo)}}}
+		// And the profile the pairing's verdict reads, which the review
+		// fixture's own document does not define: a shared caller is bound to
+		// its profile's repositories by the project's own answer
+		// (projectpolicy.Admits), so a fixture whose node defines no profile
+		// would refuse the caller at the pairing and never reach this route.
+		pol := &fakePolicy{shared: decodeTestPolicy(t, proxySharedCodingPolicyDoc(t)), sharedFound: true}
+		cfg.Policy, s.policy = pol, pol
+		s.policy.admissions = map[string]*projectpolicy.RepoPolicy{
+			slug: decodeTestChild(t, testChildDoc(testReviewAccount)),
+		}
 		if cfg.Repos[slug] != testCanonical(t, testBitbucketRepo) {
 			t.Errorf("the fixture's repository table does not hold the caller's repository: %v", cfg.Repos)
 		}
