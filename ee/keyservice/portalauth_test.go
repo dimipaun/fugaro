@@ -60,7 +60,6 @@ const (
 	// a case the fixtures can spell.
 	portalDirectory      = "directory-portal-1"
 	portalClientTenant   = "tenant-portal-1"
-	portalOtherTenant    = "tenant-someone-else"
 	portalOtherDirectory = "directory-someone-else"
 )
 

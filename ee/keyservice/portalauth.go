@@ -40,9 +40,9 @@ package keyservice
 // CLIENT names when it calls the SDK. A list entry over it therefore admits
 // whoever names a pinned value rather than the directory the person's account
 // lives in — the tenant is a door, not an identity — and the list read as a
-// directory control only because
-// the deployment was also expected to back that tenant's Microsoft provider with
-// a single-tenant Azure app registration. The pin is now the directory and
+// directory control only because the deployment was also expected to back that
+// tenant's Microsoft provider with a single-tenant Azure app registration. The
+// pin is now the directory and
 // nothing else: `SignIn.TenantID` is carried and RequireSSO never reads it.
 //
 // **Where the directory id comes from.** mcpauth reads `tid` from the verified
@@ -224,8 +224,8 @@ type SignIn struct {
 // a reseller membership whatever that request is about.
 //
 // It is the caller's to build from the organisation's own record — operations
-// sets the tenant lists (P5.1) — and its zero value is the strictest rule there
-// is: SSO with no Microsoft tenant, which is Google only.
+// sets the two lists (P5.1) — and its zero value is the strictest rule there is:
+// SSO with no Microsoft directory, which is Google only.
 type SSORule struct {
 	// Operations is the operations organisation, which accepts `google.com`
 	// only: a Microsoft sign-in is refused whatever MicrosoftDirectories holds,
@@ -239,7 +239,10 @@ type SSORule struct {
 	// Microsoft sign-in (F40), which is what a reseller is left with until the
 	// owner pins a directory its Microsoft provider forwards into the token — a
 	// list over the Identity Platform tenant a client names would instead admit
-	// whoever named a pinned value (this file's comment).
+	// whoever named a pinned value (this file's comment). Entries are compared
+	// exactly, as the memberships in this tree are: the value is one the owner
+	// copies out of the token, and a second fold here would be one spelling of a
+	// directory that only one of the two sides applies.
 	MicrosoftDirectories []string
 }
 
