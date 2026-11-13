@@ -978,6 +978,18 @@ func licenceRefresh(cmd *cobra.Command, o *licenceRefreshOptions) error {
 	}
 	switch answer.Status {
 	case keyservice.StatusRevoked:
+		// The record is written before the refusal, because it is what makes
+		// the refusal true where a person looks next: `status` reads a
+		// revocation out of the store's own record and never out of the key
+		// (project.CheckRevoked, which apply weighs against the key that
+		// applies), and on an installation with no coordinator this command is
+		// the only thing that ever talks to the server (TN5). A revocation
+		// answered here and not recorded is one the installation never learns,
+		// which is exactly the sentence below being false.
+		if err := store.RecordCheck(ctx, licenceNow(), project.CheckRevoked, claims.KeyID); err != nil {
+			return fmt.Errorf("the licence server answered that key %s is revoked, and the record of it could not be written, so `fugaro licence status` reads the key as active until a check lands: %w",
+				safetext.Field(claims.KeyID), licenceObjectErr(err, ""))
+		}
 		return fcli.UserErr("the licence server answered that key %s is revoked: this installation is Free from now on, nothing has been deleted, and a new key restores everything (`fugaro licence set`)", safetext.Field(claims.KeyID))
 	case keyservice.StatusOK:
 	default:

@@ -1481,8 +1481,10 @@ func TestLicenceRefreshOfAnOfflineKeyNeverContactsTheServer(t *testing.T) {
 
 // TestLicenceRefreshOfARevokedKey holds the server's one answer that is not a
 // renewal: the key is revoked, the refusal names it by its key_id — the support
-// handle the specification says is not a secret — and nothing is written. The
-// licence is Free from then on and a new key restores everything.
+// handle the specification says is not a secret — no key is deleted, and the
+// revocation is recorded, which is what makes the refusal true where a person
+// looks next. The licence is Free from then on and a new key restores
+// everything.
 func TestLicenceRefreshOfARevokedKey(t *testing.T) {
 	f := newLicenceFixture(t)
 	claims := f.claims()
@@ -1492,7 +1494,7 @@ func TestLicenceRefreshOfARevokedKey(t *testing.T) {
 		t.Fatalf("licence set = %v", err)
 	}
 	f.secrets.AllowAccess()
-	before := f.object(t).Raw
+	before := f.object(t)
 	f.serveLicenceServer(t, func(keyservice.RenewalCall) (int, string) {
 		return http.StatusOK, `{"status":"` + keyservice.StatusRevoked + `"}`
 	})
@@ -1507,8 +1509,80 @@ func TestLicenceRefreshOfARevokedKey(t *testing.T) {
 	if !strings.Contains(err.Error(), claims.KeyID) {
 		t.Errorf("the refusal %q does not name the key it is about", err.Error())
 	}
-	if got := f.object(t).Raw; !bytes.Equal(got, before) {
-		t.Error("a revocation rewrote the project's object: revocation is Free in behaviour and deletes nothing")
+
+	// Nothing is deleted: revocation is Free in behaviour, and the key the
+	// answer named stays where it was.
+	after := f.object(t)
+	if !slices.Equal(after.Keys, before.Keys) {
+		t.Errorf("the revocation changed the project's keys to %v, want %v: nothing a revocation does deletes one", after.Keys, before.Keys)
+	}
+	// And the answer is recorded, which is what the refusal's own sentence
+	// needs to be true where a person looks next: `status` reads a revocation
+	// out of the store's record and never out of the key, and an installation
+	// with no coordinator has no other thing that talks to the server (TN5).
+	if after.Check == nil || after.Check.Status != project.CheckRevoked || after.Check.KeyID != claims.KeyID {
+		t.Errorf("the revocation was not recorded: last_check is %+v, want a %s check about %s", after.Check, project.CheckRevoked, claims.KeyID)
+	}
+	out, _, err := f.exec(t, "", "licence", "status", "--json")
+	if err != nil {
+		t.Fatalf("licence status --json = %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("licence status --json wrote %q, which is not JSON: %v", out, err)
+	}
+	if got["revoked"] != true {
+		t.Errorf("licence status --json reads revoked %#v after the server revoked the key, want true: the refusal says the installation is Free from now on", got["revoked"])
+	}
+	if got["state"] != string(licence.Expired) {
+		t.Errorf("licence status --json reads state %#v after the server revoked the key, want %q", got["state"], licence.Expired)
+	}
+}
+
+// TestLicenceRefreshReportsARevocationItCouldNotRecord holds the branch that
+// exists because the record is the only place a revocation outlives the answer:
+// the server answers revoked, the store refuses the write, and the command says
+// the record did not land rather than telling an operator the installation is
+// Free while `status` goes on reading the key as active.
+func TestLicenceRefreshReportsARevocationItCouldNotRecord(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes into a read-only directory, so the store cannot be made to refuse the write")
+	}
+	f := newLicenceFixture(t)
+	claims := f.claims()
+	key, secret := f.issuer.mint(t, claims), licenceTestSecret(t)
+	f.seedSecretContainer(nil)
+	if _, _, err := f.exec(t, key+"\n"+secret+"\n", "licence", "set"); err != nil {
+		t.Fatalf("licence set = %v", err)
+	}
+	f.secrets.AllowAccess()
+	f.serveLicenceServer(t, func(keyservice.RenewalCall) (int, string) {
+		return http.StatusOK, `{"status":"` + keyservice.StatusRevoked + `"}`
+	})
+
+	// The object's own directory refuses a new file, which is where the bucket
+	// driver puts the temporary one it renames over the object. The read the
+	// command makes first is unaffected, so it is the record's write, and
+	// nothing earlier, that fails.
+	dir := filepath.Join(f.dir, "runs", filepath.Dir(licenceTestObjectPath))
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatalf("making %s read-only = %v", dir, err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(dir, 0o755); err != nil {
+			t.Errorf("restoring %s = %v", dir, err)
+		}
+	})
+
+	_, _, err := f.exec(t, "", "licence", "refresh")
+	if err == nil {
+		t.Fatal("a revocation whose record could not be written was reported as recorded")
+	}
+	if code := fcli.ExitCode(err); code != fcli.ExitUserError {
+		t.Errorf("the refusal exited %d, want %d: %v", code, fcli.ExitUserError, err)
+	}
+	if !strings.Contains(err.Error(), "could not be written") {
+		t.Errorf("the refusal %q does not say the record of the revocation did not land", err.Error())
 	}
 }
 
