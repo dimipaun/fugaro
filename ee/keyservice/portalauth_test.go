@@ -448,6 +448,20 @@ func TestResellerMicrosoftNeedsAPinnedTenant(t *testing.T) {
 		t.Errorf("the recorded Microsoft sign-in was refused with %v, which is not the tenant sentinel", err)
 	}
 
+	// A list whose one entry is the empty string is what an empty line in an
+	// owner's config writes, and it must refuse this sign-in: the token carries
+	// no tenant, so the empty entry would otherwise match it and admit every
+	// Microsoft sign-in a deployment can mint — the fallback above, undone by
+	// one blank line.
+	blank := SSORule{MicrosoftTenants: []string{""}}
+	err = v.RequireSSO(signIn, blank)
+	if err == nil {
+		t.Fatalf("a reseller whose pinned list is one empty entry admitted a Microsoft sign-in carrying no tenant (%s)", portalMarker)
+	}
+	if !errors.Is(err, ErrTenantNotPinned) {
+		t.Errorf("an empty list entry was refused with %v, which is not the tenant sentinel", err)
+	}
+
 	// The rule refuses the provider and not the person: the same reseller
 	// admits the same address signed in with Google, which is what the fallback
 	// leaves a reseller organisation with.
@@ -535,6 +549,7 @@ func TestSchedulerTokenNeedsItsAccountAndAudience(t *testing.T) {
 		"another issuer":                   {token: schedulerToken(func(c map[string]any) { c["iss"] = "https://accounts.example.com" })},
 		"an expired token":                 {token: signPortalToken(t, portalKey(), portalKid, "RS256", expired)},
 		"issued in the future":             {token: signPortalToken(t, portalKey(), portalKid, "RS256", future)},
+		"not valid yet":                    {token: schedulerToken(func(c map[string]any) { c["nbf"] = portalNow.Add(2 * time.Hour).Unix() })},
 		"a key id Google does not publish": {token: signPortalToken(t, portalKey(), "another-kid", "RS256", schedulerClaims())},
 		"signed by another key":            {token: signPortalToken(t, otherKey, portalKid, "RS256", schedulerClaims())},
 		"a token signed another way":       {token: signPortalToken(t, portalKey(), portalKid, "HS256", schedulerClaims())},
