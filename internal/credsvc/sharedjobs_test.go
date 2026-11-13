@@ -1,16 +1,22 @@
 package credsvc_test
 
-// The shared-job accounts the service refuses (C1.11's Interfaces paragraph,
-// Global Constraint 6's gate, which holds until C3.9).
+// The shared-job accounts the service serves, and the profile each one is
+// bound to (C3.9's coding half, B5.1, G21).
 //
-// `credsvc.SharedJobAccountsFor` is handed to C1.10's verifier as
-// `AuthConfig.SharedJobAccounts`, and the verifier refuses a caller whose
-// verified email is one of them. The plan's claim about that set is exact: the
-// accounts are "the same names `internal/infra/projectjobs.go` deploys". A
-// service that derived them its own way would be a gate that refuses accounts
-// nobody created — the ordinary case of an installation whose jobs the service
-// then admits — or, worse, admits the accounts that do exist, which is the
-// gate failing open on the one thing it exists for.
+// `credsvc.SharedJobAccountsFor` is what a holder of the published policy
+// derives the class's rows from: the same rows the deployment hands the service
+// as `AuthConfig.SharedJobAccounts` and `Config.SharedAccounts` — the account,
+// the profile it belongs to and the repositories that profile is bound to —
+// and the verifier answers the class for a caller whose verified email is one
+// of them. The plan's claim about that set is exact: the accounts are "the same
+// names `internal/infra/projectjobs.go` deploys". A service that derived them
+// its own way would serve accounts nobody created — the ordinary case of an
+// installation whose jobs the service then refuses — or, worse, refuse the
+// accounts that do exist, which is the class failing closed on the one thing it
+// exists for. The profile and the repositories are read off the same published
+// profile, and the test checks them out loud: a row that carried the wrong
+// profile would bind a caller to another profile's repositories, and one that
+// carried none would refuse every call of that job.
 //
 // So this test does not check the derivation against itself: it builds ONE
 // installation twice, from the local config `fugaro update` deploys from and from
@@ -148,7 +154,9 @@ func deployedSharedJobAccounts(t *testing.T) []string {
 // Mutation (run, restore): derive the account from anything but the profile's
 // own triple — the Fugaro project name, the provider alone, or the profile
 // without its account axis — and the service's set is no longer the deployed
-// one.
+// one. It also holds the two members the class's binding is made of: the
+// profile every row names, and the repositories that profile is bound to, which
+// are the published profile's own allow_repos (G21).
 func TestSharedJobAccountsAreTheNamesProjectJobsDeploys(t *testing.T) {
 	deployed := deployedSharedJobAccounts(t)
 	p, found, err := projectpolicy.Decode([]byte(sharedJobsPolicyDoc()))
@@ -159,8 +167,20 @@ func TestSharedJobAccountsAreTheNamesProjectJobsDeploys(t *testing.T) {
 		t.Fatal("the test's own policy document decoded as absent")
 	}
 	got := credsvc.SharedJobAccountsFor(p, sharedJobsGCPProject)
-	if !slices.Equal(got, deployed) {
-		t.Fatalf("SharedJobAccountsFor = %v, want the accounts the deployer created, %v", got, deployed)
+	if emails := sharedJobEmails(got); !slices.Equal(emails, deployed) {
+		t.Fatalf("SharedJobAccountsFor = %v, want the accounts the deployer created, %v", emails, deployed)
+	}
+	// Every row is bound to the one profile the fixture publishes and to that
+	// profile's own repositories: an installation whose profiles block names
+	// one, and a row that carried another profile — or none, or the project's
+	// list rather than the profile's — would serve a caller the wrong way.
+	for _, row := range got {
+		if row.Profile != "standard" {
+			t.Errorf("the row for %q names the profile %q, want the one profile the fixture publishes", row.Email, row.Profile)
+		}
+		if !slices.Equal(row.Repos, []string{"github/acme/webapp"}) {
+			t.Errorf("the row for %q is bound to %v, want the profile's own allow_repos", row.Email, row.Repos)
+		}
 	}
 	// The fixture is only a test of anything if the axis it covers is more
 	// than one account: one profile serving two Claude accounts and the axis's
@@ -173,9 +193,20 @@ func TestSharedJobAccountsAreTheNamesProjectJobsDeploys(t *testing.T) {
 		serviceAccountEmailForTest(gcp.ProjectServiceAccountID("standard", "github", config.ProviderKeyAccount)),
 	}
 	slices.Sort(want)
-	if !slices.Equal(got, want) {
-		t.Fatalf("the fixture's own axis is not the one it means to test: got %v, want %v", got, want)
+	if emails := sharedJobEmails(got); !slices.Equal(emails, want) {
+		t.Fatalf("the fixture's own axis is not the one it means to test: got %v, want %v", emails, want)
 	}
+}
+
+// sharedJobEmails is the service's own answer as plain emails, which is what
+// the deployer's side of these tests speaks.
+func sharedJobEmails(accounts []credsvc.SharedJobAccount) []string {
+	out := make([]string, 0, len(accounts))
+	for _, sa := range accounts {
+		out = append(out, sa.Email)
+	}
+	slices.Sort(out)
+	return out
 }
 
 // sharedJobsNoProfileLocalConfig is an installation that publishes no profile:
@@ -311,16 +342,15 @@ func TestReviewAccountsAreTheNamesProjectJobsDeploys(t *testing.T) {
 }
 
 // TestSharedAndReviewSetsAreDisjoint: an account in both sets is refused
-// everywhere (verifyJob), so the review job could never mint and the class
-// would be dead on every route. The two sets are disjoint by construction —
-// the variant's ID is derived over a different account segment — and this is
-// what holds that.
+// everywhere (verifyJob), so neither class could serve a call at all. The two
+// sets are disjoint by construction — the variant's ID is derived over a
+// different account segment — and this is what holds that.
 func TestSharedAndReviewSetsAreDisjoint(t *testing.T) {
 	p, found, err := projectpolicy.Decode([]byte(sharedJobsPolicyDoc()))
 	if err != nil || !found {
 		t.Fatalf("the test's own policy document is not one Decode accepts: %v", err)
 	}
-	shared := credsvc.SharedJobAccountsFor(p, sharedJobsGCPProject)
+	shared := sharedJobEmails(credsvc.SharedJobAccountsFor(p, sharedJobsGCPProject))
 	review := reviewJobEmails(credsvc.ReviewJobAccountsFor(p, sharedJobsGCPProject))
 	if len(shared) == 0 || len(review) == 0 {
 		t.Fatalf("the fixture admits nobody to one of the two classes: shared %v, review %v", shared, review)

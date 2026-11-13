@@ -15,7 +15,6 @@ import (
 	"cmp"
 	"encoding/json"
 	"errors"
-	"io"
 	"maps"
 	"net/http"
 	"slices"
@@ -73,7 +72,7 @@ func newReviewSvcSpelled(t *testing.T, verifierEmail, tableEmail string, extra .
 			Keys:              s.keys,
 			JobKeys:           s.jobKeys,
 			Outcomes:          RTDBOutcomes{DB: s.db},
-			SharedJobAccounts: []string{testSharedSA},
+			SharedJobAccounts: []SharedJobAccount{sharedRow()},
 			ReviewJobAccounts: []ReviewJobAccount{{Email: verifierEmail, Account: testReviewAccount}},
 			Now:               func() time.Time { return s.now },
 		})
@@ -771,9 +770,11 @@ func TestReviewMintRefusesARunIdentityWithABranch(t *testing.T) {
 	// picks the set, and the class alone does not carry the shape. What it must
 	// never do is answer a review-class identity the run's write set, and what
 	// it must never do either is serve the run's set by default to a class this
-	// service does not mint for (Global Constraint 6). Through the HTTP path
-	// above neither is reachable — the pairing refuses first — so the calls
-	// below are the chooser itself.
+	// service does not mint for. Through the HTTP path above neither is
+	// reachable — the pairing refuses first — so the calls below are the
+	// chooser itself. A shared coding caller is NOT one of those classes (B5.1):
+	// it is served the run's own set, and the test that holds that is
+	// TestSharedCodingCallerServedForAProfileRepository.
 	shape, err := s.verify(run, s.reviewJobToken(), s.job)
 	if err != nil {
 		t.Fatalf("the fixture's own identity is not one Verify answers: %v", err)
@@ -783,7 +784,7 @@ func TestReviewMintRefusesARunIdentityWithABranch(t *testing.T) {
 		id   Identity
 	}{
 		{"a review identity carrying a branch", shape},
-		{"a class this service does not mint for", Identity{Slug: s.slug, Run: s.run, JobAccount: testSharedSA, JobClass: ClassShared}},
+		{"a class this service does not mint for", Identity{Slug: s.slug, Run: s.run, JobAccount: testSharedSA}},
 	} {
 		perms, err := mintPermissions(tc.id)
 		if err == nil {
@@ -1074,32 +1075,343 @@ func TestMintRefusalsAreAuditedAndCarryNoToken(t *testing.T) {
 	}
 }
 
-// TestSharedJobCallerIsStillRefusedOnEveryRoute: the gate is narrowed by this
-// task and not lifted (F2, Global Constraint 6). A coding shared project job's
-// account is refused on every route the service has — the model path and its
-// token-count sibling, and the mint — with the sentence it is refused with
-// today, and the refusal is the caller's verified email and never the job name
-// it reports.
-func TestSharedJobCallerIsStillRefusedOnEveryRoute(t *testing.T) {
-	for _, path := range []string{MessagesPath, CountTokensPath, MintPath} {
-		t.Run(path, func(t *testing.T) {
-			s := newSvc(t)
-			tok := s.jobToken(func(c map[string]any) { c["email"] = testSharedSA })
-			resp := s.postTokens(t, path, callBody("shared"), s.runToken(), tok, s.job)
-			defer resp.Body.Close()
-			body, err := io.ReadAll(resp.Body)
-			if err != nil {
-				t.Fatalf("reading the answer: %v", err)
-			}
-			if resp.StatusCode != StatusUnverified {
-				t.Fatalf("the answer is %d, want %d", resp.StatusCode, StatusUnverified)
-			}
-			if got := refusal(t, resp.StatusCode, body); got.Error != ErrorUnverifiedJobIdentity {
-				t.Errorf("the refusal is %q, want %q: %s", got.Error, ErrorUnverifiedJobIdentity, got.Message)
-			}
-			if n := s.up.Count(); n != 0 {
-				t.Errorf("the upstream saw %d requests, want none", n)
-			}
+// ---------------------------------------------------------------------------
+// The coding half of the class (B5.1, D2078, F40, G21)
+// ---------------------------------------------------------------------------
+
+// sharedCodingProfile is the profile the fixture's shared project job is of:
+// the name verifyJob answers beside the account, and the one the fixture's
+// policy defines it under. It is a name and not a credential.
+const sharedCodingProfile = testSharedProfile
+
+// testPolicyDocOneProfile is the project's published policy with a profiles
+// block: the profile named, serving github, bound to the fixture's repository
+// and listing the accounts given — and, beside it, the default profile every
+// policy must define, serving the same accounts so that a service reading the
+// wrong one of the two is not caught by this fixture alone.
+//
+// B5.1's second binding is read out of this block and out of nothing else. The
+// repositories a shared caller's row is bound to are the profile's own
+// allow_repos (G21, the row the deployment hands the service), and the accounts
+// its call may be served by are the ones its profile is deployed for — held
+// against the repository's own admission and the project's (admittedAccounts).
+// The block is written out rather than left out, because a policy that
+// publishes no profile describes an installation that deploys no shared job at
+// all.
+func testPolicyDocOneProfile(name string, accounts ...string) string {
+	quoted := make([]string, 0, len(accounts))
+	for _, a := range accounts {
+		quoted = append(quoted, `"`+a+`"`)
+	}
+	body := `{"provider": "github", "cpu": 2, "memory": "8Gi", "timeout_class": "6h",
+			"allow_repos": ["` + testRepo + `"],
+			"claude_accounts": [` + strings.Join(quoted, ", ") + `]}`
+	profiles := `"` + projectpolicy.DefaultProfileName + `": ` + body
+	if name != projectpolicy.DefaultProfileName {
+		profiles += `, "` + name + `": ` + body
+	}
+	return `{
+		"version": 5,
+		"budget": ` + testBudgetDoc + `,
+		"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"],
+		"accounts": {
+			"default": {"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"]},
+			"` + testAccount + `": {"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"]},
+			"` + config.AnthropicKeyAccount + `": {"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"]}
+		},
+		"profiles": {` + profiles + `},
+		"credentials": {"fallback": "auto"}
+	}`
+}
+
+// newSharedCodingSvc is the installation under test for the coding half of
+// C3.9 (B5.1): the caller's verified email is a shared project job's account,
+// the row binds it to one profile, and the published policy defines that
+// profile — bound to the fixture's repository, serving the fixture's second
+// account.
+//
+// The verifier's list and the pairing's table are the same row, because a
+// deployment derives both from one place (SharedJobAccountsFor): the row
+// carries the profile the class is answered with and the repositories the
+// profile is bound to.
+func newSharedCodingSvc(t *testing.T, extra ...func(*svc, *Config)) *svc {
+	t.Helper()
+	return newSvcWith(t, func(s *svc, cfg *Config) {
+		auth, err := NewAuthenticator(AuthConfig{
+			Project:           testProject,
+			FirebaseProject:   testFirebase,
+			Audience:          testAudience,
+			JobAccounts:       []string{testJobSA},
+			Keys:              s.keys,
+			JobKeys:           s.jobKeys,
+			Outcomes:          RTDBOutcomes{DB: s.db},
+			SharedJobAccounts: []SharedJobAccount{sharedRow()},
+			Now:               func() time.Time { return s.now },
 		})
+		if err != nil {
+			t.Fatalf("the fixture's own verifier configuration is not one NewAuthenticator accepts: %v", err)
+		}
+		// The fixture's verifier and the server's are the same object, so a
+		// test can call either and be asking the same configuration.
+		cfg.Auth, s.auth = auth, auth
+		cfg.SharedAccounts = []SharedJobAccount{sharedRow()}
+		// The installation's repository table: what resolves a run identity's
+		// slug to the canonical repository the pairing reads the profile's
+		// binding against. It holds the fixture's OTHER repository too, so that
+		// a shared caller refused for a repository outside its profile is
+		// refused by the profile and not by a table that names one repository.
+		cfg.Repos = map[string]string{
+			s.slug:                         testRepo,
+			testSlug(t, testOtherRepoPath): testOtherRepo,
+		}
+		pol := &fakePolicy{
+			shared:      decodeTestPolicy(t, testPolicyDocOneProfile(sharedCodingProfile, testAccount)),
+			sharedFound: true,
+		}
+		cfg.Policy, s.policy = pol, pol
+		// The repository's own node admits the profile's one account, and the
+		// project's shared node offers it to the repository too: O4's
+		// intersection is satisfied by both legs, so a refusal below is the
+		// class's own and not the admission's.
+		s.policy.admissions = map[string]*projectpolicy.RepoPolicy{
+			s.slug: decodeTestChild(t, testChildDoc(testAccount)),
+		}
+		for _, m := range extra {
+			m(s, cfg)
+		}
+	})
+}
+
+// sharedRunToken is the run identity of a run in the fixture's shared project
+// job: a run of the fixture's repository, which is one the profile is bound to.
+func (s *svc) sharedRunToken(mutate ...func(map[string]any)) string {
+	return s.runToken(mutate...)
+}
+
+// sharedRunTokenOf is the same identity for ANOTHER repository: the slug claims
+// of a run of that repository. It is how a test presents a shared caller whose
+// run is outside the repositories the calling job's profile is bound to.
+func (s *svc) sharedRunTokenOf(slug string) string {
+	return s.runToken(
+		func(c map[string]any) { c["fs"] = slug },
+		func(c map[string]any) { c["sub"] = "r~" + slug + "~" + s.run },
+		func(c map[string]any) { c["user_id"] = "r~" + slug + "~" + s.run },
+	)
+}
+
+// sharedJobToken is the caller's Google ID token as the shared project job's
+// own service account: the account the class is decided from, and never the job
+// name the call reports.
+func (s *svc) sharedJobToken(mutate ...func(map[string]any)) string {
+	return s.jobToken(append([]func(map[string]any){
+		func(c map[string]any) { c["email"] = testSharedSA },
+	}, mutate...)...)
+}
+
+// TestSharedCodingCallerServedForAProfileRepository is B5.1's red step: a
+// coding run in a shared project job is served for its own repository, which is
+// one the profile its job is of is bound to.
+//
+// Before this task the account was refused whole (Global Constraint 6), so the
+// caller was answered "the caller is not one of the installation's job service
+// accounts" whatever repository it was on — the state a shared job's runs were
+// in with the service deployed and switched on. What the class buys is the
+// pairing and nothing else (C3.9's coding half): the run is served an account
+// the repository's admission and its profile's own list both hold, exactly as a
+// per-repository job's run is served one its repository admits.
+func TestSharedCodingCallerServedForAProfileRepository(t *testing.T) {
+	s := newSharedCodingSvc(t)
+	resp, body := s.callTokens(t, callBody("shared-coding"), s.sharedRunToken(), s.sharedJobToken(), s.job)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the shared coding caller was answered %d, want the upstream's 200: %s", resp.StatusCode, body)
+	}
+	if got := resp.Header.Get(HeaderCredential); got != testAccount {
+		t.Errorf("%s = %q, want the account the profile serves and the repository admits, %q", HeaderCredential, got, testAccount)
+	}
+	if got := resp.Header.Get(HeaderTier); got != TierA {
+		t.Errorf("%s = %q, want %q: the account is an OAuth token", HeaderTier, got, TierA)
+	}
+	if n := s.up.Count(); n != 1 {
+		t.Fatalf("the upstream saw %d requests, want 1", n)
+	}
+	auth := s.up.Seen()[0].Header.Get("Authorization")
+	if !strings.Contains(auth, fakeCred(t, testAccount)) {
+		t.Error("the call did not carry the account the pairing resolved")
+	}
+	if strings.Contains(auth, fakeCred(t, "default")) {
+		t.Error("the call carried an account the repository's own node does not admit")
+	}
+	// The admission is read for the RUN IDENTITY's repository (the class's
+	// pairing), exactly as it is for a review caller's.
+	if got := s.policy.readAdmissions(); !slices.Equal(got, []string{s.slug}) {
+		t.Errorf("the admissions read were %v, want just the run identity's repository", got)
+	}
+	// The line names the shared job's own account, which is what an operator
+	// searches the class by: the account is the caller's, and the job name the
+	// run reports is not.
+	lines := forwardLines(t, s.audit)
+	if len(lines) != 1 {
+		t.Fatalf("an answered shared call wrote %d audit lines, want exactly one: %s", len(lines), s.audit.String())
+	}
+	for field, want := range map[string]any{
+		"caller":     testSharedSA,
+		"credential": testAccount,
+		"tier":       TierA,
+		"status":     StatusOK,
+	} {
+		if got := lines[0][field]; got != want {
+			t.Errorf("the audit line's %s = %v, want %q", field, got, want)
+		}
+	}
+
+	// The mint, the class's other route (C3.9's coding half): a shared coding
+	// caller is handed the run's own write set, scoped to the one repository
+	// the pairing resolved — the class is one job serving several repositories,
+	// and the reach of the token stays the one repository its profile is bound
+	// to.
+	t.Run("the GitHub mint", func(t *testing.T) {
+		gh := newGHFake(t)
+		m := newSharedCodingSvc(t, func(s *svc, cfg *Config) {
+			cfg.Client = &http.Client{Transport: ghTransport{srv: gh.srv}}
+			s.src.docs = [][]byte{mintBundleDoc(t)}
+		})
+		resp, body := m.mintTokens(t, mintBody(testAppID), m.sharedRunToken(), m.sharedJobToken(), m.job)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("the shared caller's mint answered %d, want 200: %s", resp.StatusCode, body)
+		}
+		if ans := mintAnswer(t, body); ans.Repository != testRepo {
+			t.Errorf("the mint's answer names the repository %q, want the pairing's own %q", ans.Repository, testRepo)
+		}
+		_, sent := gh.both(t)
+		var asked struct {
+			Repositories []string          `json:"repositories"`
+			Permissions  map[string]string `json:"permissions"`
+		}
+		if err := json.Unmarshal([]byte(sent.body), &asked); err != nil {
+			t.Fatalf("the mint's body is not the JSON this test reads: %v (%s)", err, sent.body)
+		}
+		if want := github.RunTokenPermissions(); !maps.Equal(asked.Permissions, want) {
+			t.Errorf("the mint asked GitHub for %v, want the run's own set %v: a shared coding run does what any coding run does with its repository", asked.Permissions, want)
+		}
+		_, wantRepo, _ := strings.Cut(testRepoPath, "/")
+		if len(asked.Repositories) != 1 || asked.Repositories[0] != wantRepo {
+			t.Errorf("the mint asked for repositories %v, want the paired repository alone", asked.Repositories)
+		}
+	})
+}
+
+// TestSharedCodingCallerRefusedForARepositoryOutsideItsProfile: the row's
+// repositories are the binding this class is made of (G21, F40). A shared job
+// serves every repository its profile is bound to and no other, so a run
+// identity of another repository is refused rather than served the profile's
+// account — which is the whole difference between this class and a
+// per-repository job's, whose account names one repository.
+//
+// The refusal is a pairing refusal and carries the pairing's vocabulary: the
+// account is verified (the class is answered), so the call is refused once and
+// recorded once, with the sentence the per-repository class's own binding
+// refusal carries.
+func TestSharedCodingCallerRefusedForARepositoryOutsideItsProfile(t *testing.T) {
+	s := newSharedCodingSvc(t)
+	other := testSlug(t, testOtherRepoPath)
+	if _, served := s.server.cfg.Repos[other]; !served {
+		t.Fatal("the fixture's table does not hold the other repository, so the refusal below would be the table's and not the profile's")
+	}
+	resp, body := s.callTokens(t, callBody("shared-other-repo"), s.sharedRunTokenOf(other), s.sharedJobToken(), s.job)
+	if resp.StatusCode != StatusUnverified {
+		t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusUnverified, body)
+	}
+	got := refusal(t, resp.StatusCode, body)
+	if got.Error != ErrorUnverifiedRunIdentity {
+		t.Errorf("the refusal is %q, want %q", got.Error, ErrorUnverifiedRunIdentity)
+	}
+	if !strings.Contains(got.Message, "profile") {
+		t.Errorf("the refusal is %q, want it to name what the run identity failed: the profile the calling job is of", got.Message)
+	}
+	if n := s.up.Count(); n != 0 {
+		t.Errorf("the upstream saw %d requests, want none: the caller was refused before a credential was chosen", n)
+	}
+	if n := s.src.readCount(); n != 0 {
+		t.Errorf("the bundle was read %d times, want none: the pairing comes first", n)
+	}
+	if lines := parseAuditLines(t, s.audit.String()); len(lines) != 1 {
+		t.Fatalf("the refusal wrote %d audit lines, want exactly one: %s", len(lines), s.audit.String())
+	}
+}
+
+// TestSharedCodingCallerAdmittedOnlyTheProfilesAccounts: a shared job is
+// deployed for ONE account axis value of its profile, so the account its run
+// may be served is one its profile is deployed for AND one the repository's own
+// node and the project's shared node both admit.
+//
+// The fixture is built to tell the two legs apart: the repository's node admits
+// the fixture's second Claude account, and the profile serves the project's key
+// alone (the axis's other spelling). A service that read the admission alone —
+// which is exactly what a per-repository job's class does — would answer with
+// that account; the class's own binding answers with the key instead, because
+// the account is not one the calling job's profile deploys.
+func TestSharedCodingCallerAdmittedOnlyTheProfilesAccounts(t *testing.T) {
+	s := newSharedCodingSvc(t, func(s *svc, cfg *Config) {
+		s.policy.shared = decodeTestPolicy(t, testPolicyDocOneProfile(sharedCodingProfile, config.AnthropicKeyAccount))
+		s.policy.admissions[s.slug] = decodeTestChild(t, testChildDoc(testAccount))
+	})
+	resp, body := s.callTokens(t, callBody("shared-profile-accounts"), s.sharedRunToken(), s.sharedJobToken(), s.job)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the answer is %d, want the upstream's 200: %s", resp.StatusCode, body)
+	}
+	if got := resp.Header.Get(HeaderCredential); got != config.AnthropicSecret {
+		t.Errorf("%s = %q, want the project's own key %q: the profile serves that value and not the account the repository admits", HeaderCredential, got, config.AnthropicSecret)
+	}
+	if got := resp.Header.Get(HeaderTier); got != TierB {
+		t.Errorf("%s = %q, want %q: the project's key is real money", HeaderTier, got, TierB)
+	}
+	if n := s.up.Count(); n != 1 {
+		t.Fatalf("the upstream saw %d requests, want 1", n)
+	}
+	req := s.up.Seen()[0]
+	if got := req.Header.Get("x-api-key"); got != fakeCred(t, "paid") {
+		t.Error("the call did not carry the project's key")
+	}
+	if auth := req.Header.Get("Authorization"); auth != "" {
+		t.Errorf("the call carried an Authorization header %q, want none: the account the repository admits is not one this job's profile deploys", auth)
+	}
+}
+
+// TestReviewCallerUnchanged: the review class is not touched by B5.1. The
+// account a review call is served by is the pairing's own and never a profile's
+// list — a review job's account names no profile at all (Identity.Profile is
+// empty for it), and the class's offering is still the one credential its job
+// is of (reviewCandidates).
+//
+// The fixture is the one that would fail if the profile narrowing were applied
+// to every class: its policy defines the DEFAULT profile — the profile an empty
+// Identity.Profile resolves to — as serving the project's key alone, and its
+// review job is of the fixture's second Claude account.
+func TestReviewCallerUnchanged(t *testing.T) {
+	p, found, err := projectpolicy.Decode([]byte(testPolicyDocOneProfile(projectpolicy.DefaultProfileName, config.AnthropicKeyAccount)))
+	if err != nil || !found {
+		t.Fatalf("the test's own policy document is not one Decode accepts: %v", err)
+	}
+	s := newReviewSvcSpelled(t, testReviewSA, testReviewSA, func(s *svc, cfg *Config) {
+		s.policy.shared = p
+	})
+	resp, body := s.callTokens(t, callBody("review-unchanged"), s.reviewRunToken(), s.reviewJobToken(), s.job)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the review caller was answered %d, want the upstream's 200: %s", resp.StatusCode, body)
+	}
+	if got := resp.Header.Get(HeaderCredential); got != testReviewAccount {
+		t.Errorf("%s = %q, want the review job's own account %q: a review caller is served the pairing's credential and no profile's list", HeaderCredential, got, testReviewAccount)
+	}
+	if got := resp.Header.Get(HeaderTier); got != TierA {
+		t.Errorf("%s = %q, want %q", HeaderTier, got, TierA)
+	}
+	if n := s.up.Count(); n != 1 {
+		t.Fatalf("the upstream saw %d requests, want 1", n)
+	}
+	if auth := s.up.Seen()[0].Header.Get("Authorization"); !strings.Contains(auth, fakeCred(t, testReviewAccount)) {
+		t.Error("the call did not carry the account the pairing resolved")
+	}
+	if got := s.policy.readAdmissions(); !slices.Equal(got, []string{s.slug}) {
+		t.Errorf("the admissions read were %v, want just the run identity's repository", got)
 	}
 }

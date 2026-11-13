@@ -498,8 +498,10 @@ func TestSignRouteRefusesAReviewAccountWithNoKeyYet(t *testing.T) {
 //
 // The coding caller here is otherwise perfectly good — its two identities are
 // whole and it is bound to the run identity's own repository — so the class is
-// the only thing that can refuse it. The shared project job's account is
-// refused whole, as it is on every other route (Global Constraint 6).
+// the only thing that can refuse it. A shared project job's account is paired
+// like any other caller (C3.9's coding half) and refused here by the class
+// alone, because no row of the review table is its and the key this route reads
+// is the caller's own account's.
 func TestSignRouteRefusesACodingCallerAndAnUnadmittedClass(t *testing.T) {
 	t.Run("a coding caller", func(t *testing.T) {
 		s := signSvc(t)
@@ -520,14 +522,24 @@ func TestSignRouteRefusesACodingCallerAndAnUnadmittedClass(t *testing.T) {
 	})
 
 	t.Run("a shared project job's account", func(t *testing.T) {
-		s := signSvc(t)
+		// The service's own table holds the row, as the deployment's does: the
+		// verifier's list and this one are derived from one axis, so a fixture
+		// that spelled only the verifier's would be testing its own
+		// disagreement rather than the class.
+		s := signSvc(t, func(s *svc, cfg *Config) {
+			cfg.SharedAccounts = []SharedJobAccount{sharedRow()}
+		})
 		tok := s.jobToken(func(c map[string]any) { c["email"] = testSharedSA })
 		resp, body := s.signTokens(t, signBody(testDigest(t, "shared")), s.reviewRunToken(), tok, s.job)
 		if resp.StatusCode != StatusUnverified {
 			t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusUnverified, body)
 		}
-		if got := refusal(t, resp.StatusCode, body); got.Error != ErrorUnverifiedJobIdentity {
-			t.Errorf("the refusal is %q, want %q", got.Error, ErrorUnverifiedJobIdentity)
+		got := refusal(t, resp.StatusCode, body)
+		if got.Error != ErrorUnverifiedRunIdentity {
+			t.Errorf("the refusal is %q, want %q", got.Error, ErrorUnverifiedRunIdentity)
+		}
+		if !strings.Contains(got.Message, "review") {
+			t.Errorf("the refusal is %q, want it to name the class the route is served to", got.Message)
 		}
 		if marks := s.signMarks(t); len(marks) != 0 {
 			t.Errorf("a refused caller left %v behind, want no mark at all", marks)
@@ -1010,7 +1022,7 @@ func verifySvc(t *testing.T, verifiers []string, extra ...func(*svc, *Config)) *
 			Keys:              s.keys,
 			JobKeys:           s.jobKeys,
 			Outcomes:          RTDBOutcomes{DB: s.db},
-			SharedJobAccounts: []string{testSharedSA},
+			SharedJobAccounts: []SharedJobAccount{sharedRow()},
 			ReviewJobAccounts: []ReviewJobAccount{{Email: testReviewSA, Account: testReviewAccount}},
 			VerifierAccounts:  verifiers,
 			Now:               func() time.Time { return s.now },

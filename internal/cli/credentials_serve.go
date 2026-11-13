@@ -293,12 +293,12 @@ const (
 // the ones whose absence is a service that cannot say which installation it is
 // serving. The class-specific entries it reads beside them are OPTIONAL and
 // live outside this list, because the module renders each of those only where
-// it applies (envReviewJobAccounts, envVerifierAccounts, envPersonAccounts,
-// envCoordinatorAccount and envLauncherAccounts). internal/infra/tf's
-// credentialsServiceEnv is init's cover's allow-list, which is these seven plus
-// those five: a name outside it is
-// a container the cover refuses, which is what makes the module's list a
-// boundary rather than a convention. The lists are held together by tests
+// it applies (envReviewJobAccounts, envSharedJobAccounts, envVerifierAccounts,
+// envPersonAccounts, envCoordinatorAccount and envLauncherAccounts).
+// internal/infra/tf's credentialsServiceEnv is init's cover's allow-list, which
+// is these seven plus those six: a name outside it is a container the cover
+// refuses, which is what makes the module's list a boundary rather than a
+// convention. The lists are held together by tests
 // rather than by this comment: TestCredentialsServiceEnvIsTheDeploymentsOwn
 // reads credentials.tf's own env blocks and requires every name this command
 // reads to be one the module sets, so a name added on one side and not the

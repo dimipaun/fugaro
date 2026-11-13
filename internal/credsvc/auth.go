@@ -14,10 +14,11 @@
 //     identity that Cloud Run IAM let in: its ID token's signature is checked
 //     against Google's own certificates, and its email claim against the
 //     installation's job service accounts (the owner's answer of 2026-10-19),
-//     and an account that belongs to a *shared* project job is refused whole
-//     until the phase-3 shared-job rules are on main (C3.9, Global Constraint
-//     6). That last check is decided from the verified email and never from
-//     the caller's own X-Fugaro-Run-Job header: one service account is
+//     which the *shared* project jobs' own table answers too (C3.9's coding
+//     half): one of those is a job of several repositories, so its account is
+//     admitted for the repositories the profile it serves is bound to and for
+//     no other. That last check is decided from the verified email and never
+//     from the caller's own X-Fugaro-Run-Job header: one service account is
 //     dedicated to one Cloud Run job, so the email is what says which job
 //     called, while the header is text the caller chose. The same email
 //     answers the account's class — per-repository, shared or review
@@ -827,9 +828,8 @@ func (a *Authenticator) Verify(ctx context.Context, req Request) (Identity, erro
 	// run is in — the platform sets it, but a launcher may override any
 	// environment variable (internal/runner's jobName) — so it is kept for the
 	// run's record and held to the job-name rule (ValidJobName), and it decides
-	// nothing. Which job actually called is decided in verifyJob, from the
-	// verified account, and that is where Global Constraint 6's shared-job gate
-	// is (C3.9).
+	// nothing. Which job actually called, and which class that job is of, is
+	// decided in verifyJob, from the verified account (C3.9).
 	//
 	// The rule is the job-name rule and not the general header rule (review
 	// finding m3): every job name this installation can have is

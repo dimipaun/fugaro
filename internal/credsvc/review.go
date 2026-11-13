@@ -7,7 +7,9 @@ package credsvc
 // Two classes were enough while every job of an installation was either a
 // per-repository job (its service account is derived from the repository's
 // slug and the workflow, so the account names the repository its runs are of)
-// or a shared project job (refused whole, Global Constraint 6). The
+// or a shared project job — one job for several repositories, whose account
+// names no repository at all, admitted for the repositories the profile it
+// serves is bound to (pairShared, C3.9's coding half). The
 // review-only variant (docs/cloud-senior-review/ CSR7) is a third: one job per
 // (profile, account) of the published policy, whose account names no
 // repository at all — so the comparison every other caller's call is bound by

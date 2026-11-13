@@ -129,7 +129,7 @@ func classMatrixSvc(t *testing.T) (*svc, *bitbucketFake) {
 			Keys:               s.keys,
 			JobKeys:            s.jobKeys,
 			Outcomes:           RTDBOutcomes{DB: s.db},
-			SharedJobAccounts:  []string{testSharedSA},
+			SharedJobAccounts:  []SharedJobAccount{sharedRow()},
 			ReviewJobAccounts:  []ReviewJobAccount{{Email: testReviewSA, Account: testReviewAccount}},
 			VerifierAccounts:   []string{testVerifierSA},
 			PersonAccounts:     []string{testPersonAccount},
@@ -604,7 +604,7 @@ func personAuthConfig(f *fixture, person string, extra func(*AuthConfig)) AuthCo
 		Keys:              f.keys,
 		JobKeys:           f.jobKeys,
 		Outcomes:          RTDBOutcomes{DB: f.db},
-		SharedJobAccounts: []string{testSharedSA},
+		SharedJobAccounts: []SharedJobAccount{sharedRow()},
 		PersonAccounts:    []string{person},
 		Now:               func() time.Time { return f.now },
 	}

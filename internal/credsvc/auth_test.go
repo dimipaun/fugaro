@@ -43,11 +43,17 @@ const (
 	testAudience = "https://creds-aurora-dev-uc.a.run.app"
 	testJobSA    = "fugaro-job@aurora-dev.iam.gserviceaccount.com"
 	testOtherSA  = "another-job@aurora-dev.iam.gserviceaccount.com"
-	// The account of a *shared* project job (gcp.ProjectServiceAccountID):
-	// one of the accounts Global Constraint 6's gate refuses.
+	// The account of a *shared* project job (gcp.ProjectServiceAccountID): the
+	// class B5.1 serves a coding run of a profile's repositories in.
 	testSharedSA = "fugaro-p-profile-one-anthropic-acct-one@aurora-dev.iam.gserviceaccount.com"
-	testKid      = "test-kid-1"
-	testOtherKid = "test-kid-2"
+	// testSharedProfile is the profile that account's row names, and
+	// testSharedRepo the one repository the profile is bound to in these
+	// fixtures: the class's binding is "the identity's repository, and it is
+	// one of the profile's" (G21), so a row carries both beside the account.
+	testSharedProfile = "profile-one"
+	testSharedRepo    = "github/acme/aurora"
+	testKid           = "test-kid-1"
+	testOtherKid      = "test-kid-2"
 	// The key id a Google ID token names. Google's own certs and Firebase's
 	// are different key sets, so the caller's token is signed by a key the run
 	// token's set does not hold.
@@ -220,7 +226,7 @@ func newFixtureWith(t *testing.T, mutate func(*AuthConfig)) *fixture {
 		Keys:              f.keys,
 		JobKeys:           f.jobKeys,
 		Outcomes:          RTDBOutcomes{DB: f.db},
-		SharedJobAccounts: []string{testSharedSA},
+		SharedJobAccounts: []SharedJobAccount{sharedRow()},
 		Now:               func() time.Time { return f.now },
 	}
 	if mutate != nil {
@@ -246,6 +252,15 @@ func newFixtureWith(t *testing.T, mutate func(*AuthConfig)) *fixture {
 // token.sameIdentity checks an exchanged token for. The verifier reads them
 // there; a test that put them under "claims" would be testing a token
 // Firebase never issues.
+// sharedRow is the fixture's row for the shared class (B5.1): the account a
+// caller of that class is verified as, the profile it belongs to and the one
+// repository that profile is bound to. The email is a derivation of a (profile,
+// provider, account) triple and the row carries the two facts the class's
+// pairing needs beside it.
+func sharedRow() SharedJobAccount {
+	return SharedJobAccount{Email: testSharedSA, Profile: testSharedProfile, Repos: []string{testSharedRepo}}
+}
+
 func (f *fixture) runClaims(mutate ...func(map[string]any)) map[string]any {
 	c := map[string]any{
 		"iss":       "https://securetoken.google.com/" + testFirebase,
@@ -742,46 +757,52 @@ func TestVerifyRefusesAForgedSignature(t *testing.T) {
 	}
 }
 
-// C3.9's gate: until the phase-3 shared-job rules are on main, the service
-// admits runs in per-repository jobs only.
-// Global Constraint 6: per-repository jobs only until the phase-3 shared-job
-// rules are on main (C3.9), so a run in a shared project job is refused whole.
+// The shared class (C3.9's coding half, B5.1, G21): a run in a shared project
+// job is served, and the class — with the profile its job serves — is read from
+// the caller's *verified* account and never from X-Fugaro-Run-Job.
 //
-// The gate is the caller's *verified* account and never X-Fugaro-Run-Job. One
-// service account is dedicated to one Cloud Run job, so the account is the job;
-// the header is text the caller writes (a launcher may override any environment
-// variable, internal/runner's jobName), so a gate read off it would be one a
-// caller could satisfy by writing a header. Both directions are pinned below:
-// the shared account is refused however the header reads, and an admitted
-// account is admitted however the header reads.
-func TestVerifyRefusesSharedJobRun(t *testing.T) {
+// The class is the account's for the reason the gate before it was: one service
+// account is dedicated to one Cloud Run job, so the account is the job; the
+// header is text the caller writes (a launcher may override any environment
+// variable, internal/runner's jobName), so a class read off it would be one a
+// caller could choose. Both directions are pinned below: the shared account is
+// answered as the shared class however the header reads, and a per-repository
+// account is answered as a repository caller however the header reads.
+//
+// What the class is SERVED for is not decided here and is not a fact of the
+// account: the pairing binds the run's own repository and asks whether the
+// profile is one of the row's (pairShared, server_test's coding tests).
+func TestVerifyAnswersTheSharedJobClass(t *testing.T) {
 	shared := func(c map[string]any) { c["email"] = testSharedSA }
 
 	// The shared job's account, presenting a *per-repository* job name in the
-	// header: refused all the same. A forged header cannot buy admission.
+	// header: the class is the account's, and the header decides nothing.
 	f := newFixture(t)
-	_, err := f.verify(f.runToken(), f.jobToken(shared), f.job)
-	if !errors.Is(err, ErrUnverifiedJob) {
-		t.Fatalf("err = %v, want ErrUnverifiedJob: the caller is the one refused", err)
+	id, err := f.verify(f.runToken(), f.jobToken(shared), f.job)
+	if err != nil {
+		t.Fatalf("Verify refused a shared project job's account: %v", err)
 	}
-	if !strings.Contains(err.Error(), "shared") {
-		t.Errorf("err = %q, want it to say the job is shared", err)
+	if id.JobClass != ClassShared {
+		t.Errorf("JobClass = %q, want %q", id.JobClass, ClassShared)
 	}
-	// Neither the account nor the job name the caller presented is repeated.
-	for _, fragment := range []string{testSharedSA, "fugaro-p-", f.job} {
-		if strings.Contains(err.Error(), fragment) {
-			t.Errorf("err = %q repeats what the caller presented", err)
-		}
+	if id.Profile != testSharedProfile {
+		t.Errorf("Profile = %q, want the profile the row names, %q", id.Profile, testSharedProfile)
 	}
-	// And the run's own identity is not read at all: a caller this service
-	// does not admit is refused before the run is checked.
-	if paths := f.db.paths; len(paths) != 0 {
-		t.Errorf("paths read = %v, want none: the caller is refused before the run is looked at", paths)
+	if id.JobAccount != testSharedSA {
+		t.Errorf("JobAccount = %q, want the configured spelling of the account, %q", id.JobAccount, testSharedSA)
+	}
+	// The run's own identity IS read, and after the account: the class is a
+	// fact about the caller, and the run is checked under it like any other
+	// admitted caller's.
+	if paths := f.db.paths; len(paths) == 0 {
+		t.Error("the run identity was never looked at, so the caller was not admitted at all")
 	}
 
 	// The same account with no header, and with a header that is not one clean
-	// value: the refusal is the shared job's, not the header's, which is the
-	// order the two checks are in.
+	// value: the refusal is the run's own placement rule and not the class's,
+	// which is the order the two checks are in — this caller's class is the
+	// account's, so a header no job of this installation could carry is what
+	// refuses it.
 	for name, job := range map[string]string{
 		"a shared caller names no job":              "",
 		"a shared caller's job has a newline in it": "fugaro-aurora\nX-Evil: 1",
@@ -789,11 +810,11 @@ func TestVerifyRefusesSharedJobRun(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			f := newFixture(t)
 			_, err := f.verify(f.runToken(), f.jobToken(shared), job)
-			if !errors.Is(err, ErrUnverifiedJob) {
-				t.Fatalf("err = %v, want ErrUnverifiedJob", err)
+			if !errors.Is(err, ErrUnverified) || errors.Is(err, ErrUnverifiedJob) {
+				t.Fatalf("err = %v, want ErrUnverified and not the class's refusal: the class is read from the account and this caller is refused by its header", err)
 			}
-			if !strings.Contains(err.Error(), "shared") {
-				t.Errorf("err = %q, want the shared job's refusal: it is decided from the caller, not the header", err)
+			if !strings.Contains(err.Error(), "Cloud Run job name") {
+				t.Errorf("err = %q, want the placement rule's own sentence", err)
 			}
 		})
 	}
@@ -1544,7 +1565,7 @@ func TestNewAuthenticatorRefusesAnIncompleteConfig(t *testing.T) {
 		Keys:              staticKeys{testKid: &testKey().PublicKey},
 		JobKeys:           staticKeys{testJobKid: &testKey().PublicKey},
 		Outcomes:          RTDBOutcomes{DB: &fakeDB{}},
-		SharedJobAccounts: []string{testSharedSA},
+		SharedJobAccounts: []SharedJobAccount{sharedRow()},
 	}
 	cases := map[string]func(*AuthConfig){
 		"no project":          func(c *AuthConfig) { c.Project = "" },
@@ -1555,7 +1576,7 @@ func TestNewAuthenticatorRefusesAnIncompleteConfig(t *testing.T) {
 		"no job keys":         func(c *AuthConfig) { c.JobKeys = nil },
 		"no outcomes":         func(c *AuthConfig) { c.Outcomes = nil },
 		"an empty shared job account": func(c *AuthConfig) {
-			c.SharedJobAccounts = []string{testSharedSA, ""}
+			c.SharedJobAccounts = []SharedJobAccount{sharedRow(), {Email: ""}}
 		},
 		// The accounts are matched by an ASCII fold, so an address that is not
 		// ASCII could never be matched — verifyJob refuses a non-ASCII claim
@@ -1569,10 +1590,23 @@ func TestNewAuthenticatorRefusesAnIncompleteConfig(t *testing.T) {
 			c.JobAccounts = []string{testJobSA, strings.ToUpper(testJobSA)}
 		},
 		"a shared account that is not ASCII": func(c *AuthConfig) {
-			c.SharedJobAccounts = []string{"Kob@aurora-dev.iam.gserviceaccount.com"}
+			c.SharedJobAccounts = []SharedJobAccount{{Email: "Kob@aurora-dev.iam.gserviceaccount.com", Profile: testSharedProfile, Repos: []string{testSharedRepo}}}
 		},
 		"a job account with a space in it": func(c *AuthConfig) {
 			c.JobAccounts = []string{"fugaro job@aurora-dev.iam.gserviceaccount.com"}
+		},
+		// A shared job's row names the profile the class's binding is made
+		// against (B5.1, G21), and a row without one would answer a class
+		// whose pairing could name no profile at all — a configuration that
+		// binds nothing rather than one that refuses.
+		"a shared account that names no profile": func(c *AuthConfig) {
+			c.SharedJobAccounts = []SharedJobAccount{{Email: testSharedSA}}
+		},
+		"one shared account bound to two profiles": func(c *AuthConfig) {
+			c.SharedJobAccounts = []SharedJobAccount{
+				sharedRow(),
+				{Email: testSharedSA, Profile: "another-profile", Repos: []string{testSharedRepo}},
+			}
 		},
 		// A review job account names a value on the account axis, and the
 		// branch that refuses an empty one had no case until the axis grew its
@@ -1601,9 +1635,11 @@ func TestNewAuthenticatorRefusesAnIncompleteConfig(t *testing.T) {
 	if _, err := NewAuthenticator(base); err != nil {
 		t.Fatalf("NewAuthenticator refused a complete configuration: %v", err)
 	}
-	// An empty shared set is not an incomplete configuration: under Global
-	// Constraint 6 an installation with no shared project jobs has none, and
-	// the set is what the published policy's profiles say.
+	// An empty shared set is not an incomplete configuration: an installation
+	// with no shared project job has none, and the set is the deployment's own
+	// document (FUGARO_SHARED_JOB_ACCOUNTS) — empty being the fail-closed
+	// state in which the class is refused whole, which is what every
+	// installation whose module renders it nowhere starts in.
 	noShared := base
 	noShared.SharedJobAccounts = nil
 	if _, err := NewAuthenticator(noShared); err != nil {
@@ -2014,21 +2050,20 @@ func selfSignedPEM(t *testing.T, key *rsa.PrivateKey) []byte {
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 }
 
-// TestVerifierIsNotGatedByTheSharedJobRule: the verifier class is the ONE class
-// Global Constraint 6's shared-job gate does not touch (C3.9f, D1068), and the
-// two differences between its token check and a job's are stated rather than
-// implied: the folded address is matched against AuthConfig.VerifierAccounts,
-// and a verifier is not a job of this installation's job set at all — not a
-// per-repository one and not a shared project one.
+// TestVerifierIsNotGatedByTheJobTables: the verifier class is the ONE class the
+// job tables do not touch (C3.9f, D1068), and the two differences between its
+// token check and a job's are stated rather than implied: the folded address is
+// matched against AuthConfig.VerifierAccounts, and a verifier is not a job of
+// this installation's job set at all — not a per-repository one and not a
+// shared project one.
 //
 // So an address that is a shared project job's service account IS admitted
-// here, and the same address is still refused by Verify: the gate refuses a run
-// that would be launched as an account the phase-3 rules do not yet cover, and
-// a verifier launches nothing. The second case is the same claim one list
-// further on: an address that is one of the installation's job accounts is
-// admitted as a verifier too, because the verify route reads its own list and
-// no job table.
-func TestVerifierIsNotGatedByTheSharedJobRule(t *testing.T) {
+// here, and the same address is admitted by Verify as well — as the shared
+// class its own row names (B5.1): the two routes read two lists, and neither
+// gate is the other's. The second case is the same claim one list further on:
+// an address that is one of the installation's job accounts is admitted as a
+// verifier too, because the verify route reads its own list and no job table.
+func TestVerifierIsNotGatedByTheJobTables(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		email string
@@ -2048,18 +2083,21 @@ func TestVerifierIsNotGatedByTheSharedJobRule(t *testing.T) {
 			if got != tc.email {
 				t.Errorf("VerifyVerifier answered %q, want the configured spelling %q", got, tc.email)
 			}
-			// The run path is unmoved: the same account presenting the same
-			// token as a caller of a route the shared parse reaches is refused
-			// exactly as it was.
-			if _, err := f.verify(f.runToken(), tok, f.job); err != nil {
-				if tc.email == testSharedSA && !errors.Is(err, ErrUnverifiedJob) {
-					t.Errorf("the run path refused a shared job's account with %v, want ErrUnverifiedJob", err)
-				}
-				if tc.email == testJobSA {
-					t.Errorf("the run path refused the fixture's own job account: %v", err)
-				}
-			} else if tc.email == testSharedSA {
-				t.Error("the run path admitted a shared project job's account: the gate is narrowed and not lifted")
+			// The run path is unmoved by the verifier list: the same account
+			// presenting the same token is answered by its own class, which is
+			// the shared one for a shared job's account (B5.1) and the
+			// repository's for the fixture's own — the two routes read two
+			// lists and neither is the other's gate.
+			id, err := f.verify(f.runToken(), tok, f.job)
+			if err != nil {
+				t.Fatalf("the run path refused a caller the verifier list admits: %v", err)
+			}
+			want := ClassRepository
+			if tc.email == testSharedSA {
+				want = ClassShared
+			}
+			if id.JobClass != want {
+				t.Errorf("the run path answered the class %q, want %q", id.JobClass, want)
 			}
 		})
 	}
