@@ -28,7 +28,7 @@ As of 2026-11-13, read from `main`, the open pull requests and each plan's task 
 | post-review-triage | 13/14 | owner TR13 |
 | plugin-user-scope | 7/10 | U6, U7, E1 |
 | mobile | about 41/45 | P5.x, P7.4, P7.5; VS1.3 (D213 approved, no run yet); owner P2.3 and P4.4 |
-| stateless-orchestrator | 18/20 | O13, O19 (approved); owner Checks 301 to 304 and 305 (O16b) |
+| stateless-orchestrator | 18/20 | O13, O19 (approved, blocked: a run the workspace refused is not distinguishable in the run record, so it waits on a W-side record change; U12 resolved NO 2026-11-13); owner Checks 301 to 304 and 305 (O16b) |
 | issues-resolved-on-update | 6/8 | T-RU7, T-RU8 (stalled, draft #2462) |
 | go-to-market | 9/12 | owner G2.5, and two more |
 | no-prompt-policy | 13/17 | T11 to T13; owner T14 |
