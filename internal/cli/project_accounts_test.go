@@ -145,7 +145,7 @@ func TestPolicyShowPrintsAccounts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "  accounts: none (no profile serves a Claude account)") {
+	if !strings.Contains(out, "  accounts: none (no profile and no repository entry serves a Claude account)") {
 		t.Errorf("policy show does not say a policy serves no account:\n%s", out)
 	}
 }
@@ -186,7 +186,7 @@ func TestPublishDiffShowsTheAccounts(t *testing.T) {
 		// The summary row was already there, reading "none": the change is
 		// what it becomes, and the per-account line is new because the block
 		// had no entry before.
-		"~ accounts: none (no profile serves a Claude account) → ops",
+		"~ accounts: none (no profile and no repository entry serves a Claude account) → ops",
 		"+ account ops: allow_repos github/acme/app",
 	} {
 		if !strings.Contains(out, want) {

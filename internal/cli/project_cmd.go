@@ -122,11 +122,16 @@ func newProjectPolicyPublishCmd() *cobra.Command {
 			"config/policy/repos children are removed too, shared node or not: a delete\n" +
 			"that failed on the shared node leaves them behind, and this is what clears\n" +
 			"them.\n\n" +
-			"Each repository an account a profile names admits also gets a child under\n" +
+			"Each repository an account admits also gets a child under\n" +
 			"config/policy/repos/$slug, holding the NAMES of its admitted accounts and\n" +
-			"nothing else: the accounts published are the ones some profile names,\n" +
-			"qualified by that profile's provider, so an account this config defines but\n" +
-			"no profile names admits nothing a run could read. The children are narrowed before the shared node and widened\n" +
+			"nothing else. An account is admitted by the profiles that name it, each\n" +
+			"qualified by its profile's provider, and by a repository's own\n" +
+			"repos.<owner/name>.claude_accounts, qualified by that entry's provider: a\n" +
+			"repository whose runs are not on a profile job — a per-repository job, which\n" +
+			"is every Bitbucket repository — names its accounts there, because a profile\n" +
+			"is not the only kind of job its runs land on. The two are a union, and an\n" +
+			"account this config defines but neither names admits nothing a run could\n" +
+			"read. The children are narrowed before the shared node and widened\n" +
 			"after it, so a publish that stops between the two writes leaves the installation tighter than the config asked, never looser.\n" +
 			"When the node this publish writes carries a member an older Fugaro refuses\n" +
 			"whole — a credentials\n" +
@@ -2581,10 +2586,15 @@ func profilesText(p *projectpolicy.Policy) string {
 }
 
 // accountsText is the policy's account names as one line, for the diff's
-// summary row (the per-account lines carry the repositories).
+// summary row (the per-account lines carry the repositories). The empty row
+// names BOTH sources of the block, because either one alone may fill it: the
+// profiles that name an account, and the repositories whose own
+// repos.<owner/name>.claude_accounts does (DeriveAccounts). A row that named
+// the profiles only would tell an operator whose per-repository job is the
+// whole point of the entry that there is nothing to look for.
 func accountsText(p *projectpolicy.Policy) string {
 	if len(p.Accounts) == 0 {
-		return "none (no profile serves a Claude account)"
+		return "none (no profile and no repository entry serves a Claude account)"
 	}
 	return strings.Join(p.AccountNames(), ", ")
 }
