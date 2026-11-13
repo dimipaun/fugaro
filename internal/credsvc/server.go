@@ -916,7 +916,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// serving (R9).
 		binding, refused := s.verifyCallSlip(ctx, r, id)
 		if refused != nil {
-			s.refuseCall(ctx, w, id, purpose, credential, "", refused.status, refused.typ, refused.message)
+			// The refusal names the read it was taken on when it was taken on
+			// one (slipRefusal.cause): the slip's own record could not be read
+			// is the one of these that is a failed read rather than an answer
+			// about what the call said, and the two are one type and one status
+			// to the run.
+			s.refuseCallCause(ctx, w, id, purpose, credential, "", refused.status, refused.typ, refused.message, refused.cause)
 			return
 		}
 		if binding != nil {
@@ -1030,8 +1035,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		refusal, err := s.requestRefusal(shared, cl.body)
 		if err != nil {
 			// The project's own prices could not be read: a state the caller
-			// cannot fix, and never a refusal of what it sent.
-			s.refuseCall(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable, "the project's model prices could not be read")
+			// cannot fix, and never a refusal of what it sent. The read is
+			// named on the refusal's own line like every other one of this
+			// path's: the sentence says which block it was, and the label and
+			// the class say that it was the build of the table and not the
+			// policy node that failed.
+			s.refuseCallCause(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable,
+				"the project's model prices could not be read", labelRead(readPolicyPrices, err))
 			return
 		}
 		if refusal != "" {
@@ -1339,10 +1349,18 @@ func callScrubs(ctx context.Context, req Request) []string {
 
 // slipRefusal is a refused call that carried a slip: the typed refusal
 // ServeHTTP answers it with, in the shape every refusal on that path has.
+//
+// cause is the read the refusal was taken on, for the one refusal here that is
+// a read that FAILED rather than a request this service does not read — the
+// store's read of the record — and it is nil for the rest, which are answers
+// about what the call itself said. It reaches the refusal's own log line and
+// nothing else (refusallog.go), so the run is answered the same class sentence
+// it was before this field existed.
 type slipRefusal struct {
 	status  int
 	typ     string
 	message string
+	cause   error
 }
 
 // verifyCallSlip reads the slip a call presents and verifies it (DS1.6, G3, G4,
@@ -1374,20 +1392,20 @@ type slipRefusal struct {
 func (s *Server) verifyCallSlip(ctx context.Context, r *http.Request, id Identity) (*slipBinding, *slipRefusal) {
 	secret, presented, err := slipSecretFromHTTP(r)
 	if err != nil {
-		return nil, &slipRefusal{StatusRequestRefused, ErrorRequestRefused, requestRefused + err.Error()}
+		return nil, &slipRefusal{StatusRequestRefused, ErrorRequestRefused, requestRefused + err.Error(), nil}
 	}
 	if len(r.Header.Values(HeaderSlip)) == 0 {
 		if presented {
 			// A claim secret with no slip names the secret of nothing: there is
 			// no record this call could be asking about.
 			return nil, &slipRefusal{StatusRequestRefused, ErrorRequestRefused,
-				requestRefused + "the call carries a " + HeaderSlipClaim + " header and no " + HeaderSlip + " header"}
+				requestRefused + "the call carries a " + HeaderSlipClaim + " header and no " + HeaderSlip + " header", nil}
 		}
 		return nil, nil
 	}
 	slipID, err := oneHeader(r, HeaderSlip)
 	if err != nil {
-		return nil, &slipRefusal{StatusRequestRefused, ErrorRequestRefused, requestRefused + err.Error()}
+		return nil, &slipRefusal{StatusRequestRefused, ErrorRequestRefused, requestRefused + err.Error(), nil}
 	}
 	if !printableHeaderValue(slipID, maxSlipIDBytes) {
 		// A slip id this service could not have minted is a request it does not
@@ -1396,7 +1414,7 @@ func (s *Server) verifyCallSlip(ctx context.Context, r *http.Request, id Identit
 		// caller sends is a lookup an operator's database should not have to
 		// answer.
 		return nil, &slipRefusal{StatusRequestRefused, ErrorRequestRefused,
-			requestRefused + "the " + HeaderSlip + " header is not one slip id"}
+			requestRefused + "the " + HeaderSlip + " header is not one slip id", nil}
 	}
 	if !presented {
 		// Every call after the claim presents the secret the claim answered
@@ -1404,7 +1422,7 @@ func (s *Server) verifyCallSlip(ctx context.Context, r *http.Request, id Identit
 		// is a call of a shape this route does not have rather than one to
 		// serve.
 		return nil, &slipRefusal{StatusRequestRefused, ErrorRequestRefused,
-			requestRefused + "the call carries a " + HeaderSlip + " header and no " + HeaderSlipClaim + " header"}
+			requestRefused + "the call carries a " + HeaderSlip + " header and no " + HeaderSlipClaim + " header", nil}
 	}
 
 	now := s.now()
@@ -1414,7 +1432,7 @@ func (s *Server) verifyCallSlip(ctx context.Context, r *http.Request, id Identit
 		if err != nil {
 			// The state the slip must be read from could not be read: a refusal
 			// the run halts on, never a fallback (D143).
-			return nil, &slipRefusal{StatusUnavailable, ErrorStateUnavailable, "the slip could not be read"}
+			return nil, &slipRefusal{StatusUnavailable, ErrorStateUnavailable, "the slip could not be read", labelRead(readSlip, err)}
 		}
 		if !found {
 			return nil, slipNotThisRunsRefusal()
@@ -1444,7 +1462,7 @@ func (s *Server) verifyCallSlip(ctx context.Context, r *http.Request, id Identit
 // slipNotThisRunsRefusal is the one answer every refusal the RECORD makes is
 // given (slipNotThisRuns), in this path's shape.
 func slipNotThisRunsRefusal() *slipRefusal {
-	return &slipRefusal{StatusUnverified, ErrorUnverifiedRunIdentity, slipNotThisRuns}
+	return &slipRefusal{StatusUnverified, ErrorUnverifiedRunIdentity, slipNotThisRuns, nil}
 }
 
 // endSlip ends one slip and forgets the body held for it. It is the service's

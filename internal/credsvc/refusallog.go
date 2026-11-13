@@ -5,17 +5,24 @@ package credsvc
 //
 // The run is answered a typed refusal, and the gateway turns that body into one
 // generic sentence for the agent, so nothing the run writes says which of this
-// service's reads failed or with what. Check 191 is what that costs: on
-// 2026-11-12 and 2026-11-13 the owner's run had its first /v1/messages forward
-// answered 503 state_unavailable by a warm service, and the service's log held
-// nothing but the HTTP line and an audit line carrying no credential and no
-// tier — which says only that the refusal happened BEFORE a credential was
-// chosen, and leaves policy read, kill switches, bundle load, candidates or
-// admissions and the selector's own reads equally likely. A failure an operator
-// cannot diagnose is a product defect, so every refusal writes this line: the
+// service's reads failed or with what. What that costs was seen twice: on
+// 2026-11-12 and again on 2026-11-13 the owner's run had its first /v1/messages
+// forward answered 503 state_unavailable by a warm service, and the service's
+// log held nothing but the HTTP line and an audit line carrying no credential
+// and no tier — which says only that the refusal happened BEFORE a credential
+// was chosen, and leaves the policy read, the kill switches, the bundle load,
+// the candidates and admissions and the selector's own reads equally likely. A
+// failure an operator cannot diagnose is a product defect, so the refusals of a
+// model call whose run identity this service verified write this line: the
 // refusal's type and status, the run and the repository it was about, the same
 // class-only sentence the run is sent, and the two facts only the service has —
 // which read failed, and the Go type of the error it failed with.
+//
+// A refusal taken BEFORE the identity is verified is the exception, and it is
+// the one refusal that cannot be written here at all: there is no verified run
+// to name and no identity to key an audit by (refuseIdentity, server.go), so
+// neither line is written and the runbook's §3 sends the operator to §1 for
+// that shape.
 //
 // It is written BESIDE the audit line and never instead of one: the audit is
 // the record of what the service did with a credential (C1.13), this is the
@@ -57,11 +64,13 @@ const refusedMessage = "credsvc: refused"
 //
 // They are one closed set of this file's own text, so the label an operator
 // greps is never another package's spelling of its own read: a read that failed
-// is named here and nowhere else. Every read on the forward path that can fail
-// is one of them, and the selector's three are separate on purpose — the marks,
-// the leases and the run's own placement are three nodes and three different
-// questions, and "the selection's read failed" would leave an operator to guess
-// which of them to look at.
+// is named here and nowhere else. Every read of the service's OWN that a
+// refused model call can fail on is one of them — the caller's request body is
+// not, because it is not a read of anything this service holds (readCall's
+// failure is refused with the caller's own sentence) — and the selector's three
+// are separate on purpose: the marks, the leases and the run's own placement
+// are three nodes and three different questions, and "the selection's read
+// failed" would leave an operator to guess which of them to look at.
 const (
 	// readKills is the operator's two stop switches (budget.ReadKills).
 	readKills = "kills"
@@ -70,6 +79,16 @@ const (
 	// readPolicyRepo is a repository's own published node, read for its
 	// admissions (O4's legs).
 	readPolicyRepo = "policy_repo"
+	// readPolicyPrices is the project's model prices, read out of the shared
+	// node into the table the request check bounds a call by (requestPriceTable,
+	// request.go): the one read of the policy's own block that is not the
+	// allow-list, and a build of the table this service cannot answer a call
+	// without.
+	readPolicyPrices = "policy_prices"
+	// readSlip is the slip store (creds.SlipStore): the record a slip-carrying
+	// call is admitted by, read when this service's in-memory copy does not hold
+	// it.
+	readSlip = "slip_read"
 	// readBundle is the one bundle secret (C1.11's loader).
 	readBundle = "bundle"
 	// readCandidates is the call's own candidate list: the crafts' narrowing and

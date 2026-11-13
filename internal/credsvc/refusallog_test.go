@@ -6,12 +6,12 @@ package credsvc
 // text — an RTDB error embeds the path it read — and therefore no value a
 // read's error might quote, and no credential, token or request body.
 //
-// Check 191 is what the line exists for: a run's first /v1/messages forward was
-// answered 503 state_unavailable by a warm service, on 2026-11-12 and again on
-// 2026-11-13, and the service's log said nothing about which of its reads had
-// failed. Every test here fails exactly ONE read and reads the line back, so a
-// read that stops being named — or a label that starts being written for the
-// wrong one — is red.
+// The incident the line exists for was seen twice: a run's first /v1/messages
+// forward was answered 503 state_unavailable by a warm service, on 2026-11-12
+// and again on 2026-11-13, and the service's log said nothing about which of
+// its reads had failed. Every test here fails exactly ONE read and reads the
+// line back, so a read that stops being named — or a label that starts being
+// written for the wrong one — is red.
 //
 // The sentinel is the second half of that. Each failure carries a
 // credential-shaped string built at test time and planted INSIDE the error's
@@ -32,6 +32,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 )
 
 // refusalTestErr is a read's failure as a test plants it: the text it carries
@@ -449,6 +450,62 @@ func TestRefusalLogNamesTheWaitAndTheStopSwitch(t *testing.T) {
 			t.Fatalf("a refused call wrote %d forward audit lines, want exactly 1: %v", len(lines), lines)
 		}
 	})
+}
+
+// TestRefusalLogNamesTheSlipReadThatFailed: the slip a call presents is a read
+// of this service's own state like the marks and the bundle — the record lives
+// in the database, and the in-memory copy holds only the slips this instance
+// has already verified — and it is the one read of the forward path whose
+// failure the run is told as a class alone ("the slip could not be read"). The
+// line is where the read and the error's class are, and it is also where the
+// claim secret the call carried must NOT be: the store's error quotes the slip
+// id it read, and the secret is the one credential a slip-carrying call holds.
+func TestRefusalLogNamesTheSlipReadThatFailed(t *testing.T) {
+	secret := fakeCred(t, "sentinel")
+	slipID := strings.Repeat("ab", 16)
+	s, auditLog := refusalSvc(t, func(_ *svc, cfg *Config) {
+		db := gcpfake.NewRTDB(t)
+		db.DenyRead(creds.PathSlip(slipID))
+		cfg.Slips = slipStore(t, db)
+	})
+
+	resp, body := s.call(t, callBody("slip"), func(r *http.Request) {
+		r.Header.Set(HeaderSlip, slipID)
+		r.Header.Set(HeaderSlipClaim, secret)
+	})
+	if resp.StatusCode != StatusUnavailable {
+		t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusUnavailable, body)
+	}
+	if e := refusal(t, resp.StatusCode, body); e.Error != ErrorStateUnavailable {
+		t.Errorf("the refusal is %q, want %q", e.Error, ErrorStateUnavailable)
+	}
+
+	line := oneRefusalLine(t, s)
+	// The class is the database's own: the store wraps whatever the read
+	// answered with (creds' Slip), and a read the rules deny is an error this
+	// client builds from the answer and not one a test plants here — which is
+	// why this case is the one that names a class the test does not own, and
+	// the label beside it is what tells it from any other sentence of that
+	// class.
+	for field, want := range map[string]any{
+		"type":        ErrorStateUnavailable,
+		"status":      refusedStatus(StatusUnavailable),
+		"read":        readSlip,
+		"error_class": "*errors.errorString",
+		"message":     "the slip could not be read",
+	} {
+		if line[field] != want {
+			t.Errorf("the refusal's line %s = %v, want %q", field, line[field], want)
+		}
+	}
+	if logged := s.logs.String(); strings.Contains(logged, secret) {
+		t.Errorf("the service's log carries the claim secret the call presented: %s", logged)
+	}
+	if lines := forwardLines(t, auditLog); len(lines) != 1 {
+		t.Fatalf("a refused call wrote %d forward audit lines, want exactly 1: %v", len(lines), lines)
+	} else {
+		checkAuditShape(t, lines[0])
+	}
 }
 
 // TestTheRefusalLogIsWrittenBesideTheAuditLog: the two are separate acts with
