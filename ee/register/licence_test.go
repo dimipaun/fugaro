@@ -72,8 +72,8 @@ const (
 	licenceTestFirebase = "aurora-fp"
 )
 
-// licenceTestKeyPrefix is the v1 key's own prefix, written out because the
-// constant is unexported (ee/licence/keyv1.go): it is a fact of the format this
+// licenceTestKeyPrefix is the key format's own prefix, written out because the
+// constant is unexported (ee/licence/key.go): it is a fact of the format this
 // test mints, not a detail of the verifier.
 const licenceTestKeyPrefix = "fgk_"
 
@@ -290,7 +290,7 @@ func newLicenceIssuer(t *testing.T, kid string) *licenceIssuer {
 // mint renders a claim set as the key text the format writes: the prefix, the
 // payload and the signature over exactly those payload bytes, both unpadded
 // base64url.
-func (i *licenceIssuer) mint(t *testing.T, claims licence.ClaimsV1) string {
+func (i *licenceIssuer) mint(t *testing.T, claims licence.Claims) string {
 	t.Helper()
 	payload, err := json.Marshal(claims)
 	if err != nil {
@@ -303,9 +303,9 @@ func (i *licenceIssuer) mint(t *testing.T, claims licence.ClaimsV1) string {
 
 // claims is the claim set the fixture's keys carry: a paid Team key of five
 // seats, bound to this installation's Firebase project, renewing itself.
-func (f *licenceFixture) claims(edit ...func(*licence.ClaimsV1)) licence.ClaimsV1 {
+func (f *licenceFixture) claims(edit ...func(*licence.Claims)) licence.Claims {
 	interval := "P1D"
-	c := licence.ClaimsV1{
+	c := licence.Claims{
 		V:                 1, // the one policy version this Fugaro reads
 		KID:               f.issuer.kid,
 		KeyID:             "lk_test_k32_0001",
@@ -456,7 +456,7 @@ func TestLicenceSetNeverPrintsTheKey(t *testing.T) {
 	// back: a verifier's text is a sentence a person pastes into a ticket, and
 	// it is built from a payload nobody has verified.
 	stranger := newLicenceIssuer(t, licenceStrangerKey)
-	other := stranger.mint(t, f.claims(func(c *licence.ClaimsV1) { c.KID = licenceStrangerKey }))
+	other := stranger.mint(t, f.claims(func(c *licence.Claims) { c.KID = licenceStrangerKey }))
 	out, errOut, err = f.exec(t, other+"\n", "licence", "set")
 	if err == nil {
 		t.Fatal("a key no ring in this build holds was installed")
@@ -818,7 +818,7 @@ func TestLicenceRefusalsCarryNoKeyMaterial(t *testing.T) {
 		// beside the installed one — the successor of a renewal it already
 		// answered, for one. No value list can name it, because nothing here
 		// has read it, so the shape is the whole of what keeps it out.
-		other := f.issuer.mint(t, f.claims(func(c *licence.ClaimsV1) { c.KeyID = "lk_test_k32_0002" }))
+		other := f.issuer.mint(t, f.claims(func(c *licence.Claims) { c.KeyID = "lk_test_k32_0002" }))
 		f.serveLicenceServer(t, func(keyservice.RenewalCall) (int, string) {
 			return http.StatusInternalServerError, `{"error":"the successor of ` + key + ` is ` + other + `"}`
 		})
@@ -992,7 +992,7 @@ func TestLicenceSetRefusesBeforeTheContainerExists(t *testing.T) {
 // bucket never licenses this one.
 func TestLicenceSetRefusesAKeyBoundToAnotherWorkspace(t *testing.T) {
 	f := newLicenceFixture(t)
-	key := f.issuer.mint(t, f.claims(func(c *licence.ClaimsV1) { c.WorkspaceID = "another-workspaces-firebase" }))
+	key := f.issuer.mint(t, f.claims(func(c *licence.Claims) { c.WorkspaceID = "another-workspaces-firebase" }))
 
 	_, _, err := f.exec(t, key+"\n", "licence", "set")
 	if err == nil {
@@ -1012,7 +1012,7 @@ func TestLicenceSetRefusesAKeyBoundToAnotherWorkspace(t *testing.T) {
 // asking for a secret it cannot use.
 func TestLicenceSetWithAnOfflineKeyWritesNoSecret(t *testing.T) {
 	f := newLicenceFixture(t)
-	claims := f.claims(func(c *licence.ClaimsV1) {
+	claims := f.claims(func(c *licence.Claims) {
 		c.RenewalMode, c.CheckInterval = licence.RenewalNone, nil
 	})
 	key := f.issuer.mint(t, claims)
@@ -1387,7 +1387,7 @@ func TestLicenceRefreshCallsTheServerOnce(t *testing.T) {
 	f.secrets.AllowAccess()
 
 	nextSecret := licenceTestSecret(t)
-	next := f.issuer.mint(t, f.claims(func(c *licence.ClaimsV1) {
+	next := f.issuer.mint(t, f.claims(func(c *licence.Claims) {
 		c.KeyID, c.PaidThrough, c.IssuedAt = "lk_test_k32_0002", f.now.Add(600*24*time.Hour), f.now.Add(300*24*time.Hour)
 	}))
 	server := f.serveLicenceServer(t, func(keyservice.RenewalCall) (int, string) {
@@ -1460,7 +1460,7 @@ func TestLicenceRefreshOutsideTheWindowWritesNothing(t *testing.T) {
 // from a key that was replaced.
 func TestLicenceRefreshOfAnOfflineKeyNeverContactsTheServer(t *testing.T) {
 	f := newLicenceFixture(t)
-	claims := f.claims(func(c *licence.ClaimsV1) { c.RenewalMode = licence.RenewalNone })
+	claims := f.claims(func(c *licence.Claims) { c.RenewalMode = licence.RenewalNone })
 	key := f.issuer.mint(t, claims)
 	install(t, f, key)
 	f.seedSecretContainer([]byte(licenceTestSecret(t)))

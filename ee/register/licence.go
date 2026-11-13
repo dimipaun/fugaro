@@ -99,9 +99,8 @@ var licenceServerURL = "https://keys.fugaro.dev"
 // answer rather than a gap: the production ring is empty today (ee/licence's
 // productionKeyring), so there is nothing a key could be verified against. S2.9
 // has one line to add here — this variable has to become that same ring, which
-// is what keeps one build's trusted keys one list — and K7.3, which renames the
-// two verifiers into one, is the other task that moves it. It is a variable so
-// that a test can install the ring of a keypair it minted at run time.
+// is what keeps one build's trusted keys one list. It is a variable so that a
+// test can install the ring of a keypair it minted at run time.
 var licenceRing = licence.Keyring{}
 
 // licenceNow is the clock: the state a key is in is a fact about an instant,
@@ -283,7 +282,7 @@ const licenceRedacted = "[REDACTED]"
 //
 // ErrNewerVersion is the one refusal printed exactly as it comes: the
 // specification pins its sentence word for word and the verifier returns it
-// unwrapped so that a caller prints exactly it (ee/licence/keyv1.go). Every
+// unwrapped so that a caller prints exactly it (ee/licence/key.go). Every
 // other refusal is this command's own sentence with the verifier's text after
 // it.
 func licenceKeyRefusal(err error, key string) error {
@@ -299,12 +298,12 @@ func licenceKeyRefusal(err error, key string) error {
 // build will not act on it — so `status` says so and never reads it as Free,
 // which is the one answer that would tell a person their licence is fine.
 //
-// The list is the verifier's exported sentinels (ee/licence/key.go and
-// keyv1.go), and it is written out rather than inferred because a package
-// cannot be asked whether an error came from it: a sentinel a later task adds
-// is a line here, beside the reader that has to place it.
+// The list is the verifier's exported sentinels (ee/licence/key.go), and it is
+// written out rather than inferred because a package cannot be asked whether an
+// error came from it: a sentinel a later task adds is a line here, beside the
+// reader that has to place it.
 var licenceRefusals = []error{
-	licence.ErrMalformed, licence.ErrMalformedV1, licence.ErrUnknownKeyID, licence.ErrSignature,
+	licence.ErrMalformedV1, licence.ErrUnknownKeyID, licence.ErrSignature,
 	licence.ErrClaims, licence.ErrLifetime, licence.ErrDuration, licence.ErrWorkspace,
 	licence.ErrNewerVersion, licence.ErrKeyFile,
 }
@@ -619,7 +618,7 @@ func licenceSet(cmd *cobra.Command, o *licenceSetOptions) error {
 	if licenceFirebaseProject(lc) == "" {
 		return licenceNoWorkspace(lc)
 	}
-	claims, state, err := licence.VerifyV1([]byte(bundle.key), licenceNow(), licenceRing, licenceFirebaseProject(lc))
+	claims, state, err := licence.Verify([]byte(bundle.key), licenceNow(), licenceRing, licenceFirebaseProject(lc))
 	if err != nil {
 		return licenceKeyRefusal(err, bundle.key)
 	}
@@ -664,7 +663,7 @@ func licenceSet(cmd *cobra.Command, o *licenceSetOptions) error {
 // licenceWriteClaims prints what a verified key carries, and never a byte of
 // the key itself: `set` and `refresh` both answer with a key they have just
 // installed, and the one thing neither may show is the key.
-func licenceWriteClaims(w io.Writer, claims licence.ClaimsV1, state licence.State) {
+func licenceWriteClaims(w io.Writer, claims licence.Claims, state licence.State) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintf(tw, "  tier:\t%s\n", safetext.Field(claims.Tier))
 	fmt.Fprintf(tw, "  seats:\t%d\n", claims.Seats)
@@ -1000,7 +999,7 @@ func licenceRefresh(cmd *cobra.Command, o *licenceRefreshOptions) error {
 			claims.PaidThrough.UTC().Format(time.RFC3339), claims.RenewBeforeDays)
 		return nil
 	}
-	next, state, err := licence.VerifyV1([]byte(answer.Key), licenceNow(), licenceRing, licenceFirebaseProject(lc))
+	next, state, err := licence.Verify([]byte(answer.Key), licenceNow(), licenceRing, licenceFirebaseProject(lc))
 	if err != nil {
 		return fcli.UserErr("the licence server answered with a key this Fugaro does not accept, and nothing was written: %s", licenceRedact(err.Error(), answer.Key, answer.RenewalSecret))
 	}
