@@ -247,15 +247,24 @@ func (rg *apiRegistry) missing(deps Deps) error {
 // the method the route names, and the subtree's own answer for a path no area
 // registered.
 //
+// Every door mounted here is wrapped in the deploy's error reporting (P1.6,
+// errreport.go): a route that panics is reported and refused rather than
+// closing the connection on the SPA, and a 5xx answer is reported as it goes
+// out. It is the mount's rather than each area's for the reason the body cap
+// is — a handler that has to remember it is a handler that will not — and the
+// subtree's own answer is wrapped with the rest so that every path under the
+// rewrite is answered through one shape.
+//
 // No route here sets a CORS header, and that is the whole of "no CORS": Hosting
 // serves the SPA from the origin it rewrites /api/** from (F21), so the browser
 // calls this same-origin, and a header admitting another origin would admit it
 // to an API whose answers are a customer's own records.
 func (rg *apiRegistry) mount(mux *http.ServeMux, s *Service) {
+	reports := newErrReporter(s.cfg.SentryDSN, string(s.cfg.Environment))
 	for _, path := range rg.paths() {
-		mux.HandleFunc(path, s.apiDispatch(path))
+		mux.HandleFunc(path, reports.wrap(path, s.apiDispatch(path)))
 	}
-	mux.HandleFunc(apiPrefix, unknownAPIRoute)
+	mux.HandleFunc(apiPrefix, reports.wrap(apiPrefix, unknownAPIRoute))
 }
 
 // unknownAPIRoute answers a path under the rewrite's subtree that no area
