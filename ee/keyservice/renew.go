@@ -308,7 +308,8 @@ func (s *Service) status(w http.ResponseWriter, r *http.Request) {
 // and one whose end has passed are answered the key's own state and handed
 // nothing, while a key whose record names no subscription at all is refused with
 // the uniform answer: nothing here can prove such a key was ever paid for, and
-// failing closed is the owner's ruling of 2026-11-13.
+// failing closed is the owner's ruling of 2026-11-13 (D2148 — §12.1's Enterprise
+// column and `PolicyEnterprise` still claim otherwise, and TN6 has the two).
 //
 // A key outside its renewal window is answered its own state and handed nothing:
 // the successor is the key for the term *after* the one the customer is in, and

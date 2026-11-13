@@ -203,8 +203,14 @@ The server holds a default policy per tier, so self-serve keys come out consiste
 |---|---|---|---|---|---|
 | Lifetime | 1 month | 1 year | 1 year | 1 year | 14 days |
 | `grace_days` | 14 | 14 | 14 | 14 (proposed) | 0 (proposed) |
-| `renewal_mode` | auto | auto | auto | none | none |
+| `renewal_mode` | auto | auto | auto¹ | none | none |
 | `check_interval` | P1D | P1D | P1D (proposed) | null | P1D |
+
+¹ Enterprise's `auto` is a claim the service does not serve: a key the licensor mints by hand has no
+subscription on its record, and `/renew` renews only a key whose record names the subscription the
+checkout sold it for — otherwise it is refused, failing closed (**D2148**). The row stays `auto`
+because §13 has the owner name an invoiced key's period, which the minter allows only for a row
+something renews. [reconciliation.md](reconciliation.md) TN6 holds the two ways out.
 
 ## 13. Admin page (founder only)
 

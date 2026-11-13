@@ -131,6 +131,12 @@ var defaultPolicies = []Policy{
 		CheckInterval:   daily(),
 		Warnings:        defaultWarnings(),
 	},
+	// §12.1's Enterprise column, and its `renewal_mode` is a claim the service
+	// does not serve today: an invoiced key is minted by hand, and a key whose
+	// record names no subscription never renews (D2148). It stays `auto` because
+	// the column is §13's, whose keys the owner mints for a period he names —
+	// and the minter lets a caller name a term only for a row something renews
+	// (minter.go). TN6 has the two ways out, both of them the owner's.
 	{
 		Name:            PolicyEnterprise,
 		Tier:            licence.TierEnterprise,

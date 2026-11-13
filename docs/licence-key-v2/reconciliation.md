@@ -32,7 +32,7 @@ owner rules on each reversal rather than finding it in a diff.
 **F1 (Exists, Rule): the spec replaces a ruled design.** The key's format, claims, binding, grace and
 lapse, seat treatment and the "no revocation" limit are all owner rulings (D308, D436, D438, D439,
 T25, T26) recorded in `docs/licensing/licence-key.md` and `docs/subscriptions/reconciliation.md`.
-Each reversal below is a decision (D2130–D2146) with the owner's answer; none was assumed.
+Each reversal below is a decision (D2130–D2148) with the owner's answer; none was assumed.
 
 **F2 (Wrong): "no hidden phone-home" is true but the built design goes further.** D308's "no network
 call" and "no revocation" (T25: a refunded or charged-back key works to expiry) are the opposite of
@@ -129,6 +129,35 @@ two entries of that map. No change beyond naming.
 **F18 (Gap): a clock set back extends a key and a leaked key's `issued`** stay accepted limits; the
 revocation check adds a server-side bound only where a key's `check_interval` is non-null.
 
+**F19 (Rule): a key the licensor mints by hand cannot renew, and §12.1 says it can.** `/renew` renews a
+key only where the record of its issuance names the subscription the checkout sold it for, and a key
+whose record names none is refused with the endpoint's uniform answer — the owner ruled on 2026-11-13
+that it fails closed (**D2148**; the alternative, renewing whatever key presents a secret that verifies,
+is an unpaid renewal for every hand-minted key). Every route that mints by hand writes neither a
+subscription nor a key state: the admin page and the manual queue (§13, K2.6), the free-seat and
+open-source intake (K2.2) and the owner's mint tool (K1.3) all reach the one mint in `service.go`. None
+of those keys renews, and nothing else renews them either: the merchant's renewal mints for a
+subscription when a payment completes, and `/renew` is the only route that mints for a key a holder
+presents. §12.1's Enterprise column and `PolicyEnterprise` say `renewal_mode: auto`, while §13 has the
+owner name an invoiced key's period — and the minter mints a caller-named term only for a row something
+renews, so the two stand or fall together. TN6 holds the two ways out, both the owner's; K2.6, K2.7 and
+K4.1 build against this ruling.
+
+**F20 (Rule): a refund withdraws the licence, and §8's list is keyed by one key id.** A licence a
+customer holds is several keys: the purchase, the key a **seat change** reissued inside the term they
+already paid for (§5.3 — the term is the subscription's and only the seats are in the key), the key the
+merchant's own renewal minted (a renewal is §5.1's ordinary route, so that is the key an installation
+usually runs), and the `/renew` rotations of any of those. Every entry of §8's list names one key, and
+the key a merchant's refund or chargeback resolves to is the one its own transaction carries — the
+purchase, after a seat change or a renewal has replaced it. The owner ruled on 2026-11-13 that such an
+event therefore withdraws the whole licence and not the key it names (**D2147**): the licence is matched
+by the subscription its records name, and the rotations of each of those keys are followed through
+`rotation:<the key it replaces>`. A **cancellation** withdraws nothing: it carries no key id in this
+shape, §5 gives §8's list refunds, chargebacks and leaked keys, and design §5.3 has a cancellation stop
+the reissue while the key the customer holds runs to its end. What a cancellation does is enforced by
+D2148's gate instead; if the owner means it to withdraw keys too, the event needs the key it names and a
+ruling on the leakage §5.3 accepted.
+
 **Threat model of what the spec adds.** (1) *The renewal and status endpoints* are an internet-facing path
 that mints credentials: authenticated by the per-key secret (D2135), throttled, uniform answers, and the
 status endpoint carries no key. (2) *Revocation availability*: it can never revoke on silence (D2140); a
@@ -162,6 +191,8 @@ a viewer **can** copy the key; with the required `workspace_id` (D2134 as amende
 | D2144 | Licence site sign-in (F14) | Recommended: email magic link | **2026-11-11: NOT the recommendation.** Firebase Auth, as the owner asked ("why not use the firebase IDP"); read as the **owner's licence-service project**, TN3 asks the owner to confirm that reading |
 | D2145 | Command spelling (F5) | `licence`, with `license` a hidden alias | **(default)**: stated as a resolution, not asked of the owner |
 | D2146 | Unknown fields in a signed key (F4) | Ignore them, signed keys only | **2026-11-11: the recommendation.** |
+| D2147 | What a refund, a chargeback or a cancellation withdraws (F20) | Every key of the licence the event's key belongs to, matched by the subscription its records name, plus the rotations of each of them (alternatives: the key the event names alone, which leaves the key an installation runs; the rotation chain only, which leaves the key a renewal or a seat change minted) | **2026-11-13: the owner ruled it.** The named key and every other key of that licence, not the named one alone. Read against §5 as: a refund and a chargeback withdraw; a **cancellation** names no key and is D2148's gate instead |
+| D2148 | What `/renew` renews (F19) | Only a key whose issuance record names the subscription the checkout sold it for; a record naming none is refused with the endpoint's uniform answer (alternatives: renew whatever key presents a secret that verifies, which is an unpaid renewal for every hand-minted key; refuse only where the record is missing *and* the mint route was a checkout one, which the record cannot tell) | **2026-11-13: the owner ruled it.** It fails closed. §12.1's Enterprise `renewal_mode` is left saying `auto` and TN6 carries the disagreement |
 
 ## Open tensions and open items for the owner
 
@@ -175,6 +206,14 @@ a viewer **can** copy the key; with the required `workspace_id` (D2134 as amende
 - **TN3: answered 2026-11-11.** Firebase Auth in the owner's own project, `fugaro-prod`; a customer's workspace Firebase token is not trusted by the server.
 - **TN5: answered 2026-11-11 (the recommendation).** An installation without a coordinator renews by hand (`licence refresh`) and gets no automatic revocation check.
 - **TN4: answered 2026-11-11 (the recommendation).** The owner confirmed D2135's amendment.
+- **TN6: the Enterprise column's `renewal_mode: auto` (F19) — the owner's.** Nothing serves it: an
+  invoiced key is minted by hand and never renews (D2148), so the claim is a promise the service does not
+  keep — while §13's "issue an Enterprise key for a workspace, seats and period" needs the row to stay
+  one something renews, because the minter refuses a caller-named term for a row nothing renews. Options:
+  (a) read the column as `none`, which makes the claim true and takes the named period away from §13 (the
+  admin page then mints at the row's own term); (b) give an invoiced licence a renewal route of its own —
+  a subscription-shaped record for a direct sale, which D2141 keeps out of Paddle; (c) leave both as they
+  are, and K2.6, K2.7 and K4.1 build knowing `/renew` serves checkout keys only.
 - **Pending the owner's go:** no task is approved. K0.1 (counsel: the Terms' refund and the privacy text
   for the renewal contact) and K0.2 (production signing keys, S3.8) are owner-run.
 

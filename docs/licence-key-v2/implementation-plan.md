@@ -1,13 +1,16 @@
 # Licence key v2: implementation plan
 
-Builds [spec.md](spec.md) **as amended by [reconciliation.md](reconciliation.md)** (decisions D2130–D2146,
-findings F1–F18). **Nothing is implemented and no task is approved**: each task needs the owner's own
+Builds [spec.md](spec.md) **as amended by [reconciliation.md](reconciliation.md)** (decisions D2130–D2148,
+findings F1–F20). **Nothing is implemented and no task is approved**: each task needs the owner's own
 go, and answering a decision is not a go. Owner answers that shape the plan: one `fgk_` v1 format replaces the
 built one (D2130); revocation through a visible job (D2131); seats enforced on `ee` surfaces only
 (D2132, held by TN1); per-key `grace_days`, default 30 (D2133); a required `workspace_id` (the workspace's Firebase project id, TN2) beside
 `organisation` (D2134, not the recommendation); a per-key renewal secret (D2135); the 14-day trial beside
 D440's plans (D2136); the key in the runs bucket (D2137); Firebase Auth in the owner's licence project
-(D2144, not the recommendation).
+(D2144, not the recommendation); a refund or a chargeback withdrawing the whole licence rather than the
+key its event names (D2147), and `/renew` renewing only a key whose record names the subscription the
+checkout sold it for, refusing a key that names none (D2148 — TN6 is what §12.1's Enterprise column needs
+before K2.6, K2.7 and K4.1 can assume otherwise).
 
 It **supersedes** licensing task L3.1 and subscriptions S2.1/S2.3 (the format) and amends S2.4, S2.5,
 S2.7–S2.10, S3.1–S3.4 and S6.1 where they name the old claims; K7.2 writes those notes.
@@ -114,7 +117,9 @@ Reviewer tier is **standard** unless a task says `SECURITY`.
   (the route table: `/renew`, `/status`), `renew_test.go` (new). The caller sends `key_id` and the renewal secret over TLS and the server compares the secret's hash with the one it holds
   (no HMAC: the hash is in the key, which every reader of the runs bucket holds, so it must not be a signing key); response
   `{status: ok|revoked, newer_key: bool}` and the renewal's new key; uniform answers; throttled; never
-  returns a key to a revoked or unknown `key_id`; a replayed request is idempotent; a renewal returns the next key **and its new renewal secret** (reissue under a new `key_id` rotates it). **Secret handling:** 256 bits from the system CSPRNG; shown once together with the key as a two-line bundle (key line, secret line) by every issue path (the purchase email, the account page's download, the authorize code exchange and the device poll, the admin page and the mint tool), so each of those tasks returns the bundle and a re-download **rotates** the secret; after a rotation the old secret still fetches the new one for 24 hours only, then is refused. Tests:
+  returns a key to a revoked or unknown `key_id`; **it renews only a key whose record names the
+  subscription the checkout sold it for, and refuses one that names none with the same uniform answer
+  (D2148, failing closed)**; a replayed request is idempotent; a renewal returns the next key **and its new renewal secret** (reissue under a new `key_id` rotates it). **Secret handling:** 256 bits from the system CSPRNG; shown once together with the key as a two-line bundle (key line, secret line) by every issue path (the purchase email, the account page's download, the authorize code exchange and the device poll, the admin page and the mint tool), so each of those tasks returns the bundle and a re-download **rotates** the secret; after a rotation the old secret still fetches the new one for 24 hours only, then is refused. Tests:
   `TestRenewalAnswersAreUniform`, `TestTheKeyAloneCannotRenew`, `TestRenewalRefusesAWrongSecret`, `TestRevokedKeyIsNeverRenewed`,
   `TestStatusCarriesNoKey`, `TestReplayedRenewalIsIdempotent`. Command: `go test ./ee/keyservice/ -tags ee -run 'TestRenewal|TestTheKeyAlone|TestRevoked|TestStatus|TestReplayed' -count=1`.
   Depends on: K2.1, K2.2. Commit: `ee: the renewal and status endpoints`.
@@ -129,7 +134,9 @@ Reviewer tier is **standard** unless a task says `SECURITY`.
   Commit: `ee: the licence site's sign-in, authorize and device code`.
 - **K2.5 Paddle events to v1. SECURITY.** Files: `ee/keyservice/merchant.go`, `merchant_test.go`. Maps a
   completed transaction (renewal included) to a v1 key (Team monthly and annual), a refund or
-  chargeback to a revocation (D2131), a seat change to a reissue; Enterprise is not sold here (D2141).
+  chargeback to a revocation (D2131) **of every key the licence holds — the purchase, a seat change's
+  reissue, the merchant's own renewal and the rotations of each (D2147)** — a seat change to a reissue;
+  Enterprise is not sold here (D2141).
   Tests: `TestRefundRevokesTheKey`, `TestSeatChangeReissuesUnderANewKeyID`, `TestEnterpriseIsNotACheckoutPlan`.
   Depends on: K2.1, K2.2. Command: `go test ./ee/keyservice/ -tags ee -run 'TestRefund|TestSeatChange|TestEnterprise' -count=1`.
   Commit: `ee: Paddle events mint, reissue and revoke v1 keys`.
