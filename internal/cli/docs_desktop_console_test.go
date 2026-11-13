@@ -1375,7 +1375,7 @@ func firstBacktick(cell string) string {
 // is what a review of the first revision found here: the table could lose a
 // row -- or gain one -- and the test would still pass. This parses both tables
 // §5.1 rule 6 carries and compares their first cells exactly: the allow-list is
-// the twenty-eight argvs and nothing else -- the console's one spawn table
+// the twenty-nine argvs and nothing else -- the console's one spawn table
 // (SPAWN_COMMANDS) since the installation rail took the picker's read onto the
 // dashboard's surface -- and a review of an earlier revision found the picker's own
 // read, `config list --json`, absent here, which left the specification
@@ -1563,6 +1563,130 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 	for _, argv := range []string{"doctor --check-github-app", "logs --follow"} {
 		if !never[argv] {
 			t.Errorf("%s: the never table no longer names %q", path, argv)
+		}
+	}
+}
+
+// consoleRowCommand is the command a §5.1 allow-list row's argv spells: the
+// words before the row's first flag, with the placeholders an operation's own
+// schema fills taken out (`RUN`, `<name>`, `--title=<T>`). The rows state exact
+// argvs and §5.1's census sentence names commands, so this is the reduction that
+// makes the two comparable -- and the command of `settings set KEY --layer …` is
+// the `settings` the census counts once, because the row's subcommand is the
+// operation's own argument (rule 12).
+func consoleRowCommand(t *testing.T, argv string) string {
+	t.Helper()
+	var words []string
+	for _, tok := range consoleArgvWords(argv) {
+		if strings.HasPrefix(tok, "-") {
+			break
+		}
+		words = append(words, tok)
+	}
+	if len(words) == 0 {
+		t.Fatalf("the allow-list row %q states no command before its flags, so this test cannot read it as a command", argv)
+	}
+	if len(words) > 1 && words[0] == "settings" {
+		return "settings"
+	}
+	return strings.Join(words, " ")
+}
+
+// TestDocsDesktopConsoleProjectFlagCensus: §5.1 rule 6's sentence "The
+// twenty-four commands that do take the flag are …" is the one place that says
+// which commands the console aims at a named installation, and it was read by no
+// test -- so it went stale: the dependency-graph plan's GV3.2 added the table's
+// twenty-ninth row, `coordinator roadmap move`, and the console spawns it with
+// `--project` like every other row, while the sentence still said twenty-three
+// and did not name it. Nothing else could catch it, because the census is about
+// the *design's* rows -- `craft ls` is on this table with no console row yet --
+// and not about `SPAWN_COMMANDS`, which the surface test above reads.
+//
+// Both halves are read off the document rather than remembered here: the two
+// exceptions are the sentence's own ("except two: `version`, … and the rail's
+// `config list --json`"), and everything else is what the table's rows spell
+// before their flags, so a row that lands moves this sentence in the same
+// commit and nothing in Go.
+//
+// Mutations that prove it: leave the row and the sentence alone (this test fails
+// naming `coordinator roadmap move`); name a command no row carries; move the
+// spelled count without moving the list; and drop a row's own command from the
+// list (the same failure from the other side).
+func TestDocsDesktopConsoleProjectFlagCensus(t *testing.T) {
+	const path = "docs/design/desktop-console.md"
+	// Whitespace is normalised, as the sibling docs tests do: the sentence is
+	// wrapped across lines and a re-wrap is the same sentence.
+	doc := readDoc(t, path)
+	flat := strings.Join(strings.Fields(doc), " ")
+
+	// The paragraph whole, from its own first words to its last: the exceptions
+	// and the census are read out of this segment, so an "except two" or a list
+	// elsewhere in the document is not one of them.
+	block := regexp.MustCompile("Every row above carries (.+?) read off theirs:").FindStringSubmatch(flat)
+	if block == nil {
+		t.Fatalf("%s's §5.1 rule 6 no longer carries its census paragraph (\"Every row above carries … read off theirs: …\"): this test reads the count, the list and the two exceptions from it", path)
+	}
+
+	census := regexp.MustCompile("The ([a-z]+(?:-[a-z]+)?) commands that do take the flag are (.+?) — the count and the list moved").FindStringSubmatch(block[1])
+	if census == nil {
+		t.Fatalf("%s's census sentence no longer says \"The … commands that do take the flag are … — the count and the list moved\": %q", path, block[1])
+	}
+	count := consoleSpelledNumber(t, census[1])
+
+	var listed []string
+	for _, m := range regexp.MustCompile("`([^`]+)`").FindAllStringSubmatch(census[2], -1) {
+		listed = append(listed, m[1])
+	}
+	if len(listed) == 0 {
+		t.Fatalf("%s's census sentence names no command between \"are\" and \"— the count and the list moved\": %q", path, census[2])
+	}
+	if len(listed) != count {
+		t.Errorf("%s's census spells %s (%d) and names %d commands: the count and the list are one fact and move together", path, census[1], count, len(listed))
+	}
+
+	// The exceptions, from the sentence's own clause: what it excludes from the
+	// census is what the table's rows below may leave out of it.
+	at := strings.Index(block[1], "except two:")
+	if at < 0 {
+		t.Fatalf("%s's §5.1 rule 6 no longer says how many rows carry no `--project` (\"except two: …\"): the census is read against that clause", path)
+	}
+	clause := block[1][at:]
+	if end := strings.Index(clause, "That is not a table annotation"); end >= 0 {
+		clause = clause[:end]
+	}
+	exempt := map[string]bool{}
+	for _, m := range regexp.MustCompile("`([^`]+)`").FindAllStringSubmatch(clause, -1) {
+		exempt[consoleRowCommand(t, m[1])] = true
+	}
+	if len(exempt) != 2 {
+		t.Errorf("%s's §5.1 rule 6 says \"except two\" and names %d commands that carry no `--project` (%v): the census counts the rest of the table, so the two exceptions are read from that clause", path, len(exempt), exempt)
+	}
+
+	// The table's own rows, minus the exceptions: what the census must name.
+	carried := map[string]bool{}
+	for _, cells := range docTableAfter(t, path, doc, "| Allowed argv (exact, in this order) |") {
+		argv := firstBacktick(cells[0])
+		if argv == "" {
+			t.Errorf("%s: the allow-list row %q states no exact argv in its first cell", path, cells[0])
+			continue
+		}
+		name := consoleRowCommand(t, argv)
+		if exempt[name] {
+			continue
+		}
+		carried[name] = true
+	}
+	if len(carried) != count {
+		t.Errorf("%s's §5.1 rule 6 allow-list carries %d commands that take `--project` and its census spells %s (%d): the sentence is the table's own count", path, len(carried), census[1], count)
+	}
+	for _, name := range listed {
+		if !carried[name] {
+			t.Errorf("%s's census names %q and no row of §5.1 rule 6's allow-list carries that command: the list is what the rows above spell", path, name)
+		}
+	}
+	for name := range carried {
+		if !slices.Contains(listed, name) {
+			t.Errorf("%s's census omits %q, whose §5.1 rule 6 row takes the flag: name it and move the spelled count in the same commit -- the census is the console's own answer to which commands it aims at an installation", path, name)
 		}
 	}
 }
