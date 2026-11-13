@@ -143,6 +143,17 @@ owner name an invoiced key's period — and the minter mints a caller-named term
 renews, so the two stand or fall together. TN6 holds the two ways out, both the owner's; K2.6, K2.7 and
 K4.1 build against this ruling.
 
+The other half of the same ruling is what a renewal is *for*: the term a successor covers is one the
+customer has paid for, so `/renew` mints only where the subscription's own end already reaches the end
+of that term, and it never moves that end itself. The subscription's end is the merchant's record of
+what has been bought and the trigger's renewal is the only writer of it (§5.1, `merchant.Renew`); a
+purchase with no renewal behind it is a subscription ending where its key ends, and a renewal against it
+is answered the key's own state and no key. The route's own gate would otherwise be asking a question it
+had just answered for itself: a write of that end credits the caller the term it is about to mint, so a
+customer who paid once walks a chain of keys a term at a time — each with a key id, and so a throttle
+bucket, of its own — while the merchant's renewal, which is what the money is for, finds its window
+already moved past.
+
 **F20 (Rule): a refund withdraws the licence, and §8's list is keyed by one key id.** A licence a
 customer holds is several keys: the purchase, the key a **seat change** reissued inside the term they
 already paid for (§5.3 — the term is the subscription's and only the seats are in the key), the key the
@@ -192,7 +203,7 @@ a viewer **can** copy the key; with the required `workspace_id` (D2134 as amende
 | D2145 | Command spelling (F5) | `licence`, with `license` a hidden alias | **(default)**: stated as a resolution, not asked of the owner |
 | D2146 | Unknown fields in a signed key (F4) | Ignore them, signed keys only | **2026-11-11: the recommendation.** |
 | D2147 | What a refund, a chargeback or a cancellation withdraws (F20) | Every key of the licence the event's key belongs to, matched by the subscription its records name, plus the rotations of each of them (alternatives: the key the event names alone, which leaves the key an installation runs; the rotation chain only, which leaves the key a renewal or a seat change minted) | **2026-11-13: the owner ruled it.** The named key and every other key of that licence, not the named one alone. Read against §5 as: a refund and a chargeback withdraw; a **cancellation** names no key and is D2148's gate instead |
-| D2148 | What `/renew` renews (F19) | Only a key whose issuance record names the subscription the checkout sold it for; a record naming none is refused with the endpoint's uniform answer (alternatives: renew whatever key presents a secret that verifies, which is an unpaid renewal for every hand-minted key; refuse only where the record is missing *and* the mint route was a checkout one, which the record cannot tell) | **2026-11-13: the owner ruled it.** It fails closed. §12.1's Enterprise `renewal_mode` is left saying `auto` and TN6 carries the disagreement |
+| D2148 | What `/renew` renews (F19) | Only a key whose issuance record names the subscription the checkout sold it for, and only into a term that subscription's own end already reaches: the merchant's renewal is what moves that end and this route never writes it (alternatives: renew whatever key presents a secret that verifies, which is an unpaid renewal for every hand-minted key; refuse only where the record is missing *and* the mint route was a checkout one, which the record cannot tell) | **2026-11-13: the owner ruled it.** It fails closed, and a term is handed out only where the money for it has arrived. §12.1's Enterprise `renewal_mode` is left saying `auto` and TN6 carries the disagreement |
 
 ## Open tensions and open items for the owner
 
