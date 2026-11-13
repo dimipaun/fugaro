@@ -838,9 +838,9 @@ func (s *Service) paidRequest(policy, workspaceID, organisation string, seats, d
 // key's state because this is the only place either is minted for a subscription
 // and the only place that knows it: the record carries it so that a renewal can
 // tell a licence that is being paid for from one that is not, and the state
-// carries the workspace the successor of that renewal is bound to (TN2, K2.3,
-// K2.6). A key minted without the pair is a key nothing can renew — refused for
-// the subscription by §7's gate and minted into no workspace at all.
+// carries the workspace the successor of that renewal is bound to (TN2, K2.3).
+// A key minted without the pair is a key nothing can renew — refused for the
+// subscription by §7's gate and minted into no workspace at all.
 //
 // The format is the point of the type assertion. The intake holds one Mints —
 // the minter's own service (Check 174) — and the minter answers the older

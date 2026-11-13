@@ -127,7 +127,7 @@ func heldKeyIn(t *testing.T, f *fixture, policy, workspace string) (keyID, secre
 	record.Email = buyerAddress("acme.example")
 	// The key is one the checkout sold, so its record names the subscription it
 	// was minted for and the store holds it: a renewal reads it before it mints
-	// (K2.6), and a key with no subscription is the one that cannot renew at all
+	// (§7), and a key with no subscription is the one that cannot renew at all
 	// (TestAKeyWithNoSubscriptionIsRefused).
 	record.Subscription = subscriptionFor(record.KeyID)
 	if err := f.store.SaveIssuance(ctx, record); err != nil {
@@ -198,7 +198,7 @@ func subscriptionFor(keyID string) string {
 
 // setSubscription writes a subscription id into one key's record where it lies,
 // which is what the records a licensor mints by hand have and the sold ones are
-// given (K2.6). The record is the store's and a source is only ever written
+// given. The record is the store's and a source is only ever written
 // once, so editing it is the only way to reach the two states a test is about:
 // a key whose record names a subscription the merchant has cancelled or ended,
 // and one whose record names none at all.
@@ -567,11 +567,11 @@ func renewThroughTheEndpoint(t *testing.T, f *fixture, keyID, secret string) (Re
 }
 
 // TestAPurchasedKeyRenewsAndItsSuccessorInheritsItsWorkspaceAndSubscription:
-// K2.6's first two points, and the pair that left every purchased key's renewal
-// answering 500: the state a purchase writes names the workspace the checkout
-// bound — a state without one is a key no renewal can serve (K2.3) — and the
-// record names the subscription it was sold for, which the successor inherits,
-// because a successor whose record named none could never renew again.
+// the pair that left every purchased key's renewal answering 500. The state a
+// purchase writes names the workspace the checkout bound — a state without one
+// is a key no renewal can serve (K2.3) — and the record names the subscription
+// it was sold for, which the successor inherits, because a successor whose
+// record named none could never renew again.
 func TestAPurchasedKeyRenewsAndItsSuccessorInheritsItsWorkspaceAndSubscription(t *testing.T) {
 	f, _ := renewing(t)
 	bought := f.purchase("evt-k26", "acme.example", 5, 365)
@@ -626,9 +626,9 @@ func TestAPurchasedKeyRenewsAndItsSuccessorInheritsItsWorkspaceAndSubscription(t
 	}
 }
 
-// TestACancelledSubscriptionsKeyIsRefused: K2.6's third point — a key whose
-// subscription the merchant has cancelled is handed no successor, because the
-// term after this one is one nobody is paying for. The key itself is left alone
+// TestACancelledSubscriptionsKeyIsRefused: a key whose subscription the merchant
+// has cancelled is handed no successor, because the term after this one is one
+// nobody is paying for. The key itself is left alone
 // and its holder is told its own state (§5.3: a cancellation stops the reissue,
 // the key the customer holds runs to its end), and no signer is reached.
 func TestACancelledSubscriptionsKeyIsRefused(t *testing.T) {
@@ -693,13 +693,13 @@ func TestAnExpiredSubscriptionsKeyIsRefused(t *testing.T) {
 	}
 }
 
-// TestAKeyWithNoSubscriptionIsRefused: K2.6's third point, fails closed, and the
-// owner's ruling of 2026-11-13 says so in as many words — a key whose record
-// names no subscription is one nothing here can prove was paid for (a key minted
-// by hand, by the admin page or by the mint tool all look the same), so it does
-// not renew. What it is answered is the uniform refusal and not its own state:
-// the state would tell its holder that a renewal is one secret away, and the
-// refusal is the one answer §7.1 gives a caller this service will not serve.
+// TestAKeyWithNoSubscriptionIsRefused: a key whose record names no subscription
+// at all is one nothing here can prove was paid for — a key minted by hand, by
+// the admin page or by the mint tool all look the same — so it does not renew,
+// and the owner's ruling of 2026-11-13 says so in as many words: it fails
+// closed. What it is answered is the uniform refusal and not its own state: the
+// state would tell its holder that a renewal is one secret away, and the refusal
+// is the one answer §7.1 gives a caller this service will not serve.
 func TestAKeyWithNoSubscriptionIsRefused(t *testing.T) {
 	f, spy := renewing(t)
 	keyID, secret, _ := heldKey(t, f, PolicyTeamMonthly)

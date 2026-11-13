@@ -308,7 +308,7 @@ func (s *Service) status(w http.ResponseWriter, r *http.Request) {
 // and one whose end has passed are answered the key's own state and handed
 // nothing, while a key whose record names no subscription at all is refused with
 // the uniform answer: nothing here can prove such a key was ever paid for, and
-// failing closed is the owner's ruling of 2026-11-13 (K2.6).
+// failing closed is the owner's ruling of 2026-11-13.
 //
 // A key outside its renewal window is answered its own state and handed nothing:
 // the successor is the key for the term *after* the one the customer is in, and
@@ -482,7 +482,7 @@ func (s *Service) renew(w http.ResponseWriter, r *http.Request) {
 	// successor is the same licence for a later term, so the gate above has to
 	// find the same subscription on it, and a successor whose record named none
 	// could never renew again — it would be handed no key at all, since a key
-	// with no subscription is refused (K2.6).
+	// with no subscription is refused (§7.1).
 	record.Subscription = key.record.Subscription
 	if err := s.store.SaveIssuance(r.Context(), record); err != nil {
 		if !errors.Is(err, ErrAlreadyRecorded) {

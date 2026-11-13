@@ -37,7 +37,7 @@ import (
 // to mint the term after is still being paid for — nothing else in the record
 // or in the key says so, because a subscription is keyed by an id no claim
 // carries — and it is why a rotation has to inherit it: a successor whose
-// record names no subscription could never renew again (K2.6). It is a field
+// record names no subscription could never renew again (§7). It is a field
 // of its own and not a parse of Source, which is the merchant's event id for a
 // purchase and a rotation's own name for a successor.
 type Record struct {
