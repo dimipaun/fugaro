@@ -308,6 +308,16 @@ func decodeBundle(t *testing.T, rec *httptest.ResponseRecorder) bundle {
 	return answer
 }
 
+// signInBundle runs §11.3's flow once for the fixture's own purchaser and reads
+// the bundle the exchange answers, which is what a second sign-in is compared
+// against.
+func (f *fixture) signInBundle(t *testing.T) bundle {
+	t.Helper()
+	verifier := freshVerifier(t)
+	code, _, _ := redirected(t, f.signedIn(t, f.acceptedToken(t), verifier))
+	return decodeBundle(t, f.exchanged(code, verifier))
+}
+
 // postJSON submits one of the flow's program-to-program calls.
 func (f *fixture) postJSON(route string, body any) *httptest.ResponseRecorder {
 	f.t.Helper()
@@ -1127,6 +1137,91 @@ func TestTokenFromARefundedSubscriptionStillSignsIn(t *testing.T) {
 	}
 	if body := strings.TrimSpace(after.Body.String()); body != refuseNoLicence {
 		t.Errorf("the cancelled subscription was refused with %q, want %q", body, refuseNoLicence)
+	}
+}
+
+// TestTokenFromASecondSignInLeavesTheEarlierKeyLive: K2.3's rule for a
+// re-download is that the new bundle replaces the secret the account already
+// holds, and neither of this flow's two issue paths — the exchange and the
+// device poll — rotates anything today.
+//
+// The link a rotation would read **does** exist for a key this flow minted:
+// signInSource writes `signin:<subscription>:<key id>`, which is what a scan of
+// the subscription's issuances would find. What does not exist is that link for
+// the licence's other keys — a purchase, a seat change and a renewal name their
+// record after the merchant's event or the rotated key (renew.go's
+// `rotationSource`), and neither a key's record nor its state names the
+// subscription it was sold for. So a rotation written here would be half of
+// K2.3's rule: it would end the bundle an earlier **sign-in** handed out and
+// leave the licence's other bundles live beside it, still renewable, which is
+// eviction a leaked key survives. What a second sign-in should do to a key
+// another machine is already renewing is a decision about what a re-download
+// is, and it is reported rather than invented.
+//
+// This test pins both halves of what is true today, and it is the one to turn
+// around when the decision lands: making a sign-in rotate shows up as the first
+// key no longer renewing below, and recording which key a subscription holds
+// shows up as the purchase's record or state carrying the subscription.
+func TestTokenFromASecondSignInLeavesTheEarlierKeyLive(t *testing.T) {
+	f, spy := subscribed(t)
+	purchased := f.records()[0]
+	before, held, err := f.store.KeyState(context.Background(), purchased.KeyID)
+	if err != nil || !held {
+		t.Fatalf("reading the purchase's key state back (%v, held=%v)", err, held)
+	}
+	first := f.signInBundle(t)
+	second := f.signInBundle(t)
+	if spy.minted() != 2 {
+		t.Fatalf("two sign-ins minted %d key(s), want two", spy.minted())
+	}
+	if first.Key == second.Key {
+		t.Fatalf("the second sign-in answered the same key %s, so there is nothing here about what a re-download does", first.Key)
+	}
+	firstClaims := v1Verified(t, f, first.Key)
+	// The link exists, for this flow's own key: a rotation scanning the
+	// subscription's issuances would find the key the new one succeeds.
+	records := f.records()
+	linked := false
+	for _, record := range records {
+		if record.Source == signInSource("sub-"+signInOrg, firstClaims.KeyID) {
+			linked = true
+		}
+	}
+	if !linked {
+		t.Fatalf("no issuance carries %q: the link a rotation would read is not written", signInSource("sub-"+signInOrg, firstClaims.KeyID))
+	}
+	// And it does not exist for the key the merchant sold: that record is named
+	// after the event, and nothing else joins the key to the subscription.
+	if purchased.Source != "evt-signin" {
+		t.Errorf("the purchase's record is named %q, want the merchant's event: this test's other claim is about that record", purchased.Source)
+	}
+	for _, record := range records {
+		if record.KeyID == purchased.KeyID && record.Source != purchased.Source {
+			t.Errorf("the purchase's key has a second record %q, so a rotation can reach the merchant's key too: turn this test around", record.Source)
+		}
+	}
+	// Both bundles are live after the second sign-in: the earlier sign-in's key
+	// is on no revocation list and still renews with the secret it handed out,
+	// and the purchase's key state is the one the purchase wrote — no rotation
+	// touched either, which is what a leaked bundle survives today.
+	if listed := f.revocations(); len(listed) != 0 {
+		t.Errorf("the revocation list holds %+v, want nothing: neither sign-in revoked a key", listed)
+	}
+	after, held, err := f.store.KeyState(context.Background(), purchased.KeyID)
+	if err != nil || !held {
+		t.Fatalf("the purchase's key state after two sign-ins (%v, held=%v)", err, held)
+	}
+	if after.RenewalSecretHash != before.RenewalSecretHash {
+		t.Errorf("the purchase's key carries %q now, want the secret the purchase handed out: a sign-in rotated a key it was not handed", after.RenewalSecretHash)
+	}
+	f.inTheRenewalWindow(t, firstClaims.KeyID)
+	renewed := answerOf(t, f.call(RouteRenew, RenewalCall{
+		KeyID:         firstClaims.KeyID,
+		WorkspaceID:   workspaceID,
+		RenewalSecret: first.RenewalSecret,
+	}))
+	if renewed.Key == "" {
+		t.Errorf("the first sign-in's key was answered %+v, want a successor: the secret a leak holds still renews after a sign-in", renewed)
 	}
 }
 

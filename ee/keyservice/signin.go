@@ -862,14 +862,22 @@ func (s *Service) accountLicence(ctx context.Context, email string) (Subscriptio
 // endpoint states: a failure between the two leaves a key the store can revoke
 // and nothing can renew, which is the half to lose.
 //
-// What it does **not** do is rotate the key the account already holds. K2.3's
-// rule for a re-download is that the new bundle replaces the old secret, and the
-// old secret still fetches the new key for the handover's 24 hours — but the
-// store holds no link from a key to the subscription it was minted for
-// (renew.go's own comment on `renewable`), so nothing here can name the key this
-// one succeeds. Until a record carries that link, a sign-in leaves the previous
-// key exactly as it was, which costs the customer nothing and is reported rather
-// than invented.
+// What it does **not** do is rotate the key the account already holds, which is
+// what K2.3's rule for a re-download asks of both of these issue paths. The link
+// a rotation reads is the issuance record's own source, and it exists for a key
+// **this flow** minted (`signinSource`); it does not exist for the licence's
+// other keys, because a purchase, a seat change and a renewal name their record
+// after the merchant's event or the rotated key (renew.go's `rotationSource`)
+// and no field of a key's record or of its state names the subscription it was
+// sold for. A rotation written here would therefore end an earlier sign-in's
+// bundle and leave the rest of the licence's bundles live beside it, still
+// renewable — a leaked key the next sign-in does not evict, which is worse than
+// a gap that is named. Making a sign-in really replace a licence's bundle means
+// recording which key a subscription currently holds and saying what that does
+// to a key another machine is already renewing, and that is the owner's decision
+// about what a re-download is rather than a repair here.
+//
+// TestTokenFromASecondSignInLeavesTheEarlierKeyLive pins both halves.
 func (s *Service) signInMint(ctx context.Context, subscriptionID, account string) (MintedV1, error) {
 	if s.mintsV1 == nil {
 		return MintedV1{}, errors.New("the intake has no v1 minter, so the site's sign-in has no key to hand over (Check 174)")
