@@ -129,6 +129,7 @@ func runPlugin(t *testing.T, e *initEngine) *initflow.Result {
 // against the tree the merge was in, where the stage's plan created the file.
 func TestPluginStageWritesNoSettingsFile(t *testing.T) {
 	releaseBuild(t, "0.2.0")
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 	f := testutil.NewClaudePluginFake(t, "[]", "[]")
 	f.On(t, "plugins", userInstall("0.2.0"), argsInstall...)
 	settings := wiringCheckout(t, "")
@@ -146,11 +147,12 @@ func TestPluginStageWritesNoSettingsFile(t *testing.T) {
 }
 
 // The stage installs the plugin in Claude Code at user scope through the claude
-// CLI: fugaro upgrade's own plugin step, whose fixed calls are the whole of what
+// CLI: the converge's own plugin step, whose fixed calls are the whole of what
 // this stage runs. A second run finds the marketplace and the install where the
 // first left them and has nothing to do.
 func TestInitPluginStageInstallsInClaudeCode(t *testing.T) {
 	releaseBuild(t, "0.2.0")
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 	f := testutil.NewClaudePluginFake(t, "[]", "[]")
 	f.On(t, "plugins", userInstall("0.2.0"), argsInstall...)
 	wiringCheckout(t, "")
@@ -413,7 +415,7 @@ func TestInitPluginStageRemovesThePinAnOlderFugaroLeft(t *testing.T) {
 			t.Errorf("the run does not print %q\n%s", want, out)
 		}
 	}
-	if got := upgradeRead(t, settings); got != pinnedAmongOthersGone {
+	if got := convergeRead(t, settings); got != pinnedAmongOthersGone {
 		t.Errorf("the checkout after the removal:\n%s\nwant:\n%s", got, pinnedAmongOthersGone)
 	}
 	// The checkout is not moved by this: the plugin this release installs was
@@ -435,7 +437,7 @@ func TestInitPluginStageRemovesThePinAnOlderFugaroLeft(t *testing.T) {
 	if d := res.Stages[0].Detail; strings.Contains(d, "removes the "+pluginwire.PluginID+" pin") {
 		t.Errorf("a second run offers the removal of a pin that is gone: %q", d)
 	}
-	if got := upgradeRead(t, settings); got != pinnedAmongOthersGone {
+	if got := convergeRead(t, settings); got != pinnedAmongOthersGone {
 		t.Errorf("the second run rewrote the file:\n%s", got)
 	}
 }
@@ -463,7 +465,7 @@ func TestInitPluginStageRemovalWritesNothingInAnAgentSession(t *testing.T) {
 	t.Setenv("CLAUDECODE", "1")
 
 	res := runPlugin(t, e)
-	if got := upgradeRead(t, settings); got != pinnedAmongOthers {
+	if got := convergeRead(t, settings); got != pinnedAmongOthers {
 		t.Errorf("a coding agent's session wrote %s:\n%s", settings, got)
 	}
 	for _, want := range []string{
@@ -521,10 +523,10 @@ func TestInitPluginStageRemovalLeavesTheProjectScopeInstallAlone(t *testing.T) {
 	if st := res.Stages[0]; st.State != initflow.Changed || !strings.Contains(st.Detail, "removed the "+pluginwire.PluginID+" pin from") {
 		t.Fatalf("the stage reads %+v, want the pin taken out:\n%s", st, out)
 	}
-	if got := upgradeRead(t, settings); got != pinnedAmongOthersGone {
+	if got := convergeRead(t, settings); got != pinnedAmongOthersGone {
 		t.Errorf("the checkout after the removal:\n%s", got)
 	}
-	if got := upgradeRead(t, recordPath); got != record {
+	if got := convergeRead(t, recordPath); got != record {
 		t.Errorf("the removal rewrote Claude Code's own record of installed plugins:\n%s\nwant:\n%s", got, record)
 	}
 	// The shadow is still there after the pin is gone: the install that applies
@@ -647,6 +649,7 @@ func TestInitPluginStageOutsideACheckoutInstallsOnTheMachine(t *testing.T) {
 // in the checkout is written at all any more.
 func TestInitPluginStageFindsTheCheckoutFromASubdirectory(t *testing.T) {
 	releaseBuild(t, "0.2.0")
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 	f := testutil.NewClaudePluginFake(t, "[]", "[]")
 	f.On(t, "plugins", userInstall("0.2.0"), argsInstall...)
 	dir := repoCheckout(t, githubOrigin, "")
@@ -675,6 +678,7 @@ func TestInitPluginStageFindsTheCheckoutFromASubdirectory(t *testing.T) {
 // settings file (reconciliation.md F14).
 func TestInitPluginStageFindsALinkedWorktree(t *testing.T) {
 	releaseBuild(t, "0.2.0")
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 	f := testutil.NewClaudePluginFake(t, "[]", "[]")
 	f.On(t, "plugins", userInstall("0.2.0"), argsInstall...)
 	main := repoCheckout(t, githubOrigin, "")

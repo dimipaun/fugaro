@@ -22,20 +22,27 @@ import (
 // nothing to arbitrate. The node (internal/access, under config/admin/access) is
 // that arbiter now, and this step is how an installation gets there:
 //
-//   - the node is ABSENT (an installation at the previous shape, or a fresh one):
-//     the step MIGRATES. It reads the lists the installation itself carries —
-//     its Terraform outputs, never the file on this machine, which may be one
-//     admin's stale copy — turns each `user:` member into a grant (operators at
-//     project scope, admins at project scope) and leaves the node for the
-//     installation root to write, conditionally on the ETag it read (F23, and
-//     the deferral's reason is below). A copy that disagrees with the
-//     installation is said out loud and not obeyed (accessStale): the migration
-//     is the one step of `fugaro update` that may not be refused, because the
-//     refusal's own way out is the command being refused (the livelock the plan's
-//     "refuses on drift" would have been), and the roster written is the
-//     installation's either way — a member the stale copy named and the
-//     installation does not loses the role in this run's apply, which
-//     accessDropped says.
+//   - the node is ABSENT and the marker beside it is NOT set (an installation at
+//     the previous shape, or a fresh one): the step MIGRATES. It reads the lists
+//     the installation itself carries — its Terraform outputs, never the file on
+//     this machine, which may be one admin's stale copy — turns each `user:`
+//     member into a grant (operators at project scope, admins at project scope)
+//     and leaves the node for the installation root to write, conditionally on
+//     the ETag it read (F23, and the deferral's reason is below). A copy that
+//     disagrees with the installation is said out loud and not obeyed
+//     (accessStale): the migration is the one step of `fugaro update` that may
+//     not be refused, because the refusal's own way out is the command being
+//     refused (the livelock the plan's "refuses on drift" would have been), and
+//     the roster written is the installation's either way — a member the stale
+//     copy named and the installation does not loses the role in this run's
+//     apply, which accessDropped says.
+//   - the node is ABSENT and the marker IS set (accesslib.PathMigrated): the
+//     installation has migrated and its roster is nobody — the last grant was
+//     revoked, which is the one write that leaves no node behind. The step
+//     DERIVES from that empty roster and does not migrate: the lists the
+//     installation carries still hold the revoked members' IAM bindings, so a
+//     migration would write them back and the next fugaro update would undo a
+//     revocation its operator made.
 //   - the node is PRESENT: the step DERIVES. The two lists are read off the
 //     node's project-scope grants, and the spec builders get them, so an
 //     installation whose roles the commands changed converges its IAM to what
@@ -128,18 +135,39 @@ func (e *initEngine) syncAccess(ctx context.Context) error {
 			// them.
 			return nil
 		}
-		if node, err = e.migrateAccess(ctx, node); err != nil {
-			return err
+		// The absent node is two states, and the marker tells them apart
+		// (accesslib.PathMigrated): an installation whose last grant was revoked
+		// holds a roster of nobody, and one whose lists the node has never held
+		// holds no roster at all. Only the second is migrated. The first has
+		// already been decided, and its own lists cannot decide it again: a
+		// revocation takes the grant out of the node and touches no IAM
+		// (user.go), so the installation's outputs still hold the revoked member
+		// and a migration would write them back into the node — the revocation
+		// undone by the next fugaro update, and the gate of RS6c handed a roster
+		// its operator had emptied. A marker that cannot be read is the run's own
+		// error, as it is at the gate: the state it tells apart is the one where
+		// migrating is the answer that cannot be taken back.
+		migrated, err := accesslib.Migrated(ctx, db)
+		if err != nil {
+			return remote(err)
 		}
-		if !node.Found {
-			// There is nothing to migrate: the lists the installation carries
-			// name no grant at all (a node of no grants IS no node, WriteIfMatch,
-			// and the cloud grants such an installation has are the legacy
-			// members'), or the installation's own outputs could not be read and
-			// that is said (accessNoOutputs). Either way there is nothing to
-			// derive from and the two lists stay the file's for this run, which
-			// is the state the installation was in before the step ran.
-			return nil
+		if !migrated {
+			if node, err = e.migrateAccess(ctx, node); err != nil {
+				return err
+			}
+			if !node.Found {
+				// There is nothing to migrate: the lists the installation carries
+				// name no grant at all (a node of no grants IS no node, WriteIfMatch,
+				// and the cloud grants such an installation has are the legacy
+				// members'), or the installation's own outputs could not be read and
+				// that is said (accessNoOutputs). Either way there is nothing to
+				// derive from and the two lists stay the file's for this run, which
+				// is the state the installation was in before the step ran. The
+				// marker the first of the two has to leave is not written here
+				// either: it is a cloud write like the node, and it lands with it,
+				// past the run's confirmation and the guard (landSeed).
+				return nil
+			}
 		}
 	}
 	if e.r.o.operatorsChanged || e.r.o.adminsChanged {
@@ -411,8 +439,11 @@ const accessNoOutputs = "the installation's own outputs could not be read, so it
 // file sees what happened rather than finding it gone.
 const accessStale = "this machine's %s is not what the installation's own outputs list, so this run migrates the installation's: the config lists %s, the installation lists %s"
 
-// migrateAccess computes the grants node for an installation that has none, from
-// the lists the INSTALLATION carries, and returns the node as it would be. The
+// migrateAccess computes the grants node for an installation whose lists the
+// node has never held — the caller has read the marker and found it unset
+// (syncAccess), because an absent node with the marker is a roster of nobody and
+// migrating it would write back the members a revocation took out — from the
+// lists the INSTALLATION carries, and returns the node as it would be. The
 // write is not made here but by the installation root, past the run's
 // confirmation (landSeed); what this step needs the node for is the SPEC its
 // stages build, and for that the computation is the whole of it. A node that is
@@ -461,7 +492,25 @@ func (e *initEngine) migrateAccess(ctx context.Context, node accesslib.Node) (ac
 			e.r.warn(fmt.Sprintf(accessStale, l.what, safetext.FieldListLine(l.local), safetext.FieldListLine(l.remote)))
 		}
 	}
-	return e.seedNode(node, outs.Launchers, outs.Operators)
+	seed, err := e.seedNode(node, outs.Launchers, outs.Operators)
+	if err != nil {
+		return accesslib.Node{}, err
+	}
+	if !seed.Found {
+		// The installation's own lists WERE read, and they hold nobody the node
+		// can rank: a grant holds a person's address, and a `group:`, a `domain:`
+		// and a `serviceAccount:` are not addresses a credential is matched
+		// against (F25). The node stays as empty as it was, and the marker is
+		// then the whole of what the migration has to leave — without it this
+		// installation is indistinguishable from one nobody has migrated, and
+		// the gates of RS6c (access_gate.go) would never run on it at all.
+		//
+		// A first run does not come through here and never marks: it has no
+		// outputs, nothing has been applied, and the converge that follows this
+		// one is the run that reads the lists it applied and marks them.
+		e.accessMark = true
+	}
+	return seed, nil
 }
 
 // seedNode turns two IAM member lists into the node a migration would write, and
@@ -474,7 +523,9 @@ func (e *initEngine) migrateAccess(ctx context.Context, node accesslib.Node) (ac
 //
 // A node of no grants is not a node at all (WriteIfMatch): an installation whose
 // lists name only legacy members holds nothing the node can rank, and there is
-// then nothing to write.
+// then nothing to write. The caller that read the installation's OWN lists
+// records the marker for it (migrateAccess): an installation that migrated to a
+// roster of nobody is not one whose lists the node has never held.
 func (e *initEngine) seedNode(node accesslib.Node, operators, admins []string) (accesslib.Node, error) {
 	grants, err := migrationGrants(operators, admins)
 	if err != nil {
@@ -489,7 +540,10 @@ func (e *initEngine) seedNode(node accesslib.Node, operators, admins []string) (
 }
 
 // landSeed writes the migration's node, if this run computed one, and is the
-// only place that write is made.
+// only place that write is made. It lands the migration's other record too — the
+// marker an installation whose lists held no grant the node can rank has to leave
+// (landMark) — because the two are one landing: both are cloud writes the run
+// may make only past its confirmation and the guard.
 //
 // The roles step runs before the loop's first stage, before the run's
 // confirmation and before the guard that may refuse the plan, so a write there
@@ -515,11 +569,14 @@ func (e *initEngine) seedNode(node accesslib.Node, operators, admins []string) (
 // the next converge derives from it, which is what F23's conditional write is
 // for.
 func (e *initEngine) landSeed(ctx context.Context) error {
-	seed := e.accessSeed
-	if seed == nil {
+	seed, mark := e.accessSeed, e.accessMark
+	if seed == nil && !mark {
 		return nil
 	}
-	e.accessSeed = nil
+	e.accessSeed, e.accessMark = nil, false
+	if seed == nil {
+		return e.landMark(ctx)
+	}
 	err := accesslib.WriteIfMatch(ctx, e.accessDB, seed.Grants, seed.ETag)
 	switch {
 	case err == nil:
@@ -537,6 +594,49 @@ func (e *initEngine) landSeed(ctx context.Context) error {
 		return remote(err)
 	}
 }
+
+// landMark lands the migration's other record: the installation whose own lists
+// were read and hold nobody the node can rank (migrateAccess) has no node to
+// write, and the marker is the whole of what says its roles have moved out of
+// the member lists. It is landSeed's sibling in every other way — the same
+// landing point, past the run's confirmation and the guard, and the same
+// best-effort answer to a caller whose IAM refuses the write, because nothing
+// this run applies depends on the write and `fugaro update` is the one command
+// of the HARD RULE: a roles step that could not mark a database may not be the
+// thing that fails it. Until an owner's update lands the marker, the commands
+// this release gates behave as they did before it, which is the state the
+// installation was already in.
+func (e *initEngine) landMark(ctx context.Context) error {
+	err := accesslib.MarkMigrated(ctx, e.accessDB)
+	switch {
+	case err == nil:
+		e.r.noteAccess(accessMigratedNoGrants)
+		return nil
+	case errors.Is(err, rtdb.ErrPermission):
+		e.r.warn(accessMarkNeedsAdmin)
+		return nil
+	default:
+		return remote(err)
+	}
+}
+
+// accessMarkNeedsAdmin is the warning a refused marker write gets, and it is
+// accessNeedsAdmin one write over: the marker is IAM-protected exactly as the
+// node beside it is, so an account that cannot write the node cannot write this
+// either. Nothing is lost by waiting — the installation's lists hold no member
+// the node could rank, so this run applies the roster it read whatever the
+// marker says — and the next update by an owner is what records it.
+const accessMarkNeedsAdmin = "this run could not record that the installation's member lists have been migrated, and recording it needs roles/firebasedatabase.admin, the write the grants node itself needs: nothing in this run depends on it, the installation's roles are its member lists either way, and the next fugaro update by a project Owner records it"
+
+// accessMigratedNoGrants is the line the migration leaves for the installation
+// whose lists name nobody the node can rank: the marker is all it writes, and
+// the line says what the installation reads as from now on and what that costs
+// a caller who holds no grant — the commands this release gates are judged
+// against a roster of nobody rather than left as they were. terraform.budget_admins
+// are named because they hold admin at project scope without a stored pair
+// (F17.3, resolve.go's Input.Implicit): they, and a grant in the node, are who
+// reaches those commands at all.
+const accessMigratedNoGrants = "this installation's member lists hold no user: member, and a grant ranks a person, so the grants node stays empty and the installation is recorded as migrated: an action that needs a role in it — the image catalog, accounts, the spend document's read, caps and kill switches, secrets and project repositories — is now refused to a caller holding no grant there, while terraform.budget_admins hold admin at project scope without one (fugaro update --budget-admin)"
 
 // accessNodeMoved is what a run says when another writer got to the node first.
 const accessNodeMoved = "another run wrote the grants node while this one was migrating it: this run's migration was not written and the node that landed is theirs, so the next fugaro update derives the roles from it"

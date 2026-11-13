@@ -325,6 +325,10 @@ var setupDoor = convergeDoor{
 		owner: "fugaro update",
 		hint:  "it unwinds a converge that has already run, and a first run has nothing to unwind",
 	}, {
+		name:  "check",
+		owner: "fugaro update",
+		hint:  "it reports what a converge that has already run would do, and a first run has nothing to report: fugaro setup --check has no installation to read",
+	}, {
 		name:  "ask",
 		owner: "fugaro update",
 		hint:  "it asks for the confirmations a managed project's gate stands in for, and only fugaro update opens that gate: fugaro setup confirms each of its own steps with the person at the terminal already, whatever the project's marks say",

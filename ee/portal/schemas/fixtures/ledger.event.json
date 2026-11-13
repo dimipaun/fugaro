@@ -1,0 +1,9 @@
+{
+  "id": "evt_1",
+  "received_at": "2026-02-11T08:00:00Z",
+  "signature": "a-fixture-value-that-is-not-a-signature",
+  "notification": "transaction.completed",
+  "body": "{\"event_id\":\"evt_1\",\"event_type\":\"transaction.completed\"}",
+  "state": "processed",
+  "entitlement_id": "ent_1"
+}

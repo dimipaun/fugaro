@@ -11,6 +11,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -53,10 +54,10 @@ image_catalog:
 
 // catalogCheckJob is the assignment of the job CatalogCheck renders for yaml,
 // decoded from the environment variable the job reads it from.
-func catalogCheckJob(t *testing.T, yaml string, imageBuilds int64) (*CatalogCheckSpec, CatalogCheckJobSpec) {
+func catalogCheckJob(t *testing.T, yaml string) (*CatalogCheckSpec, CatalogCheckJobSpec) {
 	t.Helper()
 	lc := parseLC(t, yaml)
-	cc, err := CatalogCheck(lc, "fugaro-runs-proj-1234", imageBuilds, true)
+	cc, err := CatalogCheck(lc, "fugaro-runs-proj-1234", true)
 	if err != nil {
 		t.Fatalf("CatalogCheck: %v", err)
 	}
@@ -101,7 +102,7 @@ func repoOf(t *testing.T, spec CatalogCheckJobSpec, repo string) CatalogCheckRep
 // here is the same answer one step earlier, and it is the one the map already
 // states.
 func TestCatalogCheckAssignsAnInlineEntryToTheRepositoryThatRunsIt(t *testing.T) {
-	_, spec := catalogCheckJob(t, catalogCheckLocal+"image_map:\n  acme/other: scratch\n", 0)
+	_, spec := catalogCheckJob(t, catalogCheckLocal+"image_map:\n  acme/other: scratch\n")
 	app, other := repoOf(t, spec, "acme/app"), repoOf(t, spec, "acme/other")
 	if want := []string{"tools", "prebuilt"}; !slices.Equal(app.Entries, want) {
 		t.Errorf("acme/app builds %v, want %v: the map puts scratch on acme/other", app.Entries, want)
@@ -112,14 +113,14 @@ func TestCatalogCheckAssignsAnInlineEntryToTheRepositoryThatRunsIt(t *testing.T)
 	// A map entry that names no repository this installation can build with
 	// leaves the entry where it was: there is no account to run it as, and the
 	// job's own guard refuses a definition that bakes another repository.
-	_, spec = catalogCheckJob(t, catalogCheckLocal+"image_map:\n  acme/none: scratch\n", 0)
+	_, spec = catalogCheckJob(t, catalogCheckLocal+"image_map:\n  acme/none: scratch\n")
 	if want := []string{"tools", "scratch", "prebuilt"}; !slices.Equal(repoOf(t, spec, "acme/app").Entries, want) {
 		t.Errorf("acme/app builds %v, want %v: acme/none has no provider kind, so it cannot be the repository an entry is built in", repoOf(t, spec, "acme/app").Entries, want)
 	}
 }
 
 func TestCatalogCheckAssignsEveryEntry(t *testing.T) {
-	cc, spec := catalogCheckJob(t, catalogCheckLocal, 0)
+	cc, spec := catalogCheckJob(t, catalogCheckLocal)
 	if spec.Version != CatalogCheckSpecVersion {
 		t.Errorf("the spec is version %d, want %d", spec.Version, CatalogCheckSpecVersion)
 	}
@@ -242,7 +243,7 @@ image_catalog:
 // entry naming that repository goes to the key that can build it, rather than
 // to no build at all, which is what the sorted-first key would leave it.
 func TestCatalogCheckAssignsAnEntryToTheBuildableKeyOfTwoNames(t *testing.T) {
-	cc, spec := catalogCheckJob(t, catalogCheckTwoNames, 0)
+	cc, spec := catalogCheckJob(t, catalogCheckTwoNames)
 	if len(spec.Repositories) != 1 {
 		t.Fatalf("the spec names %d repositories (%+v), want the one this installation can build with", len(spec.Repositories), spec.Repositories)
 	}
@@ -264,7 +265,7 @@ func TestCatalogCheckUsesTheProjectCopyOfAProjectScopedCredential(t *testing.T) 
 	lc := parseLC(t, catalogCheckLocal+`project_secrets:
   bitbucket-token: { allow_data_to: [acme/app] }
 `)
-	cc, err := CatalogCheck(lc, "fugaro-runs-proj-1234", 0, true)
+	cc, err := CatalogCheck(lc, "fugaro-runs-proj-1234", true)
 	if err != nil {
 		t.Fatalf("CatalogCheck: %v", err)
 	}
@@ -305,7 +306,7 @@ func TestCatalogCheckIsNilWhenThereIsNothingToCheck(t *testing.T) {
 	} {
 		t.Run(tc.what, func(t *testing.T) {
 			lc := parseLC(t, m4LocalConfig+m5Additions+tc.yaml)
-			cc, err := CatalogCheck(lc, "fugaro-runs-proj-1234", 0, true)
+			cc, err := CatalogCheck(lc, "fugaro-runs-proj-1234", true)
 			if err != nil {
 				t.Fatalf("CatalogCheck: %v", err)
 			}
@@ -338,7 +339,7 @@ func TestCatalogCheckIsNilWhenThereIsNothingToCheck(t *testing.T) {
 func TestCatalogCheckHasNoJobWithoutABaseImage(t *testing.T) {
 	lc := parseLC(t, strings.Replace(catalogCheckLocal,
 		"base_images: { base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc }\n", "", 1))
-	cc, err := CatalogCheck(lc, "fugaro-runs-proj-1234", 0, true)
+	cc, err := CatalogCheck(lc, "fugaro-runs-proj-1234", true)
 	if err != nil || cc != nil {
 		t.Fatalf("CatalogCheck with the project's catalog and no base image = %+v, %v, want no job and no error", cc, err)
 	}
@@ -356,36 +357,106 @@ func TestCatalogCheckHasNoJobWithoutABaseImage(t *testing.T) {
 	// The base image is the job's own need: with one recorded, the same catalog
 	// gets the job, so the two readings above are not a job that nothing
 	// deploys at all.
-	cc, err = CatalogCheck(parseLC(t, catalogCheckLocal), "fugaro-runs-proj-1234", 0, true)
+	cc, err = CatalogCheck(parseLC(t, catalogCheckLocal), "fugaro-runs-proj-1234", true)
 	if err != nil || cc == nil {
 		t.Fatalf("CatalogCheck with a base image = %+v, %v, want the job", cc, err)
 	}
 	// ... and with no catalog to build, no job and no error: the same nil.
 	lc = parseLC(t, m4LocalConfig)
-	if cc, err := CatalogCheck(lc, "fugaro-runs-proj-1234", 0, true); err != nil || cc != nil {
+	if cc, err := CatalogCheck(lc, "fugaro-runs-proj-1234", true); err != nil || cc != nil {
 		t.Fatalf("CatalogCheck with no catalog = %+v, %v, want no job and no error", cc, err)
 	}
 }
 
-// TestCatalogCheckCarriesTheManagedBound: one run's build cap is M5's managed
-// bound, and a bound outside M5's range is refused rather than written into a
-// job the reader would refuse to start.
-func TestCatalogCheckCarriesTheManagedBound(t *testing.T) {
-	for _, tc := range []struct {
-		builds int64
-		want   int64
-	}{{0, 0}, {7, 7}, {1000, 1000}} {
-		_, spec := catalogCheckJob(t, catalogCheckLocal, tc.builds)
-		if spec.MaxImageBuilds != tc.want {
-			t.Errorf("the managed bound %d is written as max_image_builds %d, want %d (zero is M5's default, which the job applies itself)", tc.builds, spec.MaxImageBuilds, tc.want)
-		}
+// TestCatalogCheckWritesNoBuildBound: the document one run reads carries no
+// bound on how many builds it may submit (D1543, D1554). What bounds a build is
+// the lease it takes, which is why the same document has to carry the budget
+// backend's URL: without it the job submits its builds under no lease at all
+// and nothing counts their cost.
+//
+// The key is asserted on the bytes rather than on the struct, because the
+// struct is what stopped having a field: a version-2 document with a
+// max_image_builds in it would be a count this build wrote without meaning it,
+// and the release behind's job binary reads the document this release writes.
+func TestCatalogCheckWritesNoBuildBound(t *testing.T) {
+	cc, _ := catalogCheckJob(t, catalogCheckLocal)
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(cc.Env[CatalogCheckSpecEnv]), &doc); err != nil {
+		t.Fatalf("%s: %v", CatalogCheckSpecEnv, err)
 	}
+	if v, ok := doc["version"]; !ok || v != float64(CatalogCheckSpecVersion) {
+		t.Errorf("the document is version %v, want this release's %d", v, CatalogCheckSpecVersion)
+	}
+	if _, ok := doc["max_image_builds"]; ok {
+		t.Errorf("the document carries max_image_builds: %s", cc.Env[CatalogCheckSpecEnv])
+	}
+	if cc.Env[RTDBURLEnv] != "" {
+		t.Errorf("an installation with no budget backend carries %s=%q, want nothing: the job would try to lease against a database that is not there", RTDBURLEnv, cc.Env[RTDBURLEnv])
+	}
+
+	// The same installation with the database it leases against, which is the
+	// whole of what makes a build's cost counted: fugaro update sets the
+	// variable, and the job's own lease reads it.
 	lc := parseLC(t, catalogCheckLocal)
-	if _, err := CatalogCheck(lc, "fugaro-runs-proj-1234", 1001, true); err == nil || !strings.Contains(err.Error(), "1001") {
-		t.Fatalf("err = %v, want an out-of-range build bound refused", err)
+	lc.Budget = &localcfg.Budget{RTDBURL: "https://init-project.firebaseio.com"}
+	with, err := CatalogCheck(lc, "fugaro-runs-proj-1234", true)
+	if err != nil {
+		t.Fatalf("CatalogCheck with a budget backend: %v", err)
 	}
-	if _, err := CatalogCheck(lc, "Fugaro Runs", 0, true); err == nil {
+	if got := with.Env[RTDBURLEnv]; got != lc.Budget.RTDBURL {
+		t.Errorf("the job's %s is %q, want the installation's %q: a build of this job leases nothing without it", RTDBURLEnv, got, lc.Budget.RTDBURL)
+	}
+
+	if _, err := CatalogCheck(parseLC(t, catalogCheckLocal), "Fugaro Runs", true); err == nil {
 		t.Fatal("a runs bucket outside [a-z0-9._-] was accepted: the condition built from it would be one no comparison expects")
+	}
+}
+
+// TestCatalogCheckCarriesTheFirebaseProjectItsLeaseIsWrittenIn: the job's
+// database role is created in the installation's Firebase project and its
+// lease is written into that project's database, so the one fact reaches two
+// renderings of one plan — the module's variable, which is where the role and
+// its binding are planned, and the job's own spec, which is what the lease
+// proves the database it was handed belongs to (requireOwnBudgetDB). They come
+// from one read of the local config, and an installation whose config names no
+// Firebase project writes neither: no role on a project nobody named, and a
+// job that submits its builds unleased rather than leasing into a database it
+// cannot prove is the installation's (openCatalogJobLease).
+func TestCatalogCheckCarriesTheFirebaseProjectItsLeaseIsWrittenIn(t *testing.T) {
+	// The installation with no budget backend: the key is absent from the
+	// module's variable rather than empty, which is what the module's
+	// catalog_lease_on reads and what its variable's validation admits.
+	cc, spec := catalogCheckJob(t, catalogCheckLocal)
+	if cc.FirebaseProject != "" || spec.FirebaseProject != "" {
+		t.Errorf("an installation with no budget backend names a Firebase project (%q, %q), want neither: there is no database for a lease, and no project to create a role in", cc.FirebaseProject, spec.FirebaseProject)
+	}
+	var vars map[string]any
+	rawVars, err := json.Marshal(cc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(rawVars, &vars); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := vars["firebase_project"]; ok {
+		t.Errorf("the module's variable carries firebase_project on an installation with no budget backend: %s", rawVars)
+	}
+
+	lc := parseLC(t, catalogCheckLocal)
+	lc.Budget = &localcfg.Budget{RTDBURL: "https://aurora-fp-default-rtdb.firebaseio.com", FirebaseProject: "aurora-fp"}
+	with, err := CatalogCheck(lc, "fugaro-runs-proj-1234", true)
+	if err != nil {
+		t.Fatalf("CatalogCheck with a budget backend: %v", err)
+	}
+	if got := with.FirebaseProject; got != "aurora-fp" {
+		t.Errorf("the module's firebase_project is %q, want the installation's %q: the job's database role is created and bound in that project", got, lc.Budget.FirebaseProject)
+	}
+	var job CatalogCheckJobSpec
+	if err := json.Unmarshal([]byte(with.Env[CatalogCheckSpecEnv]), &job); err != nil {
+		t.Fatalf("%s: %v", CatalogCheckSpecEnv, err)
+	}
+	if got := job.FirebaseProject; got != "aurora-fp" {
+		t.Errorf("the job's own spec names the Firebase project %q, want %q: the lease proves its database is that project's own before it writes one", got, lc.Budget.FirebaseProject)
 	}
 }
 

@@ -1,6 +1,6 @@
 # Project Claude accounts: one OAuth token per (profile, account)
 
-Status: **0.9.0, released.** The released Fugaro is 0.23.0, and 0.9.0 is the first release any of this page works on:
+Status: **0.9.0, released.** The released Fugaro is 0.23.1, and 0.9.0 is the first release any of this page works on:
 the `claude_accounts` field inside a profile, the `accounts` block in the published policy and the
 jobs they name all ship in 0.9.0 (policy version 3,
 [`internal/projectpolicy/version.go`](../internal/projectpolicy/version.go)), and a 0.8.x binary
@@ -287,7 +287,7 @@ read, so **0.9.0's accounts need all four of these**, in this order:
 1. **Upgrade the CLI, per installation machine:**
 
    ```bash
-   brew upgrade dimipaun/tap/fugaro && fugaro upgrade
+   brew upgrade dimipaun/tap/fugaro && fugaro update
    ```
 
 2. **Republish the policy, per installation.** A publish refuses to overwrite a node written in
