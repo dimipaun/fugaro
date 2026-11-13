@@ -27,6 +27,8 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/safetext"
@@ -68,6 +70,79 @@ type Entry struct {
 // EntryID is the derived id of one event: the subject and what happened to it,
 // so the same event delivered twice is a write to the same key.
 func EntryID(subject, transition string) string { return subject + ":" + transition }
+
+// AuditRead is one orchestrator's log as a read found it: the entries in the
+// order the server stamped them, and the cut a positive since resolved to.
+//
+// Since is the database's own clock's (D1230) — it is the same instant the
+// entries below were kept by — and it is zero when the read was asked for the
+// whole log. A caller that prints it is showing a fact about the read rather
+// than about itself.
+type AuditRead struct {
+	Entries []Entry
+	Since   time.Time
+}
+
+// ReadAudit reads one orchestrator's audit log for a reader that appends
+// nothing: `fugaro orchestrator events` and the front door's get_events are
+// both this read, so the two surfaces cannot come to order or cut the log
+// differently.
+//
+// The log is a map keyed by each entry's derived id, so what a read returns is
+// the node's iteration order and never a sequence: the order is read off the
+// stamp the server gave each entry, with the derived id breaking a tie between
+// two entries stamped in the same second (D1230).
+//
+// A positive since cuts the log at the server's clock and never this machine's:
+// the reader resolves the cut by asking the database for its time, and a
+// database that answers without one is ErrNoServerTime rather than a fallback
+// to a laptop's clock — a cut taken on a clock the log's stamps did not come
+// from would hide or repeat entries at exactly the boundary it is meant to
+// draw. The cut is inclusive (an entry stamped exactly at it is kept), because
+// it is the instant "one hour ago" names.
+func ReadAudit(ctx context.Context, db Reader, agentID string, since time.Duration) (AuditRead, error) {
+	path, err := PathAudit(agentID)
+	if err != nil {
+		return AuditRead{}, err
+	}
+	var raw map[string]Entry
+	if _, err := db.Get(ctx, path, &raw); err != nil {
+		return AuditRead{}, err
+	}
+	entries := make([]Entry, 0, len(raw))
+	for _, e := range raw {
+		entries = append(entries, e)
+	}
+	SortEntries(entries)
+	if since <= 0 {
+		return AuditRead{Entries: entries}, nil
+	}
+	now, ok := db.ServerNow()
+	if !ok {
+		return AuditRead{}, ErrNoServerTime
+	}
+	cut := now.Add(-since).UTC()
+	kept := entries[:0]
+	for _, e := range entries {
+		if !e.At.Before(cut) {
+			kept = append(kept, e)
+		}
+	}
+	return AuditRead{Entries: kept, Since: cut}, nil
+}
+
+// SortEntries puts a log in the order it is read in, in place: the server's
+// stamp first and the derived id second, so the order is total rather than
+// merely stable. Both readers of this log sort the same way, which is why it is
+// one function rather than two.
+func SortEntries(entries []Entry) {
+	slices.SortFunc(entries, func(a, b Entry) int {
+		if c := a.At.Compare(b.At); c != 0 {
+			return c
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+}
 
 // Audit is one orchestrator's log.
 type Audit struct {

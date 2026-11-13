@@ -77,13 +77,27 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {name: cli, pkg: ./internal/cli, index: 0, of: 1}
-          - {name: scripts-0, pkg: ./scripts, index: 0, of: 2}
-          - {name: scripts-1, pkg: ./scripts, index: 1, of: 2}
+          - {name: cli-update, pkg: ./internal/cli, index: 0, of: 1, only: update}
+          - {name: cli-0, pkg: ./internal/cli, index: 0, of: 8, only: other}
+          - {name: cli-1, pkg: ./internal/cli, index: 1, of: 8, only: other}
+          - {name: cli-2, pkg: ./internal/cli, index: 2, of: 8, only: other}
+          - {name: cli-3, pkg: ./internal/cli, index: 3, of: 8, only: other}
+          - {name: cli-4, pkg: ./internal/cli, index: 4, of: 8, only: other}
+          - {name: cli-5, pkg: ./internal/cli, index: 5, of: 8, only: other}
+          - {name: cli-6, pkg: ./internal/cli, index: 6, of: 8, only: other}
+          - {name: cli-7, pkg: ./internal/cli, index: 7, of: 8, only: other}
+          - {name: scripts-live-0, pkg: ./scripts, index: 0, of: 3, only: live}
+          - {name: scripts-live-1, pkg: ./scripts, index: 1, of: 3, only: live}
+          - {name: scripts-live-2, pkg: ./scripts, index: 2, of: 3, only: live}
+          - {name: scripts-0, pkg: ./scripts, index: 0, of: 2, only: nonlive}
+          - {name: scripts-1, pkg: ./scripts, index: 1, of: 2, only: nonlive}
           - {name: runner-0, pkg: ./internal/runner, index: 0, of: 2}
           - {name: runner-1, pkg: ./internal/runner, index: 1, of: 2}
           - {name: issues, pkg: ./internal/issues, index: 0, of: 1}
-          - {name: rest, pkg: rest, index: 0, of: 1}
+          - {name: rest-0, pkg: rest, index: 0, of: 4}
+          - {name: rest-1, pkg: rest, index: 1, of: 4}
+          - {name: rest-2, pkg: rest, index: 2, of: 4}
+          - {name: rest-3, pkg: rest, index: 3, of: 4}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -96,18 +110,33 @@ jobs:
           PKG: ${{ matrix.pkg }}
           INDEX: ${{ matrix.index }}
           OF: ${{ matrix.of }}
+          ONLY: ${{ matrix.only }}
         run: |
           set -euo pipefail
           if [ "$PKG" = rest ]; then
-            pkgs=$(go list ./... | grep -vE '/(internal/cli|scripts|internal/runner|internal/issues)$')
-            go test -race -timeout 40m $pkgs
+            go list ./... | grep -vE '/(internal/cli|scripts|internal/runner|internal/issues)$' | while read -r p; do
+              if [ $(( $(printf '%s' "$p" | cksum | cut -d' ' -f1) % OF )) -eq "$INDEX" ]; then
+                echo "$p"
+              fi
+            done > mine-pkgs.txt
+            test -s mine-pkgs.txt
+            go test -race -timeout 40m -json $(cat mine-pkgs.txt) | tee test.json | jq -rj 'select(.Action=="output").Output'
             exit 0
           fi
-          if [ "$OF" = 1 ]; then
-            go test -race -timeout 40m "$PKG"
+          if [ "$OF" = 1 ] && [ -z "${ONLY:-}" ]; then
+            go test -race -timeout 40m -json "$PKG" | tee test.json | jq -rj 'select(.Action=="output").Output'
+            exit 0
+          fi
+          if [ "${ONLY:-}" = live ]; then
+            go test -race -timeout 40m -json -run "^TestLiveCheckScripts\$/^[^/]+\$/^shard${INDEX}\$" "$PKG" | tee test.json | jq -rj 'select(.Action=="output").Output'
             exit 0
           fi
           go test -list '.*' "$PKG" | grep -E '^(Test|Example|Fuzz)' | sort > all.txt
+          case "${ONLY:-}" in
+            update) grep -E '^TestUpdate' all.txt > sel.txt || true; mv sel.txt all.txt ;;
+            other) grep -vE '^TestUpdate' all.txt > sel.txt || true; mv sel.txt all.txt ;;
+            nonlive) grep -vE '^TestLiveCheckScripts$' all.txt > sel.txt || true; mv sel.txt all.txt ;;
+          esac
           total=$(wc -l < all.txt)
           while read -r name; do
             if [ $(( $(printf '%s' "$name" | cksum | cut -d' ' -f1) % OF )) -eq "$INDEX" ]; then
@@ -117,7 +146,27 @@ jobs:
           echo "shard $INDEX of $OF: $(wc -l < mine.txt) of $total tests"
           test -s mine.txt
           run="^($(paste -sd'|' mine.txt))\$"
-          go test -race -timeout 40m -run "$run" "$PKG"
+          go test -race -timeout 40m -json -run "$run" "$PKG" | tee test.json | jq -rj 'select(.Action=="output").Output'
+      - name: timings
+        if: always()
+        env:
+          NAME: ${{ matrix.name }}
+        run: |
+          test -s test.json || exit 0
+          {
+            echo "### shard $NAME"
+            echo "package elapsed (s):"
+            jq -r 'select(.Test==null and (.Action=="pass" or .Action=="fail") and .Elapsed!=null) | "\(.Elapsed)\t\(.Package)"' test.json | sort -rn | head -20
+            echo "slowest 40 tests (s):"
+            jq -r 'select(.Test!=null and (.Action=="pass" or .Action=="fail")) | "\(.Elapsed)\t\(.Package) \(.Test)"' test.json | sort -rn | head -40
+          } | tee timings.txt >> "$GITHUB_STEP_SUMMARY"
+          jq -r 'select(.Test!=null and (.Action=="pass" or .Action=="fail")) | "\(.Elapsed)\t\(.Package)\t\(.Test)"' test.json | sort -rn > test-times.tsv
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: test-times-${{ matrix.name }}
+          path: test-times.tsv
+          if-no-files-found: ignore
   # The one check name the release gate and branch rules know: it passes when
   # every shard and the vet job passed, and when they were skipped for a
   # documentation-only change.
