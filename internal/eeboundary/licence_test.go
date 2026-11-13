@@ -2,17 +2,19 @@ package eeboundary
 
 // The dependency side of the licence boundary (licensing plan, the follow-up
 // run of 2026-10-27): the console and the mobile app are under the business licence
-// in their own `LICENSE.md`, and what they ship is not only their own code.
+// in their own `LICENSE.md`, the portal is a business-licensed feature under
+// `ee/`, and what any of them ships is not only their own code.
 //
 // This file holds one rule and one recording:
 //
-//  1. **no copyleft among the console's or the mobile app's dependencies.** A
-//     GPL, AGPL or SSPL package reaching either app is a decision the owner
-//     makes, not a `npm install` somebody runs, and the lockfiles declare each
-//     package's licence, so the rule can be enforced hermetically: no network,
-//     no `node_modules`, no install. An entry the audit justifies is named in
-//     copyleftAllowed below, so the exception is a line a reviewer reads rather
-//     than a rule nobody can tell is being enforced.
+//  1. **no copyleft among the console's, the mobile app's or the portal's
+//     dependencies.** A GPL, AGPL or SSPL package reaching one of them is a
+//     decision the owner makes, not a `npm install` somebody runs, and the
+//     lockfiles declare each package's licence, so the rule can be enforced
+//     hermetically: no network, no `node_modules`, no install. An entry the
+//     audit justifies is named in copyleftAllowed below, so the exception is a
+//     line a reviewer reads rather than a rule nobody can tell is being
+//     enforced.
 //  2. **every dependency declares a licence at all.** A package whose licence
 //     is not in the lockfile is one nobody has classified; the report says so,
 //     and this half keeps a new one from arriving without an answer.
@@ -24,6 +26,8 @@ package eeboundary
 
 import (
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -63,17 +67,30 @@ var copyleftAllowed = map[string]string{
 	"node-forge": "(BSD-3-Clause OR GPL-2.0) is a choice between two licences, and the audit reads the app as taking BSD-3-Clause; the GPL arm is never exercised. Recorded here rather than excluded by a smarter expression parser, so the fact that a copyleft identifier appears at all is visible in the diff that changes it.",
 }
 
+// portalDirName is the portal's directory, inside the business-licensed tree.
+// It is spelled here rather than in the boundary test's list of licence
+// directories because the portal is not a fourth one: it is a feature under
+// ee/, whose every file already carries ee/'s own notice, and this file is the
+// only place that reads anything of it.
+const portalDirName = eeDirName + "/portal"
+
 // lockDirectory is one app whose lockfile this file reads. The path is built
 // from the directory's own constant rather than written out: no Go file outside
 // the console boundary test's allow-list may name a path under it.
 type lockDirectory struct {
 	dir  string
 	path string
+	// optional is a lockfile that is not in every checkout. The portal's is
+	// the one: `ee/` is deleted for the core build and its tests, so this rule
+	// holds the portal to the same two readings as the console and the mobile
+	// app wherever ee/ exists, and applies to nothing there where it does not.
+	optional bool
 }
 
 var lockDirectories = []lockDirectory{
 	{dir: consoleDirName, path: consoleDirName + "/package-lock.json"},
 	{dir: mobileDirName, path: mobileDirName + "/package-lock.json"},
+	{dir: portalDirName, path: portalDirName + "/package-lock.json", optional: true},
 }
 
 // lockPackage is one entry of a v3 lockfile's `packages` map. `license` is a
@@ -100,12 +117,21 @@ type dependency struct {
 }
 
 // readLockfile parses one app's lockfile and answers its dependencies, sorted by
-// name. The root entry (`""`, the app's own manifest) is skipped: the app is not
-// its own dependency, and its licence is the business licence read elsewhere.
-func readLockfile(t *testing.T, root string, dir lockDirectory) []dependency {
+// name, and whether there was a lockfile to read at all. The root entry (`""`,
+// the app's own manifest) is skipped: the app is not its own dependency, and its
+// licence is the business licence read elsewhere.
+//
+// A missing optional lockfile is the one absence this answers instead of
+// failing: the portal lives under ee/, and the core build and its tests run with
+// that directory deleted, which is a tree this rule does not cover rather than
+// one where it would pass by finding nothing.
+func readLockfile(t *testing.T, root string, dir lockDirectory) ([]dependency, bool) {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(dir.path)))
 	if err != nil {
+		if dir.optional && errors.Is(err, fs.ErrNotExist) {
+			return nil, false
+		}
 		t.Fatalf("%s: %v -- the copyleft rule reads the lockfiles, so a lockfile it cannot open is a rule that would pass by finding nothing", dir.path, err)
 	}
 	var doc lockDocument
@@ -127,7 +153,7 @@ func readLockfile(t *testing.T, root string, dir lockDirectory) []dependency {
 		})
 	}
 	sort.Slice(deps, func(i, j int) bool { return deps[i].name < deps[j].name })
-	return deps
+	return deps, true
 }
 
 // licenceOf renders a lockfile's `license` field as one string. The field is an
@@ -201,10 +227,10 @@ func TestCopyleftPatternSpellsTheFamiliesOut(t *testing.T) {
 	}
 }
 
-// TestLicenceBoundaryRefusesCopyleftDependencies: neither the console nor the
-// mobile app depends on a GPL, AGPL or SSPL package. The check is hermetic --
-// it reads the two lockfiles, which declare each package's licence, and nothing
-// else -- so it runs in CI and in a container with no network.
+// TestLicenceBoundaryRefusesCopyleftDependencies: neither the console, the
+// mobile app nor the portal depends on a GPL, AGPL or SSPL package. The check is
+// hermetic -- it reads the lockfiles, which declare each package's licence, and
+// nothing else -- so it runs in CI and in a container with no network.
 //
 // A new copyleft entry fails here by name, and the fix is not an edit to this
 // file: it is either dropping the dependency or a line in copyleftAllowed with
@@ -213,11 +239,14 @@ func TestLicenceBoundaryRefusesCopyleftDependencies(t *testing.T) {
 	root := moduleRoot(t)
 	seen := map[string]bool{}
 	for _, dir := range lockDirectories {
-		deps := readLockfile(t, root, dir)
+		deps, present := readLockfile(t, root, dir)
+		if !present {
+			continue
+		}
 		// The floor: a parse that read no dependencies would pass the loop
 		// below without looking at one of them.
 		if len(deps) < 100 {
-			t.Fatalf("%s: read %d dependencies, and both apps carry hundreds: the rule would pass by checking nothing", dir.path, len(deps))
+			t.Fatalf("%s: read %d dependencies, and every one of these apps carries hundreds: the rule would pass by checking nothing", dir.path, len(deps))
 		}
 		var allowed []string
 		for _, dep := range deps {
@@ -241,22 +270,25 @@ func TestLicenceBoundaryRefusesCopyleftDependencies(t *testing.T) {
 	// applying.
 	for name := range copyleftAllowed {
 		if !seen[name] {
-			t.Errorf("copyleftAllowed names %q, and neither lockfile carries it with a matching licence any more: the exception has gone stale and should be removed deliberately, in the commit that shows why it is no longer needed", name)
+			t.Errorf("copyleftAllowed names %q, and no lockfile carries it with a matching licence any more: the exception has gone stale and should be removed deliberately, in the commit that shows why it is no longer needed", name)
 		}
 	}
 }
 
-// TestLicenceBoundaryNamesEveryDependencyLicence: every package in either
-// lockfile declares its licence. Nothing is refused for a licence this rule
+// TestLicenceBoundaryNamesEveryDependencyLicence: every package in any of these
+// lockfiles declares its licence. Nothing is refused for a licence this rule
 // dislikes -- that is the test above -- but a package nobody has classified is
 // a package nobody has read, and the report lists each declaration as of
 // 2026-10-27 precisely so that a new one is visible.
 func TestLicenceBoundaryNamesEveryDependencyLicence(t *testing.T) {
 	root := moduleRoot(t)
 	for _, dir := range lockDirectories {
-		deps := readLockfile(t, root, dir)
+		deps, present := readLockfile(t, root, dir)
+		if !present {
+			continue
+		}
 		if len(deps) < 100 {
-			t.Fatalf("%s: read %d dependencies, and both apps carry hundreds: the rule would pass by checking nothing", dir.path, len(deps))
+			t.Fatalf("%s: read %d dependencies, and every one of these apps carries hundreds: the rule would pass by checking nothing", dir.path, len(deps))
 		}
 		for _, dep := range deps {
 			if dep.licence == "" {
