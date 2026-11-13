@@ -78,22 +78,26 @@ jobs:
       matrix:
         include:
           - {name: cli-update, pkg: ./internal/cli, index: 0, of: 1, only: update}
-          - {name: cli-0, pkg: ./internal/cli, index: 0, of: 6, only: other}
-          - {name: cli-1, pkg: ./internal/cli, index: 1, of: 6, only: other}
-          - {name: cli-2, pkg: ./internal/cli, index: 2, of: 6, only: other}
-          - {name: cli-3, pkg: ./internal/cli, index: 3, of: 6, only: other}
-          - {name: cli-4, pkg: ./internal/cli, index: 4, of: 6, only: other}
-          - {name: cli-5, pkg: ./internal/cli, index: 5, of: 6, only: other}
-          - {name: scripts-0, pkg: ./scripts, index: 0, of: 4}
-          - {name: scripts-1, pkg: ./scripts, index: 1, of: 4}
-          - {name: scripts-2, pkg: ./scripts, index: 2, of: 4}
-          - {name: scripts-3, pkg: ./scripts, index: 3, of: 4}
+          - {name: cli-0, pkg: ./internal/cli, index: 0, of: 8, only: other}
+          - {name: cli-1, pkg: ./internal/cli, index: 1, of: 8, only: other}
+          - {name: cli-2, pkg: ./internal/cli, index: 2, of: 8, only: other}
+          - {name: cli-3, pkg: ./internal/cli, index: 3, of: 8, only: other}
+          - {name: cli-4, pkg: ./internal/cli, index: 4, of: 8, only: other}
+          - {name: cli-5, pkg: ./internal/cli, index: 5, of: 8, only: other}
+          - {name: cli-6, pkg: ./internal/cli, index: 6, of: 8, only: other}
+          - {name: cli-7, pkg: ./internal/cli, index: 7, of: 8, only: other}
+          - {name: scripts-live-0, pkg: ./scripts, index: 0, of: 3, only: live}
+          - {name: scripts-live-1, pkg: ./scripts, index: 1, of: 3, only: live}
+          - {name: scripts-live-2, pkg: ./scripts, index: 2, of: 3, only: live}
+          - {name: scripts-0, pkg: ./scripts, index: 0, of: 2, only: nonlive}
+          - {name: scripts-1, pkg: ./scripts, index: 1, of: 2, only: nonlive}
           - {name: runner-0, pkg: ./internal/runner, index: 0, of: 2}
           - {name: runner-1, pkg: ./internal/runner, index: 1, of: 2}
           - {name: issues, pkg: ./internal/issues, index: 0, of: 1}
-          - {name: rest-0, pkg: rest, index: 0, of: 3}
-          - {name: rest-1, pkg: rest, index: 1, of: 3}
-          - {name: rest-2, pkg: rest, index: 2, of: 3}
+          - {name: rest-0, pkg: rest, index: 0, of: 4}
+          - {name: rest-1, pkg: rest, index: 1, of: 4}
+          - {name: rest-2, pkg: rest, index: 2, of: 4}
+          - {name: rest-3, pkg: rest, index: 3, of: 4}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -123,10 +127,15 @@ jobs:
             go test -race -timeout 40m -json "$PKG" | tee test.json | jq -rj 'select(.Action=="output").Output'
             exit 0
           fi
+          if [ "${ONLY:-}" = live ]; then
+            go test -race -timeout 40m -json -run "^TestLiveCheckScripts\$/^[^/]+\$/^shard${INDEX}\$" "$PKG" | tee test.json | jq -rj 'select(.Action=="output").Output'
+            exit 0
+          fi
           go test -list '.*' "$PKG" | grep -E '^(Test|Example|Fuzz)' | sort > all.txt
           case "${ONLY:-}" in
             update) grep -E '^TestUpdate' all.txt > sel.txt || true; mv sel.txt all.txt ;;
             other) grep -vE '^TestUpdate' all.txt > sel.txt || true; mv sel.txt all.txt ;;
+            nonlive) grep -vE '^TestLiveCheckScripts$' all.txt > sel.txt || true; mv sel.txt all.txt ;;
           esac
           total=$(wc -l < all.txt)
           while read -r name; do
