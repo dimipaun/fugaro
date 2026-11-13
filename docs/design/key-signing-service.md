@@ -234,8 +234,9 @@ that builds the binary, which is a decision the owner has not taken.
 above all stand, but the sentence that governs where the resources are applied no longer does. D2194
 puts the key-signing service in `fugaro-prod`, the project the website already deploys to, rather than
 in a project of the service's own: `ee/keyservice/terraform/` stays where it is, its roots set the
-project per apply (they carry no default), and the portal's P1.5 is the task that applies them there —
-with the minter's ingress internal, the API's account its only invoker, and the ring still the only
+project per apply (they carry no default), and the portal's P1.5 writes those roots while its P0.4 —
+owner-run, the way this document's own §11 is — is the step that applies them there, with the minter's
+ingress internal, the API's account its only invoker, and the ring still the only
 thing that signs. The owner re-asked after round 1, once Firebase Hosting's project-wide IAM showed
 that the website's deployer reaches signing, and kept one project
 ([portal/reconciliation.md](../portal/reconciliation.md) F18).
@@ -624,7 +625,8 @@ project the owner operates" — and that is why S2.10 mints by hand from S3.8 un
    comes from this step. **Amended 2026-11-13:** there is no project to create — `fugaro-prod` exists
    and hosts the website — so the step is the two applies and the two keys: the key-ring part of
    `ee/keyservice/terraform` applied to `fugaro-prod` with the production key id, and to
-   `fugaro-staging` with the staging one, one key id per ring (D2194, D459; the portal's P1.5). Hand
+   `fugaro-staging` with the staging one, one key id per ring (D2194, D459; the portal's P1.5 writes
+   the roots, and its P0.4 — owner-run, like this step — applies them). Hand
    minting starts here all the same, which is what the step is for.
 2. **Mint by hand while the service does not exist (S2.10).** The owner mints one key at a time
    through the KMS signing API with their own credentials — never a local private key file — against
@@ -696,7 +698,7 @@ Restated with its source, so that nothing below is read as open that is not.
 | D456 | Where does the audit log go, and who reads it? | (a) the project's own log sink, read by the owner, with the mint line repeated in the issuance record (§7.3); (b) the record only; (c) the record and an off-project sink | (a) | (a) one place to look and no new dependency, and the log's retention is the project's; (b) a log that a redeploy or a store bug can take with it, in the surface Check 173's audit is about; (c) an off-project copy is D457's personal data in a second place before D457 is answered | open |
 | D457 | What does the issuance record hold, and for how long? | (a) the fields §7.3 lists, with the applicant's address and domain dropped once the key has expired, and the mints themselves kept; (b) everything kept indefinitely; (c) the minimum: the key id and the tier only | (a) | (a) the record answers §4.3's lookup and §4.2's question while it is needed and stops being a store of personal data after; (b) a perpetual store of scraped addresses, which no notice in this tree yet covers; (c) a paid-domain lookup that cannot answer, so §4.3 stops working | open |
 | D458 | What uptime target, and what does a form submission get while the intake is down? | (a) no external target for the Free Plans (the Terms carry none, §10.5), the 60-day absorption stated, and an honest failure page; (b) a stated target for paying customers only; (c) a target for everyone | (a), or (b) with (a) | (a) matches the Terms as counsel wrote them and promises nothing Check 175 does not already measure; (b) a commitment that the merchant's and the Terms' own documents then have to carry; (c) a promise about a service whose interruption is already absorbed for 60 days | open |
-| D459 | Where does the staging pair live? | (a) the same project and key ring, with the staging key id and a staging intake that is not publicly invokable; (b) a second project; (c) no staging service, a staging key minted by hand only | (a) | (a) one project to operate and the two ids Check 179 needs, with the staging intake's exposure as the thing to watch; (b) a second project's IAM, quotas and cost for a test-only path; (c) Check 179's "a purchase in the merchant's test mode" needs an event path, which (c) does not have | **D2194, 2026-11-12** (recorded here 2026-11-13): the **second project of (b)**, one per environment, and one key id per ring rather than (a)'s one ring for both — production's ring in `fugaro-prod` holds only the production key and staging's in `fugaro-staging` only the staging key, applied by the portal's P1.5 (§9.1 row 5) |
+| D459 | Where does the staging pair live? | (a) the same project and key ring, with the staging key id and a staging intake that is not publicly invokable; (b) a second project; (c) no staging service, a staging key minted by hand only | (a) | (a) one project to operate and the two ids Check 179 needs, with the staging intake's exposure as the thing to watch; (b) a second project's IAM, quotas and cost for a test-only path; (c) Check 179's "a purchase in the merchant's test mode" needs an event path, which (c) does not have | **D2194, 2026-11-12** (recorded here 2026-11-13): the **second project of (b)**, one per environment, and one key id per ring rather than (a)'s one ring for both — production's ring in `fugaro-prod` holds only the production key and staging's in `fugaro-staging` only the staging key, applied by the portal's P0.4, which is owner-run (§9.1 row 5) |
 
 ## 13. Out of scope
 
