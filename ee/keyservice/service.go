@@ -53,6 +53,10 @@ const (
 	// what they carry is a key's secret rather than an applicant's address.
 	RouteRenew  = "/renew"
 	RouteStatus = "/status"
+	// §11's two sign-in flows are the CLI's and not the site's either: the
+	// person reaches them through the licence site's page (K5.1) and what they
+	// hand back is a key, and the routes themselves are named in signin.go
+	// beside the rules that answer them.
 )
 
 // The bounds on what a stranger may hand the service. Each is a body a form or a
@@ -169,7 +173,14 @@ type Deps struct {
 	// the process's own log, which is the project's log sink as far as this
 	// package can express one (§6).
 	Auditor Auditor
-	Now     func() time.Time
+	// SignIn may be nil: it is §11's verifier of the licence project's own ID
+	// tokens (D2144, TN3), and a deployment wired without one refuses every
+	// caller of the two sign-in flows rather than handing a key to a token
+	// nothing checked. A deployment that serves them passes the coordinator's
+	// verifier, whose rules are the licence project's too — the seam is here so
+	// that the routes are driven in a test without the project's public keys.
+	SignIn SignIn
+	Now    func() time.Time
 }
 
 // Service is the intake.
@@ -189,6 +200,13 @@ type Service struct {
 	auditor    Auditor
 	now        func() time.Time
 	limiter    *throttle
+	// signIn is §11's verifier of the licence project's own ID tokens, and codes
+	// is what the two sign-in flows are holding: an authorize code between its
+	// sign-in and its exchange, and a device code between the CLI's start and
+	// its poll. Both are this process's and both belong to signin.go, which
+	// states what that costs a deployment of more than one instance.
+	signIn SignIn
+	codes  *signInCodes
 	// renewMu is one renewal at a time in this process. A renewal reads the key's
 	// state, mints and then writes what records the rotation, and two of them in
 	// flight together would both read "no successor yet" and both mint — of which
@@ -335,6 +353,8 @@ func New(cfg Config, deps Deps) (*Service, error) {
 		auditor:    deps.Auditor,
 		now:        now,
 		limiter:    limiter,
+		signIn:     deps.SignIn,
+		codes:      newSignInCodes(),
 	}, nil
 }
 
@@ -361,6 +381,16 @@ func (s *Service) Handler() http.Handler {
 	// (adminSurface).
 	mux.HandleFunc(RouteAdmin, s.adminSurface)
 	mux.HandleFunc(RouteAdmin+"/", s.adminSurface)
+	// §11.3's and §11.4's two flows (signin.go). The two browser steps carry
+	// their method in the pattern, so the mux answers a method nothing serves
+	// with its own refusal rather than with a handler's.
+	mux.HandleFunc("GET "+RouteAuthorize, s.authorize)
+	mux.HandleFunc("POST "+RouteAuthorize, s.authorize)
+	mux.HandleFunc("POST "+RouteToken, s.token)
+	mux.HandleFunc("POST "+RouteDeviceStart, s.deviceStart)
+	mux.HandleFunc("POST "+RouteDevicePoll, s.devicePoll)
+	mux.HandleFunc("GET "+RouteDeviceApprove, s.deviceApprove)
+	mux.HandleFunc("POST "+RouteDeviceApprove, s.deviceApprove)
 	return mux
 }
 
