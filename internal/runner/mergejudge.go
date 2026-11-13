@@ -255,10 +255,18 @@ func readJudgeVerdict(res agent.Result, in MergeJudgeInput, model string, redact
 			Unreadable: true,
 		}), err
 	}
-	v.Reason, v.Blocker = redact(v.Reason), redact(v.Blocker)
-	v.FollowUps = judgeFollowUpsOfBrief(v.FollowUps, in.Findings)
-	v.Model = model
-	return runstore.NewMergeJudge(v), nil
+	// One literal rather than a field written after the read: the runner's own
+	// rule that no statement outside recordend.go writes a record's Reason
+	// (TestDocsFailureClassCensusMatchesTheRunner, docs/design/failure-classes
+	// §1) reads the parsed tree and cannot tell a verdict's Reason from a
+	// record's — so the redacted text is built here and never assigned.
+	return runstore.NewMergeJudge(runstore.MergeJudge{
+		Verdict:   v.Verdict,
+		Reason:    redact(v.Reason),
+		Blocker:   redact(v.Blocker),
+		FollowUps: judgeFollowUpsOfBrief(v.FollowUps, in.Findings),
+		Model:     model,
+	}), nil
 }
 
 // judgeFollowUpsOfBrief is the caller's half of the reader, the split
