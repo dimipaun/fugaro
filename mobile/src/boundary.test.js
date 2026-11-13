@@ -38,6 +38,13 @@
 //      no logger: a `Secret` prints as `[secret idToken]` (see
 //      `secret.test.js`), but a value revealed into a template literal and
 //      handed to `console.log` prints itself.
+//   5. `createVoiceSession(` -- the voice session's constructor. It is declared
+//      in `src/voice-session/session.js` and called in `mobile/index.js`, the
+//      app's one construction site (VS1.3, and `src/voice-session/port.js` on
+//      why), and nowhere else. A second call site is a second session over one
+//      microphone; the demo's absence from the list is the assertion F10 and
+//      D212 ask this task for -- it is text-only by construction, and it has no
+//      session to enter a voice screen with.
 //
 // **The self-exemption and the positive controls.** This file contains all
 // four tokens, so it exempts itself by name -- once, visibly -- and every rule
@@ -100,6 +107,12 @@ const RULES = [
     pattern: /\bconsole\s*\./,
     allow: [],
     why: 'D111: the two items are never logged, so there is no logger',
+  },
+  {
+    name: 'the voice session has one declaration and one construction site',
+    pattern: /\bcreateVoiceSession\s*\(/,
+    allow: ['index.js', 'src/voice-session/session.js'],
+    why: 'VS1.3: the controller is declared in `session.js` and built in `index.js`, and a second construction site would be a second session over one microphone',
   },
 ];
 
@@ -174,12 +187,14 @@ function control(rule) {
       return 's.reveal()';
     case RULES[2].name:
       return "const KEY = 'fugaro.account.'";
+    case RULES[4].name:
+      return 'const session = createVoiceSession({ machine, screen, pipeline, native });';
     default:
       return "console.log('x')";
   }
 }
 
-// **Rule 5: the app imports nothing from the CLI or the console.** D125 makes
+// **Rule 6: the app imports nothing from the CLI or the console.** D125 makes
 // the app its own artifact, and D119 gives it exactly one sibling it may reach:
 // the top-level pure-logic package `shared/`. An import that resolves anywhere
 // else outside `mobile/` -- `console/`, `internal/`, `cmd/`, `website/` -- is
@@ -249,7 +264,7 @@ test('the app imports nothing outside mobile/ but the shared package (D119, D125
   assert.deepEqual(offenders, [], 'an import leaves the app for a sibling other than shared/');
 });
 
-// **Rule 6: the manifest declares no provider auth SDK.** D221 and D234 keep
+// **Rule 7: the manifest declares no provider auth SDK.** D221 and D234 keep
 // the provider half out of v1: a device holds no provider session, the account
 // model stays D114's, and no per-project Firebase app instance exists. The
 // dependency that would give the app one is the one thing that could hold it
