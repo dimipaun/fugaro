@@ -579,7 +579,7 @@ profiles:
 		lc := parseLC(t, m4LocalConfig+projectJobRepoLC+m5Additions+c.lc)
 		// The accounts block the deployer judges the profiles against is
 		// derived from the same config, exactly as ProjectJobs derives it.
-		accounts, err := projectpolicy.DeriveAccounts(profilesAsPolicy(lc.Profiles), lc.ClaudeAccounts, lc.ProjectSecrets)
+		accounts, err := projectpolicy.DeriveAccounts(profilesAsPolicy(lc.Profiles), lc.ClaudeAccounts, lc.ProjectSecrets, nil)
 		if err != nil {
 			t.Fatalf("%s: DeriveAccounts: %v", c.name, err)
 		}
@@ -1235,7 +1235,7 @@ profiles:
 			// The service's half, over the same installation: the policy node
 			// publish derives from this local config, judged by the one function
 			// that turns the axis into admitted accounts.
-			accounts, err := projectpolicy.DeriveAccounts(profilesAsPolicy(lc.Profiles), lc.ClaudeAccounts, lc.ProjectSecrets)
+			accounts, err := projectpolicy.DeriveAccounts(profilesAsPolicy(lc.Profiles), lc.ClaudeAccounts, lc.ProjectSecrets, nil)
 			if err != nil {
 				t.Fatalf("DeriveAccounts over the test's own config: %v", err)
 			}

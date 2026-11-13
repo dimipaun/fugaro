@@ -412,7 +412,7 @@ func TestDeriveAccounts(t *testing.T) {
 	secrets := map[string]config.ProjectSecret{
 		"claude-oauth-token": {AllowDataTo: []string{"acme/sandbox"}},
 	}
-	got, err := DeriveAccounts(profiles, accounts, secrets)
+	got, err := DeriveAccounts(profiles, accounts, secrets, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -440,7 +440,7 @@ func TestDeriveAccounts(t *testing.T) {
 	// assertion is the "no entry" sentence and not just the path: an account
 	// that resolves to the zero value is refused by the empty-list rule below
 	// too, and a test that accepted either would not be pinning this one.
-	_, err = DeriveAccounts(map[string]Profile{"standard": {JobProfile: config.JobProfile{Provider: "github", ClaudeAccounts: []string{"ghost"}}}}, accounts, secrets)
+	_, err = DeriveAccounts(map[string]Profile{"standard": {JobProfile: config.JobProfile{Provider: "github", ClaudeAccounts: []string{"ghost"}}}}, accounts, secrets, nil)
 	if err == nil || !strings.Contains(err.Error(), "defines no claude_accounts entry for") {
 		t.Fatalf("an undefined account: %v", err)
 	}
@@ -450,7 +450,7 @@ func TestDeriveAccounts(t *testing.T) {
 	// The default account without a project_secrets entry: refused, naming the
 	// entry the operator adds — and again the sentence, not the block's name
 	// alone, which the empty-list refusal also carries.
-	_, err = DeriveAccounts(map[string]Profile{"standard": {JobProfile: config.JobProfile{Provider: "github", ClaudeAccounts: []string{"default"}}}}, nil, nil)
+	_, err = DeriveAccounts(map[string]Profile{"standard": {JobProfile: config.JobProfile{Provider: "github", ClaudeAccounts: []string{"default"}}}}, nil, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "is not stored project-wide") {
 		t.Fatalf("the default account with no project_secrets entry: %v", err)
 	}
@@ -458,7 +458,7 @@ func TestDeriveAccounts(t *testing.T) {
 	// its policy list would be empty — which no profile may serve (and which
 	// no project-wide container exists for, D6).
 	_, err = DeriveAccounts(map[string]Profile{"standard": {JobProfile: config.JobProfile{Provider: "github", ClaudeAccounts: []string{"ops"}}}},
-		map[string]config.ClaudeAccount{"ops": {}}, nil)
+		map[string]config.ClaudeAccount{"ops": {}}, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "may be used by no repository") {
 		t.Fatalf("an account with no allow_data_to: %v", err)
 	}
@@ -469,7 +469,7 @@ func TestDeriveAccounts(t *testing.T) {
 	// repository is not one. The sentence is validProfiles' own
 	// (profiles.go's provider required rule, providerRequired).
 	_, err = DeriveAccounts(map[string]Profile{"standard": {JobProfile: config.JobProfile{ClaudeAccounts: []string{"ops"}}}},
-		map[string]config.ClaudeAccount{"ops": {AllowDataTo: []string{"acme/app"}}}, secrets)
+		map[string]config.ClaudeAccount{"ops": {AllowDataTo: []string{"acme/app"}}}, secrets, nil)
 	if err == nil || !strings.Contains(err.Error(), "profiles.standard.provider: a profile must name the provider it serves") {
 		t.Fatalf("an account-naming profile with no provider: %v", err)
 	}
@@ -477,7 +477,7 @@ func TestDeriveAccounts(t *testing.T) {
 		t.Errorf("the refusal reports the account's repository rather than the missing provider: %v", err)
 	}
 	// No profile names an account: the block is absent, not empty.
-	got, err = DeriveAccounts(map[string]Profile{"standard": {JobProfile: config.JobProfile{Provider: "github"}}}, accounts, secrets)
+	got, err = DeriveAccounts(map[string]Profile{"standard": {JobProfile: config.JobProfile{Provider: "github"}}}, accounts, secrets, nil)
 	if err != nil || got != nil {
 		t.Fatalf("a project serving no account derived %v, %v", got, err)
 	}
@@ -497,7 +497,7 @@ func TestDeriveAccountsRefusesAWildcardEntry(t *testing.T) {
 	}
 	_, err := DeriveAccounts(profiles, nil, map[string]config.ProjectSecret{
 		"claude-oauth-token": {AllowDataTo: []string{"myworkspace/*"}},
-	})
+	}, nil)
 	if err == nil || !strings.Contains(err.Error(), "which is exact") {
 		t.Fatalf("a wildcard project_secrets entry reached the policy's account list: %v", err)
 	}
@@ -512,7 +512,7 @@ func TestDeriveAccountsRefusesAWildcardEntry(t *testing.T) {
 	// An exact list for the same account is unaffected.
 	got, err := DeriveAccounts(profiles, nil, map[string]config.ProjectSecret{
 		"claude-oauth-token": {AllowDataTo: []string{"myworkspace/api"}},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("an exact entry was refused: %v", err)
 	}
@@ -647,7 +647,7 @@ func TestDeriveAccountsPublishesTheProjectsAnthropicKey(t *testing.T) {
 			}},
 		}
 	}
-	got, err := DeriveAccounts(profiles(sentinel), nil, nil)
+	got, err := DeriveAccounts(profiles(sentinel), nil, nil, nil)
 	if err != nil {
 		t.Fatalf("a profile naming the project's own key derived no block: %v", err)
 	}
@@ -684,7 +684,7 @@ func TestDeriveAccountsPublishesTheProjectsAnthropicKey(t *testing.T) {
 		"a segment wildcard": {config.ProjectSecret{AllowDataTo: []string{"acme/*"}}, []string{"github/acme/app", "github/acme/tools"}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			got, err := DeriveAccounts(profiles(sentinel), nil, map[string]config.ProjectSecret{config.AnthropicSecret: tc.entry})
+			got, err := DeriveAccounts(profiles(sentinel), nil, map[string]config.ProjectSecret{config.AnthropicSecret: tc.entry}, nil)
 			if err != nil {
 				t.Fatalf("an installation holding the key for %v: %v", tc.entry.AllowDataTo, err)
 			}
@@ -697,7 +697,7 @@ func TestDeriveAccountsPublishesTheProjectsAnthropicKey(t *testing.T) {
 	// The key's entry reaching none of the profile's repositories: refused, and
 	// the refusal names both lists' blocks — the profile's own allow_repos and
 	// the key's entry — because the two fixes it offers are on those two.
-	_, err = DeriveAccounts(profiles(sentinel), nil, map[string]config.ProjectSecret{config.AnthropicSecret: {AllowDataTo: []string{"acme/other"}}})
+	_, err = DeriveAccounts(profiles(sentinel), nil, map[string]config.ProjectSecret{config.AnthropicSecret: {AllowDataTo: []string{"acme/other"}}}, nil)
 	if err == nil || !strings.Contains(err.Error(), "may serve no repository") {
 		t.Fatalf("the key reaching none of the profile's repositories: %v", err)
 	}
@@ -710,7 +710,7 @@ func TestDeriveAccountsPublishesTheProjectsAnthropicKey(t *testing.T) {
 	// refused the same way: the list is built from that field, so there is
 	// nothing to publish (and D3's own refusal is about a profile that lists
 	// accounts without a list at all).
-	_, err = DeriveAccounts(map[string]Profile{"standard": {JobProfile: config.JobProfile{Provider: "github", ClaudeAccounts: []string{sentinel}}}}, nil, nil)
+	_, err = DeriveAccounts(map[string]Profile{"standard": {JobProfile: config.JobProfile{Provider: "github", ClaudeAccounts: []string{sentinel}}}}, nil, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "may serve no repository") {
 		t.Fatalf("a profile naming the key with no allow_repos of its own: %v", err)
 	}
@@ -720,7 +720,7 @@ func TestDeriveAccountsPublishesTheProjectsAnthropicKey(t *testing.T) {
 	// rules would call a pattern.
 	_, err = DeriveAccounts(map[string]Profile{"standard": {JobProfile: config.JobProfile{
 		Provider: "github", AllowRepos: []string{"github/acme/*"}, ClaudeAccounts: []string{sentinel},
-	}}}, nil, nil)
+	}}}, nil, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "a pattern, and the project's own key's list is published as accounts."+sentinel+".allow_repos, which is exact") {
 		t.Fatalf("a wildcard profile list under the sentinel: %v", err)
 	}
@@ -732,7 +732,7 @@ func TestDeriveAccountsPublishesTheProjectsAnthropicKey(t *testing.T) {
 	// as a value a run's own reader would then have to refuse.
 	_, err = DeriveAccounts(map[string]Profile{"standard": {JobProfile: config.JobProfile{
 		Provider: "github", AllowRepos: []string{"acme/app"}, ClaudeAccounts: []string{sentinel},
-	}}}, nil, nil)
+	}}}, nil, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "which is not a repository as this block spells one") {
 		t.Fatalf("a profile list with no provider segment: %v", err)
 	}
@@ -768,7 +768,7 @@ func TestDeriveAccountsPublishesTheProjectsProviderKey(t *testing.T) {
 		}
 	}
 	want := []string{"github/acme/app", "github/acme/tools"}
-	got, err := DeriveAccounts(profiles([]string{"github/acme/app", "github/acme/tools"}), nil, nil)
+	got, err := DeriveAccounts(profiles([]string{"github/acme/app", "github/acme/tools"}), nil, nil, nil)
 	if err != nil {
 		t.Fatalf("a profile naming the provider key derived no block: %v", err)
 	}
@@ -803,7 +803,7 @@ func TestDeriveAccountsPublishesTheProjectsProviderKey(t *testing.T) {
 		"an entry under the provider key's own name":            {config.ProviderKeySecret: {AllowDataTo: []string{"acme/other"}}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			got, err := DeriveAccounts(profiles([]string{"github/acme/app", "github/acme/tools"}), nil, secrets)
+			got, err := DeriveAccounts(profiles([]string{"github/acme/app", "github/acme/tools"}), nil, secrets, nil)
 			if err != nil {
 				t.Fatalf("an installation holding %v: %v", secrets, err)
 			}
@@ -817,7 +817,7 @@ func TestDeriveAccountsPublishesTheProjectsProviderKey(t *testing.T) {
 	// the value with no allow_repos of its own has nothing to publish, and the
 	// sentence says why in this value's own words: no project_secrets entry
 	// narrows it, so there is no second block to go and edit.
-	_, err = DeriveAccounts(profiles(nil), nil, nil)
+	_, err = DeriveAccounts(profiles(nil), nil, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "the project's provider key may serve no repository") {
 		t.Fatalf("a profile naming the provider key with no allow_repos of its own: %v", err)
 	}
@@ -832,7 +832,7 @@ func TestDeriveAccountsPublishesTheProjectsProviderKey(t *testing.T) {
 	// A wildcard on the profile's own list is refused at the derive, naming the
 	// published block as exact rather than reporting a value the profile's own
 	// rules would call a pattern.
-	_, err = DeriveAccounts(profiles([]string{"github/acme/*"}), nil, nil)
+	_, err = DeriveAccounts(profiles([]string{"github/acme/*"}), nil, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "a pattern, and the project's provider key's list is published as accounts."+value+".allow_repos, which is exact") {
 		t.Fatalf("a wildcard profile list under the provider key: %v", err)
 	}
