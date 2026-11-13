@@ -78,6 +78,12 @@ const (
 	// provider mints is a header-sized value, and the address here is text a
 	// stranger's token chose.
 	maxEmailBytes = 512
+	// maxProviderBytes bounds `firebase.sign_in_provider`. The values are a
+	// provider id — `google.com`, `microsoft.com`, `password` — and a claim this
+	// code cannot read as one is answered as absent rather than carried.
+	maxProviderBytes = 64
+	// maxTenantBytes bounds `firebase.tenant`, the Identity Platform tenant id.
+	maxTenantBytes = 128
 )
 
 // ErrUnverifiedIDToken is a Firebase ID token this front door does not admit.
@@ -102,6 +108,25 @@ type Identity struct {
 	// against one spelling of an address rather than against the several a
 	// Unicode fold would let a claim choose.
 	Email string
+	// Provider is the `firebase.sign_in_provider` the sign-in used — the claim
+	// SECURITY.md's seventh finding pins a set of, and the one a caller refuses
+	// `custom`, `anonymous`, `password` and `emailLink` on. It is empty when the
+	// token carries none or carries one this code cannot read, which every
+	// caller that cares reads as a provider it does not admit.
+	Provider string
+	// AuthTime is the `auth_time` claim: when the person's own sign-in happened,
+	// which is what a step-up asks about (`fresh sign-in` is an age, D2187) and
+	// is NOT the token's iat — an hour-old token can attest a sign-in from this
+	// minute, and a token minted now can attest one from this morning. It is the
+	// zero time when the token carries no readable one.
+	AuthTime time.Time
+	// TenantID is `firebase.tenant`: the Identity Platform tenant the sign-in
+	// came from, and empty for a project that runs none. It is the ONLY
+	// tenant-shaped value a Firebase ID token carries — Firebase forwards no
+	// Microsoft (Entra ID) directory id, so a Microsoft sign-in carries no
+	// directory to pin and a caller whose rule needs one refuses it (D2207,
+	// pinned by ee/keyservice's TestResellerMicrosoftNeedsAPinnedTenant).
+	TenantID string
 }
 
 // Verifier verifies the Firebase ID tokens this installation's project signs.
@@ -143,13 +168,18 @@ func NewVerifier(projectID string, keys KeySource, opts ...VerifierOption) (*Ver
 // or ErrUnverifiedIDToken, or ErrUnavailable when the key set could not be read
 // at all (the key source's own sentinel).
 //
-// It is called from the approve step's POST /oauth/authorize and from nowhere
-// else (D923, amended by M-a on 2026-11-04: the token travels in that POST's
-// body and never in a URL, so the GET renders the page and verifies nothing).
-// The ID token is the proof of the sign-in step, and the single consumer is
-// what makes it safe to run in a service that answers strangers: a token that
-// is never a grant cannot be replayed at the token endpoint, and a token that
-// is never a bearer cannot reach a tool. Any later path that accepts one — a second
+// It is called from the approve step's POST /oauth/authorize and from
+// ee/keyservice's portal verifier (P1.3 of docs/portal/implementation-plan.md),
+// and from nowhere else (D923, amended by M-a on 2026-11-04: the token travels
+// in that POST's body and never in a URL, so the GET renders the page and
+// verifies nothing). The second caller is the portal API, and it reaches this
+// function rather than a copy of its rules: it needs the same verification —
+// the project as the audience and the issuer, `email_verified`, the window —
+// and the three fields below are what the portal adds rules over. The ID token
+// is the proof of the sign-in step, and a consumer set this small is what makes
+// it safe to run in a service that answers strangers: a token that is never a
+// grant cannot be replayed at the token endpoint, and a token that is never a
+// bearer cannot reach a tool. Any later path that accepts one — a second
 // argument, a "just this once" branch — is a finding rather than a convenience,
 // and the token endpoint's own grant vocabulary (ParseGrantType) has no member
 // for it.
@@ -227,7 +257,39 @@ func (v *Verifier) VerifyIDToken(ctx context.Context, raw string) (Identity, err
 	if !ok {
 		return Identity{}, fmt.Errorf("%w: the identity's email claim is not an address this front door can read", ErrUnverifiedIDToken)
 	}
-	return Identity{UID: sub, Email: email}, nil
+	// The three fields a caller adds its own rules over are READ and never
+	// required, which is the line between them and everything above: an absent
+	// or unreadable provider, sign-in time or tenant is not a token this front
+	// door refuses — the launcher and operator lists (D933) never look at one —
+	// and it is answered as absent so that a caller whose rule needs it refuses
+	// it rather than reading an empty value as a match.
+	var authTime time.Time
+	if at, ok := claimInt(claims, "auth_time"); ok {
+		authTime = time.Unix(at, 0)
+	}
+	return Identity{
+		UID:      sub,
+		Email:    email,
+		Provider: firebaseClaim(claims, "sign_in_provider", maxProviderBytes),
+		AuthTime: authTime,
+		TenantID: firebaseClaim(claims, "tenant", maxTenantBytes),
+	}, nil
+}
+
+// firebaseClaim reads one string out of the token's `firebase` claim object.
+//
+// A value this code cannot read as a short token of printable ASCII is answered
+// as empty rather than carried: the claim is text the issuer's configuration
+// chose, it ends up in a caller's comparison and, on a refusal path, in a log
+// line, and the empty answer is the one every caller treats as "not something I
+// admit".
+func firebaseClaim(claims map[string]any, key string, max int) string {
+	fb, _ := claims["firebase"].(map[string]any)
+	value, _ := fb[key].(string)
+	if !printableASCII(value, max) {
+		return ""
+	}
+	return value
 }
 
 // ErrUnsupportedGrant is a POST /oauth/token request whose grant_type is not
