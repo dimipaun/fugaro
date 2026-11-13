@@ -574,7 +574,7 @@ func renewThroughTheEndpoint(t *testing.T, f *fixture, keyID, secret string) (Re
 // record named none could never renew again.
 func TestAPurchasedKeyRenewsAndItsSuccessorInheritsItsWorkspaceAndSubscription(t *testing.T) {
 	f, _ := renewing(t)
-	bought := f.purchase("evt-k26", "acme.example", 5, 365)
+	bought := f.purchase("evt-renew-1", "acme.example", 5, 365)
 	if got := f.mintedKeys(); len(got) != 1 {
 		t.Fatalf("the purchase minted %d key(s), want one", len(got))
 	}
@@ -628,16 +628,16 @@ func TestAPurchasedKeyRenewsAndItsSuccessorInheritsItsWorkspaceAndSubscription(t
 
 // TestACancelledSubscriptionsKeyIsRefused: a key whose subscription the merchant
 // has cancelled is handed no successor, because the term after this one is one
-// nobody is paying for. The key itself is left alone
-// and its holder is told its own state (§5.3: a cancellation stops the reissue,
-// the key the customer holds runs to its end), and no signer is reached.
+// nobody is paying for. The key itself is left alone and its holder is told its
+// own state (§5.3: a cancellation stops the reissue, the key the customer holds
+// runs to its end), and no signer is reached.
 func TestACancelledSubscriptionsKeyIsRefused(t *testing.T) {
 	f, spy := renewing(t)
-	bought := f.purchase("evt-k26-cancel", "acme.example", 5, 365)
+	bought := f.purchase("evt-cancel-1", "acme.example", 5, 365)
 	secret := mailedSecret(t, f, f.mintedKeys()[0])
 	f.inTheRenewalWindow(t, bought.KeyID)
 	f.deliver(Event{
-		ID: "evt-k26-cancel-2", Type: EventCancellation, Mode: ModeFor(f.env), OccurredAt: f.now,
+		ID: "evt-cancel-2", Type: EventCancellation, Mode: ModeFor(f.env), OccurredAt: f.now,
 		Subscription: bought.Subscription, Organisation: "acme.example",
 	})
 	sub, held, err := f.store.Subscription(context.Background(), bought.Subscription)
@@ -671,7 +671,7 @@ func TestACancelledSubscriptionsKeyIsRefused(t *testing.T) {
 // customer's subscription lapsed and the key they still hold walks on.
 func TestAnExpiredSubscriptionsKeyIsRefused(t *testing.T) {
 	f, spy := renewing(t)
-	bought := f.purchase("evt-k26-expired", "acme.example", 5, 365)
+	bought := f.purchase("evt-lapsed-1", "acme.example", 5, 365)
 	secret := mailedSecret(t, f, f.mintedKeys()[0])
 	// Past the end of the term the purchase paid for, which is past the end of
 	// the subscription it was sold under.
