@@ -3533,7 +3533,10 @@ aside there (F23). A store that cannot be reached is then the refusal
 rather than a line, there being nothing here to set aside instead.
 
 An issue that has already been filed is refused: it is open on GitHub,
-and setting it aside here would not close it.
+and setting it aside here would not close it. So is one a release has
+fixed: the fix is in that release and the record says which, and a bug
+that came back is a new upload rather than a dismissal of the fix that
+did not hold.
 
 A coding agent's session may not dismiss an issue: a steered diagnosis
 could otherwise bury a real bug, so a person sets one aside (D1730).
@@ -3561,10 +3564,13 @@ the whole team's: the ones this machine saved and has not uploaded yet,
 named by their local ID, and every issue of the project's store, named
 by its number. A row names the issue the way `show`, `dismiss` and
 `submit` take it, with the class the diagnosis gave it, where it stands,
-and its one-line summary. Where the project's copy and this machine's
-file disagree, the project's is printed: the store is the truth once an
-issue is uploaded (F13), and a number is what `show` and `dismiss` read
-from the store when this machine has no file of the issue.
+and its one-line summary. An issue a release fixed, and one that closed
+without a fix, carry one more column: the release that fixed it with the
+GitHub issue it was filed as, or the reason it closed (F27, D1752).
+Where the project's copy and this machine's file disagree, the project's
+is printed: the store is the truth once an issue is uploaded (F13), and a
+number is what `show` and `dismiss` read from the store when this machine
+has no file of the issue.
 
 A record this machine's folder holds for another project is not a row:
 the folder is one for the whole machine, and another project's issue is
@@ -3700,7 +3706,7 @@ issue that is still waiting.
 REF is the issue's number — `7`, or the `#0007` a listing prints — or
 its local ID `local-<run stem>`, the same argument `show` takes. With
 no reference every `pending` issue is visited, and the ones already
-filed or set aside are skipped.
+filed, set aside or fixed by a release are skipped.
 
 The post is built once and printed as it is: the title, the body, and
 the sha256 of the exact bytes. A run without --ask files nothing and
