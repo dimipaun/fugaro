@@ -446,6 +446,23 @@
           "internal/buildtoken/buildtoken.go"
         ]
       }
+    },
+    {
+      "id": "B5",
+      "title": "the build identity",
+      "run": null,
+      "version": null,
+      "size": 2.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "deploy/terraform/gcp/modules/project/build_identity.tf",
+          "internal/infra/build_identity.go",
+          "internal/infra/build_identity_test.go",
+          "internal/credsvc/auth.go",
+          "internal/credsvc/auth_test.go"
+        ]
+      }
     }
   ],
   "edges": [
@@ -613,6 +630,16 @@
       "task": "B4",
       "needs": "S8",
       "reason": "behaviour: the same file, docs/gcp-live-checklist.md, one writer per level"
+    },
+    {
+      "task": "B5",
+      "needs": "B1",
+      "reason": "behaviour: the build class it is rendered into"
+    },
+    {
+      "task": "M1",
+      "needs": "B5",
+      "reason": "behaviour: the per-repository build account goes only after the project's exists"
     }
   ],
   "decoupling": [
