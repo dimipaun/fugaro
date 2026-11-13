@@ -477,6 +477,13 @@ func (s *Service) purchased(ctx context.Context, e Event) error {
 // key's end would open an annual renewal's window at the purchase itself and
 // move the term on by a month a year.
 //
+// The term is whole days and the end a caller may have named is an instant, so
+// it is read as a lower bound and not as the end itself: the minter rounds the
+// days up (store.go's field comment), which puts this answer at the entitlement's
+// own end or up to a day past it and never before it. The direction is the
+// package's own — days rounded up are days the customer keeps — and the exact
+// instant is what the record's own `Expires` states for the key it minted.
+//
 // A record with no term at all is the fallback and only that: nothing in this
 // service mints one (the minter writes the term it resolved, the row's own
 // included), so it is a record the store already holds from a deployment that
@@ -923,8 +930,17 @@ func (s *Service) paid(ctx context.Context, req RequestV1, applicant, source str
 	if answer.RenewalSecret != "" {
 		secretHash = digest(answer.RenewalSecret)
 	}
+	// The workspace goes in with the hash, and it is the request's own: that is
+	// the workspace the key was minted into, and `/renew` reads it back to mint
+	// the successor into — a state that names none is refused there rather than
+	// renewed, because a successor bound to no workspace is one every verifier
+	// refuses (TN2, K2.3). D2202 is what makes that refusal total rather than
+	// partial: a paid key runs thirty days, so a purchase whose state names no
+	// workspace is a licence that lapses a month in with nothing the customer or
+	// this service can do about it.
 	if err := s.store.SaveKeyState(ctx, KeyState{
 		KeyID:             answer.Record.KeyID,
+		WorkspaceID:       req.WorkspaceID,
 		RenewalSecretHash: secretHash,
 	}); err != nil {
 		return MintedV1{}, err

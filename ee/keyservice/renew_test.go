@@ -1185,3 +1185,78 @@ func TestARequestSpendsItsAddressesAllowanceWhateverItsShape(t *testing.T) {
 		t.Errorf("a request past the address's allowance was answered %q, want the one refusal %q", body, renewalRefusal)
 	}
 }
+
+// TestAnAnnualRowsKeyRenewsInItsOwnLastWeek: D2202 gives every connected row's
+// key thirty days, so the window a renewal opens in is the key's own and never
+// the year behind it — which is what the row's seven-day lead measures back
+// from. On an annual row that is the key's twenty-third day rather than the
+// three hundred and fifty-eighth of the term the customer bought: the licence
+// in hand lapses a month in, and the year the subscription holds (S3.5) is not
+// a term this key can run.
+func TestAnAnnualRowsKeyRenewsInItsOwnLastWeek(t *testing.T) {
+	f, spy := renewing(t)
+	keyID, secret, _ := heldKey(t, f, PolicyTeamAnnual)
+	record := f.issuance(t, keyID)
+	if run := record.Expires.Sub(record.Issued); run != connectedTerm {
+		t.Fatalf("the annual row's key runs %s, want D2202's thirty days", run)
+	}
+	call := RenewalCall{KeyID: keyID, WorkspaceID: workspaceID, RenewalSecret: secret}
+
+	f.advance(23*day - time.Hour)
+	if answer := answerOf(t, f.call(RouteRenew, call)); answer.Key != "" {
+		t.Errorf("a renewal asked an hour before the window opened was handed a key, want the key's own state: the window is the key's last week (T26)")
+	}
+	if got := spy.minted(); got != 0 {
+		t.Errorf("the minter was asked for %d key(s) before the window opened, want none", got)
+	}
+
+	f.advance(time.Hour)
+	answer := answerOf(t, f.call(RouteRenew, call))
+	if answer.Key == "" {
+		t.Fatalf("the renewal on the day the window opens answered no key (%+v), want the successor: the customer's year is renewed a month at a time", answer)
+	}
+	claims := v1Verified(t, f, answer.Key)
+	if run := claims.PaidThrough.Sub(claims.IssuedAt); run != connectedTerm {
+		t.Errorf("the successor runs %s, want D2202's thirty days again: what renews is the key, and the entitlement is what the subscription holds", run)
+	}
+}
+
+// TestAPurchasedKeyRenewsThroughTheRenewEndpoint: the paid lane's key state is
+// the only thing the renewal endpoint reads, and a state that names no
+// workspace is refused there rather than renewed — there is no workspace to
+// mint a successor into (TN2, K2.3). D2202 makes that refusal total rather than
+// partial: a paid key runs thirty days, so a purchase that wrote the renewal
+// hash without the workspace hands a paying customer a licence that lapses a
+// month in with nothing either side can do about it, and no other test reaches
+// the state the purchase writes.
+func TestAPurchasedKeyRenewsThroughTheRenewEndpoint(t *testing.T) {
+	f, spy := renewing(t)
+	bought := f.purchase("evt-1", "acme.example", 5, 365)
+	if len(f.mail.sent) != 1 {
+		t.Fatalf("the purchase mailed %d message(s), want the one carrying the key", len(f.mail.sent))
+	}
+	key, secret := mailedBundle(t, f.mail.sent[0].Body)
+	if claims := v1Verified(t, f, key); claims.KeyID != bought.KeyID {
+		t.Fatalf("the mail carries the key %s, want the purchased one %s", claims.KeyID, bought.KeyID)
+	}
+
+	state, held, err := f.store.KeyState(context.Background(), bought.KeyID)
+	if err != nil || !held {
+		t.Fatalf("the purchase wrote no key state for %s (held=%v, err=%v), and without one there is no renewal at all", bought.KeyID, held, err)
+	}
+	if state.WorkspaceID != workspaceID {
+		t.Fatalf("the purchase's key state names the workspace %q, want the one the purchase bound (%q): the renewal endpoint mints the successor into the state's own workspace and refuses a state that names none", state.WorkspaceID, workspaceID)
+	}
+
+	f.advance(24 * day)
+	answer := answerOf(t, f.call(RouteRenew, RenewalCall{KeyID: bought.KeyID, WorkspaceID: workspaceID, RenewalSecret: secret}))
+	if answer.Key == "" {
+		t.Fatalf("the purchased key was answered %+v, want a successor: a paid key that cannot renew is a licence that ends at D2202's thirty days", answer)
+	}
+	if got := spy.minted(); got != 1 {
+		t.Errorf("the minter was asked for %d key(s), want the one successor", got)
+	}
+	if run := v1Verified(t, f, answer.Key).PaidThrough.Sub(f.now); run != connectedTerm {
+		t.Errorf("the successor runs %s, want D2202's thirty days from the day it was asked for", run)
+	}
+}

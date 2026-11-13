@@ -684,6 +684,15 @@ func TestRequestedEndCapsTheTerm(t *testing.T) {
 			if minted.Record.TermDays != tc.wantDays {
 				t.Errorf("the record stands for %d day(s), want %d: it is the term the issuance really has, and an end the caller named is part of it (F30, S3.5)", minted.Record.TermDays, tc.wantDays)
 			}
+			// The record states whole days and the end is an instant, so a
+			// subscription rebuilt from it lands on that end or up to a day
+			// past it — the round is the package's own, and a rebuild short of
+			// the end would hand back less than the entitlement holds (S3.5).
+			if tc.exact {
+				if rebuilt := entitlementEnd(minted.Record); rebuilt.Before(tc.end) || !rebuilt.Before(tc.end.Add(24*time.Hour)) {
+					t.Errorf("a subscription rebuilt from the record ends at %s, want the end the caller named (%s) and inside a day of it: the record's term is whole days rounded up, which is the direction that never takes a day from the customer", rebuilt, tc.end)
+				}
+			}
 		})
 	}
 

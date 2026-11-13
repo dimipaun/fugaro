@@ -439,6 +439,35 @@ func TestTheIntakeMintsAV1KeyThroughTheMinterService(t *testing.T) {
 	})
 }
 
+// TestARequestLeavesTheFieldsItNamesNothingInOffTheWire: the two halves of the
+// split are deployed one after the other, and the minter reads its request
+// strictly — a field it has never heard of is a refusal (the route's own
+// `DisallowUnknownFields`). So a request that carries the zero value of a field
+// a minter from before this release does not know is a 400 on every mint for as
+// long as the deploy takes, which is the one window in which the intake is
+// newer than the minter it asks. What a request names nothing in is left out,
+// and the three are the row's own until a caller names them.
+func TestARequestLeavesTheFieldsItNamesNothingInOffTheWire(t *testing.T) {
+	fields := []string{"requested_end", "check_interval", "renewal_secret_hash"}
+	unnamed := string(mustJSON(t, v1Request(PolicyTeamAnnual)))
+	for _, field := range fields {
+		if strings.Contains(unnamed, field) {
+			t.Errorf("a request that names no %s carries the key anyway (%s), want it left out: a minter from before this release refuses a field it does not know, and the refusal is every mint", field, unnamed)
+		}
+	}
+
+	ask := v1Request(PolicyTeamAnnual)
+	ask.RequestedEnd = time.Date(2026, 12, 10, 12, 0, 0, 0, time.UTC)
+	ask.CheckInterval = "P1D"
+	ask.RenewalSecretHash = digest(freshSecret(t))
+	carried := string(mustJSON(t, ask))
+	for _, field := range fields {
+		if !strings.Contains(carried, field) {
+			t.Errorf("a request that names a %s leaves it off the wire (%s), want it carried: what a caller names is what the minter bounds and applies", field, carried)
+		}
+	}
+}
+
 // mustJSON is a value as JSON, for the tests that read what a key, a claim set
 // or a record does and does not carry.
 func mustJSON(t *testing.T, value any) []byte {

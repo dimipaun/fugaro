@@ -129,6 +129,13 @@ type Mints interface {
 // and every bound is the minter's: an end the row's own length caps, a term in
 // days the tier's ceiling caps, and a check interval inside `P1D`–`P30D` that
 // no row but the air-gapped one may be minted without (F28, F30).
+//
+// A request that names none of the three leaves them out of the JSON rather
+// than carrying their zero values: the two halves are deployed one after the
+// other and the minter reads its request strictly, so the zero value of a field
+// a minter from before this release has never heard of is a 400 on every mint
+// for as long as the deploy takes — the field's own bound is what the minter
+// applies to a value that is there, and an absent one is the row's.
 type RequestV1 struct {
 	Environment  Environment `json:"environment"`
 	Policy       string      `json:"policy"`
@@ -146,18 +153,18 @@ type RequestV1 struct {
 	// (D2182, P3.2), and an entitlement's key ends where the customer's term
 	// ends. It is a cap and never an extension: the key runs to it when it is
 	// inside the row and to the row's own longest otherwise (F30).
-	RequestedEnd time.Time `json:"requested_end"`
+	RequestedEnd time.Time `json:"requested_end,omitzero"`
 	// CheckInterval is the interval the key checks at, or empty for the row's
 	// own. F28 lets an operations mint name one within `P1D`–`P30D`, which is
 	// what turns a temporary grant into a key that stops on time; it is refused
 	// on the air-gapped row, whose key never contacts the server at all.
-	CheckInterval string `json:"check_interval"`
+	CheckInterval string `json:"check_interval,omitempty"`
 	// RenewalSecretHash is the hash the key is to carry in place of a fresh
 	// secret's: a reissue under an entitlement that already has one keeps it, so
 	// that a seat change or a renewal does not invalidate the secret the
 	// installation stored (D2200, amending D2135). Empty is a new secret, which
 	// is an issue and a reveal.
-	RenewalSecretHash string `json:"renewal_secret_hash"`
+	RenewalSecretHash string `json:"renewal_secret_hash,omitempty"`
 	// Note is free text a key carries and shows admins only.
 	Note string `json:"note"`
 }
