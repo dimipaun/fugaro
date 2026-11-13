@@ -29,6 +29,14 @@ Ground rules:
 
 ## 1. Preconditions
 
+Run `fugaro doctor --offline --json` once at the start of a session: where a check comes back with `skipped: false` and `ok: false`, tell the user in one sentence what it is and offer the one command that fixes it, for the user to run in their own terminal window, not through the agent:
+
+```bash user-runs
+fugaro update
+```
+
+A coding agent's session cannot apply cloud changes, by design: never look for a flag or another command that would let this session apply those writes, and never unset the marker that says this session is one; a session that opens with a status report nobody asked for is the failure this sentence exists to avoid, so if everything `--offline` could check is ok, say nothing and carry on. Where `plugin-install` is not ok the user has no Fugaro skills yet: the wizard's own step comes first.
+
 From the repository root (`git rev-parse --show-toplevel`) run `fugaro doctor --json`. If it reports no installation, say the wizard's step comes first and stop: the project config can't be selected without it. The user runs it once per project, in their own terminal window, not through the agent:
 
 ```bash user-runs
@@ -37,13 +45,7 @@ fugaro setup --project <name>
 
 If it names other missing pieces, the user decides whether to fix them; `fugaro.yaml` can be written once the installation exists. Its `fugaro_yaml` field says whether a `fugaro.yaml` exists and is valid, and its `secrets` field lists the stored secrets by name: both tell new setup from fixing (step 8).
 
-**A managed project's deletes.** A managed project records, in one object at its runs bucket's root, the addresses whose deletes and replacements its owner approves. Its writer is the owner's command, run in their own terminal, not through the agent; it refuses an agent's session. That is a speed bump, not a boundary: your session holds the owner's credentials, so never write that object yourself:
-
-```bash user-runs
-# one address, copied whole
-fugaro allow-delete '<address>=type=<type> project=<project> name=<name> id=<id>'
-# add instance=<value> if the type has one
-```
+**A managed project's deletes.** A managed project records, in one object at its runs bucket's root, the addresses whose deletes and replacements its owner approves; the owner's command writes it, in their own terminal, not through the agent, and it refuses an agent's session. That is a speed bump, not a boundary: your session holds the owner's credentials, so never write that object yourself. [reference/managed.md](reference/managed.md) carries the object and the command.
 
 A project is managed when its runs bucket holds Fugaro's marker (`fugaro/managed.json`) **and the project carries the label `fugaro_managed=true`** — two marks, both written in the user's own terminal, not through the agent. **Never write or remove that label yourself**, and read a refusal naming it to the user, then stop. **Managed mode is open as of 0.10.0, fence unmeasured**: the `managedDeployerShipped` gate (`internal/cli/recipes_skew.go`) is true as of 0.10.0, so `--create-project --managed`, flagging one, `fugaro managed apply` and `fugaro restore` are available; earlier releases refused all four (`managed projects are disabled in this release`). Check 68 (`docs/gcp-live-checklist.md`) is owner-run **after** the release and **NOT RUN**: read its refusals as what they are, not as a fence proved. [reference/managed.md](reference/managed.md) has the rest.
 
@@ -55,16 +57,7 @@ Also check `fugaro version` and `fugaro backends ls`, which prints the backends 
 
 ### Does the project publish a project layer?
 
-`fugaro config layer --json` takes `project:` and `gcp_project:` from the `fugaro.yaml` of the checkout it runs in, else from the selected project config (`$FUGARO_PROJECT`/`$FUGARO_CONFIG`), never a flag. Its four keys are `where`, `generation`, `sha256` and `yaml`; `profiles:` and `default_profile:` are keys inside that text, not fields of the object. Run it directly; a checkout with no `fugaro.yaml` fails with a guided sentence naming /fugaro:setup: then ask for the project and its GCP project, write a scratch `fugaro.yaml` with only `version`, `project` and `gcp_project`, and run it.
-
-**If it prints a layer,** read `profiles:` and `default_profile:` from its `yaml` field, tell the user which profiles it offers and which is the default, and ask only whether the repository fits one. If it does:
-1. Delete any scratch `fugaro.yaml` you wrote above (`fugaro config init` refuses to overwrite a file that is not byte-identical to what it would write), then write the minimal file with fugaro config init --yes (add `--profile NAME` or `--base-branch BRANCH` if it needs one).
-2. Run `fugaro config show --json`, and confirm with the user the commands and image it resolved to.
-3. Run `fugaro validate --json`, then check the image the workflow runs (steps 6, 7 and 10).
-
-A real quirk needs the full form, not the minimal file's top-level `profile:`: `fugaro validate` refuses it beside `workflows:`, so move it to `workflows.default.profile:` with the one changed field, and never copy the rest of the profile's values in.
-
-**If no layer applies, or the repository fits no profile,** delete any scratch `fugaro.yaml` and follow the investigative path below.
+`fugaro config layer --json` takes `project:` and `gcp_project:` from the checkout's `fugaro.yaml`, else from the selected project config (`$FUGARO_PROJECT`/`$FUGARO_CONFIG`), never a flag. Read `profiles:` and `default_profile:` from the `yaml` key; where it prints a layer, tell the user which profiles it offers and ask whether the repository fits one, and fugaro config init --yes then writes the minimal file `fugaro config show --json` confirms ([reference/discovery.md](reference/discovery.md) has the steps, the scratch file and what a real quirk needs). Where no layer applies, or the repository fits no profile, follow the investigative path below.
 
 ## 2. Investigate the repository
 

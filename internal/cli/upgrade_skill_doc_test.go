@@ -17,7 +17,7 @@ import (
 // The skill is rewritten against `fugaro update` there, and this test is
 // re-pointed with it.
 func TestUpgradeSkillNamesEveryState(t *testing.T) {
-	data, err := os.ReadFile("../../plugin/skills/upgrade/reference/states.md")
+	data, err := os.ReadFile("../../plugin/skills/update/reference/states.md")
 	if err != nil {
 		t.Fatal(err)
 	}
