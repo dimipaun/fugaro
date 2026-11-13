@@ -1,15 +1,23 @@
 package runner
 
-// This file is the review variant's half of B1.7 (owner direction
-// 2026-11-13): `fugaro review --pr N` works on Bitbucket too, and the
+// This file is the runner's half of the review variant (owner direction
+// 2026-11-13): `fugaro review --pr N` has to work on Bitbucket too, and the
 // review-only job mounts no secret at all, so its git and REST access to
-// Bitbucket goes through the credentials service's proxy, which holds the
-// bundle's bitbucket-token server-side. What stopped it was the runner's own
-// decision: proxiedBitbucket refused every project job (D505), and the review
-// variant is a project job. These tests pin the class rule that replaced that
-// refusal, the bootstrap the per-repository path already had -- the forwarder,
-// the credential URL and the git environment built from them -- and the two
-// things the review job must never carry: a token and a push.
+// Bitbucket has to go through the credentials service's proxy, which holds the
+// bundle's bitbucket-token server-side. One thing in the way was the runner's
+// own decision: proxiedBitbucket refused every project job (D505), and the
+// review variant is a project job. These tests pin the class rule that
+// replaced that refusal, the bootstrap the per-repository path already had --
+// the forwarder, the credential URL and the git environment built from them --
+// and the two things the review job must never carry: a token and a push.
+//
+// The rule is the runner's half alone, and no run reaches it end to end yet:
+// internal/infra's ProjectJobs deploys no job for a Bitbucket profile, so no
+// Bitbucket review variant exists for a launch to resolve, and internal/cli's
+// reviewJobFor refuses a Bitbucket review before any container starts. The
+// fixtures below build the state the deploy half will create -- a run in the
+// job such a variant is named -- which is the state this decision is written
+// for, and the deploy half is what will make it reachable.
 //
 // They ask the seams rather than running a whole run, for gitproxy_test.go's
 // reason: the run's identity is the budget session's token and not an
@@ -58,9 +66,11 @@ func reviewProxyPolicy() *projectpolicy.Policy {
 
 // reviewProxyJob is the review-only variant of the fixture profile's job: the
 // name gcp.ProjectJobName computes for the profile's no-account job with
-// config.ReviewVariantAccount on the account segment, which is the name
-// internal/infra deploys the variant under and the one the run's own
-// CLOUD_RUN_JOB carries.
+// config.ReviewVariantAccount on the account segment -- the name
+// internal/infra's ProjectReviewJobs derives a variant under, and the one such
+// a run's own CLOUD_RUN_JOB carries. No Bitbucket profile is deployed one
+// today (this file's header), so the test names the job rather than deploying
+// it: what it pins is the runner's decision about a run that is in this job.
 func reviewProxyJob() string {
 	return gcp.ProjectJobName(projectpolicy.DefaultProfileName, gitprov.KindBitbucket, reviewVariantAccount(""))
 }

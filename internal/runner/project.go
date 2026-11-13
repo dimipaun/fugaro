@@ -499,6 +499,15 @@ func remoteAdmissionErr(remote, kind, repo, slug string) error {
 // other class on a project job keeps today's answer -- a shared job serves
 // every repository of its profile and holds its own token, and the service
 // admitting a shared coding caller is B5.3, not this.
+//
+// This rule is the runner's half of the review variant, and today it is the
+// only half that exists. A Bitbucket profile is deployed no project job at
+// all (internal/infra's ProjectJobs skips a provider no shared job serves,
+// D505), so there is no Bitbucket review variant for a launch to resolve, and
+// a review launch in a Bitbucket repository is refused by internal/cli's
+// reviewJobFor before any container starts. Both halves are follow-ups, the
+// deploy one first: until it lands, no run reaches this path, and nothing here
+// is a substitute for it.
 func (r *run) proxiedBitbucket(p *projectpolicy.Policy, found, project bool, kind, repo string) bool {
 	if kind != gitprov.KindBitbucket || !found || p == nil || p.BitbucketToken == nil || !p.BitbucketToken.Proxy {
 		return false
