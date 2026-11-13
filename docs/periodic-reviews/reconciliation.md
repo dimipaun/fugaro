@@ -457,17 +457,23 @@ now decided:
   A conjunction is the shape a reader reaches for first and it matches nothing — a `get` carries no
   `objectListPrefix`, a `list` names no object — and a single half is a job that fails on its first
   run: the `resource.name` half grants no listing, and the listing half cannot read an object.
-  **`<list prefix>` is left to the check, not decided here:** the attribute's value form — the
-  request's own prefix (`runs/`) or the full `projects/_/buckets/<b>/objects/runs/` path — is
-  unverified offline, and no code in this repo reads the attribute today. The listing half is not a
+  **`<list prefix>` was left to the check rather than decided here, and the check has since decided
+  it:** the attribute's value form — the request's own prefix (`runs/`) or the full
+  `projects/_/buckets/<b>/objects/runs/` path — was unverified offline, and no code in this repo read
+  the attribute. Its third live run (2026-11-13) settled it — the account listed the prefixes the job
+  lists under the **relative** form (`runs/`, `reports/`) and was refused **every** listing under the
+  full-path one — so R12's builder writes the request's own prefix, which is what the two clauses
+  above carry, `runs/` for the runs binding and `reports/` for the reports binding. The listing half is not a
   `runs/` speciality either: R11's stored reader lists `reports/<slug>/<YYYY>/` the way today's reader
   lists a checkout's folder twice over, so `reports/`'s grant needs its listing clause as well. Its
   scope is the prefix and not one repository: the job summarises every repository, so it lists under
   `runs/` and `reports/` and no wider — the root listing is refused. The owner ruled that **an
   owner-run live check proves it before the job's Terraform lands**: a service account
-  holding both conditioned grants lists `runs/<slug>/` and `reports/`, reads one object under `runs/`,
+  holding both conditioned grants lists the four prefixes the job lists (`runs/<slug>/`,
+  `reports/<slug>/`, `reports/<slug>/<YYYY>/` and `reports/<YYYY>/`), reads one object under `runs/`,
   and is refused the **root listing** (`gs://<bucket>/`), reading a `tokens/` object and listing
-  `tokens/` or `cache/`. **If it fails, the plan stops and asks** — the bucket-wide viewer a listing
+  `tokens/` or `cache/` — and the bare `reports/` prefix, which the job never lists, is read as a
+  diagnostic and gates nothing. **If a listing the job makes fails, the plan stops and asks** — the bucket-wide viewer a listing
   otherwise needs is not planned as a fallback, because it would read `tokens/` and `cache/` too.
 - **`reports/` has one writer, the job, and launchers read it.** The job holds
   `roles/storage.objectUser` on `reports/`; a person holds **read only** — which their existing
