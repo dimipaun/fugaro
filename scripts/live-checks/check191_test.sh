@@ -962,10 +962,12 @@ POLICY_EOF
 }
 
 # The red step for the two cases above: the copy below has the gate's own
-# comparison neutralised (its `!= yes` becomes `= yes`, so the arm is never
-# taken), and with it gone the very same policy runs past the row to its end —
-# which is the whole of what the gate is for, and what fails the moment the gate
-# stops being load-bearing.
+# condition neutralised (its `if [ ... ]; then` becomes `if false; then`, so the
+# arm is never taken whatever the policy holds — unlike an inverted comparison,
+# which would take it for a policy that DOES admit the repository), and with it
+# gone the very same policy runs past the row to its end — which is the whole of
+# what the gate is for, and what fails the moment the gate stops being
+# load-bearing.
 test_the_account_gate_is_what_stops_the_check() {
   local dir=$work/nogate copy
   prepare "$dir"
@@ -973,7 +975,7 @@ test_the_account_gate_is_what_stops_the_check() {
 {"project":"fugaro","policy":{"bitbucket_token":{"allow_repos":["bitbucket/workspace-a/repo-a"],"proxy":true},"accounts":{}}}
 POLICY_EOF
   copy=$dir/check191-noaccountgate.sh
-  sed '/field_of account-admitted/s/!= yes/= yes/' "$script" >"$copy" 2>/dev/null || true
+  sed '/field_of account-admitted/s/^\( *\)if \[ .* \]; then$/\1if false; then/' "$script" >"$copy" 2>/dev/null || true
   if [ ! -s "$copy" ] || cmp -s "$script" "$copy"; then
     fail "red step: the copy is the script: the account gate's own comparison was not found to neutralise"
     return 0
