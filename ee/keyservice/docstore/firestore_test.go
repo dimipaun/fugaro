@@ -73,6 +73,28 @@ func TestFirestoreWritesTheCollectionItWasGiven(t *testing.T) {
 	}
 }
 
+// TestPrefixedKeepsTheEmptyNameEmpty is the wrapper's own rule, and it is the
+// one fact about it a test can state without a database. The suite's cases for a
+// call that names nothing pass the empty collection, and the store owes them a
+// refusal: a wrapper that answered "-" for it — a prefix in front of nothing,
+// which is a name as valid as any other — would hand the backend a collection to
+// file a document under and let a put through where the memory store refuses it,
+// so the emulator run would fail on the first of those cases instead of proving
+// that one suite holds both stores.
+func TestPrefixedKeepsTheEmptyNameEmpty(t *testing.T) {
+	p := prefixed{prefix: "docstore-x-1"}
+	if got := p.collection(""); got != "" {
+		t.Errorf("the wrapper turned an empty collection name into %q, want the empty name it was given: the suite's unnamed cases have to reach the backend unnamed", got)
+	}
+	tx := prefixedTx{prefix: "docstore-x-1"}
+	if got := tx.collection(""); got != "" {
+		t.Errorf("the transaction's wrapper turned an empty collection name into %q, want the empty name it was given", got)
+	}
+	if got := p.collection("widgets"); got != "docstore-x-1-widgets" {
+		t.Errorf("the wrapper named a collection %q, want the case's prefix in front of the name it was given", got)
+	}
+}
+
 // emulator builds one client against the emulator, skipping when the process
 // names none: a test that dialled a real project would be the one thing this
 // package's tests must never do.
@@ -107,7 +129,20 @@ type prefixed struct {
 	prefix string
 }
 
-func (p prefixed) collection(name string) string { return p.prefix + "-" + name }
+// collection prefixes one case's name, and it answers a name the suite left
+// empty with the empty name it was given: a prefix in front of nothing would be
+// a collection the case never asked for, so the suite's tests for a call that
+// names nothing — a put, a get, a query and a delete with no collection — would
+// reach a backend that has a name to file under and answer something other than
+// the refusal both stores owe them. That is the disagreement the shared suite
+// exists to catch, and a wrapper that hid it would be the one thing in this
+// package that made the emulator run pass for the wrong reason.
+func (p prefixed) collection(name string) string {
+	if name == "" {
+		return ""
+	}
+	return p.prefix + "-" + name
+}
 
 func (p prefixed) Get(ctx context.Context, collection, id string, out any) (bool, error) {
 	return p.db.Get(ctx, p.collection(collection), id, out)
@@ -137,7 +172,12 @@ type prefixedTx struct {
 	prefix string
 }
 
-func (t prefixedTx) collection(name string) string { return t.prefix + "-" + name }
+func (t prefixedTx) collection(name string) string {
+	if name == "" {
+		return ""
+	}
+	return t.prefix + "-" + name
+}
 
 func (t prefixedTx) Get(ctx context.Context, collection, id string, out any) (bool, error) {
 	return t.tx.Get(ctx, t.collection(collection), id, out)
