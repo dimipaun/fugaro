@@ -172,17 +172,17 @@ type SignIn interface {
 var _ SignIn = (*mcpauth.Verifier)(nil)
 
 // authorizeCode is one authorize request between its sign-in and its exchange:
-// the subscription the account's key is minted for, the exact redirect the code
-// may be sent to, the PKCE challenge the exchange is bound to, and the instant
-// it stops working.
+// the subscription the account's key is minted for, the PKCE challenge the
+// exchange is bound to, and the instant it stops working.
 //
-// The redirect is kept as the **validated** target and never re-read from the
-// exchange, and that is the one thing an authorization code's leak turns on: a
-// code handed to a redirect the attacker names is the key itself.
+// What it does **not** carry is a redirect target, and that is the one thing an
+// authorization code's leak turns on: the code went to the target the sign-in
+// validated and the exchange reads none, so a caller that has read a code off a
+// log or out of a browser's history has nothing to point it at — the only party
+// that can exchange it is the one that already received it (redirectWithCode).
 type authorizeCode struct {
 	subscription string
 	account      string
-	redirect     string
 	challenge    string
 	expires      time.Time
 	spent        bool
@@ -492,7 +492,6 @@ func (s *Service) authorizeSubmit(w http.ResponseWriter, r *http.Request) {
 	s.codes.keep(code, authorizeCode{
 		subscription: sub.ID,
 		account:      identity.Email,
-		redirect:     target,
 		challenge:    challenge,
 		expires:      now.Add(authorizeCodeTTL),
 	}, now)
