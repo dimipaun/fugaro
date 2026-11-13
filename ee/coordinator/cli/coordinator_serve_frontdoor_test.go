@@ -20,6 +20,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -86,12 +87,13 @@ func refusalWiring(t *testing.T) frontDoorWiring {
 	}
 }
 
-// doorStateReach is the state reach a test that has to get past the state
-// group's registration hands the wiring: a reach over an empty fake database,
-// which the command builds the two tools over and this test never reads. It is
-// the real reach rather than a stub, because what is being tested is that the
-// command registers the group at all — the reads themselves are
-// mcpauth's own file (state_reach_test.go).
+// doorStateReach is the state reach a test hands the wiring where the command
+// has to get past the state group's registration: a reach over an empty fake
+// database, which the command builds the two tools over and these tests never
+// read. It is the real reach rather than a stub, because the reads themselves
+// are mcpauth's own file (state_reach_test.go) and what is pinned here is the
+// wiring — that the group is registered at all, which
+// TestTheCommandServesTheStateGroupBesideTheReadTools reads off the registry.
 func doorStateReach(t *testing.T) mcpauth.StateReach {
 	t.Helper()
 	db, err := rtdb.New(gcpfake.NewRTDB(t).URL, rtdb.Auth{IDToken: func() string { return "the test reads nothing" }})
@@ -119,6 +121,39 @@ type cliKeySource struct{}
 
 func (cliKeySource) Key(context.Context, string) (*rsa.PublicKey, error) {
 	return nil, errors.New("this test verifies no token")
+}
+
+// TestTheCommandServesTheStateGroupBesideTheReadTools is the pin on what the
+// command registers: the registry a service is built over cannot be read back
+// off it (mcpauth.WithTools takes it and keeps it), so without this the two
+// tools O16b exists to serve — get_state and get_events — could be dropped from
+// frontDoorTools with every other test of this package still green. Deleting
+// mcpauth.RegisterStateTools there, or registering the state group's write
+// (apply_patch, which nothing serves: D2021), fails below.
+//
+// The list is the door's whole catalogue for this build, in registration order,
+// which is also the order a client's tools/list reads: the read tools M8
+// registers and then the state group. A task that adds or renames a tool of
+// either half is meant to be read here rather than to slip through.
+func TestTheCommandServesTheStateGroupBesideTheReadTools(t *testing.T) {
+	g := gcpfake.NewGCS(t)
+	g.AddBucket("fugaro-runs-acme-project", 1234, nil)
+	reach, err := mcpauth.NewProjectRuns(g.Bucket(t, "fugaro-runs-acme-project").Bucket, []string{"acme-app"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, err := frontDoorTools(reach, doorStateReach(t))
+	if err != nil {
+		t.Fatalf("the command's own registration failed, so the revision would not start: %v", err)
+	}
+	var names []string
+	for _, decl := range registry.List() {
+		names = append(names, decl.Name)
+	}
+	want := []string{"get_task_status", "stream_logs", "get_result", "list_tasks", "get_state", "get_events"}
+	if !slices.Equal(names, want) {
+		t.Errorf("the front door serves %v; want %v: the state group's read is served beside M8's tools and the state group's write is served by nothing (O16b, D2021)", names, want)
+	}
 }
 
 // TestAFrontDoorThatIsOffServesWhatTheRevisionServedBefore: D934's switch off is

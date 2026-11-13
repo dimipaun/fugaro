@@ -183,6 +183,30 @@ func openFrontDoorState(ctx context.Context, url string) (mcpauth.StateReach, er
 // putting the project's configuration in a second place. Nothing about the
 // tokens' own bounds moves with it: a family's limits are what the mint
 // resolved, and the run's spend ceiling is the run's own.
+// frontDoorTools is the registry the door serves, and it is a function of its
+// own for one reason: the registry a service is built over cannot be read back
+// off it (WithTools takes it and keeps it), so a command that registered the
+// tools inline would let the whole group this build serves disappear with every
+// test of this package still green. A test calls this with the two reaches and
+// reads what comes out (TestTheCommandServesTheStateGroupBesideTheReadTools).
+//
+// M8's read tools and O16b's state group are registered here together: the
+// state group reads one orchestrator's node through the account's own database
+// read (RegisterStateTools), and apply_patch is registered by nothing (D2021) —
+// the state group's writes stay with `fugaro orchestrator patch` and the
+// person's own credential (D1223). A registration failure is a wiring mistake
+// and never a request's, so it fails the revision's start.
+func frontDoorTools(reach *mcpauth.ProjectRuns, stateReach mcpauth.StateReach) (*mcpauth.Registry, error) {
+	registry := mcpauth.NewRegistry()
+	if err := mcpauth.RegisterReadTools(registry, reach); err != nil {
+		return nil, err
+	}
+	if err := mcpauth.RegisterStateTools(registry, stateReach); err != nil {
+		return nil, err
+	}
+	return registry, nil
+}
+
 func coordinatorFrontDoor(ctx context.Context, lookup func(string) (string, bool), w frontDoorWiring) (*coordinator.Service, error) {
 	cfg, on, err := mcpauth.DoorConfigFromEnv(lookup)
 	if err != nil {
@@ -234,20 +258,12 @@ func coordinatorFrontDoor(ctx context.Context, lookup func(string) (string, bool
 	if err != nil {
 		return nil, fcli.UserErr("%v", err)
 	}
-	registry := mcpauth.NewRegistry()
-	if err := mcpauth.RegisterReadTools(registry, reach); err != nil {
-		return nil, fcli.UserErr("%v", err)
-	}
-	// O16b's state group, registered beside M8's read tools and over its own
-	// reach: get_state and get_events read one orchestrator's node through the
-	// account's database read (RegisterStateTools). apply_patch is not
-	// registered by anything (D2021) — the state group's writes stay with
-	// `fugaro orchestrator patch` and the person's own credential (D1223).
 	stateReach, err := w.state(ctx, env[fcli.EnvRTDBURL])
 	if err != nil {
 		return nil, fcli.RemoteErr(fmt.Errorf("opening the installation's database for the state group: %w", err))
 	}
-	if err := mcpauth.RegisterStateTools(registry, stateReach); err != nil {
+	registry, err := frontDoorTools(reach, stateReach)
+	if err != nil {
 		return nil, fcli.UserErr("%v", err)
 	}
 	verifier, err := w.verifier(env[fcli.EnvFirebaseFP])
