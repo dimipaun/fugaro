@@ -1672,6 +1672,20 @@ func runBudgetKill(cmd *cobra.Command, o *budgetKillOptions, kill bool) error {
 		return userErr("--reason is %d characters; keep it to %d", utf8.RuneCountInString(o.reason), maxKillReason)
 	}
 	if cmd.Flags().Changed("workspace") {
+		// This scope answers no resolver gate, and the reason is the shape of
+		// the roles and not an oversight: the two checks below are made with the
+		// grant the scope is SET at (F19), and --workspace is not one the roster
+		// has. It acts on the workspace's OWN project and its own database — the
+		// machine must hold that project's config to run the scope at all
+		// (workspaceOwnerConfig), and the stop it writes is fenced by the two
+		// questions every writer into a budget database asks (requireOwnBudgetDB
+		// and checkDBProject, budget_kill_workspace.go) — while a role is held at
+		// a project, at all-repos or at a repository: a workspace member holds
+		// nothing in the workspace project's node BY being a member, so the grant
+		// a check would read is the workspace project's own, which is the same
+		// question --all asks of that project. Whether a workspace's stop should
+		// answer to it is a product decision about the workspace model, reported
+		// rather than taken here.
 		return runBudgetKillWorkspace(cmd, o, kill)
 	}
 	lc, db, err := openBudget(ctx, o.cloud)

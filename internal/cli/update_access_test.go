@@ -412,6 +412,44 @@ func TestAMigrationWithNoUserMemberWritesNoNode(t *testing.T) {
 	}
 }
 
+// TestAMigrationThatCannotRecordItselfIsNotAFailure: the marker is IAM-protected
+// exactly as the node is (both sit under config/admin, written over
+// roles/firebasedatabase.admin), so the run that records a migrated installation
+// can meet the same refusal the run that writes the node meets — and it answers
+// it the same way (landMark, accessMarkNeedsAdmin): said out loud, not a failure.
+//
+// `fugaro update` is the whole upgrade (the HARD RULE), and the thing left undone
+// here is a record, not a role: this installation's lists hold nobody the node
+// could rank, so the apply carries them whatever the marker says and nothing in
+// the run depended on the write. A run that failed here would stop the
+// installation stage — and every stage after it — for a caller who is not one of
+// the project's owners, which is the livelock the node's own refusal is written
+// against. What it costs is the state this test leaves: an installation that has
+// migrated reading as one nobody has migrated, until an owner's update records it.
+func TestAMigrationThatCannotRecordItselfIsNotAFailure(t *testing.T) {
+	noAgentSession(t)
+	legacy := []string{"group:eng@example.com", "domain:example.com", "serviceAccount:auto@proj-1234.iam.gserviceaccount.com"}
+	_, db := accessRig(t, legacy, legacy, legacy, legacy)
+	db.Deny(accesslib.PathMigrated)
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	all := accessOut(out, errOut, err)
+	if err != nil {
+		t.Fatalf("a caller whose IAM refuses the marker's write made fugaro update fail: %v\n%s", err, all)
+	}
+	if v := db.Value(accesslib.PathMigrated); v != nil {
+		t.Errorf("the marker is there though every write to it answered 401: %v", v)
+	}
+	for _, w := range []string{
+		"roles/firebasedatabase.admin",
+		"nothing in this run depends on it",
+		"the next fugaro update by a project Owner records it",
+	} {
+		if !strings.Contains(all, w) {
+			t.Errorf("the run does not say %q, so an operator whose installation stays unrecorded is told nothing:\n%s", w, all)
+		}
+	}
+}
+
 // accessMarked is the migration marker as the fake database holds it: whether
 // this installation reads as one whose roles have moved out of the member lists.
 func accessMarked(t *testing.T, db *gcpfake.RTDB) bool {
