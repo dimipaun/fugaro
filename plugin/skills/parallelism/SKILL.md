@@ -22,7 +22,7 @@ fugaro run --batch <name> --run-id <id> --task-file - <<'TASK'
 TASK
 ```
 
-`fugaro runs ls --batch <name>` lists the batch, and `fugaro runs ls --watch --batch <name>` follows it. Tell the user each run by its short ID (`working`'s ground rules).
+`fugaro runs ls --batch <name>` lists the batch, and `fugaro runs ls --watch --batch <name>` follows it. Tell the user each run by its short ID (`working`'s ground rules), and a batch's pull requests by the four words that skill's own paragraph defines: **live** while a run is going on one, **ready** when the last run that opened or followed it ended with the outcome `ready` (a review job's own outcome `reviewed` changes nothing), **stalled** when a run has been on it and it is not ready (`[DRAFT]`-titled ordinary pull requests on a host with no drafts included), **orphan** when no run produced or follows it.
 
 ## Stay narrow for coupled work
 
