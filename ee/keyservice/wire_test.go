@@ -23,14 +23,16 @@ package keyservice
 // fixture of its own to be read against.
 //
 // A field the schema does not know is refused by both readers, and so is a body
-// that leaves a field out: `decodeWire` holds a body to the schema's own reading
-// of it — an object, exactly the shape's fields, each of them once — rather than
-// to encoding/json's, which matches a name ignoring case, keeps the last of a
-// repeated key and reads an absent field as the zero value. One reader accepting
-// what the other refuses is a field the SPA believes is served and the API drops,
-// or a body a handler is handed as valid that no schema ever agreed to; it is why
-// every object in these schemas is closed at every level rather than only at the
-// top.
+// that leaves a field out or writes null as it: `decodeWire` holds a body to the
+// schema's own reading of it — an object, exactly the fields of the type there,
+// each of them once, and no null where a value is required — rather than to
+// encoding/json's, which matches a name ignoring case, keeps the last of a
+// repeated key, reads an absent field as the zero value and reads null as
+// leaving the field alone. One reader accepting what the other refuses is a field
+// the SPA believes is served and the API drops, or a body a handler is handed as
+// valid that no schema ever agreed to; it is why every object in these schemas is
+// closed at every level rather than only at the top, and why the decoder's own
+// reading goes as deep as the schema does.
 //
 // And exactly one shape carries a credential: the reveal's bundle. Every other
 // answer is metadata — the spec's own split (F5: resellers and operations see
@@ -225,6 +227,221 @@ func TestWireRefusesMissingFields(t *testing.T) {
 	}
 }
 
+// TestWireRefusesNestedFields pins that the deeper objects are held to their own
+// defs and not only the shape's own fields are: a nested def is closed and fully
+// required exactly as a shape's is, and the walk in `decodeWire` goes as deep as
+// the shape does. A nested object is where the first request body a later task
+// adds will sit — an organisation's terms, a reseller's rates — and a body
+// encoding/json alone would accept there is one whose fields the SPA is told it
+// is served.
+func TestWireRefusesNestedFields(t *testing.T) {
+	for _, shapeName := range wireShapeNames() {
+		shape := wireShapes[shapeName]
+		fixture, err := os.ReadFile(filepath.Join(wireFixtureDir, shapeName+".json"))
+		if err != nil {
+			t.Errorf("%s/%s.json: %v", wireFixtureDir, shapeName, err)
+			continue
+		}
+		def := strings.TrimPrefix(shapeName, shape.area+".")
+		schema := wireSchemaDef(t, shape.area, def)
+		for _, nested := range wireNestedObjects(t, wireAreaDoc(t, shape.area), def, wireInstance(t, fixture), nil) {
+			where := wirePathName(nested.path)
+
+			body := wireInstance(t, fixture)
+			wireAtPath(t, body, nested.path)[wireUnknownField] = true
+			wireRefuses(t, shapeName, "a field no shape holds at "+where, wireJSON(t, body), wireUnknownField, schema, false)
+
+			// A case-folded key is the shape of the fault encoding/json is loosest
+			// about: it matches the field ignoring case, so a body can name a field
+			// the schema does not have and still be read as the one it does.
+			body = wireInstance(t, fixture)
+			object := wireAtPath(t, body, nested.path)
+			folded, found := "", false
+			for _, name := range slices.Sorted(maps.Keys(object)) {
+				if upper := strings.ToUpper(name); upper != name {
+					folded, found = name, true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("%s: every field at %s is already upper case, so the case-folded body cannot be built", shapeName, where)
+			} else {
+				object[strings.ToUpper(folded)] = object[folded]
+				delete(object, folded)
+				wireRefuses(t, shapeName, fmt.Sprintf("%q written as %q at %s", folded, strings.ToUpper(folded), where),
+					wireJSON(t, body), strings.ToUpper(folded), schema, false)
+			}
+
+			body = wireInstance(t, fixture)
+			object = wireAtPath(t, body, nested.path)
+			left := slices.Sorted(maps.Keys(object))[0]
+			delete(object, left)
+			wireRefuses(t, shapeName, fmt.Sprintf("the field %q left out at %s", left, where), wireJSON(t, body), left, schema, false)
+		}
+	}
+}
+
+// TestWireRefusesNullWhereAValueIsRequired pins the other way a body can name a
+// field and hold nothing: encoding/json reads `null` as "leave the field alone",
+// so a body that writes null where the schema requires a value arrives at a
+// handler as that field's zero value — an empty version, a term that ended at the
+// zero instant. Every property of every object, at every depth, is put to both
+// readers as null, and both must refuse it; where the schema writes the property
+// as a union with null both must accept it, which is what keeps the rule a
+// reading of the two readers rather than a list of fields.
+func TestWireRefusesNullWhereAValueIsRequired(t *testing.T) {
+	for _, shapeName := range wireShapeNames() {
+		shape := wireShapes[shapeName]
+		fixture, err := os.ReadFile(filepath.Join(wireFixtureDir, shapeName+".json"))
+		if err != nil {
+			t.Errorf("%s/%s.json: %v", wireFixtureDir, shapeName, err)
+			continue
+		}
+		def := strings.TrimPrefix(shapeName, shape.area+".")
+		doc := wireAreaDoc(t, shape.area)
+		schema := wireSchemaDef(t, shape.area, def)
+		objects := append([]wireNested{{def: def}}, wireNestedObjects(t, doc, def, wireInstance(t, fixture), nil)...)
+		for _, object := range objects {
+			properties, ok := wireDef(t, doc, object.def, shapeName)["properties"].(map[string]any)
+			if !ok {
+				t.Errorf("%s: $defs/%s describes no properties, so none of them can be written as null", shapeName, object.def)
+				continue
+			}
+			for _, name := range slices.Sorted(maps.Keys(properties)) {
+				body := wireInstance(t, fixture)
+				wireAtPath(t, body, object.path)[name] = nil
+				where := wirePathName(append(append([]any{}, object.path...), name))
+				if wireNullableProperty(properties[name]) {
+					if err := decodeWire(wireJSON(t, body), shape.alloc()); err != nil {
+						t.Errorf("%s: this build refuses %s as null, and the schema writes it as a union with null: %v", shapeName, where, err)
+					}
+					if err := schema.Validate(body); err != nil {
+						t.Errorf("%s: the %s subschema refuses %s as null, so the two readers disagree: %v", shapeName, def, where, err)
+					}
+					continue
+				}
+				wireRefuses(t, shapeName, fmt.Sprintf("%s written as null", where), wireJSON(t, body), name, schema, false)
+			}
+		}
+	}
+}
+
+// wireNested is one object inside a shape's fixture with the def that describes
+// it: the path to it — a field name, then an index per list element — and the
+// subschema a body there is read against.
+type wireNested struct {
+	path []any
+	def  string
+}
+
+// wireNestedObjects collects every object below the shape's own that a $defs
+// entry describes rather than the shape itself: the value of a property that
+// names a def, and each element of a list of them, at any depth. The shape's own
+// object is not one of them, because the tests that call this already ask about
+// it.
+func wireNestedObjects(t *testing.T, doc map[string]any, def string, node any, path []any) []wireNested {
+	t.Helper()
+	object, ok := node.(map[string]any)
+	if !ok {
+		return nil
+	}
+	described, ok := wireDef(t, doc, def, def)["properties"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	var found []wireNested
+	for _, name := range slices.Sorted(maps.Keys(described)) {
+		target, ok := wireRefTarget(described[name])
+		if !ok {
+			continue
+		}
+		here := append(append([]any{}, path...), name)
+		switch value := object[name].(type) {
+		case map[string]any:
+			found = append(found, wireNested{path: here, def: target})
+			found = append(found, wireNestedObjects(t, doc, target, value, here)...)
+		case []any:
+			for i, element := range value {
+				inside := append(append([]any{}, here...), i)
+				if _, ok := element.(map[string]any); !ok {
+					continue
+				}
+				found = append(found, wireNested{path: inside, def: target})
+				found = append(found, wireNestedObjects(t, doc, target, element, inside)...)
+			}
+		}
+	}
+	return found
+}
+
+// wireAtPath is the object one mutation is applied to, in a body parsed fresh
+// from the fixture so every mutation starts from the body the fixture stands for.
+func wireAtPath(t *testing.T, body any, path []any) map[string]any {
+	t.Helper()
+	node := body
+	for _, step := range path {
+		switch key := step.(type) {
+		case string:
+			object, ok := node.(map[string]any)
+			if !ok {
+				t.Fatalf("the fixture holds no object at %s", wirePathName(path))
+			}
+			node = object[key]
+		case int:
+			list, ok := node.([]any)
+			if !ok || key >= len(list) {
+				t.Fatalf("the fixture holds no list entry at %s", wirePathName(path))
+			}
+			node = list[key]
+		}
+	}
+	object, ok := node.(map[string]any)
+	if !ok {
+		t.Fatalf("the fixture holds no object at %s", wirePathName(path))
+	}
+	return object
+}
+
+// wirePathName spells a path the way a reader of the body reads it, so a failure
+// names the object it was about: `rates[0].daily_rate_micros`.
+func wirePathName(path []any) string {
+	var at strings.Builder
+	for _, step := range path {
+		switch value := step.(type) {
+		case string:
+			if at.Len() > 0 {
+				at.WriteString(".")
+			}
+			at.WriteString(value)
+		case int:
+			fmt.Fprintf(&at, "[%d]", value)
+		}
+	}
+	return at.String()
+}
+
+// wireNullableProperty reports whether a property's own subschema admits null:
+// written as a union with null, or as an anyOf/oneOf whose branches include it,
+// which is how a nullable object beside a $ref is spelled.
+func wireNullableProperty(property any) bool {
+	object, ok := property.(map[string]any)
+	if !ok {
+		return false
+	}
+	if names, ok := object["type"].([]any); ok && slices.Contains(names, "null") {
+		return true
+	}
+	for _, key := range []string{"anyOf", "oneOf"} {
+		branches, _ := object[key].([]any)
+		for _, branch := range branches {
+			if inner, ok := branch.(map[string]any); ok && inner["type"] == "null" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // wireRefuses asks both readers for a body neither should accept, and asks the
 // decoder's refusal to name what it refused: one that refused for another reason
 // would look like the case being covered and hold the line nowhere. onlyGo is for
@@ -249,13 +466,13 @@ func wireRefuses(t *testing.T, shapeName, what string, body []byte, want string,
 }
 
 // wireJSON is one mutated fixture as the body a route would be handed.
-func wireJSON(t *testing.T, object map[string]any) []byte {
+func wireJSON(t *testing.T, body any) []byte {
 	t.Helper()
-	body, err := json.Marshal(object)
+	raw, err := json.Marshal(body)
 	if err != nil {
 		t.Fatalf("a mutated fixture is not JSON: %v", err)
 	}
-	return body
+	return raw
 }
 
 // wireCredentialTags are the JSON field names that carry a credential, or carry
