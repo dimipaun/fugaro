@@ -683,14 +683,16 @@ const CLI_COMMANDS: readonly CliCommand[] = [
   // `mutating` row would name a command this surface's never list does not
   // refuse.
   { command: 'settings', kind: 'allowed', where: 'internal/cli/settings.go:64' },
-  // **The roles group, classified by what each of its five words does** (RS5,
-  // the roles-and-scopes plan). `user ls` is the one the surface drives: the
-  // installation's grants as `fugaro user ls --json` prints them, which is the
-  // Members view. The other four each change who may do what -- `grant` and
-  // `revoke` write the installation's grants node, `add` and `rm` rewrite this
-  // machine's own copy of the two IAM lists (F42) -- so all four are `mutating`
-  // and all four are on `NEVER_REACHABLE` below, both as a command and as a word
-  // of `user`. The group is deliberate and not incidental: a command path that
+  // **The roles group, classified by what each of its six words does** (RS5
+  // and RS7, the roles-and-scopes plan). `user ls` is the one the surface
+  // drives: the installation's grants as `fugaro user ls --json` prints them,
+  // which is the Members view. The other five each change who may do what --
+  // `grant` and `revoke` write the installation's grants node, `add` and `rm`
+  // rewrite this machine's own copy of the two IAM lists (F42), and `offboard`
+  // drops every roster grant naming the member and has the intake delete the
+  // secrets they stored (DS2.4, D1935) -- so all five are `mutating` and all
+  // five are on `NEVER_REACHABLE` below, both as a command and as a word of
+  // `user`. The group is deliberate and not incidental: a command path that
   // reads its own subcommand from the renderer is the shape section 3.4 rule 2
   // refuses.
   { command: 'user ls', kind: 'allowed', where: 'internal/cli/user_ls.go:135' },
@@ -698,6 +700,7 @@ const CLI_COMMANDS: readonly CliCommand[] = [
   { command: 'user revoke', kind: 'mutating', where: 'internal/cli/user_grant.go:101' },
   { command: 'user add', kind: 'mutating', where: 'internal/cli/user.go:129' },
   { command: 'user rm', kind: 'mutating', where: 'internal/cli/user.go:134' },
+  { command: 'user offboard', kind: 'mutating', where: 'internal/cli/offboard.go:106' },
   // **The console's one write** (design §5.1 rule 11, D22). `run` was the
   // first writer in this list and the one no argv could drive; since V2.5.1a it
   // is a command the allow-list admits, in exactly one argv, so it is `allowed`
@@ -1235,10 +1238,10 @@ describe("the allow-list's read-only invariant", () => {
     ).toThrow(/models\.add drives add/)
   })
 
-  it('reaches no `user` word but `ls`, and refuses each of the four writes in both shapes', () => {
+  it('reaches no `user` word but `ls`, and refuses each of the five writes in both shapes', () => {
     // **The user group's fence** (the roles-and-scopes plan's RS7). `fugaro
     // user ls --json` is the one word of this group the console may drive --
-    // the Members view's read -- and the group's other four words each change
+    // the Members view's read -- and the group's other five words each change
     // who may do what, so the table draws them in the two shapes the models
     // group's fence is drawn in: a `command` row per write and an `argv` row
     // per word. Both are read back here in an argv that could actually be
@@ -1259,7 +1262,7 @@ describe("the allow-list's read-only invariant", () => {
     // flag is its own refusal.
     expect(refusedBy('user ls', ['--json', '--repo', 'example-owner/example-repo'])).toBeNull()
 
-    for (const word of ['grant', 'revoke', 'add', 'rm'] as const) {
+    for (const word of ['grant', 'revoke', 'add', 'rm', 'offboard'] as const) {
       expect(
         NEVER_REACHABLE.filter((row) => row.shape === 'command' && row.value === `user ${word}`),
         word,
@@ -2238,10 +2241,11 @@ describe('the argument schemas', () => {
   it('pins `members.list`’s one key, and that it is optional and a repository', () => {
     // **RS7's read is the group's one reachable argv** (the roles-and-scopes
     // plan, roles.md D691(b)): `fugaro user ls --json`, and nothing else under
-    // `fugaro user` -- its other four words (`grant`, `revoke`, `add`, `rm`)
-    // each change who may do what and each is on the never table. So the claim
-    // below is narrower than a schema's and it is the important one: what a
-    // renderer may say to this read is **one repository, or nothing**.
+    // `fugaro user` -- its other five words (`grant`, `revoke`, `add`, `rm`,
+    // `offboard`) each change who may do what and each is on the never table.
+    // So the claim below is narrower than a schema's and it is the important
+    // one: what a renderer may say to this read is **one repository, or
+    // nothing**.
     //
     // The two halves of that, both security claims rather than tidiness ones:
     // the **repository** is the canonical `owner/name` this surface's other

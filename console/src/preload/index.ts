@@ -507,9 +507,9 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   // repositories a pattern matches among those this machine knows, and, when a
   // repository is named, the role each person holds in it. **It is the `user`
   // group's one row**, and that is the claim worth reading: `grant`, `revoke`,
-  // `add` and `rm` are each on `src/main/ipc.ts`'s never table, as a command and
-  // as a word of `user`, so this method cannot reach a change of who may do
-  // what -- a role is read here and moved nowhere. Its one argument is the
+  // `add`, `rm` and `offboard` are each on `src/main/ipc.ts`'s never table, as a
+  // command and as a word of `user`, so this method cannot reach a change of who
+  // may do what -- a role is read here and moved nowhere. Its one argument is the
   // repository, and it is optional: the command answers about the roster
   // without it. Nothing in the document is a credential and none of it is
   // interpreted here: the CLI's own words are what a screen draws.

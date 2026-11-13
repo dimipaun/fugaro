@@ -1512,8 +1512,9 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		// `members.list` operation, roles.md D691(b)): the installation's
 		// grants as `fugaro user ls --json` prints them, and — with `--repo R`
 		// — the role each person holds in one repository. Read-only in the
-		// strongest sense this table can state: the two commands that change a
-		// roster, `user grant` and `user revoke`, are on the never table below.
+		// strongest sense this table can state: every other word of the group
+		// that changes a roster, `user grant`, `user revoke`, `user add`,
+		// `user rm` and `user offboard`, is on the never table below.
 		// `--repo` is the operation's one argument and it is optional, so the
 		// row spells the command's own argv with the argument the schema fills
 		// and the two project flags every cloud read carries (rule 3).
@@ -1675,8 +1676,9 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 	// seat estimate `seats --json` (the subscriptions plan's S4.2, D439) and
 	// the launch `fugaro run` (V2.5.1a), and the members read
 	// `user ls --json --repo R` (the roles-and-scopes plan's RS7, roles.md
-	// D691(b)), whose one argument is optional and whose two writing relatives,
-	// `user grant` and `user revoke`, the never table below keeps off this list.
+	// D691(b)), whose one argument is optional and whose five writing relatives
+	// -- `user grant`, `user revoke`, `user add`, `user rm` and `user offboard`
+	// -- the never table below keeps off this list.
 	if len(allowed) != 27 {
 		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 27 (logs has two argvs)", path, argvs, len(allowed))
 	}

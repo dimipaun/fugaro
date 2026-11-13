@@ -432,8 +432,8 @@ export interface FugaroSource {
    *
    * **It is read-only in the strongest sense this interface can state**, and the
    * group it belongs to is why that is worth a sentence: `fugaro user`'s other
-   * four words -- `grant`, `revoke`, `add` and `rm` -- each change who may do
-   * what, and none of them is reachable from this surface. What comes back is
+   * five words -- `grant`, `revoke`, `add`, `rm` and `offboard` -- each change
+   * who may do what, and none of them is reachable from this surface. What comes back is
    * somebody else's text carried as data: no word of it is a credential and no
    * screen interprets it, because the role model itself is the CLI's.
    */

@@ -612,7 +612,7 @@ export const LAUNCH_PAYLOAD_WIDTH =
  * `console/docs/json-contract.md` §6.18 describes its document). It is one of
  * the two argvs here whose **group** the console may otherwise not touch -- the
  * other is `user ls --json` below (the roles-and-scopes plan's RS7), whose
- * group's four words are on the never table the same way: `fugaro models`
+ * group's five words are on the never table the same way: `fugaro models`
  * has four other words -- `search`, `add`, `rm` and `use` -- and each is on the
  * never table below, the three writers as commands and all four as words of
  * `models`, so this row is the group's whole reachable argv. It takes no
@@ -1757,12 +1757,14 @@ export const CONSOLE_OPERATIONS = [
   // `fugaro user ls` (`internal/cli/user_ls.go`).
   //
   // **The `user` group's one reachable argv, and the group is why it is worth
-  // saying.** `fugaro user` has five words; the other four change who may do
-  // what -- `grant` and `revoke` write the installation's grants node, and the
-  // older `add` and `rm` rewrite this machine's own copy of the two IAM lists
-  // (F42) -- so each of the four is on the never table below, as a command and
-  // as a word of `user`, and `user ls --json` is the whole of this group's
-  // reach. A role is the one thing this surface reads and never moves.
+  // saying.** `fugaro user` has six words; the other five change who may do
+  // what -- `grant` and `revoke` write the installation's grants node, `add`
+  // and `rm` rewrite this machine's own copy of the two IAM lists (F42), and
+  // `offboard` drops every roster grant naming the member and has the intake
+  // delete the secrets they stored -- so each of the five is on the never table
+  // below, as a command and as a word of `user`, and `user ls --json` is the
+  // whole of this group's reach. A role is the one thing this surface reads and
+  // never moves.
   //
   // **It reads, and it is the console's strongest kind of read**: the command
   // reads this machine's own config and the installation's grants node with the
@@ -2125,15 +2127,18 @@ export const NEVER_REACHABLE: readonly NeverReachable[] = Object.freeze([
   },
   // **The `user` group's writers, in the two shapes the models rows below are
   // drawn in.** `fugaro user ls --json` is the group's one reachable word
-  // (`members.list` above, the roles-and-scopes plan's RS7); the four commands
+  // (`members.list` above, the roles-and-scopes plan's RS7); the five commands
   // here are the words beside it, and no one of them is a read: `grant` and
   // `revoke` write the installation's grants node -- one person, one role, one
   // scope, judged against the grantor's own scope and written conditionally on
-  // an ETag (RS5) -- and `add` and `rm` rewrite this machine's own copy of the
-  // installation's two IAM lists (F42). Each changes who may do what, which is
-  // the one thing this surface reads and never moves.
+  // an ETag (RS5) -- `add` and `rm` rewrite this machine's own copy of the
+  // installation's two IAM lists (F42), and `offboard` takes the member off the
+  // installation outright: the roster drops every grant naming them and the
+  // intake deletes the secrets stored under their prefix (DS2.4, D1935). Each
+  // changes who may do what, which is the one thing this surface reads and
+  // never moves.
   //
-  // The `argv` rows under them refuse the four **words** wherever an operation
+  // The `argv` rows under them refuse the five **words** wherever an operation
   // under `user` spells them, on the models rows' own reasoning: a command row
   // alone would not cover a future operation whose command is `user grant
   // <member>` rather than the command `user grant`. Each `command` row stays
@@ -2164,6 +2169,12 @@ export const NEVER_REACHABLE: readonly NeverReachable[] = Object.freeze([
     where: 'internal/cli/user.go:134',
   },
   {
+    shape: 'command',
+    value: 'user offboard',
+    why: 'a write: it drops every grant of the installation’s roster that names the member and has the intake delete the secrets stored under their prefix, which is the group’s most destructive word',
+    where: 'internal/cli/offboard.go:106',
+  },
+  {
     shape: 'argv',
     command: 'user',
     value: 'grant',
@@ -2190,6 +2201,13 @@ export const NEVER_REACHABLE: readonly NeverReachable[] = Object.freeze([
     value: 'rm',
     why: 'the write above, refused as a word of this command as well',
     where: 'internal/cli/user.go:134',
+  },
+  {
+    shape: 'argv',
+    command: 'user',
+    value: 'offboard',
+    why: 'the write above, refused as a word of this command as well',
+    where: 'internal/cli/offboard.go:106',
   },
   // **The models group's writers, and the two shapes its fence is drawn in.**
   // `fugaro models ls --json` is the group's one reachable word

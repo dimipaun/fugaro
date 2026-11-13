@@ -1280,8 +1280,8 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     // `src/main/ipc.ts`; the read itself is RS5's). The command is
     // `fugaro user ls`, so the row's words are the group's word, the subcommand
     // and the fixed `--json` -- and that is the group's whole reach: `grant`,
-    // `revoke`, `add` and `rm` are each on this module's own never table, so no
-    // argv of `user` but this one can be built.
+    // `revoke`, `add`, `rm` and `offboard` are each on this module's own never
+    // table, so no argv of `user` but this one can be built.
     //
     // **It is a read, and it is the console's strongest kind**: the command
     // reads this machine's own config and the installation's grants node with

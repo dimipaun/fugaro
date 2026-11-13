@@ -107,8 +107,8 @@ describe('the stub’s command keys', () => {
       // The roles-and-scopes plan's RS7 (`members.list` / `listMembers`): the
       // Members view's roster read. Its key is the command path, `user ls`,
       // because the `--json` is the row's own word and the `user` group's other
-      // words -- `grant`, `revoke`, `add`, `rm` -- are on no row of this table
-      // and sit on the never table instead.
+      // words -- `grant`, `revoke`, `add`, `rm`, `offboard` -- are on no row of
+      // this table and sit on the never table instead.
       'user ls',
       'run',
     ])
