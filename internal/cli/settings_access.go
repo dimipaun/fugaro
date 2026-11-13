@@ -7,6 +7,7 @@ import (
 
 	accesslib "github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
@@ -183,8 +184,21 @@ func settingsAccessJudge(ctx context.Context, in accesslib.Input, action accessl
 // the --repo the caller named (already reduced to owner/name by repoArg), else
 // the repository of the checkout the command runs in.
 //
+// The checkout's repository comes from its own origin remote and never from
+// this machine's config. settingsRepoFile resolves a `--layer repo` write in a
+// checkout the config need not list — the checkout in the working directory
+// needs no entry at all — so judging it through canonicalRepoArg, which takes a
+// bare owner/name's provider from the repos: map, would refuse a write whose
+// file had already been resolved, and refuse it with the advice to write the
+// value as provider/owner/name: a value this command's own --repo check rejects
+// ("a repository is owner/name"), so a remedy its caller cannot take. The
+// origin remote has both halves the judgement needs: its host is the provider
+// (providerForHost, the rule recordCheckout remembers a checkout by) and its
+// path is the repository.
+//
 // A checkout whose repository cannot be told — no origin remote, an origin that
-// is not a github or bitbucket URL — is refused rather than guessed at: the
+// is not a github or bitbucket URL, a host no provider lives on, an origin the
+// checkout's own git config rewrites — is refused rather than guessed at: the
 // write is a repository's own settings, and a repository this command cannot
 // name is one it cannot say the caller is an admin of. The refusal names the two
 // ways out, and both are real: a `--repo owner/name` writes the checkout this
@@ -192,14 +206,52 @@ func settingsAccessJudge(ctx context.Context, in accesslib.Input, action accessl
 // in — the same route settingsRepoFile takes — so the remedy for a checkout
 // nothing remembers is its own origin remote.
 func settingsAccessRepo(ctx context.Context, lc *localcfg.Config, o settingsWriteOptions) (string, error) {
-	repo := o.repo
-	if repo == "" {
-		var err error
-		if repo, err = originRepo(ctx); err != nil {
-			return "", userErr("this checkout's repository cannot be told from its origin (%v), so the repository whose settings this write would change — and the role that write needs — cannot be named: add the origin remote (git remote add origin <url>), or write it from a checkout this machine remembers with --repo owner/name", err)
+	if o.repo == "" {
+		repo, err := originRepo(ctx)
+		if err != nil {
+			return "", settingsAccessNoOrigin()
+		}
+		return canonicalRepoArg(lc, repo)
+	}
+	repo, err := canonicalRepoArg(lc, o.repo)
+	if err != nil {
+		return "", settingsAccessUnlistedRepo(o.repo)
+	}
+	return repo, nil
+}
+
+// settingsAccessOriginRepo is provider/owner/name of the checkout the command
+// runs in, read from its origin remote: readOrigin answers the host and the
+// repository (and whether the checkout's own git config rewrites the origin,
+// which makes the name untrustworthy), and providerForHost turns the host into
+// the provider — the pair a checkout is remembered by.
+func settingsAccessOriginRepo(ctx context.Context) (string, error) {
+	oi, ok := readOrigin(ctx, ".")
+	if ok && !oi.Rewritten {
+		if provider := providerForHost(oi.Host); provider != "" {
+			if canonical, err := projectpolicy.Canonical(provider, oi.Repo); err == nil {
+				return canonical, nil
+			}
 		}
 	}
-	return canonicalRepoArg(lc, repo)
+	return "", settingsAccessNoOrigin()
+}
+
+// settingsAccessNoOrigin is that refusal. It does not advise writing the
+// repository canonically: `--repo provider/owner/name` is refused by
+// settingsRepoFile, which takes owner/name alone, and the checkout this command
+// would then write is the one this machine remembers rather than the one it
+// runs in.
+func settingsAccessNoOrigin() error {
+	return userErr("nothing was written: this checkout's repository cannot be told from its origin (a github.com or bitbucket.org remote naming owner/name), so the repository whose settings this write would change — and the role that write needs — cannot be named: add the origin remote (git remote add origin <url>), or write that repository's settings from a checkout this machine remembers with --repo owner/name")
+}
+
+// settingsAccessUnlistedRepo is the refusal of a --repo naming a repository
+// this machine's config does not list. It is the gate's own sentence rather than
+// canonicalRepoArg's, whose advice (write the value as provider/owner/name) is
+// one this command cannot take: settingsRepoFile accepts owner/name alone.
+func settingsAccessUnlistedRepo(repo string) error {
+	return userErr("nothing was written: %s is not a repository this machine's config lists, and a --layer repo write is judged in the repository whose file it lands in: run it from that repository's checkout, where the origin remote names it, or add the repository to this machine's config (fugaro update --repo in its checkout)", safetext.Field(repo))
 }
 
 // settingsAccessInput is the resolver's own input, and whether this

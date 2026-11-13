@@ -16,6 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // settings_access_test.go is RS6b's own behaviour: the writes of the settings,
@@ -260,6 +261,63 @@ func TestAccessSettingsRepoAdminChangesRepoSettingWithinGuardrail(t *testing.T) 
 	}
 	if readFileString(t, anon) != anonBefore {
 		t.Error("the refused write changed the anonymous checkout's file")
+	}
+}
+
+// TestAccessSettingsUnlistedCheckoutIsJudgedFromItsOrigin: the file a --layer
+// repo write lands in is resolved from the checkout the command runs in, and
+// that checkout need not be a repository this machine's config lists — the cwd
+// route of settingsRepoFile asks the config for nothing at all. The judgement
+// reads the repository off the same checkout's origin remote, so such a write
+// is made by a caller whose role covers it and refused for one whose role does
+// not, instead of being refused for everyone with the advice to write the
+// repository canonically — a value `--repo` here rejects.
+func TestAccessSettingsUnlistedCheckoutIsJudgedFromItsOrigin(t *testing.T) {
+	settingsAccessRig(t,
+		userStored(t, settingsAccessEveryUser, accesslib.RoleAdmin, "all-repos"),
+		userStored(t, settingsAccessRepoUser, accesslib.RoleAdmin, "github/acme/sandbox"),
+	)
+	file := settingsWriteCheckout(t, settingsRepoYAML(""))
+	testutil.Git(t, filepath.Dir(file), "remote", "add", "origin", "https://github.com/acme/unlisted.git")
+	before := readFileString(t, file)
+
+	// The repository is the one the origin names, and this machine's config
+	// does not list it: a caller whose scope covers another repository is
+	// refused by that name, and the file does not move.
+	userPairAs(t, settingsAccessRepoUser)
+	_, _, err := execute(t, "settings", "set", "git.base_branch", "develop", "--layer", "repo", "--yes")
+	if err == nil {
+		t.Fatal("a repository-scoped admin wrote a repository their scope does not cover")
+	}
+	if !strings.Contains(err.Error(), "admin at a scope covering github/acme/unlisted") {
+		t.Errorf("the refusal does not name the repository the origin names: %v", err)
+	}
+	if readFileString(t, file) != before {
+		t.Error("the refused write changed the unlisted checkout's file")
+	}
+
+	userPairAs(t, settingsAccessEveryUser)
+	if out, _, err := execute(t, "settings", "set", "git.base_branch", "develop", "--layer", "repo", "--yes"); err != nil {
+		t.Fatalf("an all-repos admin was refused a checkout this machine's config does not list: %v\n%s", err, out)
+	}
+	if got := readFileString(t, file); !strings.Contains(got, "base_branch: develop") {
+		t.Errorf("the checkout whose repository the caller is admin of does not carry the write:\n%s", got)
+	}
+
+	// A --repo naming owner/name alone has no origin to read, so it is judged
+	// against this machine's config, and the refusal names a remedy this
+	// command can take: settingsRepoFile takes owner/name and refuses the
+	// canonical form, so canonicalRepoArg's own advice would lead nowhere here.
+	settingsCheckout(t, t.TempDir(), "acme/elsewhere", settingsRepoYAML(""))
+	_, _, err = execute(t, "settings", "set", "git.base_branch", "develop", "--layer", "repo", "--repo", "acme/elsewhere", "--yes")
+	if err == nil {
+		t.Fatal("a --repo naming a repository this machine's config does not list was written")
+	}
+	if !strings.Contains(err.Error(), "not a repository this machine's config lists") {
+		t.Errorf("the refusal does not say what is missing: %v", err)
+	}
+	if strings.Contains(err.Error(), "name it canonically") {
+		t.Errorf("the refusal advises a --repo value this command refuses: %v", err)
 	}
 }
 
