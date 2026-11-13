@@ -1356,6 +1356,40 @@ func TestRunReadsTheLastBlockThisNonceFences(t *testing.T) {
 	}
 }
 
+// TestRunCarriesTheMachinesOwnLogin: LocalHandle is the one credential a
+// diagnosis may run on that this process never holds, and it is what `fugaro
+// troubleshoot` runs on when neither variable is set (the owner's report of
+// 2026-11-13). Run has to accept it, which is what Request.validate's
+// carries() is for, and the child it starts has to be handed no value at all:
+// the login is in claude's own store under the home directory the child
+// inherits, and anything of Fugaro's beside it would be a second credential.
+//
+// Mutation (run and restored): Request.validate's `!r.Handle.carries()` back to
+// `r.Handle.Secret() == ""` -> the diagnosis is refused before the child starts
+// and this fails, while every other test in the package stays green: the local
+// login path would be dead at runtime with the suite agreeing it was fine.
+func TestRunCarriesTheMachinesOwnLogin(t *testing.T) {
+	s := newRunSetup(t)
+	s.req.Handle = LocalHandle()
+	d, err := s.run(t, answer(t, fence(s.nonce, "outcome: bug\nsignature: update config invalid\nthe answer")))
+	if err != nil {
+		t.Fatalf("a diagnosis on the machine's own login was refused: %v", err)
+	}
+	if d.Outcome != OutcomeBug {
+		t.Errorf("the outcome is %q, want the answer's own %q", d.Outcome, OutcomeBug)
+	}
+	names := strings.Fields(runField(t, s.did(t), "env"))
+	if len(names) == 0 {
+		t.Fatal("the fake child recorded no environment, so this case proves nothing")
+	}
+	for _, name := range names {
+		switch name {
+		case credsOAuthVar, credsKeyVar:
+			t.Errorf("the child was handed %s: the machine's own login is not a value this process holds, and the child reads it from claude's own store", name)
+		}
+	}
+}
+
 // TestRunRedactsTheSignatureItMatchesOn: the signature is model output too, and
 // a credential that reached it would be written into whatever a finding saved
 // from this diagnosis is matched by.
