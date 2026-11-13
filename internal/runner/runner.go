@@ -2589,6 +2589,27 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if r.follow == nil && recipe.UsesRebase(rcp) {
 		return fmt.Errorf("recipe %s puts the branch of an existing pull request back on its base, and this task continues no pull request, so there is no branch to rebase: launch it on the pull request it rebases (--pr N)", rrec.Name)
 	}
+	// A merge judge recipe (E6) judges one thing: the brief its launch left
+	// under the run's own prefix — the diff at a pull request's head, the
+	// findings the ladder still has open there and the head they belong to
+	// (MergeJudgeInput, runstore.MergeJudgeInputName). Without one the run
+	// would start, resolve this recipe and die at its first step on a missing
+	// object, as a config error rather than as the launch that was wrong;
+	// refused here by name instead, at this run's base and before any stage, as
+	// the rebase arm above is. The test is the brief itself and not the recipe,
+	// because the launcher that writes one is the escalation ladder's (E10a,
+	// E10b): a launch it serves carries the brief and passes here, and one it
+	// could not write is refused with the object named rather than halfway
+	// through a run.
+	if recipe.UsesMergeJudge(rcp) {
+		_, err := r.d.Store.ReadFile(ctx, runstore.MergeJudgeInputName)
+		if errors.Is(err, runstore.ErrNotFound) {
+			return fmt.Errorf("recipe %s holds the merge_judge step, whose whole work is one read of a brief left under the run's own prefix — the diff at a pull request's head, the findings the ladder still has open there and the head they belong to — and this launch left none at %s: the launcher that writes one is the escalation ladder's, so a merge judge run is launched by the ladder rather than by hand", rrec.Name, runstore.MergeJudgeInputName)
+		}
+		if err != nil {
+			return fmt.Errorf("the brief a merge judge run reads at %s could not be read: %w", runstore.MergeJudgeInputName, err)
+		}
+	}
 	switch {
 	case r.review && rcp.Mode != recipe.ModeReview:
 		return fmt.Errorf("recipe %s is not mode: review, but the task names pull requests to review", rrec.Name)

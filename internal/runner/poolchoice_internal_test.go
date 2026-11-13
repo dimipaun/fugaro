@@ -153,6 +153,11 @@ func poolCreds(names ...string) []config.Credential {
 // those calls out on the coder's credential — the wrong half of a spending and
 // egress grant. triage is D1848's and runs level 2's model, so it is the senior
 // review's access; plan is the coder's own planning, which F13 does not name.
+// The merge judge is the escalation ladder's own craft (E6), and its stage is
+// named here rather than left to the loop below: the stage is the whole of a
+// judge run and it is not in config.RunStages, so a mapping that dropped the
+// row would send the judge's calls out on the run's default credential with
+// nothing else in the suite saying so.
 func TestStageCraftFollowsF13(t *testing.T) {
 	for _, tc := range []struct {
 		stage string
@@ -165,6 +170,7 @@ func TestStageCraftFollowsF13(t *testing.T) {
 		{"review", config.CraftSeniorReview},
 		{"triage", config.CraftSeniorReview},
 		{stageAdversarial, config.CraftSecurityReview},
+		{stageMergeJudge, config.CraftMergeJudge},
 		{"", ""},
 		{"bootstrap", ""},
 	} {
