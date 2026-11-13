@@ -422,10 +422,13 @@ func policyContextRefusal(p *projectpolicy.Policy, shipped bool) error {
 // The judge is the base image and not each workflow's build record, which is
 // what warnOldImages can walk: the policy node is read by every job of the
 // project, and the base image is the one image this door can date without a
-// read per workflow. An installation whose base image has moved but whose
-// derived images have not rebuilt is what fugaro update's own images stage
-// closes, and a launch on such an image is refused by the vision slot's own
-// gate (checkVisionImage) before it starts.
+// read per workflow. What it dates is the installation that publishes, which is
+// not every reader of the node: a repository of the project whose job image was
+// built from an older base has no launch gate on this member either — the
+// vision slot's gates fire on agent.models.vision being written, and a
+// repository can price images without ever naming a slot — so that launch runs
+// and its runner refuses the node whole at bootstrap, and fugaro image refresh
+// in that checkout is what closes it.
 func policyImageTokensRefusal(p *projectpolicy.Policy, ref string) error {
 	if p == nil {
 		return nil
