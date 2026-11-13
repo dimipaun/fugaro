@@ -46,6 +46,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
 	"github.com/dimipaun/fugaro/internal/gitproxy"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // The names these tests stand on. The workspace and the repository are the
@@ -1294,5 +1295,415 @@ func TestBitbucketRouteNotAdmitted(t *testing.T) {
 
 	if n := up.count(); n != 0 {
 		t.Fatalf("a repository the block does not admit made %d upstream calls", n)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The review class on this route (B-adm)
+// ---------------------------------------------------------------------------
+
+// proxySiblingRepo is a second repository of the fixture's workspace. It is
+// what makes "the PAIRING decides the repository" readable: the published block
+// admits it and its own child node admits the review account to it, exactly as
+// they do the fixture's repository, so a call for it is refused by the pairing
+// and by nothing about the policy — a route that judged a call against the
+// repository the caller's path named would serve it.
+const proxySiblingRepo = testWorkspace + "/repo-b"
+
+// proxyReviewPolicyDoc is the published policy of an installation that proxies
+// the fixture's workspace and admits the review account to both of its
+// repositories.
+func proxyReviewPolicyDoc(t *testing.T) string {
+	t.Helper()
+	both := `["` + testCanonical(t, testBitbucketRepo) + `", "` + testCanonical(t, proxySiblingRepo) + `"]`
+	return `{
+		"version": 5,
+		"budget": ` + testBudgetDoc + `,
+		"allow_repos": ` + both + `,
+		"accounts": {
+			"default": {"allow_repos": ` + both + `},
+			"` + testReviewAccount + `": {"allow_repos": ` + both + `}
+		},
+		"credentials": {"fallback": "auto"},
+		"bitbucket_token": {"allow_repos": ` + both + `, "proxy": true}
+	}`
+}
+
+// proxyReviewSvc is the installation under test for the REVIEW-only job
+// (C3.9a): the caller is that job's own service account, its run identity names
+// the pull requests it reviews and no branch (reviewRunToken), and the
+// repository its slug names is the fixture's Bitbucket repository.
+//
+// The installation's table holds that ONE repository, and deliberately: the
+// sibling above is admitted by the block and by its own child node, so every
+// test that is about the pairing below is a test about the pairing and not
+// about a policy that would have refused the call anyway.
+func proxyReviewSvc(t *testing.T, mutate ...func(*svc, *Config)) (*svc, *proxyUpstream, string) {
+	t.Helper()
+	up := newProxyUpstream(t)
+	doc, token := proxyBundleDoc(t)
+	slug := bitbucketSlug(t, testBitbucketRepo)
+	s := newReviewSvcSpelled(t, testReviewSA, testReviewSA, func(s *svc, cfg *Config) {
+		s.slug = slug
+		cfg.Repos = map[string]string{slug: testCanonical(t, testBitbucketRepo)}
+		cfg.Client = up.client()
+		pol := &fakePolicy{shared: decodeTestPolicy(t, proxyReviewPolicyDoc(t)), sharedFound: true}
+		cfg.Policy, s.policy = pol, pol
+		s.policy.admissions = map[string]*projectpolicy.RepoPolicy{
+			slug:                               decodeTestChild(t, testChildDoc(testReviewAccount)),
+			bitbucketSlug(t, proxySiblingRepo): decodeTestChild(t, testChildDoc(testReviewAccount)),
+		}
+		s.src.docs = [][]byte{doc}
+		for _, m := range mutate {
+			m(s, cfg)
+		}
+	})
+	return s, up, token
+}
+
+// proxyReviewCall is one call of this route as the installation's review-only
+// job: the review account's Google ID token beside a run identity that names
+// the pull requests it reviews and no branch.
+func (s *svc) proxyReviewCall(t *testing.T, method, path string, body []byte, mutate ...func(*http.Request)) (*http.Response, []byte) {
+	t.Helper()
+	return s.proxyCallAs(t, method, path, body, s.reviewRunToken(), s.reviewJobToken(), s.job, mutate...)
+}
+
+// reviewRunTokenOf is the review-only job's run identity for ANOTHER
+// repository: the slug claims of a run of that repository, with the fpr every
+// review identity carries. It is how a test presents an identity the pairing
+// must refuse — the account is the review job's and the repository is not the
+// one the installation serves it.
+func (s *svc) reviewRunTokenOf(slug string, prs ...int) string {
+	return s.runToken(
+		func(c map[string]any) { c["fs"] = slug },
+		func(c map[string]any) { c["sub"] = "r~" + slug + "~" + s.run },
+		func(c map[string]any) { c["user_id"] = "r~" + slug + "~" + s.run },
+		func(c map[string]any) { c["fpr"] = append([]int{}, prs...) },
+	)
+}
+
+// noTokenAnywhere is this route's oldest promise read on the review class's own
+// calls: the bundle's token travels to bitbucket.org and into nothing this
+// service writes or answers (G5, C1.13).
+func (s *svc) noTokenAnywhere(t *testing.T, token, answer string) {
+	t.Helper()
+	for what, text := range map[string]string{
+		"the answer":     answer,
+		"the log":        s.logs.String(),
+		"the audit line": s.audit.String(),
+	} {
+		if strings.Contains(text, token) {
+			t.Errorf("%s carries the bundle's Bitbucket token", what)
+		}
+	}
+}
+
+// TestReviewCallerFetchesItsRepositoryThroughTheBitbucketProxy: the fetch is
+// the call the whole review is built on — the diff and the files the reviewer
+// reads come from the checkout this fetch makes — and the review-only job is
+// served it exactly as a writing run is: same rebuilt URL, same bundle token,
+// and an audit line naming the review account that asked.
+func TestReviewCallerFetchesItsRepositoryThroughTheBitbucketProxy(t *testing.T) {
+	s, up, token := proxyReviewSvc(t)
+	up.answerWith(http.StatusOK, "001e# service=git-upload-pack\n0000")
+
+	resp, ans := s.proxyReviewCall(t, http.MethodGet, proxyPath(proxyGitPath("info/refs")+"?service=git-upload-pack"), nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the review caller's fetch answered %d, want 200 (%s)", resp.StatusCode, ans)
+	}
+	got := up.only(t)
+	if got.host != "bitbucket.org" || got.scheme != "https" {
+		t.Errorf("the fetch was addressed to %s://%s, want https://bitbucket.org", got.scheme, got.host)
+	}
+	if want := "/" + proxyGitPath("info/refs"); got.path != want {
+		t.Errorf("the fetch's upstream path = %q, want %q", got.path, want)
+	}
+	if got.query != "service=git-upload-pack" {
+		t.Errorf("the fetch's upstream query = %q, want service=git-upload-pack", got.query)
+	}
+	wantAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte(bitbucket.GitUsername+":"+token))
+	if got.auth != wantAuth {
+		t.Errorf("the upstream was shown %q as its credential, want the bundle's token as git's own x-token-auth Basic", got.auth)
+	}
+
+	line := s.onlyAuditLine(t)
+	if line["purpose"] != PurposeGit || line["credential"] != config.BitbucketSecret || line["status"] != StatusOK {
+		t.Errorf("the audit line = %v, want the git purpose, the bundle's credential and ok", line)
+	}
+	// The line names the review job's own account as the caller and the run's
+	// repository, and it carries no value of the credential it names.
+	if line["run"] != s.run || line["repository"] != s.slug || line["caller"] != testReviewSA {
+		t.Errorf("the audit line = %v, want the run %q of %q called by %q", line, s.run, s.slug, testReviewSA)
+	}
+	s.noTokenAnywhere(t, token, string(ans))
+}
+
+// TestReviewCallerReadsItsPullRequestThroughTheBitbucketProxy: the reads a
+// review is made of — the pull request it reviews, that pull request's comments
+// and the commit under review — are forwarded with the bundle's token as a REST
+// bearer, and every line names the Bitbucket API purpose.
+func TestReviewCallerReadsItsPullRequestThroughTheBitbucketProxy(t *testing.T) {
+	for _, tc := range []struct{ name, path string }{
+		{"the pull request it reviews", proxyRESTPath("/pullrequests/7")},
+		{"that pull request's comments", proxyRESTPath("/pullrequests/7/comments")},
+		{"the commit under review", proxyRESTPath("/commit/abcdef1")},
+		{"the repository", proxyRESTPath("")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, up, token := proxyReviewSvc(t)
+			up.answerWith(http.StatusOK, `{"values":[]}`)
+
+			resp, ans := s.proxyReviewCall(t, http.MethodGet, proxyPath(tc.path), nil)
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("the read answered %d, want 200 (%s)", resp.StatusCode, ans)
+			}
+			got := up.only(t)
+			if got.host != "api.bitbucket.org" {
+				t.Errorf("the read was addressed to %q, want api.bitbucket.org", got.host)
+			}
+			if want := "/" + tc.path; got.path != want {
+				t.Errorf("the read's upstream path = %q, want %q", got.path, want)
+			}
+			if got.auth != "Bearer "+token {
+				t.Errorf("the read was shown %q, want the bundle's token as a REST bearer", got.auth)
+			}
+			line := s.onlyAuditLine(t)
+			if line["purpose"] != PurposeBitbucketAPI || line["credential"] != config.BitbucketSecret || line["status"] != StatusOK {
+				t.Errorf("the audit line = %v, want the Bitbucket API purpose, the bundle's credential and ok", line)
+			}
+		})
+	}
+}
+
+// TestReviewCallerWritesNothingThroughTheBitbucketProxy is this task's own red
+// step. A review-only job's run identity carries fpr and no fb, exactly as a
+// review-mode run of a per-repository job does — and fpr is what lets a comment
+// be written on the pull requests it names. The two callers are not the same
+// caller: this one is served a read-only credential set on every other route
+// (D1065), so before the class reached these rules the proxy handed it the one
+// write that set exists to refuse.
+//
+// Every write is refused for the CLASS and, the sharp part, before anything is
+// forwarded: the upstream sees zero bytes for every case below — including the
+// comment on pull request 7, which is the pull request this very identity names
+// in fpr. A route that refused the comment for any rule above the class would
+// have had to read the pull request's facts first, which is one upstream call.
+func TestReviewCallerWritesNothingThroughTheBitbucketProxy(t *testing.T) {
+	cases := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{"the comment on the pull request fpr names", http.MethodPost, proxyRESTPath("/pullrequests/7/comments"),
+			`{"content":{"raw":"a review note"}}`},
+		{"the update of the pull request fpr names", http.MethodPut, proxyRESTPath("/pullrequests/7"),
+			`{"title":"a rename"}`},
+		{"the create of a pull request", http.MethodPost, proxyRESTPath("/pullrequests"),
+			`{"title":"a pull request"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, up, token := proxyReviewSvc(t)
+			resp, ans := s.proxyReviewCall(t, tc.method, proxyPath(tc.path), []byte(tc.body))
+			proxyRefused(t, resp, ans, http.StatusBadRequest, ErrorRequestRefused, gitproxy.ReasonReadOnly)
+			if n := up.count(); n != 0 {
+				t.Fatalf("the upstream saw %d calls, and a read-only caller's write must forward no byte: %+v", n, up.calls())
+			}
+			line := s.onlyAuditLine(t)
+			if line["status"] != ErrorRequestRefused || line["purpose"] != PurposeBitbucketAPI {
+				t.Errorf("the audit line = %v, want the refusal under the Bitbucket API purpose", line)
+			}
+			s.noTokenAnywhere(t, token, string(ans))
+		})
+	}
+
+	// A push, of the very ref a writing run would move, and of the two kinds of
+	// ref a push must never move: the class is what refuses all three, and the
+	// refusal is taken before the pack and before any upstream call.
+	for _, ref := range []string{"refs/heads/fugaro/run-r", "refs/tags/v1", "refs/heads/main"} {
+		t.Run("a push of "+ref, func(t *testing.T) {
+			s, up, _ := proxyReviewSvc(t)
+			body := proxyUpdateRequest(ref) + "PACK"
+			resp, ans := s.proxyReviewCall(t, http.MethodPost, proxyPath(proxyGitPath("git-receive-pack")), []byte(body))
+			proxyRefused(t, resp, ans, http.StatusBadRequest, ErrorRequestRefused, gitproxy.ReasonReadOnly)
+			if n := up.count(); n != 0 {
+				t.Fatalf("the upstream saw %d calls, and a refused push forwards no byte: %+v", n, up.calls())
+			}
+			line := s.onlyAuditLine(t)
+			if line["status"] != ErrorRequestRefused || line["purpose"] != PurposeGit {
+				t.Errorf("the audit line = %v, want the refusal under the git purpose", line)
+			}
+			// The class is on the service's own line, which is the only place
+			// an operator reads it (the caller is told the wire refusal).
+			if logged := s.logs.String(); !strings.Contains(logged, "class="+gitproxy.ReasonReadOnly) {
+				t.Errorf("the service's own log does not carry the class %q: %s", gitproxy.ReasonReadOnly, logged)
+			}
+		})
+	}
+}
+
+// TestReviewCallerIsRefusedTheCallsThisRouteNeverNames: the routes G4 refuses
+// are refused for the review class too, and by the classification rather than
+// by the class — a merge, an approve and /2.0/workspaces are not calls this
+// route names for ANY caller, so they reach bitbucket.org as nothing at all.
+func TestReviewCallerIsRefusedTheCallsThisRouteNeverNames(t *testing.T) {
+	for _, tc := range []struct{ name, method, path string }{
+		{"a merge", http.MethodPost, proxyRESTPath("/pullrequests/7/merge")},
+		{"an approve", http.MethodPost, proxyRESTPath("/pullrequests/7/approve")},
+		{"the workspaces route", http.MethodGet, "2.0/workspaces"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, up, _ := proxyReviewSvc(t)
+			resp, ans := s.proxyReviewCall(t, tc.method, proxyPath(tc.path), nil)
+			proxyRefused(t, resp, ans, http.StatusBadRequest, ErrorRequestRefused, gitproxy.ReasonCallNotAllowed)
+			if n := up.count(); n != 0 {
+				t.Fatalf("the upstream saw %d calls, and a call that never classified must forward none", n)
+			}
+			line := s.onlyAuditLine(t)
+			if line["status"] != ErrorRequestRefused {
+				t.Errorf("the audit line = %v, want the refusal's own wire type", line)
+			}
+			if auditField(line, "purpose") != "" || auditField(line, "credential") != "" {
+				t.Errorf("the audit line = %v, and a call that never classified names neither a purpose nor a credential", line)
+			}
+		})
+	}
+}
+
+// TestReviewCallerIsRefusedAnotherRepositoryThroughTheBitbucketProxy is the
+// pairing's half of B-adm: the bundle's Bitbucket token may be a workspace or
+// project access token that reaches many repositories, so the route must judge
+// every call against the ONE repository the run identity's slug names — and a
+// path naming another repository, of this workspace or of another, is refused
+// rather than served with the token of the whole workspace.
+//
+// The other repository is one the policy ADMITS: the published block carries
+// it, its own child node admits the review account to it and it is a valid row
+// of the installation's form. The only thing refusing the call is that the
+// pairing put this run in the fixture's repository and nowhere else.
+func TestReviewCallerIsRefusedAnotherRepositoryThroughTheBitbucketProxy(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		method  string
+		path    string
+		purpose string
+	}{
+		{"a fetch of another repository of the same workspace", http.MethodGet,
+			proxySiblingRepo + ".git/info/refs?service=git-upload-pack", PurposeGit},
+		{"the advertisement of another repository of the same workspace", http.MethodGet,
+			proxySiblingRepo + ".git/info/refs?service=git-receive-pack", PurposeGit},
+		{"a read of another repository of the same workspace", http.MethodGet,
+			"2.0/repositories/" + proxySiblingRepo + "/pullrequests/7", PurposeBitbucketAPI},
+		{"a fetch of another workspace's repository", http.MethodGet,
+			testElsewhereRepo + ".git/info/refs?service=git-upload-pack", PurposeGit},
+		{"a read of another workspace's repository", http.MethodGet,
+			"2.0/repositories/" + testElsewhereRepo + "/pullrequests/7", PurposeBitbucketAPI},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, up, _ := proxyReviewSvc(t)
+			resp, ans := s.proxyReviewCall(t, tc.method, proxyPath(tc.path), nil)
+			proxyRefused(t, resp, ans, http.StatusBadRequest, ErrorRequestRefused, gitproxy.ReasonOtherRepository)
+			if n := up.count(); n != 0 {
+				t.Fatalf("the upstream saw %d calls, and a call for another repository forwards none: %+v", n, up.calls())
+			}
+			line := s.onlyAuditLine(t)
+			if line["status"] != ErrorRequestRefused || auditField(line, "purpose") != tc.purpose {
+				t.Errorf("the audit line = %v, want the refusal under the purpose %q", line, tc.purpose)
+			}
+		})
+	}
+}
+
+// TestReviewCallerWithoutAPairedIdentityIsRefused: every call of this route is
+// made by a caller the pairing placed in one repository, and each way of not
+// being that caller is a refusal here — a run identity the installation's table
+// does not hold, one whose repository does not admit the review account, one
+// that names no pull request and one that carries a branch (the shape of a
+// coding run launched into the review job). All four are refused before the
+// route is reached, so bitbucket.org sees nothing and the one line each writes
+// is the audited refusal itself.
+func TestReviewCallerWithoutAPairedIdentityIsRefused(t *testing.T) {
+	fetch := proxyPath(proxyGitPath("info/refs") + "?service=git-upload-pack")
+	for _, tc := range []struct {
+		name   string
+		mutate func(*svc, *Config)
+		runTok func(*svc) string
+		jobTok func(*svc) string
+	}{
+		{
+			name:   "a repository the installation's table does not hold",
+			runTok: func(s *svc) string { return s.reviewRunTokenOf(bitbucketSlug(t, proxySiblingRepo), 7) },
+			jobTok: func(s *svc) string { return s.reviewJobToken() },
+		},
+		{
+			name: "a repository whose admission does not name the review account",
+			mutate: func(s *svc, _ *Config) {
+				s.policy.admissions[bitbucketSlug(t, testBitbucketRepo)] = decodeTestChild(t, testChildDoc(config.DefaultClaudeAccount))
+			},
+			runTok: func(s *svc) string { return s.reviewRunToken() },
+			jobTok: func(s *svc) string { return s.reviewJobToken() },
+		},
+		{
+			name:   "a run identity that names no pull request",
+			runTok: func(s *svc) string { return s.runToken(func(c map[string]any) { c["fpr"] = []int{} }) },
+			jobTok: func(s *svc) string { return s.reviewJobToken() },
+		},
+		{
+			name:   "a run identity that carries a branch",
+			runTok: func(s *svc) string { return s.runToken(proxyClaims(s.proxyBranch())...) },
+			jobTok: func(s *svc) string { return s.reviewJobToken() },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var extra []func(*svc, *Config)
+			if tc.mutate != nil {
+				extra = append(extra, tc.mutate)
+			}
+			s, up, _ := proxyReviewSvc(t, extra...)
+
+			resp, ans := s.proxyCallAs(t, http.MethodGet, fetch, nil, tc.runTok(s), tc.jobTok(s), s.job)
+			proxyRefused(t, resp, ans, http.StatusForbidden, ErrorUnverifiedRunIdentity, "")
+
+			if n := up.count(); n != 0 {
+				t.Fatalf("the upstream saw %d calls, and an unpaired caller forwards none: %+v", n, up.calls())
+			}
+			// A refusal taken above the classification names no purpose and no
+			// credential (routeAct's rule for this route): the service had not
+			// yet decided what the call was.
+			line := s.onlyAuditLine(t)
+			if line["status"] != ErrorUnverifiedRunIdentity {
+				t.Errorf("the audit line = %v, want the refusal's own wire type", line)
+			}
+			if auditField(line, "purpose") != "" || auditField(line, "credential") != "" {
+				t.Errorf("the audit line = %v, and a refusal taken above the classification names neither", line)
+			}
+		})
+	}
+}
+
+// TestSharedCodingCallerRefusedOnTheBitbucketRoute: the gate is narrowed for the
+// review class and NOT lifted for a shared coding project job, which stays
+// refused whole (Global Constraint 6; B5.3 is the task that lifts it). Its
+// account is refused before this route is reached, with the sentence it is
+// refused with today, and the refusal is the caller's verified email and never
+// the job name it reports.
+func TestSharedCodingCallerRefusedOnTheBitbucketRoute(t *testing.T) {
+	s, up, _ := proxyReviewSvc(t)
+
+	resp, ans := s.proxyCallAs(t, http.MethodGet, proxyPath(proxyGitPath("info/refs")+"?service=git-upload-pack"), nil,
+		s.reviewRunToken(), s.jobToken(func(c map[string]any) { c["email"] = testSharedSA }), s.job)
+	if resp.StatusCode != StatusUnverified {
+		t.Fatalf("the shared caller's fetch answered %d, want %d (%s)", resp.StatusCode, StatusUnverified, ans)
+	}
+	if got := refusal(t, resp.StatusCode, ans); got.Error != ErrorUnverifiedJobIdentity {
+		t.Errorf("the refusal is %q, want %q: %s", got.Error, ErrorUnverifiedJobIdentity, got.Message)
+	}
+	if n := up.count(); n != 0 {
+		t.Fatalf("a shared coding caller made %d upstream calls, want none", n)
+	}
+	if lines := s.auditLines(t); len(lines) != 0 {
+		t.Errorf("a shared coding caller wrote %d audit lines, want none: the refusal is taken before the identity is verified", len(lines))
 	}
 }

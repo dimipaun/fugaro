@@ -4,7 +4,8 @@
 O5 (#2043), O6 (#1950), O7 (#2040), O8 (#2064), O10 (#2191), O17 (#2024) and O18 (#2112). Open as drafts: O9 (#2193) and O12 (#2290). Not
 started: O11, O13, O14 (it follows #2193 and #2207), and the three this revision writes — **O16 is now two tasks**: **O16a** (the state scopes,
 the catalogue rows and the read handlers, dormant; **approved and launchable**, after the open #1994) and **O16b** (serving them; approved,
-waits on the MCP folder's wiring task), and **O19** (a workspace's refusal pauses the queue; approved, waits on W7, #2275). **The owner answered
+waits on the MCP folder's wiring task), and **O19** (a workspace's refusal pauses the queue; approved, its gate W7 #2275 merged and **the reading of
+2026-11-13 found the run record does not mark the refusal, so it is blocked on a W-side record change** — U12 resolved NO). **The owner answered
 D2020-D2022 as recommended and approved all tasks on 2026-11-10** (reconciliation section 8). The paragraph below is the status of 2026-11-08, kept.
 
 **Status (2026-11-08): six tasks of this plan are built, all merged on `main`.** **Task O0, the state schema, the typed patch and the validator, is merged on `main`** on
@@ -860,11 +861,13 @@ either half (D2021, answered (a) on 2026-11-10).
 - **Depends on:** O17. **Level 3.** **Commit:** `feat(ee): batch approval for orchestrator work items (O18)`. **Red step:** `TestBatchDefaultIsTenAndOnlyAPersonRaisesIt`.
   **Reviewer:** security.
 
-### O19. `ee/`: a workspace's refusal pauses the queue (slice 3; approved 2026-11-10; WAITS on W7)
+### O19. `ee/`: a workspace's refusal pauses the queue (slice 3; approved 2026-11-10; BLOCKED 2026-11-13 on a W-side record change — U12 resolved NO)
 
 **What "workspace caps" can mean, read against `main` on 2026-11-10** (reconciliation section 8, F29). D1222 put "workspace caps" in `ee/`
 and said nothing more. The workspaces work is now mostly on `main`: W0-W6 and W8 are merged and **W7 — the cap's meter, its alarm and the
-member's binding — is the open draft #2275**, with W9 (the docs) after it. Its money fence is metered at the workspace's credentials service
+member's binding — was then the open draft #2275**, with W9 (the docs) after it; both have since merged (W7 as `d3b7613f` on 2026-11-11, W9 as
+#2421), and **W7's own merge is what the reading below measured: it left the refusal unmarked, so O19 is blocked and not launchable.**
+Its money fence is metered at the workspace's credentials service
 (W7) and its stop is `budget.PathKillGlobal` **in the workspace's own database** (`internal/cli/budget_kill_workspace.go:7-12`), whose rules
 are closed to every reader (`internal/budget/rules/workspace.json.tmpl`); the headroom reaches a member's **job service account** only (W7's
 interface). The daemon runs on the **person's** credential and reads its own project's kill switch (`internal/cli/orchestrator_run.go:351-378`).
@@ -876,7 +879,7 @@ such cycles (`internal/orchestrator/breaker.go`, `BreakerThreshold`). **D2022** 
 - **Files (13):** `internal/orchestrator/hooks.go` (edit: a `WorkspaceFuncs` seam, `Refused func(RunReport) bool`, set once by
   `ee/register`; **the core default answers false**, so an untagged build behaves exactly as today), `internal/orchestrator/hooks_test.go`
   (edit), `internal/orchestrator/runview.go` (edit: `RunReport` carries the refusal's source as the run record states it — **the field's name
-  and spelling are W7's, written when #2275 merges**), `internal/cli/orchestrator_run.go` (edit: the reader fills that field from the run
+  and spelling would be W7's, and #2275 merged without writing one**), `internal/cli/orchestrator_run.go` (edit: the reader fills that field from the run
   record) with `internal/cli/orchestrator_run_test.go` (edit), `internal/orchestrator/breaker.go` (edit: a trip at once, which raises the **same** `breaker-tripped` decision with the
   workspace's reason, so the pause is the one `Plan` already refuses over through `BreakerOpen`, `breaker.go:126`, and no new pause
   mechanism or decision kind exists), `internal/orchestrator/breaker_test.go` (edit), `internal/orchestrator/tick.go` (edit: the fold asks
@@ -898,12 +901,18 @@ such cycles (`internal/orchestrator/breaker.go`, `BreakerThreshold`). **D2022** 
   (the eeboundary guard is run).
 - **Command:** `go test ./internal/orchestrator/ -run 'Workspace|Breaker|Tick' -count=1 && go test ./internal/cli/ -run TestRunViewCarriesTheWorkspaceRefusal -count=1 && go test ./ee/orchestrator/ ./ee/register/ -run 'Workspace|Orchestrator' -count=1 && go test ./internal/eeboundary/ -count=1`
 - **Depends on:** O6, O7, O8 and O18 (merged), **O14** (it writes `tick.go` at level 7), and externally **D2022 answered (a)** (done
-  2026-11-10) and **W7 merged** (#2275). **Serializes after** the open #2207 (`internal/cli/orchestrator_run.go`) and #2202 (`internal/cli/orchestrator_run_test.go`), and after O13 and O14 (`tick.go`,
-  `orchestrator_run.go`). **Level 8**, and gated until both external triggers fire.
-- **What waits, exactly, and the trigger:** the `RunReport` field and the reader's mapping wait for **W7's merge**: the trigger is #2275
-  landing, and the first act is reading how a call the workspace refused (its stop, its cap or a failed settle) reaches the run record. **If
-  it does not reach it distinguishably**, O19 cannot be built as written and that is reported to the owner as a gap in W7, not worked around
-  here. W9 (docs) is not a dependency: O19 edits no `SECURITY.md` sentence.
+  2026-11-10) and **W7** (#2275, merged 2026-11-11 as `d3b7613f`). **Serializes after** the open #2207 (`internal/cli/orchestrator_run.go`) and #2202 (`internal/cli/orchestrator_run_test.go`), and after O13 and O14 (`tick.go`,
+  `orchestrator_run.go`). **Level 8**, and both external triggers have fired — **which does not make it launchable: the reading below blocks it,
+  and what unblocks it is a W-side change that puts the refusal's source in the run record, not W7's merge.**
+- **What waits, exactly, and the trigger:** the `RunReport` field and the reader's mapping waited for **W7's merge** — the trigger, #2275, which
+  landed 2026-11-11 — and the first act was reading how a call the workspace refused (its stop, its cap or a failed settle) reaches the run
+  record — where the plan already stated the stand: **if it does not reach it distinguishably, O19 cannot be built as written and is reported to
+  the owner as a gap in W7 rather than worked around here. It does not reach it distinguishably.** W9 (docs) is not a dependency: O19 edits no
+  `SECURITY.md` sentence.
+  Read 2026-11-13 (the trigger fired: W7 merged as `d3b7613f`, #2275): W7 wrote no run-record field, the workspace's stop reaches the record as
+  the same `budget_unavailable`/`run` halt a member's own service outage writes, and the cap's refusal is on no call path at all, so O19 is
+  blocked and no task of this plan implements it until a W-side change puts the refusal's source in the record — the reading, with its
+  citations, is `docs/stateless-orchestrator/reconciliation.md` **U12 (resolved NO)**.
 - **Commit:** `feat(ee): a workspace's refusal pauses the orchestrator's queue (O19)`
 - **Red step:** `TestAWorkspaceRefusalPausesTheQueueAtOnce` fails to build (no seam), then fails while a refused run is folded as an ordinary
   refusal and the next approved item is launched into the same stop.
@@ -920,7 +929,8 @@ O9 no longer needs O0 or O3**); O13 <- O8, O12, O11; O18 <- O17; O11 <- O5, O8, 
 writer per level. **Added 2026-11-10:** **O16a <- O0, O3, O5** (all merged; it shares no file with any task of this plan, and outside it
 serializes after the open #1994 on `ee/coordinator/mcpauth/authorize.go`); **O16b <- O16a**, plus the MCP folder's wiring task (external;
 D2020 answered 2026-11-10); **O19 <- O6, O7, O8, O18** (the rule) **and O19 <- O14** (both write `internal/orchestrator/tick.go`, and O13 before it writes
-`internal/cli/orchestrator_run.go`), plus W7 (#2275) external (D2022 answered 2026-11-10).
+`internal/cli/orchestrator_run.go`), plus W7 (#2275) external, merged 2026-11-11 (D2022 answered 2026-11-10) — **and that merge does not unblock
+it: the refusal is unmarked in the run record, so O19 waits on a W-side record change (U12 resolved NO 2026-11-13).**
 
 | Level | Tasks (can all run at once) |
 | --- | --- |
@@ -932,7 +942,7 @@ D2020 answered 2026-11-10); **O19 <- O6, O7, O8, O18** (the rule) **and O19 <- O
 | 5 | O11 |
 | 6 | O13 |
 | 7 | O14 (BF2) |
-| 8 | **O19** (gated: W7) |
+| 8 | **O19** (blocked: a W-side record change; U12 resolved NO 2026-11-13) |
 | gated | **O16b** (the MCP wiring task) |
 
 **Critical path:** O0 -> O3 -> O5 -> O8 -> O9 -> O11, six levels, unchanged by D1243 (O10's own path is O0 -> O3 -> O5 -> O8 -> O10, five). Slice 1
@@ -1089,7 +1099,8 @@ follows the ruling through O9, G11 and the conventions above.
   off it; it shapes O16a's `TestApplyPatchIsCataloguedAndNotServed` and nothing else. **D2022** — what O19 ("workspace caps") delivers;
   recommendation (a), a workspace's refusal pauses the queue at once, with no new read and no new cap number; it gates O19. **D2023-D2029
   are reserved.** **O16a was gated by none of them** and is approved and launchable, after the open #1994; O16b (approved) waits on the
-  MCP wiring task and O19 (approved) on W7, #2275.
+  MCP wiring task and O19 (approved) is **blocked**, its gate W7 (#2275) having merged without marking the refusal in the run record: what it
+  waits on is a W-side record change (U12 resolved NO 2026-11-13).
 - **BF2, 2026-11-08: the long-run triage rule (D1244-D1247), one task, O14, all four the recommendation.** A run past the local threshold
   `orchestrator.triage_after` (default `2h`, under the run's budget) — **replaced by D2032 of `docs/outer-loop-escalation`, and the key was never built: O14's note above says how** — is triaged by code from three reads — the run's record, the pull request's state and
   **its CI state** (through the provider read this task adds), and BF1's open-findings file — and the outcome is one of four: **merge as-is plus a follow-up task** (the owner's default, and automatic **only** on
