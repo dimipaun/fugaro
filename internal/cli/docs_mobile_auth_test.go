@@ -73,11 +73,20 @@ import (
 // checks in its P0 -- pairing an identifier with a citation needs a notion of
 // scope the prose does not carry. The reconciliation and the plan cite symbols
 // in that loose shape throughout, and the two documents are held to their paths
-// and their numbering instead. It reads **this folder
-// only**: it makes no claim about docs/mobile/, docs/central-orchestrator/,
-// docs/coordinator/ or the check register, each of which its own pin holds --
-// and it holds a citation into another folder's document to that path
-// resolving, and to nothing about what the sentence there says.
+// and their numbering instead. It reads **this folder's
+// documents, and the files those documents cite**: it makes no claim about
+// docs/mobile/, docs/central-orchestrator/, docs/coordinator/ or the check
+// register, each of which its own pin holds. A citation into another folder's
+// *document* is held to that path resolving and to nothing about what the
+// sentence there says -- with **two exceptions the census below names on
+// purpose**, because both are text another folder's maintainer can edit: one
+// full sentence of `docs/workspaces/spec.md` (the workspace's own pin, which
+// the provider document's section 2.5 rests on) and three symbols of
+// `scripts/live-checks/check361.sh` (that pin's live reading). Those two are
+// the only places this guard reads another folder's prose, and an edit to
+// either of them fails TestDocsMobileAuthProviderSymbolsResolve: the census is
+// the exception, not the rule, and a maintainer of those files should know it
+// before they reword a sentence that looks like nobody else's business.
 const (
 	mobileAuthReadme = "docs/mobile-auth/README.md"
 	mobileAuthSpec   = "docs/mobile-auth/spec.md"

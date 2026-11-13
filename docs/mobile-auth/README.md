@@ -102,7 +102,10 @@ carrying **none** of this folder's ruling vocabulary ("the owner has decided", "
 because the plan's own red step for it is that *"this document describes an alternative and must not
 read as a ruling"*. **The guard states what it does not hold**, as the neighbouring ones do: a
 symbol named beside a citation without the possessive form, and any claim about the folders this one
-reconciles, which their own pins hold. (The reconciliation and the plan are held to their paths and
+reconciles, which their own pins hold — with the two exceptions P6's census names on purpose, one
+sentence of [../workspaces/spec.md](../workspaces/spec.md) that §2.5 of the provider document rests
+on and three symbols of `scripts/live-checks/check361.sh`, which is that sentence's live reading:
+those two this guard **does** hold, so an edit there can fail it. (The reconciliation and the plan are held to their paths and
 their numbering instead of to a symbol census.) It also carries the **excuse list** — the paths these documents cite that
 are not in the tree yet, each excused **only while it does not exist**, with
 the guard failing on an entry that has become stale, so the list cleans itself as the work lands.
