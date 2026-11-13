@@ -378,10 +378,11 @@ func TestAuthorizeKeepsTheStateAndSendsTheCodeToTheListener(t *testing.T) {
 }
 
 // TestCodeExchangeRefusesAHostileTarget is the other half of the redirect
-// rule, and the one that matters: the target is not a parameter of the
-// exchange at all. A request that names one — a caller trying to move its own
-// code to an address of its choosing — is answered by the code's own recorded
-// target, which is the loopback listener and nothing else.
+// rule, and the one that matters: the exchange takes no target at all. A
+// request that names one — a caller trying to move its own code to an address
+// of its choosing — is refused for the field these routes never read, and the
+// only listener a code was ever bound to is the loopback one the sign-in
+// validated.
 func TestCodeExchangeRefusesAHostileTarget(t *testing.T) {
 	f, _ := subscribed(t)
 	verifier := freshVerifier(t)

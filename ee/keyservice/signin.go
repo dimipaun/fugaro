@@ -5,8 +5,8 @@ package keyservice
 
 // The licence site's sign-in, authorize and device code (spec §11.3, §11.4;
 // D2144, TN3): the two paths `fugaro licence login` (K3.3) reaches, and the
-// first routes in this package whose caller is a person rather than a merchant's
-// event or a key's own secret.
+// first routes here that act for a person's own account rather than for a
+// merchant's event, a key's own secret or the operator reading the admin page.
 //
 // What proves the person is a Firebase ID token of the **owner's own licence
 // project** — never a customer's workspace project, whose token would prove only
@@ -27,13 +27,11 @@ package keyservice
 //
 // The codes are **this process's**. An authorize code lives five minutes and a
 // device code ten, and what holds them is a map on the service rather than the
-// store, because the store's own interface is deliberately small enough for the
-// durable backend S3.5 names to be written from it without guessing what a query
-// means, and a code that lives minutes is not a record anybody reads later. The
+// store: a code that lives minutes is not a record anybody reads later. The
 // price is named rather than hidden: two instances of this service do not share
 // these maps, so a deployment that answers these routes from more than one
-// process needs a table for them — a change to `store.go`, which is K2.2's to
-// make and not this task's.
+// process needs a table for them, which is a change to `store.go` and not this
+// task's to make.
 
 import (
 	"bytes"
@@ -139,17 +137,18 @@ const (
 	refuseSlowDown  = "That device code is being polled too often."
 )
 
-// The release saying "ask again in a moment" needs, and it is the deployment's
-// own interval rather than a constant of the caller's.
+// refuseSlowPoll carries the interval as Retry-After, so the CLI waits the
+// time this deployment enforces rather than one it picks itself.
 func refuseSlowPoll(w http.ResponseWriter) {
 	w.Header().Set("Retry-After", strconv.Itoa(int(devicePollInterval/time.Second)))
 	http.Error(w, refuseSlowDown, http.StatusTooManyRequests)
 }
 
-// refuseSignInToken answers every request these routes will not act on with the
-// one sentence and no status of its own: a caller that cannot tell a bad port
-// from a bad token from an address that never bought anything is a caller that
-// cannot use these routes as a lookup.
+// refuseSignInToken is the answer to every request these routes turn away
+// before a sign-in is verified, whatever the fault was: one sentence and one
+// status, so a caller cannot tell a bad port from a bad state from a token that
+// does not verify. What a caller whose token did verify is told is about its own
+// account alone.
 func refuseSignInToken(w http.ResponseWriter) {
 	http.Error(w, refuseSignIn, http.StatusForbidden)
 }
