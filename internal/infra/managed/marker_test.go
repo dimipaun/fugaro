@@ -1867,6 +1867,24 @@ var runAccountGrants = setOf(
 	// and the member is the ID this scan already knows from the bundle
 	// container's grant above.
 	`google_project_iam_member | "projects/${var.credentials_service.firebase_project}/roles/fugaroCredentialsDatabase" | project=var.credentials_service.firebase_project | google_service_account.credentials[0].member | for_each= | perms=firebasedatabase.instances.get,firebasedatabase.instances.update`,
+	// Reviewed for O16b (D2020 (a)): the front door's own account, on the
+	// get-only role the same module declares for it
+	// (modules/installation/state_read.tf), in the coordinator's Firebase
+	// project — where the orchestrator's node lives (D1220) and where the
+	// database is (D6). It is the ONE grant that lets the state group's two
+	// read tools answer, and the role's whole permission list is
+	// firebasedatabase.instances.get: no storage permission at all, nothing
+	// that grants itself a role, nothing that acts as or mints for another
+	// account, and a target that is neither the runs bucket nor the
+	// installation's own project. The write is deliberately not in the list —
+	// firebasedatabase.instances.update, the only one there is, because a node
+	// write is an update: apply_patch is served by nothing (D2021) and the
+	// state's writes stay with `fugaro orchestrator patch` and the person's own
+	// credential (D1223, D1241) — so nothing here can reach the runs bucket's
+	// root. Three tests refuse a widening of this row: this one, internal/infra's
+	// TestFrontDoorHoldsNoDatabaseWrite, and the module's own
+	// TestFrontDoorStateRoleHoldsNoDatabaseWrite.
+	`google_project_iam_member | "projects/${var.coordinator.firebase_project}/roles/fugaroStateRead" | project=var.coordinator.firebase_project | google_service_account.mcp_server[0].member | for_each= | perms=firebasedatabase.instances.get`,
 	// Reviewed for C1.18: each job's account may invoke the credentials
 	// service. roles/run.invoker carries no storage permission at all — it is
 	// the right to send a request to a Cloud Run service — and the target is
