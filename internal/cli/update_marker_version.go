@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/managed"
@@ -29,7 +30,8 @@ import (
 // The door is the update's and nothing else: `fugaro setup` shows a plan and
 // creates an installation, and an installation that exists converges when it is
 // updated. It applies nothing under --plan-only either, which is a preview of a
-// plan and not a writer of facts.
+// plan and not a writer of facts, nor in a coding agent's session, which is not
+// the act that moves a mark the confirmations are skipped on.
 //
 // Nothing here may fail the update, for the reason update_budget_mode.go's step
 // may not: every state that leaves the fact alone is a warning or silence, and
@@ -39,6 +41,34 @@ import (
 func (e *initEngine) convergeMarkerVersion(ctx context.Context) {
 	r, o := e.r, e.r.o
 	if o.doorName() != updateDoor.name || o.planOnly {
+		return
+	}
+	// Then the session, for the rule the other writer of these marks keeps
+	// (update_selfflag.go): what this step rewrites is the creation fact, one of
+	// the two marks that decide whether an installation's confirmations may be
+	// skipped at all, and a coding agent's session is not the act that moves it.
+	// `--yes`'s help says as much — under one of these markers the door "changes
+	// nothing outside this machine, --yes included" — and the mark's own writer
+	// refuses one outright rather than writing it, because consent to skip a
+	// confirmation is only as strong as the markers that identify the session
+	// (F20).
+	//
+	// The gate's exception does not reach here, though it reaches the roster
+	// writeAdminList publishes in the same run (D1016): what the gate admits a
+	// session to is the converge the marks say has already happened, and this
+	// object is one of the marks themselves — the step the gate has no document
+	// for is not thereby a step the session is admitted to (docs/managed-agent-
+	// converge/spec.md). It is also the write the gate's own admission has no
+	// cover for: the rewrite changes the version a reader outside this build
+	// consumes, so the release behind a run in flight re-reads it, refuses a
+	// version it does not know, and keeps its typed confirmation — an effect the
+	// owner's own run is the one to cause, over a converge that happened.
+	//
+	// Nothing is lost by leaving it: a version-3 fact is one this build reads
+	// (read.go), the count in it bounds nothing, and the run this step belongs
+	// to is the owner's own `fugaro update` at their own terminal, which is the
+	// HARD RULE's one command and converges the fact when it runs.
+	if agentMarker(os.Getenv, r.stdinTerminal()) != "" {
 		return
 	}
 	// A run that never opened the cloud has no bucket to read and no object to
