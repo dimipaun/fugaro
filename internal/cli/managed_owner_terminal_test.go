@@ -636,7 +636,7 @@ func TestManagedOwnerTerminalPinRemovalWritesWithoutAsking(t *testing.T) {
 	}
 
 	res := runPlugin(t, e)
-	if got := upgradeRead(t, settings); got != pinnedAmongOthersGone {
+	if got := convergeRead(t, settings); got != pinnedAmongOthersGone {
 		t.Errorf("the owner's own terminal did not take the pin out:\n%s\nwant:\n%s\n%s", got, pinnedAmongOthersGone, out)
 	}
 	if !strings.Contains(out.String(), initflow.OwnerProceeded()) {
@@ -672,7 +672,7 @@ func TestManagedOwnerTerminalPinRemovalRefusesAnAgentSession(t *testing.T) {
 	if _, err := newPluginStage(e).Apply(t.Context(), initflow.Env{}); err != nil {
 		t.Fatalf("a coding agent's session was refused with an error rather than a line to run: %v\n%s", err, out)
 	}
-	if got := upgradeRead(t, settings); got != pinnedAmongOthers {
+	if got := convergeRead(t, settings); got != pinnedAmongOthers {
 		t.Errorf("a coding agent's session on a managed project wrote the checkout:\n%s", got)
 	}
 	if !strings.Contains(out.String(), initflow.AgentRefusal(agentMarkers[0])) {
@@ -699,7 +699,7 @@ func TestManagedOwnerTerminalPinRemovalRefusesWithNobodyAtTheTerminal(t *testing
 	if _, err := newPluginStage(e).Apply(t.Context(), initflow.Env{}); err != nil {
 		t.Fatalf("a managed run nobody is at failed rather than leaving the write:\n%s", out)
 	}
-	if got := upgradeRead(t, settings); got != pinnedAmongOthers {
+	if got := convergeRead(t, settings); got != pinnedAmongOthers {
 		t.Errorf("a run nobody is at wrote the checkout:\n%s", got)
 	}
 	if !strings.Contains(out.String(), "nothing was written: to take the pin out yourself") {

@@ -864,6 +864,11 @@ Amended 2026-11-11:
 `internal/cli/docs_orchestrator_cutover_test.go`, the stateless-orchestrator plan's
 pin over its cutover how-to — the one-time import and the three hand-run
 rollback steps — moved the table's row from 129 to 130.
+Amended 2026-11-12: U4 of [docs/plugin-user-scope/](../plugin-user-scope/) deleted
+`internal/cli/docs_upgrade_local_test.go`, the pin over README's sentence about
+`fugaro upgrade --local` — the flag the one command no longer has, so the pin's
+subject is gone and the sentence that is left belongs to that folder's own task
+— and moved the table's row from 132 to 131.
 Amended 2026-11-11: `abSince`, the launch-image gate the model-A/B work's A3.3
 puts on the pair's own task (`internal/cli/recipes_skew.go`: a runner older than
 the release the ab field landed in refuses the whole task at bootstrap, the

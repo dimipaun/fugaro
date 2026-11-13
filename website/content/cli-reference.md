@@ -71,7 +71,6 @@ Subcommands:
 - `fugaro troubleshoot` -- Explain a Fugaro command that failed on this machine, locally
 - `fugaro update` -- Re-converge the installation, or a checkout's repository, after a CLI upgrade
 - `fugaro update-skills` -- Install or update the Fugaro plugin in your own Claude Code
-- `fugaro upgrade` -- Bring checkouts up to this fugaro: install or update the plugin in Claude Code, refresh the repository's images
 - `fugaro user` -- Grant, revoke and list the installation's roles, and its two IAM lists
 - `fugaro validate` -- Check a fugaro.yaml against the schema and the repository
 - `fugaro verify` -- Run and record this repository's build, test or lint command (inside a Fugaro run)
@@ -3902,18 +3901,17 @@ PROJECT_ID must be the exact GCP project ID of the installation selected by
 --project, --config or the checkout: one invocation names one project, and
 there is no bulk form, no wildcard and no prefix.
 
-It records three things in gs://<runs bucket>/fugaro/managed.json: that this
-project is managed, the monthly budget amount and currency the owner states
-with --budget and --budget-currency, and the bound on the billable image
-builds one invocation of fugaro image refresh may start (design D1013). The
-amount is required, with no default (D64), because the marker's amount is what
-the apply-time budget read opens the gate on: a marked project that records no
-amount is refused by every managed apply rather than applied without a budget
-control. The amount is the budget ALERT amount the installation's Terraform
-creates and nothing else — this command does not create or change a budget,
-and it makes no billing call. The bound is not a question: it is the marker's
-own default of one build per invocation, and this command asks the owner for
-no count, exactly as fugaro setup asks for none.
+It records two things in gs://<runs bucket>/fugaro/managed.json: that this
+project is managed, and the monthly budget amount and currency the owner states
+with --budget and --budget-currency. The amount is required, with no default
+(D64), because the marker's amount is what the apply-time budget read opens the
+gate on: a marked project that records no amount is refused by every managed
+apply rather than applied without a budget control. The amount is the budget
+ALERT amount the installation's Terraform creates and nothing else — this
+command does not create or change a budget, and it makes no billing call.
+Nothing else is a question: the bound on billable image builds this object used
+to record (D1013) is gone (D1543), so there is no count to ask the owner for
+and none to write, exactly as fugaro setup asks for none.
 
 It writes BOTH marks a managed project carries, in one step: that object and
 the label fugaro_managed=true on the GCP project itself (Task 3.0). The read
@@ -6389,6 +6387,7 @@ Subcommands:
 - `fugaro runs show` -- Show a run's chain and what is left of its limits
 - `fugaro runs stats` -- Aggregate run records by the person who started each run
 - `fugaro runs summary` -- Count the window's runs and their spend, without reading a run object
+- `fugaro runs watch` -- Print the triage the daemon would decide about the window's long runs
 
 ## `fugaro runs digest`
 
@@ -6771,6 +6770,63 @@ Flags:
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | only this repository (owner/name, or a path inside its checkout) |
 | `--since` | string | `7d` | no | the window of UTC days ending today (7d, 36h, 90m; a summary is per day, so 0 is refused) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro runs watch`
+
+Print the triage the daemon would decide about the window's long runs
+
+Print, for every run in the window, what the daemon's long-run triage would
+decide about it: the outcome, the closed codes behind it, the input nobody
+could read, and the threshold the decision is taken against.
+
+The window is runs ls's: the same --repo, --all, --mine, --since and --batch,
+and the same listing behind them. Each run of it is read the way the daemon
+reads one — its record from its own storage, its pull request and its checks
+from the host the run's repository is on, and the findings artifact it
+finalized with — and the outcome is the rule's own, so the print is what the
+daemon would decide and not a second opinion about it.
+
+This command changes nothing at all. It writes no record, no audit line, no
+cancel marker and no work item, it merges nothing, it cancels nothing, and it
+has no flag that acts on a run: everything the triage does is the daemon's,
+on its own evidence, and this is the reading a person takes before that.
+
+An input that cannot be read is never an error: the rule answers
+recommend-only, which merges, cancels and restarts nothing, and the print
+names the input — record, findings, changed paths or ci — beside the outcome.
+A run under the threshold is printed as not-due: the rule read nothing about
+it, and that is not one of the four outcomes.
+
+The age is the run's own mint time against now. The daemon ages a run from
+the attempt it recorded in its own database, which this command does not
+read: the two agree to the minute for a run the daemon started, and a run
+somebody else started has no attempt for the daemon to age at all.
+
+--json prints {version, project, threshold_seconds, runs[], warnings}; runs
+carries {run, repo, age_seconds, outcome, reasons[], unreadable,
+without_a_person}.
+
+Usage: `fugaro runs watch`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--all` | bool | `false` | no | every repository in the runs bucket |
+| `--batch` | string | "" | no | only runs of this batch |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for watch |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--mine` | bool | `false` | no | only runs you requested |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--repo` | string | "" | no | only this repository (owner/name, or a path inside its checkout) |
+| `--since` | string | `7d` | no | only runs started within this long (7d, 36h, 90m; 0 for all) |
 
 Subcommands:
 
@@ -8254,6 +8310,7 @@ Flags:
 | `--budget-admin` | stringArray | `[]` | no | with --firebase-project: an IAM member who may change caps and kill switches besides the GCP project's owners and editors (repeatable; default: the local config's terraform.budget_admins) |
 | `--budget-currency` | string | "" | no | the budget's currency, such as USD |
 | `--budget-mode` | string | "" | no | with --firebase-project: off, observe or enforce: the jobs' budget mode in the project config, and for observe and enforce the project-wide mode in the database (an absent one is seeded observe) |
+| `--check` | bool | `false` | no | read-only: write nothing, run no claude command and make no cloud call, print what each step of update would do from this checkout's own files, and exit 1 when anything is stale. The checkout is PATH (update --check [PATH]); the converge's own flags are refused rather than ignored, because this mode runs none of them. The rules and the policy steps are skipped with a note naming the command that answers them: the deployed rules generation and the published policy node live in the cloud, and reading either is the call this flag promises not to make |
 | `--check-github-app` | bool | `false` | no | let the GitHub App pre-check read the App's private key from Secret Manager with your own credentials (held in memory only, for one signed token; refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it); without it update checks only with the key you typed in this run |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--config-only` | bool | `false` | no | only write the local config, from the installation's outputs (else the flags) |
@@ -8322,109 +8379,6 @@ Flags:
 | `--dir` | string | `.` | no | a directory in the checkout |
 | `-h`, `--help` | bool | `false` | no | help for update-skills |
 | `--json` | bool | `false` | no | print machine-readable output |
-
-Subcommands:
-
-This command has no subcommands.
-
-## `fugaro upgrade`
-
-Bring checkouts up to this fugaro: install or update the plugin in Claude Code, refresh the repository's images
-
-upgrade brings each checkout (PATH, default the current directory; several are
-processed one after the other, each on its own) up to this fugaro, in four
-steps, stopping that checkout at the first step that fails:
-
-  plugin  the plugin installed (user scope) or updated in Claude Code through
-          the claude CLI on PATH: a fixed set of claude plugin commands, never
-          with -y, the marketplace declared at this release's tag. It writes
-          nothing in the checkout: the plugin is this machine's, and the pin an
-          older fugaro left in .claude/settings.json is read, never moved
-          (fugaro update-skills --check and fugaro doctor report it). Without
-          claude it prints the slash commands to type in Claude Code. Running
-          Claude Code sessions apply it after a restart.
-  cloud   what fugaro image refresh does for the checkout's repository: this
-          release's base image, the daily image check job, the builds. It
-          asks at each step, or with --yes confirms every step itself, each
-          billable build included, with no cap. Skipped where there is
-          nothing to refresh from here: no fugaro.yaml, no local project
-          config (a teammate), a repository not onboarded. After a real
-          refresh it also compares the deployed job's whole copy of the
-          local project config (providers, model_prices, budget settings,
-          the region's compute price override and the GitHub App ID;
-          multi-model.md) with what the local config would write now: a
-          version upgrade never refreshes that copy, so a mismatch prints a
-          note naming the fields and the one command that does, fugaro update
-          --repo . (never run here: its Terraform confirmations stay
-          yours). --check makes no cloud call, so it cannot tell and says
-          so instead. It checks each workflow's default-account job;
-          named-account jobs are updated by the same fugaro update --repo .
-  rules   the security rules generation a project policy is read under,
-          deployed into the project's Firebase database, the same deploy
-          fugaro update's rules stage makes: the plan is printed and the
-          project's name typed (--yes confirms it, and is the way past the
-          typed confirmation without a terminal). Deployed when the deployed
-          rules are absent, older, pre-policy or a different document.
-          Skipped where there is no shared budget backend, where the database
-          is one this installation may not write (the ownership check every
-          writer into it asks), where the deployed marker is newer or hand
-          edited, and where the rules or their marker could not be read.
-          --check makes no cloud call here either and says it cannot tell.
-          It is what fugaro update's rules stage does; both doors run it, and
-          this one runs it before the policy step because the policy writer
-          refuses a migration the deployed rules would not admit.
-  policy  the project's published policy node, if an earlier Fugaro wrote it
-          in an older version: migrated in place (never deleted and
-          published again), after a diff of what changes, what is kept and
-          what is derived from the local config, and the project's name typed
-          at a terminal. --yes confirms it, and is the way past the refusal a
-          run in flight makes without it. Skipped where there is no local
-          project config or the repository is not onboarded, and in a coding
-          agent's session, with the command to run in your own terminal. It
-          reads the published node, so --check makes no call here either and
-          says it cannot tell. This is what fugaro update does for the same
-          node; both doors run it.
-
-It never upgrades fugaro itself: brew upgrade dimipaun/tap/fugaro && fugaro
-upgrade is the whole sequence.
-
---local runs the plugin step only. Under --local and in a coding agent's
-session (CLAUDECODE and the like) the cloud, rules and policy steps are
-skipped before they read anything, never attempted, with the command to run in
-your own terminal, so the exit code is 0 when the local step succeeded.
---check writes nothing, runs no claude command and makes no cloud call: it
-reads the settings file, Claude Code's record of installed plugins and the
-local project config, prints what each step would do and exits 1 when anything
-is stale (build records are not read, and neither the deployed security rules
-nor the published policy node is: the rules and policy steps say they cannot
-tell). Without --yes, --local or --check it needs a real terminal. There is no
---json.
-
-Exit codes: 0 every checkout finished or had nothing to do; 1 a refusal, a
-failed local step, a cloud step that cannot start from the checkout's files
-(a bad fugaro.yaml or origin, an unreadable config; with --check too) or
-(with --check) something stale; otherwise a failed cloud step exits with the
-refresh's own code, 2 for a cloud call that failed. The summary names each
-checkout's steps and, for one that stopped, the line to rerun.
-
-Usage: `fugaro upgrade [PATH...]`
-
-Flags:
-
-| Flag | Type | Default | Required | Description |
-| --- | --- | --- | --- | --- |
-| `--check` | bool | `false` | no | write nothing, run no claude command, make no cloud call: print what each step would do and exit 1 when anything is stale |
-| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
-| `--expect-digest` | stringArray | `[]` | no | cross-check the digest of a base image's release signature, KIND=sha256:<hex> (repeatable; one PATH only) |
-| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
-| `-h`, `--help` | bool | `false` | no | help for upgrade |
-| `--image-source` | string | "" | no | the registry and owner the release base images come from: a base kind is resolved and signature-verified there and pinned through the installation's remote repository (default ghcr.io/dimipaun) |
-| `--local` | bool | `false` | no | run the plugin step only, and skip the cloud, rules and policy steps (the only mode that does everything it can inside a coding agent's session) |
-| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
-| `--region` | string | "" | no | GCP region (overrides the project config's) |
-| `--repo` | string | "" | no | owner/name (or a path inside its checkout) of the repository; it must be the checkout's origin (one PATH only) |
-| `--workflow` | stringArray | `[]` | no | a workflow to refresh (repeatable; default: every workflow in fugaro.yaml; one PATH only) |
-| `--yes` | bool | `false` | no | confirm every step that asks without a terminal, and without asking: the cloud step's base copy, check-job update and each billable build (with no cap), the security rules deployment, and a policy migration or publish that does not loosen the published node (a publish that would loosen it is typed at your own terminal and this flag does not stand in); never in a coding agent's session |
 
 Subcommands:
 

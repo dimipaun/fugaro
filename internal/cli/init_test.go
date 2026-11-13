@@ -110,9 +110,9 @@ func labelled(f *gcpfake.CRM, project string) {
 
 func newInitRig(t *testing.T) *initRig {
 	t.Helper()
-	// The converge runs the checkout stage, which runs fugaro upgrade's
-	// plugin step: without this, a rig would install the plugin into the
-	// developer's own Claude Code through whatever claude is on PATH.
+	// The converge runs the plugin step: without this, a rig would install
+	// the plugin into the developer's own Claude Code through whatever claude
+	// is on PATH.
 	noClaudeOnPath(t)
 	r := &initRig{
 		dir: t.TempDir(), gcs: gcpfake.NewGCS(t), ar: gcpfake.NewArtifactRegistry(t), iam: gcpfake.NewIAM(t),
@@ -254,6 +254,14 @@ func outputsJSONWith(t *testing.T, over map[string]any) string {
 		"operators":                []string{},
 		"log_view":                 initLogView,
 		"registry_cleanup_dry_run": true,
+		// The installation's two Cloud Run services are NOT here by default:
+		// an installation whose outputs name one is one whose root publishes it,
+		// and a rig that seeds a block into the tfvars says so itself
+		// (credentialsOutputs, or the member written into this document by the
+		// tests with a bigger answer to give — update_converge_test.go). A
+		// default would tell every other rig the installation has services it
+		// does not, which the readers of this document act on (the switch's own
+		// bundle read, the audience fill).
 	}
 	maps.Copy(vals, over)
 	out := map[string]any{}

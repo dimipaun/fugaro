@@ -120,8 +120,8 @@ func TestUpdateConvergesPastAnInvalidCheckoutFugaroYAML(t *testing.T) {
 //
 // Mutation (run, restore): drop the cloud skip from planFor
 // (init_checkout_upgrade.go) and this test fails — the checkout stage's own
-// line reads "ran fugaro upgrade's pin, plugin, cloud for this checkout" and
-// the change that edit asked for reaches Cloud Build.
+// line reads "ran cloud for this checkout" and the change that edit asked for
+// reaches Cloud Build.
 func TestUpdateDoesNotBuildFromACheckoutFileTheRunDidNotOnboard(t *testing.T) {
 	r := newConvergeRigYAML(t, v6Node(), refreshYAML)
 	currentRelease(t)
@@ -167,8 +167,8 @@ func TestUpdateDoesNotBuildFromACheckoutFileTheRunDidNotOnboard(t *testing.T) {
 // step builds the job images from what those stages publish: run past a stop
 // like that it would build out of order, from a repository this run never
 // onboarded, and the build it submits fails at the job's own third step —
-// leaving the user a line pointing at `fugaro upgrade`, the second command the
-// HARD RULE forbids.
+// leaving the user a line the HARD RULE forbids: a second command beside the
+// one command the whole upgrade is.
 //
 // The fixture is the converge rig with the repository's recorded GitHub App ID
 // removed: the repository stage's own Check is Todo (nothing about the file is
@@ -216,11 +216,10 @@ func TestUpdateDoesNotBuildPastARepositoryStopThatIsNotAboutTheFile(t *testing.T
 		t.Errorf("Claude Code lists the plugin as %q after the run, want %q: the pin and the plugin are what the tolerance is for\n%s", got, convergeRelease, out)
 	}
 	// And nothing this stage did sends the user to a second command: the fix a
-	// failed cloud step carries names `fugaro upgrade`, because the step is
-	// upgrade's own, and that is the second command the HARD RULE forbids. The
-	// stage's "ran fugaro upgrade's plugin" is its account of which steps ran,
-	// never a command to run.
-	if i := strings.Index(out, "rerun "+selfCommand()+" upgrade"); i >= 0 {
+	// failed cloud step carries names the one door, never a command beside it,
+	// which is what the HARD RULE forbids. The stage's "ran cloud" is its
+	// account of which steps ran, never a command to run.
+	if i := strings.Index(out, "fugaro upgrade"); i >= 0 {
 		t.Errorf("the run sends the user to a second command for the checkout:\n%s", out[i:])
 	}
 }

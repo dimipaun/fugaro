@@ -1718,14 +1718,14 @@ var (
 	// cannot be told from a conditioned one, whose IAM condition is the whole
 	// fence around the account — so the project grants planned by that same
 	// apply (the deployer's eight, the launchers', the build submitters' and
-	// the history account's) name their role literally instead. Three project
-	// variables are accepted because the database roles live in the Firebase
-	// project — the credentials service's (credentials.tf) and the front door's
-	// state read (state_read.tf), both spelling the coordinator's own Firebase
-	// root, and the reason is the same one: an unknown role is a grant the cover
-	// cannot read. All are known at plan time, and the ID must be one the modules
-	// create (tf.FugaroRoles), checked below.
-	projectRoleLiteralRE = regexp.MustCompile(`^"projects/\$\{var\.(project|credentials_service\.firebase_project|coordinator\.firebase_project)\}/roles/([A-Za-z0-9_.]+)"$`)
+	// the history account's) name their role literally instead. All four
+	// project variables are accepted because the Firebase project is where three
+	// of the installation's own roles live: the credentials service's database
+	// role (credentials.tf), the catalog check job's (catalogcheck.tf, D1554)
+	// and the front door's state read (state_read.tf), each for the same reason — an unknown role is a grant the cover
+	// cannot read. All four are known at plan time, and the ID must be one the
+	// modules create (tf.FugaroRoles), checked below.
+	projectRoleLiteralRE = regexp.MustCompile(`^"projects/\$\{var\.(project|credentials_service\.firebase_project|catalog_check\.firebase_project|coordinator\.firebase_project)\}/roles/([A-Za-z0-9_.]+)"$`)
 
 	// Roles that reach the budget backend (RTDB, Firestore, Identity
 	// Platform, API keys, the token signer, IAM or project policy), or that
@@ -2228,6 +2228,32 @@ func TestCustomRolesNeverReachTheBackend(t *testing.T) {
 				for _, p := range quotedPerm.FindAllStringSubmatch(m[1], -1) {
 					if !slices.Contains(credentialsDatabasePermissions, p[1]) {
 						t.Errorf("%s: %s holds %s: the service's database role is its two data permissions and nothing else (no lifecycle, no list)", path, blk.name, p[1])
+					}
+				}
+				continue
+			}
+			// The catalog check job's database role (installation/
+			// catalogcheck.tf, D1554): the second knowing exception that holds
+			// a firebasedatabase permission, and the same two the credentials
+			// service's role holds. The job reserves each build's estimated
+			// cost before Cloud Build is asked for it, and that reservation is
+			// a lease under buildleases/<slug>/<id> in the installation's
+			// Firebase database (internal/budget/lease_build.go) — a family the
+			// rules deny whole to every client token, so the writer is an IAM
+			// identity and this role is what that identity is. Nothing else is
+			// allowed here: no lifecycle permission (create, delete, disable,
+			// reenable, undelete) and no list, so the unattended nightly job
+			// cannot delete the installation's database or lift the caps it is
+			// held to. The exact list is pinned by
+			// TestCatalogCheckLeaseRoleIsTheTwoDataPermissions below, and the
+			// binding to the job's own account alone by the same test.
+			if blk.name == "google_project_iam_custom_role.catalog_lease" {
+				if path != catalogCheckPath {
+					t.Errorf("%s: %s is not the catalog check job's own file (%s): this role is that job's reach and belongs beside its account", path, blk.name, catalogCheckPath)
+				}
+				for _, p := range quotedPerm.FindAllStringSubmatch(m[1], -1) {
+					if !slices.Contains(catalogLeasePermissions, p[1]) {
+						t.Errorf("%s: %s holds %s: the job's database role is the two data permissions and nothing else (no lifecycle, no list)", path, blk.name, p[1])
 					}
 				}
 				continue
@@ -4851,6 +4877,168 @@ func TestCredentialsDatabaseRoleIsTheTwoDataPermissions(t *testing.T) {
 	})
 	if n == 0 {
 		t.Errorf("no project grant naming the credentials service was found: this test is not reading the tree")
+	}
+}
+
+// catalogCheckPath is the installation module's catalog check file: the ONE
+// file the job's own account, job and database role live in (D1148, D1554).
+// Resources that belong to this job are named here rather than accepted
+// anywhere, so a copy of the role or the binding under another name — where the
+// account it is meant for could not be read beside it — fails the tests that
+// name this path.
+const catalogCheckPath = "gcp/modules/installation/catalogcheck.tf"
+
+// catalogLeasePermissions are the ONLY permissions the catalog check job's
+// database role may hold (installation/catalogcheck.tf): the instance's two
+// data permissions. See TestCatalogCheckLeaseRoleIsTheTwoDataPermissions for
+// what each one is for and why both predefined roles are wrong. It is a second
+// list and not a shared one with credentialsDatabasePermissions although the
+// two hold the same two permissions today: a permission one of the two
+// accounts' work grows into must not land on the other by that alone.
+var catalogLeasePermissions = []string{"firebasedatabase.instances.get", "firebasedatabase.instances.update"}
+
+// The catalog check job's database role: the two DATA permissions of the
+// instance, in the FIREBASE project, named as the literal path a plan can read,
+// and bound to the job's own account alone (D1554).
+//
+// Why the job needs one at all. Each build it submits reserves its estimated
+// cost before Cloud Build is asked for it, and the reservation is a lease under
+// buildleases/<slug>/<id> in the installation's Firebase database
+// (internal/budget/lease_build.go). That family is denied whole to every client
+// token by the installation's rules — no token in the installation writes a
+// lease — so its writer can only be an IAM identity: the account's access token
+// carries the permissions its principals hold, and this role is what those are
+// for this account. Without it the job's every build would be refused a lease
+// at run time, which is the state this release's own subtests found.
+//
+// Why these two and not roles/firebasedatabase.admin, which is what the
+// installation's coordinator and history accounts hold: Realtime Database IAM
+// has no path-level scope, so a binding reaches the whole database and the only
+// question a role answers is which OPERATIONS the account may make.
+// firebasedatabase.instances.get is the only read there is (the reclaim of a
+// lease a dead CLI left, the day's counters and the database's own mark) and
+// firebasedatabase.instances.update the only write (a realtime-database node
+// has no separate create or delete). admin adds list and the instance LIFECYCLE
+// — create, delete, disable, reenable, undelete — which would let a scheduled
+// job nobody is watching delete the installation's database, or lift the caps
+// it is held to. The two predefined roles are wrong in opposite directions:
+// viewer is get+list and cannot write a lease at all.
+//
+// The project matters as much as the permissions: the role is declared and
+// bound in the FIREBASE project, because that is where the database is (D6),
+// while the account is created in the installation's project. A grant in one
+// project to a member of another is ordinary cross-project IAM, and it is the
+// shape the credentials service's database role has. A second role rather than
+// a second binding of that one keeps the two accounts' reach from growing by
+// each other's needs (tf.RolePermissions pins both lists).
+func TestCatalogCheckLeaseRoleIsTheTwoDataPermissions(t *testing.T) {
+	b, err := os.ReadFile(catalogCheckPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roles := resourceBlocks(t, catalogCheckPath, b, "google_project_iam_custom_role")
+	if len(roles) != 1 {
+		t.Fatalf("%s declares %d custom roles, want the one database role", catalogCheckPath, len(roles))
+	}
+	role := squash(roles[0].body)
+	for _, want := range []string{
+		"project = var.catalog_check.firebase_project", // the database's project, not the installation's
+		`role_id = "` + tf.CatalogLeaseRole + `"`,
+		"count = local.catalog_lease_on ? 1 : 0",
+	} {
+		if !strings.Contains(role, want) {
+			t.Errorf("%s: the database role does not hold %q:\n%s", catalogCheckPath, want, role)
+		}
+	}
+	list := regexp.MustCompile(`(?s)permissions\s*=\s*\[([^\]]*)\]`).FindStringSubmatch(roles[0].body)
+	if list == nil {
+		t.Fatalf("%s: the database role has no permissions list:\n%s", catalogCheckPath, role)
+	}
+	var got []string
+	for _, p := range quotedPerm.FindAllStringSubmatch(list[1], -1) {
+		got = append(got, p[1])
+	}
+	want := slices.Clone(catalogLeasePermissions)
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("%s: the database role holds %v, want exactly %v: get is the only read and update the only write, and every other firebasedatabase permission is instance lifecycle a nightly check never uses", catalogCheckPath, got, want)
+	}
+	// The same two on the Go side, so a cover that accepted a third permission
+	// and a module that granted one cannot drift apart: the pin
+	// internal/infra/tf keeps (RolePermissions) is the one the confirmation
+	// reads.
+	if pin := tf.RolePermissions[tf.CatalogLeaseRole]; !slices.Equal(pin, want) {
+		t.Errorf("tf.RolePermissions[%s] = %v, want exactly %v", tf.CatalogLeaseRole, pin, want)
+	}
+	if !slices.Contains(tf.FugaroRoles, tf.CatalogLeaseRole) {
+		t.Errorf("tf.FugaroRoles does not name %s, so a grant of this role is refused", tf.CatalogLeaseRole)
+	}
+	// The role is created only where the installation has a database to write
+	// leases into: with no Firebase project, the job submits its builds unleased
+	// and says so, and a role granted on a project nobody named would be a grant
+	// on a guess.
+	if !strings.Contains(role, "var.catalog_check.firebase_project") {
+		t.Errorf("%s: the database role's project is not the installation's Firebase project:\n%s", catalogCheckPath, role)
+	}
+
+	// The one binding: on that role, in that project, to the job's own account,
+	// with no condition and no second member.
+	grants := resourceBlocks(t, catalogCheckPath, b, "google_project_iam_member")
+	var lease *block
+	for i := range grants {
+		if grants[i].name == "google_project_iam_member.catalog_lease" {
+			lease = &grants[i]
+		}
+	}
+	if lease == nil {
+		t.Fatalf("%s declares no google_project_iam_member.catalog_lease: the job's database role is bound to nothing", catalogCheckPath)
+	}
+	grant := squash(lease.body)
+	for _, want := range []string{
+		"project = var.catalog_check.firebase_project",
+		`role = "projects/${var.catalog_check.firebase_project}/roles/` + tf.CatalogLeaseRole + `"`,
+		"member = google_service_account.catalog_check[0].member",
+		"count = local.catalog_lease_on ? 1 : 0",
+	} {
+		if !strings.Contains(grant, want) {
+			t.Errorf("%s: the database grant does not hold %q:\n%s", catalogCheckPath, want, grant)
+		}
+	}
+	if strings.Contains(grant, "condition") {
+		t.Errorf("%s: the database grant carries a condition: Realtime Database IAM has no path-level scope, so a condition here would be a fence that looks like one and is not:\n%s", catalogCheckPath, grant)
+	}
+	// The role is named literally rather than read from the role resource:
+	// google_project_iam_custom_role's name is computed, so the reference
+	// reaches a plan as an unknown role and the cover could no longer say which
+	// role the grant is (tf's checkGrant, the unknown-role arm).
+	if roleAttr := firstAttr(lease.body, "role"); strings.Contains(roleAttr, "google_project_iam_custom_role.") {
+		t.Errorf("%s: the database grant reads its role from the role resource (%s), which a plan sees as unknown:\n%s", catalogCheckPath, roleAttr, grant)
+	}
+
+	// No predefined database role anywhere in the tree is granted to this job's
+	// account: the whole point of the custom role is that admin would hand an
+	// unattended job the instance lifecycle, and a plan that granted it would be
+	// refused by tf's cover and not by this test alone.
+	n := 0
+	walk(t, func(p string, fb []byte) {
+		if !strings.HasSuffix(p, ".tf") {
+			return
+		}
+		for _, blk := range allResourceBlocks(t, p, fb) {
+			if !strings.HasPrefix(blk.typ, "google_project_iam_") || !strings.Contains(blk.body, "catalog_check") {
+				continue
+			}
+			for _, r := range quotedRoleRE.FindAllStringSubmatch(blk.body, -1) {
+				if strings.HasPrefix(r[1], "roles/firebasedatabase.") {
+					t.Errorf("%s: %s grants the predefined %s to the catalog check job: its database reach is %s in %s and nothing else", p, blk.name, r[1], tf.CatalogLeaseRole, catalogCheckPath)
+				}
+			}
+			n++
+		}
+	})
+	if n == 0 {
+		t.Errorf("no project grant naming the catalog check job was found: this test is not reading the tree")
 	}
 }
 

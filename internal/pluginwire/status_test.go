@@ -202,7 +202,7 @@ func TestInstallNotEvaluatedWithoutAPin(t *testing.T) {
 
 // The machine's own install is read on exactly those checkouts, and on one with
 // no settings file at all: nothing in the tree writes a pin any more (D949, U2),
-// so that is what every checkout looks like now, and fugaro upgrade --check has
+// so that is what every checkout looks like now, and fugaro update --check has
 // to answer about the plugin on it. A report that left UserInstall unevaluated
 // there would print "cannot tell" and exit 0 on a machine whose plugin is a
 // release behind, and the upgrade skill would never run the install it exists to
