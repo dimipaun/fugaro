@@ -322,10 +322,12 @@ func (c *signInCodes) keepDevice(device string, held deviceCode, now time.Time) 
 //     is reachable by anyone and takes the lock every other route of this flow
 //     waits on, so a flood of guesses must not be able to grow that table or to
 //     leave the sweep below with work to do: what a guesser costs is one lookup.
-//   - the interval is kept **only for a code that is held**: the rate the start
-//     answered with is the rate of the flow's own polls, and an unknown code
-//     polled twice is answered the same as one polled once (`refuseDevicePoll`,
-//     which is the uniformity the poll route's sentence is about).
+//   - the interval is kept **only for a code that is held**, so an unknown code
+//     is answered the same however often it is asked about (`refuseDevicePoll`).
+//     What that costs is the one difference left between a held code and a code
+//     nobody issued — a held one polled twice inside the interval is the
+//     slow-down — and the party who can see it is the one already holding 256
+//     bits of the system's randomness, which the start route gave to nobody else.
 //   - an approved code is taken out in the same read that finds it, so one
 //     approval answers one key however slow the mint behind it is, and a mint
 //     that fails hands it back (unspendDevice).
