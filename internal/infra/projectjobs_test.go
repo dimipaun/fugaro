@@ -2309,6 +2309,57 @@ func TestProfilesKeepTheirOwnReviewVariants(t *testing.T) {
 	}
 }
 
+// credentialsFixtureImage is the image the fixtures below give the credentials
+// service: a release pinned by digest, as Credentials insists (a tag is
+// mutable), and a digest of no release at all.
+const credentialsFixtureImage = "us-east5-docker.pkg.dev/proj-1234/fugaro-ghcr/dimipaun/fugaro-credentials:1.2.3@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+
+// TestInstallationReviewTfvarsGolden writes the tfvars
+// internal/infra/testdata/installation-review.tfvars.json and the golden plan
+// scripts/gen-golden-plans.sh makes of it: the installation the implicit
+// default review job is deployed into — the credentials service ON, no
+// profiles block at all, so no shared coding job and nothing for
+// `fugaro review --pr N` to have run on — and the one review job it deploys,
+// carrying no mount and its own service account.
+//
+// It is built the way `fugaro update` builds it and not by hand: the
+// installation stage's own document (InstallationVars over Installation), with
+// the credentials service written into it by the read-modify-write that turns
+// the service on (SetCredentialsService) — the block is the deploy's own and
+// Installation() deliberately leaves it out. So the fixture cannot claim
+// something the deployment would not write, and the golden plan of the
+// installation root is planned over exactly the document a run hands Terraform.
+//
+// Run with -update to rewrite; a change here is a change to what Terraform is
+// given.
+func TestInstallationReviewTfvarsGolden(t *testing.T) {
+	lc := parseLC(t, implicitReviewLC())
+	spec, err := Installation(lc, InstallOptions{BudgetBackend: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(spec.ProjectJobs) != 0 {
+		t.Fatalf("the fixture's installation deploys the coding jobs %v, want none: the whole point of the implicit review job is a project that publishes no profile", sortedJobNames(spec.ProjectJobs))
+	}
+	if len(spec.ProjectReviewJobs) != 1 {
+		t.Fatalf("the fixture's installation deploys the review jobs %v, want the one implicit default job", sortedJobNames(spec.ProjectReviewJobs))
+	}
+	svc, err := Credentials(lc, credentialsFixtureImage, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.URL = lc.CredentialsService.URL
+	vars, err := InstallationVars(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vars, err = SetCredentialsService(vars, svc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkGolden(t, "installation-review.tfvars.json", vars)
+}
+
 // TestAddReviewVariantRefusesACollision: a review variant that derives a job
 // name or a service account a coding job of the same installation already holds
 // is refused, never added beside it. The two sets are derived over the same

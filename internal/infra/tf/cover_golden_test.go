@@ -66,6 +66,14 @@ func TestGoldenPlansAreCovered(t *testing.T) {
 		// for the same reason any other person-grant is, and the one grant of
 		// theirs the run does not cover whole is pinned below.
 		"installation-credentials": {"user:person-1@example.com"},
+		// The credentials service ON and NO profiles at all: the ONE implicit
+		// default review job (the owner's requirement of 2026-11-13) is
+		// planned here and nowhere else — its job, its own account and its two
+		// bucket grants, with no secret grant and no shared coding job beside
+		// them (TestGoldenImplicitReviewJobIsDeployedWithoutProfiles reads the
+		// whole of it). The fixture names no operator or launcher, so no
+		// person's grant is in this plan.
+		"installation-review": nil,
 		// The coordinator's opt-in ON (coordinator plan P5): its account, the
 		// account's two reads, its job and schedule, and the Firebase root's
 		// database grant to it. TestTheCoordinatorIsInTheOptInGoldensOnly

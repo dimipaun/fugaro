@@ -25,6 +25,15 @@ type installationFixture struct {
 	Project        string                       `json:"project"`
 	ProjectSecrets map[string]string            `json:"project_secrets"`
 	ProjectJobs    map[string]projectJobFixture `json:"project_jobs"`
+	// ProjectReviewJobs are the review-only variants (module.project_review):
+	// the implicit default job of an installation that declares no profile is
+	// the only entry the review golden's fixture has.
+	ProjectReviewJobs map[string]projectJobFixture `json:"project_review_jobs"`
+	// Credentials is the service whose address a review job's calls go to; the
+	// zero value in every fixture that has none.
+	Credentials struct {
+		URL string `json:"url"`
+	} `json:"credentials_service"`
 }
 
 // projectJobFixture is one project_jobs entry, as the fixture writes it.
@@ -61,6 +70,52 @@ func installationGoldenFixture(t *testing.T) installationFixture {
 func accountsGoldenFixture(t *testing.T) installationFixture {
 	t.Helper()
 	return readInstallationFixture(t, "installation-accounts.tfvars.json")
+}
+
+// reviewGoldenFixture is the implicit default review job's tfvars (the fixture
+// internal/infra's TestInstallationReviewTfvarsGolden writes): an installation
+// with the credentials service ON that declares NO profile at all, so it
+// deploys the one review-only job of the project and no shared coding job.
+func reviewGoldenFixture(t *testing.T) installationFixture {
+	t.Helper()
+	return readInstallationFixture(t, "installation-review.tfvars.json")
+}
+
+// grantsTo is every grant of the plan naming that IAM member, as "type role" —
+// the whole of what a run of that account may do, on any resource: the roles
+// of a job's account are the plan's, and an account the plan grants nothing to
+// is one no resource of the installation accepts. A grant whose role the plan
+// leaves unknown is recorded as the bare type, and the assertions below read
+// that as a change of shape rather than as a role.
+func grantsTo(p *Plan, member string) []string {
+	var out []string
+	for _, rc := range p.ResourceChanges {
+		// The account resource carries a member attribute too — its own name,
+		// not a grant to it.
+		if !strings.HasSuffix(rc.Type, "_iam_member") || str(rc.Change.After["member"]) != member {
+			continue
+		}
+		g := rc.Type
+		if role := str(rc.Change.After["role"]); role != "" {
+			g += " " + role
+		}
+		out = append(out, g)
+	}
+	return out
+}
+
+// jobAccountMembers is the plan's job service accounts as IAM members, one per
+// module.project instance: the coding jobs' accounts, which are what a review's
+// account must hold none of the roles of.
+func jobAccountMembers(t *testing.T, p *Plan) []string {
+	t.Helper()
+	var out []string
+	for _, rc := range p.ResourceChanges {
+		if rc.Type == "google_service_account" && strings.HasPrefix(rc.Address, "module.project[") {
+			out = append(out, str(rc.Change.After["member"]))
+		}
+	}
+	return out
 }
 
 func readInstallationFixture(t *testing.T, name string) installationFixture {
@@ -474,6 +529,135 @@ func TestGoldenAccountJobMountsOnlyItsOwnToken(t *testing.T) {
 			if str(rc.Change.After["secret_id"]) == container[c.account] {
 				t.Errorf("%s grants a member on the account %q's token %q: one token belongs to one job", rc.Address, c.account, container[c.account])
 			}
+		}
+	}
+}
+
+// TestGoldenImplicitReviewJobIsDeployedWithoutProfiles is the owner's
+// requirement of 2026-11-13 read off a real plan: `fugaro review --pr N` works
+// on a GitHub project that declares no profile at all. A review runs on a
+// review-only variant and on nothing else (internal/cli's reviewJobFor), and
+// the variant of a project with no shared coding job is the ONE implicit
+// default job the installation root deploys on its own
+// (module.project_review, internal/infra's implicitReviewVariant).
+//
+// The security of it is the whole point, and it is three claims on the plan:
+// the job mounts NOTHING (no secret in its container and no volume), its
+// account holds none of the roles a shared coding job's account holds (it
+// reads no secret container and no model credential — a review runs code the
+// installation has not vetted, so what it may read is what its reviewer could
+// read back), and everything it does hold is the two bucket grants the shared
+// job's account holds under the same conditions, because a review clones the
+// pull request head and writes its records into the same runs bucket.
+//
+// Mutation (run, restore): make the emission unconditional in
+// internal/infra's implicitReviewVariant and this fixture's plan gains a second
+// review job for a profile this installation does not have — the deployer
+// refuses that as a collision, so the mutation is the Go test's to catch
+// (TestProfilesKeepTheirOwnReviewVariants); give the implicit job one mount and
+// this plan carries the container in its environment and the accessor grant
+// beside it.
+func TestGoldenImplicitReviewJobIsDeployedWithoutProfiles(t *testing.T) {
+	f := reviewGoldenFixture(t)
+	if len(f.ProjectJobs) != 0 {
+		t.Fatalf("the review fixture deploys the shared coding jobs %v, want none: it is the installation whose repository has no profile to run on", slices.Sorted(maps.Keys(f.ProjectJobs)))
+	}
+	if len(f.ProjectReviewJobs) != 1 {
+		t.Fatalf("the review fixture deploys %v, want the one implicit default job", slices.Sorted(maps.Keys(f.ProjectReviewJobs)))
+	}
+	if f.Credentials.URL == "" {
+		t.Fatalf("the review fixture names no credentials service: the job's whole environment is worthless if the plan of it is made without the service the installation opted into")
+	}
+	name, j := "", projectJobFixture{}
+	for n, v := range f.ProjectReviewJobs {
+		name, j = n, v
+	}
+	p := goldenPlan(t, "installation-review")
+
+	// The installation deploys no shared job at all: the plan's own proof that
+	// the review job does not ride on one — a project that has none is the
+	// state this whole change is about, and a plan carrying a module.project
+	// instance would be a coding job nobody asked for.
+	for _, rc := range p.ResourceChanges {
+		if strings.HasPrefix(rc.Address, "module.project[") {
+			t.Errorf("%s: an installation with no profile deploys a shared coding job", rc.Address)
+		}
+	}
+
+	mod := `module.project_review["` + name + `"]`
+	job := resource(t, p, mod+".google_cloud_run_v2_job.this")
+	if got := str(job.Change.After["name"]); got != name {
+		t.Errorf("%s is the job %q, want the fixture's own key %q", mod, got, name)
+	}
+	plain, secret := jobEnvOf(t, job)
+	// No mount, in the fixture and in the plan: the code under review runs in
+	// this container, so a secret here is a credential it can read.
+	if len(j.SecretEnv) != 0 {
+		t.Errorf("the fixture mounts %v on the review job, want nothing", slices.Sorted(maps.Keys(j.SecretEnv)))
+	}
+	if len(secret) != 0 {
+		t.Errorf("%s mounts %v from Secret Manager, want nothing: a review runs the pull request's own code", mod, slices.Sorted(maps.Keys(secret)))
+	}
+	if got, ok := plain[runner.SecretEnvsVar]; ok {
+		t.Errorf("%s sets %s = %q with no mount at all", mod, runner.SecretEnvsVar, got)
+	}
+	// The whole environment is the fixture's: a value the Go code writes and
+	// the module drops would pass a fixture-only assertion, and one the module
+	// adds would be a variable no run of this job was configured for.
+	if !maps.Equal(plain, j.Env) {
+		t.Errorf("%s runs with %v, want the fixture's own environment %v", mod, plain, j.Env)
+	}
+	if got := plain["FUGARO_CREDENTIALS_SERVICE_URL"]; got != f.Credentials.URL {
+		t.Errorf("%s sets FUGARO_CREDENTIALS_SERVICE_URL = %q, want the installation's own service %q: a review fetches its installation token and every model call from it", mod, got, f.Credentials.URL)
+	}
+	if plain["FUGARO_GITHUB_APP_ID"] == "" {
+		t.Errorf("%s sets no FUGARO_GITHUB_APP_ID: the runner's github provider refuses to build without one, so this job could not check out the pull request", mod)
+	}
+
+	// The job's account, and the whole of what it holds.
+	sa := resource(t, p, mod+".google_service_account.job")
+	member := str(sa.Change.After["member"])
+	wantMember := "serviceAccount:" + j.ServiceAccount.AccountID + "@" + f.Project + ".iam.gserviceaccount.com"
+	if member != wantMember {
+		t.Errorf("%s is %q, want %q", mod+".google_service_account.job", member, wantMember)
+	}
+	got := grantsTo(p, member)
+	want := []string{"google_storage_bucket_iam_member roles/storage.objectUser", "google_storage_bucket_iam_member roles/storage.objectViewer"}
+	if !slices.Equal(got, want) {
+		t.Errorf("the review job's account holds %v, want exactly %v: a review mounts no secret, so it is granted no read of one, and the two bucket grants are the shared job's own conditions", got, want)
+	}
+
+	// And none of the roles a shared coding job's account holds: the other
+	// golden's job accounts, one profile each, are what this one is compared
+	// against. Every role beyond the two bucket grants above — the profile's
+	// secret container and, on a Vertex installation, the model accessor — is
+	// one this account must not have.
+	coding := goldenPlan(t, "installation")
+	members := jobAccountMembers(t, coding)
+	if len(members) == 0 {
+		t.Fatalf("the installation golden has no shared job account to compare against: regenerate it with scripts/gen-golden-plans.sh")
+	}
+	beside := map[string]bool{}
+	for _, m := range members {
+		for _, g := range grantsTo(coding, m) {
+			if !slices.Contains(want, g) {
+				beside[g] = true
+			}
+		}
+	}
+	if len(beside) == 0 {
+		t.Fatalf("the installation golden's job accounts hold nothing beside the two bucket grants: the comparison below would be vacuous")
+	}
+	for _, g := range got {
+		if beside[g] {
+			t.Errorf("the review job's account holds %s, which a shared coding job's account holds: a review runs the pull request's own code and must not read what a coding job mounts", g)
+		}
+	}
+	// Non-vacuous in the other direction too: the roles the comparison is
+	// about are in the other golden's plan.
+	for _, g := range []string{"google_secret_manager_secret_iam_member roles/secretmanager.secretAccessor"} {
+		if !beside[g] {
+			t.Errorf("the installation golden's job accounts hold no %s, so this test could not tell a review account that reads a secret from one that does not", g)
 		}
 	}
 }

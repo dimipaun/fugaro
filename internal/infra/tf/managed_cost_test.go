@@ -617,7 +617,7 @@ func TestManagedCostAReplaceBills(t *testing.T) {
 // carried the service) is named so a change that drops the plan fails loudly
 // rather than passing on one fewer file.
 func TestManagedCostAdmitsEveryGoldenInstallationPlan(t *testing.T) {
-	for _, name := range []string{"installation", "installation-credentials"} {
+	for _, name := range []string{"installation", "installation-credentials", "installation-review"} {
 		p := goldenPlan(t, name)
 		for _, r := range ManagedCostRefusals(p) {
 			t.Errorf("golden plan %s: the managed cost gate refuses %s", name, r)
