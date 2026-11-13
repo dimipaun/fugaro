@@ -1151,6 +1151,11 @@ func TestTheSigningKeyIsNeverDestroyedByAnApply(t *testing.T) {
 // same grant header the list already carries — a second signer grant appended
 // to keyring/, or written in a root this tree does not have today, which is why
 // both allow-lists name a root beside the header and tfFiles refuses a third.
+// The reaches the API does hold are read as their attributes and not only as
+// their headers, because a header is not a role: changing the document store's
+// to roles/iam.serviceAccountTokenCreator or roles/run.admin leaves every grant
+// the lists count exactly where it was and still hands the internet-facing
+// account the minter's identity.
 func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 	// Every block in the tree that grants anything at all is one of the seven
 	// grants this service is allowed to hold, and the list is the whole of it.
@@ -1301,6 +1306,23 @@ func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 			}
 		}
 	}
+
+	// And the document store's role, read as the attributes it writes, for the
+	// reason the invoker and sealer grants are pinned the same way: the sweep
+	// above reads a grant's header, and a header is not a role. A project-level
+	// grant whose role this test does not read is the whole fence written as one
+	// word, and two of the words a hand could change it to are a way to sign
+	// without touching anything else here — roles/iam.serviceAccountTokenCreator
+	// lets the internet-facing account mint an ID token FOR the minter and call
+	// the minter's own URL with it, and roles/run.admin lets it deploy a revision
+	// that runs as the minter's account. Either one is the signer role's reach
+	// arriving through a door no block in this tree names (Check 174, Check 571).
+	datastore := tfRootBlock(t, servicesRoot, `resource "google_project_iam_member" "api_datastore"`)
+	tfAttrsAre(t, datastore, "the document store grant in "+servicesRoot, []struct{ attr, value string }{
+		{"project", "var.project"},
+		{"role", `"roles/datastore.user"`},
+		{"member", "google_service_account.api.member"},
+	}, "the API is what writes every organisation's records, billing and reveal bundles, and it does so through the one predefined role that reads and writes documents: a broader predefined role here — the token creator above all, which would let the API's account mint an ID token as the minter, and run.admin, which would let it deploy a revision running as the minter — is a signing reach granted at the project (Check 571)")
 
 	// And the identity each service RUNS as, which is the half a grant sweep
 	// cannot see: a service that runs as another account IS that account, so an
