@@ -349,7 +349,7 @@ export function latestLicence(
 
 // The v1 key, `fgk_<payload>.<signature>`, is the licence-key-v2 format (spec
 // sections 3, 4 and 6; decision D2130), whose Go verifier is
-// `ee/licence/keyv1.go` (K1.1) and whose vectors the two are read against are
+// `ee/licence/key.go` (K1.1) and whose vectors the two are read against are
 // `ee/licence/testdata/vectors_v1.json` (K1.4).
 //
 // Three rules of that design shape the code below, and each is a case in

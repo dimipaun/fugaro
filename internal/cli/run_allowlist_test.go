@@ -418,7 +418,7 @@ func TestRunRefusesAPolicyNewerThanTheBinary(t *testing.T) {
 // fine and is not the legacy path, that is the marker's job) is refused by the same gate, and the remedy printed
 // is the operator's delete-then-publish — the same remedy internal/cli's
 // publishedPolicyOf refuses an older node with, because this release's publish
-// will not overwrite one — and never `fugaro upgrade`, which is this
+// will not overwrite one — and never the binary upgrade, which is this
 // binary's own remedy for the opposite direction and does nothing here. The two
 // directions shared one sentence until this test: the binary looked newer than
 // the node in both, so an operator whose node was simply behind was told to

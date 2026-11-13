@@ -76,6 +76,17 @@ type CAS interface {
 	PutIfMatch(ctx context.Context, path, etag string, v any) error
 }
 
+// Reader is the read half of the Realtime Database client (internal/rtdb): one
+// node read and the server's own clock. It is narrower than CAS on purpose —
+// nothing in it writes — so a surface that only reads is built over this one
+// and cannot change a node even by mistake. The front door's reach into the
+// node is one, and its account holds the database's read and nothing else
+// (O16b, D2020).
+type Reader interface {
+	Get(ctx context.Context, path string, out any) (found bool, err error)
+	ServerNow() (time.Time, bool)
+}
+
 // ETag identifies the version of the state node a caller read. It is the
 // precondition of the next save, and an empty one is refused rather than
 // turned into an unconditional write.
@@ -179,17 +190,62 @@ func (n *Node) Load(ctx context.Context) (State, ETag, error) {
 	if err != nil {
 		return State{}, "", err
 	}
-	if !found {
-		return State{SchemaVersion: SchemaVersion, AgentID: n.agentID, Role: n.role}, ETag(etag), nil
-	}
-	s, err := DecodeState(raw)
+	s, err := stateAt(raw, found, n.agentID, n.role)
 	if err != nil {
 		return State{}, "", err
 	}
-	if err := n.owns(s.AgentID, s.Role); err != nil {
-		return State{}, "", err
-	}
 	return s, ETag(etag), nil
+}
+
+// ReadState reads one orchestrator's state node for a reader that holds
+// nothing: no ETag to save under and no lease to keep. It is Node.Load's read
+// without the node's own writer, for the surfaces that only display a state —
+// the front door's get_state is one (O16b) — so both ends of this node apply
+// the same rule to what they read: the absent node is this orchestrator's empty
+// state rather than an error, and a document another id or role wrote is
+// refused (ErrNotThisNode).
+//
+// The role is the caller's and not the document's, as it is for a Node: the
+// front door reads the project's own orchestrator (RoleOrchestrator), which is
+// the loop the CLI reads too, so it cannot come to read the coordinator's
+// document as an orchestrator's.
+func ReadState(ctx context.Context, db Reader, agentID, role string) (State, error) {
+	path, err := PathState(agentID)
+	if err != nil {
+		return State{}, err
+	}
+	var raw json.RawMessage
+	found, err := db.Get(ctx, path, &raw)
+	if err != nil {
+		return State{}, err
+	}
+	return stateAt(raw, found, agentID, role)
+}
+
+// stateAt is the one reading of a state node's document: what a writer's Load
+// and a reader's ReadState both do with the bytes they found. The role is
+// checked here rather than at the write, because two loops sharing an id would
+// read each other's work as their own.
+func stateAt(raw json.RawMessage, found bool, agentID, role string) (State, error) {
+	if !found {
+		return State{SchemaVersion: SchemaVersion, AgentID: agentID, Role: role}, nil
+	}
+	s, err := DecodeState(raw)
+	if err != nil {
+		return State{}, err
+	}
+	if s.AgentID != agentID || s.Role != role {
+		return State{}, notThisNode(s.AgentID, s.Role, agentID, role)
+	}
+	return s, nil
+}
+
+// notThisNode is the refusal both halves of this node's reading make: the
+// document says it is another orchestrator's, or another loop's.
+func notThisNode(agentID, role, wantAgentID, wantRole string) error {
+	return fmt.Errorf("%w: the document is %q/%q, this node is %q/%q",
+		ErrNotThisNode, safetext.OneLine(agentID), safetext.OneLine(role),
+		safetext.OneLine(wantAgentID), safetext.OneLine(wantRole))
 }
 
 // Save writes s at the state node, under etag.
@@ -256,9 +312,7 @@ func (n *Node) checkLease(ctx context.Context) error {
 
 func (n *Node) owns(agentID, role string) error {
 	if agentID != n.agentID || role != n.role {
-		return fmt.Errorf("%w: the document is %q/%q, this node is %q/%q",
-			ErrNotThisNode, safetext.OneLine(agentID), safetext.OneLine(role),
-			safetext.OneLine(n.agentID), safetext.OneLine(n.role))
+		return notThisNode(agentID, role, n.agentID, n.role)
 	}
 	return nil
 }

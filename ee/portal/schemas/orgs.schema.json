@@ -1,0 +1,166 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/ee/portal/schemas/orgs.schema.json",
+  "title": "Portal organisations and memberships",
+  "description": "Organisations, the roles people hold in them, and a sign-up (portal plan P2.1; spec §Tenancy). The organisation is the tenant, its type decides what the SSO rule does with a person who belongs to it (F10, D2207), and a person's role lives in the membership and never in the sign-in token: a role in a token is a role only the identity provider can take away. Every object here is closed, because ee/keyservice/wire_orgs.go decodes it with DisallowUnknownFields.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/organisation"
+    },
+    {
+      "$ref": "#/$defs/membership"
+    },
+    {
+      "$ref": "#/$defs/create"
+    }
+  ],
+  "$defs": {
+    "organisation": {
+      "type": "object",
+      "description": "One organisation, as the API answers it to a member of it and, for the operations team, to anybody (P2.1).",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "type",
+        "terms",
+        "reseller_id",
+        "created_at"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The organisation's id. It is opaque and minted here: nothing outside the portal has a meaning for it, and it is not a Firebase project id or a domain."
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "The organisation's name as its members see it. It is text and not an identifier: two organisations may share one, and renaming is a later task's."
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "operations",
+            "customer",
+            "reseller"
+          ],
+          "description": "What kind of tenant this is, set once and never moved. Operations and reseller organisations are the ones the sign-in rule follows: a person who belongs to one is refused by email sign-in for any request that uses that membership (F10, D2207)."
+        },
+        "terms": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/terms"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The terms of service this organisation's sign-up accepted, or null for an organisation nobody signed up to — the operations organisation, seeded as an invitation (P2.2). Null is not an empty acceptance: it says there is no record, which is a different thing from a record with no version."
+        },
+        "reseller_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The reseller organisation that created this customer organisation on its behalf (D2191), or null when no reseller did. It is a link rather than a parent — operations can relink a customer (P6.1) — and it is what a reseller's customer list and accrual are read from."
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the organisation was created, in UTC. It is the organisation's instant and not the membership's: a person who joins a year later is a member of an organisation that has existed for a year."
+        }
+      }
+    },
+    "terms": {
+      "type": "object",
+      "description": "One acceptance of the terms of service, recorded at sign-up (D2199, P2.1's TestSignUpRecordsTermsAcceptance). The version is kept beside the instant because the terms change and the record has to say which wording was agreed to.",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "accepted_at"
+      ],
+      "properties": {
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The version of the terms the person accepted, as the terms themselves spell it. It is not a date: a wording that is corrected without changing what it says keeps its version."
+        },
+        "accepted_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the acceptance happened, in UTC, which is the sign-up's instant."
+        }
+      }
+    },
+    "membership": {
+      "type": "object",
+      "description": "One person's place in one organisation. The account itself is a Firebase Auth user; nothing about the person is copied out of the provider's answer, so this is the whole of what the portal knows about who belongs where.",
+      "additionalProperties": false,
+      "required": [
+        "organisation_id",
+        "uid",
+        "email",
+        "role",
+        "created_at",
+        "last_used_at"
+      ],
+      "properties": {
+        "organisation_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The organisation this membership is in: an organisation's shape does not carry its members, because a member of one organisation is not told the membership list of another."
+        },
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The Firebase Auth uid this membership is bound to. It is written at the first sign-in of the invited address (F40): before that an invitation knows an address and not a person."
+        },
+        "email": {
+          "type": "string",
+          "pattern": "^[^@\\s]+@[^@\\s]+$",
+          "description": "The address the identity carries, as Firebase Auth reports it. Invitations are compared against it, both sides folded by access.Member (F10), which is the only folding the two sides share."
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "owner",
+            "admin",
+            "member"
+          ],
+          "description": "What this person may decide in this organisation. Owners and admins are who may bind, buy, invite, reveal and delete (D2195); a member reads the organisation's screens and decides nothing in the portal. The role is per organisation: the same person is an owner of one and a member of another."
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the person joined, in UTC — the invitation's acceptance, or the sign-up that created the organisation."
+        },
+        "last_used_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "When this person last worked in this organisation, or null while they never have. It is what the switcher lands them on (spec §Tenancy, P2.1's TestLastUsedOrg), and null is not a time: a membership nobody selected is not one selected at the epoch."
+        }
+      }
+    },
+    "create": {
+      "type": "object",
+      "description": "A sign-up's request (P2.1). The account is the caller's own sign-in and the type is customer: only operations creates a reseller organisation (D2191, P6.1), and nothing in the body can ask for one.",
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "The name the person gives the organisation they are creating."
+        }
+      }
+    }
+  }
+}

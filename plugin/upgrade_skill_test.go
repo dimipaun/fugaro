@@ -5,15 +5,21 @@ import (
 	"testing"
 )
 
-// TestUpgradeSkill: the skill checks, runs the local half, hands over the one
+// TestUpgradeSkill: the skill checks, runs the plugin half, hands over the one
 // command that converges the installation and the checkout, and stays inside
 // its three commands (decision U14: the bound is in the text, not in
 // frontmatter).
+//
+// The three commands are `fugaro version`, `fugaro update --check` and
+// `fugaro update-skills` since U4 of
+// docs/plugin-user-scope/implementation-plan.md retired `fugaro upgrade` and
+// `--local` with it (D948, D950): the read-only mode is the converge's own, and
+// the plugin half an agent may run is the plugin-only command.
 func TestUpgradeSkill(t *testing.T) {
 	skill := readRepoFile(t, "plugin/skills/upgrade/SKILL.md")
 	states := readRepoFile(t, "plugin/skills/upgrade/reference/states.md")
 	for _, want := range []string{
-		"`fugaro version`", "`fugaro upgrade --check`", "`fugaro upgrade --local`",
+		"`fugaro version`", "`fugaro update --check`", "`fugaro update-skills`",
 		"```bash user-runs\nfugaro update\n```",
 		"A coding agent's session cannot apply cloud changes, by design",
 		"The handed-over command stays theirs.",

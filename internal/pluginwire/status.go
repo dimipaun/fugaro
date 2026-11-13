@@ -70,7 +70,7 @@ func (s State) Fix() string {
 	case Outdated:
 		return "run fugaro update"
 	case Newer:
-		return "upgrade fugaro (brew upgrade dimipaun/tap/fugaro); fugaro upgrade never moves a pin down"
+		return "upgrade fugaro (brew upgrade dimipaun/tap/fugaro); fugaro update never moves a pin down"
 	case Foreign:
 		return "check that the marketplace repository is the one you intend; fugaro never rewrites it"
 	case InstalledDiffers:

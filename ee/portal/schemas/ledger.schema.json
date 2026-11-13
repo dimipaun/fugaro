@@ -1,0 +1,155 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/ee/portal/schemas/ledger.schema.json",
+  "title": "Portal Paddle events and the sales ledger",
+  "description": "The spec's two sentences kept apart: every Paddle event stored exactly as received, and a readable sales ledger derived from it (portal plan P4.2, F16). The event is Paddle's and is never edited — it is the record of a sale counsel's retention item is about (D457) — and the entry is the portal's reading of it, so a figure in a report can always be walked back to the body it came from. An event is stored before it is processed, which is why it carries a state of its own: a retry that arrives while the first delivery is still being read finds it already there. Every object here is closed, because ee/keyservice/wire_ledger.go decodes it with DisallowUnknownFields.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/event"
+    },
+    {
+      "$ref": "#/$defs/entry"
+    }
+  ],
+  "$defs": {
+    "event": {
+      "type": "object",
+      "description": "One Paddle notification as it arrived, stored before anything was made of it.",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "received_at",
+        "signature",
+        "notification",
+        "body",
+        "state",
+        "entitlement_id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Paddle's event id, and the digest of the body for one that does not decode: an undecodable body is stored too, and it has no id of Paddle's to be stored under. The id is what makes a redelivery idempotent (F16)."
+        },
+        "received_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the delivery was received, in UTC. It is this service's clock and not the body's: what the body says about when it was sent is a claim inside a body, and the window the signature is checked in is read from the signed header (F16)."
+        },
+        "signature": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The signature header the delivery carried, kept beside the body because it is what proved the body was Paddle's. A delivery whose signature was not verified never reaches this shape: verification is first, and an unverified body is never stored (P4.2's TestUnverifiedBodyIsNeverStored)."
+        },
+        "notification": {
+          "type": "string",
+          "description": "Paddle's own name for the event, as the body spells it, and empty for a body that was stored without decoding. It is Paddle's word and not the ledger's: an entry's kind is the portal's (see `entry`)."
+        },
+        "body": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The verified body exactly as received, as text. Text is the one form that holds a body that decodes and one that does not, and \"exactly as received\" is the whole point: the signature was over these bytes."
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "stored",
+            "undecodable",
+            "processed",
+            "parked",
+            "dismissed"
+          ],
+          "description": "What the portal has made of the event. Stored is a body that arrived and has not been read yet; undecodable is one answered 400 so Paddle retries; processed is one a ledger entry exists for; parked is one whose transaction and subscription did not begin with a transaction this API created, waiting for operations (F15, P5.1); dismissed is operations ending one. The stored body is never edited by any of them."
+        },
+        "entitlement_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "What a processed or attached event resolved to, or null while it resolved to nothing — a parked event has no entitlement until operations attaches it (P5.1)."
+        }
+      }
+    },
+    "entry": {
+      "type": "object",
+      "description": "One line of the readable sales ledger, derived from one stored event.",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "at",
+        "kind",
+        "organisation_id",
+        "workspace_id",
+        "entitlement_id",
+        "amount_micros",
+        "currency",
+        "seats",
+        "channel"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The stored event's id: an entry is what one event was read as, so one event makes one line, and a refund is an event of its own rather than an edit of the purchase."
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the money moved, in UTC — the event's own instant and not the instant it was received, which is what a month's report is bounded by (P5.2's TestReportMonthsAreUTC)."
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "purchase",
+            "renewal",
+            "refund",
+            "chargeback",
+            "adjustment"
+          ],
+          "description": "What the event did to the money, in the portal's words: Paddle's notification names are a provider's vocabulary and not a ledger's."
+        },
+        "organisation_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The organisation the money was for, resolved from the transaction the API created (F15)."
+        },
+        "workspace_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The portal workspace the money was for, or null for a line whose event named none."
+        },
+        "entitlement_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The entitlement the purchase created or the refund resolved to, or null for a line that resolved to none. A purchase creates an entitlement and never a key (D2196)."
+        },
+        "amount_micros": {
+          "type": "integer",
+          "description": "The amount in micro-dollars, signed: a refund is the negative of what it gives back, and the reports add these up. Micro-dollars are the unit the rest of this repository counts money in, so no arithmetic here is done in a float."
+        },
+        "currency": {
+          "type": "string",
+          "pattern": "^[A-Z]{3}$",
+          "description": "The currency the amount is in, as an ISO 4217 code. It is kept per line because Paddle prices a currency and not this service."
+        },
+        "seats": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "How many seats the line covers, so a report can say what was bought and not only what it cost."
+        },
+        "channel": {
+          "type": "string",
+          "enum": [
+            "direct",
+            "reseller"
+          ],
+          "description": "Whether the sale was direct or through a reseller: the split the reports are asked for (spec §Operations, D2190). It is on the line because the reseller link can change afterwards (operations can relink a customer, P6.1), and a report of March must read March's channel."
+        }
+      }
+    }
+  }
+}

@@ -20,9 +20,11 @@ import (
 )
 
 // The published policy node an older Fugaro wrote, carried over to the version
-// this one reads, IN PLACE: the policy stage of `fugaro update`'s converge and
-// the policy step of `fugaro upgrade`. Both call the same two functions, so
-// the diff one shows and the write the other makes cannot drift.
+// this one reads, IN PLACE: the policy stage of `fugaro update`'s converge, and
+// the one door into the two functions below since U4 of
+// docs/plugin-user-scope/implementation-plan.md retired the second command. The
+// diff a check shows and the write an apply makes are those functions', so the
+// two cannot drift.
 //
 // It exists for the owner's rule of 2026-10-30 — `fugaro update` is the whole
 // upgrade, and it works perfectly. Before this, a bump of projectpolicy.Version
@@ -125,8 +127,8 @@ func policyNodeUnreachable(lc *localcfg.Config) bool {
 // policyMigrationNotOurs is the answer policyMigrationFor gives for a database
 // the shared ownership predicate refuses (budgetDBUnadopted): there is nothing
 // to migrate HERE, and the callers turn it into the skip their own vocabulary
-// has — `fugaro update`'s stage into a skipped stage, `fugaro upgrade` into a
-// skipped step — rather than into an error, because the rest of the run has
+// has — a skipped stage rather than a refusal — rather than into an error,
+// because the rest of the run has
 // nothing to do with that database, exactly as the rules stage's skip is not a
 // refusal.
 //
@@ -151,8 +153,7 @@ func (e *policyMigrationNotOurs) Error() string { return e.reason }
 // the budget database, and the rules stage being skipped over a database the
 // installation never adopted does not stop this one from migrating the node in
 // it — the read, the ETag and the write all land in that same database, and
-// `fugaro upgrade` reaches this function with no rules stage in front of it at
-// all.
+// this stage reaches this function whatever the stage in front of it answered.
 //
 // That gate is the rules stage's own, the same function and not a second one
 // worded alike (the second review's finding: the two drifted, and a database the
@@ -488,8 +489,8 @@ func policyMigrationRefusal(err error) error {
 // the gate's own and are not asked again. It is a parameter and not a field of
 // the migration for the reason initflow.Managed gives for its own: a caller
 // that could assert an admission could assert it for a node nobody judged, and
-// `fugaro upgrade` — the other door into this function, and the one with no
-// gate at all — passes false and gets exactly the code that was here before.
+// a caller under no gate passes false and gets exactly the code that was here
+// before.
 // The answer about the runs in flight is not among the confirmations admitted
 // stands in for: it is asked before any of them and whatever admitted the
 // write, because it is about the runs that read the node and not about who
@@ -514,8 +515,8 @@ func policyMigrationRefusal(err error) error {
 // ruling of 2026-11-09 is that `fugaro update` is safe while runs are in flight
 // and never tells anybody to wait, the doors that reach the stage without being
 // the update door (`fugaro setup`, `fugaro accounts add`) pass inflightManaged
-// and keep the answer of 2026-11-06, and `fugaro upgrade` passes inflightAsk
-// and keeps its refusal. It is a parameter and not a field of the migration for
+// and keep the answer of 2026-11-06. It is a parameter and not a field of the
+// migration for
 // the reason the paragraph above gives for admitted: a door is a fact of the
 // command, not of the node.
 //
@@ -668,11 +669,14 @@ type inflightAnswer int
 
 const (
 	// inflightAsk refuses the write without --yes and tells the operator to
-	// wait for the runs. It is the door that is NOT the whole upgrade —
-	// `fugaro upgrade`'s own policy step, the only caller left — where the
-	// person is in the middle of something else and a node of theirs is being
-	// published: the refusal costs them nothing the HARD RULE promises them,
-	// because the one command the upgrade is stays `fugaro update`.
+	// wait for the runs: the answer of the door that is NOT the whole upgrade,
+	// where the person is in the middle of something else and a node of theirs
+	// is being published, and the refusal costs them nothing the HARD RULE
+	// promises them because the one command the upgrade is stays `fugaro
+	// update`. No door passes it since U4 retired the second one — the answer
+	// is kept, and kept first, because it is the enum's zero value: a door that
+	// forgot to pass one refuses the write rather than making it, and of the
+	// two that is the safe side.
 	inflightAsk inflightAnswer = iota
 	// inflightQuiet writes and says nothing about the runs. `fugaro update` is
 	// the whole upgrade, and the owner's ruling of 2026-11-09 is that it is
@@ -713,9 +717,10 @@ const (
 )
 
 // refuseRunsInFlight is the guard a door holds before a node write: a run that
-// is mid-flight read the policy this write replaces, so `fugaro upgrade`'s own
-// step refuses it without --yes, and --yes is the way past it once the operator
-// has read what the write does (the same reading `publish --delete` has). A run
+// is mid-flight read the policy this write replaces, so the door that is not
+// the whole upgrade refused it without --yes, and --yes was the way past it
+// once the operator had read what the write does (the same reading `publish
+// --delete` has). A run
 // that writes no node — D854's re-seed alone, or the generation record alone —
 // asks nothing: no run in flight reads this machine's file.
 //
@@ -1266,9 +1271,9 @@ func (m *policyMigration) planDetail() string {
 // no request to wait at all — the owner's ruling of 2026-11-09, the whole
 // upgrade being this command — the doors that reach this stage without being
 // the update door (`fugaro setup`, `fugaro accounts add`) keep the answer of
-// 2026-11-06 they had before it, and it is `fugaro upgrade`'s own policy step
-// that keeps the refusal --yes is the way past, the same reading
-// `fugaro project policy publish --delete` has (internal/cli/project_cmd.go).
+// 2026-11-06 they had before it. The refusal --yes is the way past is
+// `fugaro project policy publish --delete`'s, the same reading
+// (internal/cli/project_cmd.go).
 func (s *policyMigrateStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {
 	// A managed project's gate is asked FIRST, and only this door has one: in a
 	// coding agent's session on a managed project the step that rewrites the

@@ -316,7 +316,7 @@ variable "history" {
 }
 
 variable "catalog_check" {
-  description = "The project's catalog check job (PIC4, D1148 task (ii)), or null on an installation whose project publishes no catalog: the one scheduled Cloud Run job that runs `fugaro image check --job --catalog` over every entry of the project's image catalog and submits at most one build per entry that fires, each build running as the build account of the repository the entry belongs to (modules/repo/catalogcheck.tf grants the actAs). Its job name must start with fugarochk-: fugaro runs ls and max_parallel count the fugaro- jobs, and the alert policies match ^fugarochk- (alert.tf). env is internal/infra's, and carries FUGARO_CATALOG_CHECK_SPEC — the whole run's assignment as JSON, which the job refuses to start without — beside the platform variables every job has. The two IAM conditions are the input's (the definitions read under builds/catalog/, internal/backend/gcp's gcp.CatalogReadCondition, and one records condition per repository, gcp.CatalogRecordsCondition): what makes a grant narrow here is its condition, and it is the bytes the plan review reads. paused is the schedule's own state and defaults to true, so a project that publishes a catalog deploys the schedule stopped and the installation that wants the nightly run writes a false."
+  description = "The project's catalog check job (PIC4, D1148 task (ii)), or null on an installation whose project publishes no catalog: the one scheduled Cloud Run job that runs `fugaro image check --job --catalog` over every entry of the project's image catalog and submits at most one build per entry that fires, each build running as the build account of the repository the entry belongs to (modules/repo/catalogcheck.tf grants the actAs). Its job name must start with fugarochk-: fugaro runs ls and max_parallel count the fugaro- jobs, and the alert policies match ^fugarochk- (alert.tf). env is internal/infra's, and carries FUGARO_CATALOG_CHECK_SPEC — the whole run's assignment as JSON, which the job refuses to start without — beside the platform variables every job has. The two IAM conditions are the input's (the definitions read under builds/catalog/, internal/backend/gcp's gcp.CatalogReadCondition, and one records condition per repository, gcp.CatalogRecordsCondition): what makes a grant narrow here is its condition, and it is the bytes the plan review reads. paused is the schedule's own state and defaults to true, so a project that publishes a catalog deploys the schedule stopped and the installation that wants the nightly run writes a false. firebase_project is the installation's Firebase project and not this one on a two-project installation: it is where the job's build leases are written and where its own database role is created and bound (catalogcheck.tf, D1554), and it is unset on an installation with no Firebase backend, where the job submits its builds unleased."
   type = object({
     account_id       = string
     job              = string
@@ -325,6 +325,7 @@ variable "catalog_check" {
     scheduler_region = string
     schedule         = optional(string, "17 4 * * *")
     paused           = optional(bool, true)
+    firebase_project = optional(string)
     env              = map(string)
     definitions_condition = object({
       title      = string
@@ -366,6 +367,18 @@ variable "catalog_check" {
       length(var.catalog_check.definitions_condition.expression) > 0
     )
     error_message = "catalog_check needs the service account ID fugaro-catalog-check — the one internal/infra/tf reads as this job's own kind of principal, so a job-account-shaped ID would be covered by the rows that accept those — an image, a job name that starts with fugarochk- (ls counts the fugaro- ones as workflow jobs, and the alert policies match ^fugarochk-), a Scheduler job name and region, and at least one repository with a slug and the two IAM conditions."
+  }
+
+  # firebase_project names a project the job's lease role is created in and
+  # bound on (catalogcheck.tf), so it has to be a project ID and not something
+  # that only reads like one. Unset is an installation with no Firebase
+  # backend, where the job takes no lease and neither resource is planned; ""
+  # is refused rather than read as unset, because a hand-edited tfvars that
+  # wrote it would otherwise silently drop the grant an installation with a
+  # database needs.
+  validation {
+    condition     = var.catalog_check == null ? true : (try(var.catalog_check.firebase_project, null) == null || can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", var.catalog_check.firebase_project)))
+    error_message = "catalog_check.firebase_project must be a GCP project ID, or absent on an installation with no Firebase backend: it is the project the job's build leases are written into and where its own database role is created (catalogcheck.tf, D1554)."
   }
 
   # The job's whole assignment arrives in its environment: internal/cli's mode

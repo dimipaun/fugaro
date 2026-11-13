@@ -3168,12 +3168,12 @@ func checkCloneJobsImage(ctx context.Context, env *cloudEnv, spec *task.Spec, wa
 // older runner refuses is the key itself: the line an operator added to their
 // fugaro.yaml is what dies at bootstrap, whoever was going to ignore it.
 //
-// It names 0.25.0, the release this work ships in ("Vole": docs/release-streams.yaml
+// It names 0.24.0, the release this work ships in ("Uakari": docs/release-streams.yaml
 // has 0.23.0 current and Uakari 0.24.0 next), which is not tagged yet: the
 // release that tags it holds this number to the tag it cuts, as it does for
 // slotSince's 0.24.0 and jobsSince's 0.22.0. docs/release.md ("Before you tag")
 // has the checklist verify it.
-const modelGradesSince = "0.25.0"
+const modelGradesSince = "0.24.0"
 
 // modelGradesLaunchSources reports, for the launch's modelGradesSince gate,
 // whether the configuration the run will read writes the key: the repository's
@@ -3288,7 +3288,7 @@ func checkCloneModelGradesImage(ctx context.Context, env *cloudEnv, spec *task.S
 // task, not a file, so the fields' own presence is the whole question and no
 // checkout of the repository is needed to answer it.
 //
-// It names 0.25.0, the release this work ships in, which is the number
+// It names 0.24.0, the release this work ships in, which is the number
 // modelGradesSince carries and for the same reason: a task that names a grade
 // resolves it through the project layer's defaults.model_grades, so the release
 // whose configuration reader knows that key is the release whose task reader
@@ -3298,7 +3298,7 @@ func checkCloneModelGradesImage(ctx context.Context, env *cloudEnv, spec *task.S
 // docs/release-streams.yaml has 0.23.0 current and Uakari 0.24.0 next, and the
 // release that tags this holds the number to the tag it cuts;
 // docs/release.md's ("Before you tag") checklist is where it verifies it.
-const taskGradeSince = "0.25.0"
+const taskGradeSince = "0.24.0"
 
 // taskGradeAsk reports, for the gates' messages, which of the two fields the
 // task carries: the subject ("" for a task that carries neither, which no gate

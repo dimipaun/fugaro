@@ -76,6 +76,13 @@ workflows:
         go vet ./...
         test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       test: |
-        go test -timeout 15m $(go list ./... | grep -v -e /internal/runner -e /internal/e2e -e /internal/image -e /fugaro/images)
+        rc=0
+        go test -timeout 15m $(go list ./... | grep -v -e /internal/runner -e /internal/e2e -e /internal/image -e /fugaro/images) || rc=$?
+        # The container's high-water memory since it started, the agent and the build cache
+        # included (Cloud Run keeps the disk in memory): the number to size resources.memory by.
+        for f in /sys/fs/cgroup/memory.peak /sys/fs/cgroup/memory/memory.max_usage_in_bytes; do
+          if [ -r "$f" ]; then echo "peak memory: $(( $(cat "$f") / 1048576 )) MiB ($f)"; break; fi
+        done
+        exit $rc
     resources: { cpu: 4, memory: 8Gi }
     timeouts: { total: 3h, stage: 150m, verify: 25m, finalize_reserve: 5m }
