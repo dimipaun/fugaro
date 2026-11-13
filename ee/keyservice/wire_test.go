@@ -22,11 +22,15 @@ package keyservice
 // an organisation's terms, a reseller's rates, a statement's lines — has no
 // fixture of its own to be read against.
 //
-// A field the schema does not know is refused by both readers. One that accepted
-// more than the other would be a field the SPA believes is served and the API
-// drops, which is the failure this pair of readers exists to prevent, and it is
-// why every object in these schemas is closed at every level rather than only at
-// the top.
+// A field the schema does not know is refused by both readers, and so is a body
+// that leaves a field out: `decodeWire` holds a body to the schema's own reading
+// of it — an object, exactly the shape's fields, each of them once — rather than
+// to encoding/json's, which matches a name ignoring case, keeps the last of a
+// repeated key and reads an absent field as the zero value. One reader accepting
+// what the other refuses is a field the SPA believes is served and the API drops,
+// or a body a handler is handed as valid that no schema ever agreed to; it is why
+// every object in these schemas is closed at every level rather than only at the
+// top.
 //
 // And exactly one shape carries a credential: the reveal's bundle. Every other
 // answer is metadata — the spec's own split (F5: resellers and operations see
@@ -36,6 +40,7 @@ package keyservice
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -134,11 +139,11 @@ func TestWireFixturesDecodeStrictly(t *testing.T) {
 const wireUnknownField = "a_field_this_shape_does_not_hold"
 
 // TestWireRefusesUnknownFields pins the other half of the two readers agreeing:
-// a field one of them knows and the other does not is a field the SPA reads as
+// a field one of them holds and the other does not is a field the SPA reads as
 // served and the API drops, or the reverse, and neither reader may be the only
-// one to refuse it. Both are asked the same way — the fixture with one field no
-// shape holds added to it — because a decoder that refused it for some other
-// reason would look like a refusal and hold the line nowhere.
+// one to refuse it. Three bodies are put to both, because encoding/json is
+// looser than a schema in three ways — it matches a name ignoring case, it keeps
+// the last of a repeated key, and it takes a name it does not know at all.
 func TestWireRefusesUnknownFields(t *testing.T) {
 	for _, shapeName := range wireShapeNames() {
 		shape := wireShapes[shapeName]
@@ -147,29 +152,110 @@ func TestWireRefusesUnknownFields(t *testing.T) {
 			t.Errorf("%s/%s.json: %v", wireFixtureDir, shapeName, err)
 			continue
 		}
+		def := strings.TrimPrefix(shapeName, shape.area+".")
+		schema := wireSchemaDef(t, shape.area, def)
+
 		object := wireObject(t, fixture)
 		object[wireUnknownField] = true
-		mutated, err := json.Marshal(object)
+		wireRefuses(t, shapeName, "a field no shape holds", wireJSON(t, object), wireUnknownField, schema, false)
+
+		held := slices.Sorted(maps.Keys(wireObject(t, fixture)))
+		written, found := "", false
+		for _, name := range held {
+			if upper := strings.ToUpper(name); upper != name {
+				written, found = name, true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("%s: every field is already upper case, so the case-folded body cannot be built", shapeName)
+		} else {
+			folded := wireObject(t, fixture)
+			folded[strings.ToUpper(written)] = folded[written]
+			delete(folded, written)
+			wireRefuses(t, shapeName, fmt.Sprintf("%q written as %q", written, strings.ToUpper(written)), wireJSON(t, folded), strings.ToUpper(written), schema, false)
+		}
+
+		// A key written twice is the decoder's own case: the validator reads the
+		// body through a parser that has already kept one of the two, so no schema
+		// can be asked about it, and a reader that kept the same one would serve a
+		// body that says two things as though it said one.
+		whole := wireJSON(t, wireObject(t, fixture))
+		value, err := json.Marshal(object)
 		if err != nil {
 			t.Errorf("%s: %v", shapeName, err)
 			continue
 		}
-		mutated = append(mutated, '\n')
-		value := shape.alloc()
-		err = decodeWire(mutated, value)
-		if err == nil {
-			t.Errorf("%s: this build reads a %s field into %T, so the shape accepts what the %s area's schema refuses",
-				shapeName, wireUnknownField, value, shape.area)
-		} else if !strings.Contains(err.Error(), "unknown field") {
-			t.Errorf("%s: this build refuses the extra field for another reason than not knowing it, so the fixture does not show that the shape is closed: %v",
-				shapeName, err)
+		twice := append(append([]byte{}, whole[:len(whole)-1]...), fmt.Sprintf(",%q:%s}", held[0], value)...)
+		wireRefuses(t, shapeName, fmt.Sprintf("%q written twice", held[0]), twice, "twice", schema, true)
+	}
+}
+
+// TestWireRefusesMissingFields pins that the two readers want the same fields
+// present and not only the same names: every property of every subschema is
+// required, and no Go field is one encoding/json reads as the zero value, so a
+// body that drops any one of them is refused by both. A property that were
+// optional would fail here, and that is the rule this guards — a body the SPA
+// may leave a field out of is one whose TypeScript type cannot say what it
+// carries.
+func TestWireRefusesMissingFields(t *testing.T) {
+	for _, shapeName := range wireShapeNames() {
+		shape := wireShapes[shapeName]
+		fixture, err := os.ReadFile(filepath.Join(wireFixtureDir, shapeName+".json"))
+		if err != nil {
+			t.Errorf("%s/%s.json: %v", wireFixtureDir, shapeName, err)
+			continue
 		}
 		def := strings.TrimPrefix(shapeName, shape.area+".")
-		if err := wireSchemaDef(t, shape.area, def).Validate(wireInstance(t, mutated)); err == nil {
-			t.Errorf("%s: the %s schema's %s subschema accepts a %s field the Go decoder refuses, so a route could serve a field no shape holds",
-				shapeName, shape.area, def, wireUnknownField)
+		schema := wireSchemaDef(t, shape.area, def)
+		described, ok := wireDef(t, wireAreaDoc(t, shape.area), def, shapeName)["properties"].(map[string]any)
+		if !ok {
+			t.Errorf("%s: $defs/%s describes no properties, so no field of it can be dropped", shapeName, def)
+			continue
 		}
+		for _, property := range slices.Sorted(maps.Keys(described)) {
+			object := wireObject(t, fixture)
+			delete(object, property)
+			wireRefuses(t, shapeName, fmt.Sprintf("the field %q left out", property), wireJSON(t, object), property, schema, false)
+		}
+		// A body that is not an object holds none of a shape's fields, which is
+		// this rule at its limit, and null is the one body that would otherwise
+		// read as a whole shape of zeroes.
+		wireRefuses(t, shapeName, "no object at all", []byte("null"), "not a JSON object", schema, false)
 	}
+}
+
+// wireRefuses asks both readers for a body neither should accept, and asks the
+// decoder's refusal to name what it refused: one that refused for another reason
+// would look like the case being covered and hold the line nowhere. onlyGo is for
+// a fault a schema cannot be asked about at all.
+func wireRefuses(t *testing.T, shapeName, what string, body []byte, want string, schema *jsonschema.Schema, onlyGo bool) {
+	t.Helper()
+	err := decodeWire(body, wireShapes[shapeName].alloc())
+	if err == nil {
+		t.Errorf("%s: this build reads a body with %s into %T, so the shape accepts what the schema refuses",
+			shapeName, what, wireShapes[shapeName].alloc())
+		return
+	}
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("%s: this build refuses a body with %s, and not for %s: %v", shapeName, what, want, err)
+	}
+	if onlyGo {
+		return
+	}
+	if err := schema.Validate(wireInstance(t, body)); err == nil {
+		t.Errorf("%s: the schema accepts a body with %s, which this build refuses, so the two readers disagree", shapeName, what)
+	}
+}
+
+// wireJSON is one mutated fixture as the body a route would be handed.
+func wireJSON(t *testing.T, object map[string]any) []byte {
+	t.Helper()
+	body, err := json.Marshal(object)
+	if err != nil {
+		t.Fatalf("a mutated fixture is not JSON: %v", err)
+	}
+	return body
 }
 
 // wireCredentialTags are the JSON field names that carry a credential, or carry
@@ -290,18 +376,6 @@ func wireSameFields(t *testing.T, at string, typ reflect.Type, doc map[string]an
 	}
 	for _, name := range slices.Sorted(maps.Keys(held)) {
 		t.Errorf("%s: this build reads a %q field the schema does not describe, so the SPA cannot know it is served", at, name)
-	}
-}
-
-// wireFieldTypes collects one type's own JSON names and what they hold, which is
-// what its subschema's properties are compared with before the walk goes deeper.
-func wireFieldTypes(t reflect.Type, into map[string]reflect.Type) {
-	for i := range t.NumField() {
-		field := t.Field(i)
-		name := strings.Split(field.Tag.Get("json"), ",")[0]
-		if name != "" && name != "-" {
-			into[name] = field.Type
-		}
 	}
 }
 
