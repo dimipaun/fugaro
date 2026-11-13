@@ -1196,8 +1196,14 @@ func TestUpdateFirebaseProjectRepinsTheCredentialsImage(t *testing.T) {
 	// stage reads back. credentialsOutputs replaces the rig's script rather
 	// than adding to it, and this is the one test that needs both objects from
 	// the same run, so the two are composed here.
+	//
+	// The intake is part of the first half, and it is not optional: this run
+	// writes the intake's block into an installation that has none (the state
+	// the seed below leaves), and the audience fill refuses the half-carried
+	// state a tfvars block without the output is.
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
 		"credentials_service":     map[string]any{"name": infra.CredentialsServiceName, "region": "us-east5", "url": credentialsServiceURL},
+		"intake":                  intakeServiceOutput(),
 		"history_service_account": historyAccount,
 		"history_job":             nil,
 	})}
@@ -1242,10 +1248,12 @@ func TestTheFirebaseProjectDoorBackfillsTheRecordToo(t *testing.T) {
 	r.fs.SetDatabase("us-east5")
 	r.appendConfig(t, "credentials_service: { url: "+credentialsServiceURL+" }\n")
 	// The installation's own outputs, as the Firebase stage reads them back: the
-	// credentials block this door re-pins AND the history account the stage
-	// needs (the composed script is TestUpdateFirebaseProjectRepinsTheCredentialsImage's).
+	// credentials block this door re-pins, the intake block the audience fill
+	// pairs with the one on disk, AND the history account the stage needs (the
+	// composed script is TestUpdateFirebaseProjectRepinsTheCredentialsImage's).
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
 		"credentials_service":     map[string]any{"name": infra.CredentialsServiceName, "region": "us-east5", "url": credentialsServiceURL},
+		"intake":                  intakeServiceOutput(),
 		"history_service_account": historyAccount,
 		"history_job":             nil,
 	})}
