@@ -258,13 +258,19 @@ node and it is over"* was written to avoid, and D222 refuses a second record for
 So the honest shape of the path is: **a provider session whose authorisation is still the node** —
 which is D221's recommendation with a sign-in bolted in front of it, and not the spec's flow.
 
-### 5.1 The allowlist predicate this would need, word for word
+### 5.1 The allowlist predicate this would need
 
 The reconciliation wrote this mapping out at
 [reconciliation.md](reconciliation.md) §3.3, and it is what the session above would be checked
-against. It is quoted here rather than re-derived, because it is the half of §3 that decides whether
-the path is usable at all — every row that is *not* enforceable in the rules is a row that has to
-move out of them:
+against. It is carried here rather than left to a reader to find, because it is the half of §3 that
+decides whether the path is usable at all — every row that is *not* enforceable in the rules is a row
+that has to move out of them. **Three cells differ from that section's, each of them the same fact
+under this folder's own reference** — which is why this is the mapping and not a quotation of it: the
+domain row carries this folder's **U1** and **D223** where §3.3 writes *"UNVERIFIED (§5)"* and
+*"D6's answer"* — U1 is that question in this folder's own list of what could not be verified, and
+D223 is this folder's decision taking the coordinator's as its own (§4) — and the last row says what
+the provider path's own session loses where §3.3 says the spec's own path loses it. No other cell is
+changed, and none states a different fact:
 
 | The spec's rule | On the device node | Enforceable in the rules? |
 | --- | --- | --- |
