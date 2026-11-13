@@ -866,7 +866,8 @@ either half (D2021, answered (a) on 2026-11-10).
 **What "workspace caps" can mean, read against `main` on 2026-11-10** (reconciliation section 8, F29). D1222 put "workspace caps" in `ee/`
 and said nothing more. The workspaces work is now mostly on `main`: W0-W6 and W8 are merged and **W7 — the cap's meter, its alarm and the
 member's binding — was then the open draft #2275**, with W9 (the docs) after it; both have since merged (W7 as `d3b7613f` on 2026-11-11, W9 as
-#2421), and **that merge is what the reading below measured: it left the refusal unmarked, so O19 is blocked and not launchable.** Its money fence is metered at the workspace's credentials service
+#2421), and **W7's own merge is what the reading below measured: it left the refusal unmarked, so O19 is blocked and not launchable.**
+Its money fence is metered at the workspace's credentials service
 (W7) and its stop is `budget.PathKillGlobal` **in the workspace's own database** (`internal/cli/budget_kill_workspace.go:7-12`), whose rules
 are closed to every reader (`internal/budget/rules/workspace.json.tmpl`); the headroom reaches a member's **job service account** only (W7's
 interface). The daemon runs on the **person's** credential and reads its own project's kill switch (`internal/cli/orchestrator_run.go:351-378`).
@@ -910,7 +911,7 @@ such cycles (`internal/orchestrator/breaker.go`, `BreakerThreshold`). **D2022** 
   `SECURITY.md` sentence.
   Read 2026-11-13 (the trigger fired: W7 merged as `d3b7613f`, #2275): W7 wrote no run-record field, the workspace's stop reaches the record as
   the same `budget_unavailable`/`run` halt a member's own service outage writes, and the cap's refusal is on no call path at all, so O19 is
-  blocked and no task of this plan implements it until a W-side change puts the refusal's source in the record** — the reading, with its
+  blocked and no task of this plan implements it until a W-side change puts the refusal's source in the record — the reading, with its
   citations, is `docs/stateless-orchestrator/reconciliation.md` **U12 (resolved NO)**.
 - **Commit:** `feat(ee): a workspace's refusal pauses the orchestrator's queue (O19)`
 - **Red step:** `TestAWorkspaceRefusalPausesTheQueueAtOnce` fails to build (no seam), then fails while a refused run is folded as an ordinary
