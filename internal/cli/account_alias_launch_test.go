@@ -7,10 +7,12 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // The launch is one of the readers an alias is resolved at (D2091, D2092): a
@@ -166,6 +168,28 @@ func TestLaunchLineNamesTheAliasAndItsAccount(t *testing.T) {
 	}
 	if strings.Contains(out, " -> ") {
 		t.Errorf("a launch that read no alias printed an account pair:\n%s", out)
+	}
+}
+
+// TestFollowUpLaunchLineNamesTheAliasItRead is the same line for the follow-up
+// that reads a name itself: `--pr N --token ALIAS` takes the alias' current
+// target (D2098), so this launch read an alias and names the pair. The follow-up
+// that inherits has no alias to name — the previous run's account is what its
+// record carries, and a record holds no alias at all (F4) — and prints what it
+// always printed.
+func TestFollowUpLaunchLineNamesTheAliasItRead(t *testing.T) {
+	f := newCloudFixture(t)
+	f.appendConfig(t, "claude_accounts:\n  acme-team:\n    allow_data_to: [\"acme/app\"]\n"+aliasBlock("reviewer", "acme-team"))
+	oauthCheckout(t, f, "")
+	seedRoot(t, f, rootID, time.Now().Add(-time.Hour))
+	writeBuildRecord(t, f, appSlug, "web", release065)
+	f.run.AddJob(gcp.JobName(appSlug, gcp.WorkflowVariant("web", "acme-team")), "2", "4Gi")
+	out, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--token", "reviewer", "--run-id", fuID, "A follow-up")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "launch " + task.ShortRun(fuID) + " (follow-up of PR #7, after " + task.ShortRun(rootID) + ") (account reviewer -> acme-team)"; !strings.Contains(out, want) {
+		t.Errorf("the follow-up's launch line does not carry %q:\n%s", want, out)
 	}
 }
 
