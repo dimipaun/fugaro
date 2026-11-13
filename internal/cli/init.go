@@ -164,6 +164,17 @@ type initOptions struct {
 	// creates; with one, it must be that config's name.
 	name string
 
+	// --rigor answers the wizard's rigor question without a terminal (task W
+	// of docs/rigor-command/implementation-plan.md; D900): the project's
+	// default mode, as `defaults.rigor.default` of the project layer. It is
+	// the flag of a FIRST RUN of `fugaro setup` and of nothing else: a run
+	// with a project config refuses it by name, because the one command that
+	// changes a project's default is `fugaro rigor set` (setupRigorRefusal,
+	// setup.go). The answer is recorded here and written by the Layer stage,
+	// which is the one stage that edits the one local layer file — the
+	// question phase applies nothing.
+	rigor string
+
 	// --repo: onboard the repository of a checkout.
 	repo, noBuild, allowJobDelete bool
 	// retire is --retire: run the retirement a config change needs, behind
@@ -485,6 +496,12 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	addCloudFlags(cmd, &o.cloud)
 	f := cmd.Flags()
 	f.StringVar(&o.name, "name", "", "the project's name: for a project config "+d.name+" creates, and what names an installation that has no name yet (with a config, it must be its name; an installation's name never changes; with several project configs it names the one to create or use; on a machine with no config for an installation that exists, it defaults to the installation's)")
+	// The rigor question (task W of docs/rigor-command/implementation-plan.md;
+	// D900). It names no door: the question is a first run's, and what says so
+	// is the run's own state (a project config, or not) rather than the verb
+	// the reader typed. `fugaro run --mode hotfix` is named here because it is
+	// the one door hotfix has, and it is not a layer's to set (D834).
+	f.StringVar(&o.rigor, "rigor", "", "answer the wizard's rigor question without a terminal: the project's default rigor mode, written as defaults.rigor.default of the project layer this run writes and publishes. One of poc, startup, pro or critical; pro keeps what a project that says nothing runs today, and it is not taken for you where nobody can be asked — a scripted run without this flag is refused. hotfix is not a mode a layer sets: it is an operator's own per-run mode, `fugaro run --mode hotfix`. It is a first run's flag: on a project that already has a config it is refused by name, and the one command that changes a project's default is fugaro rigor set")
 	f.StringVar(&o.schedulerRegion, "scheduler-region", "", "Cloud Scheduler region of the daily image checks (default: the region, or the nearest one Scheduler offers)")
 	f.StringVar(&o.runsBucket, "runs-bucket", "", "the runs bucket (default: the project config's, else fugaro-runs-<gcp-project>)")
 	f.StringVar(&o.stateBucket, "state-bucket", "", "the Terraform state bucket (default: the project config's, else fugaro-tfstate-<gcp-project>)")
@@ -2021,7 +2038,10 @@ func (r *initRun) publishedJobsPaused(ctx context.Context, lc *localcfg.Config, 
 	if spec.CatalogCheck == nil {
 		return spec
 	}
-	p, err := layerPlanFor(ctx, lc)
+	// No rigor answer is passed: what this reads is the PUBLISHED layer's own
+	// catalog check, and the wizard's answer is a mode this run is about to
+	// write into the local file, which no published object carries (task W).
+	p, err := layerPlanFor(ctx, lc, "")
 	if err != nil || p.skip != "" || (p.stale == nil && !p.seed) {
 		return spec
 	}

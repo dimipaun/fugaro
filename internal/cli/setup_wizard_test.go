@@ -53,6 +53,10 @@ var wizardAnswers = map[string]string{
 	"--gcp-project": "proj-1234\n",
 	"--region":      "\n",
 	"--name":        "\n",
+	// The rigor question has no suggestion on purpose (task W of
+	// docs/rigor-command/implementation-plan.md; D900): Enter is not an answer,
+	// so this is a value and not the "\n" every other row takes.
+	"--rigor": "pro\n",
 	// The bake question's suggestion is yes (IS7), and Enter is the answer
 	// every run of this harness that is about something else gives it.
 	"--bake-repos": "\n",
@@ -80,6 +84,8 @@ func optionsFor(flag string) *initOptions {
 		o.cloud.region = defaultRegion
 	case "--name":
 		o.name = "aurora"
+	case "--rigor":
+		o.rigor = "pro"
 	case "--bake-repos":
 		// The value the flag names, and the fact that it was passed: a run that
 		// answers the question with the flag is the run whose answer the local
