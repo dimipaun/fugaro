@@ -32,6 +32,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -106,12 +107,20 @@ func refuseWorkspace(w http.ResponseWriter) {
 	http.Error(w, workspaceRefusal, http.StatusForbidden)
 }
 
+// rotationPrefix opens the source a rotation writes. It is its own name because
+// two things read it: the rotation that writes one, and §8's walk from a
+// refunded key to the other keys of its licence, which takes the prefix and the
+// key it is walking from as a step from a key to the key that replaced it — the
+// one route whose record names its predecessor rather than only the
+// subscription the walk is already matching on.
+const rotationPrefix = "rotation:"
+
 // rotationSource names the record one rotation writes, and it is the store's
 // memory of the rotation itself: the store keeps no key material (§7.3), so the
 // fact that a key has been succeeded is a record and not a stored key, and it is
 // what makes the old secret spent instead of merely superseded.
 func rotationSource(keyID string) string {
-	return "rotation:" + keyID
+	return rotationPrefix + keyID
 }
 
 // renewalHandover is how long a rotated key's old secret still fetches its
@@ -292,6 +301,16 @@ func (s *Service) status(w http.ResponseWriter, r *http.Request) {
 // reason: §8's list is what a renewal checks first, and a key the licensor has
 // withdrawn is never handed a successor.
 //
+// A key nobody is paying for is refused too, and it is the same kind of rule:
+// the licence this route renews is one the checkout sold, so its record names
+// the subscription it was minted for and the route reads that subscription —
+// and how it has moved since — before a key is minted. A cancelled subscription
+// and one whose end has passed are answered the key's own state and handed
+// nothing, while a key whose record names no subscription at all is refused with
+// the uniform answer: nothing here can prove such a key was ever paid for, and
+// failing closed is the owner's ruling of 2026-11-13 (D2148 — §12.1's Enterprise
+// column and `PolicyEnterprise` still claim otherwise, and TN6 has the two).
+//
 // A key outside its renewal window is answered its own state and handed nothing:
 // the successor is the key for the term *after* the one the customer is in, and
 // one minted before that term is nearly over is a term nobody paid for
@@ -374,6 +393,65 @@ func (s *Service) renew(w http.ResponseWriter, r *http.Request) {
 		refuseRenewal(w)
 		return
 	}
+	// §7's other half, and the one the window below cannot see: the window says
+	// the *key* is near its end, and whether the term after it was paid for is the
+	// subscription's own record (§5.2). It is read here — after the workspace has
+	// been matched and after the rotated branch, both of which are about a
+	// rotation already earned — and before anything is minted, so a licence whose
+	// money has stopped is handed nothing.
+	//
+	// A key whose record names no subscription is refused with the uniform answer
+	// an unproven caller gets, and not with its state: no subscription is the
+	// licensor's own doing (a key minted by hand, by the admin page or by the mint
+	// tool), and the owner's ruling of 2026-11-13 is that such a key does not
+	// renew at all — fails closed, because a key nothing can prove was paid for is
+	// the hole this gate exists to close, and answering its state would tell its
+	// holder a renewal is one secret away.
+	//
+	// Every other unpaid state is answered with the key's own state and no key,
+	// which is what the window's own refusal does and for the same reason: the
+	// caller proved its secret, so what it is told is about its own key — this one
+	// is still good to its end — and a uniform refusal here would read as the
+	// licence being finished and send a paying holder to a reissue.
+	if key.record.Subscription == "" {
+		refuseRenewal(w)
+		return
+	}
+	sub, held, err := s.store.Subscription(r.Context(), key.record.Subscription)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	// A record naming a subscription the store does not hold is a store this
+	// service cannot ask about the money at all — the same inconsistency
+	// merchant.Renew refuses as ErrUnknownSubscription — and it is a failure
+	// rather than an answer: nothing here can tell a paid term from an unpaid one,
+	// and the caller's retry is what asks a store that has the subscription back.
+	if !held {
+		fail(w, fmt.Errorf("%w: the record of the key %s names the subscription %s", ErrUnknownSubscription, call.KeyID, key.record.Subscription))
+		return
+	}
+	if sub.Cancelled || !now.Before(sub.Expires) {
+		writeAnswer(w, Answer{Status: key.status()})
+		return
+	}
+	// The successor covers the term that begins where this key ends, and the
+	// subscription has to have paid for that term before anything is minted: its
+	// end is the merchant's own record of what the customer has bought — the
+	// trigger's renewal is what moves it (merchant.Renew) — and this route reads it
+	// rather than moving it. A route that moved it would credit every caller the
+	// term after the one in hand: one month bought, a successor a call, each with a
+	// fresh key id and so a throttle bucket of its own, and the merchant's own
+	// renewal left finding its window closed behind them
+	// (TestARenewalMintsOnlyIntoATermTheSubscriptionCovers).
+	//
+	// The answer is the key's own state and not the uniform refusal, for the reason
+	// the two checks around it give theirs: the caller proved its secret, and its key
+	// is still good to its end — what it has not bought is the term after that.
+	if sub.Expires.Before(covered(key.record, key.policy, now)) {
+		writeAnswer(w, Answer{Status: key.status()})
+		return
+	}
 	if !renewable(key.record, key.policy, now) {
 		// The state and not the uniform refusal: this caller proved the secret,
 		// so what it is told is about its own key, and `ok` with no successor is
@@ -418,6 +496,12 @@ func (s *Service) renew(w http.ResponseWriter, r *http.Request) {
 	// The buyer's address is carried over: the record is where a later renewal
 	// still finds the only address this licence was ever delivered to (§5.1).
 	record.Email = key.record.Email
+	// The subscription is carried over for the reason the address is: the
+	// successor is the same licence for a later term, so the gate above has to
+	// find the same subscription on it, and a successor whose record named none
+	// could never renew again — it would be handed no key at all, since a key
+	// with no subscription is refused (§7.1).
+	record.Subscription = key.record.Subscription
 	if err := s.store.SaveIssuance(r.Context(), record); err != nil {
 		if !errors.Is(err, ErrAlreadyRecorded) {
 			fail(w, err)
@@ -457,6 +541,14 @@ func (s *Service) renew(w http.ResponseWriter, r *http.Request) {
 	}, now); err != nil {
 		log.Printf("keyservice: keeping the answer to the rotation of the key %s: %v", call.KeyID, err)
 	}
+	// The subscription's own end is not written here, and that is the whole of what
+	// keeps a renewal a thing the customer has paid for: the merchant's trigger is
+	// what moves it (merchant.Renew), and a route that moved it for the term it
+	// minted would credit the caller a term per call — the gate above would then be
+	// asking a question this route had just answered for itself
+	// (TestARenewalMintsOnlyIntoATermTheSubscriptionCovers). What the successor
+	// inherits is the subscription's *name*, and the term it covers is the one the
+	// subscription's end already reaches.
 	writeAnswer(w, Answer{Status: StatusOK, NewerKey: true, Key: minted.Key, RenewalSecret: minted.RenewalSecret})
 }
 
@@ -517,36 +609,19 @@ func (s *Service) sight(ctx context.Context, keyID string) {
 // until that period is nearly over, so one call buys one term and the next waits
 // its turn.
 //
-// What it bounds is the rate and not the payment, and that half is open: which
-// term the customer is in is this key's own `paid_through`, while whether a
-// later one was paid for is the merchant's record of a subscription's end
-// (§5.2), and the store holds no link from a key to the subscription it was
-// minted for — `Record.Source` is the merchant event id that first minted it,
-// `renew:<subscription id>:<expires>` for the merchant's own renewal or
-// `rotation:<key id>` for a successor, and the subscription itself is keyed by
-// an id no record carries. So a key whose state names a workspace renews here
-// after the subscription behind it was cancelled, and the successor is a signed
-// term nobody paid for; the merchant's own renewal refuses a cancelled
-// subscription (merchant.Renew), but that is not the door this endpoint answers
-// at. Shutting it by leaving the workspace out of the state a purchase writes
-// (merchant.go's `paid`) is not the trade this service takes either: D2202 makes
-// a connected key thirty days, so that omission leaves an annual purchase dark
-// from the end of its first key until the merchant's own renewal, and the
-// remedy the plan names for it — an installation running `fugaro licence refresh`
-// every month — is this endpoint. P3.6 owns that gate and the plan says so:
-// "`/renew` issues only while the entitlement runs",
-// `TestRenewalStopsWhenTheEntitlementEnds`.
-//
-// Closing it takes a shape this file does not own: the record carries the
-// subscription the key was minted for — written by the merchant's mint sites and
-// inherited by the successor this endpoint writes — and this gate reads it before
-// the key is minted, answering the key's state and no key once that subscription
-// is cancelled or its end does not cover the term about to be signed. What such a
-// gate does with a key that carries no subscription at all — minted by hand, by
-// the admin page or by the mint tool, and indistinguishable here from a key
-// whose link was never written — is the plan's to say, and no task in it closes
-// this one today: refusing those ends the Enterprise renewals the merchant does
-// not sell (D2141), while allowing them leaves this hole open for exactly them.
+// What it bounds is the rate and not the payment, and the payment is `renew`'s
+// own gate rather than this function's: the record names the subscription the
+// key was sold under — written by `paid`, the one mint site a merchant sale goes
+// through, and inherited by the successor the endpoint writes — and `renew`
+// reads it, and how it has moved since, before a key is minted at all. A record
+// naming none is refused there and not passed on to this window: it is a key no
+// subscription paid for — the admin page's, the free seat's, the trial's, all of
+// them minted through `mint` (see `Record.Subscription`) — and a mint here would
+// hand it a term nobody bought. So this window answers whether the term *after*
+// the one the customer is in is the next one to sign, and the gate answers
+// whether anybody paid for it: a subscription reaching one term ahead and no
+// further stops the ladder on its first call, before this window is asked
+// (TestARenewalMintsOnlyIntoATermTheSubscriptionCovers).
 func renewable(record Record, policy Policy, now time.Time) bool {
 	lead := time.Duration(policy.RenewBeforeDays) * 24 * time.Hour
 	return !now.Before(record.Expires.Add(-lead))
@@ -573,10 +648,23 @@ func renewable(record Record, policy Policy, now time.Time) bool {
 // and a job running at a fixed minute pays it once: the successor's end is on
 // that minute, so its window opens on it too and the term after is exact.
 func renewalDays(record Record, policy Policy, now time.Time) int {
+	span := covered(record, policy, now).Sub(now)
+	return int((span + 24*time.Hour - 1) / (24 * time.Hour))
+}
+
+// covered is the end of the term the successor will cover, which is the instant
+// the subscription's own end has to reach before `renew` mints anything: the
+// whole period after this key's own `paid_through`, or after now for a key
+// already past it.
+//
+// It is the same span `renewalDays` asks the minter for, and the two are written
+// as one function so that they cannot drift: a gate that asked the subscription
+// for one term while the mint took another would either credit a term nobody paid
+// for or refuse one that was.
+func covered(record Record, policy Policy, now time.Time) time.Time {
 	end := record.Expires
 	if end.Before(now) {
 		end = now
 	}
-	span := end.Add(policy.Term).Sub(now)
-	return int((span + 24*time.Hour - 1) / (24 * time.Hour))
+	return end.Add(policy.Term)
 }
