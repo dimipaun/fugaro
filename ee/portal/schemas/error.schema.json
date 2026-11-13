@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/ee/portal/schemas/error.schema.json",
+  "title": "Portal API refusal",
+  "description": "The one shape the portal's API refuses with (portal plan P1.0, P1.1). Every route answers it, so it is the one shape here that is not mounted by name: the SPA branches on `code` and shows `message`, and a route that answered a sentence of its own would put the frontend's behaviour in wording that changes. Every object in this folder is closed, because the Go reader (ee/keyservice/wire_*.go, decodeWire) refuses an unknown field: a body or an answer that carried one is a schema and a reader that disagree, and the fixture tests in ee/keyservice/wire_test.go are what catch it.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/refusal"
+    }
+  ],
+  "$defs": {
+    "refusal": {
+      "type": "object",
+      "description": "A refusal: the machine's name for what went wrong and a sentence for the person. It never carries the request, an address or a token — a refusal is read by whoever sent the request and by logs, and neither is a place for the body someone sent.",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "The stable, machine-readable name of the refusal, in lower snake case. The SPA switches on it, so renaming one is changing a wire format (CLAUDE.md: a field never changes meaning)."
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "description": "One sentence for the person. It may quote what the caller sent — an address, a project id, an organisation's name — so the SPA renders it as text and never as markup."
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/ee/portal/schemas/invites.schema.json",
+  "title": "Portal invitations",
+  "description": "Invitations by email link (portal plan P2.2; spec §Tenancy). Firebase Auth sends and verifies the link, so an invitation here is an address, a role and a state: it holds no token — a stored token would be a list of live credentials — and it is accepted only by a verified address equal to the one it names, both sides folded by access.Member (F10). Every object here is closed, because ee/keyservice/wire_invites.go decodes it with DisallowUnknownFields.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/invite"
+    },
+    {
+      "$ref": "#/$defs/create"
+    }
+  ],
+  "$defs": {
+    "invite": {
+      "type": "object",
+      "description": "One invitation, as the organisation's owners and admins read it.",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "organisation_id",
+        "email",
+        "role",
+        "state",
+        "invited_by",
+        "created_at",
+        "expires_at",
+        "accepted_at"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The invitation's id. It is what the accepting call names, and it is not a secret: what makes the invitation usable is the sign-in link Firebase Auth sends to the address."
+        },
+        "organisation_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The organisation the person is invited into. A reseller invites into a customer organisation it has already created (D2191), so this is always set: an invitation never creates an organisation."
+        },
+        "email": {
+          "type": "string",
+          "pattern": "^[^@\\s]+@[^@\\s]+$",
+          "description": "The invited address. An invitation is accepted by a token whose verified address equals it and by no other (F10), which is why the address and not the id is the binding."
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "owner",
+            "admin",
+            "member"
+          ],
+          "description": "The role the membership will hold. It is chosen at the invitation because it has to exist before the person does: the operations seed invites that organisation's first owner (P2.2)."
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "accepted",
+            "revoked",
+            "expired"
+          ],
+          "description": "Where the invitation stands. Accepted is written at the first sign-in of the address it names, which is also the instant a membership binds to a uid (F40); expired is a pending invitation whose window has closed, which is a state and not a deletion, because a person reading the list is asking what happened."
+        },
+        "invited_by": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The inviter's email address: an owner reading the list is asking who asked for this, and an address is what they recognise."
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the invitation was created, in UTC."
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the invitation stops being acceptable, in UTC. A window is what keeps a forgotten invitation to a departed colleague from being a way in months later."
+        },
+        "accepted_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "When it was accepted, or null while it has not been. An invitation nobody accepted has no such instant, which is not its creation time."
+        }
+      }
+    },
+    "create": {
+      "type": "object",
+      "description": "An owner's or admin's request to invite somebody (P2.2). The organisation is the caller's own and is not in the body: a request that named one would be a request to invite into somebody else's.",
+      "additionalProperties": false,
+      "required": [
+        "email",
+        "role"
+      ],
+      "properties": {
+        "email": {
+          "type": "string",
+          "pattern": "^[^@\\s]+@[^@\\s]+$",
+          "description": "The address to invite. For the operations organisation it must be on the domain list operations set (F9, P5.1); for a reseller's invitation the acceptance needs the SSO its own organisation needs (F40)."
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "owner",
+            "admin",
+            "member"
+          ],
+          "description": "The role the new membership will hold."
+        }
+      }
+    }
+  }
+}

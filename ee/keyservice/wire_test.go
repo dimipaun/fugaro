@@ -29,9 +29,11 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
@@ -107,6 +109,111 @@ func TestWireFixturesDecodeStrictly(t *testing.T) {
 		}
 		wireAssertClosed(t, file)
 	}
+}
+
+// wireUnknownField is the field every shape is asked to refuse. It is spelled
+// the way a field this repository would add is spelled, so the failure a reader
+// sees is about the shape and not about the name being obviously foreign.
+const wireUnknownField = "a_field_this_shape_does_not_hold"
+
+// TestWireRefusesUnknownFields pins the other half of the two readers agreeing:
+// a field one of them knows and the other does not is a field the SPA reads as
+// served and the API drops, or the reverse, and neither reader may be the only
+// one to refuse it. Both are asked the same way — the fixture with one field no
+// shape holds added to it — because a decoder that refused it for some other
+// reason would look like a refusal and hold the line nowhere.
+func TestWireRefusesUnknownFields(t *testing.T) {
+	for _, shapeName := range wireShapeNames() {
+		shape := wireShapes[shapeName]
+		fixture, err := os.ReadFile(filepath.Join(wireFixtureDir, shapeName+".json"))
+		if err != nil {
+			t.Errorf("%s/%s.json: %v", wireFixtureDir, shapeName, err)
+			continue
+		}
+		object := wireObject(t, fixture)
+		object[wireUnknownField] = true
+		mutated, err := json.Marshal(object)
+		if err != nil {
+			t.Errorf("%s: %v", shapeName, err)
+			continue
+		}
+		mutated = append(mutated, '\n')
+		value := shape.alloc()
+		err = decodeWire(mutated, value)
+		if err == nil {
+			t.Errorf("%s: this build reads a %s field into %T, so the shape accepts what the %s area's schema refuses",
+				shapeName, wireUnknownField, value, shape.area)
+		} else if !strings.Contains(err.Error(), "unknown field") {
+			t.Errorf("%s: this build refuses the extra field for another reason than not knowing it, so the fixture does not show that the shape is closed: %v",
+				shapeName, err)
+		}
+		if err := wireSchema(t, shape.area).Validate(wireInstance(t, mutated)); err == nil {
+			t.Errorf("%s: the %s area's schema accepts a %s field the Go decoder refuses, so a route could serve a field no shape holds",
+				shapeName, shape.area, wireUnknownField)
+		}
+	}
+}
+
+// wireCredentialTags are the JSON field names that carry a credential, or carry
+// the way to one. The list is the whole point of the test below: it is the
+// vocabulary a shape would have to grow to leak, and a shape that grew one is
+// refused here rather than in review.
+var wireCredentialTags = []string{
+	"key",
+	"private_key",
+	"renewal_secret",
+	"secret",
+	"password",
+	"credential",
+	"token",
+}
+
+// TestRevealBundleIsTheOnlySecretShape pins the spec's split in the types
+// themselves (F5): everything the portal serves about a key is metadata, and the
+// one exception is the reveal bundle, which is the single act that hands a
+// workspace its key and the secret it renews under (D2182). It is reflection over
+// the registry rather than a list of names, so a shape added later is asked the
+// same question as the ones here, and nested types are walked because a secret
+// one level down is a secret served.
+func TestRevealBundleIsTheOnlySecretShape(t *testing.T) {
+	var carrying []string
+	for _, shapeName := range wireShapeNames() {
+		if fields := wireCredentialFields(reflect.TypeOf(wireShapes[shapeName].alloc()).Elem(), 0); len(fields) > 0 {
+			carrying = append(carrying, shapeName+" ("+strings.Join(fields, ", ")+")")
+		}
+	}
+	if want := []string{"keys.reveal"}; len(carrying) != 1 || !strings.HasPrefix(carrying[0], want[0]) {
+		t.Fatalf("the shapes carrying a credential are %v, and only %s may: every other answer is metadata, which is what a reseller and the operations team are served (F5)",
+			carrying, want[0])
+	}
+}
+
+// wireCredentialFields is the path of every field of one type, and of the types
+// it holds, whose JSON name is one of wireCredentialTags. The depth bounds the
+// walk at the nesting these shapes have, so a type that referred to itself would
+// stop rather than recur.
+func wireCredentialFields(t reflect.Type, depth int) []string {
+	if depth > 4 {
+		return nil
+	}
+	var found []string
+	for i := range t.NumField() {
+		field := t.Field(i)
+		name := strings.Split(field.Tag.Get("json"), ",")[0]
+		if slices.Contains(wireCredentialTags, name) {
+			found = append(found, name)
+		}
+		held := field.Type
+		for held.Kind() == reflect.Pointer || held.Kind() == reflect.Slice {
+			held = held.Elem()
+		}
+		if held.Kind() == reflect.Struct && held != reflect.TypeOf(time.Time{}) {
+			for _, nested := range wireCredentialFields(held, depth+1) {
+				found = append(found, name+"."+nested)
+			}
+		}
+	}
+	return found
 }
 
 // wireShapeNames is every registered shape's name, sorted, so a failure prints
