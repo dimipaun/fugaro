@@ -416,6 +416,78 @@ func TestTheDeployRunDeploysTheImplicitReviewJob(t *testing.T) {
 	}
 }
 
+// dropCredentialsServiceFromConfig rewrites the rig's project config without
+// its credentials_service block, which is the state a run that dies between the
+// installation root's apply and the config write at the end of the run leaves
+// behind: the installation's own record of the service — its tfvars, block and
+// review job together — is exactly as the run wrote it, and the config this
+// machine reads on the next update carries no block at all.
+func dropCredentialsServiceFromConfig(t *testing.T, r *imagesRig) {
+	t.Helper()
+	lc := localConfigOf(t, r)
+	if lc.CredentialsService == nil {
+		t.Fatalf("the rig's project config carries no credentials_service block to drop: the update did not record one, so this fixture would test nothing")
+	}
+	lc.CredentialsService = nil
+	data, err := lc.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(r.cfg, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := localConfigOf(t, r).CredentialsService; got != nil {
+		t.Fatalf("the project config records credentials_service = %+v after the block was dropped", got)
+	}
+}
+
+// TestACarriedRunStillDeploysTheImplicitReviewJob: the run that finds the
+// credentials service already recorded in the installation's tfvars plans the
+// review job the run that deployed the service created, even when this
+// machine's config does not name the block.
+//
+// That is the shape a run leaves when it dies in the window between the
+// installation root's apply and the config write that records the block, and it
+// is the shape every later `fugaro update` then meets: the implicit default
+// review job's existence is the local config's block (infra's
+// implicitReviewVariant), so a spec composed from a config without it holds no
+// review job at all, while the state holds the one the deploy run created. The
+// plan of a run in that state is the job's destruction, RefuseProjectJobDeletes
+// stops the whole update on it however --allow-delete reads, and the writer that
+// would record the block — and so repair the spec — is the last step of a run
+// that now never gets past its own plan: it repeats forever, with no in-CLI
+// repair and a hint naming a profile that is not what is missing.
+//
+// The carried branch is what this test drives: the block is in the tfvars, so
+// ensureCredentialsService hands the run's own record to the spec
+// (specReviewJobsOfTheService) rather than composing a fresh block off the
+// config. The issuance is the tfvars every stage of the run rewrites from the
+// spec, so what is asserted is what terraform is handed.
+//
+// Mutation (run, restore): drop that call from the carried branch and the second
+// update hands terraform no project_review_jobs — this test's assertion, with
+// the map empty.
+func TestACarriedRunStillDeploysTheImplicitReviewJob(t *testing.T) {
+	r := credentialsRig(t)
+	credentialsGitHubRepo(t, r)
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
+	credentialsOutputs(t, r)
+	if _, errOut, err := executeStdin(t, "", "update", "--yes"); err != nil {
+		t.Fatalf("the run that deploys the credentials service failed: %v\n%s", err, errOut)
+	}
+	name := credsvc.ReviewJobName(infra.ImplicitReviewProfile, "github", config.DefaultClaudeAccount)
+	dropCredentialsServiceFromConfig(t, r)
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	s := out + errOut
+	if err != nil {
+		t.Fatalf("the update that finds the service already recorded in the installation failed: %v\n%s", err, s)
+	}
+	review, _ := r.tfvars(t)["project_review_jobs"].(map[string]any)
+	if _, ok := review[name].(map[string]any); !ok {
+		t.Errorf("the run that found the block already in the installation's tfvars hands terraform no review job %s: project_review_jobs = %v. The state holds that job — the run that deployed the service created it — so this run's plan destroys it, and RefuseProjectJobDeletes stops the whole update on that plan\n%s", name, review, s)
+	}
+}
+
 // TestUpdateKeepsTheVarsFileWhereTheAudiencePlanReadsIt is the report of
 // 2026-11-09 (0.21.1, a managed project, a second attempt): the installation
 // step planned, passed the managed gate and applied — the credentials service
