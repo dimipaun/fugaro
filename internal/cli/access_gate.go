@@ -110,8 +110,8 @@ func requireAccess(ctx context.Context, env *cloudEnv, action accesslib.Action, 
 // record the way `runs show` and `runs ls` read it (showRunRepo, accessRunRepo),
 // because a run is what names the repository it belongs to. This machine's
 // config entry for the slug (accessSlugRepo) is the fallback for a run whose
-// task has gone, and project scope the last one, for a run nothing names a
-// repository for at all.
+// task and record are both unreadable, and project scope the last one, for a
+// run nothing names a repository for at all.
 //
 // Judging these from the config alone is what made a run readable through
 // `runs show` and refused through `logs` and `cancel` whenever the config
@@ -120,8 +120,10 @@ func requireAccess(ctx context.Context, env *cloudEnv, action accesslib.Action, 
 // person did not need.
 func requireRunAccess(ctx context.Context, env *cloudEnv, action accesslib.Action, s *runstore.Store, what string) error {
 	// The run's own record and then its task, the two reads `runs show` makes
-	// (showRunRepo): a run whose task has gone is still its record's run, and
-	// judging it at project scope would refuse the credential `runs show`
+	// (showRunRepo): a run whose task this build cannot read — the store is
+	// located by that object's presence, so such a run is reachable and its task
+	// is where a gate that read it alone would stop — is still its record's run,
+	// and judging it at project scope would refuse the credential `runs show`
 	// serves, and ask it for a wider role than the one it needs. A read that
 	// fails names nothing: the config's entry for the slug and then project
 	// scope answer instead, and neither is wider than the run's own repository.
