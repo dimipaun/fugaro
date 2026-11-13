@@ -27,6 +27,17 @@ package keyservice
 // of them at once. That is the closed half of the limit store.go records; the
 // pairs a caller makes out of *separate* calls (a mint's record and its key
 // state) stay two writes, and what bounds those is the service's own order.
+//
+// **A record nobody named is refused rather than kept.** A record's own id is
+// its document's id here — an issuance's source, an application's request id, a
+// key's id — and the document store refuses a document nothing named, because
+// the empty id is the one id every unnamed caller would share
+// (docstore.ErrUnnamed). store.go's memory store holds records without ids and
+// keeps such a record anyway, so the two stores differ on an input no caller
+// produces: merchant, renew and admin each name what they minted for. The suite
+// in firestore_store_test.go runs against both stores and so cannot state this,
+// which is why it is written here and pinned beside it
+// (TestTheDocstoreRefusesARecordNobodyNamed).
 
 import (
 	"context"

@@ -325,6 +325,34 @@ func testTrialOnce(t *testing.T, open func(t *testing.T) Store) {
 	}
 }
 
+// TestTheDocstoreRefusesARecordNobodyNamed is the one difference between the two
+// stores, and it is a case of its own because the suite above cannot hold it:
+// the suite runs against both, and store.go's memory store, which has no
+// document ids, keeps a record whose own id is empty. Nothing in the service
+// produces one — merchant's redelivery source, renew's rotation and admin's
+// approved request all name what they minted for — so what this pins is that a
+// caller who one day does is told rather than served.
+func TestTheDocstoreRefusesARecordNobodyNamed(t *testing.T) {
+	ctx := context.Background()
+	store := NewDocStore(docstore.NewMemory())
+	for _, tc := range []struct {
+		name string
+		call func() error
+	}{
+		{"an issuance with no source", func() error { return store.SaveIssuance(ctx, Record{KeyID: "fgk_1"}) }},
+		{"an application with no id", func() error { return store.SaveApplication(ctx, Application{Plan: openPlanName}) }},
+		{"a verification with no id", func() error { return store.SaveVerification(ctx, Verification{Plan: openPlanName}) }},
+		{"a subscription with no id", func() error { return store.SaveSubscription(ctx, Subscription{Organisation: "acme.example"}) }},
+		{"a key state with no key id", func() error { return store.SaveKeyState(ctx, KeyState{WorkspaceID: "acme-widget"}) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.call(); !errors.Is(err, docstore.ErrUnnamed) {
+				t.Errorf("%s = %v, want docstore.ErrUnnamed: the empty id is the one id every unnamed record would share, so a store that kept one would answer every lookup that named nothing", tc.name, err)
+			}
+		})
+	}
+}
+
 // sortStrings orders a suite's list in place; the stores answer a list in
 // different orders (one appends, one sorts by document id) and the interface
 // promises neither.
