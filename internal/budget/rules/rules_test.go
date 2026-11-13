@@ -800,28 +800,34 @@ func TestDeviceNodesAreClientDenied(t *testing.T) {
 // no redeploy, and the deployed document takes no generation.
 //
 // It reads testdata/rules.golden.json rather than Generate(), and it pins the
-// node's own attributes, every path beneath it and every expression that reaches
-// past it, because the byte comparison in TestRulesGolden is satisfied by
-// regenerating the golden — which is exactly how a shape rule arrives: whoever
-// writes it runs UPDATE_GOLDEN=1 in the same change, and the diff is then the
-// only place the generation would be seen. TestDeviceNodesAreClientDenied reads
-// Generate() and so catches the change before it is regenerated; neither reading
-// subsumes the other, and this one is the fence that survives the regeneration.
-// A rule over this node, or one that reads a child of it, is a generation of its
-// own (§F29's "what would force a generation later", D225's later half), so it
-// has to fail here as well.
+// node's own attributes, the two ancestors above it, every path beneath it and
+// every occurrence of its path anywhere in the document, because the byte
+// comparison in TestRulesGolden is satisfied by regenerating the golden — which
+// is exactly how a shape rule arrives: whoever writes it runs UPDATE_GOLDEN=1 in
+// the same change, and the diff is then the only place the generation would be
+// seen. TestDeviceNodesAreClientDenied reads Generate() and so catches the
+// change before it is regenerated; neither reading subsumes the other, and this
+// one is the fence that survives the regeneration. A rule over this node, or one
+// that reads a child of it, is a generation of its own (§F29's "what would force
+// a generation later", D225's later half), so it has to fail here as well.
 //
-// Hand mutation this fails on, each with the golden regenerated so that the byte
-// comparison cannot object: `".read": "USER"` or `".write": "USER"` on the `$uid`
-// entry (the attribute set), a `".validate"` beside them (the same), a `$other`
-// child beneath the node (the paths), and a USER that also required
-// `child('role').exists()` (the readers). The two predicates and the USER are
-// caught twice over — TestDeviceNodesAreClientDenied and
-// TestUserClaimRequiresTheDeviceNode hold the document to the expression each
-// expects to find there, which a regenerated golden does not break. The shape
-// rule and the `$other` are caught by nothing else once the golden is
-// regenerated, and the readers scan is what holds §F29's sentence for a rule
-// that reads one of the fields without carrying the mu claim.
+// Hand mutation this fails on, each with the golden regenerated — or edited
+// outright, which is the same thing to a test that reads the golden — so that
+// the byte comparison cannot object: `".read": "USER"` or `".write": "USER"` on
+// the `$uid` entry (the attribute set), a `".validate"` beside them or on
+// `config/admin/devices` above it (the same, and the second is why the two
+// ancestors are read here at all: a rule on the parent constrains every entry
+// under it), a `$other` child beneath the node (the paths), a USER that also
+// required `child('role').exists()` (the occurrences), and a reader spelled
+// around the entry — `root.child('config/admin/devices/' + auth.uid +
+// '/role')`, one `child()` call and a concatenation, which a match for a
+// `.child(` *after* the entry's own chain does not see (the occurrences again).
+//
+// The two predicates and the USER are caught twice over:
+// TestDeviceNodesAreClientDenied and TestUserClaimRequiresTheDeviceNode hold the
+// document to the expression each expects to find, and a regenerated golden does
+// not break them. Everything else in that list is caught by nothing else, which
+// is what this test is for.
 func TestDeviceNodeCarriesNoShapeRule(t *testing.T) {
 	raw, err := os.ReadFile(goldenPath)
 	if err != nil {
@@ -832,12 +838,17 @@ func TestDeviceNodeCarriesNoShapeRule(t *testing.T) {
 		t.Fatalf("%s is not JSON: %v", goldenPath, err)
 	}
 	node := PathDevices + "/$uid"
-	// The one reach the document has on the node: the conjunct that asks whether
-	// the entry exists, `root.child('config/admin/devices').child(auth.uid)`. A
-	// `.child(` after it is a rule reading one of the entry's fields.
-	entry := "root.child('" + PathDevices + "').child(auth.uid)"
+	// The one reach the document is allowed on the node: the conjunct that asks
+	// whether the entry exists. Every mention of the path has to be that whole
+	// expression and nothing else, which is what makes a reader spelled around
+	// it as visible here as one spelled through `.child()`.
+	entry := "root.child('" + PathDevices + "').child(auth.uid).exists()"
+	// The node's parent, read for rules of its own: a `.validate` on it
+	// constrains the shape of every entry under it, so it moves the document for
+	// the same reason one on the node does.
+	parent := PathDevices[:strings.LastIndex(PathDevices, "/")] // config/admin
 	var found bool
-	var beneath, readers []string
+	var beneath, occurrences []string
 	walk(doc["rules"], nil, func(path []string, attrs map[string]any) {
 		p := strings.Join(path, "/")
 		switch {
@@ -846,13 +857,27 @@ func TestDeviceNodeCarriesNoShapeRule(t *testing.T) {
 			if len(attrs) != 2 || attrs[".read"] != false || attrs[".write"] != false {
 				t.Errorf("/%s carries %v, want exactly {\".read\": false, \".write\": false}: a rule over the node is a rules generation (§F29), and it is the first one that reads a child of it that D225's later half is for", node, attrs)
 			}
+		case p == PathDevices:
+			if len(attrs) != 0 {
+				t.Errorf("/%s carries %v, want no rule of its own: a rule on the allowlist's parent is a rule over the shape of every entry in it (§F29)", p, attrs)
+			}
+		case p == parent:
+			if len(attrs) != 2 || attrs[".read"] != false || attrs[".write"] != false {
+				t.Errorf("/%s carries %v, want exactly {\".read\": false, \".write\": false}: the subtree is IAM-only, and a rule added here is a rule over the device node's shape", p, attrs)
+			}
 		case strings.HasPrefix(p, node+"/"):
 			beneath = append(beneath, "/"+p)
 		}
 		for a, v := range attrs {
 			expr, ok := v.(string)
-			if ok && strings.Contains(expr, entry+".child(") {
-				readers = append(readers, "/"+p+" "+a)
+			if !ok {
+				continue
+			}
+			// Every `entry` carries exactly one mention of the path, so a count
+			// that is larger than the number of whole entries is a mention this
+			// document has no business making.
+			if strings.Count(expr, PathDevices) != strings.Count(expr, entry) {
+				occurrences = append(occurrences, "/"+p+" "+a)
 			}
 		}
 	})
@@ -862,8 +887,8 @@ func TestDeviceNodeCarriesNoShapeRule(t *testing.T) {
 	if len(beneath) > 0 {
 		t.Errorf("%s names %s beneath /%s: nothing in the document may name a child of the node, or the entry stops being one whose fields are optional", goldenPath, strings.Join(beneath, ", "), node)
 	}
-	if len(readers) > 0 {
-		t.Errorf("%s reads a child of /%s in %s: a rule that reads one of the fields is D225's later half and a rules generation of its own (§F29), and it is not this work's to take", goldenPath, node, strings.Join(readers, ", "))
+	if len(occurrences) > 0 {
+		t.Errorf("%s names /%s outside the conjunct that asks whether the entry exists, in %s: only %s may mention the path, because a rule that reads a child of the node is D225's later half and a rules generation of its own (§F29)", goldenPath, PathDevices, strings.Join(occurrences, ", "), entry)
 	}
 }
 
