@@ -498,6 +498,22 @@
           "deploy/terraform/gcp/modules/project/build_identity.tf"
         ]
       }
+    },
+    {
+      "id": "B9",
+      "title": "the catalog refuses an entry that mounts a secret",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/catalog/fetch.go",
+          "internal/catalog/fetch_test.go",
+          "internal/cli/doctor_catalog.go",
+          "internal/cli/doctor_catalog_test.go"
+        ]
+      }
     }
   ],
   "edges": [
@@ -705,6 +721,11 @@
       "task": "S6",
       "needs": "S5",
       "reason": "behaviour: S5 registers a stage in init_stages.go and owns init_policy_migrate.go"
+    },
+    {
+      "task": "B9",
+      "needs": "B8",
+      "reason": "behaviour: the generated clone step replaces the mount the catalog refuses"
     }
   ],
   "decoupling": [

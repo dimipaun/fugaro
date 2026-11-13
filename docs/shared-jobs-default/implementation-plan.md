@@ -1,6 +1,6 @@
 # Implementation plan: project-level shared jobs as the default
 
-Builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md) (decisions D2300–D2309, findings F1–F23).
+Builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md) (decisions D2300–D2312, findings F1–F23).
 **Nothing is implemented, and no task is approved: each needs the owner's explicit go.** The answers that shaped the plan:
 shared jobs take Bitbucket by pairing and not by a new token (D2302); a build may bake several repositories with a
 credential-service token (D2301, which supersedes O3 (b)); `checkout: baked` runs on shared jobs (D2304); `update`
@@ -107,7 +107,7 @@ flagged opus with an independent review, and the contracts over credentials get 
 - Owner-run: no.
 
 ### S5: `update` writes the default profile and default image
-- Acceptance: for a project with no `standard` profile, `fugaro update` writes one (R1: the project's provider, the default account, `allow_repos` derived from the enrolled repositories; no image field, the image is the catalog default) to the local config **before the installation stage**, so the stage that turns profiles into project jobs deploys its job in the same `update`, and publishes it in the policy stage; it also writes a catalog default entry on the base image when the catalog has none, and prints what it created; an existing profile and an existing catalog default are never touched; a second `update` is a no-op; a project that mixes providers waits on open item 6.
+- Acceptance: for a project with no `standard` profile, `fugaro update` writes one (R1: the project's provider, the default account, `allow_repos` derived from the enrolled repositories; no image field, the image is the catalog default) to the local config **before the installation stage**, so the stage that turns profiles into project jobs deploys its job in the same `update`, and publishes it in the policy stage; it also writes a catalog default entry on the base image when the catalog has none, and prints what it created; an existing profile and an existing catalog default are never touched; a second `update` is a no-op; a project that mixes providers gets one profile per provider, named by the provider and written when that provider has none (D2310).
 - Files: `internal/cli/init_policy_migrate.go`, `internal/cli/init_policy_publish.go`, `internal/cli/init_stages.go`, `internal/cli/init_policy_migrate_test.go`, `internal/cli/update_default_profile_test.go` (new).
 - Interfaces: consumes C1's profile fields and `catalog.Entry`; produces `profiles.standard` and the default entry.
 - Tests: `TestUpdateDeploysTheDefaultProfilesJobInTheSameUpdate`, `TestUpdateCreatesTheDefaultProfile`, `TestUpdateNeverRewritesAnEditedProfile`, `TestUpdateDefaultProfileIsIdempotent`, `TestUpdatePreviousVersionConverges`.
@@ -226,6 +226,18 @@ flagged opus with an independent review, and the contracts over credentials get 
 - Depends on: C2 (the shape).
 - Commit: `catalog: the clone runs in a step the entry cannot touch (B8, F19)`.
 - Reviewer tier: opus, mandatory independent review.
+- Owner-run: no.
+
+### B9: the catalog refuses an entry that mounts a secret
+- Acceptance: catalog validation refuses a Dockerfile entry or inline entry that asks for any `RUN --mount=type=secret` or an `--secret` build argument, naming the line and saying the clone step supplies the checkout (D2311); the guidance text in `internal/catalog/fetch.go` that tells authors to mount `git-credentials` is replaced; an existing published entry that does is reported once by `update` and `doctor` and not rebuilt.
+- Files: `internal/catalog/fetch.go`, `internal/catalog/fetch_test.go`, `internal/cli/doctor_catalog.go` (new), `internal/cli/doctor_catalog_test.go` (new).
+- Interfaces: consumes B8's generated clone step; produces the refusal.
+- Tests: `TestCatalogRefusesAnEntryThatMountsASecret`, `TestCatalogGuidanceNoLongerTeachesTheGitCredentialMount`, `TestDoctorReportsAnEntryThatMountsASecret`.
+- Command: `go test ./internal/catalog/ ./internal/cli/ -run 'RefusesAnEntryThatMountsASecret|GuidanceNoLonger|DoctorReportsAnEntryThatMounts' -count=1`
+- Red step: the first test fails because the catalog tells authors to write the mount.
+- Depends on: B8 (the clone step that replaces the mount).
+- Commit: `catalog: an entry mounts no secret; the clone step supplies the checkout (B9, D2311)`.
+- Reviewer tier: opus (credentials).
 - Owner-run: no.
 
 ### B5: the build identity
@@ -400,13 +412,14 @@ flagged opus with an independent review, and the contracts over credentials get 
 
 ## Parallel execution
 
-**Edges kept** (the dependent needs behaviour or the same file); the CLI's read counts 24, leaving out the edges that touch an integration task, and this list names all of them:
+**Edges kept** (the dependent needs behaviour or the same file); the CLI's read counts 25, leaving out the edges that touch an integration task, and this list names all of them:
 - S9 → S4, S3: the same file, `runner/projectjob.go`, and the proxied fetch it resets for.
 - I1 → S9: the integration runs the baked checkout on a shared job.
 - S7 → I1, S8 → I1: they document and exercise what I1 wires.
 - B5 → B1: the class it is rendered into.
 - M1 → B5, M1 → B6: the per-repository build account goes only after the project's exists and the build and the check act as it.
 - B6 → B5, B6 → B3: the identity, and the same file `catalog.go`.
+- B9 → B8: the clone step that replaces the mount.
 - B8 → C2, I2 → B8, B3 → B8: the shape, the integration, and the same file `catalog.go`.
 - S6 → S5: S5 registers a stage in `init_stages.go` and owns `init_policy_migrate.go`.
 - B1 → S2: one file, `credsvc/server.go`, and the same pairing code; a contract would not split one file.
@@ -425,7 +438,7 @@ The graph is in [implementation-plan.graph.json](implementation-plan.graph.json)
 
 **Levels** (as `fugaro plan graph` reads them; tasks of a level run at once):
 - L0: C1, C2, S1, S2, S5, B8 (CR1 and CR2 are anticipated change requests, never launched unless raised)
-- L1: S3, S4, S6, B1, B2
+- L1: S3, S4, S6, B1, B2, B9
 - L2: I2, M3, S9, B5
 - L3: I1, B3
 - L4: S7, S8, N1, N2, M6, B6
@@ -458,7 +471,7 @@ CR1 and CR2 share files with C1 and C2 and are launched only when raised, never 
 
 **Contract changes anticipated**: CR1 amends C1 if S2's review finds the pairing needs the workflow name (it reaches S3 and S4; launched runs are followed up by a run on their pull request that names `internal/sharedjob/sharedjob.go` by path); CR2 amends C2 if B1's review finds a time-to-live cap belongs in the request (it reaches B2).
 
-**The gain** (the read): 3 edges broken, 24 kept, 6 nodes added (two contracts, two integrations, two anticipated change requests); the weighted path goes from 21.5 to 20.5, which the CLI reports as an improvement. The gain is small on purpose: the dominant chain is the migration (M6 → M1 → M2), whose edges are behaviour edges, and the contracts mainly let the Bitbucket runner, launcher and deployer, and the build and the route, run side by side.
+**The gain** (the read): 3 edges broken, 25 kept, 6 nodes added (two contracts, two integrations, two anticipated change requests); the weighted path goes from 21.5 to 20.5, which the CLI reports as an improvement. The gain is small on purpose: the dominant chain is the migration (M6 → M1 → M2), whose edges are behaviour edges, and the contracts mainly let the Bitbucket runner, launcher and deployer, and the build and the route, run side by side.
 
 ## Checks the plan takes
 

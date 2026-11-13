@@ -46,7 +46,7 @@ As of 2026-11-13, read from `main`, the open pull requests and each plan's task 
 | rigor-modes | about 24/40 | T7.1, T8.1, T8.3; the overlay plan LV1 to LV7 is unblocked in principle (LD2: the level wins), but LV1.1's type-naming and record-version rulings are still open |
 | periodic-reviews | 7/14 | R7 to R12; owner Check 136; owner Check 340 ran a third time on 2026-11-13 and exited 1 (the reports job needs only slug-level listings); the revised Check is merged (#2524) and the owner runs it again |
 | forge-authorship-images | 12/25 | 13 left; the image-setup overlap is C6 and C8's C8b/C8c, not about 16 — [reconciliation-image-setup.md](forge-authorship-images/reconciliation-image-setup.md) |
-| shared-jobs-default | 0/30 | all 30 tasks: plan only (its docs pull request is an orphan), none approved; open owner decisions 6 and 7 of its reconciliation; owner Checks 191, 192, 580, 581 and 582 |
+| shared-jobs-default | 0/31 | all 31 tasks: plan only (its docs pull request is an orphan), none approved; owner Checks 191, 192, 580, 581 and 582 |
 | bitbucket-workspace-token | 7/13 | T1.4, T2.2, T2.4, T2.6 and T2.7 |
 | binary-allow-rule | 5/11 | AR1 and AR3 to AR7, not started |
 | outer-loop-escalation | 10/18 | E6 (stalled, draft #2498), E11 (stalled, draft #2497), E10a, E10b, E12 to E14; D2046 ruled 2026-11-13: `escalation.ready_drafts` is on by default; owner Checks 540 to 542 |

@@ -84,6 +84,9 @@ Build order: `bb-shared-jobs` first, the smallest slice that gives a Bitbucket p
 | D2306 | How do Bitbucket projects reach the proxy | `update` turns the proxy on (`project_secrets.bitbucket-token.proxy`, with the credentials service `update` already deploys) | **`update` turns it on (as recommended), 2026-11-13.** |
 | D2308 | How is a baked checkout trusted on a project job (F22) | Sanitise and verify: the clone is built in a separate stage, and the runner resets `.git` config and hooks to a fixed state and verifies the origin before any fetch | **Sanitise and verify (as recommended), 2026-11-13.** |
 | D2309 | What happens to the other baked repositories during a run (F23) | The runner removes every baked directory but the run's own | **Accept the read, 2026-11-13. Not the recommendation.** A run may read the project's other baked repositories. Followed through: no removal step; the documents say so plainly (see Open items). |
+| D2310 | A project that mixes providers (open item 6): which profile does `update` write | A profile per provider, named by the provider, written when that provider has none | **A profile per provider (as recommended), 2026-11-13.** |
+| D2311 | May a catalog entry keep a credential of its own (open item 7) | No: entry builds are credential-free | **No credential in entries (as recommended), 2026-11-13.** The catalog refuses an entry that mounts a secret (B9). |
+| D2312 | Is "no job apply" enough for adding a repository (open item 8) | Yes, the root still applies its secrets and catalog check | **No job apply is enough (as recommended), 2026-11-13.** The spec's "no Terraform re-run" is amended to "no job apply". |
 
 Resolutions (one defensible answer, so not asked):
 
@@ -99,9 +102,9 @@ Resolutions (one defensible answer, so not asked):
 
 - **Open item 1 (confirm).** D2303 departs from the spec's own requirement that retirement wait for one successful shared run. The plan builds the structural precondition in its place; confirm that a failed first shared run, after the per-repository jobs are gone, may be repaired by re-running `fugaro update` rather than by falling back.
 - **Open item 2.** D2306 moves existing per-repository Bitbucket jobs onto the proxy before the flip (B1.13 part two) that Check 191 gates. The plan keeps the job's own token mounted until the flip, as `docs/secrets-brokering` says; confirm the order.
-- **Open item 6 (owner decision).** One `standard` profile serves one provider, and R1 writes it only when the project has none, so a GitHub project that already has `standard` gets no Bitbucket profile from `update`, and a project that mixes the two needs a second, named profile. Decide the rule (a profile per provider, named by the provider, written when that provider has none, is the reading the plan would build) before S5 is approved.
-- **Open item 7 (owner decision).** The catalog lets an entry's own `RUN --mount=type=secret,id=git-credentials` step read a credential today. With the generated clone step (F19) the entry's build gets none; decide whether entries keep any credential of their own, and how a private base or package source then authenticates.
-- **Open item 8.** The spec says adding a repository needs no Terraform re-run. M1 keeps the repository root's secret containers and catalog check, and `newRepositoryStage` still applies it, so a new repository applies no job but still applies its root; confirm that is enough, or ask for a task that moves those two out of the root.
+- **Open item 6** is answered: D2310.
+- **Open item 7** is answered: D2311.
+- **Open item 8** is answered: D2312.
 - **Open item 3.** F15: confirm whether a project may span Bitbucket workspaces. The plan assumes one workspace per project.
 - **Open item 4.** D2309 is not the recommendation: with it, a run on a narrow profile can read every repository baked into its image. Confirm that this is wanted, or ask for the removal step (a runner task of one file and a test).
 - **Open item 5.** Without a run gate (D2303), Check 580 is the only live proof before a per-repository job is deleted, so the plan makes M1, M6 and M2 launch after Check 580 passes, and M2 retires a job only when no execution is running on it. Confirm.
