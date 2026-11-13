@@ -334,7 +334,11 @@ func TestTheOpenSourceCheckRefusesWithoutProofs(t *testing.T) {
 		Proofs:   nil,
 		Owner:    f.owner,
 		Notifier: f.notifier,
-		Now:      f.clock,
+		// The seams the routes mounted in a test reach: this deployment serves
+		// them the way any deployment of the API does (api.go).
+		Docs:   f.docs,
+		SignIn: f.signIn,
+		Now:    f.clock,
 	})
 	if err != nil {
 		t.Fatalf("building an intake with no proof check: %v", err)

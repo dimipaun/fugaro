@@ -706,7 +706,7 @@ func (e *initEngine) ensureCredentialsService(ctx context.Context) error {
 	// deployed the service left behind, and the config write that records it in
 	// the local config is the last step of that run.
 	e.specReviewJobsOfTheService()
-	_, err = e.writeCarriedCredentials(doc)
+	_, err = e.writeCarriedCredentials(ctx, doc)
 	return err
 }
 
@@ -715,20 +715,21 @@ func (e *initEngine) ensureCredentialsService(ctx context.Context) error {
 // one — brought up to date with this machine's config, and returns the document
 // it wrote.
 //
-// The document goes back on disk BEFORE anything that can fail. prepare
-// (init.go) is what rewrites the installation's tfvars from this run's spec and
-// carries the block forward, and it is steps away: PrepareWorkdir has already
-// deleted the file, so a failure in between — the resolve below, which reaches
-// for cosign and for the registry and can fail for either — would leave an
-// installation whose tfvars hold no block at all. The next run reads that as
-// "no service yet", composes a fresh one from the local config alone, and
-// applies it: the block's URL — the audience every caller's ID token is minted
-// for, which only the tfvars and the module's outputs carry — is gone from the
-// desired state, so the revision is left admitting nobody until the audience
-// fill puts it back, and any member the deployed block carried beyond what this
-// machine's config states is lost with it. Putting the document the carry is
-// about to use back closes the window this resolve opened, and costs one write
-// of a file prepare rewrites a few steps later.
+// The document goes back on disk BEFORE anything that can fail and return.
+// prepare (init.go) is what rewrites the installation's tfvars from this run's
+// spec and carries the block forward, and it is steps away: PrepareWorkdir has
+// already deleted the file, so a step in between that returned its error — the
+// carries below reach for cosign, for the registry and for this machine's
+// config, and either of them can fail — would leave an installation whose tfvars
+// hold no block at all. The next run reads that as "no service yet", composes a
+// fresh one from the local config alone, and applies it: the block's URL — the
+// audience every caller's ID token is minted for, which only the tfvars and the
+// module's outputs carry — is gone from the desired state, so the revision is
+// left admitting nobody until the audience fill puts it back, and any member the
+// deployed block carried beyond what this machine's config states is lost with
+// it. Putting the document the carry is about to use back closes the window
+// PrepareWorkdir opened, and costs one write of a file prepare rewrites a few
+// steps later.
 //
 // A run that fails before that rewrite leaves the file on disk, and that is the
 // point rather than a leak to clean up: nothing removes a workdir on the error
@@ -752,7 +753,7 @@ func (e *initEngine) ensureCredentialsService(ctx context.Context) error {
 // workdir held it, which is the fail-closed direction — an installation whose
 // config cannot describe the table keeps the table it has — and the same shape
 // the deploy path answers a config that cannot carry the service with.
-func (e *initEngine) writeCarriedCredentials(doc []byte) ([]byte, error) {
+func (e *initEngine) writeCarriedCredentials(ctx context.Context, doc []byte) ([]byte, error) {
 	next := doc
 	if e.lc != nil {
 		refreshed, err := infra.RefreshCredentialsServiceJobAccounts(doc, e.lc)
@@ -776,7 +777,7 @@ func (e *initEngine) writeCarriedCredentials(doc []byte) ([]byte, error) {
 	// (the job-table refresh above answers the same way): an installation whose
 	// intake is not written keeps the one it has, and an installation that has
 	// none is up to date about everything else.
-	if withIntake, err := carriedIntake(next); err != nil {
+	if withIntake, err := e.carriedIntake(ctx, next); err != nil {
 		fmt.Fprintf(e.r.w, "the secrets intake is not deployed: %v\n", err)
 	} else {
 		next = withIntake
@@ -788,25 +789,50 @@ func (e *initEngine) writeCarriedCredentials(doc []byte) ([]byte, error) {
 }
 
 // carriedIntake is doc with the secrets intake's block added when it holds
-// none, carrying the image doc already records for the credentials service.
+// none, carrying the image the apply that follows will create the service from:
+// this release's pin, when the recorded one is a release this binary is past.
 //
-// The image is the recorded one and not a resolve of this run's: the intake
-// runs the same reference the service does, the credentials-service stage moves
-// both onto this release's pin a few stages later, and a second resolve here
-// would be a second registry read for one answer — and, on the path this
-// function exists for (an installation that has the service and no intake yet),
-// the only resolve of the run.
+// Why the recorded image is not good enough here, and why the pin cannot wait
+// for the credentials-service stage a few steps later. This block is written
+// before the apply that CREATES the intake's service, and the image in it is
+// the binary that service runs: an installation that skipped the release the
+// intake shipped in has a recorded image whose binary has no `intake serve`
+// subcommand (intake.tf's own args), so the revision the apply creates exits on
+// start and the apply fails — with the block already on disk, which is what
+// every rerun then repeats. The credentials service's own process is a
+// different question and keeps the recorded image until that stage: the node it
+// reads per call may not be raised before the process that reads it is replaced
+// (the owner's ruling of 2026-11-10), and the intake reads no such node.
+//
+// The resolve is the run's one (credentialsResolve, memoized): the policy
+// stage's precondition and the credentials-service stage's move read this same
+// answer, so pinning here costs no second registry read. A resolve that fails
+// returns with the block unwritten — an installation keeps no intake rather
+// than one whose revision cannot come up — and the failure is still the run's
+// where it belongs: the policy stage's precondition refuses a stale recorded
+// image before the node it reads moves, and a run whose node is already at this
+// version meets the same memoized error at the credentials-service stage, whose
+// move returns a resolve it cannot make.
 //
 // A document that carries no image for the service gets no intake: without one
 // there is nothing for the module's container to run, and the block would be a
-// revision that never comes up.
-func carriedIntake(doc []byte) ([]byte, error) {
+// revision that never comes up. A run with no release of its own — a
+// development build, which this function's callers have already refused a
+// deployment for — keeps the recorded image rather than resolving one.
+func (e *initEngine) carriedIntake(ctx context.Context, doc []byte) ([]byte, error) {
 	if _, have, err := infra.IntakeOf(doc); err != nil || have {
 		return doc, err
 	}
 	image, ok, err := infra.CredentialsServiceImageOf(doc)
 	if err != nil || !ok {
 		return doc, err
+	}
+	if ver := releaseVersion(); ver != "" && credentialsImageStale(ver, image) {
+		pinned, err := e.credentialsResolve(ctx)
+		if err != nil {
+			return doc, err
+		}
+		image = pinned
 	}
 	return infra.SetIntake(doc, infra.Intake(image))
 }
@@ -940,7 +966,7 @@ func (e *initEngine) moveCredentialsImage(ctx context.Context) error {
 	if doc == nil { // no block: nothing to move (the stage's own skip says why)
 		return nil
 	}
-	next, err := e.writeCarriedCredentials(doc)
+	next, err := e.writeCarriedCredentials(ctx, doc)
 	if err != nil {
 		return err
 	}

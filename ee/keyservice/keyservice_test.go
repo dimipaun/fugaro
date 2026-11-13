@@ -70,6 +70,15 @@ const (
 	// same shape, so a token carrying it is refused by the signature alone.
 	otherAdminSecret = "not-this-deploys-secret-0123456789"
 	stepUpCode       = "step-up-code"
+
+	// The portal's own deploy values (plan P1.0). None of them is a real one,
+	// and the three that are secret-shaped are the fixture's own strings rather
+	// than anything a deploy holds.
+	paddleAPIKey      = "fake-paddle-api-key-0123456789"
+	resendKey         = "fake-resend-key-0123456789"
+	schedulerAudience = "https://api.fugaro.example"
+	sealerKeyName     = "projects/fugaro-example/locations/europe-west1/keyRings/portal/cryptoKeys/handover"
+	tenantsCollection = "orgs"
 )
 
 // buyerAddress is the address a merchant's payload carries for the buyer of a
@@ -305,6 +314,166 @@ func (s *steps) index(step string) int {
 	return -1
 }
 
+// docsSpy is the portal's document store in a test: the documents in memory,
+// keyed by collection and id. The store the deploy runs is P1.2's, and an area's
+// test drives its own records through this one.
+//
+// It answers a query's documents in no particular order, which is what a store
+// with no order does: a test that is about an order asks for one.
+type docsSpy struct {
+	mu   sync.Mutex
+	held map[string]Doc
+}
+
+func newDocsSpy() *docsSpy { return &docsSpy{held: map[string]Doc{}} }
+
+func (d *docsSpy) Get(_ context.Context, collection, id string) (Doc, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	held, ok := d.held[collection+"/"+id]
+	if !ok {
+		return nil, ErrNoDocument
+	}
+	return held, nil
+}
+
+func (d *docsSpy) Put(_ context.Context, collection, id string, doc Doc) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.held[collection+"/"+id] = doc
+	return nil
+}
+
+func (d *docsSpy) Delete(_ context.Context, collection, id string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	delete(d.held, collection+"/"+id)
+	return nil
+}
+
+func (d *docsSpy) Query(_ context.Context, collection string, where Where) ([]Doc, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	found := []Doc{}
+	for key, doc := range d.held {
+		if !strings.HasPrefix(key, collection+"/") {
+			continue
+		}
+		if where.Field != "" && doc[where.Field] != where.Value {
+			continue
+		}
+		found = append(found, doc)
+	}
+	return found, nil
+}
+
+// Update runs the change over this store as its own transaction: a conflict is
+// what a durable store's own concurrency is about (P1.2), and a test that is
+// about one drives that store.
+func (d *docsSpy) Update(ctx context.Context, fn func(context.Context, Tx) error) error {
+	return fn(ctx, d)
+}
+
+// signInSpy is the portal's sign-in verifier in a test: the caller it answers
+// and every token it was handed, so a test reads what an area did with one.
+type signInSpy struct {
+	caller Caller
+	err    error
+	tokens []string
+}
+
+func (s *signInSpy) Verify(_ context.Context, idToken string) (Caller, error) {
+	s.tokens = append(s.tokens, idToken)
+	if s.err != nil {
+		return Caller{}, s.err
+	}
+	return s.caller, nil
+}
+
+// paddleSpy is the merchant of record in a test: what it answers and what it was
+// asked, so an area's test reads that a transaction was created server-side and
+// that a seat change and a cancellation went the same way (F15).
+type paddleSpy struct {
+	transaction Transaction
+	portalURL   string
+	customerID  string
+	err         error
+	checkouts   []Checkout
+	seats       []int
+	cancelled   []string
+}
+
+func (p *paddleSpy) CreateTransaction(_ context.Context, checkout Checkout) (Transaction, error) {
+	p.checkouts = append(p.checkouts, checkout)
+	if p.err != nil {
+		return Transaction{}, p.err
+	}
+	return p.transaction, nil
+}
+
+func (p *paddleSpy) PortalSession(_ context.Context, customerID string) (string, error) {
+	p.customerID = customerID
+	if p.err != nil {
+		return "", p.err
+	}
+	return p.portalURL, nil
+}
+
+func (p *paddleSpy) SetSeats(_ context.Context, _ string, seats int) error {
+	p.seats = append(p.seats, seats)
+	return p.err
+}
+
+func (p *paddleSpy) Cancel(_ context.Context, subscriptionID string) error {
+	p.cancelled = append(p.cancelled, subscriptionID)
+	return p.err
+}
+
+// schedulerSpy is Cloud Scheduler's verifier in a test: the account it answers
+// and every token it was handed.
+type schedulerSpy struct {
+	account string
+	err     error
+	tokens  []string
+}
+
+func (s *schedulerSpy) Verify(_ context.Context, bearer string) (string, error) {
+	s.tokens = append(s.tokens, bearer)
+	if s.err != nil {
+		return "", s.err
+	}
+	return s.account, nil
+}
+
+// sealerSpy is the handover's sealer in a test: it wraps what it is given, so a
+// test reads that a record holds the sealed bytes and never the plaintext (F3),
+// and it writes down what it was asked to open. What it wraps with is obviously
+// not a seal: the deploy's key is KMS's (P1.7).
+type sealerSpy struct {
+	err    error
+	sealed [][]byte
+	opened [][]byte
+}
+
+const sealerMarker = "sealed:"
+
+func (s *sealerSpy) Seal(_ context.Context, plaintext []byte) ([]byte, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	sealed := append([]byte(sealerMarker), plaintext...)
+	s.sealed = append(s.sealed, sealed)
+	return sealed, nil
+}
+
+func (s *sealerSpy) Open(_ context.Context, sealed []byte) ([]byte, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	s.opened = append(s.opened, sealed)
+	return bytes.TrimPrefix(sealed, []byte(sealerMarker)), nil
+}
+
 // staticTokens is a Tokens that hands out one token: the platform's metadata
 // server is the deploy's, and a test's token stands in for it.
 func staticTokens(token string) Tokens {
@@ -334,6 +503,11 @@ type fixture struct {
 	stepUp    *stepUpSpy
 	notifier  *notifierSpy
 	auditor   *auditorSpy
+	docs      *docsSpy
+	signIn    *signInSpy
+	paddle    *paddleSpy
+	scheduler *schedulerSpy
+	sealer    *sealerSpy
 	keys      Keys
 	ring      licence.Keyring
 	secret    []byte
@@ -383,6 +557,16 @@ func newFixtureWith(t *testing.T, env Environment, edit func(*fixture)) *fixture
 	f.stepUp = &stepUpSpy{accept: true, accepts: stepUpCode}
 	f.notifier = &notifierSpy{}
 	f.auditor = &auditorSpy{}
+	f.docs = newDocsSpy()
+	f.signIn = &signInSpy{caller: Caller{
+		UID: "uid-1", Email: ownerAccount, Provider: "google.com", AuthTime: f.now,
+	}}
+	f.paddle = &paddleSpy{
+		transaction: Transaction{ID: "txn-1", CustomerID: "ctm-1"},
+		portalURL:   "https://paddle.example/portal",
+	}
+	f.scheduler = &schedulerSpy{account: "scheduler@fugaro.example"}
+	f.sealer = &sealerSpy{}
 	minter := Minter{Signer: f.signer, Keys: f.keys, Environment: env, Now: f.clock}
 	f.recording = &recordingMints{inner: minter, innerV1: minter}
 	f.cfg = &Config{
@@ -424,18 +608,31 @@ func newFixtureWith(t *testing.T, env Environment, edit func(*fixture)) *fixture
 		CodeHosts:       []string{"code.example"},
 		MaxRepositories: 8,
 		Throttle:        Limits{Requests: 50, Window: time.Hour},
+		// The portal's own deploy values (plan P1.0). Sentry is left without a
+		// DSN, which is Sentry off (P1.6) and what a test that is not about
+		// reporting wants.
+		PaddleAPIKey:      []byte(paddleAPIKey),
+		ResendKey:         []byte(resendKey),
+		SchedulerAudience: schedulerAudience,
+		SealerKeyName:     sealerKeyName,
+		TenantsCollection: tenantsCollection,
 	}
 	f.deps = &Deps{
-		Store:    f.store,
-		Mints:    f.recording,
-		Mailer:   f.mail,
-		CodeHost: f.host,
-		Proofs:   f.proofs,
-		Owner:    f.owner,
-		StepUp:   f.stepUp,
-		Notifier: f.notifier,
-		Auditor:  f.auditor,
-		Now:      f.clock,
+		Store:     f.store,
+		Mints:     f.recording,
+		Mailer:    f.mail,
+		CodeHost:  f.host,
+		Proofs:    f.proofs,
+		Owner:     f.owner,
+		StepUp:    f.stepUp,
+		Notifier:  f.notifier,
+		Auditor:   f.auditor,
+		Docs:      f.docs,
+		SignIn:    f.signIn,
+		Paddle:    f.paddle,
+		Scheduler: f.scheduler,
+		Sealer:    f.sealer,
+		Now:       f.clock,
 	}
 	if edit != nil {
 		edit(f)
@@ -480,6 +677,18 @@ func (f *fixture) postFrom(ip, route string, form url.Values) *httptest.Response
 	req := httptest.NewRequest(http.MethodPost, intakeOrigin+route, strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.RemoteAddr = ip
+	rec := httptest.NewRecorder()
+	f.handler.ServeHTTP(rec, req)
+	return rec
+}
+
+// api sends one request to the portal's API, from the applicant's own address.
+// The body is what the caller wrote: the API's own routes read JSON.
+func (f *fixture) api(method, path, body string) *httptest.ResponseRecorder {
+	f.t.Helper()
+	req := httptest.NewRequest(method, intakeOrigin+path, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.RemoteAddr = applicantIP
 	rec := httptest.NewRecorder()
 	f.handler.ServeHTTP(rec, req)
 	return rec
