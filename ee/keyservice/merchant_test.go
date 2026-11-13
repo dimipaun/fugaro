@@ -1629,8 +1629,14 @@ func TestARefundRevokesTheWholeRotationChain(t *testing.T) {
 	refunded := f.purchase("evt-1", "acme.example", 5, 365)
 	untouched := f.purchase("evt-2", "widget.example", 3, 30)
 	// Two renewals, so the licence the refund names has been succeeded twice: the
-	// chain the walk has to follow is three keys long.
+	// chain the walk has to follow is three keys long. Each term is written as
+	// paid for before the rotation is asked for it, and written directly rather
+	// than by a merchant renewal, so that the licence this test walks is the
+	// endpoint's chain alone (the merchant's own keys of one licence are
+	// TestARefundRevokesEveryKeyOfTheLicence's).
+	theSubscriptionCovers(t, f, refunded.KeyID)
 	second, secondSecret := renewThroughTheEndpoint(t, f, refunded.KeyID, mailedSecret(t, f, f.mintedKeys()[0]))
+	theSubscriptionCovers(t, f, second.KeyID)
 	third, _ := renewThroughTheEndpoint(t, f, second.KeyID, secondSecret)
 
 	at := f.now
@@ -1707,7 +1713,10 @@ func TestARefundRevokesEveryKeyOfTheLicence(t *testing.T) {
 	reissued := records[len(records)-1].KeyID
 	// The endpoint's rotation of that key, so the walk also has to reach one it
 	// found by subscription: the rotation names the key it replaces and stamps
-	// the subscription beside it.
+	// the subscription beside it. The term it hands out is the one the merchant's
+	// next renewal would pay for, written here directly so that the keys of this
+	// licence stay the four this test names.
+	theSubscriptionCovers(t, f, minted.Record.KeyID)
 	rotated, _ := renewThroughTheEndpoint(t, f, minted.Record.KeyID, minted.RenewalSecret)
 	if rotated.KeyID == reissued {
 		t.Fatalf("the endpoint's rotation of %s minted the seat change's key %s", minted.Record.KeyID, reissued)

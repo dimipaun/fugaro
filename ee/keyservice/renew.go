@@ -435,6 +435,23 @@ func (s *Service) renew(w http.ResponseWriter, r *http.Request) {
 		writeAnswer(w, Answer{Status: key.status()})
 		return
 	}
+	// The successor covers the term that begins where this key ends, and the
+	// subscription has to have paid for that term before anything is minted: its
+	// end is the merchant's own record of what the customer has bought — the
+	// trigger's renewal is what moves it (merchant.Renew) — and this route reads it
+	// rather than moving it. A route that moved it would credit every caller the
+	// term after the one in hand: one month bought, a successor a call, each with a
+	// fresh key id and so a throttle bucket of its own, and the merchant's own
+	// renewal left finding its window closed behind them
+	// (TestARenewalMintsOnlyIntoATermTheSubscriptionCovers).
+	//
+	// The answer is the key's own state and not the uniform refusal, for the reason
+	// the two checks around it give theirs: the caller proved its secret, and its key
+	// is still good to its end — what it has not bought is the term after that.
+	if sub.Expires.Before(covered(key.record, key.policy, now)) {
+		writeAnswer(w, Answer{Status: key.status()})
+		return
+	}
 	if !renewable(key.record, key.policy, now) {
 		// The state and not the uniform refusal: this caller proved the secret,
 		// so what it is told is about its own key, and `ok` with no successor is
@@ -524,45 +541,14 @@ func (s *Service) renew(w http.ResponseWriter, r *http.Request) {
 	}, now); err != nil {
 		log.Printf("keyservice: keeping the answer to the rotation of the key %s: %v", call.KeyID, err)
 	}
-	// The subscription moves to the term the successor covers, which is the end
-	// the record above carries, and it is the whole of what keeps this gate
-	// coherent with the key it guards: the subscription's end and the key's
-	// `paid_through` are the same instant for a key sold at the checkout, so a
-	// term minted here without this write would leave the successor renewing
-	// against a subscription that ends where its predecessor did — refused, for a
-	// term the customer has paid for.
-	//
-	// It is written after the record and not before, and after the handover with
-	// the record already in hand: a subscription advanced for a term whose key was
-	// never recorded is a term credited to nobody — the merchant's own renewal
-	// window moves past it and the source it would mint under never exists — while
-	// a store that refuses this write is logged and the holder is still answered,
-	// exactly as the handover above is: the term is minted and recorded, and
-	// throwing it away would take a paid term from a holder whose renewal
-	// succeeded.
-	// It is read again before it is written, and that is not a second look at the
-	// same fact: the store holds whole records, so writing back the copy the gate
-	// read would undo a cancellation the merchant delivered while the key was
-	// being minted — the subscription would come back live and the next renewal
-	// would mint into it. A cancelled subscription's end is moved for nobody:
-	// nothing renews from it again.
-	//
-	// It also moves only forward, which is the rule both of this file's other
-	// writers of a subscription's end keep (`completed`, `renewed`), and it is the
-	// guard that keeps this write from being a step backwards: the key being
-	// rotated is not always the one the merchant's last renewal minted — a holder
-	// may renew from a key the subscription has already moved past, and its own
-	// record ends where its own term did — so writing that end back would truncate
-	// the store's record of the paid term, open the merchant's renewal window
-	// early and refuse a renewal of the successor for a term the customer paid for.
-	if current, held, err := s.store.Subscription(r.Context(), sub.ID); err != nil {
-		log.Printf("keyservice: reading the subscription %s back before moving its end: %v", sub.ID, err)
-	} else if held && !current.Cancelled && current.Expires.Before(record.Expires) {
-		current.Expires = record.Expires
-		if err := s.store.SaveSubscription(r.Context(), current); err != nil {
-			log.Printf("keyservice: moving the subscription %s to the term the key %s covers: %v", sub.ID, record.KeyID, err)
-		}
-	}
+	// The subscription's own end is not written here, and that is the whole of what
+	// keeps a renewal a thing the customer has paid for: the merchant's trigger is
+	// what moves it (merchant.Renew), and a route that moved it for the term it
+	// minted would credit the caller a term per call — the gate above would then be
+	// asking a question this route had just answered for itself
+	// (TestARenewalMintsOnlyIntoATermTheSubscriptionCovers). What the successor
+	// inherits is the subscription's *name*, and the term it covers is the one the
+	// subscription's end already reaches.
 	writeAnswer(w, Answer{Status: StatusOK, NewerKey: true, Key: minted.Key, RenewalSecret: minted.RenewalSecret})
 }
 
@@ -633,7 +619,9 @@ func (s *Service) sight(ctx context.Context, keyID string) {
 // them minted through `mint` (see `Record.Subscription`) — and a mint here would
 // hand it a term nobody bought. So this window answers whether the term *after*
 // the one the customer is in is the next one to sign, and the gate answers
-// whether anybody paid for it.
+// whether anybody paid for it: a subscription reaching one term ahead and no
+// further stops the ladder on its first call, before this window is asked
+// (TestARenewalMintsOnlyIntoATermTheSubscriptionCovers).
 func renewable(record Record, policy Policy, now time.Time) bool {
 	lead := time.Duration(policy.RenewBeforeDays) * 24 * time.Hour
 	return !now.Before(record.Expires.Add(-lead))
@@ -660,10 +648,23 @@ func renewable(record Record, policy Policy, now time.Time) bool {
 // and a job running at a fixed minute pays it once: the successor's end is on
 // that minute, so its window opens on it too and the term after is exact.
 func renewalDays(record Record, policy Policy, now time.Time) int {
+	span := covered(record, policy, now).Sub(now)
+	return int((span + 24*time.Hour - 1) / (24 * time.Hour))
+}
+
+// covered is the end of the term the successor will cover, which is the instant
+// the subscription's own end has to reach before `renew` mints anything: the
+// whole period after this key's own `paid_through`, or after now for a key
+// already past it.
+//
+// It is the same span `renewalDays` asks the minter for, and the two are written
+// as one function so that they cannot drift: a gate that asked the subscription
+// for one term while the mint took another would either credit a term nobody paid
+// for or refuse one that was.
+func covered(record Record, policy Policy, now time.Time) time.Time {
 	end := record.Expires
 	if end.Before(now) {
 		end = now
 	}
-	span := end.Add(policy.Term).Sub(now)
-	return int((span + 24*time.Hour - 1) / (24 * time.Hour))
+	return end.Add(policy.Term)
 }
