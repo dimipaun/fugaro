@@ -427,7 +427,6 @@ test_an_unanswered_console_prompt_stops() {
 test_console_ok_is_your_word() {
   setup_case consoleok
   default_args
-  RUN149_ARGS=("${RUN149_ARGS[@]}" "$@")
   run149
   expect_status "$status" 0 "--console-ok"
   expect_contains "$out" "FACT console-renders-stored-view: PASS" "--console-ok"
@@ -460,14 +459,9 @@ test_a_document_without_the_repos_envelope_stops() {
   expect_status "$status" 2 "the one-repository document"
   expect_contains "$out" "FACT stored-view: FAIL" "the one-repository document"
   expect_contains "$out" "repos-missing" "the one-repository document: the shape problem is named"
-  expect_no_read_target_made "$dir" "the one-repository document"
+  # The read WAS made — it is the document that is not the one the console reads.
+  expect_argv "$dir" "fugaro coordinator status --from-store --all --json --project $NAME" "the one-repository document: the read"
   expect_scratch_gone "$dir" "the one-repository document"
-}
-
-# The read was made, but the document is not the one the console reads: the
-# failures are independent, and the block has to carry both rows.
-expect_no_read_target_made() { # dir what
-  expect_argv "$1" "fugaro coordinator status --from-store --all --json --project $NAME" "$2: the read"
 }
 
 test_a_missing_key_the_console_reads_is_a_fail() {
