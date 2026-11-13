@@ -3115,10 +3115,16 @@ func TestVisionSinceIsTheReleaseTheDocsName(t *testing.T) {
 	if !strings.Contains(bullet, "currently `\""+visionSince+"\"`") {
 		t.Errorf("docs/release.md's visionSince bullet does not carry the constant's release (%q)", visionSince)
 	}
-	for _, want := range []string{"agent.models.vision", "defaults.agent.models.vision", "image_tokens", "checkVisionImage", "checkCloneVisionImage", "policyImageTokensRefusal", "not tagged yet"} {
+	// The two members shipped in tag v0.23.0, so the bullet names that tag and
+	// not a number still to be cut: a later number refuses a 0.23.0 or 0.24.0
+	// image whose readers do know the key.
+	for _, want := range []string{"agent.models.vision", "defaults.agent.models.vision", "image_tokens", "checkVisionImage", "checkCloneVisionImage", "policyImageTokensRefusal", "v0.23.0"} {
 		if !strings.Contains(bullet, want) {
 			t.Errorf("docs/release.md's visionSince bullet does not say %q", want)
 		}
+	}
+	if strings.Contains(bullet, "not tagged yet") {
+		t.Errorf("docs/release.md's visionSince bullet calls the release uncut, and %s is the tag that carries both members: the number is a cut one", visionSince)
 	}
 	// The schemas' own rows: the slot's line in each of the two files an
 	// operator writes it in, and the two registry rows settings.schema.json

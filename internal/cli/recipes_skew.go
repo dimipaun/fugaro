@@ -3364,12 +3364,16 @@ func checkCloneTaskGradeImage(lc *localcfg.Config, spec *task.Spec, warn io.Writ
 // Like noneModelSince, it carries no shipped flag: refusing every image that
 // predates the release is exactly the direction this gate wants, and an image
 // with no release tag (a dev build, a hand-pushed one) only warns, the same as
-// for every other *Since constant here. It names 0.25.0, the release this work
-// ships in — the number modelGradesSince and taskGradeSince carry, which is the
-// minor after Uakari (docs/release-streams.yaml has 0.23.0 current and Uakari
-// 0.24.0 next) — which is not tagged yet: docs/release.md's Before-you-tag list
-// verifies the number against the tag actually cut.
-const visionSince = "0.25.0"
+// for every other *Since constant here. It names 0.23.0 ("Tapir"), the release
+// the two members shipped in: tag v0.23.0 is the tag that contains V1 (#2305)
+// and V2 (#2336), and it is that release's config reader and policy reader that
+// know the key and the member, so this is a cut number and not one the work was
+// slotted for. A later number fails in the other direction — it refuses a
+// 0.23.0 or a 0.24.0 image whose readers do know the key, and the publish half
+// would refuse a node for an installation whose own base image can already read
+// it, so fugaro update would move that image to a release that still refuses the
+// node: a refusal with no way out.
+const visionSince = "0.23.0"
 
 // visionLaunchSources reports, for the launch's visionSince gate, whether the
 // configuration the run will read writes the key: the repository's fugaro.yaml

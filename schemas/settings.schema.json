@@ -337,7 +337,7 @@
         },
         "agent.models.vision": {
           "default": "unset = none: a stage whose own model cannot read an image keeps it",
-          "description": "Fugaro before 0.25.0 refuses the key, in fugaro.yaml and in a project layer's defaults: both files are decoded strictly, so a job image older than that release fails at bootstrap on a key its runner does not know, and the launch is what refuses it (internal/cli's visionSince). The slot is unusable before that release for a second reason: pricing a model's images needs model_prices' image_tokens, which the same release carries."
+          "description": "Fugaro before 0.23.0 refuses the key, in fugaro.yaml and in a project layer's defaults: both files are decoded strictly, so a job image older than that release fails at bootstrap on a key its runner does not know, and the launch is what refuses it (internal/cli's visionSince). The slot is unusable before that release for a second reason: pricing a model's images needs model_prices' image_tokens, which the same release carries."
         },
         "agent.oauth_token": {
           "default": "unset = the job's own credential"
@@ -863,7 +863,7 @@
         },
         "layer.defaults.agent.models.vision": {
           "default": "unset = none: a stage whose own model cannot read an image keeps it",
-          "description": "Fugaro before 0.25.0 refuses the key, in fugaro.yaml and in a project layer's defaults: both files are decoded strictly, so a job image older than that release fails at bootstrap on a key its runner does not know, and the launch is what refuses it (internal/cli's visionSince). The slot is unusable before that release for a second reason: pricing a model's images needs model_prices' image_tokens, which the same release carries."
+          "description": "Fugaro before 0.23.0 refuses the key, in fugaro.yaml and in a project layer's defaults: both files are decoded strictly, so a job image older than that release fails at bootstrap on a key its runner does not know, and the launch is what refuses it (internal/cli's visionSince). The slot is unusable before that release for a second reason: pricing a model's images needs model_prices' image_tokens, which the same release carries."
         },
         "layer.defaults.agent.recipe": {
           "default": "unset = the built-in recipe"
@@ -1163,7 +1163,7 @@
         },
         "model_prices.*.image_tokens": {
           "default": "unset = the built-in price",
-          "description": "Fugaro before 0.25.0 refuses the member: the published policy node is decoded strictly by every runner, so an installation whose base image predates that release cannot read a node carrying it, and the publish door refuses one (internal/cli's policyImageTokensRefusal, beside the key's own gate, visionSince)."
+          "description": "Fugaro before 0.23.0 refuses the member: the published policy node is decoded strictly by every runner, so an installation whose base image predates that release cannot read a node carrying it, and the publish door refuses one (internal/cli's policyImageTokensRefusal, beside the key's own gate, visionSince)."
         },
         "model_prices.*.input_per_m": {
           "default": "unset = the built-in price"
