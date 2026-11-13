@@ -132,9 +132,8 @@ func run(args []string, out io.Writer, runner Runner) error {
 	}
 	// flag.Parse stops at the first word that is not a flag, and every flag
 	// written after one is dropped without a word: a term or a workspace id
-	// there is a claim the owner asked for and a key that does not carry it. The
-	// command takes no positional argument once the format's word is read, so a
-	// word is always a mistake.
+	// there is a claim the owner asked for and a key that does not carry it. This
+	// command takes nothing but flags, so a word is always a mistake.
 	if extra := flags.Args(); len(extra) > 0 {
 		return fmt.Errorf("unexpected %s: this command takes nothing but flags, and a word that is not one stops the reading, so every flag after it is dropped in silence and the key is minted without the terms it asked for", strings.Join(extra, " "))
 	}
