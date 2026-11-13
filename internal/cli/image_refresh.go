@@ -90,6 +90,13 @@ type refreshOptions struct {
 	// stage's own lines do. Nil for the command, whose own writer the refresh
 	// uses.
 	out io.Writer
+	// detail is where the calling run keeps its own account of itself, when one
+	// drives this refresh: the converge's stageDetail, so that the plan block
+	// below — the review screen of a refresh run as its own command, and one
+	// step's own account of itself under a converge — goes where the rest of
+	// that account goes (§9.2). Nil for the command, whose plan block is what
+	// the person at the terminal reads before the steps.
+	detail io.Writer
 }
 
 // checkoutName is how a message names the checkout: "this checkout" when
@@ -628,6 +635,10 @@ func runImageRefresh(cmd *cobra.Command, o refreshOptions) error {
 		// The caller's writer, not the command's own: see refreshOptions.out.
 		r.w = runWriter{r: r, out: o.out}
 	}
+	if o.detail != nil {
+		// The caller's account of its own steps: see refreshOptions.detail.
+		r.detail = o.detail
+	}
 	p, err := refreshPreflight(ctx, o, iopts)
 	if err != nil {
 		return refreshStopped(1, nil, o, err)
@@ -657,7 +668,11 @@ func runImageRefresh(cmd *cobra.Command, o refreshOptions) error {
 		defer sr.close()
 		r.rep, r.repLog = sr.rep, sr.log
 	}
-	p.print(r.w)
+	pw := r.w
+	if o.detail != nil {
+		pw = o.detail
+	}
+	p.print(pw)
 	s := newRefreshSteps(r, e, p)
 	step := func(i int) *refreshStep {
 		return &refreshStep{r: r, name: refreshStepLines[i].name, header: refreshStepLines[i].header}

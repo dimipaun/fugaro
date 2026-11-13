@@ -143,7 +143,7 @@ func (s *computeStage) Apply(ctx context.Context, _ initflow.Env) (initflow.Outc
 	}
 	if plan == nil {
 		s.changes = &infra.PlanCounts{}
-		fmt.Fprintln(r.w, "No changes: the compute backend's provisioning matches the plan.")
+		fmt.Fprintln(r.stageDetail(), "No changes: the compute backend's provisioning matches the plan.")
 		return initflow.Outcome{Detail: "No changes"}, nil
 	}
 	r.planBlock(plan)

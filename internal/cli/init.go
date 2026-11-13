@@ -621,6 +621,11 @@ type initRun struct {
 	// they always have. repLog is the log it keeps, closed when the run ends.
 	rep    *report.Reporter
 	repLog report.Sink
+	// detail is where a run driven by another keeps its own account of itself,
+	// and it is set only there: the refresh the converge's checkout stage runs
+	// (refreshOptions.detail) writes its lines where that converge keeps its
+	// own, instead of onto a screen that run has already accounted for (§9.2).
+	detail io.Writer
 	// questions counts the questions in flight (initRun.asking): while one is
 	// open the run's own writer does not put the step's line back between the
 	// lines of the block it prints, so a CONFIRM block and a prompt are shown
@@ -1530,7 +1535,16 @@ func (r *initRun) progress() io.Writer {
 // run's writer, where they have always gone. A refresh a caller drives prints
 // through the caller's run, and a run whose log could not be opened prints
 // what it always printed rather than swallowing it (streamOut, G5).
-func (r *initRun) stageDetail() io.Writer { return streamOut(r.rep, r.repLog, r.w) }
+func (r *initRun) stageDetail() io.Writer {
+	if r.detail != nil {
+		// A refresh a caller drives is one step of that run, and its own lines
+		// are that run's account: they go where the caller keeps it
+		// (refreshOptions.detail), whose own writer is the fallback for a run
+		// with no log (G5).
+		return r.detail
+	}
+	return streamOut(r.rep, r.repLog, r.w)
+}
 
 // failureShown marks a failed converge's error as one the screen has already
 // read. The step that failed printed it — whole while the run has no log to
@@ -2190,7 +2204,16 @@ func (r *initRun) confirm(what, undone string) error {
 // no confirmation is taken, two lines under a banner that announced one (the
 // owner's feedback of 2026-11-10).
 func (r *initRun) willDo(what string) {
-	fmt.Fprintf(r.stageDetail(), "will do (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
+	// The note is the run's own account of a step nobody is asked about, so
+	// under the gate it goes where that account goes (§9.2); where the gate does
+	// not stand in it is what the person at the terminal reads beside the
+	// confirmation it sits behind, and it stays there — as the review screen and
+	// the local config's diff do.
+	w := r.w
+	if r.gateStandsIn() {
+		w = r.stageDetail()
+	}
+	fmt.Fprintf(w, "will do (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
 }
 
 // confirmNow is the confirmation a step of this run asks now, and it asks

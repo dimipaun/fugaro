@@ -162,7 +162,7 @@ func (r *initRun) printRetireNotes(notes []infra.Retirement) {
 		names = append(names, n.Logical)
 	}
 	slices.Sort(names)
-	fmt.Fprintf(r.w, "note: %s %s no longer mounted by any job fugaro.yaml deploys; %s\n",
+	fmt.Fprintf(r.stageDetail(), "note: %s %s no longer mounted by any job fugaro.yaml deploys; %s\n",
 		strings.Join(names, ", "), plural(len(names), "is", "are"),
 		"what is in Secret Manager stays there, and this is not a retirement: nothing is removed from Terraform's state and nothing is deleted")
 }

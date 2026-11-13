@@ -209,7 +209,10 @@ func (r *initRun) askOrdinary(what, notCovered string) (bool, error) {
 			if r.gateStandsIn() {
 				fmt.Fprintf(r.stageDetail(), "  %s\n", initflow.GateOrdinary())
 			} else {
-				fmt.Fprintln(r.stageDetail(), "  covered by the run confirmation (the review's own question, at this run's terminal)")
+				// The covered step's own note for the run whose confirmation is
+				// a person's answer: it is what they read as the step goes, and
+				// only the gate's sentence above it is the run's account.
+				fmt.Fprintln(r.w, "  covered by the run confirmation (the review's own question, at this run's terminal)")
 			}
 			return true, nil
 		}

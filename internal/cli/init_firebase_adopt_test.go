@@ -309,8 +309,8 @@ func TestInitFirebaseAdoptRerunImportsNothing(t *testing.T) {
 	if got := strings.TrimSpace(string(r.fbImportsFile(t))); got != "{}" {
 		t.Errorf("imports.tf.json = %q, want {}", got)
 	}
-	if !strings.Contains(out, "No changes: the firebase root matches the plan.") {
-		t.Errorf("no 'No changes' in\n%s", out)
+	if all := out + newestLog(t, "setup"); !strings.Contains(all, "No changes: the firebase root matches the plan.") {
+		t.Errorf("no 'No changes' in\n%s", all)
 	}
 	if strings.Contains(out, "was adopted") {
 		t.Errorf("a healthy rerun warns that the managed signer was adopted:\n%s", out)
