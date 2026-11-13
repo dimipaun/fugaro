@@ -76,10 +76,10 @@ func runConvergeChild() int {
 	fmt.Fprint(os.Stdout, out)
 	fmt.Fprint(os.Stderr, errOut)
 	if err != nil {
-		// The line cmd/fugaro/main.go prints for every failure: without it the
-		// second process would say nothing at all, and the test would be
-		// checking a refusal nobody ever sees.
-		fmt.Fprintln(os.Stderr, "fugaro:", ErrorText(err))
+		// The line cmd/fugaro/main.go prints for a failure its account did not:
+		// without it the second process would say nothing at all, and the test
+		// would be checking a refusal nobody ever sees.
+		PrintFailure(os.Stderr, err)
 	}
 	return ExitCode(err)
 }

@@ -7,12 +7,22 @@ package cli
 // none, which is a failed read command too (T6, G7).
 
 import (
+	"bytes"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/cmdlog"
 )
+
+// topLevelLine is what main writes for err, captured in a buffer instead of on
+// os.Stderr so a test can read it — `execute` and `executeStdin` never run main.
+func topLevelLine(err error) string {
+	var buf bytes.Buffer
+	PrintFailure(&buf, err)
+	return buf.String()
+}
 
 // failureLine is the sentence a failed logged command prints, up to the run ID
 // the line ends with. It is spelled here rather than read out of the reporter:
@@ -96,11 +106,20 @@ func TestFailureLineIsPrintedOnlyUnderALog(t *testing.T) {
 		if n := strings.Count(all, "quota exceeded"); n != 1 {
 			t.Errorf("the screen carries the failure %d time(s), want once:\n%s", n, all)
 		}
-		if strings.Contains(all, "fugaro: Error: quota exceeded") {
-			t.Errorf("the failed run printed its error again under the top-level banner:\n%s", all)
+		if line := topLevelLine(err); line != "" {
+			t.Errorf("main's line would print the error the account already printed: %q", line)
 		}
 		if !strings.Contains(newestLog(t, "update"), "quota exceeded") {
 			t.Errorf("the run's log lost the error the screen shortened:\n%s", newestLog(t, "update"))
+		}
+	})
+
+	t.Run("a failure nothing printed keeps the top-level line", func(t *testing.T) {
+		if line := topLevelLine(errors.New("boom")); line != "fugaro: boom\n" {
+			t.Errorf("a plain error's top-level line is %q, want %q", line, "fugaro: boom\n")
+		}
+		if line := topLevelLine(nil); line != "" {
+			t.Errorf("a successful command printed %q", line)
 		}
 	})
 

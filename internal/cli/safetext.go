@@ -2,6 +2,8 @@ package cli
 
 import (
 	"errors"
+	"fmt"
+	"io"
 
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
@@ -54,6 +56,19 @@ func ShownOnScreen(err error) bool {
 }
 
 func (e *shownError) shownOnScreen() bool { return true }
+
+// PrintFailure is the top-level line main prints for a command that returned
+// err: "fugaro:" and the error. It writes nothing when the run's own account
+// already carried that error — the step that failed, why, the log's path and
+// the command that resumes the run — because that line would be the same
+// failure a second time (the owner's feedback of 2026-11-13). The exit code and
+// the error the caller gets are untouched either way.
+func PrintFailure(w io.Writer, err error) {
+	if err == nil || ShownOnScreen(err) {
+		return
+	}
+	fmt.Fprintln(w, "fugaro:", ErrorText(err))
+}
 
 // multiLine is like oneLine, but keeps newlines, for blocks printed as
 // several lines (the agent's message).
