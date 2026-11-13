@@ -617,23 +617,18 @@ func setupRigorRefusal(answer string) error {
 // given the recommendation in the caller's place — a scripted setup is exactly
 // where a default nobody typed would be least visible.
 //
-// On a run that creates no installation the flag is refused and the question
-// is not asked: the mode belongs to the project, and a converge that re-asked
-// it would replace the project's answer with this machine's.
+// Only the run that creates the installation is asked. A project config that
+// is already selected never arrives here — ask refuses --rigor with the one
+// sentence that names `fugaro rigor set`, and asks nothing — and a run that
+// creates nothing (--config-only, --print-vars) has no installation of its own
+// to hold a mode and no layer it writes.
 //
 // The answer is recorded on --rigor's own field, which is where a scripted run
 // answers the same question and where the Layer stage reads it from — this
 // phase applies nothing.
 func (s *wizardStage) askRigor() error {
 	r, o := s.r, s.r.o
-	if !s.creating {
-		return setupRigorRefusal(o.rigor)
-	}
 	if !o.createProject {
-		// A run that creates nothing — --config-only, --print-vars — has no
-		// installation of its own to hold a mode and no layer this run writes:
-		// the question belongs to the run that creates (setupCreates), which is
-		// also the run whose missing list carries its flag (wizardInputs).
 		return nil
 	}
 	if o.rigor != "" {
