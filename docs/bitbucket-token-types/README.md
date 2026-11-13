@@ -11,7 +11,7 @@ backs off on rate limits.
 | --- | --- |
 | [spec.md](spec.md) | The spec as received, byte for byte (no typo was fixed). **Where [reconciliation.md](reconciliation.md) disagrees with it, the reconciliation wins** |
 | [reconciliation.md](reconciliation.md) | The spec against the code and against `docs/bitbucket-credentials`, `docs/bitbucket-workspace-token` and `docs/secrets-brokering`: assumptions, findings F1–F23, decisions D2350–D2356 with the owner's answers, resolutions R1–R11, open items O1–O4, UNVERIFIED U1–U8 |
-| [implementation-plan.md](implementation-plan.md) | Five slices, 19 tasks (one contract, one integration task, one anticipated change request), levels, critical path, shared-files table. Nothing in it is approved |
+| [implementation-plan.md](implementation-plan.md) | Five slices, 18 tasks (one contract, one integration task, one anticipated change request), levels, critical path, shared-files table. Nothing in it is approved |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's tasks as the graph `fugaro plan graph` reads |
 
 ## Number blocks taken
