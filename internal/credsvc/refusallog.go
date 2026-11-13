@@ -85,6 +85,14 @@ const (
 	readSelectorMarks   = "selector_marks"
 	readSelectorLeases  = "selector_leases"
 	readSelectorCurrent = "selector_current"
+	// stateWrite is the state a selection WRITES rather than reads: the mark a
+	// 401 or a usage limit leaves, the run's own placement, and the round-robin
+	// counter a rotation advances. It is labelled for the reason the three reads
+	// are — the store's failures are one class of text — and it is named
+	// separately because a write that failed is not a read that failed: an
+	// operator who greps `read=selector_marks` must not be handed a call whose
+	// mark could not be written.
+	stateWrite = "state_write"
 	// readSecret is the per-secret container read that resolves a candidate's
 	// value ahead of the bundle's entry (R6's first half).
 	readSecret = "secret_read"
@@ -172,11 +180,12 @@ func errorClass(err error) string {
 // It is built per call and never once per service: several calls select at the
 // same moment, and a recorder the service shared would answer a refusal with
 // the read some OTHER call failed (the property the marks' own concurrency
-// rules exist for). The three writes a selection makes (UpdateMark, SetPlacement
-// and the round-robin counter) are passed through unlabelled and deliberately:
-// none of them is one of the reads this line names, and a write that failed is
-// already told apart by its own message ("the credential's state could not be
-// recorded").
+// rules exist for).
+//
+// The three writes are labelled too (stateWrite), and not because the line
+// names them as reads: their text is the store's, exactly as the reads' is, and
+// a refusal that repeats the store's own words is the one thing this file
+// exists to keep out of the log (see refuseSelection).
 type stateReads struct {
 	creds.Store
 }
@@ -194,6 +203,20 @@ func (r *stateReads) Leases(ctx context.Context, now time.Time) ([]creds.Lease, 
 func (r *stateReads) Current(ctx context.Context, run creds.Run) (string, bool, error) {
 	name, found, err := r.Store.Current(ctx, run)
 	return name, found, labelRead(readSelectorCurrent, err)
+}
+
+func (r *stateReads) UpdateMark(ctx context.Context, name string, f func(creds.Mark, bool) (creds.Mark, error)) (creds.Mark, error) {
+	m, err := r.Store.UpdateMark(ctx, name, f)
+	return m, labelRead(stateWrite, err)
+}
+
+func (r *stateReads) SetPlacement(ctx context.Context, run creds.Run, name string, l creds.Lease) error {
+	return labelRead(stateWrite, r.Store.SetPlacement(ctx, run, name, l))
+}
+
+func (r *stateReads) RoundRobin(ctx context.Context) (int64, error) {
+	n, err := r.Store.RoundRobin(ctx)
+	return n, labelRead(stateWrite, err)
 }
 
 // logRefusal writes the one server-side line a refusal leaves.

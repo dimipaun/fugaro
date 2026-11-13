@@ -670,6 +670,14 @@ const answerUnaudited = "the call could not be audited, so the credential's answ
 // credential the next call is sent to again.
 const markRefusal = "the credential's state could not be recorded"
 
+// selectionUnreadable is what the SERVICE'S OWN LOG says a selection that
+// failed on the state was, in the one case where the sentence the run is sent
+// is another system's text (refusallog.go): a store's error names the node it
+// read, and the run is told it while the log never is. It says only what the
+// read it is written beside says in its own word — the selector's marks, the
+// leases or the run's placement — and claims nothing about which.
+const selectionUnreadable = "the credential's state could not be read"
+
 // answer writes the upstream's answer to the client, with the headers of this
 // contract on it: the tier, the credential's name, and the switch when this
 // call moved.
@@ -902,7 +910,18 @@ func (s *Server) refuseSelection(ctx context.Context, w http.ResponseWriter, id 
 	if aerr := s.auditCall(ctx, id, PurposeForward, "", "", ErrorStateUnavailable); aerr != nil {
 		s.log.Error("credsvc: a refused call could not be audited", "error", aerr)
 	}
-	s.logRefusal(ctx, id, ErrorStateUnavailable, StatusUnavailable, err.Error(), err)
+	// The operator's line carries the sentence the run is sent, which is this
+	// service's refusal for a selection that found nothing usable (creds'
+	// ErrNoCredential, ErrFallbackForbidden, ErrNoCandidates) — and the CLASS
+	// instead where the sentence is the store's own text, which is what a
+	// labelled failure is (refusallog.go): the store's text names the node it
+	// read, and this line never repeats another system's words. The read label
+	// and the class beside it are what tell those two apart.
+	msg := err.Error()
+	if readOf(err) != "" {
+		msg = selectionUnreadable
+	}
+	s.logRefusal(ctx, id, ErrorStateUnavailable, StatusUnavailable, msg, err)
 	WriteWireError(w, StatusUnavailable, WireError{
 		Error:   ErrorStateUnavailable,
 		Message: err.Error(),
