@@ -30,9 +30,12 @@ const (
 	keySigningDesign  = "docs/design/key-signing-service.md"
 )
 
-// licenceKeyV2Amendment is the date and the authorship every dated note in the
-// three documents opens with. It is one string rather than three spellings so
-// that a note written in a second wording fails here.
+// licenceKeyV2Amendment is the dated line the amendment opens with in each
+// document's own status block: the date, who made it and the task that carries
+// it. It is one string rather than three spellings so that a status block
+// amended in a second wording fails here. The notes a single task or decision
+// carries inside a document name that task or decision instead, which is why
+// they are pinned one by one below.
 const licenceKeyV2Amendment = "Amended 2026-11-13 by the portal (P9.1,"
 
 // TestDocsLicenceKeyV2PlanFollowsThePortal holds the plan's tasks to the
