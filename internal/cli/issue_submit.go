@@ -67,7 +67,7 @@ func newIssueSubmitCmd() *cobra.Command {
 			"REF is the issue's number — `7`, or the `#0007` a listing prints — or\n" +
 			"its local ID `local-<run stem>`, the same argument `show` takes. With\n" +
 			"no reference every `pending` issue is visited, and the ones already\n" +
-			"filed or set aside are skipped.\n\n" +
+			"filed, set aside or fixed by a release are skipped.\n\n" +
 			"The post is built once and printed as it is: the title, the body, and\n" +
 			"the sha256 of the exact bytes. A run without --ask files nothing and\n" +
 			"uploads nothing. --ask asks at your own terminal after showing the\n" +
@@ -215,8 +215,10 @@ type issueTarget struct {
 // same: the reference is the person's own decision, made about an issue whose
 // own record says only that it was not worth filing then, and no command here
 // takes a dismissal back. The sweep is the other way round for the same
-// reason — it visits what is waiting and leaves the two finished statuses
-// alone, so a dismissal nobody named is never filed by accident.
+// reason — it visits what is waiting and leaves every finished status alone,
+// `resolved` included: a release fixed that issue, and filing it again would
+// put a fixed bug on the project's repository — so a resolution nobody named
+// is never filed by accident.
 //
 // installation is the project this run files for, and a record that names
 // another one is never filed from here (F8b): the folder is one for the whole

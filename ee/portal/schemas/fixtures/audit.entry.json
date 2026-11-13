@@ -1,0 +1,11 @@
+{
+  "id": "aud_1",
+  "at": "2026-02-11T08:00:00Z",
+  "actor_uid": "uid_dana",
+  "actor_email": "dana@example.com",
+  "organisation_id": "org_example",
+  "action": "entitlement.revoke",
+  "target_id": "ent_1",
+  "read": false,
+  "detail": "the customer asked for it"
+}

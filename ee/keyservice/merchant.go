@@ -397,7 +397,15 @@ func (s *Service) completed(ctx context.Context, e Event, record Record) error {
 		sub.ID = e.Subscription
 		sub.Organisation = record.Organisation
 		sub.Seats = record.Seats
-		sub.TermDays = daysBetween(record.Issued, record.Expires)
+		sub.TermDays = record.TermDays
+		if sub.TermDays < 1 {
+			// A record an earlier deploy wrote names no term of its own, and the
+			// length of the key it minted is the only term it has left to state.
+			// The repair may not carry that absence into the state: a subscription
+			// at zero days is one `checkoutPolicy` does not sell, so every renewal
+			// and every seat change after it is refused for good (D442).
+			sub.TermDays = daysBetween(record.Issued, record.Expires)
+		}
 		sub.Email = to
 		sub.At = e.OccurredAt
 		// The workspace is the event's and not the record's: the issuance record
@@ -408,8 +416,8 @@ func (s *Service) completed(ctx context.Context, e Event, record Record) error {
 		if e.WorkspaceID != "" {
 			sub.WorkspaceID = e.WorkspaceID
 		}
-		if record.Expires.After(sub.Expires) {
-			sub.Expires = record.Expires
+		if end := entitlementEnd(record); end.After(sub.Expires) {
+			sub.Expires = end
 		}
 		return s.store.SaveSubscription(ctx, sub)
 	case EventSeatChange:
@@ -463,13 +471,44 @@ func (s *Service) purchased(ctx context.Context, e Event) error {
 		TermDays:     e.TermDays,
 		Email:        to,
 		At:           e.OccurredAt,
-		Expires:      minted.Record.Expires,
+		Expires:      entitlementEnd(minted.Record),
 	})
+}
+
+// entitlementEnd is the end of the term an issuance stands for: the instant its
+// key was minted plus the term that issuance is for — the term a purchase
+// bought, the whole days a renewal covers, or the row's own term where the
+// request named none. It is the subscription's own end and never the key's,
+// because D2202 caps a connected row's key at thirty days while the entitlement
+// the customer bought runs the term they bought — a subscription stored with the
+// key's end would open an annual renewal's window at the purchase itself and
+// move the term on by a month a year.
+//
+// The term is whole days and the end a caller may have named is an instant, so
+// it is read as a lower bound and not as the end itself: the minter rounds the
+// days up (store.go's field comment), which puts this answer at the entitlement's
+// own end or up to a day past it and never before it. The direction is the
+// package's own — days rounded up are days the customer keeps — and the exact
+// instant is what the record's own `Expires` states for the key it minted.
+//
+// A record with no term at all is the fallback and only that: nothing in this
+// service mints one (the minter writes the term it resolved, the row's own
+// included), so it is a record the store already holds from a deployment that
+// wrote the field's absence, and the key's end is the only length such a record
+// states.
+func entitlementEnd(record Record) time.Time {
+	if record.TermDays < 1 {
+		return record.Expires
+	}
+	return record.Issued.Add(time.Duration(record.TermDays) * 24 * time.Hour)
 }
 
 // seatChanged reissues inside the term the customer already paid for: `seats`
 // is a claim in the key, and the term is not (§5.3). The new key covers what is
-// left of the term, so it ends where the key it replaces ends.
+// left of that term — which for a connected row's key is D2202's thirty days
+// from the reissue, and never a term taken off the subscription — so the seats
+// move, the key is as long as any other key of its row, and the subscription's
+// own end is where it was.
 //
 // The reissue is a **new key**, under a new `key_id`, and that is the whole of
 // what makes §8's list able to withdraw it: an entry names one key, so a
@@ -665,7 +704,9 @@ func (s *Service) withdrawn(ctx context.Context, e Event) error {
 // Renew mints the next key for one subscription when T26's window is open: 30
 // days before the term it follows ends, or half that term where half is shorter
 // than the lead, which every monthly row's is, its `issued` on the day the
-// service runs, its `expires` at the end of the term it covers.
+// service runs, its `expires` at the end of the key it mints — D2202's thirty
+// days for a row whose key checks the server, however long the term behind it
+// runs.
 //
 // The key is a v1 one, minted through the same path a purchase uses and not
 // through the older format's `mint`: what every issue path hands a customer is
@@ -801,8 +842,9 @@ func (s *Service) Renew(ctx context.Context, subscriptionID string) (MintedV1, b
 }
 
 // renewed finishes a renewal whose key is already minted and whose term the
-// store did not take: the record names the end of the term it covers, so the
-// state the customer paid for is written from it.
+// store did not take: the record names the term it was minted for, so the state
+// the customer paid for is written from it — and it is the term that is written,
+// not the end of the key, which D2202 caps at thirty days below it.
 // The subscription's own end is the test — it is what the window and the source
 // are both computed from — and a state the term has already moved past is left
 // alone, so a stale source cannot pull it back.
@@ -811,10 +853,11 @@ func (s *Service) Renew(ctx context.Context, subscriptionID string) (MintedV1, b
 // merchant's timeline and not the service's, and the repair's own instant is not
 // an event on it.
 func (s *Service) renewed(ctx context.Context, sub Subscription, record Record) error {
-	if !sub.Expires.Before(record.Expires) {
+	end := entitlementEnd(record)
+	if !sub.Expires.Before(end) {
 		return nil
 	}
-	sub.Expires = record.Expires
+	sub.Expires = end
 	return s.store.SaveSubscription(ctx, sub)
 }
 
@@ -987,6 +1030,33 @@ func (s *Service) paid(ctx context.Context, req RequestV1, applicant, source, su
 		// spent and write no key state: a key the customer holds and can never
 		// renew is the half this path exists to avoid.
 	}
+	// The hash written is the hash the key carries, which is the request's own
+	// when the answer holds no secret: D2200's reissue keeps the entitlement's
+	// existing hash and answers no new secret at all, so a state hashed from the
+	// empty answer would file every reissued key under `digest("")` — a key whose
+	// holder can never renew it, holding a secret the store does not know. The
+	// state is still written for a reissue, because a key state is keyed by the
+	// key's own id and the reissue has a new one: skipping it would leave a key
+	// nothing can renew just the same.
+	secretHash := req.RenewalSecretHash
+	if answer.RenewalSecret != "" {
+		secretHash = digest(answer.RenewalSecret)
+	}
+	// The workspace goes in with the hash, and it is the request's own: that is
+	// the workspace the key was minted into, and `/renew` mints the successor
+	// into it. It has to be here, because D2202 makes a connected key thirty days
+	// of the term it was sold for and `/renew` is the door that carries the
+	// entitlement from one of those to the next — a purchased key whose state
+	// names no workspace is refused there, and an annual purchase would then be
+	// dark from the end of its first key until the merchant's own renewal, which
+	// opens RenewalLead before the subscription's end and so on day 335 of a year
+	// (renew.go's `renewable`).
+	//
+	// What naming it costs is that `/renew` reads no subscription either, so a
+	// key whose subscription the merchant has since cancelled renews here too.
+	// That gate is P3.6's and the plan says so — "`/renew` issues only while the
+	// entitlement runs", `TestRenewalStopsWhenTheEntitlementEnds` — and it needs
+	// the record to carry the subscription the key was minted for.
 	if err := s.store.SaveKeyState(ctx, KeyState{
 		KeyID: answer.Record.KeyID,
 		// The workspace the request bound the key to, which is the one the
@@ -994,7 +1064,7 @@ func (s *Service) paid(ctx context.Context, req RequestV1, applicant, source, su
 		// renewal can serve, because the successor is minted into the key's own
 		// workspace and a request's word for it is not proof (K2.3).
 		WorkspaceID:       req.WorkspaceID,
-		RenewalSecretHash: digest(answer.RenewalSecret),
+		RenewalSecretHash: secretHash,
 	}); err != nil {
 		return MintedV1{}, err
 	}
@@ -1014,7 +1084,22 @@ func (s *Service) withdrawUnrecorded(ctx context.Context, keyID string) error {
 // place either is written down outside the key ring. The store holds the
 // secret's hash and never the secret (K2.2, §7.3), so a customer who loses this
 // mail holds a key that runs to its own end and no further.
+//
+// A reissue that keeps the entitlement's existing hash is mailed its key alone
+// (D2200): the minter answered no secret, because there is no new one to hand
+// out and the holder still has the one this service sent them, so the second
+// line is left out rather than mailed empty — a bundle whose second half is
+// nothing asks a customer to keep a blank line as the thing they renew with.
 func paidKeyMail(to, key, secret string) Message {
+	if secret == "" {
+		return Message{
+			To:      to,
+			Subject: keySubject,
+			Body: "Your Fugaro licence key:\n\n" + key + "\n\n" +
+				"This key replaces one you already hold, and the renewal secret you were sent with it is unchanged.\n" +
+				"Install it in the console, or keep it for the CLI.\n",
+		}
+	}
 	return Message{
 		To:      to,
 		Subject: keySubject,

@@ -15,7 +15,7 @@ package keyservice
 // `RequestV1.Policy` names one of these and the minter looks it up here.
 //
 // The table is a value and not a set of constants on the claim set because a
-// key's policy is data: ee/licence's ClaimsV1 carries each of these fields into
+// key's policy is data: ee/licence's Claims carries each of these fields into
 // the key at issue, and this is the only place the server decides what a fresh
 // key of a tier says. Overriding a row for one deal is the admin page's (K2.6)
 // and is not read here.
@@ -25,7 +25,11 @@ package keyservice
 // hash goes into the claim (D2135).
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/dimipaun/fugaro/ee/licence"
@@ -41,6 +45,13 @@ const (
 	PolicyEnterpriseAirGapped = "enterprise-air-gapped"
 	PolicyTrial               = "trial"
 )
+
+// PolicyFreeSeat is D2184 and D2199's free seat: the one row that is not a
+// column of section 12.1, because nobody buys it. It is Team at one seat, its
+// kind is `comped` rather than `paid`, and it renews automatically: its holder
+// pays nothing, so a key that lapsed would drop a customer's colleague to Free
+// for a reason that is not about them (F39, D2203).
+const PolicyFreeSeat = "free-seat"
 
 const (
 	// monthTerm is the lifetime of the monthly row and yearTerm of the annual
@@ -76,21 +87,104 @@ const (
 // is the one duration form the design reads as "every day" (F16).
 const dailyCheck = "P1D"
 
+// connectedTerm is D2202's thirty days: the longest one key of a row whose
+// installation contacts the server may run, whatever its row is sold for.
+//
+// The bound is the rebind multiplier's (F38). A key is what ends an
+// installation's access, and an installation that has been rebound to somebody
+// else keeps answering from the copy it holds until that copy ends, so a key
+// sold for a year is a year of the entitlement still working somewhere nobody
+// is looking. Thirty days is the window the server's own answer closes in, and
+// it is why the plan accepts that an installation with no renewal job of its
+// own must refresh every month or lapse after its grace.
+//
+// A row whose key never checks has no such window to close and keeps its term
+// (D2202). Which of the two a row is, is its own `CheckInterval`: the same
+// column that says a key cannot be revoked by contact says it is not sold
+// short either.
+const connectedTerm = 30 * 24 * time.Hour
+
+// The bounds F28 puts on the check interval an operations mint may name: a key
+// that checks more often than daily costs load for nothing, and one that checks
+// less often than monthly carries a revocation window longer than the term
+// every connected key runs (D2202). They are durations because the bound is on
+// what a spelling means, not on how it is spelled: `P1W` is inside them and
+// `P7D` is the same interval.
+const (
+	minCheckInterval = 24 * time.Hour
+	maxCheckInterval = 30 * 24 * time.Hour
+)
+
+// checkIntervalInBounds refuses an interval a caller named that is outside
+// F28's `P1D`–`P30D`, and it parses the spelling through the verifier's own
+// reader: a duration no verifier reads (`PT1H`, `P1M`, `30d`) is refused here
+// rather than minted into a key that will not load.
+//
+// `P0D` parses, to a zero duration, and it is below the shortest of the two
+// bounds rather than a way of saying a key never checks: `null` is the only way
+// a key says that, and it is the air-gapped row's and no request's (F28).
+func checkIntervalInBounds(interval string) error {
+	span, err := licence.ParseISODuration(interval)
+	if err != nil {
+		return fmt.Errorf("the check interval %q is not one a key reads: %w", interval, err)
+	}
+	if span < minCheckInterval || span > maxCheckInterval {
+		return fmt.Errorf("the check interval %q is outside the daily-to-monthly span an operations mint may name (F28)", interval)
+	}
+	return nil
+}
+
+// checkSecretHash refuses a hash a caller asks a key to carry that is not one
+// this service could have written: D2135's is the hex sha256 of a 256-bit
+// secret, so it is 64 lower-case hex digits and nothing else. The shape is the
+// whole check — the minter cannot know which entitlement a hash belongs to,
+// that is the store's — and it is what keeps the field from becoming a way to
+// write a secret, a truncated hash or an empty string into a claim every reader
+// of the runs bucket holds.
+func checkSecretHash(hash string) error {
+	if len(hash) != sha256.Size*2 || strings.ToLower(hash) != hash {
+		return errors.New("a kept renewal secret hash is 64 lower-case hex digits (D2135), and this is not one")
+	}
+	if _, err := hex.DecodeString(hash); err != nil {
+		return errors.New("a kept renewal secret hash is 64 lower-case hex digits (D2135), and this is not one")
+	}
+	return nil
+}
+
+// maxKeyTerm is the longest one key of a row may run from its own `issued_at`:
+// D2202's thirty days for a row whose key checks the server, and the row's own
+// term for the air-gapped row that never does.
+func maxKeyTerm(policy Policy) time.Duration {
+	if policy.CheckInterval == nil || policy.Term < connectedTerm {
+		return policy.Term
+	}
+	return connectedTerm
+}
+
 // Policy is one row: the whole of what a fresh key of one tier carries, as
-// ee/licence's ClaimsV1 reads it back.
+// ee/licence's Claims reads it back.
 type Policy struct {
 	// Name is the row's name and what a mint request asks for.
 	Name string
 	// Tier is the tier every key of this row carries.
 	Tier string
-	// Kind is `paid` or `trial`; a `comped` key is the founder's and carries a
-	// row of its own when the admin page mints one (K2.6).
+	// Kind is one of licence's three: `paid` for every row that is sold, `trial`
+	// for the trial, and `comped` for the free seat, which is the one comped row
+	// this table carries (D2199, D2184). The founder's own comped key is the
+	// admin page's and carries no row here (K2.6).
 	Kind string
 	// Term is the row's lifetime, and it is what a mint request that names no
 	// term of its own is minted for: a first purchase is the plan's own period.
 	// A renewal names one, because it covers the rest of the term the customer
-	// is in rather than a fresh one.
+	// is in rather than a fresh one. It is also the longest a key of this row
+	// may ever run, so a row whose key checks the server is minted shorter than
+	// this and never longer (D2202; `maxKeyTerm`).
 	Term time.Duration
+	// Seats is the row's own seat count, or 0 for a row whose seats the caller
+	// names. One row has one: the free seat is one seat and not a plan, so a
+	// request that asks it for another count is refused rather than minted into
+	// a key that hands out seats nobody granted (D2184, D2199).
+	Seats int
 	// GraceDays is this key's own grace, written into the key (D2133).
 	GraceDays int
 	// RenewalMode is one of licence's three names: `auto` for a connected paid
@@ -169,6 +263,18 @@ var defaultPolicies = []Policy{
 		RenewBeforeDays: 0,
 		CheckInterval:   daily(),
 		Warnings:        nil,
+	},
+	{
+		Name:            PolicyFreeSeat,
+		Tier:            licence.TierTeam,
+		Kind:            licence.KindComped,
+		Term:            yearTerm,
+		Seats:           1,
+		GraceDays:       graceDays,
+		RenewalMode:     licence.RenewalAuto,
+		RenewBeforeDays: renewalLeadDays,
+		CheckInterval:   daily(),
+		Warnings:        defaultWarnings(),
 	},
 }
 

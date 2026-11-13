@@ -52,6 +52,21 @@ type Record struct {
 	Subscription string    `json:"subscription"`
 	Issued       time.Time `json:"issued"`
 	Expires      time.Time `json:"expires"`
+	// TermDays is the term in whole days this issuance stands for: the term a
+	// purchase bought, the whole days a renewal covers, the row's own term where
+	// the request named none (a free seat, a trial), or what an end the caller
+	// named leaves of it (F30), and every one of those is rounded up to the next
+	// whole day, because an instant is not something a count of days states
+	// exactly. It is the **entitlement's** own length and not the key's — D2202
+	// caps a connected row's key at thirty days while the term the customer paid
+	// for runs its own length — and it is what the subscription's end is rebuilt
+	// from when the record is the only thing left of an issuance whose
+	// subscription write did not land (S3.5, §5.1). A rebuild therefore lands on
+	// the entitlement's own end or up to a day past it, and never before it: the
+	// round is what keeps a subscription from lapsing inside the term it states,
+	// while the instant itself is what the key's own `Expires` states whenever
+	// the end a caller named is inside the row.
+	TermDays int `json:"term_days"`
 }
 
 // Application is one request a person has to decide (§4.5): the ones the

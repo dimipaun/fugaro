@@ -124,8 +124,8 @@ func TestMintRefusesATokenThatCouldNeverBeUsed(t *testing.T) {
 // refresh token out, and a family that has moved to the new one.
 func TestRotateReturnsAFreshPair(t *testing.T) {
 	ctx := context.Background()
-	s := newFakeStore(t)
 	now := time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
+	s := newFakeStoreOver(t, func() time.Time { return now }, nil)
 
 	access, refresh, err := MintAt(ctx, s, "user:person-1", testClient(), testLimits(), now.Add(-time.Minute))
 	if err != nil {
