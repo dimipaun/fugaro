@@ -38,7 +38,10 @@ interface ScreenModule {
   route?: ScreenRoute
 }
 
-const modules = import.meta.glob<ScreenModule>('../screens/*/route.tsx', { eager: true })
+// The pattern is relative to this file, so `./screens/...` is `src/screens/...`:
+// written one level up it collects nothing, and the check below turns that into
+// a module that will not load rather than an app with no screens.
+const modules = import.meta.glob<ScreenModule>('./screens/*/route.tsx', { eager: true })
 
 function collect(): ScreenRoute[] {
   const collected: ScreenRoute[] = []

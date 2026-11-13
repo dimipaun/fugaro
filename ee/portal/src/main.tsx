@@ -26,7 +26,26 @@ import { createFirebaseAuthPort, firebaseConfig } from './auth/firebase'
 import { SessionProvider } from './auth/session'
 import { SIGN_IN_PATH } from './routes'
 import { createTelemetry } from './telemetry'
+import type { Telemetry } from './telemetry'
 import './styles.css'
+
+// The reporter `start` builds, and the two listeners that report through it.
+// They are attached here, at module evaluation, rather than after the awaits
+// below: the first thing that can fail is the import of the reporter's own
+// chunk, and a listener attached after that call exists only once the failure
+// it is for has already gone by.
+let telemetry: Telemetry | null = null
+
+function report(error: unknown): void {
+  telemetry?.report(error)
+}
+
+window.addEventListener('error', (event: ErrorEvent) => {
+  report(event.error ?? event.message)
+})
+window.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => {
+  report(event.reason)
+})
 
 async function start(): Promise<void> {
   const root = document.getElementById('root')
@@ -34,16 +53,10 @@ async function start(): Promise<void> {
     throw new Error('index.html has no #root element to mount into')
   }
 
-  const telemetry = await createTelemetry({
+  telemetry = await createTelemetry({
     dsn: import.meta.env.VITE_SENTRY_DSN ?? null,
     environment: import.meta.env.VITE_PORTAL_ENVIRONMENT ?? 'development',
     release: import.meta.env.VITE_PORTAL_RELEASE,
-  })
-  window.addEventListener('error', (event: ErrorEvent) => {
-    telemetry.report(event.error ?? event.message)
-  })
-  window.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => {
-    telemetry.report(event.reason)
   })
 
   const config = firebaseConfig(import.meta.env)
@@ -63,4 +76,14 @@ async function start(): Promise<void> {
   )
 }
 
-void start()
+// A boot that failed is the one failure nobody can act on if it says nothing:
+// the page is empty, and the sentence it gets is the same kind of answer the
+// missing configuration gets above. Reporting the failure is the reporter's
+// job, which is why the catch hands it over rather than deciding what to say.
+void start().catch((error: unknown) => {
+  report(error)
+  const root = document.getElementById('root')
+  if (root !== null) {
+    root.textContent = 'The portal could not start. Reload the page.'
+  }
+})
