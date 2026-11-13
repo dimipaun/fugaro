@@ -785,31 +785,42 @@ func RefreshCredentialsServiceJobAccounts(vars []byte, lc *localcfg.Config) ([]b
 //
 // It is the same axis as CredentialsJobAccounts and one step further along it:
 // the coding table is a row per repository job, this one a row per review
-// variant of the installation's project jobs. An installation whose local
-// config names no profile gets none and no error — it deploys no project job
-// and so no variant, and a service that admits no review caller is the
-// fail-closed state the class is inert in, not the refusal an empty coding
-// table is.
+// variant of the installation's project jobs. An installation that deploys no
+// variant at all gets an empty table and no error — an installation with no
+// profile and no credentials service, whose review class is inert, which is
+// the fail-closed state and not the refusal an empty coding table is. The
+// implicit default review job is one of those variants and reaches the table
+// the same way as every other (ProjectReviewJobs' implicitReviewVariant), so a
+// project with no profile gets its row here on the run that deploys its job.
 //
 // The rows are sorted (profile, provider, account) and carry no duplicates.
 func CredentialsReviewJobAccounts(lc *localcfg.Config) ([]CredentialsReviewJob, error) {
-	// No profile, no project job, no variant (ProjectJobs' own first rule) —
-	// and nothing else about the installation is read, not even the runs
-	// bucket, which only a job's own environment needs.
-	if len(lc.Profiles) == 0 {
+	// Nothing can be derived, and nothing else about the installation is read:
+	// no profile deploys a coding job to derive a variant from, and with no
+	// credentials service there is no implicit one to deploy either — so not
+	// even the runs bucket, which only a job's own environment needs
+	// (ProjectReviewJobs' own two rules, read here where they save the read).
+	if len(lc.Profiles) == 0 && lc.CredentialsService == nil {
 		return nil, nil
 	}
-	bucket, err := bucketName(lc)
+	b, err := bucketName(lc)
 	if err != nil {
 		return nil, userErr("%v", err)
 	}
-	jobs, err := ProjectReviewJobs(lc, bucket, lc.UsesVertex())
+	jobs, err := ProjectReviewJobs(lc, b, lc.UsesVertex())
 	if err != nil {
 		return nil, err
 	}
 	out := make([]CredentialsReviewJob, 0, len(jobs))
 	for _, j := range jobs {
 		out = append(out, CredentialsReviewJob{Profile: j.Profile, Provider: j.Provider, Account: j.Account})
+	}
+	if len(out) == 0 {
+		// An empty table leaves the member exactly as the document carried it
+		// (RefreshCredentialsServiceJobAccounts' own rule for the union), and
+		// the module renders no entry for an empty list: a written `[]` would
+		// be a fact about the installation that is not one.
+		return nil, nil
 	}
 	slices.SortFunc(out, func(a, b CredentialsReviewJob) int {
 		if c := strings.Compare(a.Profile, b.Profile); c != 0 {
