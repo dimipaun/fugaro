@@ -320,8 +320,9 @@ export const BRIDGE_VERSION = 1
  * **third write** (rule 14 of section 5.1, after V2.5.1a's launch and the
  * settings write of C3) and it sits under `coordinator.intents` with the
  * project's stored reads, because the record it writes is the one the Graph
- * draws. Its row is the only place a renderer's own two arguments reach a
- * command line at all, and they reach it as **ids**: `src/main/ipc.ts` holds
+ * draws. It is the only row here whose **every** word is main-process state read
+ * out of a document, and the renderer's own two arguments reach it as **ids**
+ * rather than as a word: `src/main/ipc.ts` holds
  * them to the node and release-key grammars, `src/source/cli.ts` admits only the
  * keys the graph document it read listed (F21), and the three words the CLI
  * reads are spelled there out of that document -- the qualified `<plan>/<task>`

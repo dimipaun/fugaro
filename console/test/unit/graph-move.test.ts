@@ -55,6 +55,7 @@ import {
 import { UNAVAILABLE_MARK } from '../../src/shared/availability'
 import { MAX_TEXT_LENGTH, sanitizeText } from '../../src/shared/sanitize'
 import { GRAPH_DOCUMENT_VERSION } from '../../src/shared/schema'
+import { ROADMAP_MOVE_MOVED } from '../../src/source/source'
 import type { RoadmapMoveAnswer } from '../../src/source/source'
 import { CliSource } from '../../src/source/cli'
 import { everyNode } from '../support/fakeDom'
@@ -264,6 +265,61 @@ describe('a move names two ids, and the console checks them', () => {
 
     expect(preview.argv).toEqual([stub.binary, ...wordsOf(OTHER, BOX)])
     expect(preview.argv).not.toContain(NODE)
+  })
+
+  it('refuses a confirmation of a move no preview drew, and starts no child for it', async () => {
+    // **The compare-and-set is the source's, and it is the whole of what makes a
+    // confirmation binding.** Both ids here are in the document the last read
+    // holds, so nothing above this line refuses them -- and `--expect` is spelled
+    // from the record at confirmation time, so without the guard a renderer that
+    // named a pair no preview drew (a second drop, a stale sheet, a console
+    // driven by something other than its own drawing) would spawn a write the
+    // operator never read. The pair confirmed here is the box the task is
+    // already in: a real move, listed by the same read, and not the one the
+    // preview spelled.
+    const stub = aStub()
+    const source = await aSource(stub)
+    const preview = await source.roadmapMove({ node: NODE, toRelease: OTHER, confirmed: false })
+    const before = stub.calls()
+    expect(preview.refusal).toBeNull()
+
+    const moved = await source.roadmapMove({ node: NODE, toRelease: BOX, confirmed: true })
+    expect(moved.refusal).toBe(ROADMAP_MOVE_MOVED)
+    expect(moved.outcome, 'a refused confirmation answered an outcome').toBeNull()
+    expect(stub.calls(), 'a move no preview drew spawned a child').toBe(before)
+  })
+
+  it('authorises exactly one write: the line that was previewed, once', async () => {
+    // A preview is consumed by the confirmation it authorises -- `roadmapMove`
+    // clears it before the comparison -- so the same pair confirmed twice is one
+    // child and one refusal, and a second press on a stale button cannot write
+    // under a line nobody is looking at any more.
+    const stub = aStub()
+    const source = await aSource(stub)
+    await source.roadmapMove({ node: NODE, toRelease: OTHER, confirmed: false })
+    const before = stub.calls()
+
+    const written = await source.roadmapMove({ node: NODE, toRelease: OTHER, confirmed: true })
+    expect(written.refusal).toBeNull()
+    expect(written.outcome?.status).toBe('applied')
+    expect(stub.calls(), 'the confirmation the preview authorised spawned no child').toBe(before + 1)
+
+    const again = await source.roadmapMove({ node: NODE, toRelease: OTHER, confirmed: true })
+    expect(again.refusal).toBe(ROADMAP_MOVE_MOVED)
+    expect(stub.calls(), 'one preview authorised a second write').toBe(before + 1)
+  })
+
+  it('refuses a confirmation with no preview behind it at all, and starts no child', async () => {
+    // The cold call: no preview has been drawn since this console read the
+    // document, which is what a console that was switched away and back, or a
+    // renderer that never showed anything, sends first.
+    const stub = aStub()
+    const source = await aSource(stub)
+    const before = stub.calls()
+
+    const cold = await source.roadmapMove({ node: NODE, toRelease: OTHER, confirmed: true })
+    expect(cold.refusal).toBe(ROADMAP_MOVE_MOVED)
+    expect(stub.calls(), 'a confirmation with nothing behind it spawned a child').toBe(before)
   })
 })
 

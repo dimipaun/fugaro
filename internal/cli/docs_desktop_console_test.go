@@ -1845,9 +1845,9 @@ func consoleSpelledNumber(t *testing.T, spelled string) int {
 //     Project tab's seat estimate, `seats.read`, the surface's one read whose
 //     child walks the runs bucket -- to the thirty-eight rule 5 carried from
 //     2026-11-11, and the dependency-graph plan's GV3.2 -- the record's move,
-//     `roadmap.move`, the surface's third write and the first operation whose
-//     arguments a renderer supplies -- to the thirty-nine rule 5 carries
-//     today.
+//     `roadmap.move`, the surface's third write and the only operation whose
+//     every argv word is main-process state read out of a document -- to the
+//     thirty-nine rule 5 carries today.
 //   - **every row of spawn.ts's `SPAWN_COMMANDS` is admitted by rule 6's table**:
 //     the row's own words lead some row of the design's table **and what that row
 //     carries after them is flags, nothing else**. The second half is the whole
