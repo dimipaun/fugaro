@@ -32,7 +32,9 @@ package register
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -306,6 +308,33 @@ var licenceRefusals = []error{
 	licence.ErrMalformedV1, licence.ErrUnknownKeyID, licence.ErrSignature,
 	licence.ErrClaims, licence.ErrLifetime, licence.ErrDuration, licence.ErrWorkspace,
 	licence.ErrNewerVersion, licence.ErrKeyFile,
+}
+
+// licenceSecretDigest is hex(sha256(secret)): the digest a key carries in
+// renewal_secret_hash (D2135), and the one the licence server hashes a renewal's
+// secret into before it compares (ee/keyservice/renew.go). It is computed here
+// rather than read out of the service, whose own digest is unexported, and the
+// claim set this command has just verified is what it is compared against.
+func licenceSecretDigest(secret string) string {
+	sum := sha256.Sum256([]byte(secret))
+	return hex.EncodeToString(sum[:])
+}
+
+// licenceSecretMatches reports whether secret is the one the verified key
+// renews with. The server hashes the secret a renewal sends and compares it
+// against the key's own renewal_secret_hash, so a pair that does not match here
+// is a pair no renewal will ever prove — and the failure that says so comes at
+// the next renewal, days later and possibly past the last window, which is why
+// it is checked where both halves are still in front of the person.
+//
+// A key that carries no hash has nothing to compare, and its secret is
+// admitted: the claim is the whole of what is known about the pairing, and a
+// command cannot run a check the key does not carry.
+func licenceSecretMatches(claims licence.Claims, secret string) bool {
+	if secret == "" || claims.RenewalSecretHash == "" {
+		return true
+	}
+	return licenceSecretDigest(secret) == claims.RenewalSecretHash
 }
 
 // licenceRefused reports whether err is one of the verifier's own refusals.
@@ -621,6 +650,9 @@ func licenceSet(cmd *cobra.Command, o *licenceSetOptions) error {
 	claims, state, err := licence.Verify([]byte(bundle.key), licenceNow(), licenceRing, licenceFirebaseProject(lc))
 	if err != nil {
 		return licenceKeyRefusal(err, bundle.key)
+	}
+	if !licenceSecretMatches(claims, bundle.secret) {
+		return fcli.UserErr("the renewal secret on line 2 is not the one key %s renews with: the key carries the digest of its own secret, which is what the licence server weighs a renewal against, so a pair these two lines name would be installed and would never renew — and nothing would say so until the next renewal, days later and possibly past the last window. Nothing was written: check line 2, which is the secret that came with the key, whole and on one line", safetext.Field(claims.KeyID))
 	}
 	// The secret is written before the key, and the key only after it landed: a
 	// key whose secret is not in the container is a key that cannot renew, and
@@ -1002,6 +1034,12 @@ func licenceRefresh(cmd *cobra.Command, o *licenceRefreshOptions) error {
 	next, state, err := licence.Verify([]byte(answer.Key), licenceNow(), licenceRing, licenceFirebaseProject(lc))
 	if err != nil {
 		return fcli.UserErr("the licence server answered with a key this Fugaro does not accept, and nothing was written: %s", licenceRedact(err.Error(), answer.Key, answer.RenewalSecret))
+	}
+	if !licenceSecretMatches(next, answer.RenewalSecret) {
+		// The answer contradicts itself, which is nothing a person can fix:
+		// the next key is signed by the key Fugaro trusts and names the digest
+		// of another secret, so the pair it arrived with would renew nothing.
+		return fcli.RemoteErr(fmt.Errorf("the licence server answered a key %s and a renewal secret that is not the one it renews with, and nothing was written: the key carries the digest of another secret, so this installation would be left unable to renew again", safetext.Field(next.KeyID)))
 	}
 	// The new secret first, then the key: the key that is installed names the
 	// new secret's hash, so a key without it is a key that cannot renew again.

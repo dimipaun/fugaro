@@ -351,6 +351,22 @@ func (f *licenceFixture) claims(edit ...func(*licence.Claims)) licence.Claims {
 	return c
 }
 
+// bundle mints a key and the renewal secret that renews it, and answers both
+// with the claim set the key carries. The set's renewal_secret_hash is the
+// digest of that secret (D2135), which is what the licence server compares a
+// renewal against and what `set` and `refresh` check before they write — so a
+// test that installs a key and a secret installs a pair the real server would
+// renew, rather than one minted apart (the claim set's own default hash names a
+// secret no test holds, which is the pair this command exists to refuse).
+func (f *licenceFixture) bundle(t *testing.T, edit ...func(*licence.Claims)) (key, secret string, claims licence.Claims) {
+	t.Helper()
+	secret = licenceTestSecret(t)
+	claims = f.claims(append([]func(*licence.Claims){
+		func(c *licence.Claims) { c.RenewalSecretHash = licenceSecretDigest(secret) },
+	}, edit...)...)
+	return f.issuer.mint(t, claims), secret, claims
+}
+
 // secret generates the renewal secret of one test: 32 random bytes, base64url,
 // so that no test carries a secret-shaped literal.
 func licenceTestSecret(t *testing.T) string {
@@ -427,8 +443,7 @@ func TestLicenceRenewalSecretIDIsTheInstallationsContainer(t *testing.T) {
 // carries the figures a person checks.
 func TestLicenceSetWritesTheProjectAndTheSecret(t *testing.T) {
 	f := newLicenceFixture(t)
-	claims := f.claims()
-	key, secret := f.issuer.mint(t, claims), licenceTestSecret(t)
+	key, secret, _ := f.bundle(t)
 	f.seedSecretContainer(nil)
 
 	out, errOut, err := f.exec(t, key+"\n"+secret+"\n", "licence", "set")
@@ -458,7 +473,7 @@ func TestLicenceSetWritesTheProjectAndTheSecret(t *testing.T) {
 // and for the base64 of it, which is the other spelling a store echoes.
 func TestLicenceSetNeverPrintsTheKey(t *testing.T) {
 	f := newLicenceFixture(t)
-	key, secret := f.issuer.mint(t, f.claims()), licenceTestSecret(t)
+	key, secret, _ := f.bundle(t)
 	f.seedSecretContainer(nil)
 	f.secrets.AllowAccess()
 
@@ -534,7 +549,7 @@ func TestLicenceSetRefusesAKeyInArgv(t *testing.T) {
 // argument position (F5).
 func TestLicenceSetReadsTheBundleFromAFile(t *testing.T) {
 	f := newLicenceFixture(t)
-	key, secret := f.issuer.mint(t, f.claims()), licenceTestSecret(t)
+	key, secret, _ := f.bundle(t)
 	f.seedSecretContainer(nil)
 	path := filepath.Join(t.TempDir(), "licence.key")
 	if err := os.WriteFile(path, []byte(key+"\n"+secret+"\n"), 0o600); err != nil {
@@ -580,7 +595,7 @@ func TestLicenceSetReadsTheBundleFromAFile(t *testing.T) {
 // is the key itself here.
 func TestLicenceSetRefusesAKeyPastedIntoTheFileFlag(t *testing.T) {
 	f := newLicenceFixture(t)
-	key, secret := f.issuer.mint(t, f.claims()), licenceTestSecret(t)
+	key, secret, _ := f.bundle(t)
 	f.seedSecretContainer(nil)
 
 	for _, pasted := range []string{key, key + "\n" + secret} {
@@ -692,7 +707,7 @@ func TestLicenceReadBundleRefusals(t *testing.T) {
 // project's object goes, which is a write nothing can complete.
 func TestLicenceSetNamesAHalfWrittenPair(t *testing.T) {
 	f := newLicenceFixture(t)
-	key, secret := f.issuer.mint(t, f.claims()), licenceTestSecret(t)
+	key, secret, _ := f.bundle(t)
 	f.seedSecretContainer(nil)
 	if err := os.MkdirAll(filepath.Join(f.dir, "runs", licenceTestObjectPath), 0o755); err != nil {
 		t.Fatal(err)
@@ -812,7 +827,7 @@ func TestLicenceRedactRemovesEverySpellingOfEveryValue(t *testing.T) {
 func TestLicenceRefusalsCarryNoKeyMaterial(t *testing.T) {
 	t.Run("the licence server's error body", func(t *testing.T) {
 		f := newLicenceFixture(t)
-		key, secret := f.issuer.mint(t, f.claims()), licenceTestSecret(t)
+		key, secret, _ := f.bundle(t)
 		f.seedSecretContainer([]byte(secret))
 		f.secrets.AllowAccess()
 		install(t, f, key)
@@ -831,7 +846,7 @@ func TestLicenceRefusalsCarryNoKeyMaterial(t *testing.T) {
 
 	t.Run("the licence server's body echoing a key this installation never held", func(t *testing.T) {
 		f := newLicenceFixture(t)
-		key, secret := f.issuer.mint(t, f.claims()), licenceTestSecret(t)
+		key, secret, _ := f.bundle(t)
 		f.seedSecretContainer([]byte(secret))
 		f.secrets.AllowAccess()
 		install(t, f, key)
@@ -856,7 +871,7 @@ func TestLicenceRefusalsCarryNoKeyMaterial(t *testing.T) {
 
 	t.Run("a Secret Manager error echoing the payload", func(t *testing.T) {
 		f := newLicenceFixture(t)
-		key, secret := f.issuer.mint(t, f.claims()), licenceTestSecret(t)
+		key, secret, _ := f.bundle(t)
 		f.seedSecretContainer(nil)
 		f.secrets.EchoAddVersionPayload = true
 
@@ -987,7 +1002,7 @@ func mustRun(t *testing.T, f *licenceFixture, args ...string) string {
 // whose secret cannot be stored is written.
 func TestLicenceSetRefusesBeforeTheContainerExists(t *testing.T) {
 	f := newLicenceFixture(t)
-	key, secret := f.issuer.mint(t, f.claims()), licenceTestSecret(t)
+	key, secret, _ := f.bundle(t)
 
 	out, _, err := f.exec(t, key+"\n"+secret+"\n", "licence", "set")
 	if err == nil {
@@ -1004,6 +1019,47 @@ func TestLicenceSetRefusesBeforeTheContainerExists(t *testing.T) {
 	}
 	if out != "" {
 		t.Errorf("the refusal wrote %q to stdout, want nothing", out)
+	}
+}
+
+// TestLicenceSetRefusesASecretThatIsNotTheKeys holds the pairing the licence
+// server compares: the key carries hex(sha256(secret)) in renewal_secret_hash
+// (D2135), and a renewal sends the secret for the server to hash and weigh
+// against it. A mistyped line 2, or a secret from another bundle, would
+// otherwise replace a secret that works — silently, the refusal that says so
+// arriving at the next renewal, days later and possibly past the last window —
+// so it is refused while both halves are still in front of the person, and
+// neither the container nor the project's object is written.
+func TestLicenceSetRefusesASecretThatIsNotTheKeys(t *testing.T) {
+	f := newLicenceFixture(t)
+	key, secret, claims := f.bundle(t)
+	f.seedSecretContainer(nil)
+	if _, _, err := f.exec(t, key+"\n"+secret+"\n", "licence", "set"); err != nil {
+		t.Fatalf("licence set = %v", err)
+	}
+	before := f.object(t).Raw
+
+	other := licenceTestSecret(t)
+	out, errOut, err := f.exec(t, key+"\n"+other+"\n", "licence", "set")
+	if err == nil {
+		t.Fatal("a renewal secret that is not the key's own was installed")
+	}
+	if code := fcli.ExitCode(err); code != fcli.ExitUserError {
+		t.Errorf("the refusal exited %d, want %d: %v", code, fcli.ExitUserError, err)
+	}
+	if !strings.Contains(err.Error(), "line 2") || !strings.Contains(err.Error(), claims.KeyID) {
+		t.Errorf("the refusal %q does not say which line is wrong or which key it is about", err.Error())
+	}
+	for _, text := range []string{out, errOut, err.Error()} {
+		if strings.Contains(text, other) || strings.Contains(text, secret) {
+			t.Errorf("the refusal repeated the secret it refused: %q", text)
+		}
+	}
+	if got := f.secrets.Latest(f.secretContainer()); string(got) != secret {
+		t.Error("the container's newest version is not the secret the key renews with: a secret that cannot prove itself was written over the one that works")
+	}
+	if got := f.object(t).Raw; !bytes.Equal(got, before) {
+		t.Error("the refusal rewrote the project's object")
 	}
 }
 
@@ -1310,7 +1366,7 @@ func writeMachineKey(t *testing.T, f *licenceFixture, key string, mode os.FileMo
 // server — and `status`, which is a read, is not refused at all.
 func TestLicenceWritesAreRefusedInAnAgentSession(t *testing.T) {
 	f := newLicenceFixture(t)
-	key, secret := f.issuer.mint(t, f.claims()), licenceTestSecret(t)
+	key, secret, _ := f.bundle(t)
 	f.seedSecretContainer(nil)
 	server := f.serveLicenceServer(t, nil)
 	t.Setenv("CLAUDECODE", "1")
@@ -1399,18 +1455,16 @@ func TestLicenceAliasLicenseWorks(t *testing.T) {
 // installed.
 func TestLicenceRefreshCallsTheServerOnce(t *testing.T) {
 	f := newLicenceFixture(t)
-	claims := f.claims()
-	key, secret := f.issuer.mint(t, claims), licenceTestSecret(t)
+	key, secret, claims := f.bundle(t)
 	f.seedSecretContainer(nil)
 	if _, _, err := f.exec(t, key+"\n"+secret+"\n", "licence", "set"); err != nil {
 		t.Fatalf("licence set = %v", err)
 	}
 	f.secrets.AllowAccess()
 
-	nextSecret := licenceTestSecret(t)
-	next := f.issuer.mint(t, f.claims(func(c *licence.Claims) {
+	next, nextSecret, _ := f.bundle(t, func(c *licence.Claims) {
 		c.KeyID, c.PaidThrough, c.IssuedAt = "lk_test_k32_0002", f.now.Add(600*24*time.Hour), f.now.Add(300*24*time.Hour)
-	}))
+	})
 	server := f.serveLicenceServer(t, func(keyservice.RenewalCall) (int, string) {
 		answer, err := json.Marshal(keyservice.Answer{Status: keyservice.StatusOK, Key: next, RenewalSecret: nextSecret})
 		if err != nil {
@@ -1448,6 +1502,65 @@ func TestLicenceRefreshCallsTheServerOnce(t *testing.T) {
 	}
 }
 
+// TestLicenceRefreshRefusesASecretThatIsNotTheKeys holds the same pairing at
+// the server's own answer: the successor key names the digest of the secret
+// that renews it, so an answer whose key and secret do not go together is
+// refused rather than installed — the installation would otherwise hold a key
+// it could never renew again, and would learn that at the next renewal, days
+// later — and neither the container nor the project's object is written.
+func TestLicenceRefreshRefusesASecretThatIsNotTheKeys(t *testing.T) {
+	f := newLicenceFixture(t)
+	key, secret, _ := f.bundle(t)
+	f.seedSecretContainer(nil)
+	if _, _, err := f.exec(t, key+"\n"+secret+"\n", "licence", "set"); err != nil {
+		t.Fatalf("licence set = %v", err)
+	}
+	f.secrets.AllowAccess()
+	before := f.object(t).Raw
+
+	// The successor is one this build accepts — the ring it verifies with minted
+	// it — and the secret beside it belongs to another key: the answer
+	// contradicts itself, which is the state that would leave the installation
+	// holding a pair no renewal can prove.
+	nextKeyID := "lk_test_k32_0002"
+	next, _, _ := f.bundle(t, func(c *licence.Claims) {
+		c.KeyID, c.PaidThrough, c.IssuedAt = nextKeyID, f.now.Add(600*24*time.Hour), f.now.Add(300*24*time.Hour)
+	})
+	elsewhere := licenceTestSecret(t)
+	server := f.serveLicenceServer(t, func(keyservice.RenewalCall) (int, string) {
+		answer, err := json.Marshal(keyservice.Answer{Status: keyservice.StatusOK, Key: next, RenewalSecret: elsewhere})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return http.StatusOK, string(answer)
+	})
+
+	out, errOut, err := f.exec(t, "", "licence", "refresh")
+	if err == nil {
+		t.Fatal("an answer whose key and secret do not go together was installed")
+	}
+	if code := fcli.ExitCode(err); code != fcli.ExitRemoteError {
+		t.Errorf("the refusal exited %d, want %d: the answer is the server's and a person has nothing to correct: %v", code, fcli.ExitRemoteError, err)
+	}
+	if !strings.Contains(err.Error(), nextKeyID) || !strings.Contains(err.Error(), "renewal secret") {
+		t.Errorf("the refusal %q does not name the key it is about or the secret that does not match it", err.Error())
+	}
+	for _, text := range []string{out, errOut, err.Error()} {
+		if strings.Contains(text, elsewhere) || strings.Contains(text, secret) {
+			t.Errorf("the refusal repeated a secret: %q", text)
+		}
+	}
+	if server.count() != 1 {
+		t.Errorf("the licence server was called %d times, want exactly one", server.count())
+	}
+	if got := f.secrets.Latest(f.secretContainer()); string(got) != secret {
+		t.Error("the container took a version from a secret that is not the key's own")
+	}
+	if got := f.object(t).Raw; !bytes.Equal(got, before) {
+		t.Error("the refusal rewrote the project's object")
+	}
+}
+
 // TestLicenceRefreshRefusesARedirect holds the client's own rule: a 308 from
 // the licence server's address is the answer, and it is not followed. A
 // followed one re-sends the renewal — the key id and the renewal secret, which
@@ -1458,8 +1571,7 @@ func TestLicenceRefreshCallsTheServerOnce(t *testing.T) {
 // Free. The renewal goes to the licence server's address and nowhere else.
 func TestLicenceRefreshRefusesARedirect(t *testing.T) {
 	f := newLicenceFixture(t)
-	claims := f.claims()
-	key, secret := f.issuer.mint(t, claims), licenceTestSecret(t)
+	key, secret, _ := f.bundle(t)
 	f.seedSecretContainer(nil)
 	if _, _, err := f.exec(t, key+"\n"+secret+"\n", "licence", "set"); err != nil {
 		t.Fatalf("licence set = %v", err)
@@ -1509,7 +1621,7 @@ func TestLicenceRefreshRefusesARedirect(t *testing.T) {
 // installation that renewed nothing is not an installation that failed.
 func TestLicenceRefreshOutsideTheWindowWritesNothing(t *testing.T) {
 	f := newLicenceFixture(t)
-	key, secret := f.issuer.mint(t, f.claims()), licenceTestSecret(t)
+	key, secret, _ := f.bundle(t)
 	f.seedSecretContainer(nil)
 	if _, _, err := f.exec(t, key+"\n"+secret+"\n", "licence", "set"); err != nil {
 		t.Fatalf("licence set = %v", err)
@@ -1563,8 +1675,7 @@ func TestLicenceRefreshOfAnOfflineKeyNeverContactsTheServer(t *testing.T) {
 // everything.
 func TestLicenceRefreshOfARevokedKey(t *testing.T) {
 	f := newLicenceFixture(t)
-	claims := f.claims()
-	key, secret := f.issuer.mint(t, claims), licenceTestSecret(t)
+	key, secret, claims := f.bundle(t)
 	f.seedSecretContainer(nil)
 	if _, _, err := f.exec(t, key+"\n"+secret+"\n", "licence", "set"); err != nil {
 		t.Fatalf("licence set = %v", err)
@@ -1625,8 +1736,7 @@ func TestLicenceRefreshReportsARevocationItCouldNotRecord(t *testing.T) {
 		t.Skip("root writes into a read-only directory, so the store cannot be made to refuse the write")
 	}
 	f := newLicenceFixture(t)
-	claims := f.claims()
-	key, secret := f.issuer.mint(t, claims), licenceTestSecret(t)
+	key, secret, _ := f.bundle(t)
 	f.seedSecretContainer(nil)
 	if _, _, err := f.exec(t, key+"\n"+secret+"\n", "licence", "set"); err != nil {
 		t.Fatalf("licence set = %v", err)
