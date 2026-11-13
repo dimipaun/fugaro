@@ -62,81 +62,202 @@ func registerWire(name string, alloc func() any) {
 // F20). Every portal route reads its request body through this function, so a
 // body the schema refuses must not arrive at a handler looking valid.
 //
-// encoding/json alone gives none of the three. It matches a field name ignoring
-// case, so `WORKSPACE_ID` fills `workspace_id`; it keeps the last of a repeated
-// key, so a body can say one thing twice and be read as the second; it reads an
-// absent field as the zero value, so a body missing its terms version arrives as
-// an empty one; and it reads `null` as a whole shape of zeroes. A body written
-// against a newer schema is the case that matters most: it must fail here rather
-// than be served with the half of what it asked for that this build happens to
-// know.
+// encoding/json alone gives none of that. It matches a field name ignoring case,
+// so `WORKSPACE_ID` fills `workspace_id`; it keeps the last of a repeated key, so
+// a body can say one thing twice and be read as the second; it reads an absent
+// field as the zero value, so a body missing its terms version arrives as an
+// empty one; it reads `null` as "leave the field alone", so a null seat count
+// arrives as zero; and it reads an object no deeper than the shape's own fields,
+// so a nested object is held to nothing at all. A body written against a newer
+// schema is the case that matters most: it must fail here rather than be served
+// with the half of what it asked for that this build happens to know.
 func decodeWire(body []byte, shape any) error {
-	keys, err := wireBodyKeys(body)
-	if err != nil {
-		return err
-	}
 	value := reflect.ValueOf(shape)
 	if value.Kind() != reflect.Pointer || value.Elem().Kind() != reflect.Struct {
 		return fmt.Errorf("%T is not a pointer to a struct, so no body has that shape", shape)
 	}
-	held := make(map[string]reflect.Type)
-	wireFieldTypes(value.Elem().Type(), held)
-	for _, key := range keys {
-		if _, ok := held[key]; !ok {
-			return fmt.Errorf("the body holds the field %q, which this shape does not", key)
-		}
-		delete(held, key)
-	}
-	if len(held) > 0 {
-		return fmt.Errorf("the body leaves out %s, and every field of this shape is one the body has to carry",
-			strings.Join(slices.Sorted(maps.Keys(held)), ", "))
+	if err := wireStrict(body, value.Elem().Type()); err != nil {
+		return err
 	}
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
 	return decoder.Decode(shape)
 }
 
-// wireBodyKeys is a body's own field names in the order written, with a repeated
-// key refused. The body is walked as tokens rather than decoded into a map,
-// because a map has already lost both the order and the repeat by the time it
-// exists, which is exactly the pair of facts a strict reader is asked for.
-func wireBodyKeys(body []byte) ([]string, error) {
+// wireStrict holds one body to the type its route reads it into, before that
+// type reads a byte of it: the body is an object, and every object in it holds
+// exactly the fields of the Go type there, each of them once, with no null where
+// the schema requires a value. It walks the body's own tokens rather than a
+// decoded value, because a decoded map has already lost the case-folding, the
+// repeats and the nulls by the time it exists, and it goes as deep as the shape
+// does: a nested object — an organisation's terms, a reseller's rates, a
+// statement's lines — is closed and fully required in its def too, so it is read
+// the same way as the shape's own fields rather than by encoding/json alone.
+//
+// The last decode is what says the values have the types the fields have; this
+// walk is what says the body says what the schema says.
+func wireStrict(body []byte, t reflect.Type) error {
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	opening, err := decoder.Token()
 	if err != nil {
-		return nil, err
+		return errors.New("the body is not a JSON object, and a shape's fields are all it holds")
 	}
 	if delim, ok := opening.(json.Delim); !ok || delim != '{' {
-		return nil, errors.New("the body is not a JSON object, and a shape's fields are all it holds")
+		return errors.New("the body is not a JSON object, and a shape's fields are all it holds")
 	}
-	var keys []string
-	seen := make(map[string]bool)
+	if err := wireHoldObject(decoder, t, ""); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		return errors.New("the body holds more than one JSON value, and only the first would be read")
+	}
+	return nil
+}
+
+// wireHoldObject reads one object's fields against the Go type that holds them:
+// a name the type does not hold is refused, a name it holds twice is refused, and
+// a field left out is refused, so a body and its schema agree on every field the
+// object has and not only on the ones the body happens to carry. at is the path
+// this object was reached by, which is what a failure names.
+func wireHoldObject(decoder *json.Decoder, t reflect.Type, at string) error {
+	held := make(map[string]reflect.Type)
+	wireFieldTypes(t, held)
+	seen := make(map[string]bool, len(held))
 	for decoder.More() {
 		token, err := decoder.Token()
 		if err != nil {
-			return nil, err
+			return err
 		}
 		key, ok := token.(string)
 		if !ok {
-			return nil, errors.New("the body names a field with something other than a string")
+			return fmt.Errorf("%s names a field with something other than a string", wireAt(at))
 		}
 		if seen[key] {
-			return nil, fmt.Errorf("the body writes the field %q twice, and a reader that kept the last of the two would see a value the schema never saw", key)
+			return fmt.Errorf("%s writes the field %q twice, and a reader that kept the last of the two would see a value the schema never saw",
+				wireAt(at), key)
+		}
+		field, ok := held[key]
+		if !ok {
+			return fmt.Errorf("%s holds the field %q, which this shape does not", wireAt(at), key)
 		}
 		seen[key] = true
-		keys = append(keys, key)
-		var held json.RawMessage
-		if err := decoder.Decode(&held); err != nil {
-			return nil, err
+		delete(held, key)
+		if err := wireHold(decoder, field, wirePath(at, key)); err != nil {
+			return err
 		}
 	}
 	if _, err := decoder.Token(); err != nil {
-		return nil, err
+		return err
 	}
-	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
-		return nil, errors.New("the body holds more than one JSON value, and only the first would be read")
+	if len(held) > 0 {
+		return fmt.Errorf("%s leaves out %s, and every field of this shape is one the body has to carry",
+			wireAt(at), strings.Join(slices.Sorted(maps.Keys(held)), ", "))
 	}
-	return keys, nil
+	return nil
+}
+
+// wireHold reads one value and holds it to the Go type the field there has: an
+// object against a struct's fields, a list against the type of its elements, and
+// null only where the type can hold one — everywhere else the schema requires a
+// value, and encoding/json would take null as the zero value rather than refuse
+// it.
+func wireHold(decoder *json.Decoder, t reflect.Type, path string) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	switch value := token.(type) {
+	case json.Delim:
+		switch value {
+		case '{':
+			base := wirePointerless(t)
+			if !wireHoldsFields(base) {
+				return fmt.Errorf("%s holds an object, and the field there reads a value of its own", wireAt(path))
+			}
+			return wireHoldObject(decoder, base, path)
+		case '[':
+			base := wirePointerless(t)
+			if base.Kind() != reflect.Slice && base.Kind() != reflect.Array {
+				return fmt.Errorf("%s holds an array, and the field there is not a list", wireAt(path))
+			}
+			return wireHoldArray(decoder, base.Elem(), path)
+		default:
+			return fmt.Errorf("%s closes an object or an array this body never opened", wireAt(path))
+		}
+	case nil:
+		if wireNullable(t) {
+			return nil
+		}
+		return fmt.Errorf("%s is null, and the field there holds a value: a reader of the schema refuses null there, and encoding/json would take it as the zero value",
+			wireAt(path))
+	default:
+		return nil
+	}
+}
+
+// wireHoldArray reads a list's elements against the type they all have, so a
+// nested object inside a list is held to its fields like any other.
+func wireHoldArray(decoder *json.Decoder, element reflect.Type, path string) error {
+	for i := 0; decoder.More(); i++ {
+		if err := wireHold(decoder, element, fmt.Sprintf("%s[%d]", path, i)); err != nil {
+			return err
+		}
+	}
+	_, err := decoder.Token()
+	return err
+}
+
+// wireAt names where in the body a fault is, the way the SPA reads the shape: the
+// body itself at the root, and the path walked to it below.
+func wireAt(path string) string {
+	if path == "" {
+		return "the body"
+	}
+	return "the body's " + path
+}
+
+// wirePath is the path to a field, from the path to the object that holds it.
+func wirePath(at, field string) string {
+	if at == "" {
+		return field
+	}
+	return at + "." + field
+}
+
+// wirePointerless is a type once its pointers are unwrapped: a nullable field is
+// a pointer to the type that reads it, so the object below it is the same one at
+// either depth.
+func wirePointerless(t reflect.Type) reflect.Type {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	return t
+}
+
+// wireHoldsFields reports whether a body's object there carries the type's own
+// fields. A scalar has none, and neither has a type that reads itself out of a
+// JSON value — a time.Time is a string on the wire, and its own parser and the
+// schema are what refuse a body that is not one.
+func wireHoldsFields(t reflect.Type) bool {
+	if t.Kind() != reflect.Struct {
+		return false
+	}
+	return !reflect.PointerTo(t).Implements(wireJSONReader)
+}
+
+// wireJSONReader is the interface a type implements when it reads its own JSON.
+var wireJSONReader = reflect.TypeOf((*json.Unmarshaler)(nil)).Elem()
+
+// wireNullable reports whether a type can hold a JSON null. A pointer is how this
+// package spells a field its schema writes as a union with null — a nullable
+// organisation id, instant or nested object — and every other field is one the
+// schema writes as a plain type, a list of them included.
+func wireNullable(t reflect.Type) bool {
+	switch t.Kind() {
+	case reflect.Pointer, reflect.Map, reflect.Interface:
+		return true
+	}
+	return false
 }
 
 // wireFieldTypes is one type's own JSON names and the types they hold, exactly as
