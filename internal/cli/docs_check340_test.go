@@ -283,11 +283,17 @@ func TestDocsCheck340RecordsTheThirdRun(t *testing.T) {
 		// the other candidate — and the answer R12's builder takes from it.
 		"**every listing was refused**",
 		"the attribute carries the request's OWN RELATIVE prefix (`runs/`, `reports/`)",
-		// The job's own listings, traced, which are what the criterion now holds
-		// and what the diagnostic is not.
-		"read-only trace of the reports job",
+		// The job's own listings, which are what the criterion now holds and what
+		// the diagnostic is not — and where that set comes from: R12's design,
+		// cited to the reader the tree has today rather than to a job nobody has
+		// built. A section that called it a reading of R11 would present a
+		// forward-looking assumption as measured evidence, and R11 cannot exist
+		// yet: the plan builds R12 first.
 		"`reports/<slug>/<YYYY>/` and `reports/<YYYY>/`",
-		"**never** the bare `reports/` or the bucket root",
+		"what that row is worth comes from the **design**, not from a reading of code",
+		"`internal/cli/runs_digest.go:662` and `:690`",
+		"**R11 does not exist in this tree**",
+		"and never the bare `reports/` or the bucket root",
 		"a **DIAGNOSTIC** that gates nothing",
 		// The row is still NOT RUN, and one more run is what clears it.
 		"the row above is still NOT RUN",

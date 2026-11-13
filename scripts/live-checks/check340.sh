@@ -22,9 +22,14 @@
 # check runs BEFORE that Terraform lands.
 #
 # What it asserts, as the throwaway account under that relative form, is the
-# reports job's OWN reader: R11 lists `runs/<slug>/`, `reports/<slug>/`,
-# `reports/<slug>/<YYYY>/` and `reports/<YYYY>/`, and reads the `runs/` records
-# it summarises — and it lists neither the bare `reports/` nor the bucket root
+# listing set R12's design gives the reports job — §R12 of the plan, not a
+# reading of a built job: neither R11 nor the job exists in this tree yet (R12
+# lands before R7 and R11), and what the job will list is that design's own
+# statement, derived from the reader the tree has today
+# (`internal/cli/runs_digest.go`'s two `os.ReadDir` sites, 662 and 690): the loop
+# and the stored reader R11 are to list `runs/<slug>/`, `reports/<slug>/`,
+# `reports/<slug>/<YYYY>/` and `reports/<YYYY>/`, and to read the `runs/` records
+# they summarise — and to list neither the bare `reports/` nor the bucket root
 # (the one bare-prefix lister in the tree, `runstore.ListSlugs` on `runs/`, is a
 # CLI command and not the job). So:
 #   - `runs/<slug>/`, `reports/<slug>/`, `reports/<slug>/<YYYY>/` and
@@ -1147,7 +1152,7 @@ diagnose_reports_bare() {
   out=$(list_as_sa "gs://$B/reports/*") || status=$?
   REPORTS_BARE_WILDCARD=$(bare_probe "$status" "$out")
   REPORTS_BARE_API=$(reports_bare_api)
-  fact reports-bare-diagnostic INFO "DIAGNOSTIC ONLY: no criterion of this check is read from this row, it changes no PASS, no FAIL and no exit code. The reports job lists runs/<slug>/, reports/<slug>/, reports/<slug>/<YYYY>/ and reports/<YYYY>/ and NEVER this bare prefix, so the job does not need it. It is asked because the third live run (2026-11-13) was refused it — the denial named storage.objects.list — while the bucket policy read back with the owner's own identity showed the reports binding present, and that refusal is still unexplained: gcloud resolving the prefix as an object before listing it, a different request shape, and IAM propagation are all open. Asked three ways: (1) a plain ls gs://$B/reports/ — $REPORTS_BARE_PLAIN; (2) a wildcard ls gs://$B/reports/* — $REPORTS_BARE_WILDCARD; (3) a delimiter-style objects.list (prefix=reports/&delimiter=/) through the JSON API with this account's own access token — $REPORTS_BARE_API. Paste this row back: it is what the next revision of this check reads"
+  fact reports-bare-diagnostic INFO "DIAGNOSTIC ONLY: no criterion of this check is read from this row, it changes no PASS, no FAIL and no exit code. R12's design has the reports job list runs/<slug>/, reports/<slug>/, reports/<slug>/<YYYY>/ and reports/<YYYY>/ and NEVER this bare prefix, so the job does not need it (that set is the design's, not a reading of a built job: R11 does not exist in this tree yet). It is asked because the third live run (2026-11-13) was refused it — the denial named storage.objects.list — while the bucket policy read back with the owner's own identity showed the reports binding present, and that refusal is still unexplained: gcloud resolving the prefix as an object before listing it, a different request shape, and IAM propagation are all open. Asked three ways: (1) a plain ls gs://$B/reports/ — $REPORTS_BARE_PLAIN; (2) a wildcard ls gs://$B/reports/* — $REPORTS_BARE_WILDCARD; (3) a delimiter-style objects.list (prefix=reports/&delimiter=/) through the JSON API with this account's own access token — $REPORTS_BARE_API. Paste this row back: it is what the next revision of this check reads"
 }
 
 # step_criteria: grant R12's two conditioned bindings, read every criterion as the

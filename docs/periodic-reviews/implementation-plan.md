@@ -369,7 +369,7 @@ commit.
   `reports/`, the `get`, write, overwrite and delete under the lifecycle; the listing half is what
   grants the **listing**, because the job lists `runs/<slug>/` to find a repository's records and
   R11's stored reader lists `reports/<slug>/<YYYY>/` the way today's reader lists a checkout's folder
-  twice over (`internal/cli/runs_digest.go:438` and `:466`, both `os.ReadDir`), with the year roll-up
+  twice over (`internal/cli/runs_digest.go:662` and `:690`, both `os.ReadDir`, in `digestReportFiles`), with the year roll-up
   listing the same prefix again.
   **`<list prefix>` is spelled by the owner-run listing check below, and its third run spelled it.**
   The attribute's value form — whether it carries the request's own prefix (`runs/`) or the full
