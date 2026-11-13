@@ -1,11 +1,11 @@
 # Implementation plan: project-level shared jobs as the default
 
-Builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md) (decisions D2300–D2313, findings F1–F23).
+Builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md) (decisions D2300–D2314, findings F1–F23).
 **Nothing is implemented, and no task is approved: each needs the owner's explicit go.** The answers that shaped the plan:
 shared jobs take Bitbucket by pairing and not by a new token (D2302); a build may bake several repositories with a
 credential-service token (D2301, which supersedes O3 (b)); `checkout: baked` runs on shared jobs (D2304); `update`
 writes a default profile and a base-image catalog entry (R1, D2305), turns the proxy on (D2306) and retires the
-per-repository jobs with no run gate (D2303, not the recommendation); a baked checkout is sanitised and verified (D2308) and a run may read the project's other baked repositories (D2309, not the recommendation).
+per-repository jobs with no run gate (D2303, not the recommendation); a baked checkout is sanitised and verified (D2308) and the runner removes the other baked repositories before the agent starts (D2309, as amended).
 
 The decoupling pass is **on** (`fugaro settings planning.decoupling` reads `true`, the default). Mode: `fugaro settings
 rigor.default` was not read for each path; every task below that touches credentials, a write guard, Terraform or IAM is
@@ -34,7 +34,7 @@ flagged opus with an independent review, and the contracts over credentials get 
 | A shared Bitbucket job mounts no token; the runner's git, REST, submodule and LFS traffic all reach the forwarder | S3, N2, I1 |
 | A baked checkout on a project job is reset to a fixed `.git` state and its origin verified before any fetch; the clone is built in a stage the entry cannot alter | S9, B2 |
 | Every other caller class is refused on the build route, and the build identity is refused on every other route | B1 |
-| A run on a narrow profile can read the project's other baked repositories (D2309, stated, not removed) | S7, I2 |
+| A run sees only its own baked repositories: the others are removed before the agent starts | S9, I2 |
 | A call for a repository the policy does not admit is refused by the service, naming the repository | S2, N1 |
 | The entry's own build step carries no `--secret` and no identity; only the generated clone step holds the credential | B2 |
 | The build token is read-only, short-lived, covers only the entry's repositories and reaches no `RUN` step | B1, B2, B3 |
@@ -121,11 +121,11 @@ flagged opus with an independent review, and the contracts over credentials get 
 - Owner-run: no.
 
 ### S6: `update` turns the proxy on
-- Acceptance: for a project with a Bitbucket repository, `update` sets `project_secrets.bitbucket-token.proxy` in the local config (the switch `fugaro secrets --proxy` writes, which the existing policy stage then publishes as `bitbucket_token.proxy`, with `allow_repos` derived from the project's Bitbucket repositories by `DeriveBitbucketToken`) and the runner pin at `proxySince`, in the one converge step; when the project's Bitbucket secret holds no workspace token it asks for one once, with the prompt `fugaro secrets` uses (R7); a project already on it is unchanged; the stage's place in `initStages` is fixed so that the local config and the published node never disagree for `resolveBitbucketProxied` during the one `update` (the switch is written in the policy stage's migration, or before the repository stage together with the node it implies, whichever the red step shows converges), and a project at the previous version converges in one `update`; the in-flight line names the step and `update-in-flight.md` has its row.
+- Acceptance: for a project with a Bitbucket repository, `update` sets `project_secrets.bitbucket-token.proxy` in the local config (the switch `fugaro secrets --proxy` writes, which the existing policy stage then publishes as `bitbucket_token.proxy`, with `allow_repos` derived from the project's Bitbucket repositories by `DeriveBitbucketToken`) and the runner pin at `proxySince`, in the one converge step; when the project's Bitbucket secret holds no workspace token it asks for one once, with the prompt `fugaro secrets` uses (R7); `update` refuses a second Bitbucket workspace in one project, naming it (D2314); a project already on it is unchanged; the stage's place in `initStages` is fixed so that the local config and the published node never disagree for `resolveBitbucketProxied` during the one `update` (the switch is written in the policy stage's migration, or before the repository stage together with the node it implies, whichever the red step shows converges), and a project at the previous version converges in one `update`; the in-flight line names the step and `update-in-flight.md` has its row.
 - Files: `internal/cli/update_proxy_switch.go` (new), `internal/cli/init_stages.go`, `internal/cli/update_in_flight.go`, `docs/design/update-in-flight.md`, `internal/cli/update_in_flight_test.go`.
 - Interfaces: consumes the existing switches; produces the converge.
-- Tests: `TestUpdateTurnsTheBitbucketProxyOn`, `TestUpdateBitbucketProxyConvergesInOneUpdate`, `TestUpdateAsksForTheWorkspaceTokenOnce`, `TestUpdateInFlightLineNamesEveryStepThatCanReachARun`, `TestUpdateLeavesARunInFlightRunning`.
-- Command: `go test ./internal/cli/ -run 'UpdateTurnsTheBitbucketProxyOn|UpdateBitbucketProxyConverges|UpdateAsksForTheWorkspaceToken|UpdateInFlight|UpdateLeavesARunInFlight' -count=1`
+- Tests: `TestUpdateTurnsTheBitbucketProxyOn`, `TestUpdateBitbucketProxyConvergesInOneUpdate`, `TestUpdateAsksForTheWorkspaceTokenOnce`, `TestUpdateRefusesASecondBitbucketWorkspace`, `TestUpdateInFlightLineNamesEveryStepThatCanReachARun`, `TestUpdateLeavesARunInFlightRunning`.
+- Command: `go test ./internal/cli/ -run 'UpdateTurnsTheBitbucketProxyOn|UpdateBitbucketProxyConverges|UpdateAsksForTheWorkspaceToken|UpdateRefusesASecondBitbucketWorkspace|UpdateInFlight|UpdateLeavesARunInFlight' -count=1`
 - Red step: the first test fails with the switches off.
 - Depends on: S5 (S5 registers the profile stage in `init_stages.go` and owns `init_policy_migrate.go`, where the switch may be written); launches only after Check 191 passes (P2).
 - Commit: `update: Bitbucket projects converge onto the credential proxy (S6, D2306, R7)`.
@@ -145,11 +145,11 @@ flagged opus with an independent review, and the contracts over credentials get 
 - Owner-run: no.
 
 ### S9: a baked checkout on a project job is sanitised and verified
-- Acceptance: the refusal in `checkProjectCheckoutOrigin` is replaced (D2308): at job start the runner resets the baked checkout to a fixed state: `.git` config and hooks reset; a `.git` that is a file pointing elsewhere, alternates, a `commondir`, and any config or hooks under `.git/modules/*` refused; `refs/replace` and `info/grafts` removed; a hard reset to the fetched ref and `clean -ffdx`, so a tracked file an entry's build changed does not reach the run or its pull request; the origin verified against the run's repository; and only then the checkout and fetch. A checkout it cannot reset halts the run with a message naming the reason; a project job never runs a hook from a baked `.git`.
+- Acceptance: the refusal in `checkProjectCheckoutOrigin` is replaced (D2308): at job start the runner resets the baked checkout to a fixed state: `.git` config and hooks reset; a `.git` that is a file pointing elsewhere, alternates, a `commondir`, and any config or hooks under `.git/modules/*` refused; `refs/replace` and `info/grafts` removed; a hard reset to the fetched ref and `clean -ffdx`, so a tracked file an entry's build changed does not reach the run or its pull request; the origin verified against the run's repository; every baked directory but the run's own repositories' removed before the agent starts (D2309); and only then the checkout and fetch. A checkout it cannot reset halts the run with a message naming the reason; a project job never runs a hook from a baked `.git`.
 - Files: `internal/runner/projectjob.go`, `internal/runner/projectjob_test.go`, `internal/gitops/gitops.go`, `internal/gitops/reset_test.go` (new).
 - Interfaces: consumes S3's proxied runner and S4's candidate logic (the same file); produces the baked-or-clone checkout on a project job.
-- Tests: `TestBakedCheckoutOnAProjectJobIsResetBeforeFetch`, `TestBakedCheckoutWithAPlantedHookNeverRunsIt`, `TestBakedCheckoutWithAnotherOriginHalts`, `TestBakedCheckoutWithAGitdirFileAlternatesOrSubmoduleHooksHalts`, `TestBakedCheckoutDropsReplaceRefsAndGraftsAndTrackedEdits`.
-- Command: `go test ./internal/runner/ ./internal/gitops/ -run 'BakedCheckoutOnAProjectJob|PlantedHook|AnotherOrigin|GitdirFileAlternates|DropsReplaceRefs' -count=1`
+- Tests: `TestBakedCheckoutOnAProjectJobIsResetBeforeFetch`, `TestBakedCheckoutWithAPlantedHookNeverRunsIt`, `TestBakedCheckoutWithAnotherOriginHalts`, `TestBakedCheckoutWithAGitdirFileAlternatesOrSubmoduleHooksHalts`, `TestBakedCheckoutDropsReplaceRefsAndGraftsAndTrackedEdits`, `TestOtherBakedReposAreRemovedBeforeTheAgentStarts`.
+- Command: `go test ./internal/runner/ ./internal/gitops/ -run 'BakedCheckoutOnAProjectJob|PlantedHook|AnotherOrigin|GitdirFileAlternates|DropsReplaceRefs|OtherBakedReposAreRemoved' -count=1`
 - Red step: `TestBakedCheckoutWithAPlantedHookNeverRunsIt` fails because the guard refuses the checkout instead of resetting it, and a planted hook is never exercised.
 - Depends on: S4 (the same file, `projectjob.go`), S3 (the proxied fetch it resets for).
 - Commit: `runner: a baked checkout on a project job is reset and verified (S9, D2308)`.
@@ -172,7 +172,7 @@ flagged opus with an independent review, and the contracts over credentials get 
 - Acceptance: `docs/git-providers.md` no longer says Bitbucket stays per-repository; `docs/checkout.md` states that baked is a cache; the pinned reach wording and the docs tests agree.
 - Files: `docs/git-providers.md`, `docs/checkout.md`, `docs/design/project-centric.md`, `internal/cli/docs_project_wide_git_test.go`.
 - Interfaces: none.
-- Tests: `TestDocsStateTheBitbucketProjectTokenReach`, the Docs filter; the documents also state D2309 (a run may read the project's other baked repositories) plainly.
+- Tests: `TestDocsStateTheBitbucketProjectTokenReach`, the Docs filter; 
 - Command: `go test ./internal/cli/ -run Docs -count=1`
 - Red step: the pinned sentence in `docs_project_wide_git_test.go` is rewritten first, and the test fails until `docs/git-providers.md` carries the new wording.
 - Depends on: I1 (the documents describe the behaviour).
@@ -279,11 +279,11 @@ flagged opus with an independent review, and the contracts over credentials get 
 - Owner-run: no.
 
 ### I2: wire the build to the route
-- Acceptance: the stub is deleted and a hermetic test builds a catalog entry over two repositories with a credential from the service and bakes both; a second test shows a run for one of them can read the other under `/work/baked` (D2309, pinned so the choice is visible).
+- Acceptance: the stub is deleted and a hermetic test builds a catalog entry over two repositories with a credential from the service and bakes both; a second test shows a run for one of them finds the other's directory removed under `/work/baked` (D2309).
 - Files: `internal/buildtoken/stub.go` (deleted), `internal/cli/catalog_bake_e2e_test.go` (new).
 - Interfaces: consumes B1, B2, C2.
-- Tests: `TestCatalogBuildBakesTwoReposThroughTheService`, `TestARunCanReadTheProjectsOtherBakedRepos`.
-- Command: `go test ./internal/cli/ -run 'CatalogBuildBakesTwoRepos|ARunCanReadTheProjectsOtherBakedRepos' -count=1`
+- Tests: `TestCatalogBuildBakesTwoReposThroughTheService`, `TestARunCannotReadTheProjectsOtherBakedRepos`.
+- Command: `go test ./internal/cli/ -run 'CatalogBuildBakesTwoRepos|ARunCannotReadTheProjectsOtherBakedRepos' -count=1`
 - Red step: fails while the stub stands.
 - Depends on: B1, B2, B8, C2.
 - Commit: `catalog: the build reaches the credential service (I2)`.
@@ -524,7 +524,6 @@ None beyond `fugaro update`: S5, S6 and M2 do the profile, the proxy switch and 
 - **A run gate for retirement** (the spec's "after one success"): declined by the owner's answer to D2303. The structural precondition in M2 stands in its place.
 - **A new Fugaro-issued Bitbucket token**: declined by D2302; the job holds nothing.
 - **Deleting the repo-bound and repo-level image code**: out of scope in the spec.
-- **A runner step that removes the other baked repositories** (the review's recommendation): declined by the owner's answer to D2309; I2 pins the read so the choice stays visible.
 - **Narrowing a shared GitHub job to its repositories** (decision 4's GitHub half, F21): it waits on secrets-brokering's B5.7 flip, which this plan does not do; until it, a shared GitHub job mounts the App key.
 - **Graph edges from a provider or an integration to its contract**: the graph schema refuses them, so the plan says the launch order in prose.
 - **A run record that says a shared job succeeded**: not needed once D2303 dropped the gate; the launch record already names the job (F12).

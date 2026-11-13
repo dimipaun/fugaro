@@ -83,11 +83,12 @@ Build order: `bb-shared-jobs` first, the smallest slice that gives a Bitbucket p
 | D2305 | What default image does `update` create | A default catalog entry that is the pinned base image (`source: image`), nothing builds | **Catalog default on the base image (as recommended), 2026-11-13.** |
 | D2306 | How do Bitbucket projects reach the proxy | `update` turns the proxy on (`project_secrets.bitbucket-token.proxy`, with the credentials service `update` already deploys) | **`update` turns it on (as recommended), 2026-11-13.** |
 | D2308 | How is a baked checkout trusted on a project job (F22) | Sanitise and verify: the clone is built in a separate stage, and the runner resets `.git` config and hooks to a fixed state and verifies the origin before any fetch | **Sanitise and verify (as recommended), 2026-11-13.** |
-| D2309 | What happens to the other baked repositories during a run (F23) | The runner removes every baked directory but the run's own | **Accept the read, 2026-11-13. Not the recommendation.** A run may read the project's other baked repositories. Followed through: no removal step; the documents say so plainly (see Open items). |
+| D2309 | What happens to the other baked repositories during a run (F23) | The runner removes every baked directory but the run's own | **First answered "accept the read" (not the recommendation); amended later on 2026-11-13 by the owner to the recommendation: the runner removes the other baked directories before the agent starts.** Task S9. |
 | D2310 | A project that mixes providers (open item 6): which profile does `update` write | A profile per provider, named by the provider, written when that provider has none | **A profile per provider (as recommended), 2026-11-13.** |
 | D2311 | May a catalog entry keep a credential of its own (open item 7) | No: entry builds are credential-free | **No credential in entries (as recommended), 2026-11-13.** The catalog refuses an entry that mounts a secret (B9). |
 | D2312 | Is "no job apply" enough for adding a repository (open item 8) | Yes, the root still applies its secrets and catalog check | **"No job apply is enough" (as recommended), 2026-11-13; amended later the same day by the owner: no repository-level Terraform at all.** After reading `secrets.tf` and `catalogcheck.tf`, the owner ruled the root goes: adding or removing a repository applies nothing, and the spec's "no Terraform re-run" stands as written. |
 | D2313 | What becomes of the secrets a repository declares in `fugaro.yaml` (they were created by the repo root) | Became project secrets, adopted without destroying | **Amended the same day by the owner, 2026-11-13, "repository-level secrets are in a way similar to repository-level images": disabled for now, as the images are. A repository's `secrets:` is accepted and ignored with a warning; existing containers and their values are left alone; the code stays so the feature can return.** (The first answer, "become project secrets", was withdrawn.) M1. |
+| D2314 | May one project span more than one Bitbucket workspace (F15) | One workspace per project | **One workspace per project (as recommended), 2026-11-13.** S6 refuses a second workspace, naming it. |
 
 Resolutions (one defensible answer, so not asked):
 
@@ -102,14 +103,14 @@ Resolutions (one defensible answer, so not asked):
 
 ## Open tensions and open items
 
-- **Open item 1 (confirm).** D2303 departs from the spec's own requirement that retirement wait for one successful shared run. The plan builds the structural precondition in its place; confirm that a failed first shared run, after the per-repository jobs are gone, may be repaired by re-running `fugaro update` rather than by falling back.
-- **Open item 2.** D2306 moves existing per-repository Bitbucket jobs onto the proxy before the flip (B1.13 part two) that Check 191 gates. The plan keeps the job's own token mounted until the flip, as `docs/secrets-brokering` says; confirm the order.
+- **Open item 1** is confirmed (2026-11-13): a failed first shared run is repaired by running `update` again and relaunching; there is no fallback to the old job.
+- **Open item 2** is confirmed (2026-11-13): the proxy goes on before the flip, and the job keeps its own token mounted until B1.13 part two.
 - **Open item 6** is answered: D2310.
 - **Open item 7** is answered: D2311.
 - **Open item 8** is answered: D2312, as amended (no repository-level Terraform).
-- **Open item 3.** F15: confirm whether a project may span Bitbucket workspaces. The plan assumes one workspace per project.
-- **Open item 4.** D2309 is not the recommendation: with it, a run on a narrow profile can read every repository baked into its image. Confirm that this is wanted, or ask for the removal step (a runner task of one file and a test).
-- **Open item 5.** Without a run gate (D2303), Check 580 is the only live proof before a per-repository job is deleted, so the plan makes M6, M7, S10 and M2 launch after Check 580 passes, and M2 retires a job only when no execution is running on it. Confirm.
+- **Open item 3** is answered (2026-11-13), as recommended: one Bitbucket workspace per project; `update` refuses a second one naming it (S6). Recorded as D2314.
+- **Open item 4** is answered (2026-11-13): D2309 is amended, the runner removes the other baked directories (S9).
+- **Open item 5** is confirmed (2026-11-13): M6, M7, S10 and M2 launch only after Check 580 passes, and M2 retires a job only when no execution runs on it.
 
 ## UNVERIFIED
 

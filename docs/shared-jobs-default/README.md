@@ -24,5 +24,5 @@ pull requests' documents reach D2207.
 - The spec says shared jobs are "disabled as untested"; they are not behind a switch, they are limited to GitHub by a provider list.
 - The spec's "Fugaro-issued token" for Bitbucket is dropped (D2302): the job holds no token, and the proxy pairs the verified run identity to the profile's repositories.
 - Open items 6, 7 and 8 were answered as D2310 to D2312, and D2312 was amended by the owner (no repository-level Terraform at all). D2313 first moved repository secrets to project secrets and was then reversed: repository-level secrets are disabled for now, accepted and ignored with a warning, like repository-level images.
-- D2303 (no retire gate) and D2309 (a run may read the project's other baked repositories) are **not the recommendation**; D2303 departs from the spec's own "after one successful run".
+- D2303 (no retire gate) is **not the recommendation** and departs from the spec's own "after one successful run". D2309 first was too, and was amended to the recommendation.
 - Check 191, the spec's release blocker, is the owner's own run and is a prerequisite here, not a task.
