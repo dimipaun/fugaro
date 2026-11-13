@@ -1274,6 +1274,82 @@ func CarriedIntake(vars, prev []byte) ([]byte, error) {
 	return sortedJSON(doc)
 }
 
+// ProjectReviewJobsKey is the module's own variable name for the installation's
+// review-only job variants, which is the key CarriedProjectReviewJobs reads and
+// writes (InstallationSpec's field spells it in its own tag).
+const ProjectReviewJobsKey = "project_review_jobs"
+
+// CarriedProjectReviewJobs returns vars with the implicit default review job
+// (ImplicitReviewJobName) that the document prev carries, when vars carry no job
+// of that name.
+//
+// It is the carry for the one review job the config cannot always compose.
+// Whether the installation deploys that job at all is the config's answer
+// (implicitReviewVariant's gates), and one of those gates is a fact the config
+// can lose AFTER the job is deployed: a second GitHub App ID recorded, or the
+// last GitHub repository gone, leaves the config with no single App ID — and
+// the job runs on one App's ID, so no reader composes it any more. The
+// installation holds it all the same, and a document rewritten without it is
+// the plan of its destruction: RefuseProjectJobDeletes stops the whole update
+// on that plan, with "restore the profile as it was" as the only remedy it can
+// print — a profile an installation that declares none does not have. Every
+// later run repeats it, so the installation stops converging for good. The job
+// is deployed for nobody who asked for it (implicitReviewVariant), and it must
+// never be the reason an installation that converges today stops converging —
+// which is what its own gate says of the run that has not deployed it yet.
+//
+// The record is the installation's own tfvars, and the job is taken from it
+// whole rather than recomposed: prepare, the writer this serves, holds the spec
+// and not the config, and the spec's review set is exactly what cannot describe
+// this job. Taken whole is also what makes the plan that follows a no-op — the
+// job in the record is the job in the state, so nothing about it is proposed
+// for a change.
+//
+// Two things it deliberately does not do. It never overwrites a job vars
+// already carry: a config that composes the job again is the authority on it,
+// and that run is what catches the job up with this release's image and
+// environment — until then the carried job keeps what the installation was
+// deployed with, and it is a job no launch reaches (internal/cli's reviewJobFor
+// refuses a launch whose repository resolved no shared project job, and a
+// config that records no single App ID is that state). And it carries no other
+// review job: a profile's variant missing from the spec is a profile the config
+// no longer declares, which is a fact OF the config, and the refusal
+// RefuseProjectJobDeletes prints for it is that fact's remedy.
+//
+// prev is that document — infra.Workdir.PrevVars, or the tfvars the workdir
+// holds now, which is where the installation stage's own deploy wrote the job a
+// few steps before prepare rewrites the file.
+func CarriedProjectReviewJobs(vars, prev []byte) ([]byte, error) {
+	if prev == nil {
+		return vars, nil // no workdir held one: nothing to carry
+	}
+	previous, err := varsDoc(prev)
+	if err != nil {
+		// A tfvars that cannot be read is not a reason to write a plan that
+		// deletes the job: fail rather than carry nothing forward.
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
+	}
+	carried, _ := previous[ProjectReviewJobsKey].(map[string]any)
+	job, ok := carried[ImplicitReviewJobName()]
+	if !ok || job == nil {
+		return vars, nil
+	}
+	doc, err := varsDoc(vars)
+	if err != nil {
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
+	}
+	jobs, _ := doc[ProjectReviewJobsKey].(map[string]any)
+	if _, ok := jobs[ImplicitReviewJobName()]; ok {
+		return vars, nil // the spec composes the job itself: its own answer stands
+	}
+	if jobs == nil {
+		jobs = make(map[string]any, 1)
+	}
+	jobs[ImplicitReviewJobName()] = job
+	doc[ProjectReviewJobsKey] = jobs
+	return sortedJSON(doc)
+}
+
 // ManagedDeployerScopedKey is the module's own variable name for the deployer's
 // scope, which is what creates the fence: the key these functions read and
 // carry, and the one the installation's document is asked about.

@@ -419,6 +419,20 @@ func reviewVariant(lc *localcfg.Config, j ProjectJob) ProjectJob {
 // profiles are all Bitbucket ones has no profile that could name it either.
 const ImplicitReviewProfile = projectpolicy.DefaultProfileName
 
+// ImplicitReviewJobName is that job's name: the variant of the no-account job of
+// ImplicitReviewProfile on the github provider, which is the name
+// implicitReviewVariant deploys the job under — reviewVariant over the twin it
+// builds there, whose account is the axis's empty one, which
+// config.ReviewVariantAccount spells "default".
+//
+// It is named for the reader that has the installation's own record in hand and
+// not the config: CarriedProjectReviewJobs finds the job by this name in the
+// tfvars a run deployed it into, and it is the same name the deployment derives
+// rather than a second spelling of it.
+func ImplicitReviewJobName() string {
+	return credsvc.ReviewJobName(ImplicitReviewProfile, githubProvider, config.ReviewVariantAccount(""))
+}
+
 // implicitReviewJobTimeout is the task timeout of the implicit default review
 // job, and it is the total a repository workflow that names none is given
 // (internal/config's own default, 3h, which spec.go's per-repository path adds

@@ -320,6 +320,11 @@ const credentialsRigRepoLine = "  acme/sandbox: { provider: bitbucket, base_bran
 // for — the shape every credentials test above is about, and not this one.
 const credentialsRigGitHubAppID = "123456789"
 
+// credentialsRigRepo is the repository the rig's local config declares, by the
+// key the config is read and edited with: credentialsRigRepoLine's own name for
+// it, spelled once for the readers that hold the config rather than its text.
+const credentialsRigRepo = "acme/sandbox"
+
 // credentialsGitHubRepo puts the rig's one repository on the github provider
 // with an App ID recorded, which is what makes the installation one a job on
 // the github provider is deployed for at all.
@@ -485,6 +490,111 @@ func TestACarriedRunStillDeploysTheImplicitReviewJob(t *testing.T) {
 	review, _ := r.tfvars(t)["project_review_jobs"].(map[string]any)
 	if _, ok := review[name].(map[string]any); !ok {
 		t.Errorf("the run that found the block already in the installation's tfvars hands terraform no review job %s: project_review_jobs = %v. The state holds that job — the run that deployed the service created it — so this run's plan destroys it, and RefuseProjectJobDeletes stops the whole update on that plan\n%s", name, review, s)
+	}
+}
+
+// TestAnInstallationHoldingTheImplicitReviewJobConvergesThroughBothTransitions:
+// the installation that deploys the implicit default review job goes on
+// converging when the config loses the one fact that job is composed from.
+//
+// One of implicitReviewVariant's gates is the single GitHub App ID the config
+// records, and the config can lose it after the job is deployed: the last github
+// repository moves to Bitbucket (no App ID recorded at all), or a repository on
+// a second App is added (two IDs, which recordedGitHubAppID reports as an
+// error). Either way the spec composes no review job while the state holds the
+// one the installation deployed, so the plan every later run makes is that
+// job's destruction — RefuseProjectJobDeletes stops the whole update on it, with
+// "restore the profile as it was" as the only remedy it can print, a profile an
+// installation that declares none does not have — and the installation stops
+// converging for good. Both transitions are ordinary acts, so both are here.
+//
+// What converges them is the carry: the job the installation's own tfvars hold
+// is put back into the document the spec composes (infra.CarriedProjectReviewJobs,
+// init.go's prepare), whole, so the plan proposes no change to it at all. The
+// tfvars every stage of the run rewrites from the spec are what terraform is
+// handed, so what is asserted is what the plan is made from.
+//
+// Mutation (run, restore): drop the CarriedProjectReviewJobs loop from prepare
+// and both transitions hand terraform no project_review_jobs — this test's
+// assertion, with the map empty.
+func TestAnInstallationHoldingTheImplicitReviewJobConvergesThroughBothTransitions(t *testing.T) {
+	r := credentialsRig(t)
+	credentialsGitHubRepo(t, r)
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
+	credentialsOutputs(t, r)
+	if _, errOut, err := executeStdin(t, "", "update", "--yes"); err != nil {
+		t.Fatalf("the run that deploys the credentials service failed: %v\n%s", err, errOut)
+	}
+	name := infra.ImplicitReviewJobName()
+	deployed := reviewJobOf(t, r, name, "the run that deployed the credentials service")
+
+	for _, c := range []struct {
+		what    string
+		comment string
+		edit    func(*localcfg.Config)
+	}{
+		{
+			what:    "the last github repository gone",
+			comment: "the repository moves to Bitbucket and the config records no App ID at all",
+			edit: func(lc *localcfg.Config) {
+				repo := lc.Repos[credentialsRigRepo]
+				repo.Provider, repo.GitHubAppID = "bitbucket", ""
+				lc.Repos[credentialsRigRepo] = repo
+			},
+		},
+		{
+			what:    "a repository on a second App added",
+			comment: "recordedGitHubAppID reports the two IDs as an error, and the implicit job runs on one App",
+			edit: func(lc *localcfg.Config) {
+				lc.Repos[credentialsRigRepo] = localcfg.Repo{
+					Provider: "github", BaseBranch: "master", Workflows: []string{"web"}, GitHubAppID: credentialsRigGitHubAppID,
+				}
+				lc.Repos["acme/other"] = localcfg.Repo{
+					Provider: "github", BaseBranch: "main", Workflows: []string{"web"}, GitHubAppID: "987654321",
+				}
+			},
+		},
+	} {
+		rewriteRigConfig(t, r, c.edit)
+		out, errOut, err := executeStdin(t, "", "update", "--yes")
+		s := out + errOut
+		if err != nil {
+			t.Errorf("%s (%s): the update was refused: %v\n%s", c.what, c.comment, err, s)
+			continue
+		}
+		kept := reviewJobOf(t, r, name, c.what)
+		if !reflect.DeepEqual(kept, deployed) {
+			t.Errorf("%s (%s): the review job the installation holds is %v, want it unchanged from %v: the job the record holds is the job the state holds, and a document that rewrites it is a plan that replaces it\n%s", c.what, c.comment, kept, deployed, s)
+		}
+	}
+}
+
+// reviewJobOf is the implicit review job as the installation's tfvars carry it
+// after a run, which is the document every stage of the run plans the root from.
+func reviewJobOf(t *testing.T, r *imagesRig, name, what string) map[string]any {
+	t.Helper()
+	review, _ := r.tfvars(t)["project_review_jobs"].(map[string]any)
+	job, _ := review[name].(map[string]any)
+	if job == nil {
+		t.Fatalf("%s hands terraform no review job %s: project_review_jobs = %v. The state holds that job — the installation's own tfvars record it — so this run's plan destroys it, and RefuseProjectJobDeletes stops the whole update on that plan", what, name, review)
+	}
+	return job
+}
+
+// rewriteRigConfig writes the rig's project config with edit applied to it, the
+// way the transitions of the implicit review job's App ID are made by hand: the
+// file a run has rewritten is canonical YAML, so the edit is made over the
+// parsed config rather than over its text.
+func rewriteRigConfig(t *testing.T, r *imagesRig, edit func(*localcfg.Config)) {
+	t.Helper()
+	lc := localConfigOf(t, r)
+	edit(lc)
+	data, err := lc.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(r.cfg, data, 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 

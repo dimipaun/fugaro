@@ -1074,6 +1074,13 @@ func runInit(r *initRun) error {
 				if data, err = infra.CarriedManagedDeployerScoped(data, prev); err != nil {
 					return err
 				}
+				// The implicit default review job, for the same reason and off
+				// the same record: the print is a reading of the installation,
+				// and one that shows the job the next plan keeps missing would
+				// be a reading the owner cannot trust.
+				if data, err = infra.CarriedProjectReviewJobs(data, prev); err != nil {
+					return err
+				}
 			}
 		}
 		// Printed without a cloud call, so without discovery: stdout stays
@@ -2741,6 +2748,19 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports, v
 	// installation whose dynamic secrets stop being written.
 	for _, prev := range documents {
 		if vars, err = infra.CarriedIntake(vars, prev); err != nil {
+			return nil, userErr("reading the installation's tfvars: %v", err)
+		}
+	}
+	// And the implicit default review job, on the same documents: the spec
+	// composes it only while the config records one GitHub App ID, so an
+	// installation that has the job and then records two — or none, its last
+	// github repository gone — plans the job's deletion on every later run, and
+	// RefuseProjectJobDeletes stops the whole update on that plan with "restore
+	// the profile as it was" as its only remedy: a profile an installation that
+	// declares none does not have. CarriedProjectReviewJobs keeps it, from the
+	// record the run that deployed it left.
+	for _, prev := range documents {
+		if vars, err = infra.CarriedProjectReviewJobs(vars, prev); err != nil {
 			return nil, userErr("reading the installation's tfvars: %v", err)
 		}
 	}
