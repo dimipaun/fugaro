@@ -481,7 +481,7 @@ func TestAccessSettingsUnreadableCallerIsRefused(t *testing.T) {
 		if ExitCode(err) != ExitUserError {
 			t.Errorf("exit %d, want %d (a user error: nothing was attempted)", ExitCode(err), ExitUserError)
 		}
-		for _, want := range []string{"nothing was written", "whose caller the CLI could not read", "context deadline exceeded"} {
+		for _, want := range []string{"nothing was written", "whose caller could not be read", "context deadline exceeded"} {
 			if !strings.Contains(err.Error(), want) {
 				t.Errorf("the refusal does not say %q: %v", want, err)
 			}

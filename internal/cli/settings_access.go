@@ -252,9 +252,11 @@ func settingsAccessNode(ctx context.Context, lc *localcfg.Config) (accesslib.Nod
 // settingsAccessUnreadable refuses a write by a credential whose caller the CLI
 // cannot read. It is not a role refusal — there is no role to name, because the
 // caller is unknown — so it says which question could not be asked and what
-// answers it, rather than naming an admin the caller might go and find.
+// answers it, rather than naming an admin the caller might go and find. It is
+// worded as `fugaro user grant` words the same refusal (user_grant.go): one
+// fact, one sentence, and the same remedy.
 func settingsAccessUnreadable(what string, err error) error {
-	return userErr("nothing was written: %s, and the credential this command would use is one whose caller the CLI could not read (%v), so whether it may make this write cannot be asked. The caller is the credential and never this machine's config or git (finding F21), and a check that admits a credential it cannot read is no check: sign in again with a credential the CLI can verify (gcloud auth application-default login), and have a project admin make the write if it is not yours to make", what, err)
+	return userErr("nothing was written: %s, and the credential this command would use is one whose caller could not be read: %v. The caller is the credential and never the local config's `user:` key or git config user.email (finding F21): sign in with gcloud auth application-default login and run this again, and ask a project admin to make the write if it is not yours to make", what, err)
 }
 
 // settingsAccessEveryRepo is the allow_repos this gate resolves under, and it
