@@ -926,6 +926,63 @@ func TestClassIsDecidedFromTheVerifiedEmailNotTheHeader(t *testing.T) {
 	})
 }
 
+// TestASharedAccountInTwoSetsIsRefusedWhole: a deployment that names one address
+// in the shared list and in either of the other two is refused rather than
+// admitted, and the lookups must not answer it with the wider class (B5.1).
+//
+// The shared class is read FIRST (verifyJob), so an address a deployment put in
+// two lists is answered by this branch wherever it appears — and what that
+// branch hands a caller is the calling profile's whole repository set
+// (pairShared) and, on the mint, the run's own write set. An account that is
+// also a per-repository job's would be served every repository its profile
+// serves rather than the one repository its own row names, and an account that
+// is also a review job's would be served the write set where the class it was
+// deployed for mints read-only. The crossing is the deployment's mistake and
+// this service cannot answer it, so the guard is a refusal and not a precedence.
+//
+// The constructor catches neither crossing: it holds each of the three job
+// lists to its own rules, and the overlap checks it does make belong to the
+// person list and the orchestrator list, which are the classes that reach other
+// routes. So this refusal is the only thing standing between such a deployment
+// and the wider class, which is why it is pinned here beside the review∧job one.
+func TestASharedAccountInTwoSetsIsRefusedWhole(t *testing.T) {
+	cases := map[string]struct {
+		names  string
+		config func(*AuthConfig)
+	}{
+		"a per-repository job's account": {
+			names: "a shared project job's and a per-repository job's",
+			config: func(c *AuthConfig) {
+				c.JobAccounts = []string{testJobSA, testSharedSA}
+			},
+		},
+		"a review job's account": {
+			names: "a shared project job's and a review job's",
+			config: func(c *AuthConfig) {
+				c.ReviewJobAccounts = []ReviewJobAccount{{Email: testSharedSA, Account: testAccount}}
+			},
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			// The fixture's own shared row is the address the deployment named
+			// twice, so the caller below is verified as a shared account and it
+			// is the crossing alone that can refuse it.
+			f := newFixtureWith(t, tc.config)
+			_, err := f.verify(f.runToken(), f.jobToken(func(c map[string]any) { c["email"] = testSharedSA }), f.job)
+			if !errors.Is(err, ErrUnverifiedJob) {
+				t.Fatalf("err = %v, want ErrUnverifiedJob: the account is %s", err, tc.names)
+			}
+			if !strings.Contains(err.Error(), "both") {
+				t.Errorf("err = %q, want it to say the account is in both sets", err)
+			}
+			if !strings.Contains(err.Error(), tc.names) {
+				t.Errorf("err = %q, want it to name the crossing %q", err, tc.names)
+			}
+		})
+	}
+}
+
 // The owner's answer of 2026-10-19: the IAM bit says an authorised identity
 // called, the email says which. A token minted for another principal that
 // holds run.invoker on the service is refused.
