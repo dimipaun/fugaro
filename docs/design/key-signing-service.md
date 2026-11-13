@@ -25,6 +25,14 @@ about the running service is a design rather than a description.
 restates (§2) are the v2 `fgk_` keys', and the service's "no revocation, by design" gives way to a
 revocation list the customer's own job checks (D2130, D2131).**
 
+**Amended 2026-11-13 by the portal (P9.1, [portal/implementation-plan.md](../portal/implementation-plan.md),
+[portal/reconciliation.md](../portal/reconciliation.md) §"What this changes in licence key v2"): the
+service is not deployed as this design's own dedicated project.** D2194 puts the API, the minter and the
+key ring in `fugaro-prod` beside the website's console, so §3.4's project, §9.1's row 5 and §6's
+page-and-queue ownership are the portal's to settle and are noted below; §5.2's deliberate refusal to
+read the merchant's timestamp is reversed by the portal's P4.2; and the three questions §12 left open —
+D454, D455 and D459 — are recorded there as decided by D2187 and D2194. Everything else here stands.
+
 This is subscriptions **S3.1**, the first task of slice S3: the design the tasks after it are written
 against — the issuing service (S3.2), the admin page and the manual queue (S3.4), the dedicated
 project's infrastructure (S3.5), the register of the slice's checks (S3.6), the website's forms
@@ -214,6 +222,16 @@ holds, how the open-source check reads a repository, and what the throttle is �
 private repository — would hide the checks and put the product's own licence code out of the tree
 that builds the binary, which is a decision the owner has not taken.
 
+**Amended 2026-11-13**: the directory, the one package and the "never in `deploy/terraform`" rule
+above all stand, but the sentence that governs where the resources are applied no longer does. D2194
+puts the key-signing service in `fugaro-prod`, the project the website already deploys to, rather than
+in a project of the service's own: `ee/keyservice/terraform/` stays where it is, its roots set the
+project per apply (they carry no default), and the portal's P1.5 is the task that applies them there —
+with the minter's ingress internal, the API's account its only invoker, and the ring still the only
+thing that signs. The owner re-asked after round 1, once Firebase Hosting's project-wide IAM showed
+that the website's deployer reaches signing, and kept one project
+([portal/reconciliation.md](../portal/reconciliation.md) F18).
+
 ## 4. The checks
 
 Each check ends in one of three outcomes: **mint** (the key is issued now), **queue** (a person
@@ -340,6 +358,15 @@ cancellation followed by a replayed purchase does not resurrect a key.
 The admin page's approval is the same idempotency in a person's hands (`TestApprovalMintsOnce`), and
 the auto-renewal path is the same in a scheduler's: one mint per (subscription, term, seats).
 
+**Amended 2026-11-13**: this section reads the merchant's signature but not its timestamp, and portal
+P4.2 adds a **5-minute timestamp window** — an event whose `ts` is older than five minutes is refused —
+which reverses that choice
+([portal/reconciliation.md](../portal/reconciliation.md) F16). Idempotency no longer stands alone
+against a replay; the window is the merchant's own answer, and it holds only while the merchant signs
+every retry with a **fresh `ts`**, which P4.2 verifies before the window ships. What stays is the order
+of the two steps: the signature is verified first, and the verified body is stored before it is
+processed.
+
 ### 5.3 Renewal, seat change, cancellation
 
 The next key issues **30 days before expiry** (T26, [reconciliation.md](../subscriptions/reconciliation.md)
@@ -362,7 +389,9 @@ A merchant event in **test mode** mints a **staging key and nothing else**
 (`TestTestModeEventsMintStagingKeysOnly`), against the staging key id of §2's second rule: every
 production verifier holds production ids only, so a test-mode key cannot license a customer, and the
 staging installation is the only place it is accepted. Where the staging key and its intake live —
-one project and one key ring, or a second project — is **D459**; what is not open is that the two key
+one project and one key ring, or a second project — is **D459**, decided 2026-11-13 (one key id per
+environment: the production ring in `fugaro-prod` and staging's in `fugaro-staging`, §12); what is not
+open is that the two key
 ids stay apart, because that is the whole of Check 179.
 
 ### 5.5 Enterprise keys
@@ -382,6 +411,17 @@ nothing (`TestAnOrderFormMintCanBeIssuedAgain`, `TestAdminOrderFormMintsOncePerL
 the order form and the seats alone would refuse a re-issue and answer it as a success.
 
 ## 6. The admin page and the manual queue
+
+**Replaced 2026-11-13 (portal P5.1, P5.3).** The defences below are still what the surface owes — the
+page mints **any** key for **any** tier (T13 item 8), which the portal's operations API inherits
+unchanged — but the surface itself is no longer this design's. `ee/keyservice/`'s `admin.go` and
+`queue.go` become the portal's operations API and its screens, the store they read and the cells they
+write move with them, and D2187 answers the two questions this section leaves to the owner: who may
+act (operations **owners and admins** act, a member only reads; each action needs a sign-in no older
+than 5 minutes with Google) and what the factor is (the identity provider's own, not a second factor
+of the page's). **D455's "the owner's own account only" therefore no longer describes the surface**;
+the note is here rather than in the table because every row below is still the defence the API must
+carry, and the rows naming D455 and D454 are read against D2187.
 
 The page is a second authenticated surface that can mint **any** key for **any** tier (T13 item 8),
 so it is the service's highest-value target and its defences are the design's, not an
@@ -512,10 +552,10 @@ T13's own list (item numbers below are its, [reconciliation.md](../subscriptions
 | 2 | Cheap abuse of the free checks | The free-mail list, one per domain, proof of control, the queue, and the record (§4; **Checks 171–172**) | Second domains, subdomains and a private repository beside the named ones are outside every check (§4.6, U11) |
 | 3 | Harvest personal data through a bare mailbox | The minimum collected, a stated retention, and the notice (§7.3, S7.3; D457) | The intake must be able to mail, so one address per verified application is kept until D457's period ends |
 | 4 | Use an outage to drop paying customers to read-only | The 30-day lead and the two-key overlap: an outage bites only past 60 days (§8, T26; **Check 175**) | The interruption is absorbed, not removed: a 60-day outage reaches customers |
-| 5 | Break into the project the service runs in | A **dedicated** project rather than an installation's, two identities, and least privilege (§3.3) | One operator, one boundary: an owner's account is the whole of the administrative surface (§6, D455) |
+| 5 | Break into the project the service runs in | One project rather than a project per surface, two identities, and least privilege (§3.3); **D2194** puts the API, the minter and the ring in `fugaro-prod` beside the website's deployer, whose project-wide Hosting IAM reaches signing | One project is one boundary: the website's deployer, a project-level `datastore.user`, `run.services.update` on the minter or `iam.serviceAccounts.actAs` on its account all reach signing, and the owner kept `fugaro-prod` knowing it (Check 571 lists every such grant) |
 | 6 | Impersonate a customer at the free seat | Email verification, the free-mail list, one per domain, the paid-domain lookup, the queue (§4) | The key binds to an organisation and nothing compares it with the installation (S2.1): a key can be shared |
 | 7 | Mint keys as the Licensor before there is a seller | The service waits for the entity (T13); until then the owner mints by hand (§11) | Hand-minted keys carry the `issued` hole (§2) |
-| 8 | Get at the admin page | Owner-only authentication, per-action step-up, CSRF defence, escaping, an audit line, per-tier limits (§6; **Check 173**) | The page is a second surface that can mint anything: D454's caps and D455's factor are the owner's answers, and the page reads them from the deploy rather than holding them — the caps it refuses to start without, and the factor that, unnamed, leaves it read-only |
+| 8 | Get at the admin page | Owner-only authentication, per-action step-up, CSRF defence, escaping, an audit line, per-tier limits (§6; **Check 173**) | The page is a second surface that can mint anything: D454's caps and D455's factor are the owner's answers (**D2187**, 2026-11-12, settled both), and the page reads them from the deploy rather than holding them — the caps it refuses to start without, and the factor that, unnamed, leaves it read-only |
 | 9 | Forge or replay a purchase | Signature verification before the body is read, idempotency by event id, ordering (§5.2; **Check 179**) | A merchant secret leaked to the intake mints Team keys until it is rotated — a rotation path owned by the deploy (§11) |
 | 10 | Learn whether a domain holds a key | Uniform answers (§7.1), throttling (§7.2) | Timing still leaks in principle; the design's answer is the same sentence and the same work per request |
 | 11 | Read the checks and walk around them | Nothing — the code is published under `ee/` (§3.4) | Deliberate: the checks are visible and the Terms are the enforcement (§4.6) |
@@ -600,7 +640,10 @@ Restated with its source, so that nothing below is read as open that is not.
 
 - **T13 (2026-10-27)** — owner-operated, a dedicated Fugaro GCP project, Cloud Run, a non-exportable
   KMS signing key, intake split from signing, built after the entity exists; hand minting until then.
-  ([reconciliation.md](../subscriptions/reconciliation.md) §"Rulings")
+  ([reconciliation.md](../subscriptions/reconciliation.md) §"Rulings"). **Amended 2026-11-13: the
+  dedicated project is not; D2194 puts the API, the minter and the ring in `fugaro-prod` (§3.4, §9.1
+  row 5). Intake split from signing, the managed non-exportable key and hand minting until the entity
+  exists all stand.**
 - **T15 (2026-10-27)** — an individual is an organisation of one for the free seat and the public-OSI
   rule. (Same section; §4.1's queue is where it lands.)
 - **T26 (2026-10-27)** — the next key issues 30 days before expiry, two keys may be installed, and an
@@ -635,12 +678,12 @@ Restated with its source, so that nothing below is read as open that is not.
 | D450 | What shape is the minter? | (a) a second Cloud Run **service** with no public invoker, called by the intake with an ID token; (b) a Cloud Run **job** the intake triggers, drained from a queue; (c) one service, two credentials inside it | (a) | (a) two identities the platform enforces and the smallest thing an IAM audit can hold — but a second deployed service to keep alive; (b) a queue drain is right for the admin's approvals and wrong for a form's answer, which then has to poll; (c) one process's identity is one, so the signer role would sit on the internet-facing service, which is what T13 splits | open |
 | D452 | What counts as **proof of control** of a repository for the open-source check? | (a) a token the applicant commits to a repository the check can read; (b) an application installation that shows control of the organisation; (c) a commit signed by a key the applicant publishes | (a) | (a) one file in one of the repositories already named, readable through the same API, and it works for an individual with no organisation; (b) proves the organisation and asks an individual maintainer to install an app on their own account; (c) proves a key, not the project, and asks the applicant to hold one | open |
 | D453 | Where does the free-mail list come from and who keeps it? | (a) a pinned list of domains committed under `ee/keyservice/`, updated by a task of its own; (b) a public list fetched at build time; (c) a hand-kept list in the service's configuration | (a) | (a) the check is hermetic, testable and reviewable in the public repository, and it is stale until someone updates it — which is why the update is a task rather than a habit; (b) a network fetch at build and a licence question about the list's own terms; (c) a change to the running service that nothing in the tree records | open |
-| D454 | What are the per-tier mint limits, and what does a limit do? | (a) a cap per tier per window that **queues** the excess; (b) a hard refusal; (c) no cap until abuse is seen | (a) | (a) an honest burst (a batch of renewals) is seen and answered and a drain is stopped; (b) one mistyped renewal becomes a refusal for a paying customer; (c) the caps are what Check 173 measures, and "no cap" is not a limit to measure | open |
-| D455 | Who may reach the admin page, and what is the step-up? | (a) the owner's own account only, with a hardware key or TOTP **per minting action**; (b) a second owner account as well, with the same factor; (c) a password and a session cookie | (a) | (a) one account and one factor, and a stolen session alone mints nothing; (b) a second person who can mint every tier is a second licensor in fact, which the Terms' Licensor wording has not been written for; (c) a session that mints a year-and-30-day key per click | open |
+| D454 | What are the per-tier mint limits, and what does a limit do? | (a) a cap per tier per window that **queues** the excess; (b) a hard refusal; (c) no cap until abuse is seen | (a) | (a) an honest burst (a batch of renewals) is seen and answered and a drain is stopped; (b) one mistyped renewal becomes a refusal for a paying customer; (c) the caps are what Check 173 measures, and "no cap" is not a limit to measure | **Decided 2026-11-13 by D2187:** a rate per tier per window that queues the excess, carried by the portal's P5.1 as `admin.go`'s `MintCaps` — a rate and not a claim cap, so no key's `seats` is what it limits |
+| D455 | Who may reach the admin page, and what is the step-up? | (a) the owner's own account only, with a hardware key or TOTP **per minting action**; (b) a second owner account as well, with the same factor; (c) a password and a session cookie | (a) | (a) one account and one factor, and a stolen session alone mints nothing; (b) a second person who can mint every tier is a second licensor in fact, which the Terms' Licensor wording has not been written for; (c) a session that mints a year-and-30-day key per click | **Decided 2026-11-13 by D2187:** not the owner's own account and not a second factor of Fugaro's — operations **owners and admins** act and a member only reads, each action needs a sign-in no older than 5 minutes with Google, and the factor is the identity provider's |
 | D456 | Where does the audit log go, and who reads it? | (a) the project's own log sink, read by the owner, with the mint line repeated in the issuance record (§7.3); (b) the record only; (c) the record and an off-project sink | (a) | (a) one place to look and no new dependency, and the log's retention is the project's; (b) a log that a redeploy or a store bug can take with it, in the surface Check 173's audit is about; (c) an off-project copy is D457's personal data in a second place before D457 is answered | open |
 | D457 | What does the issuance record hold, and for how long? | (a) the fields §7.3 lists, with the applicant's address and domain dropped once the key has expired, and the mints themselves kept; (b) everything kept indefinitely; (c) the minimum: the key id and the tier only | (a) | (a) the record answers §4.3's lookup and §4.2's question while it is needed and stops being a store of personal data after; (b) a perpetual store of scraped addresses, which no notice in this tree yet covers; (c) a paid-domain lookup that cannot answer, so §4.3 stops working | open |
 | D458 | What uptime target, and what does a form submission get while the intake is down? | (a) no external target for the Free Plans (the Terms carry none, §10.5), the 60-day absorption stated, and an honest failure page; (b) a stated target for paying customers only; (c) a target for everyone | (a), or (b) with (a) | (a) matches the Terms as counsel wrote them and promises nothing Check 175 does not already measure; (b) a commitment that the merchant's and the Terms' own documents then have to carry; (c) a promise about a service whose interruption is already absorbed for 60 days | open |
-| D459 | Where does the staging pair live? | (a) the same project and key ring, with the staging key id and a staging intake that is not publicly invokable; (b) a second project; (c) no staging service, a staging key minted by hand only | (a) | (a) one project to operate and the two ids Check 179 needs, with the staging intake's exposure as the thing to watch; (b) a second project's IAM, quotas and cost for a test-only path; (c) Check 179's "a purchase in the merchant's test mode" needs an event path, which (c) does not have | open |
+| D459 | Where does the staging pair live? | (a) the same project and key ring, with the staging key id and a staging intake that is not publicly invokable; (b) a second project; (c) no staging service, a staging key minted by hand only | (a) | (a) one project to operate and the two ids Check 179 needs, with the staging intake's exposure as the thing to watch; (b) a second project's IAM, quotas and cost for a test-only path; (c) Check 179's "a purchase in the merchant's test mode" needs an event path, which (c) does not have | **Decided 2026-11-13 by D2194:** one project, and one key id per environment rather than (a)'s one ring for both — production's ring in `fugaro-prod` holds only the production key and staging's in `fugaro-staging` only the staging key, applied by the portal's P1.5 (§9.1 row 5) |
 
 ## 13. Out of scope
 

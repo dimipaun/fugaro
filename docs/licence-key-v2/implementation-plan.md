@@ -12,6 +12,20 @@ D440's plans (D2136); the key in the runs bucket (D2137); Firebase Auth in the o
 It **supersedes** licensing task L3.1 and subscriptions S2.1/S2.3 (the format) and amends S2.4, S2.5,
 S2.7–S2.10, S3.1–S3.4 and S6.1 where they name the old claims; K7.2 writes those notes.
 
+**Amended 2026-11-13 by the portal (P9.1,
+[implementation-plan.md](../portal/implementation-plan.md),
+[reconciliation.md](../portal/reconciliation.md) §"What this changes in licence key v2"): this plan's
+server is the portal's API.** K2.4 uses P1.3's verifier, registers its routes through P1.0's `/api/`
+registry and its pages are the SPA's (P3.5); K2.6 is superseded by P5.1, so the admin page is the
+portal's operations API and screens; K2.7 drops its edge on K2.6, registers through the same registry
+and keys trials on the organisation and the workspace's Firebase project id (D2201); K5.1 is
+superseded by the portal's screens; K2.5's purchase mail carries a link and never a key; K3.3 sends
+the installation's Firebase project id and binds an entitlement; K3.4 follows D2186, the grants node's
+array order; and K4.1 keeps its secret when `/renew` answers without a new one, with connected keys
+renewing monthly (D2200, D2202). D2194 puts the service in `fugaro-prod` (the portal plan's "Limits"
+states the cost); the portal's own numbers are D2180–D2207, and the notes below cite them beside this
+plan's D2130–D2146.
+
 ## Conventions every part follows
 
 - **`ee/` rules** (`.claude/rules/ee.md`): every new file under `ee/` carries the SPDX header
@@ -118,32 +132,55 @@ Reviewer tier is **standard** unless a task says `SECURITY`.
   `TestRenewalAnswersAreUniform`, `TestTheKeyAloneCannotRenew`, `TestRenewalRefusesAWrongSecret`, `TestRevokedKeyIsNeverRenewed`,
   `TestStatusCarriesNoKey`, `TestReplayedRenewalIsIdempotent`. Command: `go test ./ee/keyservice/ -tags ee -run 'TestRenewal|TestTheKeyAlone|TestRevoked|TestStatus|TestReplayed' -count=1`.
   Depends on: K2.1, K2.2. Commit: `ee: the renewal and status endpoints`.
+  **Amended 2026-11-13 by the portal:** `service.go` is the portal's P1.0 — it mounts the `/api/`
+  registry and no later task edits it — so this task's `/renew` and `/status` lines register from
+  `renew.go`.
 - **K2.4 Sign-in, authorize and device code. SECURITY.** Files: `ee/keyservice/signin.go` (new),
   `ee/keyservice/service.go`, `signin_test.go` (new). Verifies Firebase ID tokens of the owner's licence
   project by reusing `ee/coordinator/mcpauth/firebase.go` (audience, issuer and `email_verified` pinned; the purchaser binding depends on the last), serves `/cli/authorize`
   (port, `state`, PKCE challenge), the one-time `code` exchange, and the device-code start, poll and
   approve routes. Tests: `TestAuthorizeRefusesANonLoopbackRedirect`, `TestCodeIsSingleUse`,
   `TestPKCEVerifierIsRequired`, `TestDeviceCodeExpiresAndIsRateLimited`, `TestUnknownAndExpiredDeviceCodesAnswerAlike`,
-  `TestTokenFromAnotherProjectIsRefused`. Depends on: K2.3 (one writer of `service.go` per level).
+  `TestTokenFromAnotherProjectIsRefused`. Depends on: K2.3, the portal's P1.3 (the verifier) and P1.0
+  (the registry).
   Command: `go test ./ee/keyservice/ -tags ee -run 'TestAuthorize|TestCode|TestPKCE|TestDeviceCode|TestUnknownAndExpired|TestTokenFrom' -count=1`.
   Commit: `ee: the licence site's sign-in, authorize and device code`.
+  **Amended 2026-11-13 by the portal:** the token check is P1.3's verifier
+  (`ee/keyservice/portalauth.go`: audience, issuer, `email_verified`, `RequireSSO`, `FreshWithin`, the
+  tenant check), not a second reader of `ee/coordinator/mcpauth/firebase.go`; the routes register
+  through P1.0's `/api/` registry from this task's own `api_signin.go`, so `service.go` is P1.0's and
+  nothing here edits it; and the authorize and device-approve pages are the SPA's
+  (`ee/portal/src/screens/cli/*`, P3.5), not the website's.
 - **K2.5 Paddle events to v1. SECURITY.** Files: `ee/keyservice/merchant.go`, `merchant_test.go`. Maps a
   completed transaction (renewal included) to a v1 key (Team monthly and annual), a refund or
   chargeback to a revocation (D2131), a seat change to a reissue; Enterprise is not sold here (D2141).
   Tests: `TestRefundRevokesTheKey`, `TestSeatChangeReissuesUnderANewKeyID`, `TestEnterpriseIsNotACheckoutPlan`.
   Depends on: K2.1, K2.2. Command: `go test ./ee/keyservice/ -tags ee -run 'TestRefund|TestSeatChange|TestEnterprise' -count=1`.
   Commit: `ee: Paddle events mint, reissue and revoke v1 keys`.
+  **Amended 2026-11-13 by the portal:** the purchase mail carries a link and never a key
+  (`TestPurchaseMailCarriesNoKey`, P4.2), and P4.2 writes `merchant.go` for the portal — its adapter
+  maps the notification to a canonical event and a purchase creates an entitlement, never a key
+  (D2196), with the route at `/api/paddle/webhook` (P1.0).
 - **K2.6 The admin page. SECURITY.** Files: `ee/keyservice/admin.go` (new), `service.go`, `admin_test.go` (new).
   Owner-only: reseller and comped keys (`kind: comped` with an expiry, excluded from revenue reporting),
   lookup by workspace or `key_id`, revoke, reissue, override policy; every action is recorded. Tests:
   `TestAdminRefusesAnyoneButTheOwner`, `TestCompedKeyHasAnExpiry`, `TestAdminActionsAreRecorded`.
   Depends on: K2.4 (`service.go`). Command: `go test ./ee/keyservice/ -tags ee -run 'TestAdmin|TestComped' -count=1`.
   Commit: `ee: the founder's admin page`.
+  **Superseded by the portal (P5.1; D2187 of 2026-11-12).** The page is the portal's operations API
+  (`ee/keyservice/ops.go`, `api_ops.go`) and its screens (P5.3): owners and admins act, a member only
+  reads, every action needs a sign-in no older than 5 minutes with Google, D454's per-tier rate queues
+  the excess (carried from this task's `MintCaps`) and D456's audit covers every action, reads included.
+  Nothing of this task is built, and the level and shared-files tables below no longer schedule it.
 - **K2.7 The 14-day Team trial. SECURITY.** Files: `ee/keyservice/trial.go` (new), `service.go`,
   `trial_test.go` (new). A signed-in account asks for a trial for an installation (`kind: trial`, 14 days,
   grace 0, `check_interval` `P1D`); one per installation and account. Trial uniqueness is keyed by the Firebase project id, which is harder to mint than a caller-supplied name. Tests: `TestSecondTrialIsRefused`,
-  `TestTrialIsTeamTierFourteenDays`. Depends on: K2.6 (`service.go`), K2.2. Command: `go test ./ee/keyservice/ -tags ee -run 'TestSecondTrial|TestTrialIs' -count=1`.
+  `TestTrialIsTeamTierFourteenDays`. Depends on: K2.2 and the portal's P1.0 (the registry). Command: `go test ./ee/keyservice/ -tags ee -run 'TestSecondTrial|TestTrialIs' -count=1`.
   Commit: `ee: the Team trial`.
+  **Amended 2026-11-13 by the portal:** it drops its edge on K2.6, which P5.1 supersedes, and registers
+  its route through P1.0's `/api/` registry rather than editing `service.go`; and a trial is keyed on
+  the organisation and the workspace's Firebase project id (D2201), not on an installation name a
+  caller supplies.
 
 ### Slice K3: the project side (`ee/register`, `ee/licence`)
 
@@ -165,6 +202,9 @@ Reviewer tier is **standard** unless a task says `SECURITY`.
   deadline) and the device-code fallback (`--device`, or no browser). Tests:
   `TestLoopbackBindsOnlyTheLoopback`, `TestCallbackWithTheWrongStateIsRefused`,
   `TestTheCodeIsNeverLogged`, `TestDevicePollStopsAtExpiry`. Command: `go test ./ee/licence/login/ ./ee/register/ -tags ee -run 'TestLoopback|TestCallback|TestTheCode|TestDevicePoll' -count=1`. Depends on: K2.4, K3.2. Commit: `ee: fugaro licence login`. The device approve page shows the requesting installation's name as untrusted text and requires typing the user code.
+  **Amended 2026-11-13 by the portal:** the request carries the installation's Firebase project id,
+  and the portal's authorize and device-approve screens list the organisation's unbound entitlements
+  and **binds the chosen one** to it, with the id shown as untrusted text (P3.5).
 - **K3.4 Seats. SECURITY. HELD until the owner says enforcement ships (TN1).** Files: `ee/register/seats.go`
   (new), `ee/register/lapse.go`, `internal/access/seats.go` (new: an `access.SetSeatLimit` seam taking the caller's identity, consulted while the key is active, set from `ee/register`, default limits nothing; the core still reads no key), `ee/register/seats_test.go` (new). Records seat holders on the project's
   operator and admin lists (D2139), `fugaro licence seats assign|rm|ls`, and the `access` seam answers an
@@ -172,6 +212,10 @@ Reviewer tier is **standard** unless a task says `SECURITY`.
   nothing stored. Tests: `TestAnUnseatedOperatorActsAsAViewer`, `TestAdminsAlwaysKeepASeat`,
   `TestSeatsAreNotEnforcedInTheMITCLI`, `TestLapseNeverDeletes`. Command: `go test ./ee/register/ ./internal/access/ -tags ee -run 'TestAnUnseated|TestAdminsAlways|TestSeatsAre|TestLapseNever' -count=1`. Depends on: K1.1, K3.1, K3.2 (the command
   family's file `licence.go` is read, not edited). Commit: `ee: seats are assigned and enforced on the paid surfaces`.
+  **Amended 2026-11-13 by the portal (D2186):** who is over the seat limit is the grants node's array
+  order — admins always hold a seat and operators fill the remaining seats **in the order they were
+  granted** — and no field is added, because `internal/access/store.go` decodes the node with
+  `DisallowUnknownFields` and an installed reader would refuse it. Held with this task under TN1.
 - **K3.5 Warnings.** Files: `ee/register/warn.go` (new), `warn_test.go` (new); the window rules of the key's
   `warnings` (roles and `grace_start[+Nd]`), a line on each tagged-CLI ee command, and the field the console
   and app read from `licence status --json`. Delivered by the console, app and ee commands only (F6).
@@ -189,6 +233,10 @@ Reviewer tier is **standard** unless a task says `SECURITY`.
   `TestAnUnreachableServerNeverRevokes`, `TestRenewalWritesTheNextKeyBesideTheOld`,
   `TestRevokedKeyIsRecordedNotDeleted`, `TestOfflineKeyNeverContactsTheServer`. It verifies a renewed key (and its `workspace_id`) before writing, writes **the new secret version first, then the key**; if the stored key's hash matches no stored secret (a crash between the two), it retries with the previous secret version (inside the 24-hour window). Command: `go test ./ee/register/ -tags ee -run 'TestAnUnreachable|TestRenewalWrites|TestRevokedKey|TestOffline' -count=1`. Depends on: K1.1, K3.1, K2.3, K3.2.
   Commit: `ee: the renewal and revocation job`.
+  **Amended 2026-11-13 by the portal:** it keeps its secret when `/renew` answers without a new key —
+  the server returns the entitlement's newest key, and a caller that already holds it is not rotated
+  (D2200) — and a connected key's term is at most 30 days, renewed while the entitlement runs, so a
+  connected installation renews monthly (D2202).
 - **K4.2 The Scheduler job and the update. SECURITY.** Files: `deploy/terraform/gcp/modules/installation/licence.tf`
   (new), `variables.tf`, `deployer.tf` (the job's permissions), `deploy/terraform/gcp/roots/*` only if a root
   names the switch, `internal/cli/update_licence.go` (new), tests, `docs/releases/v<next>.md`
@@ -211,6 +259,10 @@ Reviewer tier is **standard** unless a task says `SECURITY`.
   Tests: `website/test/licence.mjs`; command `cd website && npm run check`. Depends on: K2.4.
   Commit: `website: the licence account and sign-in pages`. Reviewer: standard; **SECURITY** if it adds a
   script or a form target.
+  **Superseded by the portal (P3.4, P3.5; D2193).** The account, authorize and device pages are the
+  SPA's screens under `ee/portal/src/screens/*`, so `website/src/pages/licence/*.astro` and
+  `website/test/licence.mjs` are not written; the website's own keys page points at the portal (P9.3),
+  and the portal's hosting config carries the CSP (P9.2).
 - **K5.2 The Paddle account (subscriptions S8.5). OWNER-RUN.**
 
 ### Slice K6: the setup wizard
@@ -236,15 +288,16 @@ Edges are the "Depends on" lines.
 | --- | --- |
 | 0 | K0.1, K0.2 (owner); K1.1, K1.5, K7.2 |
 | 1 | K1.3, K1.4, K2.1, K2.2, K3.1 |
-| 2 | K2.3, K2.5 |
+| 2 | K2.3, K2.5, K2.7 |
 | 3 | K2.4, K3.2, K7.3 |
-| 4 | K2.6, K3.3, K3.5, K4.1, K5.1 |
-| 5 | K2.7, K3.6, K4.2, K6.1 |
+| 4 | K3.3, K3.5, K4.1 |
+| 5 | K3.6, K4.2, K6.1 |
 | held | K3.4 (the owner's enforcement go, TN1), after level 3 |
 
-**Critical path:** K1.1 → K2.1 → K2.3 → K2.4 → K3.3 → K6.1 (six levels; K2.3 → K3.2 → K3.5 → K3.6 is as long). K2.3 → K2.4 → K2.6 → K2.7 is the
-sequence on `ee/keyservice/service.go`, which has one writer per level by construction. K4.1 → K4.2 is
-sequential because the job's runtime is what the Terraform runs.
+**Critical path:** K1.1 → K2.1 → K2.3 → K2.4 → K3.3 → K6.1 (six levels; K2.3 → K3.2 → K3.5 → K3.6 is as long). The sequence K2.3 → K2.4 → K2.6 → K2.7 on
+`ee/keyservice/service.go` is gone: the portal's P1.0 owns that file and mounts the `/api/` registry,
+so K2.4 and K2.7 register from their own files and K2.7 moves to level 2 with its edge on K2.6
+dropped (2026-11-13). K4.1 → K4.2 is sequential because the job's runtime is what the Terraform runs.
 
 ### Shared-files table
 
@@ -257,8 +310,8 @@ sequential because the job's runtime is what the Terraform runs.
 | `docs/licensing/licence-key.md` | K1.5 (0) |
 | `ee/keyservice/minter.go`, `minterclient.go`, `policy.go` | K2.1 (1) |
 | `ee/keyservice/store.go` | K2.2 (1) |
-| `ee/keyservice/service.go` | K2.3 (2), K2.4 (3), K2.6 (4), K2.7 (5) |
-| `ee/keyservice/merchant.go` | K2.5 (2) |
+| `ee/keyservice/service.go` | the portal's P1.0, which mounts the `/api/` registry and leaves no task here editing the file: K2.3, K2.4 and K2.7 register their routes from `renew.go`, `signin.go` and `trial.go` |
+| `ee/keyservice/merchant.go` | K2.5 (2); the portal's P4.2 writes the portal's event adapter into it |
 | `ee/licence/project/store.go` | K3.1 (1) |
 | `internal/cli/agentsession.go`, `untagged_licence_test.go` | K3.2 (3) |
 | `ee/register/licence.go` | K3.2 (3), the subcommand table; later tasks add their own files |
@@ -268,7 +321,6 @@ sequential because the job's runtime is what the Terraform runs.
 | `ee/register/licence_renew.go` | K4.1 (4) |
 | `ee/register/licence_login.go`, `ee/licence/login/login.go` | K3.3 (4) |
 | `deploy/terraform/.../installation/licence.tf`, `variables.tf`, `deployer.tf`, `internal/cli/update_licence.go` | K4.2 (5) |
-| `website/src/pages/licence/*` | K5.1 (4) |
 | `docs/licensing/implementation-plan.md`, `docs/subscriptions/implementation-plan.md`, `docs/design/key-signing-service.md` | K7.2 (0) |
 
 No level holds two writers of one file. A change to any task's Files re-checks this table.
@@ -280,7 +332,8 @@ All **OWNER-RUN**; the owner types the script's one command, no agent performs a
 - **Check 560:** a real renewal through the deployed Scheduler job in the sandbox installation: a short-lived
   `renewal_mode: auto` key renews itself and `licence status` shows the new key (K4.2, K2.3).
 - **Check 561:** revocation: the owner revokes a test key on the admin page and the next check records it
-  (K2.6, K4.1); and an unreachable server does not revoke (block egress, wait one interval).
+  (K2.6, K4.1; the page is the portal's operations screens, P5.3, since 2026-11-13); and an unreachable
+  server does not revoke (block egress, wait one interval).
 - **Check 562:** browser sign-in against the staging site, including the wrong-`state` refusal (K3.3, K2.4).
 - **Check 563:** the device code from a machine with no browser (K3.3).
 - **Check 564:** a Paddle sandbox purchase, renewal and refund end to end (K2.5; subscriptions S8.5 first).
