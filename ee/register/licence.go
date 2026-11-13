@@ -39,6 +39,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -234,6 +235,17 @@ func licenceNoWorkspace(lc *localcfg.Config) error {
 // with the two spellings of each value removed: the bytes as they were handed
 // to the socket, and the base64 AddVersion wraps them in. Every line this
 // command prints that could carry back something it read goes through here.
+//
+// The values are not the whole of it, because a value list can only name what
+// this process holds: the licence server's error body is printed as it came
+// back, and what it echoes is whatever its records hold — a key this
+// installation never had among them, the successor of a renewal it already
+// answered for one. So the shape goes too, and that is what the `fgk_` prefix
+// is for: the spec gives it to keys so that a log, a scanner and a support
+// ticket recognise one (section 3.1), and a key about to be printed here is
+// recognised by the same rule. The shape pass runs over the text the values
+// have already been taken out of, and the bound is applied last, so a key the
+// bound would have cut in half is gone before it can leave its front behind.
 func licenceRedact(text string, values ...string) string {
 	forms := make([]string, 0, len(values)*2)
 	for _, value := range values {
@@ -242,8 +254,29 @@ func licenceRedact(text string, values ...string) string {
 		}
 		forms = append(forms, value, base64.StdEncoding.EncodeToString([]byte(value)))
 	}
-	return safetext.Field(agent.Redact(text, forms))
+	return safetext.Field(licenceKeyShape.ReplaceAllString(agent.Redact(text, forms), licenceRedacted))
 }
+
+// licenceKeyShape is a v1 key wherever it stands in text this command prints:
+// `fgk_`, a base64url payload, a dot and a base64url signature (spec section
+// 3.1). The dot's part is optional because the text is a body a server wrote
+// and nothing says it wrote the whole of a key: a key cut short — by the
+// server, or by the reader's own 16 KiB cap — is a key whose front would
+// otherwise be printed, and the front of a key is the key. The floor on the
+// payload is what keeps the rule off prose about the format (`fgk_<payload>`,
+// which ee/licence's own refusal spells out).
+//
+// The shape is written here rather than read out of ee/licence, which holds the
+// prefix and the format: what this matches is a key in a body Fugaro never
+// parsed, so there is no key to read the format from — only a shape to
+// recognise. A test redacts a key the fixture minted, so a format that moves
+// fails there rather than leaving this rule quietly blind.
+var licenceKeyShape = regexp.MustCompile(`fgk_[A-Za-z0-9_-]{8,}(?:\.[A-Za-z0-9_-]+)?`)
+
+// licenceRedacted is what a key's place is left as: the marker the value pass
+// writes too (internal/redact), so that a reader of a refusal cannot tell which
+// of the two passes took a value out of it.
+const licenceRedacted = "[REDACTED]"
 
 // licenceKeyRefusal is what a key this build will not accept is answered with,
 // and it repeats no part of the key.
@@ -1008,7 +1041,9 @@ func licenceHalfWritten(lc *localcfg.Config, remedy string) string {
 // endpoint) and answers what it said. The renewal secret is the whole of the
 // proof the server asks for, so it is sent over TLS and nowhere else, and every
 // failure this returns has been redacted of both the secret and whatever the
-// server said back.
+// server said back — including a key, which is why licenceRedact removes the
+// shape as well as the values: a non-200 answer prints the body verbatim, and
+// the body is the one place a key this process never held can come back from.
 //
 // The answer is decoded leniently on purpose: a field the server adds later is
 // a field this build ignores rather than a renewal that fails (CLAUDE.md: a

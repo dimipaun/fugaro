@@ -749,17 +749,30 @@ func TestLicenceSetRefusesAFlagShapedKey(t *testing.T) {
 func TestLicenceRedactRemovesEverySpellingOfEveryValue(t *testing.T) {
 	secret := licenceTestSecret(t)
 	key := licenceTestKeyPrefix + "not-a-key-this-test-minted"
+	// A key of the same shape that no caller named: a server's own body can
+	// carry one, and the value list cannot, so the shape is what has to take it
+	// out (licenceKeyShape). Built here rather than written down, so the file
+	// holds no key-shaped literal.
+	elsewhere := licenceTestKeyPrefix +
+		base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat("p", 64))) + "." +
+		base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat("s", 32)))
 	text := "the body said " + secret + " then " + base64.StdEncoding.EncodeToString([]byte(secret)) +
 		" then " + key + " then " + base64.StdEncoding.EncodeToString([]byte(key)) +
+		" then " + elsewhere +
 		" and " + strings.Repeat("x", 2*safetext.FieldMax)
 	got := licenceRedact(text, secret, key, "")
 	for _, form := range []string{
 		secret, base64.StdEncoding.EncodeToString([]byte(secret)),
 		key, base64.StdEncoding.EncodeToString([]byte(key)),
+		elsewhere,
 	} {
 		if strings.Contains(got, form) {
 			t.Errorf("licenceRedact left a %d-byte spelling of a value in its answer: %q", len(form), got)
 		}
+	}
+	if head := licenceHead(elsewhere); strings.Contains(got, head) {
+		t.Errorf("licenceRedact left the first %d runes of a key it was never given in its %d-rune answer, so the shape rule does not reach a body's own key (the answer is not printed: it is the leak)",
+			licenceHeadRunes, utf8.RuneCountInString(got))
 	}
 	if !strings.Contains(got, "the body said") || !strings.Contains(got, "then") {
 		t.Errorf("licenceRedact answered %q, want the text it was given with the values taken out", got)
@@ -795,6 +808,31 @@ func TestLicenceRefusalsCarryNoKeyMaterial(t *testing.T) {
 		}
 	})
 
+	t.Run("the licence server's body echoing a key this installation never held", func(t *testing.T) {
+		f := newLicenceFixture(t)
+		key, secret := f.issuer.mint(t, f.claims()), licenceTestSecret(t)
+		f.seedSecretContainer([]byte(secret))
+		f.secrets.AllowAccess()
+		install(t, f, key)
+		// A second key of the same issuer: what a server's own records hold
+		// beside the installed one — the successor of a renewal it already
+		// answered, for one. No value list can name it, because nothing here
+		// has read it, so the shape is the whole of what keeps it out.
+		other := f.issuer.mint(t, f.claims(func(c *licence.ClaimsV1) { c.KeyID = "lk_test_k32_0002" }))
+		f.serveLicenceServer(t, func(keyservice.RenewalCall) (int, string) {
+			return http.StatusInternalServerError, `{"error":"the successor of ` + key + ` is ` + other + `"}`
+		})
+
+		out, errOut, err := f.exec(t, "", "licence", "refresh")
+		if err == nil {
+			t.Fatal("a server answering 500 renewed the key")
+		}
+		for _, text := range []string{out, errOut, err.Error()} {
+			assertNoKeyMaterial(t, "the refusal for a body echoing a key this installation never held", text, other, secret)
+			assertNoKeyMaterial(t, "the refusal for a body echoing the installed key", text, key, secret)
+		}
+	})
+
 	t.Run("a Secret Manager error echoing the payload", func(t *testing.T) {
 		f := newLicenceFixture(t)
 		key, secret := f.issuer.mint(t, f.claims()), licenceTestSecret(t)
@@ -814,10 +852,24 @@ func TestLicenceRefusalsCarryNoKeyMaterial(t *testing.T) {
 	})
 }
 
+// licenceHeadRunes is how much of a spelling assertNoKeyMaterial reads for:
+// long enough that the front of a key or a secret is unmistakable in a message,
+// short enough that the message's own bound cannot be what hides it.
+const licenceHeadRunes = 48
+
 // assertNoKeyMaterial fails when text carries any spelling of the key or the
 // secret — the bytes as they are, and the base64 a payload is wrapped in — and
-// prints only the lengths, because a failure report is one more place key
-// material would reach.
+// prints only lengths, because a failure report is one more place key material
+// would reach.
+//
+// Each spelling is read for twice: whole, and by its first licenceHeadRunes
+// runes. The whole check is the exact one, and on its own it cannot fail for a
+// key: every message here is bounded to safetext.FieldMax runes by
+// licenceRedact, and a v1 key is longer than that bound, so all of it could
+// never stand in a message even with the redaction switched off. What a leak
+// leaves behind is its front — the bound cuts the tail and keeps the head — so
+// the head is what has to be absent as well, and the head check is the one that
+// fails when the redaction goes.
 func assertNoKeyMaterial(t *testing.T, what, text, key, secret string) {
 	t.Helper()
 	for _, form := range []string{
@@ -829,9 +881,24 @@ func assertNoKeyMaterial(t *testing.T, what, text, key, secret string) {
 			continue
 		}
 		if strings.Contains(text, form) {
-			t.Errorf("%s carries %d bytes of key material in %q", what, len(form), text)
+			t.Errorf("%s carries all %d runes of a spelling of key material, in a %d-rune message (the message itself is not printed: it is the leak)",
+				what, utf8.RuneCountInString(form), utf8.RuneCountInString(text))
+		}
+		if head := licenceHead(form); head != form && strings.Contains(text, head) {
+			t.Errorf("%s carries the first %d runes of a %d-rune spelling of key material, in a %d-rune message (the message itself is not printed: it is the leak)",
+				what, utf8.RuneCountInString(head), utf8.RuneCountInString(form), utf8.RuneCountInString(text))
 		}
 	}
+}
+
+// licenceHead is the first licenceHeadRunes runes of a spelling, and the
+// spelling itself where it is no longer than that.
+func licenceHead(form string) string {
+	r := []rune(form)
+	if len(r) <= licenceHeadRunes {
+		return form
+	}
+	return string(r[:licenceHeadRunes])
 }
 
 // TestLicenceSecretPermissionNamesTheCallsOwnPermissions holds what a permission
