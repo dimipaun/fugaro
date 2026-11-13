@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -56,6 +57,21 @@ func accessRunAsUnreadable(t *testing.T) {
 	t.Helper()
 	old := accessCallerLookup
 	accessCallerLookup = func(context.Context) (string, error) { return "", errors.New("no credentials") }
+	t.Cleanup(func() { accessCallerLookup = old })
+}
+
+// accessRunAsServiceAccount is a service account's credential: the answer
+// access.Caller gives one, sentinel included, which is the one unreadable
+// credential these commands admit. It is spelled here rather than fetched from
+// access.Caller for the reason settingsAccessServiceAccount spells it: the case
+// is about the gate's rule, and access's own test pins that Caller returns this
+// for a .gserviceaccount.com address.
+func accessRunAsServiceAccount(t *testing.T) {
+	t.Helper()
+	old := accessCallerLookup
+	accessCallerLookup = func(context.Context) (string, error) {
+		return "", fmt.Errorf("%w (fugaro-run@example.iam.gserviceaccount.com is not a person the grants can name)", accesslib.ErrServiceAccount)
+	}
 	t.Cleanup(func() { accessCallerLookup = old })
 }
 
@@ -439,6 +455,57 @@ func TestAccessRunUnreadableCredentialIsRefused(t *testing.T) {
 	if n := len(f.run.Executions()); n != 0 {
 		t.Errorf("%d executions were created for a refused launch", n)
 	}
+}
+
+// TestAccessRunServiceAccountKeepsAutomatedLaunchesWorking: a service account's
+// credential is not a person the grants can name, so access.Caller refuses its
+// address as access.ErrServiceAccount — and these commands admit it rather than
+// refuse it, which is the only credential they do that for (RS6b's rule, one
+// installation). Automated launches are what such a credential is for
+// (runs_stats.go: an automated launch is an identity of its own), and refusing
+// here would not be a role judgement — there is no role to name — but a
+// requirement to be a person, with a remedy (`gcloud auth
+// application-default login`) a CI runner cannot take.
+//
+// The installations here DO have a roster placing somebody else, so the
+// distinction under test is the one that matters: this credential is a fact the
+// design knows, and every other unreadable one is refused
+// (TestAccessRunUnreadableCredentialIsRefused), because a caller that admits
+// whatever it cannot read is off exactly when the credential breaks.
+func TestAccessRunServiceAccountKeepsAutomatedLaunchesWorking(t *testing.T) {
+	t.Run("a launch", func(t *testing.T) {
+		noAgentSession(t)
+		f := newLaunchBudget(t, "off")
+		accessRunNode(t, f, userStored(t, accessOperator, accesslib.RoleOperator, accessRepoB))
+		accessRunAsServiceAccount(t)
+
+		env := fileEnv(t, f.cloudFixture)
+		if err := launchPolicyGates(context.Background(), env, appSlug, accessRunSpec("acme/app"), "web", false, false, io.Discard); err != nil {
+			t.Fatalf("a service account's launch was refused: %v", err)
+		}
+	})
+
+	t.Run("a read of another repository's run", func(t *testing.T) {
+		noAgentSession(t)
+		f := newLaunchBudget(t, "off")
+		// A viewer holds accessRepoB alone, and the seeded run is accessRepoA's:
+		// the same row is one the listing drops for that viewer
+		// (TestAccessRunsLsListsInScope), so what this case reads is the
+		// service account's own answer rather than a listing that shows
+		// everything whatever the roster says.
+		accessRunNode(t, f, userStored(t, accessViewer, accesslib.RoleViewer, accessRepoB))
+		accessRunAsServiceAccount(t)
+		id := recentRunID(t, time.Minute, "abd6")
+		seedRun(t, f.cloudFixture, id, "", "someone@example.com", false)
+
+		out, errOut, err := execute(t, "runs", "ls")
+		if err != nil || !strings.Contains(out, task.ShortRun(id)) {
+			t.Fatalf("a service account's listing = %q, %v", out, err)
+		}
+		if strings.Contains(errOut, "holds no role") {
+			t.Errorf("the service account's listing dropped a run: %q", errOut)
+		}
+	})
 }
 
 // TestAccessCancelViewerCannotCancel: D1587 gives cancel to an operator within

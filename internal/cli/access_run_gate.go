@@ -29,7 +29,13 @@ import (
 // Who the caller is comes from the credential the command is using
 // (access.Caller, finding F21) and never from the local config's `user:` key or
 // git config: both are the caller's own to write, so either would place
-// anybody.
+// anybody. The one credential these commands admit rather than judge is a
+// service account's (accessRunJudge): such an address is not a person a grant
+// can carry, so no roster holds anything for it, and the automated launches a
+// service account or a CI runner makes are the ones `runs stats` documents as
+// identities of their own. It is RS6b's rule for its own commands
+// (settings_access.go), taken here so one installation's two gates answer that
+// credential the same way.
 //
 // An installation whose roles place NOBODY at all is not refused. The roles
 // are the grants node's and the implicit admins' (F22), and a machine whose
@@ -162,16 +168,39 @@ func requireProjectAccess(ctx context.Context, env *cloudEnv, action accesslib.A
 }
 
 // accessRunJudge is the gate's preamble: what the resolver is asked with, the
-// credential's own member, and whether the installation has a roster at all
-// (accessInput). placed false means the check does not apply, and no caller is
-// read for it — an installation with no roster cannot refuse the one credential
-// it has.
+// credential's own member, and whether there is anything to judge at all
+// (accessInput, and the service account below). placed false is that last
+// answer, and no caller is placed for it: an installation with no roster cannot
+// refuse the one credential it has, and a service account's credential is one no
+// roster can place.
+//
+// A service account's credential is admitted rather than refused, and it is the
+// only credential that is — access.ErrServiceAccount is what marks it out, and
+// only a fact this design knows is read that way (settings_access.go's own rule
+// and its own words). Such an address is not a person the grants can name, so
+// the roster can hold nothing for it whatever it holds, and the automated
+// launches a CI runner or a runbook makes with one are supported ones
+// (runs_stats.go). Refusing there would not be a role judgement — there is no
+// role to name — but a requirement to be a person, which no design here asks
+// for, and the remedy it would print (`gcloud auth application-default login`)
+// is one a machine credential cannot take.
+//
+// Every OTHER way the caller cannot be read — no credentials, an expired or
+// unverified one, the provider not answering — refuses instead: that is the
+// difference between a fact and a gap, and a check that admits whenever it
+// cannot read the credential is off exactly when the credential is broken.
+// TestAccessRunUnreadableCredentialIsRefused against
+// TestAccessRunServiceAccountKeepsAutomatedLaunchesWorking is where the two
+// answers are pinned.
 func accessRunJudge(ctx context.Context, env *cloudEnv, what string) (in accesslib.Input, caller string, placed bool, err error) {
 	if in, placed, err = accessInput(ctx, env); err != nil || !placed {
 		return accesslib.Input{}, "", placed, err
 	}
 	caller, err = accessCallerLookup(ctx)
-	if err != nil {
+	switch {
+	case errors.Is(err, accesslib.ErrServiceAccount):
+		return accesslib.Input{}, "", false, nil
+	case err != nil:
 		return accesslib.Input{}, "", true, userErr("%s: the roles are read from the credential this command is using (finding F21), and it could not read who that credential belongs to: %v. Sign in with gcloud auth application-default login and run this again", what, err)
 	}
 	return in, caller, true, nil
@@ -352,14 +381,17 @@ func accessSlugRepo(lc *localcfg.Config, slug string) (string, bool) {
 type accessRowGate struct {
 	in     accesslib.Input
 	caller string
-	// inert is the installation with no roster at all: every row is listed, and
-	// no credential was read for it (access_gate.go's own rule).
+	// inert is the state in which there is nothing to judge: the installation
+	// with no roster at all, and the service account's credential, which no
+	// roster can place (accessRunJudge). Every row is listed then, and no caller
+	// is placed for it (access_gate.go's own rule for the first).
 	inert bool
 }
 
 // accessRowsGate reads the roles for a listing. Its refusals are requireAccess's
 // — a credential whose address cannot be read is refused rather than shown
-// everything, which is the same choice every other command here makes.
+// everything, which is the same choice every other command here makes, and the
+// service account's alone is admitted (accessRunJudge).
 func accessRowsGate(ctx context.Context, env *cloudEnv) (accessRowGate, error) {
 	in, caller, placed, err := accessRunJudge(ctx, env, "nothing was listed")
 	if err != nil {
