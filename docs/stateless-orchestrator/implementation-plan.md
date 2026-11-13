@@ -903,7 +903,11 @@ such cycles (`internal/orchestrator/breaker.go`, `BreakerThreshold`). **D2022** 
 - **What waits, exactly, and the trigger:** the `RunReport` field and the reader's mapping wait for **W7's merge**: the trigger is #2275
   landing, and the first act is reading how a call the workspace refused (its stop, its cap or a failed settle) reaches the run record. **If
   it does not reach it distinguishably**, O19 cannot be built as written and that is reported to the owner as a gap in W7, not worked around
-  here. W9 (docs) is not a dependency: O19 edits no `SECURITY.md` sentence.
+  here. W9 (docs) is not a dependency: O19 edits no `SECURITY.md` sentence. **Read 2026-11-13 (the trigger fired: W7 merged as `d3b7613f`,
+  #2275): it does not reach it distinguishably.** W7 wrote no run-record field, the workspace's stop reaches the record as the same
+  `budget_unavailable`/`run` halt a member's own service outage writes, and the cap's refusal is on no call path at all, so **O19 is blocked
+  and no task of this plan implements it until a W-side change puts the refusal's source in the record** — the reading, with its citations,
+  is `docs/stateless-orchestrator/reconciliation.md` **U12 (resolved NO)**.
 - **Commit:** `feat(ee): a workspace's refusal pauses the orchestrator's queue (O19)`
 - **Red step:** `TestAWorkspaceRefusalPausesTheQueueAtOnce` fails to build (no seam), then fails while a refused run is folded as an ordinary
   refusal and the next approved item is launched into the same stop.
