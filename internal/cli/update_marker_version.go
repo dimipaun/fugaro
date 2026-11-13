@@ -57,12 +57,13 @@ func (e *initEngine) convergeMarkerVersion(ctx context.Context) {
 	// writeAdminList publishes in the same run (D1016): what the gate admits a
 	// session to is the converge the marks say has already happened, and this
 	// object is one of the marks themselves — the step the gate has no document
-	// for is not thereby a step the session is admitted to (docs/managed-agent-
-	// converge/spec.md). It is also the write the gate's own admission has no
-	// cover for: the rewrite changes the version a reader outside this build
-	// consumes, so the release behind a run in flight re-reads it, refuses a
-	// version it does not know, and keeps its typed confirmation — an effect the
-	// owner's own run is the one to cause, over a converge that happened.
+	// for is not thereby a step the session is admitted to
+	// (docs/managed-agent-converge/spec.md). It is also the write the gate's own
+	// admission has no cover for: the rewrite changes the version a reader
+	// outside this build consumes, so the release behind a run in flight
+	// re-reads it, refuses a version it does not know, and keeps its typed
+	// confirmation — an effect the owner's own run is the one to cause, over a
+	// converge that happened.
 	//
 	// Nothing is lost by leaving it: a version-3 fact is one this build reads
 	// (read.go), the count in it bounds nothing, and the run this step belongs
