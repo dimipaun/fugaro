@@ -35,6 +35,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -230,14 +231,26 @@ func (rg *apiRegistry) paths() []string {
 
 // missing refuses a deployment that holds no seam one of the mounted routes
 // reaches. It is asked at New, and only about the routes this deployment mounts.
+//
+// Every route reaching the seam is named and not the first one found: a
+// deployment that holds none holds it for all of them, and an operator who
+// supplied the seam one name asked for would meet the next name at the start
+// after it.
 func (rg *apiRegistry) missing(deps Deps) error {
 	rg.mu.Lock()
 	defer rg.mu.Unlock()
 	for _, route := range rg.routes {
 		for _, need := range route.needs {
-			if !need.held(deps) {
-				return fmt.Errorf("the API mounts %s %s, which reaches %s, and this deployment has none: the route would answer every request with a failure of its own (plan P1.0)", route.method, route.path, need)
+			if need.held(deps) {
+				continue
 			}
+			var mounts []string
+			for _, other := range rg.routes {
+				if slices.Contains(other.needs, need) {
+					mounts = append(mounts, other.method+" "+other.path)
+				}
+			}
+			return fmt.Errorf("the API mounts %s, which reach %s, and this deployment has none: each of them would answer every request with a failure of its own (plan P1.0)", strings.Join(mounts, ", "), need)
 		}
 	}
 	return nil
