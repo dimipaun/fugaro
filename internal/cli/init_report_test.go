@@ -126,6 +126,35 @@ func logDir(t *testing.T) string {
 	return filepath.Join(base, "fugaro", "logs")
 }
 
+// keptLogs is everything the logs of cmdName in this process's state directory
+// hold, and empty when there are none. A test that reads a run's account beside
+// the screen cannot assume the run kept a log: two runs of one command in the
+// same second in one process are one file name (report.logName is the command,
+// the second and the pid), the second of them is refused the name it would
+// share, keeps no log and falls back to the screen (G5) — and which of the two
+// a test lands in is the clock's business, not the test's.
+func keptLogs(t *testing.T, cmdName string) string {
+	t.Helper()
+	dir := logDir(t)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	re := regexp.MustCompile("^" + regexp.QuoteMeta(cmdName) + `-\d{14}-\d+\.log$`)
+	var all strings.Builder
+	for _, e := range entries {
+		if !re.MatchString(e.Name()) {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		all.Write(b)
+	}
+	return all.String()
+}
+
 // onlyLog reads back the one log a run of cmdName left. One run, one log: a
 // second file under this command's name is a bug, and a run that left none
 // kept nothing for the failure it may print a path to.

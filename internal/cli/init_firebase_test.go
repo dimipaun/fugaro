@@ -868,8 +868,11 @@ func TestInitFirebaseIdempotent(t *testing.T) {
 	if strings.Contains(out, "⚠ CONFIRM") {
 		t.Errorf("a confirmation on an unchanged installation:\n%s", out)
 	}
-	if !strings.Contains(out, "is up to date") {
-		t.Errorf("no word that the config is up to date:\n%s", out)
+	// The run's own word about the config is the account of the step that writes
+	// it, so the screen carries it only where the run kept no log (G5): read
+	// beside it either way (keptLogs).
+	if account := out + keptLogs(t, "setup"); !strings.Contains(account, "is up to date") {
+		t.Errorf("no word that the config is up to date:\n%s", account)
 	}
 }
 
