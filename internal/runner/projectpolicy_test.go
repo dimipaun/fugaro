@@ -744,7 +744,7 @@ func TestPolicyVersionMismatchHaltsTheRun(t *testing.T) {
 	if err == nil {
 		t.Fatalf("a policy of a newer version must stop the run: rec = %+v", rec)
 	}
-	for _, want := range []string{"version 99", fmt.Sprintf("understands version %d", projectpolicy.Version), "fugaro upgrade", projectpolicy.PathShared()} {
+	for _, want := range []string{"version 99", fmt.Sprintf("understands version %d", projectpolicy.Version), "fugaro update", projectpolicy.PathShared()} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not say %q: %v", want, err)
 		}

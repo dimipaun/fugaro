@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"reflect"
@@ -829,6 +830,39 @@ func TestJudgeSkipsJudgedPairs(t *testing.T) {
 	_, err = buildManifest(t, b)
 	if err == nil || !strings.Contains(err.Error(), "no pair that is complete and unjudged") {
 		t.Errorf("a repository whose every pair is spoken about: err = %v, want the refusal that says there is nothing to judge", err)
+	}
+}
+
+// TestJudgeVerdictsRefusesAnotherVersion: the verdicts object is the one thing
+// both the launcher and the reader of the A/B figures go through, and it is
+// versioned the way the manifest is. An object of a version this build does not
+// know is refused rather than read as one that judged nothing: read as nothing,
+// every pair it decided would fall out of every Critical figure a reader sees,
+// with the read saying only that some object could not be opened (A5.4).
+func TestJudgeVerdictsRefusesAnotherVersion(t *testing.T) {
+	b := newJudgeBucket(t)
+	body, err := json.Marshal(judgeVerdicts{
+		Version: judgeVersion + 1, JudgeModel: judgeModel,
+		Pairs: []judgeVerdict{{PairID: judgePairOne, Winner: WinChampion, Reason: "tests"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runstore.Open(b.Bucket, judgeSlug, judgeLaterRunID).PutFile(context.Background(), runstore.VerdictsName, body, "application/json"); err != nil {
+		t.Fatal(err)
+	}
+	verdicts, err := JudgeVerdicts(context.Background(), b, judgeSlug, judgeLaterRunID)
+	if err == nil {
+		t.Fatalf("a version-%d verdicts object read as %d verdicts, want the object's own version refusal", judgeVersion+1, len(verdicts))
+	}
+	if want := fmt.Sprintf("version %d", judgeVersion+1); !strings.Contains(err.Error(), want) {
+		t.Errorf("the refusal reads %v, want it to name %q", err, want)
+	}
+
+	// A judge run that wrote no object is not an error: it decided nothing,
+	// which is a different fact from an object this build cannot read.
+	if got, err := JudgeVerdicts(context.Background(), b, judgeSlug, judgeHeldRunID); err != nil || len(got) != 0 {
+		t.Errorf("a judge run with no object answered %d verdicts and %v, want none and no error", len(got), err)
 	}
 }
 

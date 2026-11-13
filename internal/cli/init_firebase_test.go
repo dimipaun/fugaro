@@ -2355,8 +2355,8 @@ func (c carryToFake) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 // unadoptedRig is one of those shapes end to end: an installation that
-// converges, a checkout of the project (the door `fugaro upgrade` reads it
-// through, resolveCloudRepo), and a budget database seeded as ANOTHER
+// converges, a checkout of the project (the door resolveCloudRepo reads it
+// through), and a budget database seeded as ANOTHER
 // installation's — the mark of workspace-a in proj-9999, the rules marker at the
 // generation the policy write is gated on, and the version-3 node with the
 // allow-list the migration would rewrite. Every fact a run needs to reach that

@@ -1067,7 +1067,7 @@ func TestImagesPreviewDoesNotListBaseAsUnpinned(t *testing.T) {
 // never the way a base kind is trusted.
 func TestNoMessageOffersARemovedBaseCommand(t *testing.T) {
 	var all []string
-	for _, args := range [][]string{{"setup", "--help"}, {"image", "refresh", "--help"}, {"upgrade", "--help"}} {
+	for _, args := range [][]string{{"setup", "--help"}, {"image", "refresh", "--help"}, {"update", "--help"}} {
 		out, _, _ := executeStdin(t, "", args...)
 		all = append(all, out)
 	}

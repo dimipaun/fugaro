@@ -70,7 +70,7 @@ type initEngine struct {
 	// checkoutBehind: this run found the checkout behind this release, which
 	// the plugin stage is where to read (the pin it wires is this release's tag,
 	// and the plugin in Claude Code is this release's too). The checkout stage
-	// runs the cloud half of fugaro upgrade for this checkout, and this is the
+	// runs the checkout's cloud half for this checkout, and this is the
 	// fact it decides on: the cloud step's own check reads fugaro.yaml and the
 	// local config and never a build record (cloudCheck, U9), and the images
 	// stage has already pinned this release's base in that config by the time
@@ -102,6 +102,17 @@ type initEngine struct {
 	// list to hold, outputs that could not be read — and it is cleared by the
 	// write, so a root that runs twice lands it once.
 	accessSeed *accesslib.Node
+
+	// flagFactVersion is the version the self-flag step's own read of the
+	// creation fact answered with, and 0 where that step read nothing
+	// (update_selfflag.go). The marker step asks it beside the gate's version
+	// for the one installation whose fact the gate never saw: the half-written
+	// flag, whose object write succeeded and whose label write then failed. A
+	// run that finishes that flag has read the object — the step could not
+	// complete the object otherwise — so the version the migration needs is
+	// already in hand, and taking a read of its own for it would be the second
+	// read of an object this run has answered once.
+	flagFactVersion int
 }
 
 // environment runs the environment check once (it prints the local
@@ -292,7 +303,7 @@ func initStages(e *initEngine) []initflow.Stage {
 	// layer whose claims the older node could not carry is judged by the same
 	// installation it is published for (init_layer_stage.go).
 	stages = append(stages, newLayerStage(e))
-	// The checkout's own steps (fugaro upgrade's pin, plugin and cloud steps)
+	// The checkout's own steps (the cloud half; the pin and the plugin are
 	// are a stage of this run too: fugaro update is the whole upgrade, so the
 	// one command the user runs may not leave the checkout it runs in behind
 	// (init_checkout_upgrade.go, the owner's rule of 2026-10-30).
@@ -437,19 +448,28 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 	// printResult for the reason the two above are: what it printed and
 	// recorded belongs to this run's result.
 	e.raiseBudgetMode(ctx)
-	// And D1940's, the last of the three steps this hook owns: the roster's
-	// project-scoped admins, published for the intake that admits a caller to
-	// the shared prefix and may hold no database role (update.go's
-	// writeAdminList). It is here for the reason above — the converge has
-	// applied everything it had, so the roster it reads is the one this run
-	// leaves behind — and it returns no error either: the list is a derived
+	// And D1543's: the creation fact a release behind left at version 3 carries
+	// the image build count this one no longer bounds a build by, and a fact is
+	// migrated where it was written (update_marker_version.go). It is after the
+	// self-flag above for the reason that step has: a run which flags an
+	// installation writes the version this build writes, so the two together
+	// converge any installation the update reaches, and the step itself does
+	// nothing where the fact is already this release's. Like the two above it
+	// returns no error — a fact left behind is one this build still reads — and
+	// it is before printResult for the same reason.
+	e.convergeMarkerVersion(ctx)
+	// And D1940's: the roster's project-scoped admins, published for the intake
+	// that admits a caller to the shared prefix and may hold no database role
+	// (update.go's writeAdminList). It is here for the reason above — the
+	// converge has applied everything it had, so the roster it reads is the one
+	// this run leaves behind — and it returns no error either: the list is a derived
 	// object, and failing an upgrade over one is what the HARD RULE forbids.
 	e.writeAdminList(ctx)
-	// And T-RU5's, the fourth and last: what this release fixes about the
+	// And T-RU5's, the fifth and last: what this release fixes about the
 	// project's filed issues, which is a step of the run and not of the door
 	// (update_resolved.go) because --json's document carries it and is printed
-	// on the next line. It is reached on the same path the three above are —
-	// the converge applied everything it had — and it is the one of the four
+	// on the next line. It is reached on the same path the four above are —
+	// the converge applied everything it had — and it is the one of the five
 	// that no mode has to exclude twice: what it writes to the shared store is
 	// the store's own guarded write, and what it prints is a line nobody has
 	// to act on.
@@ -737,10 +757,53 @@ func (e *initEngine) writeCarriedCredentials(doc []byte) ([]byte, error) {
 			next = refreshed
 		}
 	}
+	// And the intake, which the same apply deploys and which no earlier release
+	// wrote: an installation whose tfvars carry the service's block and no
+	// intake's is every installation this release upgrades, and the two are
+	// deployed by one run because they are one pin of one image — the intake is
+	// a subcommand of it (IntakeSpec). It is added here, where the block the
+	// run is about to apply is read, and never in an agent's session or a
+	// development build: this function's callers have already refused those
+	// (ensureCredentialsService, moveCredentialsImage).
+	//
+	// A document this run cannot read or write leaves the entry where it is,
+	// which is the fail-closed direction and never a reason to stop the upgrade
+	// (the job-table refresh above answers the same way): an installation whose
+	// intake is not written keeps the one it has, and an installation that has
+	// none is up to date about everything else.
+	if withIntake, err := carriedIntake(next); err != nil {
+		fmt.Fprintf(e.r.w, "the secrets intake is not deployed: %v\n", err)
+	} else {
+		next = withIntake
+	}
 	if err := e.wd.WriteVars(next); err != nil {
 		return nil, userErr("writing the installation's %s: %v", infra.VarsFile, err)
 	}
 	return next, nil
+}
+
+// carriedIntake is doc with the secrets intake's block added when it holds
+// none, carrying the image doc already records for the credentials service.
+//
+// The image is the recorded one and not a resolve of this run's: the intake
+// runs the same reference the service does, the credentials-service stage moves
+// both onto this release's pin a few stages later, and a second resolve here
+// would be a second registry read for one answer — and, on the path this
+// function exists for (an installation that has the service and no intake yet),
+// the only resolve of the run.
+//
+// A document that carries no image for the service gets no intake: without one
+// there is nothing for the module's container to run, and the block would be a
+// revision that never comes up.
+func carriedIntake(doc []byte) ([]byte, error) {
+	if _, have, err := infra.IntakeOf(doc); err != nil || have {
+		return doc, err
+	}
+	image, ok, err := infra.CredentialsServiceImageOf(doc)
+	if err != nil || !ok {
+		return doc, err
+	}
+	return infra.SetIntake(doc, infra.Intake(image))
 }
 
 // The two reasons a run deploys no credentials service at all: a coding agent's
@@ -791,53 +854,6 @@ func (e *initEngine) credentialsMoveHeld() string {
 		return ""
 	}
 	return why
-}
-
-// credentialsBehindHeld is why a door that replaces no credentials service may
-// not raise the node either, when the service this installation runs is one
-// another release pinned.
-const credentialsBehindHeld = "this door replaces no credentials service, and the image the installation records for it is the release behind this binary's"
-
-// credentialsRaiseHeld is why `fugaro upgrade`'s policy step may not write a
-// node whose version rises: the installation's tfvars carry a credentials
-// service, and this door replaces none — its cloud step is fugaro image
-// refresh, job images only, and the service's image lives in the installation
-// root's tfvars, which only `fugaro update`'s stages write
-// (newCredentialsStage). It is the same pair of facts the update door's own
-// hold is read from — credentialsMoveHeld for the block,
-// credentialsResolveBeforeRaise for the staleness — asked by the door that
-// cannot answer either by moving the service, and the state it may not leave is
-// the one the update door's hold exists for: the service reads the published
-// node on every cascade and Bitbucket-proxied call and refuses a node its own
-// binary does not understand, so a node raised here refuses every such call of
-// the project until a later `fugaro update` succeeds (the owner's ruling of
-// 2026-11-10; the migration and the replacement are that one command's).
-//
-// A development build holds it whatever the reference says, which is the update
-// door's own answer to that run (credentialsDevBuildHeld): it resolves no
-// released image, so there is none to compare the record against and none for
-// it to move to. An installation whose tfvars carry no block runs no service to
-// refuse the node at all, and one whose recorded image is already this binary's
-// release is the state the last update left — no stale process — and neither is
-// held. A tfvars this binary cannot read is silence, the answer
-// credentialsMoveHeld gives it: the failure of that read belongs to the run
-// that applies the file.
-func credentialsRaiseHeld(lc *localcfg.Config) string {
-	if lc == nil {
-		return ""
-	}
-	doc, image, err := installationCredentialsImage(lc)
-	if err != nil || doc == nil {
-		return ""
-	}
-	ver := releaseVersion()
-	switch {
-	case ver == "":
-		return credentialsDevBuildHeld
-	case credentialsImageStale(ver, image):
-		return credentialsBehindHeld
-	}
-	return ""
 }
 
 // credentialsResolveBeforeRaise resolves the image this run's own move of the
@@ -933,6 +949,18 @@ func (e *initEngine) moveCredentialsImage(ctx context.Context) error {
 	updated, err := infra.SetCredentialsServiceImage(next, pinned)
 	if err != nil {
 		return userErr("setting the credentials service's image in the installation's %s: %v", infra.VarsFile, err)
+	}
+	// The intake moves with the service it shares the pin with, in one write:
+	// both run the released image, and a run that replaced the service's
+	// process alone would leave the intake serving the release behind's binary
+	// — a binary whose own reader is what decides whether this run's published
+	// node is one it can serve at all.
+	if _, haveIntake, err := infra.IntakeOf(updated); err != nil {
+		return userErr("reading the installation's %s: %v", infra.VarsFile, err)
+	} else if haveIntake {
+		if updated, err = infra.SetIntakeImage(updated, pinned); err != nil {
+			return userErr("setting the secrets intake's image in the installation's %s: %v", infra.VarsFile, err)
+		}
 	}
 	if err := e.wd.WriteVars(updated); err != nil {
 		return userErr("writing the installation's %s: %v", infra.VarsFile, err)
@@ -1040,6 +1068,17 @@ func (e *initEngine) deployCredentialsService(ctx context.Context) error {
 	if err != nil {
 		return userErr("setting the credentials service in the installation's %s: %v", infra.VarsFile, err)
 	}
+	// And the intake, in the same document and off the same resolve: the run
+	// that deploys the service on an installation that has none is the run that
+	// deploys the intake beside it, because the intake is a subcommand of the
+	// very image just pinned (`fugaro intake serve`). Nothing about the
+	// installation has to be read for it: the intake holds no bundle and no
+	// database, so the facts CredentialsInstallationFacts refused above are the
+	// service's alone.
+	doc, err = infra.SetIntake(doc, infra.Intake(pinned))
+	if err != nil {
+		return userErr("setting the secrets intake in the installation's %s: %v", infra.VarsFile, err)
+	}
 	if err := e.wd.WriteVars(doc); err != nil {
 		return userErr("writing the installation's %s: %v", infra.VarsFile, err)
 	}
@@ -1051,9 +1090,8 @@ func (e *initEngine) deployCredentialsService(ctx context.Context) error {
 // carry no block at all.
 //
 // It is recordedCredentialsImage's read for a caller that holds no workdir —
-// the checks' own case, and the read `fugaro upgrade` makes
-// (credentialsRaiseHeld): that door runs no stage of the converge at all, so
-// the file the last update left is the only document it has.
+// the checks' own case: a check runs before the stage that prepares the
+// workdir, so the file the last update left is the only document it has.
 func installationCredentialsImage(lc *localcfg.Config) ([]byte, string, error) {
 	dir, err := infra.InstallationWorkdir(os.Getenv, lc.GCPProject)
 	if err != nil {
@@ -1208,12 +1246,42 @@ func (e *initEngine) fillCredentialsAudience(ctx context.Context) (bool, error) 
 	if err != nil {
 		return false, userErr("reading the installation's tfvars: %v", err)
 	}
-	if current == url {
+	// The intake's audience is the same write, on the same apply, and for the
+	// same reason: it is a second Cloud Run service with its own URL, its own
+	// unassigned placeholder on the apply that creates it and its own callers
+	// whose ID tokens are minted for that URL — so a run that filled only the
+	// service's would leave an intake that is healthy, reachable by IAM and
+	// admits nobody.
+	//
+	// An installation whose tfvars carry no intake is left alone: the block is
+	// that installation's record of not having the feature, and this function
+	// may not turn it on by inventing one (SetIntakeURL refuses to).
+	intakeURL := ""
+	if _, haveIntake, err := infra.IntakeOf(vars); err != nil {
+		return false, userErr("reading the installation's tfvars: %v", err)
+	} else if haveIntake {
+		if outs.Intake == nil {
+			return false, userErr("the installation's tfvars carry a secrets intake and its outputs carry none: the tfvars key is not the variable the installation root reads, so nothing was deployed, and every caller of the intake mints an ID token for a URL that does not exist")
+		}
+		if intakeURL = outs.Intake.URL; intakeURL == "" {
+			return false, userErr("the installation's outputs carry the secrets intake %s with no URL: the module's output reads the service's own uri, so an empty one means the state holds something other than the service this run's apply created, and a revision whose audience is not its own URL admits no caller", outs.Intake.Name)
+		}
+	}
+	currentIntake, err := infra.IntakeURLOf(vars)
+	if err != nil {
+		return false, userErr("reading the installation's tfvars: %v", err)
+	}
+	if current == url && currentIntake == intakeURL {
 		return false, nil
 	}
 	updated, err := infra.SetCredentialsServiceURL(vars, url)
 	if err != nil {
 		return false, userErr("setting the credentials service's URL in the installation's %s: %v", infra.VarsFile, err)
+	}
+	if intakeURL != "" {
+		if updated, err = infra.SetIntakeURL(updated, intakeURL); err != nil {
+			return false, userErr("setting the secrets intake's URL in the installation's %s: %v", infra.VarsFile, err)
+		}
 	}
 	if err := e.wd.WriteVars(updated); err != nil {
 		return false, userErr("writing the installation's %s: %v", infra.VarsFile, err)
@@ -1223,7 +1291,7 @@ func (e *initEngine) fillCredentialsAudience(ctx context.Context) (bool, error) 
 		return false, remote(err)
 	}
 	if !changed {
-		return false, userErr("the installation plans nothing with credentials_service.url set to the service's own URL: the module does not carry that value onto the revision, so no revision would ever carry the audience its callers' ID tokens are minted for")
+		return false, userErr("the installation plans nothing with credentials_service.url set to the service's own URL: the module does not carry that value onto the revision, so no revision would ever carry the audience its callers' ID tokens are minted for (the secrets intake's url is written in the same apply, and one that plans nothing is just as wrong for it)")
 	}
 	plan, err := e.t.Show(ctx, infra.PlanFile)
 	if err != nil {
@@ -1250,6 +1318,9 @@ func (e *initEngine) fillCredentialsAudience(ctx context.Context) (bool, error) 
 	}
 	r.res.Applied = true
 	fmt.Fprintf(r.w, "the credentials service's audience is its own URL: %s\n", url)
+	if intakeURL != "" {
+		fmt.Fprintf(r.w, "the secrets intake's audience is its own URL: %s\n", intakeURL)
+	}
 	return true, nil
 }
 

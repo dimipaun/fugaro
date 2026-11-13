@@ -638,7 +638,7 @@ func TestDocsProjectClaudeAccountsGcpSetupRollout(t *testing.T) {
 		"fugaro secrets set claude-oauth-token-<name>",
 		// The Version 3 rollout, in order.
 		"**0.9.0's accounts need all four of these**, in this order:",
-		"brew upgrade dimipaun/tap/fugaro && fugaro upgrade",
+		"brew upgrade dimipaun/tap/fugaro && fugaro update",
 		"fugaro project policy publish --delete",
 		"fugaro image refresh",
 		// The shared jobs move last, per installation: image refresh never

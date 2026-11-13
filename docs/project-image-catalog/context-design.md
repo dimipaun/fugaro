@@ -33,6 +33,7 @@ items in **O1–O7**:
 | Block | Use |
 | --- | --- |
 | **G1–G4** | the gaps this amendment closes, read against the code. They are **not findings**: the folder's findings are **F1–F16** ([reconciliation.md](reconciliation.md) §1) and stay exactly those sixteen. A gap here is a place where the code and a sentence of the folder's own documents disagree; a finding is an ambiguity in the owner's spec. |
+| **G5–G6** | the two gaps the **fold-in** adds (D1408, §11): both read against the code **after** C1–C5 were built, and neither is a finding either. §1's heading and the row above keep the four gaps this amendment was written with, in the series' own order of writing. |
 | **A1–A8** | this amendment's own decisions, stated here in §2 with the recommendation and the cost of the alternative, the shape [reconciliation.md](reconciliation.md) §2 already uses for D1140–D1159 |
 | **O1–O6** | the **open items** — the owner's to answer, §9. **None of them is decided here.** |
 | **C1–C5** | the build tasks, §5. **Nothing is built and no task is approved.** |
@@ -922,3 +923,148 @@ moved branch head, and the job that fires it **cannot submit a build at the new 
 - **Not a wire-format change.** `source_commit` keeps its name and its meaning, the record gains one
   field and keeps its version, and the console, the mobile app, the history reader and the plugin read
   every field they read today.
+
+## 11. The fold-in (G5–G6, and O1–O6 answered)
+
+**D1408 was answered on 2026-11-07: fold into this document.** [docs/catalog-build-context/](../catalog-build-context/README.md)
+read this feature a second time — its own findings **F1–F33** against the tree, and **D1390–D1409**,
+which the owner answered on 2026-11-07 (D1409 amended 2026-11-08) — and its plan is written in this
+amendment's own series: its tasks **CB1–CB5** are this file's **C1–C5**, and the two folders are one
+design of record, this one. So its reading is carried here rather than kept beside this file, and
+**this section is where**: **G5** and **G6** are the gaps it found that §1 did not, **O1–O6** are
+recorded against §9's recommendations with the answers the owner gave, and **C1–C5** are recorded as
+built. That folder stays what it was: the reading that fed this one, and nothing more.
+
+**Read on 2026-11-12, against the tree C1–C5 merged on** (CB4 is #2374), so every sentence below is a
+reading of code rather than a recommendation, and where the code answers an item differently from
+§9's recommendation, **the answer here wins and §9 keeps its recommendation as the text the build was
+designed from** — the rule this file already applies to [spec.md](spec.md): the original stays visible
+beside what supersedes it.
+
+### G5. The member reaches a runner by two doors, and §A7 gated neither
+
+§A7 states the skew correctly — `decodeImageCatalog` reads the block with **`dec.DisallowUnknownFields()`**,
+so a reader that knows `image_catalog` and predates `context` **fails the whole block** rather than
+listing one unknown key, and `internal/runner/projectpolicy.go` routes that failure through
+`policyReadError`, so the **run is refused** in every repository of the project — and then leaves the
+remedy as a sentence in the release notes ("upgrade every launcher before publishing it"). A sentence
+is not a gate, and the reading found the two places a refusal has to sit, because both of them carry
+the member to a runner:
+
+- **the deployment.** `internal/infra/readiness.go`'s `var imageContextShipped = false`, beside
+  `imageCatalogShipped`, read by the image gate as `!imageContextShipped && ws.CatalogContext`: a
+  workflow whose image comes from an entry whose source names a context is **held back**, with a
+  refusal that names the entry, the member and `fugaro update`. `ws.CatalogContext` is the mark
+  `internal/infra/spec.go` writes when it reads the member out of the catalog, so the gate judges the
+  entry the job actually runs and not the catalog as a whole.
+- **the published node.** `internal/cli/recipes_skew.go`'s `const imageContextShipped = false`
+  (infra's constant at this release, one fact in two places) read by `policyContextRefusal`
+  (`internal/cli/init_policy_publish.go`), which refuses the node **`policyNodeForPublish`** is about
+  to write when it carries a `context:`. That one function is both doors that publish — `fugaro update`'s
+  policy stage and `fugaro project policy publish` — and it judges the **node** and not the local
+  config, because a config silent about the catalog keeps the published one, so the member can reach
+  those bytes from either side.
+
+**One fact, two constants, flipped in the same commit** — the shape `imageCatalogShipped` already has,
+and the lesson it taught: 0.17.0 published and read the `image_catalog` key with its own gate still
+false, and readiness held back every job a catalog entry gave its image to. That is why the context's
+gate landed **with the key** rather than with C5's own task, which is the plan's §5 read back into this
+file. **What holds it**, in both directions: `TestReadinessRefusesAContextEntryBeforeTheGateIsFlipped`
+(a workflow on such an entry is refused while the constant is false, and deployed once it is true) and
+`TestReadinessDoesNotRefuseAnEntryWithNoContext` (the same installation, an entry that names no
+context, deployed — the gate is for the member and never for the catalog). **The mutation that proves
+the second one is load-bearing**: gate on the catalog instead of on the member — drop `ws.CatalogContext`
+from the two conditions, so `!imageContextShipped` alone refuses every catalog entry — and
+`TestReadinessDoesNotRefuseAnEntryWithNoContext` fails on the refusal it must not produce. It was run
+and restored, and it is exactly the mutation that would refuse every catalog project on an old
+installation.
+
+### G6. The build template's salt did not reach a catalog record
+
+`gcp.TemplateSalt` (`internal/backend/gcp/build.go`) is the hex SHA-256 of the embedded
+`cloudbuild.yaml` and the fugaro version, and the **workflow** check fires on it
+(`internal/imagecheck/triggers.go`: `in.TemplateSalt != rec.TemplateSalt`), so a release that changes
+the build's own steps rebuilds every workflow image. The **catalog** check had no such input:
+`CatalogInputs` and `CatalogInputsFingerprint` carried `DefinitionSHA256`, `BaseRef`, `BaseDigest` and
+`Lockfiles`, `CatalogRecordState` had no `template_salt`, and the check's `evaluate` never read one —
+so the same release rebuilt **no** catalog image at all, while every task that adds a catalog build
+step changes `images/derived/cloudbuild.yaml`. This is the gap the reading found while C3 was being
+written, and **C4 closed it**: `CatalogRecordState.TemplateSalt` (`template_salt`),
+`CatalogInputs.TemplateSalt` set from `gcp.TemplateSalt(Version)` in the check's own `evaluate` **and**
+stamped into every build that check submits, `DecideCatalog` firing `ReasonCatalogTemplate`
+(`catalog-template`) when the two differ — and **only** when the caller states one (`in.TemplateSalt !=
+""`), so a caller that knows no template never fires it on a record it cannot compare with — and the
+back-off's `Equal` carrying the salt, so a skipped run does not lose the reason it skipped on.
+
+### The open items, answered
+
+The owner's answers are D1390–D1409 of [docs/catalog-build-context/reconciliation.md](../catalog-build-context/reconciliation.md)
+§7 (2026-11-07; D1409 amended 2026-11-08). §9 keeps its own text above; this is what each item became.
+
+| Item | The answer | What the code does (2026-11-12) |
+| --- | --- | --- |
+| **O1** — does the policy `Version` move? | **No**, and the recommendation's own condition is met: the skew is a **gate**, not a version bump (D1403) | This member moves `Version` **not at all**: it is **7** at this reading (`internal/projectpolicy/version.go`) — 5 is the pools' owner and roster, 6 the binaries block, 7 the two model grades, each a **top-level** key a version behind would silently decode past, which is not this member's shape: a `context:` sits inside `image_catalog`, whose every released reader decodes strictly and so refuses the block outright instead of skipping the member — and §9's "stays **4**" is that recommendation's own text as written, not today's number. The gate is G5's two refusals, both false until the release that first reads the member flips them |
+| **O2** — how does the nightly check learn that the context moved? | **Not from the branch, and with no credential**: the identity is what the copy staged (D1401) | `internal/cli/image_check_catalog.go` reads `builds/catalog/<entry>/context-sha256` and the commit beside it (`config.CatalogContextHashKey`, `CatalogContextCommitKey`) **out of the runs bucket** and never opens the provider: the check job holds no repository credential, and a missing object is refused by name with the command that stages it rather than read as "nothing changed". `TestCatalogCheckReadsTheStagedContextHash` pins it — touching a `gitprov` opener is the failure |
+| **O3** — is the context bounded, and where? | **Bounded where the CLI resolves it**, before the copy is written (D1398) | `internal/catalog`'s `MaxContextBytes` (**64 MiB**) and `MaxContextFiles` (**4000**), checked against the provider's own listing in `contextHash` before a byte of the context is fetched, so an entry over either is refused by name and never billed for a build; a context that holds **no files** is refused too, because a tree read cannot tell an empty directory from one that is not there |
+| **O4** — which release carries this, and in what order against the removal? | **The work does not wait for the removal chain** (D1409, amended 2026-11-08); the slot itself stays the owner's | nothing in the tree records a release for it: the two constants wait for the flip that release makes, and no ordering against R0–R10 is asserted anywhere in the code |
+| **O5** — what commit does a scheduled rebuild use? | **The one the copy pinned and staged** (D1394, D1395) — never a commit the job resolves for itself | `catalogCheckTarget.submit` builds a context entry at `ev.contextCommit` and stamps the **same** value as the definition's `SourceCommit`, so the record's `source_commit` and `context_commit` are one commit and the image's `org.opencontainers.image.revision` label is it |
+| **O6** — does a context entry get a narrower identity? | **Not now**: the whole context tree (D1401) | `contextDigest` is a sha256 over the tree's paths and each file's digest, in path order, and `DecideCatalog` fires `ReasonCatalogContext` (`catalog-context`) when the staged digest differs from the record's — a change anywhere under the context fires it, and a `context_paths` key does not exist |
+
+### The tasks, and the one whose shape changed
+
+- **C1 → CB1, as written.** `Source.Context`, `catalogContextMessage`, the settings row
+  `image_catalog.entries.*.source.context` and the schema member; the registry's rows went
+  **325 → 326**, as §A7 predicted.
+- **C2 → CB2, as written.** The copy resolves the source's ref to one commit and reads file and tree
+  at it; `context_commit` is staged beside the Dockerfile (`source-commit`) and the record's
+  `SourceCommit` is that commit.
+- **C3 → CB3, as written.** The clone step outside the Docker build, `--file` on the build step, and
+  the record's `context_sha256`.
+- **C4 → CB4**, as written in interface and changed in its subject: O2's answer removed the provider
+  read the task was priced for, so the check stays credential-less, and G6's salt is what the task
+  gained.
+- **C5 → the gate above, in a different shape.** §C5 designs a `catalogContextSkew` on the **write**
+  path — a `contextSince`/`contextShipped` pair judging the installation's **base image** where an
+  entry is written, in the shape `imageCatalogGate` has. What shipped refuses the two things a runner
+  actually reads: the deployment (readiness) and the published node (`policyContextRefusal`). The
+  difference is the subject: a write-path gate judges the machine the entry is written on, and an
+  operator on a current base image would be free to publish the node D1403 is about to every runner in
+  the project; the node and the job are where the member reaches them. **A reader of §C5 must not take
+  it as a description of the code**, and its own tests
+  (`TestCatalogContextSkewRefusesAnOlderBase` and its siblings) name a function that does not exist.
+  One fact beside it, because it is why the node's refusal is the door that matters today: `fugaro
+  image add` has no `--context` flag, and the generic settings path carries **no writer** for
+  `image_catalog.entries[].source.context` (the registry row exists, and the count
+  `internal/cli/docs_config_management_test.go` keeps is explicit that this path does not write it), so
+  a `context:` is written by editing this machine's project config — and `fugaro update` is what
+  publishes it to the node.
+
+### What this fold-in leaves open
+
+- **F32 — who reviews the context's contents.** §4.1's trust boundary is unchanged and still the
+  question: a context widens the operator's decision (the catalog is operator-owned because it decides
+  what code runs) to a repository tree the operator does not read. D1394/D1395 answered the **commit**
+  half; whether the answer is review at copy time, a documented trust boundary, or nothing is a
+  **product decision** and no D-row of D1390–D1409 took it. It is stated here as open rather than
+  settled by a sentence.
+- **The release the gate is flipped in.** D1409's amendment removed an ordering constraint, not the
+  owner's choice of release: the two `imageContextShipped` constants are false at this reading, and
+  until the release that first reads the member flips them, an installation whose catalog carries a
+  `context:` has its job held back and its node refused — which is the intended, loud state.
+- **F30's tension with the removal's ruling**, which the reading itself named: a `context:` is an
+  engine-side mechanism, and D1208's ruling (owner, 2026-11-04) refused an engine-side bake keyed by
+  repository on the ground that it "re-creates the per-repository build input inside the catalog". The
+  owner answered it (D1409): the difference is that a context is a checkout the **entry's own
+  Dockerfile** decides what to do with, not a bake the engine performs, and the design is read against
+  the shape D1208 has produced so far rather than against entries that do not exist yet.
+- **The trigger's honest state, which is a divergence from §A5 and O2's recommendation.** The nightly
+  decision's subject is the digest **the operator's own copy staged**, not a branch head: the rebuild
+  is pinned to that staged commit, and the record is written by the build the same copy submitted. So a
+  commit pushed under the context fires **nothing by itself** — a context entry's trigger fires where a
+  staged copy moved and **no build recorded it**, which is a copy whose build failed or was cancelled.
+  §A5's branch-head identity and O2's recommendation would have made a commit under the context a
+  rebuild on the following night; what shipped makes the operator's own staging the only thing that
+  moves the entry, and the nightly job the thing that finishes a copy a failed build left unrecorded.
+  Which answer D1148's promise ("scheduled security rebuilds") rests on is therefore still open, and it
+  needs a decision rather than a sentence: the reading is stated here so the next reader meets it in
+  the design and not in a surprise.

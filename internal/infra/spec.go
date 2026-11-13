@@ -115,7 +115,7 @@ const (
 	VertexProjectEnv = "ANTHROPIC_VERTEX_PROJECT_ID"
 )
 
-// PlatformEnv is every key above, together: fugaro upgrade's job-config-copy
+// PlatformEnv is every key above, together: fugaro update's job-config-copy
 // check (internal/cli/upgrade_cloud.go) excludes exactly this set, named
 // here from the same constants platformEnv and the vertex branch use, so it
 // never has to guess it or drift from them.

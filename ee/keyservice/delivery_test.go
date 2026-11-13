@@ -121,7 +121,7 @@ func TestARenewalKeyIsMailedToTheBuyer(t *testing.T) {
 	// A subscription the store holds with no address a key can be mailed to is
 	// refused rather than renewed into the void.
 	f.store.SaveSubscription(context.Background(), Subscription{
-		ID: "sub-anonymous.example", Organisation: "anonymous.example", Seats: 1, TermDays: 365,
+		ID: "sub-anonymous.example", Organisation: "anonymous.example", WorkspaceID: workspaceID, Seats: 1, TermDays: 365,
 		At: f.now.Add(-365 * day), Expires: f.now.Add(day),
 	})
 	if _, renewed, err := f.svc.Renew(context.Background(), "sub-anonymous.example"); !errors.Is(err, ErrNoBuyer) || renewed {
@@ -366,6 +366,7 @@ func TestAPurchaseWithNoDeliverableAddressIsRefused(t *testing.T) {
 			OccurredAt:   f.now,
 			Subscription: "sub-" + strconv.Itoa(i),
 			Organisation: "acme.example",
+			WorkspaceID:  workspaceID,
 			Email:        raw,
 			Seats:        5,
 			TermDays:     365,

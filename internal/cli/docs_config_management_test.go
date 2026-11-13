@@ -198,8 +198,8 @@ const (
 // block, and a row may not name a family command that does not take it (D1178);
 // the row and the reconcile paragraph move together when that command lands.
 const (
-	cfmRegistryRows   = 424
-	cfmAllowlistNamed = 101
+	cfmRegistryRows   = 436
+	cfmAllowlistNamed = 105
 )
 
 func TestDocsConfigManagementIsWritten(t *testing.T) {
@@ -453,6 +453,15 @@ func TestDocsConfigManagementRelativeCitationsResolve(t *testing.T) {
 // internal/settings/registry.go:301, and its layer row for defaults.planning at
 // :542.
 //
+// E3 of docs/outer-loop-escalation/ is the last mover, by twelve rows and by
+// twelve: the local ladder's `escalation.*` block is the machine's own — a
+// threshold is authority, so no shared layer holds one — and the generic path is
+// its door, which is what puts the owner's own hand and the coding agent's fence
+// in front of it. Four of the twelve are the per-mode override rows the named
+// list carries, and the eight scalars beside them (the four a mode reads, the
+// cost ceiling, the critical-path factor, the judge's grade and the readiness
+// switch) are reached by the block's own prefix.
+//
 // It counts through the same predicate the write path uses, so the test and the
 // command cannot disagree about what "the allowlist carries" means: the three
 // refusals settingsWriteRowHinted makes before the allowlist is asked are
@@ -664,7 +673,7 @@ var cfmGateRows = []cfmGateRow{
 
 // cfmGateFamilies ties a row's first cell to the family command the tree
 // already names for it: `settingsFamilyCommands` is what refuses a write and
-// points its key at that family (`internal/cli/settings_set.go:523`), so a row
+// points its key at that family (`internal/cli/settings_set.go:537`), so a row
 // spelled some other way would be a table whose command no refusal answers
 // with. A row extends its family's own spelling -- `fugaro rigor set` is the
 // spelling itself, `fugaro secrets rm` adds a subcommand to `fugaro secrets` --

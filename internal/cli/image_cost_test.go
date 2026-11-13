@@ -68,7 +68,7 @@ func imageCostFixture(t *testing.T, pricer buildPricer) (*budgetFixture, *imageC
 	f.db.Set(budget.PathLimits, map[string]any{"maxReserveMicros": 100 * usd1})
 	f.db.Set(budget.PathCapsRepo(appSlug), map[string]any{"dailyMicros": 5 * usd1})
 	f.db.Set(budget.PathCapsGlobal, map[string]any{"perRunMicros": 50 * usd1, "dailyMicros": 100 * usd1})
-	c := newImageCost(lc, db, "acme/app", appSlug, "someone@example.com", pricer)
+	c := newImageCost(db, lc.Build.MachineType, lc.BuildRegion(), "acme/app", appSlug, "someone@example.com", pricer)
 	c.now = func() time.Time { return imageCostDay }
 	return f, c
 }

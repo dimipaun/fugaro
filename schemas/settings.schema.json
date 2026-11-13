@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/settings.schema.json",
   "title": "Fugaro settings",
-  "description": "The document `fugaro settings --json` prints: one row per setting and scope, the layers the read touched with what came of each, and the built-in default of every key of the registry. See docs/settings-commands/spec.md §2.8. Members are only ever added within a version (D848), so a renamed or re-meant member is a new member under a new name and the old one is kept, and removing or retyping one bumps version. No object here is closed for that reason: additionalProperties is left true everywhere, because a consumer that refused a member this schema does not know would refuse a newer CLI's document, which D848 promises to keep readable under the same version.",
+  "description": "The document `fugaro settings --json` prints: one row per setting and scope, the layers the read touched with what came of each, and the built-in default of every key of the registry. See docs/settings-commands/spec.md \u00a72.8. Members are only ever added within a version (D848), so a renamed or re-meant member is a new member under a new name and the old one is kept, and removing or retyping one bumps version. No object here is closed for that reason: additionalProperties is left true everywhere, because a consumer that refused a member this schema does not know would refuse a newer CLI's document, which D848 promises to keep readable under the same version.",
   "type": "object",
   "required": [
     "version",
@@ -124,7 +124,7 @@
           "pattern": "^profile .+$"
         }
       ],
-      "$comment": "The origin of a value, as WINS and --why's levels print it: a layer name, or `profile <name>` when one of the project layer's profiles decided it — config.SourceProfile's spelling, which spec §2.2 says is `config show`'s own. The layer list is settings.Layers, the same list --layer takes; the profile form is a pattern because profile names are the project layer's vocabulary, not the read's."
+      "$comment": "The origin of a value, as WINS and --why's levels print it: a layer name, or `profile <name>` when one of the project layer's profiles decided it \u2014 config.SourceProfile's spelling, which spec \u00a72.2 says is `config show`'s own. The layer list is settings.Layers, the same list --layer takes; the profile form is a pattern because profile names are the project layer's vocabulary, not the read's."
     },
     "default": {
       "type": "object",
@@ -161,7 +161,7 @@
         "outcome": {
           "type": "string",
           "minLength": 1,
-          "$comment": "Whether the level won, was overridden, or was ignored as looser than the winner (spec §2.6). The last two are the cloud layers' (S2), so the word is not closed here."
+          "$comment": "Whether the level won, was overridden, or was ignored as looser than the winner (spec \u00a72.6). The last two are the cloud layers' (S2), so the word is not closed here."
         }
       }
     },
@@ -209,7 +209,7 @@
         },
         "owner": {
           "type": "string",
-          "description": "The command that writes the key (D1178): `fugaro settings set` for a key the generic path writes, the family that writes one it does not — `fugaro models`, `fugaro rigor set`, `fugaro rigor floor`, `fugaro accounts`, `fugaro secrets`, `fugaro project`, `fugaro workspace`, `fugaro image map` — and, for a key no command edits, a sentence naming the command that carries its file — `fugaro setup` and `fugaro update` for the installation's own keys, `fugaro config publish` for a key the layer file states and `fugaro config init` for one a checkout's `fugaro.yaml` is opened with — rather than a bare command name a reader would take for the key's own editor. A row whose `writable` is false never spells the generic writer — the write is what decides whether it may, so the pair says a command writes a key it has just refused — and the empty string is a row no command writes, the literal `*` of a wildcard row. Display text, not an authority: where `settings set` refuses a key in a family's name it is that refusal's own words, and no rule reads it. Written on every row by this CLI; absent from a document an older CLI wrote, where it means the same as the empty string."
+          "description": "The command that writes the key (D1178): `fugaro settings set` for a key the generic path writes, the family that writes one it does not \u2014 `fugaro models`, `fugaro rigor set`, `fugaro rigor floor`, `fugaro accounts`, `fugaro secrets`, `fugaro project`, `fugaro workspace`, `fugaro image map` \u2014 and, for a key no command edits, a sentence naming the command that carries its file \u2014 `fugaro setup` and `fugaro update` for the installation's own keys, `fugaro config publish` for a key the layer file states and `fugaro config init` for one a checkout's `fugaro.yaml` is opened with \u2014 rather than a bare command name a reader would take for the key's own editor. A row whose `writable` is false never spells the generic writer \u2014 the write is what decides whether it may, so the pair says a command writes a key it has just refused \u2014 and the empty string is a row no command writes, the literal `*` of a wildcard row. Display text, not an authority: where `settings set` refuses a key in a family's name it is that refusal's own words, and no rule reads it. Written on every row by this CLI; absent from a document an older CLI wrote, where it means the same as the empty string."
         },
         "target_layer": {
           "type": "string",
@@ -329,14 +329,14 @@
         "agent.models.coder": {
           "default": "unset = agent.model"
         },
+        "agent.models.diagnose": {
+          "default": "unset = Fugaro's own diagnose model (config.DefaultDiagnoseModel)"
+        },
         "agent.models.reviewer": {
           "default": "unset = agent.model"
         },
         "agent.models.vision": {
           "default": "unset = none: a stage whose own model cannot read an image keeps it"
-        },
-        "agent.models.diagnose": {
-          "default": "unset = Fugaro's own diagnose model (config.DefaultDiagnoseModel)"
         },
         "agent.oauth_token": {
           "default": "unset = the job's own credential"
@@ -585,6 +585,44 @@
         "endpoints.storage": {
           "default": "unset = the global Storage endpoint"
         },
+        "escalation.cost_ceiling": {
+          "default": "unset = none: a file that states no ceiling gets no cost trigger"
+        },
+        "escalation.critical_path_factor": {
+          "$comment": "localcfg.DefaultEscalationCriticalPathFactor",
+          "default": "0.5"
+        },
+        "escalation.merge_judge": {
+          "default": "unset = none: a judge nobody named is a question for the owner (escalation.Grades)"
+        },
+        "escalation.modes.*.r2_after_attempts": {
+          "default": "unset = the block's own, or the shipped table's when it states none"
+        },
+        "escalation.modes.*.r2_after_hours": {
+          "default": "unset = the block's own, or the shipped table's when it states none"
+        },
+        "escalation.modes.*.r2_coder": {
+          "default": "unset = the block's own, or the shipped table's when it states none"
+        },
+        "escalation.modes.*.r3_after_hours": {
+          "default": "unset = the block's own, or the shipped table's when it states none"
+        },
+        "escalation.r2_after_attempts": {
+          "default": "unset = the shipped table's own, one row per mode (escalation.DefaultThresholds)"
+        },
+        "escalation.r2_after_hours": {
+          "default": "unset = the shipped table's own, one row per mode (escalation.DefaultThresholds)"
+        },
+        "escalation.r2_coder": {
+          "default": "unset = the shipped table's own, one row per mode (escalation.DefaultThresholds)"
+        },
+        "escalation.r3_after_hours": {
+          "default": "unset = the shipped table's own, one row per mode (escalation.DefaultThresholds)"
+        },
+        "escalation.ready_drafts": {
+          "$comment": "localcfg.DefaultEscalationReadyDrafts",
+          "default": "false"
+        },
         "followup.allow_public": {
           "default": "unset = false"
         },
@@ -637,20 +675,17 @@
         "governance.tiers": {
           "default": "unset = Fugaro's own tiers"
         },
+        "image_catalog.entries.*.default": {
+          "default": "unset = false"
+        },
+        "image_catalog.entries.*.description": {
+          "default": "unset = none"
+        },
         "image_catalog.entries.*.name": {
           "default": "unset = none"
         },
-        "image_catalog.entries.*.tags": {
-          "default": "unset = none"
-        },
-        "image_catalog.entries.*.source.kind": {
-          "default": "unset = none"
-        },
-        "image_catalog.entries.*.source.repo": {
-          "default": "unset = none"
-        },
-        "image_catalog.entries.*.source.path": {
-          "default": "unset = none"
+        "image_catalog.entries.*.services": {
+          "default": "unset = none: the run starts no backing service"
         },
         "image_catalog.entries.*.source.branch": {
           "default": "unset = none"
@@ -658,20 +693,23 @@
         "image_catalog.entries.*.source.context": {
           "default": "unset = none"
         },
-        "image_catalog.entries.*.source.inline": {
-          "default": "unset = none"
-        },
         "image_catalog.entries.*.source.image": {
           "default": "unset = none"
         },
-        "image_catalog.entries.*.description": {
+        "image_catalog.entries.*.source.inline": {
           "default": "unset = none"
         },
-        "image_catalog.entries.*.default": {
-          "default": "unset = false"
+        "image_catalog.entries.*.source.kind": {
+          "default": "unset = none"
         },
-        "image_catalog.entries.*.services": {
-          "default": "unset = none: the run starts no backing service"
+        "image_catalog.entries.*.source.path": {
+          "default": "unset = none"
+        },
+        "image_catalog.entries.*.source.repo": {
+          "default": "unset = none"
+        },
+        "image_catalog.entries.*.tags": {
+          "default": "unset = none"
         },
         "image_map": {
           "default": "unset = none: no repository is mapped, and the catalog's default entry decides the image"
@@ -816,14 +854,14 @@
         "layer.defaults.agent.models.coder": {
           "default": "unset = defaults.agent.model"
         },
+        "layer.defaults.agent.models.diagnose": {
+          "default": "unset = Fugaro's own diagnose model (config.DefaultDiagnoseModel)"
+        },
         "layer.defaults.agent.models.reviewer": {
           "default": "unset = defaults.agent.model"
         },
         "layer.defaults.agent.models.vision": {
           "default": "unset = none: a stage whose own model cannot read an image keeps it"
-        },
-        "layer.defaults.agent.models.diagnose": {
-          "default": "unset = Fugaro's own diagnose model (config.DefaultDiagnoseModel)"
         },
         "layer.defaults.agent.recipe": {
           "default": "unset = the built-in recipe"
@@ -858,6 +896,9 @@
         "layer.defaults.model_grades.strongest.model": {
           "default": "unset = none: a rung whose grade the project sets nowhere refuses and asks"
         },
+        "layer.defaults.planning.decoupling": {
+          "default": "unset = true"
+        },
         "layer.defaults.rigor.areas.*.match": {
           "default": "unset = none"
         },
@@ -869,9 +910,6 @@
         },
         "layer.defaults.rigor.default": {
           "default": "unset = the built-in mode (pro)"
-        },
-        "layer.defaults.planning.decoupling": {
-          "default": "unset = true"
         },
         "layer.gcp_project": {
           "default": "unset = the installation's GCP project"
@@ -1163,6 +1201,10 @@
         "orchestrator.spawn_per_minute": {
           "default": "unset = 2 (policy.DefaultSpawnPerMinute)"
         },
+        "planning.decoupling": {
+          "$comment": "config.DefaultPlanningDecoupling",
+          "default": "true"
+        },
         "policy_generation": {
           "default": "unset = none: no generation is recorded; the next update adopts the published one"
         },
@@ -1235,6 +1277,9 @@
         "repos.*.base_branch": {
           "default": "unset = the project's base_branch"
         },
+        "repos.*.credentials_service_ready": {
+          "default": "unset = false: no update has applied this repository's root with the service on \u2014 its bundle holds no model credential, or its agent.auth is not the cascade"
+        },
         "repos.*.github_app_id": {
           "default": "unset = none"
         },
@@ -1244,15 +1289,8 @@
         "repos.*.vertex": {
           "default": "unset = false"
         },
-        "repos.*.credentials_service_ready": {
-          "default": "unset = false: no update has applied this repository's root with the service on — its bundle holds no model credential, or its agent.auth is not the cascade"
-        },
         "repos.*.workflows": {
           "default": "unset = every workflow the repository defines"
-        },
-        "planning.decoupling": {
-          "$comment": "config.DefaultPlanningDecoupling",
-          "default": "true"
         },
         "review_floor": {
           "default": "unset = none: no floor is added"
@@ -1262,9 +1300,6 @@
         },
         "rigor.default": {
           "default": "unset = pro (rigor.Default)"
-        },
-        "security.patterns": {
-          "default": "unset = the engine's floor alone"
         },
         "routing.claude.models": {
           "default": "unset = none"
@@ -1283,6 +1318,9 @@
         },
         "secret_rotation_days": {
           "default": "unset = 0: no rotation period is recorded"
+        },
+        "security.patterns": {
+          "default": "unset = the engine's floor alone"
         },
         "setup_pending": {
           "default": "unset = none: setup ran to the end"

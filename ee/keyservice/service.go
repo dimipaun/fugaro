@@ -48,6 +48,11 @@ const (
 	RouteRequest    = "/request"
 	RouteVerify     = "/verify"
 	RouteWebhook    = "/webhook"
+	// The renewal and the status routes are the site's forms' siblings and not
+	// the site's own (§7, §8): the customer's project is what asks them, and
+	// what they carry is a key's secret rather than an applicant's address.
+	RouteRenew  = "/renew"
+	RouteStatus = "/status"
 )
 
 // The bounds on what a stranger may hand the service. Each is a body a form or a
@@ -139,6 +144,12 @@ type Deps struct {
 	Mints    Mints
 	Mailer   Mailer
 	CodeHost CodeHost
+	// MintsV1 may be nil: it is the intake's route to a v1 key, which the
+	// renewal endpoint is the only caller of (§7, K2.3), and a deployment that
+	// mints only the older format has none. The renewal route then answers that
+	// it cannot mint rather than reaching for a signer this half never holds
+	// (Check 174).
+	MintsV1 MintsV1
 	// Proofs may be nil: D452 is open, and a service with no proof check
 	// refuses the open-source programme rather than treating a public
 	// repository as proof of who is asking (§4.4).
@@ -168,6 +179,7 @@ type Service struct {
 	openSource Plan
 	store      Store
 	mints      Mints
+	mintsV1    MintsV1
 	mail       Mailer
 	host       CodeHost
 	proofs     Proofs
@@ -177,6 +189,16 @@ type Service struct {
 	auditor    Auditor
 	now        func() time.Time
 	limiter    *throttle
+	// renewMu is one renewal at a time in this process. A renewal reads the key's
+	// state, mints and then writes what records the rotation, and two of them in
+	// flight together would both read "no successor yet" and both mint — of which
+	// only one can be the rotation the store records, so the other would answer
+	// with a key nothing would let renew (renew's own comment).
+	//
+	// It is this process's, like pageMu above and for the same reason: what a
+	// second instance does is decided by the store's record of the rotation and
+	// by the handover beside it (D2135), which is where the 24-hour window lives.
+	renewMu sync.Mutex
 	// pageMu is the page's actions one at a time. A minting action is a count,
 	// an audit line and a key, and the count reads the record the key writes:
 	// two of them in flight together would each count a record that does not
@@ -303,6 +325,7 @@ func New(cfg Config, deps Deps) (*Service, error) {
 		openSource: *cfg.OpenSource,
 		store:      deps.Store,
 		mints:      deps.Mints,
+		mintsV1:    deps.MintsV1,
 		mail:       deps.Mailer,
 		host:       deps.CodeHost,
 		proofs:     deps.Proofs,
@@ -326,6 +349,10 @@ func (s *Service) Handler() http.Handler {
 	mux.HandleFunc("POST "+RouteRequest, s.requestForm)
 	mux.HandleFunc("GET "+RouteVerify, s.verifyLink)
 	mux.HandleFunc("POST "+RouteWebhook, s.webhook)
+	// §7's renewal and §8's status: POSTs, because what they carry is a key's
+	// secret and a secret never belongs in a URL.
+	mux.HandleFunc("POST "+RouteRenew, s.renew)
+	mux.HandleFunc("POST "+RouteStatus, s.status)
 	// §6's page: where the queue is read and where the owner's key is minted.
 	// The patterns carry no method, and the exact one beside the subtree is
 	// what keeps the mux from answering a bare /admin with a redirect to
