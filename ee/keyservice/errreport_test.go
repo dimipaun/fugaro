@@ -4,8 +4,9 @@
 package keyservice
 
 // The API's error reporting's own tests (portal plan P1.6): a panicking route
-// and a 5xx answer reach Sentry without the request, and a deployment with no
-// DSN reaches nothing at all.
+// and a 5xx answer reach Sentry without the request, a panic whose answer is
+// already under way goes on to the server, and a deployment with no DSN (or one
+// Sentry cannot read) reaches nothing at all and keeps its panics in its log.
 //
 // The Sentry a test reports to is an httptest server on the loopback, which is
 // the only host a hermetic test reaches: the DSN points at it and the transport
@@ -29,6 +30,12 @@ import (
 const (
 	apiPanicPath = "/api/probe/panic"
 	apiFailPath  = "/api/probe/fail"
+	apiHalfPath  = "/api/probe/half"
+
+	// halfAnswer is how much of an answer the third probe had written when it
+	// panicked: a refusal written after it would read as the rest of one answer,
+	// which is the whole of what the wrapper has to avoid.
+	halfAnswer = `{"organisation":{"id":"acme`
 
 	// panicProbeSays is what the panicking route panics with. It is the route's
 	// own sentence and not the request's, because the panic's own value is the
@@ -39,6 +46,7 @@ const (
 func init() {
 	registerAPI(http.MethodPost, apiPanicPath, panicProbe)
 	registerAPI(http.MethodPost, apiFailPath, failProbe)
+	registerAPI(http.MethodPost, apiHalfPath, panicAfterWriting)
 }
 
 // panicProbe is a door that panics, which is the failure no route can answer.
@@ -52,6 +60,17 @@ func panicProbe(_ *Service, _ http.ResponseWriter, _ *http.Request) {
 // (P1.6).
 func failProbe(_ *Service, w http.ResponseWriter, _ *http.Request) {
 	refuseAPI(w, http.StatusBadGateway, "upstream_failed", "The merchant did not answer.")
+}
+
+// panicAfterWriting is a door that fails after it has answered: the status line
+// and part of a body are out, and then it panics. It writes no refusal of its
+// own, so what the test reads after the panic is the wrapper's doing and not
+// this door's.
+func panicAfterWriting(_ *Service, w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", apiJSONType)
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.WriteString(w, halfAnswer)
+	panic(panicProbeSays)
 }
 
 // TestPanicIsReportedWithoutTheBody: a route that panics is reported and
@@ -110,6 +129,59 @@ func TestPanicIsReportedWithoutTheBody(t *testing.T) {
 	} {
 		if strings.Contains(held, unwanted.held) {
 			t.Errorf("the report carries %s (%q): a report reaches Sentry and never the request (§7.2):\n%s", unwanted.what, unwanted.held, held)
+		}
+	}
+}
+
+// TestAPanicThatAlreadyAnsweredGoesOnToTheServer (P1.6): a route whose answer is
+// already under way when it panics is not answered a second time. A refusal
+// written after the half answer would reach the client as the rest of that
+// answer — a 500 the API never meant, which is worse than the connection the
+// server closes over a panic. So the panic goes on to the server, unchanged, and
+// the failure is still reported: the wrapper's recover is what would have taken
+// that report away.
+//
+// The test stands where net/http's own recover stands, since a panic recovered
+// inside the handler is one the server never hears about; the recorder is the
+// answer as far as it got.
+func TestAPanicThatAlreadyAnsweredGoesOnToTheServer(t *testing.T) {
+	stand := newSentryStand(t)
+	f := newFixtureWith(t, Production, func(f *fixture) { f.cfg.SentryDSN = stand.dsn() })
+
+	req := httptest.NewRequest(http.MethodPost, intakeOrigin+apiHalfPath, strings.NewReader("{}"))
+	req.Header.Set("Content-Type", apiJSONType)
+	req.RemoteAddr = applicantIP
+	rec := httptest.NewRecorder()
+
+	var raised any
+	func() {
+		defer func() { raised = recover() }()
+		f.handler.ServeHTTP(rec, req)
+	}()
+
+	if raised == nil {
+		t.Fatal("a panic the wrapper could not answer was swallowed, and the server never saw it: a truncated body then reads as a whole answer")
+	}
+	if raised != panicProbeSays {
+		t.Errorf("the server was handed %v, want the route's own panic (%q)", raised, panicProbeSays)
+	}
+
+	// The caller's answer is the half the route wrote, and nothing is written
+	// after it: a refusal here would be a second status and a second body.
+	if rec.Code != http.StatusOK {
+		t.Errorf("the answer went out as %d, want %d: the route had already answered when it panicked", rec.Code, http.StatusOK)
+	}
+	if got := rec.Body.String(); got != halfAnswer {
+		t.Errorf("the caller's answer is %q, want the half the route wrote (%q) and no refusal after it", got, halfAnswer)
+	}
+
+	posted := stand.posted()
+	if len(posted) != 1 {
+		t.Fatalf("the panic reached Sentry %d time(s), want one", len(posted))
+	}
+	for _, want := range []string{apiHalfPath, panicProbeSays, `"status":"500"`} {
+		if !strings.Contains(posted[0], want) {
+			t.Errorf("the report carries no %s, so a panic beside a half answer is reported as half a failure:\n%s", want, posted[0])
 		}
 	}
 }
