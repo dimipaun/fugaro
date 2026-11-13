@@ -67,18 +67,20 @@ const refusedMessage = "credsvc: refused"
 //
 // They are one closed set of this file's own text, so the label an operator
 // greps is never another package's spelling of its own read: a read that failed
-// is named here and nowhere else. Every read of the service's OWN that a
-// refused model call can fail on is one of them, with two exceptions, and both
-// are refusals whose own sentence already names what went wrong rather than a
-// read this file would have to name: the caller's request body is not a read of
-// anything this service holds (readCall's failure is refused with the caller's
-// own sentence), and the candidate list is a step and not a read of one node
+// is named here and nowhere else. Every read of the service's own that a refused
+// model call can fail on is one of them, with two exceptions — both refusals
+// whose sentence already names what went wrong, so that a label beside it would
+// say the same thing twice: the caller's request body is not a read of anything
+// this service holds (readCall's failure is refused with the caller's own
+// sentence), and the candidate list is a step and not a read of one node
 // (candidates: the crafts that narrow it and the admissions that fill it), so a
-// call the candidate list refuses is written with an empty read and an empty
-// class beside its sentence. The selector's three
-// are separate on purpose: the marks, the leases and the run's own placement
-// are three nodes and three different questions, and "the selection's read
-// failed" would leave an operator to guess which of them to look at.
+// call the candidate list refuses writes an empty read and an empty class
+// beside its sentence.
+//
+// The selector's three are separate on purpose: the marks, the leases and the
+// run's own placement are three nodes and three different questions, and "the
+// selection's read failed" would leave an operator to guess which of them to
+// look at.
 const (
 	// readKills is the operator's two stop switches (budget.ReadKills).
 	readKills = "kills"
