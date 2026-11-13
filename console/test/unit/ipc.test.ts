@@ -575,12 +575,11 @@ interface CliCommand {
  * converge rows were re-read on 2026-10-21, after task W1.2 of
  * `docs/setup-wizard/implementation-plan.md` split the old first-run `init` into
  * `fugaro setup` and `fugaro update` and left it a hidden tombstone. One row has
- * left it since: `upgrade`, which U4 of
- * `docs/plugin-user-scope/implementation-plan.md` removed with no tombstone
- * (D950), so there is no verb of that name left to classify -- and a table that
- * kept classifying one would be the drift this list and the never table exist to
- * catch. It is the
- * other half of the allow-list's invariant: nothing off this list may be driven
+ * left it since: U4 of `docs/plugin-user-scope/implementation-plan.md` removed
+ * `upgrade` with no tombstone (D950), so there is no verb of that name left to
+ * classify -- and a table that kept classifying one would be the drift this list
+ * and the never table exist to catch. It is the other half of the allow-list's
+ * invariant: nothing off this list may be driven
  * (there is no command the console could drive that is not here), and nothing on
  * it that is not `allowed` may be driven either. Keeping the list complete is
  * what makes "the console is read-only" a fact about the surface rather than a
