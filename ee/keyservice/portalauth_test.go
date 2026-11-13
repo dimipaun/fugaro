@@ -99,7 +99,17 @@ func signPortalToken(t *testing.T, key *rsa.PrivateKey, kid, alg string, claims 
 	if err != nil {
 		t.Fatalf("marshalling the claims: %v", err)
 	}
-	signing := base64.RawURLEncoding.EncodeToString(head) + "." + base64.RawURLEncoding.EncodeToString(payload)
+	return signSegments(t, key, string(head), string(payload))
+}
+
+// signSegments signs a header and a payload written out as text. It is what a
+// case presents when the text it hands the decoder is already what a presenter
+// would sign: a case built by rewriting a segment of an already-signed token
+// meets the signature's refusal first, and the decoder guard it is about never
+// runs.
+func signSegments(t *testing.T, key *rsa.PrivateKey, head, payload string) string {
+	t.Helper()
+	signing := base64.RawURLEncoding.EncodeToString([]byte(head)) + "." + base64.RawURLEncoding.EncodeToString([]byte(payload))
 	sum := sha256.Sum256([]byte(signing))
 	sig, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, sum[:])
 	if err != nil {
@@ -664,6 +674,14 @@ func TestASchedulerTokenIsOneStringAndOneObject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshalling a header: %v", err)
 	}
+	// twoObjects is a payload carrying the deployment's own claim object and a
+	// second object after it, signed as it stands: every claim in the first is one
+	// the verifier admits, so the single-object guard is the only thing that can
+	// refuse it.
+	twoObjects, err := json.Marshal(schedulerClaims())
+	if err != nil {
+		t.Fatalf("marshalling the claims: %v", err)
+	}
 	encode := func(raw string) string { return base64.RawURLEncoding.EncodeToString([]byte(raw)) }
 
 	// splice writes raw into one segment as its own base64url text: the shape a
@@ -684,7 +702,7 @@ func TestASchedulerTokenIsOneStringAndOneObject(t *testing.T) {
 		"an empty header segment":          splice(0, ""),
 		"an empty payload segment":         splice(1, ""),
 		"an empty signature segment":       splice(2, ""),
-		"two objects in one payload":       splice(1, `{"iss":"x"}{"iss":"y"}`),
+		"two objects in one payload":       signSegments(t, portalKey(), string(object), string(twoObjects)+`{"iss":"y"}`),
 		"a payload that is not an object":  splice(1, `[1,2]`),
 		"a payload past the claims bound":  splice(1, `{"iss":"`+strings.Repeat("a", maxOIDCClaimsBytes)+`"}`),
 		"a header past its own bound":      splice(0, string(object)+strings.Repeat(" ", maxOIDCHeaderBytes)),
