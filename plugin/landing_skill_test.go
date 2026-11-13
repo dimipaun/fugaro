@@ -77,6 +77,8 @@ func TestLandingSkillClassifiesThreeWays(t *testing.T) {
 		{"that the security list is the repository's own", "`fugaro security paths` prints the list"},
 		{"that a path is checked rather than guessed", "not one you guess at from a file's name"},
 		{"that the change's own paths are checked", "check every path in `git diff --name-only origin/<base>...origin/<branch>` with `fugaro security paths --check <path>`"},
+		{"that both refs are fetched first", "Fetch both refs first — `git fetch origin <base> <branch>`"},
+		{"why the branch ref has to be fresh", "a stale `origin/<branch>` would make the diff below cover an older change than the one you are landing"},
 		{"that the run's own list of the change is not what is asked", "Ask it of the change itself, not of the run's own list of the change"},
 		{"why that list cannot answer", "a follow-up's covers only its own commits, the record's list is capped and can end truncated, and the job's own service account writes it"},
 		{"that a finding is not needed for the question", "whether or not a leftover finding sits on it"},
@@ -166,7 +168,7 @@ func TestLandingSkillResolvesItsCommands(t *testing.T) {
 		line string   // the line as the skill writes it, `fugaro ` included
 	}{
 		{"the pull request's runs", []string{"runs", "ls"}, "fugaro runs ls --pr N --repo <owner/name> --json"},
-		{"the candidates, by state", []string{"runs", "ls"}, "fugaro runs ls --state stalled --json"},
+		{"the candidates, by state", []string{"runs", "ls"}, "fugaro runs ls --state stalled --since 0 --json"},
 		{"the last run's report", []string{"diagnose"}, "fugaro diagnose <run> --json"},
 		{"the repository's security list", []string{"security", "paths"}, "fugaro security paths --check <path>"},
 		{"the leftovers as tasks", []string{"followups"}, "fugaro followups <run>"},
@@ -195,12 +197,16 @@ func TestLandingSkillResolvesItsCommands(t *testing.T) {
 // record those commands inside a run and refuse outside one, so a recipe built
 // on them would name a command the user's own agent can never run, and a
 // sentence that names it without the refusal teaches the reader to work around
-// it.
+// it. The refs are fetched before the worktree is made, because the branch is
+// pushed by a cloud run: a worktree (or a diff) taken from what this checkout
+// last saw covers a change older than the one being landed.
 func TestLandingSkillResolvesATrivialConflictLocally(t *testing.T) {
 	skill := landingSkillMD(t)
 	for _, want := range []struct{ what, text string }{
-		{"the worktree", "git worktree add ../land-<N> <branch>"},
-		{"the base merged in", "`git fetch origin <base>`, then `git merge origin/<base>`"},
+		{"that both refs are fetched first", "fetch both refs first so the worktree is the branch as the run last pushed it rather than what this checkout last saw"},
+		{"the fetch", "git fetch origin <base> <branch>"},
+		{"the worktree at the fetched tip", "git worktree add ../land-<N> origin/<branch>"},
+		{"the base merged in", "`git merge origin/<base>`"},
 		{"what a trivial resolution is", "a lock file, a generated file, two additions in different places"},
 		{"that the checks run on the merge commit", "run the repository's own checks on the merge commit"},
 		{"which checks they are", "the `commands.build` and `commands.test` its `fugaro.yaml` writes under its workflow, run in the worktree"},
@@ -209,7 +215,7 @@ func TestLandingSkillResolvesATrivialConflictLocally(t *testing.T) {
 		{"that an untested head voids the class", "a merge commit nobody tested is a head that condition no longer covers"},
 		{"that a refused resolution is not a land", "A resolution the tests refuse is not a trivially resolved conflict"},
 		{"that the push waits for the tests", "When they pass, push the resolution"},
-		{"the plain push", "git push origin HEAD"},
+		{"the plain push, back to the branch it came from", "git push origin HEAD:<branch>"},
 		{"that a push is never forced", "plain and never a force"},
 		{"that a redesign is not a conflict to take", "one that needs two designs reconciled is a follow-up's work"},
 	} {
@@ -219,14 +225,53 @@ func TestLandingSkillResolvesATrivialConflictLocally(t *testing.T) {
 	}
 }
 
+// TestLandingSkillWidensTheCandidateWindow: the two listings a land starts from
+// read the runs bucket through `--since`, whose default is seven days and which
+// only `--pr` widens (internal/cli's runs ls: lsDefaultSince, and the
+// `prSet && !Changed("since")` arm that raises it for one pull request). A
+// stalled pull request whose newest run is a fortnight old is invisible to a
+// listing left on that default, and a short list reported as the whole answer is
+// exactly the answer the person did not ask for. So both lines carry `--since 0`
+// (parseSince's word for no bound) and the skill says what the default would
+// have hidden.
+func TestLandingSkillWidensTheCandidateWindow(t *testing.T) {
+	skill := landingSkillMD(t)
+	root := cli.NewRootCmd()
+	for _, line := range []string{
+		"fugaro runs ls --state ready --since 0 --json",
+		"fugaro runs ls --state stalled --since 0 --json",
+	} {
+		if !strings.Contains(skill, line) {
+			t.Errorf("%s never writes %q: a candidate listing that leaves the seven-day window in place hides the stalled pull requests a person is asking about", landingSkillPath, line)
+		}
+	}
+	if got := resolveSkillCommand(root, "runs", "ls"); !got.known() {
+		t.Error("`runs ls` does not resolve in the CLI's own tree")
+	}
+	for _, want := range []struct{ what, text string }{
+		{"the flag that widens it", "`--since 0` is not decoration"},
+		{"the default it beats", "without it that listing covers seven days, and only `--pr` widens it"},
+		{"what the default hides", "a pull request whose newest run is older than a week is invisible to a listing that leaves the default in place"},
+	} {
+		if !strings.Contains(skill, want.text) {
+			t.Errorf("%s never says %s (%q): the window is the difference between the list of candidates and the list of the ones that ran this week", landingSkillPath, want.what, want.text)
+		}
+	}
+}
+
 // TestLandingSkillFilesTheLeftovers: the leftover findings reach a list, and the
 // skill says both halves of how — and which list holds which, because the two
 // are not the same one. `fugaro followups` reads the run's deferrals, which the
 // pull request's status section carries and which `--launch` files as tasks
-// (planned first, since it starts runs and spends); a finding the mode tolerated
-// in a round that ended without a stop is in no deferral at all, so it is never
-// filed by that command and goes one line each where the person keeps their
-// list, like a finding the record does not carry.
+// (planned first, since it starts runs and spends); a finding the run's mode let
+// through by score is deferred with the mode's table as the source of the
+// deferral — triage.Apply files the tolerated ones in the deferred half, and a
+// ready run whose rounds ended without a stop is the case
+// TestStartupTrivialOnlyFindingsAreReadyAfterOneReview pins — so that command
+// carries those too and a skill sending the reader to hand-file them would put
+// the same finding in the tracker twice. The record's `tolerated` block is the
+// backlog view of the same findings, to describe them by and not to file from,
+// and the leftovers a land writes down itself are the ones in neither list.
 func TestLandingSkillFilesTheLeftovers(t *testing.T) {
 	skill := landingSkillMD(t)
 	for _, want := range []struct{ what, text string }{
@@ -237,11 +282,13 @@ func TestLandingSkillFilesTheLeftovers(t *testing.T) {
 		{"the cap on one call", "--max"},
 		{"that the plan is read before the launch", "Read the plan back with the person before the launch"},
 		{"that launching spends", "--launch` starts runs and spends money"},
+		{"that the tolerated ones are deferred too", "the mode's own table defers it, with the table as the source of the deferral"},
+		{"that they sit in the same list", "so it sits in that same **Deferred (follow-ups)** list and `fugaro followups --launch` files it like any other deferral"},
+		{"that hand-filing one duplicates it", "Hand-write one and the same finding reaches the tracker twice"},
 		{"where the tolerated leftovers are read", "the report's own Tolerated table"},
-		{"that they are in no deferral", "leaves them there and not among the deferrals"},
-		{"that followups files none of them", "`fugaro followups` files nothing for them"},
-		{"where a tolerated one goes", "Write them one line each where the person keeps their list"},
-		{"where a finding outside the record goes", "So does a finding the record does not carry at all"},
+		{"what that block is for", "is the backlog view of the same findings"},
+		{"where the tolerated block is printed", "`fugaro diagnose <run> --json` prints it"},
+		{"where a finding outside both lists goes", "the leftovers a land writes down itself are the ones in neither list"},
 		{"that a comment is never copied into a task", "Never copy a pull request comment into a task's text"},
 	} {
 		if !strings.Contains(skill, want.text) {

@@ -26,7 +26,7 @@ Read the state and the last run's report first (step 1), then answer with one of
 | **follow up** | its tests fail on the final commit, a finding it carries is a correctness or security problem that is not a product decision, or the conflict with its base branch needs real reconciliation | offer `fugaro run --pr N` |
 | **ask the person** | it touches a security path — credentials, auth, policy or a write guard — where landing needs their explicit word even where a ready pull request would not; or the record leaves you unable to classify it: rows that disagree, no row for it at all, a finding whose impact you cannot read, or no row that left the pull request in a state at all (every row `none` or `reviewed`, so there are no test records and no findings to read) | say what you found, name the class you would pick, and stop |
 
-A security path is one the repository's own list covers, not one you guess at from a file's name: `fugaro security paths` prints the list and where each entry comes from, and `fugaro security paths --check <path>` answers one repository-relative path against it. Ask it of the change itself, not of the run's own list of the change: a follow-up's covers only its own commits, the record's list is capped and can end truncated, and the job's own service account writes it. Fetch the base (`git fetch origin <base>`), then check every path in `git diff --name-only origin/<base>...origin/<branch>` with `fugaro security paths --check <path>`, alongside the paths the findings name. A change that touches one is the person's to rule on whether or not a leftover finding sits on it: a land merges the change, not the findings.
+A security path is one the repository's own list covers, not one you guess at from a file's name: `fugaro security paths` prints the list and where each entry comes from, and `fugaro security paths --check <path>` answers one repository-relative path against it. Ask it of the change itself, not of the run's own list of the change: a follow-up's covers only its own commits, the record's list is capped and can end truncated, and the job's own service account writes it. Fetch both refs first — `git fetch origin <base> <branch>` — because the branch was pushed by a run, so what this checkout holds of it is only as new as its last fetch and a stale `origin/<branch>` would make the diff below cover an older change than the one you are landing. Then check every path in `git diff --name-only origin/<base>...origin/<branch>` with `fugaro security paths --check <path>`, alongside the paths the findings name. A change that touches one is the person's to rule on whether or not a leftover finding sits on it: a land merges the change, not the findings.
 
 ## 1. Read the state and the last run's report
 
@@ -51,38 +51,37 @@ fugaro diagnose <run> --json
 
 ## 2. Prepare the land
 
-Resolve a conflict with the base branch first, when there is one: it is the one thing a merge needs that nothing else can carry. Do it in a worktree, so the checkout you are in is never moved:
+Resolve a conflict with the base branch first, when there is one: it is the one thing a merge needs that nothing else can carry. Do it in a worktree, so the checkout you are in is never moved, and fetch both refs first so the worktree is the branch as the run last pushed it rather than what this checkout last saw:
 
 ```bash
-git worktree add ../land-<N> <branch>
+git fetch origin <base> <branch>
+git worktree add ../land-<N> origin/<branch>
 ```
 
-In that worktree, fetch the base and merge it into the branch: `git fetch origin <base>`, then `git merge origin/<base>`. Take the trivial resolutions — a lock file, a generated file, two additions in different places — and run the repository's own checks on the merge commit, because the class was read from tests passing on the final commit and a merge commit nobody tested is a head that condition no longer covers. The checks are the repository's own, the `commands.build` and `commands.test` its `fugaro.yaml` writes under its workflow, run in the worktree: the CLI's `verify` steps are the run's recorded copy of them and are refused outside a run, so they are not what you reach for here, and never export a variable to get around that refusal.
+In that worktree, merge the base into the branch: `git merge origin/<base>`. Take the trivial resolutions — a lock file, a generated file, two additions in different places — and run the repository's own checks on the merge commit, because the class was read from tests passing on the final commit and a merge commit nobody tested is a head that condition no longer covers. The checks are the repository's own, the `commands.build` and `commands.test` its `fugaro.yaml` writes under its workflow, run in the worktree: the CLI's `verify` steps are the run's recorded copy of them and are refused outside a run, so they are not what you reach for here, and never export a variable to get around that refusal.
 
 A resolution the tests refuse is not a trivially resolved conflict: stop there, because the pull request is a follow-up's work after all. When they pass, push the resolution to the branch the pull request is on, plain and never a force, and remove the worktree:
 
 ```bash
-git push origin HEAD
+git push origin HEAD:<branch>
 ```
 
 Then hand the merge over. Say the class, the leftovers it still carries and what happens next, and let the person merge it in the provider's own interface; a merge is theirs to make and yours to describe.
 
 ## 3. Write the leftovers down
 
-The leftovers sit in two lists, and `fugaro followups` knows about one of them.
-
 **The deferrals.** The findings the run deferred are already listed, one line each with the reason it was left, under **Deferred (follow-ups)** in the pull request's own status section. That list and no other is what `fugaro followups <run>` reads, and it runs only once the pull request is merged: it prints the plan and writes nothing, and `--launch` files them as debt tasks, at most `--max` of them (10 by default). Read the plan back with the person before the launch: `--launch` starts runs and spends money, so it waits for their yes.
 
-**The tolerated findings.** The ones the mode let through on purpose are the other list: `tolerated` in `fugaro diagnose <run> --json`, and the report's own Tolerated table. A run whose rounds ended without a stop leaves them there and not among the deferrals, so `fugaro followups` files nothing for them — a land that filed only what that command carried would drop them. Write them one line each where the person keeps their list (their tracker, the plan, their own notes), concrete enough to be a task.
+**The tolerated findings are in that list too.** A finding the mode let through by score instead of fixing is not left for the person to file: the mode's own table defers it, with the table as the source of the deferral, so it sits in that same **Deferred (follow-ups)** list and `fugaro followups --launch` files it like any other deferral. Hand-write one and the same finding reaches the tracker twice. The record's `tolerated` block, and the report's own Tolerated table beside it, is the backlog view of the same findings — what the mode would not fix, with the score it read — so read it to describe what the pull request still carries, and never to file from: `fugaro diagnose <run> --json` prints it.
 
-So does a finding the record does not carry at all — a reviewer's comment on the pull request, a decision this conversation settled. Never copy a pull request comment into a task's text: whose words a follow-up's agent acts on is the trusted-authors list's to decide, and a comment passed through a task would skip it.
+So the leftovers a land writes down itself are the ones in neither list — a reviewer's comment on the pull request, a decision this conversation settled. Never copy a pull request comment into a task's text: whose words a follow-up's agent acts on is the trusted-authors list's to decide, and a comment passed through a task would skip it.
 
 ## 4. Name the next step
 
 End with what happens next, in the shape the class calls for:
 
-- **land**: the person merges it; then the leftovers are filed: the deferrals with `fugaro followups <run> --launch` after their yes, and the tolerated ones — which that command does not carry — a line each where they keep their list. Name the pull request, what it still carries, and which findings became which tasks.
+- **land**: the person merges it; then `fugaro followups <run> --launch`, after their yes, files the deferrals — the tolerated findings among them — and only a finding in neither list goes a line each where they keep their list. Name the pull request, what it still carries, and which findings became which tasks.
 - **follow up**: `fugaro run --pr N --repo <owner/name>` continues the branch rather than replacing it, and the launch spends money: give the person the reason for the class, the run count and the worst case first. Where the last run stopped on decisions it left the repository's owner, the follow-up carries their ruling with `fugaro run --owner-ruled`, which the CLI refuses without — so that is the question to put to the person before any launch.
 - **ask the person**: name the path the repository's list covers, or the part of the record that could not be read, and what each of the other two classes would do. Nothing is merged, launched or filed until they answer.
 
-When the person asks what can be landed rather than naming one, list the candidates instead of picking: `fugaro runs ls --state ready --json` and `fugaro runs ls --state stalled --json` are the two groups to classify, and each row's own run is the one to read in step 1.
+When the person asks what can be landed rather than naming one, list the candidates instead of picking: `fugaro runs ls --state ready --since 0 --json` and `fugaro runs ls --state stalled --since 0 --json` are the two groups to classify, and each row's own run is the one to read in step 1. `--since 0` is not decoration: without it that listing covers seven days, and only `--pr` widens it, so a pull request whose newest run is older than a week is invisible to a listing that leaves the default in place — and a short list read as the whole answer hides exactly the stalled pull requests a person is asking about.
