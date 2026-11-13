@@ -9,9 +9,15 @@ package keyservice
 // these tests are what keeps them the same shape.
 //
 // A fixture that decodes is the two readers agreeing: the Go decoder reads it
-// strictly, and the area's schema accepts it. The SPA's hand-written TypeScript
-// types are tested on these same fixtures (P1.4), so a fixture is also the third
-// reader's statement of what a shape holds.
+// strictly, and the shape's own subschema accepts it. The SPA's hand-written
+// TypeScript types are tested on these same fixtures (P1.4), so a fixture is
+// also the third reader's statement of what a shape holds.
+//
+// The names are compared and not only the values, because a fixture proves the
+// fields it happens to carry and says nothing about the rest: a field on one
+// side alone — a Go field no schema property describes, or a property no Go
+// field reads — is exactly the drift a fixture is written to miss, and the plan
+// invites it, since every later task owns one area's file and adds fields to it.
 //
 // A field the schema does not know is refused by both readers. One that accepted
 // more than the other would be a field the SPA believes is served and the API
@@ -27,6 +33,7 @@ package keyservice
 import (
 	"bytes"
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -41,16 +48,19 @@ import (
 // The two directories the portal's wire lives in, relative to this package. They
 // are the SPA's tree and not this package's: the schema a route's answer is read
 // against and the fixture that stands for it sit beside the TypeScript types
-// built from them (P1.4), so the frontend and the Go side are reading one file.
+// hand-written from them (P1.4), so the frontend and the Go side are reading one
+// file.
 const (
 	wireFixtureDir = "../portal/schemas/fixtures"
 	wireSchemaDir  = "../portal/schemas"
+	wireDefPrefix  = "#/$defs/"
 )
 
-// TestWireFixturesDecodeStrictly pins that every fixture decodes into the shape
-// its name registers, that the area's schema accepts it, and that the two
-// readers cover each other: a shape with no fixture, a fixture with no shape and
-// a schema file no shape names are each a hole the other two would not show.
+// TestWireFixturesDecodeStrictly pins that a shape and its schema hold the same
+// field names, that every fixture decodes into the shape its name registers and
+// is accepted by that shape's own subschema, and that the two readers cover each
+// other: a shape with no fixture, a fixture with no shape and a schema file no
+// shape names are each a hole the other two would not show.
 func TestWireFixturesDecodeStrictly(t *testing.T) {
 	entries, err := os.ReadDir(wireFixtureDir)
 	if err != nil {
@@ -80,9 +90,11 @@ func TestWireFixturesDecodeStrictly(t *testing.T) {
 			t.Errorf("%s/%s: this build does not read the fixture into %T: %v", wireFixtureDir, name, value, err)
 			continue
 		}
-		if err := wireSchema(t, shape.area).Validate(wireInstance(t, fixture)); err != nil {
-			t.Errorf("%s/%s: the %s area's schema refuses the fixture the Go decoder accepted: %v",
-				wireFixtureDir, name, shape.area, err)
+		def := strings.TrimPrefix(shapeName, shape.area+".")
+		wireAssertSameFields(t, shapeName, value, wireProperties(t, shape.area, def))
+		if err := wireSchemaDef(t, shape.area, def).Validate(wireInstance(t, fixture)); err != nil {
+			t.Errorf("%s/%s: the %s schema's own %s subschema refuses the fixture the Go decoder accepted: %v",
+				wireFixtureDir, name, shape.area, def, err)
 		}
 	}
 	if len(seen) == 0 {
@@ -108,6 +120,7 @@ func TestWireFixturesDecodeStrictly(t *testing.T) {
 			t.Errorf("%s describes an area no wire shape names, so no fixture is ever read against it", file)
 		}
 		wireAssertClosed(t, file)
+		wireAssertRootCovers(t, file, area)
 	}
 }
 
@@ -147,9 +160,10 @@ func TestWireRefusesUnknownFields(t *testing.T) {
 			t.Errorf("%s: this build refuses the extra field for another reason than not knowing it, so the fixture does not show that the shape is closed: %v",
 				shapeName, err)
 		}
-		if err := wireSchema(t, shape.area).Validate(wireInstance(t, mutated)); err == nil {
-			t.Errorf("%s: the %s area's schema accepts a %s field the Go decoder refuses, so a route could serve a field no shape holds",
-				shapeName, shape.area, wireUnknownField)
+		def := strings.TrimPrefix(shapeName, shape.area+".")
+		if err := wireSchemaDef(t, shape.area, def).Validate(wireInstance(t, mutated)); err == nil {
+			t.Errorf("%s: the %s schema's %s subschema accepts a %s field the Go decoder refuses, so a route could serve a field no shape holds",
+				shapeName, shape.area, def, wireUnknownField)
 		}
 	}
 }
@@ -227,6 +241,111 @@ func wireShapeNames() []string {
 	return names
 }
 
+// wireAssertSameFields refuses a field one reader has and the other does not: a
+// Go field the shape's subschema does not describe is a field the SPA cannot
+// know is served, and a property no Go field reads is one the API drops however
+// faithfully the schema promises it.
+func wireAssertSameFields(t *testing.T, shapeName string, value any, properties []string) {
+	t.Helper()
+	held := make(map[string]bool)
+	wireFieldNames(reflect.TypeOf(value).Elem(), held)
+	for _, name := range properties {
+		if !held[name] {
+			t.Errorf("%s: the schema describes a %q property this build reads nothing into, so a route would drop a field the SPA is told it is served",
+				shapeName, name)
+		}
+		delete(held, name)
+	}
+	for _, name := range slices.Sorted(maps.Keys(held)) {
+		t.Errorf("%s: this build reads a %q field the shape's subschema does not describe, so the SPA cannot know it is served",
+			shapeName, name)
+	}
+}
+
+// wireFieldNames collects one type's own JSON names. Nested types are their own
+// defs and are reached through the property that holds them, so this reads the
+// shape's level and no deeper.
+func wireFieldNames(t reflect.Type, into map[string]bool) {
+	for i := range t.NumField() {
+		name := strings.Split(t.Field(i).Tag.Get("json"), ",")[0]
+		if name != "" && name != "-" {
+			into[name] = true
+		}
+	}
+}
+
+// wireProperties is the names one shape's subschema describes, which is the list
+// the Go type has to read exactly.
+func wireProperties(t *testing.T, area, def string) []string {
+	t.Helper()
+	file := filepath.Join(wireSchemaDir, area+".schema.json")
+	defs, ok := wireAreaDoc(t, area)["$defs"].(map[string]any)
+	if !ok {
+		t.Fatalf("%s holds no $defs, so no shape in the %s area has a subschema", file, area)
+	}
+	shape, ok := defs[def].(map[string]any)
+	if !ok {
+		t.Fatalf("%s: the %s area holds no $defs/%s, so nothing validates the %s shape", file, area, def, area+"."+def)
+	}
+	properties, ok := shape["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("%s: $defs/%s describes no properties", file, def)
+	}
+	return slices.Sorted(maps.Keys(properties))
+}
+
+// wireAssertRootCovers refuses an area whose root oneOf does not reach every
+// shape this build registers in it, in either direction: the root is what a
+// reader of the file takes for the area's shapes, so a def no branch names
+// describes a shape nothing validates, and a branch naming no registered shape
+// advertises one nothing decodes.
+func wireAssertRootCovers(t *testing.T, file, area string) {
+	t.Helper()
+	branches := make(map[string]bool)
+	for _, branch := range wireArray(t, file, wireAreaDoc(t, area)["oneOf"]) {
+		ref, ok := branch.(map[string]any)
+		if !ok {
+			t.Errorf("%s: a root oneOf branch is not an object", file)
+			continue
+		}
+		target, ok := ref["$ref"].(string)
+		if !ok || !strings.HasPrefix(target, wireDefPrefix) {
+			t.Errorf("%s: a root oneOf branch refers to %q rather than to a def of this file", file, ref["$ref"])
+			continue
+		}
+		branches[strings.TrimPrefix(target, wireDefPrefix)] = true
+	}
+	registered := make(map[string]bool)
+	for shapeName, shape := range wireShapes {
+		if shape.area == area {
+			registered[strings.TrimPrefix(shapeName, area+".")] = true
+		}
+	}
+	for _, def := range slices.Sorted(maps.Keys(registered)) {
+		if !branches[def] {
+			t.Errorf("%s: this build registers the %s.%s shape and the root oneOf does not name $defs/%s, so the file does not say the area serves it",
+				file, area, def, def)
+		}
+	}
+	for _, def := range slices.Sorted(maps.Keys(branches)) {
+		if !registered[def] {
+			t.Errorf("%s: the root oneOf names $defs/%s and this build registers no %s.%s shape, so the file advertises a shape nothing decodes",
+				file, def, area, def)
+		}
+	}
+}
+
+// wireArray reads one array out of a schema document, so a helper that walks a
+// document the test did not write does not assert its shape twice.
+func wireArray(t *testing.T, file string, node any) []any {
+	t.Helper()
+	array, ok := node.([]any)
+	if !ok {
+		t.Fatalf("%s: an array the test walks is not an array", file)
+	}
+	return array
+}
+
 // wireAssertClosed walks one area's schema and refuses an object that could
 // accept a field the Go decoder would not: every shape here is a Go struct read
 // with DisallowUnknownFields, so a subschema without additionalProperties:false
@@ -263,10 +382,9 @@ func wireAssertClosed(t *testing.T, file string) {
 	walk("$", doc)
 }
 
-// wireSchema compiles one area's schema under its own $id, as the shipped
-// schemas are read: the file names itself, and a validator that had to be told
-// the id would be reading something other than what the SPA fetches.
-func wireSchema(t *testing.T, area string) *jsonschema.Schema {
+// wireAreaDoc reads one area's schema as the document it is, for the walks that
+// ask about its shape rather than about a fixture.
+func wireAreaDoc(t *testing.T, area string) map[string]any {
 	t.Helper()
 	file := filepath.Join(wireSchemaDir, area+".schema.json")
 	raw, err := os.ReadFile(file)
@@ -277,7 +395,23 @@ func wireSchema(t *testing.T, area string) *jsonschema.Schema {
 	if err != nil {
 		t.Fatalf("%s: %v", file, err)
 	}
-	id, ok := doc.(map[string]any)["$id"].(string)
+	object, ok := doc.(map[string]any)
+	if !ok {
+		t.Fatalf("%s is not a JSON object", file)
+	}
+	return object
+}
+
+// wireSchemaDef compiles one shape's own subschema, under the area's $id and
+// reached by its def, as the shipped schemas are read: the file names itself,
+// and a validator that had to be told the id would be reading something other
+// than what the SPA fetches. The def and not the whole file, because the whole
+// file's oneOf would accept a fixture that had drifted into a sibling shape.
+func wireSchemaDef(t *testing.T, area, def string) *jsonschema.Schema {
+	t.Helper()
+	file := filepath.Join(wireSchemaDir, area+".schema.json")
+	doc := wireAreaDoc(t, area)
+	id, ok := doc["$id"].(string)
 	if !ok || id == "" {
 		t.Fatalf("%s carries no $id, so nothing can compile it", file)
 	}
@@ -285,9 +419,9 @@ func wireSchema(t *testing.T, area string) *jsonschema.Schema {
 	if err := compiler.AddResource(id, doc); err != nil {
 		t.Fatalf("%s: %v", file, err)
 	}
-	schema, err := compiler.Compile(id)
+	schema, err := compiler.Compile(id + wireDefPrefix + def)
 	if err != nil {
-		t.Fatalf("%s: %v", file, err)
+		t.Fatalf("%s: the %s shape's subschema does not compile: %v", file, area+"."+def, err)
 	}
 	return schema
 }
