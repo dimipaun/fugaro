@@ -112,8 +112,13 @@ func TestDocsCheck302IsOneScriptTheOwnerRuns(t *testing.T) {
 		// rollback is the steps by hand and no command stands in for them.
 		"no rollback command exists",
 		"the 14 days",
-		// The installation this check is for, and the one it never touches.
+		// The installation this check is for, and the one it never touches:
+		// the refusal is `belong` by name, which is what the script's own
+		// guard refuses, and the section may not promise a sandbox list the
+		// register never wrote and the script does not carry.
 		"never `belong`",
+		"refuses the sandbox installation `belong`",
+		"names no other installation as a sandbox",
 	} {
 		if !strings.Contains(flat, want) {
 			t.Errorf("Check 302's section does not say %q: the section is where the owner reads what the check settles and how to run it", want)
@@ -126,6 +131,17 @@ func TestDocsCheck302IsOneScriptTheOwnerRuns(t *testing.T) {
 		if _, err := os.Stat("../../" + path); err != nil {
 			t.Errorf("%s is named by Check 302 and does not exist: %v", path, err)
 		}
+	}
+	// The refusal the section describes is the one the script carries: its
+	// guard refuses the `belong` family and nothing else, so a section
+	// promising a wider refusal — a sandbox allow-list the register never
+	// wrote — would describe a reading the owner never gets.
+	guard, err := os.ReadFile("../../scripts/live-checks/check302.sh")
+	if err != nil {
+		t.Fatalf("check302.sh cannot be read: %v", err)
+	}
+	if !strings.Contains(string(guard), "belong | belong-*") {
+		t.Errorf("check302.sh no longer refuses the `belong` family by name, which is the refusal Check 302's section describes")
 	}
 	row := liveCheckRow(register, "302")
 	if row == "" {

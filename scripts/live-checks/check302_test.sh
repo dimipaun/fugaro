@@ -1005,6 +1005,10 @@ case_cutover_happy() {
   expect_contains "$out" "arrives unapproved" "cutover: what the dump does not do"
   expect_fact daemon PASS "cutover: the daemon"
   expect_contains "$out" "the listing names it as holder the-owners-macbook" "cutover: the lease holder"
+  # The beat is the listing's own updated_at, and it is not the holder: a row
+  # that cut one out of the other would print the holder twice and pass the
+  # assertion above.
+  expect_contains "$out" "whose last beat the database stamped 2026-11-13T09:59:00Z" "cutover: the last beat"
   expect_fact finished PASS "cutover: the finished run"
   expect_contains "$out" "FACT finished: PASS — one finished run: the daemon folded run run-aaa into item w1" "cutover: the run it was about"
   expect_contains "$out" "the installation's own listing names the run as 'done'" "cutover: the run's own outcome"

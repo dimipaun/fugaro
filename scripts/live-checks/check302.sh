@@ -1091,8 +1091,11 @@ for o in (d.get("orchestrators") or []):
         break
 PY
 )
-    holder=${holder%%|*}
+    # The beat is read off the whole reading, before the holder is cut down to
+    # its own half: reading it afterwards would find no separator left and
+    # print the holder where the last beat belongs.
     beat=${holder#*|}
+    holder=${holder%%|*}
     if [ -z "${holder:-}" ]; then
       fact daemon FAIL "the installation's own listing names no daemon holding this installation's lease ('fugaro orchestrator ls' has no local orchestrator for $INSTALLATION with a holder): the daemon is not running, so the cutover has not happened yet. Start it as the plan names ('fugaro orchestrator run > $DAEMON_LOG 2>&1') and run this phase again"
       state_keep "the cutover is waiting for the daemon to be started and left running"

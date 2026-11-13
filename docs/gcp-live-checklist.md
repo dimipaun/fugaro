@@ -12417,8 +12417,9 @@ never the sandbox from an agent's session: **no agent runs any step of it**.
 `bash scripts/live-checks/check302.sh cutover --dump <file> --daemon-log <file>` and, inside the 14 days,
 `bash scripts/live-checks/check302.sh rollback` — **you** run it, on **your own installation and never `belong`**, and
 **no agent runs any step of it**. It is a plan-then-confirm script: every phase prints its plan and asks for **one** confirmation, typed
-at your terminal, and `--dry-run` prints that plan and changes nothing. It refuses `belong` and any installation the register does not
-name as a sandbox, keeps its readings in a state file under its own directory (`${XDG_STATE_HOME:-$HOME/.local/state}/fugaro/check302`,
+at your terminal, and `--dry-run` prints that plan and changes nothing. It refuses the sandbox installation `belong` — and any name
+carrying it — by name, whether you typed it or the local config in force answers it, and it names no other installation as a sandbox:
+the register is where a positive list would have to be written. It keeps its readings in a state file under its own directory (`${XDG_STATE_HOME:-$HOME/.local/state}/fugaro/check302`,
 mode 0600, removed once the rollback is complete or by `... forget`), never prints a secret, and implements the register's steps and
 nothing else: the cutover's three facts, the window, and the manual rollback with **no** rollback command (it verifies that none
 exists rather than inventing one). Every reading is a `FACT <name>: PASS|FAIL|INFO — <what>` line and the run ends
