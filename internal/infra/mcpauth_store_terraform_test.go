@@ -246,9 +246,14 @@ func specWithoutIt(t *testing.T) InstallationSpec {
 // (the root's one data source is deferred behind a resource this same plan
 // creates), so it needs no credential and no network beyond init's provider
 // download.
-func installationPlanFor(t *testing.T, spec InstallationSpec) map[string]plannedResource {
+//
+// dropModule removes those files from the installation module before the plan,
+// which is how a convergence test plans the release before the one it is in:
+// a module file a task adds is the whole of that task's plan change, and the
+// tree without it is the tree an installation at the previous version holds.
+func installationPlanFor(t *testing.T, spec InstallationSpec, dropModule ...string) map[string]plannedResource {
 	t.Helper()
-	_, rows := installationPlan(t, spec)
+	_, rows := installationPlan(t, spec, dropModule...)
 	return rows
 }
 
@@ -256,7 +261,7 @@ func installationPlanFor(t *testing.T, spec InstallationSpec) map[string]planned
 // plan review reads (tf.Cover.NotCovered): what an update applies is the plan,
 // and whether its one confirmation covers it is a question about the whole
 // document rather than about the rows these tests pick out of it.
-func installationPlan(t *testing.T, spec InstallationSpec) (*tf.Plan, map[string]plannedResource) {
+func installationPlan(t *testing.T, spec InstallationSpec, dropModule ...string) (*tf.Plan, map[string]plannedResource) {
 	t.Helper()
 	bin, err := exec.LookPath("terraform")
 	if err != nil {
@@ -272,6 +277,11 @@ func installationPlan(t *testing.T, spec InstallationSpec) (*tf.Plan, map[string
 	// The root's own terraform tests are not what this test runs.
 	if err := os.RemoveAll(filepath.Join(root, "tests")); err != nil {
 		t.Fatal(err)
+	}
+	for _, name := range dropModule {
+		if err := os.Remove(filepath.Join(dir, "gcp", "modules", "installation", name)); err != nil {
+			t.Fatal(err)
+		}
 	}
 	for name, content := range map[string]string{
 		"terraform.tfvars.json": string(vars),
@@ -347,9 +357,35 @@ func theRunsConfirmation(t *testing.T, spec InstallationSpec) tf.Cover {
 		Projects: []string{spec.Project}, Region: spec.Region, Buckets: []string{spec.RunsBucket},
 		Ghcr: GhcrRegistry, Listed: slices.Concat(spec.Launchers, spec.Operators),
 	}
+	// The Firebase project too, which is what the run's own cover carries when
+	// the installation has one (init_review.go's cover appends
+	// --firebase-project when it is not the installation's own project): the
+	// front door's database role and the credentials service's are declared in
+	// that project, and a cover without it would read them as roles of a
+	// project this run does not know.
+	for _, fp := range firebaseProjects(spec) {
+		if fp != spec.Project && !slices.Contains(c.Projects, fp) {
+			c.Projects = append(c.Projects, fp)
+		}
+	}
 	if host, err := RegistryHost(lc); err == nil {
 		c.Registry, _, _ = strings.Cut(host, "/")
 	}
 	_, c.Owner, _ = strings.Cut(lc.ImageSource, "/")
 	return c
+}
+
+// firebaseProjects are the Firebase projects spec's own specs name: the
+// Firebase root's project is where the coordinator's and the history job's
+// database lives (D6), and it is the project the run's cover carries beside the
+// installation's own.
+func firebaseProjects(spec InstallationSpec) []string {
+	var out []string
+	if spec.Coordinator != nil && spec.Coordinator.FirebaseProject != "" {
+		out = append(out, spec.Coordinator.FirebaseProject)
+	}
+	if spec.History != nil && spec.History.FirebaseProject != "" {
+		out = append(out, spec.History.FirebaseProject)
+	}
+	return out
 }

@@ -318,24 +318,26 @@ resource "google_cloud_scheduler_job" "coordinator_sweep" {
 # private key, a Bitbucket read at the credentials service and
 # firebasedatabase.admin over the FP, and an identity holding any of those
 # behind a public endpoint would make spec.md §8's "there is no credential to
-# reach" false the day the front door is turned on. This one holds two grants —
-# the runs bucket's read, below, and the store's objects, in mcpauth_store.tf —
-# and nothing else in this tree or the Firebase root grants it anything: no
-# secret, no database, no actAs, which is the narrowest account the design names
-# for M4.
+# reach" false the day the front door is turned on. This one holds three grants
+# — the runs bucket's read, below, the store's objects, in mcpauth_store.tf, and
+# the database's read, in state_read.tf — and nothing else in this tree or the
+# Firebase root grants it anything: no secret, no database write, no actAs,
+# which is the narrowest account the design names for M4.
 #
 # It is created with the front door's own opt-in and not with the coordinator's:
 # an installation that opted into the coordinator for its read-only view
 # acquires no account at all, which is the same rule the service and the
 # binding follow.
 #
-# The database half of what a front door needs is NOT here and deliberately so:
-# the store binding is D935, whose bucket and one binding live in
-# mcpauth_store.tf — beside the bucket they bind rather than in this file,
+# The account's other two grants are NOT here and deliberately so: the store
+# binding is D935, whose bucket and one binding live in mcpauth_store.tf, and
+# the database's read is O16b, whose role and one binding live in
+# state_read.tf — each beside the resource it binds rather than in this file,
 # which names this account exactly twice (the runs bucket's read below, and the
 # service's own identity) and must keep doing so. What this account reaches is
-# therefore the runs bucket (D932) and the store's objects (D935), and nothing
-# else.
+# therefore the runs bucket (D932), the store's objects (D935) and the
+# orchestrator's own node, read-only, in the coordinator's Firebase project
+# (O16b), and nothing else.
 resource "google_service_account" "mcp_server" {
   count = local.mcp_server_on ? 1 : 0
 
@@ -346,7 +348,7 @@ resource "google_service_account" "mcp_server" {
   depends_on = [google_project_service.this]
 }
 
-# The runs bucket, read-only, and one of the account's two grants: a run's
+# The runs bucket, read-only, and one of the account's three grants: a run's
 # recorded
 # artefacts — its logs and its diff — are what the tools behind this port
 # answer with (D932), and the answer the owner did not choose (streaming Cloud
@@ -390,10 +392,11 @@ resource "google_storage_bucket_iam_member" "mcp_server_runs_reader" {
 # no credential-shaped environment name, which
 # coordinator_service_test.go's TestCoordinatorServiceIsPublicAndCarriesNoCredential
 # holds against this very block — and the identity behind the port is an
-# account whose whole reach is the runs bucket's read and the store it writes
-# its own records to, so a stolen access token reaches the tools its scopes
-# name and nothing else (spec.md §8, "What a stolen access token reaches":
-# there is no credential to reach).
+# account whose whole reach is the runs bucket's read (D932), the store it
+# writes its own records to (D935) and the orchestrator's own node, read-only
+# (O16b), so a stolen access token reaches the tools its scopes name and
+# nothing else (spec.md §8, "What a stolen access token reaches": there is no
+# credential to reach).
 #
 # M9's launch grant is deliberately absent, and the absence is the design:
 # spawn_task is the one privilege this work adds, it belongs to M9's own
@@ -495,11 +498,13 @@ resource "google_cloud_run_v2_service" "coordinator_front_door" {
       # The state the front door serves, in the names the sweep already reads:
       # the project, the Firebase project and database the coordinator's
       # subtrees live in, and the runs bucket a run's artefacts (its logs and
-      # its diff) are read from (D932). None of them is a credential, no entry
-      # here has a value_source, and naming the database is not a grant on it:
-      # what this account may read there is D935's store binding, which is the
-      # one binding mcpauth_store.tf writes, so the front door reaches the runs
-      # bucket and the store's own bucket and nothing else. The store's URL is
+      # its diff) are read from (D932). None of them is a credential and no
+      # entry here has a value_source. Naming the database is not a grant on it
+      # either: the read this account has there is O16b's own, whose role and
+      # one binding live in state_read.tf, so what the front door reaches is
+      # the runs bucket (D932), the store's own bucket (D935, the one binding
+      # mcpauth_store.tf writes) and the orchestrator's node, read-only (O16b),
+      # and nothing else. The store's URL is
       # deliberately not an entry yet: the process that opens it (M5) names the
       # bucket it was handed, and the name it must be handed is the installation
       # output mcpauth_store_bucket.

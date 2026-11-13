@@ -1718,14 +1718,14 @@ var (
 	// cannot be told from a conditioned one, whose IAM condition is the whole
 	// fence around the account — so the project grants planned by that same
 	// apply (the deployer's eight, the launchers', the build submitters' and
-	// the history account's) name their role literally instead. All three
-	// project variables are accepted because the Firebase project is where two
+	// the history account's) name their role literally instead. All four
+	// project variables are accepted because the Firebase project is where three
 	// of the installation's own roles live: the credentials service's database
-	// role (credentials.tf) and the catalog check job's (catalogcheck.tf,
-	// D1554), each for the same reason — an unknown role is a grant the cover
-	// cannot read. All three are known at plan time, and the ID must be one the
+	// role (credentials.tf), the catalog check job's (catalogcheck.tf, D1554)
+	// and the front door's state read (state_read.tf), each for the same reason — an unknown role is a grant the cover
+	// cannot read. All four are known at plan time, and the ID must be one the
 	// modules create (tf.FugaroRoles), checked below.
-	projectRoleLiteralRE = regexp.MustCompile(`^"projects/\$\{var\.(project|credentials_service\.firebase_project|catalog_check\.firebase_project)\}/roles/([A-Za-z0-9_.]+)"$`)
+	projectRoleLiteralRE = regexp.MustCompile(`^"projects/\$\{var\.(project|credentials_service\.firebase_project|catalog_check\.firebase_project|coordinator\.firebase_project)\}/roles/([A-Za-z0-9_.]+)"$`)
 
 	// Roles that reach the budget backend (RTDB, Firestore, Identity
 	// Platform, API keys, the token signer, IAM or project policy), or that
@@ -2267,6 +2267,31 @@ func TestCustomRolesNeverReachTheBackend(t *testing.T) {
 			// whole-database write) is not bound to the workspace's account at
 			// all. TestMemberUpdateBindsNoWriteOnTheMembersDatabase is the
 			// exact pin.
+			// The front door's read of the installation's database
+			// (installation/state_read.tf, O16b, D2020 (a)): the third knowing
+			// exception, and the narrowest of the three — the instance's read
+			// and no write at all. The state group's two tools answer
+			// get_state and get_events as the front door's own account, and
+			// apply_patch is served by nothing (D2021), so the write
+			// (instances.update, the only one RTDB has) is withheld by its
+			// absence from this list rather than by a handler: a later
+			// revision of the front door has none to reach for. The exact list
+			// is pinned by tf.RolePermissions and by the module's own
+			// TestFrontDoorStateRoleHoldsNoDatabaseWrite; this ban continues
+			// past it because the role reaches further than "read one node" —
+			// no path-level scope exists — and it is bound to the front door's
+			// account alone.
+			if blk.name == "google_project_iam_custom_role.state_read" {
+				if !strings.HasPrefix(path, "gcp/modules/installation/state_read") {
+					t.Errorf("%s: %s is not in the installation module's state_read.tf", path, blk.name)
+				}
+				for _, p := range quotedPerm.FindAllStringSubmatch(m[1], -1) {
+					if !slices.Contains(tf.MCPStateReadPermissions, p[1]) {
+						t.Errorf("%s: %s holds %s: the front door's database role is the instance's read and nothing else", path, blk.name, p[1])
+					}
+				}
+				continue
+			}
 			if blk.name == "google_project_iam_custom_role.workspace_read" {
 				if !strings.HasPrefix(path, "gcp/modules/firebase/") {
 					t.Errorf("%s: %s is not in the Firebase module", path, blk.name)
