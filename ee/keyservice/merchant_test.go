@@ -656,7 +656,10 @@ func TestAPurchaseWhoseSubscriptionWasNotSavedKeepsItsWorkspace(t *testing.T) {
 		t.Errorf("the repaired subscription names the workspace %q, want the %q its purchase carried (TN2)", sub.WorkspaceID, workspaceID)
 	}
 
-	f.advance(365*day - 30*day)
+	// The repaired subscription holds the month the record describes, and it is
+	// a month of a connected row: D2202 caps the key at thirty days, so the
+	// window opens inside the very term the record's key was minted for.
+	f.advance(20 * day)
 	minted, renewed, err := f.svc.Renew(context.Background(), "sub-acme.example")
 	if err != nil || !renewed {
 		t.Fatalf("the renewal of the repaired subscription answered (renewed=%v, err=%v), want the next key: the customer paid for the term", renewed, err)
@@ -884,13 +887,37 @@ func TestAStoreThatRecordsAndThenFailsKeepsTheMailedKey(t *testing.T) {
 	}
 }
 
+// subscriptionRunsTo moves the end the subscription is stored with onto the end
+// of the term the customer bought, which is the term the merchant billed and not
+// the thirty days the key that follows it runs for: D2202 shortens the key of a
+// connected row and leaves its entitlement alone, so a subscription bought for a
+// year runs the year while the key in the customer's hands is a month of it. The
+// purchase path records the key's own end in both places for as long as there is
+// no record of the entitlement itself (P4.2), and a test whose subject is the
+// window inside the term therefore states the end the subscription is sold for.
+func (f *fixture) subscriptionRunsTo(t *testing.T, end time.Time) {
+	t.Helper()
+	sub, held, err := f.store.Subscription(context.Background(), "sub-acme.example")
+	if err != nil || !held {
+		t.Fatalf("reading the subscription (held=%v, err=%v)", held, err)
+	}
+	sub.Expires = end
+	if err := f.store.SaveSubscription(context.Background(), sub); err != nil {
+		t.Fatalf("writing the subscription's own end: %v", err)
+	}
+}
+
 // TestRenewalKeyIssuesThirtyDaysBeforeExpiry: T26 — the next key issues 30 days
 // before the current one expires, its `issued` is the day the service runs and
 // its `expires` is the end of the term it covers, so the two keys overlap and
-// the verifier takes the latest valid one.
+// the verifier takes the latest valid one. The subscription in hand is the year
+// the customer bought, and the key that covers it is the thirty days D2202 gives
+// a connected row: issued on the window's first day, it ends exactly on the end
+// of the term it follows.
 func TestRenewalKeyIssuesThirtyDaysBeforeExpiry(t *testing.T) {
 	f := newFixture(t)
 	first := f.purchase("evt-1", "acme.example", 5, 365)
+	f.subscriptionRunsTo(t, first.Issued.Add(365*day))
 
 	f.advance(365*day - 31*day)
 	if _, renewed, err := f.svc.Renew(context.Background(), "sub-acme.example"); err != nil || renewed {
@@ -905,9 +932,9 @@ func TestRenewalKeyIssuesThirtyDaysBeforeExpiry(t *testing.T) {
 	if !renewed {
 		t.Fatal("a renewal at exactly 30 days before expiry minted nothing, want the next key")
 	}
-	wantExpiry := first.Expires.Add(365 * day)
+	wantExpiry := f.now.Add(connectedTerm)
 	if !minted.Record.Expires.Equal(wantExpiry) {
-		t.Errorf("the renewal covers to %s, want the term's end %s: issued plus a term plus the 30-day lead (§2)", minted.Record.Expires, wantExpiry)
+		t.Errorf("the renewal covers to %s, want %s: the thirty days D2202 gives a connected key from the day the window opened, which is the end of the term it covers (§2)", minted.Record.Expires, wantExpiry)
 	}
 	if !minted.Record.Issued.Equal(f.now) {
 		t.Errorf("the renewal's `issued` is %s, want the service's own clock (%s)", minted.Record.Issued, f.now)
@@ -919,8 +946,12 @@ func TestRenewalKeyIssuesThirtyDaysBeforeExpiry(t *testing.T) {
 	if claims.Seats != 5 || claims.Organisation != "acme.example" {
 		t.Errorf("the renewal key claims %d seat(s) for %q, want the subscription's own", claims.Seats, claims.Organisation)
 	}
-	if got := v1Verified(t, f, f.mintedKeys()[0]); got.Seats != 5 {
-		t.Errorf("the first key claims %d seat(s), want the purchase's 5: a renewal withdraws nothing", got.Seats)
+	// The key the purchase handed out is not what a renewal withdraws: D2202
+	// caps it at the thirty days it was minted for, so by the time a year's
+	// renewal comes round it has ended of its own accord, and what is left to
+	// read is that the renewal wrote nothing against it (§8).
+	if entry, withdrawn, err := f.store.Revocation(context.Background(), first.KeyID); err != nil || withdrawn {
+		t.Errorf("the renewal wrote the §8 entry %+v for the key the customer already holds (held=%v, err=%v), want it untouched: a renewal withdraws nothing", entry, withdrawn, err)
 	}
 
 	// The renewal is a v1 key like the purchase's, and that is what makes it one
@@ -986,18 +1017,20 @@ func TestAMonthlyPurchaseIsNotRenewableAtOnce(t *testing.T) {
 		t.Errorf("the refused renewal moved the term's end to %s, want the purchase's %s", sub.Expires, first.Expires)
 	}
 
-	// The window opens in the term's second half, and what it mints then covers
-	// to the end of the term after the one the customer is in — the same overlap
-	// an annual renewal has, fifteen days of it rather than thirty.
+	// The window opens in the term's second half, and the key it mints there
+	// covers the thirty days from that day (D2202) rather than the month and a
+	// half a renewal of a longer term would ask for: it ends the day its own
+	// successor's window opens, which is the overlap T26 wants without a second
+	// month issued for one billed.
 	f.advance(15 * day)
 	minted, renewed, err := f.svc.Renew(context.Background(), "sub-acme.example")
 	if err != nil || !renewed {
 		t.Fatalf("the monthly renewal in the term's second half answered (renewed=%v, err=%v), want the next key", renewed, err)
 	}
-	wantExpiry := first.Expires.Add(30 * day)
+	wantExpiry := f.now.Add(connectedTerm)
 	claims := v1Verified(t, f, minted.Key)
 	if !claims.PaidThrough.Equal(wantExpiry) || !minted.Record.Expires.Equal(wantExpiry) {
-		t.Errorf("the monthly renewal covers to %s, want the end of the term it follows (%s): the lead moves the mint and never the term", claims.PaidThrough, wantExpiry)
+		t.Errorf("the monthly renewal covers to %s, want %s: the thirty days a connected key runs from the day the window opened (D2202)", claims.PaidThrough, wantExpiry)
 	}
 	if minted.Record.Plan != PolicyTeamMonthly || claims.KeyID == first.KeyID {
 		t.Errorf("the monthly renewal minted under the row %q with key id %q, want the row the month is sold under (%q) and a key of its own", minted.Record.Plan, claims.KeyID, PolicyTeamMonthly)
@@ -1014,6 +1047,7 @@ func TestAMonthlyPurchaseIsNotRenewableAtOnce(t *testing.T) {
 func TestALeapYearRenewsOneDayAfterTheWindowOpens(t *testing.T) {
 	f := newFixture(t)
 	first := f.purchase("evt-1", "acme.example", 5, 366)
+	f.subscriptionRunsTo(t, first.Issued.Add(366*day))
 
 	f.advance(366*day - 30*day)
 	if _, renewed, err := f.svc.Renew(context.Background(), "sub-acme.example"); err != nil || renewed {
@@ -1025,9 +1059,9 @@ func TestALeapYearRenewsOneDayAfterTheWindowOpens(t *testing.T) {
 	if err != nil || !renewed {
 		t.Fatalf("the leap year's renewal the day after answered (renewed=%v, err=%v), want the next key", renewed, err)
 	}
-	wantExpiry := first.Expires.Add(366 * day)
+	wantExpiry := f.now.Add(connectedTerm)
 	if claims := v1Verified(t, f, minted.Key); !claims.PaidThrough.Equal(wantExpiry) {
-		t.Errorf("the renewal covers to %s, want the end of the term it follows (%s): waiting a day moves the mint and never the term", claims.PaidThrough, wantExpiry)
+		t.Errorf("the renewal covers to %s, want %s: the day the wait costs is a day of the key and never one of the term, and the key runs its own thirty days from the day it was asked for (D2202)", claims.PaidThrough, wantExpiry)
 	}
 }
 
@@ -1304,7 +1338,9 @@ func TestAnEventWithNoInstantIsRefused(t *testing.T) {
 func TestSeatChangeReissues(t *testing.T) {
 	f := newFixture(t)
 	first := f.purchase("evt-1", "acme.example", 3, 365)
-	f.advance(30 * day)
+	// Inside the term, which for a connected row's key is the thirty days it was
+	// minted for (D2202): a seat change after the key's own end reissues nothing.
+	f.advance(10 * day)
 	f.event(Event{ID: "evt-2", Type: EventSeatChange, Organisation: "acme.example", Seats: 5, TermDays: 365})
 
 	records := f.records()
@@ -1334,15 +1370,20 @@ func TestCancellationStopsReissue(t *testing.T) {
 	f.advance(day)
 	f.event(Event{ID: "evt-2", Type: EventCancellation, Organisation: "acme.example"})
 
+	// A cancellation withdraws nothing, and the key it leaves the customer
+	// holding is read before its own term is out: it is the thirty days D2202
+	// gives a connected row, so the wait below is one no key of this row outlives.
+	f.advance(28 * day)
+	if claims := v1Verified(t, f, held); !claims.PaidThrough.Equal(first.Expires) {
+		t.Errorf("the held key reads paid_through=%s, want %s: a cancellation withdraws nothing", claims.PaidThrough, first.Expires)
+	}
+
 	f.advance(365*day - 31*day)
 	if _, renewed, err := f.svc.Renew(context.Background(), "sub-acme.example"); err != nil || renewed {
 		t.Errorf("a cancelled subscription renewed (renewed=%v, err=%v), want nothing", renewed, err)
 	}
 	if got := len(f.records()); got != 1 {
 		t.Errorf("the record holds %d key(s), want the one the customer holds", got)
-	}
-	if claims := v1Verified(t, f, held); !claims.PaidThrough.Equal(first.Expires) {
-		t.Errorf("the held key reads paid_through=%s, want %s: a cancellation withdraws nothing", claims.PaidThrough, first.Expires)
 	}
 }
 
@@ -1625,7 +1666,10 @@ func TestSeatChangeReissuesUnderANewKeyID(t *testing.T) {
 		t.Errorf("the purchase's key id is %q, want one under the %q prefix (spec section 3.2)", first.KeyID, keyIDPrefix)
 	}
 
-	f.advance(30 * day)
+	// Inside the term the key was minted for, which is the thirty days D2202
+	// gives a connected row: a seat change after the key's own end reissues
+	// nothing, and what is left of the term is what the reissue covers.
+	f.advance(10 * day)
 	f.event(Event{ID: "evt-2", Type: EventSeatChange, Organisation: "acme.example", Seats: 5, TermDays: 365})
 
 	records := f.records()

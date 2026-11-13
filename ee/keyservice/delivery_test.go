@@ -198,7 +198,7 @@ func TestAPurchaseWhoseSubscriptionWriteFailedIsCompleted(t *testing.T) {
 	if err != nil || !held {
 		t.Fatalf("the redelivered purchase left no subscription (held=%v, err=%v), want the state the record describes", held, err)
 	}
-	if sub.Organisation != "acme.example" || sub.Seats != 5 || sub.TermDays != 365 {
+	if sub.Organisation != "acme.example" || sub.Seats != 5 || sub.TermDays != daysBetween(record.Issued, record.Expires) {
 		t.Errorf("the repaired subscription is %+v, want the record's own organisation, seats and term", sub)
 	}
 	if !sub.Expires.Equal(record.Expires) {
