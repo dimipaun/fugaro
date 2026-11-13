@@ -130,6 +130,9 @@ func runAccountsAllowList(cmd *cobra.Command, name string, repos []string, allow
 	if err != nil {
 		return err
 	}
+	if err := accessGateProject(cmd.Context(), lc, nil, "nothing was written", "changing the repositories an account may be mounted for"); err != nil {
+		return err
+	}
 	if !allow {
 		if _, declared := lc.ClaudeAccounts[name]; !declared {
 			// The remedy is the one command builder this pair has

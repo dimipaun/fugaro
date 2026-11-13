@@ -236,6 +236,77 @@ func TestAccessNodeZeroGrantWriteLeavesTheAbsentState(t *testing.T) {
 	}
 }
 
+// TestAccessNodeWriteLeavesTheMigrationMarker: the marker beside the node is the
+// whole of what tells a roster of nobody from an installation whose lists have
+// never been migrated into it, and the write that empties the node is the one
+// that leaves it: the last grant's revocation prunes the node whole, so the
+// marker has to be there when the node is gone. A write that LANDS grants marks
+// nothing — the node it wrote is that record — which is what keeps a migration
+// whose node write failed from reading as an installation frozen at a roster of
+// nobody (the sibling test below).
+func TestAccessNodeWriteLeavesTheMigrationMarker(t *testing.T) {
+	ctx := context.Background()
+	f, db := accessDB(t)
+
+	if migrated, err := Migrated(ctx, db); err != nil || migrated {
+		t.Fatalf("Migrated on an installation that has never written the node = %v, %v, want false", migrated, err)
+	}
+	absent, err := Read(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteIfMatch(ctx, db, []Grant{grant(alice, RoleAdmin, Scope{Kind: ScopeProject})}, absent.ETag); err != nil {
+		t.Fatalf("WriteIfMatch of one grant: %v", err)
+	}
+	if migrated, err := Migrated(ctx, db); err != nil || migrated {
+		t.Fatalf("Migrated after a write that landed a grant = %v, %v, want false: the node is its own record, and a marker written before a node write that then failed would read as a roster of nobody", migrated, err)
+	}
+
+	held, err := Read(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteIfMatch(ctx, db, nil, held.ETag); err != nil {
+		t.Fatalf("WriteIfMatch of no grants: %v", err)
+	}
+	f.Set(PathNode, foldAsTheDatabaseKeeps(f.Value(PathNode)))
+	if v := f.Value(PathNode); v != nil {
+		t.Fatalf("the database holds %#v at the node: the emptied list is pruned with it", v)
+	}
+	if migrated, err := Migrated(ctx, db); err != nil || !migrated {
+		t.Fatalf("Migrated after the last grant was revoked = %v, %v, want true: an emptied node is a roster of nobody", migrated, err)
+	}
+}
+
+// TestAccessAFailedNodeWriteLeavesTheInstallationUnmigrated: a write that lands
+// grants and is refused — a caller without firebasedatabase.instances.update, the
+// write only the implicit admins hold (F22/D1592) — leaves neither the node nor a
+// marker, and the installation then reads as one nobody has migrated: the next
+// fugaro update migrates it, which is where that refusal is answered
+// (accessNeedsAdmin). Marking it instead would freeze a first migration that
+// failed partway at a roster of nobody, and the reader of the marker cannot tell
+// that from the revocation the marker is for.
+func TestAccessAFailedNodeWriteLeavesTheInstallationUnmigrated(t *testing.T) {
+	ctx := context.Background()
+	f, db := accessDB(t)
+
+	absent, err := Read(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Deny(PathNode)
+	err = WriteIfMatch(ctx, db, []Grant{grant(alice, RoleAdmin, Scope{Kind: ScopeProject})}, absent.ETag)
+	if !errors.Is(err, rtdb.ErrPermission) {
+		t.Fatalf("WriteIfMatch whose node write is refused = %v, want rtdb.ErrPermission", err)
+	}
+	if v := f.Value(PathNode); v != nil {
+		t.Fatalf("the refused write left %#v at the node", v)
+	}
+	if migrated, err := Migrated(ctx, db); err != nil || migrated {
+		t.Fatalf("Migrated after a node write that was refused = %v, %v, want false: the installation has not migrated, and a marker here would read as a roster of nobody, which is the state a revocation makes and this is not one", migrated, err)
+	}
+}
+
 // TestAccessNodeReadHaltsOnAnUnreadableNode: a node that is present and cannot
 // be read is an error the caller halts on, never an empty Node. It is the other
 // half of the rule the test above pins, and the half that fails closed: the
