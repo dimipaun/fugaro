@@ -208,7 +208,7 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy) []policyDri
 	// rewrite the node on every run of the project without ever closing the gap
 	// it fired on.
 	profiles := policyProfiles(lc)
-	accounts, err := projectpolicy.DeriveAccounts(profiles, lc.ClaudeAccounts, lc.ProjectSecrets)
+	accounts, err := projectpolicy.DeriveAccounts(profiles, lc.ClaudeAccounts, lc.ProjectSecrets, lc.PolicyRepoAccounts())
 	if err != nil {
 		// The config names an account that cannot be published at all (one no
 		// field defines, an empty allow_data_to, a pattern where an exact

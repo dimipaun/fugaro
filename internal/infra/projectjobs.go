@@ -83,7 +83,7 @@ func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]Pr
 	// refused at init with the sentence publish would print — and never
 	// deployed as a job whose token is bounded by a list no node states.
 	profiles := profilesAsPolicy(lc.Profiles)
-	accounts, err := projectpolicy.DeriveAccounts(profiles, lc.ClaudeAccounts, lc.ProjectSecrets)
+	accounts, err := projectpolicy.DeriveAccounts(profiles, lc.ClaudeAccounts, lc.ProjectSecrets, lc.PolicyRepoAccounts())
 	if err != nil {
 		return nil, userErr("%v", err)
 	}

@@ -871,7 +871,7 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 	// a profile admitting a repository one of its accounts does not cover is
 	// refused before anything is written.
 	profiles := policyProfiles(lc)
-	accounts, err := projectpolicy.DeriveAccounts(profiles, lc.ClaudeAccounts, lc.ProjectSecrets)
+	accounts, err := projectpolicy.DeriveAccounts(profiles, lc.ClaudeAccounts, lc.ProjectSecrets, lc.PolicyRepoAccounts())
 	if err != nil {
 		return nil, false, userErr("%v", err)
 	}
