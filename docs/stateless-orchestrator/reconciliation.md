@@ -762,7 +762,8 @@ whole-database read and no write; the compounding case (D2020 (a) with D2021 (b)
   W7 merged as `d3b7613f` ("workspaces: the workspace cap's meter, its alarm and the member's binding (W7)", 2026-11-11), and it answers NO.**
   W7 added no workspace marker to the halt vocabulary and no run-record field: its gateway hunks are the headroom read in
   `serviceAnswer` (`internal/gateway/service.go:697-706`), the header dropped from the agent's answer
-  (`internal/gateway/forward.go:1445`) and the reader's own two fields (`internal/gateway/gateway.go:327-332`), so the reason, scope and
+  (`internal/gateway/forward.go:1445`) and the reader's own two fields (`internal/gateway/gateway.go:333-334`, the comment above them being
+  `:327-332`), so the reason, scope and
   detail every halt is written with are the ones they were (`internal/gateway/service.go:145`, `:871-881`) and its 34 files touch no
   run-record or task file. Nothing in `internal/runstore`, `internal/task` or
   `internal/orchestrator` names a workspace at all either: `Record` carries no workspace field, `Halt.Scope` is `run | repo | global`
