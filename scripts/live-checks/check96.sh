@@ -1675,6 +1675,8 @@ def cmd_projectjob():
 def cmd_job():
     job = load()
     spec = ((job.get("spec") or {}).get("template") or {}).get("spec") or {}
+    # A Cloud Run job nests its execution template one level below a service's, so the container and the account sit under spec.template.spec.template.spec.
+    spec = (spec.get("template") or {}).get("spec") or {}
     containers = spec.get("containers") or [{}]
     container = containers[0]
     env = env_of(container)
