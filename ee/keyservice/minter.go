@@ -434,10 +434,12 @@ func (m Minter) MintV1(ctx context.Context, req RequestV1) (MintedV1, error) {
 	}, nil
 }
 
-// keyText is the key text the design writes: the key id, the payload and the
-// signature, all three unpadded base64url, in that order (S2.1). It is the same
-// three lines as the owner's mint tool, which this package cannot import
-// because that tool is a `main`.
+// keyText is the key text the removed format writes: the key id, the payload
+// and the signature, all three unpadded base64url, in that order (S2.1). The
+// owner's mint tool used to spell this shape too and no longer does -- it writes
+// the v1 text, the `fgk_` prefix and two parts (K7.3) -- so this is the one
+// place left that writes the three-part text, for the routes still to be
+// converted to v1.
 func keyText(keyID string, payload, signature []byte) string {
 	return keyID + "." +
 		base64.RawURLEncoding.EncodeToString(payload) + "." +
