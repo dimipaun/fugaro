@@ -326,6 +326,60 @@ func TestWireRefusesNullWhereAValueIsRequired(t *testing.T) {
 	}
 }
 
+// TestWireHoldsTheShapeAndNotTheValues pins the split `decodeWire`'s comment
+// draws, so the comment cannot drift from what the function does: the walk holds
+// a body to the schema's shape — its fields, each once, no null where a value is
+// required — and what the values say is each handler's own check. Every case is
+// a body that shape's subschema refuses and this build reads without complaint;
+// the first two are F41's, the pattern that keeps a project id safe to put in a
+// host name, which is exactly what a decoder that checked values would have to
+// refuse.
+func TestWireHoldsTheShapeAndNotTheValues(t *testing.T) {
+	cases := []struct {
+		shape string
+		path  []any
+		value any
+		why   string
+	}{
+		{"workspaces.bind", []any{"project_id"}, "evil.example.com/../x", "a project id outside the pattern that keeps it safe in a host name (F41)"},
+		{"ops.project_transfer", []any{"project_id"}, "evil.example.com/../x", "the same id arriving on the operations route (F41)"},
+		{"billing.seats", []any{"seats"}, 0, "a seat count below the schema's minimum"},
+		{"invites.create", []any{"role"}, "superowner", "a role the schema's enum does not name"},
+		{"invites.create", []any{"email"}, "not an address", "an address outside the schema's pattern"},
+		{"workspaces.bind", []any{"entitlement_id"}, "", "an empty id where the schema forbids an empty one"},
+		{"orgs.create", []any{"name"}, strings.Repeat("x", 65), "a name past the schema's maxLength"},
+		{"reports.month", []any{"month"}, "2026-13", "a month the schema's pattern does not name"},
+		{"ledger.entry", []any{"currency"}, "usd", "a currency outside the schema's pattern"},
+		{"statements.payment", []any{"amount_micros"}, 0, "an amount below the schema's minimum"},
+		{"resellers.reseller", []any{"rates", 0, "daily_rate_micros"}, -1, "a rate below the schema's minimum, one level down"},
+	}
+	for _, c := range cases {
+		shape, ok := wireShapes[c.shape]
+		if !ok {
+			t.Errorf("no shape is registered as %s, so the case about %s is never asked", c.shape, c.why)
+			continue
+		}
+		fixture, err := os.ReadFile(filepath.Join(wireFixtureDir, c.shape+".json"))
+		if err != nil {
+			t.Errorf("%s/%s.json: %v", wireFixtureDir, c.shape, err)
+			continue
+		}
+		body := wireInstance(t, fixture)
+		object := wireAtPath(t, body, c.path[:len(c.path)-1])
+		object[c.path[len(c.path)-1].(string)] = c.value
+		def := strings.TrimPrefix(c.shape, shape.area+".")
+		if err := wireSchemaDef(t, shape.area, def).Validate(body); err == nil {
+			t.Errorf("%s: the %s subschema accepts %v as %s, so this case no longer shows a value the schema refuses",
+				c.shape, def, c.value, c.why)
+			continue
+		}
+		if err := decodeWire(wireJSON(t, body), shape.alloc()); err != nil {
+			t.Errorf("%s: this build now refuses %v as %s, so it no longer holds only the shape and the comment above has to be rewritten to say what it holds: %v",
+				c.shape, c.value, c.why, err)
+		}
+	}
+}
+
 // wireNested is one object inside a shape's fixture with the def that describes
 // it: the path to it — a field name, then an index per list element — and the
 // subschema a body there is read against.
@@ -475,10 +529,12 @@ func wireJSON(t *testing.T, body any) []byte {
 	return raw
 }
 
-// wireCredentialTags are the JSON field names that carry a credential, or carry
-// the way to one. The list is the whole point of the test below: it is the
-// vocabulary a shape would have to grow to leak, and a shape that grew one is
-// refused here rather than in review.
+// wireCredentialTags are the words that name a credential, or the way to one.
+// The list is the whole point of the test below: it is the vocabulary a shape
+// would have to grow to leak, and a shape that grew one is refused here rather
+// than in review. The words are matched, not the field names that use them
+// today: `token` is the wording the renewal path would reach for, and
+// `renewal_token` is the name a shape would actually grow.
 var wireCredentialTags = []string{
 	"key",
 	"private_key",
@@ -509,6 +565,53 @@ func TestRevealBundleIsTheOnlySecretShape(t *testing.T) {
 	}
 }
 
+// wireCredentialProbe is a type no shape has, so the vocabulary can be asked
+// about the names the shapes have not grown yet. `renewal_token` is the name the
+// renewal path would grow — the shape the portal serves a reseller and the
+// operations team (F5) — and `key_id` is the key's name, which every metadata
+// answer carries; the probe is what tells the two apart.
+type wireCredentialProbe struct {
+	RenewalToken string              `json:"renewal_token"`
+	Token        string              `json:"token"`
+	APIKey       string              `json:"api_key"`
+	KeyID        string              `json:"key_id"`
+	TermsVersion string              `json:"terms_version"`
+	Nested       *wireCredentialNest `json:"nested"`
+}
+
+type wireCredentialNest struct {
+	PrivateKey string `json:"private_key"`
+}
+
+// TestWireCredentialNamesMatchByTheirWords pins the vocabulary's rule where the
+// shapes cannot yet show it: one field per spelling a credential would arrive
+// under, so a name that only ends in a word the vocabulary holds cannot pass as
+// metadata the way `renewal_token` did before this test existed (F5).
+func TestWireCredentialNamesMatchByTheirWords(t *testing.T) {
+	found := wireCredentialFields(reflect.TypeOf(wireCredentialProbe{}), 0)
+	want := []string{"renewal_token", "token", "api_key", "nested.private_key"}
+	if !slices.Equal(found, want) {
+		t.Errorf("the credential vocabulary finds %v in a type carrying %v, and it has to find exactly those: a name whose last word names a credential is one a shape may not serve, and `key_id`/`terms_version` are not", found, want)
+	}
+}
+
+// wireCredentialName reports whether a JSON field name names a credential: one
+// of wireCredentialTags on its own (`token`), or as the last word of a compound
+// name (`renewal_token`, `private_key`). A name that only mentions one is not a
+// credential, which is why `key_id` — the key's name, served with every metadata
+// answer — does not match: the word has to be the whole of the name's last part.
+func wireCredentialName(name string) bool {
+	if slices.Contains(wireCredentialTags, name) {
+		return true
+	}
+	for _, tag := range wireCredentialTags {
+		if strings.HasSuffix(name, "_"+tag) {
+			return true
+		}
+	}
+	return false
+}
+
 // wireCredentialFields is the path of every field of one type, and of the types
 // it holds, whose JSON name is one of wireCredentialTags. The depth bounds the
 // walk at the nesting these shapes have, so a type that referred to itself would
@@ -521,7 +624,7 @@ func wireCredentialFields(t reflect.Type, depth int) []string {
 	for i := range t.NumField() {
 		field := t.Field(i)
 		name := strings.Split(field.Tag.Get("json"), ",")[0]
-		if slices.Contains(wireCredentialTags, name) {
+		if wireCredentialName(name) {
 			found = append(found, name)
 		}
 		held := field.Type
