@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"maps"
+	"os"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -190,6 +192,138 @@ func TestFollowUpLaunchLineNamesTheAliasItRead(t *testing.T) {
 	}
 	if want := "launch " + task.ShortRun(fuID) + " (follow-up of PR #7, after " + task.ShortRun(rootID) + ") (account reviewer -> acme-team)"; !strings.Contains(out, want) {
 		t.Errorf("the follow-up's launch line does not carry %q:\n%s", want, out)
+	}
+}
+
+// TestReusedLaunchNamesNoPairItDidNotRead is the launch line's own edge, and it
+// is the one the reuse path makes: a launch whose --run-id already holds its own
+// task is answered with that task (reuseStored), so what starts is the account
+// the *stored* task mounts — written when it was stored — while the builders
+// above resolved a name out of the file as it stands now. A repeat after a
+// repoint would otherwise print the pair this call read (reviewer -> the new
+// target) while the job it starts is the old target's variant, which is a line
+// about a run that is not the one going. The stored task carries its account and
+// no alias at all (F4), so the repeat names no pair, exactly as a launch that
+// read no alias does.
+func TestReusedLaunchNamesNoPairItDidNotRead(t *testing.T) {
+	f := aliasChainFixture(t)
+	args := []string{"run", "--repo", limitsRepo, "--continues", chainRun, "--run-id", chainFu, "A task"}
+	out, _, err := execute(t, args...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "launch " + task.ShortRun(chainFu) + " (account reviewer -> acme-overflow)"; !strings.Contains(out, want) {
+		t.Fatalf("the launch that read the alias does not carry %q:\n%s", want, out)
+	}
+
+	// The one edit the aliases exist for: the same keys, the other account.
+	aliasRepoint(t, "acme-overflow", "acme-personal")
+
+	out, _, err = execute(t, args...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "already launched") {
+		t.Fatalf("the repeat is not the launch it repeats:\n%s", out)
+	}
+	if strings.Contains(out, " -> ") {
+		t.Errorf("the repeat named a pair it did not read: the task it reused mounts %s, and the alias is not what decided it:\n%s",
+			readSpec(t, f, chainFu).OAuthToken, out)
+	}
+	if got := readSpec(t, f, chainFu).OAuthToken; got != "acme-overflow" {
+		t.Errorf("the stored task mounts %q, want the account its own launch resolved", got)
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("%d executions, want the one the first launch started", n)
+	}
+}
+
+// TestRepeatRefusesAStoredAccountTheRepositoryMayNoLongerUse is the allow-list
+// read at the one place a launch reuses a stored task as it is (F6, F4): a run
+// ID's task is bucket data nobody vouches for, and the account it mounts was
+// judged when it was written — a grant narrowed since, or an account taken out
+// of claude_accounts, must not let a repeat start a job on that credential. The
+// check is storedRepeat's, the funnel every reuse shape passes through
+// (--continues, --pr, a review recipe, --retry), and it is asked about the
+// account the stored task carries rather than about the one this call resolves.
+func TestRepeatRefusesAStoredAccountTheRepositoryMayNoLongerUse(t *testing.T) {
+	f := newCloudFixture(t)
+	f.appendConfig(t, "claude_accounts:\n  acme-overflow: { allow_data_to: [\"acme/app\"] }\n")
+	oauthCheckout(t, f, "")
+	const id = "20261113-120000-c1c1"
+	spec := firstRunSpec(id)
+	spec.OAuthToken = "acme-overflow"
+	seedSpec(t, f, spec, false)
+
+	// The account's own grant, narrowed to a repository that is not this one.
+	path := os.Getenv("FUGARO_CONFIG")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := strings.Replace(string(data), `acme-overflow: { allow_data_to: ["acme/app"] }`, `acme-overflow: { allow_data_to: ["acme/elsewhere"] }`, 1)
+	if updated == string(data) {
+		t.Fatal("the fixture's claude_accounts block names no acme-overflow for acme/app")
+	}
+	if err := os.WriteFile(path, []byte(updated), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	b, err := blobx.Open(context.Background(), f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = storedRepeat(context.Background(), envOn(t, f, b), appSlug, &runOptions{runID: id}, 0, "x", 0)
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want the repeat refused on the stored account's own grant", err)
+	}
+	for _, want := range []string{"acme-overflow", "not one acme/app may use"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+}
+
+// aliasChainFixture is the installation a repeat after a repoint is measured
+// on: acme/app checked out with agent.auth oauth and a chain to continue, two
+// accounts of the repository, and the project default naming the alias. A
+// repoint is one edit of that block and no other line (D2093), so the launch and
+// its repeat differ in nothing else.
+func aliasChainFixture(t *testing.T) *cloudFixture {
+	t.Helper()
+	f := newCloudFixture(t)
+	f.appendConfig(t, "claude_accounts:\n  acme-overflow: { allow_data_to: [\"acme/app\"] }\n  acme-personal: { allow_data_to: [\"acme/app\"] }\n"+
+		aliasBlock("reviewer", "acme-overflow")+"default_claude_account: reviewer\n")
+	baseBranchCheckout(t, limitsRepo, aliasChainYAML, "main")
+	writeBuildRecord(t, f, appSlug, "web", release065)
+	f.run.AddJob(gcp.JobName(appSlug, gcp.WorkflowVariant("web", "acme-overflow")), "2", "4Gi")
+	seedChainRun(t, f, chainRun, 0, task.Overrides{})
+	return f
+}
+
+// aliasChainYAML is aliasChainFixture's checkout: the workflow the launch runs
+// and the one line that makes a named account usable at all (a non-default name
+// is refused under every other auth), with no chain limit the launch would have
+// to inherit.
+const aliasChainYAML = "version: 1\nproject: aurora\ngit: { provider: github, base_branch: main }\n" +
+	"agent: { auth: oauth }\n" +
+	"workflows:\n  web: { commands: { build: sh b.sh, test: sh t.sh } }\n"
+
+// aliasRepoint moves the fixture's alias from one account to another, which is
+// the whole of what a repoint is on this machine.
+func aliasRepoint(t *testing.T, from, to string) {
+	t.Helper()
+	path := os.Getenv("FUGARO_CONFIG")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := strings.Replace(string(data), "reviewer: "+from+"\n", "reviewer: "+to+"\n", 1)
+	if updated == string(data) {
+		t.Fatalf("the fixture's alias block names no %s", from)
+	}
+	if err := os.WriteFile(path, []byte(updated), 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 

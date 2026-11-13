@@ -1089,7 +1089,18 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 	// its own line names (spec §7, D2099): the spec builders above record the
 	// pair where they resolve it, and every launch shape reaches its line
 	// through this one reply.
-	res.account = o.account
+	//
+	// A reused task is the one shape the pair must not come from: reuseStored
+	// substituted the stored task *after* the builder above resolved a name out
+	// of this machine's file, so what starts is the account the stored task
+	// mounts — a repeat after a repoint would otherwise print the pair this call
+	// read while the job mounts the account the task written before it names
+	// (the run's log line shows that job's own variant). The stored task carries
+	// its account and no alias at all (F4), so a reused launch names no pair,
+	// exactly as a launch that read no alias does.
+	if !reused {
+		res.account = o.account
+	}
 	return res, nil
 }
 
