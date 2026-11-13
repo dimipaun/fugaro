@@ -567,3 +567,51 @@ func failingTokens() Tokens {
 		return "", errors.New("the metadata server answered nothing")
 	})
 }
+
+// TestMintTermNeverExceedsTheRow: F30 — a request may name the instant its key
+// is for, because a term is not always "so many days from now": a reveal ends on
+// the predecessor's `paid_through` and must never extend it, and an entitlement
+// is paid for to a date rather than for a count of days (D2197, P3.1, P3.2).
+// What the minter does with that instant is cap it: the key it signs runs at
+// most as long as the row allows, whatever instant the caller named, so §2's
+// rule — a key cannot outlive what its row is sold for — holds on this path too.
+func TestMintTermNeverExceedsTheRow(t *testing.T) {
+	f := newFixture(t)
+	minter := Minter{Signer: f.signer, Keys: f.keys, Environment: Production, Now: f.clock}
+	// Three years out, which is past every row of the table: a minter that
+	// passed the instant on would sign a key the verifier's own ceiling refuses.
+	far := f.now.Add(3 * 365 * day)
+
+	for _, row := range defaultPolicies {
+		t.Run(row.Name, func(t *testing.T) {
+			minted, err := minter.MintV1(context.Background(), RequestV1{
+				Environment:  Production,
+				Policy:       row.Name,
+				WorkspaceID:  workspaceID,
+				Organisation: "acme.example",
+				Seats:        1,
+				RequestedEnd: far,
+			})
+			if err != nil {
+				t.Fatalf("the minter refused an end %s out, want the row's own term: %v", far.Sub(f.now), err)
+			}
+			claims := v1Verified(t, f, minted.Key)
+			run := claims.PaidThrough.Sub(claims.IssuedAt)
+			if run > row.Term {
+				t.Errorf("the key runs %s from its issue, want at most the row's own %s: the end a caller names is capped at the row and never passed on (F30, section 2)", run, row.Term)
+			}
+			// D2202: the row's own term is the bound, and a row whose key
+			// checks the server is bound tighter still — its thirty days.
+			want := row.Term
+			if row.CheckInterval != nil && want > 30*day {
+				want = 30 * day
+			}
+			if run != want {
+				t.Errorf("the key runs %s, want %s: an end past the row is capped at the longest key the row mints", run, want)
+			}
+			if !claims.PaidThrough.Equal(f.now.Add(want)) {
+				t.Errorf("the key is paid through %s, want %s: `issued` is still the minter's own clock, and only the end it was asked for moved (section 2)", claims.PaidThrough, f.now.Add(want))
+			}
+		})
+	}
+}
