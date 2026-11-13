@@ -11,6 +11,19 @@ design** of [docs/licensing/licence-key.md](../licensing/licence-key.md) (subscr
 reconciliation is therefore mostly a list of where the spec reverses a built or ruled thing, so the
 owner rules on each reversal rather than finding it in a diff.
 
+**Amended 2026-11-13 by the portal (P9.1,
+[implementation-plan.md](../portal/implementation-plan.md),
+[reconciliation.md](../portal/reconciliation.md) §"What this changes in licence key v2").** The
+portal's API is this work's licence server: K2.4's sign-in is P1.3's verifier and its pages are the
+SPA's (P3.5); the admin page and the manual queue (F15, the design's §6) are the portal's operations
+API and screens (P5.1, P5.3), so plan task K2.6 is superseded; the account, authorize and device pages
+are the portal's screens, so K5.1 is superseded; K2.5's purchase mail carries a link and never a key,
+and a purchase is an entitlement rather than a key (D2196); K3.3 sends the installation's Firebase
+project id and the portal binds the chosen entitlement to it; K3.4 follows D2186 (the grants node's
+array order) and K2.7 keys trials on the organisation and the project id (D2201); K4.1 keeps its
+secret when `/renew` answers without a new one and connected keys renew monthly (D2200, D2202); and
+D2194 puts everything in `fugaro-prod`, which is where TN3 already put the sign-in project.
+
 ## What the repo already has
 
 | Spec concept | What exists on `main` |
@@ -112,12 +125,20 @@ but Firebase's signing keys are one global set, so a token from any customer's p
 it proves is "someone controls that project", not who bought. **Recorded as: Firebase Auth in the
 owner's licence-service project (email link plus Google), not the customer's.** Using a workspace's own
 Firebase token to prove the `workspace_id` binding at `licence login` is a possible later claim check
-(TN3, answered: fugaro-prod).
+(TN3, answered: fugaro-prod). **Amended 2026-11-13 by the portal (P9.1):** the sign-in is P1.3's
+verifier inside the portal's API — audience, issuer, `email_verified`, `RequireSSO`, and a fresh
+sign-in where an action needs one — and the account, authorize and device pages are the SPA's screens
+(P3.5); TN3's `fugaro-prod` is also where the API, the minter and the ring live (D2194).
 
 **F15 (Gap): the admin page and the manual queue.** §13 (reseller, comped, revoke, reissue, override
 policy) and the design's §6 exist as a design (`docs/design/key-signing-service.md` §6) but `ee/keyservice`
 has no admin route. A comped key is `kind: comped`, expiring, never in revenue reporting; the owner-only
-access rule of the design (`TestAdminRefusesAnyoneButTheOwner`) carries over.
+access rule of the design (`TestAdminRefusesAnyoneButTheOwner`) carries over. **Amended 2026-11-13 by
+the portal (P9.1):** the admin page and the manual queue are the portal's operations API and screens
+(P5.1, P5.3), with D2187's rule — operations owners and admins act and a member only reads, each action
+needs a sign-in no older than 5 minutes with Google, and invitations are limited to the domain list the
+operations owner sets — D454's per-tier rate queueing the excess and D456's audit over every action,
+reads included. Plan task K2.6 is superseded and the design's §6 is replaced.
 
 **F16 (Gap): ISO 8601 durations.** `check_interval: "P1D"` needs a parser the repo does not have. The plan
 accepts only `P<n>D` and `P<n>W`, refuses anything else, and `null` means none.
@@ -151,7 +172,7 @@ a viewer **can** copy the key; with the required `workspace_id` (D2134 as amende
 | D2133 | Grace | `grace_days` carried by the key, server default **30** (B17, T26) (alternatives: 14; fixed 30 outside the key) | **2026-11-11: the recommendation.** The spec's 14 becomes 30 |
 | D2134 | What `workspace_id` names | Recommended: a checked installation id | **2026-11-11: NOT the recommendation.** Keep `organisation`, add an optional `workspace_id`. **Amended by the owner the same day (TN2): `workspace_id` is REQUIRED on every key and is checked offline against the Firebase project id of the workspace** (a project outside a workspace: its own Firebase project id) |
 | D2135 | Renewal authentication (F7) | A per-key renewal secret, hash in the key, secret sent over TLS and held in the installation's Secret Manager (alternatives: the scheduler SA's identity; none) | **2026-11-11: the recommendation.** **Amended after review:** the call sends the secret and the server compares its hash, with no HMAC (a hash in the key is readable by every bucket reader). **Confirmed by the owner 2026-11-11.** |
-| D2136 | Trials | Add the 14-day Team trial beside D440's plans (alternatives: replace D440; none) | **2026-11-11: the recommendation.** One per installation |
+| D2136 | Trials | Add the 14-day Team trial beside D440's plans (alternatives: replace D440; none) | **2026-11-11: the recommendation.** One per installation. **Amended 2026-11-13 by the portal (D2201):** the trial is keyed on the organisation and the workspace's Firebase project id, not on the installation alone |
 | D2137 | Where the key lives per project (F9) | The runs bucket beside the published policy (alternatives: Secret Manager; per machine) | **2026-11-11: the recommendation.** |
 | D2138 | Grace of trial and air-gapped keys | Trial 0, air-gapped 30 | **2026-11-11: the recommendation.** |
 | D2139 | Seat holders | Count in the key, holders in the project (the spec's assumption) | **2026-11-11: the recommendation.** |

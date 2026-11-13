@@ -120,6 +120,66 @@ func TestPreviousMarkerVersionConvergesOnUpdate(t *testing.T) {
 	run.laterWrites(t, r)
 }
 
+// TestConvergeMarkerVersionSkipsInAnAgentSession: the door in a coding agent's
+// session leaves the creation fact exactly as it found it. The object is one of
+// the two marks that decide whether this installation's confirmations may be
+// skipped at all (the other is the project's own label), so the version it
+// records is not the session's to move: `--yes`'s help promises the opposite of
+// a write under a marker ("changes nothing outside this machine, --yes
+// included"), and the step that writes the marks keeps the same fence outright
+// (update_selfflag.go).
+//
+// The fixture is the session that would otherwise reach the write, and it is
+// the case the fence is for rather than a corner of it: the installation is
+// managed and its fact is version 3, so the gate admits the session and the
+// step's own guard is the only thing between it and the object. The run stops
+// at the stages a session deploys nothing for, so what it would leave behind is
+// the one write of a run that converged nothing — the fact moved to a version
+// the release behind a run in flight refuses, over a converge that did not
+// happen.
+//
+// The other half of the claim is TestPreviousMarkerVersionConvergesOnUpdate:
+// the same rig and the same fact, with no marker, where the step does rewrite
+// the object. Together the two say the skip is the marker's and not a step that
+// does nothing.
+func TestConvergeMarkerVersionSkipsInAnAgentSession(t *testing.T) {
+	currentRelease(t)
+	r := convergeRigWithMarker(t, markerBuildsFact)
+	isolateGateCredentials(t)
+	// The premise, so the test cannot pass over an installation the step would
+	// have had nothing to do about anyway.
+	facts, err := readMarkFactsOn(t, r.initRig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !facts.Managed || facts.Version != managed.MarkerVersionBuilds {
+		t.Fatalf("the fixture's fact reads as managed %v version %d, want the managed version-%d fact this step is for",
+			facts.Managed, facts.Version, managed.MarkerVersionBuilds)
+	}
+	// The marker last, as the rigs that drive a session do: the fixture's own
+	// helpers clear every marker, so a session set before the rig is built is
+	// not the session the door runs in.
+	agentSession(t)
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	s := out + errOut
+	if err != nil && !strings.Contains(s, "left for you") {
+		t.Fatalf("an update in a coding agent's session failed with something other than the steps it leaves for the user: %v\n%s", err, s)
+	}
+	got, ok := managedFlagAt(t, r.gcs, initRunsBucket)
+	if !ok {
+		t.Fatalf("the update left no gs://%s/%s behind: the fact was the fixture's, and the session may rewrite neither it nor its absence",
+			initRunsBucket, managed.MarkerObject)
+	}
+	if got != markerBuildsFact {
+		t.Errorf("gs://%s/%s = %s after an update in a coding agent's session, want %s: the object is one of the marks the confirmations are skipped on, and the run that moves it is the owner's own",
+			initRunsBucket, managed.MarkerObject, got, markerBuildsFact)
+	}
+	if strings.Contains(s, "converged to version") {
+		t.Errorf("the session reported the fact converged, over an object it did not write:\n%s", s)
+	}
+}
+
 // readMarkFactsOn is the managed read over a rig's fakes — the same read the
 // apply-time gate makes, project number, bucket label, project label and all —
 // answering with the fact's version beside its verdict. A test that read the

@@ -37,7 +37,10 @@ func newIssueDismissCmd() *cobra.Command {
 			"aside there (F23). A store that cannot be reached is then the refusal\n" +
 			"rather than a line, there being nothing here to set aside instead.\n\n" +
 			"An issue that has already been filed is refused: it is open on GitHub,\n" +
-			"and setting it aside here would not close it.\n\n" +
+			"and setting it aside here would not close it. So is one a release has\n" +
+			"fixed: the fix is in that release and the record says which, and a bug\n" +
+			"that came back is a new upload rather than a dismissal of the fix that\n" +
+			"did not hold.\n\n" +
 			"A coding agent's session may not dismiss an issue: a steered diagnosis\n" +
 			"could otherwise bury a real bug, so a person sets one aside (D1730).",
 		Args: cobra.ExactArgs(1),
@@ -80,6 +83,19 @@ func runIssueDismiss(cmd *cobra.Command, ref string) error {
 			filed = " at " + u
 		}
 		return userErr("nothing was dismissed: %s was already filed%s, and dismiss marks an issue as not worth submitting", issueRef(i), filed)
+	}
+	// A resolved issue is the other thing dismiss has nothing to say about
+	// (F9, F14): the record's own `resolved_in` says a release fixed the bug,
+	// and setting `dismissed` over `resolved` would drop that and print that
+	// nothing is filed for an issue that was. A bug that came back is not this
+	// command's either — the duplicate check attaches it to the resolved issue
+	// as a regression, and the fix that did not hold stays on the record.
+	if err == nil && i.Status == issues.StatusResolved {
+		fixed := ""
+		if i.ResolvedIn != "" {
+			fixed = " in " + oneLine(i.ResolvedIn)
+		}
+		return userErr("nothing was dismissed: %s was fixed%s, and a fixed issue is not buried; if it came back, that is a new upload", issueRef(i), fixed)
 	}
 	// A number is the project's, so this is the half of the command that reaches
 	// the store: a reference the folder here does not hold is the row of a

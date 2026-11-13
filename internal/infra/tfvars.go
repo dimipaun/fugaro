@@ -298,11 +298,15 @@ type CredentialsServiceSpec struct {
 	// policy's own spelling (config.ProjectJobAccounts' mapping, never empty),
 	// and a revision reads no policy at start-up (D143).
 	//
-	// It is left out of an installation whose local config names no profile,
-	// which is an installation that deploys no review job and whose service
-	// admits no review caller — the fail-closed state, and not an error: the
-	// class is inert until a profile exists (unlike JobAccounts, which the
-	// service refuses an empty version of).
+	// It is left out of an installation that deploys no review job at all — no
+	// profile, and no credentials service (CredentialsReviewJobAccounts) — which
+	// is an installation whose service admits no review caller: the fail-closed
+	// state, and not an error, because the class is inert until a job of it
+	// exists (unlike JobAccounts, which the service refuses an empty version
+	// of). An installation with no profile and the service on is NOT that
+	// state: it deploys the ONE implicit default review job and carries that
+	// job's row, which is what the owner's requirement of 2026-11-13 asks for
+	// (ProjectReviewJobs' implicitReviewVariant).
 	ReviewJobAccounts []CredentialsReviewJob `json:"review_job_accounts,omitempty"`
 	// VerifierAccounts are the identities that may ask the service whether a
 	// verdict's signature is its own (C3.9g1, D1068): the installation's own
@@ -785,31 +789,42 @@ func RefreshCredentialsServiceJobAccounts(vars []byte, lc *localcfg.Config) ([]b
 //
 // It is the same axis as CredentialsJobAccounts and one step further along it:
 // the coding table is a row per repository job, this one a row per review
-// variant of the installation's project jobs. An installation whose local
-// config names no profile gets none and no error — it deploys no project job
-// and so no variant, and a service that admits no review caller is the
-// fail-closed state the class is inert in, not the refusal an empty coding
-// table is.
+// variant of the installation's project jobs. An installation that deploys no
+// variant at all gets an empty table and no error — an installation with no
+// profile and no credentials service, whose review class is inert, which is
+// the fail-closed state and not the refusal an empty coding table is. The
+// implicit default review job is one of those variants and reaches the table
+// the same way as every other (ProjectReviewJobs' implicitReviewVariant), so a
+// project with no profile gets its row here on the run that deploys its job.
 //
 // The rows are sorted (profile, provider, account) and carry no duplicates.
 func CredentialsReviewJobAccounts(lc *localcfg.Config) ([]CredentialsReviewJob, error) {
-	// No profile, no project job, no variant (ProjectJobs' own first rule) —
-	// and nothing else about the installation is read, not even the runs
-	// bucket, which only a job's own environment needs.
-	if len(lc.Profiles) == 0 {
+	// Nothing can be derived, and nothing else about the installation is read:
+	// no profile deploys a coding job to derive a variant from, and with no
+	// credentials service there is no implicit one to deploy either — so not
+	// even the runs bucket, which only a job's own environment needs
+	// (ProjectReviewJobs' own two rules, read here where they save the read).
+	if len(lc.Profiles) == 0 && lc.CredentialsService == nil {
 		return nil, nil
 	}
-	bucket, err := bucketName(lc)
+	b, err := bucketName(lc)
 	if err != nil {
 		return nil, userErr("%v", err)
 	}
-	jobs, err := ProjectReviewJobs(lc, bucket, lc.UsesVertex())
+	jobs, err := ProjectReviewJobs(lc, b, lc.UsesVertex())
 	if err != nil {
 		return nil, err
 	}
 	out := make([]CredentialsReviewJob, 0, len(jobs))
 	for _, j := range jobs {
 		out = append(out, CredentialsReviewJob{Profile: j.Profile, Provider: j.Provider, Account: j.Account})
+	}
+	if len(out) == 0 {
+		// An empty table leaves the member exactly as the document carried it
+		// (RefreshCredentialsServiceJobAccounts' own rule for the union), and
+		// the module renders no entry for an empty list: a written `[]` would
+		// be a fact about the installation that is not one.
+		return nil, nil
 	}
 	slices.SortFunc(out, func(a, b CredentialsReviewJob) int {
 		if c := strings.Compare(a.Profile, b.Profile); c != 0 {
@@ -1256,6 +1271,82 @@ func CarriedIntake(vars, prev []byte) ([]byte, error) {
 		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
 	}
 	doc["intake"] = block
+	return sortedJSON(doc)
+}
+
+// ProjectReviewJobsKey is the module's own variable name for the installation's
+// review-only job variants, which is the key CarriedProjectReviewJobs reads and
+// writes (InstallationSpec's field spells it in its own tag).
+const ProjectReviewJobsKey = "project_review_jobs"
+
+// CarriedProjectReviewJobs returns vars with the implicit default review job
+// (ImplicitReviewJobName) that the document prev carries, when vars carry no job
+// of that name.
+//
+// It is the carry for the one review job the config cannot always compose.
+// Whether the installation deploys that job at all is the config's answer
+// (implicitReviewVariant's gates), and one of those gates is a fact the config
+// can lose AFTER the job is deployed: a second GitHub App ID recorded, or the
+// last GitHub repository gone, leaves the config with no single App ID — and
+// the job runs on one App's ID, so no reader composes it any more. The
+// installation holds it all the same, and a document rewritten without it is
+// the plan of its destruction: RefuseProjectJobDeletes stops the whole update
+// on that plan, with "restore the profile as it was" as the only remedy it can
+// print — a profile an installation that declares none does not have. Every
+// later run repeats it, so the installation stops converging for good. The job
+// is deployed for nobody who asked for it (implicitReviewVariant), and it must
+// never be the reason an installation that converges today stops converging —
+// which is what its own gate says of the run that has not deployed it yet.
+//
+// The record is the installation's own tfvars, and the job is taken from it
+// whole rather than recomposed: prepare, the writer this serves, holds the spec
+// and not the config, and the spec's review set is exactly what cannot describe
+// this job. Taken whole is also what makes the plan that follows a no-op — the
+// job in the record is the job in the state, so nothing about it is proposed
+// for a change.
+//
+// Two things it deliberately does not do. It never overwrites a job vars
+// already carry: a config that composes the job again is the authority on it,
+// and that run is what catches the job up with this release's image and
+// environment — until then the carried job keeps what the installation was
+// deployed with, and it is a job no launch reaches (internal/cli's reviewJobFor
+// refuses a launch whose repository resolved no shared project job, and a
+// config that records no single App ID is that state). And it carries no other
+// review job: a profile's variant missing from the spec is a profile the config
+// no longer declares, which is a fact OF the config, and the refusal
+// RefuseProjectJobDeletes prints for it is that fact's remedy.
+//
+// prev is that document — infra.Workdir.PrevVars, or the tfvars the workdir
+// holds now, which is where the installation stage's own deploy wrote the job a
+// few steps before prepare rewrites the file.
+func CarriedProjectReviewJobs(vars, prev []byte) ([]byte, error) {
+	if prev == nil {
+		return vars, nil // no workdir held one: nothing to carry
+	}
+	previous, err := varsDoc(prev)
+	if err != nil {
+		// A tfvars that cannot be read is not a reason to write a plan that
+		// deletes the job: fail rather than carry nothing forward.
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
+	}
+	carried, _ := previous[ProjectReviewJobsKey].(map[string]any)
+	job, ok := carried[ImplicitReviewJobName()]
+	if !ok || job == nil {
+		return vars, nil
+	}
+	doc, err := varsDoc(vars)
+	if err != nil {
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
+	}
+	jobs, _ := doc[ProjectReviewJobsKey].(map[string]any)
+	if _, ok := jobs[ImplicitReviewJobName()]; ok {
+		return vars, nil // the spec composes the job itself: its own answer stands
+	}
+	if jobs == nil {
+		jobs = make(map[string]any, 1)
+	}
+	jobs[ImplicitReviewJobName()] = job
+	doc[ProjectReviewJobsKey] = jobs
 	return sortedJSON(doc)
 }
 

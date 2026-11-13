@@ -2381,13 +2381,15 @@ func (r *run) bootstrap(ctx context.Context) error {
 		return err
 	}
 	// A proxied run keeps the remote it was given -- the launcher's Bitbucket
-	// URL, or the origin of a checkout an earlier execution left here, which
-	// is that same URL -- and it is the insteadOf rewrite its git environment
-	// carries (credentialVars) that sends every Bitbucket URL to this
-	// execution's forwarder. The remote is not rewritten to the endpoint
-	// because git reaches it through what the checkout records, not through
-	// what this function hands it: a port written into the remote would be one
-	// an earlier execution drew, dead by the time this one fetches, and the
+	// URL, the origin of a checkout an earlier execution left here, which is
+	// that same URL, or the URL this run computed for a project job
+	// (cloneURL, which repourl.CloneURL builds on bitbucket.org too) -- and it
+	// is the insteadOf rewrite its git environment carries (credentialVars)
+	// that sends every Bitbucket URL to this execution's forwarder. The remote
+	// is not rewritten to the endpoint because git reaches it through what the
+	// checkout records, not through what this function hands it: a port
+	// written into the remote would be one an earlier execution drew, dead by
+	// the time this one fetches, and the
 	// final push would go to nobody. Written this way, the port exists in the
 	// environment alone and every execution routes by its own.
 	//

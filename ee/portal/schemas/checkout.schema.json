@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/ee/portal/schemas/checkout.schema.json",
+  "title": "Portal checkout",
+  "description": "Checkout, in the two halves that keep the browser out of the money (portal plan P4.1; F15, D2192). The SPA asks the API for a transaction, naming the workspace and the licence terms it accepted; the API creates it at Paddle with the organisation and workspace in its custom_data; and the overlay is opened with the transaction id and nothing else. A page that could name what it was buying could name a victim's workspace, buy against it and refund, which is the finding this split answers. Every object here is closed, because ee/keyservice/wire_checkout.go decodes it with DisallowUnknownFields.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/create"
+    },
+    {
+      "$ref": "#/$defs/session"
+    }
+  ],
+  "$defs": {
+    "create": {
+      "type": "object",
+      "description": "The SPA's request to start a purchase. The organisation is the caller's membership and not a field: a body that could name one would be a request to bill somebody else.",
+      "additionalProperties": false,
+      "required": [
+        "workspace_id",
+        "terms_version"
+      ],
+      "properties": {
+        "workspace_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The portal workspace the purchase is for. One active subscription per workspace is the rule (D2192), so this is what the API checks that against before it creates anything."
+        },
+        "terms_version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The licence terms the buyer accepted (spec §Legal). The version is named rather than a flag being set: a boolean would record that somebody accepted something without recording which wording, and the record has to say which."
+        }
+      }
+    },
+    "session": {
+      "type": "object",
+      "description": "What the SPA opens the Paddle overlay with: one id and nothing else. The price, the quantity and the custom_data are the server's, so a tampered page can at most name a transaction that is not its own, which the overlay and the webhook both refuse.",
+      "additionalProperties": false,
+      "required": [
+        "transaction_id"
+      ],
+      "properties": {
+        "transaction_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Paddle's id for the transaction the API created. The purchase event that follows is admitted only because a transaction this API created began it (F15)."
+        }
+      }
+    }
+  }
+}

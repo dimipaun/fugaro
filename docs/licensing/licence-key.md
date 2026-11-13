@@ -4,10 +4,12 @@
 the claim set of [the licence-key-v2 plan](../licence-key-v2/implementation-plan.md) and its
 [reconciliation](../licence-key-v2/reconciliation.md) — decisions D2130–D2146, findings F1–F18 and
 tensions TN1–TN5 — and the text the tasks that build it are written against: the Go verifier (K1.1,
-`ee/licence/keyv1.go`), the mint tool (K1.3), the console's verifier (K1.4), the project store (K3.1),
+`ee/licence/key.go`), the mint tool (K1.3), the console's verifier (K1.4), the project store (K3.1),
 the commands (K3.2–K3.4), the renewal job (K4.1, K4.2) and the key service (K2). The production keyring
-is empty, so no key exists in the field and the replacement orphans nothing (D2130); the old
-`<key id>.<payload>.<signature>` format stays in the tree, untouched, until K7.3 removes it.
+is empty, so no key exists in the field and the replacement orphans nothing (D2130). The Go verifier of
+the old `<key id>.<payload>.<signature>` format went with K7.3, and the console's and the app's readers
+of that format remain, with `ee/licence/testdata/vectors.json`, until the tasks that remove those
+readers remove the file too.
 
 It **supersedes** licensing task L3.1 and subscriptions **S2.1/S2.3** (the format) and **amends**
 S2.4, S2.5, S2.7–S2.10, S3.1–S3.4 and S6.1 where they name the old claims (K7.2 writes the notes for
