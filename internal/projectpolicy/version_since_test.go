@@ -50,7 +50,7 @@ func TestVersionSinceCoversEveryVersion(t *testing.T) {
 	// token block (0.14.0), 5 the pools' owner and roster (0.23.0, the
 	// release that shipped it — not 0.22.0, which shipped with version
 	// 4, and not 0.22.1, which writes no version 5), 6 the binaries block
-	// (0.24.0) and 7 the two model grades (0.25.0, the release this change
+	// (0.24.0) and 7 the two model grades (0.24.0, the release this change
 	// ships in). An off-by-one table fails here.
 	for v, want := range map[int]string{1: "0.8.0", 2: "0.8.5", 3: "0.9.0", 4: "0.14.0", 5: "0.23.0", 6: "0.24.0", 7: "0.24.0"} {
 		if got := VersionSince[v]; got != want {
