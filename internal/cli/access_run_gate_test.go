@@ -883,3 +883,37 @@ func TestAccessRunActionRolesAgreeWithTheResolver(t *testing.T) {
 		}
 	}
 }
+
+// TestAccessRunRevokingTheLastGrantLeavesNobody is access_gate.go's own case for
+// the commands of this plan: an installation that has migrated holds its roles
+// in the node, a revocation that takes the last grant away leaves no node — the
+// state an installation whose lists have never been migrated is in — and the
+// marker the emptying write leaves beside it (access.PathMigrated) is what tells
+// the two apart. Judged as the roster of nobody it is, revoking the last grant
+// does not hand launching back to whoever asks next, and the revoked operator
+// keeps being refused until somebody grants a role again.
+func TestAccessRunRevokingTheLastGrantLeavesNobody(t *testing.T) {
+	noAgentSession(t)
+	f := newLaunchBudget(t, "off")
+	// The marker user revoke's emptying write leaves (access.MarkMigrated; the
+	// write itself is pinned by access_gate_test.go's own case), beside the
+	// absent node the database prunes an emptied list to.
+	f.db.Set(accesslib.PathMigrated, true)
+	accessRunAs(t, accessOperator)
+
+	_, _, err := runBudget(t)
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("a launch on an installation whose last grant was revoked: err = %v (exit %d), want a refusal", err, ExitCode(err))
+	}
+	for _, want := range []string{"nothing was launched", "launching " + accessRepoA, "needs the role operator", "holds no role"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Errorf("%d executions were created for a refused launch", n)
+	}
+	if storedTask(t, f.cloudFixture) {
+		t.Error("the refused launch stored its task")
+	}
+}

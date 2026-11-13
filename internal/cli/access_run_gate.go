@@ -162,9 +162,10 @@ func requireProjectAccess(ctx context.Context, env *cloudEnv, action accesslib.A
 }
 
 // accessRunJudge is the gate's preamble: what the resolver is asked with, the
-// credential's own member, and whether anything places anybody at all. placed
-// false means the check does not apply, and no caller is read for it — an
-// installation that place nobody cannot refuse the one credential it has.
+// credential's own member, and whether the installation has a roster at all
+// (accessInput). placed false means the check does not apply, and no caller is
+// read for it — an installation with no roster cannot refuse the one credential
+// it has.
 func accessRunJudge(ctx context.Context, env *cloudEnv, what string) (in accesslib.Input, caller string, placed bool, err error) {
 	if in, placed, err = accessInput(ctx, env); err != nil || !placed {
 		return accesslib.Input{}, "", placed, err
@@ -178,51 +179,55 @@ func accessRunJudge(ctx context.Context, env *cloudEnv, what string) (in accessl
 
 // accessInput is what the resolver is asked with: the grants node's pairs, the
 // implicit admins this machine can name, and the published allow_repos. placed
-// is whether anything in it places anybody.
+// is whether the installation has a roster to judge against at all — a node, or
+// the marker of one whose last grant was revoked (accessStoredGrants) — and not
+// whether that roster places the caller asking.
 func accessInput(ctx context.Context, env *cloudEnv) (in accesslib.Input, placed bool, err error) {
 	grants, found, err := accessStoredGrants(ctx, env)
 	if err != nil {
 		return accesslib.Input{}, false, err
 	}
 	if !found {
-		// The installation has no grants node: its roles have not moved there
+		// The installation has no roster: its roles have not moved into a node
 		// yet, and neither an outage nor a config that names implicit admins
-		// makes one. Nothing is placed and nothing is judged — the config's
-		// implicit admins are half of a roster, and judging a launcher by that
-		// half alone would refuse the people the installation meant to place,
-		// with a remedy (`fugaro user grant`) that RS5 refuses while there is
-		// no node to write. This is where an outage stops being a refusal, and
-		// where an installation that has not updated keeps the behavior it had.
-		// A node a revoke emptied is this same state (accessStoredGrants), so it
-		// is not judged either.
+		// makes one. Nothing is judged — the config's implicit admins are half
+		// of a roster, and judging a launcher by that half alone would refuse
+		// the people the installation meant to place, with a remedy (`fugaro
+		// user grant`) that RS5 refuses while there is no node to write. This is
+		// where an outage stops being a refusal, and where an installation that
+		// has not updated keeps the behavior it had.
 		return accesslib.Input{}, false, nil
 	}
+	// A roster is judged whatever it holds: one of nobody refuses everyone it
+	// does not place, which for the empty roster is everyone but the config's
+	// implicit admins (F22). Reading it as "nothing to check" is what would let
+	// the last grant's revocation hand these commands to whoever asks next.
 	in = accesslib.Input{
 		Grants:     grants,
 		Implicit:   userImplicitAdmins(env.lc),
 		AllowRepos: accessAllowRepos(ctx, env),
 	}
-	return in, len(grants)+len(in.Implicit) > 0, nil
+	return in, true, nil
 }
 
 // accessStoredGrants is the grants node's pairs. found is whether the
-// installation has a node at all: one without a node places nobody this build
+// installation has a roster at all: one without one places nobody this build
 // can read and is judged by nothing.
 //
-// There is no second state to tell that apart from. The database keeps no
-// member for an empty list — an empty grants list is an empty object and is
-// pruned (access.Node's own words), so a project that migrated and holds no
-// grants reads as the very same absent node as one that has not migrated — and
-// the gate therefore judges neither. A revoke that takes the last stored grant
-// away leaves that state behind.
+// An absent node is two states, and access.PathMigrated — the marker the write
+// that leaves no node leaves beside it — is what tells them apart (access.Node
+// says so itself): an installation whose last grant was revoked holds a roster
+// of nobody, and one whose lists have never been migrated holds no roster at
+// all. The first is judged, which is what keeps a revoke from handing the
+// commands of this plan back to whoever asks next; the second is not judged,
+// which is what keeps an installation that has not run `fugaro update` behaving
+// as it did. It is access_gate.go's own rule for the same two states, word for
+// word, because the two gates read one installation.
 //
 // The node is the installation's whole roster (RS3 migrates the two terraform
-// lists into it), so this is the only place roles come from: an absent node is
-// an installation whose roles have not moved there yet (`fugaro update` runs
-// the migration), which places nobody. That is also the whole reason found is
-// a separate answer from "no grants": an installation that has not updated
-// must keep the behavior it had, and no machine's config makes a roster on its
-// own (the terraform lists are the machine's copy, not the authority).
+// lists into it), so this is the only place roles come from, and no machine's
+// config makes a roster on its own (the terraform lists are the machine's copy,
+// not the authority).
 //
 // What a failed read means is the one distinction here (rtdb's own contract):
 // a refusal is the credential's (D1585 gives the node to a caller holding the
@@ -257,7 +262,13 @@ func accessStoredGrants(ctx context.Context, env *cloudEnv) (grants []accesslib.
 		return nil, false, dbErr(env.lc, err, false)
 	}
 	if !node.Found {
-		return nil, false, nil
+		migrated, err := accesslib.Migrated(ctx, db)
+		if err != nil {
+			return nil, false, dbErr(env.lc, err, false)
+		}
+		if !migrated {
+			return nil, false, nil
+		}
 	}
 	return node.Grants, true, nil
 }
@@ -341,7 +352,7 @@ func accessSlugRepo(lc *localcfg.Config, slug string) (string, bool) {
 type accessRowGate struct {
 	in     accesslib.Input
 	caller string
-	// inert is the installation that places nobody: every row is listed, and
+	// inert is the installation with no roster at all: every row is listed, and
 	// no credential was read for it (access_gate.go's own rule).
 	inert bool
 }
