@@ -435,20 +435,33 @@ func (s *Service) renew(w http.ResponseWriter, r *http.Request) {
 		writeAnswer(w, Answer{Status: key.status()})
 		return
 	}
-	// The successor covers the term that begins where this key ends, and the
-	// subscription has to have paid for that term before anything is minted: its
-	// end is the merchant's own record of what the customer has bought — the
-	// trigger's renewal is what moves it (merchant.Renew) — and this route reads it
-	// rather than moving it. A route that moved it would credit every caller the
-	// term after the one in hand: one month bought, a successor a call, each with a
-	// fresh key id and so a throttle bucket of its own, and the merchant's own
-	// renewal left finding its window closed behind them
+	// The subscription has to have paid for what the successor would cover before
+	// anything is minted, and what says it has is its end being past the end of the
+	// key in hand: its end is the merchant's own record of what the customer has
+	// bought — the trigger's renewal is what moves it (merchant.Renew) — and this
+	// route reads it rather than moving it. A route that moved it would credit every
+	// caller the term after the one in hand: one month bought, a successor a call,
+	// each with a fresh key id and so a throttle bucket of its own, and the
+	// merchant's own renewal left finding its window closed behind them
 	// (TestARenewalMintsOnlyIntoATermTheSubscriptionCovers).
+	//
+	// It is that comparison and never a term measured out from the key's own end,
+	// because the two ends are not on one grid (D2202): the row's key runs thirty
+	// days where the subscription runs the term the customer bought, so an annual
+	// subscription is a year of keys and not one term this key's arithmetic has to
+	// reach; and the keys the other paid paths mint — the merchant's own renewal,
+	// the seat change — end where those paths asked for them and on no grid at all.
+	// A gate that asked for a whole term of room past the key refused every one of
+	// them, which is a paid licence dark from the end of the key in hand
+	// (TestARenewalOffTheTermGridIsServed, TestASeatChangesKeyRenewsWhileTheTermRuns,
+	// TestAMonthBilledInTwentyEightDaysRenewsToTheSubscriptionsEnd), and it is the
+	// mint below rather than this check that keeps the successor inside what was
+	// bought (`renewalDays`).
 	//
 	// The answer is the key's own state and not the uniform refusal, for the reason
 	// the two checks around it give theirs: the caller proved its secret, and its key
 	// is still good to its end — what it has not bought is the term after that.
-	if sub.Expires.Before(covered(key.record, key.policy, now)) {
+	if !sub.Expires.After(key.record.Expires) {
 		writeAnswer(w, Answer{Status: key.status()})
 		return
 	}
@@ -471,7 +484,7 @@ func (s *Service) renew(w http.ResponseWriter, r *http.Request) {
 		WorkspaceID:  key.state.WorkspaceID,
 		Organisation: key.record.Organisation,
 		Seats:        key.record.Seats,
-		TermDays:     renewalDays(key.record, key.policy, now),
+		TermDays:     renewalDays(key.record, key.policy, now, sub.Expires),
 	})
 	if err != nil {
 		fail(w, err)
@@ -637,6 +650,18 @@ func renewable(record Record, policy Policy, now time.Time) bool {
 // holder asked for before, and a term longer than the tier allows is the
 // minter's refusal rather than a clamp in this file (Check 175).
 //
+// What it never asks for is a day the subscription has not reached, and that is
+// the gate's own second half rather than a second gate: past the end of the key
+// in hand the two ends are not on one grid (D2202), so a request measured by the
+// row's period alone runs past what the customer bought wherever the subscription
+// ends inside it — an annual subscription reaches a year beyond a thirty-day key
+// where the successor above it is a month, and a key whose end is a few days
+// short of the subscription's (the chain arriving at the merchant's renewal) has
+// days of room and not a period. A record standing for a term nobody paid for is
+// read by `entitlementEnd` (merchant.go), which is what the subscription's own
+// end would be repaired from: the mint is capped instead, so the successor ends
+// where the money does.
+//
 // The term is in whole days, because that is the unit `RequestV1.TermDays`
 // states and the minter dates the successor from its own clock and never from a
 // date this side sends (§2), which is the rule the tier's ceiling rests on. So a
@@ -647,20 +672,19 @@ func renewable(record Record, policy Policy, now time.Time) bool {
 // measures from the end the key in hand carries. The round is what that costs,
 // and a job running at a fixed minute pays it once: the successor's end is on
 // that minute, so its window opens on it too and the term after is exact.
-func renewalDays(record Record, policy Policy, now time.Time) int {
-	span := covered(record, policy, now).Sub(now)
-	return int((span + 24*time.Hour - 1) / (24 * time.Hour))
+func renewalDays(record Record, policy Policy, now time.Time, paidThrough time.Time) int {
+	days := daysBetween(now, covered(record, policy, now))
+	if rest := daysBetween(now, paidThrough); rest < days {
+		days = rest
+	}
+	return days
 }
 
-// covered is the end of the term the successor will cover, which is the instant
-// the subscription's own end has to reach before `renew` mints anything: the
-// whole period after this key's own `paid_through`, or after now for a key
-// already past it.
-//
-// It is the same span `renewalDays` asks the minter for, and the two are written
-// as one function so that they cannot drift: a gate that asked the subscription
-// for one term while the mint took another would either credit a term nobody paid
-// for or refuse one that was.
+// covered is the end the successor's term reaches when it is measured by the row
+// alone: the whole period after this key's own `paid_through`, or after now for a
+// key already past it. What the successor is asked for is the nearer of it and
+// the subscription's own end (`renewalDays`), so this is the outer bound and the
+// money is the inner one.
 func covered(record Record, policy Policy, now time.Time) time.Time {
 	end := record.Expires
 	if end.Before(now) {

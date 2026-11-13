@@ -578,18 +578,46 @@ func renewThroughTheEndpoint(t *testing.T, f *fixture, keyID, secret string) (Re
 
 // theMerchantRenews runs the merchant's own renewal of the licence a key belongs
 // to, the way the merchant's trigger does when the customer's money buys the next
-// term (merchant.Renew, Service.Renew): it advances the clock into the key's
-// window — which is inside the trigger's own window too, since T26's lead is what
-// the trigger reads and the term's half bounds it for a short row — and fails
-// when nothing was minted. It is the only thing that moves a subscription's end,
-// and so the only thing that buys the term `/renew` later hands out
+// term (merchant.Renew, Service.Renew): it advances the clock to where the
+// trigger's own window opens and fails when nothing was minted. It is the only
+// thing that moves a subscription's end, and so the only thing that buys the term
+// `/renew` later hands out
 // (TestARenewalMintsOnlyIntoATermTheSubscriptionCovers).
 func theMerchantRenews(t *testing.T, f *fixture, key Record) {
 	t.Helper()
-	f.inTheRenewalWindow(t, key.KeyID)
+	f.inTheMerchantRenewalWindow(t, key)
 	if _, renewed, err := f.svc.Renew(context.Background(), key.Subscription); err != nil || !renewed {
 		t.Fatalf("the merchant's renewal of the subscription %s minted nothing (renewed=%v err=%v)", key.Subscription, renewed, err)
 	}
+}
+
+// inTheMerchantRenewalWindow moves the clock to where the merchant's own renewal
+// is asked for and answers that instant: a day inside the lead the trigger opens
+// its window by before the *subscription's* own end — T26's lead, bounded by half
+// the term for a row sold for less than it, which is the rule merchant.Renew
+// reads for itself.
+//
+// The subscription's window is not the key's, and D2202 is what separates them: a
+// connected row's key runs thirty days while the subscription runs the period the
+// customer bought, so the trigger of an annual licence fires some eleven months
+// after the key in hand was minted and never inside that key's own last week. A
+// test that ran the trigger in the key's window instead would be asking it for a
+// term the customer has not been billed for, and `Renew` answers that with
+// nothing minted.
+func (f *fixture) inTheMerchantRenewalWindow(t *testing.T, key Record) time.Time {
+	t.Helper()
+	sub, held, err := f.store.Subscription(context.Background(), key.Subscription)
+	if err != nil || !held {
+		t.Fatalf("the store holds no subscription %q for the key %s (held=%v err=%v)", key.Subscription, key.KeyID, held, err)
+	}
+	lead := RenewalLead
+	if half := time.Duration(sub.TermDays) * 12 * time.Hour; sub.TermDays > 0 && half < lead {
+		lead = half
+	}
+	if asked := sub.Expires.Add(-lead).Add(24 * time.Hour); asked.After(f.now) {
+		f.advance(asked.Sub(f.now))
+	}
+	return f.now
 }
 
 // theSubscriptionCovers writes the subscription a key belongs to as paid through
@@ -639,9 +667,9 @@ func TestAPurchasedKeyRenewsAndItsSuccessorInheritsItsWorkspaceAndSubscription(t
 		t.Fatalf("the purchased key's state names the workspace %q, want %q: a state without one is a key no renewal can serve", state.WorkspaceID, workspaceID)
 	}
 
-	// The term the successor will cover is one the customer has bought, and what
-	// says so is the merchant's own renewal of the subscription: the trigger runs
-	// inside the key's window, mints the key for the term it bills and moves the
+	// What the successor will cover is one the customer has bought, and what says
+	// so is the merchant's own renewal of the subscription: the trigger runs inside
+	// its own window, mints the key for the term it bills and moves the
 	// subscription's end to it (merchant.Renew). The endpoint below hands that term
 	// out and reads the end rather than moving it, so a purchase the merchant has
 	// not renewed is a licence with no term to hand out
@@ -664,17 +692,26 @@ func TestAPurchasedKeyRenewsAndItsSuccessorInheritsItsWorkspaceAndSubscription(t
 	if next.WorkspaceID != workspaceID {
 		t.Errorf("the successor's state names the workspace %q, want %q: a renewal keeps the key in its own workspace", next.WorkspaceID, workspaceID)
 	}
-	// The successor covers the term the merchant's renewal paid for — the
-	// subscription's end is the instant the merchant's own record of it names —
-	// and the rotation left that end where the merchant did. A rotation that
-	// wrote it would be the endpoint crediting a term, which is what its gate
+	// The successor covers the term the merchant's renewal paid for, and the
+	// rotation left the subscription's own end where the merchant did. A rotation
+	// that wrote it would be the endpoint crediting a term, which is what its gate
 	// exists to refuse (D2148).
+	//
+	// Under D2202 those are two different instants: what the merchant's renewal
+	// bought is the entitlement's term — a year past the subscription's end it
+	// moved — and what the holder is handed out of it is the thirty days a
+	// connected key runs from the day it was asked for. What the renewal must
+	// never do is reach past the money, and that is the mint's own cap rather than
+	// a coincidence of the row's period.
 	sub, held, err := f.store.Subscription(context.Background(), bought.Subscription)
 	if err != nil || !held {
 		t.Fatalf("reading the subscription back: held=%v err=%v", held, err)
 	}
-	if !sub.Expires.Equal(successor.Expires) {
-		t.Errorf("the subscription ends at %s and the successor covers to %s, want the same instant: the successor covers the term the merchant's renewal paid for, and no other", sub.Expires, successor.Expires)
+	if run := successor.Expires.Sub(f.now); run != connectedTerm {
+		t.Errorf("the successor covers %s from the renewal, want D2202's thirty days: the merchant's renewal buys the entitlement's term and this endpoint hands out a key of it", run)
+	}
+	if successor.Expires.After(sub.Expires) {
+		t.Errorf("the successor covers to %s and the subscription ends at %s, want the successor inside what was paid for", successor.Expires, sub.Expires)
 	}
 	if !sub.Expires.Equal(paid.Expires) {
 		t.Errorf("the rotation moved the subscription's end from %s, where the merchant's own renewal left it, to %s, want it left alone: this route hands out a term the customer has paid for and never credits one", paid.Expires, sub.Expires)
@@ -786,15 +823,29 @@ func TestACancelledSubscriptionsKeyIsRefused(t *testing.T) {
 // window says. A key past its `paid_through` is inside its window trivially, so
 // without this gate it is exactly the key that mints a term nobody paid for: the
 // customer's subscription lapsed and the key they still hold walks on.
+//
+// The lapse is the subscription's own and not the key's, and D2202 is why they
+// are two dates: the year the customer bought is where the money ends, while the
+// key the purchase mailed ran thirty days of it, so a clock past the key's end is
+// a clock months inside the term that was paid for and a renewal there is the one
+// the licence is owed (TestAPurchasedKeyRenewsThroughTheRenewEndpoint).
 func TestAnExpiredSubscriptionsKeyIsRefused(t *testing.T) {
 	f, spy := renewing(t)
 	bought := f.purchase("evt-lapsed-1", "acme.example", 5, 365)
 	secret := mailedSecret(t, f, f.mintedKeys()[0])
-	// Past the end of the term the purchase paid for, which is past the end of
-	// the subscription it was sold under.
-	f.advance(bought.Expires.Sub(f.now) + time.Hour)
+	lapsed, held, err := f.store.Subscription(context.Background(), bought.Subscription)
+	if err != nil || !held {
+		t.Fatalf("reading the subscription back: held=%v err=%v", held, err)
+	}
+	// Past the end of the term the purchase paid for, which is past the end of the
+	// subscription it was sold under — and long past the end of the key in hand,
+	// which is the holder whose job lapsed and still asks.
+	f.advance(lapsed.Expires.Sub(f.now) + time.Hour)
 	if !f.now.After(bought.Expires) {
 		t.Fatalf("the clock reads %s and the key ends at %s, want the key past its end", f.now, bought.Expires)
+	}
+	if !f.now.After(lapsed.Expires) {
+		t.Fatalf("the clock reads %s and the subscription ends at %s, want the subscription past its end", f.now, lapsed.Expires)
 	}
 
 	rec := f.call(RouteRenew, RenewalCall{KeyID: bought.KeyID, WorkspaceID: workspaceID, RenewalSecret: secret})
@@ -811,13 +862,13 @@ func TestAnExpiredSubscriptionsKeyIsRefused(t *testing.T) {
 }
 
 // TestARenewalMintsOnlyIntoATermTheSubscriptionCovers: the other half of the
-// money gate, and the half that keeps the keys and the money together. A
-// successor covers the period that begins where the key in hand ends, and what
-// says the customer has bought that period is the subscription's own end: the
-// merchant's trigger is what moves it (merchant.Renew) and this route reads it.
-// A purchase the merchant has not renewed is a subscription ending where its key
-// ends, so there is no term to hand out and the call is answered the key's own
-// state — however often it is asked.
+// money gate, and the half that keeps the keys and the money together. What says
+// the customer has bought the time after the key in hand is the subscription's
+// own end being past it: the merchant's trigger is what moves that end
+// (merchant.Renew) and this route reads it. A purchase the merchant has not
+// renewed is a subscription ending where its key ends — the monthly row's own
+// state, and the one term that was bought — so there is no term beyond it to hand
+// out and the call is answered the key's own state, however often it is asked.
 //
 // Without the gate the route credits itself the term it is about to mint: every
 // call is answered a fresh key id and a fresh secret, so a caller that paid once
@@ -826,7 +877,7 @@ func TestAnExpiredSubscriptionsKeyIsRefused(t *testing.T) {
 // own renewal — the money the term is for — finds its window already moved past.
 func TestARenewalMintsOnlyIntoATermTheSubscriptionCovers(t *testing.T) {
 	f, spy := renewing(t)
-	bought := f.purchase("evt-term-1", "acme.example", 5, 365)
+	bought := f.purchase("evt-term-1", "acme.example", 5, 30)
 	secret := mailedSecret(t, f, f.mintedKeys()[0])
 	paid, held, err := f.store.Subscription(context.Background(), bought.Subscription)
 	if err != nil || !held {
@@ -870,18 +921,35 @@ func TestARenewalMintsOnlyIntoATermTheSubscriptionCovers(t *testing.T) {
 		t.Errorf("the minter was asked for %d key(s) once the term was paid for, want the one successor", got)
 	}
 
-	// And the successor buys nothing on its own: it covers the term the merchant
-	// has just been paid for, and the term after that is the next renewal's. The
-	// clock is moved into the successor's own window first, so what refuses this
-	// call is the money and not the calendar.
+	// What the successor's own renewal buys is the days the subscription has left
+	// and never a term of its own: the merchant paid for one term, and this route
+	// hands that term out across however many keys the holder walks through on the
+	// way to its end. So the successor ends where the chain's own thirty days put
+	// it, the key it is handed ends where the subscription does — the cap on the
+	// mint and not a coincidence of the calendar — and that last key buys nothing
+	// at all. Every window is opened before its call, so what refuses the last one
+	// is the money and not the timing.
+	moved, held, err := f.store.Subscription(context.Background(), bought.Subscription)
+	if err != nil || !held {
+		t.Fatalf("reading the subscription back after the merchant's renewal: held=%v err=%v", held, err)
+	}
 	successor := v1Verified(t, f, answer.Key)
 	f.inTheRenewalWindow(t, successor.KeyID)
 	next := answerOf(t, f.call(RouteRenew, RenewalCall{KeyID: successor.KeyID, WorkspaceID: workspaceID, RenewalSecret: answer.RenewalSecret}))
-	if next.Key != "" || next.NewerKey {
-		t.Errorf("the successor was answered %+v, want its own state and no key: one renewal buys one term, and the merchant has not renewed this one", next)
+	if next.Key == "" {
+		t.Fatalf("the successor was refused with days of the paid term still ahead of it: %+v", next)
 	}
-	if got := spy.minted(); got != 1 {
-		t.Errorf("the minter was asked for %d key(s) in all, want the merchant's one term and nothing after it", got)
+	last := v1Verified(t, f, next.Key)
+	if !last.PaidThrough.Equal(moved.Expires) {
+		t.Errorf("the successor's own renewal ends at %s, want the subscription's own end (%s): a renewal covers the days that are left of the term, not a period of its own (D2202)", last.PaidThrough, moved.Expires)
+	}
+	f.inTheRenewalWindow(t, last.KeyID)
+	refused := answerOf(t, f.call(RouteRenew, RenewalCall{KeyID: last.KeyID, WorkspaceID: workspaceID, RenewalSecret: next.RenewalSecret}))
+	if refused.Key != "" || refused.NewerKey {
+		t.Errorf("a key ending where the subscription ends was answered %+v, want its own state and no key: the term after this one is one nobody has paid for", refused)
+	}
+	if got := spy.minted(); got != 2 {
+		t.Errorf("the minter was asked for %d key(s) in all, want the two the paid term covers and nothing after it", got)
 	}
 }
 
