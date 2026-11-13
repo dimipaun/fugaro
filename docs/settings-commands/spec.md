@@ -402,10 +402,13 @@ three is a coordination task, not an implementation (§6, implementation plan).
 - **A read is always allowed**, in an agent session and anywhere: `settings`, `settings get`, and
   every family's `show`. None of them calls a Secret Manager access method, reads Terraform state,
   or prints a sensitive value (§2.3).
-- **A local file the user owns may be edited by the user** (SD18). `--layer local` and `--layer
-  project` write files in the user's own config home; the boundary that matters stays IAM, at
-  publish: `update`'s policy and layer writes are the owner's, and the project layer's launcher
-  reachability (SD13) is recorded here and decided elsewhere.
+- **A local file the user owns may be edited by the user** (SD18). `--layer local` writes this
+  machine's own project config, the file one person owns, and no role is asked for that write; the
+  boundary that matters stays IAM, at publish: `update`'s policy and layer writes are the owner's,
+  and the project layer's launcher reachability (SD13) is recorded here and decided elsewhere. The
+  layer file `--layer project` writes is the project's own copy of its guardrails rather than one
+  person's, and where the installation has roles that write takes admin at project scope
+  (`docs/roles-scopes` F19, which names the project layer).
 - **A repository file is written in the working tree and never committed** (the `models` D781
   rule): the user's own branch and review carry it to runs.
 - **No secret is read, printed or stored** by any form here. A credential block names a secret, it

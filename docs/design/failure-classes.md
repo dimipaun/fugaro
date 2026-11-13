@@ -394,7 +394,8 @@ within 90 days anyway.
 (`api.LoadRows`, `internal/cli/runs.go`), so the group table costs one read of the same rows and
 **adds no network path at all** — the owner's brief's constraint. `--group-by` takes exactly one
 value, `failure_class`, refused by the flag's own closed list the way `--state` refuses
-(`lsStates`, `runs.go:65`), so the flag cannot be asked for a grouping that does not exist.
+(`lsStateWords`, `runs_prstate.go:51` — the run's own states plus the three states of a pull
+request), so the flag cannot be asked for a grouping that does not exist.
 
 - The text listing prints one row per class — `class`, `runs`, `share` (of the window's runs) and
   `spend` beside it — by runs descending, ties by name, so two readers of one window print the same

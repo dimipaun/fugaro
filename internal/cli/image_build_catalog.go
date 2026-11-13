@@ -101,6 +101,13 @@ func runImageBuildCatalogOrDerived(cmd *cobra.Command, name string, o imageBuild
 func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv, cat *config.Catalog, name string, conds initflow.Conditions) error {
 	ctx := cmd.Context()
 	lc := env.lc
+	// Building a catalog entry builds the project's own image (F19's catalog),
+	// and the entry it builds is read from this machine's config: the build is
+	// the project admin's. The per-workflow build beside it is the repository's
+	// own and is not this gate's (D1900 keeps it off entirely).
+	if err := accessGateProject(ctx, lc, nil, "nothing was built", "building a catalog entry"); err != nil {
+		return err
+	}
 	root, rf, err := loadCheckoutResolved(ctx, "", lc, layerOptions{})
 	if err != nil {
 		return err

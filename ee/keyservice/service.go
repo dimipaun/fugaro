@@ -163,7 +163,8 @@ type Config struct {
 	SealerKeyName string
 	// TenantsCollection is the document collection the organisations' lists are
 	// kept in: the invitation domains the operations organisation allows and the
-	// Microsoft tenants a reseller pins (D2207, plan P5.1). It is configuration
+	// Microsoft (Entra ID) directories a reseller pins (D2207, plan P5.1). It is
+	// configuration
 	// because the deploy names its own collections, and the lists themselves are
 	// data an operations owner sets.
 	TenantsCollection string
@@ -206,7 +207,7 @@ type Deps struct {
 	// that mounts no route reaching one has no business holding it, and New
 	// refuses a missing seam only when a mounted route declares it (api.go).
 	Docs      Docs
-	SignIn    SignIn
+	SignIn    SignInVerifier
 	Paddle    Paddle
 	Scheduler Scheduler
 	Sealer    Sealer

@@ -830,3 +830,25 @@ created, enabled or deleted outside the sandbox.
   is null by default, and C3.9g3's key is omitted when the effective list is empty — where "effective" is
   the rule both writers apply: a config that states no list keeps the published one, so a list is cleared by
   writing `verifier_accounts: []`, never by deleting the key.
+
+## What C1 changed against this plan (2026-11-13)
+
+The plan's "**One derivation, one input, one test**" bullet, and spec.md §2.2's "one input" bullet beside it,
+state the policy side of the review set: `ReviewJobAccountsFor` reads the published policy, and an
+installation that publishes no profile derives no review job. That is still true of the derivation, and one
+row of the deployment now sits outside it.
+
+The service's own admitted set was never the policy-derived one: `AuthConfig.ReviewJobAccounts` holds the
+rows of `FUGARO_REVIEW_JOB_ACCOUNTS`, the deployment's table, because the command reads its environment and
+no policy (D143, `internal/cli/credentials_serve.go`). C1's first piece — one project-level review-only job
+per `(provider, account)` whether or not the installation declares a profile — deploys the single implicit
+default review job for an installation that has opted into the service and declares no profile
+(`internal/infra`'s `implicitReviewVariant`, `(profile, provider, account)` = the default profile, `github`,
+the default account). Its row goes into that table, and no published profile states the triple, so the
+policy-derived set cannot name it.
+
+So `TestReviewAccountsAreTheNamesProjectJobsDeploys` reads the **profile-derived** variants of the coding
+set, which is where the two sides agree, and the one row is a deliberate difference rather than a drift:
+the pairing still requires the account to be admitted to the run identity's repository by the policy's
+admissions (`pairReview`, `admittedAccounts`), and carrying the class through for a project with no profile
+is C1's second piece. Nothing in this plan's order changes.

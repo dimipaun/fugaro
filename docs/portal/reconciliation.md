@@ -3,8 +3,8 @@
 **This file amends [spec.md](spec.md); where the two disagree, this file wins.** Checked against
 `origin/main` at `a07e14262` and #2457 (K2.3) and #2458 (K2.5), both merged on 2026-11-12. It
 numbers **D2180–D2229** (D2180–D2207 used) and **Checks 570–579**, both verified free on `main` and in
-every open pull request's diff. Findings are `F1`…`F42`. Review rounds corrected several findings; those
-are marked **(round 1)**, **(round 2)** or **(round 3)**.
+every open pull request's diff. Findings are `F1`…`F43`. Review rounds corrected several findings; those
+are marked **(round 1)**, **(round 2)**, **(round 3)** or **(round 4)**.
 
 ## What the repo already has
 
@@ -15,9 +15,9 @@ the names below: the key service of the subscriptions plan (S3) and the licence 
 | Spec concept | What exists on `main` (#2457 and #2458 included) |
 | --- | --- |
 | Backend with a licence-refresh endpoint | `ee/keyservice` (Go): `service.go` the public intake, `minter.go` the signer half, `merchant.go`, `admin.go`, `checks.go`, `queue.go`, `policy.go`, `store.go`. **No `main`, no KMS-backed signer, no image: nothing is deployable** (the package comment says so). `/renew` and `/status` are #2457 |
-| Key, licence, refresh policy in the key | `ee/licence/keyv1.go`: `fgk_` v1 key, `ClaimsV1` with `key_id`, `workspace_id` (required: the workspace's Firebase project id), `organisation`, `tier`, `seats`, `paid_through`, `grace_days`, `renewal_mode`, `renew_before_days`, `check_interval`, `warnings`, `kind` (`knownKind`: `paid`, `trial`, `comped` only); `VerifyV1`. Shipped in v0.23.0 |
+| Key, licence, refresh policy in the key | `ee/licence/key.go`: `fgk_` v1 key, `Claims` with `key_id`, `workspace_id` (required: the workspace's Firebase project id), `organisation`, `tier`, `seats`, `paid_through`, `grace_days`, `renewal_mode`, `renew_before_days`, `check_interval`, `warnings`, `kind` (`knownKind`: `paid`, `trial`, `comped` only); `Verify`. Shipped in v0.23.0 |
 | Signing with a key in Cloud KMS | `ee/keyservice/terraform/keyring`: `EC_SIGN_ED25519`, one ring (default name `fugaro-licence`) holding key ids `fugaro-licence-production` and `fugaro-licence-staging` (D459(a)); the `project` variable has no default. `ee/licence/mint/kms.go` is the owner's hand-mint tool (package `main`, through `gcloud`) |
-| Staging licences never validate in production | The key id names the environment; `TestStagingKeyIDIsRefusedV1` |
+| Staging licences never validate in production | The key id names the environment; `TestStagingKeyIDIsRefused` |
 | Paddle webhooks: signature, idempotency | `merchant.go`: `VerifySignature` (parses `ts`, **never compares it with now**), the idempotency guard in `apply`, `ModeFor`. `webhook` decodes a **canonical `Event`**, not Paddle's notification body, and answers 200 when decoding fails |
 | Operations key minting, audit | `admin.go` (S3.4, #2382): the owner's account only, a second factor per mint (**D455**), **D454**'s per-tier rate per window that **queues** the excess (`MintCaps`), one audit line per mint (**D456**), and a key is mailed, never stored or rendered (design §7.3) |
 | Policy chosen by the minter | `MintV1` takes the renewal and check policy from the row only ("a caller that could name them could mint a key that never checks"); it draws a new `key_id` and `issued_at` on every mint, generates the renewal secret itself (D2135) whose hash is a signed claim (`RenewalSecretHash`), and takes the caller's `TermDays` capped at the tier's maximum |
@@ -94,7 +94,9 @@ Google or Microsoft for any request that uses that membership, whatever organisa
 invitation is accepted only by a token whose verified `email` equals the invited address, both folded
 by `access.Member`. For Microsoft, an address is a tenant's claim and Firebase's token likely carries no Microsoft tenant
 id (**round 3**). Resolved by **D2207**: the operations organisation accepts Google only; a reseller
-accepts Google, or Microsoft only with a pinned tenant id if P1.3 finds one in the token.
+accepts Google, or Microsoft only with a pinned directory id if P1.3 finds one in the token. **Amended
+2026-11-13 (F43)**: what a reseller pins is the Microsoft (Entra ID) directory the verified token's
+`tid` names, and never the Identity Platform tenant a client names at sign-in.
 
 **F11 (Gap): where the provider is checked.** Resolved by **D2188: API only**. Firestore rules deny every
 client read and write.
@@ -235,8 +237,10 @@ the organisation's free seat at its key's next renewal; it does not come back.
   spec's "one key per workspace" holds.
 - A reseller is never a member of its customers' organisations; it invites the customer's first owner.
 - The operations seed is an invitation, and membership binds to the uid at first acceptance.
-- Operations accepts Google only; a reseller's Microsoft sign-in needs a pinned tenant, and an empty
-  list refuses every `microsoft.com` sign-in (D2207).
+- Operations accepts Google only; a reseller's Microsoft sign-in needs a pinned Microsoft (Entra ID)
+  directory — the verified token's `tid` as the provider wrote it into `firebase.sign_in_attributes`,
+  never the Identity Platform tenant a client names and never a custom claim (F43) — and an empty list
+  refuses every `microsoft.com` sign-in (D2207).
 - Operations can cut a handover short and transfer a project id.
 - Operations sets each reseller's credit limit and wholesale rates.
 - Deletion removes memberships and invitations.
@@ -253,6 +257,30 @@ is checked before it goes into a host name, so the probe cannot be aimed elsewhe
 **F42 (Gap, security, round 3): air-gapped copies.** An air-gapped key has no secret and is never
 revoked, so reveal and rebind would each mint a permanent extra copy. Resolved by **D2206**: issued once
 at binding, as a file; the same signed text on every download; no reveal or rebind except by operations.
+
+**F43 (Wrong, security, round 4, 2026-11-13): the pinned value was a door, not a directory.** P1.3 (#2515,
+merged) pinned a reseller's Microsoft list against `firebase.tenant`, and the fourth review round found
+what that claim is: the Identity Platform tenant the sign-in was MADE IN, which the client names when it
+calls the SDK. A list over it therefore admits whoever names a pinned value — the tenant is a door and not
+an identity — and the entry stood for a directory only because the deployment was separately expected to
+back that tenant's Microsoft provider with a single-tenant Azure app registration, which the API can
+neither see nor check. The owner ruled on 2026-11-13: **"Pin the real directory id"**. Resolved: the pin is
+the Microsoft (Entra ID) directory id of the VERIFIED token — the `tid` the provider wrote into
+`firebase.sign_in_attributes` — the client-named tenant never admits, a token with no `tid` is refused
+(D2207's Google-only fallback), and the single-tenant registration is a documented belt-and-braces rather
+than the control. Pinned by `TestMicrosoftDirectoryIsPinned`, `TestAClientNamedTenantNeverAdmitsMicrosoft`,
+`TestEmptyDirectoryListRefusesMicrosoft` and `TestResellerMicrosoftNeedsAPinnedDirectory`.
+
+**The second half of F43, found by review on 2026-11-13: where inside the token it is read.** The fix
+above first read the `tid` in either of two shapes, one of them the token's own top level — and that level
+is the CUSTOM-CLAIMS namespace, where this repository's own project writes its `mu`, `fs` and `fr` claims,
+so a `tid` there is a value any project-side writer of custom claims can mint. Reading it would have
+rebuilt F43's hole in a different claim: a pin any project-side writer can satisfy, and not the provider's
+report of where an account lives. Resolved: `directoryID` reads `firebase.sign_in_attributes.tid` and
+nothing else, and a `tid` in the token's own claim set is ignored rather than compared, so it neither
+admits nor refuses. Pinned by `mcpauth`'s `TestATopLevelTidIsNotADirectory` and by
+`TestMicrosoftDirectoryIsPinned`'s custom-claim case, and mutation-checked: a `directoryID` that reads the
+top level again fails both.
 
 **Threat model of what the portal adds.**
 1. *The API asks the minter to sign.* The minter is internal-only, invokable by the API's account only,
@@ -298,7 +326,7 @@ at binding, as a file; the same signed text on every download; no reveal or rebi
 | D2203 | Free seat after a purchase (F39) | Ends at the next renewal | Keep it (needs counsel) | **2026-11-12: the recommendation.** |
 | D2205 | Binding to a project that does not exist (F41) | (owner's own ruling) | — | **2026-11-12, the owner:** "check that the Firebase project ID exists at the very least"; the unauthenticated database probe is the plan's mechanism |
 | D2206 | Air-gapped copies (F42) | Issued once; no reveal or rebind | Cap at two per term | **2026-11-12: the recommendation.** |
-| D2207 | Microsoft for operations and resellers (F10) | Pin the tenant or refuse | Separate app; accept | **2026-11-12: "Operations should be Google only"; resellers: Google, or Microsoft with a pinned tenant (the recommendation of the follow-up).** Not the recommendation for operations |
+| D2207 | Microsoft for operations and resellers (F10) | Pin the tenant or refuse | Separate app; accept | **2026-11-12: "Operations should be Google only"; resellers: Google, or Microsoft with a pinned tenant (the recommendation of the follow-up).** Not the recommendation for operations. **2026-11-13 (F43): "Pin the real directory id" — the pinned value is the verified token's `tid` as the provider wrote it into `firebase.sign_in_attributes` (F43's second half; a `tid` in the token's own custom-claims level is ignored), and the Identity Platform tenant a client names never admits** |
 | D2204 | Workspace, entitlements, project id (F40) | One active entitlement per workspace; project id unique across organisations | Several; shared ids | **2026-11-12: the recommendation.** TN-P1: global uniqueness kept, operations transfers |
 
 What this changes in licence key v2 (amended by this plan's task P9.1, not edited here): K2.4 uses P1.3's
@@ -333,8 +361,11 @@ Open items, all the owner's:
 
 - The value of `firebase.sign_in_provider` for an email-link sign-in (`password` or `emailLink`); the API
   allows only `google.com` and `microsoft.com`, and P1.3's test pins both values as refused.
-- Whether Firebase's ID token carries a Microsoft tenant id at all (P1.3; without one, resellers are
-  Google-only, D2207).
+- Whether a project's Microsoft provider forwards a `tid` into the ID token at all, and under which name
+  (`firebase.sign_in_attributes.tid` is the one the reader reads — F43's second half, and the only place a
+  provider's own claims arrive — while a `tid` in the token's own custom-claims level is ignored): the
+  deployment's provider configuration is the owner's (P0.1), and a provider that forwards none leaves
+  resellers Google-only, which is D2207's fallback (P1.3; P2.2 reads the real token).
 - The exact answers of the database probe (D2205) for a locked database and for a missing one (P3.1
   confirms them; a missing project may answer differently from a project without the database).
 - Whether Firebase Hosting has any per-site IAM (the plan assumes none, as round 1 read it).

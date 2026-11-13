@@ -171,6 +171,9 @@ func runAccountsRm(cmd *cobra.Command, name string, o accountsRmOptions) error {
 	if err != nil {
 		return err
 	}
+	if err := accessGateProject(cmd.Context(), lc, nil, "nothing was written", "removing a model account"); err != nil {
+		return err
+	}
 	old, err := settingsReadDocument(settingsTarget{kind: settingsDocLocal, path: sel.Path})
 	if err != nil {
 		return err
