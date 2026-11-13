@@ -259,18 +259,32 @@ func (c *Config) Shared() *Config {
 	s.WorkspacePin = WorkspacePin{}
 	s.WorkspaceMembers = nil
 	s.WorkspaceCap = nil
-	s.Repos = withoutBaseBranches(c.Repos)
+	s.Repos = withoutRepoLocalKeys(c.Repos)
 	return &s
 }
 
-// withoutBaseBranches is a copy of repos with every base_branch cleared.
-func withoutBaseBranches(repos map[string]Repo) map[string]Repo {
+// withoutRepoLocalKeys is a copy of repos with the two keys of an entry that
+// are never published cleared: base_branch, which comes from the checkout's
+// reviewed fugaro.yaml, and claude_accounts, which is the operator's own
+// admission statement — the repository-level half of the trust anchor T1 keeps
+// in the operator-only local config (see Shared's own note on claude_accounts,
+// and named-oauth-tokens.md §3).
+//
+// claude_accounts is stripped for the reason the top-level block is: the file
+// is written into the runs bucket, which any launcher of the project can write,
+// so an entry published here would let one add a repository to an account's
+// admission by editing that file — and the machine that then published the
+// policy would derive an admission the owner never made. ParseShared refuses
+// the key besides, because a shared config carrying one was not written by the
+// converge.
+func withoutRepoLocalKeys(repos map[string]Repo) map[string]Repo {
 	if repos == nil {
 		return nil
 	}
 	out := make(map[string]Repo, len(repos))
 	for k, r := range repos {
 		r.BaseBranch = ""
+		r.ClaudeAccounts = nil
 		out[k] = r
 	}
 	return out
@@ -300,7 +314,7 @@ func MergeShared(published, local *Config) *Config {
 	if !SameInstallation(published, local) {
 		return out
 	}
-	out.Repos = withoutBaseBranches(mergeRepoRecords(published.Repos, out.Repos))
+	out.Repos = withoutRepoLocalKeys(mergeRepoRecords(published.Repos, out.Repos))
 	out.BaseImages = unionMaps(published.BaseImages, local.BaseImages)
 	out.ModelPrices = unionMaps(published.ModelPrices, local.ModelPrices)
 	out.ComputePrices = unionMaps(published.ComputePrices, local.ComputePrices)

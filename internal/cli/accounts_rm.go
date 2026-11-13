@@ -144,6 +144,15 @@ type accountsRmPlan struct {
 	allow    []string
 	secretID string
 	rest     []string // the profiles that still list the account after the edit
+	// repos is the repository entries whose own claude_accounts names this
+	// account (docs/project-claude-accounts.md §3). They are cleared with the
+	// declaration rather than refused over, for the crafts' reason: no command
+	// of this release edits that list (`repos.*.claude_accounts` is not a
+	// `settings set` path), so a refusal would send the owner to a hand edit,
+	// while an entry left behind is a repository naming an account this file no
+	// longer declares — the state a publish refuses. Empty for a run that keeps
+	// the declaration.
+	repos []string
 	// crafts is the crafts whose access names the typed entry this removal
 	// takes away. They are cleared with it rather than refused over: the key is
 	// the one `fugaro update`'s own conversion writes (init_craft_migrate.go),
@@ -296,6 +305,9 @@ func accountsRmResolve(path string, lc *localcfg.Config, name, want string, old 
 			plan.rest = append(plan.rest, p)
 		}
 	}
+	if plan.drop {
+		plan.repos = reposNamingAccount(lc, name)
+	}
 	if plan.drop && plan.typed {
 		plan.crafts = craftsNaming(lc, name)
 	}
@@ -314,6 +326,18 @@ func accountsRmResolve(path string, lc *localcfg.Config, name, want string, old 
 			return accountsRmPlan{}, nil, nil, userErr("claude_accounts.%s: %v", pluginwire.Printable(name), err)
 		}
 		next = n
+		// A repository's own entry that named the account goes on the same
+		// bytes, for the crafts' reason one level out: the declaration it
+		// names is gone, so an entry left behind is a repository admitted to
+		// an account this file no longer defines, and the publish that
+		// derives it refuses.
+		for _, repo := range plan.repos {
+			n, err := yamledit.RemoveListItemWithOptions(next, []string{"repos", repo, "claude_accounts"}, name, yamledit.RemoveOptions{DropEmptyParents: true})
+			if err != nil {
+				return accountsRmPlan{}, nil, nil, userErr("repos.%s.claude_accounts: %v", pluginwire.Printable(repo), err)
+			}
+			next = n
+		}
 	}
 	// The typed half goes with the declaration, on the same bytes: the entry the
 	// account was declared as is the account's, and a name left in the
@@ -413,6 +437,31 @@ func craftAccessKeys(crafts []string) string {
 	keys := make([]string, 0, len(crafts))
 	for _, craft := range crafts {
 		keys = append(keys, "crafts."+craft+".access")
+	}
+	return strings.Join(keys, " and ")
+}
+
+// reposNamingAccount is the local config's repos entries whose own
+// claude_accounts lists the name, in the order the sentence that clears them
+// names them: the repository-level half of the account sources, which is how a
+// repository whose runs are not on a profile job is admitted
+// (docs/project-claude-accounts.md §3).
+func reposNamingAccount(lc *localcfg.Config, name string) []string {
+	var out []string
+	for _, repo := range slices.Sorted(maps.Keys(lc.Repos)) {
+		if slices.Contains(lc.Repos[repo].ClaudeAccounts, name) {
+			out = append(out, repo)
+		}
+	}
+	return out
+}
+
+// repoAccountKeys spells those entries' keys for a sentence, the way
+// craftAccessKeys does: the whole of what the write clears, named one by one.
+func repoAccountKeys(repos []string) string {
+	keys := make([]string, 0, len(repos))
+	for _, repo := range repos {
+		keys = append(keys, "repos."+repo+".claude_accounts")
 	}
 	return strings.Join(keys, " and ")
 }
@@ -960,6 +1009,10 @@ func accountsRmWhat(plan accountsRmPlan) string {
 			parts = append(parts, fmt.Sprintf("clear %s, which named that entry and would have nothing to spend without it",
 				craftAccessKeys(plan.crafts)))
 		}
+	}
+	if len(plan.repos) > 0 {
+		parts = append(parts, fmt.Sprintf("clear %s, which admitted that repository's own runs to the account",
+			repoAccountKeys(plan.repos)))
 	}
 	parts = append(parts,
 		fmt.Sprintf("delete the secret %s (Secret Manager's own delete, which cannot be undone here)", plan.secretID),
