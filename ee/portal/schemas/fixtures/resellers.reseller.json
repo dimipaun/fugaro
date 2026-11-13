@@ -1,0 +1,15 @@
+{
+  "organisation_id": "org_reseller",
+  "credit_limit_micros": 500000000,
+  "rates": [
+    {
+      "row": "team-monthly",
+      "daily_rate_micros": 800000
+    },
+    {
+      "row": "enterprise",
+      "daily_rate_micros": 2000000
+    }
+  ],
+  "created_at": "2026-02-10T11:00:00Z"
+}
