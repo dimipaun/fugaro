@@ -15,12 +15,12 @@ the names below: the key service of the subscriptions plan (S3) and the licence 
 | Spec concept | What exists on `main` (#2457 and #2458 included) |
 | --- | --- |
 | Backend with a licence-refresh endpoint | `ee/keyservice` (Go): `service.go` the public intake, `minter.go` the signer half, `merchant.go`, `admin.go`, `checks.go`, `queue.go`, `policy.go`, `store.go`. **No `main`, no KMS-backed signer, no image: nothing is deployable** (the package comment says so). `/renew` and `/status` are #2457 |
-| Key, licence, refresh policy in the key | `ee/licence/keyv1.go`: `fgk_` v1 key, `ClaimsV1` with `key_id`, `workspace_id` (required: the workspace's Firebase project id), `organisation`, `tier`, `seats`, `paid_through`, `grace_days`, `renewal_mode`, `renew_before_days`, `check_interval`, `warnings`, `kind` (`knownKind`: `paid`, `trial`, `comped` only); `VerifyV1`. Shipped in v0.23.0 |
+| Key, licence, refresh policy in the key | `ee/licence/key.go`: `fgk_` v1 key, `Claims` with `key_id`, `workspace_id` (required: the workspace's Firebase project id), `organisation`, `tier`, `seats`, `paid_through`, `grace_days`, `renewal_mode`, `renew_before_days`, `check_interval`, `warnings`, `kind` (`knownKind`: `paid`, `trial`, `comped` only); `Verify`. Shipped in v0.23.0 |
 | Signing with a key in Cloud KMS | `ee/keyservice/terraform/keyring`: `EC_SIGN_ED25519`, one ring (default name `fugaro-licence`) holding key ids `fugaro-licence-production` and `fugaro-licence-staging` (D459(a)); the `project` variable has no default. `ee/licence/mint/kms.go` is the owner's hand-mint tool (package `main`, through `gcloud`) |
-| Staging licences never validate in production | The key id names the environment; `TestStagingKeyIDIsRefusedV1` |
+| Staging licences never validate in production | The key id names the environment; `TestStagingKeyIDIsRefused` |
 | Paddle webhooks: signature, idempotency | `merchant.go`: `VerifySignature` (parses `ts`, **never compares it with now**), the idempotency guard in `apply`, `ModeFor`. `webhook` decodes a **canonical `Event`**, not Paddle's notification body, and answers 200 when decoding fails |
 | Operations key minting, audit | `admin.go` (S3.4, #2382): the owner's account only, a second factor per mint (**D455**), **D454**'s per-tier rate per window that **queues** the excess (`MintCaps`), one audit line per mint (**D456**), and a key is mailed, never stored or rendered (design §7.3) |
-| Policy chosen by the minter | `MintV1` takes the renewal and check policy from the row only ("a caller that could name them could mint a key that never checks"); it draws a new `key_id` and `issued_at` on every mint, generates the renewal secret itself (D2135) whose hash is a signed claim (`RenewalSecretHash`), and takes the caller's `TermDays` capped at the tier's maximum |
+| Policy chosen by the minter | `Mint` takes the renewal and check policy from the row only ("a caller that could name them could mint a key that never checks"); it draws a new `key_id` and `issued_at` on every mint, generates the renewal secret itself (D2135) whose hash is a signed claim (`RenewalSecretHash`), and takes the caller's `TermDays` capped at the tier's maximum |
 | Renewal handover | #2457: `Handover{Key, RenewalSecret, Until}` keeps a rotated successor's key and **plaintext** secret for 24 hours; `/renew` sees a successor only through a `rotation:<key_id>` record; it renews any key whose mode is not `none`, with no check on what was paid |
 | Free seat | D440/D432: one free seat per organisation, 3 months, one per email domain, through the `/free-seat` form on `website/src/pages/keys.astro` and email verification (`checks.go`) |
 | Trials, open source | `policy.go` `PolicyTrial` (D2136, 14 days, grace 0); `/open-source` form with proof of control (D452) |
@@ -182,14 +182,14 @@ entitlement: it issues the next key only while the entitlement runs (an active s
 operations or reseller term, the organisation alive for the free seat).
 
 **F28 (Gap, round 1): operations choosing a refresh policy.** The spec lets operations mint "with any …
-refresh policy"; `MintV1` refuses a caller-named policy so no caller can mint a key that never checks.
+refresh policy"; `Mint` refuses a caller-named policy so no caller can mint a key that never checks.
 **Resolution:** operations picks a row, seats and an end date, and may set `check_interval` within
 `P1D`–`P30D`; only the air-gapped row has none. The minter enforces the bounds.
 
 **F29 (Gap, round 1): revocation across rotations.** A refund revoking the original `key_id` would leave a
 revealed successor valid. **Resolution:** revocation is by entitlement: every key minted for it is revoked.
 
-**F30 (Gap, rounds 1 and 2): reveal must not extend a term.** `MintV1` takes the caller's `TermDays`
+**F30 (Gap, rounds 1 and 2): reveal must not extend a term.** `Mint` takes the caller's `TermDays`
 capped at the tier's maximum, but it is stateless and cannot know a predecessor's `paid_through`. The API
 passes the days remaining; "reveal never extends" is held by the API, not the minter.
 
