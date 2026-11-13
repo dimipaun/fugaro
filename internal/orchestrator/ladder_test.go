@@ -30,12 +30,30 @@ func finding(l, i, f int, c rigor.Class) rigor.Score {
 	return rigor.Score{Likelihood: l, Impact: i, FixCost: f, Class: c}
 }
 
-// atRung1 is the ledger of an item the ladder has walked to rung 1 — the
-// ladder's floor, where the item goes back to its normal recipe loop — with the
+// atRung is the ledger of an item the ladder has walked to one rung, with the
 // outer runs the executor has already spent on it.
-func atRung1(now time.Time, outer int) *orchestrator.Escalation {
-	e := ledger(escalation.R1, outer, step("", escalation.R1, escalation.ReasonAge, now.Add(-2*time.Hour), ""))
+func atRung(now time.Time, rung escalation.Rung, outer int) *orchestrator.Escalation {
+	e := ledger(rung, outer, step("", rung, escalation.ReasonAge, now.Add(-2*time.Hour), ""))
 	return &e
+}
+
+// atRung1 is the ledger of an item at the ladder's floor, where it goes back to
+// its normal recipe loop.
+func atRung1(now time.Time, outer int) *orchestrator.Escalation {
+	return atRung(now, escalation.R1, outer)
+}
+
+// resumableItem is the position the ladder's rung 1 resume is planned from: an
+// item whose approval a retry has spent, whose own two runs of the approved
+// spec failed, and whose ledger says the ladder walked it to its floor.
+func resumableItem(t *testing.T, id string, now, at time.Time) (orchestrator.State, orchestrator.WorkItem) {
+	t.Helper()
+	item := spentItem(t, id, now, at)
+	item.Phase = orchestrator.PhaseFailed
+	item.Escalation = atRung1(now.Add(-90*time.Minute), 1)
+	s := o6Node(t, now, item)
+	s.Intents = twoAttempts(id, at, now.Add(-100*time.Minute), item)
+	return s, item
 }
 
 // twoAttempts is the intents of an item whose approval covers two attempts and
@@ -489,11 +507,7 @@ func TestThirdNormalRunIsCoveredByLadder(t *testing.T) {
 func TestLadderLaunchStopsAtCostCeiling(t *testing.T) {
 	now := o6Now()
 	at := now.Add(-2 * time.Hour)
-	item := spentItem(t, "wi-1", now, at)
-	item.Phase = orchestrator.PhaseFailed
-	item.Escalation = atRung1(now.Add(-90*time.Minute), 1)
-	s := o6Node(t, now, item)
-	s.Intents = twoAttempts("wi-1", at, now.Add(-100*time.Minute), item)
+	s, item := resumableItem(t, "wi-1", now, at)
 
 	view := orchestrator.RunView{Spend: map[string]orchestrator.LadderSpend{"wi-1": {USD: 4.5, Ceiling: 5}}}
 	if _, ok := orchestrator.LadderLaunch(s, item, view, o6Caps()); !ok {
@@ -586,11 +600,7 @@ func TestLadderIntentSurvivesCrashAndRetry(t *testing.T) {
 func TestLadderLaunchRefusesOnTheNodesGuards(t *testing.T) {
 	now := o6Now()
 	at := now.Add(-2 * time.Hour)
-	item := spentItem(t, "wi-1", now, at)
-	item.Phase = orchestrator.PhaseFailed
-	item.Escalation = atRung1(now.Add(-90*time.Minute), 1)
-	s := o6Node(t, now, item)
-	s.Intents = twoAttempts("wi-1", at, now.Add(-100*time.Minute), item)
+	s, item := resumableItem(t, "wi-1", now, at)
 
 	// The item the three cases below are about launches here, so what stops it
 	// in each of them is the one question that case turns on.
@@ -649,11 +659,7 @@ func TestLadderLaunchRefusesOnTheNodesGuards(t *testing.T) {
 func TestLadderResumeIsRefusedByTheWriteSide(t *testing.T) {
 	now := o6Now()
 	at := now.Add(-2 * time.Hour)
-	item := spentItem(t, "wi-1", now, at)
-	item.Phase = orchestrator.PhaseFailed
-	item.Escalation = atRung1(now.Add(-90*time.Minute), 1)
-	s := o6Node(t, now, item)
-	s.Intents = twoAttempts("wi-1", at, now.Add(-100*time.Minute), item)
+	s, item := resumableItem(t, "wi-1", now, at)
 
 	a, ok := orchestrator.LadderLaunch(s, item, orchestrator.RunView{}, o6Caps())
 	if !ok {
@@ -694,6 +700,112 @@ func TestLadderResumeIsRefusedByTheWriteSide(t *testing.T) {
 	}
 	if w, _ := o.s.Item("wi-1"); w.Attempts != item.Attempts || w.Phase != item.Phase || w.RunID != item.RunID {
 		t.Fatalf("the refused ladder launch wrote %+v", w)
+	}
+}
+
+// TestLadderLaunchResumesOnlyARunThatFailed is the outcome the ladder's floor
+// reads. Rung 1 sends the item back to its own recipe, so what the ladder
+// resumes is work the loop failed at: a refusal is the run's own word on the
+// spec the resume would run again — the same answer that already stops the
+// retry (nextAttempt) — and a cancellation is a person stopping it. Neither is
+// a run to make a second time, whoever paid for the attempt, and a resume made
+// over a refusal is one made after every further refusal, up to
+// MaxOuterAttempts.
+//
+// Mutation: drop the outcome read and the item whose second attempt was refused
+// or cancelled is resumed.
+func TestLadderLaunchResumesOnlyARunThatFailed(t *testing.T) {
+	now := o6Now()
+	at := now.Add(-2 * time.Hour)
+	s, item := resumableItem(t, "wi-1", now, at)
+
+	// The item the guard is about launches, so what stops each case below is the
+	// outcome of the attempt the approval covers.
+	if _, ok := orchestrator.LadderLaunch(s, item, orchestrator.RunView{}, o6Caps()); !ok {
+		t.Fatal("the ladder launches nothing for an item at rung 1 whose own run failed")
+	}
+
+	for _, ended := range []orchestrator.Outcome{orchestrator.OutcomeRefused, orchestrator.OutcomeCancelled} {
+		held := s
+		held.Intents = append([]orchestrator.Intent{}, s.Intents...)
+		held.Intents[len(held.Intents)-1].Outcome = ended
+		if a, ok := orchestrator.LadderLaunch(held, item, orchestrator.RunView{}, o6Caps()); ok {
+			t.Fatalf("the ladder launched %+v over a run that ended %s, and the same answer is what it would run into", a, ended)
+		}
+	}
+
+	// The newest attempt under the approval is the one that answers, not the
+	// first: a failure the item's own loop has since run past is not a failure
+	// the ladder picks up.
+	done := s
+	done.Intents = append([]orchestrator.Intent{}, s.Intents...)
+	done.Intents[len(done.Intents)-1].Outcome = orchestrator.OutcomeSucceeded
+	if a, ok := orchestrator.LadderLaunch(done, item, orchestrator.RunView{}, o6Caps()); ok {
+		t.Fatalf("the ladder launched %+v over the newest attempt, which succeeded", a)
+	}
+}
+
+// TestLadderLaunchRefusesAnItemItIsNotTheResumeFor is the three things the
+// resume reads beside the approval: the rung, the phase and the dependencies.
+// Rung 1 is the floor where the item goes back to its own recipe, and every
+// other rung is a run of another recipe that the executor launches (E10b). A
+// finished item never leaves its phase, and a cancelled item keeps the spent
+// marker its retry wrote — the phase is what stands between it and a launch —
+// while an item whose dependency is not done waits, as every attempt of this
+// package does.
+//
+// Mutation: drop any one of the three and this test fails on its case.
+func TestLadderLaunchRefusesAnItemItIsNotTheResumeFor(t *testing.T) {
+	now := o6Now()
+	at := now.Add(-2 * time.Hour)
+	s, item := resumableItem(t, "wi-1", now, at)
+	if _, ok := orchestrator.LadderLaunch(s, item, orchestrator.RunView{}, o6Caps()); !ok {
+		t.Fatal("the ladder launches nothing for an item at rung 1 whose own run failed")
+	}
+
+	for _, rung := range []escalation.Rung{escalation.R0, escalation.R2, escalation.R3, escalation.R4} {
+		other := item
+		other.Escalation = atRung(now.Add(-90*time.Minute), rung, 1)
+		if a, ok := orchestrator.LadderLaunch(s, other, orchestrator.RunView{}, o6Caps()); ok {
+			t.Fatalf("the ladder launched %+v for an item at %s, and only the floor runs the item's own recipe", a, rung)
+		}
+	}
+	bare := item
+	bare.Escalation = nil
+	if a, ok := orchestrator.LadderLaunch(s, bare, orchestrator.RunView{}, o6Caps()); ok {
+		t.Fatalf("the ladder launched %+v for an item with no ledger at all", a)
+	}
+
+	cancelled := item
+	cancelled.Phase = orchestrator.PhaseCancelled
+	if cancelled.SpentApprovalAt == nil {
+		t.Fatal("the item under test carries no spent marker, and this case is about the phase alone")
+	}
+	if a, ok := orchestrator.LadderLaunch(s, cancelled, orchestrator.RunView{}, o6Caps()); ok {
+		t.Fatalf("the ladder launched %+v for an item a person cancelled", a)
+	}
+
+	// A dependency is part of the spec the approval covers, so the item and the
+	// two attempts its own runs are recorded under carry the list together: what
+	// stops the first two here is the dependency and not the digest.
+	dependent := item
+	dependent.DependsOn = []string{"wi-9"}
+	unfinished := o6Node(t, now, dependent, workItemOf("wi-9"))
+	unfinished.Intents = twoAttempts("wi-1", at, now.Add(-100*time.Minute), dependent)
+	if a, ok := orchestrator.LadderLaunch(unfinished, dependent, orchestrator.RunView{}, o6Caps()); ok {
+		t.Fatalf("the ladder launched %+v for an item whose dependency is not done", a)
+	}
+	missing := o6Node(t, now, dependent)
+	missing.Intents = twoAttempts("wi-1", at, now.Add(-100*time.Minute), dependent)
+	if a, ok := orchestrator.LadderLaunch(missing, dependent, orchestrator.RunView{}, o6Caps()); ok {
+		t.Fatalf("the ladder launched %+v for a dependency the node does not carry", a)
+	}
+	done := workItemOf("wi-9")
+	done.Phase = orchestrator.PhaseDone
+	ready := o6Node(t, now, dependent, done)
+	ready.Intents = twoAttempts("wi-1", at, now.Add(-100*time.Minute), dependent)
+	if _, ok := orchestrator.LadderLaunch(ready, dependent, orchestrator.RunView{}, o6Caps()); !ok {
+		t.Fatal("the ladder launches nothing for an item whose dependency is done")
 	}
 }
 

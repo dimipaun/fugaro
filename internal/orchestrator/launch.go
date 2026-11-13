@@ -372,7 +372,10 @@ func LadderRuns(s State, w WorkItem) int {
 // retried — and this is what is left once the approval has no attempt left. It
 // answers false for an item whose own loop still holds work — an attempt under
 // the approval's allowance, or one committed and not reported — because a
-// launch beside either of those is the loop's and not the ladder's.
+// launch beside either of those is the loop's and not the ladder's, and false
+// for an item the loop did not fail at: the resume runs the item's own recipe
+// again, and a refusal or a cancellation is an answer the second run would
+// reach again (failedUnder).
 //
 // The caps are read here the way Plan reads them, and what comes back approves
 // nothing: the approval covers the run, and the ladder has no approval of its
@@ -433,6 +436,17 @@ func LadderLaunch(s State, w WorkItem, view RunView, caps Caps) (Action, bool) {
 		// The approval covers the spec it was given over, and an edit since is
 		// another spec: what the ladder resumes is the run the person approved,
 		// or nothing at all.
+		return Action{}, false
+	}
+	if !failedUnder(s, w.ID, at, covered) {
+		// A resume is the item's own recipe run again, so it is work the loop
+		// failed at and nothing else. What the loop answered instead is its
+		// answer to the same spec: a refusal is the run's own word on the work
+		// — the thing that already stops the retry (nextAttempt) — and a
+		// cancellation is a person stopping it. Neither is a run the ladder
+		// makes again, whoever paid for the attempt, and a run the ladder
+		// started over after a refusal is one it starts over after every
+		// further one, up to MaxOuterAttempts.
 		return Action{}, false
 	}
 	if LadderRuns(s, w) >= MaxOuterAttempts {

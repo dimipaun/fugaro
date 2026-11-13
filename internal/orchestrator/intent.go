@@ -118,23 +118,34 @@ func normalRunsUnder(s State, w WorkItem, approval Approval) int {
 	return n
 }
 
-// failedUnder reports whether the newest attempt the approval covers failed,
-// which is the only thing a retry answers. A refusal, a cancellation and a
-// success are not failures, and an attempt that has not reported is not one to
-// retry either. An attempt under the same approval that the approval does not
-// cover — a run of another recipe the ladder launched — is not the item's own
-// last attempt, so it neither answers a retry nor stops one.
-func failedUnder(s State, w WorkItem, approval Approval) bool {
+// newestUnder is the newest attempt of one item recorded under one approval as
+// a run of one spec, which is the last word a run had on that work, and false
+// when the item carries none. An attempt under the same approval of another
+// digest — a run of another recipe the ladder launched — is not the item's own
+// attempt, so it is not the one either reader below is asking about.
+func newestUnder(s State, itemID string, at time.Time, digest Digest) (Intent, bool) {
 	newest, found := Intent{}, false
 	for _, it := range s.Intents {
-		if IntentItem(it.ID) != w.ID || !it.ApprovalAt.Equal(approval.At) || it.SpecDigest != approval.SpecDigest {
+		if IntentItem(it.ID) != itemID || !it.ApprovalAt.Equal(at) || it.SpecDigest != digest {
 			continue
 		}
 		if !found || IntentAttempt(it.ID) > IntentAttempt(newest.ID) {
 			newest, found = it, true
 		}
 	}
-	return found && newest.Outcome == OutcomeFailed
+	return newest, found
+}
+
+// failedUnder reports whether the newest attempt the approval covers failed,
+// which is the only thing a retry answers, and the only thing the ladder starts
+// the item's own recipe over after (LadderLaunch). A refusal, a cancellation
+// and a success are not failures, and an attempt that has not reported is not
+// one to retry either. An attempt under the same approval that the approval
+// does not cover — a run of another recipe the ladder launched — is not the
+// item's own last attempt, so it neither answers a retry nor stops one.
+func failedUnder(s State, itemID string, at time.Time, digest Digest) bool {
+	newest, ok := newestUnder(s, itemID, at, digest)
+	return ok && newest.Outcome == OutcomeFailed
 }
 
 // approvalCovers reports whether the standing approval is the one an intent
@@ -242,7 +253,7 @@ func nextAttempt(s State, w WorkItem) (Action, bool) {
 		action.Kind = ActionLaunch
 		return action, true
 	}
-	if !failedUnder(s, w, *approval) {
+	if !failedUnder(s, w.ID, approval.At, approval.SpecDigest) {
 		// The allowance is not spent, but only a failure is retried: a refusal
 		// is not one, and neither is a run a person stopped.
 		return Action{}, false
