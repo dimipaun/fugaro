@@ -1074,7 +1074,7 @@ func TestChecklistHasCheck49(t *testing.T) {
 	chk49MustContain(t, section, "section", []string{
 		"Use `fugaro image refresh` for the image half, not `fugaro upgrade`",
 		"**writes nothing in the checkout**",
-		"`internal/cli/upgrade.go` is that command's own `Long` text, one paragraph per step: `plugin`, `cloud`, `rules`, `policy`",
+		"`internal/cli/update_check.go` is where that command's four steps live (`checkSteps`): `plugin`, `cloud`, `rules`, `policy`",
 		// Both places the pin step's file is compared: step 8's block and
 		// step 8's FACT. One without the other is a restore that checks the
 		// file and a FACT that does not claim it.
@@ -2272,11 +2272,9 @@ var chk49Citations = []chkCitation{
 	{"internal/infra/firebasedb.go", "records the rules generation"},
 	{"internal/cli/upgrade_cloud.go", "func jobConfigCopyNote"},
 	{"internal/cli/image_refresh_steps.go", "func (r *initRun) refreshCloneJobs"},
-	// The Long text is one paragraph per step, and the pin merge deleted the
-	// `pin` paragraph (U2, D949), so the anchor is the line that opens the
-	// `plugin` one: the sentence's list of steps is the four the command runs
-	// now.
-	{"internal/cli/upgrade.go", "the plugin installed (user scope) or updated in Claude Code through"},
+	// `fugaro upgrade` is gone (U4): its four steps are update --check's
+	// checkSteps, the anchor for the sentence's list of steps.
+	{"internal/cli/update_check.go", "var checkSteps = []checkStep{"},
 	{"internal/cli/init_repo_stage.go", "s.anchor(ctx, env, s.e.r.o.planOnly)"},
 	{"internal/cli/init_fugaroyaml.go", "writeFileAtomic"},
 	{"internal/cli/init_fugaroyaml.go", "func (s *repositoryStage) anchor"},

@@ -1198,6 +1198,7 @@ func TestUpdateFirebaseProjectRepinsTheCredentialsImage(t *testing.T) {
 	// the same run, so the two are composed here.
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
 		"credentials_service":     map[string]any{"name": infra.CredentialsServiceName, "region": "us-east5", "url": credentialsServiceURL},
+		"intake":                  intakeServiceOutput(),
 		"history_service_account": historyAccount,
 		"history_job":             nil,
 	})}
@@ -1246,6 +1247,7 @@ func TestTheFirebaseProjectDoorBackfillsTheRecordToo(t *testing.T) {
 	// needs (the composed script is TestUpdateFirebaseProjectRepinsTheCredentialsImage's).
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
 		"credentials_service":     map[string]any{"name": infra.CredentialsServiceName, "region": "us-east5", "url": credentialsServiceURL},
+		"intake":                  intakeServiceOutput(),
 		"history_service_account": historyAccount,
 		"history_job":             nil,
 	})}
