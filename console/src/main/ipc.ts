@@ -62,8 +62,8 @@
 // the table of commands and flags the console must never reach: every write
 // subcommand on this tree -- including the converge, `setup` and `update`, which
 // create a project and apply Terraform -- the `secrets` commands, the retired
-// `init` tombstone, `upgrade` and the hidden `exec`, the hidden
-// `budget history` job command, `image git-credential`
+// `init` tombstone and the hidden `exec`, the hidden `budget history` job
+// command, `image git-credential`
 // (it prints a credential), the project-centric phase 1 commands that write or
 // publish, and the flags that make a read-only command into something else
 // (`--follow`, `--check-github-app`, `--strict`, `--csv`, `--watch`, the watch
@@ -2157,12 +2157,6 @@ export const NEVER_REACHABLE: readonly NeverReachable[] = Object.freeze([
     value: 'init',
     why: 'the retired converge: a hidden tombstone that applies nothing and exits 1, naming `fugaro setup` and `fugaro update`. It stays on this table because the console may not drive it either — a verb that refuses every argv is not a read the console could make',
     where: 'internal/cli/retired.go:39 (Hidden: true)',
-  },
-  {
-    shape: 'command',
-    value: 'upgrade',
-    why: "a write: it replaces the CLI's own wiring and refreshes images",
-    where: 'internal/cli/upgrade.go:79',
   },
   {
     shape: 'command',

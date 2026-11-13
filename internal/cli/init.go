@@ -94,10 +94,19 @@ type initOptions struct {
 	noLogIsolation                  bool
 	registryCleanup                 string
 	planOnly, printVars, configOnly bool
-	publishConfig                   bool // --publish-config: publish the shared config to the runs bucket and stop
-	anchor                          bool // --anchor: write the checkout's gcp_project line, after its checks, and stop
-	forget, yes, asJSON             bool
-	nonInteractive                  bool
+	// checkOnly is --check, the update door's read-only mode (D948, U4 of
+	// docs/plugin-user-scope/implementation-plan.md): it prints what each
+	// step of the converge would do from the checkout's own files, writes
+	// nothing, and exits 1 when anything is stale (runUpdateCheck,
+	// update_check.go). It is the update door's alone — setup refuses it by
+	// name (setupDoor.foreign) — and it was the half of the retired
+	// `fugaro upgrade` that was not a converge at all.
+	checkOnly bool
+
+	publishConfig       bool // --publish-config: publish the shared config to the runs bucket and stop
+	anchor              bool // --anchor: write the checkout's gcp_project line, after its checks, and stop
+	forget, yes, asJSON bool
+	nonInteractive      bool
 	// ask is --ask (the owner's rule of 2026-11-04): the symmetric half of
 	// --yes, and fugaro update's flag alone (setup refuses it by name). In a
 	// managed project it puts back the confirmations the gate would have
@@ -404,6 +413,15 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 			switch {
 			case foreign:
 				err = userErr("fugaro %s does not take --%s: that is %s's (%s)", d.name, ff.name, ff.owner, ff.hint)
+			case o.checkOnly:
+				// --check is the one mode of this door that is not a
+				// converge: it reads the checkout's own files, writes
+				// nothing and prints each step's verdict (update_check.go).
+				// It is decided here, before --repo, because the checkout is
+				// this mode's argument rather than the run's: `fugaro update
+				// --check PATH`, and a converge flag passed beside it is
+				// refused by name (refuseConvergeFlags) rather than ignored.
+				err = runUpdateCheck(cmd, o, args)
 			case o.ask && o.yes:
 				// The two flags say opposite things about the same
 				// confirmations (managed_ask.go): refused here, beside the
@@ -429,7 +447,12 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 			// is itself the remedy never sends the reader to itself over work
 			// it is about to do. Every other door prints it before it runs,
 			// which this call leaves alone.
-			warnStaleSkillsAfter(cmd)
+			// A --check run reports the plugin's own state as its first
+			// step, so the closing staleness line would say the same thing a
+			// second time: it is the converge's last line and stays there.
+			if !o.checkOnly {
+				warnStaleSkillsAfter(cmd)
+			}
 			return err
 		},
 	}
@@ -491,6 +514,13 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	f.StringVar(&o.parent, "parent", "", "on a first run, which creates the project: organizations/<number> or folders/<number> to create it under (default: no parent; an organization is never guessed)")
 	f.BoolVar(&o.managed, "managed", false, "on a first run, which creates the project: record its monthly budget in the creation fact. Every project "+d.name+" creates is Fugaro-managed (its runs bucket's creation fact and the fugaro_managed label); --managed is what records the budget amount the managed apply needs. The monthly budget amount is required — --budget, --budget-currency and --billing-account together, with no default and no suggestion taken for you — and the amount and the currency are recorded in the project's creation fact (gs://fugaro-runs-<gcp-project>/fugaro/managed.json), where a later run and a restore read what was chosen. It removes no confirmation: creating the project still takes a person at a real terminal, and the installation's ordinary steps share the run's one review. Flagging a project that already exists as managed is fugaro managed flag's, run by the owner at a terminal, "+managedFlaggingSentence)
 	f.StringVar(&o.linkBilling, "link-billing", "", "on a first run, which creates the project: link this billing account (an ID such as 0123AB-4567CD-89EF01) to the project, at your own real terminal, where being at it is what confirms the step. This may incur charges on that account; never with --yes. It never changes a project's existing billing link")
+	// --check is the update door's alone (D948): the read-only half of the
+	// retired `fugaro upgrade`, and the mode the skills ask for, because it
+	// promises no cloud call where a stage's own plan may make one. Its help
+	// is worded for the door that reads it — setup declares it, hides it and
+	// refuses it by name (setupDoor.foreign), the shape --forget has on that
+	// door.
+	f.BoolVar(&o.checkOnly, "check", false, "read-only: write nothing, run no claude command and make no cloud call, print what each step of "+d.name+" would do from this checkout's own files, and exit 1 when anything is stale. The checkout is PATH ("+d.name+" --check [PATH]); the converge's own flags are refused rather than ignored, because this mode runs none of them. The rules and the policy steps are skipped with a note naming the command that answers them: the deployed rules generation and the published policy node live in the cloud, and reading either is the call this flag promises not to make")
 	f.BoolVar(&o.planOnly, "plan-only", false, "stop after showing the plan (never takes --yes: it creates nothing on a flag's word)")
 	f.BoolVar(&o.printVars, "print-vars", false, "print the Terraform variables and exit, with no cloud calls and no Terraform (ungated: no discovery, and with --repo no readiness gates)")
 	f.BoolVar(&o.configOnly, "config-only", false, "only write the local config, from the installation's outputs (else the flags)")
@@ -539,8 +569,8 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	// checkout stage is LocalUnderAgent too, and what that buys there is the
 	// run's own account of its cloud half: the plan drops the image refresh,
 	// whose writes are not this machine's, and the apply leaves it for the user
-	// as a named step rather than one line naming `fugaro upgrade` and nothing
-	// of what became of the images (checkoutStage.planFor's repositoryStopped;
+	// as a named step rather than one line naming the door and nothing of what
+	// became of the images (checkoutStage.planFor's repositoryStopped;
 	// the repository stop it applies past is #1836's, initflow's RunsPastStop).
 	// The help has to say that rather than promise a session a write it may not
 	// get to.
@@ -1044,6 +1074,13 @@ func runInit(r *initRun) error {
 				if data, err = infra.CarriedManagedDeployerScoped(data, prev); err != nil {
 					return err
 				}
+				// The implicit default review job, for the same reason and off
+				// the same record: the print is a reading of the installation,
+				// and one that shows the job the next plan keeps missing would
+				// be a reading the owner cannot trust.
+				if data, err = infra.CarriedProjectReviewJobs(data, prev); err != nil {
+					return err
+				}
 			}
 		}
 		// Printed without a cloud call, so without discovery: stdout stays
@@ -1301,11 +1338,11 @@ func (e *initEngine) markCreated(ctx context.Context) {
 	// --managed is the one flag that says this creation is managed, and its
 	// own check refuses a run that passed it without the trio
 	// (init_project.go), so a non-nil budget here is one this run was given
-	// and the installation's Terraform budget carries the same figures. The
-	// bound on billable image builds is not passed and not asked for: it is the
-	// marker's own default, recorded by the same write (managed.WriteMarker,
-	// D1013), so a creation that is not managed passes nil and writes the
-	// object it always wrote, byte for byte (Task 4.2: the change reaches
+	// and the installation's Terraform budget carries the same figures. No
+	// bound on the billable image builds is passed and none is asked for: the
+	// count is gone from the marker (D1543), so the object is the amount and
+	// nothing else, and a creation that is not managed passes nil and writes
+	// the object it always wrote, byte for byte (Task 4.2: the change reaches
 	// nobody else).
 	var budget *managed.Budget
 	if r.o.managed {
@@ -2697,6 +2734,34 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports, v
 			if err != nil {
 				return nil, userErr("reading the installation's tfvars: %v", err)
 			}
+		}
+	}
+	// The secrets intake's block is the second key this spec never carries, and
+	// it is written by the same run that wrote the service's (init_stages.go's
+	// ensureCredentialsService, through carriedIntake and deployCredentialsService):
+	// every run of init rewrites the root's tfvars from a spec that does not
+	// hold it, so an installation that has the intake would lose the key here
+	// and plan the whole service — its account, its two roles, its invoker
+	// grants and its revision — away, with the URL it alone records. Carried
+	// forward exactly as it was, present or absent, like the service's own
+	// block and for the same HARD RULE reason: one missed `fugaro update` is an
+	// installation whose dynamic secrets stop being written.
+	for _, prev := range documents {
+		if vars, err = infra.CarriedIntake(vars, prev); err != nil {
+			return nil, userErr("reading the installation's tfvars: %v", err)
+		}
+	}
+	// And the implicit default review job, on the same documents: the spec
+	// composes it only while the config records one GitHub App ID, so an
+	// installation that has the job and then records two — or none, its last
+	// github repository gone — plans the job's deletion on every later run, and
+	// RefuseProjectJobDeletes stops the whole update on that plan with "restore
+	// the profile as it was" as its only remedy: a profile an installation that
+	// declares none does not have. CarriedProjectReviewJobs keeps it, from the
+	// record the run that deployed it left.
+	for _, prev := range documents {
+		if vars, err = infra.CarriedProjectReviewJobs(vars, prev); err != nil {
+			return nil, userErr("reading the installation's tfvars: %v", err)
 		}
 	}
 	// The other key this spec never carries, and for a sharper reason than the

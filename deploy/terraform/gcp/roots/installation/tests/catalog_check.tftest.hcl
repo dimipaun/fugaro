@@ -6,21 +6,23 @@
 # project's image catalog and submits a build per entry that fires is a job
 # that can move every repository's images, so the set of things its account may
 # reach is the thing to read. The second run below pins what the plan carries,
-# grant by grant: the four grants this module makes — role, member and
+# grant by grant: the five grants this module makes — role, member and
 # condition title — the argv the job runs, the account it runs as, the spec in
 # its environment, the paused schedule and the account Scheduler calls it as,
-# and the alert's filter. The fifth grant, the actAs that lets a build of an
-# entry run as the entry's own repository's account, is the repository root's
+# and the alert's filter. One of the five is in the Firebase project and not
+# this one: the job's own database role, whose build leases are written there
+# (D1554). The sixth grant, the actAs that lets a build of an entry run as the
+# entry's own repository's account, is the repository root's
 # (roots/repo/tests/catalog_check.tftest.hcl).
 #
 # The exact-set half is NOT here, and cannot be: a tftest cannot enumerate a
-# module's resources, so an extra grant resource beside these four is
+# module's resources, so an extra grant resource beside these five is
 # invisible to it. That gate is internal/infra/managed's scan, which pins every
 # grant to a member that is not a set of people whole (runAccountGrants) and
 # reports both a grant no row holds and a row no module grants any more;
-# TestTheModuleScanCatchesTheMutations adds a sixth grant to this account and
-# drops one of the five, so both halves of that gate are shown firing rather
-# than assumed.
+# TestTheModuleScanCatchesTheMutations adds a further grant to this account and
+# drops one of the reviewed ones, so both halves of that gate are shown firing
+# rather than assumed.
 #
 # The names, the argv, the condition titles and the alert filter are the ones
 # internal/infra writes (gcp.CatalogReadConditionTitle for the definitions
@@ -80,6 +82,8 @@ run "no_catalog_check_job_without_one" {
       length(google_service_account.catalog_check) == 0 && length(google_cloud_run_v2_job.catalog_check) == 0 &&
       length(google_cloud_scheduler_job.catalog_check) == 0 &&
       length(google_project_iam_member.catalog_check_build_submitter) == 0 &&
+      length(google_project_iam_custom_role.catalog_lease) == 0 &&
+      length(google_project_iam_member.catalog_lease) == 0 &&
       length(google_storage_bucket_iam_member.catalog_check_definitions) == 0 &&
       length(google_storage_bucket_iam_member.catalog_check_records) == 0 &&
       length(google_cloud_run_v2_job_iam_member.catalog_check_invoker) == 0
@@ -131,6 +135,12 @@ run "exact_grants" {
       scheduler_region = "us-east5"
       schedule         = "17 4 * * *"
       paused           = true
+      # The installation's Firebase project and not this one: the job's build
+      # leases are written into that project's database, so that is where its
+      # own database role is created and bound (D1554). The value is
+      # deliberately not the installation's project — a run that handed the job
+      # one value for both would pass over a module that never read the field.
+      firebase_project = "aurora-fp"
       env = {
         FUGARO_PROJECT            = "aurora"
         FUGARO_GCP_PROJECT        = "proj-1234"
@@ -155,16 +165,37 @@ run "exact_grants" {
   assert {
     condition = toset(concat(
       [for r in google_project_iam_member.catalog_check_build_submitter : "google_project_iam_member ${r.role} ${r.member}"],
+      [for r in google_project_iam_member.catalog_lease : "google_project_iam_member ${r.project} ${r.role} ${r.member}"],
       [for r in google_storage_bucket_iam_member.catalog_check_definitions : "google_storage_bucket_iam_member ${r.role} ${one(r.condition).title} ${r.member}"],
       [for r in google_storage_bucket_iam_member.catalog_check_records : "google_storage_bucket_iam_member ${r.role} ${one(r.condition).title} ${r.member}"],
       [for r in google_cloud_run_v2_job_iam_member.catalog_check_invoker : "google_cloud_run_v2_job_iam_member ${r.role} ${r.member}"],
       )) == toset([
       "google_project_iam_member projects/proj-1234/roles/fugaroBuildSubmitter serviceAccount:fugaro-catalog-check@proj-1234.iam.gserviceaccount.com",
+      "google_project_iam_member aurora-fp projects/aurora-fp/roles/fugaroCatalogLease serviceAccount:fugaro-catalog-check@proj-1234.iam.gserviceaccount.com",
       "google_storage_bucket_iam_member roles/storage.objectViewer fugaro-catalog-read-fugaro-catalog-check serviceAccount:fugaro-catalog-check@proj-1234.iam.gserviceaccount.com",
       "google_storage_bucket_iam_member roles/storage.objectUser fugaro-catalog-records-acme-app-0123456789abcdef serviceAccount:fugaro-catalog-check@proj-1234.iam.gserviceaccount.com",
       "google_cloud_run_v2_job_iam_member roles/run.invoker serviceAccount:fugaro-scheduler@proj-1234.iam.gserviceaccount.com",
     ])
-    error_message = "the catalog check job's grants must be exactly these four: the build submissions on the project, the copied definitions read-only, one repository's build records and check state, and run.invoker on its own job for the scheduler account. A fifth grant — any role, on any of these three types — fails this assertion, and there is no secret accessor, no log writer, no actAs and no key here: the actAs on a repository's build account is the repository root's grant, and the build reads the secrets."
+    error_message = "the catalog check job's grants must be exactly these five: the build submissions on the project, its own database role in the Firebase project (the leases every build's cost is reserved with, D1554), the copied definitions read-only, one repository's build records and check state, and run.invoker on its own job for the scheduler account. A further grant — any role, on any of these types — fails this assertion, and there is no secret accessor, no log writer, no actAs and no key here: the actAs on a repository's build account is the repository root's grant, and the build reads the secrets."
+  }
+
+  # The job's database role holds the instance's two DATA permissions and
+  # nothing else: get is the only read there is and update the only write, so
+  # no lifecycle permission (create, delete, disable, reenable, undelete) and
+  # no list reaches an unattended nightly job. The role is created in the
+  # Firebase project and named as the literal path the binding carries, so a
+  # plan can read which role it is (internal/infra/tf's cover).
+  assert {
+    condition = (
+      length(google_project_iam_custom_role.catalog_lease) == 1 &&
+      google_project_iam_custom_role.catalog_lease[0].project == "aurora-fp" &&
+      google_project_iam_custom_role.catalog_lease[0].role_id == "fugaroCatalogLease" &&
+      toset(google_project_iam_custom_role.catalog_lease[0].permissions) == toset([
+        "firebasedatabase.instances.get",
+        "firebasedatabase.instances.update",
+      ])
+    )
+    error_message = "the catalog check job's database role must be fugaroCatalogLease in the Firebase project, holding the instance's two data permissions and nothing else"
   }
 
   assert {
@@ -291,6 +322,96 @@ run "env_must_carry_the_spec" {
       scheduler_region = "us-east5"
       env = {
         FUGARO_PROJECT = "aurora"
+      }
+      definitions_condition = {
+        title      = "fugaro-catalog-read-fugaro-catalog-check"
+        expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/builds/catalog/\")"
+      }
+      repositories = [{
+        slug = "acme-app-0123456789abcdef"
+        records_condition = {
+          title      = "fugaro-catalog-records-acme-app-0123456789abcdef"
+          expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/builds/acme-app-0123456789abcdef/catalog/\")"
+        }
+      }]
+    }
+  }
+
+  expect_failures = [var.catalog_check]
+}
+
+run "no_lease_role_without_a_firebase_project" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    catalog_check = {
+      account_id       = "fugaro-catalog-check"
+      job              = "fugarochk-catalog-1a2b3c4d"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/base:0.18.0"
+      scheduler_job    = "fugarochk-catalog"
+      scheduler_region = "us-east5"
+      env = {
+        FUGARO_PROJECT            = "aurora"
+        FUGARO_GCP_PROJECT        = "proj-1234"
+        FUGARO_CATALOG_CHECK_SPEC = "{\"version\":2,\"firebase_project\":\"\"}"
+      }
+      definitions_condition = {
+        title      = "fugaro-catalog-read-fugaro-catalog-check"
+        expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/builds/catalog/\")"
+      }
+      repositories = [{
+        slug = "acme-app-0123456789abcdef"
+        records_condition = {
+          title      = "fugaro-catalog-records-acme-app-0123456789abcdef"
+          expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/builds/acme-app-0123456789abcdef/catalog/\")"
+        }
+      }]
+    }
+  }
+
+  # An installation with no Firebase backend (a config that names no
+  # firebase_project) gets the job and its four other grants and no database
+  # role: there is no database for the job to lease against, so it submits its
+  # builds unleased and says so in one line, and a role granted on a project
+  # nobody named would be a grant on a guess.
+  assert {
+    condition = (
+      length(google_cloud_run_v2_job.catalog_check) == 1 &&
+      length(google_project_iam_member.catalog_check_build_submitter) == 1 &&
+      length(google_project_iam_custom_role.catalog_lease) == 0 &&
+      length(google_project_iam_member.catalog_lease) == 0
+    )
+    error_message = "without a firebase_project the job must still be planned, with its project and bucket grants and no database role at all"
+  }
+}
+
+run "lease_role_needs_a_project_id" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    catalog_check = {
+      account_id       = "fugaro-catalog-check"
+      job              = "fugarochk-catalog-1a2b3c4d"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/base:0.18.0"
+      scheduler_job    = "fugarochk-catalog"
+      scheduler_region = "us-east5"
+      # Empty rather than unset: unset is an installation with no budget
+      # backend, and a hand-edited tfvars that wrote "" would otherwise drop
+      # the grant an installation with a database needs — quietly, since the
+      # job would deploy and then fail every lease at run time.
+      firebase_project = ""
+      env = {
+        FUGARO_PROJECT            = "aurora"
+        FUGARO_GCP_PROJECT        = "proj-1234"
+        FUGARO_CATALOG_CHECK_SPEC = "{\"version\":2,\"firebase_project\":\"\"}"
       }
       definitions_condition = {
         title      = "fugaro-catalog-read-fugaro-catalog-check"

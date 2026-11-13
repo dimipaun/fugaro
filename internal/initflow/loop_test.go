@@ -1918,7 +1918,7 @@ func TestLoopAStageThatLeftSomethingIsNotATick(t *testing.T) {
 	stages := fakes(&log, Preflight, Checkout)
 	stages[0].(*fake).status = Status{State: Done}
 	stages[1].(*fake).outLeft = &Left{Stage: Checkout, Kind: LeftCommand,
-		Text: "run fugaro upgrade's cloud half in your terminal"}
+		Text: "run fugaro update's cloud half in your terminal"}
 	opts := yesOpts()
 	opts.Out = &out
 	opts.Report = reporterTo(&out, report.Options{})
@@ -1935,7 +1935,7 @@ func TestLoopAStageThatLeftSomethingIsNotATick(t *testing.T) {
 	if strings.HasPrefix(line, m.done) {
 		t.Errorf("a stage with a step left for the user printed the tick:\n%s", got)
 	}
-	if !strings.Contains(got, "left for you (checkout, command): run fugaro upgrade's cloud half in your terminal") {
+	if !strings.Contains(got, "left for you (checkout, command): run fugaro update's cloud half in your terminal") {
 		t.Errorf("the left-for-you block is missing:\n%s", got)
 	}
 	if res.ExitCode() != 1 {
