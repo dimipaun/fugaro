@@ -533,13 +533,15 @@ func TestGoldenAccountJobMountsOnlyItsOwnToken(t *testing.T) {
 	}
 }
 
-// TestGoldenImplicitReviewJobIsDeployedWithoutProfiles is the owner's
-// requirement of 2026-11-13 read off a real plan: `fugaro review --pr N` works
-// on a GitHub project that declares no profile at all. A review runs on a
-// review-only variant and on nothing else (internal/cli's reviewJobFor), and
-// the variant of a project with no shared coding job is the ONE implicit
-// default job the installation root deploys on its own
-// (module.project_review, internal/infra's implicitReviewVariant).
+// TestGoldenImplicitReviewJobIsDeployedWithoutProfiles is the deployment half
+// of the owner's requirement of 2026-11-13 read off a real plan: the ONE review
+// job a GitHub project has whether or not it declares a profile. A review runs
+// on a review-only variant and on nothing else (internal/cli's reviewJobFor),
+// and the variant of a project with no shared coding job is the implicit
+// default job the installation root deploys on its own (module.project_review,
+// internal/infra's implicitReviewVariant). The launch that resolves a review
+// onto it is the launcher's half and follows (C1's piece 3): reviewJobFor
+// refuses such a launch today, this job deployed or not.
 //
 // The security of it is the whole point, and it is three claims on the plan:
 // the job mounts NOTHING (no secret in its container and no volume), its
@@ -548,7 +550,15 @@ func TestGoldenAccountJobMountsOnlyItsOwnToken(t *testing.T) {
 // installation has not vetted, so what it may read is what its reviewer could
 // read back), and everything it does hold is the two bucket grants the shared
 // job's account holds under the same conditions, because a review clones the
-// pull request head and writes its records into the same runs bucket.
+// pull request head and writes its records into the same runs bucket. The one
+// grant that may join them is the credentials service's own invoker
+// membership, which this job's environment names and which no project job
+// account holds yet (the pending item docs/secrets-brokering's
+// implementation plan carries — modules/project grants no run.invoker, and
+// modules/workflow, which does, is the per-repository root's module): the
+// closure below admits it, because a caller the service does not admit is a
+// 403 rather than a wider read, and reads of the account's own grants as the
+// posture it is.
 //
 // Mutation (run, restore): make the emission unconditional in
 // internal/infra's implicitReviewVariant and this fixture's plan gains a second
@@ -622,16 +632,37 @@ func TestGoldenImplicitReviewJobIsDeployedWithoutProfiles(t *testing.T) {
 		t.Errorf("%s is %q, want %q", mod+".google_service_account.job", member, wantMember)
 	}
 	got := grantsTo(p, member)
+	// The two bucket grants are the shared job's own conditions: a review
+	// clones the pull request head and writes its records into the same runs
+	// bucket. They are what this account must hold, and the closure below is
+	// what it may hold: the credentials service's invoker membership, which its
+	// environment names the service by and which the plan does not carry yet
+	// (no project job account is a member of the service's invoker set — the
+	// pending item docs/secrets-brokering's plan names), and nothing else. A
+	// grant of any other role here is one the shared job's account holds or a
+	// secret read, and both are what this container must not have.
 	want := []string{"google_storage_bucket_iam_member roles/storage.objectUser", "google_storage_bucket_iam_member roles/storage.objectViewer"}
-	if !slices.Equal(got, want) {
-		t.Errorf("the review job's account holds %v, want exactly %v: a review mounts no secret, so it is granted no read of one, and the two bucket grants are the shared job's own conditions", got, want)
+	serviceInvoker := "google_cloud_run_v2_service_iam_member roles/run.invoker"
+	for _, g := range want {
+		if !slices.Contains(got, g) {
+			t.Errorf("the review job's account does not hold %s: a review clones the pull request head and writes its records into the runs bucket, on the shared job's own conditions", g)
+		}
+	}
+	for _, g := range got {
+		if slices.Contains(want, g) || g == serviceInvoker {
+			continue
+		}
+		t.Errorf("the review job's account holds %s, want nothing but %v and the credentials service's own invoker membership: a review mounts no secret, so it is granted no read of one", g, want)
 	}
 
 	// And none of the roles a shared coding job's account holds: the other
 	// golden's job accounts, one profile each, are what this one is compared
 	// against. Every role beyond the two bucket grants above — the profile's
 	// secret container and, on a Vertex installation, the model accessor — is
-	// one this account must not have.
+	// one this account must not have. The service's invoker membership is not
+	// one of them: it admits a caller to the service the review fetches its
+	// token from, it is what this job's own environment names, and the day the
+	// pending item grants it to the project job accounts both sets hold it.
 	coding := goldenPlan(t, "installation")
 	members := jobAccountMembers(t, coding)
 	if len(members) == 0 {
@@ -640,7 +671,7 @@ func TestGoldenImplicitReviewJobIsDeployedWithoutProfiles(t *testing.T) {
 	beside := map[string]bool{}
 	for _, m := range members {
 		for _, g := range grantsTo(coding, m) {
-			if !slices.Contains(want, g) {
+			if !slices.Contains(want, g) && g != serviceInvoker {
 				beside[g] = true
 			}
 		}

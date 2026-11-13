@@ -430,10 +430,19 @@ const implicitReviewJobTimeout = 3 * time.Hour
 
 // implicitReviewVariant is the installation's implicit default review-only job:
 // the review job a project has with no profile of its own, so that
-// `fugaro review --pr N` runs on any GitHub project out of the box, with no
-// profile to declare and no policy to publish first (the owner's requirement of
+// `fugaro review --pr N` can run on any GitHub project with no profile to
+// declare and no policy to publish first (the owner's requirement of
 // 2026-11-13). ok is false when the installation deploys none, which is the
 // ordinary answer for every installation that is not the case above.
+//
+// This is the DEPLOYMENT half of that requirement, and the half C1 lands first:
+// the job, its own service account and the row the credentials service admits a
+// review caller by are all written here. The half that resolves a review onto it
+// is the launcher's, and it follows (C1's piece 3): internal/cli's reviewJobFor
+// refuses a launch whose repository resolved no shared project job even with
+// this job deployed, and its own sentence for that case names a project that has
+// published no profiles. Nothing has to change for this job to be deployed, and
+// no launch reaches it until that half lands.
 //
 // It exists because a review runs on a review-only variant and on nothing else:
 // a project that publishes no profiles deploys no shared coding job, so there
@@ -450,11 +459,20 @@ const implicitReviewJobTimeout = 3 * time.Hour
 //     token and its reviewer's model calls both come from the service, and a
 //     project without one has nothing for the job to fetch anything from —
 //     checkReviewService refuses that launch before it looks for a job.
-//   - No profile-derived variant covering (github, the default account): the
-//     no-account job every github profile has derives exactly that pair
-//     (config.ProjectJobAccounts' empty account segment, spelled "default" by
-//     config.ReviewVariantAccount), so an installation deploying a github coding
-//     job already has the job this one would add and its plan stays what it was.
+//   - No github coding job in the installation's set: every profile's accounts
+//     carry config.ProjectJobAccounts' empty segment, so a github coding job
+//     holds a no-account entry whose variant is exactly the pair this job would
+//     add (github, the default account — config.ReviewVariantAccount spells that
+//     empty segment "default"). The gate reads the pair rather than the name and
+//     service account it derives, and it suppresses on purpose where the two
+//     differ: a project that declares a github profile already reviews its
+//     repositories on that profile's variant, and requirement 2 leaves its plan
+//     exactly what it was, so no implicit job is added beside it even when the
+//     profile is not named ImplicitReviewProfile. What the wider gate leaves
+//     open is the repository whose workflow names a profile no policy defines,
+//     and that is the launcher half's question (piece 3) rather than this one's:
+//     nothing resolves a review onto this job yet, so an installation with
+//     profiles is not made to carry a job no launch of it reaches.
 //   - A single Github App ID recorded (recordedGitHubAppID): a github job runs
 //     on providers.EnvGitHubAppID and the module refuses a job without it, so an
 //     installation that records none — or two, which recordedGitHubAppID reports

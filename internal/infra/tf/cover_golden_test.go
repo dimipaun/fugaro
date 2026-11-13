@@ -639,7 +639,7 @@ func TestTheCoordinatorIsInTheOptInGoldensOnly(t *testing.T) {
 		},
 		"firebase-coordinator": {"module.firebase.google_project_iam_member.coordinator_database[0]"},
 	}
-	for _, name := range []string{"installation", "installation-accounts", "installation-managed", "installation-credentials", "installation-adopt",
+	for _, name := range []string{"installation", "installation-accounts", "installation-managed", "installation-credentials", "installation-review", "installation-adopt",
 		"installation-coordinator", "installation-viewers", "firebase", "firebase-same-project", "firebase-adopt", "firebase-coordinator", "firebase-viewers",
 		"installation-catalog-add-repo"} {
 		var got []string

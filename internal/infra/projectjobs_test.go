@@ -2146,13 +2146,20 @@ func implicitReviewRow() CredentialsReviewJob {
 	return CredentialsReviewJob{Profile: ImplicitReviewProfile, Provider: githubProvider, Account: config.DefaultClaudeAccount}
 }
 
-// TestImplicitReviewJobIsDeployedWithoutProfiles is the owner's requirement of
-// 2026-11-13: `fugaro review --pr N` works on any GitHub project out of the
-// box, with no profile to declare and no policy to publish first. A review runs
-// on a review-only variant and nothing else (reviewJobFor) — a project with no
-// profiles has no coding job to derive a variant from — so the variant has to
-// be a job of the project itself: ONE review-only job for the default account
-// on the github provider, beside nothing.
+// TestImplicitReviewJobIsDeployedWithoutProfiles is the deployment half of the
+// owner's requirement of 2026-11-13: `fugaro review --pr N` must run on any
+// GitHub project with no profile to declare and no policy to publish first. A
+// review runs on a review-only variant and never on a shared coding job, and a
+// project with no profiles has no coding job to derive a variant from — so the
+// variant has to be a job of the project itself: ONE review-only job for the
+// default account on the github provider, beside nothing.
+//
+// What this test asserts is the deployment: the job, its own service account
+// and the row the credentials service admits a review caller by. The half that
+// resolves a review onto it follows (C1's piece 3, the launcher):
+// internal/cli's reviewJobFor refuses a launch whose repository resolved no
+// shared project job, this one included, so no review reaches this container
+// until that half lands.
 //
 // Mutations (each run and restored): drop the credentials-service gate and an
 // installation that has not opted in deploys a review job whose every call
