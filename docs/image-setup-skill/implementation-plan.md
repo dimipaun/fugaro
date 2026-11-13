@@ -123,7 +123,7 @@ The stage is pinned to the composing repository: it refuses a `REPO_URL` that is
 - **Red step:** the skill and its tests do not exist. **Tier:** `opus + mandatory independent review` (a plugin skill).
 
 ### IS13: docs, release notes, operator line
-- **Files:** `scripts/check-500.sh`, `scripts/check-501.sh` (new), `docs/releases/vX.Y.Z.md` (new; version at cut), `website/data/release-summaries.yaml`, `docs/image-setup-skill/README.md`, `docs/gcp-live-checklist.md` (Checks 500, 501).
+- **Files:** `scripts/live-checks/check-500.sh`, `scripts/live-checks/check-500_test.sh`, `scripts/live-checks/check-501.sh`, `scripts/live-checks/check-501_test.sh` (all new; the repository keeps its owner-run checks under `scripts/live-checks/`, each with the sibling test that drives it against fake tools), `scripts/live_checks_test.go` (the two new pairs in its table), `docs/releases/vX.Y.Z.md` (new; version at cut), `website/data/release-summaries.yaml`, `docs/image-setup-skill/README.md`, `docs/gcp-live-checklist.md` (Checks 500, 501).
 - **Operators:** `### For operators`: "run `fugaro update`" and what it asks (a rebuild of the base-derived images behind its own confirmation).
 - **Tests:** `go test ./internal/cli/ -run Docs -count=1`; `npm run check` in `website/` if content changed. **Depends on:** IS1–IS12. **Commit:** `docs: release notes and live checks for the image setup skill`.
 - **Red step:** the docs-guard test pins the new check numbers. **Tier:** standard.
@@ -165,7 +165,7 @@ The stage is pinned to the composing repository: it refuses a `REPO_URL` that is
 
 ## Checks (reserved 500–509)
 
-- **Both checks ship as one script each** (`scripts/check-500.sh`, `check-501.sh`, written by IS13), so the owner types one command.
+- **Both checks ship as one script each** (`scripts/live-checks/check-500.sh` and `scripts/live-checks/check-501.sh`, written by IS13, each with its `_test.sh`), so the owner types one command.
 - **Check 500 (OWNER-RUN):** on the sandbox project, the owner runs the skill end to end, builds the proposed images with `fugaro image build`, launches one run on a baked image, and confirms the run and the warning on a repo with a stale `image:` block. No agent performs any step.
 - **Check 501 (OWNER-RUN):** after `fugaro update`, a run on the slim base reaches `result.json`; the owner types `fugaro update` then `fugaro run` on the sandbox.
 - Nothing runs against the dev installation `belong` without the owner's own go.

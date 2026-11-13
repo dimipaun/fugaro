@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See ee/LICENSE for the terms.
 
-// This file is the A/B report (docs/model-ab-testing, plan task A4.3, decisions
-// D560, D563, D564, D565, D562, D570): the rows `fugaro ab` prints, built from
-// run records alone.
+// This file is the A/B report (docs/model-ab-testing, plan tasks A4.3 and A5.4,
+// decisions D560, D563, D564, D565, D562, D570, D553, D561): the rows
+// `fugaro ab` prints, built from the window's run records and from the verdicts
+// its judge runs wrote under their own prefixes.
 //
 // The pairs, the signals and the statistics are ee/ab's; this is where they are
 // grouped so a person can read them, and two promises hold it together.
@@ -22,6 +23,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"slices"
 	"strconv"
@@ -51,8 +53,10 @@ type ABRow struct {
 	Tier string
 	// Champion and Challenger are the two arms' coder models.
 	Champion, Challenger string
-	// Pairs is the group's valid pairs, and Wins, Losses and Ties the pairs the
-	// challenger took, lost and drew (D563).
+	// Pairs is the group's valid pairs that count, and Wins, Losses and Ties
+	// the pairs the challenger took, lost and drew (D563): a Critical pair no
+	// judge has decided is in none of them (D561), which is what Unjudged says
+	// beside the row.
 	Pairs              int
 	Wins, Losses, Ties int
 	// ChampionHalts and ChallengerHalts are how many of the group's pairs each
@@ -63,6 +67,31 @@ type ABRow struct {
 	// the group's pairs (D562). It is context and never a signal: the shadow
 	// opens no pull request, so rework cannot enter a paired comparison.
 	FollowUps int
+	// JudgeFamilies are the families of the models that judged the group's
+	// pairs (D553), sorted and deduplicated: a Claude ID is "anthropic", and a
+	// provider model's family is its ID's vendor prefix. Empty — never a list
+	// holding "" — for a group no judge has decided a pair of, which is every
+	// group of a project that has run no judge.
+	JudgeFamilies []string
+	// SameFamily says one of those judge families is also one of the arms': the
+	// two arms are the champion and the challenger of the group, and the flag
+	// is true when a judge shares a family with either. Blindness removes
+	// labels, not style, so this is the honest mitigation D553 asks for rather
+	// than a claim that the verdict is unbiased.
+	SameFamily bool
+	// Unjudged is how many of the group's valid pairs no judge has decided, at
+	// every mode: a pair the judge run skipped (its diffs named an arm, its
+	// patch was cut short) and a pair no judge run has reached are one fact
+	// here. At Critical those pairs are in no figure at all (D561), which is
+	// why Pairs and Unjudged add up to the group's pairs there and not
+	// elsewhere — outside Critical a pair counts whether or not a judge has
+	// read it.
+	Unjudged int
+	// Truncated is how many of the group's pairs carry a patch A2.1 cut short.
+	// It is a fact about the pair and not about the judge: A5.1 refuses a
+	// truncated diff, so such a pair can never be judged and stays unjudged for
+	// as long as it is in the window, whether or not a judge run has tried.
+	Truncated int
 	// Rec is the rule's answer for the group (D565), with the figures it was
 	// read through.
 	Rec ab.Recommendation
@@ -72,9 +101,10 @@ type ABRow struct {
 // and the valid pairs they were built from.
 type ABReport struct {
 	Rows []ABRow
-	// Pairs is every valid pair, which is the sum of the rows' pairs: a pair R2
-	// refuses is in no figure at all (D571) and is counted here no more than in
-	// a row.
+	// Pairs is every valid pair that counts — the sum of the rows' pairs: a pair
+	// R2 refuses is in no figure at all (D571), and neither is a Critical pair
+	// no judge has decided (D561), and neither is counted here. The pairs left
+	// out are the rows' Unjudged counts, which is where a reader sees them.
 	Pairs int
 }
 
@@ -88,23 +118,31 @@ type ABReport struct {
 // refusals, ab.Score the signals and ab.Recommend the rule, so a change to any
 // of them reaches this report without a second copy of it here.
 //
+// verdicts is what the judge runs have decided, keyed by pair ID (ab.Verdict,
+// read by ab.JudgeVerdicts): a pair it holds no entry for is one no judge run
+// has decided, which is a pair at Critical that does not count. Nil is a read
+// that found no verdict at all, which is every project until a judge run has
+// finished and is not an error.
+//
 // rates is the project's exchange rate per mode (D565): the extra cost a pair
 // may carry before the mode keeps the champion. A mode the table leaves out —
 // and nil, which is the whole table — takes the figure Fugaro ships.
-func BuildAB(records []runstore.Record, rates map[rigor.Mode]float64) ABReport {
+func BuildAB(records []runstore.Record, verdicts map[string]ab.Verdict, rates map[rigor.Mode]float64) ABReport {
 	pairs := ab.Pairs(records)
-	rep := ABReport{Rows: []ABRow{}, Pairs: len(pairs)}
+	rep := ABReport{Rows: []ABRow{}}
 	groups := map[abGroup]*abAcc{}
 	order := make([]abGroup, 0, len(pairs))
 	for _, p := range pairs {
 		g := groupOf(p)
 		a, ok := groups[g]
 		if !ok {
-			a = &abAcc{group: g}
+			a = &abAcc{group: g, judges: map[string]bool{}}
 			groups[g] = a
 			order = append(order, g)
 		}
-		a.add(p)
+		if a.add(p, verdicts[p.ID]) {
+			rep.Pairs++
+		}
 	}
 	slices.SortFunc(order, func(a, b abGroup) int { return a.compare(b) })
 	for _, g := range order {
@@ -213,14 +251,38 @@ func tierRank(key string) int {
 
 // abAcc accumulates one group's row.
 type abAcc struct {
-	group     abGroup
-	pairs     int
-	followUps int
-	summary   ab.Summary
+	group      abGroup
+	pairs      int
+	unjudged   int
+	truncated  int
+	followUps  int
+	sameFamily bool
+	judges     map[string]bool
+	summary    ab.Summary
 }
 
-func (a *abAcc) add(p ab.Pair) {
-	res := ab.Score(p, a.group.mode)
+// add reads one pair of the group into the row, and answers whether the pair
+// counts (ab.Result.Counted). A pair that does not count is in no figure at all
+// — not the pairs, the wins, the halts, the cost ratios or the follow-ups —
+// which is what "does not count" means; it is still counted as unjudged, which
+// is the figure that says why the group is short.
+func (a *abAcc) add(p ab.Pair, v ab.Verdict) bool {
+	if p.Champion.PatchTruncated || p.Challenger.PatchTruncated {
+		a.truncated++
+	}
+	res := ab.Score(p, a.group.mode, v)
+	if !res.Verdict.Judged() {
+		a.unjudged++
+	} else if family := modelFamily(res.Verdict.JudgeModel); family != "" {
+		a.judges[family] = true
+		if family == modelFamily(a.group.champion) || family == modelFamily(a.group.challenger) {
+			a.sameFamily = true
+		}
+	}
+	if !res.Counted {
+		return false
+	}
+	a.pairs++
 	switch res.Winner {
 	case ab.WinChallenger:
 		a.summary.Wins++
@@ -238,9 +300,34 @@ func (a *abAcc) add(p ab.Pair) {
 	if ratio := pairCostRatio(p); !math.IsNaN(ratio) {
 		a.summary.CostRatios = append(a.summary.CostRatios, ratio)
 	}
-	a.pairs++
 	a.followUps += p.ChampionFollowUps
+	return true
 }
+
+// modelFamily is the family a model ID belongs to (D553): a Claude ID is
+// "anthropic", and a provider model's family is its ID's vendor prefix, so
+// "deepseek/deepseek-v4-flash" is "deepseek" and "anthropic/claude-sonnet-5.5"
+// is "anthropic" with the Claude IDs' own family. Anything else — an alias, an
+// ID this build does not know, a model ID spelled with no vendor — has no
+// family, and a row never flags one: the flag is about two models sharing a
+// family, and "" shares nothing.
+func modelFamily(model string) string {
+	if strings.HasPrefix(model, claudePrefix) {
+		return familyAnthropic
+	}
+	if vendor, _, ok := strings.Cut(model, "/"); ok && vendor != "" {
+		return vendor
+	}
+	return ""
+}
+
+// The two spellings D553's mapping reads: a Claude model ID's prefix, which is
+// also the vendor a provider route under the Anthropic prefix names, and the
+// family a Claude ID belongs to.
+const (
+	claudePrefix    = "claude-"
+	familyAnthropic = "anthropic"
+)
 
 func (a *abAcc) row(rate float64) ABRow {
 	return ABRow{
@@ -255,6 +342,10 @@ func (a *abAcc) row(rate float64) ABRow {
 		ChampionHalts:   a.summary.ChampionHalts,
 		ChallengerHalts: a.summary.ChallengerHalts,
 		FollowUps:       a.followUps,
+		JudgeFamilies:   slices.Sorted(maps.Keys(a.judges)),
+		SameFamily:      a.sameFamily,
+		Unjudged:        a.unjudged,
+		Truncated:       a.truncated,
 		Rec:             ab.Recommend(a.summary, rate),
 	}
 }
@@ -316,7 +407,8 @@ func ABTable(w io.Writer, rep ABReport, m ABMeta) error {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, strings.Join([]string{
 		"MODE", "TIER", "CHAMPION", "CHALLENGER", "PAIRS", "WINS", "LOSSES", "TIES",
-		"CHALLENGER WIN 95%", "COST", "HALTS", "FOLLOW-UPS", "ADVICE",
+		"CHALLENGER WIN 95%", "COST", "HALTS", "FOLLOW-UPS", "JUDGE FAMILY", "SAME FAMILY",
+		"UNJUDGED", "TRUNCATED", "ADVICE",
 	}, "\t"))
 	for _, row := range rep.Rows {
 		fmt.Fprintln(tw, strings.Join(abCells(row), "\t"))
@@ -349,11 +441,22 @@ func abCells(r ABRow) []string {
 	if r.Rec.HasCost {
 		cost = fmt.Sprintf("%.2fx", r.Rec.CostRatio)
 	}
+	judges, same := "-", "-"
+	if len(r.JudgeFamilies) > 0 {
+		// Text is every other cell's treatment and this one is built from a
+		// verdicts object's judge_model, which is text out of the bucket: a
+		// cell printed raw would carry its escapes to the operator's terminal.
+		judges = Text(strings.Join(r.JudgeFamilies, ","))
+	}
+	if r.SameFamily {
+		same = "yes"
+	}
 	return []string{
 		Text(r.Mode), Text(r.Tier), Text(r.Champion), Text(r.Challenger),
 		strconv.Itoa(r.Pairs), strconv.Itoa(r.Wins), strconv.Itoa(r.Losses), strconv.Itoa(r.Ties),
 		fmt.Sprintf("%.2f-%.2f", r.Rec.Lo, r.Rec.Hi),
-		cost, halts, strconv.Itoa(r.FollowUps), abAdvice(r.Rec),
+		cost, halts, strconv.Itoa(r.FollowUps), judges, same,
+		strconv.Itoa(r.Unjudged), strconv.Itoa(r.Truncated), abAdvice(r.Rec),
 	}
 }
 
@@ -379,6 +482,12 @@ func abNotes(rep ABReport) []string {
 		"COST is the median pair cost ratio, the challenger's model dollars over the champion's; - means no pair carried both arms' figures",
 		"no person, no repository and no task text is read: a row is a mode, a tier and two coder models (D560)",
 	}
+	if slices.ContainsFunc(rep.Rows, func(r ABRow) bool { return len(r.JudgeFamilies) > 0 }) {
+		notes = append(notes, "JUDGE FAMILY is the family of the model that judged the group's pairs (a Claude ID is anthropic; a provider model's family is its ID's vendor prefix), and SAME FAMILY says one of its families is one of the arms' own: blindness removes labels, not style (D553)")
+	}
+	if slices.ContainsFunc(rep.Rows, func(r ABRow) bool { return r.Unjudged > 0 || r.Truncated > 0 }) {
+		notes = append(notes, "UNJUDGED counts the group's pairs no judge has decided, TRUNCATED those whose patch was cut short at A2.1's cap and can never be judged (A5.1); at Critical an unjudged pair is in no figure at all (D561), and outside it a pair is decided on the hard signals whether or not a judge has read it")
+	}
 	if slices.ContainsFunc(rep.Rows, func(r ABRow) bool { return r.Rec.Decision == ab.DecisionNoConclusion }) {
 		notes = append(notes, fmt.Sprintf("a row with fewer than %d decisive pairs carries no conclusion: the sample cannot say, which is not the same answer as keeping the champion", ab.MinRuns))
 	}
@@ -402,18 +511,32 @@ type ABJSONDoc struct {
 // ABJSONRow is one group: the group, the counts, and the recommendation object
 // R3 reserves as the seam a writer would read.
 type ABJSONRow struct {
-	Mode              string               `json:"mode"`
-	Tier              string               `json:"tier"`
-	Champion          string               `json:"champion"`
-	Challenger        string               `json:"challenger"`
-	Pairs             int                  `json:"pairs"`
-	Wins              int                  `json:"wins"`
-	Losses            int                  `json:"losses"`
-	Ties              int                  `json:"ties"`
-	ChampionHalts     int                  `json:"champion_halts"`
-	ChallengerHalts   int                  `json:"challenger_halts"`
-	ChampionFollowUps int                  `json:"champion_follow_ups"`
-	Recommendation    ABJSONRecommendation `json:"recommendation"`
+	Mode              string `json:"mode"`
+	Tier              string `json:"tier"`
+	Champion          string `json:"champion"`
+	Challenger        string `json:"challenger"`
+	Pairs             int    `json:"pairs"`
+	Wins              int    `json:"wins"`
+	Losses            int    `json:"losses"`
+	Ties              int    `json:"ties"`
+	ChampionHalts     int    `json:"champion_halts"`
+	ChallengerHalts   int    `json:"challenger_halts"`
+	ChampionFollowUps int    `json:"champion_follow_ups"`
+	// JudgeFamilies, JudgeSameFamily, Unjudged and Truncated are the judge's
+	// own figures (A5.4, D553, D561): the families that judged the group,
+	// whether one of them is an arm's own, and the pairs no judge has decided
+	// and the pairs a cut-short patch leaves unjudgeable. The four are additive
+	// under names no earlier reader knows, so one reads the document it always
+	// read — except where the names cannot carry the difference: at Critical the
+	// figures above count only judged pairs (D561), so a group whose judge runs
+	// have not reached a pair reads fewer pairs, wins, losses and ties than the
+	// same records read before A5.4, and Unjudged is the figure that says how
+	// many. Outside Critical nothing about them moved.
+	JudgeFamilies   []string             `json:"judge_families"`
+	JudgeSameFamily bool                 `json:"judge_same_family"`
+	Unjudged        int                  `json:"unjudged"`
+	Truncated       int                  `json:"truncated"`
+	Recommendation  ABJSONRecommendation `json:"recommendation"`
 }
 
 // ABJSONRecommendation is the rule's answer as the JSON carries it: the advice,
@@ -479,6 +602,10 @@ func ABJSON(w io.Writer, rep ABReport, m ABMeta) error {
 			ChampionHalts:     r.ChampionHalts,
 			ChallengerHalts:   r.ChallengerHalts,
 			ChampionFollowUps: r.FollowUps,
+			JudgeFamilies:     append([]string{}, r.JudgeFamilies...),
+			JudgeSameFamily:   r.SameFamily,
+			Unjudged:          r.Unjudged,
+			Truncated:         r.Truncated,
 			Recommendation:    rec,
 		})
 	}

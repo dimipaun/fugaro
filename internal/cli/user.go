@@ -121,7 +121,7 @@ installation's on the next fugaro update, so a config that has not seen the
 members another admin added would drop them.`,
 		Args: cobra.NoArgs,
 	}
-	cmd.AddCommand(newUserLsCmd(), newUserGrantCmd(), newUserRevokeCmd(), newUserAddCmd(), newUserRmCmd())
+	cmd.AddCommand(newUserLsCmd(), newUserGrantCmd(), newUserRevokeCmd(), newUserAddCmd(), newUserRmCmd(), newUserOffboardCmd())
 	return cmd
 }
 

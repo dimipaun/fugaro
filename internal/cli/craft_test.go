@@ -78,6 +78,15 @@ defaults:
 // path to anything else on this tree stops resolving once it has.
 func craftFixture(t *testing.T) string {
 	t.Helper()
+	return craftFixtureWith(t, "")
+}
+
+// craftFixtureWith is craftFixture with one more block appended to the
+// installation's own config, which is where the subscription-spread switch is
+// written: the read takes the switch from there, so a test about it needs a
+// world whose config says so.
+func craftFixtureWith(t *testing.T, extra string) string {
+	t.Helper()
 	orig, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
@@ -88,7 +97,7 @@ func craftFixture(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, append(base, []byte(craftLocalExtra)...), 0o600); err != nil {
+	if err := os.WriteFile(path, append(base, []byte(craftLocalExtra+extra)...), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("FUGARO_CONFIG", path)
@@ -170,6 +179,60 @@ func TestCraftLsTheThreeLayers(t *testing.T) {
 	}
 	if errOut != "" && strings.Contains(errOut, "fugaro: problem:") {
 		t.Errorf("every access names a credential or a pool a layer holds, so the read has nothing to warn about: %q", errOut)
+	}
+}
+
+// TestCraftLsServesWhenTheSpreadIsOn is the switch's own arm: the same three
+// layers with the installation's own `subscription_spread: true`, where the
+// pool holds two subscriptions and therefore serves — on both rows that name
+// it, the one the owner set and the one that inherits it. The column states
+// what a run will do with the access and a run reads this switch, so a read
+// that answered it as off would report the one fact the column exists for the
+// wrong way round.
+func TestCraftLsServesWhenTheSpreadIsOn(t *testing.T) {
+	craftFixtureWith(t, "subscription_spread: true\n")
+	out, errOut, err := execute(t, "craft", "ls")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	pooled := 0
+	for _, row := range craftRows() {
+		if row.Access != "claude-pool" {
+			continue
+		}
+		pooled++
+		line := craftLine(t, out, row.Craft)
+		if strings.Contains(line, "no: the subscription-spread switch is off") {
+			t.Errorf("the %s row says the switch is off, and this machine's config turns it on: %q", row.Craft, line)
+		}
+		if !strings.HasSuffix(strings.TrimSpace(line), "yes") {
+			t.Errorf("the %s row names the pool the switch turns on and does not say it serves: %q", row.Craft, line)
+		}
+	}
+	if pooled == 0 {
+		t.Fatal("the fixture names no pool, so this test would pass against a read that says nothing at all")
+	}
+	if errOut != "" && strings.Contains(errOut, "fugaro: problem:") {
+		t.Errorf("every access names a credential or a pool a layer holds, so the read has nothing to warn about: %q", errOut)
+	}
+	// The document the console reads carries the same answer, from the same
+	// serializer: a member that kept saying inert would be the table and the
+	// wire disagreeing about one fact.
+	raw, _, err := execute(t, "craft", "ls", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, raw)
+	}
+	var doc craftLsDoc
+	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Crafts) != len(config.CraftNames) {
+		t.Fatalf("the document carries %d rows, want one per craft (%d)", len(doc.Crafts), len(config.CraftNames))
+	}
+	for i, row := range doc.Crafts {
+		if row.Inert {
+			t.Errorf("crafts[%d] (%s) is inert with the switch on: %+v", i, row.Craft, row)
+		}
 	}
 }
 

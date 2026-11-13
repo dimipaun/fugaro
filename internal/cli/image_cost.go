@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
-	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
@@ -65,9 +64,19 @@ type buildPricer interface {
 
 // imageCost is one command's build leases: one repository, one project's budget
 // database, one price lookup.
+//
+// The machine type and the region are held as strings rather than as the config
+// they came from, because there are two callers of this writer and only one of
+// them has a config: `fugaro image build` and `fugaro image refresh` run at a
+// checkout and read them from fugaro.yaml, while the catalog check job runs in
+// a Cloud Run job with no checkout at all and carries them in its assignment
+// (catalogCheckSpec.MachineType and BuildRegion, rendered from the same local
+// config by fugaro update). One writer, two sources, and nothing else here
+// differs between them.
 type imageCost struct {
-	lc *localcfg.Config
-	db *rtdb.Client
+	db      *rtdb.Client
+	machine string
+	region  string
 	// repo is the repository as a person writes it (owner/name) and slug its
 	// database key. The refusal names the first and the paths are the second,
 	// and both come from the same checkout the build comes from.
@@ -78,8 +87,8 @@ type imageCost struct {
 	now    func() time.Time
 }
 
-func newImageCost(lc *localcfg.Config, db *rtdb.Client, repo, slug, who string, pricer buildPricer) *imageCost {
-	return &imageCost{lc: lc, db: db, repo: repo, slug: slug, who: who, pricer: pricer, now: time.Now}
+func newImageCost(db *rtdb.Client, machine, region, repo, slug, who string, pricer buildPricer) *imageCost {
+	return &imageCost{db: db, machine: machine, region: region, repo: repo, slug: slug, who: who, pricer: pricer, now: time.Now}
 }
 
 // BuildOverCapError is the refusal of an image build no cap has room for
@@ -128,8 +137,7 @@ func (e *buildUnpricedError) Unwrap() error { return e.cause }
 // the day or the run, a price read that failed — returns an error and writes
 // nothing.
 func (c *imageCost) take(ctx context.Context, id string) (budget.BuildLease, *budget.Decision, error) {
-	machineType, region := c.lc.Build.MachineType, c.lc.BuildRegion()
-	rate, err := c.pricer.Rate(ctx, machineType, region)
+	rate, err := c.pricer.Rate(ctx, c.machine, c.region)
 	var noPrice *budget.NoPriceError
 	switch {
 	case errors.As(err, &noPrice):

@@ -332,3 +332,45 @@ func TestSettingsRegistryHasIssuesKeys(t *testing.T) {
 		}
 	}
 }
+
+// TestEscalationRegistryKeysAreLocalOnly: the ladder's thresholds decide when a
+// stalled item comes off its normal recipe, what it runs on then and at what
+// cost it is merged under the gate, so the local config is their only store
+// (E3, D2032, G3) — a row advertising the project layer or the shared file
+// would name a store the key cannot have, and the read would offer an edit the
+// write then refuses. Their owner is the generic path, which is what puts the
+// owner's own hand and the coding agent's fence in front of them at all.
+func TestEscalationRegistryKeysAreLocalOnly(t *testing.T) {
+	for _, key := range []string{
+		"escalation.r2_after_hours",
+		"escalation.r2_after_attempts",
+		"escalation.r3_after_hours",
+		"escalation.r2_coder",
+		"escalation.critical_path_factor",
+		"escalation.cost_ceiling",
+		"escalation.merge_judge",
+		"escalation.ready_drafts",
+		"escalation.modes.*.r2_after_hours",
+		"escalation.modes.*.r2_after_attempts",
+		"escalation.modes.*.r3_after_hours",
+		"escalation.modes.*.r2_coder",
+	} {
+		r, ok := Lookup(key)
+		if !ok {
+			t.Errorf("%s: no registry row, so the read cannot name a key the file holds", key)
+			continue
+		}
+		if !slices.Equal(r.Layers, []string{LayerLocal}) {
+			t.Errorf("%s: Layers = %v, want the local config alone — a threshold is authority, and no shared layer may hold it", key, r.Layers)
+		}
+		if r.Owner != "settings set" {
+			t.Errorf("%s: Owner = %q, want the generic path, the door that carries the typed form and the coding agent's fence", key, r.Owner)
+		}
+		if r.Doc != docEscalation {
+			t.Errorf("%s: Doc = %q, want %q", key, r.Doc, docEscalation)
+		}
+	}
+	if r, ok := Lookup("escalation.ready_drafts"); !ok || r.TypedWhy == "" {
+		t.Error("escalation.ready_drafts carries no TypedWhy, so turning the daemon's readiness authority on is written unasked (D2046)")
+	}
+}

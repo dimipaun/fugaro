@@ -44,17 +44,17 @@ func gradesLayerParsed(t *testing.T) *config.ProjectLayer {
 // moving apart would send an operator to a release that does not carry one of
 // them. It is written out because every other reader moves with the constant
 // and stays green at any number (docs/release-streams.yaml has 0.23.0 current
-// and Uakari 0.24.0 next, so this is the minor after the one slotSince names).
+// and Uakari 0.24.0 next, so it is the release slotSince names).
 func TestModelGradesSinceIsTheReleaseTheKeyShipsIn(t *testing.T) {
-	if modelGradesSince != "0.25.0" {
-		t.Errorf("modelGradesSince = %q: the model_grades key ships in CLI 0.25.0", modelGradesSince)
+	if modelGradesSince != "0.24.0" {
+		t.Errorf("modelGradesSince = %q: the model_grades key ships in CLI 0.24.0", modelGradesSince)
 	}
 	if rel, ok := projectpolicy.VersionRelease(projectpolicy.Version); !ok || rel != modelGradesSince {
 		t.Errorf("policy version %d arrived in %q, want %q: the node walk that carries it and the reader that knows the key are the same release", projectpolicy.Version, rel, modelGradesSince)
 	}
 }
 
-// TestModelGradesSinceHasAReleaseBullet: modelGradesSince names 0.25.0, which
+// TestModelGradesSinceHasAReleaseBullet: modelGradesSince names 0.24.0, which
 // is not tagged, so docs/release.md's Before-you-tag list is what holds the
 // constant to the release actually cut — the job every other *Since constant's
 // bullet does, and the one this constant's own comment claims. The test above

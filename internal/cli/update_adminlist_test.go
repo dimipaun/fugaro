@@ -218,7 +218,7 @@ func TestUpdateInACodingAgentsSessionWritesNoAdminList(t *testing.T) {
 	setRoster(t, r, rosterGrant("owner@example.com", "admin", "project"))
 	// The marker last, as the rigs that drive a session do
 	// (agentUpdateCheckout): the fixture's own helpers clear every marker
-	// (upgradeEnv), so a session set before the rig is built is not the
+	// (convergeEnv), so a session set before the rig is built is not the
 	// session the door runs in.
 	agentSession(t)
 
