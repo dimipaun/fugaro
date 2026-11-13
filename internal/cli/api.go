@@ -184,7 +184,7 @@ func ClipRunes(s string, n int) string { return clipRunes(s, n) }
 // name's flags to the tagged tree, where the command that carries them is
 // (ee/plugincheck). It answers a copy, so a caller that appends to it changes
 // nothing.
-func PaidCommandNames() []string { return slices.Clone(paidCommandNames) }
+func PaidCommandNames() []string { return slices.Clone(paidCommandNames()) }
 
 // RunsBucket is the bucket the project's runs are stored in.
 func (c *Cloud) RunsBucket() *blobx.Bucket { return c.env.bucket }
