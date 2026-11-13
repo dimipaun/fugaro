@@ -332,10 +332,11 @@ func (c *signInCodes) claimDevice(device string, now time.Time) (deviceCode, boo
 	defer c.mu.Unlock()
 	key := digest(device)
 	held, found := c.devices[key]
-	if !found || !now.Before(held.expires) {
-		if found {
-			delete(c.devices, key)
-		}
+	if !found {
+		return deviceCode{}, false
+	}
+	if !now.Before(held.expires) {
+		delete(c.devices, key)
 		return deviceCode{}, false
 	}
 	if !held.approved {
