@@ -243,6 +243,76 @@ func TestAPurchaseWhoseSubscriptionWriteFailedIsCompleted(t *testing.T) {
 	}
 }
 
+// termlessRecords is the store as a deployment that wrote its first records
+// before the term was part of one: what it answers with is the record as it was
+// written, which names no term at all. It is the state a redelivery meets after
+// the deploy that added the field.
+type termlessRecords struct {
+	Store
+}
+
+func (t termlessRecords) Issuances(ctx context.Context) ([]Record, error) {
+	held, err := t.Store.Issuances(ctx)
+	for i := range held {
+		held[i].TermDays = 0
+	}
+	return held, err
+}
+
+// TestAPurchaseRepairedFromARecordThatNamesNoTermRenews: a purchase whose
+// subscription write was lost is finished from the record the mint left (§5.2),
+// and that record may be one an earlier deploy wrote — one that names no term of
+// its own. The absent term is the repair's to fill and not to keep: a
+// subscription at zero days is one `checkoutPolicy` does not sell, so the
+// renewal and every seat change after it are refused for good (D442). What the
+// repair writes is the length of the key the record minted, and the renewal
+// inside that term is the proof it is one the checkout serves.
+func TestAPurchaseRepairedFromARecordThatNamesNoTermRenews(t *testing.T) {
+	f := newFixtureWith(t, Production, func(f *fixture) {
+		f.store = &Memory{}
+		f.deps.Store = termlessRecords{Store: &failingSubscriptions{Memory: f.store, refuse: 1}}
+	})
+	event := Event{
+		ID:           "evt-1",
+		Type:         EventPurchase,
+		OccurredAt:   f.now,
+		Subscription: "sub-acme.example",
+		Organisation: "acme.example",
+		WorkspaceID:  workspaceID,
+		Email:        buyerAddress("acme.example"),
+		Seats:        5,
+		TermDays:     365,
+	}
+	if rec := f.event(event); rec.Code != http.StatusInternalServerError {
+		t.Fatalf("a purchase whose subscription write failed was answered %d, want 500: the merchant's retry is what finishes it", rec.Code)
+	}
+	if _, held, _ := f.store.Subscription(context.Background(), "sub-acme.example"); held {
+		t.Fatal("the failed write left a subscription, want the event for the redelivery")
+	}
+
+	if rec := f.event(event); rec.Code != http.StatusOK {
+		t.Fatalf("the redelivered purchase was answered %d, want 200", rec.Code)
+	}
+	sub, held, err := f.store.Subscription(context.Background(), "sub-acme.example")
+	if err != nil || !held {
+		t.Fatalf("the redelivered purchase left no subscription (held=%v, err=%v), want the state the record describes", held, err)
+	}
+	if _, sold := checkoutPolicy(sub.TermDays); !sold {
+		t.Fatalf("the repaired subscription stands for %d day(s), want a term the checkout sells: the record named none and the key it minted is what the repair has left, while a subscription at zero days refuses every renewal and every seat change it will ever have (D442)", sub.TermDays)
+	}
+
+	// The window T26 opens sits inside the term the repair wrote, and an ordinary
+	// trigger a day before the end is what a real one meets.
+	f.advance(sub.Expires.Sub(f.now) - day)
+	if _, renewed, err := f.svc.Renew(context.Background(), "sub-acme.example"); err != nil || !renewed {
+		t.Fatalf("the renewal of a repaired subscription answered (renewed=%v, err=%v), want the next term's key: a term the checkout does not sell is one whose renewals are refused for good (D442)", renewed, err)
+	}
+	after, _, _ := f.store.Subscription(context.Background(), "sub-acme.example")
+	if !after.Expires.After(sub.Expires) {
+		t.Errorf("the renewed subscription ends %s and ended %s, want the term moved on: the renewal is the whole of what the repair's term was written for", after.Expires, sub.Expires)
+	}
+}
+
 // TestASeatChangeWhoseSubscriptionWriteFailedIsCompleted: the same failure on
 // the reissue path, where the record holds the seats the customer asked for and
 // the subscription still holds the old ones.

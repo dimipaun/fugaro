@@ -391,6 +391,14 @@ func (s *Service) completed(ctx context.Context, e Event, record Record) error {
 		sub.Organisation = record.Organisation
 		sub.Seats = record.Seats
 		sub.TermDays = record.TermDays
+		if sub.TermDays < 1 {
+			// A record an earlier deploy wrote names no term of its own, and the
+			// length of the key it minted is the only term it has left to state.
+			// The repair may not carry that absence into the state: a subscription
+			// at zero days is one `checkoutPolicy` does not sell, so every renewal
+			// and every seat change after it is refused for good (D442).
+			sub.TermDays = daysBetween(record.Issued, record.Expires)
+		}
 		sub.Email = to
 		sub.At = e.OccurredAt
 		// The workspace is the event's and not the record's: the issuance record
