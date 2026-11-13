@@ -136,6 +136,16 @@ type Mints interface {
 // a minter from before this release has never heard of is a 400 on every mint
 // for as long as the deploy takes — the field's own bound is what the minter
 // applies to a value that is there, and an absent one is the row's.
+//
+// The answer carries the same skew the other way, and that one is held by the
+// order the two halves are deployed in rather than by anything in this file:
+// the intake reads the answer as strictly as the minter reads this request, so
+// a record field a newer minter adds is every mint failing until the intake is
+// the revision serving. That is why the services root writes the dependency
+// from the minter onto the intake — the intake lands first — and why the pair is
+// ordered one way and not symmetrically: an intake newer than its minter costs
+// nothing, because a field the older answer leaves out is the zero value the
+// reader already falls back from (terraform/services/main.tf).
 type RequestV1 struct {
 	Environment  Environment `json:"environment"`
 	Policy       string      `json:"policy"`

@@ -163,6 +163,16 @@ resource "google_cloud_run_v2_service" "minter" {
   lifecycle {
     ignore_changes = [client, client_version]
   }
+
+  # The intake reads this service's answer as strictly as this service reads the
+  # intake's request, so a field a newer minter adds to the record is a whole
+  # answer a released intake refuses and every mint fails for as long as that
+  # intake is the one serving: this service is the revision that has to land
+  # second, and the one apply that changes both is the only place the order can
+  # be stated. There is nothing to guard the other way round — an answer that
+  # leaves a field out is that field's zero value to its reader — so the pair is
+  # ordered one way and not symmetrically.
+  depends_on = [google_cloud_run_v2_service.intake]
 }
 
 # The intake alone is public: roles/run.invoker to allUsers, on the intake and

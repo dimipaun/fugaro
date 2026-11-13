@@ -1311,6 +1311,31 @@ func TestTheMinterHasNoPublicInvoker(t *testing.T) {
 	}, "the minter has no public invoker, and the intake's ID token is what the platform checks before its container runs (D450(a))")
 }
 
+// TestTheIntakeIsTheRevisionThatLandsFirst: the intake reads the minter's answer
+// strictly (§3.2, minterclient.go), so a record field a newer minter answers with
+// is a whole answer a released intake refuses and every mint fails until that
+// intake is the one serving. The one apply that changes both images is where that
+// is decided, so the order is written as a dependency and asserted here rather
+// than left to whoever runs the deploy: the minter waits for the intake, and the
+// intake names nothing of the minter's — which is what makes the pair acyclic as
+// well as correctly ordered, since the reverse edge is a graph Terraform refuses
+// to apply rather than a deploy that goes the wrong way.
+func TestTheIntakeIsTheRevisionThatLandsFirst(t *testing.T) {
+	minter := tfRootBlock(t, servicesRoot, `resource "google_cloud_run_v2_service" "minter"`)
+	got, ok := tfAttr(minter, "depends_on")
+	if !ok || tfCompact(got) != "[google_cloud_run_v2_service.intake]" {
+		if got == "" {
+			got = "nothing"
+		}
+		t.Errorf("the minter service in %s depends on %s, want [google_cloud_run_v2_service.intake]: a minter revision that lands before the intake's fails every mint for the length of the deploy, since the answer it writes carries a field the released intake refuses the whole answer over", servicesRoot, got)
+	}
+
+	intake := tfRootBlock(t, servicesRoot, `resource "google_cloud_run_v2_service" "intake"`)
+	if strings.Contains(tfCompact(intake), "google_cloud_run_v2_service.minter") {
+		t.Errorf("the intake service in %s names the minter's service:\n%s\nthe intake is the revision that lands first, so anything it writes about the minter is either the reverse edge — a cycle, and one Terraform will not apply — or a reach the intake does not have", servicesRoot, strings.TrimSpace(intake))
+	}
+}
+
 // TestTheTestsReadEveryFileOfTheTree: everything Terraform would read under
 // this tree is either read by the checks above or refused here, because a sweep
 // that silently skipped a file is a sweep that proves nothing about it. Four
