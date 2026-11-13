@@ -1,388 +1,537 @@
 # Fugaro portal: implementation plan
 
-Builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md) (findings F1–F24,
-decisions D2180–D2195).
+Builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md) (findings F1–F36,
+decisions D2180–D2200).
 
 ## Status
 
 **Plan only. Nothing is implemented. No task is approved**: each task needs the owner's own explicit go,
 by name. Answering a decision is not approving a task.
 
-The owner's answers that shape this plan (2026-11-12): the backend is Go and extends `ee/keyservice`
-(D2180); the key is the v2 bundle and a seat change reissues a successor that `licence refresh` fetches
-(D2181); a key is never stored, and "reveal" rotates it (D2182); #2457 and #2458 merge as planned
-(D2183); the free seat is minted at the first workspace (D2184); trials and open source stay, in the
-portal (D2185); admins and then operators by grant order hold the seats (D2186, held with K3.4); the
-operations organisation's owners and admins mint after a fresh sign-in (D2187); the SPA reaches data
-through the API only (D2188); resellers accrue daily against a credit limit (D2189) and owe Fugaro
-(D2190); resellers create their customers' organisations (D2191); one Paddle subscription per workspace
-(D2192); the SPA lives in `ee/portal/` (D2193); everything runs in `fugaro-prod`, staging in
-`fugaro-staging` (D2194); a sole owner cannot delete their account (D2195).
+The owner's answers that shape this plan (2026-11-12):
+
+- **Backend and keys.** The backend is Go and extends `ee/keyservice` (D2180). The key is the v2 bundle
+  (D2181). A reissue for seats or a renewal keeps the secret, and refresh returns the newest key (D2200).
+  "Reveal" rotates through an encrypted 24-hour handover, once a day (D2182 as amended). #2457 and #2458
+  merge as planned (D2183).
+- **Entitlements.** Every grant is an entitlement, bound to a Firebase project id in the portal or by
+  `licence login`, then minted (D2196, D2199). The free seat is an entitlement at sign-up (D2184 as
+  amended). A paid term runs from payment (D2197). Rebinding is self-serve once per 30 days (D2198).
+  Trials and open source stay, in the portal (D2185).
+- **Seats.** Admins, then operators in grant order, hold the seats (D2186, held with K3.4).
+- **Operations.** Owners and admins mint after a fresh sign-in (D2187).
+- **Data path.** The SPA reaches data through the API only (D2188).
+- **Resellers.** They accrue daily against a credit limit (D2189), owe Fugaro (D2190) and create their
+  customers' organisations (D2191).
+- **Billing.** One Paddle subscription per workspace (D2192).
+- **Placement and deletion.** The SPA lives in `ee/portal/` (D2193). Everything runs in `fugaro-prod`
+  with staging in `fugaro-staging`; the owner accepted the risk round 1 found (D2194). A sole owner
+  cannot delete their account (D2195).
 
 ## Conventions every part follows
 
 - `CLAUDE.md` and [.claude/rules/ee.md](../../.claude/rules/ee.md): every file under `ee/` starts with
-  the two-line SPDX notice; a JSON file gets a sibling `.license` file (`TestEEFilesCarryTheNotice`);
-  nothing outside `ee/` imports `ee/` (`go test ./internal/eeboundary/ -count=1` after each Go task).
-- **No agent deploys, operates or holds a signing key for the service** (ee.md, R5 as amended by D440).
-  Every deploy, project, provider account and signing key is OWNER-RUN (slice P0), and the scripts say
-  so.
-- Hermetic tests: no network, no real cloud, no home directory. The Firestore adapter's tests run under
-  a new `firestore` build tag against the emulator and never in default CI; everything else runs on the
-  in-memory store. Paddle, Resend and the minter are `httptest` fakes.
-- No secret-shaped literal in a test, fixture or doc: a Paddle webhook secret, a renewal secret and a
-  Resend key are built at test time.
-- Config and wire formats decode strictly. The API's shapes are JSON Schemas in `ee/portal/schemas/`
-  (F20); adding a field is allowed, and a changed meaning gets a new name.
-- Never edit `.github/workflows/`; the portal's CI job is staged under `docs/pending-workflows/` (P9.2).
+  the two-line SPDX notice, and a JSON file (schemas, fixtures, `package.json`, the lockfile,
+  `tsconfig.json`, `firebase.json`) gets a sibling `.license` file (`TestEEFilesCarryTheNotice`); nothing
+  outside `ee/` imports `ee/` (`go test ./internal/eeboundary/ -count=1` after each Go task).
+- **No agent deploys, builds a release image of, operates or holds a signing key for the service**
+  (ee.md, R5 as amended by D440). Slice P0 and the live checks are OWNER-RUN.
+- Hermetic tests: no network, no real cloud, no home directory. Paddle, Resend, KMS and the minter are
+  `httptest` or interface fakes. The Firestore adapter's suite runs under a `firestore` tag against the
+  emulator, staged in the pending portal workflow (P9.2).
+- No secret-shaped literal in a test, fixture or doc: secrets are built at test time.
+- Strict decoding. The API's shapes are JSON Schemas in `ee/portal/schemas/`, one file per area, and the
+  Go types are `ee/keyservice/wire_<area>.go`. Both are written by P1.1. A later task changes only its
+  own area's files, and every area has one task. Adding a field is allowed; a changed meaning gets a new
+  name.
+- **Cross-tenant tests in every API task.** An owner or admin of organisation A acting on B's workspace,
+  entitlement, key, subscription or member is refused (`TestAnotherOrgsXIsRefused` in each task).
+- Never edit `.github/workflows/`; the portal's workflow is staged under `docs/pending-workflows/`.
 - Comments explain why. No TODO comments.
-- New dependencies (F24), each added by one task: `cloud.google.com/go/firestore` (P1.2), `github.com/getsentry/sentry-go` (P1.6); in
-  `ee/portal/package.json`: `react`, `react-dom`, `react-router-dom`, `firebase`, `@sentry/react`,
-  `@paddle/paddle-js`, `vite`, `@vitejs/plugin-react`, `typescript`, `vitest`, `@testing-library/react`,
-  `jsdom`, `ajv` (P1.4). Nothing else without asking.
-- Targeted tests only: each task names its `-run` filter or its test file.
+- New dependencies (F24), each added by one task: `cloud.google.com/go/firestore` (P1.2),
+  `github.com/getsentry/sentry-go` (P1.6), `cloud.google.com/go/kms` (P1.7). `ee/portal/package.json`
+  (P1.4) adds `react`, `react-dom`, `react-router-dom`, `firebase`, `@sentry/react`, `@paddle/paddle-js`,
+  `vite`, `@vitejs/plugin-react`, `typescript`, `vitest`, `@testing-library/react`, `jsdom` and `ajv`.
+  Nothing else without asking.
+- Targeted tests only. Live-check scripts go under `scripts/live-checks/check-NNN.sh`
+  (`TestLiveCheckScripts`), registered in `docs/gcp-live-checklist.md`.
 
 ## Global constraints and review focus
 
 | Constraint | Pinned by |
 | --- | --- |
-| Operations and reseller organisations refuse any provider but `google.com` and `microsoft.com`, on every request | P1.3 `TestEmailLinkIsRefusedForOperations`, P2.1 `TestEmailLinkUserIsRefusedInAResellerOrg` |
+| A person who belongs to an operations or reseller organisation is refused, for any request using that membership, unless signed in with `google.com` or `microsoft.com` | P1.3 `TestEmailLinkIsRefusedForOperations`, P2.1 `TestSSORuleFollowsTheActorsMembership` |
+| Microsoft sign-ins to operations and reseller organisations carry an allowed tenant id | P1.3 `TestMicrosoftTenantIsPinned` |
 | An invitation is accepted only by its own verified address | P2.2 `TestInvitationIsBoundToItsAddress` |
-| No key secret is stored or mailed, ever | P3.2 `TestNoKeyIsStored`, P2.2 `TestResendMailerSendsNoKey` |
-| A reveal rotates, needs a fresh sign-in, and tells the other owners | P3.2 |
-| The API never signs; only the minter's identity can | P1.5 `TestOnlyTheMinterCanSign`, Check 571 |
-| A minted claim beyond the tier's cap is refused (D454) | P5.1 `TestMintIsCappedPerTier` |
-| Every operations action, reads included, is audited | P2.1 `TestOperationsReadsAreAudited`, P5.1 `TestEveryOperationsActionIsAudited` |
-| A Paddle event is stored as received before it is processed, and a redelivery changes nothing | P4.2 |
+| No key or secret is mailed; a stored handover is encrypted | P2.2 `TestResendMailerSendsNoKey`, P3.6 `TestHandoverIsStoredEncrypted` |
+| A reveal rotates, needs a fresh sign-in, is one per day, never extends a term, and tells the other owners | P3.2 |
+| A seat change or renewal reaches the installation through `licence refresh` | P3.6 `TestSeatChangeIsTheNextRenewal` |
+| `/renew` issues only while the entitlement runs | P3.6 `TestRenewalStopsWhenTheEntitlementEnds` |
+| Revocation covers every key of an entitlement | P3.6 `TestRevocationCoversEveryRotation` |
+| The minter is internal, invokable by the API only, and enforces row, term cap and policy bounds | P1.5 `TestOnlyTheAPIInvokesTheMinter`, P1.8 |
+| D454's rate per tier queues the excess for operations mints | P5.1 `TestOperationsMintsQueueOverTheRate` |
+| Every operations action, reads included, is audited | P2.1, P5.1 |
+| A Paddle transaction is created server-side; an event is stored as received first, checked for time, and a redelivery changes nothing | P4.1, P4.2 |
 | A reseller sees only its customers and never a secret | P6.1 |
-| Two concurrent reseller mints cannot pass the credit limit together | P6.2 `TestConcurrentMintsCannotExceedTheLimit` |
+| Two concurrent reseller mints cannot pass the credit limit together | P6.2 (memory, and the emulator suite) |
 | Firestore rules deny every client access | P1.5 `TestFirestoreRulesDenyClients` |
-| No analytics request before consent; Sentry sends no personal data | P1.4 |
-| A staging key never verifies in production | existing `TestStagingKeyIDIsRefused`; Check 574 |
+| No analytics before consent; Sentry sends no personal data | P1.4, P1.6 |
+| A staging key never verifies in production | `TestStagingKeyIDIsRefusedV1`; Check 574 |
 
 ## Limits this plan accepts
 
-- A reveal rotates a live key: an installation without a renewal job (TN5 of licence-key-v2) must run
-  `fugaro licence set` again with the new bundle after 24 hours.
-- The operations second factor is the identity provider's MFA, which Fugaro cannot see (D2187).
-- One project (D2194): the isolation of the signer rests on IAM inside `fugaro-prod`, measured by
-  Check 571, not on a project boundary.
-- The free seat's abuse control is the terms (D2184).
+- **One project (D2194, accepted by the owner):** the website's CI deployer can replace the portal's
+  JavaScript, and project-level Firestore, Cloud Run or service-account grants in `fugaro-prod` reach the
+  signer. Check 571 lists every such grant.
+- An installation without a renewal job (TN5 of licence-key-v2) must `licence set` the new bundle within
+  24 hours of a reveal.
+- The operations second factor is the identity provider's (D2187).
+- The free seat's abuse control is the terms and a per-account daily limit on new organisations.
 
 ## Slices and tasks
 
 Every task's reviewer tier is **opus + mandatory independent review** where it says SECURITY, otherwise
-standard. Each task's Red step is its first named test, written first and failing because the code it
-tests does not exist yet, unless the task says otherwise.
+standard. Each task's Red step is its first named test, written first and failing because the code does
+not exist yet.
 
 ### Slice P0: owner-run (no agent performs any step)
 
-- **P0.1 Projects and Firebase. OWNER-RUN.** In `fugaro-prod` and `fugaro-staging`: enable Auth's
-  Google, Apple (a Services ID in the Apple developer account), Microsoft (an app registration) and email
-  link providers; add `app.fugaro.dev` (staging: a staging host) to the authorised domains; create the
-  `portal` hosting site and its DNS record. Depends on: none.
-- **P0.2 Provider accounts. OWNER-RUN.** Paddle sandbox and live (subscriptions S8.5, licence-key-v2
-  K5.2): one product per policy row, the webhook pointed at `https://app.fugaro.dev/api/paddle/webhook`;
-  Resend and its DNS records (staging uses Resend's test mode and Paddle's sandbox only); the Sentry
-  project and its DSN; the analytics property. Each secret goes into
-  Secret Manager by the owner: `gcloud secrets versions add <name> --data-file=-` with the names P1.5
-  creates. Depends on: P1.5 applied (P0.4).
-- **P0.3 Counsel. OWNER-RUN.** The terms of service and licence terms the portal records acceptance of,
-  reseller invoicing and sales tax, the privacy notice (Firestore personal data, analytics, Sentry), D457
-  retention. Gates P0.5's production deploy, not any task.
-- **P0.4 Apply the Terraform. OWNER-RUN.** `terraform -chdir=ee/keyservice/terraform/keyring apply
-  -var project=fugaro-staging` then `services`; then the same for `fugaro-prod`. If a `fugaro-licence` ring
-  exists (UNVERIFIED), destroy its key versions in the console; the ring itself cannot be deleted.
-  Depends on: P1.5.
-- **P0.5 Deploy and seed. OWNER-RUN.** `scripts/deploy-portal.sh --project fugaro-staging --dry-run`, then
-  without `--dry-run`; Check 570–575 on staging; then production. Seed the operations organisation:
-  `scripts/deploy-portal.sh --seed-operations <owner address> --project <p>`. Depends on: P9.2, P2.1, P0.4.
+- **P0.1 Projects and Firebase.** In `fugaro-prod` and `fugaro-staging`, enable Auth's Google, Apple
+  (Services ID), Microsoft (app registration) and email-link providers. Add `app.fugaro.dev` and the staging
+  host to the authorised domains. Create the `fugaro-portal` hosting site and its DNS. Depends on: none.
+- **P0.2 Provider accounts.** Paddle sandbox and live (subscriptions S8.5, licence-key-v2 K5.2): one price
+  per row, the webhook at `https://app.fugaro.dev/api/paddle/webhook`. Resend and its DNS (staging uses
+  Resend's test mode and Paddle's sandbox only). Sentry project and DSN. Analytics property. Each secret
+  goes in with `gcloud secrets versions add <name> --data-file=- --project <p>`, under the names P1.5
+  creates. Depends on: P0.4.
+- **P0.3 Counsel.** The terms of service, licence terms, reseller invoicing and tax, the privacy notice,
+  and D457 retention including raw Paddle events. Gates P0.5's production deploy.
+- **P0.4 Apply the Terraform.** `terraform -chdir=ee/keyservice/terraform/keyring apply
+  -var project=fugaro-staging -var environment=staging`, then `services` the same way, then both for
+  `fugaro-prod` with `environment=production`. If a `fugaro-licence` ring exists, destroy its key versions;
+  the ring cannot be deleted. Depends on: P1.5.
+- **P0.5 Build, deploy and seed.** `scripts/deploy-portal.sh --project fugaro-staging --dry-run`, then
+  without `--dry-run`. The script runs the Cloud Build of P1.7's two images, deploys both services and the
+  hosting site, and seeds the operations organisation with `--seed-operations <owner address>`. Production
+  follows Check 570–575. Depends on: P0.1, P0.2, P0.4, P1.7, P9.2, P2.1.
+- **P0.6 The live checks.** `scripts/live-checks/check-570.sh` … `check-575.sh` on staging. Depends on:
+  P9.4, P0.5.
 
 ### Slice P1: foundations (inert alone)
 
-- **P1.0 The API mount. SECURITY.** Files: `ee/keyservice/api.go` (new), `ee/keyservice/service.go`
-  (`Handler` mounts the `/api/` registry), `ee/keyservice/api_test.go` (new). Interfaces produced:
-  `registerAPI(method, path string, h apiHandler)`, called from each area file's `init`, so no later task
-  edits `service.go`; one JSON error shape; a body cap per route; no CORS (Hosting rewrites `/api/**` to
-  the service, same origin). Tests: `TestAPIRoutesComeFromTheRegistry`, `TestAPIErrorsAreUniform`,
-  `TestAPIBodyIsCapped`. Command: `go test ./ee/keyservice/ -tags ee -run 'TestAPI' -count=1`. Depends on:
-  #2457 merged (one writer of `service.go`). Commit: `ee: the portal API's route registry`.
-- **P1.1 Wire schemas and Go types.** Files: `ee/portal/schemas/*.schema.json` (new: organisation,
-  membership, invitation, workspace, key metadata, reveal bundle, checkout context, subscription mirror,
-  ledger entry, statement, report rows, audit entry, error), each with a `.license` file;
-  `ee/portal/schemas/fixtures/*.json` (new); `ee/keyservice/wire.go`, `wire_test.go` (new). Tests:
-  `TestWireFixturesDecodeStrictly`, `TestWireRefusesUnknownFields`, `TestRevealBundleIsTheOnlySecretShape`.
-  Command: `go test ./ee/keyservice/ -tags ee -run 'TestWire|TestRevealBundle' -count=1`. Depends on: none.
-  Commit: `ee: the portal's wire schemas`.
-- **P1.2 The document store.** Files: `ee/keyservice/docstore/` (new package: `docs.go` the interface with
-  get, put, query and a transaction; `memory.go`; `firestore.go`; `conformance_test.go` run on memory;
-  `firestore_test.go` with `//go:build firestore` running the same suite on the emulator), `go.mod`,
-  `go.sum`; `ee/keyservice/firestore_store.go` (new: the existing `Store` interface on `docstore`).
-  Tests: `TestDocstoreConformance`, `TestTransactionRetriesOnConflict`, `TestStoreOnDocstoreConformance`.
-  Command: `go test ./ee/keyservice/... -tags ee -run 'TestDocstore|TestTransaction|TestStoreOnDocstore' -count=1`;
-  the emulator half `go test -tags 'ee firestore' ./ee/keyservice/docstore/ -count=1` (needs the emulator,
-  never in default CI). Depends on: none. Commit: `ee: a document store on Firestore`.
-- **P1.3 Sign-in for the API. SECURITY.** Files: `ee/keyservice/portalauth.go`, `portalauth_test.go` (new).
-  Verifies Firebase ID tokens of the deploying project by reusing `ee/coordinator/mcpauth/firebase.go`
-  (audience, issuer, `email_verified` pinned); answers the caller's address (folded as `access.Member`
-  folds it), provider and `auth_time`; `RequireSSO(orgType)` and `FreshWithin(5*time.Minute)`; verifies
-  Cloud Scheduler's OIDC token for the job endpoints (P6.3, P7.1). Licence-key-v2's K2.4 consumes this
-  verifier instead of writing its own (P9.1). Tests: `TestEmailLinkIsRefusedForOperations` (both
-  `password` and `emailLink`, UNVERIFIED which one Firebase sends), `TestTokenFromAnotherProjectIsRefused`,
-  `TestUnverifiedEmailIsRefused`, `TestStaleSignInIsRefusedForMint`, `TestSchedulerTokenFromAnotherAccountIsRefused`.
-  Command: `go test ./ee/keyservice/ -tags ee -run 'TestEmailLink|TestTokenFrom|TestUnverified|TestStale|TestSchedulerToken' -count=1`.
-  Depends on: none. Commit: `ee: the portal API verifies sign-in and its provider`.
-- **P1.4 The SPA skeleton.** Files (all new, under `ee/portal/`): `package.json`, `package-lock.json`
-  (each with `.license`), `vite.config.ts`, `tsconfig.json` (+ `.license`), `index.html`, `src/main.tsx`,
-  `src/app.tsx`, `src/routes.ts` (collects `src/screens/*/route.tsx` with `import.meta.glob`, so later
-  tasks add folders and edit no shared file), `src/api/client.ts`, `src/api/types.ts`, `src/auth/*`,
-  `src/telemetry.ts` (Sentry: no personal data, no replay, DSN from the build environment, absent means
-  off), `src/consent.ts` (analytics only after consent, the site's D93 rule), `src/styles.css` importing
-  `website/src/styles/tokens.css`, `src/screens/signin/*`, `test/*`. Tests: `types.test.ts` (every
-  fixture of P1.1 validates with ajv and type-checks), `signin.test.tsx` (four providers offered),
-  `consent.test.ts` (no analytics request before consent), `telemetry.test.ts` (no user fields sent).
-  Command: `cd ee/portal && npm ci && npx vitest run && npx tsc --noEmit`. Depends on: P1.1.
-  Commit: `ee: the portal app's skeleton and sign-in`.
-  Layouts are mobile-first and work at a 360px width (the spec's "responsive").
-- **P1.6 Backend error reporting.** Files: `ee/keyservice/errreport.go`, `errreport_test.go` (new),
-  `ee/keyservice/api.go` (wraps the registry's handlers), `go.mod`, `go.sum` (`github.com/getsentry/sentry-go`).
-  Panics and 5xx answers go to Sentry with no request body, header or address; no DSN means off. Tests:
-  `TestPanicIsReportedWithoutTheBody`, `TestNoDSNReportsNothing`. Command: `go test ./ee/keyservice/ -tags ee -run 'TestPanicIs|TestNoDSN' -count=1`.
-  Depends on: P1.0, P1.2 (one writer of `go.mod` per level). Commit: `ee: the portal API reports errors to Sentry`.
-- **P1.5 Infrastructure. SECURITY.** Files: `ee/keyservice/terraform/keyring/*.tf` (the default project
-  becomes the variable's required value; one key id per apply, so staging's ring holds only the staging
-  key), `ee/keyservice/terraform/services/*.tf` (the Firestore database `portal`, the API service, the
-  minter, the secrets' empty containers, `scheduler.tf` with the statement and reminder jobs **paused**,
-  the minter's signer grant on the ring only), `ee/portal/firestore.rules` (+ `.license`: deny all),
-  `ee/keyservice/terraform/infra_test.go`. Tests: `TestOnlyTheMinterCanSign`, `TestNoProjectLevelKMSRole`,
-  `TestStagingRingHoldsOnlyTheStagingKey`, `TestFirestoreRulesDenyClients`, `TestNoServiceRunsAsADefaultAccount`.
-  Command: `go test -tags 'ee terraform' ./ee/keyservice/terraform/ -count=1`. Depends on: none.
-  Commit: `ee: the portal's infrastructure in one project (D2194)`.
+- **P1.0 The API mount and dependencies. SECURITY.**
+  - Files: `ee/keyservice/api.go` (new), `ee/keyservice/service.go`, `ee/keyservice/api_test.go` (new).
+  - `Handler` mounts an `/api/` registry. Area files call `registerAPI(method, path, h)` from `init`, so no
+    later task edits `service.go`. `Deps` and `New` gain every interface later tasks need: the document
+    store, the sign-in verifier, the Paddle client, the Scheduler verifier, the handover sealer and the
+    mailer. Absent ones are refused at start only when a route that needs them is mounted.
+  - Also: one JSON error shape, a body cap per route, no CORS (Hosting rewrites `/api/**` to the service).
+  - Tests: `TestAPIRoutesComeFromTheRegistry`, `TestAPIErrorsAreUniform`, `TestAPIBodyIsCapped`,
+    `TestClientAddressBehindHostingIsTheCallers`.
+  - Command: `go test ./ee/keyservice/ -tags ee -run 'TestAPI|TestClientAddress' -count=1`.
+  - Depends on: #2457, #2458. Commit: `ee: the portal API's route registry`.
+- **P1.1 Wire schemas and types.**
+  - Files: `ee/portal/schemas/<area>.schema.json` (new: orgs, invites, workspaces, entitlements, keys,
+    checkout, billing, ledger, ops, resellers, statements, reports, audit, error), each with `.license`;
+    `ee/portal/schemas/fixtures/*.json` with `.license` (new); `ee/keyservice/wire_<area>.go`,
+    `wire_test.go` (new).
+  - Tests: `TestWireFixturesDecodeStrictly`, `TestWireRefusesUnknownFields`,
+    `TestRevealBundleIsTheOnlySecretShape`.
+  - Command: `go test ./ee/keyservice/ -tags ee -run 'TestWire|TestRevealBundle' -count=1`.
+  - Depends on: none. Commit: `ee: the portal's wire schemas`.
+- **P1.2 The document store.**
+  - Files: `ee/keyservice/docstore/` (new: `docs.go` with get, put, query and transactions; `memory.go`;
+    `firestore.go`; `conformance_test.go`; `firestore_test.go` under `//go:build firestore`), `go.mod`,
+    `go.sum`, and `ee/keyservice/firestore_store.go` (new: the `Store` interface, as #2457 and #2458 leave
+    it, on `docstore`).
+  - Tests: `TestDocstoreConformance`, `TestTransactionRetriesOnConflict`, `TestStoreOnDocstoreConformance`.
+  - Command: `go test ./ee/keyservice/... -tags ee -run 'TestDocstore|TestTransaction|TestStoreOnDocstore' -count=1`.
+  - Depends on: #2457, #2458. Commit: `ee: a document store on Firestore`.
+- **P1.3 Sign-in for the API. SECURITY.**
+  - Files: `ee/coordinator/mcpauth/firebase.go` (`Identity` gains `Provider`, `AuthTime` and `TenantID`;
+    the D923 comment names the portal as a second caller), `ee/keyservice/portalauth.go`,
+    `portalauth_test.go` (new).
+  - The verifier pins audience, issuer and `email_verified`. It compares addresses through `access.Member`
+    on both sides and offers `RequireSSO`, `FreshWithin(5*time.Minute)` and the tenant check. It also
+    verifies Cloud Scheduler OIDC tokens, account **and** audience.
+  - Tests: `TestEmailLinkIsRefusedForOperations` (both `password` and `emailLink`),
+    `TestTokenFromAnotherProjectIsRefused`, `TestUnverifiedEmailIsRefused`, `TestStaleSignInIsRefusedForMint`,
+    `TestMicrosoftTenantIsPinned`, `TestSchedulerTokenNeedsItsAccountAndAudience`, plus the existing
+    `go test ./ee/coordinator/mcpauth/ -tags ee -count=1`.
+  - Command: `go test ./ee/keyservice/ ./ee/coordinator/mcpauth/ -tags ee -run 'TestEmailLink|TestTokenFrom|TestUnverified|TestStale|TestMicrosoftTenant|TestSchedulerToken' -count=1` (mcpauth's own suite runs whole).
+  - Depends on: none. Commit: `ee: the portal API verifies sign-in, provider and tenant`.
+- **P1.4 The SPA skeleton.**
+  - Files (new, under `ee/portal/`): `package.json`, `package-lock.json`, `tsconfig.json` (each with
+    `.license`); `vite.config.ts`, `index.html`; `src/main.tsx`, `src/app.tsx`; `src/routes.ts`, which
+    collects `src/screens/*/route.tsx` with `import.meta.glob`; `src/api/client.ts`,
+    `src/api/types/<area>.ts`; `src/auth/*`; `src/telemetry.ts` (Sentry with no personal data and no
+    replay, off without a DSN); `src/consent.ts` (analytics after consent, D93); `src/styles.css`
+    (imports `website/src/styles/tokens.css`, mobile-first); `src/screens/signin/*`; `test/*`. Also
+    `internal/eeboundary/licence_test.go`: the portal's lockfile joins the copyleft audit, skipped when
+    `ee/` is absent.
+  - Tests: `types.test.ts` (every fixture validates with ajv and type-checks), `signin.test.tsx`,
+    `consent.test.ts`, `telemetry.test.ts`.
+  - Command: `cd ee/portal && npm ci && npx vitest run && npx tsc --noEmit`, plus
+    `go test ./internal/eeboundary/ -count=1`.
+  - Depends on: P1.1. Commit: `ee: the portal app's skeleton and sign-in`.
+- **P1.5 Infrastructure. SECURITY.**
+  - Files: `ee/keyservice/terraform/keyring/*.tf` (the project and one environment per apply: one key id
+    per ring, amending D459(a)); `ee/keyservice/terraform/services/*.tf`.
+  - The services root adds the Firestore database `portal`, the API and minter services, the minter's
+    ingress set to internal with the API's account as its only invoker, and the minter's signer grant on
+    its ring only. It adds a KMS encrypt/decrypt key for the handover whose decrypter is the API's account
+    only, the secrets' empty containers, and `scheduler.tf` with the statement and reminder jobs **paused**.
+  - Also `ee/portal/firestore.rules` (+ `.license`, deny all) and
+    `ee/keyservice/terraform/infra_test.go`.
+  - Tests: `TestOnlyTheMinterCanSign`, `TestOnlyTheAPIInvokesTheMinter`, `TestMinterIngressIsInternal`,
+    `TestOnlyTheAPIDecryptsHandovers`, `TestRingHoldsOneEnvironmentsKey`, `TestFirestoreRulesDenyClients`,
+    `TestNoServiceRunsAsADefaultAccount`.
+  - Command: `go test -tags 'ee terraform' ./ee/keyservice/terraform/ -count=1`.
+  - Depends on: none. Commit: `ee: the portal's infrastructure in one project (D2194)`.
+- **P1.6 Backend error reporting.**
+  - Files: `ee/keyservice/errreport.go`, `errreport_test.go` (new); `ee/keyservice/api.go`, which wraps
+    the registry's handlers; `go.mod`, `go.sum`.
+  - Panics and 5xx answers go to Sentry without body, headers or address; no DSN means off.
+  - Tests: `TestPanicIsReportedWithoutTheBody`, `TestNoDSNReportsNothing`.
+  - Command: `go test ./ee/keyservice/ -tags ee -run 'TestPanicIs|TestNoDSN' -count=1`.
+  - Depends on: P1.0, P1.2. Commit: `ee: the portal API reports errors to Sentry`.
+- **P1.7 The deployable programs. SECURITY.**
+  - Files (new): `ee/keyservice/cmd/portal-api/main.go`, `ee/keyservice/cmd/minter/main.go`,
+    `ee/keyservice/kmssigner.go` and `kmssigner_test.go` (a `Signer` on the KMS API, fake client in
+    tests), `ee/keyservice/config.go` and `config_test.go` (environment and Secret Manager, strict),
+    `ee/keyservice/cmd/*/Dockerfile`, `ee/keyservice/cloudbuild.yaml` (+ `.license`); also `go.mod`, `go.sum`.
+  - Tests: `TestConfigRefusesUnknownVariables`, `TestKMSSignerVerifiesWithTheKeyring`,
+    `TestMinterBinaryHoldsNoMailOrMerchantSecret`.
+  - Command: `go test ./ee/keyservice/... -tags ee -run 'TestConfig|TestKMSSigner|TestMinterBinary' -count=1`.
+  - Depends on: P1.0, P1.6. Commit: `ee: the portal API and minter programs`.
+- **P1.8 The minter's bounded term and policy. SECURITY.**
+  - Files: `ee/keyservice/minter.go`, `ee/keyservice/policy.go`, tests.
+  - The minter accepts an end date that it caps at the row's term (F30). It accepts an operations
+    `check_interval` within `P1D`–`P30D`, and never none outside the air-gapped row (F28). It adds a
+    `free-seat` row: Team, one seat, `kind: comped`, yearly, auto renewal.
+  - Tests: `TestMintTermNeverExceedsTheRow`, `TestRequestedEndCapsTheTerm`,
+    `TestOperationsCheckIntervalIsBounded`, `TestFreeSeatRowIsComped`.
+  - Command: `go test ./ee/keyservice/ -tags ee -run 'TestMintTerm|TestRequestedEnd|TestOperationsCheck|TestFreeSeatRow' -count=1`.
+  - Depends on: #2457, #2458. Commit: `ee: the minter takes a capped end and a bounded check interval`.
 
 ### Slice P2: tenancy
 
-- **P2.1 Organisations and memberships. SECURITY.** Files: `ee/keyservice/orgs.go`, `api_orgs.go`,
-  `audit.go`, `orgs_test.go` (new). Sign-up creates a customer organisation and records the terms'
-  version and time; types operations, customer, reseller; roles owner, admin, member in membership
-  documents; last-used organisation; operations reads across organisations, each audited; the SSO rule per
-  organisation type on every request. Tests: `TestSignUpRecordsTermsAcceptance`, `TestRolesLiveInMemberships`,
-  `TestEmailLinkUserIsRefusedInAResellerOrg`, `TestOperationsReadsAreAudited`, `TestLastUsedOrg`,
-  `TestOnlyOperationsCreatesTheOperationsOrg`. Command: `go test ./ee/keyservice/ -tags ee -run
-  'TestSignUp|TestRoles|TestEmailLinkUser|TestOperationsReads|TestLastUsed|TestOnlyOperationsCreates' -count=1`.
-  Depends on: P1.0, P1.1, P1.2, P1.3. Commit: `ee: portal organisations and memberships`.
-- **P2.2 Invitations and mail. SECURITY.** Files: `ee/keyservice/invites.go`, `api_invites.go`, `resend.go`
-  (a `Mailer` on Resend's HTTP API), tests (new). Tests: `TestInvitationIsBoundToItsAddress`,
-  `TestInvitationIsSingleUse`, `TestOperationsInviteOutsideTheDomainListIsRefused`, `TestResellerInviteNeedsSSO`,
-  `TestResendMailerSendsNoKey`. Command: `go test ./ee/keyservice/ -tags ee -run 'TestInvitation|TestOperationsInvite|TestResellerInvite|TestResend' -count=1`.
-  Depends on: P2.1. Commit: `ee: portal invitations by email`.
-- **P2.3 Tenancy screens.** Files: `ee/portal/src/screens/{orgs,members,settings,sso}/*`, tests (new).
-  The switcher, the "SSO required" dialog with the Google and Microsoft buttons, members and invitations,
-  organisation settings. Tests: `sso.test.tsx` (selecting an operations organisation while signed in by
-  email opens the dialog), `members.test.tsx`. Command: `cd ee/portal && npx vitest run src/screens/{orgs,members,settings,sso}`.
-  Depends on: P1.4. Commit: `ee: the portal's organisation screens`.
-- **P2.4 Deletion. SECURITY.** Files: `ee/keyservice/deletion.go`, `api_account.go`, tests (new);
-  `ee/portal/src/screens/account/*` (new). Tests: `TestSoleOwnerCannotDeleteTheirAccount`,
-  `TestOrgDeletionRevokesAndCancels`, `TestSalesRecordsLoseTheirPersonalFields`. Command: `go test ./ee/keyservice/ -tags ee -run 'TestSoleOwner|TestOrgDeletion|TestSalesRecords' -count=1`
-  and `cd ee/portal && npx vitest run src/screens/account`. Depends on: P2.1, P3.1, P4.3.
-  Commit: `ee: self-serve account and organisation deletion (D2195)`.
+- **P2.1 Organisations and memberships. SECURITY.**
+  - Files: `ee/keyservice/orgs.go`, `api_orgs.go`, `audit.go`, `orgs_test.go` (new).
+  - Sign-up creates a customer organisation, records the terms' version and time, and creates the
+    free-seat entitlement (D2199). Organisation types and roles; the last-used organisation; operations
+    reads across organisations, audited; the SSO rule by the actor's membership; a per-account daily limit
+    on new organisations.
+  - Tests: `TestSignUpRecordsTermsAcceptance`, `TestSignUpCreatesTheFreeSeatEntitlement`,
+    `TestRolesLiveInMemberships`, `TestSSORuleFollowsTheActorsMembership`, `TestOperationsReadsAreAudited`,
+    `TestLastUsedOrg`, `TestOrgCreationIsRateLimited`, `TestAnotherOrgsMembersAreRefused`.
+  - Command: `go test ./ee/keyservice/ -tags ee -run 'TestSignUp|TestRoles|TestSSORule|TestOperationsReads|TestLastUsed|TestOrgCreation|TestAnotherOrgsMembers' -count=1`.
+  - Depends on: P1.0, P1.1, P1.2, P1.3. Commit: `ee: portal organisations and memberships`.
+- **P2.2 Invitations and mail. SECURITY.**
+  - Files: `ee/keyservice/invites.go`, `api_invites.go`, `resend.go` (a `Mailer` on Resend's API), tests (new).
+  - Tests: `TestInvitationIsBoundToItsAddress`, `TestInvitationIsSingleUse`,
+    `TestOperationsInviteOutsideTheDomainListIsRefused`, `TestResellerInviteNeedsSSO`,
+    `TestResendMailerSendsNoKey`, `TestAnotherOrgsInvitationsAreRefused`.
+  - Command: `go test ./ee/keyservice/ -tags ee -run 'TestInvitation|TestOperationsInvite|TestResellerInvite|TestResend|TestAnotherOrgsInvitations' -count=1`.
+  - Depends on: P2.1. Commit: `ee: portal invitations by email`.
+- **P2.3 Tenancy screens.**
+  - Files: `ee/portal/src/screens/{orgs,members,settings,sso}/*` and their tests (new).
+  - Tests: `sso.test.tsx` (an operations organisation selected while signed in by email opens the
+    dialog), `members.test.tsx`, `switcher.test.tsx`.
+  - Command: `cd ee/portal && npx vitest run src/screens/orgs src/screens/members src/screens/settings src/screens/sso`.
+  - Depends on: P1.4. Commit: `ee: the portal's organisation screens`.
+- **P2.4 Deletion. SECURITY.**
+  - Files: `ee/keyservice/deletion.go`, `api_account.go`, tests (new); `ee/portal/src/screens/account/*` (new).
+  - Deleting an organisation cancels its subscriptions and revokes every entitlement's keys. Deleting an
+    account deletes the Firebase Auth user through the Identity Toolkit API.
+  - Tests: `TestSoleOwnerCannotDeleteTheirAccount`, `TestOrgDeletionRevokesAndCancels`,
+    `TestAccountDeletionRemovesTheAuthUser`, `TestAnotherOrgCannotBeDeleted`, `account.test.tsx`.
+  - Command: `go test ./ee/keyservice/ -tags ee -run 'TestSoleOwner|TestOrgDeletion|TestAccountDeletion|TestAnotherOrgCannot' -count=1`
+    and `cd ee/portal && npx vitest run src/screens/account`.
+  - Depends on: P2.1, P3.1, P4.3. Commit: `ee: self-serve account and organisation deletion (D2195)`.
 
-### Slice P3: workspaces and keys
+### Slice P3: workspaces, entitlements and keys
 
-- **P3.1 Workspaces and the free seat. SECURITY.** Files: `ee/keyservice/workspaces.go`,
-  `api_workspaces.go`, tests (new); `ee/keyservice/policy.go` (a `free-seat` row: Team, one seat,
-  `kind: free`, auto renewal, renewed while the organisation exists). A workspace records its Firebase
-  project id (the key's `workspace_id`, TN2). Tests: `TestFirstWorkspaceMintsTheFreeSeat`,
-  `TestSecondWorkspaceGetsNoFreeSeat`, `TestFreeSeatIsOneSeatTeam`, `TestWorkspaceIDIsAFirebaseProjectID`.
-  Command: `go test ./ee/keyservice/ -tags ee -run 'TestFirstWorkspace|TestSecondWorkspace|TestFreeSeat|TestWorkspaceID' -count=1`.
-  Depends on: P2.1. Commit: `ee: portal workspaces and the free seat (D2184)`.
-- **P3.2 Reveal. SECURITY.** Files: `ee/keyservice/reveal.go`, `api_keys.go`, tests (new). Reveal issues a
-  fresh bundle through the minter (the K2.3 rotation, with the 24-hour overlap) and returns it once; key
-  metadata for every member. A key with no renewal secret (air-gapped, D2138) is re-signed with the same
-  claims on reveal and offered as a downloadable licence file. Tests: `TestAirGappedRevealIsAFile`, `TestNoKeyIsStored`, `TestRevealRotatesTheSecret`,
-  `TestOnlyOwnersAndAdminsReveal`, `TestRevealNeedsAFreshSignIn`, `TestRevealNotifiesOtherOwners`,
-  `TestResellerAndOperationsSeeMetadataOnly`. Command: `go test ./ee/keyservice/ -tags ee -run 'TestNoKeyIs|TestReveal|TestOnlyOwners|TestResellerAndOperations' -count=1`.
-  Depends on: P3.1, #2457. Commit: `ee: a key is revealed by rotating it (D2182)`.
-- **P3.3 Trial and open source in the portal. SECURITY.** Files: `ee/keyservice/api_trial.go`,
-  `api_opensource.go`, tests (new). The trial reuses K2.7's rule; the open-source request reuses
-  `checks.go`'s proof check and `queue.go`'s manual queue, decided by operations in P5.1's screens.
-  Tests: `TestTrialFromThePortalIsOnePerWorkspace`, `TestOpenSourceRequestQueuesForOperations`.
-  Command: `go test ./ee/keyservice/ -tags ee -run 'TestTrialFromThePortal|TestOpenSourceRequest' -count=1`.
-  Depends on: P3.1, K2.7 (licence-key-v2, not yet approved). Commit: `ee: trials and open-source requests in the portal (D2185)`.
-- **P3.4 Workspace screens.** Files: `ee/portal/src/screens/workspaces/*`, tests (new). Workspaces with key
-  metadata, seats and renewal date; reveal with copy; after a purchase or seat change, the line
-  "run `fugaro licence refresh`"; trial and open-source buttons. Tests: `workspaces.test.tsx`
-  (the bundle is shown once and cleared on navigation; the refresh hint appears after a seat change).
-  Command: `cd ee/portal && npx vitest run src/screens/workspaces`. Depends on: P1.4.
-  Commit: `ee: the portal's workspace screens`.
+- **P3.1 Workspaces and entitlements. SECURITY.**
+  - Files: `ee/keyservice/entitlements.go`, `workspaces.go`, `api_workspaces.go`, `api_entitlements.go`,
+    tests (new).
+  - A workspace may be unbound. An entitlement records its source, tier, seats, term (from payment,
+    D2197) and the workspace it is attached to. Binding takes a Firebase project id and mints through the
+    minter. Rebinding is once per 30 days and revokes the old key (D2198).
+  - Tests: `TestBindingMintsTheKey`, `TestUnboundEntitlementHasNoKey`, `TestTermRunsFromPayment`,
+    `TestRebindIsOncePerThirtyDays`, `TestRebindRevokesTheOldKey`, `TestWorkspaceIDIsAFirebaseProjectID`,
+    `TestOnlyOwnersAndAdminsBind`, `TestAnotherOrgsEntitlementIsRefused`.
+  - Command: `go test ./ee/keyservice/ -tags ee -run 'TestBinding|TestUnbound|TestTermRuns|TestRebind|TestWorkspaceID|TestOnlyOwnersAndAdminsBind|TestAnotherOrgsEntitlement' -count=1`.
+  - Depends on: P2.1, P1.8. Commit: `ee: entitlements bound to a workspace mint its key (D2196)`.
+- **P3.6 Renewal follows the entitlement. SECURITY.**
+  - Files: `ee/keyservice/renew.go` (from #2457), `ee/keyservice/merchant.go`, tests.
+  - A seat change or renewal reissues under the entitlement with the same secret hash, and `/renew`
+    answers with the newest key (D2200). `/renew` issues only while the entitlement runs (F27).
+    Revocation is by entitlement (F29). The handover bundle is sealed with P1.0's sealer (D2182 as amended).
+  - Tests: `TestSeatChangeIsTheNextRenewal`, `TestRenewalStopsWhenTheEntitlementEnds`,
+    `TestRevocationCoversEveryRotation`, `TestHandoverIsStoredEncrypted`, `TestCompedKeysRenewOnlyWithinTheirTerm`.
+  - Command: `go test ./ee/keyservice/ -tags ee -run 'TestSeatChange|TestRenewalStops|TestRevocationCovers|TestHandoverIs|TestCompedKeysRenew' -count=1`.
+  - Depends on: P3.1, P4.2. Commit: `ee: renewal and revocation follow the entitlement (D2200)`.
+- **P3.2 Reveal. SECURITY.**
+  - Files: `ee/keyservice/reveal.go`, `api_keys.go`, tests (new).
+  - Reveal issues a fresh bundle ending on the predecessor's `paid_through`. A key with no secret
+    (air-gapped) is re-signed the same way and offered as a licence file. Limits: one reveal per workspace
+    per day, owners and admins only, a fresh sign-in, the other owners mailed.
+  - Tests: `TestRevealNeverExtendsTheTerm`, `TestRevealRotatesTheSecret`, `TestRevealIsOncePerDay`,
+    `TestOnlyOwnersAndAdminsReveal`, `TestRevealNeedsAFreshSignIn`, `TestRevealNotifiesOtherOwners`,
+    `TestAirGappedRevealIsAFile`, `TestResellerAndOperationsSeeMetadataOnly`, `TestAnotherOrgsKeyIsRefused`.
+  - Command: `go test ./ee/keyservice/ -tags ee -run 'TestReveal|TestOnlyOwnersAndAdminsReveal|TestAirGapped|TestResellerAndOperations|TestAnotherOrgsKey' -count=1`.
+  - Depends on: P3.6. Commit: `ee: a key is revealed by rotating it (D2182)`.
+- **P3.3 Trial and open source in the portal. SECURITY.**
+  - Files: `ee/keyservice/api_trial.go`, `api_opensource.go`, tests (new).
+  - Both create entitlements. The trial applies K2.7's rule; the open-source request applies `checks.go`'s
+    proof check and `queue.go`'s queue, decided in P5.1.
+  - Tests: `TestTrialIsOnePerWorkspaceAndAccount`, `TestOpenSourceRequestQueuesForOperations`.
+  - Command: `go test ./ee/keyservice/ -tags ee -run 'TestTrialIsOne|TestOpenSourceRequest' -count=1`.
+  - Depends on: P3.1, K2.7 (licence-key-v2; not approved). Commit: `ee: trials and open-source requests in the portal (D2185)`.
+- **P3.4 Workspace screens.**
+  - Files: `ee/portal/src/screens/workspaces/*` and tests (new).
+  - Shows workspaces, entitlements (paid, not yet bound), binding, rebind, reveal and copy, the air-gapped
+    file, seats and renewal date, the line "run `fugaro licence refresh`" after a purchase or seat change,
+    and the trial and open-source buttons.
+  - Tests: `workspaces.test.tsx` (the bundle is shown once and cleared on navigation; an unbound
+    entitlement shows how to bind; the refresh hint).
+  - Command: `cd ee/portal && npx vitest run src/screens/workspaces`.
+  - Depends on: P1.4. Commit: `ee: the portal's workspace screens`.
+- **P3.5 `licence login` screens.**
+  - Files: `ee/portal/src/screens/cli/*` and tests (new).
+  - K2.4's authorize and device-approve pages. They list the organisation's unbound entitlements and bind
+    the chosen one to the requesting installation's Firebase project id, shown as untrusted text.
+  - Tests: `authorize.test.tsx`, `device.test.tsx` (the user code must be typed).
+  - Command: `cd ee/portal && npx vitest run src/screens/cli`.
+  - Depends on: P1.4, K2.4 (licence-key-v2; not approved). Commit: `ee: the licence login pages in the portal`.
 
 ### Slice P4: Paddle
 
-- **P4.1 Checkout. SECURITY.** Files: `ee/keyservice/checkout.go`, `api_checkout.go`, tests (new);
-  `ee/portal/src/screens/checkout/*` (new, Paddle.js overlay). The API records the licence terms'
-  acceptance and returns the checkout context with `custom_data` `{org_id, workspace_id}`. Tests:
-  `TestCheckoutNeedsLicenceTermsAccepted`, `TestCustomDataCarriesOrgAndWorkspace`, `checkout.test.tsx`.
-  Command: `go test ./ee/keyservice/ -tags ee -run 'TestCheckout|TestCustomData' -count=1` and
-  `cd ee/portal && npx vitest run src/screens/checkout`. Depends on: P3.1, P1.4, #2458.
-  Commit: `ee: Paddle checkout from the portal`.
-- **P4.2 Events as received, and the ledger. SECURITY.** Files: `ee/keyservice/merchant.go` (store the raw
-  body and signature header before `apply`), `ledger.go`, tests (new). The purchase email carries a portal
-  link, never a key (F3). Tests: `TestEventIsStoredAsReceivedBeforeProcessing`, `TestRedeliveryDoesNotDoubleCount`,
-  `TestLedgerDerivesFromStoredEvents`, `TestEventWithoutAnOrgIsParkedNotDropped`, `TestPurchaseMailCarriesNoKey`.
-  Command: `go test ./ee/keyservice/ -tags ee -run 'TestEventIs|TestRedelivery|TestLedger|TestEventWithout|TestPurchaseMail' -count=1`.
-  Depends on: P1.2, #2458. Commit: `ee: Paddle events kept as received, and the sales ledger`.
-- **P4.3 Billing mirror, seats and the customer portal. SECURITY.** Files: `ee/keyservice/paddleclient.go`,
-  `api_billing.go`, tests (new). Mirrors subscription state from events; "buy more seats" updates the
-  subscription's quantity through Paddle's API (the event then reissues, K2.5); a customer-portal link per
-  organisation; cancellation for P2.4. Tests: `TestBuySeatsUpdatesTheQuantity`, `TestCustomerPortalLinkIsPerOrg`,
-  `TestOnlyOwnersAndAdminsBuy`. Command: `go test ./ee/keyservice/ -tags ee -run 'TestBuySeats|TestCustomerPortal|TestOnlyOwnersAndAdminsBuy' -count=1`.
-  Depends on: P4.2, P3.1. Commit: `ee: billing state, seat purchases and Paddle's customer portal`.
-- **P4.4 Billing screens.** Files: `ee/portal/src/screens/billing/*`, tests (new). Command:
-  `cd ee/portal && npx vitest run src/screens/billing`. Depends on: P1.4. Commit: `ee: the portal's billing screens`.
+- **P4.1 Checkout. SECURITY.**
+  - Files: `ee/keyservice/checkout.go`, `api_checkout.go`, `paddleclient.go`, tests (new);
+    `ee/portal/src/screens/checkout/*` (new).
+  - Records the licence terms' acceptance, creates the Paddle transaction server-side with `custom_data`
+    `{org_id, workspace_id}`, and hands the overlay only the transaction id. A second active subscription
+    for one workspace is refused.
+  - Tests: `TestCheckoutNeedsLicenceTermsAccepted`, `TestTransactionIsCreatedServerSide`,
+    `TestSecondSubscriptionForAWorkspaceIsRefused`, `TestAnotherOrgsWorkspaceCannotBeBought`,
+    `checkout.test.tsx`.
+  - Command: `go test ./ee/keyservice/ -tags ee -run 'TestCheckout|TestTransactionIs|TestSecondSubscription|TestAnotherOrgsWorkspace' -count=1`
+    and `cd ee/portal && npx vitest run src/screens/checkout`.
+  - Depends on: P3.1, P1.4. Commit: `ee: Paddle checkout from the portal`.
+- **P4.2 Paddle events. SECURITY.**
+  - Files: `ee/keyservice/merchant.go`, `paddleevents.go` (the adapter), `ledger.go`, tests (new).
+  - Paddle's body is stored as received with its signature header before processing. A 5-minute timestamp
+    window applies. The adapter maps the notification to the canonical event; refunds resolve to the
+    entitlement. A purchase creates an entitlement, never a key (D2196). An undecodable body is stored and
+    answered 400. A transaction the API did not create is parked. The route becomes `/api/paddle/webhook`,
+    and the mail carries a link.
+  - Tests: `TestEventIsStoredAsReceivedBeforeProcessing`, `TestStaleTimestampIsRefused`,
+    `TestRedeliveryDoesNotDoubleCount`, `TestPaddleBodyMapsToTheEvent`, `TestRefundFindsItsEntitlement`,
+    `TestPurchaseCreatesAnEntitlement`, `TestUndecodableEventIsKeptAndRetried`,
+    `TestForeignTransactionIsParked`, `TestLedgerDerivesFromStoredEvents`, `TestPurchaseMailCarriesNoKey`.
+  - Command: `go test ./ee/keyservice/ -tags ee -run 'TestEventIs|TestStaleTimestamp|TestRedelivery|TestPaddleBody|TestRefundFinds|TestPurchaseCreates|TestUndecodable|TestForeignTransaction|TestLedger|TestPurchaseMail' -count=1`.
+  - Depends on: P1.0, P1.2. Commit: `ee: Paddle events kept as received, mapped and ledgered`.
+- **P4.3 Billing mirror, seats and the customer portal. SECURITY.**
+  - Files: `ee/keyservice/billing.go`, `api_billing.go`, tests (new).
+  - Mirrors subscription state. "Buy more seats" updates the quantity, and the event then reissues
+    (P3.6). Provides a customer-portal link per organisation and cancellation for P2.4.
+  - Tests: `TestBuySeatsUpdatesTheQuantity`, `TestCustomerPortalLinkIsPerOrg`, `TestOnlyOwnersAndAdminsBuy`,
+    `TestAnotherOrgsSubscriptionIsRefused`.
+  - Command: `go test ./ee/keyservice/ -tags ee -run 'TestBuySeats|TestCustomerPortal|TestOnlyOwnersAndAdminsBuy|TestAnotherOrgsSubscription' -count=1`.
+  - Depends on: P4.1, P4.2, P3.1. Commit: `ee: billing state, seat purchases and Paddle's customer portal`.
+- **P4.4 Billing screens.**
+  - Files: `ee/portal/src/screens/billing/*` and tests (new).
+  - Tests: `billing.test.tsx` (seats, renewal date, the customer-portal link).
+  - Command: `cd ee/portal && npx vitest run src/screens/billing`.
+  - Depends on: P1.4. Commit: `ee: the portal's billing screens`.
 
 ### Slice P5: operations
 
-- **P5.1 Operations API. SECURITY.** Files: `ee/keyservice/ops.go`, `api_ops.go`, tests (new). Look up any
-  organisation, its workspaces, keys (metadata), purchases and members; mint (any seats, expiry and
-  refresh policy), extend, change seats, revoke, comp (`kind: comped`); decide the open-source queue;
-  owners and admins only, sign-in within 5 minutes, D454's caps, the operations domain list (D2187).
-  Supersedes licence-key-v2 K2.6. Tests: `TestOperationsMemberCannotMint`, `TestMintNeedsAFreshSignIn`,
-  `TestMintIsCappedPerTier`, `TestEveryOperationsActionIsAudited`, `TestOperationsNeverSeesASecret`.
-  Command: `go test ./ee/keyservice/ -tags ee -run 'TestOperationsMember|TestMintNeeds|TestMintIsCapped|TestEveryOperations|TestOperationsNever' -count=1`.
-  Depends on: P2.1, P3.1. Commit: `ee: the operations API (D2187)`.
-- **P5.2 Reports.** Files: `ee/keyservice/reports.go`, `api_reports.go`, tests (new). Monthly per customer,
-  by channel, and each reseller's receivable (D2190); comped and free keys are not revenue. Tests:
-  `TestReportSplitsDirectAndReseller`, `TestReportMonthsAreUTC`, `TestCompedAndFreeKeysAreNotRevenue`,
-  `TestResellerReceivableMatchesItsStatements`. Command: `go test ./ee/keyservice/ -tags ee -run 'TestReport|TestComped|TestResellerReceivable' -count=1`.
-  Depends on: P4.2, P6.3. Commit: `ee: monthly sales reports`.
-- **P5.3 Operations screens.** Files: `ee/portal/src/screens/ops/*`, tests (new): lookup, key actions, the
-  queue, the ledger, the audit log, reports. Command: `cd ee/portal && npx vitest run src/screens/ops`.
-  Depends on: P1.4. Commit: `ee: the portal's operations screens`.
+- **P5.1 Operations API. SECURITY.**
+  - Files: `ee/keyservice/ops.go`, `api_ops.go`, tests (new).
+  - Lookups: organisations, workspaces, entitlements, key metadata, purchases and members.
+  - Key actions: create an entitlement with any seats and end date, a row and a bounded check interval;
+    extend; change seats; comp; revoke.
+  - The open-source queue is decided here, and the domain and tenant lists are set here.
+  - Owners and admins only, a fresh sign-in, D454's rate per tier queueing the excess (carried from
+    `admin.go`'s `MintCaps`). Supersedes K2.6.
+  - Tests: `TestOperationsMemberCannotMint`, `TestMintNeedsAFreshSignIn`,
+    `TestOperationsMintsQueueOverTheRate`, `TestEveryOperationsActionIsAudited`,
+    `TestOperationsNeverSeesASecret`, `TestDomainAndTenantListsAreOwnerSet`.
+  - Command: `go test ./ee/keyservice/ -tags ee -run 'TestOperationsMember|TestMintNeeds|TestOperationsMints|TestEveryOperations|TestOperationsNever|TestDomainAndTenant' -count=1`.
+  - Depends on: P2.1, P3.1, P1.8. Commit: `ee: the operations API (D2187)`.
+- **P5.2 Reports.**
+  - Files: `ee/keyservice/reports.go`, `api_reports.go`, tests (new).
+  - Tests: `TestReportSplitsDirectAndReseller`, `TestReportMonthsAreUTC`, `TestCompedKeysAreNotRevenue`,
+    `TestResellerReceivableMatchesItsStatements`.
+  - Command: `go test ./ee/keyservice/ -tags ee -run 'TestReport|TestCompedKeysAre|TestResellerReceivable' -count=1`.
+  - Depends on: P4.2, P6.3. Commit: `ee: monthly sales reports`.
+- **P5.3 Operations screens.**
+  - Files: `ee/portal/src/screens/ops/*` and tests (new).
+  - Covers lookup, entitlement and key actions, the queue, the ledger, the audit log, reports and the
+    lists.
+  - Tests: `ops.test.tsx` (members see no action buttons; a mint asks for a fresh sign-in).
+  - Command: `cd ee/portal && npx vitest run src/screens/ops`.
+  - Depends on: P1.4. Commit: `ee: the portal's operations screens`.
 
 ### Slice P6: resellers
 
-- **P6.1 Reseller organisations and customers. SECURITY.** Files: `ee/keyservice/resellers.go`,
-  `api_resellers.go`, tests (new). Operations creates a reseller organisation with its wholesale rates and
-  credit limit; a reseller creates a customer organisation and invites its owner; one reseller per
-  customer; operations relinks. Tests: `TestOnlyOperationsCreatesAResellerOrg`, `TestResellerSeesOnlyItsCustomers`,
-  `TestResellerNeverSeesASecret`, `TestRelinkIsAudited`. Command: `go test ./ee/keyservice/ -tags ee -run 'TestOnlyOperationsCreatesAReseller|TestResellerSees|TestResellerNever|TestRelink' -count=1`.
-  Depends on: P2.2, P5.1. Commit: `ee: resellers and their customers (D2191)`.
-- **P6.2 Reseller minting and accrual. SECURITY.** Files: `ee/keyservice/accrual.go`,
-  `api_reseller_keys.go`, tests (new). Mint and seat changes for the reseller's own customers; daily accrual;
-  the credit check in one transaction (D2189). Tests: `TestAccrualIsSeatsTimesTheDailyRate`,
-  `TestMintBeyondTheCreditLimitIsRefused`, `TestRevokedKeyStopsAccruing`, `TestConcurrentMintsCannotExceedTheLimit`.
-  Command: `go test ./ee/keyservice/ -tags ee -run 'TestAccrual|TestMintBeyond|TestRevokedKeyStops|TestConcurrentMints' -count=1`.
-  Depends on: P6.1, P3.1. Commit: `ee: reseller minting against a credit limit (D2189)`.
-- **P6.3 Monthly statements.** Files: `ee/keyservice/statements.go`, `api_statements.go`, tests (new). A
-  Scheduler-called endpoint closes the month, writes each reseller's statement, mails it; operations marks
-  payment. Tests: `TestStatementSumsTheMonth`, `TestStatementRunIsIdempotent`, `TestStatementEndpointRefusesOtherCallers`,
-  `TestPaymentIsRecordedByOperationsOnly`. Command: `go test ./ee/keyservice/ -tags ee -run 'TestStatement|TestPaymentIs' -count=1`.
-  Depends on: P6.2, P2.2. Commit: `ee: monthly reseller statements`.
-- **P6.4 Reseller screens.** Files: `ee/portal/src/screens/reseller/*`, tests (new). Command:
-  `cd ee/portal && npx vitest run src/screens/reseller`. Depends on: P1.4. Commit: `ee: the portal's reseller screens`.
+- **P6.1 Reseller organisations and customers. SECURITY.**
+  - Files: `ee/keyservice/resellers.go`, `api_resellers.go`, tests (new).
+  - Tests: `TestOnlyOperationsCreatesAResellerOrg`, `TestResellerSeesOnlyItsCustomers`,
+    `TestResellerNeverSeesASecret`, `TestRelinkIsAudited`.
+  - Command: `go test ./ee/keyservice/ -tags ee -run 'TestOnlyOperationsCreatesAReseller|TestResellerSees|TestResellerNever|TestRelink' -count=1`.
+  - Depends on: P2.2, P5.1. Commit: `ee: resellers and their customers (D2191)`.
+- **P6.2 Reseller entitlements and accrual. SECURITY.**
+  - Files: `ee/keyservice/accrual.go`, `api_reseller_keys.go`, tests (new).
+  - Tests: `TestAccrualIsSeatsTimesTheDailyRate`, `TestMintBeyondTheCreditLimitIsRefused`,
+    `TestRevokedEntitlementStopsAccruing`, `TestConcurrentMintsCannotExceedTheLimit` (memory here; the
+    emulator suite adds the same case).
+  - Command: `go test ./ee/keyservice/ -tags ee -run 'TestAccrual|TestMintBeyond|TestRevokedEntitlement|TestConcurrentMints' -count=1`.
+  - Depends on: P6.1. Commit: `ee: reseller entitlements against a credit limit (D2189)`.
+- **P6.3 Monthly statements.**
+  - Files: `ee/keyservice/statements.go`, `api_statements.go`, tests (new).
+  - Tests: `TestStatementSumsTheMonth`, `TestStatementRunIsIdempotent`,
+    `TestStatementEndpointRefusesOtherCallers`, `TestPaymentIsRecordedByOperationsOnly`.
+  - Command: `go test ./ee/keyservice/ -tags ee -run 'TestStatement|TestPaymentIs' -count=1`.
+  - Depends on: P6.2, P2.2. Commit: `ee: monthly reseller statements`.
+- **P6.4 Reseller screens.**
+  - Files: `ee/portal/src/screens/reseller/*` and tests (new).
+  - Tests: `reseller.test.tsx` (customers, statements; no reveal button).
+  - Command: `cd ee/portal && npx vitest run src/screens/reseller`.
+  - Depends on: P1.4. Commit: `ee: the portal's reseller screens`.
 
 ### Slice P7: reminders
 
-- **P7.1 Renewal reminders.** Files: `ee/keyservice/reminders.go`, `api_reminders.go`, tests (new). A
-  Scheduler-called endpoint mails owners and admins before a key that does not renew through Paddle runs
-  out (reseller, comped, open-source keys); once per term. Tests: `TestReminderIsSentOncePerTerm`,
-  `TestPaddleRenewedKeysGetNoReminder`, `TestReminderEndpointRefusesOtherCallers`. Command:
-  `go test ./ee/keyservice/ -tags ee -run 'TestReminder|TestPaddleRenewed' -count=1`. Depends on: P3.1, P2.2.
-  Commit: `ee: renewal reminders`.
+- **P7.1 Renewal and binding reminders.**
+  - Files: `ee/keyservice/reminders.go`, `api_reminders.go`, tests (new).
+  - Mails owners before a key that Paddle does not renew runs out, and mails a reminder about a paid
+    entitlement that is still unbound.
+  - Tests: `TestReminderIsSentOncePerTerm`, `TestPaddleRenewedKeysGetNoReminder`,
+    `TestUnboundEntitlementIsReminded`, `TestReminderEndpointRefusesOtherCallers`.
+  - Command: `go test ./ee/keyservice/ -tags ee -run 'TestReminder|TestPaddleRenewed|TestUnboundEntitlementIs' -count=1`.
+  - Depends on: P3.1, P2.2. Commit: `ee: renewal and binding reminders`.
 
-### Slice P9: docs, hosting and retirement
+### Slice P9: docs, hosting, retirement and checks
 
-- **P9.1 Amend licence key v2's plan.** Files: `docs/licence-key-v2/implementation-plan.md`,
-  `docs/licence-key-v2/reconciliation.md`, `docs/design/key-signing-service.md` (dated notes only):
-  K2.4 uses P1.3's verifier and its pages are the SPA's; K2.6 is superseded by P5.1; K5.1 by the portal's
-  screens; K2.5's mail carries a link (F3); K3.4 follows D2186 and adds a `since` field to the grant node
-  (F8); design §3.4's `fugaro-licence` becomes `fugaro-prod` (D2194) and §6's owner-only page is replaced
-  (D2187). Tests: `GOFLAGS=-p=2 go test ./internal/cli/ -run Docs -count=1`. Depends on: none.
-  Commit: `docs: licence key v2 and the key-signing design follow the portal`.
-- **P9.2 Hosting, deploy and CI. SECURITY.** Files: `firebase.json` (two hosting targets, `website` and
-  `portal`; the portal's CSP admits Paddle's and Firebase Auth's origins; `/api/**` rewrites to the API
-  service), `scripts/deploy-website.sh` (`--only hosting:website`), `scripts/deploy-portal.sh` (new;
-  OWNER-RUN; dry-run first; refuses an agent session; `--seed-operations`), `website/test/origins.mjs`
-  (the website's CSP unchanged), `ee/portal/test/hosting.test.ts` (new: the portal target's CSP and
-  rewrite), `docs/pending-workflows/portal-tests.yml` (new) and its section in
-  `docs/pending-workflows/README.md`. Command: `cd website && node --test test/origins.mjs` and
-  `cd ee/portal && npx vitest run test/hosting.test.ts`. Depends on: P1.4. Commit: `ee: the portal's hosting target and deploy script`.
-- **P9.3 Retire the forms and the admin page. SECURITY.** Files: `ee/keyservice/service.go` (the
-  `/free-seat`, `/open-source`, `/request` and `/verify` routes go), `admin.go` and `admin_test.go` (the
-  HTML page goes; its caps and audit moved in P5.1), `website/src/pages/keys.astro` (points to the
-  portal), `website/src/lib/keys-intake.mjs` (removed), `website/test/keys.mjs`, `firebase.json`
-  (`form-action` drops `keys.fugaro.dev`). Tests: `go test ./ee/keyservice/ -tags ee -count=1` and
-  `cd website && npm run check`. Depends on: P3.3, P5.1, P9.2. Commit: `ee: the portal replaces the key forms and the admin page`.
+- **P9.1 Amend licence key v2.**
+  - Files: `docs/licence-key-v2/implementation-plan.md`, `docs/licence-key-v2/reconciliation.md` and
+    `docs/design/key-signing-service.md` (dated notes only): the list in the reconciliation's "What this
+    changes in licence key v2", plus design §3.4 (`fugaro-prod`), §6 (replaced by P5.1) and D459(a)
+    (amended).
+  - Command: `GOFLAGS=-p=2 go test ./internal/cli/ -run Docs -count=1`.
+  - Depends on: none. Commit: `docs: licence key v2 and the key-signing design follow the portal`.
+- **P9.2 Hosting, deploy and CI. SECURITY.**
+  - Files: `ee/portal/firebase.json` (+ `.license`; the `fugaro-portal` site, its CSP for Paddle,
+    Firebase Auth, Sentry and analytics, and the `/api/**` rewrite to the API service);
+    `scripts/deploy-portal.sh` (new); `scripts/deploy-portal_test.sh` (new);
+    `ee/portal/test/hosting.test.ts` (new); `docs/pending-workflows/portal-tests.yml` (new: vitest, the
+    targeted Go tests and the `firestore` emulator suite) and its section in
+    `docs/pending-workflows/README.md`.
+  - The deploy script is OWNER-RUN with `--config ee/portal/firebase.json`, dry-run first, refuses an
+    agent session, runs Cloud Build and accepts `--seed-operations`.
+  - The root `firebase.json` and the website's tooling are untouched.
+  - Command: `bash scripts/deploy-portal_test.sh` and `cd ee/portal && npx vitest run test/hosting.test.ts`.
+  - Depends on: P1.4. Commit: `ee: the portal's hosting config and deploy script`.
+- **P9.3 Retire the forms and the admin page. SECURITY.**
+  - Files: `ee/keyservice/service.go` (drops the `/free-seat`, `/open-source`, `/request` and `/verify`
+    routes); `admin.go` and `admin_test.go` (the HTML page goes); `website/src/pages/keys.astro` (points
+    to the portal); `website/src/lib/keys-intake.mjs` (removed); `website/test/keys.mjs`; root
+    `firebase.json` (`form-action` drops `keys.fugaro.dev`).
+  - Command: `go test ./ee/keyservice/ -tags ee -count=1` and `cd website && npm run check`.
+  - Depends on: P3.3, P5.1, P9.2. Commit: `ee: the portal replaces the key forms and the admin page`.
+- **P9.4 The live-check scripts.**
+  - Files: `scripts/live-checks/check-570.sh` … `check-575.sh` (new), `docs/gcp-live-checklist.md`
+    (their entries). Each refuses `fugaro-prod` unless `--production` is given, and refuses an agent
+    session.
+  - Command: `go test ./internal/cli/ -run 'TestLiveCheckScripts|Docs' -count=1`.
+  - Depends on: P1.5, P2.3, P3.2, P4.3, P6.3. Commit: `scripts: the portal's live checks`.
 
 ## Parallel execution
 
-External edges: #2457 (K2.3) before P1.0 and P3.2; #2458 (K2.5) before P4.1 and P4.2; K2.7 before P3.3.
+External edges: #2457 and #2458 (merging, D2183) before P1.0, P1.2 and P1.8; K2.7 before P3.3; K2.4 before
+P3.5 (both licence-key-v2, not approved; after P9.1 they register through P1.0's registry and depend on it).
 
-Edges: P1.1 → P1.4; P1.0, P1.2 → P1.6; P1.0, P1.1, P1.2, P1.3 → P2.1; P2.1 → P2.2, P3.1, P5.1; P3.1 → P3.2, P3.3, P4.1, P4.3,
-P5.1, P6.2, P7.1; P1.2 → P4.2 → P4.3; P1.4 → P2.3, P3.4, P4.1, P4.4, P5.3, P6.4, P9.2; P2.2 → P6.1, P6.3,
-P7.1; P5.1 → P6.1 → P6.2 → P6.3 → P5.2; P4.2 → P5.2; P2.1, P3.1, P4.3 → P2.4; P3.3, P5.1, P9.2 → P9.3;
-P1.5 → P0.4 → P0.2; P9.2, P2.1, P0.4 → P0.5.
+Edges:
+
+- Foundations: P1.1 → P1.4; P1.0, P1.2 → P1.6; P1.0, P1.6 → P1.7.
+- Tenancy: P1.0, P1.1, P1.2, P1.3 → P2.1 → P2.2.
+- Workspaces and keys: P2.1, P1.8 → P3.1. P3.1, P4.2 → P3.6 → P3.2. P3.1 → P3.3, P4.1, P5.1, P7.1.
+- Paddle: P1.0, P1.2 → P4.2. P4.1, P4.2, P3.1 → P4.3. P2.1, P3.1, P4.3 → P2.4.
+- Operations and resellers: P1.8 → P5.1 → P6.1. P2.2 → P6.1 → P6.2 → P6.3 → P5.2. P4.2 → P5.2.
+  P2.2 → P6.3, P7.1.
+- SPA screens: P1.4 → P2.3, P3.4, P3.5, P4.1, P4.4, P5.3, P6.4, P9.2.
+- Retirement and checks: P3.3, P5.1, P9.2 → P9.3. P1.5, P2.3, P3.2, P4.3, P6.3 → P9.4.
 
 | Level | Tasks (run together) |
 | --- | --- |
-| 0 | P1.0, P1.1, P1.2, P1.3, P1.5, P9.1 |
+| 0 | P1.0, P1.1, P1.2, P1.3, P1.5, P1.8, P9.1 |
 | 1 | P1.4, P1.6, P2.1, P4.2 |
-| 2 | P2.2, P2.3, P3.1, P3.4, P4.4, P5.3, P6.4, P9.2 |
-| 3 | P3.2, P3.3, P4.1, P4.3, P5.1, P7.1 |
-| 4 | P2.4, P6.1, P9.3 |
-| 5 | P6.2 |
+| 2 | P1.7, P2.2, P2.3, P3.1, P3.4, P3.5, P4.4, P5.3, P6.4, P9.2 |
+| 3 | P3.3, P3.6, P4.1, P5.1, P7.1 |
+| 4 | P3.2, P4.3, P6.1, P9.3 |
+| 5 | P2.4, P6.2 |
 | 6 | P6.3 |
-| 7 | P5.2 |
+| 7 | P5.2, P9.4 |
 
-Owner-run: P0.1 and P0.3 at any time; P0.4 after P1.5; P0.2 after P0.4; P0.5 after level 2.
+Owner-run: P0.1 and P0.3 at any time; P0.4 after P1.5; P0.2 after P0.4; P0.5 after P1.7, P9.2 and P2.1;
+P0.6 after P9.4 and P0.5.
 
-**Critical path:** #2457 → P1.0 → P2.1 → P3.1 → P5.1 → P6.1 → P6.2 → P6.3 → P5.2 (eight levels). The
-reseller chain is the long pole; customer self-serve (P3, P4) is complete at level 3, so a first
-production deploy can go before slice P6 lands.
+**Critical path:** #2457 → P1.0 → P2.1 → P3.1 → P5.1 → P6.1 → P6.2 → P6.3 → P5.2 (eight levels). Customer
+self-serve (P2–P4) is complete at level 5, so the first deploy can precede slice P6.
 
-Why some of it is sequential: `service.go` has one writer (P1.0 opens the registry so nothing after it
-edits that file until P9.3); every API task needs the auth (P1.3), the store (P1.2) and the organisation
-model (P2.1); reseller accrual needs reseller organisations; reports read statements.
+Why some of it is sequential:
+
+- `service.go` has two writers, P1.0 (level 0) and P9.3 (level 4); `merchant.go` likewise has P4.2 then
+  P3.6.
+- Every API task needs the sign-in (P1.3), the store (P1.2) and the organisation model (P2.1).
+- Reveal needs the entitlement-aware renewal (P3.6).
+- Reseller accrual needs reseller organisations, and reports read statements.
 
 ### Shared-files table
 
-Only files written by more than one task are listed; every other file in the plan has one writer.
+Files written by more than one task (open pull requests included). Every other file has one writer.
 
 | File | Writers (level) |
 | --- | --- |
-| `ee/keyservice/service.go` | P1.0 (0), P9.3 (4) |
-| `ee/keyservice/merchant.go` | #2458 (external, before 1), P4.2 (1) |
-| `ee/keyservice/policy.go` | P3.1 (2) |
-| `firebase.json` | P9.2 (2), P9.3 (4) |
-| `ee/keyservice/admin.go`, `admin_test.go` | P9.3 (4) |
-| `go.mod`, `go.sum` | P1.2 (0), P1.6 (1) |
+| `ee/keyservice/service.go` | #2457 (before 0), P1.0 (0), P9.3 (4) |
+| `ee/keyservice/store.go` | #2457, #2458 (before 0); read, not written, by P1.2 |
+| `ee/keyservice/merchant.go` | #2458 (before 0), P4.2 (1), P3.6 (3) |
+| `ee/keyservice/renew.go` | #2457 (before 0), P3.6 (3) |
+| `ee/keyservice/minter.go`, `policy.go` | P1.8 (0) |
 | `ee/keyservice/api.go` | P1.0 (0), P1.6 (1) |
-| `ee/portal/package.json`, `package-lock.json` | P1.4 (1) |
-| `website/test/keys.mjs`, `website/src/pages/keys.astro` | P9.3 (4) |
+| `go.mod`, `go.sum` | P1.2 (0), P1.6 (1), P1.7 (2) |
+| `ee/coordinator/mcpauth/firebase.go` | P1.3 (0) |
+| `ee/keyservice/admin.go`, `admin_test.go` | P9.3 (4) |
+| root `firebase.json` | P9.3 (4) |
 | `docs/licence-key-v2/*`, `docs/design/key-signing-service.md` | P9.1 (0) |
+| `docs/gcp-live-checklist.md` | P9.4 (7) |
 
-No level holds two writers of one file. P2.4 and P4.1 each write a Go file and a screen folder that no
-other task writes. Screens register through `import.meta.glob` (P1.4), and API routes through
-`registerAPI` (P1.0), so adding an area edits no shared file.
+No level holds two writers of one file. API routes register through `registerAPI` (P1.0), screens through
+`import.meta.glob` (P1.4), and wire files are per area with one task each, so adding an area edits no
+shared file.
 
 ## Checks this plan takes (570–579)
 
-All are OWNER-RUN, on `fugaro-staging` first; each becomes a script under `scripts/checks/` written by the
-task named, so the owner types one command.
+All OWNER-RUN on `fugaro-staging` first. Each is one command, `scripts/live-checks/check-NNN.sh --project <p>`,
+written by P9.4.
 
-| Check | Measures | Script written by |
-| --- | --- | --- |
-| 570 | A sandbox purchase end to end: checkout, the webhook, the key, reveal, `fugaro licence set` on a test installation, a seat purchase, then `fugaro licence refresh` shows the new seats | P4.3 |
-| 571 | In the deployed project, only the minter's account can sign, and no project-level role that holds `useToSign` is granted to anyone but the owner | P1.5 |
-| 572 | An email-link account is refused by the operations and reseller API and sees the SSO dialog | P2.3 |
-| 573 | A redelivered sandbox event leaves the ledger unchanged | P4.2 |
-| 574 | A staging-signed key is refused by a production build | P1.5 |
-| 575 | A staging reseller's month: accrual, statement mail, a mint refused over the limit | P6.3 |
+| Check | Measures |
+| --- | --- |
+| 570 | Pay before setup: a sandbox purchase leaves an unbound entitlement. `fugaro setup` on a test installation follows, then `fugaro licence login` binds and mints. A seat purchase follows, and `fugaro licence refresh` shows the new seats with no paste |
+| 571 | Every identity that reaches signing in the project: the minter's signer grant, invokers and `actAs` on the minter's account, `run.services.update` on the minter, `datastore.user`, Hosting deployers, any project-level role with `useToSign`. The owner reads the list (D2194's accepted risk) |
+| 572 | An email-link account is refused by the operations and reseller API and sees the SSO dialog, on a phone-width window too |
+| 573 | A redelivered sandbox event leaves the ledger unchanged; a replayed one outside the window is refused |
+| 574 | A staging-signed key is refused by a production build |
+| 575 | A staging reseller's month: accrual, statement mail, a mint refused over the limit |
 
 576–579 are reserved.
 
 ## After deploy
 
 The portal is Fugaro's own service, not an installation's: no `fugaro update` step and no
-`### For operators` entry follow from it. The licence-key-v2 tasks that do reach an installation keep their
-own entries. The owner's post-deploy steps are P0.5 and the checks above. When P9.3 lands, the website's
-deploy must follow the portal's, because the key page will point to the portal.
+`### For operators` entry follow from it. The licence-key-v2 tasks that reach an installation keep their
+own entries. When P9.3 lands, the website's deploy follows the portal's, because the key page points to
+the portal.
