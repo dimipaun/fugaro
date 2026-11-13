@@ -115,18 +115,59 @@ type Minted struct {
 // Mints is the intake's one route to a key, and the whole of it: the intake
 // holds a Mints and never a Signer (Check 174). The minted key is answered here
 // and not read from a store, because there is no store of keys.
+//
+// It mints the claim set of the format licence-key-v2 removed (K7.3), which is
+// why the shape below is written here rather than read from ee/licence: that
+// package reads the v1 key and no other. The routes that reach it -- the free
+// seat, the open-source grant and the request form -- carry no workspace id,
+// which every v1 key binds to (TN2), so converting them is a task of the plan's
+// own and one with a product decision in it: until it lands, what these routes
+// answer is the text they answered before the removal, which no Go verifier
+// reads any more. The console's verifier of the removed format still reads it,
+// and that reader's own removal is the console's task and not this one's.
 type Mints interface {
 	Mint(ctx context.Context, req Request) (Minted, error)
+}
+
+// intakeClaims is the payload one of the intake's routes signs: the claim set of
+// the format licence-key-v2 removed (K7.3), kept here so that the removal
+// changes nothing about what those routes mint.
+type intakeClaims struct {
+	Tier         string   `json:"tier"`
+	Features     []string `json:"features"`
+	Seats        int      `json:"seats"`
+	Organisation string   `json:"organisation"`
+	Issued       int64    `json:"issued"`
+	Expires      int64    `json:"expires"`
 }
 
 // RequestV1 is what the service asks the minter for when the key is a v1 one:
 // the row of the default policy it is issued under, the workspace it binds to,
 // and the organisation, seats and term it is for (spec section 3.2).
 //
-// It carries no policy of its own — no grace, no renewal mode, no check
-// interval — because those are the row's (D2133, D2138) and a caller that could
-// name them could mint a key that never checks at all. It carries no date
-// either, for the reason the older request carries none.
+// It carries no policy of its own — no grace, no renewal mode, no warnings —
+// because those are the row's (D2133, D2138) and a caller that could name them
+// could mint a key that never checks at all. What it names instead is bounded,
+// and every bound is the minter's: an end the row's own length caps, a term in
+// days the tier's ceiling caps, and a check interval inside `P1D`–`P30D` that
+// no row but the air-gapped one may be minted without (F28, F30).
+//
+// A request that names none of the three leaves them out of the JSON rather
+// than carrying their zero values: the two halves are deployed one after the
+// other and the minter reads its request strictly, so the zero value of a field
+// a minter from before this release has never heard of is a 400 on every mint
+// for as long as the deploy takes — the field's own bound is what the minter
+// applies to a value that is there, and an absent one is the row's.
+//
+// The answer carries the same skew the other way, and that one is held by the
+// order the two halves are deployed in rather than by anything in this file:
+// the intake reads the answer as strictly as the minter reads this request, so
+// a record field a newer minter adds is every mint failing until the intake is
+// the revision serving. That is why the services root writes the dependency
+// from the minter onto the intake — the intake lands first — and why the pair is
+// ordered one way and not symmetrically: an intake newer than its minter costs
+// nothing, because a field the older answer leaves out is the zero value the
+// reader already falls back from (terraform/services/main.tf).
 type RequestV1 struct {
 	Environment  Environment `json:"environment"`
 	Policy       string      `json:"policy"`
@@ -138,6 +179,24 @@ type RequestV1 struct {
 	// end of the term the customer is in, which is longer than a fresh period
 	// and still inside the tier's ceiling.
 	TermDays int `json:"term_days"`
+	// RequestedEnd is the instant the key is to end at, or the zero time for one
+	// that runs its term from the minter's own clock. A reveal ends on the
+	// predecessor's `paid_through`, which is an instant and not a count of days
+	// (D2182, P3.2), and an entitlement's key ends where the customer's term
+	// ends. It is a cap and never an extension: the key runs to it when it is
+	// inside the row and to the row's own longest otherwise (F30).
+	RequestedEnd time.Time `json:"requested_end,omitzero"`
+	// CheckInterval is the interval the key checks at, or empty for the row's
+	// own. F28 lets an operations mint name one within `P1D`–`P30D`, which is
+	// what turns a temporary grant into a key that stops on time; it is refused
+	// on the air-gapped row, whose key never contacts the server at all.
+	CheckInterval string `json:"check_interval,omitempty"`
+	// RenewalSecretHash is the hash the key is to carry in place of a fresh
+	// secret's: a reissue under an entitlement that already has one keeps it, so
+	// that a seat change or a renewal does not invalidate the secret the
+	// installation stored (D2200, amending D2135). Empty is a new secret, which
+	// is an issue and a reveal.
+	RenewalSecretHash string `json:"renewal_secret_hash,omitempty"`
 	// Note is free text a key carries and shows admins only.
 	Note string `json:"note"`
 }
@@ -251,7 +310,7 @@ func (m Minter) Mint(ctx context.Context, req Request) (Minted, error) {
 	}
 	issued := now.UTC()
 	expires := issued.Add(term)
-	claims := licence.Claims{
+	claims := intakeClaims{
 		Tier:         req.Tier,
 		Features:     req.Features,
 		Seats:        req.Seats,
@@ -281,6 +340,7 @@ func (m Minter) Mint(ctx context.Context, req Request) (Minted, error) {
 			Organisation: req.Organisation,
 			Issued:       issued,
 			Expires:      expires,
+			TermDays:     req.TermDays,
 		},
 	}, nil
 }
@@ -290,17 +350,26 @@ func (m Minter) Mint(ctx context.Context, req Request) (Minted, error) {
 //
 // The claim set is spec section 3.2's payload, and its policy is the row's and
 // never the caller's: a request names which row (D2133, D2138) and nothing about
-// what a key of it carries. What the request does name is the term in days,
-// because a renewal covers the rest of the term the customer is in rather than a
-// fresh one, and a key of a length the tier does not allow is refused exactly as
-// the older format refuses it. Only a row something renews takes that term: a
-// row nothing renews is minted for its own lifetime, since its length is as much
-// the row's as its grace is (D2136, D2138).
+// what a key of it carries — not its grace, not its renewal mode, and not its
+// warnings. What the request does name is bounded here, and the bounds are the
+// three the design gives the minter: the term in days, because a renewal covers
+// the rest of the term the customer is in rather than a fresh one, and a key of
+// a length the tier does not allow is refused exactly as the older format
+// refuses it; the end, which is capped at the longest key the row mints (F30);
+// and the check interval, which must be inside `P1D`–`P30D` and cannot be
+// removed from a row whose key checks (F28).
 //
-// `issued_at` and `paid_through` are the minter's own clock and that term, which
-// is what keeps a caller from dating a key past its tier's maximum (§2, §9.2).
-// The renewal secret is generated here, in the same pass, so that the hash in
-// the key and the secret on the bundle are one secret minted once (D2135).
+// Only a row something renews takes a term of its own: a row nothing renews is
+// minted for its own lifetime, since its length is as much the row's as its
+// grace is (D2136, D2138).
+//
+// `issued_at` is the minter's own clock and `paid_through` is that clock plus
+// the term, or the end the caller named when that is inside it, which is what
+// keeps a caller from dating a key past its tier's maximum (§2, §9.2). The
+// renewal secret is generated here, in the same pass, so that the hash in the
+// key and the secret on the bundle are one secret minted once (D2135) — unless
+// the request keeps an existing hash, which is a reissue under an entitlement
+// that already has one and answers no secret at all (D2200).
 func (m Minter) MintV1(ctx context.Context, req RequestV1) (MintedV1, error) {
 	if req.Environment != m.Environment {
 		return MintedV1{}, fmt.Errorf("this minter signs for the %s environment and the request names %q, and the key id it would sign under is the whole of what keeps the two apart", m.Environment, req.Environment)
@@ -313,6 +382,29 @@ func (m Minter) MintV1(ctx context.Context, req RequestV1) (MintedV1, error) {
 	if !known {
 		return MintedV1{}, fmt.Errorf("the tier %q is not one a key can be issued for", policy.Tier)
 	}
+	// The one row whose seats are its own: a free seat is one seat, and a request
+	// that asks this row for a hundred has not been given them by anything, so it
+	// mints a key for nobody rather than a key for a hundred (D2184, D2199).
+	if policy.Seats != 0 && req.Seats != policy.Seats {
+		return MintedV1{}, fmt.Errorf("the %s row is minted for its own %d seat(s) and the request names %d: this row's seats are the row's (D2184)",
+			policy.Name, policy.Seats, req.Seats)
+	}
+	// F28: an operations mint may name the interval its key checks at, inside the
+	// bounds, and the air-gapped row is the one row it may not touch — that key
+	// never contacts the server, so an interval on it is a request that has
+	// misunderstood which row it is minting from, and the row's null is the whole
+	// of what makes its key work in an installation with no route out (section 8).
+	if req.CheckInterval != "" {
+		if policy.CheckInterval == nil {
+			return MintedV1{}, fmt.Errorf("the %s row's key never contacts the server and the request names a check interval of %q: only the air-gapped row has none, and it has none because its installation cannot check (F28)",
+				policy.Name, req.CheckInterval)
+		}
+		if err := checkIntervalInBounds(req.CheckInterval); err != nil {
+			return MintedV1{}, fmt.Errorf("the %s row: %w", policy.Name, err)
+		}
+		interval := req.CheckInterval
+		policy.CheckInterval = &interval
+	}
 	// A row that nothing renews is minted for its own lifetime and for no other:
 	// a trial is D2136's fourteen days, and an air-gapped key is replaced by hand
 	// when the customer's next year is paid for (section 7), so neither length is
@@ -322,6 +414,11 @@ func (m Minter) MintV1(ctx context.Context, req RequestV1) (MintedV1, error) {
 	// than a fresh period. A period that is neither is a special deal, and a
 	// special deal is the admin page's override of the row rather than a term on
 	// this route (sections 12.1, 13; K2.6).
+	//
+	// An end is not a term in this sense: it is the instant a key's term ends,
+	// and a key re-signed under a live entitlement ends where the key it
+	// replaces ends whatever row it is of (P3.2). What caps it is the length the
+	// key would have been minted for anyway, which is below.
 	if req.TermDays != 0 && policy.RenewalMode == licence.RenewalNone && req.TermDays != int(policy.Term/(24*time.Hour)) {
 		return MintedV1{}, fmt.Errorf("the %s row runs for its own %d day(s) and the request names %d: nothing renews this row, so its term is the row's and never the caller's (D2136, section 7)",
 			policy.Name, int(policy.Term/(24*time.Hour)), req.TermDays)
@@ -333,6 +430,19 @@ func (m Minter) MintV1(ctx context.Context, req RequestV1) (MintedV1, error) {
 	term, err := termInDays(days, policy.Tier, maximum)
 	if err != nil {
 		return MintedV1{}, err
+	}
+	// The term the issuance itself stands for, and what the record's own term is
+	// read from: D2202 shortens the key below it and never the entitlement, so
+	// this is not `term` — while an end a caller names **is** the entitlement's
+	// own and shortens this too (F30, and a reveal hands back a predecessor's
+	// `paid_through`, which is where the term it stands for ends).
+	stands := time.Duration(days) * 24 * time.Hour
+	// D2202: a key of a row whose installation contacts the server runs thirty
+	// days at the most, whatever the row is sold for and whatever the caller
+	// named, because that key's end is the only thing that ends a rebound
+	// installation's access. The air-gapped row keeps its own term.
+	if limit := maxKeyTerm(policy); term > limit {
+		term = limit
 	}
 	if req.Seats < 1 {
 		return MintedV1{}, fmt.Errorf("a key for %d seat(s) is one nobody can install", req.Seats)
@@ -354,8 +464,21 @@ func (m Minter) MintV1(ctx context.Context, req RequestV1) (MintedV1, error) {
 	if err != nil {
 		return MintedV1{}, err
 	}
-	secret, secretHash, err := newRenewalSecret()
-	if err != nil {
+	secret, secretHash := "", ""
+	if req.RenewalSecretHash != "" {
+		// D2200: a reissue under an entitlement that already has a secret keeps
+		// it, so the installation's stored secret stays the one the server
+		// compares and a seat change or a renewal does not lock the holder out
+		// of renewing. What a caller may hand back is only a hash of the shape
+		// this service writes — which entitlement owns it is the store's to know
+		// (P3.6) — and the answer carries no secret, because there is no new one
+		// to show: the hash is the holder's own secret's, and it is not this
+		// service's to hand out a second time.
+		if err := checkSecretHash(req.RenewalSecretHash); err != nil {
+			return MintedV1{}, fmt.Errorf("the %s row: %w", policy.Name, err)
+		}
+		secretHash = req.RenewalSecretHash
+	} else if secret, secretHash, err = newRenewalSecret(); err != nil {
 		return MintedV1{}, err
 	}
 	now := time.Now()
@@ -363,8 +486,27 @@ func (m Minter) MintV1(ctx context.Context, req RequestV1) (MintedV1, error) {
 		now = m.Now()
 	}
 	issued := now.UTC()
+	if !req.RequestedEnd.IsZero() {
+		// F30: the end a caller names is a cap and never an extension. A reveal
+		// hands back the predecessor's `paid_through` and the successor runs to
+		// it, which is where the term it has left came from; anything past the
+		// row was already capped above. An end the clock has reached is refused
+		// rather than signed, because the key it would make is past before
+		// anybody reads it.
+		end := req.RequestedEnd.UTC()
+		if !end.After(issued) {
+			return MintedV1{}, errors.New("the end the request names is not after the minter's own clock, and a key minted to it is one that is already past (F30)")
+		}
+		until := end.Sub(issued)
+		if until < term {
+			term = until
+		}
+		if until < stands {
+			stands = until
+		}
+	}
 	paidThrough := issued.Add(term)
-	claims := licence.ClaimsV1{
+	claims := licence.Claims{
 		V:                 versionV1,
 		KID:               kid,
 		KeyID:             keyID,
@@ -408,14 +550,23 @@ func (m Minter) MintV1(ctx context.Context, req RequestV1) (MintedV1, error) {
 			Organisation: req.Organisation,
 			Issued:       issued,
 			Expires:      paidThrough,
+			// The whole days this issuance stands for, and not the term the key
+			// was minted for: what a caller rebuilding a subscription from the
+			// record wants is the entitlement, which D2202's cap on the key does
+			// not move (S3.5). The rounding up is the package's own: a term that
+			// ends a few hours short of the end it stands for is one that lapses
+			// inside it.
+			TermDays: daysBetween(issued, issued.Add(stands)),
 		},
 	}, nil
 }
 
-// keyText is the key text the design writes: the key id, the payload and the
-// signature, all three unpadded base64url, in that order (S2.1). It is the same
-// three lines as the owner's mint tool, which this package cannot import
-// because that tool is a `main`.
+// keyText is the key text the removed format writes: the key id, the payload
+// and the signature, all three unpadded base64url, in that order (S2.1). The
+// owner's mint tool used to spell this shape too and no longer does -- it writes
+// the v1 text, the `fgk_` prefix and two parts (K7.3) -- so this is the one
+// place left that writes the three-part text, for the routes still to be
+// converted to v1.
 func keyText(keyID string, payload, signature []byte) string {
 	return keyID + "." +
 		base64.RawURLEncoding.EncodeToString(payload) + "." +
@@ -423,10 +574,10 @@ func keyText(keyID string, payload, signature []byte) string {
 }
 
 // The two spellings of the v1 format this side writes, and they are copies of
-// ee/licence's own unexported constants (keyv1.go's `keyPrefixV1` and
+// ee/licence's own unexported constants (key.go's `keyPrefixV1` and
 // `versionV1`): that package reads the format and this is the only side that
 // writes it. What holds the two together is that every key these tests mint is
-// read back through licence.VerifyV1, which refuses a text whose prefix or
+// read back through licence.Verify, which refuses a text whose prefix or
 // version was spelled wrong here.
 const (
 	keyPrefixV1 = "fgk_"

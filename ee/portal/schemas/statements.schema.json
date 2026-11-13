@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/ee/portal/schemas/statements.schema.json",
+  "title": "Portal reseller statements",
+  "description": "What a reseller owes Fugaro for one month (portal plan P6.3; D2189, D2190). The direction is the finding: resellers owe Fugaro and there are no commissions. A statement is the month's accrual — days times seats times the wholesale rate — with one line per customer, issued once by an idempotent run and then read; what is paid against it is recorded here by operations and by nobody else, because only a person sees the money arrive. Every object here is closed, because ee/keyservice/wire_statements.go decodes it with DisallowUnknownFields.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/statement"
+    },
+    {
+      "$ref": "#/$defs/payment"
+    }
+  ],
+  "$defs": {
+    "statement": {
+      "type": "object",
+      "description": "One reseller's month, as the reseller and the operations team read it.",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "reseller_organisation_id",
+        "month",
+        "accrued_micros",
+        "paid_micros",
+        "state",
+        "lines",
+        "issued_at",
+        "paid_at"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The statement's id. A run of a month that has already been issued returns the statement that exists rather than making a second (P6.3's TestStatementRunIsIdempotent), so this is what a payment is recorded against."
+        },
+        "reseller_organisation_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The reseller that owes the money — the organisation the statement is addressed to and not the customers', which are its lines."
+        },
+        "month": {
+          "type": "string",
+          "pattern": "^\\d{4}-(0[1-9]|1[0-2])$",
+          "description": "The month the accrual is for, as `YYYY-MM` in UTC. A month boundary is a time zone's opinion, and a boundary that followed the reader's clock would put one day's accrual in two statements."
+        },
+        "accrued_micros": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "What the month's accrual came to, in micro-dollars. It is the sum of the lines, and it is what the credit limit was measured against while the month ran."
+        },
+        "paid_micros": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "What has been recorded against it so far, in micro-dollars. It is kept beside the accrual rather than netted off it: a statement is issued before it is paid, and a partly paid one has to keep saying what it was for."
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "open",
+            "paid"
+          ],
+          "description": "Open or paid, and it follows the two amounts: a statement whose payments cover its accrual is paid, so no separate act closes one and no run can leave one open that was settled."
+        },
+        "lines": {
+          "type": "array",
+          "description": "One entry per customer the month accrued for. The order is stable, so a reseller comparing two months can see which customer moved.",
+          "items": {
+            "$ref": "#/$defs/line"
+          }
+        },
+        "issued_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the statement was issued, in UTC — the run's instant, which is after the month it covers."
+        },
+        "paid_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "When the last payment settled it, in UTC, or null while it is open. A partial payment leaves this null and moves paid_micros."
+        }
+      }
+    },
+    "line": {
+      "type": "object",
+      "description": "One customer's part of a statement.",
+      "additionalProperties": false,
+      "required": [
+        "organisation_id",
+        "amount_micros"
+      ],
+      "properties": {
+        "organisation_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The customer organisation the accrual was for, linked to the reseller through the link operations sets (P6.1)."
+        },
+        "amount_micros": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "That customer's accrual for the month, in micro-dollars. It is not signed: a revoked entitlement stops accruing rather than crediting, and a correction is a payment recorded against the statement."
+        }
+      }
+    },
+    "payment": {
+      "type": "object",
+      "description": "Operations' record that money arrived against one statement (P6.3's TestPaymentIsRecordedByOperationsOnly). The statement it is for is the route's own target and not a field, so a payment cannot be recorded against two.",
+      "additionalProperties": false,
+      "required": [
+        "amount_micros",
+        "paid_at",
+        "reference"
+      ],
+      "properties": {
+        "amount_micros": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "What was received, in micro-dollars, and it may be less than the statement: a partial payment leaves it open and shows both figures. It must be more than nothing — a payment of zero is a mistake and not a fact."
+        },
+        "paid_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the money arrived, in UTC, which is the bank's date and not the day somebody typed it in."
+        },
+        "reference": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The bank or transfer reference operations was given, kept so that a payment can be matched to a statement months later — and so that the same transfer entered twice is visible as the same reference."
+        }
+      }
+    }
+  }
+}

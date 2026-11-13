@@ -210,6 +210,14 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 	if err != nil {
 		return err
 	}
+	// The node is what every run of the project is admitted by, so publishing
+	// it — and deleting it, which the same command does — is a project-level
+	// write: admin at project scope (F19). It is asked before the rules and
+	// before every read of the node, so a caller whose roles do not hold it
+	// reads the sentence naming the role rather than anything about the node.
+	if err := settingsAccessGate(ctx, lc, "fugaro project policy publish"); err != nil {
+		return err
+	}
 	if err := requirePolicyRules(ctx, db, lc); err != nil {
 		return err
 	}

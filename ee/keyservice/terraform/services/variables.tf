@@ -6,8 +6,22 @@ variable "project" {
   type        = string
 }
 
+variable "environment" {
+  description = "The environment this apply is for: with var.keyring it names the ring the signer grant is made on, and the key id inside it (D459). One apply, one environment."
+  type        = string
+
+  # The same list keyring/'s `keys` map names, written where a person reading this
+  # root sees it: the two roots have to admit one set of environments, or one of
+  # them plans against a ring the other never creates. TestRingHoldsOneEnvironmentsKey
+  # holds the two together.
+  validation {
+    condition     = contains(["production", "staging"], var.environment)
+    error_message = "environment must be production or staging."
+  }
+}
+
 variable "region" {
-  description = "The region both services run in."
+  description = "The region both services run in, the key rings' location and the Firestore database's."
   type        = string
 
   validation {
@@ -17,7 +31,7 @@ variable "region" {
 }
 
 variable "keyring" {
-  description = "The key ring keyring/ created, which the signer role is granted on."
+  description = "The key ring's name stem keyring/ created this environment's ring with; the grant is made on this name and the environment joined by a dash."
   type        = string
   default     = "fugaro-licence"
 }
@@ -28,10 +42,10 @@ variable "signer_role" {
   default     = "fugaroKeySigner"
 }
 
-variable "intake_account" {
-  description = "The intake's service account id."
+variable "api_account" {
+  description = "The API's service account id."
   type        = string
-  default     = "fugaro-key-intake"
+  default     = "fugaro-portal-api"
 }
 
 variable "minter_account" {
@@ -40,10 +54,16 @@ variable "minter_account" {
   default     = "fugaro-key-minter"
 }
 
-variable "intake_service" {
-  description = "The intake's Cloud Run service name."
+variable "scheduler_account" {
+  description = "The service account Cloud Scheduler mints its OIDC tokens for. It is the account the API's sign-in check verifies, and it holds no IAM role in this project: the scheduler calls a public service and the API's own check is the fence (P1.3, F33)."
   type        = string
-  default     = "fugaro-key-intake"
+  default     = "fugaro-portal-scheduler"
+}
+
+variable "api_service" {
+  description = "The API's Cloud Run service name."
+  type        = string
+  default     = "fugaro-portal-api"
 }
 
 variable "minter_service" {
@@ -52,8 +72,8 @@ variable "minter_service" {
   default     = "fugaro-key-minter"
 }
 
-variable "intake_image" {
-  description = "The intake's image, built from ee/keyservice (S3.2) and pushed by the deploy (S3.7). No default: a service pointing at an image nobody built would be a revision that never becomes ready."
+variable "api_image" {
+  description = "The API's image, built from ee/keyservice (S3.2) and pushed by the deploy (P9.2, S3.7). No default: a service pointing at an image nobody built would be a revision that never becomes ready."
   type        = string
 }
 
@@ -62,8 +82,111 @@ variable "minter_image" {
   type        = string
 }
 
+variable "handover_key" {
+  description = "The handover ring's name and the name of the encryption key inside it: the key id is the ring's path plus this name, so one literal names both (D2182)."
+  type        = string
+  default     = "fugaro-portal-handover"
+}
+
+variable "handover_role" {
+  description = "The custom role the API's account is granted on the handover ring: encrypt and decrypt, and nothing else (D2182)."
+  type        = string
+  default     = "fugaroHandoverSealer"
+}
+
+variable "statement_job" {
+  description = "The monthly statement job's name."
+  type        = string
+  default     = "fugaro-portal-statements"
+}
+
+variable "reminder_job" {
+  description = "The daily reminder job's name."
+  type        = string
+  default     = "fugaro-portal-reminders"
+}
+
+variable "statement_job_path" {
+  description = "The path the statement job posts to on the API. The route is P6.3's, so this is the one place the two meet."
+  type        = string
+  default     = "/api/statements/run"
+}
+
+variable "reminder_job_path" {
+  description = "The path the reminder job posts to on the API. The route is P7.1's."
+  type        = string
+  default     = "/api/reminders/run"
+}
+
+# The two jobs' pauses are inputs rather than literals in scheduler.tf, so that
+# the apply which ships a route is also the apply that starts its job: a literal
+# can only be changed from outside Terraform, and the next apply — a re-run, an
+# image change, any infra change at all — writes the literal back and pauses the
+# job again, mid-month and without a word. One variable per job rather than one
+# for both, because the two routes ship in different tasks (P6.3 and P7.1) and a
+# single switch would either mail reminders before their route exists or hold the
+# statements back until it does.
+variable "statements_paused" {
+  description = "Whether the monthly statement job is created paused. Its route is P6.3's, so the default keeps it off; the deploy that ships the route turns it on by setting this false in the same apply."
+  type        = bool
+  default     = true
+}
+
+variable "reminders_paused" {
+  description = "Whether the daily reminder job is created paused. Its route is P7.1's, and the same switch turns it on."
+  type        = bool
+  default     = true
+}
+
+variable "secrets" {
+  description = "The secrets the services read, keyed by the name the deploy knows them by and valued with their Secret Manager ids. This root creates the empty containers; the deploy fills them (P9.2, S3.7)."
+  type        = map(string)
+
+  default = {
+    paddle_api_key = "fugaro-portal-paddle-api-key"
+    paddle_webhook = "fugaro-portal-paddle-webhook-secret"
+    resend_api_key = "fugaro-portal-resend-api-key"
+    sentry_dsn     = "fugaro-portal-sentry-dsn"
+  }
+}
+
+variable "network" {
+  description = "The network the API's egress runs over. It is this root's own rather than the project's default, for the reason the compute module's is: a default network arrives with its own firewall rules and with subnets nobody here reviewed."
+  type        = string
+  default     = "fugaro-portal-network"
+}
+
+variable "subnetwork" {
+  description = "The subnet the API's revisions take their egress address from."
+  type        = string
+  default     = "fugaro-portal-subnet"
+}
+
+variable "subnet_cidr" {
+  description = "The subnet's range. A /20 is small for the two services this project holds (Direct VPC egress consumes one address per revision instance) and wide enough that a scale-out never runs out of them."
+  type        = string
+  default     = "10.132.0.0/20"
+
+  validation {
+    condition     = can(cidrhost(var.subnet_cidr, 0))
+    error_message = "subnet_cidr must be an IPv4 range such as 10.132.0.0/20."
+  }
+}
+
+variable "router" {
+  description = "The Cloud Router the NAT is created on. Named here rather than left to the provider, because the router is what a plan's review screen shows the NAT hanging from."
+  type        = string
+  default     = "fugaro-portal-router"
+}
+
+variable "nat" {
+  description = "The Cloud NAT that carries the API's internet traffic. Paddle's API and Resend's are not Google's, so private Google access does not reach them, and an all-traffic egress with no NAT is an API that can reach the minter and nothing else."
+  type        = string
+  default     = "fugaro-portal-nat"
+}
+
 variable "manage_apis" {
-  description = "Whether this root enables the three APIs it needs. Off for a project whose owner enables them out of band."
+  description = "Whether this root enables the APIs it needs. Off for a project whose owner enables them out of band."
   type        = bool
   default     = true
 }

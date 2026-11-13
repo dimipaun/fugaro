@@ -10,6 +10,10 @@ package keyservice
 // guard in New can be deleted with all of them green, and what it guards is the
 // difference between a service that refuses to start and one that runs with an
 // unlimited rate, an unverifiable body or a key that verifies nowhere.
+//
+// The refusals the portal's API adds are not here: a mounted route's seam is
+// refused only for the routes this deployment mounts (api.go), and api_test.go
+// holds that guard.
 
 import (
 	"testing"

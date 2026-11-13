@@ -411,6 +411,15 @@ export const NON_TEXT_STRING_KEYS: readonly string[] = Object.freeze([
   // section 5). A screen that draws it compares it or names it from its own
   // table, so it is not text and carries no class.
   'failure_class',
+  // `pr_state` is the state of the pull request a `runs ls` row carries, in the
+  // owner's four words of 2026-11-12 (`live`, `ready`, `stalled`; the fourth,
+  // `orphan`, is one no listing of runs can write -- contract section 5). It is
+  // an enum of the same kind as `status` and `derived` beside it: the CLI folds
+  // it from the run records and writes it from its own table, so a screen that
+  // draws it names it from that table rather than sanitizing it. The console
+  // reads no screen from it yet, and the key is accepted so a document carrying
+  // it decodes instead of reading as the skew state.
+  'pr_state',
   'outcome',
   'auth',
   'deadline',
@@ -1239,6 +1248,19 @@ export const FINISHED_KEYS = [
  * `WIRE_TEXT_CLASSES` because its value is a name of the CLI's own vocabulary
  * and not text a job wrote: it is in `NON_TEXT_STRING_KEYS`, as `status` and
  * `derived` are, so the screen that reads it takes it through that list.
+ *
+ * **`pr_state` arrived with the pull request vocabulary (CLI 0.24.0)**, between
+ * `pr` and `pushed` in the struct, and `runs ls` writes it on every row that
+ * carries a pull request: the state of that pull request in the owner's four
+ * words of 2026-11-12 -- `live`, `ready` or `stalled`; the fourth, `orphan`, is
+ * one no listing of runs can write (contract section 5). It is
+ * `failure_class`'s omission a sixth time, and the pin against the struct is
+ * again what would catch it. The console reads no screen from it yet -- the key
+ * is accepted and dropped, as `plan_task` and `owner_decisions` are -- and it
+ * carries no entry in `WIRE_TEXT_CLASSES` because its value is a word of the
+ * CLI's own table and not text a job wrote: it is in `NON_TEXT_STRING_KEYS`,
+ * beside `status`, `outcome` and `derived`, whose vocabulary it is a second
+ * closed list of.
  */
 export const RECORD_KEYS = [
   'run',
@@ -1278,6 +1300,7 @@ export const RECORD_KEYS = [
   'task_pr',
   'record_pr',
   'pr',
+  'pr_state',
   'pushed',
   'pushed_head',
   'started_at',
