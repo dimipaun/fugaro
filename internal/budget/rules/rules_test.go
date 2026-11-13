@@ -792,24 +792,31 @@ func TestDeviceNodesAreClientDenied(t *testing.T) {
 // TestDeviceNodeCarriesNoShapeRule is P2's fourth claim — the plan's red step
 // calls it "the document moved" — and the one its three emulator cases cannot
 // reach: reconciliation §F29 reads the node as `{ ".read": false, ".write":
-// false }` with **no `.validate` over it and no `$other` beneath it**, and that
-// absence, not the fields, is what makes the administered email and the role
-// (D222, D225) children whose arrival changes nothing. No rule reads one, so an
-// entry carrying them is admitted exactly as a bare one is, an installation
-// whose document predates them needs no redeploy, and the deployed document
-// takes no generation.
+// false }` with **no `.validate` over it, no `$other` beneath it, and nothing in
+// the document naming a child of it**, and that absence, not the fields, is what
+// makes the administered email and the role (D222, D225) children whose arrival
+// changes nothing. No rule reads one, so an entry carrying them is admitted
+// exactly as a bare one is, an installation whose document predates them needs
+// no redeploy, and the deployed document takes no generation.
 //
-// It reads testdata/rules.golden.json rather than Generate() and pins the node's
-// own attributes and everything beneath it, because the byte comparison in
-// TestRulesGolden is satisfied by regenerating the golden — which is exactly how
-// a shape rule arrives: whoever writes it runs UPDATE_GOLDEN=1 in the same
-// change, and the diff is then the only place the generation would be seen. A
-// rule over this node is a generation of its own (§F29's "what would force a
-// generation later", D225's later half), so it has to fail here as well.
+// It reads testdata/rules.golden.json rather than Generate(), and it pins the
+// node's own attributes, every path beneath it and every expression that reaches
+// past it, because the byte comparison in TestRulesGolden is satisfied by
+// regenerating the golden — which is exactly how a shape rule arrives: whoever
+// writes it runs UPDATE_GOLDEN=1 in the same change, and the diff is then the
+// only place the generation would be seen. TestDeviceNodesAreClientDenied reads
+// Generate() and so catches the change before it is regenerated; neither reading
+// subsumes the other, and this one is the fence that survives the regeneration.
+// A rule over this node, or one that reads a child of it, is a generation of its
+// own (§F29's "what would force a generation later", D225's later half), so it
+// has to fail here as well.
 //
-// Hand mutation this fails on: adding `".validate": ...` to the `$uid` entry in
-// rules.json.tmpl and regenerating the golden (the attribute set below), and
-// adding a `$other` child beneath the node (the paths below it).
+// Hand mutation this fails on, each with the golden regenerated so that only
+// this test can object: `".read": "USER"` or `".write": "USER"` on the `$uid`
+// entry (the attribute set), a `".validate"` beside them, a `$other` child
+// beneath the node (the paths), and a USER that also required
+// `child('role').exists()` (the readers) — the last of which every other reading
+// of the document passes, which is why it is worth pinning here.
 func TestDeviceNodeCarriesNoShapeRule(t *testing.T) {
 	raw, err := os.ReadFile(goldenPath)
 	if err != nil {
@@ -820,8 +827,12 @@ func TestDeviceNodeCarriesNoShapeRule(t *testing.T) {
 		t.Fatalf("%s is not JSON: %v", goldenPath, err)
 	}
 	node := PathDevices + "/$uid"
+	// The one reach the document has on the node: the conjunct that asks whether
+	// the entry exists, `root.child('config/admin/devices').child(auth.uid)`. A
+	// `.child(` after it is a rule reading one of the entry's fields.
+	entry := "root.child('" + PathDevices + "').child(auth.uid)"
 	var found bool
-	var beneath []string
+	var beneath, readers []string
 	walk(doc["rules"], nil, func(path []string, attrs map[string]any) {
 		p := strings.Join(path, "/")
 		switch {
@@ -833,12 +844,21 @@ func TestDeviceNodeCarriesNoShapeRule(t *testing.T) {
 		case strings.HasPrefix(p, node+"/"):
 			beneath = append(beneath, "/"+p)
 		}
+		for a, v := range attrs {
+			expr, ok := v.(string)
+			if ok && strings.Contains(expr, entry+".child(") {
+				readers = append(readers, "/"+p+" "+a)
+			}
+		}
 	})
 	if !found {
 		t.Fatalf("%s carries no /%s: the deployed document denies the node USER's device conjunct reads", goldenPath, node)
 	}
 	if len(beneath) > 0 {
 		t.Errorf("%s names %s beneath /%s: nothing in the document may name a child of the node, or the entry stops being one whose fields are optional", goldenPath, strings.Join(beneath, ", "), node)
+	}
+	if len(readers) > 0 {
+		t.Errorf("%s reads a child of /%s in %s: a rule that reads one of the fields is D225's later half and a rules generation of its own (§F29), and it is not this work's to take", goldenPath, node, strings.Join(readers, ", "))
 	}
 }
 
