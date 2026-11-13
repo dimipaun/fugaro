@@ -12374,6 +12374,17 @@ step needs a credential typed.
 4. **The boundary.** `fugaro update` never **installs** a unit (that is `fugaro setup`'s and `fugaro orchestrator install`'s), and the
    unit's step asks for a typed confirmation, which `--yes` does not cover and an agent-marker run never writes.
 
+**Run it:** `bash scripts/live-checks/check301.sh start`, then the one thing it prints (the reboot) and
+`bash scripts/live-checks/check301.sh after-reboot`, `bash scripts/live-checks/check301.sh upgrade` and
+`bash scripts/live-checks/check301.sh update` — **you** run every phase, at your own terminal, and
+**no agent runs any step of it**. The check spans a reboot and two platforms, so it is phased and resumable, with its readings in a
+small file under its own state directory (`${XDG_STATE_HOME:-$HOME/.local/state}/fugaro/check301`, mode 0600, removed by `... forget`);
+the same script runs on macOS (launchd) and Linux (systemd) and picks the platform itself. Every automated reading is a
+`FACT <name>: PASS|FAIL|INFO — <what>` line and the run ends `CHECK 301 RESULT ... END (exit <code>)`; the human-only steps — the
+reboot, the install, the brew-style upgrade on a throwaway machine — are printed once with their exact command and recorded when you
+confirm them. Every phase takes `--dry-run`. Its own test, `scripts/live-checks/check301_test.sh`, drives it against fakes with no
+network and no cloud.
+
 **Restore.** Nothing is restored: the daemon is meant to stay installed and running. The throwaway machine the upgrade half uses is
 the owner's to discard, and no state this check makes is meant to be undone.
 
@@ -12401,6 +12412,18 @@ never the sandbox from an agent's session: **no agent runs any step of it**.
 4. **The manual rollback, at any point inside the window.** `fugaro orchestrator uninstall`, then the sweep, the watcher and the queue
    scripts re-armed, and one launch seen through them. **No rollback command exists**, so those steps are the whole rollback — and the
    owner decides when the scripts are removed.
+
+**Run it:** `bash scripts/live-checks/check302.sh before --installation <name> --scripts <dir>`, then
+`bash scripts/live-checks/check302.sh cutover --dump <file> --daemon-log <file>` and, inside the 14 days,
+`bash scripts/live-checks/check302.sh rollback` — **you** run it, on **your own installation and never `belong`**, and
+**no agent runs any step of it**. It is a plan-then-confirm script: every phase prints its plan and asks for **one** confirmation, typed
+at your terminal, and `--dry-run` prints that plan and changes nothing. It refuses `belong` and any installation the register does not
+name as a sandbox, keeps its readings in a state file under its own directory (`${XDG_STATE_HOME:-$HOME/.local/state}/fugaro/check302`,
+mode 0600, removed once the rollback is complete or by `... forget`), never prints a secret, and implements the register's steps and
+nothing else: the cutover's three facts, the window, and the manual rollback with **no** rollback command (it verifies that none
+exists rather than inventing one). Every reading is a `FACT <name>: PASS|FAIL|INFO — <what>` line and the run ends
+`CHECK 302 RESULT ... END (exit <code>)`. Its own test, `scripts/live-checks/check302_test.sh`, drives it against fakes with no network
+and no cloud.
 
 **Restore.** This check's second half **is** a rollback and not an undo of the first: what it leaves behind is the daemon stopped,
 the scripts re-armed and on disk, and the 14-day window running. Say which state the machine is in when you stop.

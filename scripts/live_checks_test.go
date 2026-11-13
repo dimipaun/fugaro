@@ -52,6 +52,13 @@ import (
 // and a fake `fugaro` that logs every call with the directory it was made in, so
 // a case says both what the check measured and that no image was built, no
 // `fugaro update` was answered for the owner and no run was launched.
+// Check 301's fakes are a fake `fugaro`, a fake launchd and a fake systemd
+// whose boot id and unit files the test writes, so a reboot, a second
+// instance's refusal and T7's re-render are all readings of files the test
+// owns; Check 302's are a fake `fugaro`, a real `uname` and a real terminal
+// (a pty its helper types the phase's one confirmation into), and it rewrites
+// a copy of its own script to prove the case that expects a quiet daemon log
+// to be a finding is not vacuous.
 var liveCheckScripts = []struct {
 	name string
 	test string
@@ -68,6 +75,8 @@ var liveCheckScripts = []struct {
 	{"check191.sh", "check191_test.sh"},
 	{"check195.sh", "check195_test.sh"},
 	{"check300.sh", "check300_test.sh"},
+	{"check301.sh", "check301_test.sh"},
+	{"check302.sh", "check302_test.sh"},
 	{"check340.sh", "check340_test.sh"},
 	{"check96.sh", "check96_test.sh"},
 	{"check361.sh", "check361_test.sh"},
