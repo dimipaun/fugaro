@@ -77,9 +77,9 @@ type Craft struct {
 }
 
 // Crafts is fugaro.yaml's `agent.crafts` and the project layer's
-// `defaults.agent.crafts`: the four crafts by name.
+// `defaults.agent.crafts`: the crafts by name.
 //
-// It is a struct with four fields rather than a map for config.ModelRoles'
+// It is a struct with a field per craft rather than a map for config.ModelRoles'
 // reason — the crafts are a closed set, so a file that misspells one is
 // refused by the strict decoder instead of quietly setting nothing — and each
 // field is a block rather than a scalar because a craft sets its model and its

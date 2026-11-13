@@ -2423,14 +2423,14 @@ This command has no subcommands.
 
 Show the model and the credential or pool each craft runs on
 
-Show the four crafts: the coder, the first-line review, the senior review
-and the security review.
+Show the crafts: the coder, the first-line review, the senior review,
+the security review and the merge judge.
 
 Each craft runs a model and sends its calls out on a credential or a pool, and
-the two halves inherit separately: the first-line review follows the coder and
-the security review follows the senior review, so a craft that sets only one
-half keeps the other half it follows. A craft that sets no access anywhere
-resolves to the project's default credential.
+the two halves inherit separately: the first-line review follows the coder, and
+the security review and the merge judge follow the senior review, so a craft
+that sets only one half keeps the other half it follows. A craft that sets no
+access anywhere resolves to the project's default credential.
 
 Every half names where it came from: the layer that wrote it (repo, local or
 project), the craft it was inherited from, or default when nothing set it. A
