@@ -416,6 +416,56 @@ func TestTheIntakeMintsAV1KeyThroughTheMinterService(t *testing.T) {
 			t.Error("the intake's half accepted a mint with no renewal secret, want a refusal: a key nobody can renew is not one this service issues (D2135)")
 		}
 	})
+
+	// The one answer with no secret the intake's half does pass on, and the lane
+	// it exists for: a reissue that keeps the entitlement's existing hash is
+	// answered with no new secret (D2200), and a client that refused it would
+	// leave that reissue unable to reach the minter anywhere but a test's own
+	// in-process wiring.
+	t.Run("a reissue that keeps the entitlement's hash crosses with no secret", func(t *testing.T) {
+		kept := digest("the secret this entitlement was issued with")
+		request := v1Request(PolicyTeamMonthly)
+		request.RenewalSecretHash = kept
+		reissued, err := mints.MintV1(context.Background(), request)
+		if err != nil {
+			t.Fatalf("the intake's half refused the minter's reissue answer: %v", err)
+		}
+		if reissued.RenewalSecret != "" {
+			t.Errorf("the reissue answered the secret %q, want none: the holder keeps the one they were sent (D2200)", reissued.RenewalSecret)
+		}
+		if got := v1Verified(t, f, reissued.Key).RenewalSecretHash; got != kept {
+			t.Errorf("the reissued key crossed the wire carrying %q, want the hash the request kept (%q)", got, kept)
+		}
+	})
+}
+
+// TestARequestLeavesTheFieldsItNamesNothingInOffTheWire: the two halves of the
+// split are deployed one after the other, and the minter reads its request
+// strictly — a field it has never heard of is a refusal (the route's own
+// `DisallowUnknownFields`). So a request that carries the zero value of a field
+// a minter from before this release does not know is a 400 on every mint for as
+// long as the deploy takes, which is the one window in which the intake is
+// newer than the minter it asks. What a request names nothing in is left out,
+// and the three are the row's own until a caller names them.
+func TestARequestLeavesTheFieldsItNamesNothingInOffTheWire(t *testing.T) {
+	fields := []string{"requested_end", "check_interval", "renewal_secret_hash"}
+	unnamed := string(mustJSON(t, v1Request(PolicyTeamAnnual)))
+	for _, field := range fields {
+		if strings.Contains(unnamed, field) {
+			t.Errorf("a request that names no %s carries the key anyway (%s), want it left out: a minter from before this release refuses a field it does not know, and the refusal is every mint", field, unnamed)
+		}
+	}
+
+	ask := v1Request(PolicyTeamAnnual)
+	ask.RequestedEnd = time.Date(2026, 12, 10, 12, 0, 0, 0, time.UTC)
+	ask.CheckInterval = "P1D"
+	ask.RenewalSecretHash = digest(freshSecret(t))
+	carried := string(mustJSON(t, ask))
+	for _, field := range fields {
+		if !strings.Contains(carried, field) {
+			t.Errorf("a request that names a %s leaves it off the wire (%s), want it carried: what a caller names is what the minter bounds and applies", field, carried)
+		}
+	}
 }
 
 // mustJSON is a value as JSON, for the tests that read what a key, a claim set
