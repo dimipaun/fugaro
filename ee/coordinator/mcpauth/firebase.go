@@ -128,11 +128,12 @@ type Identity struct {
 	// zero time when the token carries no readable one.
 	AuthTime time.Time
 	// TenantID is `firebase.tenant`: the Identity Platform tenant the sign-in
-	// came from, and empty for a project that runs none. It is the ONLY
-	// tenant-shaped value a Firebase ID token carries — Firebase forwards no
-	// Microsoft (Entra ID) directory id, so a Microsoft sign-in carries no
-	// directory to pin and a caller whose rule needs one refuses it (D2207,
-	// pinned by ee/keyservice's TestResellerMicrosoftNeedsAPinnedTenant).
+	// came from, and empty for a project that runs none. It is the tenant the
+	// CLIENT names at sign-in and not the directory an account lives in, and it
+	// is the ONLY tenant-shaped value a Firebase ID token carries — Firebase
+	// forwards no Microsoft (Entra ID) directory id, so a Microsoft sign-in
+	// carries no directory to pin and a caller whose rule needs one refuses it
+	// (D2207, pinned by ee/keyservice's TestResellerMicrosoftNeedsAPinnedTenant).
 	TenantID string
 }
 

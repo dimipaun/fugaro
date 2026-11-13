@@ -144,8 +144,9 @@ func portalClaims() map[string]any {
 // `microsoft.com`, `firebase.identities` holds the provider's own user id, and
 // the address is the directory's. No Microsoft (Entra ID) directory id is in
 // it — the only tenant-shaped claim Firebase's set carries is `firebase.tenant`,
-// which is Identity Platform's own tenant — which is why the tenant check below
-// refuses every Microsoft sign-in a deployment can actually mint (D2207).
+// which is Identity Platform's own tenant, the one a client asks for — which is
+// why the tenant check below refuses every Microsoft sign-in a deployment can
+// actually mint (D2207).
 func microsoftSignInClaims() map[string]any {
 	claims := portalClaims()
 	claims["email"] = "owner@contoso.example"
@@ -402,7 +403,10 @@ func TestStaleSignInIsRefusedForMint(t *testing.T) {
 
 // TestMicrosoftTenantIsPinned: D2207's condition for a reseller. A Microsoft
 // sign-in is admitted only from a tenant on the organisation's list, so a
-// directory nobody pinned is refused however valid the token is.
+// directory nobody pinned is refused however valid the token is — and what the
+// list entry pins is the Identity Platform tenant, which is a directory only
+// when that tenant's app registration is single-tenant (portalauth.go's
+// comment).
 func TestMicrosoftTenantIsPinned(t *testing.T) {
 	v := portalVerifier(t)
 	signIn := portalSignIn(t, v, microsoftTenantClaims())
@@ -476,7 +480,11 @@ func TestOperationsAcceptsGoogleOnly(t *testing.T) {
 // Microsoft sign-in Firebase ACTUALLY mints — the recorded shape, whose token
 // carries no tenant because Firebase forwards no Microsoft directory id. D2207's
 // fallback follows: a reseller organisation is Google-only until the owner gives
-// a directory a tenant Firebase can carry.
+// a directory a tenant Firebase can carry, AND backs that tenant's Microsoft
+// provider with a single-tenant app registration for that one directory — the
+// half that makes a pinned tenant id stand for a directory rather than for
+// whichever tenant a client asked for (portalauth.go's comment). This test holds
+// the fallback's own half: the shape a deployment can mint today is refused.
 func TestResellerMicrosoftNeedsAPinnedTenant(t *testing.T) {
 	v := portalVerifier(t)
 	signIn := portalSignIn(t, v, microsoftSignInClaims())

@@ -34,9 +34,27 @@ package keyservice
 // ID token's claim set has no field for one, and the Microsoft sign-in recorded
 // in portalauth_test.go carries none. The only tenant-shaped value Firebase
 // writes is `firebase.tenant`, which is Identity Platform's own tenant
-// (mcpauth.Identity.TenantID), so the list can be satisfied only if the owner
-// gives each Microsoft directory an Identity Platform tenant of its own. Until
-// then D2207's fallback applies: a reseller organisation is Google-only too, and
+// (mcpauth.Identity.TenantID) — the tenant the sign-in was MADE IN, which the
+// client names when it calls the SDK, and NOT the directory the person's account
+// lives in.
+//
+// **So a pinned list is a directory control only half way, and the other half is
+// deployment configuration this file can neither see nor check.** The tenant id
+// a list entry pins stands for a directory only when that Identity Platform
+// tenant's Microsoft provider is backed by a **single-tenant Azure app
+// registration** for that one directory: that registration is what admits only
+// its own directory's accounts, so a token minted in the tenant is one of that
+// directory's people. A tenant whose registration is multi-tenant admits every
+// Entra directory there is, and the same list entry then pins nothing at all —
+// an owner who sets the list up without that half has a control that reads as a
+// directory pin and is not one. The registration is the owner's (P0's accounts
+// in docs/portal/reconciliation.md name it) and pinners of a tenant should be
+// told so.
+//
+// A deployment that will not or cannot hold that half takes D2207's own fallback
+// for "no usable Microsoft tenant id": a reseller organisation is Google-only
+// too, which is the zero SSORule — no pinned tenant, and so every `microsoft.com`
+// sign-in refused — and the state the recorded shape is already in.
 // `TestResellerMicrosoftNeedsAPinnedTenant` is what holds that. The recorded
 // shape is also what P2.2 needs about `email_verified`: it is a claim Firebase
 // sets from the provider's own report, and this verifier requires it of every
@@ -167,7 +185,10 @@ type SignIn struct {
 	// readable one, which FreshWithin refuses.
 	AuthTime time.Time
 	// TenantID is `firebase.tenant`, the Identity Platform tenant the sign-in
-	// came from, or empty when the project runs none.
+	// came from, or empty when the project runs none. It is the tenant the
+	// client asked for and not the Microsoft (Entra ID) directory the person's
+	// account lives in, which is what RequireSSO's list entry is read as only
+	// with the single-tenant app registration this file's comment names.
 	TenantID string
 }
 
@@ -189,7 +210,9 @@ type SSORule struct {
 	// D2207's condition for Microsoft: a `microsoft.com` sign-in is admitted
 	// only when the token's tenant is one of these. Empty or nil refuses every
 	// Microsoft sign-in (F40), which is what a reseller is left with until the
-	// owner pins a tenant Firebase can carry (this file's comment).
+	// owner pins a tenant Firebase can carry AND backs it with a single-tenant
+	// app registration — the list on its own pins the tenant the client asked
+	// for and not the directory the person is in (this file's comment).
 	MicrosoftTenants []string
 }
 
@@ -275,7 +298,8 @@ func (v *PortalVerifier) Verify(ctx context.Context, raw string) (SignIn, error)
 // (D2207, F10): anything but `google.com` and `microsoft.com` is refused before
 // the rule is read, a Microsoft sign-in at the operations organisation is
 // refused outright, and at a reseller it is admitted only from a tenant on the
-// rule's list.
+// rule's list — a list whose entries are directories only when the deployment
+// holds the app-registration half this file's comment names.
 //
 // It is called for a request that uses an operations or a reseller membership —
 // the rule follows the ACTOR and not the organisation the request is about — and
