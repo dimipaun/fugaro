@@ -77,7 +77,8 @@ func (s *Server) candidates(ctx context.Context, id Identity, canonical string, 
 		// on a state it cannot name would be the worse answer to it.
 		ra, ok := s.reviewAccount(id.JobAccount)
 		if !ok {
-			return nil, creds.StrategyFailover, nil, fmt.Errorf("%w: the calling account is not one of this service's review job accounts", ErrUnavailable)
+			return nil, creds.StrategyFailover, nil, labelRead(readCandidates,
+				fmt.Errorf("%w: the calling account is not one of this service's review job accounts", ErrUnavailable))
 		}
 		out, skipped := reviewCandidates(reviewOfferings(b), ra.Account)
 		return out, creds.StrategyFailover, skipped, nil
@@ -90,7 +91,7 @@ func (s *Server) candidates(ctx context.Context, id Identity, canonical string, 
 		// own sentence is the answer, and it travels as this error rather than
 		// as an empty list, which the selector would answer with a sentence
 		// about the bundle.
-		return nil, creds.StrategyFailover, nil, err
+		return nil, creds.StrategyFailover, nil, labelRead(readCandidates, err)
 	} else if narrowed {
 		cands, strategy = offer, offerStrategy
 		// The credentials the crafts leave out are ones this call may not be
@@ -249,14 +250,14 @@ func offeredToReview(c creds.Credential, account string) bool {
 func (s *Server) admittedAccounts(ctx context.Context, slug, canonical string) (map[string]bool, error) {
 	child, found, err := s.cfg.Policy.Admissions(ctx, slug)
 	if err != nil {
-		return nil, err
+		return nil, labelRead(readPolicyRepo, err)
 	}
 	if !found || child == nil || child.Credentials == nil {
 		return map[string]bool{}, nil
 	}
 	shared, found, err := s.cfg.Policy.Shared(ctx)
 	if err != nil {
-		return nil, err
+		return nil, labelRead(readPolicyShared, err)
 	}
 	if !found || shared == nil {
 		return map[string]bool{}, nil
@@ -476,10 +477,24 @@ func (s *Server) auditCall(ctx context.Context, id Identity, purpose, credential
 //
 // The audit status is the refusal's own wire error type, so the run's halt
 // message and the operator's line read the same word for the same refusal.
+//
+// It also writes the diagnosis the audit line cannot carry (logRefusal): which
+// read failed and with what class of error, which is nowhere else once the
+// gateway has turned the typed refusal into one sentence for the agent.
 func (s *Server) refuseCall(ctx context.Context, w http.ResponseWriter, id Identity, purpose, credential, tier string, status int, typ, message string) {
+	s.refuseCallCause(ctx, w, id, purpose, credential, tier, status, typ, message, nil)
+}
+
+// refuseCallCause is refuseCall for a refusal whose cause this code knows: the
+// error the refusal was taken on, carrying the label of the read that failed
+// (labelRead) when one did. The refusal itself is unchanged — the same audited
+// act, the same body and the same status — and the cause reaches the service's
+// own log line and nothing else: no error text, no field of the answer.
+func (s *Server) refuseCallCause(ctx context.Context, w http.ResponseWriter, id Identity, purpose, credential, tier string, status int, typ, message string, cause error) {
 	if err := s.auditCall(ctx, id, purpose, credential, tier, typ); err != nil {
 		s.log.Error("credsvc: a refused call could not be audited", "error", err)
 	}
+	s.logRefusal(ctx, id, typ, status, message, cause)
 	s.refuse(w, status, typ, message)
 }
 
@@ -544,7 +559,8 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, s
 			// rotated away — silently, and with no line that says so. The
 			// sentence is the class and nothing else: no container and no value
 			// is in it.
-			s.refuseCall(ctx, w, id, PurposeForward, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable, perSecretRefusal)
+			s.refuseCallCause(ctx, w, id, PurposeForward, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable,
+				perSecretRefusal, labelRead(readSecret, err))
 			return
 		}
 		if !ok {
@@ -560,7 +576,8 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, s
 		}
 		ans, err := s.send(ctx, cl, e)
 		if err != nil {
-			s.refuseCall(ctx, w, id, PurposeForward, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable, err.Error())
+			s.refuseCallCause(ctx, w, id, PurposeForward, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable,
+				err.Error(), labelRead(readUpstream, err))
 			return
 		}
 
@@ -573,7 +590,8 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, s
 			// the wrong reason.
 			ans.resp.Body.Close()
 			if _, err := sel.Broken(ctx, c.Name); err != nil {
-				s.refuseCall(ctx, w, id, PurposeForward, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable, markRefusal)
+				s.refuseCallCause(ctx, w, id, PurposeForward, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable,
+					markRefusal, err)
 				return
 			}
 			tried = append(tried, Tried{Name: c.Name, Tier: wireTier(c.Tier), Reason: ReasonBroken})
@@ -587,7 +605,8 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, s
 			reset := usageLimitReset(ans.resp.Header, s.now())
 			ans.resp.Body.Close()
 			if _, err := sel.Exhausted(ctx, c.Name, c.Tier, reset); err != nil {
-				s.refuseCall(ctx, w, id, PurposeForward, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable, markRefusal)
+				s.refuseCallCause(ctx, w, id, PurposeForward, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable,
+					markRefusal, err)
 				return
 			}
 			tried = append(tried, Tried{Name: c.Name, Tier: wireTier(c.Tier), Reason: ReasonExhausted})
@@ -871,12 +890,19 @@ func (s *Server) refuseSelection(ctx context.Context, w http.ResponseWriter, id 
 		if aerr := s.auditCall(ctx, id, PurposeForward, "", "", ErrorExhaustedUntil); aerr != nil {
 			s.log.Error("credsvc: a refused call could not be audited", "error", aerr)
 		}
-		WriteExhaustedUntil(w, ExhaustedUntil{ResetAt: reset, Tried: tried}, now)
+		ans := ExhaustedUntil{ResetAt: reset, Tried: tried}
+		// The selection's refusal is a refusal like every other and leaves the
+		// same diagnosis (logRefusal). The message is read off the very struct
+		// the answer is written from, so the run and the operator read one
+		// refusal and not two renderings of it.
+		s.logRefusal(ctx, id, ErrorExhaustedUntil, StatusExhaustedUntil, ans.Error(), err)
+		WriteExhaustedUntil(w, ans, now)
 		return
 	}
 	if aerr := s.auditCall(ctx, id, PurposeForward, "", "", ErrorStateUnavailable); aerr != nil {
 		s.log.Error("credsvc: a refused call could not be audited", "error", aerr)
 	}
+	s.logRefusal(ctx, id, ErrorStateUnavailable, StatusUnavailable, err.Error(), err)
 	WriteWireError(w, StatusUnavailable, WireError{
 		Error:   ErrorStateUnavailable,
 		Message: err.Error(),

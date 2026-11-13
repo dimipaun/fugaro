@@ -887,8 +887,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	on, which, err := s.cfg.Kills.Stop(ctx, id.Slug)
 	if err != nil {
 		// An unreadable switch is not an off switch (budget's own rule), so
-		// the call is refused rather than served.
-		s.refuseCall(ctx, w, id, purpose, credential, "", StatusUnavailable, ErrorStateUnavailable, "the operator's stop switches could not be read")
+		// the call is refused rather than served. The read is named on the
+		// refusal's own line, because a switch that could not be read and a
+		// switch that is ON are the same refusal type and the same status to a
+		// run and two different incidents to the operator.
+		s.refuseCallCause(ctx, w, id, purpose, credential, "", StatusUnavailable, ErrorStateUnavailable,
+			"the operator's stop switches could not be read", labelRead(readKills, err))
 		return
 	}
 	if on {
@@ -992,7 +996,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// before the one document that holds every credential is read at all.
 	shared, found, err := s.cfg.Policy.Shared(ctx)
 	if err != nil || !found {
-		s.refuseCall(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable, "the project's policy could not be read")
+		// A node that is not there is not a read that failed, and labelRead
+		// answers a nil err as nil: the two share one sentence and the line
+		// still tells them apart, by the read it names and by the class.
+		s.refuseCallCause(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable,
+			"the project's policy could not be read", labelRead(readPolicyShared, err))
 		return
 	}
 	cl, err := readCall(r, callScrubs(ctx, req))
@@ -1042,8 +1050,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Fail closed, and name the CLASS of what is wrong without ever
 		// carrying a value, a key or another package's text (BundleRefusal):
 		// the loader's own error carries the key it is about for the operator,
-		// and the run reading this refusal is not the operator.
-		s.refuseCall(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable, BundleRefusal(err))
+		// and the run reading this refusal is not the operator. What the run
+		// cannot be told and the operator can is on the service's own line: the
+		// loader's error reaches it as its Go type and never as its text.
+		s.refuseCallCause(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable,
+			BundleRefusal(err), labelRead(readBundle, err))
 		return
 	}
 	cands, strategy, notAdmitted, err := s.candidates(ctx, id, canonical, shared, b)
@@ -1056,10 +1067,17 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// switch or the path that would let it serve.
 		var refusal *poolRefusal
 		if errors.As(err, &refusal) {
-			s.refuseCall(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable, refusal.message)
+			// The operator's own configuration, and not a read that failed:
+			// the sentence says which switch or path would let the call
+			// through, and the cause beside it says which step produced it.
+			s.refuseCallCause(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable, refusal.message, err)
 			return
 		}
-		s.refuseCall(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable, "the repository's admissions could not be read")
+		// The read that failed is named by the error itself: the repository's
+		// node (readPolicyRepo) or the shared one its accounts are read from
+		// (readPolicyShared), labelled where each is read.
+		s.refuseCallCause(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable,
+			"the repository's admissions could not be read", err)
 		return
 	}
 	// The slip's own fence on the offering (G12, R9), and the last thing
@@ -1087,7 +1105,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// placement names, and the retry leaves it only when the attempt that just
 	// failed was that same credential — the one case where staying would spend
 	// the retry on the mark that was just written.
-	sel := &creds.Selector{Store: s.cfg.State, Settings: settingsOf(shared), Now: s.now, Strategy: strategy}
+	//
+	// The store the selector is handed is this call's own reader over the
+	// service's state (stateReads), which labels the three reads a selection
+	// makes as it makes them: the marks, the leases and the run's placement are
+	// three nodes and the refusal a failed one answers is one type, so without
+	// the label an operator cannot tell which of them to look at (refusallog.go).
+	sel := &creds.Selector{Store: &stateReads{Store: s.cfg.State}, Settings: settingsOf(shared), Now: s.now, Strategy: strategy}
 	s.forward(ctx, w, cl, sel, id, b, cands, notAdmitted)
 }
 
