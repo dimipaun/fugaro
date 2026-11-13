@@ -12,11 +12,11 @@ package keyservice
 // whoever holds a licence.
 //
 // What the suite cannot hold is where the two stores differ on purpose. One is
-// a difference of cost (a read-modify-write where the memory store writes once,
-// a record the database's own TTL collects); those are named in
-// firestore_store.go. The other is a difference of answer — a record nobody
-// named — and it is a case of its own below, because the suite runs against
-// both stores and so can only hold what they agree on.
+// a difference of cost — a record that moves one field is read and written back
+// whole here, where the memory store writes once (TouchKey) — and it is named in
+// firestore_store.go. The other is a difference of answer, a record nobody
+// named, and it is a case of its own below, because the suite runs against both
+// stores and so can only hold what they agree on.
 
 import (
 	"context"
