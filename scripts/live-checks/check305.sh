@@ -65,7 +65,8 @@
 #             M12) and two token families, and both families are REVOKED at the
 #             end (`POST /oauth/revoke`) with the fact that says so. The two
 #             tokens live in the scratch directory (mode 0700, token files mode
-#             0600), are never printed and are removed with it. --save is a
+#             0600 read back with stat at each sign-in, which the block reports),
+#             are never printed and are removed with it. --save is a
 #             directory of yours and the check only copies documents into it.
 # Output:     progress on stderr, ONE block on stdout headed CHECK 305 RESULT,
 #             to copy back. Exit 0 when every fact passed, 1 when one FAILed, 2
@@ -161,6 +162,26 @@ need_tools() {
   need python3 "the check's own MCP client, and every document it reads, run on it"
   need fugaro "doctor names the installation and the two documents are read through it"
   need gcloud "the front door's URL and the one role the read is granted through are read with it, as YOU"
+  need stat "the mode of the token file each sign-in mints is read back with it, so the block's 'mode 0600' is a reading and not a promise"
+}
+
+# file_mode PATH: PATH's mode as three octal digits, or empty when it cannot be
+# read. GNU stat spells it -c %a and BSD -f %Lp, and this check runs on the
+# owner's own machine, which is usually a Mac. Neither is trusted to have
+# answered the question: what comes back has to BE three octal digits, because
+# GNU's `stat -f` reads -f as the filesystem mode and prints a whole filesystem
+# report without failing.
+file_mode() { # file_mode PATH
+  local mode
+  mode=$(stat -c %a "$1" 2>/dev/null || true)
+  case "$mode" in
+  [0-7][0-7][0-7]) printf '%s' "$mode"; return 0 ;;
+  esac
+  mode=$(stat -f %Lp "$1" 2>/dev/null || true)
+  case "$mode" in
+  [0-7][0-7][0-7]) printf '%s' "$mode"; return 0 ;;
+  esac
+  return 0
 }
 
 # ------------------------------------------------------------- scratch + trap
@@ -190,6 +211,7 @@ TOOL_NAMES=""
 STATE_TOKEN=""
 TASKS_TOKEN=""
 STATE_SCOPES=""
+TOKEN_MODES=""
 SIGNIN_WAIT=${CHECK305_SIGNIN_WAIT:-300}
 
 scratch_up() {
@@ -612,7 +634,7 @@ finish() {
     facts="${facts}"$'\n'"restore|INFO|nothing of this check's was written on the installation, so there is nothing there to undo; the two token families it minted at the door were not revoked, because the run did not reach the door again — they expire on their own"
   fi
   if [ "$SCRATCH_REMOVED" = yes ]; then
-    facts="${facts}"$'\n'"scratch|PASS|the scratch directory is gone, and the two tokens it held (mode 0600) with it"
+    facts="${facts}"$'\n'"scratch|PASS|the scratch directory is gone, and the tokens it held with it (the mode each sign-in read back with stat: ${TOKEN_MODES:-no token was minted})"
   elif [ -n "$SCRATCH" ]; then
     facts="${facts}"$'\n'"scratch|FAIL|the scratch directory is STILL THERE at $SCRATCH — remove it yourself: it holds the two tokens this check minted"
   fi
@@ -1028,9 +1050,11 @@ step_agent() {
 }
 
 # step_signin runs the check's own OAuth client for one scope and keeps the token
-# in the scratch directory (mode 0600). The URL is printed to you WHILE the client
-# waits, because the second act is yours: the page's number is approved on the
-# device this installation paired with you. Nothing the client prints is a token.
+# in the scratch directory, reading its mode back with stat before the run reads
+# the door with it: a token file anyone could read is a leak the run stops on,
+# and the mode the block reports is that reading. The URL is printed WHILE the
+# client waits, because the second act is yours: the page's number is approved on
+# the device this installation paired with you. Nothing the client prints is a token.
 step_signin() { # step_signin WHAT SCOPE TOKEN_FILE
   local what=$1 scope=$2 file=$3
   local out="$SCRATCH/signin.$what.out"
@@ -1038,7 +1062,8 @@ step_signin() { # step_signin WHAT SCOPE TOKEN_FILE
   owner ""
   owner "SIGN IN ($what) — this check is a real client of the installation's own issuer: it registers itself,"
   owner "  runs the authorization-code flow with PKCE and a loopback redirect (the shape 'fugaro coordinator login' runs),"
-  owner "  and keeps the token in its scratch directory (mode 0600), which is removed at the end. It waits ${SIGNIN_WAIT}s."
+  owner "  keeps the token in its scratch directory (removed at the end) and reads that file's mode back with stat,"
+  owner "  so the mode the block reports is the mode the file has. It waits ${SIGNIN_WAIT}s."
   client "$((SIGNIN_WAIT + 60))" signin --door "$DOOR" --scope "$scope" --token-file "$file" --wait "$SIGNIN_WAIT" 2>"$SCRATCH/signin.$what.err" |
     while IFS= read -r line; do
       printf '%s\n' "$line" >>"$out"
@@ -1058,7 +1083,14 @@ step_signin() { # step_signin WHAT SCOPE TOKEN_FILE
     fact "signin-$what" FAIL "the sign-in for $scope did not finish: the client exited $rc without a token. What the door and the client said is above"
     stop "Check 305 could not mint a token of its own for '$scope': the flow needs the page's number approved on the device this installation paired with you, and Allow pressed on the page, inside ${SIGNIN_WAIT}s. Nothing on the installation was written — the client registered itself and no token was kept. Run it again when you have that device in your hand"
   fi
-  fact "signin-$what" PASS "a client of the check's own registered at the door and holds a token whose scopes are '$scope' (the token is in the scratch directory, mode 0600, and no token, code or verifier is ever printed). The register's reading is made with THIS token, not with your own credential"
+  local mode
+  mode=$(file_mode "$file")
+  TOKEN_MODES="${TOKEN_MODES}${TOKEN_MODES:+, }$what=$mode"
+  if [ "$mode" != 600 ]; then
+    fact "signin-$what" FAIL "the client minted a token for '$scope', but the file it is in — $file — is mode ${mode:-unreadable}, not 0600: a token any other account on this machine can read is already leaked, so the check reads nothing with it"
+    stop "Check 305 minted a token into a file whose mode is ${mode:-unreadable} rather than 0600. The exit trap removes the scratch directory and the token with it; fix the mode before running this check again (nothing on the installation was written)"
+  fi
+  fact "signin-$what" PASS "a client of the check's own registered at the door and holds a token whose scopes are '$scope'; the file it is kept in is mode $mode — read with stat, so it is your account's alone — and no token, code or verifier is ever printed. The register's reading is made with THIS token, not with your own credential"
 }
 
 # step_tools is the capability gate, and it is the one that stops: a door that
@@ -1368,7 +1400,7 @@ step_restore() {
     if grep -q '^REVOKED$' "$out" 2>/dev/null; then revoked=$((revoked + 1)); fi
   done
   if [ "$tried" -gt 0 ] && [ "$revoked" -eq "$tried" ]; then
-    fact restore PASS "nothing on the installation was written — no node, no state, no work item, no role and no grant — and the two token families this check minted at the door are revoked (POST /oauth/revoke answered 200 for both; the two client registrations expire on their own, M12's store lifetime). The scratch directory holds the two tokens (mode 0600) and is removed at the end: nothing of this run is left at the door or on this machine"
+    fact restore PASS "nothing on the installation was written — no node, no state, no work item, no role and no grant — and the two token families this check minted at the door are revoked (POST /oauth/revoke answered 200 for both; the two client registrations expire on their own, M12's store lifetime). The scratch directory held the two tokens (the mode each sign-in read back with stat: ${TOKEN_MODES:-none}) and is removed at the end: nothing of this run is left at the door or on this machine"
     return 0
   fi
   if [ "$tried" -eq 0 ]; then

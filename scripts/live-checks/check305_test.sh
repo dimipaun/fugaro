@@ -359,7 +359,13 @@ class Handler(BaseHTTPRequestHandler):
             code = "code-%d" % (len(PENDING) + 1)
             with LOCK:
                 PENDING[code] = query
-            location = query["redirect_uri"] + "?" + urllib.parse.urlencode({"code": code, "state": query.get("state", "")})
+            # The redirect's state is the client's own anti-forgery value: the
+            # wrong-state mode answers with one it never sent, which the client
+            # must refuse rather than redeem the code with.
+            state = query.get("state", "")
+            if read("door-mode") == "wrong-state":
+                state = "a-state-this-client-never-sent"
+            location = query["redirect_uri"] + "?" + urllib.parse.urlencode({"code": code, "state": state})
             self.send_response(302)
             self.send_header("Location", location)
             self.send_header("Content-Length", "0")
@@ -805,6 +811,23 @@ case_no_door_published() {
   expect_contains "$(cat "$dir/state/calls")" "gcloud run services list" "nodoor: the door was looked for the way a client looks"
 }
 
+# The redirect's state is the client's own anti-forgery value, and the fake door
+# echoes back the one it was handed in every other case: a client that stopped
+# comparing it would pass the whole suite, and would redeem a code that answers
+# somebody else's authorization request. The wrong-state mode answers with a
+# value the client never sent, which it must refuse BEFORE it redeems anything.
+case_signin_wrong_state() {
+  setup_case wrongstate
+  write_door_mode "$dir" wrong-state
+  BROWSER_WANT=1
+  run305 --installation "$INSTALLATION" --door "$DOOR"
+  expect_status "$status" 2 "wrongstate: the run stops when the redirect carries a state the client never sent"
+  expect_fact signin-state FAIL "wrongstate: the one sign-in it made did not finish"
+  expect_contains "$errtext" "the redirect carried a state this client did not send" "wrongstate: the client's own line is what stops it"
+  expect_absent "$out" "FACT tools: PASS" "wrongstate: nothing past the sign-in was read"
+  expect_absent "$(cat "$dir/state/door-calls")" "POST /oauth/token" "wrongstate: the code was never redeemed"
+}
+
 case_release_gate() {
   setup_case gate
   write_door_mode "$dir" old
@@ -1162,6 +1185,36 @@ case_mutation_tasks_row_always_passes() {
   expect_status "$status" 0 "mutation: the broken copy exits 0 where the real one exits 1"
 }
 
+# The mutation: a copy of the check whose client mints the token file
+# world-readable. The mode the block reports is a reading of that file (stat), so
+# widening it must FAIL the sign-in row and stop the run before it reads the door
+# with that token — a check that printed the mode it promised instead of the one
+# the file has would pass this copy and report "mode 0600" over a 0644 file.
+case_mutation_token_mode_world_readable() {
+  setup_case mutmode
+  BROWSER_WANT=2
+  local copy=$dir/mutated305.sh old_umask
+  sed 's|os.O_TRUNC, 0o600)|os.O_TRUNC, 0o644)|' "$script" >"$copy"
+  if ! grep -q 'os.O_TRUNC, 0o644)' "$copy"; then
+    fail "mutation: the sed found no place to widen the token file's mode"
+    return 0
+  fi
+  run305 --installation "$INSTALLATION" --door "$DOOR"
+  expect_fact signin-state PASS "mutation: the unbroken check reads the file's mode and passes it"
+  expect_contains "$out" "is mode 600" "mutation: the row carries the mode stat read, so it is a reading"
+  # The mode the client asks for is the file's mode only under a umask that does
+  # not take bits away, and this case asserts the two differ.
+  old_umask=$(umask)
+  umask 022
+  RUN305_SCRIPT="$copy"
+  BROWSER_WANT=1
+  run305 --installation "$INSTALLATION" --door "$DOOR"
+  umask "$old_umask"
+  expect_fact signin-state FAIL "mutation: a world-readable token file FAILs the sign-in row"
+  expect_contains "$out" "is mode 644" "mutation: and the row carries the mode it read"
+  expect_status "$status" 2 "mutation: the copy stops there instead of reading the door with that token"
+}
+
 # --------------------------------------------------------------- the suite
 # CHECK_TEST_SHARD="i/n" runs every n-th case starting at i, and
 # CHECK_TEST_ONLY=name runs that one case alone. Neither set: all run.
@@ -1181,6 +1234,7 @@ t() {
 t case_full_pass
 t case_door_off
 t case_no_door_published
+t case_signin_wrong_state
 t case_release_gate
 t case_apply_patch_listed
 t case_state_mismatch
@@ -1212,6 +1266,7 @@ t case_missing_python
 t case_missing_tools
 t case_dry_run
 t case_mutation_tasks_row_always_passes
+t case_mutation_token_mode_world_readable
 
 suite_done=yes
 if [ "$failures" -ne 0 ]; then
