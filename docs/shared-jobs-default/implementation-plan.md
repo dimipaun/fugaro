@@ -1,6 +1,6 @@
 # Implementation plan: project-level shared jobs as the default
 
-Builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md) (decisions D2300–D2312, findings F1–F23).
+Builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md) (decisions D2300–D2313, findings F1–F23).
 **Nothing is implemented, and no task is approved: each needs the owner's explicit go.** The answers that shaped the plan:
 shared jobs take Bitbucket by pairing and not by a new token (D2302); a build may bake several repositories with a
 credential-service token (D2301, which supersedes O3 (b)); `checkout: baked` runs on shared jobs (D2304); `update`
@@ -16,7 +16,7 @@ flagged opus with an independent review, and the contracts over credentials get 
 - **P1.** B5.1 (#2545) and B5.2 (`docs/secrets-brokering`) merged: the GitHub shared-job class in the credential service, and the service URL, the invoker grant and the rendered shared-job accounts for a project job (`credentialsServiceLaunchEnv`). S2 extends B5.1's `pairShared`; I1 cannot pass without both.
 - **P2.** Check 191 (owner-run, `scripts/live-checks/check191.sh`) passed, with #2549 and #2550 landed. The spec's release blocker; **no task starts it and no agent performs it**.
 - **S2 is `docs/secrets-brokering`'s B5.3, and S1 with S4 carry `docs/bitbucket-workspace-token`'s T2.2**: the pull request of each names both numbers, and whoever merges it closes the older row in `docs/status.md`. T2.7 and the workspace token's other tasks stay theirs.
-- **Launch gates (owner-run results, so not graph edges)**: S6 launches only after Check 191 passes (P2); M1, M6 and M2 launch only after Check 580 passes, because with no retire gate (D2303) that check is the live proof before a per-repository job is deleted. The graph draws no edge from a provider to its contract (the schema refuses one), so S1, S2 and S5 launch after C1 merges and B1 and B8 after C2 merges.
+- **Launch gates (owner-run results, so not graph edges)**: S6 launches only after Check 191 passes (P2); M6, M7 and M2 launch only after Check 580 passes, because with no retire gate (D2303) that check is the live proof before a per-repository job is deleted. The graph draws no edge from a provider to its contract (the schema refuses one), so S1, S2 and S5 launch after C1 merges and B1 and B8 after C2 merges.
 
 ## Conventions
 
@@ -25,7 +25,7 @@ flagged opus with an independent review, and the contracts over credentials get 
 - **Never**: a secret-shaped literal in a test, doc or fixture; a live cloud action by an agent; a TODO comment; a token or credential file in an image layer; deleting the repo-bound or repo-level image code (spec: out of scope).
 - Hermetic tests only: `internal/gcpfake`, `internal/gitprov` fake, `internal/testutil`, `t.TempDir()`.
 - **Hard rule** (CLAUDE.md): every `fugaro update` step is idempotent, safe with runs in flight, has a row in `docs/design/update-in-flight.md` and a test that an installation at the previous version converges. The release notes' `### For operators` is "run `fugaro update`" and what it asks.
-- Reviewer tier **opus + independent review** for: S2, S9, B1, B2, B5, C1, C2, N1, M1, M6, M2, S6, B3, I1, I2 (credentials, the proxy, Terraform, IAM, the runner's baked-checkout guard). Standard for the rest.
+- Reviewer tier **opus + independent review** for: S2, S9, B1, B2, B5, C1, C2, N1, M1, M6, M7, M2, S6, B3, I1, I2 (credentials, the proxy, Terraform, IAM, the runner's baked-checkout guard). Standard for the rest.
 
 ## Global constraints and review focus
 
@@ -41,7 +41,8 @@ flagged opus with an independent review, and the contracts over credentials get 
 | No token or credential file survives in any image layer: git config, `.netrc`, credential helper store, environment | B3 |
 | `update` never rewrites an existing profile; a second run changes nothing | S5 |
 | `update` with a run in flight leaves it running; the retirement deletes only an orphaned job and is named in the in-flight line | M2 |
-| Adding or removing a repository applies no job (the root still applies secrets: open item 8) | M1 |
+| Adding or removing a repository applies no repository-level Terraform at all | M7 |
+| An adopted per-repository secret is never destroyed and keeps its value | M1, M2 |
 | A project with no catalog default gets a base-image default, so a job always has an image | S5 |
 
 ## Slice 1: `bb-shared-jobs` (the urgent slice)
@@ -241,7 +242,7 @@ flagged opus with an independent review, and the contracts over credentials get 
 - Owner-run: no.
 
 ### B5: the build identity
-- Acceptance: a project has one build service account for catalog builds, granted invoker on the credentials service and rendered into the service's account sets as the build class (B1), so a shared repository's catalog build has an account to run as after M1 removes the per-repository one; the account holds no write role on any repository registry but the project's own.
+- Acceptance: a project has one build service account for catalog builds, granted invoker on the credentials service and rendered into the service's account sets as the build class (B1), so a shared repository's catalog build has an account to run as after M2 destroys the per-repository one; the account holds no write role on any repository registry but the project's own.
 - Files: `deploy/terraform/gcp/modules/project/build_identity.tf` (new), `internal/infra/build_identity.go` (new), `internal/infra/build_identity_test.go` (new), `internal/credsvc/auth.go`, `internal/credsvc/auth_test.go`.
 - Interfaces: consumes B1's build class; produces the account `CatalogBuildSpec` runs as.
 - Tests: `TestProjectHasOneBuildIdentity`, `TestBuildIdentityIsInvokerOnTheService`, `TestBuildIdentityIsInTheServicesBuildClass`; `terraform fmt -check`.
@@ -352,26 +353,38 @@ flagged opus with an independent review, and the contracts over credentials get 
 - Reviewer tier: opus (Terraform inputs, IAM).
 - Owner-run: no.
 
-### M1: remove the per-repository jobs from the default Terraform path
-- Acceptance: for a repository marked shared, `modules/repo` creates no workflow job, registry, build service account or check job (the secret containers and the catalog check stay, the check now acting as B6's identity); adding or removing a repository needs no job apply (the repository root still applies its secret containers: open item 8); a repository no profile admits keeps the per-repository path.
-- Files: `deploy/terraform/gcp/modules/repo/workflows.tf`, `deploy/terraform/gcp/modules/repo/registry.tf`, `deploy/terraform/gcp/modules/repo/build.tf`, `deploy/terraform/gcp/modules/repo/check.tf`, `internal/infra/repo_module_test.go` (new).
-- Interfaces: consumes M6's `shared` mark; produces the reduced root.
-- Tests: `TestRepoRootOmitsTheJobsForASharedRepo`, `TestAddingARepoAppliesNoJob`; `terraform fmt -check`.
-- Command: `go test -tags terraform ./internal/infra/ -run 'RepoRootOmits|AddingARepoAppliesNoJob' -count=1`
-- Red step: the first test fails because every workflow gets a job.
-- Depends on: M6 (the mark it reads), B5 (the project's build identity must exist before the per-repository build account goes), B6 (the build and the check act as it); launches after Check 580 passes.
-- Commit: `infra: a shared repository has no jobs of its own (M1, spec Infrastructure)`.
+### M1: a repository's secrets become project secrets, adopted without being destroyed
+- Acceptance: the installation root creates the project-level secret containers for the secrets repositories declare in `fugaro.yaml` (D2313), and `update` adopts each existing per-repository container into the installation root's state by import, never destroying it or a stored value (`prevent_destroy` stays); a profile's `allow_data_to` list names the repositories that may use each; a second `update` changes nothing.
+- Files: `deploy/terraform/gcp/modules/project/secrets.tf` (new), `internal/infra/tfvars.go`, `internal/infra/adopt_secrets.go` (new), `internal/infra/adopt_secrets_test.go` (new), `internal/cli/update_workflowsecrets.go`.
+- Interfaces: consumes the repositories' declared secrets; produces project-wide containers.
+- Tests: `TestInstallationRootCreatesTheProjectSecretContainers`, `TestUpdateAdoptsAPerRepoSecretWithoutDestroyingIt`, `TestAdoptedSecretKeepsItsValue`, `TestUpdateProjectSecretsIsIdempotent`.
+- Command: `go test -tags terraform ./internal/infra/ ./internal/cli/ -run 'ProjectSecretContainers|AdoptsAPerRepoSecret|AdoptedSecretKeepsItsValue|UpdateProjectSecretsIsIdempotent' -count=1`
+- Red step: the first test fails because secret containers are created by the repository root.
+- Depends on: I1 (shared jobs work, so a profile can mount a project secret).
+- Commit: `infra: repository secrets are project secrets, adopted not destroyed (M1, D2313)`.
+- Reviewer tier: opus (secrets, Terraform, IAM).
+- Owner-run: no.
+
+### M7: onboarding a repository applies nothing
+- Acceptance: for a repository a deployed profile admits, `newRepositoryStage` and `repoEngine` enrol the repository (the profile's `allow_repos`, the project sync, the policy) and apply no repository-level Terraform at all (D2312 as amended); a repository no profile admits keeps the existing path; removing a repository is a config change only.
+- Files: `internal/cli/init_repo_stage.go`, `internal/cli/init.go`, `internal/cli/init_repo_stage_test.go`.
+- Interfaces: consumes M6's shared mark and M1's project secrets; produces an apply-free onboarding.
+- Tests: `TestOnboardingASharedRepoAppliesNoTerraform`, `TestRemovingASharedRepoIsAConfigChange`, `TestARepoNoProfileAdmitsKeepsTheRepoRoot`.
+- Command: `go test ./internal/cli/ -run 'OnboardingASharedRepoApplies|RemovingASharedRepo|ARepoNoProfileAdmitsKeeps' -count=1`
+- Red step: the first test fails because the stage runs the repository root's apply.
+- Depends on: M6 (the mark), M1 (secrets live in the installation root before the repository root is skipped); launches after Check 580 passes.
+- Commit: `update: a shared repository is enrolled with no repository-level Terraform (M7, D2312)`.
 - Reviewer tier: opus (Terraform, IAM).
 - Owner-run: no.
 
 ### M2: `update` retires the per-repository jobs
-- Acceptance: `update` retires a repository's own jobs once its structural precondition holds (admitted to a deployed profile, project image resolves, the proxy on for a Bitbucket repository, **and no execution running on the job**, so a job with a run in flight is retired by a later `update`) and not before; the confirmation retirement needs outside a managed project is asked inside `update`, never as a second command, and the in-flight line names the retirement; an installation at the previous version converges; a failed first shared run is repaired by running `update` again, which re-converges the profile, the image and the proxy, and the user relaunches the run.
+- Acceptance: `update` retires a repository's whole root (its jobs, registry, build account and check job destroyed with the confirmation `update` asks; its secret containers already adopted by M1, so removed from the root's state and never destroyed) once its structural precondition holds (admitted to a deployed profile, project image resolves, the proxy on for a Bitbucket repository, **and no execution running on the job**, so a job with a run in flight is retired by a later `update`) and not before; the confirmation retirement needs outside a managed project is asked inside `update`, never as a second command, and the in-flight line names the retirement; an installation at the previous version converges; a failed first shared run is repaired by running `update` again, which re-converges the profile, the image and the proxy, and the user relaunches the run.
 - Files: `internal/cli/init_retire.go`, `internal/infra/retire.go`, `internal/cli/update_in_flight.go`, `docs/design/update-in-flight.md`, `internal/cli/init_retire_test.go`.
 - Interfaces: consumes M1, S5, S6; produces the retirement.
 - Tests: `TestUpdateRetiresTheRepoJobsOfAMigratedRepo`, `TestUpdateDoesNotRetireBeforeThePrecondition`, `TestUpdateDoesNotRetireAJobWithARunningExecution`, `TestUpdateRepairsAFailedFirstSharedRun`, `TestUpdatePreviousVersionConvergesToSharedJobs`, `TestUpdateLeavesARunInFlightRunning`.
 - Command: `go test ./internal/cli/ -run 'UpdateRetires|UpdateDoesNotRetire|UpdateRepairsAFailedFirstSharedRun|UpdatePreviousVersionConverges|UpdateLeavesARunInFlight' -count=1`
 - Red step: the first test fails: nothing retires a repository root.
-- Depends on: M1 (what is removed), S5 (the profile), S6 (the proxy, and the `update_in_flight.go` rows: one writer per level); launches after Check 580 passes.
+- Depends on: M7 (no root is applied any more, so the old one is retired), M1 (the secrets are adopted first), B6 (the build and the check act as the project identity before the per-repository account is destroyed), S5 (the profile), S6 (the proxy, and the `update_in_flight.go` rows: one writer per level); launches after Check 580 passes.
 - Commit: `update: retire the per-repository jobs of a migrated repository (M2, D2303)`.
 - Reviewer tier: opus, independent review, one mutation check (the precondition off must keep the jobs).
 - Owner-run: no.
@@ -412,20 +425,21 @@ flagged opus with an independent review, and the contracts over credentials get 
 
 ## Parallel execution
 
-**Edges kept** (the dependent needs behaviour or the same file); the CLI's read counts 25, leaving out the edges that touch an integration task, and this list names all of them:
+**Edges kept** (the dependent needs behaviour or the same file); the CLI's read counts 26, leaving out the edges that touch an integration task, and this list names all of them:
 - S9 → S4, S3: the same file, `runner/projectjob.go`, and the proxied fetch it resets for.
 - I1 → S9: the integration runs the baked checkout on a shared job.
 - S7 → I1, S8 → I1: they document and exercise what I1 wires.
 - B5 → B1: the class it is rendered into.
-- M1 → B5, M1 → B6: the per-repository build account goes only after the project's exists and the build and the check act as it.
 - B6 → B5, B6 → B3: the identity, and the same file `catalog.go`.
 - B9 → B8: the clone step that replaces the mount.
 - B8 → C2, I2 → B8, B3 → B8: the shape, the integration, and the same file `catalog.go`.
 - S6 → S5: S5 registers a stage in `init_stages.go` and owns `init_policy_migrate.go`.
 - B1 → S2: one file, `credsvc/server.go`, and the same pairing code; a contract would not split one file.
 - B3 → I2, N1 → I1, N2 → I1, M2 → S6, B4 → S8: one file each (`catalog.go`, `bitbucketproxy.go`, `runner.go`, `update_in_flight.go`, `docs/gcp-live-checklist.md`), so one writer per level.
+- M7 → M6, M7 → M1: the mark, and the secrets adopted before the root is skipped.
+- M1 → I1: a profile mounts a project secret only once shared jobs work.
 - M6 → I1, M6 → S5: marking a repository shared is safe only once shared jobs work and the default profile exists.
-- M1 → M6, M2 → M1, M2 → S5, M2 → S6: the module reads M6's mark, and the retirement reads what M1 stopped emitting, the profile and the proxy.
+- M2 → M7, M2 → M1, M2 → B6, M2 → S5, M2 → S6: the retirement of a root follows the apply-free onboarding, the adopted secrets, the project identity, the profile and the proxy.
 - M3 → S4: the warning reads the launcher's decision.
 - M4 → M2, M4 → S7, M5 → M2, M5 → B4 (one checklist file), N3 → N1 and N2, B4 → B3: behaviour.
 
@@ -441,12 +455,12 @@ The graph is in [implementation-plan.graph.json](implementation-plan.graph.json)
 - L1: S3, S4, S6, B1, B2, B9
 - L2: I2, M3, S9, B5
 - L3: I1, B3
-- L4: S7, S8, N1, N2, M6, B6
-- L5: B4, N3, M1
+- L4: S7, S8, N1, N2, M1, M6, B6
+- L5: B4, N3, M7
 - L6: M2
 - L7: M4, M5
 
-**Critical path** (the read): C1 → S3 → S9 → I1 → M6 → M1 → M2 → M4. It is sequential because the retirement is meaningful only once shared jobs work (and the baked checkout is trusted) and Terraform no longer emits the per-repository jobs; the release notes close it. The owner-run checks follow.
+**Critical path** (the read): C1 → S3 → S9 → I1 → M1 → M7 → M2 → M4. It is sequential because the old repository roots are retired only once shared jobs work (and the baked checkout is trusted), the secrets are adopted, and onboarding no longer applies a root; the release notes close it. The owner-run checks follow.
 
 **Shared-files table** (no level holds two writers of one file; the contract's own `stub.go` is deleted by its integration task):
 
@@ -463,6 +477,7 @@ The graph is in [implementation-plan.graph.json](implementation-plan.graph.json)
 | `internal/cli/init_stages.go`, `internal/cli/init_policy_migrate.go` | S5 (L0), S6 (L1; the switch's alternative home) |
 | `internal/cli/update_in_flight.go`, `docs/design/update-in-flight.md` | S6 (L1), M2 (L6) |
 | `docs/gcp-live-checklist.md` | S8 (L4), B4 (L5), M5 (L7) |
+| `internal/cli/init.go`, `internal/cli/init_repo_stage.go` | M7 (L5) |
 | `deploy/terraform/gcp/modules/project/build_identity.tf` | B5 (L2), B6 (L4) |
 | `internal/sharedjob/stub.go` | C1 (L0), I1 (L3) |
 | `internal/buildtoken/stub.go` | C2 (L0), I2 (L2) |
@@ -471,7 +486,7 @@ CR1 and CR2 share files with C1 and C2 and are launched only when raised, never 
 
 **Contract changes anticipated**: CR1 amends C1 if S2's review finds the pairing needs the workflow name (it reaches S3 and S4; launched runs are followed up by a run on their pull request that names `internal/sharedjob/sharedjob.go` by path); CR2 amends C2 if B1's review finds a time-to-live cap belongs in the request (it reaches B2).
 
-**The gain** (the read): 3 edges broken, 25 kept, 6 nodes added (two contracts, two integrations, two anticipated change requests); the weighted path goes from 21.5 to 20.5, which the CLI reports as an improvement. The gain is small on purpose: the dominant chain is the migration (M6 → M1 → M2), whose edges are behaviour edges, and the contracts mainly let the Bitbucket runner, launcher and deployer, and the build and the route, run side by side.
+**The gain** (the read): 3 edges broken, 26 kept, 6 nodes added (two contracts, two integrations, two anticipated change requests); the weighted path goes from 19.5 to 19, which the CLI reports as an improvement. The gain is small on purpose: the dominant chain is the migration (M1 → M7 → M2), whose edges are behaviour edges, and the contracts mainly let the Bitbucket runner, launcher and deployer, and the build and the route, run side by side.
 
 ## Checks the plan takes
 
@@ -495,4 +510,4 @@ None beyond `fugaro update`: S5, S6 and M2 do the profile, the proxy switch and 
 - **Narrowing a shared GitHub job to its repositories** (decision 4's GitHub half, F21): it waits on secrets-brokering's B5.7 flip, which this plan does not do; until it, a shared GitHub job mounts the App key.
 - **Graph edges from a provider or an integration to its contract**: the graph schema refuses them, so the plan says the launch order in prose.
 - **A run record that says a shared job succeeded**: not needed once D2303 dropped the gate; the launch record already names the job (F12).
-- **M1 as one task**: it was over five files, so the spec and images stage became M6.
+- **Keeping a per-repository root for secrets and the catalog check** (the plan's first reading): declined by the owner on 2026-11-13, "no repo-level Terraform" (D2312 as amended); the secrets became project secrets (D2313) and the catalog check acts as the project identity (B6).

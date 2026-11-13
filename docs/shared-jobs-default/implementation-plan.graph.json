@@ -316,18 +316,18 @@
     },
     {
       "id": "M1",
-      "title": "remove the per-repository jobs from the default Terraform path",
+      "title": "a repository's secrets become project secrets",
       "run": null,
       "version": null,
-      "size": 4,
+      "size": 3,
       "footprint": {
         "prediction": true,
         "paths": [
-          "deploy/terraform/gcp/modules/repo/workflows.tf",
-          "deploy/terraform/gcp/modules/repo/registry.tf",
-          "deploy/terraform/gcp/modules/repo/build.tf",
-          "deploy/terraform/gcp/modules/repo/check.tf",
-          "internal/infra/repo_module_test.go"
+          "deploy/terraform/gcp/modules/project/secrets.tf",
+          "internal/infra/tfvars.go",
+          "internal/infra/adopt_secrets.go",
+          "internal/infra/adopt_secrets_test.go",
+          "internal/cli/update_workflowsecrets.go"
         ]
       }
     },
@@ -514,6 +514,21 @@
           "internal/cli/doctor_catalog_test.go"
         ]
       }
+    },
+    {
+      "id": "M7",
+      "title": "onboarding a repository applies nothing",
+      "run": null,
+      "version": null,
+      "size": 2.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/init_repo_stage.go",
+          "internal/cli/init.go",
+          "internal/cli/init_repo_stage_test.go"
+        ]
+      }
     }
   ],
   "edges": [
@@ -673,11 +688,6 @@
       "reason": "behaviour: the default profile must exist before the jobs stop being emitted"
     },
     {
-      "task": "M1",
-      "needs": "M6",
-      "reason": "behaviour: the module reads the shared mark M6 emits"
-    },
-    {
       "task": "B4",
       "needs": "S8",
       "reason": "behaviour: the same file, docs/gcp-live-checklist.md, one writer per level"
@@ -686,11 +696,6 @@
       "task": "B5",
       "needs": "B1",
       "reason": "behaviour: the build class it is rendered into"
-    },
-    {
-      "task": "M1",
-      "needs": "B5",
-      "reason": "behaviour: the per-repository build account goes only after the project's exists"
     },
     {
       "task": "I2",
@@ -713,11 +718,6 @@
       "reason": "behaviour: the same file, backend/gcp/catalog.go"
     },
     {
-      "task": "M1",
-      "needs": "B6",
-      "reason": "behaviour: the build and the check act as the project identity before the per-repository account goes"
-    },
-    {
       "task": "S6",
       "needs": "S5",
       "reason": "behaviour: S5 registers a stage in init_stages.go and owns init_policy_migrate.go"
@@ -726,6 +726,31 @@
       "task": "B9",
       "needs": "B8",
       "reason": "behaviour: the generated clone step replaces the mount the catalog refuses"
+    },
+    {
+      "task": "M1",
+      "needs": "I1",
+      "reason": "behaviour: a profile mounts a project secret only once shared jobs work"
+    },
+    {
+      "task": "M7",
+      "needs": "M6",
+      "reason": "behaviour: it reads the shared mark"
+    },
+    {
+      "task": "M7",
+      "needs": "M1",
+      "reason": "behaviour: the secrets are adopted before the repository root is skipped"
+    },
+    {
+      "task": "M2",
+      "needs": "M7",
+      "reason": "behaviour: the old root is retired once none is applied"
+    },
+    {
+      "task": "M2",
+      "needs": "B6",
+      "reason": "behaviour: the build and the check act as the project identity before the per-repository account is destroyed"
     }
   ],
   "decoupling": [
