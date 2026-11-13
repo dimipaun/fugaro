@@ -371,6 +371,114 @@ func TestAccessUnreadableGrantsNodeIsARefusal(t *testing.T) {
 	}
 }
 
+// TestAccessRevokingTheLastGrantLeavesNobody: an installation that has migrated
+// holds its roles in the node, and the node the last grant's revocation leaves
+// is absent — the state an installation whose lists have never been migrated is
+// in. The marker the write leaves beside it (access.PathMigrated) tells the two
+// apart, so the emptied node is judged as the roster of nobody it is: revoking
+// the last grant does not hand the project's own surfaces to whoever asks next,
+// and the revoked admin keeps being refused.
+func TestAccessRevokingTheLastGrantLeavesNobody(t *testing.T) {
+	f := accessFixture(t, false)
+	// An implicit admin, so the last-admin rule lets the installation's only
+	// stored grant go (userLastProjectAdmin): the case is the revocation that
+	// empties the node, not one the node refuses.
+	f.appendConfig(t, "terraform:\n  budget_admins: [user:owner@example.com]\n")
+	member := accessMember(t, accessAdminAddr)
+	accessAs(t, f.db, accessAdminAddr, userStored(t, member, accesslib.RoleAdmin, "project"))
+	if _, _, err := execute(t, "user", "revoke", member, "--role", "admin", "--scope", "project"); err != nil {
+		t.Fatalf("revoking the installation's last grant: %v", err)
+	}
+	if v := f.db.Value(accesslib.PathMigrated); v == nil {
+		t.Fatal("the revoke left no migration marker: an emptied node would read as an installation nobody has migrated")
+	}
+	// gcpfake keeps the {"grants":[]} an emptied list is written as, and the
+	// database prunes it whole (access's own test folds the fake the same way),
+	// so the node the gate would find after this revoke — none — is left here
+	// before it is asked.
+	f.db.Set(accesslib.PathNode, nil)
+	if v := f.db.Value(accesslib.PathNode); v != nil {
+		t.Fatalf("the test left %#v at the grants node, want the absent node the database prunes an emptied list to", v)
+	}
+	_, _, err := execute(t, "budget", "set", "--global", "--per-run", "3")
+	accessRefused(t, err,
+		"nothing was set",
+		"setting the project's own caps needs admin at project scope",
+		"(user:admin@example.com) hold nothing in the grants node")
+	if v := f.db.Value(budget.PathCapsGlobal); v != nil {
+		t.Errorf("the refused set wrote %s = %v", budget.PathCapsGlobal, v)
+	}
+}
+
+// TestAccessBudgetKillAndResumeAskTheResolver: the kill switch is the budget
+// admins' (docs/design/roles.md, §1.1), and the scope it is set at is the grant
+// it needs — an all-repos admin holds no project-level thing, so it can neither
+// halt every run of the project nor let them spend again (D1542: a resume is a
+// raise), and a viewer of one repository cannot move that repository's switch.
+// Every refusal leaves the switch where it was.
+func TestAccessBudgetKillAndResumeAskTheResolver(t *testing.T) {
+	for _, tc := range []struct {
+		verb      string
+		declined  string
+		doing     string
+		doingRepo string
+	}{
+		{"kill", "nothing was killed", "halting every run of the project", "halting this repository's runs"},
+		{"resume", "nothing was resumed", "letting every run of the project spend again", "letting this repository's runs spend again"},
+	} {
+
+		t.Run(tc.verb+" --all", func(t *testing.T) {
+			f := accessFixture(t, false)
+			accessAs(t, f.db, accessAdminAddr,
+				userStored(t, accessMember(t, accessAdminAddr), accesslib.RoleAdmin, "all-repos"))
+			_, _, err := execute(t, "budget", tc.verb, "--all")
+			accessRefused(t, err,
+				tc.declined,
+				tc.doing+" needs admin at project scope",
+				"(user:admin@example.com) hold admin at all-repos")
+			if v := f.db.Value(budget.PathKillGlobal); v != nil {
+				t.Errorf("the refused %s wrote %s = %v", tc.verb, budget.PathKillGlobal, v)
+			}
+		})
+		t.Run(tc.verb+" --repo", func(t *testing.T) {
+			f := accessFixture(t, false)
+			accessAs(t, f.db, accessAdminAddr,
+				userStored(t, accessMember(t, accessAdminAddr), accesslib.RoleViewer, accessRepoCanon))
+			_, _, err := execute(t, "budget", tc.verb, "--repo", "acme/app")
+			accessRefused(t, err,
+				tc.declined,
+				tc.doingRepo+" needs admin on "+accessRepoCanon,
+				"(user:admin@example.com) hold viewer at "+accessRepoCanon)
+			if v := f.db.Value(budget.PathKillRepo(appSlug)); v != nil {
+				t.Errorf("the refused %s wrote %s = %v", tc.verb, budget.PathKillRepo(appSlug), v)
+			}
+		})
+	}
+
+	f := accessFixture(t, false)
+	accessAs(t, f.db, accessAdminAddr,
+		userStored(t, accessMember(t, accessAdminAddr), accesslib.RoleAdmin, "project"))
+	if _, _, err := execute(t, "budget", "kill", "--all"); err != nil {
+		t.Fatalf("a project admin could not halt every run: %v", err)
+	}
+	if v := f.db.Value(budget.PathKillGlobal); v == nil {
+		t.Error("the project's kill switch was not written")
+	}
+	if _, _, err := execute(t, "budget", "resume", "--all"); err != nil {
+		t.Fatalf("a project admin could not let runs spend again: %v", err)
+	}
+
+	f = accessFixture(t, false)
+	accessAs(t, f.db, accessAdminAddr,
+		userStored(t, accessMember(t, accessAdminAddr), accesslib.RoleAdmin, accessRepoCanon))
+	if _, _, err := execute(t, "budget", "kill", "--repo", "acme/app"); err != nil {
+		t.Fatalf("a repository admin could not halt its own repository: %v", err)
+	}
+	if v := f.db.Value(budget.PathKillRepo(appSlug)); v == nil {
+		t.Error("the repository's kill switch was not written")
+	}
+}
+
 // TestAccessGateRefusesHTTP2DebugBeforeItOpens: the gate is the first cloud
 // open of commands that were purely local before this task — `accounts add`
 // edits the config and talked to nothing — so it carries the guard every other

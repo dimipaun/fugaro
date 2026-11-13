@@ -1642,6 +1642,19 @@ func budgetKillLogName(kill bool) string {
 	return "budget-resume"
 }
 
+// budgetKillDoing is what a refused kill or resume was doing, for the gate's
+// sentence: the switch is the budget admins' (docs/design/roles.md, §1.1), and
+// the scope it is set at is the scope the change needs, so halting a project and
+// halting one repository are two different grants. A resume is said as what it
+// does — runs start spending again — because that is the half a role has to
+// cover (D1542 fences it as a raise).
+func budgetKillDoing(kill bool, scope string) string {
+	if kill {
+		return "halting " + scope
+	}
+	return "letting " + scope + " spend again"
+}
+
 func runBudgetKill(cmd *cobra.Command, o *budgetKillOptions, kill bool) error {
 	ctx := cmd.Context()
 	// The flag's presence names the scope, not the string it carries: a bare
@@ -1698,6 +1711,11 @@ func runBudgetKill(cmd *cobra.Command, o *budgetKillOptions, kill bool) error {
 			return err
 		}
 		path, what = budget.PathKillRepo(slug), "repository "+repo
+		if err := accessGateRepo(ctx, lc, db, repo, declined, budgetKillDoing(kill, "this repository's runs")); err != nil {
+			return err
+		}
+	} else if err := accessGateProject(ctx, lc, db, declined, budgetKillDoing(kill, "every run of the project")); err != nil {
+		return err
 	}
 	out := cmd.OutOrStdout()
 	res, err := budget.SetKill(ctx, db, path, kill, me, o.reason, budget.KillHooks{

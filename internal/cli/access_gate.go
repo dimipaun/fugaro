@@ -25,11 +25,17 @@ import (
 // installation whose `fugaro update` has not migrated its lists yet — the update
 // is the one command of the HARD RULE and it arrives at once — and it is also a
 // machine whose own config does not name that database, which reaches no node
-// either way. Both behave exactly as these commands did before this task. What
-// is NOT the rule is "everyone holds everything": wherever a node is found every
-// check below is made, and a node that cannot be READ is a refusal rather than
-// an empty roster — failing open there would hand the strongest roles to whoever
-// the database cannot answer for.
+// either way. Both behave exactly as these commands did before this task.
+//
+// An installation that HAS migrated is judged by its roster whatever that roster
+// holds, and an emptied one is judged by the empty roster: the node and the
+// marker the migration leaves beside it (access.PathMigrated) are what tell the
+// two apart, because an absent node is what a project nobody has migrated and a
+// project whose last grant was revoked look like in the database. What is NOT
+// the rule is "everyone holds everything": wherever an installation has a roster
+// every check below is made, and a roster that cannot be READ is a refusal
+// rather than an empty one — failing open there would hand the strongest roles
+// to whoever the database cannot answer for.
 //
 // Which action each command asks about is F19's project-level list and the
 // decisions it carries: the image catalog and accounts are the project's
@@ -73,7 +79,20 @@ func accessJudge(ctx context.Context, lc *localcfg.Config, db *rtdb.Client, repo
 		return nil, dbErr(lc, err, false)
 	}
 	if !node.Found {
-		return nil, nil
+		// An absent node is two states, and access.PathMigrated tells them
+		// apart: an installation whose last grant was revoked holds a roster of
+		// nobody, and one whose lists have never been migrated holds no roster
+		// at all. The first is judged below — the empty roster is what a
+		// project-level action is refused against, so revoking the last grant
+		// cannot hand the project's own surfaces to whoever asks next — and the
+		// second is left exactly as it was before this task.
+		migrated, err := accesslib.Migrated(ctx, db)
+		if err != nil {
+			return nil, dbErr(lc, err, false)
+		}
+		if !migrated {
+			return nil, nil
+		}
 	}
 	in := accesslib.Input{Grants: node.Grants, Implicit: userImplicitAdmins(lc)}
 	if repoLevel {

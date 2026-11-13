@@ -236,6 +236,46 @@ func TestAccessNodeZeroGrantWriteLeavesTheAbsentState(t *testing.T) {
 	}
 }
 
+// TestAccessNodeWriteLeavesTheMigrationMarker: the marker beside the node is
+// written by the node's own write and survives the node being emptied, which is
+// the whole of what tells a roster of nobody from an installation whose lists
+// have never been migrated into it. The write that empties the node is the one
+// that matters: it is the last grant's revocation, and the marker has to be
+// there when the node is gone.
+func TestAccessNodeWriteLeavesTheMigrationMarker(t *testing.T) {
+	ctx := context.Background()
+	f, db := accessDB(t)
+
+	if migrated, err := Migrated(ctx, db); err != nil || migrated {
+		t.Fatalf("Migrated on an installation that has never written the node = %v, %v, want false", migrated, err)
+	}
+	absent, err := Read(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteIfMatch(ctx, db, []Grant{grant(alice, RoleAdmin, Scope{Kind: ScopeProject})}, absent.ETag); err != nil {
+		t.Fatalf("WriteIfMatch of one grant: %v", err)
+	}
+	if migrated, err := Migrated(ctx, db); err != nil || !migrated {
+		t.Fatalf("Migrated after the node was written = %v, %v, want true", migrated, err)
+	}
+
+	held, err := Read(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteIfMatch(ctx, db, nil, held.ETag); err != nil {
+		t.Fatalf("WriteIfMatch of no grants: %v", err)
+	}
+	f.Set(PathNode, foldAsTheDatabaseKeeps(f.Value(PathNode)))
+	if v := f.Value(PathNode); v != nil {
+		t.Fatalf("the database holds %#v at the node: the emptied list is pruned with it", v)
+	}
+	if migrated, err := Migrated(ctx, db); err != nil || !migrated {
+		t.Fatalf("Migrated after the last grant was revoked = %v, %v, want true: an emptied node is a roster of nobody", migrated, err)
+	}
+}
+
 // TestAccessNodeReadHaltsOnAnUnreadableNode: a node that is present and cannot
 // be read is an error the caller halts on, never an empty Node. It is the other
 // half of the rule the test above pins, and the half that fails closed: the
