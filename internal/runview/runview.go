@@ -252,6 +252,10 @@ type Row struct {
 	// pull request's state now: no forge is read, so one merged or closed
 	// after the run that left it `ready` still reads `ready`.
 	//
+	// A review run is on the pull request its task reviews, which its record
+	// names only at the artifact stage that ends the review, so such a row
+	// carries this field while `PR` beside it is still empty.
+	//
 	// It is the LISTING's computation and not Join's: whether a run is going
 	// on a pull request is a fact about every run of that pull request, and
 	// Join sees one. A read that holds a window of runs groups them by the

@@ -128,11 +128,14 @@ func prVerdict(r runview.Row) bool {
 	return false
 }
 
-// markPRStates sets PRState on every row that carries a pull request, from the
+// markPRStates sets PRState on every row that is on a pull request, from the
 // runs of that pull request the listing read: the rows are grouped by the pull
-// request they carry, the newest run of each group that said what the pull
+// request they are on, the newest run of each group that said what the pull
 // request is is taken (prVerdict), and the vocabulary above is applied to the
 // group.
+//
+// reviewing is the pull request each of those rows reviews, by run id, for the
+// review runs whose row cannot say it yet (prGroupKey's third case).
 //
 // It is the listing's read and not the row's, which is why it is done here and
 // not in runview.Join: whether a run is going on a pull request is a fact about
@@ -141,11 +144,11 @@ func prVerdict(r runview.Row) bool {
 // narrowed it — and it runs before --mine, --batch and --state pick the rows
 // that are printed, so every row of a page carries the state of its pull
 // request and not the state of the page.
-func markPRStates(rows []runview.Row) {
+func markPRStates(rows []runview.Row, reviewing map[string]int) {
 	groups := map[string]*prGroup{}
 	keys := make([]string, len(rows))
 	for i, r := range rows {
-		key, ok := prGroupKey(r)
+		key, ok := prGroupKey(r, reviewing[r.RunID])
 		if !ok {
 			continue
 		}
@@ -169,23 +172,33 @@ func markPRStates(rows []runview.Row) {
 	}
 }
 
-// prGroupKey is the pull request a row carries, as the identity a listing
-// groups its runs by: the repository's storage slug (two repositories number
-// their pull requests from 1, so a number alone is not a pull request) and the
-// number the run's record or its task names — or, for a record that names a
-// pull request whose number it does not carry, the URL, which is the only
-// thing left of it to group by. ok is false for a row that carries no pull
-// request at all: a run that opened none, and an artifact run among them. A
-// review job is not one of those — a review of PR N records N, so its row is
+// prGroupKey is the pull request a row is on, as the identity a listing groups
+// its runs by: the repository's storage slug (two repositories number their
+// pull requests from 1, so a number alone is not a pull request) and the number
+// the run's record or its task names — or, for a record that names a pull
+// request whose number it does not carry, the URL, which is the only thing left
+// of it to group by. reviewing is the third case, the pull request a review run
+// was launched to review: its record carries no number at all until the
+// artifact stage writes one, which is what ends the review
+// (internal/runner/reviewartifact.go), so while the review is going its task is
+// the only thing that says which pull request it is on.
+//
+// ok is false for a row that is on no pull request at all: a run that opened
+// none, and an artifact run among them. A review run is not one of those, in
+// either half of its life: a finished review of PR N records N, so its row is
 // grouped with that pull request's runs and reads their state, while its own
-// outcome says nothing about it (prVerdict).
-func prGroupKey(r runview.Row) (string, bool) {
+// outcome says nothing about it (prVerdict), and a review still going is
+// grouped by the number its task names (reviewing), which is the same key the
+// record gives it once the review ends.
+func prGroupKey(r runview.Row, reviewing int) (string, bool) {
 	slug := rowRef(r).Slug
 	switch {
 	case r.PR > 0:
 		return slug + "#" + strconv.Itoa(r.PR), true
 	case r.PRURL != "":
 		return slug + " " + r.PRURL, true
+	case reviewing > 0:
+		return slug + "#" + strconv.Itoa(reviewing), true
 	}
 	return "", false
 }

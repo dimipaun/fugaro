@@ -6384,9 +6384,12 @@ a pull request, and leaves it out of the rows that have none. It is the
 last state a run recorded of the pull request and not the pull request's
 state now: nothing here calls the forge, so a pull request merged or
 closed after the run that left it ready still reads ready, and one
-closed after a draft still reads stalled. A run's own state is in its
-result.json, so this filter reads every run it filters -- it narrows the
-listing, never the reads.
+closed after a draft still reads stalled. A review run's pull request is
+the one its task reviews, which its record names only when the review
+ends: while it is going, its row reads that pull request's state though
+its pr is still empty. A run's own state is in its result.json, so this
+filter reads every run it filters -- it narrows the listing, never the
+reads.
 
 The fourth state of a pull request, orphan (no run ever produced or follows
 it), is one no listing of runs can name: such a pull request has no run and

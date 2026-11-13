@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -37,6 +38,7 @@ type prStateRuns struct {
 	broken     string // PR 15: a run whose result.json cannot be read
 	rebased    string // PR 16: the run that left the pull request ready
 	rebase     string // PR 16: the newer run, a rebase that said nothing about it
+	reviewing  string // PR 17: a review run in flight, whose record names no pull request yet
 	noPR       string // a run that opened no pull request
 }
 
@@ -54,6 +56,7 @@ func seedPRStateRuns(t *testing.T, f *cloudFixture) prStateRuns {
 		broken:     runIDAt(0, "000500", "e001"),
 		rebased:    runIDAt(0, "000700", "1a01"),
 		rebase:     runIDAt(0, "000800", "1b01"),
+		reviewing:  runIDAt(0, "000900", "2a01"),
 		noPR:       runIDAt(0, "000600", "f001"),
 	}
 	// PR 11: the newest run of the pull request is still going, so the pull
@@ -103,9 +106,28 @@ func seedPRStateRuns(t *testing.T, f *cloudFixture) prStateRuns {
 		Branch: "fugaro/" + r.rebased, FollowUp: &runstore.FollowUp{PR: 16, PreviousRun: r.rebased},
 		PR: &runstore.PRRef{Number: 16, URL: "https://github.com/acme/app/pull/16"}})
 
+	// PR 17: a review run that is going. Its own record names no pull request
+	// -- a review writes one only at the artifact stage, which is what ends
+	// the review -- so the pull request it is on is the one its task names as
+	// the subject of the review, and a run going on it is what makes it live.
+	exec = seedSpec(t, f, reviewTaskFor(r.reviewing, 17), true)
+	f.run.SetState(exec, backend.StateRunning)
+	writeRecord(t, f, r.reviewing, &runstore.Record{Version: 1, RunID: r.reviewing, Repo: "acme/app", Workflow: "web",
+		Status: runstore.StatusRunning, Stage: "review", Execution: exec})
+
 	// A run that opened no pull request carries no state at all.
 	seedSpec(t, f, firstRunSpec(r.noPR), false)
 	return r
+}
+
+// reviewTaskFor is the task of a review run of PR pr of acme/app: a review
+// names the pull request it reviews in Spec.ReviewPRs, which is the only thing
+// that says which one it is on until its record names it.
+func reviewTaskFor(id string, pr int) *task.Spec {
+	s := firstRunSpec(id)
+	s.Mode = recipe.ModeReview
+	s.ReviewPRs = []int{pr}
+	return s
 }
 
 // prStatesOf is each row of a listing by its run ID, as the state of the pull
@@ -140,7 +162,8 @@ func TestRunsLsPRStateVocabulary(t *testing.T) {
 		r.broken:     prStateStalled,
 		r.rebased:    prStateReady, // the rebase below that run said nothing about the pull request
 		r.rebase:     prStateReady,
-		r.noPR:       "", // no pull request, no state
+		r.reviewing:  prStateLive, // a review going is a run going on the pull request its task names
+		r.noPR:       "",          // no pull request, no state
 	}
 	if len(got.Runs) != len(want) {
 		t.Fatalf("the fixture lists %d runs, want its %d: %v", len(got.Runs), len(want), runIDs(got.Runs))
@@ -162,7 +185,7 @@ func TestRunsLsPRStateFilter(t *testing.T) {
 	r := seedPRStateRuns(t, f)
 
 	for state, want := range map[string][]string{
-		prStateLive:    {r.live},
+		prStateLive:    {r.reviewing, r.live}, // newest first: the review was minted after the running run
 		prStateReady:   {r.rebase, r.rebased, r.ready, r.readyOld},
 		prStateStalled: {r.broken, r.unlaunched, r.stalled}, // newest first, the listing's own order
 	} {
@@ -312,7 +335,7 @@ func TestPRStateFromTheListingsOwnRows(t *testing.T) {
 		// A run that opened no pull request.
 		prStateRow(slug, "20261112-090000-ffff", at(0), runstore.StatusFailed, runstore.OutcomeNone, 0),
 	}
-	markPRStates(rows)
+	markPRStates(rows, nil)
 	want := []string{prStateLive, prStateLive, prStateStalled, prStateStalled, prStateStalled,
 		prStateReady, prStateReady, prStateReady, prStateStalled, prStateStalled, ""}
 	for i, row := range rows {
@@ -345,7 +368,7 @@ func TestPRStateGroupsOneRepositoryAtATime(t *testing.T) {
 		{Run: "acme-other-8b1e5a9d3c7f2046/20261112-090000-bbbb", RunID: "20261112-090000-bbbb", Created: at,
 			Status: string(runstore.StatusFailed), Outcome: string(runstore.OutcomeDraft), PR: 1},
 	}
-	markPRStates(rows)
+	markPRStates(rows, nil)
 	if rows[0].PRState != prStateLive || rows[1].PRState != prStateStalled {
 		t.Fatalf("PR 1 of acme/app is %q and PR 1 of acme/other is %q, want live and stalled: a pull request number means one repository",
 			rows[0].PRState, rows[1].PRState)
@@ -365,5 +388,44 @@ func TestPRStateReadsTheTaskWhenTheRunHasNoRecord(t *testing.T) {
 	got, _ := lsJSON(t, "--since", "0")
 	if len(got.Runs) != 1 || got.Runs[0].PRState != prStateLive {
 		t.Fatalf("a running run whose record has not arrived carries %+v, want the live state of the pull request its task names", got.Runs)
+	}
+}
+
+// TestPRStateReadsAReviewRunsTask: a review run is a run going on the pull
+// request it reviews, and its own record says which that is only at the
+// artifact stage, which is what ends the review -- so the fold takes the number
+// from the task (markPRStates' reviewing), and while the review is going the
+// pull request reads live and the review's own row carries that state. A review
+// of several is on no single pull request (chain_continues.go's
+// continuesPRChain) and the listing places it on none.
+func TestPRStateReadsAReviewRunsTask(t *testing.T) {
+	const slug = "acme-app-3f9c1d2e4b5a6078"
+	at := lsNow()
+	rows := []runview.Row{
+		// PR 21: the run that left it ready, then a review of it that is going.
+		prStateRow(slug, "20261112-090000-aa21", at, runstore.StatusSucceeded, runstore.OutcomeReady, 21),
+		{Run: slug + "/20261112-090000-bb21", RunID: "20261112-090000-bb21", Created: at,
+			Status: string(runstore.StatusRunning)},
+	}
+	markPRStates(rows, map[string]int{"20261112-090000-bb21": 21})
+	for i, want := range []string{prStateLive, prStateLive} {
+		if rows[i].PRState != want {
+			t.Errorf("row %s carries pr_state %q, want %q", rows[i].RunID, rows[i].PRState, want)
+		}
+	}
+
+	// The same review run of a launch that names several: no number is a
+	// number the run's task gives it, so the pull request it reviews stays
+	// whatever its own runs said and the review's row carries no state.
+	rows = []runview.Row{
+		prStateRow(slug, "20261112-090000-cc21", at, runstore.StatusSucceeded, runstore.OutcomeReady, 22),
+		{Run: slug + "/20261112-090000-dd21", RunID: "20261112-090000-dd21", Created: at,
+			Status: string(runstore.StatusRunning)},
+	}
+	markPRStates(rows, nil)
+	for i, want := range []string{prStateReady, ""} {
+		if rows[i].PRState != want {
+			t.Errorf("row %s carries pr_state %q, want %q", rows[i].RunID, rows[i].PRState, want)
+		}
 	}
 }

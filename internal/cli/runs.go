@@ -279,9 +279,12 @@ func newLsCmd() *cobra.Command {
 			"last state a run recorded of the pull request and not the pull request's\n" +
 			"state now: nothing here calls the forge, so a pull request merged or\n" +
 			"closed after the run that left it ready still reads ready, and one\n" +
-			"closed after a draft still reads stalled. A run's own state is in its\n" +
-			"result.json, so this filter reads every run it filters -- it narrows the\n" +
-			"listing, never the reads.\n\n" +
+			"closed after a draft still reads stalled. A review run's pull request is\n" +
+			"the one its task reviews, which its record names only when the review\n" +
+			"ends: while it is going, its row reads that pull request's state though\n" +
+			"its pr is still empty. A run's own state is in its result.json, so this\n" +
+			"filter reads every run it filters -- it narrows the listing, never the\n" +
+			"reads.\n\n" +
 			"The fourth state of a pull request, orphan (no run ever produced or follows\n" +
 			"it), is one no listing of runs can name: such a pull request has no run and\n" +
 			"so no row here, and telling one from every other would take a call to the\n" +
@@ -590,11 +593,26 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 		return nil, remote(err)
 	}
 
+	// The pull request each review run of the window is on, by run id: a
+	// review run's record carries no pull request until the artifact stage
+	// writes one, which is what ends the review
+	// (internal/runner/reviewartifact.go), so while the review is going its
+	// task is the only thing that says which pull request it is on. Only a
+	// review of exactly one places its run there: a review of several is on
+	// no single pull request, the reading continuesPRChain makes of a review
+	// launch for the same reason (chain_continues.go), and its artifact is
+	// one verdict about one head.
+	reviewing := map[string]int{}
+	for i := range rows {
+		if t := runs[i].in.Task; t != nil && len(t.ReviewPRs) == 1 {
+			reviewing[rows[i].RunID] = t.ReviewPRs[0]
+		}
+	}
 	// The state of each pull request the window holds, set before the filters
 	// below pick the page: a state is the pull request's, read from every run
 	// of it the listing read, so it is the same on every row of a page as on
 	// the rows --mine, --batch and --state dropped.
-	markPRStates(rows)
+	markPRStates(rows, reviewing)
 	rows = slices.DeleteFunc(rows, func(r runview.Row) bool {
 		return (f.mine != "" && r.RequestedBy != f.mine) || (f.batch != "" && r.Batch != f.batch) ||
 			(f.state != "" && !rowInState(r, f.state))
