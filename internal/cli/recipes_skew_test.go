@@ -3093,6 +3093,54 @@ func TestRunRefusesTheLayersVisionOnAnOlderBaseImage(t *testing.T) {
 	}
 }
 
+// TestRunRefusesVisionOnACloneWorkflowsOlderBaseImage: a checkout: clone
+// workflow's job has no derived image and so no build record to judge, so the
+// gate judges base_images.base's own release (checkCloneImageSince) and names
+// the fix that image has — fugaro update --base base — rather than an image
+// refresh of a workflow that is never built. The boundary is the constant's
+// own, as it is on the built-image route: one release below is refused, the
+// constant's release launches.
+func TestRunRefusesVisionOnACloneWorkflowsOlderBaseImage(t *testing.T) {
+	for _, c := range []struct {
+		rel     string
+		refused bool
+	}{
+		{shiftRelease(t, visionSince, -1), true},
+		{visionSince, false},
+	} {
+		t.Run(c.rel, func(t *testing.T) {
+			f := newCloudFixture(t)
+			base := "ghcr.io/dimipaun/fugaro-base:" + c.rel
+			f.appendConfig(t, "base_images: {base: "+base+"}\n")
+			configSkewCheckout(t, f, visionSkewHead+
+				"workflows:\n  svc: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n")
+			_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
+			if !c.refused {
+				if err != nil {
+					t.Fatalf("release %s: err = %v, want launched", c.rel, err)
+				}
+				return
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v, want the launch refused", err)
+			}
+			for _, want := range []string{
+				"fugaro.yaml's agent.models.vision of acme/other",
+				"knows the vision slot (agent.models.vision)",
+				"Run fugaro update --base base",
+				base,
+			} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("%v lacks %q", err, want)
+				}
+			}
+			if n := len(f.run.Executions()); n != 0 {
+				t.Fatalf("%d executions, want none", n)
+			}
+		})
+	}
+}
+
 // TestVisionSinceIsTheReleaseTheDocsName holds visionSince to the readers that
 // state its number: docs/release.md's Before-you-tag bullet and the
 // descriptions of the three schemas both new members live in — the vision slot
