@@ -2,8 +2,8 @@
 # Tests for scripts/ci-hygiene.sh. Every case runs the script in a git
 # repository of its own, built in a temp directory and holding nothing but the
 # fixtures the case is about, so no case reads this repository's tree and no
-# case depends on another: the script is run under `timeout`, and the whole
-# file finishes in seconds.
+# case depends on another: each case runs the script under `timeout` where the
+# machine has one, and the whole file finishes in seconds.
 #
 # The last three cases are mutation checks, one per rule: each runs a copy of
 # the script whose rule body has been replaced by `:` and requires the case
@@ -43,12 +43,25 @@ write() {
 # the index, and staging needs no identity where committing would.
 track() { git -C "$work/repo" add -A; }
 
+# bounded CMD...: a case's own deadline where the machine has `timeout`, and
+# CMD itself where it does not. `timeout` is coreutils and stock macOS ships
+# none of it, so requiring it fails every case of this suite -- and the Go
+# wrapper with it -- on a Mac developer machine, which is the one place a case
+# hanging would be caught by a person rather than by CI.
+bounded() {
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 20 "$@"
+  else
+    "$@"
+  fi
+}
+
 # run [DIR] [SCRIPT]: runs the script, from the fixture repository unless a
 # directory is named; sets $status and $out.
 run() {
   local dir=${1:-$work/repo} script=${2:-scripts/ci-hygiene.sh}
   set +e
-  out=$(cd "$dir" && timeout 20 bash "$script" 2>&1)
+  out=$(cd "$dir" && bounded bash "$script" 2>&1)
   status=$?
   set -e
 }
