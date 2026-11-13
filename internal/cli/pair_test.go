@@ -17,6 +17,7 @@ import (
 	"io"
 	"maps"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -39,6 +40,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/mailbox/keychain"
+	"github.com/dimipaun/fugaro/internal/mobileauth"
 )
 
 // The pairing fixture: a project config whose budget backend is the RTDB fake,
@@ -587,6 +589,244 @@ func TestPairRoleLowersToViewer(t *testing.T) {
 	}
 	if !strings.Contains(out, "role viewer") {
 		t.Fatalf("--role viewer did not lower the device's role:\n%s", out)
+	}
+}
+
+// pairSeedEntry puts one allowlist entry on the node as `fugaro pair` writes
+// it: the uid is the node's key, the administered email is the entry's address
+// (an address or a whole domain) and the role is the role it was written with.
+func (f *pairFixture) pairSeedEntry(uid, email, role string) {
+	f.db.Set(rules.PathDevices+"/"+uid, map[string]any{
+		"name": "seed", "email": email, "role": role, "at": pairT0.UTC().Format(time.RFC3339),
+	})
+}
+
+// pairEntryWritten is the entry a completed pairing wrote: the fixture holds the
+// entries the test seeded, so the one that is not one of them is the command's.
+func (f *pairFixture) pairEntryWritten(t *testing.T, seeded ...string) (string, string) {
+	t.Helper()
+	allowlist, ok := f.db.Value(rules.PathDevices).(map[string]any)
+	if !ok {
+		t.Fatalf("the allowlist is %v, want an object", f.db.Value(rules.PathDevices))
+	}
+	known := map[string]bool{}
+	for _, uid := range seeded {
+		known[uid] = true
+	}
+	for uid, child := range allowlist {
+		if known[uid] {
+			continue
+		}
+		node, ok := child.(map[string]any)
+		if !ok {
+			t.Fatalf("the device node %s is %v, want an object", uid, child)
+		}
+		email, _ := node[mobileauth.NodeFieldEmail].(string)
+		role, _ := node[mobileauth.NodeFieldRole].(string)
+		return email, role
+	}
+	t.Fatalf("the pairing wrote no entry beside the %d the test seeded", len(seeded))
+	return "", ""
+}
+
+// TestPairDeviceNodeNamesMatchMobileauth is the writer's half of P2's rule: the
+// node's administered email and role are named by internal/mobileauth's own
+// constants, so that the writer and every reader share one spelling — and a Go
+// struct tag cannot hold a constant, so the tags are held to them here rather
+// than spelled twice by hand and drifting. `pair ls` reads the same two.
+func TestPairDeviceNodeNamesMatchMobileauth(t *testing.T) {
+	typ := reflect.TypeOf(pairDeviceNode{})
+	for field, want := range map[string]string{
+		"Email": mobileauth.NodeFieldEmail,
+		"Role":  mobileauth.NodeFieldRole,
+	} {
+		f, ok := typ.FieldByName(field)
+		if !ok {
+			t.Fatalf("pairDeviceNode has no %s field: the writer writes the node's children through it", field)
+		}
+		if got := f.Tag.Get("json"); got != want {
+			t.Fatalf("pairDeviceNode.%s is written as %q, want %q: internal/mobileauth names the child and P2's PathDevices comment is what holds the writer and the reader to one spelling", field, got, want)
+		}
+	}
+}
+
+// TestPairRoleResolvedFromTheAllowlistEntries is D224 and the spec's own rule
+// ("an exact email overrides its domain's role"), resolved once, at the write.
+// The domain entry grants the HIGHER role and the pairing operator is an admin,
+// so every way of not resolving — writing the caller's own role, or reading the
+// domain's entry for an address an exact entry names — writes admin; the entry
+// that names the address is what settles it.
+func TestPairRoleResolvedFromTheAllowlistEntries(t *testing.T) {
+	f := newPairFixture(t, pairMe)
+	f.pairSeedEntry(pairDevA, "example.com", "operator")
+	f.pairSeedEntry(pairDevB, pairMe, "viewer")
+	out, _, err := pairPair(t, f, token.Fingerprint(pairKeyBytes))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "role viewer") {
+		t.Fatalf("the pairing did not resolve the exact entry over its domain's:\n%s", out)
+	}
+	if email, role := f.pairEntryWritten(t, pairDevA, pairDevB); role != "viewer" || email != pairMe {
+		t.Fatalf("the entry written is %q/%q, want %s/viewer", email, role, pairMe)
+	}
+
+	// A domain entry alone is the whole of what admits its members: the address
+	// is on no exact entry, so the domain's role is what the node carries — the
+	// domain rule applied at administration (D223) and recorded on the entry.
+	f = newPairFixture(t, pairMe)
+	f.pairSeedEntry(pairDevA, "example.com", "operator")
+	if _, _, err := pairPair(t, f, token.Fingerprint(pairKeyBytes)); err != nil {
+		t.Fatal(err)
+	}
+	if email, role := f.pairEntryWritten(t, pairDevA); role != "operator" || email != pairMe {
+		t.Fatalf("the entry written is %q/%q, want %s/operator: a domain entry's role is resolved at the write", email, role, pairMe)
+	}
+
+	// An address no entry names is the pairing's own entry to write, and the
+	// role is the one the operator already holds (the allowlist has nothing to
+	// resolve for them).
+	f = newPairFixture(t, pairMe)
+	f.pairSeedEntry(pairDevA, "other.example", "viewer")
+	if _, _, err := pairPair(t, f, token.Fingerprint(pairKeyBytes)); err != nil {
+		t.Fatal(err)
+	}
+	if _, role := f.pairEntryWritten(t, pairDevA); role != "admin" {
+		t.Fatalf("an address no entry names was written %q, want the operator's own admin", role)
+	}
+}
+
+// TestPairUnreadableAllowlistEntryRefused is the allowlist half of the refusal:
+// a node whose administered email is not a value this build reads names nobody,
+// and P1 refuses a whole resolution over it — so the pairing refuses instead of
+// writing the caller's own (wider) role past an entry that might have been the
+// narrower one for them. It names the node, because the node is what an admin
+// fixes, and it echoes the value never.
+func TestPairUnreadableAllowlistEntryRefused(t *testing.T) {
+	const value = "Dimi Paun <dimi@example.com>"
+	for name, seed := range map[string]func(*pairFixture){
+		"an address this build does not read": func(f *pairFixture) { f.pairSeedEntry(pairDevA, value, "viewer") },
+		"a domain that is not a domain":       func(f *pairFixture) { f.pairSeedEntry(pairDevA, "not a domain", "viewer") },
+		"an empty email":                      func(f *pairFixture) { f.pairSeedEntry(pairDevA, "", "viewer") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newPairFixture(t, pairMe)
+			seed(f)
+			out, _, err := pairRun(t, "--json")
+			if err == nil || ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v, want exit 1", err)
+			}
+			events := pairLines(t, out)
+			if len(events) != 1 || events[0].Event != pairEventRefused || events[0].Code != pairRefusedAllowlistUnreadable {
+				t.Fatalf("events = %v, want one refused with %q", events, pairRefusedAllowlistUnreadable)
+			}
+			if !strings.Contains(events[0].Reason, pairDevA) {
+				t.Fatalf("the refusal does not name the node an admin must fix: %q", events[0].Reason)
+			}
+			if strings.Contains(events[0].Reason, value) {
+				t.Fatalf("the refusal echoes the value it refused: %q", events[0].Reason)
+			}
+			if n := len(f.iam.SignCalls()); n != 0 {
+				t.Fatalf("a refused pairing minted %d tokens, want none: the allowlist is read before anything is minted", n)
+			}
+			f.pairOnlySeededEntries(t, pairDevA)
+		})
+	}
+}
+
+// pairOnlySeededEntries holds a refusal to leaving the allowlist as it found it:
+// the seeded nodes (and nothing else), no pairing subtree and no keychain item.
+func (f *pairFixture) pairOnlySeededEntries(t *testing.T, seeded ...string) {
+	t.Helper()
+	allowlist, ok := f.db.Value(rules.PathDevices).(map[string]any)
+	if !ok || len(allowlist) != len(seeded) {
+		t.Fatalf("the allowlist is %v, want exactly the %d entries the test seeded", f.db.Value(rules.PathDevices), len(seeded))
+	}
+	for _, uid := range seeded {
+		if v := f.db.Value(rules.PathDevices + "/" + uid); v == nil {
+			t.Fatalf("the seeded entry %s is gone: %v", uid, allowlist)
+		}
+	}
+	if v := f.db.Value("pairing"); v != nil {
+		t.Fatalf("a refused pairing wrote the pairing subtree: %v", v)
+	}
+	if len(f.keys.Keys) != 0 {
+		t.Fatalf("a refused pairing wrote the keychain: %v", f.keys.Keys)
+	}
+}
+
+// TestPairResolvedRoleAboveOwnRefused: the resolver's answer can be above the
+// pairing operator's own role — an entry written by an admin, a caller who has
+// since been demoted — and a device may not be more than the person pairing it
+// (RS8). It is refused rather than clamped: a clamp would record a role the
+// allowlist does not carry, and the fix (an admin writes the entry) is one
+// sentence away.
+func TestPairResolvedRoleAboveOwnRefused(t *testing.T) {
+	f := newPairFixture(t, pairLauncher)
+	f.pairSeedEntry(pairDevA, pairLauncher, "admin")
+	out, _, err := pairRun(t, "--json")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want exit 1", err)
+	}
+	events := pairLines(t, out)
+	if len(events) != 1 || events[0].Event != pairEventRefused || events[0].Code != pairRefusedRoleAbove {
+		t.Fatalf("events = %v, want one refused with %q", events, pairRefusedRoleAbove)
+	}
+	for _, want := range []string{"admin", "operator"} {
+		if !strings.Contains(events[0].Reason, want) {
+			t.Fatalf("the refusal %q does not name %q", events[0].Reason, want)
+		}
+	}
+	if n := len(f.iam.SignCalls()); n != 0 {
+		t.Fatalf("a refused pairing minted %d tokens, want none", n)
+	}
+	f.pairOnlySeededEntries(t, pairDevA)
+}
+
+// TestPairUnverifiedEmailReadsTheUserinfoAnswer is D226 against the response it
+// actually reads: the refusal is init_members.go's userEmail — the shape
+// init_members.go already uses — and what it refuses is the endpoint's own
+// `email_verified: false`, with the address it names. pairMeLookup is left
+// alone: the identity the pairing inherits its role from is a different read.
+func TestPairUnverifiedEmailReadsTheUserinfoAnswer(t *testing.T) {
+	verified := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"email":%q,"email_verified":%t}`, pairMe, verified)
+	}))
+	defer srv.Close()
+
+	f := newPairFixture(t, pairMe)
+	authenticatedUser = func(ctx context.Context, _ *localcfg.Config) (string, error) {
+		return userEmail(ctx, srv.Client(), srv.URL)
+	}
+	out, _, err := pairRun(t, "--json")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want exit 1", err)
+	}
+	events := pairLines(t, out)
+	if len(events) != 1 || events[0].Event != pairEventRefused || events[0].Code != pairRefusedEmail {
+		t.Fatalf("events = %v, want one refused with %q", events, pairRefusedEmail)
+	}
+	if !strings.Contains(events[0].Reason, "is not verified") || !strings.Contains(events[0].Reason, pairMe) {
+		t.Fatalf("the refusal %q does not name the unverified address as userEmail does", events[0].Reason)
+	}
+	if n := len(f.iam.SignCalls()); n != 0 {
+		t.Fatalf("an unverified address minted %d tokens, want none", n)
+	}
+
+	// The same endpoint answering `email_verified: true` is the address the node
+	// takes: the check is the response, not a missing field.
+	verified = true
+	f = newPairFixture(t, pairMe)
+	authenticatedUser = func(ctx context.Context, _ *localcfg.Config) (string, error) {
+		return userEmail(ctx, srv.Client(), srv.URL)
+	}
+	if _, _, err := pairPair(t, f, token.Fingerprint(pairKeyBytes)); err != nil {
+		t.Fatal(err)
+	}
+	if email, role := f.pairEntryWritten(t); email != pairMe || role != "admin" {
+		t.Fatalf("the entry written is %q/%q, want %s/admin", email, role, pairMe)
 	}
 }
 

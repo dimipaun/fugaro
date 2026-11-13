@@ -207,8 +207,8 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 		failed := dbErr(lc, err, false)
 		return pairRefuse(ev, o, pairRefusalCode(failed, pairRefusedUnplaced), failed)
 	}
-	role := pairInheritedRole(grantsNode.Grants, me)
-	if role == mobileauth.RoleNone {
+	ownRole := pairInheritedRole(grantsNode.Grants, me)
+	if ownRole == mobileauth.RoleNone {
 		if !grantsNode.Found {
 			return pairRefuse(ev, o, pairRefusedUnplaced,
 				fmt.Errorf("%s has no grants node yet (%s is absent), so a device paired here would have no role to inherit: run '%s update', which writes that node from the installation's own lists when one of them names a user: member — a group: or domain: member is not an address a grant holds, and lists that name none write no node",
@@ -218,20 +218,28 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 			fmt.Errorf("%s holds no role at project scope in %s, so a device it paired would have no role to inherit: a device records a role and no scope, so the role it inherits is the pairing user's highest role at project scope, and a role held only in repositories is not one a device can carry; ask an admin of %s to add you to the installation's project-scope operator grants by naming the whole list with '%s update --operator %s' — that flag writes the list it is given, so every operator who must keep the role is named beside you",
 				me, lc.Name, lc.Name, selfCommand(), me))
 	}
+	// The device's role, and the two writers that meet here. `own` is the
+	// pairing operator's own project-scope role, which is what bounds whatever
+	// is written (RS8: a device may not be more than the person pairing it).
+	// --role, when it is given, is the operator's own instruction and settles
+	// it; otherwise D224's resolver answers, below, once the administered
+	// address is known — an entry that already names the address carries the
+	// role the node is written with.
+	role, typedRole := ownRole, false
 	if o.role != "" {
 		switch want, known := mobileauth.ParseRole(o.role); {
 		case !known:
 			return pairRefuse(ev, o, pairRefusedInvalidRole,
 				fmt.Errorf("--role %s is not a role: this installation's roles are %s", o.role, pairRoleNames()))
-		case !role.AtLeast(want):
+		case !ownRole.AtLeast(want):
 			return pairRefuse(ev, o, pairRefusedRoleAbove,
-				fmt.Errorf("--role %s is above your own role (%s): a paired device inherits your role and --role may only lower it, so a device like this one cannot be more than you are", want, role))
+				fmt.Errorf("--role %s is above your own role (%s): a paired device inherits your role and --role may only lower it, so a device like this one cannot be more than you are", want, ownRole))
 		default:
-			role = want
+			role, typedRole = want, true
 		}
 	}
 
-	// §7.1 step 2, D224 and D226: the one address this command may administer
+	// §7.1 step 2, D226: the one address this command may administer
 	// is the pairing operator's own verified one, read by the check
 	// init_members.go's userEmail already performs for the CLI. --email is
 	// therefore not a free field: an address that is not the operator's own
@@ -262,6 +270,25 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 	} else if email != own {
 		return pairRefuse(ev, o, pairRefusedEmail,
 			fmt.Errorf("--email %s is not your own verified address (%s): a device node's administered email is an address this installation has proved the pairing operator holds, and pairing refuses one it cannot attribute to you", email, own))
+	}
+
+	// D224, and this is the place the resolution runs: once, in the CLI, at the
+	// write, for the address the entry is about to carry. `pair ls` and the
+	// console then read the role off the node and re-resolve nothing, which is
+	// what makes an entry's role a fact rather than a function of the allowlist
+	// it was read beside. It is a read like the probe above, so it is still
+	// before anything is minted or written — and --role, when the operator gave
+	// one, is their own instruction and is not resolved over.
+	if !typedRole {
+		resolved, err := pairResolveEntryRole(ctx, lc, db, email, ownRole)
+		switch {
+		case err == nil:
+			role = resolved
+		case errors.Is(err, errPairResolvedAbove):
+			return pairRefuse(ev, o, pairRefusedRoleAbove, err)
+		default:
+			return pairRefuse(ev, o, pairRefusalCode(err, pairRefusedAllowlistUnreadable), err)
+		}
 	}
 
 	signer, err := (&cloudEnv{lc: lc}).tokenSigner(ctx)
@@ -863,6 +890,165 @@ func pairInheritedRole(grants []accesslib.Grant, me string) mobileauth.Role {
 	return accesslib.EffectiveAtProject(accesslib.Input{Grants: grants}, me)
 }
 
+// errPairResolvedAbove is D224's own refusal: the role the allowlist resolves
+// for this pairing's entry is above the one the pairing operator holds, so
+// writing it would put authority on a device that nobody bounded (RS8). It is
+// a sentinel because the caller tells it from "the allowlist cannot be read":
+// the two are different sentences to an operator — one names a role to ask
+// about, the other names a node to fix — and they carry different wire codes.
+var errPairResolvedAbove = errors.New("pairing: the resolved entry is above the pairing operator's own role")
+
+// pairResolveEntryRole is D224 at the write: the role the entry `fugaro pair` is
+// about to write carries, resolved ONCE, here, from the allowlist's own device
+// nodes — so no reader resolves a role, and `pair ls` prints what the node
+// holds rather than what the allowlist would say about it today.
+//
+// The three answers, and why each is the one written:
+//
+//   - An entry already names the address. P1's resolver answers, so an exact
+//     entry overrides its domain's (the spec's own rule) and the domain rule
+//     lands on the node at the write (D223) instead of at a read. A role above
+//     own is refused rather than clamped: own is what bounds a device (RS8), and
+//     a silent clamp would record a role the allowlist does not carry.
+//   - No entry names the address. The person is not on the allowlist yet and
+//     this pairing is what puts them there, so the role is the caller's own
+//     project-scope role — Phase 6's rule, and the only admission a project
+//     whose allowlist is still empty has (D230: the first entry is the first
+//     pairing's, and the creator who runs it holds an admin).
+//   - The allowlist cannot be read. Refused, by the node that carries the value
+//     and never by the value itself. P1 refuses a whole resolution over one
+//     entry it cannot read, and this command must not paper over that: an entry
+//     nobody can identify might be the narrower one for this address, so
+//     falling through to the caller's own role would write a wider role where
+//     the node's writer meant something narrower.
+func pairResolveEntryRole(ctx context.Context, lc *localcfg.Config, db *rtdb.Client, address string, own mobileauth.Role) (mobileauth.Role, error) {
+	exact, domains, unreadable, err := pairAllowlistEntries(ctx, lc, db)
+	if err != nil {
+		return mobileauth.RoleNone, err
+	}
+	if len(unreadable) > 0 {
+		return mobileauth.RoleNone, fmt.Errorf("%s carries %d device node(s) whose %s child is not a value this build reads (%s): an administered email that cannot be read names nobody, so the role this pairing would write cannot be resolved past it; an admin fixes the node, or takes it off the allowlist with 'fugaro pair revoke', and `fugaro pair ls` prints the uids",
+			rules.PathDevices, len(unreadable), mobileauth.NodeFieldEmail, strings.Join(unreadable, ", "))
+	}
+	if !pairAllowlistNames(exact, domains, address) {
+		return own, nil
+	}
+	role, err := mobileauth.Resolve(exact, domains, address)
+	if err != nil {
+		return mobileauth.RoleNone, fmt.Errorf("the allowlist cannot resolve a role for %s: %w; a device node's role is resolved from the allowlist's entries at the write and nowhere else (D224), so an admin fixes the node — `fugaro pair ls` prints them — before this pairing can be written", address, err)
+	}
+	if !own.AtLeast(role) {
+		return mobileauth.RoleNone, fmt.Errorf("%w: %s's entry resolves to %s, above your own role (%s); a device cannot be more than the person pairing it, so ask an admin to write the entry, or pair it as someone who holds %s",
+			errPairResolvedAbove, address, role, own, role)
+	}
+	return role, nil
+}
+
+// pairAllowlistEntries reads the allowlist's device nodes as the entries the
+// resolver reads, in the two lists it takes (D222: the entry is the node — the
+// administered email is the address and the role is what the node was written
+// with). It answers with the nodes whose email it could not read at all, by uid,
+// so the refusal can name a node an admin can find rather than a value nobody
+// may echo.
+//
+// A node with no `email` child names nobody and is skipped rather than refused:
+// that is what keeps a node written before the fields existed harmless (P2),
+// where a child that is present and unreadable is exactly what P1 refuses the
+// whole resolution over. The kind is the address's own shape — an "@" makes an
+// exact entry, its absence a domain entry — and the value is held to that kind's
+// own normaliser here, so an entry in the wrong kind is refused rather than
+// reinterpreted. Neither At nor By is filled: the node holds
+// a pairing instant and no author, the resolver reads neither field, and
+// inventing them here would be this command writing a record it does not have.
+func pairAllowlistEntries(ctx context.Context, lc *localcfg.Config, db *rtdb.Client) (exact, domains []mobileauth.Entry, unreadable []string, err error) {
+	var tree map[string]json.RawMessage
+	if _, err := db.Get(ctx, rules.PathDevices, &tree); err != nil {
+		return nil, nil, nil, dbErr(lc, err, false)
+	}
+	// Sorted, so an entry's position in either list is a property of the
+	// database rather than of map iteration: a duplicate-entry refusal and a
+	// domain/address precedence both read the lists in this order.
+	uids := make([]string, 0, len(tree))
+	for uid := range tree {
+		uids = append(uids, uid)
+	}
+	sort.Strings(uids)
+	for _, uid := range uids {
+		var node map[string]json.RawMessage
+		if json.Unmarshal(tree[uid], &node) != nil {
+			continue
+		}
+		raw, ok := node[mobileauth.NodeFieldEmail]
+		if !ok {
+			continue
+		}
+		var email string
+		if json.Unmarshal(raw, &email) != nil {
+			unreadable = append(unreadable, uid)
+			continue
+		}
+		var role string
+		_ = json.Unmarshal(node[mobileauth.NodeFieldRole], &role)
+		entry := mobileauth.Entry{Address: email, Role: mobileauth.Role(role)}
+		// The kind is the value's own shape, and the value is then held to that
+		// kind's own normaliser — the same one Resolve judges the list with. A
+		// value neither reads is the entry P1 refuses a whole resolution over,
+		// and it is refused here, where the node that carries it can be named.
+		// A value that reads but is not the canonical form is NOT this case: it
+		// is an entry that names somebody and cannot be used, which is Resolve's
+		// to refuse (so a spelling nobody wrote can never fall through to a
+		// wider domain's role).
+		if strings.Contains(email, "@") {
+			if _, err := mobileauth.NormalizeEmail(email); err != nil {
+				unreadable = append(unreadable, uid)
+				continue
+			}
+			exact = append(exact, entry)
+			continue
+		}
+		if _, err := mobileauth.NormalizeDomain(email); err != nil {
+			unreadable = append(unreadable, uid)
+			continue
+		}
+		domains = append(domains, entry)
+	}
+	return exact, domains, unreadable, nil
+}
+
+// pairAllowlistNames reports whether the allowlist NAMES the address at all —
+// whether any entry of either kind is the address's own. It answers a presence
+// question and never a role: the role comes from P1's Resolve alone, and this
+// exists because "the address is not on the allowlist yet" (write the caller's
+// own role) and "the address is on it and its entry cannot be used" (refuse) are
+// the same error out of Resolve, and only the entries can tell them apart.
+//
+// The comparison is on canonical forms, so an entry written in another spelling
+// of the same address still counts as naming it: that entry is then Resolve's to
+// refuse, which is what stops a hand-edited exact entry from falling through to
+// a wider domain's role. An address this build cannot canonicalise names nothing
+// and is left to the caller's own role, exactly as it is left to Resolve.
+func pairAllowlistNames(exact, domains []mobileauth.Entry, address string) bool {
+	want, err := mobileauth.NormalizeEmail(address)
+	if err != nil {
+		return false
+	}
+	for _, e := range exact {
+		if normal, err := mobileauth.NormalizeEmail(e.Address); err == nil && normal == want {
+			return true
+		}
+	}
+	domain, ok := mobileauth.DomainOf(want)
+	if !ok {
+		return false
+	}
+	for _, e := range domains {
+		if normal, err := mobileauth.NormalizeDomain(e.Address); err == nil && normal == domain {
+			return true
+		}
+	}
+	return false
+}
+
 // pairDatabaseAdminProbe refuses a credential the database will not let at the
 // device node, before the token is minted and before anything is shown (§4.6,
 // §6): the node is written, the delivery node is written and the pairing node
@@ -1146,8 +1332,13 @@ func pairDeviceRowFrom(uid string, raw json.RawMessage) pairDeviceRow {
 	}
 	get := func(k string, v *string) { _ = json.Unmarshal(m[k], v) }
 	get("name", &row.Name)
-	get("email", &row.Email)
-	get("role", &row.Role)
+	// The two the resolver and the console both read are named by
+	// internal/mobileauth's own constants, which is the one spelling the writer
+	// and every reader share (P2's PathDevices comment); pairDeviceNode's tags
+	// are held to the same two by TestPairDeviceNodeNamesMatchMobileauth,
+	// because a Go struct tag is a literal and cannot hold a constant.
+	get(mobileauth.NodeFieldEmail, &row.Email)
+	get(mobileauth.NodeFieldRole, &row.Role)
 	get("at", &row.At)
 	return row
 }
