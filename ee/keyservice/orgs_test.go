@@ -34,13 +34,13 @@ import (
 // secret-shaped: the verifier is a spy that answers whatever caller a case sets
 // (keyservice_test.go).
 const (
-	danaUID   = "uid-dana"
-	danaEmail = "dana@example.com"
-	erinUID   = "uid-erin"
-	erinEmail = "erin@example.com"
-	opsUID    = "uid-operations"
-	opsEmail  = "operations@fugaro.example"
-	sellerUID = "uid-seller"
+	danaUID    = "uid-dana"
+	danaEmail  = "dana@example.com"
+	erinUID    = "uid-erin"
+	erinEmail  = "erin@example.com"
+	opsUID     = "uid-operations"
+	opsEmail   = "operations@fugaro.example"
+	sellerUID  = "uid-seller"
 	sellerMail = "seller@partner.example"
 
 	// portalIDToken is what these cases present as the bearer token. The spy
