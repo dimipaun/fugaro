@@ -16,7 +16,10 @@ package credsvc
 // model call whose run identity this service verified write this line: the
 // refusal's type and status, the run and the repository it was about, the same
 // class-only sentence the run is sent, and the two facts only the service has —
-// which read failed, and the Go type of the error it failed with.
+// which read failed, and the Go type of the error it failed with. Where the
+// refusal is not one read's failure but a step's — the candidate list's own
+// build — the sentence itself names what failed and the two fields are empty
+// (the label block below).
 //
 // A refusal taken BEFORE the identity is verified is the exception, and it is
 // the one refusal that cannot be written here at all: there is no verified run
@@ -65,9 +68,14 @@ const refusedMessage = "credsvc: refused"
 // They are one closed set of this file's own text, so the label an operator
 // greps is never another package's spelling of its own read: a read that failed
 // is named here and nowhere else. Every read of the service's OWN that a
-// refused model call can fail on is one of them — the caller's request body is
-// not, because it is not a read of anything this service holds (readCall's
-// failure is refused with the caller's own sentence) — and the selector's three
+// refused model call can fail on is one of them, with two exceptions, and both
+// are refusals whose own sentence already names what went wrong rather than a
+// read this file would have to name: the caller's request body is not a read of
+// anything this service holds (readCall's failure is refused with the caller's
+// own sentence), and the candidate list is a step and not a read of one node
+// (candidates: the crafts that narrow it and the admissions that fill it), so a
+// call the candidate list refuses is written with an empty read and an empty
+// class beside its sentence. The selector's three
 // are separate on purpose: the marks, the leases and the run's own placement
 // are three nodes and three different questions, and "the selection's read
 // failed" would leave an operator to guess which of them to look at.
@@ -76,9 +84,6 @@ const (
 	readKills = "kills"
 	// readPolicyShared is the project's published shared node (C1.2).
 	readPolicyShared = "policy_shared"
-	// readPolicyRepo is a repository's own published node, read for its
-	// admissions (O4's legs).
-	readPolicyRepo = "policy_repo"
 	// readPolicyPrices is the project's model prices, read out of the shared
 	// node into the table the request check bounds a call by (requestPriceTable,
 	// request.go): the one read of the policy's own block that is not the
@@ -91,12 +96,6 @@ const (
 	readSlip = "slip_read"
 	// readBundle is the one bundle secret (C1.11's loader).
 	readBundle = "bundle"
-	// readCandidates is the call's own candidate list: the crafts' narrowing and
-	// the admissions that fill it (candidates, admittedAccounts). A failure that
-	// carries a more specific label of its own — the repository's node could not
-	// be read — is written with that one, because the innermost read is the one
-	// an operator acts on.
-	readCandidates = "candidates"
 	// readSelectorMarks, readSelectorLeases and readSelectorCurrent are the
 	// three reads creds.Select makes of the cascade's shared state before it
 	// decides anything: every credential's mark, every lease (the cap), and the
@@ -154,8 +153,9 @@ func labelRead(read string, err error) error {
 
 // readOf is the label err carries, or "" for an error no read labelled. The
 // INNERMOST label wins, because the more specific read is the one an operator
-// acts on: a candidate list that failed because the repository's node could not
-// be read is the policy read's failure and not the list's.
+// acts on: an error a read labels and a caller labels again is about the read
+// underneath, and a failure wrapped in a sentence of this service's own is
+// still that read's failure.
 func readOf(err error) string {
 	for err != nil {
 		var rf *readFailure
@@ -196,10 +196,10 @@ func errorClass(err error) string {
 // leases is a different incident from one that could not read the run's own
 // placement — so the label is put on the error here, where the read happens.
 //
-// It is built per call and never once per service: several calls select at the
-// same moment, and a recorder the service shared would answer a refusal with
-// the read some OTHER call failed (the property the marks' own concurrency
-// rules exist for).
+// It is built once, in NewServer, and holds nothing of its own: the label
+// travels on the error the read answered, so several calls selecting at the
+// same moment each carry their own and no refusal can be answered with the read
+// some OTHER call failed.
 //
 // The three writes are labelled too (stateWrite), and not because the line
 // names them as reads: their text is the store's, exactly as the reads' is, and

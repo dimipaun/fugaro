@@ -77,8 +77,7 @@ func (s *Server) candidates(ctx context.Context, id Identity, canonical string, 
 		// on a state it cannot name would be the worse answer to it.
 		ra, ok := s.reviewAccount(id.JobAccount)
 		if !ok {
-			return nil, creds.StrategyFailover, nil, labelRead(readCandidates,
-				fmt.Errorf("%w: the calling account is not one of this service's review job accounts", ErrUnavailable))
+			return nil, creds.StrategyFailover, nil, fmt.Errorf("%w: the calling account is not one of this service's review job accounts", ErrUnavailable)
 		}
 		out, skipped := reviewCandidates(reviewOfferings(b), ra.Account)
 		return out, creds.StrategyFailover, skipped, nil
@@ -91,7 +90,7 @@ func (s *Server) candidates(ctx context.Context, id Identity, canonical string, 
 		// own sentence is the answer, and it travels as this error rather than
 		// as an empty list, which the selector would answer with a sentence
 		// about the bundle.
-		return nil, creds.StrategyFailover, nil, labelRead(readCandidates, err)
+		return nil, creds.StrategyFailover, nil, err
 	} else if narrowed {
 		cands, strategy = offer, offerStrategy
 		// The credentials the crafts leave out are ones this call may not be
@@ -250,14 +249,14 @@ func offeredToReview(c creds.Credential, account string) bool {
 func (s *Server) admittedAccounts(ctx context.Context, slug, canonical string) (map[string]bool, error) {
 	child, found, err := s.cfg.Policy.Admissions(ctx, slug)
 	if err != nil {
-		return nil, labelRead(readPolicyRepo, err)
+		return nil, err
 	}
 	if !found || child == nil || child.Credentials == nil {
 		return map[string]bool{}, nil
 	}
 	shared, found, err := s.cfg.Policy.Shared(ctx)
 	if err != nil {
-		return nil, labelRead(readPolicyShared, err)
+		return nil, err
 	}
 	if !found || shared == nil {
 		return map[string]bool{}, nil

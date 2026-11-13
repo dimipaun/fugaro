@@ -148,8 +148,12 @@ func refusedJSON(t *testing.T, s *svc) string {
 //
 // Mutation (run, restore): drop the labelRead from any one of the reads this
 // table fails — server.go's stop switches, its policy read or its bundle load,
-// cascade.go's admissions or creds' state wrapper (refusallog.go's
-// stateReads) — and that case is red: the line names no read.
+// or creds' state wrapper (refusallog.go's stateReads) — and that case is red:
+// the line names no read.
+//
+// The candidate list has a case of its own below, and it is the one refusal
+// this line writes with no read: the list is a step and not a read of one node
+// (refusallog.go's label block).
 func TestRefusalLogNamesTheReadThatFailed(t *testing.T) {
 	cases := []struct {
 		// what the case is about, and the read the line must name.
@@ -169,11 +173,6 @@ func TestRefusalLogNamesTheReadThatFailed(t *testing.T) {
 			name: "the project's shared node", read: readPolicyShared,
 			fail:    func(s *svc, _ *Config, cause error) { s.policy.sharedErr = cause },
 			message: "the project's policy could not be read",
-		},
-		{
-			name: "the repository's own node", read: readPolicyRepo,
-			fail:    func(s *svc, _ *Config, cause error) { s.policy.admErr = cause },
-			message: "the repository's admissions could not be read",
 		},
 		{
 			name: "the bundle", read: readBundle,
@@ -242,41 +241,44 @@ func TestRefusalLogNamesTheReadThatFailed(t *testing.T) {
 	}
 }
 
-// TestRefusalLogNamesTheCraftsStepThatLeftTheCallNothing: the candidate list is
-// a step and not a read of one node — the crafts narrow it and the admissions
-// fill it — and a call the crafts leave nothing to serve is refused with that
-// step named, beside the sentence the operator must act on (the published node
-// it was built from).
-func TestRefusalLogNamesTheCraftsStepThatLeftTheCallNothing(t *testing.T) {
+// TestTheRefusalLogLeavesTheCandidateListsOwnFailureUnlabelled: the repository's
+// own node cannot be read, and the refusal of it is the candidate list's — the
+// crafts narrow the list and the admissions fill it, and the one sentence they
+// share names the read for the operator ("the repository's admissions could not
+// be read", server.go's admissions branch), so the line carries that sentence
+// and no label of its own.
+//
+// The two empty fields are the point of the case: an operator must not read
+// read="" as "no read failed" — here a read did, and the sentence says which.
+func TestTheRefusalLogLeavesTheCandidateListsOwnFailureUnlabelled(t *testing.T) {
+	sentinel := fakeCred(t, "sentinel")
 	s, auditLog := refusalSvc(t, func(s *svc, _ *Config) {
-		// One craft whose access names a pool no layer holds: the craft
-		// contributes nothing, and nothing else is published, so the call has
-		// no candidate at all.
-		s.policy.shared = decodeTestPolicy(t, poolNode(`"crafts": {"coder": {"access": "no-such-pool"}}`))
+		s.policy.admErr = &refusalTestErr{text: "reading " + sentinel + " failed"}
 	})
 
-	resp, body := s.call(t, callBody("crafts"))
+	resp, body := s.call(t, callBody("refused"))
 	if resp.StatusCode != StatusUnavailable {
 		t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusUnavailable, body)
-	}
-	e := refusal(t, resp.StatusCode, body)
-	if !strings.HasPrefix(e.Message, poolRefusalHead) {
-		t.Fatalf("the refusal is %q, want the crafts' own sentence %q", e.Message, poolRefusalHead)
 	}
 	line := oneRefusalLine(t, s)
 	for field, want := range map[string]any{
 		"type":        ErrorStateUnavailable,
 		"status":      refusedStatus(StatusUnavailable),
-		"read":        readCandidates,
-		"error_class": "*credsvc.poolRefusal",
-		"message":     e.Message,
+		"read":        "",
+		"error_class": "",
+		"message":     "the repository's admissions could not be read",
 	} {
 		if line[field] != want {
 			t.Errorf("the refusal's line %s = %v, want %q", field, line[field], want)
 		}
 	}
+	if logged := s.logs.String(); strings.Contains(logged, sentinel) {
+		t.Errorf("the service's log carries the text of the error it refused on: %s", logged)
+	}
 	if lines := forwardLines(t, auditLog); len(lines) != 1 {
 		t.Fatalf("a refused call wrote %d forward audit lines, want exactly 1: %v", len(lines), lines)
+	} else {
+		checkAuditShape(t, lines[0])
 	}
 }
 

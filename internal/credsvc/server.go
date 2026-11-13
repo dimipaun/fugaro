@@ -588,6 +588,15 @@ func NewServer(cfg Config) (*Server, error) {
 	if cfg.State == nil {
 		return nil, errors.New("credsvc: the service has no credential state")
 	}
+	// The state is read through this service's own reader (stateReads), which
+	// labels the read that failed as it fails: a selection makes three reads of
+	// the store — every credential's mark, every lease and the run's own
+	// placement — and answers a failure with one type and one sentence, so
+	// without the label the operator's line cannot say which node to look at
+	// (refusallog.go). It is wrapped here rather than at each reader so that no
+	// path can hold the store unlabelled, and it changes nothing else about it:
+	// every method answers what it answered before.
+	cfg.State = &stateReads{Store: cfg.State}
 	if cfg.Kills == nil {
 		return nil, errors.New("credsvc: the service cannot read the stop switches")
 	}
@@ -1077,17 +1086,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// switch or the path that would let it serve.
 		var refusal *poolRefusal
 		if errors.As(err, &refusal) {
-			// The operator's own configuration, and not a read that failed:
-			// the sentence says which switch or path would let the call
-			// through, and the cause beside it says which step produced it.
-			s.refuseCallCause(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable, refusal.message, err)
+			s.refuseCall(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable, refusal.message)
 			return
 		}
-		// The read that failed is named by the error itself: the repository's
-		// node (readPolicyRepo) or the shared one its accounts are read from
-		// (readPolicyShared), labelled where each is read.
-		s.refuseCallCause(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable,
-			"the repository's admissions could not be read", err)
+		s.refuseCall(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable, "the repository's admissions could not be read")
 		return
 	}
 	// The slip's own fence on the offering (G12, R9), and the last thing
@@ -1115,13 +1117,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// placement names, and the retry leaves it only when the attempt that just
 	// failed was that same credential — the one case where staying would spend
 	// the retry on the mark that was just written.
-	//
-	// The store the selector is handed is this call's own reader over the
-	// service's state (stateReads), which labels the three reads a selection
-	// makes as it makes them: the marks, the leases and the run's placement are
-	// three nodes and the refusal a failed one answers is one type, so without
-	// the label an operator cannot tell which of them to look at (refusallog.go).
-	sel := &creds.Selector{Store: &stateReads{Store: s.cfg.State}, Settings: settingsOf(shared), Now: s.now, Strategy: strategy}
+	sel := &creds.Selector{Store: s.cfg.State, Settings: settingsOf(shared), Now: s.now, Strategy: strategy}
 	s.forward(ctx, w, cl, sel, id, b, cands, notAdmitted)
 }
 
