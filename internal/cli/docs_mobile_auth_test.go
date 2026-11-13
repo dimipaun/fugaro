@@ -652,22 +652,60 @@ const (
 )
 
 // mobileAuthProviderRulings is the folder's ruling vocabulary, and the
-// provider document may carry none of it. `**Answered` is the shape
-// reconciliation.md §4 writes each of D221-D236's answers in; "the owner has
-// decided" is the sentence the plan's P6 names in its own red step -- *"write a
-// decision as if it were answered ... and the guard's verbatim/decision checks
-// must fail, because this document describes an alternative and must not read as
-// a ruling"*; and the two "we will" phrases are what turns a description into a
-// commitment. A reader who meets any of them here has met a document claiming a
-// decision nobody took.
+// provider document may carry none of it. The answer shape is
+// reconciliation.md §4's -- *"Answered 2026-10-22: as recommended"* -- and "as
+// recommended" alone is enough of it to catch an answer recorded in the
+// folder's own words; "the owner has decided" is the sentence the plan's P6
+// names in its own red step -- *"write a decision as if it were answered ...
+// and the guard's verbatim/decision checks must fail, because this document
+// describes an alternative and must not read as a ruling"*; and the two "we
+// will" phrases are what turns a description into a commitment. A reader who
+// meets any of them here has met a document claiming a decision nobody took.
+//
+// Each entry is written the way mobileAuthRulingShape reads a document -- lower
+// case, no emphasis marks -- because the spelling is not what this holds: the
+// scan has to catch the claim in whatever shape the sentence around it takes.
 var mobileAuthProviderRulings = []string{
 	"the owner has decided",
 	"the owner decided",
 	"has been decided",
-	"**Answered",
+	"answered 2026-10-22: as recommended",
+	"as recommended",
 	"we will build",
 	"we will implement",
 	"this document plans",
+}
+
+// mobileAuthRulingShape is how the scan below reads a document: lower case, with
+// the emphasis marks a sentence is written in stripped and its whitespace
+// flattened. A literal match is the one thing it must not be. The claim P6's red
+// step plants is *"the owner has decided"* -- *"write a decision as if it were
+// answered ... and the guard's ... checks must fail"* -- and a document writes it
+// as often at the head of a sentence as anywhere else (`The owner has decided`,
+// `**The owner has decided**`), with the answer shape in bold after the
+// reconciliation's own habit (`**Answered 2026-10-22: as recommended**`), and
+// wrapped across a line break by the width the folder writes to. A scan that
+// matched only the spelling the reconciliation happens to use would pass every
+// one of those mutations, which is exactly the failure it exists to catch.
+func mobileAuthRulingShape(s string) string {
+	s = strings.ToLower(s)
+	s = strings.NewReplacer("*", "", "`", "", "_", "").Replace(s)
+	return strings.Join(strings.Fields(s), " ")
+}
+
+// mobileAuthRulingPhrase is the scan: the phrase this folder rules with that the
+// text carries, or "" when it carries none. It reads the text through
+// mobileAuthRulingShape, so it is a check on the claim rather than on the
+// spelling, and it is walked with planted claims before the document is read, so
+// a green run means the walk can fail.
+func mobileAuthRulingPhrase(s string) string {
+	flat := mobileAuthRulingShape(s)
+	for _, phrase := range mobileAuthProviderRulings {
+		if strings.Contains(flat, phrase) {
+			return phrase
+		}
+	}
+	return ""
 }
 
 // TestDocsMobileAuthProviderIsRefusedNotPlanned: the provider document says what
@@ -679,19 +717,22 @@ var mobileAuthProviderRulings = []string{
 // three `@react-native-firebase` packages and **no auth package**, which is
 // exactly the fence the document says the path would cross.
 //
-// Mutation (verified, run and restored): write "the owner has decided" into the
-// document and this test fails naming the phrase; add
-// `@react-native-firebase/auth` to `mobile/package.json` and it fails naming the
-// dependency, because the document would then be describing a tree that no
-// longer matches it.
+// Mutation (verified, run and restored): write "**The owner has decided** that
+// providers are enabled in every project." into the document -- the claim at the
+// head of a sentence and in bold, which is how a document writes one -- and this
+// test fails naming the phrase, because the scan reads the claim and not the
+// spelling; add `@react-native-firebase/auth` to `mobile/package.json` and it
+// fails naming the dependency, because the document would then be describing a
+// tree that no longer matches it.
 func TestDocsMobileAuthProviderIsRefusedNotPlanned(t *testing.T) {
 	// Sentences here are prose and wrap, so both sides are compared with their
 	// whitespace flattened, the way the neighbouring pins read a paragraph: a
 	// sentence moved across a line break is the same sentence, and a check that
 	// failed on the wrapping would be fixed by rewrapping it rather than by
-	// restoring what it says. The ruling scan below reads the flattened text for
-	// the same reason, and it flattens the other way too: a phrase broken across
-	// a line is a phrase the document carries.
+	// restoring what it says. The ruling scan below flattens the same way, inside
+	// mobileAuthRulingShape, so a phrase broken across a line is a phrase the
+	// document carries -- and it is read without the emphasis marks, for the
+	// reason that function gives.
 	doc := normSpace(readDoc(t, mobileAuthProvider))
 	for _, want := range []struct{ sentence, why string }{
 		{mobileAuthProviderStatus, "the document states what it is, and the one thing a reader must not take it for is a plan or a part"},
@@ -702,16 +743,48 @@ func TestDocsMobileAuthProviderIsRefusedNotPlanned(t *testing.T) {
 			t.Errorf("%s no longer carries %q: %s", mobileAuthProvider, want.sentence, want.why)
 		}
 	}
-	for _, phrase := range mobileAuthProviderRulings {
-		if strings.Contains(doc, phrase) {
-			t.Errorf("%s carries %q, which is this folder's ruling vocabulary: the provider path was refused, nothing here is a decision, and a document that read as one would send a reader to build what D221 answered against", mobileAuthProvider, phrase)
+	// The walk is planted first, so a green run below means the scan can fail --
+	// and planted in the shapes a document really writes a claim in: at the head
+	// of a sentence, in bold, in italics, and broken across a line break, which
+	// the flattening has to close back up.
+	for _, planted := range []struct{ line, phrase string }{
+		{"**Answered 2026-10-22: as recommended** — no provider session reaches a project's database.", "answered 2026-10-22: as recommended"},
+		{"The owner has decided that a provider session reaches the project's database.", "the owner has decided"},
+		{"**The owner decided** it: every project enables google.com.", "the owner decided"},
+		{"The question _has been decided_ by the owner on 2026-11-13.", "has been decided"},
+		{"This document is written to the recommendation the owner gave, and it is\n\nas recommended.", "as recommended"},
+		{"We **will** build the provider path in P6.", "we will build"},
+		{"This\n\nplans nothing, and it does not say this document plans anything.", "this document plans"},
+	} {
+		if got := mobileAuthRulingPhrase(planted.line); got != planted.phrase {
+			t.Fatalf("%q is reported as %q, and it is %q: the scan is what broke, not the document", planted.line, got, planted.phrase)
 		}
+	}
+	// ... and with the document's own sentences, which say the same things
+	// without ruling on them. A scan that flagged these would be turned off
+	// rather than fixed: this document is *about* an answered decision, so it
+	// has to be able to say so.
+	for _, clean := range []string{
+		"**The owner answered D221 on 2026-10-22, taking the recommendation**, and **D228** refused the email link in v1 by name.",
+		"whose recommendation is **no** and whose alternative is the owner's own spec of 2026-10-20, taken as written",
+		"No decision is taken here, and D221's answer is not reopened by it.",
+	} {
+		if got := mobileAuthRulingPhrase(clean); got != "" {
+			t.Errorf("%q is reported as %q: the scan must tell a document describing an answered decision from one claiming a decision of its own", clean, got)
+		}
+	}
+	if phrase := mobileAuthRulingPhrase(readDoc(t, mobileAuthProvider)); phrase != "" {
+		t.Errorf("%s carries %q, which is this folder's ruling vocabulary: the provider path was refused, nothing here is a decision, and a document that read as one would send a reader to build what D221 answered against", mobileAuthProvider, phrase)
 	}
 	// The scan above is only meaningful if the vocabulary exists somewhere: the
 	// reconciliation writes an answer under every one of the sixteen decisions,
-	// and this is that control.
+	// and this is that control -- read through the same matcher, so a matcher
+	// that stopped matching fails here rather than passing the document.
 	if !strings.Contains(readDoc(t, mobileAuthRecon), mobileAuthAnswered) {
 		t.Fatalf("%s no longer carries %q, so the scan above proves nothing: the control, not the provider document, is what broke", mobileAuthRecon, mobileAuthAnswered)
+	}
+	if got := mobileAuthRulingPhrase(readDoc(t, mobileAuthRecon)); got == "" {
+		t.Fatalf("%s read through the ruling scan carries none of its vocabulary, and it records the owner's answer under each of D221-D236: the scan, not the provider document, is what broke", mobileAuthRecon)
 	}
 
 	// The document's own claim about the app, held to the tree: the three
