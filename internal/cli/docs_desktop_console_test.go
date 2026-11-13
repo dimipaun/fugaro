@@ -1850,8 +1850,9 @@ func consoleSpelledNumber(t *testing.T, spelled string) int {
 //     Project tab's seat estimate, `seats.read`, the surface's one read whose
 //     child walks the runs bucket -- to thirty-eight, and the roles-and-scopes
 //     plan's RS7 -- the Members view's read of the installation's grants,
-//     `members.list`, and the surface's first row whose one argument is optional
-//     -- to the thirty-nine rule 5 carries today.
+//     `members.list`, the second row whose command is a word of a group the
+//     console otherwise may not touch (`models.list` was the first) -- to the
+//     thirty-nine rule 5 carries today.
 //   - **every row of spawn.ts's `SPAWN_COMMANDS` is admitted by rule 6's table**:
 //     the row's own words lead some row of the design's table **and what that row
 //     carries after them is flags, nothing else**. The second half is the whole

@@ -3106,17 +3106,23 @@ describe('the spend read’s arguments', () => {
  * surface's two other reads of a section rather than of a run, and three things
  * about it are its own:
  *
- *   - **It is the first row that reaches a command *group* whose other words
- *     are refused.** `fugaro user` has five subcommands and the console drives
- *     one: `grant`, `revoke`, `add` and `rm` each change who may do what, and
- *     each is on this file's never table as a command and as a word of `user`
- *     -- so `user ls --json` is the group's whole reach, and a second row under
- *     `user` would have to be argued against those four.
- *   - **Its one argument is optional**, which is a first for a row whose
- *     argument is a repository: the command has a state of its own without it
- *     (the stored pairs, and the repositories of this machine a pattern
- *     matches), and naming a repository asks the narrower question -- the role
- *     each person holds in it.
+ *   - **It is the second row here that reaches a command *group* whose other
+ *     words are refused** -- `models.list` reached the `models` group first, in
+ *     console 0.119.0. `fugaro user` has six subcommands and the console drives
+ *     one: `grant`, `revoke`, `add`, `rm` and `offboard` each change who may do
+ *     what, and each is on this file's never table as a command and as a word
+ *     of `user` -- so `user ls --json` is the group's whole reach, and a second
+ *     row under `user` would have to be argued against those five.
+ *   - **Its one argument is optional, and the read has a state of its own
+ *     without it.** `--repo R` does not filter one answer here, it narrows the
+ *     question: without it the document is the installation's stored pairs,
+ *     with the repositories of this machine each pattern matches, and with it
+ *     the role each person holds in one repository. Optional arguments are not
+ *     new -- `plan.status`'s `all` and `graph.read`'s `source` are two, and
+ *     `live.watch`, `budget.show`, `runs.list` and `accounts.inventory` each
+ *     carry an optional `--repo` too -- but every one of those narrows a list
+ *     or a feed this surface already draws, and none of them changes what the
+ *     read is about.
  *   - **The word a renderer fills is a repository and never a pattern.** A
  *     grant's *scope* is a pattern, and a pattern is exactly the value that
  *     would widen what the read is about; the `repository` kind refuses one
@@ -3177,9 +3183,10 @@ const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   // mode, because its document carries no dollar of any kind.
   ['seats.read', 'readSeats'],
   // The Members view's read (the roles-and-scopes plan's RS7), appended for the
-  // reason every row above was. It is the one row here whose command is a word of
-  // a group this console otherwise may not touch at all, and its one argument --
-  // the repository a role is asked about -- is optional.
+  // reason every row above was. It is one of the two rows here whose command is
+  // a word of a group this console otherwise may not touch at all -- the other
+  // is `models.list` -- and its one argument, the repository a role is asked
+  // about, is optional.
   ['members.list', 'listMembers'],
 ]
 
