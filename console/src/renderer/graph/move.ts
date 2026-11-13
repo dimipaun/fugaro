@@ -289,6 +289,10 @@ export const MOVE_CONFIRM_CLASS = 'graph-move-confirm'
 export const MOVE_CANCEL_CLASS = 'graph-move-cancel'
 export const MOVE_UNDO_CLASS = 'graph-move-undo'
 export const MOVE_STATUS_CLASS = 'graph-move-status'
+/** MOVE_STATUS_REASON_CLASS is §6.24's `reason` beside the status word: the
+ * record's own sentence, a value this module sanitizes and cuts rather than the
+ * sheet's vocabulary. */
+export const MOVE_STATUS_REASON_CLASS = 'graph-move-status-reason'
 /** MOVE_OPEN_CLASS is the button a record task's row carries: the keyboard's and
  * the screen reader's way into a move, which a drag cannot be. */
 export const MOVE_OPEN_CLASS = 'graph-move-open'
@@ -519,14 +523,30 @@ function sheetSentence(sheet: MoveSheet): Sanitized | null {
   return null
 }
 
-/** statusOf is the record's own answer as the sheet's words: §6.24's status
- * through `MOVE_OUTCOME_WORDS`, with what the record said alongside it. */
+/** statusOf is the record's own answer as the sheet's word: §6.24's status
+ * through `MOVE_OUTCOME_WORDS`, which is this module's own table over the closed
+ * `MOVE_STATUSES` union and is therefore written through `literal`. What the
+ * record said alongside it is a value of the record's and is drawn by
+ * `statusReason`, in a cell of its own. */
 function statusOf(answer: RoadmapMoveAnswer): string | null {
   const outcome = answer.outcome
   if (outcome === null) return null
-  const word = MOVE_OUTCOME_WORDS[outcome.status]
-  const because = outcome.reason
-  return because === null || because === '' ? word : `${word}: ${because}`
+  return MOVE_OUTCOME_WORDS[outcome.status]
+}
+
+/** statusReason is §6.24's `reason` as a value like every other: a coordinator
+ * wrote it -- a refusal interpolates the release the record was holding
+ * (`ee/coordinator/roadmap_write.go`) -- so it goes through the sanitizer in the
+ * class of its own wire key, `sentence`, and this module's own cut, and it is
+ * `null` where the record said nothing. **It is drawn in an element of its own
+ * and never appended to the status word**: the word is this module's and the
+ * sentence is the record's, and a cell whose text is assembled out of two facts
+ * is what this sheet refuses (rule 14's Sanitized fields; `source.ts`'s
+ * `RoadmapMoveOutcome.reason`). */
+function statusReason(answer: RoadmapMoveAnswer): Sanitized | null {
+  const because = answer.outcome?.reason ?? null
+  if (because === null || because === '') return null
+  return moveValue(because, 'reason', 'the record’s reason')
 }
 
 /**
@@ -613,8 +633,13 @@ export function moveSheet(factory: ScreenFactory, sheet: MoveSheet, targets: rea
 
     const status = statusOf(answer)
     if (status !== null) {
-      const statusCell = make(factory, 'p', MOVE_STATUS_CLASS)
-      root.append(literal(statusCell, status))
+      // The record's own sentence is a paragraph of its own rather than a word
+      // appended to this module's: two facts, two cells -- and the sheet carries
+      // no style sheet, so a `p` beside a `p` is what keeps them apart on the
+      // window as well as in the DOM.
+      root.append(literal(make(factory, 'p', MOVE_STATUS_CLASS), status))
+      const because = statusReason(answer)
+      if (because !== null) drawn(root, factory, 'p', because, MOVE_STATUS_REASON_CLASS)
     }
   }
 

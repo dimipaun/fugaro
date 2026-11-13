@@ -11,7 +11,8 @@
 // four times -- `logs[].severity`, `row.status`, `job.status` and a secret
 // label's *key* -- each a wire string handed to `literal` because it looked like
 // vocabulary. A test per call site catches the instance it names and not the
-// fifth one, so this one reads the screens themselves:
+// fifth one, so this one reads the modules that draw themselves -- the screens,
+// the shared modules and the graph modules (`FILES` below):
 //
 //   - every argument a screen hands to a `literal` sink must be a string
 //     literal, a template with no interpolation, a module constant
@@ -80,9 +81,18 @@ const SCREENS = join(__dirname, '..', '..', 'src', 'renderer', 'screens')
  * `literal` of its own would be a place this scan exists for. */
 const SHARED = join(__dirname, '..', '..', 'src', 'shared')
 
+/** GRAPH is the third directory that may draw: `src/renderer/graph` holds the
+ * Graph screen's model and drawing, and `move.ts` draws the move sheet -- its
+ * own `literal` and `drawn`, the sheet's fields and the record's sentence beside
+ * its status. The review of GV3.2 found that module outside this scan, which is
+ * the whole reason the scan reads directories rather than the screens: a drawer
+ * is a module that writes a text slot, wherever it lives. */
+const GRAPH = join(__dirname, '..', '..', 'src', 'renderer', 'graph')
+
 /** RENDERER is the whole renderer tree. The `literal` scan above reads the
- * screens and the shared modules, because those are the files that draw text;
- * the inline-style scan below reads **every** module under `src/renderer`,
+ * screens, the shared modules and the graph modules, because those are the files
+ * that draw text; the inline-style scan below reads **every** module under
+ * `src/renderer`,
  * because a `.style` write is an offence wherever it is written -- a helper
  * outside `screens/` is a module the screens call, and a scan that read only the
  * screens would let one arrive there (Task 6.2; design section 5.5). */
@@ -434,6 +444,33 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
       within: 'figure',
       reason:
         'the parameter of the `figure` helper itself; every call site passes one of this file\'s own term constants (`SEATS_USED_TERM`, `SEATS_LICENSED_TERM`), which are the console\'s words for the figure beside them',
+    },
+  },
+  // The third drawer outside the screens: `src/renderer/graph/move.ts` draws the
+  // move sheet rule 14 describes -- the confirmation, its three named fields and
+  // the record's own answer (GV3.2). It is a sibling module of the Graph screen
+  // rather than a screen, which is exactly why the review found it unscanned.
+  '../graph/move.ts': {
+    'value.text': {
+      within: 'drawn',
+      reason:
+        'the sanitizer\'s own answer, and the sheet\'s one document-shaped text besides the sentence below: a value reaches `drawn` only as a `Sanitized` that `sanitizeText` built (`moveValue` and `moveArgv`), which is `version.ts`\'s `versionText` case -- a drawer may write a sanitizer\'s own answer and nothing else. The record\'s raw string never reaches it: `moveValue` is the only builder, and the one value that is not a field of the answer -- §6.24\'s `reason` -- goes through it too (`statusReason`)',
+    },
+    UNAVAILABLE_MARK: 'the console\'s own unavailable mark (`app.ts`), the other half of `drawn`\'s pair of outcomes -- the same constant `graph.ts`\'s `drawInto` and `projects.ts` draw a refused value as',
+    'target.name.ok ? target.name.text : UNAVAILABLE_MARK': {
+      within: 'moveSheet',
+      reason:
+        'the `<option>` a release box gets: `target.name` is the `Sanitized` label the Graph screen built with `sanitizeText` when it handed the sheet its targets, so the drawn word is the sanitizer\'s own answer and a refusal is the console\'s mark -- the value the option carries is the box\'s key, below',
+    },
+    'field.label': {
+      within: 'moveSheet',
+      reason:
+        'one named field\'s label, and `moveFields` is the only builder: the three are this module\'s own words (`MOVE_TASK_LABEL`, `MOVE_FROM_LABEL`, `MOVE_TO_LABEL`), written into the cell beside the record\'s `Sanitized` value',
+    },
+    status: {
+      within: 'moveSheet',
+      reason:
+        '§6.24\'s status as this module\'s own word (`statusOf`): `MOVE_OUTCOME_WORDS` is this file\'s table keyed by the closed `MOVE_STATUSES` union, and an answer carrying any other status is refused whole by `moveAnswerOf` -- so a document cannot put a word in this cell. What the record said beside it is not this cell: it is §6.24\'s `reason`, drawn as a `Sanitized` value of its own (`statusReason`, the `graph-move-status-reason` cell)',
     },
   },
 })
@@ -798,6 +835,28 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
       within: 'stateWord',
       reason:
         '`stateWord` is `markWord` with the other door into a text slot: a **document\'s** word is a `Sanitized` value, and this is the sanitizer\'s own answer or -- because the write is behind `state.ok` -- no attribute at all. A refused word is deliberately unmarked: a `data-word` holding the console\'s `n/a` would be a state the stylesheet painted as if the source had said it',
+    },
+  },
+  '../graph/move.ts': {
+    "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
+    'value.reason': {
+      within: 'drawn',
+      reason: 'the sanitizer\'s own reason for a refused value, written by `sanitizeText` in `moveValue` and naming the field it refused rather than the value it refused -- the same attribute `graph.ts`\'s `drawInto` writes',
+    },
+    phase: {
+      within: 'moveSheet',
+      reason:
+        '`movePhaseOf` answers one of the five literal phases (`MOVE_PHASES`: choosing, preview, reading, refused, answered) out of the sheet it is handed, and the attribute is the hook a rule and a test read which sheet is drawn by -- so the value is this module\'s own word and not one a caller supplied',
+    },
+    'target.key': {
+      within: 'moveSheet',
+      reason:
+        'a `releases[].key` of the graph document this installation last read, written as the `<option>`\'s `value` and never drawn -- the id the select reports back when a box is chosen, which `src/source/cli.ts` holds against that same document before it builds any word of a command line (the box\'s name is the `Sanitized` label the option draws)',
+    },
+    'field.label': {
+      within: 'moveSheet',
+      reason:
+        'one named field\'s label as the cell\'s `data-field` hook: the three are `moveFields`\' own words (`MOVE_TASK_LABEL`, `MOVE_FROM_LABEL`, `MOVE_TO_LABEL`), written here so a rule and a test can find the cell the value beside it is drawn in',
     },
   },
   'run.ts': {
@@ -1335,8 +1394,18 @@ const SHARED_FILES: readonly string[] = Object.freeze(
   walkFiles(SHARED, SCREENS).sort((a, b) => a.localeCompare(b)),
 )
 
-/** FILES is everything the scan reads: the screens, and the shared modules. */
-const FILES: readonly string[] = Object.freeze([...SCREEN_FILES, ...SHARED_FILES])
+/** GRAPH_FILES are the modules of `src/renderer/graph`, scanned exactly as a
+ * screen is and, like the shared modules, not required to have a sink: `move.ts`
+ * draws the move sheet and the other three draw nothing. Their paths are
+ * relative to `SCREENS` (`../graph/move.ts`), so every read and every vocabulary
+ * lookup in this file finds them the way it finds a screen. */
+const GRAPH_FILES: readonly string[] = Object.freeze(
+  walkFiles(GRAPH, SCREENS).sort((a, b) => a.localeCompare(b)),
+)
+
+/** FILES is everything the scan reads: the screens, the shared modules, and the
+ * graph modules the Graph screen draws its sheet with. */
+const FILES: readonly string[] = Object.freeze([...SCREEN_FILES, ...SHARED_FILES, ...GRAPH_FILES])
 
 /** RENDERER_FILES is every module under `src/renderer`, recursively, as a path
  * relative to it. It is the reach of the inline-style scan, and it is a walk
@@ -1399,6 +1468,22 @@ describe('a screen writes only its own vocabulary through literal', () => {
     ])
     expect(FILES).toContain(SHARED_DRAWER)
     expect(FILES).toContain(SKEW_MODULE)
+  })
+
+  it('reads the graph modules as well, so the sheet a drawer under graph/ draws is scanned', () => {
+    // The review of GV3.2 found this half of the defect: `graph/move.ts` draws
+    // the move sheet, and this scan read only the screens and the shared
+    // modules -- so the sheet's own `literal` was a sink nothing here ever
+    // looked at. The three modules beside it draw nothing, and they are read for
+    // the same reason the whole `shared/` list is: a drawer that arrives in a
+    // directory this file reads is caught without this file being edited again.
+    expect([...GRAPH_FILES]).toEqual([
+      '../graph/layout-client.ts',
+      '../graph/layout.ts',
+      '../graph/model.ts',
+      '../graph/move.ts',
+    ])
+    expect(FILES).toContain('../graph/move.ts')
   })
 
   it('walks into subdirectories and reads every module extension (MUTATION)', () => {

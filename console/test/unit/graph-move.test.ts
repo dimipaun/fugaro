@@ -35,6 +35,7 @@ import {
   MOVE_CONFIRM_LABEL,
   MOVE_FROM_LABEL,
   MOVE_MAX_FIELD_CODE_POINTS,
+  MOVE_OUTCOME_WORDS,
   MOVE_TASK_LABEL,
   MOVE_TARGET_UNCHOSEN,
   MOVE_TARGET_UNCHOSEN_LABEL,
@@ -391,6 +392,46 @@ describe('the sheet the screen draws', () => {
     const root = drawn({ request: { node: NODE, toRelease: OTHER }, answer: null, sentence: 'no such task' })
     expect(ofClass(root, 'graph-move-confirm')).toHaveLength(0)
     expect(ofClass(root, 'graph-move-cancel')).toHaveLength(1)
+  })
+
+  it('draws what the record said as a value of its own, sanitized and capped, beside the word it is not', () => {
+    // §6.24's `reason` is a coordinator's own text -- a refusal interpolates the
+    // release's name (`ee/coordinator/roadmap_write.go`) -- so it is a value of
+    // the record's like every field of the sheet, and it is drawn the way those
+    // are: through `sanitizeText`, cut by this module, and in an element of its
+    // own. The status word is the module's own vocabulary and holds none of it,
+    // which is what a sheet that spelled `${word}: ${reason}` into one cell
+    // would compose.
+    const hostile = `the record holds ${ROMAN} ${'x'.repeat(4000)}\u0000\nstill`
+    const root = drawn({
+      request: { node: NODE, toRelease: OTHER },
+      answer: answer({ outcome: { status: 'refused', request: 'req-1', reason: hostile, current: null } }),
+      sentence: null,
+    })
+    const status = ofClass(root, 'graph-move-status')
+    expect(status).toHaveLength(1)
+    expect(status[0]?.textContent).toBe(MOVE_OUTCOME_WORDS.refused)
+    const because = ofClass(root, 'graph-move-status-reason')
+    expect(because).toHaveLength(1)
+    const text = because[0]?.textContent ?? ''
+    // The evidence that the record's sentence went through the sanitizer: the
+    // null and the newline a reason can carry are gone, and the sentence is
+    // untouched otherwise -- it is text, and it says what the record said.
+    expect(text).not.toContain('\u0000')
+    expect(text).not.toContain('\n')
+    expect(text.startsWith('the record holds')).toBe(true)
+    // And the cut is this module's own, so a reason that is a paragraph cannot
+    // push the sheet's buttons out of the window.
+    expect([...text].length).toBeLessThanOrEqual(MOVE_MAX_FIELD_CODE_POINTS)
+    expect(text.endsWith('…')).toBe(true)
+    // A record that said nothing draws no cell at all rather than an empty one.
+    const quiet = drawn({
+      request: { node: NODE, toRelease: OTHER },
+      answer: answer({ outcome: { status: 'applied', request: 'req-1', reason: null, current: null } }),
+      sentence: null,
+    })
+    expect(ofClass(quiet, 'graph-move-status')).toHaveLength(1)
+    expect(ofClass(quiet, 'graph-move-status-reason')).toHaveLength(0)
   })
 })
 
