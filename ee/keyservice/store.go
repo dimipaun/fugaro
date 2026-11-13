@@ -102,9 +102,17 @@ type Verification struct {
 // because a renewal is minted months later with nothing but this record to
 // deliver the key to: the event that carried the address is long gone, and a
 // key minted with no address reaches nobody (§5.1, §5.3).
+//
+// WorkspaceID is the Firebase project the subscription's keys bind to, kept for
+// the same reason the address is: a v1 key names the workspace it binds to
+// (TN2, D2134), the purchase is the event that carried it, and a renewal minted
+// months later has nothing else to read it from. A subscription whose record
+// names none cannot be renewed into a v1 key at all, which is why it is refused
+// rather than minted (§5.1, §5.3).
 type Subscription struct {
 	ID           string    `json:"id"`
 	Organisation string    `json:"organisation"`
+	WorkspaceID  string    `json:"workspace_id"`
 	Seats        int       `json:"seats"`
 	TermDays     int       `json:"term_days"`
 	Email        string    `json:"email"`
@@ -129,8 +137,9 @@ type Revocation struct {
 }
 
 // KeyState is what the service remembers about one issued key that the key's
-// own claims cannot carry: the renewal secret's digest (§7, D2135) and the
-// instant the key last asked the server anything (§8).
+// own claims cannot supply to it: the workspace it is bound to (TN2), the
+// renewal secret's digest (§7, D2135) and the instant the key last asked the
+// server anything (§8).
 //
 // The digest and never the secret. The secret is the holder's half of a renewal
 // and the store is read by whoever operates the service, so the store keeping
@@ -139,14 +148,49 @@ type Revocation struct {
 // kept is what decides whether a caller who sends the secret is the holder, and
 // nothing else is derivable from it.
 //
+// WorkspaceID is here because a renewal mints the successor into the key's own
+// workspace and a request's word for it is not proof: the claim is in the key,
+// which only its holder can read, so a service that minted into the workspace
+// the caller named would let whoever holds a key and its secret bind the next
+// term to a workspace of their choosing. A state with no workspace is one no
+// renewal can serve — the issue path that writes this record owes it (K2.3).
+//
 // LastSeen is zero for a key that has never called in, which is not the same as
 // a key that called in long ago: the status endpoint's answer is the key's
 // state and not this, and the instant is what the admin page reads when it asks
 // whether a holder is still checking.
 type KeyState struct {
 	KeyID             string    `json:"key_id"`
+	WorkspaceID       string    `json:"workspace_id"`
 	RenewalSecretHash string    `json:"renewal_secret_hash"`
 	LastSeen          time.Time `json:"last_seen"`
+}
+
+// Handover is one rotation's answer, kept for the window its own lost answer can
+// be asked for again in (D2135, §7): the successor an old secret fetched, that
+// old secret's digest and the instant the window closes.
+//
+// It is the one record in this store that holds key material, and it is here
+// because the promise cannot be kept anywhere else. A replay lands on whichever
+// instance answers it, hours after the rotation and never on the process that
+// made it; what it asks for is the successor's own two lines; and the minter
+// cannot be asked again, because a second mint is a *different* key with a
+// different secret, and the first one is the only successor the holder's answer
+// ever carried. What keeps the exception small is Until: a handover is answered
+// only inside its window and is dropped when the window closes, so what the
+// store holds is the rotations of the last 24 hours rather than a growing list
+// of live credentials, and a durable store expires them by that instant (a TTL)
+// rather than keeping a table nothing sweeps.
+//
+// SecretHash is the **old** key's renewal-secret digest, so the window reopens
+// for the secret that earned it and for no other, and KeyID is that same old
+// key's id, because that is what a replay presents.
+type Handover struct {
+	KeyID         string    `json:"key_id"`
+	SecretHash    string    `json:"secret_hash"`
+	Key           string    `json:"key"`
+	RenewalSecret string    `json:"renewal_secret"`
+	Until         time.Time `json:"until"`
 }
 
 // Trial is one 14-day Team trial handed out under §14: the installation it was
@@ -182,14 +226,15 @@ type Trial struct {
 // backend that can express either pair as one write closes it, which is why the
 // interface is small enough to be given one (S3.5).
 //
-// After Subscriptions come the three things a key's life adds to §7.3's
-// record: the state its renewal is decided from (§7), the revocation list (§8)
-// and the trials handed out (§14). They keep the shape above — whole records
-// that the service filters as it reads — and they meet that limit in the same
-// two ways: an issuance and its key state are two writes, so a mint that dies
-// between them leaves a key the store can revoke and cannot renew (the safe
-// half of the pair), while ClaimTrial is a check and a write that cannot be
-// split, because two asks arriving together would otherwise be two trials.
+// After Subscriptions come the things a key's life adds to §7.3's record: the
+// state its renewal is decided from (§7), the revocation list (§8), the trials
+// handed out (§14) and a rotation's handover (D2135). They keep the shape above
+// — whole records that the service filters as it reads — and they meet that
+// limit in the same two ways: an issuance and its key state are two writes, so a
+// mint that dies between them leaves a key the store can revoke and cannot renew
+// (the safe half of the pair), while ClaimTrial is a check and a write that
+// cannot be split, because two asks arriving together would otherwise be two
+// trials.
 type Store interface {
 	SaveIssuance(ctx context.Context, r Record) error
 	Issuances(ctx context.Context) ([]Record, error)
@@ -206,6 +251,11 @@ type Store interface {
 	SaveKeyState(ctx context.Context, s KeyState) error
 	KeyState(ctx context.Context, keyID string) (KeyState, bool, error)
 	TouchKey(ctx context.Context, keyID string, at time.Time) error
+	// SaveHandover and Handover take the instant they are read at, the way
+	// TouchKey does: what a store holds of a handover is a window, and which side
+	// of it a read is on is the service's clock rather than the store's.
+	SaveHandover(ctx context.Context, h Handover, now time.Time) error
+	Handover(ctx context.Context, keyID string, now time.Time) (Handover, bool, error)
 	ClaimTrial(ctx context.Context, t Trial) error
 	Trials(ctx context.Context) ([]Trial, error)
 }
@@ -233,6 +283,11 @@ var ErrTrialUnnamed = errors.New("keyservice: a trial names the installation and
 // by a record nobody meant to write.
 var ErrRevocationUnnamed = errors.New("keyservice: a revocation names the key it withdraws")
 
+// ErrHandoverUnnamed is a handover with no key_id, refused for the reason a
+// revocation with none is: an entry under the empty string would answer for
+// every key nobody named, and this one answers with a key.
+var ErrHandoverUnnamed = errors.New("keyservice: a handover names the key it succeeded")
+
 // Memory is the store a test drives and the shape a durable one has to keep:
 // the same methods and the same rules. It is safe for concurrent use because
 // the service's handlers are.
@@ -244,6 +299,7 @@ type Memory struct {
 	subscriptions map[string]Subscription
 	revocations   map[string]Revocation
 	keys          map[string]KeyState
+	handovers     map[string]Handover
 	trials        []Trial
 }
 
@@ -416,6 +472,47 @@ func (m *Memory) TouchKey(_ context.Context, keyID string, at time.Time) error {
 	held.LastSeen = at
 	m.keys[keyID] = held
 	return nil
+}
+
+// SaveHandover keeps one rotation's answer, and it sweeps the windows that have
+// closed as it writes: a handover is the one record here that holds key
+// material, so an expired one is dropped rather than waiting for somebody to ask
+// about that key again — which is exactly the case the sweep is for, since a
+// holder whose answer was lost is the one who never asks a second time.
+func (m *Memory) SaveHandover(_ context.Context, h Handover, now time.Time) error {
+	if h.KeyID == "" {
+		return ErrHandoverUnnamed
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.handovers == nil {
+		m.handovers = map[string]Handover{}
+	}
+	m.sweepHandovers(now)
+	m.handovers[h.KeyID] = h
+	return nil
+}
+
+// Handover answers the rotation a key is still inside its window for. One the
+// window has closed goes rather than being answered: what is held there is a
+// successor's key and its renewal secret, and the window is what the promise
+// bounds them by.
+func (m *Memory) Handover(_ context.Context, keyID string, now time.Time) (Handover, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sweepHandovers(now)
+	held, known := m.handovers[keyID]
+	return held, known, nil
+}
+
+// sweepHandovers drops every handover whose window has closed. The caller holds
+// the lock.
+func (m *Memory) sweepHandovers(now time.Time) {
+	for keyID, held := range m.handovers {
+		if !now.Before(held.Until) {
+			delete(m.handovers, keyID)
+		}
+	}
 }
 
 // ClaimTrial is §14's one trial per installation and per account, and it is the

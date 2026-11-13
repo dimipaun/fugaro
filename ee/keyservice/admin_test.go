@@ -1544,9 +1544,12 @@ func TestPerTierMintLimit(t *testing.T) {
 
 	// And the merchant's path is not the page's, either way round: a purchase
 	// mints under a page cap the window has spent, because §5.1's events and
-	// §5.5's page are two doors and the cap is one of them (§5.1, §5.5).
-	if bought := f.purchase("evt-cap-1", "buyer.example", 3, 365); bought.Plan != paidPlanName {
-		t.Errorf("a purchase under a spent page cap minted %q, want the merchant's plan", bought.Plan)
+	// §5.5's page are two doors and the cap is one of them (§5.1, §5.5). What it
+	// mints under is the checkout's own row and not the page's plan name: D442's
+	// checkout sells two periods, and the row is where the term, the grace and
+	// the renewal come from (D2133, D442).
+	if bought := f.purchase("evt-cap-1", "buyer.example", 3, 365); bought.Plan != PolicyTeamAnnual {
+		t.Errorf("a purchase under a spent page cap minted %q, want the row a year is sold under (%q)", bought.Plan, PolicyTeamAnnual)
 	}
 }
 

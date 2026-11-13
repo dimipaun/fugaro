@@ -3168,12 +3168,12 @@ func checkCloneJobsImage(ctx context.Context, env *cloudEnv, spec *task.Spec, wa
 // older runner refuses is the key itself: the line an operator added to their
 // fugaro.yaml is what dies at bootstrap, whoever was going to ignore it.
 //
-// It names 0.25.0, the release this work ships in ("Vole": docs/release-streams.yaml
+// It names 0.24.0, the release this work ships in ("Uakari": docs/release-streams.yaml
 // has 0.23.0 current and Uakari 0.24.0 next), which is not tagged yet: the
 // release that tags it holds this number to the tag it cuts, as it does for
 // slotSince's 0.24.0 and jobsSince's 0.22.0. docs/release.md ("Before you tag")
 // has the checklist verify it.
-const modelGradesSince = "0.25.0"
+const modelGradesSince = "0.24.0"
 
 // modelGradesLaunchSources reports, for the launch's modelGradesSince gate,
 // whether the configuration the run will read writes the key: the repository's
@@ -3276,6 +3276,69 @@ func checkCloneModelGradesImage(ctx context.Context, env *cloudEnv, spec *task.S
 	}
 	subject, alt := modelGradesSubject(spec.Repo, fromRepo, fromLayer)
 	return checkCloneImageSince(env.lc, spec, modelGradesSince, subject, modelGradesKnows(fromRepo, fromLayer), "; or "+alt, warn)
+}
+
+// taskGradeSince is the first fugaro release whose task reader knows a task's
+// own model grade (task.Spec.ModelGrade) and the importance a follow-up carries
+// (task.Spec.FollowUpOf.Importance) — docs/outer-loop-escalation, E4 (G11) and
+// D2040. A task is decoded with DisallowUnknownFields, so a runner built from an
+// older job image refuses the whole spec at bootstrap: bytes in the bucket under
+// a run that never starts, after the launch was paid for. The gate follows
+// followUpSince's shape rather than modelGradesSince's — what is judged is the
+// task, not a file, so the fields' own presence is the whole question and no
+// checkout of the repository is needed to answer it.
+//
+// It names 0.24.0, the release this work ships in, which is the number
+// modelGradesSince carries and for the same reason: a task that names a grade
+// resolves it through the project layer's defaults.model_grades, so the release
+// whose configuration reader knows that key is the release whose task reader
+// knows this field — an installation older than it can neither set a grade nor
+// run a task that names one, and gating the field one release earlier would
+// launch runs that die at bootstrap on a grade the project has no way to set.
+// docs/release-streams.yaml has 0.23.0 current and Uakari 0.24.0 next, and the
+// release that tags this holds the number to the tag it cuts;
+// docs/release.md's ("Before you tag") checklist is where it verifies it.
+const taskGradeSince = "0.24.0"
+
+// taskGradeAsk reports, for the gates' messages, which of the two fields the
+// task carries: the subject ("" for a task that carries neither, which no gate
+// ever refuses) and what the job image's runner has to know. The two travel
+// apart — a grade rides any task, while an importance rides the follow-up block
+// alone — so a refusal names the field the person wrote rather than both.
+func taskGradeAsk(spec *task.Spec) (subject, knows string) {
+	grade := spec.ModelGrade != ""
+	importance := spec.FollowUpOf != nil && spec.FollowUpOf.Importance != ""
+	switch {
+	case grade && importance:
+		return "a task carrying a model grade and a follow-up importance", "a task's model_grade and follow_up_of.importance"
+	case importance:
+		return "a task carrying a follow-up importance", "a task's follow_up_of.importance"
+	case grade:
+		return "a task carrying a model grade", "a task's model_grade"
+	}
+	return "", ""
+}
+
+// checkTaskGradeImage refuses a launch whose job image runs a fugaro older than
+// taskGradeSince while the task carries either field: a runner built before that
+// release decodes the task strictly and refuses the spec at bootstrap, so the
+// launch must not reach such a job at all.
+func checkTaskGradeImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, warn io.Writer) error {
+	subject, knows := taskGradeAsk(spec)
+	if subject == "" {
+		return nil
+	}
+	return checkImageSince(ctx, env, slug, spec, kind, taskGradeSince, subject, knows, "", warn)
+}
+
+// checkCloneTaskGradeImage is checkTaskGradeImage for a checkout: clone
+// workflow: see checkCloneImageSince.
+func checkCloneTaskGradeImage(lc *localcfg.Config, spec *task.Spec, warn io.Writer) error {
+	subject, knows := taskGradeAsk(spec)
+	if subject == "" {
+		return nil
+	}
+	return checkCloneImageSince(lc, spec, taskGradeSince, subject, knows, "", warn)
 }
 
 // modelGradesImageWarnings warns, once, that a configuration which writes the

@@ -1619,7 +1619,8 @@ func TestUpdateManagedLeavesComputeOwnerRun(t *testing.T) {
 // the one a PERSON at the terminal on a managed project gets.
 //
 // The shape is therefore that person: the installation root planned for a
-// change §4.1 refuses to apply (the removal of a data-bearing bucket), and the fourth read of
+// change §4.1 refuses to apply (an authoritative IAM resource, D1549's kind:
+// a bucket removal now leaves the owner a command, T9), and the fourth read of
 // its saved plan — the credentials stage's own — refused. The two arms are the
 // entry's own answer and its mutation: under the gate the step is left for the
 // owner and the run carries on, and with the entry dropped the same refusal
@@ -1647,27 +1648,26 @@ func TestUpdateManagedGatesTheCredentialsServiceStage(t *testing.T) {
 				if stopped := stoppedStage(got); stopped != initflow.CredentialsService {
 					t.Fatalf("the run stopped at %s, want the credentials-service stage:\n%s", stopped, got)
 				}
-				if left := leftFor(got, initflow.CredentialsService, initflow.LeftRefused); left != "" {
-					t.Errorf("a stage this door does not gate left the owner the gate's own step, which is the answer the entry exists to give:\n%s", got)
+				if strings.Contains(got, "left for you ("+initflow.CredentialsService+", ") {
+					t.Errorf("a stage this door does not gate left the owner a step, which is the answer the entry exists to give:\n%s", got)
 				}
 				return
 			}
-			if applies != 1 {
-				t.Errorf("%d applies reached the fake, want the installation stage's alone: the credentials stage's plan was refused and nothing of it may be applied:\n%s", applies, got)
+			if applies != 2 {
+				t.Errorf("%d applies reached the fake, want the installation stage's two (its own and the intake's re-apply, DS4.1) alone: the credentials stage's plan was refused and nothing of it may be applied:\n%s", applies, got)
 			}
 			if s := stoppedStage(got); s != "(the summary names no failed stage)" {
 				t.Fatalf("the run failed at %s: the gate's refusal is the owner's step, not a failure:\n%s", s, got)
 			}
-			// LeftRefused and not LeftCommand: what the gate leaves the owner
-			// is D1012's refusal step (internal/initflow's stage.go answers a
-			// gate verdict with it), not a command to run — the plan this stage
-			// holds is the installation's own, and no command of the owner's
-			// rebuilds what the gate would not admit.
+			// LeftRefused and not LeftCommand: the plan carries no removal, so
+			// the owner's --allow-delete admits nothing of it (gateDeleteLeft
+			// finds no listable address) and what the gate leaves is D1012's
+			// refusal step, a verdict with no command to run.
 			left := leftFor(got, initflow.CredentialsService, initflow.LeftRefused)
 			if left == "" {
 				t.Fatalf("the credentials-service stage was not left for the owner:\n%s", got)
 			}
-			for _, want := range []string{"managed gate refused this step", "google_storage_bucket.runs"} {
+			for _, want := range []string{"managed gate refused this step", "an authoritative IAM resource"} {
 				if !strings.Contains(left, want) {
 					t.Errorf("the step left for the owner does not name %q:\n%s", want, left)
 				}
@@ -1680,7 +1680,7 @@ func TestUpdateManagedGatesTheCredentialsServiceStage(t *testing.T) {
 // on a managed project, with the plan the gate refuses in front of the
 // credentials-service stage. The installation root's saved plan is shown more
 // than once in a run — every stage that judges that root reads it again — and
-// the credentials stage's own read is the FOURTH of them, so the refused
+// the credentials stage's own read is the SEVENTH of them (the installation stage reads its plan three times, then the intake's re-apply of the same root three more, DS4.1), so the refused
 // document is the last step of the ordered list (faketerraform's keyed script
 // consumes a list in order and repeats its last step). A run that reads the
 // root one more time before this stage leaves the list a step short, and the
@@ -1696,9 +1696,14 @@ func credentialsStageRun(t *testing.T) (string, int) {
 	r.script["show -json"] = r.script["show"]
 	r.script["plan@installation"] = map[string]any{"exit": 2}
 	admitted := map[string]any{"stdout": planJSON(t, change("module.installation.google_service_account.scheduler", "create"))}
-	refused := map[string]any{"stdout": planJSON(t, change("module.installation.google_storage_bucket.runs", "delete"))}
-	r.script["show@installation"] = []any{admitted, admitted, admitted, refused}
-	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"credentials_service": credentialsServiceOutput()})}
+	refused := map[string]any{"stdout": planJSON(t, iamBindingCreate())}
+	r.script["show@installation"] = []any{admitted, admitted, admitted, admitted, admitted, admitted, refused}
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
+		"credentials_service": credentialsServiceOutput(),
+		// The intake this run deploys: its block is written by the same stage,
+		// and its audience comes back from the same outputs.
+		"intake": intakeServiceOutput(),
+	})}
 	r.save(t)
 	r.managedRuns(t, initProjectName, initProject)
 	isolateGateCredentials(t)

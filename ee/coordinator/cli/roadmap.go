@@ -105,9 +105,9 @@ type coordinatorDoor struct {
 	access string
 }
 
-// newCoordinatorRoadmapCmd is the roadmap group. `publish` (P9c) and GV3.1's
-// `move` join it later, which is why it is a group of its own rather than
-// three commands on `coordinator`.
+// newCoordinatorRoadmapCmd is the roadmap group: `move` (GV3.1) and `publish`
+// (P9c) are two of its commands, which is why it is a group of its own rather
+// than several commands strung off `coordinator`.
 func newCoordinatorRoadmapCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "roadmap",
@@ -129,8 +129,11 @@ func newCoordinatorRoadmapCmd() *cobra.Command {
 			"record refused, a tool the token may not call), 2 for a failure of the\n" +
 			"front door or of the record.",
 	}
+	cmd.AddCommand(newCoordinatorRoadmapPublishCmd())
+	cmd.AddCommand(newCoordinatorRoadmapUnpublishCmd())
 	cmd.AddCommand(newCoordinatorRoadmapNeedCmd())
 	cmd.AddCommand(newCoordinatorRoadmapUnneedCmd())
+	cmd.AddCommand(newCoordinatorRoadmapMoveCmd())
 	cmd.AddCommand(newCoordinatorRoadmapReleasesCmd())
 	cmd.AddCommand(newCoordinatorRoadmapRequestCmd())
 	return cmd
@@ -685,6 +688,24 @@ func coordinatorCallTool(ctx context.Context, client *http.Client, door *coordin
 	return json.RawMessage(text), nil
 }
 
+// coordinatorDoorRefusal is the door refusing the call itself — a credential it
+// will not take (401) or a tool it will not let this token call (403) — as
+// opposed to a tool answering with a refusal of its own.
+//
+// No tool ran, so nothing in the sentence is about the request: it is the
+// credential's or the installation's, and a caller that reads a refusal as the
+// record's own answer about what it asked for has to be able to tell the two
+// apart. `publish --releases` is that caller — a release the record already
+// holds is refused by the tool and is a skip, while a token the door will not
+// take is a run that published nothing and must not be reported as a skip.
+type coordinatorDoorRefusal struct{ err error }
+
+func (r coordinatorDoorRefusal) Error() string { return r.err.Error() }
+
+// Unwrap keeps the exit code the sentence carries: the refusals wrapped here
+// are user errors, and errors.As has to reach the ExitError inside them.
+func (r coordinatorDoorRefusal) Unwrap() error { return r.err }
+
 // coordinatorCallRefusal turns a non-200 answer into the sentence a person
 // needs. The status decides whose problem it is: 401 and 403 are this
 // credential's (sign in again, or the token is not an operator's), and the
@@ -705,12 +726,12 @@ func coordinatorCallRefusal(resp *http.Response, data []byte) error {
 		if said == "" {
 			said = "the token was refused"
 		}
-		return fcli.UserErr("the front door refused this credential (%s): %s — run `fugaro coordinator login --scope roadmap:write` again", resp.Status, said)
+		return coordinatorDoorRefusal{fcli.UserErr("the front door refused this credential (%s): %s — run `fugaro coordinator login --scope roadmap:write` again", resp.Status, said)}
 	case http.StatusForbidden:
 		if said == "" {
 			said = "the token may not call this tool"
 		}
-		return fcli.UserErr("the front door refused this call (%s): %s", resp.Status, said)
+		return coordinatorDoorRefusal{fcli.UserErr("the front door refused this call (%s): %s", resp.Status, said)}
 	default:
 		if said == "" {
 			said = resp.Status

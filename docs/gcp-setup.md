@@ -36,7 +36,7 @@ It reads and changes nothing: the environment, Terraform, billing and the projec
 
 ## Next steps
 
-Six things an installation needs sooner or later, one page each:
+Seven things an installation needs sooner or later, one page each:
 
 - [Budgets on and off](how-to/budgets.md) — the monthly billing alert, and the model budget's caps and kill switches.
 - [Registry cleanup](how-to/registry-cleanup.md) — audit the dry run, then let Artifact Registry delete old image versions.
@@ -44,6 +44,7 @@ Six things an installation needs sooner or later, one page each:
 - [Retiring a workflow or an account](how-to/retiring-a-workflow.md) — plain `fugaro update` on a managed project, else `--repo --retire`.
 - [Teammates: no setup](how-to/teammates.md) — a launcher or an operator runs the CLI with no local config.
 - [Cutting over to the orchestrator daemon](how-to/orchestrator-cutover.md) — one import, the daemon takes over, and the rollback is three hand-run steps.
+- [Model A/B testing](how-to/model-ab-testing.md) — turn sampling on in the project layer, and read the pairs `fugaro ab` reports.
 
 <a id="not-an-owner"></a>
 

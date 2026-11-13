@@ -12,7 +12,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
-	"github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -132,20 +131,17 @@ func TestCatalogCheckSpecRoundTripsThroughItsReader(t *testing.T) {
 		t.Fatalf("the installed catalog check job would refuse the spec this installation writes: %v", err)
 	}
 	// The version is a wire value: the reader accepts the document it knows
-	// (version 1) and refuses anything below it, so a producer that bumped its
-	// own version without the reader's is caught here rather than once a night
-	// in a job that starts nothing.
-	if e.spec.Version != 1 {
-		t.Fatalf("the reader read version %d, and this release's document is version 1 (infra.CatalogCheckSpecVersion): an installation and the job it deploys disagree about the bytes between them", e.spec.Version)
+	// (infra.CatalogCheckSpecVersion) and refuses anything below it, so a
+	// producer that bumped its own version without the reader's is caught here
+	// rather than once a night in a job that starts nothing.
+	if e.spec.Version != infra.CatalogCheckSpecVersion {
+		t.Fatalf("the reader read version %d, and this release's document is version %d (infra.CatalogCheckSpecVersion): an installation and the job it deploys disagree about the bytes between them", e.spec.Version, infra.CatalogCheckSpecVersion)
 	}
 	if e.spec.Catalog == nil || len(e.spec.Catalog.Entries) != 4 {
 		t.Fatalf("the reader read the catalog %+v, want the four entries of the local config", e.spec.Catalog)
 	}
 	if e.name != lc.Name || e.gcpProject != lc.GCPProject || e.region != lc.Region {
 		t.Fatalf("the reader read %s/%s/%s, want the installation's %s/%s/%s", e.name, e.gcpProject, e.region, lc.Name, lc.GCPProject, lc.Region)
-	}
-	if got, want := e.maxImageBuilds, int(managed.DefaultImageBuilds); got != want {
-		t.Fatalf("the run's build cap is %d, want M5's default %d: the producer writes no cap for an installation that never read one", got, want)
 	}
 	if got, want := e.spec.BaseImages[config.BaseKind], lc.BaseImage(config.BaseKind); got != want {
 		t.Fatalf("the spec's %s base image is %q, want the local config's %q", config.BaseKind, got, want)
@@ -223,23 +219,30 @@ func TestCatalogCheckSpecRoundTripsThroughItsReader(t *testing.T) {
 	}
 }
 
-// TestCatalogCheckSpecCarriesTheManagedBuildBound: one run's build cap is M5's
-// managed bound (the marker's max_image_builds), which so bounds a managed
-// creation's image builds, and an installation that has read no bound writes
-// none: the job then applies the default the reader shares with M5.
-func TestCatalogCheckSpecCarriesTheManagedBuildBound(t *testing.T) {
-	cc, _ := installationCatalogCheck(t, catalogProducerLocal, infra.InstallOptions{ImageBuilds: 7})
+// TestCatalogCheckSpecCarriesNoBuildBound: the spec records no count of builds
+// (D1543), because no installation has one to record — the marker's
+// max_image_builds is gone and the count that bounded a night's builds is the
+// job's own (catalogRunBuildCap). What bounds a build's cost is the lease it
+// takes (D1554), and this pins that the removal really reached the bytes on the
+// wire rather than leaving a key the reader would silently ignore.
+//
+// The other direction — the mixture `fugaro update` leaves behind, since the
+// spec and the job image swap without an order between them — is pinned beside
+// it: a spec the release behind rendered (version 1, with the count) is read
+// here as the catalog it names, with the count ignored, because
+// json.Unmarshal is not strict about a key a newer document dropped and
+// nothing else about the two versions differs.
+func TestCatalogCheckSpecCarriesNoBuildBound(t *testing.T) {
+	cc, lc := installationCatalogCheck(t, catalogProducerLocal, infra.InstallOptions{})
 	if cc == nil {
 		t.Fatal("the installation tfvars carry no catalog_check")
 	}
-	var doc struct {
-		MaxImageBuilds int `json:"max_image_builds"`
-	}
+	var doc map[string]any
 	if err := json.Unmarshal([]byte(cc.Env[infra.CatalogCheckSpecEnv]), &doc); err != nil {
 		t.Fatalf("%s: %v", infra.CatalogCheckSpecEnv, err)
 	}
-	if doc.MaxImageBuilds != 7 {
-		t.Fatalf("the spec's max_image_builds is %d, want the managed bound 7", doc.MaxImageBuilds)
+	if v, ok := doc["max_image_builds"]; ok {
+		t.Fatalf("the spec still records an image build bound (%v): no installation has one to record, and the job's own count is what bounds a night's builds", v)
 	}
 	for _, name := range []string{infra.ProjectEnv, infra.GCPProjectEnv, infra.RegionEnv, infra.BucketEnv} {
 		t.Setenv(name, cc.Env[name])
@@ -249,8 +252,25 @@ func TestCatalogCheckSpecCarriesTheManagedBuildBound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("readCatalogJobEnv: %v", err)
 	}
-	if e.maxImageBuilds != 7 {
-		t.Fatalf("the run's build cap is %d, want the managed bound 7", e.maxImageBuilds)
+	if e.spec.Version != infra.CatalogCheckSpecVersion || e.name != lc.Name {
+		t.Fatalf("the reader read %+v, want the spec this installation writes", e.spec)
+	}
+
+	// The release behind's bytes: the same document with the count it wrote and
+	// the version it wrote them under.
+	doc["version"] = 1
+	doc["max_image_builds"] = 1
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(catalogCheckSpecEnv, string(raw))
+	e, err = readCatalogJobEnv()
+	if err != nil {
+		t.Fatalf("the job refuses the spec the release behind wrote, so an installation whose job image was rebuilt before its spec was written runs no check at all: %v", err)
+	}
+	if len(e.spec.Repositories) != 2 || len(e.spec.Catalog.Entries) != 4 {
+		t.Fatalf("the reader read the older document as %+v", e.spec)
 	}
 }
 

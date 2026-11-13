@@ -131,8 +131,8 @@ func newConvergeRig(t *testing.T, node map[string]any) *convergeRig {
 // where the file the repository stage reads is the thing that is wrong.
 func newConvergeRigYAML(t *testing.T, node map[string]any, yaml string) *convergeRig {
 	t.Helper()
-	fakeTerraform(t) // built with go, which upgradeEnv takes off PATH
-	upgradeEnv(t, convergeRelease)
+	fakeTerraform(t) // built with go, which convergeEnv takes off PATH
+	convergeEnv(t, convergeRelease)
 	// The checkout stage's cloud step builds the stale workflows, and a build
 	// leases its estimated cost before it is submitted (T4): its lease needs
 	// the caps below and the price of a build, which a hermetic test reads
@@ -394,6 +394,7 @@ func TestUpdateMigratesTheNodeBeforeItReplacesTheCredentialsService(t *testing.T
 	// installation's other facts.
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
 		"credentials_service": credentialsServiceOutput(),
+		"intake":              intakeServiceOutput(),
 	})}
 	r.save(t)
 
@@ -449,7 +450,21 @@ func TestUpdateFailsTheCredentialsResolveBeforeItMigratesTheNode(t *testing.T) {
 	// model credential at all).
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
 		"credentials_service": credentialsServiceOutput(),
+		"intake":              intakeServiceOutput(),
 	})}
+	// The installation root's plan is NOT empty here, and the fixture says so
+	// rather than leaving it to the rig's default: this release's run writes the
+	// secrets intake's block into an installation that has none (DS4.1), the
+	// module's whole intake file is gated on that variable, so the apply that
+	// follows it creates the service — and an installation stage whose plan
+	// reports no changes while its tfvars gained a service is the shape the
+	// audience fill refuses (TF.Plan's exit code is what says a plan has
+	// something to apply). The plan's own content is not what this test is
+	// about; where the run STOPS is, and a stage that plans nothing never
+	// reaches the policy stage's precondition.
+	r.script["show -json"] = r.script["show"]
+	r.script["plan@installation"] = map[string]any{"exit": 2}
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.intake", "create"))
 	r.save(t)
 	recorded := credentialsServiceEntry(t, r.imagesRig)["image"]
 
@@ -488,6 +503,7 @@ func TestUpdateInAnAgentSessionHoldsTheNodeAtItsVersion(t *testing.T) {
 	seedCredentialsService(t, r.imagesRig, oldCredentialsRef(convergePrev))
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
 		"credentials_service": credentialsServiceOutput(),
+		"intake":              intakeServiceOutput(),
 	})}
 	r.save(t)
 	r.managedRuns(t, initProjectName, initProject)
@@ -522,7 +538,7 @@ func converge(t *testing.T, node map[string]any, stale []string) {
 	// (U5's migration, inside this same `fugaro update`): the fixture carries
 	// nothing but the pin, so both entries go and both parent keys with them,
 	// and an empty settings object is left — never a deleted file.
-	if got := upgradeRead(t, r.settings); got != "{}\n" {
+	if got := convergeRead(t, r.settings); got != "{}\n" {
 		t.Errorf("the checkout's settings after the run:\n%s\nwant the pin taken out and nothing else moved:\n%s", got, "{}\n")
 	}
 	// And with the pin gone there is nothing stale left for the line every

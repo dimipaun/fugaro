@@ -5,10 +5,12 @@ import (
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/escalation"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // applyRouting rewrites the run's Claude pins through the project's routing
@@ -168,6 +170,82 @@ func (r *run) applyRouting(pp *projectpolicy.Policy, found bool) error {
 			return fmt.Errorf("routing.claude names %s, and this run cannot resolve its route: the switch routes nothing rather than sending the call direct (D1b)", model)
 		}
 		p.set(sent)
+	}
+	return nil
+}
+
+// applyGrade moves the run onto the model grade its task named
+// (task.Spec.ModelGrade, E4; G11).
+//
+// A task names a grade and nothing else: the model and the credential that
+// grade runs are the project layer's to say, and the merge's first layer — the
+// ceiling, which is the owner's published policy node or the copy of his
+// project layer this job carries (policyCeiling, and policy.tightenGrades,
+// which records every later layer's attempt instead of taking it) — is the
+// only layer that fills r.policy.Grades. So a repository's file and the task
+// itself cannot reach a model or a credential through this field even by
+// writing one: the value is looked up in the project's own table or the run
+// refuses, which is what makes the two halves of a grade one choice rather
+// than a model the ladder chose and a credential the caller chose.
+//
+// A grade the project sets nothing for halts the run here, in bootstrap,
+// before a credential is built and before a pin moves. The ladder ships no
+// default for either name (D2039): a rung that reached for one nobody set has
+// to ask the owner to set it, never run on a model he did not choose.
+//
+// The write lands in the coder's *own* slot (agent.models.coder) rather than
+// in agent.model, the one place a pin is set by hand instead of through
+// pinSlots. That slot is what the judge stage pins — stageRole gives the judge
+// the coder's role, since a registered step's calls are charged to a stage
+// with no role of its own — so a single write moves the coder's passes and the
+// judge's, which is the whole of "one stronger single pass"
+// (TestRoutingGradeAppliesToCoderAndJudge). The reviewer and the background
+// model fall back to agent.model, and a grade is a model the ladder reserved
+// for one pass, not for every stage that named none.
+//
+// A grade that names no credential writes none: policy.Grade.Access is "" for
+// the project's default credential (D1624), and the run's own coder craft — a
+// repository may send one craft out on one of the owner's credentials (D1628)
+// — is a choice the grade is silent about, not one it revokes.
+//
+// It runs before the switch and before the levels (resolvePolicy). A grade
+// written after the switch would be a model the switch never judged: an owner
+// who routes the model a grade names would find the run sending it direct. A
+// grade written after the levels would leave level 1, which runs the coder's
+// model, on the model the grade replaced.
+func (r *run) applyGrade() error {
+	g := string(r.spec.ModelGrade)
+	if g == "" {
+		return nil
+	}
+	if !escalation.KnownGrade(r.spec.ModelGrade) {
+		return fmt.Errorf("this task's model_grade is %q: a task names a grade rather than a model or a credential (G11), and the project layer is what resolves one to a model and a credential. Name one of %s, or leave it empty for the model the run's own configuration gives this repository (agent.models.coder)", g, task.GradeList())
+	}
+	grade, ok := r.policy.Grades[g]
+	if !ok || grade.Model == "" {
+		return fmt.Errorf("this task runs at the model grade %q and this project sets no such grade: a grade is the project layer's to name and no default ships for either (D2039), so the run refuses here rather than pick a model the owner never chose. Set defaults.model_grades.%s in the project layer and publish it (fugaro project policy publish), or launch the task without a model_grade", g, g)
+	}
+	a := &r.cfg.Agent
+	a.Models.Coder = grade.Model
+	// What the write lands beside: a recipe may map one role onto the other
+	// (roles:, ApplyRoles, which bootstrap has applied already). The grade is
+	// the task's own model for one rung and the mapping is the repository's
+	// standing default, so the grade stands — the precedence a challenger arm's
+	// coder model already has over the mapping (shadow.go, D555). The mapping
+	// roles: {reviewer: coder} copies the coder's model, so it is applied again
+	// here and the reviewer follows the coder onto the grade; roles: {coder:
+	// reviewer} — premium's "coder on the reviewer's model" — names the coder's
+	// model itself and cannot hold beside a grade, so the mapping is the half
+	// that gives way and the run says so in its log, the way it says a model the
+	// mapping overrides (runner.go, ApplyRoles).
+	if r.rcp != nil && r.rcp.CoderIsReviewer {
+		r.d.Log.Info("the task's model grade replaces the coder model the recipe's roles mapping set",
+			"recipe", r.rcp.Name, "grade", g, "coder", grade.Model)
+	} else if r.rcp != nil && r.rcp.ReviewerIsCoder {
+		ApplyRoles(a, r.rcp)
+	}
+	if grade.Access != "" {
+		a.Crafts.Coder.Access = grade.Access
 	}
 	return nil
 }
