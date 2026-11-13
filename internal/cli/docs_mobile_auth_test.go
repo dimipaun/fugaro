@@ -38,8 +38,8 @@ import (
 //   - TestDocsMobileAuthPartsAreInOrder -- P0-P6, contiguous and in order: the
 //     plan's parts are an order, not a list.
 //   - TestDocsMobileAuthCitationsResolve -- every repository path the
-//     reconciliation and the plan cite resolves on disk, under the filter and
-//     the excuse list below.
+//     reconciliation, the plan and the provider document cite resolves on disk,
+//     under the filter and the excuse list below.
 //   - TestDocsMobileAuthCarriesNoSecretShape -- no line of the five documents
 //     carries a Firebase API key shape, a PEM header or a reverse-DNS identity
 //     literal. This folder is *about* Firebase configuration, so the next
@@ -444,13 +444,14 @@ func mobileAuthCitedPaths(doc string, dirs map[string]bool) []string {
 // deletion, rather than loosening the path rule above.
 var mobileAuthWillCreate = map[string]string{}
 
-// TestDocsMobileAuthCitationsResolve: every repository path the reconciliation
-// and the plan cite resolves on disk, and every entry on the excuse list is
-// still excused for a reason. A citation is how these documents carry their
-// whole value -- the reconciliation is a reading of the tree, and the plan is a
-// set of parts against it -- so a path that stops resolving is a claim nobody
-// can check, and an excuse that has gone stale is a path that resolved while
-// the guard still looked past it.
+// TestDocsMobileAuthCitationsResolve: every repository path the three documents
+// that cite the tree -- the reconciliation, the plan and the provider document
+// -- resolve on disk, and every entry on the excuse list is still excused for a
+// reason. A citation is how these documents carry their whole value -- the
+// reconciliation is a reading of the tree, the plan is a set of parts against
+// it, and the provider document is a path priced against it -- so a path that
+// stops resolving is a claim nobody can check, and an excuse that has gone
+// stale is a path that resolved while the guard still looked past it.
 //
 // Mutation (verified, run and restored): rename a cited path in a scratch tree
 // and this test fails naming it; append a line number to a citation
@@ -524,9 +525,20 @@ func TestDocsMobileAuthCitationsResolve(t *testing.T) {
 // citation needs a notion of scope the prose does not carry
 // (`docs/coordinator/implementation-plan.md`'s P0 says the same of its own pair
 // of checks). The provider document is short and its whole subject is code a
-// reader can walk, so every symbol it names is paired with its file here -- and
-// the reverse list below is the other half, which is what keeps the pairing from
-// being decorative.
+// reader can walk, so the symbols it is held to are paired with their file here
+// -- the code it names, and the file each name lives in -- and the reverse list
+// below is the other half, which is what keeps the pairing from being
+// decorative. The two lists are read in the two directions they can be checked
+// in, and they are **not** required to be each other's image: a name the
+// document must keep can be a node path, a wire field or a file below a
+// directory, which is nothing this map could pair with a source file, and a
+// symbol paired above is checked against its file rather than against the
+// document, because the document names it as the code writes it and not as the
+// guard spells it (`Mint`, where the file has `func Mint(`). What is *not* true
+// of them, and is worth saying here because the symmetry reads as though it
+// were: the two are not each other's image, so a name on only one side is not a
+// gap -- and an entry on one side that no reader would look for on the other is
+// a pairing a reader cannot follow, which is the pairing to delete.
 var mobileAuthProviderSymbols = map[string][]string{
 	"internal/cli/init_firebase.go": {
 		"func refusePublicSignUp(", "func workspaceSignInPath(",
@@ -538,9 +550,10 @@ var mobileAuthProviderSymbols = map[string][]string{
 		"defaultSupportedIdpConfigs", "oauthIdpConfigs", "signIn.email.enabled",
 		"client.permissions.disabledUserSignup is false",
 	},
-	// The macros the document names as what a provider session would reach, and
-	// the device node it would keep reading (D221's recommendation).
-	"internal/budget/rules/rules.go": {"PathDevices", "userClaim", "\"USER\":", "\"TOKEN\":", "\"PAIRING\":", "\"MAILBOX\":"},
+	// The macros the document names as what a provider session would reach --
+	// all five, `RUN` included -- and the device node it would keep reading
+	// (D221's recommendation).
+	"internal/budget/rules/rules.go": {"PathDevices", "\"USER\":", "\"TOKEN\":", "\"RUN\":", "\"PAIRING\":", "\"MAILBOX\":"},
 	// The one verified-email check the tree has, and the userinfo read it is
 	// over -- a precedent for the shape, not an implementation of it.
 	"internal/cli/init_members.go": {"func userEmail(", "var authenticatedUser = func(", "is not verified"},

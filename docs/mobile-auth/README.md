@@ -94,14 +94,16 @@ what counts as one (a backticked token whose first segment is a directory of thi
 documents carries a credential-shaped literal — because a folder about Firebase configuration is
 exactly the folder where somebody eventually pastes a real key. **P6's own document is held to two
 things the others are not**, because it is the one document here that describes a path the tree does
-not take: every symbol it names is paired with the file the symbol lives in, and checked both ways,
-and the document must say of itself what it is — refused, and **not a part, a task or a plan** —
-while carrying **none** of this folder's ruling vocabulary (`**Answered`, "the owner has decided"),
+not take: the code it names is paired with the file each name lives in — the pairings checked
+against their files, and the names the document must keep checked against the document, the two
+lists read in the two directions they can be and **not** required to be each other's image — and the
+document must say of itself what it is: refused, and **not a part, a task or a plan** — while
+carrying **none** of this folder's ruling vocabulary ("the owner has decided", "as recommended"),
 because the plan's own red step for it is that *"this document describes an alternative and must not
 read as a ruling"*. **The guard states what it does not hold**, as the neighbouring ones do: a
-symbol named beside a citation without the possessive form (the reconciliation and the plan are held
-to their paths and their numbering instead), and any claim about the folders this one reconciles,
-which their own pins hold. It also carries the **excuse list** — the paths these documents cite that
+symbol named beside a citation without the possessive form, and any claim about the folders this one
+reconciles, which their own pins hold. (The reconciliation and the plan are held to their paths and
+their numbering instead of to a symbol census.) It also carries the **excuse list** — the paths these documents cite that
 are not in the tree yet, each excused **only while it does not exist**, with
 the guard failing on an entry that has become stale, so the list cleans itself as the work lands.
 **`internal/cli/docs_mobile_auth_test.go` was the third path this work creates and it left that
