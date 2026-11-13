@@ -595,3 +595,132 @@ func TestAVerifierNeedsItsConfiguration(t *testing.T) {
 		t.Error("NewSchedulerVerifier accepted a nil key set: nothing would be verified but the claims")
 	}
 }
+
+// TestASchedulerTokenIsOneStringAndOneObject: a Scheduler token is the string
+// Google signed and exactly one JSON object per segment, and every spelling of
+// one that a permissive decoder would read as the token is refused here.
+//
+// The newline case is the load-bearing one, and mcpauth's copy of this rule is
+// held by TestANewlineInASpentTokensSignatureIsRefused for the same reason: Go's
+// base64 decoder ignores a CR or an LF ANYWHERE in its input — the Strict decode
+// included — and verifyOIDCRS256 hashes the segments as the strings they are, so
+// a newline inside the SIGNATURE segment leaves the signature verifying while
+// the token is another string. The header and the payload are the signing input
+// and a byte added there breaks the signature by itself, which is why the
+// signature segment is the one a decoder has to read as it was written.
+func TestASchedulerTokenIsOneStringAndOneObject(t *testing.T) {
+	v := schedulerVerifier(t)
+	valid := signPortalToken(t, portalKey(), portalKid, "RS256", schedulerClaims())
+
+	// fresh signs the deployment's own claims again: a case that rewrites a
+	// segment needs a token whose signature is over what it rewrites, or the
+	// refusal would be the signature's rather than the decoder's.
+	fresh := func() string { return signPortalToken(t, portalKey(), portalKid, "RS256", schedulerClaims()) }
+
+	object, err := json.Marshal(map[string]any{"alg": "RS256", "kid": portalKid, "typ": "JWT"})
+	if err != nil {
+		t.Fatalf("marshalling a header: %v", err)
+	}
+	encode := func(raw string) string { return base64.RawURLEncoding.EncodeToString([]byte(raw)) }
+
+	// splice writes raw into one segment as its own base64url text: the shape a
+	// presenter controls, where appending a byte would change nothing.
+	splice := func(i int, raw string) string {
+		parts := strings.Split(fresh(), ".")
+		parts[i] = encode(raw)
+		return strings.Join(parts, ".")
+	}
+
+	cases := map[string]string{
+		"a LF inside the signature":        segmentWith(fresh(), 2, "\n"),
+		"a CRLF inside the signature":      segmentWith(fresh(), 2, "\r\n"),
+		"a space inside the signature":     segmentWith(fresh(), 2, " "),
+		"padding on the signature":         segmentWith(fresh(), 2, "="),
+		"a byte of no shape in the header": segmentWith(fresh(), 0, "\x7f"),
+		"a LF inside the payload":          segmentWith(fresh(), 1, "\n"),
+		"an empty header segment":          splice(0, ""),
+		"an empty payload segment":         splice(1, ""),
+		"an empty signature segment":       splice(2, ""),
+		"two objects in one payload":       splice(1, `{"iss":"x"}{"iss":"y"}`),
+		"a payload that is not an object":  splice(1, `[1,2]`),
+		"a payload past the claims bound":  splice(1, `{"iss":"`+strings.Repeat("a", maxOIDCClaimsBytes)+`"}`),
+		"a header past its own bound":      splice(0, string(object)+strings.Repeat(" ", maxOIDCHeaderBytes)),
+		"a token past its own size bound":  strings.Repeat("a", maxOIDCTokenBytes+1),
+		"a token that is not a JWT at all": portalMarker,
+	}
+
+	if err := v.Verify(context.Background(), valid); err != nil {
+		t.Fatalf("the Scheduler verifier refused the token this deployment's job presents: %v", err)
+	}
+	for name, tok := range cases {
+		err := v.Verify(context.Background(), tok)
+		if err == nil {
+			t.Errorf("%s: the Scheduler verifier admitted it (%s)", name, portalMarker)
+			continue
+		}
+		if !errors.Is(err, ErrUnverifiedSchedulerToken) {
+			t.Errorf("%s: refused with %v, which is not the sentinel the route answers 403 from", name, err)
+		}
+	}
+}
+
+// segmentWith appends lit to one segment of a compact JWT: the bytes a
+// presenter would have written, kept as they are rather than re-encoded.
+func segmentWith(tok string, i int, lit string) string {
+	parts := strings.Split(tok, ".")
+	parts[i] += lit
+	return strings.Join(parts, ".")
+}
+
+// outageKeys is the key set that could not be read at all — an endpoint that
+// timed out or answered an error. It is the shape a verifier has to pass
+// through rather than answer as a refusal of the caller.
+type outageKeys struct{}
+
+func (outageKeys) Key(context.Context, string) (*rsa.PublicKey, error) {
+	return nil, fmt.Errorf("%w: the published set could not be read", mcpauth.ErrUnavailable)
+}
+
+// TestAKeySetOutageIsNotARefusalOfTheCaller: an unreadable key set is this
+// service's failure and not the caller's, so it reaches the route as
+// ErrUnavailable rather than as "not you". The distinction is deliberate — a
+// route that answered a sign-in refusal for its own outage would send every
+// person to sign in again — and it is what a caller branches on.
+func TestAKeySetOutageIsNotARefusalOfTheCaller(t *testing.T) {
+	ctx := context.Background()
+
+	portal, err := NewPortalVerifier(portalProject, outageKeys{}, WithPortalClock(func() time.Time { return portalNow }))
+	if err != nil {
+		t.Fatalf("NewPortalVerifier over an unreadable key set: %v", err)
+	}
+	_, err = portal.Verify(ctx, signPortalToken(t, portalKey(), portalKid, "RS256", portalClaims()))
+	err = mustRefuse(t, "a portal sign-in", err)
+	if !errors.Is(err, mcpauth.ErrUnavailable) {
+		t.Errorf("the portal verifier answered an unreadable key set with %v, and the caller cannot tell it from a bad token", err)
+	}
+	if errors.Is(err, ErrUnverifiedSignIn) {
+		t.Errorf("the portal verifier answered its own outage as a refused sign-in (%v): every person would be sent to sign in again", err)
+	}
+
+	scheduler, err := NewSchedulerVerifier(portalSchedulerAccount, portalSchedulerAudience, outageKeys{}, WithSchedulerClock(func() time.Time { return portalNow }))
+	if err != nil {
+		t.Fatalf("NewSchedulerVerifier over an unreadable key set: %v", err)
+	}
+	err = mustRefuse(t, "a Scheduler token", scheduler.Verify(ctx, signPortalToken(t, portalKey(), portalKid, "RS256", schedulerClaims())))
+	if !errors.Is(err, mcpauth.ErrUnavailable) {
+		t.Errorf("the Scheduler verifier answered an unreadable key set with %v, and the caller cannot tell it from a bad token", err)
+	}
+	if errors.Is(err, ErrUnverifiedSchedulerToken) {
+		t.Errorf("the Scheduler verifier answered its own outage as a refused token (%v): the job's failure would read as a stranger's token", err)
+	}
+}
+
+// mustRefuse returns err, failing when there is none: every case it is called
+// for is a refusal, and a nil would make the assertions below say nothing.
+func mustRefuse(t *testing.T, what string, err error) error {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("%s was admitted over a key set that could not be read", what)
+	}
+	return err
+}
