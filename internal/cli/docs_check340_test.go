@@ -98,7 +98,7 @@ func TestDocsCheck340IsRegistered(t *testing.T) {
 		// that could not confirm what it deleted exits 1 beside a PASSing
 		// list-prefix row, and a reader who takes every exit 1 for E4 stops
 		// R12's Terraform on a run that answered the question it was run for.
-		"or a form passed and the restore could not confirm what it deleted",
+		"or every criterion held and the restore could not confirm what it deleted",
 	} {
 		if !strings.Contains(flat, want) {
 			t.Errorf("Check %s's section does not say %q: the section is where the owner reads what the check settles and how to run it, and a pin that has moved is a section that stopped saying it", check340Number, want)
@@ -217,20 +217,18 @@ func TestDocsCheck340RecordsTheSecondRun(t *testing.T) {
 		// rows as readings about the listing clause whatever the clause allows.
 		"recorded as **NOT OBSERVED**",
 		"neither a criterion that held nor one that failed",
-		"it **fails the form**",
+		"it **FAILS the check**",
 		"/tokens/*",
 		// The third reading of the row that matters, and the one no string comes
-		// with: a form whose readable criteria held is still not an answer while
+		// with: a run whose readable criteria held is still not an answer while
 		// the guard is unread.
 		"**`list-prefix: INFO — not settled`**",
-		"reads **both** candidate forms to the end of their criteria",
-		// The other half of "both forms are read": one form passing is the
-		// answer, and two passing is a contradiction the run stops on — a
-		// section that said only the first would have the owner read a PASS
-		// where the run exits 2.
-		"no single attribute value starts with both candidate strings",
-		"let **both** forms through",
-		"`reports/<slug>/` **and** the bare `reports/` must list",
+		// What that revision did about the forms, and where it stands now: it read
+		// both, and the third run below retired the second one. A section that
+		// stopped at "the fixes" would have the owner look for a full-path form
+		// this check no longer reads.
+		"**both** candidate forms to the end of their criteria",
+		"**and both of those are history now**",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("Check %s's section does not say %q: the check has been run twice and the second run is where the fallback was lost, so the register has to carry it", check340Number, want)
@@ -248,9 +246,131 @@ func TestDocsCheck340RecordsTheSecondRun(t *testing.T) {
 			t.Errorf("Check %s's section does not say %q: a bucket that is not there stops the run, and a stop that does not name the create command leaves the owner with a check that will not start", check340Number, want)
 		}
 	}
-	// The row is where a reader stops, so it carries both attempts.
-	if row := check340Row(register); !strings.Contains(row, "Two attempts have been made") {
-		t.Errorf("Check %s's row does not record the second attempt: the row and the section are one registration, and a reader who stops at the table has to see that the check has been run twice and settled nothing either time", check340Number)
+	// The row is where a reader stops, so it carries every attempt.
+	if row := check340Row(register); !strings.Contains(row, "Three attempts have been made") {
+		t.Errorf("Check %s's row does not record all three attempts: the row and the section are one registration, and a reader who stops at the table has to see that the check has been run three times, twice aborting and once failing on the bare reports/ prefix", check340Number)
+	}
+}
+
+// TestDocsCheck340RecordsTheThirdRun: the third run is the one that read the
+// probe, and it is the reading the current script is built on — so the register
+// has to carry it, and the two things it settled have to survive a later edit.
+// It settled the attribute's VALUE FORM, which is what R12's builder waits for:
+// the relative form listed what the job lists, and the full-path form listed
+// nothing at all, which retires the second candidate rather than leaving it as
+// an open question. And it read the bare `reports/` prefix as REFUSED while the
+// bucket policy named the reports binding, which is why the revision after it
+// reads the four prefixes the job actually lists and asks the bare prefix as a
+// DIAGNOSTIC that gates nothing: a check that kept gating on a listing the job
+// never makes would fail R12 on a request nobody sends. The row stays NOT RUN
+// until that revision has itself been run, and the section has to say so in as
+// many words — a reader who took the settled form for a settled check would
+// hand R12 its string off a script nobody has run.
+func TestDocsCheck340RecordsTheThirdRun(t *testing.T) {
+	register := readDoc(t, liveChecksDoc)
+	raw := check340Section(t, register)
+	section := flattenDoc(raw)
+	for _, want := range []string{
+		// The run, its exit, and that it is the first reading of the probe.
+		"Third run: 2026-11-13, exit `1`",
+		"the first run that really read the probe",
+		// What the relative form measured, including the refusal that failed the
+		// criterion on a prefix the job does not list.
+		"`runs/<slug>/` and `reports/<slug>/`",
+		"the **bare `reports/`**",
+		"REFUSED with a denial naming `storage.objects.list`",
+		// The reading that settles the value form — every listing refused under
+		// the other candidate — and the answer R12's builder takes from it.
+		"**every listing was refused**",
+		"the attribute carries the request's OWN RELATIVE prefix (`runs/`, `reports/`)",
+		// The job's own listings, traced, which are what the criterion now holds
+		// and what the diagnostic is not.
+		"read-only trace of the reports job",
+		"`reports/<slug>/<YYYY>/` and `reports/<YYYY>/`",
+		"**never** the bare `reports/` or the bucket root",
+		"a **DIAGNOSTIC** that gates nothing",
+		// The row is still NOT RUN, and one more run is what clears it.
+		"the row above is still NOT RUN",
+		"one more run of the same command",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("Check %s's section does not say %q: the third run is the reading the current script is built on, and the register is where a later revision has to find what it settled and what is still unrun", check340Number, want)
+		}
+	}
+	// The revision reads one form, and the section has to say the check no longer
+	// reads the other — the sentences it replaced are what a reader would
+	// otherwise still look for.
+	for _, gone := range []string{
+		"no single attribute value starts with both candidate strings",
+		"let **both** forms through",
+		"`reports/<slug>/` **and** the bare `reports/` must list",
+	} {
+		if strings.Contains(section, gone) {
+			t.Errorf("Check %s's section still reads as the two-form check (%q): the third run settled the value form and the revision after it reads the relative one alone, so the sentence is a shape the script no longer has", check340Number, gone)
+		}
+	}
+	// The bare prefix is asked three ways and changes nothing: a section that
+	// named only the gcloud call would leave the owner unable to tell a gcloud
+	// refusal from a clause that does not reach the prefix.
+	for _, want := range []string{
+		"reports-bare-diagnostic",
+		"delimiter=/",
+		"mode-`0600` `curl` config file",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("Check %s's section does not say %q: the bare prefix is a diagnostic asked three ways, and its row is what the next revision of the check reads", check340Number, want)
+		}
+	}
+	// The three probes, read from the raw section: a `gs://` URL carries `//`,
+	// which flattenDoc folds into a space for the prose pins above.
+	for _, want := range []string{
+		"gcloud storage ls gs://<bucket>/reports/",
+		"gcloud storage ls gs://<bucket>/reports/*",
+	} {
+		if !strings.Contains(raw, want) {
+			t.Errorf("Check %s's diagnostic paragraph does not name %q: the bare prefix is asked three ways, and a row that named one of the gcloud calls but not the other could not tell a refusal of the plain request from a refusal of the wildcard one", check340Number, want)
+		}
+	}
+	// The year-level object is this check's own and is deleted by name: a Restore
+	// that walked the year prefix would take the owner's own reports with it.
+	for _, want := range []string{
+		"deleted **by name**",
+		"**never as the `reports/<YYYY>/` prefix**",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("Check %s's section does not say %q: the check seeds at the year level the job writes to, and the teardown has to name its own object rather than the prefix that holds the owner's reports", check340Number, want)
+		}
+	}
+}
+
+// TestDocsCheck340NamesEveryBlockKey: the section's reading paragraph names the
+// rows the script prints, read from the script's own BLOCK_KEYS rather than a
+// paraphrase of it. A paragraph that missed a key the script prints leaves a
+// reader a row they cannot place, and one that named a key the script does not
+// print is worse: the owner would go looking in the pasted block for a row that
+// was never in it. The bare-reports diagnostic is the row this matters for now,
+// because it is the one row whose absence from a block would otherwise read as
+// an incomplete paste rather than as the diagnostic it is.
+func TestDocsCheck340NamesEveryBlockKey(t *testing.T) {
+	const script = "scripts/live-checks/check340.sh"
+	keys := blockKeys(t, readRepoFile(t, script))
+	if len(keys) < 10 {
+		t.Fatalf("%s: BLOCK_KEYS parsed as %d keys (%v), which cannot be the block", script, len(keys), keys)
+	}
+	section := check340Section(t, readDoc(t, liveChecksDoc))
+	const heading = "**Reading the `CHECK 340 RESULT` block.**"
+	i := strings.Index(section, heading)
+	if i < 0 {
+		t.Fatalf("%s: the Check %s section has no %q paragraph", liveChecksDoc, check340Number, heading)
+	}
+	para := section[i:]
+	if j := strings.Index(para, "\n\n"); j >= 0 {
+		para = para[:j]
+	}
+	for _, k := range keys {
+		if !strings.Contains(para, "`"+k+"`") {
+			t.Errorf("%s's Check %s %q paragraph does not name the block key `%s`, which %s's BLOCK_KEYS prints", liveChecksDoc, check340Number, heading, k, script)
+		}
 	}
 }
 

@@ -1028,10 +1028,11 @@ step_account() {
   GRANT_MADE=yes
 }
 
-# step_seed: four small objects of this check's own, inside the four real
-# prefixes, written with YOUR identity. They are what makes the listings mean
-# something — a listing of an empty prefix proves nothing — and each is named so
-# that the Restore deletes exactly this run's slug.
+# step_seed: five small objects of this check's own, inside the four real
+# prefixes and at the year level under reports/, written with YOUR identity. They
+# are what makes the listings mean something — a listing of an empty prefix
+# proves nothing — and each is named so that the Restore deletes exactly this
+# run's slug and its own year object, never a bare year prefix.
 step_seed() {
   printf '{"check": "340", "kind": "a seeded run record"}\n' >"$SCRATCH/runs.json"
   printf '# a seeded report\n' >"$SCRATCH/reports.md"
@@ -1362,9 +1363,9 @@ finish() {
   fi
   # The verdict is taken from the facts, not from the exit path: an exit 0 beside
   # a FAILed list-prefix row, or beside a Restore that did not finish, would read
-  # as a pass. The rows of the form that did NOT work are deliberately not part of
-  # this — a form that lists nothing is what the other form's PASS is measured
-  # against, and the block says which is which.
+  # as a pass. The diagnostic's own row is deliberately not part of this — the bare
+  # reports/ prefix is not a listing the reports job makes, so a refusal there is
+  # not a criterion and cannot turn a reading into a failure.
   if [ "$status" -eq 0 ] && printf '%s\n' "$facts" | grep -qE '^(list-prefix|restore)\|FAIL\|'; then
     status=1
   fi

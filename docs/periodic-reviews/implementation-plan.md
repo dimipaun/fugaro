@@ -371,12 +371,19 @@ commit.
   R11's stored reader lists `reports/<slug>/<YYYY>/` the way today's reader lists a checkout's folder
   twice over (`internal/cli/runs_digest.go:438` and `:466`, both `os.ReadDir`), with the year roll-up
   listing the same prefix again.
-  **`<list prefix>` is deliberately not spelled here.** The attribute's value form — whether it
-  carries the request's own prefix (`runs/`) or the full `projects/_/buckets/<b>/objects/runs/` path —
-  is exactly what the owner-run listing check below settles: it is **unverified offline** (bucket-iam
-  §4, V7), **no code in this repo reads the attribute today** (grepping the tree finds it in the
-  design alone), and the wrong form is a grant that lists nothing. The check fixes the value before
-  R12's Terraform lands, and the builder takes it as its one argument. **The listing half's own scope
+  **`<list prefix>` is spelled by the owner-run listing check below, and its third run spelled it.**
+  The attribute's value form — whether it carries the request's own prefix (`runs/`) or the full
+  `projects/_/buckets/<b>/objects/runs/` path — was **unverified offline** (bucket-iam
+  §4, V7), with **no code in this repo reading the attribute** (grepping the tree found it in the
+  design alone), and the wrong form is a grant that lists nothing. **The third run (2026-11-13) read
+  both candidate forms and answered it: under the relative form the account listed `runs/<slug>/` and
+  `reports/<slug>/` and was refused the root listing, the `tokens/` read and the `tokens/` and
+  `cache/` listings, while under the full `projects/_/buckets/<b>/objects/…` form EVERY listing was
+  refused** — no request attribute ever carries that string. The builder therefore writes the
+  request's own prefix, `runs/` for the runs binding and `reports/` for the reports binding. The job's
+  own listings are the ones the check reads — `runs/<slug>/`, `reports/<slug>/`,
+  `reports/<slug>/<YYYY>/` and `reports/<YYYY>/` — and the bare `reports/` prefix the third run was
+  refused is a diagnostic, not a listing the job makes. **The listing half's own scope
   is `runs/` and not one repository's `runs/<slug>/`**, which is what the job needs and what the
   mechanism can express: the job summarises every repository and so lists each slug's records under
   the one prefix — the narrowness the owner asked for is "the listing prefixes and nothing else", not
@@ -444,17 +451,23 @@ commit.
   on the sandbox installation, signs in as the project and grants a throwaway service account **both
   conditioned grants** — `roles/storage.objectViewer` on `runs/` and `roles/storage.objectUser` on
   `reports/`, each with the two clause halves above joined by `||` — then, as that account:
-  `gcloud storage ls --recursive gs://<bucket>/runs/<slug>/` (must list), `gcloud storage ls
-  --recursive gs://<bucket>/reports/` (must list), reading one object under `runs/` with
+  `gcloud storage ls --recursive gs://<bucket>/runs/<slug>/` (must list), the three reports listings
+  the job makes — `gcloud storage ls --recursive gs://<bucket>/reports/<slug>/`, `gs://<bucket>/reports/<slug>/<YYYY>/`
+  and `gs://<bucket>/reports/<YYYY>/` (each must list, its own answer in its own row), reading one
+  object under `runs/` with
   `gcloud storage cat` (must read), and the refusals — `gcloud storage cat` of a `tokens/` object,
   `gcloud storage ls gs://<bucket>/` (the **root listing**, which the two prefixes must not reach),
-  `gcloud storage ls gs://<bucket>/tokens/` and `gcloud storage ls gs://<bucket>/cache/` (all four
-  must be refused). **The check is also what settles `<list prefix>`:** the owner tries each candidate
-  form — the request's own prefix (`runs/`) and the full `projects/_/buckets/<b>/objects/runs/` path —
-  and the one under which `ls gs://<bucket>/runs/<slug>/` and `ls gs://<bucket>/reports/` both list,
-  with the root listing still refused, is the form R12's builder writes. A form the attribute does not
-  carry lists nothing, which is why the check runs before the Terraform lands rather than the value
-  being reasoned about here. The throwaway account is removed afterwards. **If any of it fails, the plan stops and asks the owner** — the bucket-wide
+  `gcloud storage ls gs://<bucket>/tokens/*` and `gcloud storage ls gs://<bucket>/cache/*` (all four
+  must be refused, the two listings asked as wildcards so the List request is the one that goes out).
+  **The check is also what settles `<list prefix>`:** it read both candidate forms — the request's own
+  prefix (`runs/`) and the full `projects/_/buckets/<b>/objects/runs/` path — and the third run
+  (2026-11-13) listed under the relative form while **every listing under the full path was refused**,
+  so the relative form is the one R12's builder writes and the only one the check reads any more. A
+  form the attribute does not carry lists nothing, which is why the check runs before the Terraform
+  lands rather than the value being reasoned about here. The bare `reports/` prefix is asked as a
+  diagnostic only — the job never lists it, and the third run's refusal of it, with the binding read
+  back as present, is unexplained rather than a criterion. The throwaway account is removed
+  afterwards. **If a listing the job makes fails, the plan stops and asks the owner** — the bucket-wide
   viewer a listing needs when the condition cannot carry one is **not** planned as a fallback here,
   because it would also read `tokens/` and `cache/`.
 
@@ -1387,11 +1400,17 @@ one that names a section rather than only a number (the `Checks 340–349` row o
 [README.md](README.md); [reconciliation.md](reconciliation.md) §5's amendment).
 
 **Check 340 — the prefix-limited listing grant (R12's, and it gates R12).** The owner proves that the
-job's read grant lists `runs/<slug>/` and `reports/`, reads one `runs/` object, and is refused the
+job's read grant lists the FOUR prefixes the reports job lists — `runs/<slug>/`, `reports/<slug>/`,
+`reports/<slug>/<YYYY>/` and `reports/<YYYY>/` — reads one `runs/` object, and is refused the
 root listing and a `tokens/` read and a `tokens/` or `cache/` listing — which is what settles
 `storage.googleapis.com/objectListPrefix`'s own value form, the attribute `docs/design/bucket-iam.md`
-records as unverified (V7). **If it fails, R12's Terraform does not land and the plan stops and
-asks** (E4). Owner-run, **NOT RUN**.
+records as unverified (V7). **The third run (2026-11-13, exit `1`) settled the value: the attribute
+carries the request's own RELATIVE prefix (`runs/`, `reports/`) — under the full-path form EVERY
+listing was refused — and the bare `reports/` prefix it was refused (with the binding read back as
+present) is a DIAGNOSTIC row, because the job never lists it.** **If a listing the job makes does not
+hold, R12's Terraform does not land and the plan stops and
+asks** (E4). Owner-run, **NOT RUN** — the revision the third run's reading produced has not itself
+been run.
 
 **Check 341 — the reports job's first firing, and what it stored.** The owner sets
 `jobs.reports.paused: false`, runs `fugaro update`, lets the schedule fire once and reads what
