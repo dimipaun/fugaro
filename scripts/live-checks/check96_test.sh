@@ -540,18 +540,18 @@ if os.environ["JOB_PROFILE"] == "yes":
     labels = {"fugaro_profile": "shared", "fugaro_role": "project"}
 spec["containers"] = [container]
 job = {"metadata": {"name": os.environ["JOB_NAME"], "labels": labels},
-       "spec": {"template": {"spec": spec}}}
+       "spec": {"template": {"spec": {"template": {"spec": spec}}}}}
 check = {"metadata": {"name": os.environ["JOB_NAME"] + "-check",
                       "labels": {"fugaro_repo": os.environ["FAKE96_LABEL"], "fugaro_role": "check"}},
-         "spec": {"template": {"spec": {"serviceAccountName": os.environ["JOB_SA"],
-                                        "containers": [{"env": []}]}}}}
+         "spec": {"template": {"spec": {"template": {"spec": {"serviceAccountName": os.environ["JOB_SA"],
+                                        "containers": [{"env": []}]}}}}}}
 jobs = [job, check]
 describes = {os.environ["JOB_NAME"]: job}
 if os.environ.get("JOB_SECOND") == "yes":
     second = json.loads(json.dumps(job))
     second["metadata"]["name"] = os.environ["JOB_NAME"] + "-second"
     second["metadata"]["labels"]["fugaro_workflow"] = "second"
-    second["spec"]["template"]["spec"]["serviceAccountName"] = os.environ["JOB_SECOND_SA"]
+    second["spec"]["template"]["spec"]["template"]["spec"]["serviceAccountName"] = os.environ["JOB_SECOND_SA"]
     jobs.insert(0, second)
     describes[second["metadata"]["name"]] = second
 open(sys.argv[1], "w", encoding="utf-8").write(json.dumps(job))
