@@ -92,8 +92,10 @@
 # the reboot really happened and `upgrade` can say the binary moved: both compare
 # against what the earlier phase recorded. It holds no credential and no
 # document a project owns. CHECK301_PLATFORM and CHECK301_BOOT_ID are the
-# hermetic test's seams for the two things a fake cannot provide (the platform
-# and the machine's boot identity); a real run sets neither.
+# hermetic test's seams for the things a fake cannot provide — the platform, the
+# machine's boot identity, and how long the handover reading waits for the
+# manager to report the new daemon (CHECK301_HANDOVER_SECONDS, four minutes by
+# default); a real run sets none of them.
 set -Eeuo pipefail
 
 # No xtrace: this check reads no credential, but a trace of a run that carries
@@ -186,6 +188,15 @@ UNIT_LABEL=dev.fugaro.orchestrator
 SYSTEMD_UNIT=fugaro-orchestrator.service
 PHASE=""
 RELEASE_NEEDED=0.24.0
+# How long the handover reading waits for the manager to report the new daemon:
+# the daemon checks the version at the path its unit names every cycle (30s by
+# default) and the manager starts the new one right after, so four minutes is
+# generous on a machine that is doing something else too. The hermetic test sets
+# it to a few seconds, which is the only reason it is a variable.
+HANDOVER_SECONDS=${CHECK301_HANDOVER_SECONDS:-240}
+case "$HANDOVER_SECONDS" in
+"" | *[!0-9]*) HANDOVER_SECONDS=240 ;;
+esac
 INSTALLATION=""
 MACHINE=""
 DRY_RUN=no
@@ -248,6 +259,12 @@ state_remove() {
     return 0
   fi
   fact state PASS "the state file this check kept between the phases ($STATE_FILE) is removed; nothing else of it is left"
+}
+
+# state_keep is state_remove's other half: a phase that has to be run again says
+# where its readings are instead of dropping them.
+state_keep() { # why
+  fact state INFO "the state file $STATE_FILE is KEPT ($1): run this phase again, with no new '$PROG start' — '$PROG forget' drops it"
 }
 
 # cleanup runs IN THIS SHELL, never in a subshell: remove_scratch records what it
@@ -314,15 +331,21 @@ finish() {
 # $SCRATCH/KEY.out and .err, and end it after SECONDS. `timeout` is not used: it
 # is GNU coreutils, and this check runs on the owner's machine, where the tool is
 # absent on macOS. Sets BOUNDED_STATUS and BOUNDED_TIMED_OUT.
+#
+# The poll is a tenth of a second rather than a whole one: nearly every command
+# this wraps answers in milliseconds, so a one-second poll would add a second to
+# each of them — a minute of pure waiting over one run, which is why the hermetic
+# test would be minutes long for no reading it makes. Both platforms' sleep take
+# a fraction.
 run_bounded() {
   local secs=$1 key=$2
   shift 2
   BOUNDED_TIMED_OUT=no
   "$@" >>"$SCRATCH/$key.out" 2>>"$SCRATCH/$key.err" &
-  local pid=$! waited=0
+  local pid=$! waited=0 limit=$((secs * 20))
   while kill -0 "$pid" 2>/dev/null; do
-    [ "$waited" -lt "$secs" ] || break
-    sleep 1
+    [ "$waited" -lt "$limit" ] || break
+    sleep 0.05
     waited=$((waited + 1))
   done
   if kill -0 "$pid" 2>/dev/null; then
@@ -333,6 +356,16 @@ run_bounded() {
   fi
   BOUNDED_STATUS=0
   wait "$pid" 2>/dev/null || BOUNDED_STATUS=$?
+}
+
+# bounded_ok SECONDS KEY CMD...: run_bounded, and REPORT whether it answered with
+# exit 0. run_bounded itself always returns 0 — nearly every caller reads its
+# answer out of BOUNDED_STATUS, and a helper that failed under `set -e` would end
+# the run instead of letting the caller record what happened.
+bounded_ok() {
+  run_bounded "$@"
+  if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" -ne 0 ]; then return 1; fi
+  return 0
 }
 
 # --------------------------------------------------------------- the guards
@@ -371,6 +404,11 @@ guard_agent() {
 # local config in force selects, so the name is refused here and the reading that
 # follows names the installation it acted on.
 guard_owner() {
+  if [ "$PHASE" = forget ]; then
+    # `forget` removes this check's own state file and nothing else, so the
+    # installation in force is not part of what it does and is not asked for.
+    return 0
+  fi
   if [ -z "$INSTALLATION" ]; then
     stop "no installation is selected: the local config in force names none, and this check must know which installation it is driving the daemon for. Name it: $USAGE (--installation <name>, the name fugaro doctor --json reports as project.name)"
   fi
@@ -388,7 +426,7 @@ guard_owner() {
 # version and the commands are read first and the run stops with one sentence
 # naming the release it needs.
 guard_release() {
-  if ! run_bounded 30 release fugaro version; then
+  if ! bounded_ok 30 release fugaro version; then
     fact release FAIL "fugaro version did not answer (exit $BOUNDED_STATUS): this check needs release $RELEASE_NEEDED"
     stop "fugaro version did not answer, so this check cannot tell which release it is looking at: needs release $RELEASE_NEEDED"
   fi
@@ -406,11 +444,7 @@ guard_release() {
   fi
   local verb missing=""
   for verb in status install uninstall; do
-    if ! run_bounded 30 "verb-$verb" fugaro orchestrator "$verb" --help; then
-      missing="$missing $verb"
-    elif [ "$BOUNDED_TIMED_OUT" = yes ]; then
-      missing="$missing $verb"
-    fi
+    if ! bounded_ok 30 "verb-$verb" fugaro orchestrator "$verb" --help; then missing="$missing $verb"; fi
   done
   if [ -n "$missing" ]; then
     fact release FAIL "this fugaro ($v) carries no 'fugaro orchestrator$missing': needs release $RELEASE_NEEDED"
@@ -474,6 +508,11 @@ parse_args() {
       shift
       ;;
     -h | --help)
+      # The usage is the whole answer, so there is no block: a CHECK 301 RESULT
+      # for a run that ran nothing would be a verdict about a machine this run
+      # never looked at.
+      REACHED_END=yes
+      PRINTED=1
       printf 'usage: %s\n' "$USAGE"
       exit 0
       ;;
@@ -596,15 +635,15 @@ MANAGER_STATE=""
 MANAGER_PID=""
 read_manager() { # read_manager KEY
   case "$MANAGER" in
-  darwin) run_bounded 20 "$1" launchctl print "gui/$(id -u)/$UNIT_LABEL" ;;
-  linux) run_bounded 20 "$1" systemctl --user show -p LoadState -p ActiveState -p SubState -p MainPID "$SYSTEMD_UNIT" ;;
+  launchd) run_bounded 20 "$1" launchctl print "gui/$(id -u)/$UNIT_LABEL" ;;
+  systemd) run_bounded 20 "$1" systemctl --user show -p LoadState -p ActiveState -p SubState -p MainPID "$SYSTEMD_UNIT" ;;
   esac
   local out="$SCRATCH/$1.out"
   MANAGER_STATE=unknown
   MANAGER_PID=""
   if [ "$BOUNDED_TIMED_OUT" = yes ]; then MANAGER_STATE=unknown; return 0; fi
   case "$MANAGER" in
-  darwin)
+  launchd)
     if [ "$BOUNDED_STATUS" -ne 0 ]; then MANAGER_STATE=absent; return 0; fi
     case "$(sed -n 's/^[[:space:]]*state = //p' "$out" | head -1)" in
     running) MANAGER_STATE=running ;;
@@ -612,7 +651,7 @@ read_manager() { # read_manager KEY
     esac
     MANAGER_PID=$(sed -n 's/^[[:space:]]*pid = //p' "$out" | head -1)
     ;;
-  linux)
+  systemd)
     if [ "$BOUNDED_STATUS" -ne 0 ]; then MANAGER_STATE=unknown; return 0; fi
     if [ "$(sed -n 's/^LoadState=//p' "$out" | head -1)" != loaded ]; then MANAGER_STATE=absent; return 0; fi
     case "$(sed -n 's/^ActiveState=//p' "$out" | head -1)" in
@@ -620,7 +659,7 @@ read_manager() { # read_manager KEY
     *) MANAGER_STATE=notrunning ;;
     esac
     MANAGER_PID=$(sed -n 's/^MainPID=//p' "$out" | head -1)
-    [ "$MANAGER_PID" = 0 ] && MANAGER_PID=""
+    if [ "$MANAGER_PID" = 0 ]; then MANAGER_PID=""; fi
     ;;
   esac
   return 0
@@ -818,9 +857,11 @@ phase_start() {
     ;;
   notrunning | absent)
     fact daemon FAIL "the unit is installed and $(manager_words): the install did not bring the daemon up, so nothing here has a daemon to survive a reboot. Read the manager's own report ($([ "$MANAGER" = launchd ] && echo "launchctl print gui/$(id -u)/$UNIT_LABEL" || echo "systemctl --user status $SYSTEMD_UNIT")) and fix what it says"
+    stop "the login unit is installed and its daemon is not running ($(manager_words)): there is nothing for a reboot to bring back yet, so this phase records nothing and asks you for no reboot. Fix what the manager reports and run it again"
     ;;
   *)
     fact daemon FAIL "the manager did not answer a state this check reads ($(manager_words)), so whether the daemon is running cannot be told"
+    stop "the manager did not answer a state this check reads ($(manager_words)): run '$([ "$MANAGER" = launchd ] && echo "launchctl print gui/$(id -u)/$UNIT_LABEL" || echo "systemctl --user status $SYSTEMD_UNIT")' yourself and read what it says"
     ;;
   esac
 
@@ -885,12 +926,17 @@ phase_after_reboot() {
     stop "the recorded run is $was_machine's and this is $MACHINE: run this phase on that machine, or drop the state ('$PROG forget')"
   fi
 
+  # A reading that a re-run fixes — the reboot itself, or a daemon the reboot
+  # did not bring back — keeps the state: the phase says "run this again", and a
+  # re-run with no state would only be told to start over.
+  local again=no
   local now_boot
   now_boot=$(boot_identity)
   if [ -z "$now_boot" ] || [ -z "$was_boot" ]; then
     fact boot INFO "this machine's boot identity could not be read (it was '$was_boot' before), so whether the machine really rebooted is not measured here — the daemon row below still reads what the manager says"
   elif [ "$now_boot" = "$was_boot" ]; then
     fact boot FAIL "the machine has NOT rebooted since 'start' recorded it: the boot identity is still '$was_boot'. The install and the reboot are the two things this half is: reboot the machine and run this phase again"
+    again=yes
   else
     fact boot PASS "the machine really rebooted: its boot identity moved from '$was_boot' to '$now_boot'"
   fi
@@ -909,8 +955,10 @@ phase_after_reboot() {
     fact daemon PASS "the login unit brought the daemon back after the reboot with no terminal and no command: $(manager_words), and its pid moved from $was_pid to $MANAGER_PID"
   elif [ "$MANAGER_STATE" = running ]; then
     fact daemon FAIL "the manager reports the daemon running under pid $MANAGER_PID, which is the pid 'start' recorded: that process was started before the reboot, so the reboot was not survived by a new one — read the manager's own report and fix what it says"
+    again=yes
   else
     fact daemon FAIL "the unit is installed and $(manager_words) after the reboot: the daemon is not running, so nothing came back at login. Read the manager's own report and the daemon's log and fix what it says"
+    again=yes
   fi
 
   if read_lease lease-ls; then
@@ -942,7 +990,11 @@ phase_after_reboot() {
     fi
   fi
 
-  state_remove
+  if [ "$again" = yes ]; then
+    state_keep "the reboot or the daemon reading above did not pass, and both are read again on a run of this phase"
+  else
+    state_remove
+  fi
   fact human-next INFO "the next step is the upgrade half, on a THROWAWAY machine (macOS or Linux, never this one if you care about it): there run 'fugaro orchestrator install' (typing the word install), then: bash scripts/live-checks/check301.sh upgrade --machine <label>"
   say "next, on a throwaway machine: fugaro orchestrator install, then bash scripts/live-checks/check301.sh upgrade"
 }
@@ -977,7 +1029,7 @@ phase_upgrade() {
       stop "the login unit at $UNIT_PATH was removed while the upgrade half was waiting: run 'fugaro orchestrator install' and start this half again"
     fi
     fact unit INFO "there is no login unit on this machine (${UNIT_PATH:+$UNIT_PATH does not exist}), which is what this half reads the boundary on"
-    if ! run_bounded 60 never-installs fugaro update --yes; then
+    if ! bounded_ok 600 never-installs fugaro update --yes; then
       fact never-installs FAIL "the unit is not installed here and 'fugaro update --yes' exited $BOUNDED_STATUS: the boundary reading needs the command to converge (or to report a settled installation) and this run did neither. Its last lines: $(tail -n 5 "$SCRATCH/never-installs.out" "$SCRATCH/never-installs.err" 2>/dev/null | tr '\n' ' ')"
     else
       read_unit unit-status-2
@@ -987,6 +1039,7 @@ phase_upgrade() {
         fact never-installs FAIL "'fugaro update --yes' wrote a login unit at $UNIT_PATH on a machine that had none: update installed a unit, which T7's ruling refuses"
       fi
     fi
+    fact handover INFO "nothing to hand over: this machine has no login unit, so the binary at the path a unit would name was never replaced and no daemon was restarted here"
     fact human-install INFO "now install the unit here, in your own terminal, once: fugaro orchestrator install (it asks you to type the word install)"
     fact state INFO "no state file is written: this phase stopped before it had a unit to read a handover on"
     stop "no login unit is installed on this machine, and 'fugaro update' writes none: run 'fugaro orchestrator install' (typing the word install) and then run this phase again"
@@ -1055,7 +1108,7 @@ phase_upgrade() {
   fact version PASS "the binary the unit names ($program) reported '$was_version' before the upgrade and reports '$version' now"
   read_manager manager-after
   local waited=0
-  while [ -n "$MANAGER_PID" ] && [ "$MANAGER_PID" = "$was_pid" ] && [ "$waited" -lt 240 ]; do
+  while [ -n "$MANAGER_PID" ] && [ "$MANAGER_PID" = "$was_pid" ] && [ "$waited" -lt "$HANDOVER_SECONDS" ]; do
     sleep 5
     waited=$((waited + 5))
     read_manager "manager-after-$waited"
@@ -1072,9 +1125,9 @@ phase_upgrade() {
   local now_sha
   now_sha=$(unit_hash "$UNIT_PATH")
   if [ "$now_sha" = "$was_sha" ]; then
-    fact handover PASS "the login unit's own file is byte-for-byte what it was before the upgrade: replacing the binary under it does not touch the unit, which is why the unit survives every brew upgrade"
+    fact unit-kept PASS "the login unit's own file is byte-for-byte what it was before the upgrade: replacing the binary under it does not touch the unit, which is why the unit survives every brew upgrade"
   else
-    fact handover FAIL "the login unit's file changed while the binary was replaced ($was_sha -> $now_sha): an upgrade of the binary must not rewrite the unit — something else wrote it, and the next 'fugaro update' will compare against whatever is there now"
+    fact unit-kept FAIL "the login unit's file changed while the binary was replaced ($was_sha -> $now_sha): an upgrade of the binary must not rewrite the unit — something else wrote it, and the next 'fugaro update' will compare against whatever is there now"
   fi
   if read_lease lease-ls; then
     if [ -n "$LEASE_HOLDER" ] && [ "$LEASE_HOLDERS" = 1 ]; then
@@ -1147,7 +1200,7 @@ phase_update() {
   # The agent-marked run comes first: it is the reading that only exists while
   # something is still there to re-render, and it must not be the run that
   # re-renders it.
-  if ! run_bounded 900 boundary CLAUDECODE=1 fugaro update --yes; then
+  if ! bounded_ok 900 boundary env CLAUDECODE=1 fugaro update --yes; then
     fact boundary FAIL "fugaro update --yes exited $BOUNDED_STATUS with CLAUDECODE=1 set: the agent-marked run did not finish, so what it wrote cannot be read. Its last lines: $(tail -n 5 "$SCRATCH/boundary.out" "$SCRATCH/boundary.err" 2>/dev/null | tr '\n' ' ')"
   else
     local after_sha after_pid
@@ -1165,7 +1218,7 @@ phase_update() {
     fi
   fi
 
-  if ! run_bounded 3600 update fugaro update --yes; then
+  if ! bounded_ok 3600 update fugaro update --yes; then
     fact update FAIL "fugaro update --yes exited $BOUNDED_STATUS: the one command T7's half is about did not finish. Its last lines: $(tail -n 8 "$SCRATCH/update.out" "$SCRATCH/update.err" 2>/dev/null | tr '\n' ' ')"
     fact re-render FAIL "not measured: the update above did not exit 0"
   else
@@ -1200,7 +1253,7 @@ phase_update() {
   quiet_before_sha=$(unit_hash "$UNIT_PATH")
   read_manager manager-before-quiet
   quiet_before_pid=$MANAGER_PID
-  if ! run_bounded 3600 quiet fugaro update --yes; then
+  if ! bounded_ok 3600 quiet fugaro update --yes; then
     fact quiet FAIL "the second 'fugaro update --yes' exited $BOUNDED_STATUS: a repeated update must finish and must write nothing. Its last lines: $(tail -n 5 "$SCRATCH/quiet.out" "$SCRATCH/quiet.err" 2>/dev/null | tr '\n' ' ')"
   else
     quiet_sha=$(unit_hash "$UNIT_PATH")
@@ -1315,7 +1368,7 @@ block_keys() {
   case "$PHASE" in
   start) list="phase platform installation agent release xtrace unit daemon state human-install human-reboot restore" ;;
   after-reboot) list="phase platform installation release unit boot daemon lease second-refuses state human-next restore" ;;
-  upgrade) list="phase platform installation release unit daemon never-installs version handover lease state human-install human-upgrade human-next restore" ;;
+  upgrade) list="phase platform installation release unit daemon never-installs version handover unit-kept lease state human-install human-upgrade human-next restore" ;;
   update) list="phase platform installation agent release xtrace terminal unit before boundary update re-render quiet lease state restore" ;;
   forget) list="phase platform installation state restore" ;;
   esac
@@ -1345,9 +1398,13 @@ main() {
   guard_owner
   fact phase PASS "$PHASE on $MACHINE: this machine is $PLATFORM, and the login unit's manager here is $MANAGER"
   fact platform PASS "this check picked $MANAGER itself from the machine it is running on (uname -s answered $PLATFORM), and it reads and writes only the person's own login level ($([ "$MANAGER" = launchd ] && echo "launchd's gui/$(id -u)" || echo 'systemd --user'))"
-  local project=""
-  project=$(gcp_project_of "$INSTALLATION")
-  fact installation PASS "the installation in force is $INSTALLATION${project:+ on GCP project $project}, and it is not belong"
+  if [ "$PHASE" = forget ]; then
+    fact installation INFO "forget removes only this check's own state file under $STATE_DIR, so which installation is in force is not part of it"
+  else
+    local project=""
+    project=$(gcp_project_of "$INSTALLATION")
+    fact installation PASS "the installation in force is $INSTALLATION${project:+ on GCP project $project}, and it is not belong"
+  fi
 
   if [ "$DRY_RUN" = yes ]; then
     # The dry run stops here: the guards and the reads above are the part of a
