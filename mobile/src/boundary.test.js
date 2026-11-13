@@ -248,3 +248,78 @@ test('the app imports nothing outside mobile/ but the shared package (D119, D125
     .flatMap((file) => escapes(file, readFileSync(join(ROOT, file), 'utf8')));
   assert.deepEqual(offenders, [], 'an import leaves the app for a sibling other than shared/');
 });
+
+// **Rule 6: the manifest declares no provider auth SDK.** D221 and D234 keep
+// the provider half out of v1: a device holds no provider session, the account
+// model stays D114's, and no per-project Firebase app instance exists. The
+// dependency that would give the app one is the one thing that could hold it
+// without a line of this app changing, so the rule is the plan's own sentence
+// read literally -- `mobile/package.json` gains **no** Firebase, Google, Apple
+// or Microsoft **auth** dependency (docs/mobile-auth, Task P4) -- and it is
+// here rather than in `dependencies.test.js` because it is a boundary: a
+// package that authenticates is a package with something to keep.
+//
+// **Why the three `@react-native-firebase` packages are not refused.** The
+// manifest declares `app`, `analytics` and `crashlytics` today (P7.1a's
+// telemetry), none of them carries a sign-in surface, and the rule is about
+// auth rather than about the word Firebase. What it refuses is the shape of an
+// auth SDK -- an `auth`, `authentication`, `signin`, `login`, `oauth`, `msal`
+// or `identity` name -- plus the bare `firebase` package, whose
+// `signInWithCredential` is the spec's step 4 in one call.
+//
+// `devDependencies` is not scanned: the manifest declares none, `dependencies`
+// is what a build installs into the app, and a package that never reaches the
+// binary cannot hold a session in it.
+
+/** An auth SDK, by the shape of its name. */
+const PROVIDER_AUTH = /(?:^|[/@_-])(?:auth(?:entication)?|signin|login|oauth\d*|msal|identity|apple-authentication|google-signin)(?:$|[/@_-])/i;
+
+/** The Firebase SDK itself: what the spec's `signInWithCredential` needs. */
+const FIREBASE_SDK = /^@?firebase(?:\/|$)/;
+
+/** The declared dependencies that are a provider auth SDK, sorted. */
+function providerAuth(manifest) {
+  return Object.keys(manifest.dependencies ?? {})
+    .filter((name) => PROVIDER_AUTH.test(name) || FIREBASE_SDK.test(name))
+    .sort();
+}
+
+test('the manifest declares no provider auth SDK (D221, D234)', () => {
+  // The positive control first: every provider the spec's table names, and the
+  // Firebase SDK that would sign the phone in, is flagged -- so a green run
+  // below is about this manifest and not about a pattern that matches nothing.
+  for (const name of [
+    '@react-native-firebase/auth',
+    '@firebase/auth',
+    'firebase',
+    'expo-auth-session',
+    'expo-apple-authentication',
+    '@react-native-google-signin/google-signin',
+    'react-native-app-auth',
+    '@azure/msal-react',
+    'amazon-cognito-identity-js',
+  ]) {
+    assert.deepEqual(providerAuth({ dependencies: { [name]: '1.0.0' } }), [name], name);
+  }
+  // ... and the manifest's own Firebase packages are not auth: refusing them
+  // would refuse the telemetry the app has, and the rule would then be about a
+  // word rather than about a session.
+  assert.deepEqual(
+    providerAuth({
+      dependencies: {
+        '@react-native-firebase/app': '27.1.0',
+        '@react-native-firebase/analytics': '27.1.0',
+        '@react-native-firebase/crashlytics': '27.1.0',
+      },
+    }),
+    [],
+  );
+  // ... and the manifest itself. Mutation: add any name above to
+  // `mobile/package.json`'s `dependencies` and this fails naming it.
+  const manifest = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
+  assert.deepEqual(
+    providerAuth(manifest),
+    [],
+    'D221: no provider session reaches a project, so the app declares no provider auth SDK',
+  );
+});
