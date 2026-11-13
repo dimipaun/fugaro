@@ -311,10 +311,14 @@ func TestBootstrapRigorForAFollowUpReadsNoBranch(t *testing.T) {
 
 // TestBootstrapRigorTakesTheRunsOwnRequestOnlyUpward: the run's own request —
 // `fugaro run --mode`, carried in the task (T1.6) — is D6's raise-only input.
-// Above the layers' answer it decides and the block says so; below it, or off
-// the axis (Hotfix), it decides nothing and the layer that already set the mode
-// keeps its name, which is the fail-closed direction a launcher must not be
-// able to outvote.
+// Above the layers' answer it decides and the block says so; below it, it
+// decides nothing and the layer that already set the mode keeps its name, which
+// is the fail-closed direction a launcher must not be able to outvote.
+//
+// Hotfix is the one mode the request takes whole (rigor.Mode.PerRun): the owner
+// ruled on 2026-11-13 that `--mode hotfix` needs no opt-in
+// (docs/rigor-command/implementation-plan.md R7), so it decides even from below
+// every on-axis mode, and the block names the request as the layer that did.
 func TestBootstrapRigorTakesTheRunsOwnRequestOnlyUpward(t *testing.T) {
 	base := `version: 1
 project: aurora
@@ -332,7 +336,7 @@ rigor:
 	}{
 		{"a request above the repository's default", "critical", rigor.Critical, rigor.FromRequest},
 		{"a request below it", "poc", rigor.Startup, rigor.FromRepo},
-		{"hotfix, which is off the axis", "hotfix", rigor.Startup, rigor.FromRepo},
+		{"hotfix, which the request takes whole", "hotfix", rigor.Hotfix, rigor.FromRequest},
 		{"no request at all", "", rigor.Startup, rigor.FromRepo},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

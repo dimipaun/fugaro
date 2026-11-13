@@ -3,12 +3,15 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -106,17 +109,67 @@ func TestRunRefusesAModeOutsideTheVocabulary(t *testing.T) {
 	}
 }
 
-// TestRunAcceptsHotfix: hotfix is in the vocabulary and off the axis — it
-// ranks below every on-axis mode (internal/rigor's Rank), so the launcher
-// accepts it and it is the resolver that refuses to let it lower anything.
-// A launcher that refused the word would make D12's one route to it, an
-// operator asking for it, unreachable from the CLI.
-func TestRunAcceptsHotfix(t *testing.T) {
+// TestRunTakesHotfixWithNoOptIn: `fugaro run --mode hotfix` takes effect for
+// that run with no opt-in. The owner ruled on 2026-11-13 that the gate D12
+// named is dropped rather than built — there is no way to predict when a
+// hotfix will be needed (docs/rigor-command/implementation-plan.md R7) — so
+// the flag is not merely accepted: it decides, from a repository that
+// configures no rigor block at all.
+//
+// The three halves are one fact read three ways: the stored task carries the
+// request, the launcher prints no "has no effect" note (it took effect), and
+// no key exists that could have opted in — the repository schema's rigor
+// block carries the mode's two keys and nothing else, so there is no
+// `rigor.hotfix` for a launcher or a runner to read.
+//
+// Mutation (put the old behaviour back — rigor.Mode.PerRun() false for hotfix,
+// so Resolve's rank comparison discards a request ranking 0): the resolution
+// answers pro, the launcher prints the note, and this fails on the note.
+func TestRunTakesHotfixWithNoOptIn(t *testing.T) {
+	// Read before the fixture: a launch changes the working directory.
+	keys := repoRigorKeys(t)
 	f := newCloudFixture(t)
-	spec := runWithRigor(t, f, "20261025-120200-abcd", []string{"--mode", "hotfix"}, "Fix production.")
-	if spec.Rigor != "hotfix" {
-		t.Fatalf("rigor = %q, want the flag's mode", spec.Rigor)
+	writeBuildRecord(t, f, appSlug, "web", release0111)
+	checkoutWorkflows(t, "", "  web: { commands: { build: sh build.sh, test: sh test.sh } }\n")
+	_, errOut, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261025-120200-abcd", "--mode", "hotfix", "Fix production.")
+	if err != nil {
+		t.Fatal(err)
 	}
+	if spec := readSpec(t, f, "20261025-120200-abcd"); spec.Rigor != rigor.Hotfix {
+		t.Fatalf("rigor = %q, want the flag's mode recorded as asked", spec.Rigor)
+	}
+	if strings.Contains(errOut, rigorNoEffect) {
+		t.Errorf("the launcher says the request had no effect, and the run's mode is the request:\n%s", errOut)
+	}
+	if got := rigor.Resolve(rigor.Config{}, rigor.Request{Mode: rigor.Hotfix}); got.Mode != rigor.Hotfix || got.From != rigor.FromRequest {
+		t.Fatalf("Resolve = (%q, %q); want hotfix from the request: this is the property the note above reads", got.Mode, got.From)
+	}
+	if !slices.Equal(keys, []string{"areas", "default"}) {
+		t.Errorf("schemas/fugaro.schema.json's rigor block carries %v; want only the mode's two keys: the ruling dropped the gate D12 named, and a key that does not exist cannot opt a run in", keys)
+	}
+}
+
+// repoRigorKeys is the property names of the repository schema's rigor block,
+// sorted. It is read from the schema rather than from a list here because the
+// claim it serves is "no opt-in key exists anywhere": a key added to the
+// document a repository's fugaro.yaml is validated against would be the gate
+// the 2026-11-13 ruling dropped.
+func repoRigorKeys(t *testing.T) []string {
+	t.Helper()
+	var doc struct {
+		Properties struct {
+			Rigor struct {
+				Properties map[string]any `json:"properties"`
+			} `json:"rigor"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal([]byte(readDoc(t, "schemas/fugaro.schema.json")), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Properties.Rigor.Properties) == 0 {
+		t.Fatal("schemas/fugaro.schema.json has no rigor block")
+	}
+	return slices.Sorted(maps.Keys(doc.Properties.Rigor.Properties))
 }
 
 // TestRunRefusesTooManyDeclaredPaths: the list is bounded (task.
@@ -294,6 +347,10 @@ const rigorNoEffect = "it has no effect"
 // nothing. The launcher says so once, on stderr, and still launches: the
 // request is recorded as asked, and the note is no error.
 //
+// Hotfix is not one of these cases: it is the mode a request takes whole
+// (rigor.Mode.PerRun), so it takes effect from any starting point and there is
+// nothing to note (TestRunTakesHotfixWithNoOptIn).
+//
 // Mutation (drop the note): the first two cases see nothing on stderr.
 func TestRunNotesAModeThatRaisesNothing(t *testing.T) {
 	cases := []struct {
@@ -301,8 +358,6 @@ func TestRunNotesAModeThatRaisesNothing(t *testing.T) {
 		paths                 []string
 		want                  string // "" means no note
 	}{
-		{"hotfix under the default", "", "hotfix", nil,
-			"--mode hotfix is not higher than the repository's resolved mode pro: it has no effect"},
 		{"equal to the repository's", "rigor:\n  default: critical\n", "critical", nil,
 			"--mode critical is not higher than the repository's resolved mode critical: it has no effect"},
 		{"below an area the paths match", "rigor:\n  default: poc\n  areas:\n    - { name: payments, match: \"payments/**\", mode: critical }\n", "pro", []string{"payments/x.go"},
@@ -345,7 +400,7 @@ func TestRunAttemptsNotesAModeThatRaisesNothingOnce(t *testing.T) {
 	f := newCloudFixture(t)
 	writeBuildRecord(t, f, appSlug, "web", release0111)
 	checkoutWorkflows(t, "", "  web: { commands: { build: sh build.sh, test: sh test.sh } }\n")
-	_, errOut, err := execute(t, "run", "--repo", "acme/app", "--attempts", "2", "--mode", "hotfix", "Fix it.")
+	_, errOut, err := execute(t, "run", "--repo", "acme/app", "--attempts", "2", "--mode", "poc", "Fix it.")
 	if err != nil {
 		t.Fatal(err)
 	}

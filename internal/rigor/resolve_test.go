@@ -98,9 +98,15 @@ func TestResolveLayerPrecedence(t *testing.T) {
 			Critical, FromRepo, nil,
 		},
 		{
-			"a request for hotfix raises nothing: it is off the axis",
+			"a request for hotfix is taken whole: it needs no opt-in and is not compared by rank",
 			Config{Repo: Pro}, Request{Mode: Hotfix},
-			Pro, FromRepo, nil,
+			Hotfix, FromRequest, nil,
+		},
+		{
+			"a request for hotfix decides over an area rule too",
+			Config{Repo: Pro, RepoAreas: []Area{{Name: "pay", Match: "p/**", Mode: Critical}}},
+			Request{Mode: Hotfix, Paths: []string{"p/x.go"}},
+			Hotfix, FromRequest, []string{"pay"},
 		},
 		{
 			"an area may set hotfix, and it is then the answer",
@@ -116,6 +122,58 @@ func TestResolveLayerPrecedence(t *testing.T) {
 		}
 		if names := areaNames(got.Areas); !slices.Equal(names, c.wantArea) {
 			t.Errorf("%s: areas = %v; want %v", c.name, names, c.wantArea)
+		}
+	}
+}
+
+// TestResolveTakesAHotfixRequestWhole pins the owner's ruling of 2026-11-13
+// (docs/rigor-command/implementation-plan.md R7): `fugaro run --mode hotfix`
+// takes effect with no opt-in, so a request for it decides the run whether the
+// layers below resolved poc or critical, and whether an area rule matched. The
+// gate D12 named is dropped rather than built, and nothing here reads a key
+// that would gate it — the whole input is the request itself.
+//
+// The other half is the raise-only rule, which this must not have moved:
+// every on-axis request is still compared by Rank and still cannot lower.
+//
+// Mutation (drop req.Mode.PerRun() from Resolve's request block, leaving the
+// rank comparison): hotfix ranks 0, so every case here answers the layer's
+// mode instead and the test fails on the first one.
+func TestResolveTakesAHotfixRequestWhole(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  Config
+		req  Request
+	}{
+		{"over the built-in default", Config{}, Request{Mode: Hotfix}},
+		{"over a project default", Config{Project: Critical}, Request{Mode: Hotfix}},
+		{"over a repository default", Config{Repo: Critical}, Request{Mode: Hotfix}},
+		{"over an area the paths match", Config{
+			Repo:      Pro,
+			RepoAreas: []Area{{Name: "pay", Match: "p/**", Mode: Critical}},
+		}, Request{Mode: Hotfix, Paths: []string{"p/x.go"}}},
+	}
+	for _, c := range cases {
+		got := Resolve(c.cfg, c.req)
+		if got.Mode != Hotfix || got.From != FromRequest {
+			t.Errorf("%s: Resolve = (%q, %q); want (%q, %q): --mode hotfix takes effect with no opt-in",
+				c.name, got.Mode, got.From, Hotfix, FromRequest)
+		}
+	}
+	// D22's monotone rule is untouched: a mode the run has already reached
+	// still holds over a weaker answer. The request is given to every moment
+	// the runner resolves at, so a run that asked for hotfix reached it at
+	// bootstrap and this is the defensive reading of a record that says
+	// otherwise — the fail-closed one.
+	if got := Resolve(Config{Repo: Pro}, Request{Mode: Hotfix, Reached: Critical}); got.Mode != Critical {
+		t.Errorf("Resolve(repo pro, request hotfix, reached critical) = %q; want critical: a mode a run has reached never falls", got.Mode)
+	}
+	// Raise-only is unchanged for every other mode: a request below what the
+	// layers resolved still leaves the layers' answer standing, and one equal
+	// to it still leaves the layer that set it named.
+	for _, m := range []Mode{POC, Startup} {
+		if got := Resolve(Config{Repo: Critical}, Request{Mode: m}); got.Mode != Critical || got.From != FromRepo {
+			t.Errorf("Resolve(repo critical, request %q) = (%q, %q); want (critical, repo): a request may not lower a run", m, got.Mode, got.From)
 		}
 	}
 }

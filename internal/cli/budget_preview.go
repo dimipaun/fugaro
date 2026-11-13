@@ -572,12 +572,13 @@ func runBudgetPreview(cmd *cobra.Command, o *budgetPreviewOptions) error {
 		KnobsFrom: knobs.from, PerRunCapSource: []string{}, Notes: []string{}}
 	doc.Knobs.FirstLineRounds, doc.Knobs.ReviewRounds = knobs.first, knobs.rounds
 	doc.RigorMode = knobs.mode
-	// A request the layers already meet changes nothing (rigor.Resolve's
+	// An on-axis request the layers already meet changes nothing (rigor.Resolve's
 	// raise-only rule), and the figures above are the resolved mode's: a caller
 	// who asked for poc and got pro's ceiling has to be told why, or the flag
 	// reads as broken. run says the same thing at a launch (noteRigorRequest).
 	// A request the resolution landed on exactly is not this case: it took
-	// effect, whether or not the layer that set the mode is the request.
+	// effect, whether or not the layer that set the mode is the request — and
+	// hotfix always lands on exactly itself, since the request takes it whole.
 	if o.mode != "" && knobs.mode != rigor.Mode(o.mode) {
 		doc.Notes = append(doc.Notes, fmt.Sprintf("--mode %s has no effect: this repository resolves to %s, and a request may raise a mode and never lower it", o.mode, knobs.mode))
 	}

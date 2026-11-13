@@ -98,15 +98,25 @@ func TestFollowUpKeepsTheRecordedMode(t *testing.T) {
 	}
 }
 
-// TestFollowUpRefusesHotfix: hotfix is reached by an operator's own run under
-// the base branch's opt-in (D12), never through a follow-up — the levels
-// overlay's amendment to T5.2. It ranks below every on-axis mode, so it could
-// not raise a PR's mode either, and the two rules are not one: the refusal
-// names the operator's own route, which is what tells it apart from the
-// lower-mode one. A PR that recorded no mode is the case that holds them
-// apart — there the raise-only rule would let hotfix through (nothing is
-// recorded to be lower than), so the guard is the only thing refusing it.
-func TestFollowUpRefusesHotfix(t *testing.T) {
+// TestFollowUpTakesHotfix: `--mode hotfix` is accepted on a follow-up and the
+// stored task carries it. The owner ruled on 2026-11-13 that the gate D12
+// named is dropped rather than built — there is no way to predict when a
+// hotfix will be needed (docs/rigor-command/implementation-plan.md R7) — so a
+// follow-up is the same door as a first run: an operator asking for hotfix
+// gets it, and the sentence about a base-branch opt-in is gone with the
+// refusal that used to carry it.
+//
+// The recorded mode is the case that tells the two rules apart: against a PR
+// recorded at pro the raise-only rule would refuse hotfix as lower (it ranks
+// 0), so the request is taken whole rather than compared. Against a PR that
+// recorded nothing there is no comparison to make at all, and it must still be
+// accepted and still be stored as asked — Strictest would drop it for the
+// empty recorded mode the same way it drops it for pro.
+//
+// Mutation (put the old refusal back — refuseFollowUpRigor's hotfix case, or a
+// followUpRigor that returns Strictest for every request): the launch is
+// refused, or stores the PR's mode instead of hotfix, and this fails.
+func TestFollowUpTakesHotfix(t *testing.T) {
 	for _, c := range []struct {
 		name     string
 		recorded rigor.Mode
@@ -118,31 +128,53 @@ func TestFollowUpRefusesHotfix(t *testing.T) {
 			f := newCloudFixture(t)
 			seedRootRigor(t, f, rootID, c.recorded)
 			writeBuildRecord(t, f, appSlug, "web", release0111)
-			_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--mode", "hotfix", "also rename x")
-			if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "an operator's own run") || !strings.Contains(err.Error(), "(D12)") {
-				t.Fatalf("err = %v, want exit 1 naming the operator's own route to hotfix", err)
+			if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--mode", "hotfix", "also rename x"); err != nil {
+				t.Fatalf("a follow-up asking for hotfix was refused: %v", err)
 			}
-			if n := len(f.run.Executions()); n != 0 {
-				t.Fatalf("%d executions, want none", n)
-			}
-			if !noTaskStored(t, f, fuID) {
-				t.Errorf("the refused launch wrote a task.json")
+			if got := readSpec(t, f, fuID).Rigor; got != rigor.Hotfix {
+				t.Fatalf("rigor = %q, want hotfix, the mode the flag asked for", got)
 			}
 		})
 	}
 }
 
+// TestStoredFollowUpKeepsAHotfixRequest: a stored follow-up task that asks for
+// hotfix launches as it is. --retry and a repeated --run-id reuse the stored
+// task, and recheckFollowUp re-applies the raise-only rule to the request that
+// task carries; the rule does not judge hotfix (rigor.Mode.PerRun), or a
+// follow-up the operator launched with --mode hotfix could not be retried —
+// the stored request ranks below the PR's recorded mode, and the refusal would
+// name a lowering nobody asked for.
+//
+// Mutation (put the old refusal back): the stored request is refused as
+// "lower than pro", which is the shape of the failure this pins.
+func TestStoredFollowUpKeepsAHotfixRequest(t *testing.T) {
+	f := newCloudFixture(t)
+	seedRootRigor(t, f, rootID, rigor.Pro)
+	writeBuildRecord(t, f, appSlug, "web", release0111)
+	fu := followUpSpec(fuID, rootID, rootID, 7)
+	fu.Rigor = rigor.Hotfix
+	seedSpec(t, f, fu, false)
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID); err != nil {
+		t.Fatalf("a stored follow-up asking for hotfix was refused: %v", err)
+	}
+	if got := readSpec(t, f, fuID).Rigor; got != rigor.Hotfix {
+		t.Fatalf("rigor = %q, want the stored request kept", got)
+	}
+}
+
 // TestFollowUpNeverKeepsARecordedHotfix: hotfix is off the axis, so it is not
-// a mode a follow-up keeps. The runs on a PR can record it — an operator's own
-// run under the base branch's opt-in (D12) is a run on that branch — and a
-// follow-up that inherited it would be the second route to it that D12 does
-// not have: reached by a launch that asked for nothing, and one --mode hotfix
-// is refused on. The record imposes nothing instead, so the launch asks for
-// none and the runner resolves from the layers.
+// a mode a follow-up inherits. The runs on a PR can record it — an operator
+// asked for it on one — and a follow-up that inherited it would reach it
+// through a launch that asked for nothing, which is not the explicit per-run
+// choice the mode is (rigor.Mode.PerRun). The record imposes nothing instead,
+// so the launch asks for none and the runner resolves from the layers; a
+// follow-up that wants hotfix says so, and --mode hotfix is accepted on one
+// (TestFollowUpTakesHotfix).
 //
 // Mutation (drop the bounded.Mode != rigor.Hotfix term from resolvePR): the
-// follow-up stores rigor: hotfix, which is also the stored task the same
-// refusal would then reject on --retry.
+// follow-up stores rigor: hotfix, and a launch that asked for nothing reaches
+// the mode with the least review there is.
 func TestFollowUpNeverKeepsARecordedHotfix(t *testing.T) {
 	f := newCloudFixture(t)
 	seedRootRigor(t, f, rootID, rigor.Hotfix)

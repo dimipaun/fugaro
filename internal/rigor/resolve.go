@@ -113,11 +113,16 @@ type Request struct {
 	// asks for none. It may raise and never lower (D6, F14): the fail-closed
 	// direction, kept for every run kind.
 	//
-	// Hotfix is off the axis and ranks below every on-axis mode, so a
-	// request for it raises nothing. That is deliberate: reaching Hotfix is
-	// an operator invoking it under a repository's own opt-in (D12), not a
-	// request that outranks an area, and no request may carry a run below a
-	// floor.
+	// Hotfix is the one mode the request takes a run to outright rather than
+	// by outranking what the layers resolved (Mode.PerRun): it is off the
+	// axis and ranks below every on-axis mode, so a rank comparison would
+	// always discard it, while an operator asking for it is saying
+	// production is on fire. The owner's ruling of 2026-11-13 is that this
+	// door needs no opt-in — the gate D12 named is dropped rather than built
+	// (docs/rigor-command/implementation-plan.md R7) — so `--mode hotfix`
+	// decides for the run that asked for it. No request carries a run below
+	// a floor: the floors are outside every layer and are applied over this
+	// resolution, not by it.
 	Mode Mode
 	// Paths are the paths the run touches, matched against the area rules
 	// (D20c): the paths a caller declared at bootstrap, and the run's own
@@ -149,7 +154,8 @@ type Resolved struct {
 // Resolve is the one resolver (D6): the narrowest layer that sets the mode
 // wins — an area the run's paths match, then the repository's own value,
 // then the project default, then Fugaro's own default — and on top of that
-// the run's own request may raise and never lower it.
+// the run's own request may raise and never lower it, except for Hotfix,
+// which the request takes whole (Mode.PerRun).
 //
 // A narrower layer may set a *lower* mode than a wider one (D21): the order
 // is a precedence, not an only-tightens rule — that is what a default is
@@ -177,9 +183,12 @@ func Resolve(cfg Config, req Request) Resolved {
 		mode, from = Strictest(ModesOf(matched)...), FromArea
 		areas = matched
 	}
-	if Known(req.Mode) && req.Mode.Rank() > mode.Rank() {
-		// Raise-only: a request equal to the resolved mode leaves the layer
-		// that already set it named, since that is the narrower answer.
+	if Known(req.Mode) && (req.Mode.PerRun() || req.Mode.Rank() > mode.Rank()) {
+		// Raise-only for every on-axis mode: a request equal to the resolved
+		// mode leaves the layer that already set it named, since that is the
+		// narrower answer. Hotfix is not raised to and not compared at all —
+		// it is taken whole, so a request for it decides whether the layers
+		// resolved pro or critical (Mode.PerRun).
 		mode, from = req.Mode, FromRequest
 	}
 	if Known(req.Reached) && req.Reached.Rank() > mode.Rank() {
