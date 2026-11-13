@@ -131,7 +131,7 @@ import {
 } from '../../src/main/installations'
 import { MAX_LICENCE_KEY_LENGTH } from '../../src/main/licence'
 import { APP_ENTRY_URL } from '../../src/main/protocol'
-import { SPAWN_KIND_FOR, SPAWN_COMMANDS, argvFor } from '../../src/main/spawn'
+import { MAX_ARGUMENT_LENGTH, SPAWN_KIND_FOR, SPAWN_COMMANDS, argvFor, isSafeArgumentValue } from '../../src/main/spawn'
 import {
   BRIDGE_VERSION,
   CONSOLE_BRIDGE_KEY,
@@ -2362,7 +2362,7 @@ describe('the roadmap move’s schema (GV3.2)', () => {
     // identity of the task is the source's question, asked against the last
     // document it read. (A leading dash is admitted, and it is harmless for the
     // reason the whole value is: it never becomes a word of an argv.)
-    for (const node of ['', 'a b', 'a#b', 'a\nb', 'a\u0000b', 'a"b', 'a'.repeat(301), 7, true, null, ['a']]) {
+    for (const node of ['', 'a b', 'a#b', 'a\nb', 'a\u0000b', 'a"b', 'a'.repeat(MAX_ARGUMENT_LENGTH + 1), 7, true, null, ['a']]) {
       const decision = validateArguments('roadmap.move', { node, toRelease: '' })
       expect(decision.ok, `roadmap.move accepted the node ${JSON.stringify(node)}`).toBe(false)
       if (node === '' || node === 'a b' || node === 'a#b' || node === 'a"b') {
@@ -2398,6 +2398,31 @@ describe('the roadmap move’s schema (GV3.2)', () => {
       expect(decision.ok, `roadmap.move accepted a ${key}`).toBe(false)
       expect(decision.ok ? '' : decision.reason, key).toBe(`roadmap.move takes no ${key}`)
     }
+  })
+
+  it('admits no node key longer than the argv element the move would spell', () => {
+    // **The two bounds are one number.** The word a node key selects is the
+    // document's own `id`, emitted as the positional, and every argv element is
+    // held to `MAX_ARGUMENT_LENGTH` (`src/main/spawn.ts`) -- while the key itself
+    // is held to `MAX_ROADMAP_NODE_LENGTH` here. A schema that admitted a longer
+    // key would let a person select a task this console then refuses to spell,
+    // with a sentence about the value's *alphabet* rather than its length -- so
+    // the boundary either side of the guard is pinned here, both ways round: what
+    // the schema admits, the guard passes, and one character past it neither
+    // does.
+    const longest = 'a'.repeat(MAX_ARGUMENT_LENGTH)
+    const past = `${longest}a`
+    expect(isSafeArgumentValue(longest), 'the guard and this case disagree about the bound').toBe(true)
+    expect(validateArguments('roadmap.move', { node: longest, toRelease: '' }).ok).toBe(true)
+    expect(isSafeArgumentValue(past)).toBe(false)
+    const decision = validateArguments('roadmap.move', { node: past, toRelease: '' })
+    expect(decision.ok).toBe(false)
+    // And the refusal names the length, because that is the whole of what is
+    // wrong with the key: a sentence about the alphabet would be about a value
+    // that spells every character of it correctly.
+    expect(decision.ok ? '' : decision.reason).toBe(
+      `node is longer than ${String(MAX_ARGUMENT_LENGTH)} characters`,
+    )
   })
 })
 

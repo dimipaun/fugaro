@@ -276,16 +276,23 @@ export const MAX_GRAPH_SCOPE_LENGTH = 'orchestrator:'.length + 40
  * What the pattern is for is the other half: a key that could never be one, so a
  * payload cannot make this process carry a path, a newline or a megabyte into a
  * refusal sentence. It is `isSafeArgumentValue`'s alphabet (`src/main/spawn.ts`)
- * with the length bound of its own, even though no node key ever reaches argv --
- * the value a node key reaches is the document's own `id`, and that one is
- * emitted from main-process state.
+ * **and that function's own length bound** (`MAX_ARGUMENT_LENGTH`), even though
+ * no node key ever reaches argv -- the value a node key reaches is the
+ * document's own `id`, and that one is emitted from main-process state and held
+ * to the same bound by `assertMoveWord`. A key this schema admits and that bound
+ * would not is a task a person could select and the console would then refuse to
+ * spell, with a sentence about an alphabet the key spells perfectly well; so the
+ * two are one number, and a key longer than it is refused here, by name and
+ * length.
  */
-const ROADMAP_NODE_RE = /^[A-Za-z0-9._:@/+-]{1,300}$/
+const ROADMAP_NODE_RE = /^[A-Za-z0-9._:@/+-]{1,200}$/
 
 /** MAX_ROADMAP_NODE_LENGTH is the length `ROADMAP_NODE_RE` admits, read out
  * here so the check that runs before the grammar and the pattern it feeds cannot
- * disagree about where a key ends. */
-const MAX_ROADMAP_NODE_LENGTH = 300
+ * disagree about where a key ends. It is `spawn.ts`'s `MAX_ARGUMENT_LENGTH` for
+ * the reason above, and `ipc.test.ts` holds the two together: the longest key
+ * this schema admits is the longest value that guard passes. */
+const MAX_ROADMAP_NODE_LENGTH = 200
 
 /**
  * ROADMAP_RELEASE_RE is the shape of the release a move names: **the record's

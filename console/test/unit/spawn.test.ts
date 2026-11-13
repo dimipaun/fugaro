@@ -80,6 +80,7 @@ import {
   isSafeArgumentValue,
   keyedArguments,
   locationsFor,
+  MAX_ARGUMENT_LENGTH,
   nodeSpawner,
   parseVersionLine,
   planFor,
@@ -792,6 +793,31 @@ describe('the spawn table and the argv it builds', () => {
     // row at all -- is the release the main process read. A move built with no
     // main-process context is not a shorter argv: it is refused.
     expect(() => argvFor('roadmap.move', { node, toRelease: box }, safeContext())).toThrow(/has no move to spell/)
+  })
+
+  it('refuses a move word that is merely long by its length, and not by its alphabet', () => {
+    // **A task id longer than any argv element may be is not a bad spelling.**
+    // The word is the document's own `<plan>/<task>` and every character of it is
+    // one `isSafeArgumentValue` admits, so the only true sentence about it names
+    // the bound it passed (`MAX_ARGUMENT_LENGTH`) -- and that bound is also the
+    // node key's own in `ipc.ts`, which is what keeps a key from being admitted
+    // by the schema and refused here, one step later, for the wrong reason.
+    const long = 'gv/plan.md/'.concat('x'.repeat(MAX_ARGUMENT_LENGTH))
+    const move = { ...safeContext(), roadmapMove: { task: long, to: 'a'.repeat(64), expect: '' } }
+    expect(() => argvFor('roadmap.move', { node: 'coordinator:gv/T1', toRelease: 'a'.repeat(64) }, move)).toThrow(
+      `roadmap.move's node is longer than ${String(MAX_ARGUMENT_LENGTH)} characters`,
+    )
+    // One character inside the bound is a command line like any other: the guard
+    // is the whole of the check, so nothing about the task's own text is read.
+    const fits = 'x'.repeat(MAX_ARGUMENT_LENGTH)
+    const ok = { ...safeContext(), roadmapMove: { task: fits, to: 'a'.repeat(64), expect: '' } }
+    expect([...argvFor('roadmap.move', { node: 'coordinator:gv/T1', toRelease: 'a'.repeat(64) }, ok)]).toContain(fits)
+    // And a word the bound does not explain is still refused by the alphabet's
+    // own sentence: the length is asked first, and only it.
+    const newline = { ...safeContext(), roadmapMove: { task: 'gv/plan.md\nT1', to: 'a'.repeat(64), expect: '' } }
+    expect(() => argvFor('roadmap.move', { node: 'coordinator:gv/T1', toRelease: 'a'.repeat(64) }, newline)).toThrow(
+      "roadmap.move's node is not a value this console will pass to the CLI",
+    )
   })
 
   it('keys a subscription on the arguments that reach a word, and no others', () => {

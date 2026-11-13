@@ -1451,8 +1451,20 @@ function roadmapReleaseWord(value: string): string {
  * applies, asked here of a word that came from main-process state rather than
  * from a payload -- the document is read off a CLI's stdout, so its own fields
  * are untrusted text like any other, and a task id carrying a newline must be
- * refused rather than spawned. */
+ * refused rather than spawned.
+ *
+ * **The length is asked first and answered in its own words.** Every other way
+ * this can refuse is a *spelling* this console will not pass -- an empty word, a
+ * NUL, a leading dash, a character outside the alphabet -- and a task id that is
+ * merely long is none of those. It is a legitimate task of the record whose
+ * qualified id is longer than any argv element may be, and a person reading "not
+ * a value this console will pass to the CLI" about it is reading about the wrong
+ * problem. The bound is `MAX_ARGUMENT_LENGTH`, which is also the node key's own
+ * in `ipc.ts`, so a key is never admitted there and refused here. */
 function assertMoveWord(operation: string, key: string, word: string): void {
+  if (word.length > MAX_ARGUMENT_LENGTH) {
+    refused(`${operation}'s ${key} is longer than ${MAX_ARGUMENT_LENGTH} characters`)
+  }
   if (word === '' || word.includes('\u0000') || !isSafeArgumentValue(word)) {
     refused(`${operation}'s ${key} is not a value this console will pass to the CLI`)
   }
@@ -1549,12 +1561,24 @@ export function sameArgv(left: readonly string[], right: readonly string[]): boo
 }
 
 /**
+ * MAX_ARGUMENT_LENGTH is how long one argv element may be, and it is read out
+ * here rather than spelled in the check because two places need the same number:
+ * `isSafeArgumentValue` below, and `assertMoveWord` -- which holds a word built
+ * from a **document** rather than from a payload, and reports a word over this
+ * bound by its length instead of by the alphabet it does spell correctly. The
+ * same number is `ipc.ts`'s `MAX_ROADMAP_NODE_LENGTH`, for the node key a move
+ * names: a key admitted there and refused here would be a task a person can
+ * select and the console then declines to spell.
+ */
+export const MAX_ARGUMENT_LENGTH = 200
+
+/**
  * isSafeArgumentValue answers whether one renderer argument may become an argv
  * element. A leading `-` is refused as well as the alphabet: a value that looks
  * like a flag is a value that changes the command.
  */
 export function isSafeArgumentValue(value: string): boolean {
-  if (value === '' || value.length > 200) return false
+  if (value === '' || value.length > MAX_ARGUMENT_LENGTH) return false
   if (value.startsWith('-')) return false
   return ARGUMENT_RE.test(value)
 }
