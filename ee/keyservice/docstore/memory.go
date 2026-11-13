@@ -85,6 +85,29 @@ func (m *Memory) Put(_ context.Context, collection, id string, doc any) error {
 	return nil
 }
 
+// Delete drops one document, as the seam says. The collection's epoch moves
+// with it: a document that goes is a change to what a query of that collection
+// answers, and a transaction sitting on a query of it must meet the conflict
+// rather than commit onto the list it read.
+func (m *Memory) Delete(_ context.Context, collection, id string) error {
+	if err := named(collection, id); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	coll := m.colls[collection]
+	if coll == nil {
+		return nil
+	}
+	if _, held := coll.docs[id]; !held {
+		return nil
+	}
+	delete(coll.docs, id)
+	m.version++
+	coll.epoch = m.version
+	return nil
+}
+
 func (m *Memory) Query(_ context.Context, collection string, q Query) ([]Document, error) {
 	if collection == "" {
 		return nil, ErrUnnamed

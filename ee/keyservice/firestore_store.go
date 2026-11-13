@@ -15,9 +15,9 @@ package keyservice
 // document store and against store.go's Memory, so the two answer alike, and
 // the deploy is one constructor argument away (docstore.NewFirestore over the
 // client P1.5's database is reached through). What the seam cannot express is
-// named where it is used: it has no field-level update and no delete, and both
-// cost something here — a read-modify-write, a record the database's own TTL
-// collects — rather than being papered over.
+// named where it is used: it has no field-level update, so a record that moves
+// one field is read and written back whole (TouchKey), and it is the reason
+// that method is a transaction.
 //
 // **Everything a check needs is one transaction.** store.go states the two
 // places where a read-then-write is the whole rule — an issuance is refused
@@ -200,25 +200,38 @@ func (s *DocStore) TouchKey(ctx context.Context, keyID string, at time.Time) err
 	})
 }
 
-// SaveHandover keeps one rotation's answer for its window. It sweeps nothing:
-// store.go's memory store drops the handovers whose window has closed, and this
-// store has no delete to drop them with — the seam has none, because nothing
-// else here needs one. What bounds the window instead is the read below, which
-// answers an expired handover as one the store does not hold, and the
-// database's own TTL on the collection (P1.5), which is what keeps the store
-// from growing a list of live credentials nothing collects.
-func (s *DocStore) SaveHandover(ctx context.Context, h Handover, _ time.Time) error {
+// SaveHandover keeps one rotation's answer for its window, and it sweeps the
+// windows that have closed as it writes — store.go's memory store does exactly
+// this, and the reason is store.go's own: a handover is the one record here
+// that holds key material, so an expired one goes rather than waiting for
+// somebody to ask about that key again, which is the case the sweep is for
+// (a holder whose answer was lost never asks a second time).
+//
+// A TTL on the collection could not do this job, and it is worth saying why,
+// because it is the cheaper thing to reach for: the seam writes every value as
+// the JSON it marshals to, so a handover's Until is stored as a string, and a
+// Firestore TTL policy fires on a Timestamp field rather than on the text of
+// one. The sweep is what keeps this store from growing a list of live
+// credentials, and docstore's Delete exists for it.
+func (s *DocStore) SaveHandover(ctx context.Context, h Handover, now time.Time) error {
 	if h.KeyID == "" {
 		return ErrHandoverUnnamed
+	}
+	if err := s.sweptHandovers(ctx, now); err != nil {
+		return err
 	}
 	return s.db.Put(ctx, handoverCollection, h.KeyID, h)
 }
 
-// Handover answers the rotation a key is still inside its window for. The
-// window is read here and not left to the store: what a handover holds is a
-// successor's key and its renewal secret, so one whose window has closed is
-// answered as absent even if the database still holds it.
+// Handover answers the rotation a key is still inside its window for. It sweeps
+// first, as the write does and for the same reason, so a key nobody asks about
+// again is still collected by whichever call comes next; the window is checked
+// again below, because another instance whose clock is behind can write an
+// expired handover in between the sweep and this read.
 func (s *DocStore) Handover(ctx context.Context, keyID string, now time.Time) (Handover, bool, error) {
+	if err := s.sweptHandovers(ctx, now); err != nil {
+		return Handover{}, false, err
+	}
 	var h Handover
 	held, err := s.one(ctx, handoverCollection, keyID, &h)
 	if err != nil || !held {
@@ -228,6 +241,34 @@ func (s *DocStore) Handover(ctx context.Context, keyID string, now time.Time) (H
 		return Handover{}, false, nil
 	}
 	return h, true, nil
+}
+
+// sweptHandovers drops every handover whose window has closed.
+//
+// It reads the collection rather than asking the database for the expired ones:
+// a query by Until would be a comparison this seam does not have (its filters
+// are equalities, docstore's Where), and the size here is bounded by the
+// rotations of the last day — store.go states the same scale for the same
+// reason. The cost of that read is on every handover read and write, which is
+// once per rotation and once per replay, not once per request.
+func (s *DocStore) sweptHandovers(ctx context.Context, now time.Time) error {
+	docs, err := s.db.Query(ctx, handoverCollection, docstore.Query{})
+	if err != nil {
+		return err
+	}
+	for _, d := range docs {
+		var h Handover
+		if err := d.Decode(&h); err != nil {
+			return err
+		}
+		if now.Before(h.Until) {
+			continue
+		}
+		if err := s.db.Delete(ctx, handoverCollection, d.ID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ClaimTrial writes §14's one trial per installation and per account. Both

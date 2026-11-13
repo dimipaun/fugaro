@@ -117,6 +117,10 @@ func (p prefixed) Put(ctx context.Context, collection, id string, doc any) error
 	return p.db.Put(ctx, p.collection(collection), id, doc)
 }
 
+func (p prefixed) Delete(ctx context.Context, collection, id string) error {
+	return p.db.Delete(ctx, p.collection(collection), id)
+}
+
 func (p prefixed) Query(ctx context.Context, collection string, q docstore.Query) ([]docstore.Document, error) {
 	return p.db.Query(ctx, p.collection(collection), q)
 }

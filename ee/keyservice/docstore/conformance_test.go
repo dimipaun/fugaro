@@ -81,6 +81,7 @@ func Run(t *testing.T, open Factory) {
 	t.Run("AMissingDocumentIsNotAnError", func(t *testing.T) { testMissing(t, open) })
 	t.Run("ADocumentComesBackAsItWentIn", func(t *testing.T) { testRoundTrip(t, open) })
 	t.Run("APutReplacesTheWholeDocument", func(t *testing.T) { testPutReplaces(t, open) })
+	t.Run("ADeleteDropsTheDocument", func(t *testing.T) { testDelete(t, open) })
 	t.Run("AQueryTakesACollection", func(t *testing.T) { testQuery(t, open) })
 	t.Run("AFilterComparesTheValueItWrites", func(t *testing.T) { testFilterTypes(t, open) })
 	t.Run("ATransactionCommitsTogether", func(t *testing.T) { testCommitTogether(t, open) })
@@ -177,6 +178,49 @@ func testPutReplaces(t *testing.T, open Factory) {
 	if got.Seats != 0 || got.Open || got.Since != (time.Time{}) || got.Note != nil {
 		t.Errorf("the document still holds fields from the write it replaced: %+v. A put is the whole document, so a field the second write left out is gone rather than kept", got)
 	}
+}
+
+// testDelete is the seam's one destructive call, and what it is for: a record
+// whose own window has closed has to go rather than stay (docs.go's Delete). It
+// is held to the same standard as a write — the document is gone from the
+// collection and not merely hidden from a lookup by id — and to being something
+// a sweep can call twice, since two instances sweeping the same collection is
+// the ordinary case and not the rare one.
+func testDelete(t *testing.T, open Factory) {
+	s := open(t)
+	doc(t, s, "one", sample())
+	doc(t, s, "two", sample())
+
+	if err := s.Delete(ctx(), collection, "one"); err != nil {
+		t.Fatalf("Delete = %v, want nil", err)
+	}
+	var got widget
+	if held, err := s.Get(ctx(), collection, "one", &got); err != nil || held {
+		t.Errorf("Get after Delete = (%v, %v), want (false, nil)", held, err)
+	}
+	if !reflect.DeepEqual(got, widget{}) {
+		t.Errorf("Get after Delete filled the caller's value with %+v: nothing was read, so nothing may be written", got)
+	}
+	rest, err := s.Query(ctx(), collection, docstore.Query{})
+	if err != nil {
+		t.Fatalf("Query after Delete: %v", err)
+	}
+	if ids := idsOf(rest); strings.Join(ids, ",") != "two" {
+		t.Errorf("the collection holds %v after deleting one of two documents, want [two]: a document that is gone is gone from a query too, or a caller that lists the collection would keep handing out what was dropped", ids)
+	}
+
+	// Deleting what is not there is the state the caller asked for, which is
+	// what makes a sweep safe to run from two instances at once.
+	for _, id := range []string{"one", "never"} {
+		if err := s.Delete(ctx(), collection, id); err != nil {
+			t.Errorf("Delete of %q, which the store does not hold = %v, want nil", id, err)
+		}
+	}
+
+	// And the document can be written again: a delete is not a tombstone that
+	// makes an id unusable.
+	doc(t, s, "one", sample())
+	same(t, "the document written again after a delete", read(t, s, "one"), sample())
 }
 
 func testQuery(t *testing.T, open Factory) {
@@ -374,6 +418,8 @@ func testUnnamed(t *testing.T, open Factory) {
 		{"a get with no collection", func() error { _, err := s.Get(ctx(), "", "one", nil); return err }},
 		{"a get with no id", func() error { _, err := s.Get(ctx(), collection, "", nil); return err }},
 		{"a query with no collection", func() error { _, err := s.Query(ctx(), "", docstore.Query{}); return err }},
+		{"a delete with no collection", func() error { return s.Delete(ctx(), "", "one") }},
+		{"a delete with no id", func() error { return s.Delete(ctx(), collection, "") }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if err := tc.call(); !errors.Is(err, docstore.ErrUnnamed) {

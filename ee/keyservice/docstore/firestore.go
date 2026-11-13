@@ -80,6 +80,20 @@ func (f *Firestore) Put(ctx context.Context, collection, id string, doc any) err
 	return nil
 }
 
+// Delete drops one document, as the seam says. A document the database does not
+// hold is the state the caller asked for and not a failure, which is what the
+// SDK's own NotFound means here.
+func (f *Firestore) Delete(ctx context.Context, collection, id string) error {
+	if err := named(collection, id); err != nil {
+		return err
+	}
+	_, err := f.client.Collection(collection).Doc(id).Delete(ctx)
+	if err != nil && status.Code(err) != codes.NotFound {
+		return fmt.Errorf("docstore: dropping %s/%s: %w", collection, id, err)
+	}
+	return nil
+}
+
 func (f *Firestore) Query(ctx context.Context, collection string, q Query) ([]Document, error) {
 	if collection == "" {
 		return nil, ErrUnnamed
@@ -106,10 +120,14 @@ func (f *Firestore) RunTransaction(ctx context.Context, fn func(ctx context.Cont
 
 // firestoreTx is one attempt's transaction. It carries the client because the
 // SDK addresses a document through the client's own reference and not through
-// the transaction.
+// the transaction, and it carries whether the attempt has written, because the
+// SDK refuses a read after a write with an error of its own and the seam has to
+// refuse it as the sentinel both backends answer with (docstore.ErrReadAfterWrite,
+// which the suite holds this backend to as hard as the memory store).
 type firestoreTx struct {
 	client *firestore.Client
 	tx     *firestore.Transaction
+	wrote  bool
 }
 
 func (t *firestoreTx) ref(collection, id string) *firestore.DocumentRef {
@@ -119,6 +137,9 @@ func (t *firestoreTx) ref(collection, id string) *firestore.DocumentRef {
 func (t *firestoreTx) Get(ctx context.Context, collection, id string, out any) (bool, error) {
 	if err := named(collection, id); err != nil {
 		return false, err
+	}
+	if t.wrote {
+		return false, ErrReadAfterWrite
 	}
 	snap, err := t.tx.Get(t.ref(collection, id))
 	if status.Code(err) == codes.NotFound {
@@ -141,12 +162,19 @@ func (t *firestoreTx) Put(_ context.Context, collection, id string, doc any) err
 	if err != nil {
 		return err
 	}
-	return t.tx.Set(t.ref(collection, id), fields)
+	if err := t.tx.Set(t.ref(collection, id), fields); err != nil {
+		return err
+	}
+	t.wrote = true
+	return nil
 }
 
 func (t *firestoreTx) Query(_ context.Context, collection string, q Query) ([]Document, error) {
 	if collection == "" {
 		return nil, ErrUnnamed
+	}
+	if t.wrote {
+		return nil, ErrReadAfterWrite
 	}
 	docs, err := readAll(t.tx.Documents(t.client.Collection(collection)))
 	if err != nil {

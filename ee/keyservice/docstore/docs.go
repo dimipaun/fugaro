@@ -2,8 +2,9 @@
 // See ee/LICENSE for the terms.
 
 // Package docstore is the portal's own storage: collections of JSON documents,
-// and the four things its callers need of them — read one, write one, query a
-// collection, and run a group of those as one all-or-nothing transaction.
+// and the five things its callers need of them — read one, write one, drop one,
+// query a collection, and run a group of those as one all-or-nothing
+// transaction.
 //
 // **A document is JSON, and nothing else.** Whatever a caller writes is
 // marshalled on the way in and decoded on the way out, so no fact about a
@@ -42,9 +43,9 @@ import (
 	"sort"
 )
 
-// Store is the portal's storage. Get and Put address one document by its
-// collection and its id, Query reads a collection, and RunTransaction runs a
-// function whose reads and writes land together or not at all.
+// Store is the portal's storage. Get, Put and Delete address one document by
+// its collection and its id, Query reads a collection, and RunTransaction runs
+// a function whose reads and writes land together or not at all.
 //
 // Nothing here is a schema: a collection is a name a caller chose, and this
 // package never sees the shape of what is written in one beyond the JSON object
@@ -62,6 +63,20 @@ type Store interface {
 	// value rather than an accumulation of writes. A caller that must not
 	// overwrite reads inside a transaction first.
 	Put(ctx context.Context, collection, id string, doc any) error
+	// Delete drops one document.
+	//
+	// It is here for the one record that has to go rather than stay: a handover
+	// of a rotation whose window has closed holds a successor's key and its
+	// renewal secret, and ee/keyservice/store.go's Handover says what keeping
+	// one means — a growing list of live credentials, in a store whoever
+	// operates the service can read. So a store that could not drop a record
+	// could not keep that promise, and this is the seam's smallest answer to
+	// it: the caller that wrote the record is the caller that sweeps it.
+	//
+	// A document the store does not hold is not an error. The caller is
+	// sweeping, and another instance's sweep may have reached the record first;
+	// the state the caller asked for is the state it gets.
+	Delete(ctx context.Context, collection, id string) error
 	// Query answers the documents of one collection that match q, in id order.
 	Query(ctx context.Context, collection string, q Query) ([]Document, error)
 	// RunTransaction runs fn, and commits what it wrote only if nothing it

@@ -333,6 +333,88 @@ func testTrialOnce(t *testing.T, open func(t *testing.T) Store) {
 	}
 }
 
+// TestTheDocStoreDropsAnExpiredHandover is the one thing the suite above cannot
+// see: that the store stops *holding* a handover once its window has closed.
+// What a handover holds is a successor's key and its renewal secret, so a
+// durable store that answered "absent" and kept the record would be the growing
+// list of live credentials store.go's Handover refuses — and the answer through
+// the interface is the same either way, which is why this reads the document
+// store the records are actually kept in.
+//
+// The sweep runs before the write and before the read, as store.go's memory
+// store runs it, so a record the write that follows is the next call's to
+// collect: what this pins is that every call collects, not that one write can.
+func TestTheDocStoreDropsAnExpiredHandover(t *testing.T) {
+	ctx := context.Background()
+	db := docstore.NewMemory()
+	store := NewDocStore(db)
+	live := Handover{
+		KeyID: "fgk_1", SecretHash: freshDigest(t),
+		Key: "fgk_2", RenewalSecret: "secret-issued-as-the-test-runs",
+		Until: issuedAt.Add(24 * time.Hour),
+	}
+	if err := store.SaveHandover(ctx, live, issuedAt); err != nil {
+		t.Fatalf("SaveHandover = %v", err)
+	}
+	if held := handovers(t, ctx, db); len(held) != 1 {
+		t.Fatalf("the store holds %d handover(s) after one write, want 1", len(held))
+	}
+
+	// A window that had already closed when it was written, which is what an
+	// instance whose clock is behind leaves behind.
+	stale := Handover{
+		KeyID: "fgk_9", SecretHash: freshDigest(t),
+		Key: "fgk_10", RenewalSecret: "another-secret-issued-as-the-test-runs",
+		Until: issuedAt,
+	}
+	if err := store.SaveHandover(ctx, stale, issuedAt); err != nil {
+		t.Fatalf("SaveHandover of a window that had already closed = %v", err)
+	}
+
+	// The next write sweeps it and keeps the one still inside its window: a
+	// sweep that took the live window with it would lose the successor's key
+	// and secret, which is the one thing a handover exists to answer with.
+	next := Handover{
+		KeyID: "fgk_20", SecretHash: freshDigest(t),
+		Key: "fgk_21", RenewalSecret: "a-third-secret-issued-as-the-test-runs",
+		Until: live.Until,
+	}
+	if err := store.SaveHandover(ctx, next, issuedAt); err != nil {
+		t.Fatalf("SaveHandover = %v", err)
+	}
+	if held := handovers(t, ctx, db); len(held) != 2 || held[0].KeyID != live.KeyID || held[1].KeyID != next.KeyID {
+		t.Errorf("the store holds %+v, want the two handovers inside their windows (%s, %s) and not the one whose window had closed", held, live.KeyID, next.KeyID)
+	}
+
+	// The read sweeps too, so a key nobody asks about again is still collected
+	// by whichever call comes next.
+	if expired, found, err := store.Handover(ctx, live.KeyID, live.Until); err != nil || found {
+		t.Fatalf("Handover past the window = (%+v, %v), want it answered as absent", expired, err)
+	}
+	if held := handovers(t, ctx, db); len(held) != 0 {
+		t.Errorf("after a read past its window, the store still holds %+v, want nothing: what the sweep would not collect is key material kept for the life of the database", held)
+	}
+}
+
+// handovers is what the document store really holds, read past the store's own
+// answers: the suite in this file goes through the interface and this cannot.
+func handovers(t *testing.T, ctx context.Context, db docstore.Store) []Handover {
+	t.Helper()
+	docs, err := db.Query(ctx, handoverCollection, docstore.Query{})
+	if err != nil {
+		t.Fatalf("reading the handovers the store keeps: %v", err)
+	}
+	out := make([]Handover, 0, len(docs))
+	for _, d := range docs {
+		var h Handover
+		if err := d.Decode(&h); err != nil {
+			t.Fatalf("decoding a handover the store keeps: %v", err)
+		}
+		out = append(out, h)
+	}
+	return out
+}
+
 // TestTheDocstoreRefusesARecordNobodyNamed is the one difference between the two
 // stores, and it is a case of its own because the suite above cannot hold it:
 // the suite runs against both, and store.go's memory store, which has no
