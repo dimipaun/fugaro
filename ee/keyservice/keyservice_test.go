@@ -79,6 +79,11 @@ const (
 	schedulerAudience = "https://api.fugaro.example"
 	sealerKeyName     = "projects/fugaro-example/locations/europe-west1/keyRings/portal/cryptoKeys/handover"
 	tenantsCollection = "orgs"
+	// termsVersion is the version of the terms the fixture's deployment serves
+	// and records at a sign-up (D2199). The owner has not published the wording
+	// itself, so a test names a version of its own, in the shape the terms will
+	// spell one.
+	termsVersion = "2026-10-27"
 )
 
 // buyerAddress is the address a merchant's payload carries for the buyer of a
@@ -390,6 +395,14 @@ func (s *signInSpy) Verify(_ context.Context, idToken string) (Caller, error) {
 	return s.caller, nil
 }
 
+// RequireSSO is the rule and not the spy: the fixture's seam applies P1.3's own
+// implementation (ssoRefuses), so a test that reads a refusal reads the rule a
+// deployment would apply. What the spy answers is the caller, and that is what a
+// test sets to be somebody else.
+func (s *signInSpy) RequireSSO(caller Caller, rule SSORule) error {
+	return ssoRefuses(signInOf(caller), rule)
+}
+
 // paddleSpy is the merchant of record in a test: what it answers and what it was
 // asked, so an area's test reads that a transaction was created server-side and
 // that a seat change and a cancellation went the same way (F15).
@@ -616,6 +629,7 @@ func newFixtureWith(t *testing.T, env Environment, edit func(*fixture)) *fixture
 		SchedulerAudience: schedulerAudience,
 		SealerKeyName:     sealerKeyName,
 		TenantsCollection: tenantsCollection,
+		TermsVersion:      termsVersion,
 	}
 	f.deps = &Deps{
 		Store:     f.store,

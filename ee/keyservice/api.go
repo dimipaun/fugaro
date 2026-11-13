@@ -391,9 +391,17 @@ type Caller struct {
 // into the caller that token names, having checked the token's audience, its
 // issuer, its signature and that the address is verified, first. What an area
 // then asks of a caller — the provider rule, a fresh sign-in, a pinned tenant —
-// is P1.3's, on this type.
+// is P1.3's, and it is asked through this seam for the same reason the
+// verification is: a rule about a sign-in belongs to whatever holds the
+// sign-in.
 type SignIn interface {
 	Verify(ctx context.Context, idToken string) (Caller, error)
+	// RequireSSO refuses a caller whose sign-in the rule does not admit (D2207,
+	// F10). The rule is the caller's to build from the organisation's own record
+	// (P1.3's SSORule) and it follows the membership a request USES and not the
+	// organisation the request is about, so an area passes the membership's own
+	// organisation.
+	RequireSSO(caller Caller, rule SSORule) error
 }
 
 // Paddle is the merchant of record as the portal reaches it. Every method is one

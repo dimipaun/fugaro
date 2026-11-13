@@ -216,6 +216,63 @@ type SSORule struct {
 	MicrosoftTenants []string
 }
 
+// PortalSignIn is this verifier behind the API's own seam (api.go's SignIn):
+// what a deployment hands Deps.SignIn is this, so that no area ever holds a
+// PortalVerifier and no area needs a second implementation of the rules.
+//
+// It is one of the two places the seam's own type and this file's meet, and the
+// one place the conversion lives, because the two carry the same facts about a
+// sign-in and a field either side grows has to be carried across here (signInOf)
+// or a later rule would read a caller with a fact missing and refuse a person who
+// did nothing wrong.
+type PortalSignIn struct{ Verifier *PortalVerifier }
+
+// Verify answers the caller the token names (api.go's seam).
+func (p PortalSignIn) Verify(ctx context.Context, idToken string) (Caller, error) {
+	signIn, err := p.Verifier.Verify(ctx, idToken)
+	if err != nil {
+		return Caller{}, err
+	}
+	return callerOf(signIn), nil
+}
+
+// RequireSSO applies P1.3's rule to a caller this seam answered (D2207, F10).
+func (p PortalSignIn) RequireSSO(caller Caller, rule SSORule) error {
+	return p.Verifier.RequireSSO(signInOf(caller), rule)
+}
+
+// signInOf is a caller as the sign-in the rules are written over. The two types
+// carry the same facts — the account, the address, the provider, the sign-in's
+// instant and the tenant — and this is the one place they are converted, so a
+// rule that starts reading a field is given it here rather than in every area
+// that applies one.
+//
+// Member is the one fact the seam's caller has no field for, and that is a gap
+// rather than a decision: the folded address is what invitations are compared
+// against (P2.2, F10), and whichever rule needs it is the one that adds it to
+// api.go's Caller and carries it here.
+func signInOf(caller Caller) VerifiedSignIn {
+	return VerifiedSignIn{
+		UID:      caller.UID,
+		Email:    caller.Email,
+		Provider: caller.Provider,
+		AuthTime: caller.AuthTime,
+		TenantID: caller.TenantID,
+	}
+}
+
+// callerOf is the other direction: the sign-in Verify answered, as the caller
+// the seam's own Verify answers with.
+func callerOf(signIn VerifiedSignIn) Caller {
+	return Caller{
+		UID:      signIn.UID,
+		Email:    signIn.Email,
+		Provider: signIn.Provider,
+		AuthTime: signIn.AuthTime,
+		TenantID: signIn.TenantID,
+	}
+}
+
 // PortalVerifier verifies the portal's sign-in tokens and applies the rules a
 // membership adds over them.
 type PortalVerifier struct {
@@ -306,6 +363,15 @@ func (v *PortalVerifier) Verify(ctx context.Context, raw string) (VerifiedSignIn
 // a customer membership is not one of those, so a request that uses only one
 // never reaches this.
 func (v *PortalVerifier) RequireSSO(signIn VerifiedSignIn, rule SSORule) error {
+	return ssoRefuses(signIn, rule)
+}
+
+// ssoRefuses is the rule itself, over the two facts it reads: the provider a
+// sign-in used and the directory it came from. It is a package function and not
+// only a method on the verifier because it reads nothing of one — which is what
+// lets the API's own seam (api.go's SignIn, which carries a Caller rather than a
+// VerifiedSignIn) apply the same rule rather than a second copy of it.
+func ssoRefuses(signIn VerifiedSignIn, rule SSORule) error {
 	switch signIn.Provider {
 	case signInGoogle:
 		return nil

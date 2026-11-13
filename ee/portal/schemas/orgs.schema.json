@@ -12,6 +12,12 @@
     },
     {
       "$ref": "#/$defs/create"
+    },
+    {
+      "$ref": "#/$defs/list"
+    },
+    {
+      "$ref": "#/$defs/members"
     }
   ],
   "$defs": {
@@ -159,6 +165,40 @@
           "minLength": 1,
           "maxLength": 64,
           "description": "The name the person gives the organisation they are creating."
+        }
+      }
+    },
+    "list": {
+      "type": "object",
+      "description": "The organisations one person belongs to, which is what the organisation switcher renders (P2.1, spec §Tenancy). The one they last worked in is first: the order is the memberships' own last_used_at, and a membership nobody has selected sorts after every membership somebody has.",
+      "additionalProperties": false,
+      "required": [
+        "organisations"
+      ],
+      "properties": {
+        "organisations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/organisation"
+          },
+          "description": "Every organisation the caller is a member of, most recently used first. It is empty for a person who belongs to none, which is what a newly created account looks like before its first sign-up."
+        }
+      }
+    },
+    "members": {
+      "type": "object",
+      "description": "One organisation's members (P2.1). Owners and admins read it and a member does not (D2186, D2195): a member reads the organisation's screens and decides nothing in the portal, and who else belongs is one of the things decided.",
+      "additionalProperties": false,
+      "required": [
+        "members"
+      ],
+      "properties": {
+        "members": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/membership"
+          },
+          "description": "Every membership of the organisation, in the store's own order — the organisation's id and then the uid — which is not an order a screen has to keep."
         }
       }
     }
