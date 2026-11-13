@@ -109,10 +109,10 @@ func refuseWorkspace(w http.ResponseWriter) {
 
 // rotationPrefix opens the source a rotation writes. It is its own name because
 // two things read it: the rotation that writes one, and §8's walk from a
-// refunded key to the successors a renewal minted from it, which matches the
-// prefix and appends the key it is walking from — a source a seat change wrote
-// is the merchant's event id and carries no such prefix, and that is what keeps
-// the refund off a key the customer still pays for.
+// refunded key to the other keys of its licence, which takes the prefix and the
+// key it is walking from as a step from a key to the key that replaced it — the
+// one route whose record names its predecessor rather than only the
+// subscription the walk is already matching on.
 const rotationPrefix = "rotation:"
 
 // rotationSource names the record one rotation writes, and it is the store's

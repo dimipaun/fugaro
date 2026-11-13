@@ -1605,12 +1605,15 @@ func TestRefundRevokesTheKey(t *testing.T) {
 	if entry.Reason != ReasonRefund || !entry.At.Equal(older) {
 		t.Errorf("the late refund's entry is %+v, want %q at %s, the event's own instant", entry, ReasonRefund, older)
 	}
-	if got := f.revocations(); len(got) != 3 {
-		t.Errorf("§8's list holds %d entry(ies), want the three the merchant named", len(got))
+	// The keys the events named are a licence and a half: the refund of the
+	// purchase withdraws the seat change's key beside it, since the two are one
+	// licence the customer paid for once (D2147).
+	if got := f.revocations(); len(got) != 4 {
+		t.Errorf("§8's list holds %d entry(ies), want the four keys of the two licences the merchant named", len(got))
 	}
 }
 
-// TestARefundRevokesTheWholeRotationChain: §8 and D2131 as the owner ruled on
+// TestARefundRevokesTheWholeRotationChain: §8 and D2147 as the owner ruled on
 // 2026-11-13 — a refund withdraws the key its event names **and every successor
 // a rotation minted from it**. Those successors are the same licence continued,
 // and the money going back has to reach them: without the walk the refunded
@@ -1618,11 +1621,9 @@ func TestRefundRevokesTheKey(t *testing.T) {
 // the id the merchant's own transaction carries and that is the key a renewal
 // replaced.
 //
-// What the walk does not follow is a seat change's key. That record's source is
-// the merchant's own event id under the subscription, and the key it mints is a
-// different licence for the seats the customer now pays for — the other side of
-// that line is TestSeatChangeReissuesUnderANewKeyID's, and it is the reason the
-// walk matches the rotation prefix rather than following a subscription.
+// The chain here is the endpoint's alone, which is the route the walk follows
+// from a key to the key that replaced it: TestARefundRevokesEveryKeyOfTheLicence
+// is the same ruling on the routes a key is minted by rather than rotated into.
 func TestARefundRevokesTheWholeRotationChain(t *testing.T) {
 	f, _ := renewing(t)
 	refunded := f.purchase("evt-1", "acme.example", 5, 365)
@@ -1673,20 +1674,18 @@ func TestARefundRevokesTheWholeRotationChain(t *testing.T) {
 	}
 }
 
-// TestARefundRevokesTheMerchantRenewalsOfTheLicenceToo: the same ruling on the
-// other route a licence's next key is minted by. A merchant renewal names the
-// subscription and the term it covers and **not** the key it follows — and that
-// key is the one a paying customer actually holds, since a renewal is §5.1's
-// ordinary route — so a walk that follows the rotation chain alone leaves it
-// live, and `/renew` hands its holder a fresh successor for a licence the money
-// has gone back for. The refund names the purchase's key, because that is the
-// key the merchant's own transaction resolves to and the store holds no
-// subscription-to-key index.
-//
-// The seat change beside them is the other side of the line: its record carries
-// the same subscription and the merchant's event id for a source, so it is the
-// source that keeps the walk off a key the customer still pays for.
-func TestARefundRevokesTheMerchantRenewalsOfTheLicenceToo(t *testing.T) {
+// TestARefundRevokesEveryKeyOfTheLicence: D2147's ruling on every route a key
+// of one sold licence is minted by. A merchant renewal names the subscription
+// and the term it covers and **not** the key it follows, and a seat change's
+// reissue names the merchant's event — so a walk that follows the rotation chain
+// alone, or one that takes a source other than a subscription as the line
+// between two licences, leaves a key of this one live, and `/renew` hands its
+// holder a fresh successor for a licence the money has gone back for. The key a
+// customer's installation actually runs is a seat change's or a renewal's,
+// never the purchase's, and the refund names the purchase's key because that is
+// the one the merchant's own transaction resolves to: the store holds no
+// subscription-to-key index and the event's key id is all it has.
+func TestARefundRevokesEveryKeyOfTheLicence(t *testing.T) {
 	f, _ := renewing(t)
 	refunded := f.purchase("evt-1", "acme.example", 5, 30)
 	untouched := f.purchase("evt-2", "widget.example", 3, 30)
@@ -1706,8 +1705,9 @@ func TestARefundRevokesTheMerchantRenewalsOfTheLicenceToo(t *testing.T) {
 		t.Fatalf("the seat change minted %d key(s), want one", len(records)-before)
 	}
 	reissued := records[len(records)-1].KeyID
-	// And the endpoint's rotation of the renewal, so the walk also has to carry
-	// on from a key it reached by subscription rather than by prefix.
+	// The endpoint's rotation of that key, so the walk also has to reach one it
+	// found by subscription: the rotation names the key it replaces and stamps
+	// the subscription beside it.
 	rotated, _ := renewThroughTheEndpoint(t, f, minted.Record.KeyID, minted.RenewalSecret)
 	if rotated.KeyID == reissued {
 		t.Fatalf("the endpoint's rotation of %s minted the seat change's key %s", minted.Record.KeyID, reissued)
@@ -1715,33 +1715,67 @@ func TestARefundRevokesTheMerchantRenewalsOfTheLicenceToo(t *testing.T) {
 
 	at := f.now
 	f.event(Event{ID: "evt-3", Type: EventRefund, OccurredAt: at, Subscription: refunded.Subscription, KeyID: refunded.KeyID})
-	for _, keyID := range []string{refunded.KeyID, minted.Record.KeyID, rotated.KeyID} {
+	for _, keyID := range []string{refunded.KeyID, minted.Record.KeyID, reissued, rotated.KeyID} {
 		entry, held, err := f.store.Revocation(context.Background(), keyID)
 		if err != nil || !held {
-			t.Errorf("the refund left no entry for %s (held=%v err=%v), want every key of the licence withdrawn: a refunded customer keeps no key a renewal minted for the subscription", keyID, held, err)
+			t.Errorf("the refund left no entry for %s (held=%v err=%v), want every key of the licence withdrawn: a refunded customer keeps no key a renewal, a seat change or a rotation minted", keyID, held, err)
 			continue
 		}
 		if entry.Reason != ReasonRefund || !entry.At.Equal(at) {
 			t.Errorf("the entry for %s is %+v, want %q at the event's own instant %s", keyID, entry, ReasonRefund, at)
 		}
 	}
-	for _, keyID := range []string{reissued, untouched.KeyID} {
+	if entry, held, _ := f.store.Revocation(context.Background(), untouched.KeyID); held {
+		t.Errorf("the refund of %s withdrew the key %s (%+v), want another licence's key left alone", refunded.KeyID, untouched.KeyID, entry)
+	}
+	if got := len(f.revocations()); got != 4 {
+		t.Errorf("§8's list holds %d entry(ies), want the four keys of the refunded licence", got)
+	}
+}
+
+// TestARefundOfAKeyNobodySoldTouchesNoOther: the other side of matching a
+// licence by its subscription, and both halves of the subscription the walk
+// reads. Every key the licensor mints by hand — the admin page's, the mint
+// tool's, a trial's, an invoiced Enterprise key — writes no subscription, so an
+// empty one is not a licence: a walk that matched on it would withdraw every
+// unsold key in the store at the first refund of any one of them. And a refund
+// whose key the store does hold is read from that record rather than from the
+// event's own word for the subscription, or a refund of an unsold key would walk
+// into the licence the merchant named instead — the sold key here — and withdraw
+// the keys of a customer whose money was never returned.
+func TestARefundOfAKeyNobodySoldTouchesNoOther(t *testing.T) {
+	f, _ := renewing(t)
+	sold := f.purchase("evt-0", "acme.example", 3, 30)
+	first, _, _ := heldKey(t, f, PolicyTeamMonthly)
+	second, _, _ := heldKey(t, f, PolicyTeamMonthly)
+	withoutASubscription(t, f, first)
+	withoutASubscription(t, f, second)
+
+	f.event(Event{ID: "evt-1", Type: EventRefund, OccurredAt: f.now, Subscription: sold.Subscription, KeyID: first})
+	if _, held, _ := f.store.Revocation(context.Background(), first); !held {
+		t.Errorf("the refund of %s wrote no entry, want the key it named withdrawn", first)
+	}
+	for _, keyID := range []string{second, sold.KeyID} {
 		if entry, held, _ := f.store.Revocation(context.Background(), keyID); held {
-			t.Errorf("the refund of %s withdrew the key %s (%+v), want a licence the customer still pays for left alone", refunded.KeyID, keyID, entry)
+			t.Errorf("the refund of the hand-minted key %s withdrew %s as well (%+v), want the key it named alone: its record names no subscription, and an empty one is not the licence the event named", first, keyID, entry)
 		}
 	}
-	if got := len(f.revocations()); got != 3 {
-		t.Errorf("§8's list holds %d entry(ies), want the three keys of the refunded licence", got)
+	if got := len(f.revocations()); got != 1 {
+		t.Errorf("§8's list holds %d entry(ies), want the one key the event named", got)
 	}
 }
 
 // TestSeatChangeReissuesUnderANewKeyID: §5.3, §8 and K2.2 — the reissue is a
 // new key under a new `key_id`, and that is what makes §8's list usable at all.
-// An entry names one key, so a reissue that kept the id of the key it replaces
-// would be withdrawn by a refund of a key the customer no longer holds, and a
-// key reissued after a leak would inherit the leak's entry. What does not move
-// is the term: the customer paid for one, and the new key covers what is left of
-// it at the seats they bought.
+// An entry names one key: a reissue that kept the id of the key it replaces
+// would inherit a leak's entry, and the record would name a key that is not the
+// one the customer was mailed. What does not move is the term: the customer paid
+// for one, and the new key covers what is left of it at the seats they bought.
+//
+// A refund of the key the reissue replaced withdraws both, because it withdraws
+// the licence and not the key the event happens to name (D2147): the reissue
+// shares the purchase's subscription, and the key a customer's installation
+// actually runs is this one.
 func TestSeatChangeReissuesUnderANewKeyID(t *testing.T) {
 	f := newFixture(t)
 	first := f.purchase("evt-1", "acme.example", 3, 365)
@@ -1759,7 +1793,7 @@ func TestSeatChangeReissuesUnderANewKeyID(t *testing.T) {
 	}
 	reissued := records[1]
 	if reissued.KeyID == first.KeyID {
-		t.Errorf("the reissue kept the key id %q, want its own: an entry of §8's list names one key and a refund of the superseded one must not withdraw the key the customer holds", reissued.KeyID)
+		t.Errorf("the reissue kept the key id %q, want its own: an entry of §8's list names one key, and the record has to name the key the customer was mailed", reissued.KeyID)
 	}
 	after := v1Verified(t, f, f.mintedKeys()[1])
 	if after.KeyID != reissued.KeyID {
@@ -1772,17 +1806,21 @@ func TestSeatChangeReissuesUnderANewKeyID(t *testing.T) {
 		t.Errorf("the reissued key binds the workspace %q, want the purchase's %q", after.WorkspaceID, before.WorkspaceID)
 	}
 
-	// The refund of the key the customer no longer holds withdraws that one.
-	f.advance(day)
-	f.event(Event{ID: "evt-3", Type: EventRefund, OccurredAt: f.now, Subscription: "sub-acme.example", KeyID: first.KeyID})
-	if _, held, _ := f.store.Revocation(context.Background(), first.KeyID); !held {
-		t.Errorf("the refund of %s wrote no entry, want the key it named withdrawn", first.KeyID)
-	}
-	if _, held, _ := f.store.Revocation(context.Background(), reissued.KeyID); held {
-		t.Errorf("the refund of the superseded key %s withdrew the reissued key %s: the reissue has its own id and §8's list is keyed by it", first.KeyID, reissued.KeyID)
-	}
 	if claims := v1Verified(t, f, f.mintedKeys()[1]); claims.KeyID != reissued.KeyID {
 		t.Errorf("the key the customer holds claims the key id %q, want the reissued %q", claims.KeyID, reissued.KeyID)
+	}
+
+	// The refund names the key the customer no longer holds and withdraws the
+	// reissue beside it: the merchant's transaction resolves to the purchase, and
+	// both keys are the one licence the money has gone back for.
+	f.advance(day)
+	f.event(Event{ID: "evt-3", Type: EventRefund, OccurredAt: f.now, Subscription: "sub-acme.example", KeyID: first.KeyID})
+	for _, keyID := range []string{first.KeyID, reissued.KeyID} {
+		if entry, held, _ := f.store.Revocation(context.Background(), keyID); !held {
+			t.Errorf("the refund of %s wrote no entry for %s, want every key of the licence withdrawn", first.KeyID, keyID)
+		} else if entry.Reason != ReasonRefund {
+			t.Errorf("the entry for %s is %+v, want %q", keyID, entry, ReasonRefund)
+		}
 	}
 }
 

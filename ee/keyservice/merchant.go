@@ -94,11 +94,11 @@ const SigningHeader = "Paddle-Signature"
 // would open the window before the purchase that starts it.
 const RenewalLead = 30 * 24 * time.Hour
 
-// renewalPrefix opens the source the merchant's own renewal writes, and it is
-// its own name because two things read it: that renewal, and §8's walk from a
-// refunded key to the other keys of the licence, which has no key id to follow
-// there — the source carries the subscription and the term instead, and it is
-// the subscription the walk matches on.
+// renewalPrefix opens the source the merchant's own renewal writes. The source
+// carries the subscription and the term because a renewal's key id says nothing
+// about the licence it belongs to, and §8's walk from a refunded key to the rest
+// of the licence matches records on exactly that subscription — the renewal's
+// among them, which is the key a paying customer actually holds (§5.1).
 const renewalPrefix = "renew:"
 
 var (
@@ -539,20 +539,32 @@ func (s *Service) seatChanged(ctx context.Context, e Event, sub Subscription) er
 // the subscription moves — a refund is not a cancellation, and the merchant's
 // cancellation is the event that stops the reissue (§5.3).
 //
-// The chain is the chain of one **licence** and nothing else, and that is the
-// owner's ruling of 2026-11-13. Two routes mint the licence's next key and the
-// walk follows both: the `/renew` endpoint's rotation, whose record says
-// `rotation:<the key it replaces>` (see `rotationSource`), and the merchant's own
-// renewal, whose record says `renew:<the subscription>:<the term>` and names no
-// predecessor key — the key a paying customer actually holds, since a renewal is
-// §5.1's ordinary route. The subscription is what the second route is followed
-// by, and it is the refunded key's own record that says which one that is; the
-// event's own word for it stands in where the store holds no record of the key,
-// because a key whose issuance write failed is still one §8 has to withdraw.
-// That is also what keeps a **seat change's** key out of the walk: it is a
-// different licence the customer still pays for — and a refund of the key it
-// replaced must not touch it — while sharing the subscription, so what tells the
-// two apart is the source rather than the subscription alone.
+// The walk is over one **licence** and nothing else, and that is the owner's
+// ruling of 2026-11-13 (D2147). Two steps reach a key of it and the walk takes
+// both: the subscription every issuance of a sold licence stamps on its record —
+// the purchase, the key a **seat change** reissued, and the merchant's own
+// renewal, which is §5.1's ordinary route and the key a paying customer actually
+// holds — and the record's own word for the key it replaced,
+// `rotation:<the key it replaces>` (see `rotationSource`), which the `/renew`
+// endpoint's rotation carries beside the subscription.
+//
+// The subscription is the step that matters, and a seat change's key belongs to
+// it like any other: a seat change mints inside the term the customer already
+// paid for, so it is the same licence and not a second one — `seatChanged` says
+// so, and the term is the subscription's while only the seats are in the key
+// (§5.3). Reading the source as what tells one licence from another was the
+// tempting shortcut and it is wrong: the key a customer's installation runs is
+// usually a seat change's or a renewal's, never the purchase's, so a withdrawal
+// that stopped at the purchase would leave the licence renewing after the money
+// went back.
+//
+// The refunded key's own record is what says which subscription the licence is;
+// the event's own word for it stands in where the store holds no record of the
+// key, because a key whose issuance write failed is still one §8 has to
+// withdraw. Only a key whose record names a subscription is walked, which is
+// what keeps a hand-minted key — the admin page's, the mint tool's, a trial's —
+// from being read as the same licence as every other key whose record names
+// none.
 //
 // Without the walk a customer who renewed once and then obtained a refund kept a
 // key nothing named and nothing could name: every entry on this list is a key id,
@@ -615,13 +627,15 @@ func (s *Service) withdrawn(ctx context.Context, e Event) error {
 			successors[from] = append(successors[from], record.KeyID)
 		}
 	}
-	// The refunded key and every merchant renewal of its own subscription start
-	// the walk, and each of those is then followed through the rotations it has.
+	// The refunded key and every other issuance of its own subscription start the
+	// walk, whatever minted it, and each of those is then followed through the
+	// rotations it has. The empty subscription is not a licence: an unsold key
+	// names none, so matching on "" would withdraw every hand-minted key there is.
 	seen := map[string]bool{e.KeyID: true}
 	walk := []string{e.KeyID}
 	if subscription != "" {
 		for _, record := range records {
-			if record.Subscription != subscription || !strings.HasPrefix(record.Source, renewalPrefix) || seen[record.KeyID] {
+			if record.Subscription != subscription || seen[record.KeyID] {
 				continue
 			}
 			seen[record.KeyID] = true
