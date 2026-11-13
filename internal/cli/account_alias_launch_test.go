@@ -195,6 +195,48 @@ func TestFollowUpLaunchLineNamesTheAliasItRead(t *testing.T) {
 	}
 }
 
+// TestBatchLaunchLineNamesTheAliasOnEveryAttempt is the same line for a batch
+// (--attempts): a best-of-N batch resolves its account once, from the same flag
+// and keys a single launch does (resolveBatchPlan), and every attempt's own step
+// is that resolution's line — one pair per attempt, which is what the operator
+// reads to know which account all N jobs mount.
+func TestBatchLaunchLineNamesTheAliasOnEveryAttempt(t *testing.T) {
+	f := newCloudFixture(t)
+	f.appendConfig(t, claudeAccountsConfig+aliasBlock("reviewer", "acme-overflow"))
+	oauthCheckout(t, f, "")
+	writeBuildRecord(t, f, otherSlug, "svc", release065)
+	f.run.AddJob(gcp.JobName(otherSlug, gcp.WorkflowVariant("svc", "acme-overflow")), "2", "4Gi")
+	out, _, err := execute(t, "run", "--repo", "acme/other", "--attempts", "2", "--token", "reviewer", "A task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(out, "(account reviewer -> acme-overflow)"); n != 2 {
+		t.Fatalf("%d of the batch's launch lines carry the pair, want one per attempt:\n%s", n, out)
+	}
+}
+
+// TestReviewLaunchLineNamesTheAliasItRead is the line for a review-mode launch
+// (--recipe review-only --pr N): it resolves its account from the flag exactly
+// as a fresh run does (reviewSpec), so `--token ALIAS` names the pair its step
+// prints. A review job names no pull request of its own in the line's follow-up
+// tail (it reviews one rather than continuing one), which is why the pair is
+// the whole of what this line adds.
+func TestReviewLaunchLineNamesTheAliasItRead(t *testing.T) {
+	f := newCloudFixture(t)
+	f.appendConfig(t, "claude_accounts:\n  acme-overflow: { allow_data_to: [\"acme/app\"] }\n"+aliasBlock("reviewer", "acme-overflow"))
+	baseBranchCheckout(t, "acme/app", aliasChainYAML, "main")
+	writeBuildRecord(t, f, appSlug, "web", release070)
+	f.run.AddJob(gcp.JobName(appSlug, gcp.WorkflowVariant("web", "acme-overflow")), "2", "4Gi")
+	const reviewRun = "20261007-100000-abcd"
+	out, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", reviewRun, "--recipe", "review-only", "--pr", "7", "--token", "reviewer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "launch " + task.ShortRun(reviewRun) + " (account reviewer -> acme-overflow)"; !strings.Contains(out, want) {
+		t.Errorf("the review launch's line does not carry %q:\n%s", want, out)
+	}
+}
+
 // TestReusedLaunchNamesNoPairItDidNotRead is the launch line's own edge, and it
 // is the one the reuse path makes: a launch whose --run-id already holds its own
 // task is answered with that task (reuseStored), so what starts is the account
