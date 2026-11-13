@@ -1655,7 +1655,11 @@ the security-sensitive tier**, which includes a built-in set — `.github/workfl
 whatever the repository declares. Paths are declared as `doublestar` globs in the
 `rigor:` block (and, project-wide, in the published policy), each with a mode, and
 the pattern is validated the way config validates patterns today (F9). **A task or
-a follow-up comment cannot lower a mode below a floor, ever** (D6, D8). **The mode
+a follow-up comment cannot lower a mode below a floor, ever** (D6, D8). *(Amended
+2026-11-13: the floor is read with the mode the run is at, so a request that takes a
+run to `hotfix` is held to hotfix's own row and lowers no level of the row it left —
+`fugaro run --mode hotfix` needs no opt-in, task R7 of
+`docs/rigor-command/implementation-plan.md`.)* **The mode
 used is recorded in the PR body and in the run record**, in the same words, so the
 two can be diffed. Reason: the repository's security posture for this tier is
 already written (`docs/credentials-service/implementation-plan.md` Global

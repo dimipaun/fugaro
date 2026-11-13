@@ -120,9 +120,17 @@ type Request struct {
 	// production is on fire. The owner's ruling of 2026-11-13 is that this
 	// door needs no opt-in — the gate D12 named is dropped rather than built
 	// (docs/rigor-command/implementation-plan.md R7) — so `--mode hotfix`
-	// decides for the run that asked for it. No request carries a run below
-	// a floor: the floors are outside every layer and are applied over this
-	// resolution, not by it.
+	// decides for the run that asked for it.
+	//
+	// The floors stay outside every layer and are applied over this
+	// resolution, not by it — but they are keyed by the mode the run is at
+	// (config.LevelInputs.Floor is "the owner's floor for Mode and only for
+	// it"), so a run the request takes to hotfix is held to hotfix's row and
+	// not to the row of the mode the layers resolved. An owner who wants
+	// hotfix runs floored says so for hotfix: `fugaro rigor floor set hotfix
+	// l2,l3`. What no mode reaches is the security-sensitive diff's own
+	// escalation, which turns the adversarial pass on for the run whatever
+	// mode it is at (internal/runner/plan.go).
 	Mode Mode
 	// Paths are the paths the run touches, matched against the area rules
 	// (D20c): the paths a caller declared at bootstrap, and the run's own
