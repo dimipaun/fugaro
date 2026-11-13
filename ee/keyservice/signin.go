@@ -841,6 +841,12 @@ func (s *Service) verifySignIn(ctx context.Context, raw string) (Caller, bool) {
 // would refuse a customer whose earlier key was refunded and who has bought
 // again. What closes a refund is knowing which key a subscription holds, and
 // that is the record the store has never kept.
+//
+// The portal that replaces this reading closes it by keeping that record: a
+// refund resolves to the entitlement (P4.2) and revocation is by entitlement
+// (P3.6, F29, `TestRevocationCoversEveryRotation`), which is the thing this route
+// would then read — so what is missing is that model and not a check this file
+// could invent from the subscription alone.
 func (s *Service) accountLicence(ctx context.Context, email string) (Subscription, bool, error) {
 	subscriptions, err := s.store.Subscriptions(ctx)
 	if err != nil {
@@ -888,6 +894,15 @@ func (s *Service) accountLicence(ctx context.Context, email string) (Subscriptio
 // recording which key a subscription currently holds and saying what that does
 // to a key another machine is already renewing, and that is the owner's decision
 // about what a re-download is rather than a repair here.
+//
+// The portal that replaces this reading places K2.3's rule elsewhere: under it a
+// sign-in **binds** an entitlement rather than handing a licence its bundle
+// (D2196, P3.5's screens, K3.3), the secret rotates with the binding (P3.1's
+// `TestRebindRotatesTheSecret`) and with the account page's reveal, which is
+// where the 24-hour handover K2.3 names is realized at all (P3.2, D2182 as
+// amended: one a day, after a fresh sign-in, the other owners mailed). Rotating
+// here as well would be a second rotation writer beside renew.go's, over a
+// secret the portal's own model says this flow does not hold.
 //
 // TestTokenFromASecondSignInLeavesTheEarlierKeyLive pins both halves.
 func (s *Service) signInMint(ctx context.Context, subscriptionID, account string) (MintedV1, error) {

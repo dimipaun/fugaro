@@ -1237,7 +1237,11 @@ func TestTokenFromARefundedSubscriptionStillSignsIn(t *testing.T) {
 // This test pins both halves of what is true today, and it is the one to turn
 // around when the decision lands: making a sign-in rotate shows up as the first
 // key no longer renewing below, and recording which key a subscription holds
-// shows up as the purchase's record or state carrying the subscription.
+// shows up as the purchase's record or state carrying the subscription. The
+// portal has already made that decision and put the rotation on its own tasks —
+// the binding (P3.1's `TestRebindRotatesTheSecret`) and the reveal (P3.2's
+// `TestRevealRotatesTheSecret`, the 24-hour handover of D2182 as amended) — so
+// what this test is waiting on is P3.1/P3.2 landing, not a repair here.
 func TestTokenFromASecondSignInLeavesTheEarlierKeyLive(t *testing.T) {
 	f, spy := subscribed(t)
 	purchased := f.records()[0]
@@ -1361,6 +1365,70 @@ func TestTokenFromASignerTheProjectDoesNotPublishIsRefused(t *testing.T) {
 	}
 	if spy.minted() != 0 {
 		t.Errorf("a token this project did not sign minted %d key(s), want none", spy.minted())
+	}
+}
+
+// TestNoVerifierConfiguredRefusesEverySignIn: `Deps.SignIn` is the portal's seam
+// (P1.0, P1.3) and a deployment may start without one — New refuses a missing
+// seam only for the routes that deployment mounts, and the §11 routes reach the
+// seam only at the moment a form carries a token. What such a deployment must
+// never do is answer a finished sign-in, so both of §11's doors refuse every
+// caller with the sign-in's own uniform sentence — the one a person would have
+// been given anyway — and nothing is minted, approved or kept.
+//
+// The seam is cleared on the running service rather than left out of the
+// deployment, because in this binary New refuses a nil one whatever is mounted:
+// P1.0's own probe route (api_test.go) declares `needSignIn`, and the deployment
+// this test is about is one that mounts no such route. The flows read the field
+// per request, so clearing it is the deployment.
+func TestNoVerifierConfiguredRefusesEverySignIn(t *testing.T) {
+	f, spy := subscribed(t)
+	f.svc.signIn = nil
+	verifier := freshVerifier(t)
+
+	// The door still opens: the form is static and what is missing is the check,
+	// which is answered where the token would have been read.
+	if form := f.get(RouteAuthorize, authorizeQuery(verifier)); form.Code != http.StatusOK {
+		t.Fatalf("the sign-in form answered %d with no verifier configured, want %d: %s", form.Code, http.StatusOK, form.Body.String())
+	}
+	rec := f.signedIn(t, f.acceptedToken(t), verifier)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("the sign-in answered %d with no verifier configured, want %d: %s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+	// The sentence is the sign-in's own and not the one about a licence: the
+	// account here holds one, and a service that cannot check a token must say
+	// the same thing to it as to a stranger rather than report what it found.
+	if body := strings.TrimSpace(rec.Body.String()); body != refuseSignIn {
+		t.Errorf("the sign-in was refused with %q, want the uniform sentence %q", body, refuseSignIn)
+	}
+	if held := f.codesHeld(); held.codes != 0 {
+		t.Errorf("the refused sign-in left %d authorize code(s) behind, want none: a code is a bundle waiting to be collected", held.codes)
+	}
+
+	// §11.4's other door, at both of its steps: the code the terminal is holding
+	// stays unapproved, so its poll is still told to wait.
+	start := f.startDevice(t, "acme-laptop")
+	confirm := f.post(RouteDeviceApprove, url.Values{"user_code": {start.UserCode}, "id_token": {f.acceptedToken(t)}})
+	if confirm.Code != http.StatusForbidden {
+		t.Fatalf("the confirmation page answered %d with no verifier configured, want %d: %s", confirm.Code, http.StatusForbidden, confirm.Body.String())
+	}
+	if body := strings.TrimSpace(confirm.Body.String()); body != refuseSignIn {
+		t.Errorf("the confirmation was refused with %q, want the uniform sentence %q", body, refuseSignIn)
+	}
+	done := f.post(RouteDeviceApprove, url.Values{
+		"user_code": {start.UserCode},
+		"id_token":  {f.acceptedToken(t)},
+		"confirm":   {"1"},
+	})
+	if done.Code != http.StatusForbidden {
+		t.Fatalf("the approval answered %d with no verifier configured, want %d: %s", done.Code, http.StatusForbidden, done.Body.String())
+	}
+	f.advance(devicePollInterval)
+	if rec := f.pollDevice(t, start.DeviceCode); !strings.Contains(rec.Body.String(), DevicePending) {
+		t.Errorf("the poll answered %d %s with no verifier configured, want %s: the code was approved without a sign-in", rec.Code, rec.Body.String(), DevicePending)
+	}
+	if spy.minted() != 0 {
+		t.Errorf("a deployment holding no verifier minted %d key(s), want none", spy.minted())
 	}
 }
 
