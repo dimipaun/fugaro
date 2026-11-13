@@ -81,8 +81,10 @@ func newBudgetPreviewCmd() *cobra.Command {
 			"the repository resolves (its rigor: block, the project layer) and never\n" +
 			"lower it, so a request below the resolved mode changes nothing and the\n" +
 			"preview says so rather than quoting a cheaper ceiling than the run would\n" +
-			"be held to. The mode is an input to the two terms the tool can compute\n" +
-			"and to nothing else: the recipe's stage bound, through the rounds the\n" +
+			"be held to. hotfix is the one exception, exactly as it is for a run: it is\n" +
+			"taken whole and needs no opt-in, so the figures are its own. The mode is an\n" +
+			"input to the two terms the tool can compute and to nothing else: the\n" +
+			"recipe's stage bound, through the rounds the\n" +
 			"mode's own row gives the knobs the checkout leaves unset, and the per-run\n" +
 			"cap, through the fraction of the deployed ceiling the mode carries.\n" +
 			"That is not the mode budget set --mode takes, which is the accounting\n" +
@@ -136,7 +138,7 @@ func newBudgetPreviewCmd() *cobra.Command {
 	f.StringVar(&o.recipe, "recipe", "", "the recipe to preview ("+strings.Join(recipe.CatalogNames(), ", ")+")")
 	f.IntVar(&o.runs, "runs", 0, "how many runs to estimate")
 	f.StringVar(&o.repo, "repo", "", "the repository (owner/name, or a path inside its checkout); default: the checkout's origin")
-	f.StringVar(&o.mode, "mode", "", "the rigor mode to preview: "+rigor.ModeList()+"; it may raise the mode the repository resolves (its rigor: block, the project layer) and never lower it, so a mode below the resolved one changes nothing. This is the rigor mode, not the accounting mode budget set --mode takes (observe or enforce)")
+	f.StringVar(&o.mode, "mode", "", "the rigor mode to preview: "+rigor.ModeList()+"; it may raise the mode the repository resolves (its rigor: block, the project layer) and never lower it, so a mode below the resolved one changes nothing — except hotfix, which is taken whole and needs no opt-in, as it is for a run. This is the rigor mode, not the accounting mode budget set --mode takes (observe or enforce)")
 	f.BoolVar(&o.json, "json", false, "print machine-readable output")
 	addCloudFlags(cmd, &o.cloud)
 	for _, name := range []string{"recipe", "runs"} {
@@ -179,7 +181,9 @@ type previewKnobs struct {
 // asked is --mode, fed to the resolver as the run's own request and nothing
 // more: the run's request may raise a mode and never lower it (D6), and a
 // preview that let it lower one would quote a ceiling the launched run would
-// never be held to — the unsafe direction for a spend estimate.
+// never be held to — the unsafe direction for a spend estimate. Hotfix is the
+// one mode the request takes whole (rigor.Mode.PerRun), so the preview prices it
+// exactly as a hotfix run would be priced rather than calling it a lower mode.
 func previewKnobsOf(cfg *config.Config, project rigor.Config, asked rigor.Mode) previewKnobs {
 	k := previewKnobs{from: "defaults", mode: rigor.Resolve(project, rigor.Request{Mode: asked}).Mode}
 	if cfg != nil {

@@ -175,10 +175,12 @@ fugaro run --mode critical "add a unique index on payments.idempotency_key"
 
 `--mode` asks for a mode for this run, and it **may raise the mode the run
 resolves from its configuration and never lower it**: a request below what the
-configuration already says has no effect, and the launcher says so. `--path`
-declares a path the run will touch, which is what lets `rigor.areas` rules be
-matched from the first moment rather than from the run's diff. Repeat it for each
-path.
+configuration already says has no effect, and the launcher says so. `hotfix` is
+the one exception, and the flag is its door: it is off the axis and ranks below
+every other mode, so it is taken whole rather than compared and needs no opt-in
+(§[The hotfix mode](#the-hotfix-mode)). `--path` declares a path the run will
+touch, which is what lets `rigor.areas` rules be matched from the first moment
+rather than from the run's diff. Repeat it for each path.
 
 **Per repository**, in its `fugaro.yaml`:
 

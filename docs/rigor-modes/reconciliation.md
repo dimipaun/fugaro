@@ -1435,8 +1435,8 @@ F13's amendment in `docs/rigor-command/reconciliation.md` §2). The half of the
 decision that stands is the one about surfaces: the request is the operator's own
 launch — `fugaro run --mode hotfix`, on a first run or on a follow-up — and no
 comment reaches the mode, since a task filed from one never carries it.
-`fugaro rigor set` and `fugaro rigor repo` still refuse to **write** it as a
-default in any form. A hand-written `rigor.default: hotfix` in a
+`fugaro rigor set` still refuses to **write** it as a
+default in any form it can write. A hand-written `rigor.default: hotfix` in a
 `fugaro.yaml` still resolves, as it always did; whether that stays reachable is
 the owner's to rule on separately.
 

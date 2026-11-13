@@ -1132,8 +1132,10 @@ for one for a run, and takes the same vocabulary. It may raise the mode
 the repository resolves (its rigor: block, the project layer) and never
 lower it, so a request below the resolved mode changes nothing and the
 preview says so rather than quoting a cheaper ceiling than the run would
-be held to. The mode is an input to the two terms the tool can compute
-and to nothing else: the recipe's stage bound, through the rounds the
+be held to. hotfix is the one exception, exactly as it is for a run: it is
+taken whole and needs no opt-in, so the figures are its own. The mode is an
+input to the two terms the tool can compute and to nothing else: the
+recipe's stage bound, through the rounds the
 mode's own row gives the knobs the checkout leaves unset, and the per-run
 cap, through the fraction of the deployed ceiling the mode carries.
 That is not the mode budget set --mode takes, which is the accounting
@@ -1195,7 +1197,7 @@ Flags:
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for preview |
 | `--json` | bool | `false` | no | print machine-readable output |
-| `--mode` | string | "" | no | the rigor mode to preview: poc, startup, pro, critical, hotfix; it may raise the mode the repository resolves (its rigor: block, the project layer) and never lower it, so a mode below the resolved one changes nothing. This is the rigor mode, not the accounting mode budget set --mode takes (observe or enforce) |
+| `--mode` | string | "" | no | the rigor mode to preview: poc, startup, pro, critical, hotfix; it may raise the mode the repository resolves (its rigor: block, the project layer) and never lower it, so a mode below the resolved one changes nothing — except hotfix, which is taken whole and needs no opt-in, as it is for a run. This is the rigor mode, not the accounting mode budget set --mode takes (observe or enforce) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--recipe` | string | "" | yes | the recipe to preview (ab-judge, default, escalate, lint-fix, pick, premium, rebase, review-only, run-digest, solo, standard, test-and-fix) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
@@ -6311,10 +6313,12 @@ and --retry takes none (the stored task keeps its own).
 It may raise the mode the run resolves from its own configuration
 (rigor.default and rigor.areas in fugaro.yaml, the project layer's defaults)
 and never lower it, so a launch that asks for less cannot outvote a repository
-that asked for more. A follow-up (--pr) keeps the mode the PR's runs recorded
-and may only raise it: asking for less is refused, and so is hotfix, which
-only an operator's own run reaches. --path PATH declares a path this run will
-touch, repeatable, matched against those area rules before the run starts;
+that asked for more. hotfix is the one exception: it is off the rigor axis and
+ranks below every other mode, so it is taken whole rather than compared, needs
+no opt-in, and takes effect on a first run and on a follow-up alike. A
+follow-up (--pr) keeps the mode the PR's runs recorded and may only raise it,
+and asking for less than that is refused. --path PATH declares a path this run
+will touch, repeatable, matched against those area rules before the run starts;
 without either flag a first run resolves from its configuration alone, and a
 follow-up from that and the mode it keeps. Both are
 recorded in the run's record and named in the pull request's status line.

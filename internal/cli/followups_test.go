@@ -506,10 +506,11 @@ func TestFollowupsCarriesTheParentsMode(t *testing.T) {
 	}
 }
 
-// TestFollowupsDropsARecordedHotfix: hotfix is off the rigor axis and is an
-// operator's own run, reached under the base branch's opt-in and never through
-// a filed task (D12, D1844), so a parent that recorded one imposes nothing:
-// the task carries no mode and the run resolves its own.
+// TestFollowupsDropsARecordedHotfix: hotfix is off the rigor axis and is a mode
+// an operator asks for on the run that needs it (rigor.Mode.PerRun), so a filed
+// task — a launch that asked for nothing — never carries it (D1844): a parent
+// that recorded one imposes nothing, the task carries no mode, and the run
+// resolves its own.
 func TestFollowupsDropsARecordedHotfix(t *testing.T) {
 	f := newCloudFixture(t)
 	launchable(t, f)

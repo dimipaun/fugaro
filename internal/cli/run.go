@@ -398,10 +398,12 @@ func newRunCmd() *cobra.Command {
 			"It may raise the mode the run resolves from its own configuration\n" +
 			"(rigor.default and rigor.areas in fugaro.yaml, the project layer's defaults)\n" +
 			"and never lower it, so a launch that asks for less cannot outvote a repository\n" +
-			"that asked for more. A follow-up (--pr) keeps the mode the PR's runs recorded\n" +
-			"and may only raise it: asking for less is refused, and so is hotfix, which\n" +
-			"only an operator's own run reaches. --path PATH declares a path this run will\n" +
-			"touch, repeatable, matched against those area rules before the run starts;\n" +
+			"that asked for more. hotfix is the one exception: it is off the rigor axis and\n" +
+			"ranks below every other mode, so it is taken whole rather than compared, needs\n" +
+			"no opt-in, and takes effect on a first run and on a follow-up alike. A\n" +
+			"follow-up (--pr) keeps the mode the PR's runs recorded and may only raise it,\n" +
+			"and asking for less than that is refused. --path PATH declares a path this run\n" +
+			"will touch, repeatable, matched against those area rules before the run starts;\n" +
 			"without either flag a first run resolves from its configuration alone, and a\n" +
 			"follow-up from that and the mode it keeps. Both are\n" +
 			"recorded in the run's record and named in the pull request's status line.",
