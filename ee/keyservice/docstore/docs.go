@@ -174,9 +174,15 @@ var ErrUnnamed = errors.New("docstore: a document is named by its collection and
 // carrying one addresses a subcollection, or a path the backend refuses, rather
 // than a document of the collection the caller named — a write lands where a
 // query of that collection never returns it and a read answers about something
-// else. The two period ids are the pair the backend refuses outright, and they
-// are the same hazard from the other side: a caller that meant a document of
-// its own would get the path traversal instead.
+// else. The two period ids are the same hazard from the other side: a caller
+// that meant a document of its own would get the path traversal instead. An id
+// matching __.*__ is the database's own reserved form and one over 1500 bytes is
+// longer than it admits, so neither is a name it can file under. A control
+// character is the one the name rule refuses beyond what the database documents
+// — the deployment writes no name it cannot print, and the core's Firestore
+// client already refuses these (internal/firestore/client.go's validName) — and
+// it is refused here rather than only there so that the two halves of the
+// deployment keep one set of names.
 //
 // The memory store refuses a name like this as the deploy's store does, so a
 // caller that would produce one meets it in a test rather than in the deploy.

@@ -321,10 +321,25 @@ func namedCollection(collection string) error {
 }
 
 // fileable reports whether a name is one the deploy's backend can file a
-// document under. It is the store that names a database behaving as itself
-// here: what it keeps as a filename this one keeps as a map key, so a name the
-// database reads as a path has to be refused by both, or a caller would learn
-// in the deploy what a test let through (ErrUnstorableName).
+// document under, and it is the whole of what that backend refuses: a slash is
+// a path separator there, "." and ".." are path traversal, an id matching
+// __.*__ is the database's own reserved form, and an id over 1500 bytes is the
+// length it admits. It is the rule the core's own Firestore client already
+// writes down (internal/firestore/client.go's validName), repeated here rather
+// than imported because it is unexported there and this package should not
+// depend on the console's client for a predicate of five lines; the two halves
+// of the deployment therefore refuse one set of names. The one place the two
+// differ is deliberate: that one tests for four characters or more before
+// calling a name reserved, and __.*__ matches a bare "____" as well, so this is
+// the server's expression rather than that approximation of it.
+//
+// A store that kept the looser rule is exactly the test-versus-deploy
+// divergence ErrUnstorableName exists to close: the memory store would hold
+// what the database refuses, and a caller would learn it in the deploy.
 func fileable(name string) bool {
-	return !strings.Contains(name, "/") && name != "." && name != ".."
+	if len(name) > 1500 || name == "." || name == ".." ||
+		(len(name) >= 4 && strings.HasPrefix(name, "__") && strings.HasSuffix(name, "__")) {
+		return false
+	}
+	return !strings.ContainsFunc(name, func(r rune) bool { return r < 0x20 || r == 0x7f || r == '/' })
 }

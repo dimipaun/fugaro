@@ -531,9 +531,17 @@ func testUnnamed(t *testing.T, open Factory) {
 // ErrUnstorableName). Every call that takes a name is held to it, and the
 // transaction's own writes with them — the guard is the store's, not one
 // method's.
+//
+// The rows are the whole of the name rule and not the one shape it was first
+// written for: a slash is the one that misplaces a document, and the reserved
+// form, the length and the control character are the rest of what the database
+// refuses to file, each of which a store that checked only for the slash would
+// accept here and refuse in the deploy.
 func testUnstorableName(t *testing.T, open Factory) {
 	s := open(t)
 	slashed := "one/two"
+	reserved := "__reserved__"
+	tooLong := strings.Repeat("a", 1501)
 	for _, tc := range []struct {
 		name string
 		call func() error
@@ -546,10 +554,14 @@ func testUnstorableName(t *testing.T, open Factory) {
 		{"a query of a collection with a slash in it", func() error { _, err := s.Query(ctx(), slashed, docstore.Query{}); return err }},
 		{"a put under the id a single period", func() error { return s.Put(ctx(), collection, ".", map[string]any{"a": 1}) }},
 		{"a put under the id two periods", func() error { return s.Put(ctx(), collection, "..", map[string]any{"a": 1}) }},
+		{"a put under the database's reserved id form", func() error { return s.Put(ctx(), collection, reserved, map[string]any{"a": 1}) }},
+		{"a collection named in the database's reserved form", func() error { return s.Put(ctx(), reserved, "one", map[string]any{"a": 1}) }},
+		{"a put under an id longer than the database files", func() error { return s.Put(ctx(), collection, tooLong, map[string]any{"a": 1}) }},
+		{"a put under an id carrying a control character", func() error { return s.Put(ctx(), collection, "one\ttwo", map[string]any{"a": 1}) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if err := tc.call(); !errors.Is(err, docstore.ErrUnstorableName) {
-				t.Errorf("%s = %v, want docstore.ErrUnstorableName: the backend reads a slash as a path separator rather than as a character of a name, so a document written under one would sit where a query of the collection the caller named never returns it", tc.name, err)
+				t.Errorf("%s = %v, want docstore.ErrUnstorableName: a name the backend cannot file is one it reads as a path rather than as a name, or one it refuses outright, and a store that took it would keep a document a query of the collection never returns", tc.name, err)
 			}
 		})
 	}

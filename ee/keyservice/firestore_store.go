@@ -27,6 +27,11 @@ package keyservice
 // of them at once. That is the closed half of the limit store.go records; the
 // pairs a caller makes out of *separate* calls (a mint's record and its key
 // state) stay two writes, and what bounds those is the service's own order.
+// Three rules are checks of that shape — an issuance, a revocation and a trial,
+// the third reading two documents — and firestore_store_test.go drives all
+// three through a store that refuses to be read or written beside a
+// transaction, so the sentence above is held by a case and not only by review
+// (TestTheDocstoreChecksAndWritesInOneTransaction).
 //
 // **A record nobody named is refused rather than kept.** A record's own id is
 // its document's id here — an issuance's source, an application's request id, a

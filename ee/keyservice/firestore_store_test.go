@@ -442,3 +442,124 @@ func TestTheDocstoreRefusesARecordNobodyNamed(t *testing.T) {
 		})
 	}
 }
+
+// txWatch is a document store that records how it was used: how many
+// transactions were opened over it, which calls went through a transaction's own
+// object, and which reached the store itself.
+//
+// The suite proves what each of DocStore's rules answers. What no sequential
+// case can see is how the answer was reached: firestore_store.go leads with
+// "everything a check needs is one transaction", and the reason this package
+// depends on the seam's transactions at all is the three checks written that
+// way — an issuance under a source the store holds, a revocation, and §14's
+// trial. Split any of them into a read and a write beside the transaction and
+// the suite still passes: two callers asking at once, which is the pair the rule
+// exists to refuse, is exactly what a sequential case cannot produce.
+//
+// It is the two paths and not the transaction's depth that are counted, because
+// the store's own methods are reachable from inside a transaction's function as
+// well — that is the mutation worth catching, and it leaves a call that reads or
+// writes a document the transaction's read set never saw.
+type txWatch struct {
+	db docstore.Store
+
+	opened  int
+	through int
+	direct  []string
+}
+
+func (w *txWatch) directCall(call string) {
+	w.direct = append(w.direct, call)
+}
+
+func (w *txWatch) Get(ctx context.Context, collection, id string, out any) (bool, error) {
+	w.directCall("Get " + collection + "/" + id)
+	return w.db.Get(ctx, collection, id, out)
+}
+
+func (w *txWatch) Put(ctx context.Context, collection, id string, doc any) error {
+	w.directCall("Put " + collection + "/" + id)
+	return w.db.Put(ctx, collection, id, doc)
+}
+
+func (w *txWatch) Delete(ctx context.Context, collection, id string) error {
+	w.directCall("Delete " + collection + "/" + id)
+	return w.db.Delete(ctx, collection, id)
+}
+
+func (w *txWatch) Query(ctx context.Context, collection string, q docstore.Query) ([]docstore.Document, error) {
+	return w.db.Query(ctx, collection, q)
+}
+
+func (w *txWatch) RunTransaction(ctx context.Context, fn func(ctx context.Context, tx docstore.Transaction) error) error {
+	w.opened++
+	return w.db.RunTransaction(ctx, func(ctx context.Context, tx docstore.Transaction) error {
+		return fn(ctx, &txWatchTx{tx: tx, watch: w})
+	})
+}
+
+// txWatchTx is the transaction object the watcher hands out: every call a
+// function makes through it is counted as one that is part of the transaction.
+type txWatchTx struct {
+	tx    docstore.Transaction
+	watch *txWatch
+}
+
+func (t *txWatchTx) Get(ctx context.Context, collection, id string, out any) (bool, error) {
+	t.watch.through++
+	return t.tx.Get(ctx, collection, id, out)
+}
+
+func (t *txWatchTx) Put(ctx context.Context, collection, id string, doc any) error {
+	t.watch.through++
+	return t.tx.Put(ctx, collection, id, doc)
+}
+
+func (t *txWatchTx) Query(ctx context.Context, collection string, q docstore.Query) ([]docstore.Document, error) {
+	t.watch.through++
+	return t.tx.Query(ctx, collection, q)
+}
+
+// TestTheDocstoreChecksAndWritesInOneTransaction holds the rule the store's
+// header leads with, which nothing else here does: the two stores answer the
+// same way whether a check runs inside a transaction or beside one, so only a
+// store that watches the calls can tell the two apart.
+//
+// Each rule is driven once. One transaction has to be opened — not none, and not
+// two, which is a check committed apart from the write it decides — every call it
+// makes has to go through that transaction's own object, and none may reach the
+// store itself, because a read made there is a read made on a state the write
+// does not commit onto.
+func TestTheDocstoreChecksAndWritesInOneTransaction(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name string
+		call func(store Store) error
+	}{
+		{"an issuance under a source the store holds", func(store Store) error {
+			return store.SaveIssuance(ctx, record("evt_1"))
+		}},
+		{"a revocation", func(store Store) error {
+			return store.Revoke(ctx, Revocation{KeyID: "fgk_1", Reason: "refund", At: issuedAt})
+		}},
+		{"a trial, which reads two documents", func(store Store) error {
+			return store.ClaimTrial(ctx, Trial{Installation: "acme-widget", Account: applicantAddress, KeyID: "fgk_1", At: issuedAt})
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			watched := &txWatch{db: docstore.NewMemory()}
+			if err := tc.call(NewDocStore(watched)); err != nil {
+				t.Fatalf("%s = %v, want the record kept", tc.name, err)
+			}
+			if watched.opened != 1 {
+				t.Errorf("%s opened %d transaction(s) over the store, want 1: the check and the write it decides are one transaction, or two callers asking at once both get the answer they asked for", tc.name, watched.opened)
+			}
+			if watched.through == 0 {
+				t.Errorf("%s made no call through the transaction it opened: a transaction nothing read and nothing wrote is not the check-then-write the rule asks for", tc.name)
+			}
+			if len(watched.direct) != 0 {
+				t.Errorf("%s reached the store itself: %v. A check read there and a write made beside it is the check-then-write the store's rules are written to refuse, and no sequential case above can tell it from this one", tc.name, watched.direct)
+			}
+		})
+	}
+}
