@@ -110,7 +110,13 @@ type troubleshootDoc struct {
 	Offline bool     `json:"offline,omitempty"`
 	Reason  string   `json:"reason,omitempty"`
 	LogTail []string `json:"log_tail,omitempty"`
-	Doctor  string   `json:"doctor,omitempty"`
+	// logTailSkipped is how many lines the tail left out as Terraform refresh
+	// noise. It is not part of the document — the tail is — and it is here
+	// rather than recomputed by the printer so that the header says refresh
+	// lines were left out only where they were: a log that is nothing but
+	// refresh lines is printed whole under a header claiming nothing.
+	logTailSkipped int
+	Doctor         string `json:"doctor,omitempty"`
 }
 
 // troubleshootFix is one fix command D1614's check reached a verdict on: what
@@ -301,11 +307,6 @@ func troubleshootID(getenv func(string) string, ref string) (cmdlog.ID, error) {
 // contradicts what Fugaro expects is a large share of what this command
 // exists to explain (F23), and the agent can say so from the log alone.
 type troubleshootResolution struct {
-	// lc is the selected project config, the same read the credential step
-	// uses: the account names and the layer file are both in it, and reading
-	// it twice would let two steps of one diagnosis disagree about which
-	// project it is about.
-	lc    *localcfg.Config
 	cfg   *config.Config
 	layer *config.ProjectLayer
 	notes []string
@@ -362,7 +363,6 @@ func (r troubleshootResolution) text() ([]byte, error) {
 func readTroubleshootResolution(ctx context.Context) troubleshootResolution {
 	var r troubleshootResolution
 	lc := selectedProjectConfigReadOnly(ctx)
-	r.lc = lc
 	// The checkout is resolved without recording it: this command explains a
 	// failure and changes nothing on the machine, and remembering a checkout
 	// is a write.
@@ -496,7 +496,7 @@ func troubleshootEgress(cmd *cobra.Command, o *troubleshootOptions, model string
 	account := "your own Claude login"
 	switch {
 	case h.Local():
-		account += " on this machine, the one claude already holds here, and Fugaro sends no token: the diagnosis runs as that login"
+		account += " on this machine, the one claude already holds here, and Fugaro sends no token with it"
 	case !h.Own():
 		account = "the project's Claude account " + h.Account()
 	}
@@ -549,7 +549,7 @@ func troubleshootWriteReport(ev diagnoseagent.Evidence, d troubleshootDoc) (stri
 // rather than a failure line and nothing else.
 func troubleshootOffline(cmd *cobra.Command, o *troubleshootOptions, ev diagnoseagent.Evidence, d troubleshootDoc, reason error) error {
 	d.Offline, d.Reason = true, oneLine(reason.Error())
-	d.LogTail = troubleshootLogTail(ev)
+	d.LogTail, d.logTailSkipped = troubleshootLogTail(ev)
 	d.Doctor = troubleshootEvidenceFile(ev, "doctor.txt")
 	// The model is printed with the rest of the header and no answer is: no
 	// agent ran, so there is none to print.
@@ -571,12 +571,17 @@ const troubleshootRefreshLine = "Refreshing state"
 // owner's report of 2026-11-13 — forty lines of it said nothing). The order of
 // the log is kept, and a log that is nothing but refresh lines falls back to
 // its own end rather than printing none of it.
-func troubleshootLogTail(ev diagnoseagent.Evidence) []string {
+//
+// The second answer is how many lines that left out, so that the header under
+// which the tail is printed can say what really happened: a fallback that
+// dropped nothing must not be described as a tail refresh lines were removed
+// from.
+func troubleshootLogTail(ev diagnoseagent.Evidence) (lines []string, skipped int) {
 	text := troubleshootEvidenceFile(ev, ev.RunID+".log")
 	if text == "" {
-		return nil
+		return nil, 0
 	}
-	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
+	lines = strings.Split(strings.TrimRight(text, "\n"), "\n")
 	kept := make([]string, 0, len(lines))
 	for _, l := range lines {
 		if strings.Contains(l, troubleshootRefreshLine) {
@@ -584,13 +589,14 @@ func troubleshootLogTail(ev diagnoseagent.Evidence) []string {
 		}
 		kept = append(kept, l)
 	}
+	skipped = len(lines) - len(kept)
 	if len(kept) == 0 {
-		kept = lines
+		kept, skipped = lines, 0
 	}
 	if len(kept) > troubleshootLogLines {
 		kept = kept[len(kept)-troubleshootLogLines:]
 	}
-	return kept
+	return kept, skipped
 }
 
 // troubleshootEvidenceFile reads one file of the evidence folder, "" when it
@@ -796,7 +802,15 @@ func printTroubleshoot(w io.Writer, d troubleshootDoc, asJSON bool) error {
 		fmt.Fprintf(&b, "\nEvidence   %s\n", oneLine(d.EvidenceDir))
 		fmt.Fprintf(&b, "Guide      %s\n", oneLine(d.Guide))
 		if len(d.LogTail) > 0 {
-			fmt.Fprintf(&b, "\nThe end of the log (%d lines, Terraform's `%s` lines left out)\n%s\n", len(d.LogTail), troubleshootRefreshLine, indent(multiLine(strings.Join(d.LogTail, "\n"))))
+			// What the tail is only where it was cut: a log of nothing but
+			// refresh lines is printed whole, and a header saying they were
+			// left out over the lines themselves would be the one line a
+			// person checks the tail against, contradicting it.
+			cut := ""
+			if d.logTailSkipped > 0 {
+				cut = fmt.Sprintf(", %d `%s` lines left out", d.logTailSkipped, troubleshootRefreshLine)
+			}
+			fmt.Fprintf(&b, "\nThe end of the log (%d lines%s)\n%s\n", len(d.LogTail), cut, indent(multiLine(strings.Join(d.LogTail, "\n"))))
 		}
 		if d.Doctor != "" {
 			fmt.Fprintf(&b, "\nfugaro doctor said\n%s\n", indent(multiLine(strings.TrimRight(d.Doctor, "\n"))))

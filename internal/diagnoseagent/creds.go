@@ -337,7 +337,7 @@ func Resolve(env []string, accounts Accounts, read SecretReader) (Handle, error)
 // environment or the secret of the project's account.
 func newHandle(envName, what, value, account string, own bool) (Handle, error) {
 	if len(value) < 4 {
-		return Handle{}, fmt.Errorf("the credential %s is shorter than 4 bytes, so it cannot be redacted safely: a value that short would be replaced in everything this diagnosis prints, ordinary words among it, and a value that short is usually a placeholder left in the environment rather than a credential. Replace it with the account's real credential",
+		return Handle{}, fmt.Errorf("the credential %s is shorter than 4 bytes, so it cannot be redacted safely: a value that short would be replaced in everything this diagnosis prints, ordinary words among it, and a value that short is usually a placeholder rather than a credential. Replace it with the account's real credential",
 			pluginwire.Printable(what))
 	}
 	return Handle{env: []string{envName + "=" + value}, secret: value, account: account, own: own}, nil

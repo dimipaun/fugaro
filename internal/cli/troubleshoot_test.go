@@ -442,15 +442,17 @@ func TestTroubleshootLogTailSkipsTerraformRefreshNoise(t *testing.T) {
 	// so a reader is not left wondering where the refresh pass went.
 	// The offline path's exit is the answer here, not a failure of the run.
 	text, _, _ := tsRun(t, x)
-	if !strings.Contains(text, "Terraform's `"+troubleshootRefreshLine+"` lines left out") {
+	if !strings.Contains(text, "The end of the log (2 lines, 50 `"+troubleshootRefreshLine+"` lines left out)") {
 		t.Errorf("what the tail is printed under does not say what was left out:\n%s", text)
 	}
 }
 
 // TestTroubleshootLogTailFallsBackToTheEnd: a log that is nothing but refresh
 // lines has no other end to print, and printing none of it says less than the
-// log does. It is read from the file rather than through a run, because a log
-// that ends on a refresh line is not one Latest takes for a failed command.
+// log does. Nothing was left out on that path, which the count says, so the
+// header under it claims no omission over the refresh lines it prints. It is
+// read from the file rather than through a run, because a log that ends on a
+// refresh line is not one Latest takes for a failed command.
 func TestTroubleshootLogTailFallsBackToTheEnd(t *testing.T) {
 	dir := t.TempDir()
 	const runID = "update-20261107183012-48213"
@@ -458,9 +460,19 @@ func TestTroubleshootLogTailFallsBackToTheEnd(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, runID+".log"), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	tail := troubleshootLogTail(diagnoseagent.Evidence{EvidenceDir: dir, RunID: runID})
+	tail, skipped := troubleshootLogTail(diagnoseagent.Evidence{EvidenceDir: dir, RunID: runID})
 	if len(tail) != 2 {
 		t.Errorf("a log of refresh lines alone prints %d lines, want its own end: %q", len(tail), tail)
+	}
+	if skipped != 0 {
+		t.Errorf("the fallback reports %d lines left out, and it left none out: %q", skipped, tail)
+	}
+	// The header a person reads is built from that count, so a log cut nowhere
+	// is not described as one refresh lines were taken out of.
+	var b strings.Builder
+	printTroubleshoot(&b, troubleshootDoc{Version: "1", Model: "m", Offline: true, Reason: "r", LogTail: tail, logTailSkipped: skipped}, false)
+	if strings.Contains(b.String(), "left out") {
+		t.Errorf("the header claims lines were left out under a tail that dropped none:\n%s", b.String())
 	}
 }
 

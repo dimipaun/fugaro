@@ -500,13 +500,18 @@ func TestRunChildEnvironmentHoldsNothingButTheHandle(t *testing.T) {
 	value := runValue(t, "handed")
 	env := childEnvironment([]string{
 		"PATH=/usr/bin", "HOME=/home/someone", "TERM=xterm", "TMPDIR=/tmp",
+		// The client's own store, moved: a child on the machine's own login has
+		// to look for that login where this machine keeps it (the owner's
+		// report of 2026-11-13), and the variable names a directory rather than
+		// a value.
+		"CLAUDE_CONFIG_DIR=/home/someone/elsewhere",
 		"ANTHROPIC_API_KEY=" + value, // the same credential, from the environment
 		"GH_TOKEN=" + value,
 		"AWS_SECRET_ACCESS_KEY=" + value,
 		"GOOGLE_APPLICATION_CREDENTIALS=/home/someone/key.json",
 		"NODE_OPTIONS=--require /home/someone/hook.js",
 	}, runHandle(t, value))
-	for _, want := range []string{"PATH=/usr/bin", "HOME=/home/someone", "TERM=xterm", "TMPDIR=/tmp", credsOAuthVar + "=" + value} {
+	for _, want := range []string{"PATH=/usr/bin", "HOME=/home/someone", "TERM=xterm", "TMPDIR=/tmp", "CLAUDE_CONFIG_DIR=/home/someone/elsewhere", credsOAuthVar + "=" + value} {
 		if !slices.Contains(env, want) {
 			t.Errorf("the child's environment lacks %q: %v", want, env)
 		}
@@ -514,7 +519,7 @@ func TestRunChildEnvironmentHoldsNothingButTheHandle(t *testing.T) {
 	for _, kv := range env {
 		name, _, _ := strings.Cut(kv, "=")
 		switch name {
-		case "PATH", "HOME", "TERM", "TMPDIR", credsOAuthVar:
+		case "PATH", "HOME", "TERM", "TMPDIR", "CLAUDE_CONFIG_DIR", credsOAuthVar:
 		default:
 			t.Errorf("the child's environment carries %s, which is neither a variable a diagnosis needs nor the handle's own credential", name)
 		}
