@@ -294,6 +294,18 @@ test('the app imports nothing outside mobile/ but the shared package (D119, D125
 // the one the rule exists to refuse. So a version that is an alias is read for
 // the package it points at, and the key and the target are judged by the same
 // two patterns; a failure names both, because the alias is what hides it.
+//
+// **Why the specifier is read as well as the name.** A version that is not a
+// registry range names a source for which the manifest spells no package at
+// all: a tarball URL, a `git+ssh://` spec, `github:owner/repo`, `file:`/`link:`
+// or a bare `owner/repo`. `"fb": "https://host/@react-native-firebase/auth/-/auth-27.1.0.tgz"`
+// puts the Firebase auth SDK in `node_modules/fb` exactly as the alias above
+// does -- the fourth review of this rule found it green -- and no name exists
+// here for the two patterns to judge. Reading a package name out of a URL is a
+// guess, and a dependency the rule cannot read is not one it can call clean, so
+// it refuses the specifier instead. What a registry install is spelled with
+// carries neither `/` nor `:`: a range (`^1.0.0`, `>=1.0.0 <2.0.0`, `1.x`,
+// `*`) and a dist-tag (`latest`) all pass.
 
 /** The dependency groups a build installs into the app, in the manifest's own
  * order: each one reaches `node_modules`, so each one is a dependency the app
@@ -326,14 +338,29 @@ function installed(name, version) {
   return at > 0 ? target.slice(0, at) : target;
 }
 
+/** A version that installs from somewhere other than the registry -- a tarball
+ * URL, a `git+ssh://` or `github:owner/repo` spec, `file:`/`link:`, a bare
+ * `owner/repo` -- and so puts a package in `node_modules` whose name the
+ * manifest never spells. A registry range and a dist-tag carry neither `/` nor
+ * `:` and an `npm:` alias carries its own target instead (read by `installed`),
+ * so those two characters are the whole of the test. */
+function offRegistry(version) {
+  return typeof version === 'string' && !version.startsWith('npm:') && /[/:]/.test(version);
+}
+
 /** The declared dependencies that are a provider auth SDK, sorted, each named
  * with the group it sits in -- so a failure says where to look. An alias is
  * judged by the package it installs and reported with both names: the alias is
- * what would hide it. */
+ * what would hide it. A version from another source is refused on the spec
+ * alone, since the name to judge is not in the manifest. */
 function providerAuth(manifest) {
   const found = [];
   for (const group of INSTALLED_GROUPS) {
     for (const [name, version] of Object.entries(manifest[group] ?? {})) {
+      if (offRegistry(version)) {
+        found.push(`${group}: ${name} -> ${version}`);
+        continue;
+      }
       const target = installed(name, version);
       if (PROVIDER_AUTH.test(fold(target)) || FIREBASE_SDK.test(target)) {
         found.push(target === name ? `${group}: ${name}` : `${group}: ${name} -> ${target}`);
@@ -389,6 +416,57 @@ test('the manifest declares no provider auth SDK (D221, D234)', () => {
   // rule is still about a session rather than about the word npm.
   assert.deepEqual(
     providerAuth({ dependencies: { store: 'npm:expo-secure-store@14.0.0', store2: 'npm:expo-secure-store' } }),
+    [],
+  );
+  // ... and a version that installs from another source is refused on the spec
+  // alone, whatever its key: a tarball URL or a git spec puts a package in
+  // `node_modules` that this manifest never names, and a guess at the name
+  // inside a URL is the thing the rule declines to make. Mutations: read the
+  // key alone (the reviewed defect) and the first goes red, judge by the name
+  // patterns only and both do.
+  assert.deepEqual(
+    providerAuth({
+      dependencies: { fbx: 'https://registry.npmjs.org/@react-native-firebase/auth/-/auth-27.1.0.tgz' },
+    }),
+    ['dependencies: fbx -> https://registry.npmjs.org/@react-native-firebase/auth/-/auth-27.1.0.tgz'],
+  );
+  assert.deepEqual(
+    providerAuth({ dependencies: { gx: 'github:invertase/react-native-firebase' } }),
+    ['dependencies: gx -> github:invertase/react-native-firebase'],
+  );
+  // ... and every other spelling of "somewhere else" is the same shape, in each
+  // of the groups a build installs: a `git+ssh://` spec, a bare `owner/repo`,
+  // and the two local ones.
+  for (const spec of [
+    'git+ssh://git@github.com/invertase/react-native-firebase.git',
+    'git://github.com/invertase/react-native-firebase.git',
+    'invertase/react-native-firebase',
+    'file:../firebase-auth',
+    'link:../firebase-auth',
+  ]) {
+    for (const group of INSTALLED_GROUPS) {
+      assert.deepEqual(
+        providerAuth({ [group]: { fb: spec } }),
+        [`${group}: fb -> ${spec}`],
+        `${group}: ${spec}`,
+      );
+    }
+  }
+  // ... while a registry install spelled as a range or a dist-tag is not a
+  // source at all: the rule refuses where a dependency comes from, so it must
+  // not refuse how a registry version is written.
+  assert.deepEqual(
+    providerAuth({
+      dependencies: {
+        caret: '^1.0.0',
+        tilde: '~1.2.3',
+        compound: '>=1.0.0 <2.0.0',
+        wildcard: '1.x',
+        any: '*',
+        tagged: 'latest',
+        prerelease: '2.0.0-beta.1',
+      },
+    }),
     [],
   );
   // ... and the groups themselves are pinned against a written list: the loop
