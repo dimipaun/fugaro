@@ -41,7 +41,8 @@ type Record struct {
 	Issued       time.Time `json:"issued"`
 	Expires      time.Time `json:"expires"`
 	// TermDays is the term in whole days this issuance stands for: the term a
-	// purchase bought, or the whole days a renewal covers. It is the
+	// purchase bought, the whole days a renewal covers, or the row's own term
+	// where the request named none (a free seat, a trial). It is the
 	// **entitlement's** own length and not the key's — D2202 caps a connected
 	// row's key at thirty days while the term the customer paid for runs its
 	// own length — and it is what the subscription's end is rebuilt from when

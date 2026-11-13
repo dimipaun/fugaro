@@ -501,11 +501,14 @@ func (m Minter) MintV1(ctx context.Context, req RequestV1) (MintedV1, error) {
 			Organisation: req.Organisation,
 			Issued:       issued,
 			Expires:      paidThrough,
-			// The term the request named, and not the term this key was minted
-			// for: D2202 caps the key below what the caller asked for when the
-			// caller is the paid path, and what that path is rebuilding from the
-			// record is the entitlement and not the key (S3.5).
-			TermDays: req.TermDays,
+			// The term this issuance stands for, and not the term this key was
+			// minted for: D2202 caps the key below the term the caller asked for,
+			// while what a caller rebuilding a subscription from the record wants
+			// is the entitlement (S3.5). It is `days` and not the request's own
+			// field for the rows that name no term at all — a free seat is a
+			// year-long entitlement minted from a request that names none — where
+			// the row's term is the term the key stands for.
+			TermDays: days,
 		},
 	}, nil
 }

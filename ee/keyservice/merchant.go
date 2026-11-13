@@ -461,17 +461,19 @@ func (s *Service) purchased(ctx context.Context, e Event) error {
 }
 
 // entitlementEnd is the end of the term an issuance stands for: the instant its
-// key was minted plus the term the request asked that key to cover. It is the
-// subscription's own end and never the key's, because D2202 caps a connected
-// row's key at thirty days while the entitlement the customer bought runs the
-// term they bought — a subscription stored with the key's end would open an
-// annual renewal's window at the purchase itself and move the term on by a month
-// a year.
+// key was minted plus the term that issuance is for — the term a purchase
+// bought, the whole days a renewal covers, or the row's own term where the
+// request named none. It is the subscription's own end and never the key's,
+// because D2202 caps a connected row's key at thirty days while the entitlement
+// the customer bought runs the term they bought — a subscription stored with the
+// key's end would open an annual renewal's window at the purchase itself and
+// move the term on by a month a year.
 //
-// The fallback is for an issuance whose request named no term: those are the
-// paths that mint one key for a row's own length (a trial, a free seat, an
-// open-source key) and build no subscription out of it, so nothing measures a
-// term from their records and the key's end is all that one says.
+// A record with no term at all is the fallback and only that: nothing in this
+// service mints one (the minter writes the term it resolved, the row's own
+// included), so it is a record the store already holds from a deployment that
+// wrote the field's absence, and the key's end is the only length such a record
+// states.
 func entitlementEnd(record Record) time.Time {
 	if record.TermDays < 1 {
 		return record.Expires
@@ -899,9 +901,21 @@ func (s *Service) paid(ctx context.Context, req RequestV1, applicant, source str
 		// spent and write no key state: a key the customer holds and can never
 		// renew is the half this path exists to avoid.
 	}
+	// The hash written is the hash the key carries, which is the request's own
+	// when the answer holds no secret: D2200's reissue keeps the entitlement's
+	// existing hash and answers no new secret at all, so a state hashed from the
+	// empty answer would file every reissued key under `digest("")` — a key whose
+	// holder can never renew it, holding a secret the store does not know. The
+	// state is still written for a reissue, because a key state is keyed by the
+	// key's own id and the reissue has a new one: skipping it would leave a key
+	// nothing can renew just the same.
+	secretHash := req.RenewalSecretHash
+	if answer.RenewalSecret != "" {
+		secretHash = digest(answer.RenewalSecret)
+	}
 	if err := s.store.SaveKeyState(ctx, KeyState{
 		KeyID:             answer.Record.KeyID,
-		RenewalSecretHash: digest(answer.RenewalSecret),
+		RenewalSecretHash: secretHash,
 	}); err != nil {
 		return MintedV1{}, err
 	}
@@ -921,7 +935,22 @@ func (s *Service) withdrawUnrecorded(ctx context.Context, keyID string) error {
 // place either is written down outside the key ring. The store holds the
 // secret's hash and never the secret (K2.2, §7.3), so a customer who loses this
 // mail holds a key that runs to its own end and no further.
+//
+// A reissue that keeps the entitlement's existing hash is mailed its key alone
+// (D2200): the minter answered no secret, because there is no new one to hand
+// out and the holder still has the one this service sent them, so the second
+// line is left out rather than mailed empty — a bundle whose second half is
+// nothing asks a customer to keep a blank line as the thing they renew with.
 func paidKeyMail(to, key, secret string) Message {
+	if secret == "" {
+		return Message{
+			To:      to,
+			Subject: keySubject,
+			Body: "Your Fugaro licence key:\n\n" + key + "\n\n" +
+				"This key replaces one you already hold, and the renewal secret you were sent with it is unchanged.\n" +
+				"Install it in the console, or keep it for the CLI.\n",
+		}
+	}
 	return Message{
 		To:      to,
 		Subject: keySubject,

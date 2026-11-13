@@ -1364,8 +1364,11 @@ func TestAnEventWithNoInstantIsRefused(t *testing.T) {
 func TestSeatChangeReissues(t *testing.T) {
 	f := newFixture(t)
 	first := f.purchase("evt-1", "acme.example", 3, 365)
-	// Inside the term, which for a connected row's key is the thirty days it was
-	// minted for (D2202): a seat change after the key's own end reissues nothing.
+	// Inside the term the customer paid for. What the seat change measures its
+	// remaining days against is the subscription's own end and not the key's — the
+	// seat is the merchant's statement about an entitlement, so a seat change
+	// inside the year reissues at any point in it, a lapsed key of the row
+	// included — and this is well inside both.
 	f.advance(10 * day)
 	f.event(Event{ID: "evt-2", Type: EventSeatChange, Organisation: "acme.example", Seats: 5, TermDays: 365})
 
@@ -1701,9 +1704,10 @@ func TestSeatChangeReissuesUnderANewKeyID(t *testing.T) {
 		t.Errorf("the purchase's key id is %q, want one under the %q prefix (spec section 3.2)", first.KeyID, keyIDPrefix)
 	}
 
-	// Inside the term the key was minted for, which is the thirty days D2202
-	// gives a connected row: a seat change after the key's own end reissues
-	// nothing, and what is left of the term is what the reissue covers.
+	// Inside the term the customer paid for, which is what the seat change reads
+	// its remaining days from and never the key's own thirty (D2202): what is
+	// left of the subscription is what lets the reissue happen at all, and the
+	// key it mints runs its own thirty days from here.
 	f.advance(10 * day)
 	f.event(Event{ID: "evt-2", Type: EventSeatChange, Organisation: "acme.example", Seats: 5, TermDays: 365})
 
@@ -1737,6 +1741,57 @@ func TestSeatChangeReissuesUnderANewKeyID(t *testing.T) {
 	}
 	if claims := v1Verified(t, f, f.mintedKeys()[1]); claims.KeyID != reissued.KeyID {
 		t.Errorf("the key the customer holds claims the key id %q, want the reissued %q", claims.KeyID, reissued.KeyID)
+	}
+}
+
+// TestAReissueThatKeepsTheSecretWritesTheHashItKept: D2200 lets a reissue carry
+// the entitlement's existing secret hash in place of a fresh secret, and the
+// minter then answers no secret at all. The paid path is the answer's only
+// consumer, and it is the one that must not read "no secret" as a secret: hashed
+// blindly it files the reissued key under the hash of nothing — a key its holder
+// can never renew, holding a secret the store does not know — and mails a bundle
+// whose second line is empty. What it writes is the hash the key carries, which
+// is the request's own, and what it mails is the key alone.
+func TestAReissueThatKeepsTheSecretWritesTheHashItKept(t *testing.T) {
+	f := newFixture(t)
+	kept := digest("the secret this entitlement was issued with")
+	answer, err := f.svc.paid(context.Background(), RequestV1{
+		Environment:       Production,
+		Policy:            PolicyTeamAnnual,
+		WorkspaceID:       workspaceID,
+		Organisation:      "acme.example",
+		Seats:             5,
+		TermDays:          365,
+		RenewalSecretHash: kept,
+	}, buyerAddress("acme.example"), "reissue:evt-2")
+	if err != nil {
+		t.Fatalf("reissuing onto the entitlement's own secret hash: %v", err)
+	}
+	if answer.RenewalSecret != "" {
+		t.Fatalf("the reissue answered a secret (%q), want none: the holder keeps the one they were sent (D2200)", answer.RenewalSecret)
+	}
+	if got := v1Verified(t, f, answer.Key).RenewalSecretHash; got != kept {
+		t.Errorf("the reissued key claims the hash %q, want the one the reissue kept (%q)", got, kept)
+	}
+
+	state, held, err := f.store.KeyState(context.Background(), answer.Record.KeyID)
+	if err != nil || !held {
+		t.Fatalf("the reissue wrote no key state (held=%v, err=%v), want one: a key with no state is one nothing can renew", held, err)
+	}
+	if state.RenewalSecretHash != kept {
+		t.Errorf("the key's state holds %q, want the kept hash %q: read off the empty answer it is %q, and the renewal that presents the holder's own secret compares against a hash of it that is not that (D2200, D2135)",
+			state.RenewalSecretHash, kept, digest(""))
+	}
+
+	if got := len(f.mail.sent); got != 1 {
+		t.Fatalf("the reissue mailed %d message(s), want the key's one", got)
+	}
+	body := f.mail.sent[0].Body
+	if !strings.Contains(body, answer.Key) {
+		t.Errorf("the reissue's mail is %q, want it to carry the key", body)
+	}
+	if strings.Contains(body, answer.Key+"\n\n\n") {
+		t.Errorf("the reissue's mail is %q, want no empty second line: no secret was minted, so the line is left out rather than sent blank (D2200)", body)
 	}
 }
 

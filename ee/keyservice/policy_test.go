@@ -62,6 +62,17 @@ func TestFreeSeatRowIsComped(t *testing.T) {
 	if run := claims.PaidThrough.Sub(claims.IssuedAt); run != connectedTerm {
 		t.Errorf("the free seat's key runs %s, want %s: it is a row whose key checks the server, and D2202 caps the key and not the entitlement", run, connectedTerm)
 	}
+	// The key is a month of the free seat and the record is the year of it: this
+	// request names no term at all, and a record that carried the term named —
+	// none — would leave the entitlement's own length to be read off the key it
+	// minted, so a caller rebuilding one from it would end a year-long free seat a
+	// month after it began (S3.5).
+	if minted.Record.TermDays != 365 {
+		t.Errorf("the free seat's record stands for %d day(s), want the row's own 365: the request named no term, and the record is the entitlement and not the key", minted.Record.TermDays)
+	}
+	if want := minted.Record.Issued.Add(365 * day); !entitlementEnd(minted.Record).Equal(want) {
+		t.Errorf("the free seat's record ends its term at %s, want %s", entitlementEnd(minted.Record), want)
+	}
 
 	// The seat is the row's and not a caller's: an operations mint that asks the
 	// free-seat row for a hundred seats has been given a hundred by nothing.
