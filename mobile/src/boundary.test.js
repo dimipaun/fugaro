@@ -263,31 +263,66 @@ test('the app imports nothing outside mobile/ but the shared package (D119, D125
 // manifest declares `app`, `analytics` and `crashlytics` today (P7.1a's
 // telemetry), none of them carries a sign-in surface, and the rule is about
 // auth rather than about the word Firebase. What it refuses is the shape of an
-// auth SDK -- an `auth`, `authentication`, `signin`, `login`, `oauth`, `msal`
-// or `identity` name -- plus the bare `firebase` package, whose
-// `signInWithCredential` is the spec's step 4 in one call.
+// auth SDK -- an `auth`, `authentication`, `oauth`, `msal`, `identity`,
+// `sign-in` or `log-in` name, in whatever spelling separates the words -- plus
+// the bare `firebase` package, whose `signInWithCredential` is the spec's step
+// 4 in one call.
 //
-// `devDependencies` is not scanned: the manifest declares none, `dependencies`
-// is what a build installs into the app, and a package that never reaches the
-// binary cannot hold a session in it.
+// **Every group a build installs, not just `dependencies`.** `npm ci` writes
+// `dependencies`, `optionalDependencies` and `peerDependencies` into
+// `node_modules`, so each of them is a way to ship a package the app holds
+// without a line of this app changing -- and the first review of this rule
+// found `optionalDependencies` open (the rule read `dependencies` alone, and
+// nothing else in the tree reads that group either). `devDependencies` is the
+// one that is not scanned: a production install (`npm ci --omit=dev`, and the
+// install a build machine may make) does not write it, so a package there never
+// reaches the binary and cannot hold a session in it.
+//
+// **Why the name is folded first.** A provider's name is spelled as its package
+// spells it: the same Google package is `expo-google-sign-in`,
+// `google_sign_in` and `.../google-signin`, and the second review of this rule
+// found the hyphenated ones walking through a pattern that required a delimiter
+// after its token. Folding every separator but `-` to `-` makes one spelling of
+// the name for the pattern to judge, and the pattern then reads the words
+// rather than an enumeration of the packages that happen to be named today.
 
-/** An auth SDK, by the shape of its name. */
-const PROVIDER_AUTH = /(?:^|[/@_-])(?:auth(?:entication)?|signin|login|oauth\d*|msal|identity|apple-authentication|google-signin)(?:$|[/@_-])/i;
+/** The dependency groups a build installs into the app, in the manifest's own
+ * order: each one reaches `node_modules`, so each one is a dependency the app
+ * really holds. */
+const INSTALLED_GROUPS = Object.freeze(['dependencies', 'optionalDependencies', 'peerDependencies']);
+
+/** An auth SDK, by the shape of its name, in the folded spelling `fold` makes.
+ * The token's own separator is optional (`sign-?in`, so `signin` and `sign-in`
+ * are one name) and a trailing number is part of it (`auth0`, `oauth2`), which
+ * is what the packages carry. */
+const PROVIDER_AUTH = /(?:^|-)(?:auth(?:entication|orization)?\d*|oauth\d*|msal\d*|identity\d*|sign-?in|log-?in)(?:$|-)/;
 
 /** The Firebase SDK itself: what the spec's `signInWithCredential` needs. */
-const FIREBASE_SDK = /^@?firebase(?:\/|$)/;
+const FIREBASE_SDK = /^@?firebase(?:$|[/@_-])/;
 
-/** The declared dependencies that are a provider auth SDK, sorted. */
+/** One package name with every separator but `-` folded to it, so a spelling
+ * that splits a provider's name differently is the same name here. */
+function fold(name) {
+  return name.toLowerCase().replace(/[@/._]+/g, '-');
+}
+
+/** The declared dependencies that are a provider auth SDK, sorted, each named
+ * with the group it sits in -- so a failure says where to look. */
 function providerAuth(manifest) {
-  return Object.keys(manifest.dependencies ?? {})
-    .filter((name) => PROVIDER_AUTH.test(name) || FIREBASE_SDK.test(name))
-    .sort();
+  const found = [];
+  for (const group of INSTALLED_GROUPS) {
+    for (const name of Object.keys(manifest[group] ?? {})) {
+      if (PROVIDER_AUTH.test(fold(name)) || FIREBASE_SDK.test(name)) found.push(`${group}: ${name}`);
+    }
+  }
+  return found.sort();
 }
 
 test('the manifest declares no provider auth SDK (D221, D234)', () => {
-  // The positive control first: every provider the spec's table names, and the
-  // Firebase SDK that would sign the phone in, is flagged -- so a green run
-  // below is about this manifest and not about a pattern that matches nothing.
+  // The positive control first: every provider the spec's table names, the
+  // Firebase SDK that would sign the phone in, and the spellings the two
+  // reviews of this rule found walking through it -- so a green run below is
+  // about this manifest and not about a pattern that matches nothing.
   for (const name of [
     '@react-native-firebase/auth',
     '@firebase/auth',
@@ -298,9 +333,42 @@ test('the manifest declares no provider auth SDK (D221, D234)', () => {
     'react-native-app-auth',
     '@azure/msal-react',
     'amazon-cognito-identity-js',
+    'expo-google-sign-in',
+    'google_sign_in',
+    'react-native-auth0',
+    'oauth2-client',
   ]) {
-    assert.deepEqual(providerAuth({ dependencies: { [name]: '1.0.0' } }), [name], name);
+    assert.deepEqual(providerAuth({ dependencies: { [name]: '1.0.0' } }), [`dependencies: ${name}`], name);
   }
+  // ... and the groups themselves are pinned against a written list: the loop
+  // below moves with the constant it checks, and a loop that moves with what it
+  // checks is exactly how `optionalDependencies` was left out of this rule in
+  // the first place. The three are the groups `npm ci` writes into
+  // `node_modules`.
+  assert.deepEqual(
+    [...INSTALLED_GROUPS],
+    ['dependencies', 'optionalDependencies', 'peerDependencies'],
+    'every group a build installs is scanned',
+  );
+  // ... and each of them is scanned, not `dependencies` alone:
+  // `optionalDependencies` reaches the app's `node_modules` exactly as
+  // `dependencies` does. Mutation: drop a group from `INSTALLED_GROUPS` and the
+  // pin above goes red with it.
+  for (const group of INSTALLED_GROUPS) {
+    assert.deepEqual(
+      providerAuth({ [group]: { '@react-native-firebase/auth': '27.1.0' } }),
+      [`${group}: @react-native-firebase/auth`],
+      group,
+    );
+  }
+  // ... and `devDependencies` is deliberately not one of them (the header's
+  // reason): a production install does not write it, so a package there is not
+  // one the built app can hold.
+  assert.deepEqual(
+    providerAuth({ devDependencies: { '@react-native-firebase/auth': '27.1.0' } }),
+    [],
+    'devDependencies never reaches the bundle',
+  );
   // ... and the manifest's own Firebase packages are not auth: refusing them
   // would refuse the telemetry the app has, and the rule would then be about a
   // word rather than about a session.
@@ -314,8 +382,9 @@ test('the manifest declares no provider auth SDK (D221, D234)', () => {
     }),
     [],
   );
-  // ... and the manifest itself. Mutation: add any name above to
-  // `mobile/package.json`'s `dependencies` and this fails naming it.
+  // ... and the manifest itself. Mutation: add any name above to any group in
+  // `INSTALLED_GROUPS` of `mobile/package.json` and this fails naming it, with
+  // the group it was found in.
   const manifest = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
   assert.deepEqual(
     providerAuth(manifest),
