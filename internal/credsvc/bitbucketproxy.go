@@ -25,7 +25,11 @@ package credsvc
 //     Classify reads the path and the method, Decide answers for the run and
 //     the published block. This file owns no rule about what a run may fetch,
 //     push or write — a second spelling of those rules is how they drift, and
-//     the rules are the security-sensitive half of this work.
+//     the rules are the security-sensitive half of this work. What it hands
+//     the rules is the one fact they cannot read off a run identity: the class
+//     of the job that called (proxyIdentity), which is what makes the
+//     installation's review-only job write nothing here exactly as it writes
+//     nothing through the token set it is minted elsewhere (D1065).
 //   - The upstream URL is REBUILT from what the classification decided on
 //     (G13): the host, the workspace and the repository from the canonical
 //     repository the pairing produced, the action from the call's name, and the
@@ -138,6 +142,29 @@ func gitproxyAct(kind gitproxy.Kind) (purpose, credential string) {
 	return PurposeGit, config.BitbucketSecret
 }
 
+// proxyIdentity is what the rules are told about the run asking: B1.4's own
+// Identity, filled from the verified identity's claims and from the class of
+// the job it called from, and from nothing the request carries.
+//
+// The class is the one fact of it a claim cannot carry, and the reason this is
+// a function rather than two struct literals: the review-only job and a
+// review-mode run of a per-repository job are minted the same claims (fpr, no
+// fb), and only the first of the two is read-only (gitproxy's
+// Identity.ReadOnly). Reading the class here, once, is what keeps the two
+// decisions the rules make on it - may this call be made, and may this write's
+// body be sent - from disagreeing about which caller they are answering.
+func proxyIdentity(id Identity) gitproxy.Identity {
+	return gitproxy.Identity{
+		Run:    id.Run,
+		Branch: id.Branch,
+		PRs:    id.PRs,
+		// The review class is F16's read-only job: it is served a read-only
+		// credential on every other route (mintPermissions, D1065), so a
+		// write of it here would be reach that set exists to not have.
+		ReadOnly: id.JobClass == ClassReview,
+	}
+}
+
 // bitbucketProxy answers one call of the run's Bitbucket traffic. It is reached
 // from ServeHTTP's branch, below the two identities, the pairing and the stop
 // switches, and it does there what every other route does: it names the call,
@@ -240,7 +267,7 @@ func (s *Server) bitbucketProxy(ctx context.Context, w http.ResponseWriter, r *h
 		s.refuseUnavailable(ctx, w, id, purpose, "the project's policy could not be read")
 		return
 	}
-	if verdict := gitproxy.Decide(req, gitproxy.Identity{Run: id.Run, Branch: id.Branch, PRs: id.PRs}, canonical, shared.BitbucketToken); !verdict.Allow {
+	if verdict := gitproxy.Decide(req, proxyIdentity(id), canonical, shared.BitbucketToken); !verdict.Allow {
 		s.refuseProxy(ctx, w, id, purpose, verdict.Reason)
 		return
 	}
@@ -312,7 +339,7 @@ func (s *Server) bitbucketProxy(ctx context.Context, w http.ResponseWriter, r *h
 				s.refuseUnavailable(ctx, w, id, purpose, "the pull request a write names could not be read")
 				return
 			}
-			if verdict := gitproxy.CheckPRWrite(pr, prBody, gitproxy.Identity{Run: id.Run, Branch: id.Branch, PRs: id.PRs}, canonical); !verdict.Allow {
+			if verdict := gitproxy.CheckPRWrite(pr, prBody, proxyIdentity(id), canonical); !verdict.Allow {
 				s.refuseProxy(ctx, w, id, purpose, verdict.Reason)
 				return
 			}

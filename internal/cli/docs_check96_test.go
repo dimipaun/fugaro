@@ -287,8 +287,26 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 	if !strings.Contains(cascade, "func (s *Server) refuseCall(ctx context.Context, w http.ResponseWriter") {
 		t.Errorf("internal/credsvc/cascade.go no longer has `refuseCall`: Check 96's step 4 is written on its behaviour — it writes the refusal's one audit line and then the typed refusal")
 	}
-	if body := check96FuncBody(t, cascade, "func (s *Server) refuseCall(ctx context.Context, w http.ResponseWriter"); !strings.Contains(body, "auditCall") || !strings.Contains(body, "s.refuse(") {
-		t.Errorf("internal/credsvc/cascade.go's `refuseCall` no longer writes the audit line before the answer (%q): Check 96's step 4 expects exactly one line for the pairing refusal, written before the answer goes out", strings.TrimSpace(body))
+	// The three calls are one path and the check's expectation is about the
+	// path: refuseCall delegates to refuseCallCause, which writes the audit line
+	// through `auditCall` and only then the typed refusal through `s.refuse`. A
+	// reading held to `refuseCall`'s own body alone would be a reading of where
+	// the code happens to sit, and it went red when the cause-carrying half
+	// moved one level down (the refusal's own server-side line, refusallog.go) —
+	// so both halves are pinned: the entry point that every refusal after the
+	// pairing takes, and the body that audits before it answers.
+	//
+	// What is pinned of the entry point is the DELEGATION CALL and its whole
+	// argument list, never the name of the function it reaches:
+	// check96FuncBody runs to the next top-level `func `, so that name is also
+	// in refuseCallCause's own doc comment underneath, and a reading of the name
+	// stays green with the delegation inlined away — the one edit this half
+	// exists to catch.
+	if body := check96FuncBody(t, cascade, "func (s *Server) refuseCall(ctx context.Context, w http.ResponseWriter"); !strings.Contains(body, "s.refuseCallCause(ctx, w, id, purpose, credential, tier") {
+		t.Errorf("internal/credsvc/cascade.go's `refuseCall` no longer delegates the refusal to the audited path `refuseCallCause` (%q): Check 96's step 4 expects exactly one line for the pairing refusal, and the delegation is what keeps the audit and the answer one act", strings.TrimSpace(body))
+	}
+	if body := check96FuncBody(t, cascade, "func (s *Server) refuseCallCause(ctx context.Context, w http.ResponseWriter"); !strings.Contains(body, "auditCall") || !strings.Contains(body, "s.refuse(") {
+		t.Errorf("internal/credsvc/cascade.go's `refuseCallCause` no longer writes the audit line before the answer (%q): Check 96's step 4 expects exactly one line for the pairing refusal, written before the answer goes out", strings.TrimSpace(body))
 	}
 	if !strings.Contains(server, "func (s *Server) refuse(w http.ResponseWriter") {
 		t.Errorf("internal/credsvc/server.go no longer has `refuse`: Check 96's step 4 is written on its behaviour — it is the wire writer the refusals answered before an identity is verified take, and it writes no audit line")

@@ -574,8 +574,12 @@ interface CliCommand {
  * (`grep -rn 'Use:' internal/cli/*.go`, parents excluded), classified. Its three
  * converge rows were re-read on 2026-10-21, after task W1.2 of
  * `docs/setup-wizard/implementation-plan.md` split the old first-run `init` into
- * `fugaro setup` and `fugaro update` and left it a hidden tombstone. It is the
- * other half of the allow-list's invariant: nothing off this list may be driven
+ * `fugaro setup` and `fugaro update` and left it a hidden tombstone. One row has
+ * left it since: U4 of `docs/plugin-user-scope/implementation-plan.md` removed
+ * `upgrade` with no tombstone (D950), so there is no verb of that name left to
+ * classify -- and a table that kept classifying one would be the drift this list
+ * and the never table exist to catch. It is the other half of the allow-list's
+ * invariant: nothing off this list may be driven
  * (there is no command the console could drive that is not here), and nothing on
  * it that is not `allowed` may be driven either. Keeping the list complete is
  * what makes "the console is read-only" a fact about the surface rather than a
@@ -692,7 +696,10 @@ const CLI_COMMANDS: readonly CliCommand[] = [
   { command: 'setup', kind: 'mutating', where: 'internal/cli/setup.go:235' },
   { command: 'update', kind: 'mutating', where: 'internal/cli/update.go:58' },
   { command: 'init', kind: 'retired', where: 'internal/cli/retired.go:39 (hidden)' },
-  { command: 'upgrade', kind: 'mutating', where: 'internal/cli/upgrade.go:79' },
+  // `upgrade` is not here and is on no other row: U4 of
+  // `docs/plugin-user-scope/implementation-plan.md` removed the command with no
+  // tombstone (D950), so there is no verb of that name to classify -- not even
+  // the `retired` class the `init` tombstone above takes.
   { command: 'exec', kind: 'mutating', where: 'internal/cli/exec.go:52 (hidden)' },
   { command: 'verify', kind: 'mutating', where: 'internal/cli/verify.go:16' },
   { command: 'update-skills', kind: 'mutating', where: 'internal/cli/updateskills.go:46' },
@@ -1331,7 +1338,7 @@ describe('the never-reachable table', () => {
     })
   }
 
-  for (const command of ['budget kill', 'budget history', 'secrets set', 'setup', 'update', 'init', 'upgrade', 'exec']) {
+  for (const command of ['budget kill', 'budget history', 'secrets set', 'setup', 'update', 'init', 'exec']) {
     it(`carries a never-table row for ${command}`, () => {
       const row = NEVER_REACHABLE.find(
         (candidate) => candidate.shape === 'command' && candidate.value === command,
