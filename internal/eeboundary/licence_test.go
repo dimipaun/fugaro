@@ -22,7 +22,9 @@ package eeboundary
 // The audit itself is `docs/licensing/dependency-audit.md`: this file enforces
 // what a machine can, and that document carries what a machine cannot -- what
 // each licence obliges, which declarations are stale, and the app-store
-// questions for counsel.
+// questions for counsel. It weighs the console's and the mobile app's
+// dependencies today and the portal's not yet, which is the one thing about the
+// third lockfile that is still owed there.
 
 import (
 	"encoding/json"
@@ -80,17 +82,25 @@ const portalDirName = eeDirName + "/portal"
 type lockDirectory struct {
 	dir  string
 	path string
-	// optional is a lockfile that is not in every checkout. The portal's is
-	// the one: `ee/` is deleted for the core build and its tests, so this rule
-	// holds the portal to the same two readings as the console and the mobile
-	// app wherever ee/ exists, and applies to nothing there where it does not.
-	optional bool
+	// absentWith is the directory this app's lockfile is absent together with,
+	// and it is empty for a lockfile every checkout has. The portal's is the
+	// one: `ee/` is deleted for the core build and its tests, so this rule holds
+	// the portal to the same two readings as the console and the mobile app
+	// wherever ee/ exists, and applies to nothing there where it does not.
+	//
+	// What excuses the absence is the boundary's and never the lockfile's. The
+	// two are not the same state: a checkout that has ee/ and has lost the
+	// portal's lockfile is one where both rules below would quietly read two of
+	// the three apps and say nothing about it, which is the silence they exist
+	// to break -- so this field names a directory to look for, not a file to
+	// forgive.
+	absentWith string
 }
 
 var lockDirectories = []lockDirectory{
 	{dir: consoleDirName, path: consoleDirName + "/package-lock.json"},
 	{dir: mobileDirName, path: mobileDirName + "/package-lock.json"},
-	{dir: portalDirName, path: portalDirName + "/package-lock.json", optional: true},
+	{dir: portalDirName, path: portalDirName + "/package-lock.json", absentWith: eeDirName},
 }
 
 // lockPackage is one entry of a v3 lockfile's `packages` map. `license` is a
@@ -121,15 +131,17 @@ type dependency struct {
 // the app's own manifest) is skipped: the app is not its own dependency, and its
 // licence is the business licence read elsewhere.
 //
-// A missing optional lockfile is the one absence this answers instead of
-// failing: the portal lives under ee/, and the core build and its tests run with
-// that directory deleted, which is a tree this rule does not cover rather than
-// one where it would pass by finding nothing.
+// A lockfile absent together with the directory it lives under is the one
+// absence this answers instead of failing: the portal lives under ee/, and the
+// core build and its tests run with that directory deleted, which is a tree this
+// rule does not cover rather than one where it would pass by finding nothing.
+// Any other absence fails, this app's included, because a lockfile the rule
+// cannot open is a rule that checks nothing about the app it belongs to.
 func readLockfile(t *testing.T, root string, dir lockDirectory) ([]dependency, bool) {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(dir.path)))
 	if err != nil {
-		if dir.optional && errors.Is(err, fs.ErrNotExist) {
+		if lockfileIsOptional(root, dir) {
 			return nil, false
 		}
 		t.Fatalf("%s: %v -- the copyleft rule reads the lockfiles, so a lockfile it cannot open is a rule that would pass by finding nothing", dir.path, err)
@@ -154,6 +166,26 @@ func readLockfile(t *testing.T, root string, dir lockDirectory) ([]dependency, b
 	}
 	sort.Slice(deps, func(i, j int) bool { return deps[i].name < deps[j].name })
 	return deps, true
+}
+
+// lockfileIsOptional answers whether one lockfile's absence is this checkout's
+// rather than a rule that covers nothing: only when the directory it is absent
+// together with is not there, which is what the core build's deleted `ee/` looks
+// like from here.
+//
+// Only "not there" excuses it. A directory this process cannot read is a
+// question for the rule below rather than an answer here, or a permission
+// problem would be read as the core build and two readings would cover two apps
+// in silence.
+func lockfileIsOptional(root string, dir lockDirectory) bool {
+	if dir.absentWith == "" {
+		return false
+	}
+	info, err := os.Stat(filepath.Join(root, filepath.FromSlash(dir.absentWith)))
+	if err != nil {
+		return errors.Is(err, fs.ErrNotExist)
+	}
+	return !info.IsDir()
 }
 
 // licenceOf renders a lockfile's `license` field as one string. The field is an
@@ -294,6 +326,44 @@ func TestLicenceBoundaryNamesEveryDependencyLicence(t *testing.T) {
 			if dep.licence == "" {
 				t.Errorf("%s depends on %s %s, which declares no licence in the lockfile: the report classifies every dependency by licence, and one it cannot classify is one nobody has looked at", dir.path, dep.name, dep.version)
 			}
+		}
+	}
+}
+
+// TestLicenceBoundarySkipsOnlyWhereTheBoundaryIsAbsent holds the one escape
+// either rule has: the portal's lockfile may be missing, and only because `ee/`
+// is -- the core build, and the suite that runs beside it, delete that
+// directory. The state is built here rather than described, because the two
+// readings differ by one directory: excused by the lockfile's absence, a
+// checkout that has `ee/` and has lost the portal's lockfile has both rules read
+// two of the three apps and pass, which is the green rule they exist not to be.
+func TestLicenceBoundarySkipsOnlyWhereTheBoundaryIsAbsent(t *testing.T) {
+	var portal lockDirectory
+	for _, dir := range lockDirectories {
+		if dir.dir == portalDirName {
+			portal = dir
+		}
+	}
+	if portal.path == "" {
+		t.Fatalf("%s is not among the apps this file reads a lockfile for: the portal is the third one, and the rules below cover it or they cover two of three and say nothing", portalDirName)
+	}
+	if portal.absentWith != eeDirName {
+		t.Fatalf("%s is excused by %q, want %q: the portal's lockfile is absent exactly when the business-licensed tree it lives in is, and any other excuse is a lockfile these rules stop reading without saying so", portal.path, portal.absentWith, eeDirName)
+	}
+
+	root := t.TempDir()
+	if !lockfileIsOptional(root, portal) {
+		t.Errorf("%s with no %s/ in the tree: that absence is the core build's, so the rule covers nothing here rather than failing", portal.path, eeDirName)
+	}
+	if err := os.MkdirAll(filepath.Join(root, eeDirName), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if lockfileIsOptional(root, portal) {
+		t.Errorf("%s with %s/ in the tree: the lockfile's absence is this checkout's own and has to fail the rule, or both readings cover two of the three apps and say nothing", portal.path, eeDirName)
+	}
+	for _, dir := range lockDirectories {
+		if dir.absentWith == "" && lockfileIsOptional(root, dir) {
+			t.Errorf("%s is excused by an absence that has nothing to do with it: only the portal's lockfile is optional, and only while %s/ is gone", dir.path, eeDirName)
 		}
 	}
 }
