@@ -177,9 +177,15 @@
     },
     "evaluateSteps": {
       "oneOf": [
-        { "type": "array", "prefixItems": [{ "$ref": "#/$defs/abJudge" }], "items": false, "minItems": 1, "maxItems": 1 }
+        { "type": "array", "prefixItems": [{ "$ref": "#/$defs/abJudge" }], "items": false, "minItems": 1, "maxItems": 1 },
+        { "type": "array", "prefixItems": [{ "$ref": "#/$defs/mergeJudge" }], "items": false, "minItems": 1, "maxItems": 1 }
       ],
-      "description": "A mode: evaluate recipe's steps: exactly one, and it is a step kind this build registered as that mode's own (recipe.RegisterStepKind, orderEvaluate). The judge run's ab_judge step is the only one today, and the mode's rules are why: an evaluate run reads material the bucket already holds, so a step that runs a repository command or starts an agent is refused by name rather than run."
+      "description": "A mode: evaluate recipe's steps: exactly one, and it is either a step kind this build registered as that mode's own (recipe.RegisterStepKind, orderEvaluate) or the core's own judge step (recipe.StepMergeJudge). The judge runs are the only ones today — ab_judge, and the core's merge_judge beside it — and the mode's rules are why: an evaluate run reads material the bucket already holds, so a step that runs a repository command or starts an agent is refused by name rather than run."
+    },
+    "mergeJudge": {
+      "type": "object", "additionalProperties": false, "required": ["merge_judge"],
+      "properties": { "merge_judge": { "type": ["object", "null"], "additionalProperties": false } },
+      "description": "The merge judge run's only step (recipe.StepMergeJudge, the escalation ladder's rung 3): one read-only stage reads the diff, the open findings and the fundamentals checklist the launcher left under the run's prefix, and answers merge with follow-ups or blocked. It carries no keys, and it is not a registered kind — the code behind it is this tree's (internal/runner/mergejudge.go), not the Subscription Edition's. The verdict can only veto: the run checks no branch out, pushes nothing and opens no pull request."
     },
     "abJudge": {
       "type": "object", "additionalProperties": false, "required": ["ab_judge"],

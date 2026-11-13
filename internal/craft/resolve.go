@@ -1,4 +1,4 @@
-// Package craft resolves the crafts: which model a run's four crafts use and
+// Package craft resolves the crafts: which model a run's five crafts use and
 // which credential or pool each one's calls go out on, and for each half the
 // layer it came from (docs/model-crafts/spec.md §3, reconciliation MC2).
 //

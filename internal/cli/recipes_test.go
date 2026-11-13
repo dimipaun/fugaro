@@ -224,6 +224,7 @@ func TestRecipesLsLayers(t *testing.T) {
 		{Name: "default", Source: "catalog"},
 		{Name: "escalate", Source: "catalog"},
 		{Name: "lint-fix", Source: "catalog"},
+		{Name: "merge-judge", Source: "catalog"},
 		{Name: "pick", Source: "catalog"},
 		{Name: "premium", Source: "catalog"},
 		{Name: "rebase", Source: "catalog"},

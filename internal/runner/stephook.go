@@ -103,10 +103,13 @@ func registeredStep(kind recipe.StepKind) (StepFunc, bool) {
 // and the run's stage timings write.
 const evaluateStage = "judge"
 
-// runEvaluateMode runs a mode: evaluate recipe: its one registered step, and
-// then an ending. It opens no pull request, pushes no branch and commits
-// nothing (r.skipPR), and the run's record is the whole of what it leaves
-// beside the objects the step wrote under its own prefix.
+// runEvaluateMode runs a mode: evaluate recipe: its one step, and then an
+// ending. The step is a registered kind's or, for the merge judge, a kind this
+// tree carries (recipe.StepMergeJudge, mergejudge.go) — one step either way,
+// which is what a mode: evaluate recipe is (orderEvaluate). It opens no pull
+// request, pushes no branch and commits nothing (r.skipPR), and the run's record
+// is the whole of what it leaves beside the objects the step wrote under its own
+// prefix.
 func (r *run) runEvaluateMode(ctx context.Context) {
 	defer func() {
 		if p := recover(); p != nil {
@@ -122,29 +125,49 @@ func (r *run) runEvaluateMode(ctx context.Context) {
 		}
 	}()
 	kind := r.evaluateStep()
-	step, ok := registeredStep(kind)
-	if !ok {
-		// The recipe parser refuses a step kind it has not been taught, so
-		// this is a build whose registration and whose recipe came from two
-		// halves that did not land together (ee/register's init). Reported as
-		// a failure rather than run as "nothing to do": a judge run that
-		// succeeded without judging would be counted as a judged pair by
-		// everything that reads the runs afterwards.
-		r.endEvaluate(ctx, runstore.StatusFailed, failure.ConfigInvalid,
-			fmt.Sprintf("the %s step is part of this recipe, but this build carries nothing to run it", kind), nil)
-		return
+	var err error
+	class := failure.StageErrorUnexplained
+	if kind == recipe.StepMergeJudge {
+		// The mode's one step is this tree's own here (E6, mergejudge.go),
+		// rather than a registered kind's: the merge judge runs one stage of
+		// the run's own machinery, and its stage records its own timing under
+		// its own name (stageOnce) — the stepTiming below is a registered
+		// step's, whose calls the run's stage list would hold nowhere else.
+		err, class = r.mergeJudge(ctx)
+	} else {
+		step, ok := registeredStep(kind)
+		if !ok {
+			// The recipe parser refuses a step kind it has not been taught, so
+			// this is a build whose registration and whose recipe came from two
+			// halves that did not land together (ee/register's init). Reported as
+			// a failure rather than run as "nothing to do": a judge run that
+			// succeeded without judging would be counted as a judged pair by
+			// everything that reads the runs afterwards.
+			r.endEvaluate(ctx, runstore.StatusFailed, failure.ConfigInvalid,
+				fmt.Sprintf("the %s step is part of this recipe, but this build carries nothing to run it", kind), nil)
+			return
+		}
+		started := r.d.Now()
+		err = step(ctx, StepView{
+			RunID: r.rec.RunID,
+			Slug:  r.d.Store.Slug(),
+			Store: r.d.Store,
+			AB:    r.ab,
+			Call:  r.DirectCall,
+			Log:   r.d.Log,
+		})
+		r.rec.Stages = append(r.rec.Stages, r.stepTiming(string(kind), started))
 	}
-	started := r.d.Now()
-	err := step(ctx, StepView{
-		RunID: r.rec.RunID,
-		Slug:  r.d.Store.Slug(),
-		Store: r.d.Store,
-		AB:    r.ab,
-		Call:  r.DirectCall,
-		Log:   r.d.Log,
-	})
-	r.rec.Stages = append(r.rec.Stages, r.stepTiming(string(kind), started))
 	r.updateCost()
+	r.endEvaluateStep(ctx, kind, class, err)
+}
+
+// endEvaluateStep ends an evaluate run on what its one step reported: the four
+// endings every step of the mode shares, whatever ran it. class is the caller's
+// because it is not always the stage's — a registered step's failure is the
+// stage's own, and the merge judge's is configuration's when the brief its own
+// launch wrote is not there to read.
+func (r *run) endEvaluateStep(ctx context.Context, kind recipe.StepKind, class failure.Class, err error) {
 	switch {
 	case err == nil:
 		r.endEvaluate(ctx, runstore.StatusSucceeded, "", "", nil)
@@ -154,7 +177,7 @@ func (r *run) runEvaluateMode(ctx context.Context) {
 	case r.isCancelled():
 		r.endEvaluate(ctx, runstore.StatusCancelled, failure.Cancelled, "cancelled during "+string(kind), nil)
 	default:
-		r.endEvaluate(ctx, runstore.StatusFailed, failure.StageErrorUnexplained, r.redact(err.Error()), nil)
+		r.endEvaluate(ctx, runstore.StatusFailed, class, r.redact(err.Error()), nil)
 	}
 }
 

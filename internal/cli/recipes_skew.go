@@ -451,11 +451,11 @@ var escalationRecipes = []string{"escalate", "rebase", "merge-judge"}
 // itself, never a repository's or the project's own file that happens to
 // share it (resolveRecipe reads those first, and they win). It is the floor
 // under the construct gates: a recipe whose text carries no hand_over and no
-// rebase step this launcher can see — merge-judge, whose file the catalog
-// does not hold yet, and any of the three whose text a later release edits to
-// use fewer constructs — is still held to the release whose runner runs the
-// ladder's recipes, so an image that cannot take the launch is refused at the
-// terminal rather than at bootstrap.
+// rebase step this launcher can see — merge-judge, which carries neither, and
+// any of the three whose text a later release edits to use fewer constructs —
+// is still held to the release whose runner runs the ladder's recipes, so an
+// image that cannot take the launch is refused at the terminal rather than at
+// bootstrap.
 func escalationRecipeNamed(spec *task.Spec) bool {
 	return spec.Recipe != nil && spec.Recipe.Source == string(recipe.SourceCatalog) && slices.Contains(escalationRecipes, spec.Recipe.Name)
 }

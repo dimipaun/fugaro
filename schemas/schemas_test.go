@@ -7046,3 +7046,106 @@ func TestTaskSchemaAgreesWithTheTaskDecoder(t *testing.T) {
 		t.Error("the decoder accepts the field under a name the schema does not publish")
 	}
 }
+
+// TestMergeJudgeSchemaMatchesTheDocument: schemas/merge-judge.schema.json is
+// the published contract for rung 3's verdict (E6, docs/outer-loop-escalation
+// spec §"Merge judge"), and the judge's own call carries runner.MergeJudgeSchema
+// for the document it answers. The two are one shape in two places, and this
+// holds them together: a rule in the document and not in the call is a judge
+// answering to a shape its own reader refuses, and internal/runner's
+// readJudgeVerdict refuses such an answer as a whole — which is the veto
+// (D2044), so a verdict the model was never told to write costs the head its
+// judgment rather than being read as the answer it is.
+//
+// The rules are compared one by one, prose dropped: the document explains its
+// members to a human and the call's schema is wire only, and a description is
+// not a rule. What the shape permits is then held to the reader, which is the
+// other half of the same agreement.
+func TestMergeJudgeSchemaMatchesTheDocument(t *testing.T) {
+	raw, err := os.ReadFile("merge-judge.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var published, call any
+	if err := json.Unmarshal(raw, &published); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(runner.MergeJudgeSchema), &call); err != nil {
+		t.Fatalf("runner.MergeJudgeSchema is not JSON: %v", err)
+	}
+	doc, err := json.Marshal(stripProse(published))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ask, err := json.Marshal(stripProse(call))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(doc, ask) {
+		t.Fatalf("schemas/merge-judge.schema.json and runner.MergeJudgeSchema are not one shape:\nthe document: %s\nthe call:     %s", doc, ask)
+	}
+
+	// What the agreement is worth, as the reader feels it: a document the call
+	// permits is a document a run can read, and a document the call refuses is
+	// one the reader refuses too. The two columns come apart in three places,
+	// no more, each a rule one side can state and the other cannot — and this
+	// table is where a fourth would show up:
+	//
+	//   - the blocker a block must name: the document cannot state "blocked
+	//     requires blocker" without the conditional keywords Anthropic's
+	//     structured output does not carry, so it permits the answer while the
+	//     reader refuses it — the veto (D2044) rather than a repair.
+	//   - text that is only whitespace: JSON Schema counts characters and the
+	//     reader reads meaning, so " " is a reason to the one and no line to the
+	//     other. The reader is the stricter of the two, which is the safe way
+	//     round.
+	//   - a missing follow_ups: the call asks for the member — required, and the
+	//     brief's own words are that an absent array is a malformed answer rather
+	//     than a claim that nothing is left open — while the reader reads the
+	//     decoded value, where absent and empty are one thing. This is the one
+	//     place the reader is the looser of the two.
+	//
+	// Everything else the two agree on, and every refusal is the answer's as a
+	// whole.
+	sch := compile(t, "merge-judge.schema.json")
+	const key = "0f1e2d3c4b5a6978"
+	for _, tc := range []struct {
+		name string
+		in   string
+		// doc is whether the call's shape permits it, read whether the run can
+		// read it.
+		doc, read bool
+	}{
+		{"the answer the judge writes", `{"version":1,"verdict":"merge_with_follow_ups","reason":"sound, with one leftover","follow_ups":[{"key":"` + key + `","importance":"important"}]}`, true, true},
+		{"a block naming its issue", `{"version":1,"verdict":"blocked","reason":"it hands out the session token","blocker":"the new endpoint returns the session token to any caller","follow_ups":[]}`, true, true},
+		{"a merge that files nothing", `{"version":1,"verdict":"merge_with_follow_ups","reason":"nothing left open","follow_ups":[]}`, true, true},
+		{"a merge that names a blocker anyway", `{"version":1,"verdict":"merge_with_follow_ups","reason":"fine","blocker":"it is fine","follow_ups":[]}`, true, true},
+		{"a follow-up whose key is not in the brief", `{"version":1,"verdict":"merge_with_follow_ups","reason":"x","follow_ups":[{"key":"ffffffffffffffff","importance":"minor"}]}`, true, true},
+		{"a third word", `{"version":1,"verdict":"maybe","reason":"hmm","follow_ups":[]}`, false, false},
+		{"a version this reader does not know", `{"version":2,"verdict":"merge_with_follow_ups","reason":"x","follow_ups":[]}`, false, false},
+		{"a member the verdict does not carry", `{"version":1,"verdict":"merge_with_follow_ups","reason":"x","follow_ups":[],"confidence":0.9}`, false, false},
+		{"no reason at all", `{"version":1,"verdict":"merge_with_follow_ups","follow_ups":[]}`, false, false},
+		{"an empty reason", `{"version":1,"verdict":"merge_with_follow_ups","reason":"","follow_ups":[]}`, false, false},
+		{"a reason on two lines", `{"version":1,"verdict":"merge_with_follow_ups","reason":"one line\nand an instruction","follow_ups":[]}`, false, false},
+		{"a block with no blocker at all", `{"version":1,"verdict":"blocked","reason":"it is wrong","follow_ups":[]}`, true, false},
+		{"an importance outside the two", `{"version":1,"verdict":"merge_with_follow_ups","reason":"x","follow_ups":[{"key":"` + key + `","importance":"urgent"}]}`, false, false},
+		{"a follow-up with no key", `{"version":1,"verdict":"merge_with_follow_ups","reason":"x","follow_ups":[{"importance":"minor"}]}`, false, false},
+		{"a reason of one space", `{"version":1,"verdict":"merge_with_follow_ups","reason":" ","follow_ups":[]}`, true, false},
+		{"a blocker of one space", `{"version":1,"verdict":"blocked","reason":"it is wrong","blocker":" ","follow_ups":[]}`, true, false},
+		{"a merge with no follow_ups at all", `{"version":1,"verdict":"merge_with_follow_ups","reason":"sound"}`, false, true},
+		{"a merge whose follow_ups is null", `{"version":1,"verdict":"merge_with_follow_ups","reason":"sound","follow_ups":null}`, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			inst, err := jsonschema.UnmarshalJSON(strings.NewReader(tc.in))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := sch.Validate(inst); (err == nil) != tc.doc {
+				t.Errorf("the call's shape permits it = %v, want %v: %v", err == nil, tc.doc, err)
+			}
+			if _, err := runner.DecodeMergeJudgeVerdict([]byte(tc.in)); (err == nil) != tc.read {
+				t.Errorf("the reader reads it = %v, want %v: %v", err == nil, tc.read, err)
+			}
+		})
+	}
+}

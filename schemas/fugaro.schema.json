@@ -73,12 +73,13 @@
         "crafts": {
           "type": "object",
           "additionalProperties": false,
-          "description": "Each craft's model and the credential or pool its calls go out on (docs/model-crafts/spec.md §3). A craft that sets nothing takes the model and the access of the craft it follows — review follows coder, security-review follows senior-review — and the two halves inherit separately. No key here turns a review level on: level 3 stays the review levels' and the recipe's switch, not the security-review craft's.",
+          "description": "Each craft's model and the credential or pool its calls go out on (docs/model-crafts/spec.md §3). A craft that sets nothing takes the model and the access of the craft it follows — review follows coder, merge-judge and security-review follow senior-review — and the two halves inherit separately. No key here turns a review level on: level 3 stays the review levels' and the recipe's switch, not the security-review craft's.",
           "properties": {
             "coder": { "$ref": "#/$defs/craft", "description": "implement and fix" },
             "review": { "$ref": "#/$defs/craft", "description": "review, level 1" },
             "senior-review": { "$ref": "#/$defs/craft", "description": "senior review, level 2" },
-            "security-review": { "$ref": "#/$defs/craft", "description": "security review, level 3; setting it does not turn the level on" }
+            "security-review": { "$ref": "#/$defs/craft", "description": "security review, level 3; setting it does not turn the level on" },
+            "merge-judge": { "$ref": "#/$defs/craft", "description": "the merge judge, the escalation ladder's rung 3 (docs/outer-loop-escalation E6); it follows the senior review and answers whether a handed-over pull request may merge" }
           }
         },
         "max_output_tokens": {

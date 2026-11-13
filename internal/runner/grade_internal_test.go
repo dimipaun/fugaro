@@ -141,6 +141,27 @@ func TestRoutingGradeAppliesToCoderAndJudge(t *testing.T) {
 	if got := r.cfg.Agent.Crafts.Coder.Access; got != "acme-own-key" {
 		t.Errorf("the coder craft access = %q, want the repository's own: a grade that names no credential writes none", got)
 	}
+	if got := r.cfg.Agent.Crafts.MergeJudge.Access; got != "" {
+		t.Errorf("the merge judge craft access = %q, want it untouched: a grade that names no credential writes none", got)
+	}
+	// And the access half lands on the judge's craft as well as the coder's:
+	// the judge's stage is charged to the merge-judge craft (stageCraft), so a
+	// writer that half-filled the pair would send the judge's calls out on the
+	// run's own default credential instead of the one the grade named — the
+	// spending and egress grant the ladder bought, unread by the stage it
+	// bought it for.
+	withAccess := gradedRun(t, escalation.Strong, policy.Grades{
+		config.GradeStrong: {Model: "claude-opus-5-5", Access: "openrouter-main"},
+	})
+	if err := withAccess.applyGrade(); err != nil {
+		t.Fatalf("applyGrade: %v", err)
+	}
+	if got := withAccess.cfg.Agent.Crafts.Coder.Access; got != "openrouter-main" {
+		t.Errorf("the coder craft access = %q, want the grade's", got)
+	}
+	if got := withAccess.cfg.Agent.Crafts.MergeJudge.Access; got != "openrouter-main" {
+		t.Errorf("the merge judge craft access = %q, want the grade's: the judge's stage is charged to that craft, so the one choice in two halves lands on both", got)
+	}
 	// A run whose reviewer names no model of its own falls back to agent.model,
 	// which the grade left alone.
 	fallback := gradedRun(t, escalation.Strong, policy.Grades{config.GradeStrong: {Model: "claude-opus-5-5"}})

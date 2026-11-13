@@ -262,7 +262,7 @@ type Policy struct {
 	CraftPools       []config.Pool       `json:"craft_pools,omitempty"`
 
 	// Crafts are the credential or pool each craft's calls go out on (spec §3):
-	// the project's answer for the four crafts, which a repository selects
+	// the project's answer for the five crafts, which a repository selects
 	// among and narrows but never adds to (F25, D1628). A craft's access here
 	// names a member of CraftCredentials or CraftPools, or the built-in vertex;
 	// what the name resolves to is the run's answer (MC2).

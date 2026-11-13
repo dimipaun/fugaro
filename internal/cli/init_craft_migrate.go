@@ -230,6 +230,16 @@ func deriveCraftAccesses(c *localcfg.Config, refused map[string]string) []string
 		if own := c.Crafts.Of(craft).Access; own != "" {
 			continue
 		}
+		// A craft this vocabulary holds no stage for has nothing to derive:
+		// merge-judge (E6), whose one stage is the runner's own merge_judge and
+		// not one of config.RunStages, so no key of the older vocabulary speaks
+		// for it, and any crafts.merge-judge the file holds is left as the owner
+		// wrote it. Nothing is reported about it either: the notes below are
+		// about stages that disagree and an account no credential stands for,
+		// and a craft with no stage has neither.
+		if len(names[craft]) == 0 {
+			continue
+		}
 		// Every stage of the craft has to run on one account for the craft to
 		// hold it: a stage that names none runs on the default, and the craft
 		// speaks for all of them.
@@ -320,8 +330,10 @@ func installationAccounts(c *localcfg.Config, stages []string) []string {
 }
 
 // allEqual reports whether every name is the same. It is asked of a craft's
-// stages and never of an empty list, which every craft has at least one of
-// (stageCraft covers config.RunStages).
+// stages and never of an empty list: stageCraft covers config.RunStages, so a
+// craft none of them maps to is the caller's to skip before this is asked —
+// merge-judge, whose one stage is the runner's own and not an account stage at
+// all (deriveCraftAccesses).
 func allEqual(names []string) bool {
 	return !slices.ContainsFunc(names, func(name string) bool { return name != names[0] })
 }

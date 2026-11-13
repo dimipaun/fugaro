@@ -15,7 +15,7 @@ package credsvc
 //
 // **What the crafts can and cannot say to this service.** The wire carries no
 // stage and no craft — a call arrives for a run and a job class, not for a
-// stage (C1.10) — so the list is the UNION of the four crafts' accesses rather
+// stage (C1.10) — so the list is the UNION of the five crafts' accesses rather
 // than the one craft this call is of: `implement` and `review_first` are served
 // by the same loop, and a service that guessed which craft a call is of would
 // answer a review stage from the coder's credential. Two consequences follow,

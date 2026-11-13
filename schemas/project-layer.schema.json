@@ -50,12 +50,13 @@
             "crafts": {
               "type": "object",
               "additionalProperties": false,
-              "description": "Each craft's model for every repository of the project (docs/model-crafts/spec.md §3). A craft that sets no model takes the model of the craft it follows — review follows coder, security-review follows senior-review. A craft's ACCESS — the credential or pool its calls go out on — is not here and never the project layer's to name (config.Scopes): only the local config and the published policy node hold one, and a layer that writes one is refused. No key in this block turns a review level on: level 3 stays the review levels' and the recipe's switch, not the security-review craft's.",
+              "description": "Each craft's model for every repository of the project (docs/model-crafts/spec.md §3). A craft that sets no model takes the model of the craft it follows — review follows coder, merge-judge and security-review follow senior-review. A craft's ACCESS — the credential or pool its calls go out on — is not here and never the project layer's to name (config.Scopes): only the local config and the published policy node hold one, and a layer that writes one is refused. No key in this block turns a review level on: level 3 stays the review levels' and the recipe's switch, not the security-review craft's.",
               "properties": {
                 "coder": { "$ref": "#/$defs/craft", "description": "implement and fix" },
                 "review": { "$ref": "#/$defs/craft", "description": "review, level 1" },
                 "senior-review": { "$ref": "#/$defs/craft", "description": "senior review, level 2" },
-                "security-review": { "$ref": "#/$defs/craft", "description": "security review, level 3; setting it does not turn the level on" }
+                "security-review": { "$ref": "#/$defs/craft", "description": "security review, level 3; setting it does not turn the level on" },
+                "merge-judge": { "$ref": "#/$defs/craft", "description": "the merge judge, the escalation ladder's rung 3 (docs/outer-loop-escalation E6); it follows the senior review and answers whether a handed-over pull request may merge" }
               }
             },
             "review_rounds": { "type": "integer", "minimum": 1, "maximum": 10 },

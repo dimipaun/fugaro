@@ -978,7 +978,7 @@ func TestUnregisteredStepRefused(t *testing.T) {
 		t.Errorf("problems = %s: a paid step is reported as an unknown one", text)
 	}
 	_, ps = Parse([]byte("version: 1\nname: judge\nmode: evaluate\nsteps:\n  - judge_it: {}\n"))
-	if text := ProblemsText(ps); !strings.Contains(text, "is not a step type (version 1 has first_line, review, adversarial, check, digest, plan, render and rebase)") {
+	if text := ProblemsText(ps); !strings.Contains(text, "is not a step type (version 1 has first_line, review, adversarial, check, digest, plan, render, rebase and merge_judge)") {
 		t.Errorf("problems = %s, want version 1's own list for an unknown kind", text)
 	}
 }
@@ -1012,6 +1012,34 @@ func TestEvaluateModeRefusesCommandsAndImplement(t *testing.T) {
 	_, ps := Parse([]byte("version: 1\nname: judge\nmode: evaluate\nsteps:\n  - check: { command: test }\n  - review: {}\n"))
 	if text := ProblemsText(ps); !strings.Contains(text, "mode: evaluate takes exactly one step") {
 		t.Errorf("problems = %s, want the two-step refusal as well", text)
+	}
+}
+
+// TestMergeJudgeStepIsOnlyTheEvaluateMode: the judge step is the core's own
+// evaluate step (E6, mergejudge.go), and the other three modes refuse it rather
+// than accept it and drop it. The implement and review loop has no rule for it
+// (order's own default arm says what that would cost: the step would never run
+// and the run would open an ordinary pull request as if it had judged the head),
+// and an artifact recipe has neither a judge nor a head to judge — the two
+// sentences differ because the two refusals are made by different order
+// functions, and both name the step.
+func TestMergeJudgeStepIsOnlyTheEvaluateMode(t *testing.T) {
+	for _, tc := range []struct{ mode, steps, want string }{
+		{ModeImplement, "  - merge_judge: {}\n  - review: {}\n", "merge_judge is only for mode: evaluate"},
+		{ModeReview, "  - merge_judge: {}\n", "merge_judge is only for mode: evaluate"},
+		{ModeArtifact, "  - merge_judge: {}\n", "merge_judge is not a step of mode: artifact"},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			_, ps := Parse([]byte("version: 1\nname: judge\nmode: " + tc.mode + "\nsteps:\n" + tc.steps))
+			if text := ProblemsText(ps); !strings.Contains(text, tc.want) {
+				t.Errorf("problems = %s, want %q", text, tc.want)
+			}
+		})
+	}
+	// The same step in its own mode parses: the three refusals above are the
+	// mode and not the kind.
+	if r, ps := Parse([]byte("version: 1\nname: judge\nmode: evaluate\nsteps:\n  - merge_judge: {}\n")); r == nil {
+		t.Fatalf("a mode: evaluate recipe holding the judge step was refused: %v", ps)
 	}
 }
 

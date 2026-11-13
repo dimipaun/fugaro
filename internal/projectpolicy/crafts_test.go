@@ -150,7 +150,7 @@ func TestCraftMembersAreUnknownToAReaderThatPredatesThem(t *testing.T) {
 	}
 }
 
-// TestCraftBlockDecodesStrictly: the block is a closed set of four crafts whose
+// TestCraftBlockDecodesStrictly: the block is a closed set of five crafts whose
 // members are a closed set of two, so a misspelling is refused by the decoder
 // and never quietly sets nothing — the rule config.Crafts' struct shape exists
 // for. A craft itself carries no credential: its access names one, which is the
