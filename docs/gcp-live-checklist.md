@@ -11932,8 +11932,8 @@ admits its repository (`internal/credsvc`'s `admittedAccounts`; the child node's
 fails `account-admitted` *before it launches anything*, with the `state_unavailable` ("no candidate
 credentials were offered") halt the runs would otherwise measure; its remedy is to name an account for
 the repository in the local config (a profile's or a repository's `claude_accounts`) and have the owner
-run `fugaro project policy publish`. A
-switch the reading cannot settle — and a service doctor reports as not there or as having nothing to
+run `fugaro project policy publish`. A switch the reading cannot settle — and a service doctor reports
+as not there or as having nothing to
 serve a run's model credential out of, where every model call of a run is refused — is recorded as
 **unmeasured** (exit `2`, nothing launched) rather than as a pass. Three **sandbox** Bitbucket
 repositories — the proxied one the runs work
@@ -11977,7 +11977,8 @@ launched**.
 credential of an account whose own `allow_repos` names its repository, so a node whose block names none
 refuses every model call of a run there `state_unavailable`, "no candidate credentials were offered", and
 the check stops before any run is launched, naming the account to add to the local config and the
-owner-run `fugaro project policy publish` that carries it to the node); `run-launch` and `run-outcome` (the working run reached a final
+owner-run `fugaro project policy publish` that carries it to the node); `run-launch` and `run-outcome`
+(the working run reached a final
 status, pushed its branch and opened its pull request); the seven refusal rows
 (`refusal-other-repository`, `refusal-other-ref`, `refusal-tag-ref`, `refusal-ref-delete`,
 `refusal-other-pull-request`, `refusal-merge`, `refusal-workspaces`), each failing on the run's own line,

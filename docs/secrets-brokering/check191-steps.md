@@ -67,13 +67,12 @@ neither deletes nor closes them, and the block names each one.
   `credentials.accounts` — so a node whose block names none is a run refused `state_unavailable`, "no
   candidate credentials were offered", at its first model call; the check reads that half from the
   same `policy show` document and fails `account-admitted` for it). Check 191 reads the published
-  policy from
-  `fugaro project policy show --project fugaro --json` and the switch from the credentials service's
-  OWN IAM policy (`gcloud run services get-iam-policy fugaro-credentials --project fugaro-dev --region
-  us-east5 --format=json`) crossed with the repository's REAL jobs (the jobs whose own `FUGARO_REMOTE`
-  names it, from the job list the check already reads), and fails the `proxied` row — before it
-  launches anything — when the repository is not admitted, is admitted without `proxy: true`, or is
-  off the switch: the published half alone is **inert**, a repository off the switch holds its own
+  policy from `fugaro project policy show --project fugaro --json` and the switch from the credentials
+  service's OWN IAM policy (`gcloud run services get-iam-policy fugaro-credentials --project fugaro-dev
+  --region us-east5 --format=json`) crossed with the repository's REAL jobs (the jobs whose own
+  `FUGARO_REMOTE` names it, from the job list the check already reads), and fails the `proxied` row —
+  before it launches anything — when the repository is not admitted, is admitted without `proxy: true`,
+  or is off the switch: the published half alone is **inert**, a repository off the switch holds its own
   token and is served by nothing, so the check stops rather than launch three runs at a path the proxy
   is not on. Its remedy is to set `agent.auth: cascade` for that repository, run `fugaro update
   --repo` for it and run the check again. It stops the same way — unmeasured, nothing launched — when
