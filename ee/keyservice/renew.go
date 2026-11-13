@@ -524,10 +524,16 @@ func (s *Service) sight(ctx context.Context, keyID string) {
 // minted for — `Record.Source` is the merchant event id that first minted it,
 // `renew:<subscription id>:<expires>` for the merchant's own renewal or
 // `rotation:<key id>` for a successor, and the subscription itself is keyed by
-// an id no record carries. So a subscription cancelled after its purchase still
-// renews here, and the successor is a signed term nobody paid for; the
-// merchant's own renewal refuses a cancelled subscription (merchant.Renew), but
-// that is not the door this endpoint answers at.
+// an id no record carries. So a key whose state names a workspace renews here
+// after the subscription behind it was cancelled, and the successor is a signed
+// term nobody paid for; the merchant's own renewal refuses a cancelled
+// subscription (merchant.Renew), but that is not the door this endpoint answers
+// at. The paid lane keeps this door shut today by leaving the workspace out of
+// the state it writes (merchant.go's `paid`), which is why a purchased key is
+// refused here rather than renewed, and it is the issue paths that will name one
+// — the account page's and the purchase mail's (K2.4, K2.5) — that have to
+// answer this first: a state that names a workspace is a key this endpoint
+// renews without asking anyone.
 //
 // Closing it takes a shape this file does not own: the record carries the
 // subscription the key was minted for — written by the merchant's mint sites and

@@ -1221,15 +1221,16 @@ func TestAnAnnualRowsKeyRenewsInItsOwnLastWeek(t *testing.T) {
 	}
 }
 
-// TestAPurchasedKeyRenewsThroughTheRenewEndpoint: the paid lane's key state is
-// the only thing the renewal endpoint reads, and a state that names no
-// workspace is refused there rather than renewed — there is no workspace to
-// mint a successor into (TN2, K2.3). D2202 makes that refusal total rather than
-// partial: a paid key runs thirty days, so a purchase that wrote the renewal
-// hash without the workspace hands a paying customer a licence that lapses a
-// month in with nothing either side can do about it, and no other test reaches
-// the state the purchase writes.
-func TestAPurchasedKeyRenewsThroughTheRenewEndpoint(t *testing.T) {
+// TestACancelledSubscriptionsKeyGetsNoSuccessor: the renewal endpoint mints a
+// successor from the caller's own key state and never looks at the subscription
+// the key was minted for — `renewable` says what closing that takes — so the one
+// thing between a customer who has cancelled and a free month after month of
+// them is that the paid lane's state names no workspace at all, which is what
+// the endpoint refuses (TN2, K2.3). D2202 is what makes that the whole of it: a
+// paid key runs thirty days, so a state that named a workspace would let an
+// installation whose subscription the merchant has stopped selling renew itself
+// for as long as it keeps asking.
+func TestACancelledSubscriptionsKeyGetsNoSuccessor(t *testing.T) {
 	f, spy := renewing(t)
 	bought := f.purchase("evt-1", "acme.example", 5, 365)
 	if len(f.mail.sent) != 1 {
@@ -1240,23 +1241,35 @@ func TestAPurchasedKeyRenewsThroughTheRenewEndpoint(t *testing.T) {
 		t.Fatalf("the mail carries the key %s, want the purchased one %s", claims.KeyID, bought.KeyID)
 	}
 
+	// What the purchase writes is a state with the key's own renewal hash and no
+	// binding: the hash is what makes the key renewable at all, and the workspace
+	// left out is what keeps the renewal from being one the subscription never
+	// agreed to.
 	state, held, err := f.store.KeyState(context.Background(), bought.KeyID)
 	if err != nil || !held {
 		t.Fatalf("the purchase wrote no key state for %s (held=%v, err=%v), and without one there is no renewal at all", bought.KeyID, held, err)
 	}
-	if state.WorkspaceID != workspaceID {
-		t.Fatalf("the purchase's key state names the workspace %q, want the one the purchase bound (%q): the renewal endpoint mints the successor into the state's own workspace and refuses a state that names none", state.WorkspaceID, workspaceID)
+	if state.RenewalSecretHash != secretHash(secret) {
+		t.Errorf("the purchase's key state carries the hash %q, want the hash of the secret it mailed: a state hashed from anything else files the key under a secret its holder does not have", state.RenewalSecretHash)
+	}
+	if state.WorkspaceID != "" {
+		t.Fatalf("the purchase's key state names the workspace %q, want none: this endpoint mints the successor into the state's workspace and reads no subscription, so a purchased key that names one renews itself after the merchant cancelled", state.WorkspaceID)
 	}
 
-	f.advance(24 * day)
-	answer := answerOf(t, f.call(RouteRenew, RenewalCall{KeyID: bought.KeyID, WorkspaceID: workspaceID, RenewalSecret: secret}))
-	if answer.Key == "" {
-		t.Fatalf("the purchased key was answered %+v, want a successor: a paid key that cannot renew is a licence that ends at D2202's thirty days", answer)
+	// The customer cancels a day in, and the key's own window opens a month on.
+	f.advance(day)
+	f.event(Event{ID: "evt-2", Type: EventCancellation, Organisation: "acme.example"})
+	sub, held, err := f.store.Subscription(context.Background(), "sub-acme.example")
+	if err != nil || !held || !sub.Cancelled {
+		t.Fatalf("the cancellation reads held=%v cancelled=%v (err=%v), want it applied: the rest of this test is about the key of a subscription the merchant has stopped selling", held, sub.Cancelled, err)
 	}
-	if got := spy.minted(); got != 1 {
-		t.Errorf("the minter was asked for %d key(s), want the one successor", got)
+	f.advance(30 * day)
+
+	rec := f.call(RouteRenew, RenewalCall{KeyID: bought.KeyID, WorkspaceID: workspaceID, RenewalSecret: secret})
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("a cancelled subscription's key was answered %d (%q), want %d", rec.Code, rec.Body.String(), http.StatusInternalServerError)
 	}
-	if run := v1Verified(t, f, answer.Key).PaidThrough.Sub(f.now); run != connectedTerm {
-		t.Errorf("the successor runs %s, want D2202's thirty days from the day it was asked for", run)
+	if got := spy.minted(); got != 0 {
+		t.Errorf("the minter was asked for %d key(s) after the cancellation, want none: every successor it signs for this key is a term nobody paid for", got)
 	}
 }

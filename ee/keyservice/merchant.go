@@ -930,17 +930,20 @@ func (s *Service) paid(ctx context.Context, req RequestV1, applicant, source str
 	if answer.RenewalSecret != "" {
 		secretHash = digest(answer.RenewalSecret)
 	}
-	// The workspace goes in with the hash, and it is the request's own: that is
-	// the workspace the key was minted into, and `/renew` reads it back to mint
-	// the successor into — a state that names none is refused there rather than
-	// renewed, because a successor bound to no workspace is one every verifier
-	// refuses (TN2, K2.3). D2202 is what makes that refusal total rather than
-	// partial: a paid key runs thirty days, so a purchase whose state names no
-	// workspace is a licence that lapses a month in with nothing the customer or
-	// this service can do about it.
+	// The state carries the hash and not the workspace, although the request
+	// names one and the key is bound to it, and that is the half of the pair that
+	// has to stay shut: `/renew` mints its successor into the state's own
+	// workspace, reads nothing else, and never looks at the subscription the key
+	// was minted for, so a state naming a workspace is a purchased key that
+	// renews itself every month after the subscription behind it is cancelled —
+	// a signed term nobody paid for, and D2202 is what makes it unbounded rather
+	// than a month of grace: the key in hand runs thirty days, so the door serves
+	// the whole of a licence the merchant has stopped selling. A state that names
+	// none is refused there instead (K2.3), which costs a renewal rather than a
+	// term; the gate that would let this state name its workspace is renew.go's
+	// to write and the plan's to decide.
 	if err := s.store.SaveKeyState(ctx, KeyState{
 		KeyID:             answer.Record.KeyID,
-		WorkspaceID:       req.WorkspaceID,
 		RenewalSecretHash: secretHash,
 	}); err != nil {
 		return MintedV1{}, err
