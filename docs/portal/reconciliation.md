@@ -2,9 +2,9 @@
 
 **This file amends [spec.md](spec.md); where the two disagree, this file wins.** Checked against
 `origin/main` at `a07e14262` and #2457 (K2.3) and #2458 (K2.5), both merged on 2026-11-12. It
-numbers **D2180–D2229** (D2180–D2204 used) and **Checks 570–579**, both verified free on `main` and in
-every open pull request's diff. Findings are `F1`…`F40`. Review rounds corrected several findings; those
-are marked **(round 1)** or **(round 2)**.
+numbers **D2180–D2229** (D2180–D2207 used) and **Checks 570–579**, both verified free on `main` and in
+every open pull request's diff. Findings are `F1`…`F42`. Review rounds corrected several findings; those
+are marked **(round 1)**, **(round 2)** or **(round 3)**.
 
 ## What the repo already has
 
@@ -82,19 +82,19 @@ it. Held with K3.4 under TN1.
 
 **F9 (Rule, round 1): operations minting.** Resolved by **D2187**: operations owners and admins mint,
 extend, change seats, comp and revoke; members only read. Each of those actions needs a sign-in no older
-than 5 minutes (`auth_time`) with Google or Microsoft. **D454 is a rate per tier per window that queues
+than 5 minutes (`auth_time`) with Google (D2207). **D454 is a rate per tier per window that queues
 the excess** (`admin.go` `MintCaps`), not a claim cap; P5.1 carries it over. D456's audit covers every
 operations action, reads included. Invitations to the operations organisation are limited to an allowed
-email-domain list, and Microsoft sign-ins to allowed tenant ids, which the operations owner sets. **This
-amends D455**.
+email-domain list the operations owner sets. D454 and D455 are **open** in design §12; D2187 decides
+them (D455 as the identity provider's factor, not Fugaro's) (**round 3**).
 
 **F10 (Gap, security, round 1): the SSO rule and email claims.** The rule follows the **actor's**
 membership: a person who belongs to an operations or reseller organisation must have signed in with
 Google or Microsoft for any request that uses that membership, whatever organisation it targets. Every
 invitation is accepted only by a token whose verified `email` equals the invited address, both folded
-by `access.Member`. For Microsoft, an address is a tenant's claim; operations and reseller sign-ins with
-`microsoft.com` must carry a tenant id on that organisation's list (UNVERIFIED: whether Firebase sets
-`email_verified` for Microsoft).
+by `access.Member`. For Microsoft, an address is a tenant's claim and Firebase's token likely carries no Microsoft tenant
+id (**round 3**). Resolved by **D2207**: the operations organisation accepts Google only; a reseller
+accepts Google, or Microsoft only with a pinned tenant id if P1.3 finds one in the token.
 
 **F11 (Gap): where the provider is checked.** Resolved by **D2188: API only**. Firestore rules deny every
 client read and write.
@@ -117,7 +117,8 @@ one workspace is refused.
 
 **F16 (Gap, round 1): Paddle events.** `webhook` decodes a canonical shape, so a real Paddle notification
 is dropped with a 200; refunds need a `key_id` Paddle never sends; the route is `/webhook`; the signature's
-timestamp is not checked. **Resolution:** an adapter from Paddle's notification body to the canonical
+timestamp is not checked, which design §5.2 chose deliberately (idempotency handles replay); the window
+below **reverses** it, and only if Paddle signs every retry with a fresh `ts` (**round 3**). **Resolution:** an adapter from Paddle's notification body to the canonical
 event, a refund or chargeback resolved through the subscription or transaction to its entitlement; the
 signature and a 5-minute timestamp window verified **first**, then the verified body and its signature
 header stored as received **before** processing, keyed by event id (an undecodable verified body by its
@@ -129,10 +130,10 @@ organisation cancels its subscriptions and revokes its entitlements' keys. The F
 deleted with the account. Raw Paddle events are sales records: how long they are kept and whether their
 buyer fields are redacted is counsel's (D457), an open item.
 
-**F18 (Rule, round 1): projects.** **D2194: everything in `fugaro-prod`** (not the recommendation). The
+**F18 (Rule, round 1): projects.** **D2194: everything in `fugaro-prod`** (not the recommendation). It supersedes the settled ruling
+**T13** (2026-10-27, "a dedicated Fugaro GCP project", design §12 and §9.1 row 5) (**round 3**). The
 key service's Terraform has no default project (the ring's default *name* is `fugaro-licence`); this plan
-sets the project per apply and puts one key id per ring, which **amends D459(a)** (one ring for both
-environments): production's ring holds only the production key, staging's (`fugaro-staging`) only the
+sets the project per apply and puts one key id per ring, which **decides the open D459** toward one ring per environment, not (a)'s one ring for both (**round 3**): production's ring holds only the production key, staging's (`fugaro-staging`) only the
 staging key. **Round 1 found that Firebase Hosting's IAM is project-wide**: the website's CI deployer
 (`roles/firebasehosting.admin`, runnable by `workflow_dispatch`) can deploy the portal's JavaScript, and
 with it take a fresh operations sign-in and mint; project-level `datastore.user`, `run.services.update` on
@@ -234,13 +235,24 @@ the organisation's free seat at its key's next renewal; it does not come back.
   spec's "one key per workspace" holds.
 - A reseller is never a member of its customers' organisations; it invites the customer's first owner.
 - The operations seed is an invitation, and membership binds to the uid at first acceptance.
-- An empty tenant list refuses every `microsoft.com` sign-in. Whether Firebase marks Microsoft addresses
-  verified is settled in P1.3 before invitations ship.
+- Operations accepts Google only; a reseller's Microsoft sign-in needs a pinned tenant, and an empty
+  list refuses every `microsoft.com` sign-in (D2207).
 - Operations can cut a handover short and transfer a project id.
 - Operations sets each reseller's credit limit and wholesale rates.
 - Deletion removes memberships and invitations.
 - The website preview workflow's gate does not pin `.hosting.site`, so a branch's `firebase.json` could
   target the portal's site: the concrete form of D2194's risk. A staged workflow change pins it.
+
+**F41 (Gap, owner 2026-11-12): the project must exist.** Resolved by **D2205**: before binding, the API
+reads `https://<project>-default-rtdb.firebaseio.com/.json` without credentials. Every Fugaro installation
+creates that database (`deploy/terraform/gcp/modules/firebase/firebase.tf`); its locked rules answer
+"permission denied", while a project with no installation answers "no such database". It catches typos
+and invented ids and proves an installation exists, not who controls it (D2201 stands). The id's shape
+is checked before it goes into a host name, so the probe cannot be aimed elsewhere.
+
+**F42 (Gap, security, round 3): air-gapped copies.** An air-gapped key has no secret and is never
+revoked, so reveal and rebind would each mint a permanent extra copy. Resolved by **D2206**: issued once
+at binding, as a file; the same signed text on every download; no reveal or rebind except by operations.
 
 **Threat model of what the portal adds.**
 1. *The API asks the minter to sign.* The minter is internal-only, invokable by the API's account only,
@@ -284,6 +296,9 @@ the organisation's free seat at its key's next renewal; it does not come back.
 | D2201 | Proof of a binding (F37) | No proof; trials and one-per rules key on org and project | Proof through the installation | **2026-11-12: the recommendation.** Its "never blocks" holds for trials only (TN-P1) |
 | D2202 | Rebind multiplier (F38) | Connected keys at most 30 days, renewed while the entitlement runs | Accept | **2026-11-12: the recommendation.** |
 | D2203 | Free seat after a purchase (F39) | Ends at the next renewal | Keep it (needs counsel) | **2026-11-12: the recommendation.** |
+| D2205 | Binding to a project that does not exist (F41) | (owner's own ruling) | — | **2026-11-12, the owner:** "check that the Firebase project ID exists at the very least"; the unauthenticated database probe is the plan's mechanism |
+| D2206 | Air-gapped copies (F42) | Issued once; no reveal or rebind | Cap at two per term | **2026-11-12: the recommendation.** |
+| D2207 | Microsoft for operations and resellers (F10) | Pin the tenant or refuse | Separate app; accept | **2026-11-12: "Operations should be Google only"; resellers: Google, or Microsoft with a pinned tenant (the recommendation of the follow-up).** Not the recommendation for operations |
 | D2204 | Workspace, entitlements, project id (F40) | One active entitlement per workspace; project id unique across organisations | Several; shared ids | **2026-11-12: the recommendation.** TN-P1: global uniqueness kept, operations transfers |
 
 What this changes in licence key v2 (amended by this plan's task P9.1, not edited here): K2.4 uses P1.3's
@@ -318,8 +333,10 @@ Open items, all the owner's:
 
 - The value of `firebase.sign_in_provider` for an email-link sign-in (`password` or `emailLink`); the API
   allows only `google.com` and `microsoft.com`, and P1.3's test pins both values as refused.
-- Whether Firebase sets `email_verified` for Microsoft sign-ins, and the claim that carries the tenant id
-  (P1.3 confirms against Firebase's documentation; the tenant list holds either way).
+- Whether Firebase's ID token carries a Microsoft tenant id at all (P1.3; without one, resellers are
+  Google-only, D2207).
+- The exact answers of the database probe (D2205) for a locked database and for a missing one (P3.1
+  confirms them; a missing project may answer differently from a project without the database).
 - Whether Firebase Hosting has any per-site IAM (the plan assumes none, as round 1 read it).
 - Whether a `fugaro-licence` ring was ever created (S3.8 is owner-run).
 - Which `X-Forwarded-For` entry is the caller's behind Hosting's rewrite to Cloud Run (F34).
