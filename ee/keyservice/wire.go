@@ -60,7 +60,12 @@ func registerWire(name string, alloc func() any) {
 // has to be an object, it has to hold exactly the shape's fields, and it has to
 // hold each of them once (CLAUDE.md's rule that a wire format decodes strictly,
 // F20). Every portal route reads its request body through this function, so a
-// body the schema refuses must not arrive at a handler looking valid.
+// body whose *shape* the schema refuses must not arrive at a handler looking
+// valid. What a body's values say is not this function's to judge: an enum value
+// the schema does not name, a project id its pattern refuses (F41's, the one
+// that keeps an id safe to put in a host name), a seat count below its minimum,
+// an empty id where it forbids an empty one — each of those is the handler's own
+// check, and TestWireHoldsTheShapeAndNotTheValues pins that split.
 //
 // encoding/json alone gives none of that. It matches a field name ignoring case,
 // so `WORKSPACE_ID` fills `workspace_id`; it keeps the last of a repeated key, so
@@ -95,7 +100,11 @@ func decodeWire(body []byte, shape any) error {
 // the same way as the shape's own fields rather than by encoding/json alone.
 //
 // The last decode is what says the values have the types the fields have; this
-// walk is what says the body says what the schema says.
+// walk is what says the body carries the fields the schema carries, each of them
+// once and none of them null where the schema requires a value. Neither says
+// anything about what the values mean: the schema's enums, patterns and ranges
+// are each handler's own check — TestWireHoldsTheShapeAndNotTheValues pins that
+// split — and a timestamp's format is its parser's.
 func wireStrict(body []byte, t reflect.Type) error {
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	opening, err := decoder.Token()
