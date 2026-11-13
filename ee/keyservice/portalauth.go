@@ -17,8 +17,9 @@ package keyservice
 // **What this file adds** is every rule that depends on WHO is asking, which the
 // token cannot answer: the SSO rule of the membership the request uses (D2207,
 // F10), the age of the sign-in itself (`auth_time`, not the token's `iat`, which
-// is what D2187's five minutes are about), and the tenant a Microsoft sign-in
-// has to come from. The addresses are compared through access.Member on BOTH
+// is what D2187's five minutes are about), and the Microsoft (Entra ID)
+// directory a Microsoft sign-in has to come from. The addresses are compared
+// through access.Member on BOTH
 // sides (F31): the member this verifier builds and the member a stored record
 // carries are one spelling of one person, so a list entry cannot be missed by a
 // fold or matched by a domain's case. The member is built from the address as
@@ -42,20 +43,24 @@ package keyservice
 // lives in — the tenant is a door, not an identity — and the list read as a
 // directory control only because the deployment was also expected to back that
 // tenant's Microsoft provider with a single-tenant Azure app registration. The
-// pin is now the directory and
-// nothing else: `SignIn.TenantID` is carried and RequireSSO never reads it.
+// pin is now the directory and nothing else: `SignIn.TenantID` is carried and
+// RequireSSO never reads it.
 //
-// **Where the directory id comes from.** mcpauth reads `tid` from the verified
-// token, in either shape a deployment's Microsoft provider writes it: the
-// token's own claim set, or `firebase.sign_in_attributes`, where Identity
-// Platform's OIDC providers put the provider's own claims (a `tid` in both, and
-// disagreeing, is answered as none). Both are inside the signed payload, so the
-// value is the provider's own report of where the account lives — the property
-// `firebase.tenant` does not have. Which shape a project's provider actually
-// mints is deployment configuration this file can neither see nor check (P0.1's
-// provider accounts, docs/portal/reconciliation.md): a provider that forwards no
-// `tid` at all leaves every `microsoft.com` sign-in carrying no directory, and
-// that is refused below.
+// **Where the directory id comes from, and where it does not.** mcpauth reads
+// `tid` out of `firebase.sign_in_attributes`, where Identity Platform puts a
+// federated provider's own claims, and that is the only place it reads: the
+// value is then the provider's own report of where an account lives, which is
+// the property `firebase.tenant` does not have. The token's own top level is
+// deliberately NOT read beside it, and that is a rule rather than an omission:
+// that level is the CUSTOM-CLAIMS namespace, where this repository's own project
+// writes `mu`, `fs` and `fr`, so a `tid` there is a value any project-side writer
+// of custom claims can mint and a pin over it is one that writer satisfies —
+// `firebase.tenant`'s hole in another claim (mcpauth's `directoryID`,
+// TestATopLevelTidIsNotADirectory). Whether a project's Microsoft provider
+// forwards a `tid` at all is deployment configuration this file can neither see
+// nor check (P0.1's provider accounts, docs/portal/reconciliation.md): a
+// provider that forwards none leaves every `microsoft.com` sign-in carrying no
+// directory, and that is refused below.
 //
 // **The single-tenant app registration is a belt-and-braces and not the
 // control.** Backing a tenant's Microsoft provider with a registration for one
@@ -210,11 +215,11 @@ type SignIn struct {
 	// over a value the client chooses admits whoever chooses a pinned one.
 	TenantID string
 	// DirectoryID is the Microsoft (Entra ID) directory the verified token
-	// reports the person's account lives in: the `tid` claim, read by mcpauth out
-	// of the token's own claim set or out of `firebase.sign_in_attributes`, both
-	// of which are inside the signed payload. It is empty for a Google sign-in,
-	// for a Microsoft one whose provider forwarded no directory, and for one
-	// whose two claims disagree — which RequireSSO refuses.
+	// reports the person's account lives in: the `tid` the provider signed into
+	// `firebase.sign_in_attributes`, which is the only place mcpauth reads one —
+	// a `tid` in the token's own claim set is a custom claim and is ignored. It
+	// is empty for a Google sign-in and for a Microsoft one whose provider
+	// forwarded no directory, which RequireSSO refuses.
 	DirectoryID string
 }
 
@@ -330,8 +335,10 @@ func (v *PortalVerifier) Verify(ctx context.Context, raw string) (SignIn, error)
 // the rule is read, a Microsoft sign-in at the operations organisation is
 // refused outright, and at a reseller it is admitted only when the VERIFIED
 // token's Microsoft (Entra ID) directory id is on the rule's list — the `tid`
-// the provider wrote, never the Identity Platform tenant the client named at
-// sign-in, which is carried on the sign-in and read nowhere here.
+// the provider wrote into `firebase.sign_in_attributes`, never the Identity
+// Platform tenant the client named at sign-in and never a `tid` in the token's
+// own custom-claims level, both of which are carried on the sign-in and read
+// nowhere here.
 //
 // It is called for a request that uses an operations or a reseller membership —
 // the rule follows the ACTOR and not the organisation the request is about — and

@@ -24,5 +24,6 @@ rotate), D2183 (merge #2457 and #2458 as planned), D2194 (everything in `fugaro-
 (D2196–D2199). Tension TN-P1 (D2201 against D2204) was answered against the recommendation: a project
 id is unique across organisations and operations transfers it. D2207 for operations (Google only) is the owner's own answer, not the
 recommendation; the owner amended it on 2026-11-13 ("Pin the real directory id", F43): what a reseller
-pins is the verified token's Microsoft (Entra ID) directory id (`tid`), and never the Identity Platform
-tenant a client names at sign-in.
+pins is the verified token's Microsoft (Entra ID) directory id — the `tid` the provider wrote into
+`firebase.sign_in_attributes`, and not a `tid` in the token's own custom-claims level, which F43's second
+half had the reader drop — and never the Identity Platform tenant a client names at sign-in.

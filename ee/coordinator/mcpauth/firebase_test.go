@@ -352,16 +352,16 @@ func TestTheAdmittedIdentityIsTheTokensOwn(t *testing.T) {
 // sign-in time or a directory refuses the token instead of reading a filled-in
 // value.
 //
-// The directory is the one field with TWO shapes, and both are read because
-// which one a deployment's Microsoft provider writes is its configuration: the
-// token's own `tid` claim and `firebase.sign_in_attributes.tid`, where Identity
-// Platform's OIDC providers put the provider's own claims.
+// The directory is read from ONE place, `firebase.sign_in_attributes.tid`, where
+// Identity Platform puts a federated provider's own claims — and the token's own
+// top level is not it (TestATopLevelTidIsNotADirectory): the carried token below
+// puts a different value there to pin that the attribute is what is read.
 func TestTheIdentityCarriesTheProviderTheSignInTimeTheTenantAndTheDirectory(t *testing.T) {
 	v := verifierOver(t, staticKeys{testKid: &testKey().PublicKey})
 
 	carried := idTokenClaims(testProject)
 	carried["auth_time"] = testNow.Add(-3 * time.Minute).Unix()
-	carried["tid"] = "directory-1"
+	carried["tid"] = "a-custom-claim-called-tid"
 	carried["firebase"] = map[string]any{
 		"sign_in_provider":   "microsoft.com",
 		"tenant":             "tenant-1",
@@ -382,28 +382,7 @@ func TestTheIdentityCarriesTheProviderTheSignInTimeTheTenantAndTheDirectory(t *t
 		t.Errorf("the identity's tenant is %q, and the token named tenant-1", id.TenantID)
 	}
 	if id.DirectoryID != "directory-1" {
-		t.Errorf("the identity's directory is %q, and both of the token's claims name directory-1", id.DirectoryID)
-	}
-
-	// Either shape alone is enough: a provider that writes only one of them is
-	// the ordinary case and not a token to refuse, and the reader takes whichever
-	// one the token carries.
-	for name, mutate := range map[string]func(claims map[string]any){
-		"only the token's own tid":   func(c map[string]any) { delete(c["firebase"].(map[string]any), "sign_in_attributes") },
-		"only the sign-in attribute": func(c map[string]any) { delete(c, "tid") },
-	} {
-		claims := idTokenClaims(testProject)
-		claims["tid"] = "directory-1"
-		claims["firebase"] = map[string]any{"sign_in_attributes": map[string]any{"tid": "directory-1"}}
-		mutate(claims)
-		id, err := v.VerifyIDToken(context.Background(), signJWT(t, testKey(), testKid, "RS256", claims))
-		if err != nil {
-			t.Errorf("%s: VerifyIDToken refused a token this project admits: %v", name, err)
-			continue
-		}
-		if id.DirectoryID != "directory-1" {
-			t.Errorf("%s: the identity carries directory %q, and the token names directory-1 in the shape this case leaves it in", name, id.DirectoryID)
-		}
+		t.Errorf("the identity's directory is %q, and `firebase.sign_in_attributes` names directory-1 while the token's own claim set names a custom claim", id.DirectoryID)
 	}
 
 	absent := map[string]func(claims map[string]any){
@@ -418,18 +397,15 @@ func TestTheIdentityCarriesTheProviderTheSignInTimeTheTenantAndTheDirectory(t *t
 		},
 		"a provider that is not printable ASCII": func(c map[string]any) { c["firebase"] = map[string]any{"sign_in_provider": "google com"} },
 		"a sign-in time that is not a number":    func(c map[string]any) { c["auth_time"] = "soon" },
-		"a tid that is not a string":             func(c map[string]any) { c["tid"] = 7 },
-		"a tid past the bound":                   func(c map[string]any) { c["tid"] = strings.Repeat("d", maxDirectoryBytes+1) },
 		"an attribute that is not an object":     func(c map[string]any) { c["firebase"] = map[string]any{"sign_in_attributes": testMarker} },
 		"an attribute tid that is not a string": func(c map[string]any) {
 			c["firebase"] = map[string]any{"sign_in_attributes": map[string]any{"tid": []any{testMarker}}}
 		},
-		// The two claims disagreeing is answered as absent rather than as either
-		// one: a pin over a directory that two claims of one token spell two ways
-		// would admit or refuse by which reader ran first.
-		"two claims that disagree": func(c map[string]any) {
-			c["tid"] = "directory-1"
-			c["firebase"] = map[string]any{"sign_in_attributes": map[string]any{"tid": "directory-2"}}
+		"an attribute tid past the bound": func(c map[string]any) {
+			c["firebase"] = map[string]any{"sign_in_attributes": map[string]any{"tid": strings.Repeat("d", maxDirectoryBytes+1)}}
+		},
+		"an attribute tid that is not printable ASCII": func(c map[string]any) {
+			c["firebase"] = map[string]any{"sign_in_attributes": map[string]any{"tid": "directory one"}}
 		},
 	}
 	for name, mutate := range absent {
@@ -452,6 +428,35 @@ func TestTheIdentityCarriesTheProviderTheSignInTimeTheTenantAndTheDirectory(t *t
 		if id.DirectoryID != "" {
 			t.Errorf("%s: the identity carries directory %q, and a value this code cannot read is answered as absent", name, id.DirectoryID)
 		}
+	}
+}
+
+// TestATopLevelTidIsNotADirectory: a Firebase ID token's own top level is the
+// CUSTOM-CLAIMS namespace — the `mu`, `fs` and `fr` claims this repository's own
+// project writes live there — so a `tid` beside them is a value any project-side
+// writer of custom claims can mint, and not a directory any Entra provider
+// attested.
+//
+// It is ignored, and that is the pin: a caller's rule over the directory rests on
+// what the identity provider said (`firebase.sign_in_attributes`), so a pin
+// cannot be satisfied by whoever can write the token's custom claims — the same
+// hole D2207's amendment closed for `firebase.tenant`, which the client names.
+func TestATopLevelTidIsNotADirectory(t *testing.T) {
+	v := verifierOver(t, staticKeys{testKid: &testKey().PublicKey})
+
+	claims := idTokenClaims(testProject)
+	claims["tid"] = "directory-1"
+	claims["firebase"] = map[string]any{"sign_in_provider": "microsoft.com", "tenant": "tenant-1"}
+
+	id, err := v.VerifyIDToken(context.Background(), signJWT(t, testKey(), testKid, "RS256", claims))
+	if err != nil {
+		t.Fatalf("VerifyIDToken refused a token this project admits: %v", err)
+	}
+	if id.DirectoryID != "" {
+		t.Errorf("the identity carries directory %q, and a `tid` in the token's own claim set is a custom claim: a rule over it admits whoever can write one", id.DirectoryID)
+	}
+	if id.TenantID != "tenant-1" {
+		t.Errorf("the identity's tenant is %q, and the client-named tenant is still carried beside it", id.TenantID)
 	}
 }
 

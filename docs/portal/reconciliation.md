@@ -238,8 +238,9 @@ the organisation's free seat at its key's next renewal; it does not come back.
 - A reseller is never a member of its customers' organisations; it invites the customer's first owner.
 - The operations seed is an invitation, and membership binds to the uid at first acceptance.
 - Operations accepts Google only; a reseller's Microsoft sign-in needs a pinned Microsoft (Entra ID)
-  directory — the verified token's `tid`, never the Identity Platform tenant a client names (F43) — and an
-  empty list refuses every `microsoft.com` sign-in (D2207).
+  directory — the verified token's `tid` as the provider wrote it into `firebase.sign_in_attributes`,
+  never the Identity Platform tenant a client names and never a custom claim (F43) — and an empty list
+  refuses every `microsoft.com` sign-in (D2207).
 - Operations can cut a handover short and transfer a project id.
 - Operations sets each reseller's credit limit and wholesale rates.
 - Deletion removes memberships and invitations.
@@ -264,12 +265,22 @@ calls the SDK. A list over it therefore admits whoever names a pinned value — 
 an identity — and the entry stood for a directory only because the deployment was separately expected to
 back that tenant's Microsoft provider with a single-tenant Azure app registration, which the API can
 neither see nor check. The owner ruled on 2026-11-13: **"Pin the real directory id"**. Resolved: the pin is
-the Microsoft (Entra ID) directory id of the VERIFIED token — the `tid` claim, read by `mcpauth` out of the
-token's own claim set or out of `firebase.sign_in_attributes` — the client-named tenant never admits, a
-token with no `tid` is refused (D2207's Google-only fallback), and the single-tenant registration is a
-documented belt-and-braces rather than the control. Pinned by `TestMicrosoftDirectoryIsPinned`,
-`TestAClientNamedTenantNeverAdmitsMicrosoft`, `TestEmptyDirectoryListRefusesMicrosoft` and
-`TestResellerMicrosoftNeedsAPinnedDirectory`.
+the Microsoft (Entra ID) directory id of the VERIFIED token — the `tid` the provider wrote into
+`firebase.sign_in_attributes` — the client-named tenant never admits, a token with no `tid` is refused
+(D2207's Google-only fallback), and the single-tenant registration is a documented belt-and-braces rather
+than the control. Pinned by `TestMicrosoftDirectoryIsPinned`, `TestAClientNamedTenantNeverAdmitsMicrosoft`,
+`TestEmptyDirectoryListRefusesMicrosoft` and `TestResellerMicrosoftNeedsAPinnedDirectory`.
+
+**The second half of F43, found by review on 2026-11-13: where inside the token it is read.** The fix
+above first read the `tid` in either of two shapes, one of them the token's own top level — and that level
+is the CUSTOM-CLAIMS namespace, where this repository's own project writes its `mu`, `fs` and `fr` claims,
+so a `tid` there is a value any project-side writer of custom claims can mint. Reading it would have
+rebuilt F43's hole in a different claim: a pin any project-side writer can satisfy, and not the provider's
+report of where an account lives. Resolved: `directoryID` reads `firebase.sign_in_attributes.tid` and
+nothing else, and a `tid` in the token's own claim set is ignored rather than compared, so it neither
+admits nor refuses. Pinned by `mcpauth`'s `TestATopLevelTidIsNotADirectory` and by
+`TestMicrosoftDirectoryIsPinned`'s custom-claim case, and mutation-checked: a `directoryID` that reads the
+top level again fails both.
 
 **Threat model of what the portal adds.**
 1. *The API asks the minter to sign.* The minter is internal-only, invokable by the API's account only,
@@ -315,7 +326,7 @@ documented belt-and-braces rather than the control. Pinned by `TestMicrosoftDire
 | D2203 | Free seat after a purchase (F39) | Ends at the next renewal | Keep it (needs counsel) | **2026-11-12: the recommendation.** |
 | D2205 | Binding to a project that does not exist (F41) | (owner's own ruling) | — | **2026-11-12, the owner:** "check that the Firebase project ID exists at the very least"; the unauthenticated database probe is the plan's mechanism |
 | D2206 | Air-gapped copies (F42) | Issued once; no reveal or rebind | Cap at two per term | **2026-11-12: the recommendation.** |
-| D2207 | Microsoft for operations and resellers (F10) | Pin the tenant or refuse | Separate app; accept | **2026-11-12: "Operations should be Google only"; resellers: Google, or Microsoft with a pinned tenant (the recommendation of the follow-up).** Not the recommendation for operations. **2026-11-13 (F43): "Pin the real directory id" — the pinned value is the verified token's `tid`, and the Identity Platform tenant a client names never admits** |
+| D2207 | Microsoft for operations and resellers (F10) | Pin the tenant or refuse | Separate app; accept | **2026-11-12: "Operations should be Google only"; resellers: Google, or Microsoft with a pinned tenant (the recommendation of the follow-up).** Not the recommendation for operations. **2026-11-13 (F43): "Pin the real directory id" — the pinned value is the verified token's `tid` as the provider wrote it into `firebase.sign_in_attributes` (F43's second half; a `tid` in the token's own custom-claims level is ignored), and the Identity Platform tenant a client names never admits** |
 | D2204 | Workspace, entitlements, project id (F40) | One active entitlement per workspace; project id unique across organisations | Several; shared ids | **2026-11-12: the recommendation.** TN-P1: global uniqueness kept, operations transfers |
 
 What this changes in licence key v2 (amended by this plan's task P9.1, not edited here): K2.4 uses P1.3's
@@ -350,10 +361,11 @@ Open items, all the owner's:
 
 - The value of `firebase.sign_in_provider` for an email-link sign-in (`password` or `emailLink`); the API
   allows only `google.com` and `microsoft.com`, and P1.3's test pins both values as refused.
-- Whether a project's Microsoft provider puts a `tid` into the ID token at all, and in which of the two
-  shapes (`tid` in the token's own claim set, or `firebase.sign_in_attributes.tid`): the deployment's
-  provider configuration is the owner's (P0.1), the reader accepts either shape (F43), and a provider that
-  writes none leaves resellers Google-only, which is D2207's fallback (P1.3; P2.2 reads the real token).
+- Whether a project's Microsoft provider forwards a `tid` into the ID token at all, and under which name
+  (`firebase.sign_in_attributes.tid` is the one the reader reads — F43's second half, and the only place a
+  provider's own claims arrive — while a `tid` in the token's own custom-claims level is ignored): the
+  deployment's provider configuration is the owner's (P0.1), and a provider that forwards none leaves
+  resellers Google-only, which is D2207's fallback (P1.3; P2.2 reads the real token).
 - The exact answers of the database probe (D2205) for a locked database and for a missing one (P3.1
   confirms them; a missing project may answer differently from a project without the database).
 - Whether Firebase Hosting has any per-site IAM (the plan assumes none, as round 1 read it).

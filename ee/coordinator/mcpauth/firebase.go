@@ -139,17 +139,20 @@ type Identity struct {
 	// amended on 2026-11-13).
 	TenantID string
 	// DirectoryID is the Microsoft (Entra ID) directory the person's account
-	// lives in: the `tid` claim of the verified token, read by directoryID below
-	// out of whichever of the two shapes the project's Microsoft provider writes
-	// it in. It is empty for every sign-in that carries none — a Google sign-in,
-	// a Microsoft one whose provider forwards no directory, one whose two claims
-	// disagree about the directory — and a caller whose rule needs a directory
-	// refuses it rather than reading the empty value as one.
+	// lives in: the `tid` of the provider's own report of the sign-in, which
+	// directoryID below reads out of `firebase.sign_in_attributes` and out of
+	// nowhere else. It is empty for every sign-in that carries none — a Google
+	// sign-in, a Microsoft one whose provider forwards no directory — and a
+	// caller whose rule needs a directory refuses it rather than reading the
+	// empty value as one.
 	//
-	// Both shapes are inside the SIGNED token, which is the whole point of it
-	// (D2207's amendment, ee/keyservice's TestMicrosoftDirectoryIsPinned): the
-	// provider's own report of where an account lives cannot be chosen by the
-	// person signing in, unlike the Identity Platform tenant above.
+	// It is inside the SIGNED token, which is the whole point of it (D2207's
+	// amendment, ee/keyservice's TestMicrosoftDirectoryIsPinned): the provider's
+	// own report of where an account lives cannot be chosen by the person signing
+	// in, unlike the Identity Platform tenant above. Where it is read matters as
+	// much as that it is signed: the token's own top level is the custom-claims
+	// namespace, so a `tid` there is a value the project's own writers can mint
+	// and is deliberately not read.
 	DirectoryID string
 }
 
@@ -306,29 +309,31 @@ func (v *Verifier) VerifyIDToken(ctx context.Context, raw string) (Identity, err
 // directoryID reads the Microsoft (Entra ID) directory id a verified token
 // carries, or answers empty.
 //
-// Two shapes carry it, and both are read because which one a deployment's
-// Microsoft provider writes is the provider's configuration and not this code's
-// to choose: a token that carries Microsoft's own claim set holds `tid` at its
-// own top level, and Identity Platform's OIDC providers put the provider's
-// claims under `firebase.sign_in_attributes`, where the same directory arrives
-// as `sign_in_attributes.tid`. Both are inside the signed payload, so neither is
-// a value the person signing in names — which is the whole difference between
-// this and `firebase.tenant` (Identity.TenantID).
+// It reads ONE place: `firebase.sign_in_attributes.tid`, where Identity Platform
+// puts a federated provider's own claims. That object is the provider's report
+// of the sign-in, and reading only it is the control rather than a preference: a
+// Firebase ID token's own top level is the CUSTOM-CLAIMS namespace — the `mu`,
+// `fs` and `fr` claims this repository's own project writes live there — so a
+// top-level `tid` is a value any project-side writer of custom claims can mint,
+// and a pin a caller reads it against is one that writer can satisfy. That is
+// the same shape of hole D2207's amendment removed `firebase.tenant` for: an
+// admitted sign-in has to rest on something only the identity provider could
+// have said. A top-level `tid` is therefore ignored and not compared, so one
+// beside the attribute neither admits nor refuses on its own.
 //
-// A token carrying both and disagreeing about the directory is answered as
-// carrying none, by the same rule that answers an unreadable value as absent:
-// two values for one fact is not a fact a caller's pin can be built on, and the
-// empty answer is the one every caller treats as "not something I admit".
+// Which claims a project's Microsoft provider actually forwards is deployment
+// configuration this code can neither see nor check (P0.1 of
+// docs/portal/implementation-plan.md): a provider that forwards no `tid` leaves
+// this empty, and a caller whose rule needs a directory refuses that rather than
+// reading the empty value as one.
 func directoryID(claims map[string]any) string {
-	top := stringClaim(claims, "tid", maxDirectoryBytes)
-	attribute := firebaseAttribute(claims, "tid", maxDirectoryBytes)
-	if top != "" && attribute != "" && top != attribute {
+	fb, _ := claims["firebase"].(map[string]any)
+	attrs, _ := fb["sign_in_attributes"].(map[string]any)
+	value, _ := attrs["tid"].(string)
+	if !printableASCII(value, maxDirectoryBytes) {
 		return ""
 	}
-	if top != "" {
-		return top
-	}
-	return attribute
+	return value
 }
 
 // firebaseClaim reads one string out of the token's `firebase` claim object.
@@ -341,33 +346,6 @@ func directoryID(claims map[string]any) string {
 func firebaseClaim(claims map[string]any, key string, max int) string {
 	fb, _ := claims["firebase"].(map[string]any)
 	value, _ := fb[key].(string)
-	if !printableASCII(value, max) {
-		return ""
-	}
-	return value
-}
-
-// firebaseAttribute reads one string out of the token's own
-// `firebase.sign_in_attributes` object: the claim set an Identity Platform OIDC
-// or SAML provider's attributes arrive in. It holds firebaseClaim's rule — a
-// value this code cannot read as a short token of printable ASCII is answered as
-// absent — and it is a second reader rather than a path through that one because
-// the object it reads is a level deeper.
-func firebaseAttribute(claims map[string]any, key string, max int) string {
-	fb, _ := claims["firebase"].(map[string]any)
-	attrs, _ := fb["sign_in_attributes"].(map[string]any)
-	value, _ := attrs[key].(string)
-	if !printableASCII(value, max) {
-		return ""
-	}
-	return value
-}
-
-// stringClaim reads one string claim of the token's own claim set, holding
-// firebaseClaim's rule one level up: only a short token of printable ASCII is
-// answered, and anything else is absent.
-func stringClaim(claims map[string]any, key string, max int) string {
-	value, _ := claims[key].(string)
 	if !printableASCII(value, max) {
 		return ""
 	}

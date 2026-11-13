@@ -187,13 +187,16 @@ not exist yet.
   - Command: `go test ./ee/keyservice/ ./ee/coordinator/mcpauth/ -run 'TestEmailLink|TestTokenFrom|TestUnverified|TestStale|TestMicrosoftDirectory|TestEmptyDirectory|TestAClientNamed|TestResellerMicrosoft|TestSchedulerToken' -count=1`.
   - D2207 as the owner's ruling of 2026-11-13 ("Pin the real directory id") amends it: the operations
     organisation accepts `google.com` only. A reseller organisation accepts Google, or Microsoft only when
-    the VERIFIED token's Microsoft (Entra ID) directory id — the `tid` claim, which mcpauth reads out of
-    the token's own claim set or out of `firebase.sign_in_attributes` — is on its list. The Identity
-    Platform tenant a client names at sign-in (`firebase.tenant`) never admits, and a token carrying no
-    `tid` is refused: a reseller whose provider forwards no directory is Google-only, which is D2207's
-    fallback. `TestMicrosoftDirectoryIsPinned` is also the mutation check — the admitted fixture's
-    client-named tenant is off the list, so an implementation reading the tenant refuses it and the test
-    fails. The mcpauth suite runs whole: `go test ./ee/coordinator/mcpauth/ -count=1`.
+    the VERIFIED token's Microsoft (Entra ID) directory id — the `tid` the provider wrote into
+    `firebase.sign_in_attributes`, which is the only place mcpauth reads one, because the token's own
+    claim set is the custom-claims namespace and a `tid` there is a claim a project-side writer can mint
+    (F43's second half) — is on its list. The Identity Platform tenant a client names at sign-in
+    (`firebase.tenant`) never admits, and a token carrying no `tid` is refused: a reseller whose provider
+    forwards no directory is Google-only, which is D2207's fallback. `TestMicrosoftDirectoryIsPinned` is
+    also the mutation check — the admitted fixture's client-named tenant is off the list, so an
+    implementation reading the tenant refuses it and the test fails — and
+    `mcpauth.TestATopLevelTidIsNotADirectory` is the second one, failing for a reader that takes the
+    token's own `tid`. The mcpauth suite runs whole: `go test ./ee/coordinator/mcpauth/ -count=1`.
   - Depends on: none. Commit: `ee: the portal API verifies sign-in, provider and directory`.
 - **P1.4 The SPA skeleton. SECURITY** (sign-in code, and it edits the boundary guard's licence test).
   - Files (new, under `ee/portal/`): `package.json`, `package-lock.json`, `tsconfig.json` (each with

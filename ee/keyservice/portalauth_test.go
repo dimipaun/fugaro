@@ -163,12 +163,13 @@ func microsoftSignInClaims() map[string]any {
 }
 
 // microsoftDirectoryClaims is a Microsoft sign-in whose verified token reports
-// the Entra directory the account lives in, in the shape Identity Platform's
-// OIDC providers write it: `firebase.sign_in_attributes.tid`. That claim is
-// inside the signed payload, which is what makes it the value a reseller's list
-// can be pinned to and `firebase.tenant` — the Identity Platform tenant a client
-// names at sign-in — something the rule never reads (D2207 as amended on
-// 2026-11-13).
+// the Entra directory the account lives in, in the one shape read:
+// `firebase.sign_in_attributes.tid`, where Identity Platform puts a federated
+// provider's own claims. That object is the provider's report of the sign-in,
+// which is what makes it the value a reseller's list can be pinned to — unlike
+// `firebase.tenant`, the Identity Platform tenant a client names at sign-in, and
+// unlike a `tid` in the token's own custom-claims level, neither of which the
+// rule reads (D2207 as amended on 2026-11-13).
 func microsoftDirectoryClaims() map[string]any {
 	claims := microsoftSignInClaims()
 	claims["firebase"].(map[string]any)["sign_in_attributes"] = map[string]any{"tid": portalDirectory}
@@ -411,9 +412,9 @@ func TestStaleSignInIsRefusedForMint(t *testing.T) {
 
 // TestMicrosoftDirectoryIsPinned: D2207's condition for a reseller, as the
 // owner's ruling of 2026-11-13 pins it. A Microsoft sign-in is admitted only
-// when the VERIFIED token's Microsoft (Entra ID) directory id (`tid`) is on the
-// organisation's list, so a directory nobody pinned is refused however valid the
-// token is.
+// when the VERIFIED token's Microsoft (Entra ID) directory id (`tid`, read out
+// of `firebase.sign_in_attributes`) is on the organisation's list, so a
+// directory nobody pinned is refused however valid the token is.
 //
 // This is also the task's mutation check, and the fixture is what makes it one:
 // the admitted token carries a client-named Identity Platform tenant that is NOT
@@ -457,14 +458,19 @@ func TestMicrosoftDirectoryIsPinned(t *testing.T) {
 		t.Errorf("the refusal %q does not name the `tid` claim the pin is read from: the old text named the tenant, and the person reading it has to be told which value the rule is about", message)
 	}
 
-	// The shape a deployment's provider may write instead — the directory at the
-	// token's own top level — is the same admission: which of the two shapes a
-	// provider mints is its configuration and not a difference a reseller's list
-	// can see (mcpauth's directoryID).
+	// A `tid` in the token's own claim set is a CUSTOM claim and not a directory:
+	// that level is the namespace this project writes `mu`, `fs` and `fr` in, so
+	// a pin read from it is one any project-side writer of custom claims can
+	// satisfy — `firebase.tenant`'s hole in another claim, which is why the
+	// reader ignores it (mcpauth's `directoryID`, TestATopLevelTidIsNotADirectory).
 	top := microsoftSignInClaims()
 	top["tid"] = portalDirectory
-	if err := v.RequireSSO(portalSignIn(t, v, top), reseller); err != nil {
-		t.Errorf("a reseller refused a Microsoft sign-in whose token names the pinned directory at its own top level: %v", err)
+	err = v.RequireSSO(portalSignIn(t, v, top), reseller)
+	if err == nil {
+		t.Fatalf("a reseller admitted a Microsoft sign-in whose token names the pinned directory in its own claim set, which is a value any project-side writer of custom claims can mint (%s)", portalMarker)
+	}
+	if !errors.Is(err, ErrDirectoryNotPinned) {
+		t.Errorf("a custom-claim tid was refused with %v, which is not the directory sentinel", err)
 	}
 }
 
