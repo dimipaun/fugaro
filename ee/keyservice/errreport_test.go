@@ -15,6 +15,7 @@ package keyservice
 import (
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -118,9 +119,14 @@ func TestPanicIsReportedWithoutTheBody(t *testing.T) {
 // names a DSN the test can watch, because sentry-go reads SENTRY_DSN out of it
 // for a client built without one — a report to a host the deploy never named is
 // what this file builds no client at all to avoid.
+//
+// Reporting nowhere is not recording nowhere: the panic reaches the process's
+// own log, which is the only trace such a deployment has — the recover that
+// answers the route is what keeps net/http from writing one itself.
 func TestNoDSNReportsNothing(t *testing.T) {
 	stand := newSentryStand(t)
 	t.Setenv("SENTRY_DSN", stand.dsn())
+	said := captureLog(t)
 
 	f := newFixture(t)
 
@@ -132,6 +138,45 @@ func TestNoDSNReportsNothing(t *testing.T) {
 	}
 	if got := stand.posted(); len(got) != 0 {
 		t.Errorf("a deployment with no DSN reported %d event(s), want none:\n%s", len(got), strings.Join(got, "\n"))
+	}
+	for _, want := range []string{apiPanicPath, panicProbeSays} {
+		if got := said.text(); !strings.Contains(got, want) {
+			t.Errorf("the log of a deployment with no DSN does not carry %s, so its panic was recorded nowhere at all:\n%s", want, got)
+		}
+	}
+}
+
+// TestAnUnreadableDSNReportsNothing (P1.6): a DSN Sentry cannot read leaves the
+// API reporting nowhere, which is the same off a deployment with no DSN holds —
+// refused once, at the mount, which has no error to return, so the service
+// starts and keeps answering instead of refusing to (the reading
+// newErrReporter states). The stand is the host that DSN names, and it is
+// reached by nothing: a value Sentry refuses is not a host this service reports
+// to. The panic still reaches the process's log, and so does the sentence that
+// says reporting is off.
+func TestAnUnreadableDSNReportsNothing(t *testing.T) {
+	stand := newSentryStand(t)
+	said := captureLog(t)
+
+	f := newFixtureWith(t, Production, func(f *fixture) { f.cfg.SentryDSN = stand.unreadable() })
+
+	if rec := f.api(http.MethodPost, apiPanicPath, "{}"); rec.Code != http.StatusInternalServerError {
+		t.Errorf("a panicking route answered %d beside an unreadable DSN, want %d: reporting is off, and answering is not", rec.Code, http.StatusInternalServerError)
+	}
+	if got := stand.posted(); len(got) != 0 {
+		t.Errorf("a deployment whose DSN Sentry cannot read reported %d event(s), want none:\n%s", len(got), strings.Join(got, "\n"))
+	}
+	for _, want := range []struct {
+		what string
+		held string
+	}{
+		{"the refusal of the DSN, which is what tells an operator reporting is off", "cannot read it"},
+		{"the route that panicked", apiPanicPath},
+		{"what it panicked with", panicProbeSays},
+	} {
+		if got := said.text(); !strings.Contains(got, want.held) {
+			t.Errorf("the log does not carry %s:\n%s", want.what, got)
+		}
 	}
 }
 
@@ -194,13 +239,50 @@ func newSentryStand(t *testing.T) *sentryStand {
 // dsn is the DSN a client reaches this stand with. The public key of a DSN is
 // not a secret — it ships in every client that reports — and the test builds
 // one here rather than naming one anywhere.
-func (s *sentryStand) dsn() string {
-	return "http://" + strings.Repeat("a", 32) + "@" + strings.TrimPrefix(s.server.URL, "http://") + "/1"
-}
+func (s *sentryStand) dsn() string { return "http://" + s.key() + "@" + s.address() + "/1" }
+
+// unreadable is a DSN naming this stand with a scheme a DSN does not have, so
+// the host in it is one this service could have reached and sentry-go refuses
+// the value before it ever does.
+func (s *sentryStand) unreadable() string { return "ftp://" + s.key() + "@" + s.address() + "/1" }
+
+func (s *sentryStand) key() string { return strings.Repeat("a", 32) }
+
+func (s *sentryStand) address() string { return strings.TrimPrefix(s.server.URL, "http://") }
 
 // posted is every envelope the stand was sent, in order.
 func (s *sentryStand) posted() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]string(nil), s.envelopes...)
+}
+
+// logCapture is the process's own log while one test runs, which is where a
+// deployment that reports nowhere has its failures written. log is one
+// package-level logger, so a test that reads it hands it back on the way out.
+type logCapture struct {
+	mu   sync.Mutex
+	said strings.Builder
+}
+
+func (c *logCapture) Write(body []byte) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.said.Write(body)
+}
+
+// text is everything written to the log so far.
+func (c *logCapture) text() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.said.String()
+}
+
+func captureLog(t *testing.T) *logCapture {
+	t.Helper()
+	held := &logCapture{}
+	done := log.Writer()
+	log.SetOutput(held)
+	t.Cleanup(func() { log.SetOutput(done) })
+	return held
 }

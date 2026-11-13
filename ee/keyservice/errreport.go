@@ -24,11 +24,20 @@ package keyservice
 // environment for a client built without one, which is a report to a host the
 // deploy never named — TestNoDSNReportsNothing pins that no client is built at
 // all without a DSN, and F24 is why the dependency is here.
+//
+// That log line is not a figure of speech. The recover in wrap is what takes
+// net/http's own panic log away — the server recovers a panic nobody else did
+// and writes it down itself, and a panic recovered here never reaches it — so a
+// deployment reporting nowhere writes the panic to the process's log instead
+// (the same method, pattern and stack a report would carry, and no more of the
+// request than that). A failure is recorded somewhere on every path: in the
+// deploy's Sentry when it named one, and in its log when it did not.
 
 import (
 	"fmt"
 	"log"
 	"net/http"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -59,6 +68,11 @@ const (
 type errReporter struct {
 	client *sentry.Client
 }
+
+// off answers whether this deployment reports anywhere at all, which is the
+// state the wrapper keeps a panic's trace by: with a client the report is the
+// record, and without one the process's own log is.
+func (r errReporter) off() bool { return r.client == nil }
 
 // newErrReporter builds where one Handler's failures go, from the deploy's DSN
 // and environment.
@@ -92,6 +106,11 @@ func newErrReporter(dsn, environment string) errReporter {
 // panics is reported and refused, and one that answers 5xx is reported as its
 // answer goes out. Nothing else is reported, which is every answer a caller
 // asked for and got — a 404 and a 401 are the API working.
+//
+// A panic is recorded under either reading of "reporting is on": sent to the
+// deploy's Sentry when it named a readable DSN, and written to the process's own
+// log when it named none (or one Sentry refused), because the recover below is
+// what stops net/http from logging it.
 func (r errReporter) wrap(path string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		held := &apiAnswer{ResponseWriter: w}
@@ -100,13 +119,27 @@ func (r errReporter) wrap(path string, next http.HandlerFunc) http.HandlerFunc {
 			if crashed != nil {
 				r.report(req, path, http.StatusInternalServerError, crashed)
 				if held.status == 0 {
+					if r.off() {
+						// The recover here is what took net/http's own panic log
+						// away: the server recovers a panic nobody else did and
+						// writes it down, and it never sees this one. A
+						// deployment reporting nowhere has to hear about the
+						// panic somewhere, and this is the log its own comment
+						// says such failures belong in. What is written is what
+						// a report carries and no more — the method, the route's
+						// pattern, the panic and the stack — so the request is
+						// still never read for a body, a header or an address.
+						log.Printf("keyservice: the route %s %s panicked, and this deployment reports nowhere: %v\n%s", req.Method, path, crashed, debug.Stack())
+					}
 					refuseAPI(w, http.StatusInternalServerError, apiFailedCode, apiFailedMessage)
 					return
 				}
 				// The route had already answered when it panicked, and half an
 				// answer written out as a whole one is worse than none: the
 				// panic goes on to the server, which closes the connection
-				// rather than let a client read a truncated body as the answer.
+				// rather than let a client read a truncated body as the answer —
+				// and which writes the panic to the process's log itself, so
+				// this path needs none of the log line above.
 				panic(crashed)
 			}
 			if held.status >= http.StatusInternalServerError {
@@ -121,7 +154,7 @@ func (r errReporter) wrap(path string, next http.HandlerFunc) http.HandlerFunc {
 // else: the body, the headers and the address are what §7.2 keeps out of the
 // API's answers, and a report reaches a third party rather than the caller.
 func (r errReporter) report(req *http.Request, path string, status int, crashed any) {
-	if r.client == nil {
+	if r.off() {
 		return
 	}
 	event := sentry.NewEvent()
