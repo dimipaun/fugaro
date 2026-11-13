@@ -491,6 +491,11 @@ what D222 and D226 shape.
 sign-in stays custom tokens only, and a provider sign-in, if the owner ever wants one, is an
 identity claim checked once, at pairing.
 
+The alternative above is discharged as documentation rather than built, in
+[provider-sign-in.md](provider-sign-in.md) (P6): it writes §3 out in full, so that whoever wants
+this path next reads a document instead of re-deriving the decision. It is not a part of the plan
+and it changes nothing here.
+
 ### D222 — What is the allowlist, and where does it live?
 
 **Recommendation: the device node, with the administered email and role as fields on it** — exactly
