@@ -99,6 +99,7 @@
         "paths": [
           "internal/cli/init_policy_migrate.go",
           "internal/cli/init_policy_publish.go",
+          "internal/cli/init_stages.go",
           "internal/cli/init_policy_migrate_test.go",
           "internal/cli/update_default_profile_test.go"
         ]
@@ -131,6 +132,7 @@
         "prediction": true,
         "paths": [
           "internal/sharedjob/stub.go",
+          "internal/infra/projectjobs.go",
           "internal/cli/shared_job_e2e_test.go"
         ]
       },
@@ -205,18 +207,18 @@
     },
     {
       "id": "B2",
-      "title": "the catalog build uses the route and bakes several repositories",
+      "title": "the catalog build bakes several repositories",
       "run": null,
       "version": null,
-      "size": 3,
+      "size": 2,
       "footprint": {
         "prediction": true,
         "paths": [
-          "internal/backend/gcp/catalog.go",
           "internal/cli/gitcred.go",
           "internal/imagebake/imagebake.go",
           "internal/imagebake/bake_test.go",
-          "internal/cli/image_build_catalog.go"
+          "internal/cli/image_build_catalog.go",
+          "internal/cli/image_build_catalog_test.go"
         ]
       }
     },
@@ -247,7 +249,8 @@
           "images/scan.sh",
           "images/scan_test.go",
           "images/trivy-secret.yaml",
-          "internal/backend/gcp/catalog.go"
+          "internal/backend/gcp/catalog.go",
+          "internal/backend/gcp/catalog_test.go"
         ]
       }
     },
@@ -463,6 +466,38 @@
           "internal/credsvc/auth_test.go"
         ]
       }
+    },
+    {
+      "id": "B8",
+      "title": "the generated clone step",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/backend/gcp/catalog.go",
+          "internal/backend/gcp/catalog_clone.go",
+          "internal/backend/gcp/catalog_test.go",
+          "internal/backend/gcp/catalog_clone_test.go"
+        ]
+      }
+    },
+    {
+      "id": "B6",
+      "title": "catalog builds and the check run as the build identity",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/backend/gcp/catalog.go",
+          "internal/backend/gcp/catalog_test.go",
+          "deploy/terraform/gcp/modules/repo/catalogcheck.tf",
+          "deploy/terraform/gcp/modules/project/build_identity.tf"
+        ]
+      }
     }
   ],
   "edges": [
@@ -640,6 +675,36 @@
       "task": "M1",
       "needs": "B5",
       "reason": "behaviour: the per-repository build account goes only after the project's exists"
+    },
+    {
+      "task": "I2",
+      "needs": "B8",
+      "reason": "the integration runs the clone step"
+    },
+    {
+      "task": "B3",
+      "needs": "B8",
+      "reason": "behaviour: the same file, backend/gcp/catalog.go"
+    },
+    {
+      "task": "B6",
+      "needs": "B5",
+      "reason": "behaviour: the account it runs as"
+    },
+    {
+      "task": "B6",
+      "needs": "B3",
+      "reason": "behaviour: the same file, backend/gcp/catalog.go"
+    },
+    {
+      "task": "M1",
+      "needs": "B6",
+      "reason": "behaviour: the build and the check act as the project identity before the per-repository account goes"
+    },
+    {
+      "task": "S6",
+      "needs": "S5",
+      "reason": "behaviour: S5 registers a stage in init_stages.go and owns init_policy_migrate.go"
     }
   ],
   "decoupling": [

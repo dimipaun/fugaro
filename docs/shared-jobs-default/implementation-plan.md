@@ -16,7 +16,7 @@ flagged opus with an independent review, and the contracts over credentials get 
 - **P1.** B5.1 (#2545) and B5.2 (`docs/secrets-brokering`) merged: the GitHub shared-job class in the credential service, and the service URL, the invoker grant and the rendered shared-job accounts for a project job (`credentialsServiceLaunchEnv`). S2 extends B5.1's `pairShared`; I1 cannot pass without both.
 - **P2.** Check 191 (owner-run, `scripts/live-checks/check191.sh`) passed, with #2549 and #2550 landed. The spec's release blocker; **no task starts it and no agent performs it**.
 - **S2 is `docs/secrets-brokering`'s B5.3, and S1 with S4 carry `docs/bitbucket-workspace-token`'s T2.2**: the pull request of each names both numbers, and whoever merges it closes the older row in `docs/status.md`. T2.7 and the workspace token's other tasks stay theirs.
-- **Launch gates (owner-run results, so not graph edges)**: S6 launches only after Check 191 passes (P2); M1, M6 and M2 launch only after Check 580 passes, because with no retire gate (D2303) that check is the live proof before a per-repository job is deleted. The graph draws no edge from a provider to its contract (the schema refuses one), so S1, S2 and S5 launch after C1 merges and B1 after C2 merges.
+- **Launch gates (owner-run results, so not graph edges)**: S6 launches only after Check 191 passes (P2); M1, M6 and M2 launch only after Check 580 passes, because with no retire gate (D2303) that check is the live proof before a per-repository job is deleted. The graph draws no edge from a provider to its contract (the schema refuses one), so S1, S2 and S5 launch after C1 merges and B1 and B8 after C2 merges.
 
 ## Conventions
 
@@ -41,7 +41,7 @@ flagged opus with an independent review, and the contracts over credentials get 
 | No token or credential file survives in any image layer: git config, `.netrc`, credential helper store, environment | B3 |
 | `update` never rewrites an existing profile; a second run changes nothing | S5 |
 | `update` with a run in flight leaves it running; the retirement deletes only an orphaned job and is named in the in-flight line | M2 |
-| Adding or removing a repository needs no Terraform apply | M1 |
+| Adding or removing a repository applies no job (the root still applies secrets: open item 8) | M1 |
 | A project with no catalog default gets a base-image default, so a job always has an image | S5 |
 
 ## Slice 1: `bb-shared-jobs` (the urgent slice)
@@ -59,10 +59,10 @@ flagged opus with an independent review, and the contracts over credentials get 
 - Owner-run: no.
 
 ### S1: the deployer admits Bitbucket profiles
-- Acceptance: `infra.SharedJobProvider("bitbucket")` is true; `ProjectJobs` deploys a job for a valid Bitbucket profile with no Bitbucket secret mounted and the proxy required; a profile that mounts the Bitbucket secret stays refused.
+- Acceptance: `ProjectJobs` can deploy a job for a valid Bitbucket profile with no Bitbucket secret mounted and the proxy required, and a profile that mounts the Bitbucket secret stays refused; **`sharedJobProviders` itself is left as it is**, so S1 to S4 merge with no effect on a Bitbucket project and a release cut midway breaks nothing; I1 makes the one-line change.
 - Files: `internal/infra/projectjobs.go`, `internal/infra/projectjobs_test.go`, `internal/projectpolicy/profiles.go`, `internal/projectpolicy/profiles_test.go`.
 - Interfaces: consumes C1's profile fields; produces a Bitbucket job in the installation root.
-- Tests: `TestProjectJobsDeployABitbucketProfile`, `TestBitbucketProfileMountsNoToken`, `TestSharedJobProviders`.
+- Tests: `TestProjectJobsDeployABitbucketProfile` (with the provider admitted in the test), `TestBitbucketProfileMountsNoToken`, `TestSharedJobProvidersAdmitsBitbucketAfterI1`.
 - Command: `go test ./internal/infra/ ./internal/projectpolicy/ -run 'ProjectJobs|BitbucketProfile|SharedJobProviders' -count=1`
 - Red step: `TestProjectJobsDeployABitbucketProfile` fails because the provider list admits GitHub alone.
 - Depends on: none in the graph (S1 is the provider side of C1's broken edge S4 → S1); it is built against `contract.md` and launches after C1 merges. It carries T2.2's deployer half.
@@ -108,7 +108,7 @@ flagged opus with an independent review, and the contracts over credentials get 
 
 ### S5: `update` writes the default profile and default image
 - Acceptance: for a project with no `standard` profile, `fugaro update` writes one (R1: the project's provider, the default account, `allow_repos` derived from the enrolled repositories; no image field, the image is the catalog default) to the local config **before the installation stage**, so the stage that turns profiles into project jobs deploys its job in the same `update`, and publishes it in the policy stage; it also writes a catalog default entry on the base image when the catalog has none, and prints what it created; an existing profile and an existing catalog default are never touched; a second `update` is a no-op; a project that mixes providers waits on open item 6.
-- Files: `internal/cli/init_policy_migrate.go`, `internal/cli/init_policy_publish.go`, `internal/cli/init_policy_migrate_test.go`, `internal/cli/update_default_profile_test.go` (new).
+- Files: `internal/cli/init_policy_migrate.go`, `internal/cli/init_policy_publish.go`, `internal/cli/init_stages.go`, `internal/cli/init_policy_migrate_test.go`, `internal/cli/update_default_profile_test.go` (new).
 - Interfaces: consumes C1's profile fields and `catalog.Entry`; produces `profiles.standard` and the default entry.
 - Tests: `TestUpdateDeploysTheDefaultProfilesJobInTheSameUpdate`, `TestUpdateCreatesTheDefaultProfile`, `TestUpdateNeverRewritesAnEditedProfile`, `TestUpdateDefaultProfileIsIdempotent`, `TestUpdatePreviousVersionConverges`.
 - Command: `go test ./internal/cli/ -run 'UpdateDeploysTheDefaultProfilesJob|UpdateCreatesTheDefaultProfile|UpdateNeverRewrites|UpdateDefaultProfile|UpdatePreviousVersion' -count=1`
@@ -125,14 +125,14 @@ flagged opus with an independent review, and the contracts over credentials get 
 - Tests: `TestUpdateTurnsTheBitbucketProxyOn`, `TestUpdateBitbucketProxyConvergesInOneUpdate`, `TestUpdateAsksForTheWorkspaceTokenOnce`, `TestUpdateInFlightLineNamesEveryStepThatCanReachARun`, `TestUpdateLeavesARunInFlightRunning`.
 - Command: `go test ./internal/cli/ -run 'UpdateTurnsTheBitbucketProxyOn|UpdateBitbucketProxyConverges|UpdateAsksForTheWorkspaceToken|UpdateInFlight|UpdateLeavesARunInFlight' -count=1`
 - Red step: the first test fails with the switches off.
-- Depends on: none in the graph; launches only after Check 191 passes (P2).
+- Depends on: S5 (S5 registers the profile stage in `init_stages.go` and owns `init_policy_migrate.go`, where the switch may be written); launches only after Check 191 passes (P2).
 - Commit: `update: Bitbucket projects converge onto the credential proxy (S6, D2306, R7)`.
 - Reviewer tier: opus, independent review (credentials switch).
 - Owner-run: no.
 
 ### I1: wire the sides and prove it end to end
-- Acceptance: the stubs are deleted; a hermetic test runs a shared job for GitHub and for Bitbucket: clone, fetch, push and open a pull request, with an unadmitted repository refused, and a baked checkout accepted only after S9's reset.
-- Files: `internal/sharedjob/stub.go` (deleted), `internal/cli/shared_job_e2e_test.go` (new).
+- Acceptance: the stubs are deleted and `sharedJobProviders` admits `bitbucket` (the one-line switch S1 left, with the pinned reason in the test); a hermetic test runs a shared job for GitHub and for Bitbucket: clone, fetch, push and open a pull request, with an unadmitted repository refused, and a baked checkout accepted only after S9's reset.
+- Files: `internal/sharedjob/stub.go` (deleted), `internal/infra/projectjobs.go`, `internal/cli/shared_job_e2e_test.go` (new).
 - Interfaces: consumes S1–S4 and C1.
 - Tests: `TestSharedJobEndToEndGitHub`, `TestSharedJobEndToEndBitbucket`.
 - Command: `go test ./internal/cli/ -run 'SharedJobEndToEnd' -count=1`
@@ -193,7 +193,7 @@ flagged opus with an independent review, and the contracts over credentials get 
 - Owner-run: no.
 
 ### B1: the credential-service build route
-- Acceptance: for a build identity the service answers a GitHub build with a read-only, short-lived installation token covering exactly the requested repositories of the caller's own project, and a Bitbucket build with a proxy grant (the entry's repositories paired to the identity; no token, R6); it refuses a repository outside the entry's and audits the mint; every other caller class is refused on the build route and the build identity on every other route.
+- Acceptance: the repositories a build may be given are read from the published image map for the entry the request names, and `contract-build-token.md` states that the one project identity can reach the union of every entry's repositories; for a build identity the service answers a GitHub build with a read-only, short-lived installation token covering exactly the requested repositories of the caller's own project, and a Bitbucket build with a proxy grant (the entry's repositories paired to the identity; no token, R6); it refuses a repository outside the entry's and audits the mint; every other caller class is refused on the build route and the build identity on every other route.
 - Files: `internal/credsvc/buildtoken.go` (new), `internal/credsvc/server.go`, `internal/credsvc/bitbucketproxy.go`, `internal/credsvc/buildtoken_test.go` (new), `internal/credsvc/audit.go`.
 - Interfaces: consumes C2's `Request`; produces `Response`.
 - Tests: `TestBuildTokenIsReadOnly`, `TestBuildTokenCoversOnlyTheRequestedRepos`, `TestBuildTokenExpires`, `TestBuildTokenMintIsAudited`, `TestBitbucketBuildGetsAProxyGrantAndNoToken`, `TestEveryOtherClassRefusedOnTheBuildRoute`, `TestBuildIdentityRefusedOnEveryOtherRoute`.
@@ -204,16 +204,28 @@ flagged opus with an independent review, and the contracts over credentials get 
 - Reviewer tier: opus, mandatory independent review, one mutation check (a write scope must fail).
 - Owner-run: no.
 
-### B2: the catalog build uses the route and bakes several repositories
-- Acceptance: the build step asks `buildtoken.Client` for one credential over the entry's repositories; `imagebake.Decide` may bake several repositories into one entry; the clone runs in a **separate build step whose Dockerfile Fugaro generates entirely**, from the pinned base digest with `GIT_CONFIG_NOSYSTEM=1`, and the checkout reaches the entry's build as a named build context, so the entry's build carries no `--secret` and no identity and no entry `RUN` step can read the credential or alter the clone's tools (F19); submodules and LFS objects of a baked repository are fetched in that step with the same credential; submodules of a baked repository are cloned with the same credential and one it does not cover fails naming the repository; an entry that serves a repository the project does not admit is refused.
-- Files: `internal/backend/gcp/catalog.go`, `internal/cli/gitcred.go`, `internal/imagebake/imagebake.go`, `internal/imagebake/bake_test.go`, `internal/cli/image_build_catalog.go`.
+### B2: the catalog build bakes several repositories
+- Acceptance: `imagebake.Decide` may bake several repositories into one entry (D2301, superseding O3 (b)); the build asks `buildtoken.Client` for one credential over the entry's repositories, read from the published image map for the named entry (the build identity itself can reach the union of every entry's repositories: stated in `contract-build-token.md`); submodules of a baked repository that the credential does not cover fail naming the repository; an entry that serves a repository the project does not admit is refused.
+- Files: `internal/cli/gitcred.go`, `internal/imagebake/imagebake.go`, `internal/imagebake/bake_test.go`, `internal/cli/image_build_catalog.go`, `internal/cli/image_build_catalog_test.go`.
 - Interfaces: consumes C2's `Client`; produces the multi-repo bake plan.
-- Tests: `TestDecideBakesSeveralRepos`, `TestCatalogBuildTokenIsASecretMount`, `TestCloneStepIsGeneratedAndSeparateFromTheEntryBuild`, `TestEntryBuildCarriesNoSecretAndNoIdentity`, `TestBakedSubmoduleOutsideTheCredentialNamesTheRepo`, `TestCatalogBuildRefusesAnUnadmittedRepo`.
-- Command: `go test ./internal/imagebake/ ./internal/backend/gcp/ ./internal/cli/ -run 'DecideBakes|CatalogBuildToken|CloneStep|EntryBuildCarries|BakedSubmodule|CatalogBuildRefuses' -count=1`
+- Tests: `TestDecideBakesSeveralRepos`, `TestBakedSubmoduleOutsideTheCredentialNamesTheRepo`, `TestCatalogBuildRefusesAnUnadmittedRepo`, `TestCredentialIsReadFromTheNamedEntrysRepos`.
+- Command: `go test ./internal/imagebake/ ./internal/cli/ -run 'DecideBakes|BakedSubmodule|CatalogBuildRefuses|CredentialIsReadFromTheNamedEntry' -count=1`
 - Red step: `TestDecideBakesSeveralRepos` fails because `Decide` bakes one repository (O3 (b)).
 - Depends on: C2.
 - Commit: `catalog: a project image bakes several repositories (B2, D2301)`.
 - Reviewer tier: opus (credential in a build).
+- Owner-run: no.
+
+### B8: the generated clone step
+- Acceptance: the clone runs in a **separate build step whose Dockerfile Fugaro generates entirely**, from the pinned base digest with `GIT_CONFIG_NOSYSTEM=1`, and the checkout reaches the entry's build as a named build context, so the entry's build carries no `--secret` and no identity and no entry `RUN` step can read the credential or alter the clone's tools (F19); the credential is stored per host (the pattern `catalogContextStep` uses) and a URL on any other host, in `.gitmodules` or `.lfsconfig`, is refused before any credential is offered, with `protocol.ext` and `protocol.file` set to never; submodules and LFS objects of a baked repository are fetched in this step; the credential is revoked at the step's end where the provider allows, and otherwise expires within the build's timeout.
+- Files: `internal/backend/gcp/catalog.go`, `internal/backend/gcp/catalog_clone.go` (new), `internal/backend/gcp/catalog_test.go`, `internal/backend/gcp/catalog_clone_test.go` (new).
+- Interfaces: consumes C2's `Client`; produces the checkout as a build context.
+- Tests: `TestCloneStepIsGeneratedAndSeparateFromTheEntryBuild`, `TestEntryBuildCarriesNoSecretAndNoIdentity`, `TestCloneStepRefusesAForeignHostInGitmodulesAndLfsconfig`, `TestCloneStepSetsProtocolExtAndFileToNever`, `TestCloneStepCredentialIsRevokedAtTheEnd`.
+- Command: `go test ./internal/backend/gcp/ -run 'CloneStep|EntryBuildCarries' -count=1`
+- Red step: `TestEntryBuildCarriesNoSecretAndNoIdentity` fails because the entry's own last stage holds the secret mount.
+- Depends on: C2 (the shape).
+- Commit: `catalog: the clone runs in a step the entry cannot touch (B8, F19)`.
+- Reviewer tier: opus, mandatory independent review.
 - Owner-run: no.
 
 ### B5: the build identity
@@ -228,6 +240,18 @@ flagged opus with an independent review, and the contracts over credentials get 
 - Reviewer tier: opus (IAM, Terraform).
 - Owner-run: no.
 
+### B6: catalog builds and the catalog check run as the build identity
+- Acceptance: `CatalogBuildSpec` runs as the project's build identity (B5) and `catalogcheck.tf` grants actAs on it and not on the per-repository build account; the identity holds the writer and tag-mover roles on the shared registry that the per-repository account held through `registry.tf`, and nothing wider.
+- Files: `internal/backend/gcp/catalog.go`, `internal/backend/gcp/catalog_test.go`, `deploy/terraform/gcp/modules/repo/catalogcheck.tf`, `deploy/terraform/gcp/modules/project/build_identity.tf`.
+- Interfaces: consumes B5's account; produces the account the build and check run as.
+- Tests: `TestCatalogBuildRunsAsTheBuildIdentity`, `TestCatalogCheckActsAsTheBuildIdentity`, `TestBuildIdentityHoldsOnlyTheRegistryRoles`; `terraform fmt -check`.
+- Command: `go test -tags terraform ./internal/backend/gcp/ ./internal/infra/ -run 'RunsAsTheBuildIdentity|CatalogCheckActsAs|HoldsOnlyTheRegistryRoles' -count=1`
+- Red step: the first test fails because the spec requires the repository's build account.
+- Depends on: B5 (the account), B3 (the same file, `catalog.go`; one writer per level).
+- Commit: `catalog: builds and the check run as the project's build identity (B6)`.
+- Reviewer tier: opus (IAM).
+- Owner-run: no.
+
 ### I2: wire the build to the route
 - Acceptance: the stub is deleted and a hermetic test builds a catalog entry over two repositories with a credential from the service and bakes both; a second test shows a run for one of them can read the other under `/work/baked` (D2309, pinned so the choice is visible).
 - Files: `internal/buildtoken/stub.go` (deleted), `internal/cli/catalog_bake_e2e_test.go` (new).
@@ -235,19 +259,19 @@ flagged opus with an independent review, and the contracts over credentials get 
 - Tests: `TestCatalogBuildBakesTwoReposThroughTheService`, `TestARunCanReadTheProjectsOtherBakedRepos`.
 - Command: `go test ./internal/cli/ -run 'CatalogBuildBakesTwoRepos|ARunCanReadTheProjectsOtherBakedRepos' -count=1`
 - Red step: fails while the stub stands.
-- Depends on: B1, B2, C2.
+- Depends on: B1, B2, B8, C2.
 - Commit: `catalog: the build reaches the credential service (I2)`.
 - Reviewer tier: opus.
 - Owner-run: no.
 
 ### B3: the leak scan in the catalog build
 - Acceptance: the catalog build runs the scan before the promote step and refuses an image that holds git config credentials, a `.netrc`, a credential-helper store or a token in the environment or in any layer; a clean image passes.
-- Files: `images/scan.sh`, `images/scan_test.go`, `images/trivy-secret.yaml`, `internal/backend/gcp/catalog.go`.
+- Files: `images/scan.sh`, `images/scan_test.go`, `images/trivy-secret.yaml`, `internal/backend/gcp/catalog.go`, `internal/backend/gcp/catalog_test.go`.
 - Interfaces: consumes the built image reference.
 - Tests: `TestScanRefusesAnImageWithAGitCredential`, `TestScanRefusesANetrc`, `TestScanRefusesATokenInTheEnvironment`, `TestCatalogBuildStepsRunTheScanBeforePromote`.
 - Command: `go test ./images/ ./internal/backend/gcp/ -run 'Scan|CatalogBuildSteps' -count=1`
 - Red step: the scan tests fail on fixtures with each leftover.
-- Depends on: I2 (the same `catalog.go`; one writer per level).
+- Depends on: I2 (the same `catalog.go`; one writer per level), B8.
 - Commit: `catalog: the build scans its image for leftover credentials (B3, R2)`.
 - Reviewer tier: opus.
 - Owner-run: no.
@@ -317,19 +341,19 @@ flagged opus with an independent review, and the contracts over credentials get 
 - Owner-run: no.
 
 ### M1: remove the per-repository jobs from the default Terraform path
-- Acceptance: for a repository marked shared, `modules/repo` creates no workflow job, registry, build service account or check job (the secret containers and the catalog check stay: other consumers, U8); adding or removing a repository needs no Terraform apply; a repository no profile admits keeps the per-repository path.
+- Acceptance: for a repository marked shared, `modules/repo` creates no workflow job, registry, build service account or check job (the secret containers and the catalog check stay, the check now acting as B6's identity); adding or removing a repository needs no job apply (the repository root still applies its secret containers: open item 8); a repository no profile admits keeps the per-repository path.
 - Files: `deploy/terraform/gcp/modules/repo/workflows.tf`, `deploy/terraform/gcp/modules/repo/registry.tf`, `deploy/terraform/gcp/modules/repo/build.tf`, `deploy/terraform/gcp/modules/repo/check.tf`, `internal/infra/repo_module_test.go` (new).
 - Interfaces: consumes M6's `shared` mark; produces the reduced root.
-- Tests: `TestRepoRootOmitsTheJobsForASharedRepo`, `TestAddingARepoNeedsNoApply`; `terraform fmt -check`.
-- Command: `go test -tags terraform ./internal/infra/ -run 'RepoRootOmits|AddingARepo' -count=1`
+- Tests: `TestRepoRootOmitsTheJobsForASharedRepo`, `TestAddingARepoAppliesNoJob`; `terraform fmt -check`.
+- Command: `go test -tags terraform ./internal/infra/ -run 'RepoRootOmits|AddingARepoAppliesNoJob' -count=1`
 - Red step: the first test fails because every workflow gets a job.
-- Depends on: M6 (the mark it reads), B5 (the project's build identity must exist before the per-repository build account goes); launches after Check 580 passes.
+- Depends on: M6 (the mark it reads), B5 (the project's build identity must exist before the per-repository build account goes), B6 (the build and the check act as it); launches after Check 580 passes.
 - Commit: `infra: a shared repository has no jobs of its own (M1, spec Infrastructure)`.
 - Reviewer tier: opus (Terraform, IAM).
 - Owner-run: no.
 
 ### M2: `update` retires the per-repository jobs
-- Acceptance: `update` retires a repository's own jobs once its structural precondition holds (admitted to a deployed profile, project image resolves, proxy on, **and no execution running on the job**, so a job with a run in flight is retired by a later `update`) and not before; the confirmation retirement needs outside a managed project is asked inside `update`, never as a second command, and the in-flight line names the retirement; an installation at the previous version converges; a failed first shared run is repaired by running `update` again, which re-converges the profile, the image and the proxy, and the user relaunches the run.
+- Acceptance: `update` retires a repository's own jobs once its structural precondition holds (admitted to a deployed profile, project image resolves, the proxy on for a Bitbucket repository, **and no execution running on the job**, so a job with a run in flight is retired by a later `update`) and not before; the confirmation retirement needs outside a managed project is asked inside `update`, never as a second command, and the in-flight line names the retirement; an installation at the previous version converges; a failed first shared run is repaired by running `update` again, which re-converges the profile, the image and the proxy, and the user relaunches the run.
 - Files: `internal/cli/init_retire.go`, `internal/infra/retire.go`, `internal/cli/update_in_flight.go`, `docs/design/update-in-flight.md`, `internal/cli/init_retire_test.go`.
 - Interfaces: consumes M1, S5, S6; produces the retirement.
 - Tests: `TestUpdateRetiresTheRepoJobsOfAMigratedRepo`, `TestUpdateDoesNotRetireBeforeThePrecondition`, `TestUpdateDoesNotRetireAJobWithARunningExecution`, `TestUpdateRepairsAFailedFirstSharedRun`, `TestUpdatePreviousVersionConvergesToSharedJobs`, `TestUpdateLeavesARunInFlightRunning`.
@@ -376,12 +400,15 @@ flagged opus with an independent review, and the contracts over credentials get 
 
 ## Parallel execution
 
-**Edges kept** (the dependent needs behaviour or the same file); the CLI's read counts 19, leaving out the edges that touch an integration task, and this list names all of them:
+**Edges kept** (the dependent needs behaviour or the same file); the CLI's read counts 24, leaving out the edges that touch an integration task, and this list names all of them:
 - S9 → S4, S3: the same file, `runner/projectjob.go`, and the proxied fetch it resets for.
 - I1 → S9: the integration runs the baked checkout on a shared job.
 - S7 → I1, S8 → I1: they document and exercise what I1 wires.
 - B5 → B1: the class it is rendered into.
-- M1 → B5: the per-repository build account goes only after the project's exists.
+- M1 → B5, M1 → B6: the per-repository build account goes only after the project's exists and the build and the check act as it.
+- B6 → B5, B6 → B3: the identity, and the same file `catalog.go`.
+- B8 → C2, I2 → B8, B3 → B8: the shape, the integration, and the same file `catalog.go`.
+- S6 → S5: S5 registers a stage in `init_stages.go` and owns `init_policy_migrate.go`.
 - B1 → S2: one file, `credsvc/server.go`, and the same pairing code; a contract would not split one file.
 - B3 → I2, N1 → I1, N2 → I1, M2 → S6, B4 → S8: one file each (`catalog.go`, `bitbucketproxy.go`, `runner.go`, `update_in_flight.go`, `docs/gcp-live-checklist.md`), so one writer per level.
 - M6 → I1, M6 → S5: marking a repository shared is safe only once shared jobs work and the default profile exists.
@@ -394,14 +421,14 @@ flagged opus with an independent review, and the contracts over credentials get 
 - S4 needed S1 for the provider list and the profile shape only: broken by **C1**, re-joined in **I1**.
 - B2 needed B1 for the request and response shape only: broken by **C2**, re-joined in **I2**.
 
-The graph is in [implementation-plan.graph.json](implementation-plan.graph.json). Its schema refuses an edge from a provider to its contract and from an integration to its contract, so S1, S2 and B1 are drawn at level 0 and launch after their contract merges (see the launch gates above).
+The graph is in [implementation-plan.graph.json](implementation-plan.graph.json). Its schema refuses an edge from a provider to its contract and from an integration to its contract, so S1, S2, B1 and B8 are drawn without that edge and launch after their contract merges (see the launch gates above).
 
 **Levels** (as `fugaro plan graph` reads them; tasks of a level run at once):
-- L0: C1, C2, S1, S2, S5, S6 (CR1 and CR2 are anticipated change requests, never launched unless raised)
-- L1: S3, S4, B1, B2
+- L0: C1, C2, S1, S2, S5, B8 (CR1 and CR2 are anticipated change requests, never launched unless raised)
+- L1: S3, S4, S6, B1, B2
 - L2: I2, M3, S9, B5
 - L3: I1, B3
-- L4: S7, S8, N1, N2, M6
+- L4: S7, S8, N1, N2, M6, B6
 - L5: B4, N3, M1
 - L6: M2
 - L7: M4, M5
@@ -412,21 +439,26 @@ The graph is in [implementation-plan.graph.json](implementation-plan.graph.json)
 
 | File | Tasks (by level) |
 | --- | --- |
-| `internal/credsvc/auth.go` | S2 (L0), B5 (L2) |
 | `internal/credsvc/server.go` | S2 (L0), B1 (L1) |
 | `internal/credsvc/bitbucketproxy.go` | S2 (L0), B1 (L1), N1 (L4) |
+| `internal/credsvc/auth.go` | S2 (L0), B5 (L2) |
 | `internal/runner/runner.go` | S3 (L1), N2 (L4) |
 | `internal/runner/projectjob.go` | S4 (L1), S9 (L2) |
 | `internal/gitops/gitops.go` | S9 (L2), N2 (L4) |
-| `internal/backend/gcp/catalog.go` | B2 (L1), B3 (L3) |
-| `internal/cli/update_in_flight.go`, `docs/design/update-in-flight.md` | S6 (L0), M2 (L6) |
+| `internal/backend/gcp/catalog.go`, `catalog_test.go` | B8 (L0), B3 (L3), B6 (L4) |
+| `internal/infra/projectjobs.go` | S1 (L0), I1 (L3) |
+| `internal/cli/init_stages.go`, `internal/cli/init_policy_migrate.go` | S5 (L0), S6 (L1; the switch's alternative home) |
+| `internal/cli/update_in_flight.go`, `docs/design/update-in-flight.md` | S6 (L1), M2 (L6) |
 | `docs/gcp-live-checklist.md` | S8 (L4), B4 (L5), M5 (L7) |
+| `deploy/terraform/gcp/modules/project/build_identity.tf` | B5 (L2), B6 (L4) |
 | `internal/sharedjob/stub.go` | C1 (L0), I1 (L3) |
 | `internal/buildtoken/stub.go` | C2 (L0), I2 (L2) |
 
+CR1 and CR2 share files with C1 and C2 and are launched only when raised, never at level 0.
+
 **Contract changes anticipated**: CR1 amends C1 if S2's review finds the pairing needs the workflow name (it reaches S3 and S4; launched runs are followed up by a run on their pull request that names `internal/sharedjob/sharedjob.go` by path); CR2 amends C2 if B1's review finds a time-to-live cap belongs in the request (it reaches B2).
 
-**The gain** (the read): 3 edges broken, 19 kept, 6 nodes added (two contracts, two integrations, two anticipated change requests); the weighted path goes from 21 to 20.5, which the CLI reports as an improvement. The gain is small on purpose: the dominant chain is the migration (M6 → M1 → M2), whose edges are behaviour edges, and the contracts mainly let the Bitbucket runner, launcher and deployer, and the build and the route, run side by side.
+**The gain** (the read): 3 edges broken, 24 kept, 6 nodes added (two contracts, two integrations, two anticipated change requests); the weighted path goes from 21.5 to 20.5, which the CLI reports as an improvement. The gain is small on purpose: the dominant chain is the migration (M6 → M1 → M2), whose edges are behaviour edges, and the contracts mainly let the Bitbucket runner, launcher and deployer, and the build and the route, run side by side.
 
 ## Checks the plan takes
 
