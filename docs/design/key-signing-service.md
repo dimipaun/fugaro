@@ -242,31 +242,37 @@ thing that signs. The owner re-asked after round 1, once Firebase Hosting's proj
 that the website's deployer reaches signing, and kept one project
 ([portal/reconciliation.md](../portal/reconciliation.md) F18).
 
-### 3.5 The API-to-minter route and its cost
+### The API-to-minter route and its cost
 
 **(a) Keep it.** Added 2026-11-13 (owner ruling, "Look for a cheaper route"); this note changes no
-tree and no test. Four resources carry the route — `google_compute_network.portal`,
-`google_compute_subnetwork.portal`, `google_compute_router.portal` and
-`google_compute_router_nat.portal`, all new creates on this root's plan — plus the API template's
+tree and no test, and it is unnumbered because `ee/keyservice/startup_test.go:7` already cites a
+"§3.5" of this design for the refusals `New` makes. Four new resources carry the route —
+`google_compute_network.portal`, `google_compute_subnetwork.portal`,
+`google_compute_router.portal` and `google_compute_router_nat.portal` — plus the API template's
 `vpc_access { egress = "ALL_TRAFFIC" }` (`ee/keyservice/terraform/services/main.tf`). The network,
-the subnet and the Cloud Router carry no charge of their own, and the NAT bills an hourly charge per
-gateway in the region plus a per-GiB processing charge on the bytes it translates. **This repository
-holds no GCP price data** — its only price file is the model catalog
-([provider-price-catalog.md](provider-price-catalog.md)) — and this note could open no pricing page,
-so nothing below is a verified rate: the structure is a fixed charge that runs whether or not a key
-is minted — tens of US dollars a month for the gateway — beside cents of data charge for mail and
-webhooks. `TestMinterIngressIsInternal` holds the shape: the minter's `INGRESS_TRAFFIC_INTERNAL_ONLY`,
-the API's `INGRESS_TRAFFIC_ALL`, the `vpc_access` mode and its two interfaces, the subnet's
-`private_ip_google_access`, the NAT's coverage, no `vpc_access` on the minter, and two services.
+the subnet and the Cloud Router carry no charge of their own; the NAT bills an hourly charge per
+gateway in the region plus a per-GiB processing charge on the bytes it translates. **The repository
+holds GCP prices, not this pair's:** `internal/backend/batch/prices.go`'s Compute Engine list table
+(read 2026-10-15, pinned by `TestCheckMachineTypePrices`) and
+[compute-backend.md](compute-backend.md) §1.7's external-IP rate ($0.005/h in use, $0.0025/h spot) —
+but its reading of the NAT is a structure only ("hourly + per-GB processed … plus a router and
+subnet"), with no rate for either and no page this run could open. So the pair cannot be priced
+offline: a fixed charge that runs whether or not a key is minted, tens of US dollars a month as this
+run recalls and has not verified, beside cents of data charge for mail and webhooks.
+`TestMinterIngressIsInternal` holds the shape: the two ingresses, the `vpc_access` mode and its
+interfaces, the subnet's `private_ip_google_access`, the NAT's coverage, no `vpc_access` on the
+minter, and two services.
 
 **(b) Move the fence to IAM.** `ingress = "INGRESS_TRAFFIC_ALL"` on the minter, the invoker grant
 unchanged (`api_invokes_minter`: `roles/run.invoker` to the API's account, and no `allUsers` binding
 anywhere near it), and the API's `vpc_access` block deleted — the network, subnet, router, NAT and
-their four variables go with it, nothing else using them. That is the whole saving: no fixed charge,
-and Paddle and Resend return to Cloud Run's ordinary egress, which the API already pays for.
-`TestMinterIngressIsInternal` is the pin that moves — its internal-ingress, `vpc_access`, subnet and
-NAT assertions are what this deletes — and the fence left standing is
-`TestTheMinterHasNoPublicInvoker` and `TestOnlyTheAPIInvokesTheMinter`, the IAM half, unchanged.
+the five variables they alone use (`network`, `subnetwork`, `subnet_cidr`, `router`, `nat`) go with
+them. That is the whole saving: no fixed charge, and Paddle and Resend return to Cloud Run's ordinary
+egress, which the API already pays for. `TestMinterIngressIsInternal` is the pin that moves — its
+internal-ingress, `vpc_access`, subnet and NAT assertions are what this deletes — and the fence left
+standing is `TestTheMinterHasNoPublicInvoker` and `TestOnlyTheAPIInvokesTheMinter`, which live in a
+`//go:build terraform` file **no CI job runs** (this document's status line): the one lock left is a
+hand-run test until the staged workflow change lands.
 
 **The security difference.** Internal ingress refuses an outside caller at the network layer, before
 IAM and before any container. All ingress lets the request reach the platform's front end, which
@@ -275,32 +281,27 @@ is read and nothing is signed, so an outsider's happy case gains a 403 and the s
 What matters is the other fence failing: internal ingress is a second lock, so a later
 `invoker_iam_disabled = true` or a stray `allUsers` binding still leaves an outsider outside, while
 under all ingress that same mistake is the signer open to the internet. **Logs:** each refusal is
-recorded, so probes are visible — a caller refused at the edge is not a request on an internal-only
-service at all — and a flood of them bills as log ingestion. **DoS:** a request refused before an
-instance exists costs no vCPU or memory (Cloud Run bills instance time, not requests), so the minter
-stays at zero instances and a flood cannot spend the budget or start containers; what it can consume
-is the project's Cloud Run quota and log allowance.
+recorded (a caller refused at the edge is not a request on an internal-only service at all), so
+probes are visible and a flood of them bills as log ingestion. **DoS:** a request refused before an
+instance exists costs no vCPU or memory, so the minter stays at zero and a flood spends no budget.
 
 **(c) Split the egress.** Cloud Run's Direct VPC egress has two modes per revision — all traffic, or
-the private ranges — and no per-destination routing or host rule; a Serverless VPC Access connector
-is the same two modes. So "the minter leg private, Paddle and Resend on the default egress" is not
-one `vpc_access` block: with the private ranges alone the minter's `run.app` host is not one of
-them, and the call arrives as an outsider — why P1.5 took `ALL_TRAFFIC`. It becomes expressible only
-by making the minter's address private — an **internal Application Load Balancer** with a serverless
-NEG, whose reserved internal address the API calls, or **Private Service Connect** (that same load
-balancer plus a service attachment and a consumer endpoint). Each keeps the network and subnet and
-drops the NAT, adding a forwarding rule and, for PSC, an endpoint — so the fixed figure lands in the
-same order, not at zero, differently charged rather than obviously cheaper — and the pins move: the
-NAT half of `TestMinterIngressIsInternal` goes, and the load balancer, its NEG and their grants
-become things to pin. **UNVERIFIED without a live project:** that internal ingress accepts the
-forwarded request, that the caller identity survives it, and every rate above.
+the private ranges — and no per-destination or host-based routing (a Serverless VPC Access connector
+is no different). "The minter leg private, Paddle and Resend on the default egress" is not one
+`vpc_access` block: the private ranges would not carry the minter's `run.app` host, so the call would
+arrive as an outsider — why P1.5 took `ALL_TRAFFIC`. It becomes expressible only by making the
+minter's address private — an **internal Application Load Balancer** with a serverless NEG, whose
+reserved address the API calls, or **Private Service Connect** (that plus a service attachment and a
+consumer endpoint). Each keeps the network and subnet and drops the NAT, adding a forwarding rule
+and, for PSC, an endpoint: the fixed figure lands in the same order, not at zero, and the pins move
+with it — the NAT half of `TestMinterIngressIsInternal` goes, and the load balancer, its NEG and
+their grants become things to pin. **UNVERIFIED without a live project:** the forwarded request's
+acceptance, the caller identity across it, and every rate above.
 
 **Recommendation.** Take (b), unless the owner prices the load balancer below the NAT *and* wants a
 second front door on the signer: the fence is the IAM check in every shape, and internal ingress
 buys defence in depth at a fixed monthly charge for a service that mints a handful of keys a month.
-(The charge also goes away with internal ingress kept by giving the minter no inbound path at all —
-a Cloud Run job the API triggers through the Run Admin API — but that is D450's mechanism rather
-than this route, and it adds the API's account a `run.jobs.run` grant.)
+(The same charge goes when the minter gains no inbound path at all — D450's Cloud Run job route.)
 
 ## 4. The checks
 
