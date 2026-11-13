@@ -392,6 +392,12 @@ func (m Minter) MintV1(ctx context.Context, req RequestV1) (MintedV1, error) {
 	if err != nil {
 		return MintedV1{}, err
 	}
+	// The term the issuance itself stands for, and what the record's own term is
+	// read from: D2202 shortens the key below it and never the entitlement, so
+	// this is not `term` — while an end a caller names **is** the entitlement's
+	// own and shortens this too (F30, and a reveal hands back a predecessor's
+	// `paid_through`, which is where the term it stands for ends).
+	stands := time.Duration(days) * 24 * time.Hour
 	// D2202: a key of a row whose installation contacts the server runs thirty
 	// days at the most, whatever the row is sold for and whatever the caller
 	// named, because that key's end is the only thing that ends a rebound
@@ -452,8 +458,12 @@ func (m Minter) MintV1(ctx context.Context, req RequestV1) (MintedV1, error) {
 		if !end.After(issued) {
 			return MintedV1{}, errors.New("the end the request names is not after the minter's own clock, and a key minted to it is one that is already past (F30)")
 		}
-		if until := end.Sub(issued); until < term {
+		until := end.Sub(issued)
+		if until < term {
 			term = until
+		}
+		if until < stands {
+			stands = until
 		}
 	}
 	paidThrough := issued.Add(term)
@@ -501,14 +511,13 @@ func (m Minter) MintV1(ctx context.Context, req RequestV1) (MintedV1, error) {
 			Organisation: req.Organisation,
 			Issued:       issued,
 			Expires:      paidThrough,
-			// The term this issuance stands for, and not the term this key was
-			// minted for: D2202 caps the key below the term the caller asked for,
-			// while what a caller rebuilding a subscription from the record wants
-			// is the entitlement (S3.5). It is `days` and not the request's own
-			// field for the rows that name no term at all — a free seat is a
-			// year-long entitlement minted from a request that names none — where
-			// the row's term is the term the key stands for.
-			TermDays: days,
+			// The whole days this issuance stands for, and not the term the key
+			// was minted for: what a caller rebuilding a subscription from the
+			// record wants is the entitlement, which D2202's cap on the key does
+			// not move (S3.5). The rounding up is the package's own: a term that
+			// ends a few hours short of the end it stands for is one that lapses
+			// inside it.
+			TermDays: daysBetween(issued, issued.Add(stands)),
 		},
 	}, nil
 }

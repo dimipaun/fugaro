@@ -628,17 +628,25 @@ func TestRequestedEndCapsTheTerm(t *testing.T) {
 	ctx := context.Background()
 
 	for _, tc := range []struct {
-		name    string
-		policy  string
-		end     time.Time
-		want    time.Duration
-		exact   bool
-		refused bool
+		name string
+		// wantDays is the whole days the record is to stand for: the term the
+		// issuance itself covers, which an end the caller named shortens and
+		// D2202's cap on the key never does. A record that said a year over a
+		// key ten days long would rebuild a subscription ending a year out, and
+		// one that said a month over a year-long entitlement would rebuild a
+		// subscription ending a month out — the cap moves the key and not the
+		// thing it is a month of (F30, D2202, S3.5).
+		wantDays int
+		policy   string
+		end      time.Time
+		want     time.Duration
+		exact    bool
+		refused  bool
 	}{
-		{name: "an end inside the row", policy: PolicyTeamAnnual, end: f.now.Add(10*day + 7*time.Second), want: 10*day + 7*time.Second, exact: true},
-		{name: "an end past the row", policy: PolicyTeamAnnual, end: f.now.Add(3 * 365 * day), want: connectedTerm},
-		{name: "an end inside the air-gapped row's year", policy: PolicyEnterpriseAirGapped, end: f.now.Add(200 * day), want: 200 * day, exact: true},
-		{name: "an end past the air-gapped row's year", policy: PolicyEnterpriseAirGapped, end: f.now.Add(3 * 365 * day), want: 365 * day},
+		{name: "an end inside the row", policy: PolicyTeamAnnual, end: f.now.Add(10*day + 7*time.Second), want: 10*day + 7*time.Second, wantDays: 11, exact: true},
+		{name: "an end past the row", policy: PolicyTeamAnnual, end: f.now.Add(3 * 365 * day), want: connectedTerm, wantDays: 365},
+		{name: "an end inside the air-gapped row's year", policy: PolicyEnterpriseAirGapped, end: f.now.Add(200 * day), want: 200 * day, wantDays: 200, exact: true},
+		{name: "an end past the air-gapped row's year", policy: PolicyEnterpriseAirGapped, end: f.now.Add(3 * 365 * day), want: 365 * day, wantDays: 365},
 		{name: "an end behind the minter's clock", policy: PolicyTeamAnnual, end: f.now.Add(-day), refused: true},
 		{name: "an end on the minter's clock", policy: PolicyTeamAnnual, end: f.now, refused: true},
 	} {
@@ -673,6 +681,9 @@ func TestRequestedEndCapsTheTerm(t *testing.T) {
 			if !minted.Record.Expires.Equal(claims.PaidThrough) {
 				t.Errorf("the record expires %s and the key %s, want one instant: the record is written from the key it names (K2.1)", minted.Record.Expires, claims.PaidThrough)
 			}
+			if minted.Record.TermDays != tc.wantDays {
+				t.Errorf("the record stands for %d day(s), want %d: it is the term the issuance really has, and an end the caller named is part of it (F30, S3.5)", minted.Record.TermDays, tc.wantDays)
+			}
 		})
 	}
 
@@ -688,6 +699,9 @@ func TestRequestedEndCapsTheTerm(t *testing.T) {
 	}
 	if run := v1Verified(t, f, minted.Key).PaidThrough.Sub(f.now); run != 5*day {
 		t.Errorf("the key runs %s, want the shorter of the term and the end (%s): an end caps and never extends (F30)", run, 5*day)
+	}
+	if minted.Record.TermDays != 5 {
+		t.Errorf("the record stands for %d day(s), want the 5 the end leaves and not the 90 the request named: a subscription rebuilt from the record would otherwise end 90 days out", minted.Record.TermDays)
 	}
 }
 
