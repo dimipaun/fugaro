@@ -234,19 +234,21 @@ func wirePointerless(t reflect.Type) reflect.Type {
 	return t
 }
 
+// wireJSONReader is the interface a type implements when it reads its own JSON.
+var wireJSONReader = reflect.TypeOf((*json.Unmarshaler)(nil)).Elem()
+
 // wireHoldsFields reports whether a body's object there carries the type's own
-// fields. A scalar has none, and neither has a type that reads itself out of a
-// JSON value — a time.Time is a string on the wire, and its own parser and the
-// schema are what refuse a body that is not one.
+// fields, which is what the walk has something to compare. A scalar has none, and
+// neither has a type that reads itself out of a JSON value — a time.Time is a
+// string on the wire. A container at either is refused rather than stepped over:
+// there is nothing there for the walk to compare, and every shape's schema
+// requires a value where the Go type is not a struct this package wrote.
 func wireHoldsFields(t reflect.Type) bool {
 	if t.Kind() != reflect.Struct {
 		return false
 	}
 	return !reflect.PointerTo(t).Implements(wireJSONReader)
 }
-
-// wireJSONReader is the interface a type implements when it reads its own JSON.
-var wireJSONReader = reflect.TypeOf((*json.Unmarshaler)(nil)).Elem()
 
 // wireNullable reports whether a type can hold a JSON null. A pointer is how this
 // package spells a field its schema writes as a union with null — a nullable
