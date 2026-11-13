@@ -815,6 +815,16 @@ func TestDeviceNodesAreClientDenied(t *testing.T) {
 // that reads a child of it, is a generation of its own (§F29's "what would force
 // a generation later", D225's later half), so it has to fail here as well.
 //
+// The occurrences are read as spellings rather than as text: adjacent string
+// literals are joined back up before the search, so the `devices` segment cut in
+// two and put back together is seen, and a `$` capture joined to a literal that
+// names part of the path counts as a mention of it, so a segment stood in for by
+// a wildcard is seen too. It is a fence over spellings and not a parser — a path
+// assembled from pieces that never sit next to each other in the expression
+// would still slip past it — but a reader that gets past it has to name the node
+// somehow else, and TestUserClaimRequiresTheDeviceNode holds the document's one
+// allowed reach to its exact text.
+//
 // Hand mutation this fails on, each with the golden regenerated — or edited
 // outright, which is the same thing to a test that reads the golden — so that
 // the byte comparison cannot object: `".read": "USER"` or `".write": "USER"` on
@@ -827,10 +837,12 @@ func TestDeviceNodesAreClientDenied(t *testing.T) {
 // the node (the paths), a USER that also required `child('role').exists()` (the
 // occurrences), and a reader spelled around the entry — `root.child(
 // 'config/admin/devices/' + auth.uid + '/role')`, one `child()` call and a
-// concatenation, or one call per segment, `root.child('config').child('admin')
-// .child('devices').child(auth.uid).child('role')`: a test that matched the
-// literal path, or a `.child(` *after* the entry's own chain, sees neither (the
-// occurrences again).
+// concatenation, one call per segment, `root.child('config').child('admin')
+// .child('devices').child(auth.uid).child('role')`, or the `devices` segment
+// itself cut in two and put back together, `'config/admin/dev' + 'ices'`, or
+// stood in for by a capture, `'config/admin/' + $k`: a test that matched the
+// literal path, or a `.child(` *after* the entry's own chain, sees none of them
+// (the occurrences again).
 //
 // The two predicates and the USER are caught twice over:
 // TestDeviceNodesAreClientDenied and TestUserClaimRequiresTheDeviceNode hold the
@@ -851,11 +863,16 @@ func TestDeviceNodeCarriesNoShapeRule(t *testing.T) {
 	// The one reach the document is allowed on the node: the conjunct that asks
 	// whether the entry exists. It is taken out of an expression whole, and what
 	// is left must name no part of the path — every spelling of the path carries
-	// the `devices` segment, so a reader written one `.child()` per segment, or
-	// with the path cut into pieces and joined with `+`, is as visible here as
-	// the literal one.
+	// the `devices` segment, so a reader written one `.child()` per segment is as
+	// visible here as the literal one.
 	entry := "root.child('" + PathDevices + "').child(auth.uid).exists()"
 	devices := segments[len(segments)-2]
+	// A literal can be cut in two around the word (`'config/admin/dev' +
+	// 'ices'`), so the pieces are put back together before the search, and a
+	// capture can stand in for a whole segment (`'config/admin/' + $k`), so a `$`
+	// variable joined to a literal that names the path is a mention of it too.
+	split := regexp.MustCompile(`'\s*\+\s*'`)
+	captured := regexp.MustCompile(`(?:\$[A-Za-z_][A-Za-z0-9_]*|'[^']*config[^']*')\s*\+\s*(?:\$[A-Za-z_][A-Za-z0-9_]*|'[^']*config[^']*')`)
 	// How far a path reaches towards the node: a wildcard segment matches any one
 	// of the node's, so `config/admin/$x` covers the entry as surely as the
 	// literal path does, and a rule there constrains its shape for the same
@@ -900,7 +917,8 @@ func TestDeviceNodeCarriesNoShapeRule(t *testing.T) {
 			if !ok {
 				continue
 			}
-			if strings.Contains(strings.ReplaceAll(expr, entry, ""), devices) {
+			rest := split.ReplaceAllString(strings.ReplaceAll(expr, entry, ""), "")
+			if strings.Contains(rest, devices) || captured.MatchString(rest) {
 				occurrences = append(occurrences, "/"+p+" "+a)
 			}
 		}
@@ -912,7 +930,7 @@ func TestDeviceNodeCarriesNoShapeRule(t *testing.T) {
 		t.Errorf("%s names %s beneath /%s: nothing in the document may name a child of the node, or the entry stops being one whose fields are optional", goldenPath, strings.Join(beneath, ", "), node)
 	}
 	if len(occurrences) > 0 {
-		t.Errorf("%s names %q outside the conjunct that asks whether the entry exists, in %s: only %s may mention the path, however it is spelled, because a rule that reads a child of the node is D225's later half and a rules generation of its own (§F29)", goldenPath, PathDevices, strings.Join(occurrences, ", "), entry)
+		t.Errorf("%s names %q outside the conjunct that asks whether the entry exists, in %s: only %s may mention the path — this reading joins literals split around a `+` and follows a `$` capture joined to one, so the whole segment need not be written out — because a rule that reads a child of the node is D225's later half and a rules generation of its own (§F29)", goldenPath, PathDevices, strings.Join(occurrences, ", "), entry)
 	}
 }
 
