@@ -25,6 +25,7 @@ package docstore_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -95,6 +96,38 @@ func TestPrefixedKeepsTheEmptyNameEmpty(t *testing.T) {
 	}
 }
 
+// TestPrefixedLeavesARefusedNameAlone is the rest of that rule, and it is what
+// the suite's name cases need of the wrapper under -tags firestore: a call under
+// a name the store refuses has to reach the store as the name the case asked
+// for, or the emulator run fails on a collection the wrapper renamed. The
+// backend here is the memory store, which is the same seam and needs no
+// database — what is under test is the name the wrapper passes on, not the
+// answer a database gives it.
+func TestPrefixedLeavesARefusedNameAlone(t *testing.T) {
+	ctx := context.Background()
+	p := prefixed{db: docstore.NewMemory(), prefix: "docstore-x-1"}
+	tx := prefixedTx{prefix: "docstore-x-1"}
+	for _, tc := range []struct {
+		why        string
+		collection string
+		want       error
+	}{
+		{"a collection in the database's reserved form", "__reserved__", docstore.ErrUnstorableName},
+		{"a collection carrying the store's path separator", "one/two", docstore.ErrUnstorableName},
+		{"no collection at all", "", docstore.ErrUnnamed},
+	} {
+		if got := p.collection(tc.collection); got != tc.collection {
+			t.Errorf("the wrapper named %s %q, want the name it was given: a prefix in front of it asks the backend about a collection the case never named, and the emulator run then fails the backend for the wrapper's own rename", tc.why, got)
+		}
+		if got := tx.collection(tc.collection); got != tc.collection {
+			t.Errorf("the transaction's wrapper named %s %q, want the name it was given", tc.why, got)
+		}
+		if err := p.Put(ctx, tc.collection, "one", map[string]any{"a": 1}); !errors.Is(err, tc.want) {
+			t.Errorf("a put under %s through the wrapper = %v, want %v: the suite's case for it has to be refused by the store and not answered by a collection of the wrapper's making", tc.why, err, tc.want)
+		}
+	}
+}
+
 // emulator builds one client against the emulator, skipping when the process
 // names none: a test that dialled a real project would be the one thing this
 // package's tests must never do.
@@ -129,20 +162,27 @@ type prefixed struct {
 	prefix string
 }
 
-// collection prefixes one case's name, and it answers a name the suite left
-// empty with the empty name it was given: a prefix in front of nothing would be
-// a collection the case never asked for, so the suite's tests for a call that
-// names nothing — a put, a get, a query and a delete with no collection — would
-// reach a backend that has a name to file under and answer something other than
-// the refusal both stores owe them. That is the disagreement the shared suite
-// exists to catch, and a wrapper that hid it would be the one thing in this
-// package that made the emulator run pass for the wrong reason.
-func (p prefixed) collection(name string) string {
-	if name == "" {
-		return ""
+// prefixedName is the wrapper's whole rule, in one place because the store and
+// its transaction have to name a collection the same way: a case's prefix goes
+// in front of a name the store would file, and a name it would not is answered
+// with the name it was given.
+//
+// A name like that never reaches the database — the store refuses it before any
+// client is built — so there is nothing to keep apart, and prefixing it would be
+// the wrapper's own mistake with the backend's name on it. A prefix in front of
+// the empty name is a collection the case never named, and one in front of the
+// database's reserved form __.*__ stops it matching that form: either way the
+// suite's case for a name the store must refuse would instead ask the backend
+// something it can file and fail the emulator run for the answer to a question
+// the wrapper invented (TestPrefixedLeavesARefusedNameAlone).
+func prefixedName(prefix, name string) string {
+	if !docstore.Storable(name) {
+		return name
 	}
-	return p.prefix + "-" + name
+	return prefix + "-" + name
 }
+
+func (p prefixed) collection(name string) string { return prefixedName(p.prefix, name) }
 
 func (p prefixed) Get(ctx context.Context, collection, id string, out any) (bool, error) {
 	return p.db.Get(ctx, p.collection(collection), id, out)
@@ -172,12 +212,7 @@ type prefixedTx struct {
 	prefix string
 }
 
-func (t prefixedTx) collection(name string) string {
-	if name == "" {
-		return ""
-	}
-	return t.prefix + "-" + name
-}
+func (t prefixedTx) collection(name string) string { return prefixedName(t.prefix, name) }
 
 func (t prefixedTx) Get(ctx context.Context, collection, id string, out any) (bool, error) {
 	return t.tx.Get(ctx, t.collection(collection), id, out)
