@@ -525,9 +525,14 @@ func TestSignRouteRefusesACodingCallerAndAnUnadmittedClass(t *testing.T) {
 		// The service's own table holds the row, as the deployment's does: the
 		// verifier's list and this one are derived from one axis, so a fixture
 		// that spelled only the verifier's would be testing its own
-		// disagreement rather than the class.
+		// disagreement rather than the class. The published policy defines the
+		// row's profile for the same reason (B5.1's second gate, pairShared):
+		// the pairing must pass for the refusal below to be the class's, and a
+		// policy that defines no profile would refuse this caller itself rather
+		// than leave it to the route.
 		s := signSvc(t, func(s *svc, cfg *Config) {
 			cfg.SharedAccounts = []SharedJobAccount{sharedRow()}
+			s.policy.shared = decodeTestPolicy(t, testPolicyDocOneProfile(sharedCodingProfile, testAccount))
 		})
 		tok := s.jobToken(func(c map[string]any) { c["email"] = testSharedSA })
 		resp, body := s.signTokens(t, signBody(testDigest(t, "shared")), s.reviewRunToken(), tok, s.job)
