@@ -26,7 +26,7 @@ Read the state and the last run's report first (step 1), then answer with one of
 | **follow up** | its tests fail on the final commit, a finding it carries is a correctness or security problem that is not a product decision, or the conflict with its base branch needs real reconciliation | offer `fugaro run --pr N` |
 | **ask the person** | it touches a security path — credentials, auth, policy or a write guard — where landing needs their explicit word even where a ready pull request would not; or the record leaves you unable to classify it: rows that disagree, no row for it at all, a finding whose impact you cannot read | say what you found, name the class you would pick, and stop |
 
-A security path is one the repository's own list covers, not one you guess at from a file's name: `fugaro security paths` prints the list and where each entry comes from, and `fugaro security paths --check <path>` answers one repository-relative path against it. Check the paths the change itself touches — `changed_files.paths` in the run's row, step 1, or, when the row carries none because the run died before it recorded them, the branch's own diff against the base — and the paths the findings name. A change that touches one is the person's to rule on whether or not a leftover finding sits on it: a land merges the change, not the findings.
+A security path is one the repository's own list covers, not one you guess at from a file's name: `fugaro security paths` prints the list and where each entry comes from, and `fugaro security paths --check <path>` answers one repository-relative path against it. Ask it of the change itself, not of the run's own list of the change: a follow-up's covers only its own commits, the record's list is capped and can end truncated, and the job's own service account writes it. Fetch the base (`git fetch origin <base>`), then check every path in `git diff --name-only origin/<base>...origin/<branch>` with `fugaro security paths --check <path>`, alongside the paths the findings name. A change that touches one is the person's to rule on whether or not a leftover finding sits on it: a land merges the change, not the findings.
 
 ## 1. Read the state and the last run's report
 
@@ -34,7 +34,7 @@ A security path is one the repository's own list covers, not one you guess at fr
 fugaro runs ls --pr N --repo <owner/name> --json
 ```
 
-The rows are the pull request's runs, newest first: the run that opened it and any follow-ups, and — once one has read the pull request — a finished independent review job's own run, which is usually the newest of them. `--repo` is needed unless the local config lists exactly one repository. Read four fields of each row: `pr`, the pull request the run went to; `status`, the run's own state; `outcome`, the state the run left the pull request in; and `runs[].changed_files.paths`, the JSON field of the paths the run changed, which the security check below reads. A row whose `status` is `launching`, `pending` or `running` means a run is going: the pull request is live, nothing can be landed on it, and you stop there and say so.
+The rows are the pull request's runs, newest first: the run that opened it and any follow-ups, and — once one has read the pull request — a finished independent review job's own run, which is usually the newest of them. `--repo` is needed unless the local config lists exactly one repository. Read three fields of each row: `pr`, the pull request the run went to; `status`, the run's own state; and `outcome`, the state the run left the pull request in. A row whose `status` is `launching`, `pending` or `running` means a run is going: the pull request is live, nothing can be landed on it, and you stop there and say so.
 
 A review job's run is the one whose `outcome` is `reviewed`, and it is not the run a land is decided from: it read the pull request and built nothing, so it carries no test records, no findings and no deferrals, and the class's conditions — tests passing on the final commit, only leftover findings — cannot be read off it. Take those from the run that built the change, the newest row whose `outcome` is not `reviewed`. The review job's own review round is still worth reading, as the verdict of a reader who did not write the change.
 
@@ -57,12 +57,7 @@ Resolve a conflict with the base branch first, when there is one: it is the one 
 git worktree add ../land-<N> <branch>
 ```
 
-In that worktree, fetch the base and merge it into the branch: `git fetch origin <base>`, then `git merge origin/<base>`. Take the trivial resolutions — a lock file, a generated file, two additions in different places — and run the repository's own checks on the merge commit, because the class was read from tests passing on the final commit and a merge commit nobody tested is a head that condition no longer covers:
-
-```bash
-fugaro verify build
-fugaro verify test
-```
+In that worktree, fetch the base and merge it into the branch: `git fetch origin <base>`, then `git merge origin/<base>`. Take the trivial resolutions — a lock file, a generated file, two additions in different places — and run the repository's own checks on the merge commit, because the class was read from tests passing on the final commit and a merge commit nobody tested is a head that condition no longer covers. The checks are the repository's own, the `commands.build` and `commands.test` its `fugaro.yaml` writes under its workflow, run in the worktree: the CLI's `verify` steps are the run's recorded copy of them and are refused outside a run, so they are not what you reach for here, and never export a variable to get around that refusal.
 
 A resolution the tests refuse is not a trivially resolved conflict: stop there, because the pull request is a follow-up's work after all. When they pass, push the resolution to the branch the pull request is on, plain and never a force, and remove the worktree:
 

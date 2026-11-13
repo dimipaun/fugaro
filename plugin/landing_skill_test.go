@@ -76,9 +76,9 @@ func TestLandingSkillClassifiesThreeWays(t *testing.T) {
 		{"the security path the person must rule on", "credentials, auth, policy or a write guard"},
 		{"that the security list is the repository's own", "`fugaro security paths` prints the list"},
 		{"that a path is checked rather than guessed", "not one you guess at from a file's name"},
-		{"that the change's own paths are checked", "Check the paths the change itself touches"},
-		{"where those paths are read", "`changed_files.paths` in the run's row, step 1"},
-		{"the fallback when the row carries none", "when the row carries none because the run died before it recorded them, the branch's own diff against the base"},
+		{"that the change's own paths are checked", "check every path in `git diff --name-only origin/<base>...origin/<branch>` with `fugaro security paths --check <path>`"},
+		{"that the run's own list of the change is not what is asked", "Ask it of the change itself, not of the run's own list of the change"},
+		{"why that list cannot answer", "a follow-up's covers only its own commits, the record's list is capped and can end truncated, and the job's own service account writes it"},
 		{"that a finding is not needed for the question", "whether or not a leftover finding sits on it"},
 		{"the unreadable-record case", "no row for it at all, a finding whose impact you cannot read"},
 	} {
@@ -93,9 +93,10 @@ func TestLandingSkillClassifiesThreeWays(t *testing.T) {
 // newest row, and that run built nothing — no test records, no findings, no
 // deferrals — so a reader taking "the last run" for the class's evidence
 // measures a land against a record that has none of it. The skill has to say
-// which row decides and which one is only a second opinion, and it has to name
-// the paths the run changed, because the security question below is asked of
-// the change and not only of the findings.
+// which row decides and which one is only a second opinion. The row's own
+// account of the paths it changed is deliberately not part of that read: the
+// security question is asked of the change itself, and a row records one run's
+// commits and is written by the run.
 func TestLandingSkillReadsTheChangeRunsRecord(t *testing.T) {
 	skill := landingSkillMD(t)
 	for _, want := range []struct{ what, text string }{
@@ -105,7 +106,7 @@ func TestLandingSkillReadsTheChangeRunsRecord(t *testing.T) {
 		{"what it carries instead", "it carries no test records, no findings and no deferrals"},
 		{"which row decides", "Take those from the run that built the change, the newest row whose `outcome` is not `reviewed`"},
 		{"that its verdict still counts", "as the verdict of a reader who did not write the change"},
-		{"the paths the run changed", "`runs[].changed_files.paths`, the JSON field of the paths the run changed"},
+		{"that no row of it is read for the paths", "not of the run's own list of the change"},
 	} {
 		if !strings.Contains(skill, want.text) {
 			t.Errorf("%s never says %s (%q): the row a land is read from is the run that built the change, and a class read off a review job's run is read off a record that carries none of its conditions", landingSkillPath, want.what, want.text)
@@ -172,12 +173,17 @@ func TestLandingSkillResolvesItsCommands(t *testing.T) {
 // TestLandingSkillResolvesATrivialConflictLocally: landing includes the
 // conflict with the base branch when there is one, and the recipe is the one
 // the repository's own rules allow: a worktree rather than the checkout, the
-// base merged into the branch, the tests run on the merge commit before
-// anything is pushed (the class was read from tests passing on the final
-// commit, and a merge commit nobody tested is a head that condition no longer
-// covers), a plain push and never a force, and the distinction that makes the
-// class honest — a conflict needing two designs reconciled is not trivial, and
-// is a follow-up's work.
+// base merged into the branch, the repository's own build and test commands
+// run on the merge commit before anything is pushed (the class was read from
+// tests passing on the final commit, and a merge commit nobody tested is a head
+// that condition no longer covers), a plain push and never a force, and the
+// distinction that makes the class honest — a conflict needing two designs
+// reconciled is not trivial, and is a follow-up's work. The checks are the
+// repository's own, read from its `fugaro.yaml`: the CLI's `verify` steps
+// record those commands inside a run and refuse outside one, so a recipe built
+// on them would name a command the user's own agent can never run, and a
+// sentence that names it without the refusal teaches the reader to work around
+// it.
 func TestLandingSkillResolvesATrivialConflictLocally(t *testing.T) {
 	skill := landingSkillMD(t)
 	for _, want := range []struct{ what, text string }{
@@ -185,7 +191,9 @@ func TestLandingSkillResolvesATrivialConflictLocally(t *testing.T) {
 		{"the base merged in", "`git fetch origin <base>`, then `git merge origin/<base>`"},
 		{"what a trivial resolution is", "a lock file, a generated file, two additions in different places"},
 		{"that the checks run on the merge commit", "run the repository's own checks on the merge commit"},
-		{"the checks themselves", "fugaro verify build\nfugaro verify test"},
+		{"which checks they are", "the `commands.build` and `commands.test` its `fugaro.yaml` writes under its workflow, run in the worktree"},
+		{"that the CLI's own verify steps are not the way", "the CLI's `verify` steps are the run's recorded copy of them and are refused outside a run"},
+		{"that the refusal is not worked around", "never export a variable to get around that refusal"},
 		{"that an untested head voids the class", "a merge commit nobody tested is a head that condition no longer covers"},
 		{"that a refused resolution is not a land", "A resolution the tests refuse is not a trivially resolved conflict"},
 		{"that the push waits for the tests", "When they pass, push the resolution"},
