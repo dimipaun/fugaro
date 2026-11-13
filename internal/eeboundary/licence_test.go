@@ -60,13 +60,22 @@ const (
 // leading one keeps `LGPL`'s `GPL` tail from matching on its own.
 var copyleftPattern = regexp.MustCompile(`\b(?:A?GPL|LGPL|SSPL)(?:-?v?\d+(?:\.\d+)*)?(?:-only|-or-later)?\b`)
 
-// copyleftAllowed is the explicit allow-list of dependency names whose declared
+// copyleftAllowed is the explicit allow-list of dependencies whose declared
 // licence matches copyleftPattern and which `docs/licensing/dependency-audit.md`
-// justifies. The reason is written beside each name because the list is what a
-// reviewer reads to tell a justified exception from a package that slipped in:
-// an entry here without a reason is the rule switched off for one name.
-var copyleftAllowed = map[string]string{
-	"node-forge": "(BSD-3-Clause OR GPL-2.0) is a choice between two licences, and the audit reads the app as taking BSD-3-Clause; the GPL arm is never exercised. Recorded here rather than excluded by a smarter expression parser, so the fact that a copyleft identifier appears at all is visible in the diff that changes it.",
+// justifies. It is keyed by the app whose lockfile carries the package, and then
+// by the package's name, because an exception is the audit's reading of one
+// app's dependency rather than a property of a name: the same package arriving
+// in another app's lockfile is one nobody has weighed, and a list keyed by name
+// alone would excuse it there in silence. A lockfile with no entry here excuses
+// nothing, which is the honest state of the portal's until the audit reads it.
+//
+// The reason is written beside each name because the list is what a reviewer
+// reads to tell a justified exception from a package that slipped in: an entry
+// here without a reason is the rule switched off for one name.
+var copyleftAllowed = map[string]map[string]string{
+	mobileDirName: {
+		"node-forge": "(BSD-3-Clause OR GPL-2.0) is a choice between two licences, and the audit reads the mobile app as taking BSD-3-Clause; the GPL arm is never exercised. Recorded here rather than excluded by a smarter expression parser, so the fact that a copyleft identifier appears at all is visible in the diff that changes it.",
+	},
 }
 
 // portalDirName is the portal's directory, inside the business-licensed tree.
@@ -188,6 +197,51 @@ func lockfileIsOptional(root string, dir lockDirectory) bool {
 	return !info.IsDir()
 }
 
+// lockDirectoryFor answers the app whose lockfile this file reads, by its
+// directory name, and fails when there is none: a case that names an app the
+// rule does not read is one that would pass without looking at a lockfile.
+func lockDirectoryFor(t *testing.T, dirName string) lockDirectory {
+	t.Helper()
+	for _, dir := range lockDirectories {
+		if dir.dir == dirName {
+			return dir
+		}
+	}
+	t.Fatalf("%s is not an app this file reads a lockfile for", dirName)
+	return lockDirectory{}
+}
+
+// copyleftExcuse answers the reason one app's lockfile allows a package whose
+// declared licence is copyleft, and whether it allows it at all.
+//
+// It is the only way this file asks the question, so that which lockfile a
+// package was found in is part of the question every time: a lookup of the name
+// alone is the exception the audit read for one app applying to the others.
+func copyleftExcuse(dir lockDirectory, name string) (string, bool) {
+	reason, ok := copyleftAllowed[dir.dir][name]
+	return reason, ok
+}
+
+// copyleftIn answers the dependencies of one app's lockfile whose declared
+// licence is copyleft, split into the ones that app's allow-list excuses and the
+// ones nothing does. Both halves are needed: the first is what the rule records
+// as an exception a reviewer can see is still applying, and the second is what
+// it refuses. The app's lockfile is an argument rather than the loop above it, so
+// a case built by hand is judged by the same rule a real lockfile is.
+func copyleftIn(dir lockDirectory, deps []dependency) (allowed, refused []dependency) {
+	for _, dep := range deps {
+		if !copyleftPattern.MatchString(dep.licence) {
+			continue
+		}
+		if _, ok := copyleftExcuse(dir, dep.name); ok {
+			allowed = append(allowed, dep)
+			continue
+		}
+		refused = append(refused, dep)
+	}
+	return allowed, refused
+}
+
 // licenceOf renders a lockfile's `license` field as one string. The field is an
 // SPDX expression in a v3 lockfile, and the object spelling is the older
 // `{ "type": ..., "url": ... }` pair; the type is the name of the licence and
@@ -265,11 +319,13 @@ func TestCopyleftPatternSpellsTheFamiliesOut(t *testing.T) {
 // nothing else -- so it runs in CI and in a container with no network.
 //
 // A new copyleft entry fails here by name, and the fix is not an edit to this
-// file: it is either dropping the dependency or a line in copyleftAllowed with
-// the reason, which is the decision the owner makes.
+// file: it is either dropping the dependency or a line in copyleftAllowed under
+// the app whose lockfile carries it, with the reason, which is the decision the
+// owner makes -- and an exception already granted to another app is not one,
+// because the audit read that app's dependency and not this one's.
 func TestLicenceBoundaryRefusesCopyleftDependencies(t *testing.T) {
 	root := moduleRoot(t)
-	seen := map[string]bool{}
+	seen := map[string]map[string]bool{}
 	for _, dir := range lockDirectories {
 		deps, present := readLockfile(t, root, dir)
 		if !present {
@@ -280,29 +336,72 @@ func TestLicenceBoundaryRefusesCopyleftDependencies(t *testing.T) {
 		if len(deps) < 100 {
 			t.Fatalf("%s: read %d dependencies, and every one of these apps carries hundreds: the rule would pass by checking nothing", dir.path, len(deps))
 		}
-		var allowed []string
-		for _, dep := range deps {
-			if !copyleftPattern.MatchString(dep.licence) {
-				continue
-			}
-			if _, ok := copyleftAllowed[dep.name]; ok {
-				seen[dep.name] = true
-				allowed = append(allowed, dep.name)
-				continue
-			}
-			t.Errorf("%s depends on %s %s, whose declared licence is %q: a copyleft identifier is a decision the owner makes rather than one a dependency update makes. Drop the dependency, or add its name to copyleftAllowed with the reason -- and if the report has not weighed it, weigh it there first (docs/licensing/dependency-audit.md)", dir.path, dep.name, dep.version, dep.licence)
+		allowed, refused := copyleftIn(dir, deps)
+		for _, dep := range refused {
+			t.Errorf("%s depends on %s %s, whose declared licence is %q: a copyleft identifier is a decision the owner makes rather than one a dependency update makes. Drop the dependency, or add its name to copyleftAllowed under this app with the reason -- and if the report has not weighed it, weigh it there first (docs/licensing/dependency-audit.md)", dir.path, dep.name, dep.version, dep.licence)
 		}
-		if len(allowed) > 0 {
-			slices.Sort(allowed)
-			t.Logf("%s: %d copyleft identifier(s) allowed by copyleftAllowed: %s", dir.path, len(allowed), strings.Join(allowed, ", "))
+		if len(allowed) == 0 {
+			continue
+		}
+		seen[dir.dir] = map[string]bool{}
+		names := make([]string, 0, len(allowed))
+		for _, dep := range allowed {
+			seen[dir.dir][dep.name] = true
+			names = append(names, dep.name)
+		}
+		slices.Sort(names)
+		t.Logf("%s: %d copyleft identifier(s) allowed by copyleftAllowed: %s", dir.path, len(names), strings.Join(names, ", "))
+	}
+	// The other direction: an allow-list entry whose app no longer carries the
+	// package with a matching licence is an exception nobody can see has stopped
+	// applying.
+	for dirName, entries := range copyleftAllowed {
+		for name := range entries {
+			if !seen[dirName][name] {
+				t.Errorf("copyleftAllowed excuses %q in %s, and that lockfile does not carry it with a matching licence any more: the exception has gone stale and should be removed deliberately, in the commit that shows why it is no longer needed", name, dirName)
+			}
 		}
 	}
-	// The other direction: an allow-list entry whose package is gone, or whose
-	// licence no longer matches, is an exception nobody can see has stopped
-	// applying.
-	for name := range copyleftAllowed {
-		if !seen[name] {
-			t.Errorf("copyleftAllowed names %q, and no lockfile carries it with a matching licence any more: the exception has gone stale and should be removed deliberately, in the commit that shows why it is no longer needed", name)
+}
+
+// TestCopyleftExceptionBelongsToTheLockfileItWasReadFor holds the allow-list to
+// the app whose dependency the audit read it for. The list is one map inside the
+// rule, and the question it answers -- is this package excused -- is about a
+// package in a lockfile; asked of the name alone it would hand one app's
+// exception to the others, so the package the audit justified for the mobile app
+// arriving in the portal's lockfile would be allowed there without a word, in a
+// tree `docs/licensing/dependency-audit.md` says a copyleft identifier arriving
+// in is a task rather than a line in copyleftAllowed.
+//
+// The judgement goes through copyleftIn, which is what the rule above refuses
+// with, so this is the refusal itself and not a second reading of the map.
+func TestCopyleftExceptionBelongsToTheLockfileItWasReadFor(t *testing.T) {
+	known := map[string]bool{}
+	for _, dir := range lockDirectories {
+		known[dir.dir] = true
+	}
+	for dirName, entries := range copyleftAllowed {
+		if !known[dirName] {
+			t.Errorf("copyleftAllowed excuses packages in %q, which is not an app this file reads a lockfile for: the entry applies to nothing, and reads as a decision that is being enforced", dirName)
+		}
+		for name, reason := range entries {
+			if strings.TrimSpace(reason) == "" {
+				t.Errorf("copyleftAllowed excuses %q in %s with no reason: the list is what a reviewer reads to tell a justified exception from a package that slipped in, so an entry without one is the rule switched off for that name", name, dirName)
+			}
+		}
+	}
+
+	// The exception the audit has read, as the pair the rule has to hold apart:
+	// the package's name, and the lockfile it was read in.
+	forge := dependency{name: "node-forge", version: "1.3.1", licence: "(BSD-3-Clause OR GPL-2.0)"}
+	if _, ok := copyleftExcuse(lockDirectoryFor(t, mobileDirName), forge.name); !ok {
+		t.Fatalf("the mobile app's allow-list no longer excuses %s: this test holds an exception that exists to its own lockfile, so an exception that is gone is a change to make deliberately rather than to read around", forge.name)
+	}
+	for _, dir := range lockDirectories {
+		allowed, refused := copyleftIn(dir, []dependency{forge})
+		excused := len(allowed) == 1 && len(refused) == 0
+		if want := dir.dir == mobileDirName; excused != want {
+			t.Errorf("%s with %s %s, whose licence is %q: excused = %v, want %v. An exception is the audit's reading of one app's dependency rather than a property of the name, so a package arriving in another app's lockfile has to be refused there: the fix is weighing it, never a name the list already carries", dir.path, forge.name, forge.version, forge.licence, excused, want)
 		}
 	}
 }
@@ -338,15 +437,7 @@ func TestLicenceBoundaryNamesEveryDependencyLicence(t *testing.T) {
 // checkout that has `ee/` and has lost the portal's lockfile has both rules read
 // two of the three apps and pass, which is the green rule they exist not to be.
 func TestLicenceBoundarySkipsOnlyWhereTheBoundaryIsAbsent(t *testing.T) {
-	var portal lockDirectory
-	for _, dir := range lockDirectories {
-		if dir.dir == portalDirName {
-			portal = dir
-		}
-	}
-	if portal.path == "" {
-		t.Fatalf("%s is not among the apps this file reads a lockfile for: the portal is the third one, and the rules below cover it or they cover two of three and say nothing", portalDirName)
-	}
+	portal := lockDirectoryFor(t, portalDirName)
 	if portal.absentWith != eeDirName {
 		t.Fatalf("%s is excused by %q, want %q: the portal's lockfile is absent exactly when the business-licensed tree it lives in is, and any other excuse is a lockfile these rules stop reading without saying so", portal.path, portal.absentWith, eeDirName)
 	}

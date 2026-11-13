@@ -202,7 +202,7 @@ Direct dependencies, all MIT: `@react-native-async-storage/async-storage` 2.2.0,
 | Package | Version | Declared | Required by | Notes |
 | --- | --- | --- | --- | --- |
 | `lightningcss` and its 11 platform binaries | 1.33.0 | MPL-2.0 | `@expo/metro-config` | A build-time CSS transformer in the Metro pipeline |
-| `node-forge` | 1.4.0 | `BSD-3-Clause OR GPL-2.0` | `@expo/cli`, `@expo/code-signing-certificates` | A choice of two licences; the audit reads the app as taking BSD-3-Clause, so no GPL obliges anything. `copyleftAllowed` in `internal/eeboundary/licence_test.go` names it with this reason, so the identifier is visible in the diff rather than hidden by a smarter parser |
+| `node-forge` | 1.4.0 | `BSD-3-Clause OR GPL-2.0` | `@expo/cli`, `@expo/code-signing-certificates` | A choice of two licences; the audit reads the app as taking BSD-3-Clause, so no GPL obliges anything. `copyleftAllowed` in `internal/eeboundary/licence_test.go` names it with this reason, under this app's lockfile and no other, so the identifier is visible in the diff rather than hidden by a smarter parser |
 | `caniuse-lite` | 1.0.30001816 | CC-BY-4.0 | `browserslist` | Browser-support data, not code. CC-BY-4.0 asks for attribution, so if its data reached the artifact it would want a notice — as a `browserslist` input it does not |
 | `react-native`, `expo`, `react` and their transitive MIT/ISC/Apache-2.0 tree | — | permissive | the app | All MIT/ISC/Apache-2.0/BSD-family; nothing here obliges anything beyond keeping the notices |
 
@@ -238,6 +238,11 @@ this section carries what the rule can say about it today and what is still owed
   not been done for the portal. The rule's own failure message sends a reader here to weigh a
   dependency before naming it as an exception, so an entry the portal's tree turns up is a task rather
   than a line in `copyleftAllowed`.
+- **An exception here excuses one app.** `copyleftAllowed` is keyed by the lockfile the package was
+  found in and then by its name, so the mobile app's `node-forge` entry is not one the portal or the
+  console can inherit: a package the list already names, arriving in a lockfile this document has not
+  weighed, is refused there, and `TestCopyleftExceptionBelongsToTheLockfileItWasReadFor` holds the
+  exception to the app it was read for.
 - **What ships is not its lockfile either.** The portal's build is Vite's, and the bundle is what a
   browser downloads: the same caveat the console's and the mobile app's sections state applies, and for
   the portal nothing has been read out of a built bundle at all.
