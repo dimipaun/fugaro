@@ -55,12 +55,19 @@ type WireProjectTransfer struct {
 
 // WireOpsLists is the two lists the operations owner sets. Both are read by the
 // sign-in rule rather than by a screen (D2207, F40): EmailDomains limits which
-// addresses operations may invite, and MicrosoftTenants is which tenants a
-// reseller's Microsoft sign-in is accepted from. An empty tenant list refuses
-// every microsoft.com sign-in, which is the safe reading of "nobody set one".
+// addresses operations may invite, and MicrosoftDirectories is which Microsoft
+// (Entra ID) directories a reseller's Microsoft sign-in is accepted from. An
+// empty directory list refuses every microsoft.com sign-in, which is the safe
+// reading of "nobody set one".
+//
+// MicrosoftDirectories carries a NEW name and not the old `microsoft_tenants`
+// one: the old field held Identity Platform tenant ids, and a tenant is the door
+// a sign-in is made through rather than the directory an account lives in, so a
+// reader of a stored `microsoft_tenants` value would pin the wrong thing and no
+// error would say so (D2207's amendment, 2026-11-13).
 type WireOpsLists struct {
-	EmailDomains     []string `json:"email_domains"`
-	MicrosoftTenants []string `json:"microsoft_tenants"`
+	EmailDomains         []string `json:"email_domains"`
+	MicrosoftDirectories []string `json:"microsoft_directories"`
 }
 
 // WireQueueDecision is operations' answer to one item of the queue of requests
