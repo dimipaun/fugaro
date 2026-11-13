@@ -62,6 +62,11 @@ SERVICE_URL=https://credsvc-fixture.a.run.app
 SIGNER=fugaro-token-signer@fugaro-sbx.iam.gserviceaccount.com
 JOB=fugaro-acme-sandbox
 JOBSA=run-acme-sandbox@fugaro-dev.iam.gserviceaccount.com
+# The account of a repository's SECOND workflow's job (a job of its own, which
+# `--workflow` has to be able to select among several) and an account of the
+# owner's own belong installation, which no run of this check ever judges.
+SECOND_SA=run-acme-second@fugaro-dev.iam.gserviceaccount.com
+BELONG_SA=run-belong@fugaro-dev.iam.gserviceaccount.com
 SVCSA=credsvc@fugaro-dev.iam.gserviceaccount.com
 APPID=424242
 SANDBOX_REPO=acme/sandbox
@@ -103,7 +108,17 @@ run)
   jobs)
     case "${3:-}" in
     list) cat "$FAKE96_DIR/jobs.json" ;;
-    describe) cat "$FAKE96_DIR/job.json" ;;
+    describe)
+      # One answer per job, by the name asked for: a repository with several
+      # workflows has several jobs, and a check that read the wrong one would
+      # describe the right name and then judge the wrong account. The case whose
+      # second job runs as its own account is what tells the two apart.
+      if [ -n "${4:-}" ] && [ -f "$FAKE96_DIR/job-$4.json" ]; then
+        cat "$FAKE96_DIR/job-$4.json"
+      else
+        cat "$FAKE96_DIR/job.json"
+      fi
+      ;;
     *) printf 'fake gcloud: unknown jobs verb %s\n' "${3:-}" >&2; exit 64 ;;
     esac
     ;;
@@ -499,11 +514,13 @@ write_config() { # dir
 # URL off it, JOB_APP_KEY=no takes the App key's environment entry and mount
 # off it, JOB_PROFILE=yes makes it a shared project job, JOB_SECOND=yes gives the
 # repository a second job of its own (one per workflow, which is the shape the
-# check refuses to choose in), and JOB_SA overrides the account it runs as.
+# check refuses to choose in unless `--workflow` names one), JOB_SA overrides the
+# account it runs as, and JOB_SECOND_SA the second job's own — so a case can say
+# which of the two a run read.
 write_job() { # dir
   local dir=$1
   JOB_URL="${JOB_URL-yes}" JOB_APP_KEY="${JOB_APP_KEY-yes}" JOB_PROFILE="${JOB_PROFILE:-no}" \
-    JOB_SECOND="${JOB_SECOND:-no}" \
+    JOB_SECOND="${JOB_SECOND:-no}" JOB_SECOND_SA="${JOB_SECOND_SA:-$JOBSA}" \
     JOB_NAME="${JOB_NAME:-$JOB}" JOB_SA="${JOB_SA:-$JOBSA}" python3 - "$dir/state/job.json" "$dir/state/jobs.json" <<'PY'
 import json, os, sys
 
@@ -529,13 +546,19 @@ check = {"metadata": {"name": os.environ["JOB_NAME"] + "-check",
          "spec": {"template": {"spec": {"serviceAccountName": os.environ["JOB_SA"],
                                         "containers": [{"env": []}]}}}}
 jobs = [job, check]
+describes = {os.environ["JOB_NAME"]: job}
 if os.environ.get("JOB_SECOND") == "yes":
     second = json.loads(json.dumps(job))
     second["metadata"]["name"] = os.environ["JOB_NAME"] + "-second"
     second["metadata"]["labels"]["fugaro_workflow"] = "second"
+    second["spec"]["template"]["spec"]["serviceAccountName"] = os.environ["JOB_SECOND_SA"]
     jobs.insert(0, second)
+    describes[second["metadata"]["name"]] = second
 open(sys.argv[1], "w", encoding="utf-8").write(json.dumps(job))
 open(sys.argv[2], "w", encoding="utf-8").write(json.dumps(jobs))
+for name, doc in describes.items():
+    with open(os.path.join(os.path.dirname(sys.argv[1]), "job-%s.json" % name), "w", encoding="utf-8") as f:
+        f.write(json.dumps(doc))
 PY
 }
 
@@ -872,19 +895,135 @@ test_a_repository_with_several_jobs_of_its_own_is_not_read_as_none() {
   # One job per workflow of the repository's fugaro.yaml. This check reads the
   # job a run lands on, and which workflow a run uses is a question the launch
   # itself refuses without --workflow (internal/cli/run.go's resolveWorkflow), so
-  # the check stops rather than read one of them. Falling back to the shared
-  # project job is how two jobs used to be read as none: the account, the
-  # environment and the mint were then judged against the wrong job.
+  # with no flag the check is not told either and stops rather than read one of
+  # them. Falling back to the shared project job is how two jobs used to be read
+  # as none: the account, the environment and the mint were then judged against
+  # the wrong job. The refusal ends with the one thing that lifts it — the flag,
+  # and the labels to name with it — because a reader who cannot tell which
+  # workflow a run uses has to be handed the fix rather than left to guess it.
   JOB_SECOND=yes write_job "$dir"
   run96
   expect_status "$status" 2 "two jobs of its own"
   expect_contains "$out" "has 2 jobs of its own" "two jobs of its own: the count"
   expect_contains "$out" "$JOB workflow=default" "two jobs of its own: the one it found is named with its workflow"
   expect_contains "$out" "$JOB-second workflow=second" "two jobs of its own: the other one too"
+  expect_contains "$out" "Re-run with --workflow <one of: default, second>" \
+    "two jobs of its own: the refusal ends with the flag and every workflow found"
   expect_absent "$out" "has NO job of its own" "two jobs of its own: it is not read as none"
   expect_absent "$out" "FACT job: PASS" "two jobs of its own: no job was read"
   expect_contains "$out" "FACT job: FAIL — not reached" "two jobs of its own: the row says it was never measured"
   expect_absent "$(cat "$dir/state/calls")" "curl " "two jobs of its own: a call before the stop"
+}
+
+test_the_workflow_flag_selects_that_workflows_job() {
+  setup_case workflowflag
+  # The same repository, with the workflow named: the job read is the one that
+  # wears the label, and every row that reads the job — its account, its
+  # environment, the mint — is a reading of THAT job. The second job runs as an
+  # account of its own, so a check that described the right name but judged the
+  # other job's document would show up here.
+  JOB_SECOND=yes JOB_SECOND_SA="$SECOND_SA" write_job "$dir"
+  RUN96_ARGS=(--workflow second)
+  run96
+  expect_status "$status" 0 "the flag names a workflow"
+  expect_block_keys "$out" "the flag names a workflow"
+  expect_contains "$out" "FACT job: PASS — " "the flag names a workflow: the row"
+  expect_contains "$out" "$JOB-second" "the flag names a workflow: the job it read"
+  expect_contains "$out" "the job of the workflow second (its fugaro_workflow label, the one you named)" \
+    "the flag names a workflow: the row says which workflow's job it judged"
+  expect_contains "$(cat "$dir/state/calls")" "run jobs describe $JOB-second" \
+    "the flag names a workflow: the job it asked Cloud Run to describe"
+  expect_absent "$(cat "$dir/state/calls")" "run jobs describe $JOB " \
+    "the flag names a workflow: the other workflow's job was described too"
+  expect_contains "$out" "it runs as $SECOND_SA" "the flag names a workflow: the job account is the selected job's own"
+  expect_contains "$out" "FACT job-env: PASS — " "the flag names a workflow: the environment is read from that job"
+  expect_contains "$out" "FACT mint: PASS — " "the flag names a workflow: the mint is read against that job"
+  expect_contains "$(cat "$dir/err")" "the caller is $SECOND_SA" "the flag names a workflow: the caller is that job's account"
+}
+
+test_the_workflow_flag_is_what_selects_the_job() {
+  setup_case workflowmutation
+  # The flag is worth only as much as its being read, so this is the mutation:
+  # a copy of the check that parses --workflow and then throws the value away.
+  # The case above has to catch it, and the shape it is caught in is the one
+  # that says why: with the flag ignored the repository has two jobs of its own
+  # and the check stops, so the run that named a workflow neither passes nor
+  # reads the second job.
+  JOB_SECOND=yes JOB_SECOND_SA="$SECOND_SA" write_job "$dir"
+  local copy=$dir/ignore96.sh
+  sed 's|^      WORKFLOW_ARG=$2$|      : "$2"|' "$script" >"$copy"
+  grep -q ': "\$2"' "$copy" || fail "the mutation: the copy does not ignore the flag (the sed found no place to put it)"
+  status=0
+  out=$(env TMPDIR="$dir/tmp" FAKE96_DIR="$dir/state" FUGARO_CONFIG="$dir/state/fugaro.yaml" \
+    PATH="$dir/bin:$PATH" bash "$copy" --workflow second "$SANDBOX_REPO" 2>"$dir/err") || status=$?
+  printf '%s' "$out" >"$dir/out"
+  expect_status "$status" 2 "the mutation"
+  expect_absent "$out" "FACT job: PASS" \
+    "the mutation: a check that ignored --workflow was NOT caught, so the case above asserts nothing about the flag"
+  expect_contains "$out" "has 2 jobs of its own" "the mutation: the shape the ignoring is caught in"
+  expect_absent "$(cat "$dir/state/calls")" "run jobs describe" "the mutation: a job was described after all"
+  expect_absent "$(cat "$dir/state/calls")" "curl " "the mutation: a call before the stop"
+}
+
+test_an_unknown_workflow_is_refused_with_the_workflows_found() {
+  setup_case unknownworkflow
+  JOB_SECOND=yes write_job "$dir"
+  RUN96_ARGS=(--workflow nope)
+  run96
+  expect_status "$status" 2 "an unknown workflow"
+  expect_contains "$out" "--workflow nope does not name a workflow of $SANDBOX_REPO" \
+    "an unknown workflow: the refusal"
+  expect_contains "$out" "nope is not a workflow of this repository" "an unknown workflow: what it read"
+  expect_contains "$out" "fugaro_workflow label(s) default, second" \
+    "an unknown workflow: the workflows it did find, which is the fix"
+  expect_absent "$out" "FACT job: PASS" "an unknown workflow: no job was read"
+  expect_absent "$(cat "$dir/state/calls")" "run jobs describe" "an unknown workflow: no job was described"
+  expect_absent "$(cat "$dir/state/calls")" "curl " "an unknown workflow: a call before the refusal"
+
+  # And the same on a repository whose fugaro.yaml has ONE workflow: naming a
+  # workflow it does not have is the same refusal there, and the one job it has
+  # is not silently read as the one that was named.
+  setup_case unknownworkflowone
+  RUN96_ARGS=(--workflow nope)
+  run96
+  expect_status "$status" 2 "an unknown workflow on a one-workflow repository"
+  expect_contains "$out" "fugaro_workflow label(s) default" \
+    "an unknown workflow on a one-workflow repository: the label it did find"
+  expect_absent "$out" "FACT job: PASS" "an unknown workflow on a one-workflow repository: no job was read"
+}
+
+test_a_workflow_of_the_belong_account_is_refused() {
+  setup_case belongworkflow
+  # A named OAuth account's job label is its workflow joined to the account
+  # (gcp.WorkflowVariant), so `default_belong` is the workflow `default` on the
+  # owner's own account: this check is a sandbox one, it mints a real GitHub
+  # installation token as the job's account, and the register says never belong.
+  # The refusal is by NAME and it comes before any read at all.
+  RUN96_ARGS=(--workflow default_belong)
+  run96
+  expect_status "$status" 2 "a belong workflow"
+  expect_contains "$out" "aborted: FAIL" "a belong workflow: the abort is recorded"
+  expect_contains "$out" "names the owner's own 'belong' account" "a belong workflow: the guard says why"
+  expect_contains "$out" "never runs a belong workflow" "a belong workflow: the rule"
+  expect_absent "$(cat "$dir/state/calls")" "gcloud" "a belong workflow: a cloud call before the guard"
+  expect_absent "$(cat "$dir/state/calls")" "fugaro" "a belong workflow: a fugaro call before the guard"
+}
+
+test_a_job_whose_own_account_is_belong_is_refused() {
+  setup_case belongjob
+  # The half of the same rule that needs the job read: the job's OWN account is
+  # a belong one, whatever its workflow label says. Everything below the job row
+  # impersonates that account and reads the mint as it, so the run stops there —
+  # and before the first curl, not after a mint that already went out as it.
+  JOB_SA="$BELONG_SA" write_job "$dir"
+  run96
+  expect_status "$status" 2 "a belong job account"
+  expect_contains "$out" "aborted: FAIL" "a belong job account: the abort is recorded"
+  expect_contains "$out" "runs as $BELONG_SA, an account of the owner's own 'belong' installation" \
+    "a belong job account: the refusal names the account and why"
+  expect_contains "$out" "FACT job: FAIL — not reached" "a belong job account: the job row was never measured"
+  expect_absent "$out" "FACT job: PASS" "a belong job account: no PASS for the job it refused"
+  expect_absent "$(cat "$dir/state/calls")" "curl " "a belong job account: a call before the refusal"
 }
 
 test_the_shared_project_job_with_the_url_is_a_fail() {
@@ -1397,6 +1536,10 @@ test_usage() {
   expect_status "$status" 2 "an unknown flag"
   expect_contains "$(cat "$dir/err")" "unknown argument" "an unknown flag: the refusal"
   RUN96_UNNAMED=yes
+  run96 --workflow
+  expect_status "$status" 2 "--workflow with no name"
+  expect_contains "$(cat "$dir/err")" "--workflow needs the workflow's name" "--workflow with no name: the refusal"
+  RUN96_UNNAMED=yes
   run96 "$SANDBOX_REPO" "$OTHER_REPO"
   expect_status "$status" 2 "two repositories"
   expect_contains "$(cat "$dir/err")" "only one repository" "two repositories: the refusal"
@@ -1450,6 +1593,11 @@ t test_a_config_that_is_not_fugaro_dev_stops
 t test_another_installation_on_fugaro_dev_stops
 t test_a_repository_with_one_job_too_few_stops
 t test_a_repository_with_several_jobs_of_its_own_is_not_read_as_none
+t test_the_workflow_flag_selects_that_workflows_job
+t test_an_unknown_workflow_is_refused_with_the_workflows_found
+t test_a_workflow_of_the_belong_account_is_refused
+t test_a_job_whose_own_account_is_belong_is_refused
+t test_the_workflow_flag_is_what_selects_the_job
 t test_the_shared_project_job_with_the_url_is_a_fail
 t test_a_job_that_has_no_service_url_while_the_config_records_one_is_a_fail
 t test_the_switch_written_True_is_the_switch_on
