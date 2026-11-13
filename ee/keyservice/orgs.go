@@ -539,13 +539,18 @@ func (s *Service) signUp(ctx context.Context, actor Caller, name string) (WireOr
 // refuseAnotherOrganisation refuses a sign-up when the account has created every
 // organisation a day allows (F35, D2184), counted over the last 24 hours.
 //
-// What is counted is the memberships the account OWNS: being invited into
-// somebody else's organisation is not creating one, and an account that belongs
-// to ten has created none of them. The count reads the memberships' own
-// timestamps because the organisation's instant is not on the membership, and a
-// founder's membership is written by the sign-up itself — so the count is taken
-// before the transaction and the whole of the sign-up is under signUpMu, which
-// is what keeps two of them from reading one count (signUpMu's own comment).
+// What is counted is the memberships the account OWNS that were written in the
+// last day, because an organisation carries no record of who created it: for
+// every organisation made through sign-up that is the founder's own membership,
+// and for one somebody was later made an owner of it is theirs too — so a
+// promotion counts as a creation, which is the side an abuse control may err on.
+// An invitation into somebody else's organisation as a member is not counted at
+// all, and neither is a membership of any age: it is the last day that is asked
+// about.
+//
+// The count is taken before the sign-up's transaction and not inside it, because
+// the memberships are QUERIED and api.go's Tx reads by id alone (signUpMu's own
+// comment holds the rest).
 func (s *Service) refuseAnotherOrganisation(ctx context.Context, uid string, now time.Time) error {
 	held, err := membershipsOf(ctx, s.docs, uid)
 	if err != nil {
