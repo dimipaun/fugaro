@@ -907,10 +907,11 @@ POLICY_EOF
   run_check "$dir" "$script"
   expect_status "$status" 1 "no account: the check stops"
   expect_contains "$out" "FACT account-admitted: FAIL" "no account: the row does not pass"
-  expect_contains "$out" "no Claude account of the published node admits workspace-a/repo-a" "no account: the row names the repository"
+  expect_contains "$out" "no account of the published node's accounts block admits workspace-a/repo-a" "no account: the row names the repository"
   expect_contains "$out" "no shared Claude credential can ever serve a run of it" "no account: the row says what the account leg alone settles"
   expect_contains "$out" "does not spend (oauth-only)" "no account: the row reads the fallback in force"
-  expect_contains "$out" "every model call of the three runs below is refused" "no account: the row says the runs would be refused"
+  expect_contains "$out" "the working run below is refused at its first model call" "no account: the row says the working run is refused"
+  expect_contains "$out" "the review-only run is refused at its PAIRING" "no account: the row says the review run is refused at its pairing, where the fallback decides nothing"
   expect_contains "$out" "the halt of 0.23.1" "no account: the row names the halt it exists for"
   expect_contains "$out" "claude_accounts.<name>.allow_data_to" "no account: the row names the account's own list in the local config"
   expect_contains "$out" "profiles.<profile>.claude_accounts" "no account: the row names the profile that must choose the account"
@@ -936,8 +937,9 @@ POLICY_EOF
   expect_status "$status" 1 "a spending policy: the check still stops"
   expect_contains "$out" "FACT account-admitted: FAIL" "a spending policy: the row does not pass"
   expect_contains "$out" "credentials.fallback spends (auto)" "a spending policy: the row reads the fallback in force"
-  expect_contains "$out" "served by the project's paid key instead" "a spending policy: the row names what would serve the runs"
-  expect_contains "$out" "where the service's bundle holds that key, and refused at their first model call where it does not" "a spending policy: the row does not claim a refusal it cannot read"
+  expect_contains "$out" "served by the project's paid key instead" "a spending policy: the row names what would serve the working run"
+  expect_contains "$out" "where the service's bundle holds that key, and refused at its first model call where it does not" "a spending policy: the row does not claim a refusal it cannot read"
+  expect_contains "$out" "the review-only run is refused at its PAIRING either way" "a spending policy: the row says the review run is refused in this arm too, the fallback no part of it"
   expect_absent "$out" "state_unavailable" "a spending policy: the row names no refusal the service might not answer with"
   expect_contains "$out" "fugaro project policy publish" "a spending policy: the row names the owner-run publish"
   expect_contains "$out" "FACT run-launch: FAIL — not reached" "a spending policy: nothing below the row was measured"
@@ -959,6 +961,28 @@ POLICY_EOF
   expect_status "$status" 1 "an account of another repository: the check stops"
   expect_contains "$out" "FACT account-admitted: FAIL" "an account of another repository: the row does not pass"
   expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "an account of another repository: no run was launched"
+}
+
+# The gate reads an ENTRY of the block, which is the task's own wording, and the
+# block is keyed by account-axis value rather than by Claude account: the
+# publisher keys the project's own paid key into it as anthropic-api-key--project
+# and provider-key--project (internal/projectpolicy's DeriveAccounts, and
+# config.AxisNonAccountValue names the two), so an entry naming one admits a run
+# to that TIER-B credential and no shared one. This test pins that reading and
+# the sentence that says so, so that a later change to the gate is a change here
+# too rather than a silent one: what the row must not do is call such an entry a
+# Claude account.
+test_an_entry_that_is_no_claude_account_still_passes_the_gate() {
+  local dir=$work/keyentry
+  prepare "$dir"
+  cat >"$dir/state/project-policy.json" <<'POLICY_EOF'
+{"project":"fugaro","policy":{"bitbucket_token":{"allow_repos":["bitbucket/workspace-a/repo-a"],"proxy":true},"accounts":{"anthropic-api-key--project":{"allow_repos":["bitbucket/workspace-a/repo-a"]}}}}
+POLICY_EOF
+  run_check "$dir" "$script"
+  expect_status "$status" 0 "the project's own key as the only entry: the gate passes on the entry it reads"
+  expect_contains "$out" 'FACT account-admitted: PASS — the published policy'"'"'s accounts block admits workspace-a/repo-a in the allow_repos of 1 entry (anthropic-api-key--project)' "the project's own key as the only entry: the row counts entries, not Claude accounts"
+  expect_contains "$out" "two of those values are no Claude account at all" "the project's own key as the only entry: the row says what the block's keys really are"
+  expect_contains "$out" "anthropic-api-key--project and provider-key--project" "the project's own key as the only entry: the row names both of the axis's non-account values"
 }
 
 # The red step for the two cases above: the copy below has the gate's own
@@ -1847,6 +1871,7 @@ t test_the_fake_run_refuses_an_id_the_cli_would_refuse
 t test_no_account_for_the_repository_stops_the_check
 t test_a_spending_policy_names_the_paid_key_it_will_not_launch_on
 t test_an_account_for_another_repository_stops_the_check
+t test_an_entry_that_is_no_claude_account_still_passes_the_gate
 t test_the_account_gate_is_what_stops_the_check
 t test_the_switch_being_off_stops_the_check
 t test_one_job_of_the_repository_without_the_grant_is_a_switch_that_is_off

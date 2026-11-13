@@ -60,23 +60,34 @@
 #             repository must be on the credentials-service switch (agent.auth:
 #             cascade for it, with a model credential in the service's bundle,
 #             its root re-applied), the sandbox repository must be published
-#             with `proxy: true`, and an account of the published node's
-#             `accounts` block must name it: the service offers a run only a
-#             credential of an account whose own `allow_repos` admits the run's
+#             with `proxy: true`, and an `accounts` entry of the published node
+#             must name it: the service offers a run a shared credential only
+#             from an account whose own `allow_repos` admits the run's
 #             repository (internal/credsvc's `admittedAccounts`, and that
 #             admission is the intersection of THREE published facts — the
 #             node's own top-level `allow_repos`, which is the project's
-#             allow-list, the account's list, and the repository child node's
-#             `credentials.accounts`; this preflight reads the account's list
+#             allow-list, that entry's list, and the repository child node's
+#             `credentials.accounts`; this preflight reads the entry's list
 #             alone, from the policy the step already holds), so a node whose
 #             block names none can never have a shared Claude credential offered
-#             to a run in it. What the runs below then meet turns on the node's
-#             `credentials.fallback`: where it does not spend, every model call
-#             of theirs is refused (the halt of 0.23.1) — and where it spends,
-#             they are served by the project's paid key instead, if the service's
-#             bundle holds it, which is not a read this check makes and not a
-#             guess it launches three runs on. Check 191 stops if any of the four
-#             is not so:
+#             to a run in it. Two of the block's keys are no Claude account at
+#             all — `anthropic-api-key--project` and `provider-key--project` are
+#             the project's own paid key, keyed there by the publisher — so an
+#             entry naming one of those admits a run to that key and settles
+#             nothing here; the gate reads an entry, and its PASS row says so.
+#             What the runs below then meet turns on the node's
+#             `credentials.fallback`: where it does not spend, the working run's
+#             first model call is refused (the halt of 0.23.1) — and where it
+#             spends, that run is served by the project's paid key instead, if
+#             the service's bundle holds it, which is not a read this check makes
+#             and not a guess it launches runs on. The review-only run is refused
+#             at its pairing either way: a review caller's identity is paired
+#             against this same admission, which the fallback never enters
+#             (internal/credsvc's pairReview). The ended-identity probe reads the
+#             same either way: its first call is the bootstrap git traffic,
+#             refused as an identity before any route — and so before this
+#             admission — is reached. Check 191 stops if any of the four is not
+#             so:
 #             the published half alone is INERT — a repository off the switch
 #             holds its own token and is served by nothing — because the fact it
 #             measures is a REFUSAL, and only the service can refuse a call it is
@@ -1366,27 +1377,37 @@ step_policy() {
   # tier A is the only tier that admission governs — while a node that names one
   # is only that leg of the intersection, and a repository the project's
   # allow-list has stopped admitting is stopped by the launch row below rather
-  # than here. Nor does it settle what the runs below then meet: a tier-B
+  # than here. The block is keyed by account-axis value, and two of those
+  # values are no Claude account at all — the project's own key is published
+  # into it as anthropic-api-key--project and provider-key--project
+  # (internal/projectpolicy's DeriveAccounts, config.AxisNonAccountValue) — so
+  # an entry naming one of the two admits a run to that tier-B credential and
+  # this gate passes on it; the task asks for an entry, and the PASS row says
+  # what such an entry does and does not settle. Nor does it settle what the
+  # runs below then meet: a tier-B
   # credential needs no admission at all (internal/credsvc's `candidates`), so
   # the project's paid key answers a call no shared account can wherever the
   # node's credentials.fallback spends AND the service's bundle holds that key,
-  # and every model call is refused only where it does not. The row is worded
-  # from that same document's fallback for both: the second is the halt of
-  # 0.23.1, and the first is three runs the check cannot know are served (the
-  # bundle is not a read it makes) and will not launch on a guess. Either way it
-  # is not a reading about the proxy, and it is read before any run of the three
-  # is launched.
+  # and the working run's model calls are refused only where it does not. The row
+  # is worded from that same document's fallback for both: the second is the halt
+  # of 0.23.1, and the first is a run the check cannot know is served (the bundle
+  # is not a read it makes) and will not launch on a guess. One run below is
+  # refused in either arm: a review-only run's identity is paired against this
+  # same admission and the fallback never enters that pairing (internal/credsvc's
+  # pairReview), so a repository no account of the node admits carries no review
+  # run at all. Either way it is not a reading about the proxy, and it is read
+  # before any run of the three is launched.
   if [ "$(field_of account-admitted "$got")" != yes ]; then
     if [ "$(field_of fallback "$got")" = auto ]; then
-      fact account-admitted FAIL "no Claude account of the published node admits ${REPO}, so no shared Claude credential can ever serve a run of it: the service offers one only from an account whose own allow_repos admits its repository. This node's credentials.fallback spends (auto), so the three runs below would be served by the project's paid key instead — where the service's bundle holds that key, and refused at their first model call where it does not — and this check stops rather than launch them on a key it cannot read. Add ${REPO} to the account's own list in the local config (claude_accounts.<name>.allow_data_to, or project_secrets.claude-oauth-token.allow_data_to for the default account), name that account in the profile this repository's workflow uses (profiles.<profile>.claude_accounts), run 'fugaro project policy publish' (owner-run), then re-run"
+      fact account-admitted FAIL "no account of the published node's accounts block admits ${REPO}, so no shared Claude credential can ever serve a run of it: the service offers one only from an account whose own allow_repos admits its repository. This node's credentials.fallback spends (auto), so the working run below would be served by the project's paid key instead — where the service's bundle holds that key, and refused at its first model call where it does not — while the review-only run is refused at its PAIRING either way (a review caller's identity is paired against this same admission, which the fallback never enters), so the check stops rather than launch the two of them. Add ${REPO} to the account's own list in the local config (claude_accounts.<name>.allow_data_to, or project_secrets.claude-oauth-token.allow_data_to for the default account), name that account in the profile this repository's workflow uses (profiles.<profile>.claude_accounts), run 'fugaro project policy publish' (owner-run), then re-run"
     else
-      fact account-admitted FAIL "no Claude account of the published node admits ${REPO}, so no shared Claude credential can ever serve a run of it: the service offers one only from an account whose own allow_repos admits its repository. This node's credentials.fallback does not spend ($(field_of fallback "$got")), and the project's paid key is never spent without a written 'fallback: auto' (D152), so every model call of the three runs below is refused — the halt of 0.23.1 — and the check stops rather than measure three of them. Add ${REPO} to the account's own list in the local config (claude_accounts.<name>.allow_data_to, or project_secrets.claude-oauth-token.allow_data_to for the default account), name that account in the profile this repository's workflow uses (profiles.<profile>.claude_accounts), run 'fugaro project policy publish' (owner-run), then re-run"
+      fact account-admitted FAIL "no account of the published node's accounts block admits ${REPO}, so no shared Claude credential can ever serve a run of it: the service offers one only from an account whose own allow_repos admits its repository. This node's credentials.fallback does not spend ($(field_of fallback "$got")), and the project's paid key is never spent without a written 'fallback: auto' (D152), so the working run below is refused at its first model call — the halt of 0.23.1 — and the review-only run is refused at its PAIRING, which reads this same admission and never the fallback: the check stops rather than launch the two of them. Add ${REPO} to the account's own list in the local config (claude_accounts.<name>.allow_data_to, or project_secrets.claude-oauth-token.allow_data_to for the default account), name that account in the profile this repository's workflow uses (profiles.<profile>.claude_accounts), run 'fugaro project policy publish' (owner-run), then re-run"
     fi
     return 1
   fi
   holders=$(printf '%s\n' "$got" | sed -n 's/^holder=//p' | tr '\n' ' ' | sed 's/ *$//')
   n=$(printf '%s\n' "$got" | sed -n 's/^holder=//p' | wc -l | tr -d ' ')
-  fact account-admitted PASS "the published policy's accounts block names ${REPO} in the allow_repos of ${n} Claude account$([ "$n" = 1 ] || printf 's') (${holders}) — the account leg of the service's admission, which is what offers a run a shared (tier A) Claude credential: a tier-B one is the project's paid key, and no admission governs it. The admission's other two legs, the node's own allow_repos and the repository's own credentials.accounts, are not read here"
+  fact account-admitted PASS "the published policy's accounts block admits ${REPO} in the allow_repos of ${n} entr$([ "$n" = 1 ] && printf 'y' || printf 'ies') (${holders}) — the account leg of the service's admission, which is what offers a run a shared (tier A) Claude credential: a tier-B one is the project's paid key, and no admission governs it. The block is keyed by account-axis value, and two of those values are no Claude account at all: the project's own key, published as anthropic-api-key--project and provider-key--project, admits a run to that tier-B credential rather than to a shared one, so an entry naming one settles nothing here. The admission's other two legs, the node's own allow_repos and the repository's own credentials.accounts, are not read here"
   # The node's half is read and it is not the whole flip: a repository the node
   # admits is served only while its own switch is on, so the row that says its
   # runs reach Bitbucket through the service — the one step_policy_switch

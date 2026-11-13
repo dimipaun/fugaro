@@ -68,13 +68,21 @@ neither deletes nor closes them, and the block names each one.
   `credentials.accounts` — so a node whose block names none can never have a shared Claude credential
   offered to a run of that repository. The check reads the account's list from the same `policy show`
   document and fails `account-admitted` for it; the other two legs are other objects, so a repository
-  the project's allow-list has stopped admitting is caught at the `run-launch` row instead. What the
-  three runs would meet under that row is the node's `credentials.fallback`, which the row also reads:
-  where it does not spend, every model call of theirs is refused (the `state_unavailable` halt of
-  0.23.1 — "creds: no candidate credentials were offered" where the bundle holds no paid key, and the
-  fallback-forbidden refusal where it holds one the policy will not spend); where it spends (`auto`),
-  they are served by the project's paid key instead, as far as the service's bundle holds that key,
-  which is not a read this check makes). Check 191 reads the published
+  the project's allow-list has stopped admitting is caught at the `run-launch` row instead. The block is
+  keyed by account-axis value, not by Claude account: the publisher keys the project's own paid key into
+  it as `anthropic-api-key--project` and `provider-key--project` (`internal/config`'s
+  `AxisNonAccountValue` names the two), so an entry naming one of those admits a run to that tier-B
+  credential and settles nothing here — the gate reads an entry, and its PASS row says so. What the
+  working run would meet under that row is the node's `credentials.fallback`, which the row also reads:
+  where it does not spend, the working run's first model call is refused (the
+  `state_unavailable` halt of 0.23.1 — "creds: no candidate credentials were offered" where the bundle
+  holds no paid key, and the fallback-forbidden refusal where it holds one the policy will not spend);
+  where it spends (`auto`), that run is served by the project's paid key instead, as far as the
+  service's bundle holds that key, which is not a read this check makes. The review-only run is refused
+  in either arm: a review caller's identity is paired against this same admission, which the fallback
+  never enters (`internal/credsvc`'s `pairReview`), and the ended-identity probe is not part of this
+  reading at all — its first call is refused as an identity before any route, and so before this
+  admission, is reached). Check 191 reads the published
   policy from `fugaro project policy show --project fugaro --json` and the switch from the credentials
   service's OWN IAM policy (`gcloud run services get-iam-policy fugaro-credentials --project fugaro-dev
   --region us-east5 --format=json`) crossed with the repository's REAL jobs (the jobs whose own
@@ -205,11 +213,14 @@ service's own) and stops unmeasured when it holds no version Secret Manager will
 would call a run at the direct path a broken proxy), `account-admitted` (the same node's `accounts`
 block admits the repository too — the account leg of the service's admission, whose other two legs are
 the node's own top-level `allow_repos` and the repository child node's `credentials.accounts` — so a
-node whose block names none can never have a shared Claude credential offered to a run there, and the
-check stops before any run is launched, naming the `credentials.fallback` in force and, under it,
-whether the runs would be refused or served by the project's paid key, plus the account's
-`allow_data_to`, the profile that must name it and the owner-run `fugaro project policy publish` that
-carries it to the node), `run-launch` and
+node whose block names none can never have a shared Claude credential offered to a run there — and the
+block's keys are account-axis values, two of which are no Claude account at all, so an entry naming
+`anthropic-api-key--project` or `provider-key--project` admits a run to the project's paid key and
+settles nothing here — and the check stops before any run is launched, naming the `credentials.fallback`
+in force and, under it, whether the working run would be refused or served by the project's paid key
+and the review-only run's pairing refusal in either arm, plus the account's `allow_data_to`, the profile
+that must name it and the owner-run `fugaro project policy publish` that carries it to the node),
+`run-launch` and
 `run-outcome` (the working run reached a final status, succeeded, and the service served its push and
 its pull request — the branch and the number the check leaves for you), the seven refusal rows
 (`refusal-other-repository`, `refusal-other-ref`, `refusal-tag-ref`, `refusal-ref-delete`,
@@ -264,15 +275,21 @@ knowing by name:
 - **No Claude account is admitted to the repository** (`account-admitted: FAIL`) — the published node's
   `accounts` block names no account whose own `allow_repos` holds `CHECK191_REPO`, so the credentials
   service can never offer a run of it a shared Claude credential: that admission governs tier A, and
-  the account leg is out of reach whatever the other two hold. The row says what the runs would then
-  meet, read from the same document's `credentials.fallback`: under `oauth-only` (the default, and the
-  state 0.23.1 measured the halt in) every model call of all three runs is refused —
+  the account leg is out of reach whatever the other two hold. The block is keyed by account-axis value,
+  and two of those values are no Claude account at all: an entry naming `anthropic-api-key--project` or
+  `provider-key--project` admits a run to the project's own paid key rather than to a shared one, so it
+  settles nothing here (the gate reads an entry, and the row says what such an entry does not). The row
+  says what the working run would then meet, read from the same document's `credentials.fallback`: under
+  `oauth-only` (the default, and the state 0.23.1 measured the halt in) its first model call is refused —
   `state_unavailable` ("creds: no candidate credentials were offered") where the bundle holds no paid
   key, and the fallback-forbidden refusal ("no shared subscription credential can serve this call")
   where it holds one the policy does not spend. Under `auto` a tier-B credential needs no admission
-  (internal/credsvc's `candidates`), so the three runs would be served by the project's paid key
+  (internal/credsvc's `candidates`), so that run would be served by the project's paid key
   instead, as far as the service's bundle holds that key — which the check does not read, and which is
-  a spend it will not launch on. Either way it is not a reading about the proxy. Add
+  a spend it will not launch on. The review-only run is refused in either arm: a review caller's identity
+  is paired against this same admission, which the fallback never enters (internal/credsvc's
+  `pairReview`), and the ended-identity probe is not part of this reading at all, since its first call is
+  refused as an identity before any route is reached. Either way it is not a reading about the proxy. Add
   `CHECK191_REPO` to the account's own list in the
   local config (`claude_accounts.<name>.allow_data_to`, or
   `project_secrets.claude-oauth-token.allow_data_to` for the default account; `fugaro accounts add
