@@ -138,7 +138,10 @@ func TestUpdateLeavesAnUnenrolledRepositoryAloneAndExitsOne(t *testing.T) {
 	if got := ExitCode(err); got != ExitUserError {
 		t.Errorf("exit %d, want %d", got, ExitUserError)
 	}
-	all := out + errOut + ErrorText(err)
+	// The plan view names the repository stage and says why it is left, and the
+	// plan view is the run's own account of itself: it is in the log, and the
+	// screen is the steps (§9.2).
+	all := out + errOut + ErrorText(err) + newestLog(t, "update")
 	if !strings.Contains(all, "is not one of project "+initProjectName+"'s yet") {
 		t.Errorf("the run does not say the checkout's repository is not the project's:\n%s", all)
 	}
