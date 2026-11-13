@@ -30,9 +30,10 @@ revocation list the customer's own job checks (D2130, D2131).**
 service is not deployed as this design's own dedicated project.** D2194 puts the API, the minter and the
 key ring in `fugaro-prod` beside the website's console, so §1's project, §3.4's, §9.1's row 5 and §6's
 page-and-queue ownership, and §11's first step, are the portal's to settle and are noted below; §5.2's
-deliberate refusal to read the merchant's timestamp is reversed by the portal's P4.2; and three of the
-questions §12 leaves open — D454, D455 and D459 — are recorded there as decided by D2187 and D2194,
-while the other seven stay open. Everything else here stands.
+deliberate refusal to read the merchant's timestamp is reversed by the portal's P4.2, and only if P4.2
+first confirms that Paddle signs every retry with a fresh `ts` — if it does not, no window is added and
+§5.2 stands as written; and three of the questions §12 leaves open — D454, D455 and D459 — are recorded
+there as decided by D2187 and D2194, while the other seven stay open. Everything else here stands.
 
 This is subscriptions **S3.1**, the first task of slice S3: the design the tasks after it are written
 against — the issuing service (S3.2), the admin page and the manual queue (S3.4), the dedicated
@@ -367,11 +368,12 @@ the auto-renewal path is the same in a scheduler's: one mint per (subscription, 
 
 **Amended 2026-11-13**: this section reads the merchant's signature but not its timestamp, and portal
 P4.2 adds a **5-minute timestamp window** — an event whose `ts` is older than five minutes is refused —
-which reverses that choice
-([portal/reconciliation.md](../portal/reconciliation.md) F16). Idempotency no longer stands alone
-against a replay; the window is the merchant's own answer, and it holds only while the merchant signs
-every retry with a **fresh `ts`**, which P4.2 verifies before the window ships. What stays is the order
-of the two steps: the signature is verified first, and the verified body is stored before it is
+only if it first confirms, from the merchant's documentation and a recorded sandbox retry, that every
+delivery is signed with a **fresh `ts`**; if it does not, no window is added and this section stands as
+written, with idempotency alone against a replay
+([portal/reconciliation.md](../portal/reconciliation.md) F16,
+[portal/implementation-plan.md](../portal/implementation-plan.md) P4.2). What stays either way is the
+order of the two steps: the signature is verified first, and the verified body is stored before it is
 processed.
 
 ### 5.3 Renewal, seat change, cancellation
@@ -396,9 +398,9 @@ A merchant event in **test mode** mints a **staging key and nothing else**
 (`TestTestModeEventsMintStagingKeysOnly`), against the staging key id of §2's second rule: every
 production verifier holds production ids only, so a test-mode key cannot license a customer, and the
 staging installation is the only place it is accepted. Where the staging key and its intake live —
-one project and one key ring, or a second project — is **D459**, decided 2026-11-13 (one key id per
-environment: the production ring in `fugaro-prod` and staging's in `fugaro-staging`, §12); what is not
-open is that the two key
+one project and one key ring, or a second project — is **D459**, decided by D2194 on 2026-11-12 (one
+key id per environment: the production ring in `fugaro-prod` and staging's in `fugaro-staging`, §12);
+what is not open is that the two key
 ids stay apart, because that is the whole of Check 179.
 
 ### 5.5 Enterprise keys
@@ -694,7 +696,7 @@ Restated with its source, so that nothing below is read as open that is not.
 | D456 | Where does the audit log go, and who reads it? | (a) the project's own log sink, read by the owner, with the mint line repeated in the issuance record (§7.3); (b) the record only; (c) the record and an off-project sink | (a) | (a) one place to look and no new dependency, and the log's retention is the project's; (b) a log that a redeploy or a store bug can take with it, in the surface Check 173's audit is about; (c) an off-project copy is D457's personal data in a second place before D457 is answered | open |
 | D457 | What does the issuance record hold, and for how long? | (a) the fields §7.3 lists, with the applicant's address and domain dropped once the key has expired, and the mints themselves kept; (b) everything kept indefinitely; (c) the minimum: the key id and the tier only | (a) | (a) the record answers §4.3's lookup and §4.2's question while it is needed and stops being a store of personal data after; (b) a perpetual store of scraped addresses, which no notice in this tree yet covers; (c) a paid-domain lookup that cannot answer, so §4.3 stops working | open |
 | D458 | What uptime target, and what does a form submission get while the intake is down? | (a) no external target for the Free Plans (the Terms carry none, §10.5), the 60-day absorption stated, and an honest failure page; (b) a stated target for paying customers only; (c) a target for everyone | (a), or (b) with (a) | (a) matches the Terms as counsel wrote them and promises nothing Check 175 does not already measure; (b) a commitment that the merchant's and the Terms' own documents then have to carry; (c) a promise about a service whose interruption is already absorbed for 60 days | open |
-| D459 | Where does the staging pair live? | (a) the same project and key ring, with the staging key id and a staging intake that is not publicly invokable; (b) a second project; (c) no staging service, a staging key minted by hand only | (a) | (a) one project to operate and the two ids Check 179 needs, with the staging intake's exposure as the thing to watch; (b) a second project's IAM, quotas and cost for a test-only path; (c) Check 179's "a purchase in the merchant's test mode" needs an event path, which (c) does not have | **D2194, 2026-11-12** (recorded here 2026-11-13): one project, and one key id per environment rather than (a)'s one ring for both — production's ring in `fugaro-prod` holds only the production key and staging's in `fugaro-staging` only the staging key, applied by the portal's P1.5 (§9.1 row 5) |
+| D459 | Where does the staging pair live? | (a) the same project and key ring, with the staging key id and a staging intake that is not publicly invokable; (b) a second project; (c) no staging service, a staging key minted by hand only | (a) | (a) one project to operate and the two ids Check 179 needs, with the staging intake's exposure as the thing to watch; (b) a second project's IAM, quotas and cost for a test-only path; (c) Check 179's "a purchase in the merchant's test mode" needs an event path, which (c) does not have | **D2194, 2026-11-12** (recorded here 2026-11-13): the **second project of (b)**, one per environment, and one key id per ring rather than (a)'s one ring for both — production's ring in `fugaro-prod` holds only the production key and staging's in `fugaro-staging` only the staging key, applied by the portal's P1.5 (§9.1 row 5) |
 
 ## 13. Out of scope
 

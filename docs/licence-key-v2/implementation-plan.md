@@ -133,8 +133,8 @@ Reviewer tier is **standard** unless a task says `SECURITY`.
   `TestStatusCarriesNoKey`, `TestReplayedRenewalIsIdempotent`. Command: `go test ./ee/keyservice/ -tags ee -run 'TestRenewal|TestTheKeyAlone|TestRevoked|TestStatus|TestReplayed' -count=1`.
   Depends on: K2.1, K2.2. Commit: `ee: the renewal and status endpoints`.
   **Amended 2026-11-13 by the portal:** `service.go` is the portal's P1.0 — it mounts the `/api/`
-  registry and no later task edits it — so this task's `/renew` and `/status` lines register from
-  `renew.go`.
+  registry, and no licence-key-v2 task edits it (the portal's P9.3 is the file's other writer, at the
+  portal plan's own level) — so this task's `/renew` and `/status` lines register from `renew.go`.
 - **K2.4 Sign-in, authorize and device code. SECURITY.** Files: `ee/keyservice/signin.go` (new; it
   registers its routes through the portal's P1.0 `/api/` registry), `signin_test.go` (new). Verifies Firebase ID tokens of the owner's licence
   project by reusing `ee/coordinator/mcpauth/firebase.go` (audience, issuer and `email_verified` pinned; the purchaser binding depends on the last), serves `/cli/authorize`
@@ -311,8 +311,8 @@ runtime is what the Terraform runs.
 | `docs/licensing/licence-key.md` | K1.5 (0) |
 | `ee/keyservice/minter.go`, `minterclient.go`, `policy.go` | K2.1 (1) |
 | `ee/keyservice/store.go` | K2.2 (1) |
-| `ee/keyservice/service.go` | the portal's P1.0, which mounts the `/api/` registry and leaves no task here editing the file: K2.3, K2.4 and K2.7 register their routes from `renew.go`, `signin.go` and `trial.go` |
-| `ee/keyservice/merchant.go` | K2.5 (2); the portal's P4.2 writes the portal's event adapter into it |
+| `ee/keyservice/service.go` | nobody here: the portal's P1.0 (level 0 of the portal plan) mounts the `/api/` registry and its P9.3 (level 7) is the file's other writer, so K2.3, K2.4 and K2.7 register their routes from `renew.go`, `signin.go` and `trial.go` |
+| `ee/keyservice/merchant.go` | K2.5 (2); the portal's P4.2 (level 4 of the portal plan) writes the portal's event adapter into it, and the portal's P3.6 (level 5) edits it after |
 | `ee/licence/project/store.go` | K3.1 (1) |
 | `internal/cli/agentsession.go`, `untagged_licence_test.go` | K3.2 (3) |
 | `ee/register/licence.go` | K3.2 (3), the subcommand table; later tasks add their own files |
