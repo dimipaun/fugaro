@@ -377,8 +377,8 @@ func (m Minter) MintV1(ctx context.Context, req RequestV1) (MintedV1, error) {
 	//
 	// An end is not a term in this sense: it is the instant a key's term ends,
 	// and a key re-signed under a live entitlement ends where the key it
-	// replaces ends whatever row it is of (P3.2). The row's own length caps it,
-	// which for this row is the whole year it is sold for and not thirty days.
+	// replaces ends whatever row it is of (P3.2). What caps it is the length the
+	// key would have been minted for anyway, which is below.
 	if req.TermDays != 0 && policy.RenewalMode == licence.RenewalNone && req.TermDays != int(policy.Term/(24*time.Hour)) {
 		return MintedV1{}, fmt.Errorf("the %s row runs for its own %d day(s) and the request names %d: nothing renews this row, so its term is the row's and never the caller's (D2136, section 7)",
 			policy.Name, int(policy.Term/(24*time.Hour)), req.TermDays)
