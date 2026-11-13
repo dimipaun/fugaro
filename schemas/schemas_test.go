@@ -7087,13 +7087,26 @@ func TestMergeJudgeSchemaMatchesTheDocument(t *testing.T) {
 
 	// What the agreement is worth, as the reader feels it: a document the call
 	// permits is a document a run can read, and a document the call refuses is
-	// one the reader refuses too. The two columns come apart in exactly one
-	// place, and it is the gap the paragraph above names: the document cannot
-	// state, without the conditional keywords Anthropic's structured output does
-	// not carry, that a blocked verdict names its blocker — so it permits the
-	// document and the reader refuses it, which is the veto (D2044) rather than
-	// a repair. Everything else the two agree on, and every refusal is the
-	// answer's as a whole.
+	// one the reader refuses too. The two columns come apart in three places,
+	// no more, each a rule one side can state and the other cannot — and this
+	// table is where a fourth would show up:
+	//
+	//   - the blocker a block must name: the document cannot state "blocked
+	//     requires blocker" without the conditional keywords Anthropic's
+	//     structured output does not carry, so it permits the answer while the
+	//     reader refuses it — the veto (D2044) rather than a repair.
+	//   - text that is only whitespace: JSON Schema counts characters and the
+	//     reader reads meaning, so " " is a reason to the one and no line to the
+	//     other. The reader is the stricter of the two, which is the safe way
+	//     round.
+	//   - a missing follow_ups: the call asks for the member — required, and the
+	//     brief's own words are that an absent array is a malformed answer rather
+	//     than a claim that nothing is left open — while the reader reads the
+	//     decoded value, where absent and empty are one thing. This is the one
+	//     place the reader is the looser of the two.
+	//
+	// Everything else the two agree on, and every refusal is the answer's as a
+	// whole.
 	sch := compile(t, "merge-judge.schema.json")
 	const key = "0f1e2d3c4b5a6978"
 	for _, tc := range []struct {
@@ -7117,6 +7130,10 @@ func TestMergeJudgeSchemaMatchesTheDocument(t *testing.T) {
 		{"a block with no blocker at all", `{"version":1,"verdict":"blocked","reason":"it is wrong","follow_ups":[]}`, true, false},
 		{"an importance outside the two", `{"version":1,"verdict":"merge_with_follow_ups","reason":"x","follow_ups":[{"key":"` + key + `","importance":"urgent"}]}`, false, false},
 		{"a follow-up with no key", `{"version":1,"verdict":"merge_with_follow_ups","reason":"x","follow_ups":[{"importance":"minor"}]}`, false, false},
+		{"a reason of one space", `{"version":1,"verdict":"merge_with_follow_ups","reason":" ","follow_ups":[]}`, true, false},
+		{"a blocker of one space", `{"version":1,"verdict":"blocked","reason":"it is wrong","blocker":" ","follow_ups":[]}`, true, false},
+		{"a merge with no follow_ups at all", `{"version":1,"verdict":"merge_with_follow_ups","reason":"sound"}`, false, true},
+		{"a merge whose follow_ups is null", `{"version":1,"verdict":"merge_with_follow_ups","reason":"sound","follow_ups":null}`, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			inst, err := jsonschema.UnmarshalJSON(strings.NewReader(tc.in))

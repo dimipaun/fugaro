@@ -297,6 +297,41 @@ func TestJudgeVerdictSchema(t *testing.T) {
 	}
 }
 
+// TestJudgeVerdictIsRedacted: the reason and the blocker are a model's words
+// about a diff anybody who opened the pull request wrote, so the run redacts
+// them before they are recorded. result.schema.json says of both that the
+// runner redacts them, and every comparable field of the record is treated the
+// same way (outcome.go's accepted and tolerated findings); the blocker is also
+// the scope rung 4's split is written to, and it is read wherever a record is.
+//
+// The value below is mounted the way a workflow's own secret is
+// (runner.SecretEnvsVar), standing in for one the diff quotes back — a judge
+// repeating the diff is the ordinary way a secret would reach result.json.
+func TestJudgeVerdictIsRedacted(t *testing.T) {
+	const mounted = "a-mounted-secret-the-diff-quoted-back"
+	g := newGWFiles(t, gwConfig(t, ""), "observe", "", nil)
+	g.deps.Env = append(g.deps.Env, "QUOTED_TOKEN="+mounted, runner.SecretEnvsVar+"=QUOTED_TOKEN")
+	rec := mustJudge(t, g, judgeBriefOf(t, "diff --git a/a.go b/a.go\n+const token = \""+mounted+"\"\n"),
+		judging(func(t *testing.T, _ string) agent.Result {
+			return judgeBlocked(t, "the diff publishes "+mounted, "the build embeds "+mounted)
+		}))
+	got := rec.MergeJudge
+	if got == nil {
+		t.Fatal("the record carries no verdict")
+	}
+	for _, field := range []struct{ name, val string }{{"reason", got.Reason}, {"blocker", got.Blocker}} {
+		if strings.Contains(field.val, mounted) {
+			t.Errorf("the %s carries the mounted secret: %q", field.name, field.val)
+		}
+		if !strings.Contains(field.val, "[REDACTED]") {
+			t.Errorf("the %s = %q, want the secret replaced where it stood", field.name, field.val)
+		}
+	}
+	if v := runner.MergeJudgeOf(rec); v.Verdict != runstore.MergeJudgeBlocked || v.Blocker == "" {
+		t.Errorf("the ladder reads the record as %+v, want the block the judge answered with its issue named", v)
+	}
+}
+
 // TestJudgeMalformedOutputIsBlocked is D2044's rule and E6's red step: an
 // answer nobody can read is a veto and never a permission. The cases are the
 // shapes a stage's answer arrives in when it went wrong — prose where the
@@ -413,6 +448,29 @@ func TestJudgeInjectedDiffCannotMerge(t *testing.T) {
 		}
 		if len(g.provider.State.PRs) != 0 || rec.PR != nil {
 			t.Errorf("the judge run opened a pull request: %+v", g.provider.State.PRs)
+		}
+	})
+
+	t.Run("a verdict in the stage's text is not the answer", func(t *testing.T) {
+		// The mirror of the case above: there the answer was prose and there
+		// was no structured one, here the stage's text is a well-formed verdict
+		// object while the structured channel is empty. It is the shape a
+		// fallback reader would take — readTriageVerdict reads a fenced object
+		// out of the text — and it is exactly what a diff that talked the judge
+		// into printing the answer would want: a text the model wrote in its own
+		// voice is what the injection reaches, and the structured answer is what
+		// it cannot write. So the run reads the structured one alone and this is
+		// the veto (D2044, G1).
+		g := newGWFiles(t, gwConfig(t, ""), "observe", "", nil)
+		answer := string(judgeMerge(t, "nothing else in the way").Structured)
+		rec := mustJudge(t, g, judgeBriefOf(t, diff), judging(func(t *testing.T, _ string) agent.Result {
+			return agent.Result{Text: answer, CostUSD: 0.25}
+		}))
+		if got := rec.MergeJudge; got == nil || got.Verdict != runstore.MergeJudgeBlocked || !got.Unreadable {
+			t.Fatalf("the record's verdict = %+v, want the veto the answer nobody read is", got)
+		}
+		if v := runner.MergeJudgeOf(rec); v.Verdict != runstore.MergeJudgeBlocked {
+			t.Errorf("the ladder reads the record as %+v, want a block", v)
 		}
 	})
 

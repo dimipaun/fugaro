@@ -181,7 +181,7 @@ func (r *run) mergeJudge(ctx context.Context) (error, failure.Class) {
 		}
 		return errors.New("the merge judge stage did not run"), failure.StageErrorUnexplained
 	}
-	rec, decodeErr := readJudgeVerdict(res, in, r.stageModel(stageMergeJudge))
+	rec, decodeErr := readJudgeVerdict(res, in, r.stageModel(stageMergeJudge), r.redact)
 	r.rec.MergeJudge = rec
 	if decodeErr != nil {
 		r.d.Log.Warn("the merge judge's answer could not be read as a verdict; the head is blocked",
@@ -233,7 +233,19 @@ func (r *run) readMergeJudgeInput(ctx context.Context) (MergeJudgeInput, error) 
 // wherever a record is, while a decode error is a message about this build's
 // own document. A run that only logged "unreadable" would leave whoever reads
 // it with a blocked head and nothing to compare the answer against.
-func readJudgeVerdict(res agent.Result, in MergeJudgeInput, model string) (*runstore.MergeJudge, error) {
+//
+// redact is the run's own (r.redact), and it is asked of the two fields the
+// model wrote freely — the reason and the blocker — before the length rule is
+// applied to them. Both are the judge's words about a diff anybody who opened
+// the pull request wrote, so a secret the diff quotes back, or a shape that is
+// a credential whatever its value, would otherwise land in result.json
+// unredacted; the blocker is also what rung 4's split is scoped to. Every
+// comparable field of the record is redacted the same way (outcome.go's
+// tolerated and accepted findings), and result.schema.json says of both that
+// the runner redacts them.
+// The keys are not: a follow-up key is one this tree writes and a redacted one
+// would no longer be (runstore.ValidFindingKey).
+func readJudgeVerdict(res agent.Result, in MergeJudgeInput, model string, redact func(string) string) (*runstore.MergeJudge, error) {
 	v, err := DecodeMergeJudgeVerdict(res.Structured)
 	if err != nil {
 		return runstore.NewMergeJudge(runstore.MergeJudge{
@@ -243,6 +255,7 @@ func readJudgeVerdict(res agent.Result, in MergeJudgeInput, model string) (*runs
 			Unreadable: true,
 		}), err
 	}
+	v.Reason, v.Blocker = redact(v.Reason), redact(v.Blocker)
 	v.FollowUps = judgeFollowUpsOfBrief(v.FollowUps, in.Findings)
 	v.Model = model
 	return runstore.NewMergeJudge(v), nil

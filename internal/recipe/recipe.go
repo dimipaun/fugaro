@@ -1263,6 +1263,12 @@ func (p *parser) order(r *Recipe, src []int) {
 			// Refused here rather than in steps(), which reads a step
 			// before the recipe's mode is necessarily known.
 			p.add(path, 0, "%s is only for mode: artifact", s.Kind)
+		case StepMergeJudge:
+			// A run of its own, whose whole work this loop has no rule for
+			// (orderEvaluate, mergejudge.go): accepted here it would be
+			// dropped in silence, and the run would implement, review and
+			// open an ordinary pull request as if it had judged the head.
+			p.add(path, 0, "merge_judge is only for mode: evaluate")
 		default:
 			// A registered step kind (RegisterStepKind): steps() reads any
 			// of them, and orderEvaluate is the order function that places
