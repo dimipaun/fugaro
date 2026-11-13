@@ -207,11 +207,7 @@ func settingsAccessJudge(ctx context.Context, in accesslib.Input, action accessl
 // nothing remembers is its own origin remote.
 func settingsAccessRepo(ctx context.Context, lc *localcfg.Config, o settingsWriteOptions) (string, error) {
 	if o.repo == "" {
-		repo, err := originRepo(ctx)
-		if err != nil {
-			return "", settingsAccessNoOrigin()
-		}
-		return canonicalRepoArg(lc, repo)
+		return settingsAccessOriginRepo(ctx)
 	}
 	repo, err := canonicalRepoArg(lc, o.repo)
 	if err != nil {
