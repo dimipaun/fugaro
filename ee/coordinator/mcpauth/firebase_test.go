@@ -369,7 +369,9 @@ func TestTheIdentityCarriesTheProviderTheSignInTimeAndTheTenant(t *testing.T) {
 		"no firebase claim at all":               func(c map[string]any) { delete(c, "firebase") },
 		"no sign-in time":                        func(c map[string]any) { delete(c, "auth_time") },
 		"a firebase claim that is not an object": func(c map[string]any) { c["firebase"] = testMarker },
-		"a provider that is not a string":        func(c map[string]any) { c["firebase"] = map[string]any{"sign_in_provider": 7, "tenant": []any{testMarker}} },
+		"a provider that is not a string": func(c map[string]any) {
+			c["firebase"] = map[string]any{"sign_in_provider": 7, "tenant": []any{testMarker}}
+		},
 		"a tenant past the bound": func(c map[string]any) {
 			c["firebase"] = map[string]any{"tenant": strings.Repeat("t", maxTenantBytes+1)}
 		},
