@@ -817,13 +817,16 @@ func TestDeviceNodesAreClientDenied(t *testing.T) {
 //
 // The occurrences are read as spellings rather than as text: adjacent string
 // literals are joined back up before the search, so the `devices` segment cut in
-// two and put back together is seen, and a `$` capture joined to a literal that
-// names part of the path counts as a mention of it, so a segment stood in for by
-// a wildcard is seen too. It is a fence over spellings and not a parser — a path
-// assembled from pieces that never sit next to each other in the expression
-// would still slip past it — but a reader that gets past it has to name the node
-// somehow else, and TestUserClaimRequiresTheDeviceNode holds the document's one
-// allowed reach to its exact text.
+// two and put back together is seen, and a literal naming the path counts as a
+// mention of it wherever it is built with a `+`, so a segment stood in for by a
+// `$` capture is seen too. That last reading is anchored on `config/admin` and
+// not on `config`, because a capture holds one segment and a rule that builds
+// some other `config/…` path names neither the node nor a child of it: this
+// fence may not accuse one of that. It is a fence over spellings and not a
+// parser — a path assembled from pieces that never sit next to each other in the
+// expression would still slip past it — but a reader that gets past it has to
+// name the node somehow else, and TestUserClaimRequiresTheDeviceNode holds the
+// document's one allowed reach to its exact text.
 //
 // Hand mutation this fails on, each with the golden regenerated — or edited
 // outright, which is the same thing to a test that reads the golden — so that
@@ -869,10 +872,14 @@ func TestDeviceNodeCarriesNoShapeRule(t *testing.T) {
 	devices := segments[len(segments)-2]
 	// A literal can be cut in two around the word (`'config/admin/dev' +
 	// 'ices'`), so the pieces are put back together before the search, and a
-	// capture can stand in for a whole segment (`'config/admin/' + $k`), so a `$`
-	// variable joined to a literal that names the path is a mention of it too.
+	// capture can stand in for a whole segment (`'config/admin/' + $k`), so a
+	// literal naming the path counts as a mention of it wherever it is built with
+	// a `+`. Anchored on `config/admin` and not on `config`: a `$` variable holds
+	// exactly one segment, so a capture can only stand in for `admin` or
+	// `devices`, and a rule that builds some other `config/…` path — a per-repo
+	// cap or kill lookup — names neither the node nor a child of it.
 	split := regexp.MustCompile(`'\s*\+\s*'`)
-	captured := regexp.MustCompile(`(?:\$[A-Za-z_][A-Za-z0-9_]*|'[^']*config[^']*')\s*\+\s*(?:\$[A-Za-z_][A-Za-z0-9_]*|'[^']*config[^']*')`)
+	captured := regexp.MustCompile(`'[^']*config/admin[^']*'\s*\+|\+\s*'[^']*config/admin[^']*'`)
 	// How far a path reaches towards the node: a wildcard segment matches any one
 	// of the node's, so `config/admin/$x` covers the entry as surely as the
 	// literal path does, and a rule there constrains its shape for the same
