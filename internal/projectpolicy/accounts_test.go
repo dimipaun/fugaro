@@ -840,3 +840,186 @@ func TestDeriveAccountsPublishesTheProjectsProviderKey(t *testing.T) {
 		t.Errorf("the refusal calls the pattern not a repository, which a profile's own list may spell: %v", err)
 	}
 }
+
+// TestDeriveAccountsAdmitsARepositorysOwnAccount — THE RED STEP — is the
+// per-repository source of the accounts block: a repository whose runs are not
+// on a profile job (every Bitbucket repository, and every repository no
+// workflow sends to a shared one) names its accounts in its own repos entry,
+// and the published block carries the repository's canonical name for each of
+// them. Without it the block has no entry for the account at all, so the
+// credentials service's intersection with the repository's child admission is
+// empty and every model call of its runs is answered 503 state_unavailable.
+//
+// The mutation is dropping the repos argument's merge in DeriveAccounts (or
+// dropping the call to deriveRepoAccounts): the derived block then comes back
+// nil for this config and the two assertions below fail naming the account.
+//
+// The canonical name is the assertion that matters and not the owner/name the
+// file spells: allow_repos is provider-qualified, and the qualification is the
+// repository entry's own provider — the one place a per-repository job's
+// provider is stated.
+func TestDeriveAccountsAdmitsARepositorysOwnAccount(t *testing.T) {
+	accounts := map[string]config.ClaudeAccount{
+		"acme-team": {AllowDataTo: []string{"acme/sandbox"}},
+	}
+	repos := map[string]RepoAccount{
+		"acme/sandbox": {Provider: "bitbucket", Accounts: []string{"acme-team"}},
+	}
+	got, err := DeriveAccounts(nil, accounts, nil, repos)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"bitbucket/acme/sandbox"}; !slices.Equal(got["acme-team"].AllowRepos, want) {
+		t.Fatalf("accounts.acme-team.allow_repos = %v, want %v (the repository's own entry, qualified with its provider)", got["acme-team"].AllowRepos, want)
+	}
+	// The derived block is what the node's own rules accept: what publish
+	// writes is a policy a reader decodes, and a run's job reads the same
+	// shape.
+	if _, _, err := Decode([]byte(accountsNode(`{"acme-team":{"allow_repos":["bitbucket/acme/sandbox"]}}`, ""))); err != nil {
+		t.Fatalf("the derived shape was refused by the node's own rules: %v", err)
+	}
+	// The default account is admitted the same way, through the
+	// project_secrets entry that stores its token project-wide — the one
+	// source of its list, and the reason a repository entry naming it is
+	// refused without one (the next test).
+	got, err = DeriveAccounts(nil, nil, map[string]config.ProjectSecret{
+		"claude-oauth-token": {AllowDataTo: []string{"acme/sandbox"}},
+	}, map[string]RepoAccount{"acme/sandbox": {Provider: "bitbucket", Accounts: []string{"default"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"bitbucket/acme/sandbox"}; !slices.Equal(got["default"].AllowRepos, want) {
+		t.Errorf("accounts.default.allow_repos = %v, want %v (the default account's own project_secrets entry)", got["default"].AllowRepos, want)
+	}
+	// A repository entry naming no account states nothing about accounts, which
+	// is the shape every entry has today: the block is absent, not empty.
+	got, err = DeriveAccounts(nil, accounts, nil, map[string]RepoAccount{"acme/sandbox": {Provider: "bitbucket"}})
+	if err != nil || got != nil {
+		t.Fatalf("a repository entry naming no account derived %v, %v", got, err)
+	}
+}
+
+// TestDeriveAccountsRefusesARepositoryEntryItsAccountDoesNotCover is D3 asked
+// of a repository's own entry: the account is the credential, and a repository
+// the account's own list does not cover is one whose runs the token must never
+// reach — so the entry is refused rather than published, with the sentence
+// naming the account, the repository and the list the operator edits.
+//
+// The mutation is skipping the coverage check (repoAccountCovers): the entry
+// then publishes an admission for a repository the account's allow_data_to
+// excludes, which is the widening this rule exists to prevent — and the
+// service's intersection would admit the repository to the account anyway,
+// because the child and the node would both name it.
+func TestDeriveAccountsRefusesARepositoryEntryItsAccountDoesNotCover(t *testing.T) {
+	accounts := map[string]config.ClaudeAccount{
+		"acme-team": {AllowDataTo: []string{"acme/other"}},
+	}
+	repos := map[string]RepoAccount{
+		"acme/sandbox": {Provider: "bitbucket", Accounts: []string{"acme-team"}},
+	}
+	_, err := DeriveAccounts(nil, accounts, nil, repos)
+	if err == nil {
+		t.Fatal("a repository entry naming an account that does not cover it was published")
+	}
+	for _, want := range []string{"repos.acme/sandbox.claude_accounts", "acme-team", "acme/other", "claude_accounts.acme-team.allow_data_to"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	// The provider is required on an entry that names accounts: an allow_repos
+	// entry is provider-qualified, and this entry is the only place a
+	// per-repository job's provider is stated — refused for the missing field
+	// rather than qualified by a guess (providerRequired, the profiles' own
+	// rule).
+	_, err = DeriveAccounts(nil, accounts, nil, map[string]RepoAccount{
+		"acme/sandbox": {Accounts: []string{"acme-team"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "repos.acme/sandbox.claude_accounts") {
+		t.Fatalf("a repository entry with no provider: %v", err)
+	}
+	if !strings.Contains(err.Error(), "must name the provider it serves") {
+		t.Errorf("the refusal does not name the missing provider: %v", err)
+	}
+	// An account the config does not define names a token whose repositories
+	// are undecidable: refused, naming the block to define.
+	_, err = DeriveAccounts(nil, accounts, nil, map[string]RepoAccount{
+		"acme/sandbox": {Provider: "bitbucket", Accounts: []string{"ghost"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "defines no claude_accounts entry for") {
+		t.Fatalf("an undefined account named by a repository entry: %v", err)
+	}
+	// The default account with no project_secrets entry: the same refusal the
+	// profile path makes, because the token has no project-wide copy to be
+	// mounted from.
+	_, err = DeriveAccounts(nil, nil, nil, map[string]RepoAccount{
+		"acme/sandbox": {Provider: "bitbucket", Accounts: []string{"default"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "the default account may serve no repository project_secrets does not reach") {
+		t.Fatalf("the default account named by a repository entry with no project_secrets entry: %v", err)
+	}
+}
+
+// TestDeriveAccountsUnionsARepositoryEntryWithAProfile: a profile and a
+// repository entry may name one account, and what is published is the union —
+// nothing a profile derived is narrowed by a repository entry, and nothing a
+// repository entry adds is dropped because a profile also names the account.
+// The two are one answer about one credential, and the account's own list is
+// the bound on both (the refusal test above).
+//
+// The account here serves two jobs, which is the case the union is for: a
+// github profile serves it (a shared job) and a bitbucket repository's own
+// entry names it (a per-repository job). The profile path qualifies the
+// account's whole allow_data_to with the profile's provider — the file spells
+// a repository as owner/name, and the profile's provider is what makes it
+// canonical — so the same repository also appears under the profile's
+// provider; the repository entry adds the repository's own canonical name,
+// which is the admission that repository's per-repository job reads.
+//
+// The mutation is assigning instead of unioning in DeriveAccounts' merge loop
+// (out[ref] = repoAccounts[ref]): the account then serves only the repository
+// its own entry names, and the profile's repository — already admitted, and
+// admitted by the node before this change — loses its admission, which is the
+// one direction a publish may never move in.
+func TestDeriveAccountsUnionsARepositoryEntryWithAProfile(t *testing.T) {
+	profiles := map[string]Profile{
+		"standard": {JobProfile: config.JobProfile{Provider: "github", ClaudeAccounts: []string{"ops"}}},
+	}
+	accounts := map[string]config.ClaudeAccount{
+		"ops": {AllowDataTo: []string{"acme/app", "acme/sandbox"}},
+	}
+	repos := map[string]RepoAccount{
+		"acme/sandbox": {Provider: "bitbucket", Accounts: []string{"ops"}},
+	}
+	got, err := DeriveAccounts(profiles, accounts, nil, repos)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"bitbucket/acme/sandbox", "github/acme/app", "github/acme/sandbox"}
+	if !slices.Equal(got["ops"].AllowRepos, want) {
+		t.Errorf("accounts.ops.allow_repos = %v, want %v (the profile's repositories and the repository entry's, as one list)", got["ops"].AllowRepos, want)
+	}
+	// One repository both sources name, in the same spelling — a bitbucket
+	// profile serving the repository its own entry names — is held once: the
+	// union is a set, and a duplicate would be a second admission of the same
+	// repository under the same provider.
+	got, err = DeriveAccounts(map[string]Profile{
+		"standard": {JobProfile: config.JobProfile{Provider: "bitbucket", ClaudeAccounts: []string{"ops"}}},
+	}, map[string]config.ClaudeAccount{
+		"ops": {AllowDataTo: []string{"acme/sandbox"}},
+	}, nil, repos)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"bitbucket/acme/sandbox"}; !slices.Equal(got["ops"].AllowRepos, want) {
+		t.Errorf("accounts.ops.allow_repos = %v, want %v (one repository named by both sources, held once)", got["ops"].AllowRepos, want)
+	}
+	// The account's own list is still the bound: a repository entry naming an
+	// account the profile also names is refused when the account does not cover
+	// it, exactly as it is without the profile.
+	_, err = DeriveAccounts(profiles, accounts, nil, map[string]RepoAccount{
+		"acme/elsewhere": {Provider: "bitbucket", Accounts: []string{"ops"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "repos.acme/elsewhere.claude_accounts") {
+		t.Fatalf("a repository entry outside the account's own list, under a profile that names it too: %v", err)
+	}
+}
