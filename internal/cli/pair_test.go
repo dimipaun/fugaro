@@ -592,6 +592,47 @@ func TestPairRoleLowersToViewer(t *testing.T) {
 	}
 }
 
+// TestPairRoleFlagOnlyLowersTheResolvedRole is the flag's ceiling: D224 puts the
+// allowlist's answer for the administered address on the node, so --role is a
+// bound on that answer and not a way around it. An operator who may not name a
+// role above their own may not name one above the entry's either — here the
+// operator holds admin and their own entry says operator, so the refusal is the
+// entry's and not the caller's — and the flag takes the node's role down from
+// the resolved one, which is what it is for.
+func TestPairRoleFlagOnlyLowersTheResolvedRole(t *testing.T) {
+	// Above the resolved role, and equal to the operator's own: the entry's
+	// answer, not the caller's grant, is what refuses it.
+	f := newPairFixture(t, pairMe)
+	f.pairSeedEntry(pairDevA, pairMe, "operator")
+	out, _, err := pairRun(t, "--json", "--role", "admin")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want exit 1", err)
+	}
+	events := pairLines(t, out)
+	if len(events) != 1 || events[0].Event != pairEventRefused || events[0].Code != pairRefusedRoleAbove {
+		t.Fatalf("events = %v, want one refused with %q", events, pairRefusedRoleAbove)
+	}
+	for _, want := range []string{"operator", "admin"} {
+		if !strings.Contains(events[0].Reason, want) {
+			t.Fatalf("the refusal %q does not name %q: an operator told only that the role is above something cannot tell which entry to fix", events[0].Reason, want)
+		}
+	}
+	if n := len(f.iam.SignCalls()); n != 0 {
+		t.Fatalf("a refused role still called signJwt %d times", n)
+	}
+	f.pairOnlySeededEntries(t, pairDevA)
+
+	// Below the resolved role: written, with the role the flag named.
+	f = newPairFixture(t, pairMe)
+	f.pairSeedEntry(pairDevA, pairMe, "operator")
+	if _, _, err := pairPair(t, f, token.Fingerprint(pairKeyBytes), "--role", "viewer"); err != nil {
+		t.Fatal(err)
+	}
+	if _, role := f.pairEntryWritten(t, pairDevA); role != "viewer" {
+		t.Fatalf("--role viewer wrote %q, want viewer: the flag lowers the resolved operator", role)
+	}
+}
+
 // pairSeedEntry puts one allowlist entry on the node as `fugaro pair` writes
 // it: the uid is the node's key, the administered email is the entry's address
 // (an address or a whole domain) and the role is the role it was written with.

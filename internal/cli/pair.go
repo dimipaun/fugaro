@@ -125,7 +125,7 @@ func newPairCmd() *cobra.Command {
 	f := cmd.Flags()
 	f.StringVar(&o.name, "name", "", "the device's name, for pair ls and the device node's own field")
 	f.StringVar(&o.email, "email", "", "the administered email for the device (default, and normally the value: your own verified address, which is the only address this command may administer)")
-	f.StringVar(&o.role, "role", "", "the device's role: viewer, operator or admin (default: your own role, inherited; --role may only lower it)")
+	f.StringVar(&o.role, "role", "", "the device's role: viewer, operator or admin (default: the role the allowlist resolves for your address, or your own when it names none; --role may only lower it)")
 	f.DurationVar(&o.timeout, "timeout", pairDefaultTimeout, "how long to wait for the phone's key and the typed code (refused above "+pairMaxTimeout.String()+")")
 	f.BoolVar(&o.asJSON, "json", false, "stream the pairing as newline-delimited JSON events on stdout")
 	addCloudFlags(cmd, &o.cloudOptions)
@@ -218,14 +218,14 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 			fmt.Errorf("%s holds no role at project scope in %s, so a device it paired would have no role to inherit: a device records a role and no scope, so the role it inherits is the pairing user's highest role at project scope, and a role held only in repositories is not one a device can carry; ask an admin of %s to add you to the installation's project-scope operator grants by naming the whole list with '%s update --operator %s' — that flag writes the list it is given, so every operator who must keep the role is named beside you",
 				me, lc.Name, lc.Name, selfCommand(), me))
 	}
-	// The device's role, and the two writers that meet here. `own` is the
-	// pairing operator's own project-scope role, which is what bounds whatever
-	// is written (RS8: a device may not be more than the person pairing it).
-	// --role, when it is given, is the operator's own instruction and settles
-	// it; otherwise D224's resolver answers, below, once the administered
-	// address is known — an entry that already names the address carries the
-	// role the node is written with.
-	role, typedRole := ownRole, false
+	// The device's role, and the two writers that meet here. `ownRole` is the
+	// pairing operator's own project-scope role, which is the ceiling whatever
+	// is written stays under (RS8: a device may not be more than the person
+	// pairing it), and it is also what D224's resolver answers with for an
+	// address no entry names. --role, when the operator gives it, is checked
+	// against it here and against the resolver's answer below: the flag lowers
+	// the role the node carries, and never raises it.
+	var wantRole mobileauth.Role
 	if o.role != "" {
 		switch want, known := mobileauth.ParseRole(o.role); {
 		case !known:
@@ -235,7 +235,7 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 			return pairRefuse(ev, o, pairRefusedRoleAbove,
 				fmt.Errorf("--role %s is above your own role (%s): a paired device inherits your role and --role may only lower it, so a device like this one cannot be more than you are", want, ownRole))
 		default:
-			role, typedRole = want, true
+			wantRole = want
 		}
 	}
 
@@ -276,19 +276,31 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 	// write, for the address the entry is about to carry. `pair ls` and the
 	// console then read the role off the node and re-resolve nothing, which is
 	// what makes an entry's role a fact rather than a function of the allowlist
-	// it was read beside. It is a read like the probe above, so it is still
-	// before anything is minted or written — and --role, when the operator gave
-	// one, is their own instruction and is not resolved over.
-	if !typedRole {
-		resolved, err := pairResolveEntryRole(ctx, lc, db, email, ownRole)
-		switch {
-		case err == nil:
-			role = resolved
-		case errors.Is(err, errPairResolvedAbove):
-			return pairRefuse(ev, o, pairRefusedRoleAbove, err)
-		default:
-			return pairRefuse(ev, o, pairRefusalCode(err, pairRefusedAllowlistUnreadable), err)
+	// it was read beside.
+	//
+	// It runs whether or not --role was given, because the flag is a bound on
+	// this answer and not a way around it: an operator who may not name a role
+	// higher than their own may not name one higher than the allowlist's answer
+	// for their address either, or the node would carry a role the allowlist
+	// does not grant and the reader that trusts the node (P4, the rules) would
+	// trust it. --role can only take the role down from here. The read is one
+	// like the probe above, so both refusals still land before anything is
+	// minted or written.
+	resolved, err := pairResolveEntryRole(ctx, lc, db, email, ownRole)
+	switch {
+	case err == nil:
+	case errors.Is(err, errPairResolvedAbove):
+		return pairRefuse(ev, o, pairRefusedRoleAbove, err)
+	default:
+		return pairRefuse(ev, o, pairRefusalCode(err, pairRefusedAllowlistUnreadable), err)
+	}
+	role := resolved
+	if o.role != "" {
+		if !resolved.AtLeast(wantRole) {
+			return pairRefuse(ev, o, pairRefusedRoleAbove,
+				fmt.Errorf("--role %s is above the %s the allowlist resolves for %s: a device node carries the role resolved for the administered address, and --role may only lower it", wantRole, resolved, email))
 		}
+		role = wantRole
 	}
 
 	signer, err := (&cloudEnv{lc: lc}).tokenSigner(ctx)
