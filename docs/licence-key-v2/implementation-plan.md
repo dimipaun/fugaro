@@ -124,8 +124,8 @@ Reviewer tier is **standard** unless a task says `SECURITY`.
   (`key_id`, reason, time), the renewal secret hash and last-seen per key, one trial per installation
   and per account. Tests: `TestRevokedKeyStaysRevoked`, `TestOneTrialPerInstallation`,
   `TestRevocationIsIdempotent`. Depends on: K1.1. Commit: `ee: the key store holds revocations and trials`.
-- **K2.3 Renewal and status. SECURITY.** Files: `ee/keyservice/renew.go` (new), `ee/keyservice/service.go`
-  (the route table: `/renew`, `/status`), `renew_test.go` (new). The caller sends `key_id` and the renewal secret over TLS and the server compares the secret's hash with the one it holds
+- **K2.3 Renewal and status. SECURITY.** Files: `ee/keyservice/renew.go` (new; it registers `/renew` and
+  `/status` through the portal's P1.0 `/api/` registry), `renew_test.go` (new). The caller sends `key_id` and the renewal secret over TLS and the server compares the secret's hash with the one it holds
   (no HMAC: the hash is in the key, which every reader of the runs bucket holds, so it must not be a signing key); response
   `{status: ok|revoked, newer_key: bool}` and the renewal's new key; uniform answers; throttled; never
   returns a key to a revoked or unknown `key_id`; a replayed request is idempotent; a renewal returns the next key **and its new renewal secret** (reissue under a new `key_id` rotates it). **Secret handling:** 256 bits from the system CSPRNG; shown once together with the key as a two-line bundle (key line, secret line) by every issue path (the purchase email, the account page's download, the authorize code exchange and the device poll, the admin page and the mint tool), so each of those tasks returns the bundle and a re-download **rotates** the secret; after a rotation the old secret still fetches the new one for 24 hours only, then is refused. Tests:
@@ -135,8 +135,8 @@ Reviewer tier is **standard** unless a task says `SECURITY`.
   **Amended 2026-11-13 by the portal:** `service.go` is the portal's P1.0 — it mounts the `/api/`
   registry and no later task edits it — so this task's `/renew` and `/status` lines register from
   `renew.go`.
-- **K2.4 Sign-in, authorize and device code. SECURITY.** Files: `ee/keyservice/signin.go` (new),
-  `ee/keyservice/service.go`, `signin_test.go` (new). Verifies Firebase ID tokens of the owner's licence
+- **K2.4 Sign-in, authorize and device code. SECURITY.** Files: `ee/keyservice/signin.go` (new; it
+  registers its routes through the portal's P1.0 `/api/` registry), `signin_test.go` (new). Verifies Firebase ID tokens of the owner's licence
   project by reusing `ee/coordinator/mcpauth/firebase.go` (audience, issuer and `email_verified` pinned; the purchaser binding depends on the last), serves `/cli/authorize`
   (port, `state`, PKCE challenge), the one-time `code` exchange, and the device-code start, poll and
   approve routes. Tests: `TestAuthorizeRefusesANonLoopbackRedirect`, `TestCodeIsSingleUse`,
@@ -148,7 +148,7 @@ Reviewer tier is **standard** unless a task says `SECURITY`.
   **Amended 2026-11-13 by the portal:** the token check is P1.3's verifier
   (`ee/keyservice/portalauth.go`: audience, issuer, `email_verified`, `RequireSSO`, `FreshWithin`, the
   tenant check), not a second reader of `ee/coordinator/mcpauth/firebase.go`; the routes register
-  through P1.0's `/api/` registry from this task's own `api_signin.go`, so `service.go` is P1.0's and
+  through P1.0's `/api/` registry from this task's own `signin.go`, so `service.go` is P1.0's and
   nothing here edits it; and the authorize and device-approve pages are the SPA's
   (`ee/portal/src/screens/cli/*`, P3.5), not the website's.
 - **K2.5 Paddle events to v1. SECURITY.** Files: `ee/keyservice/merchant.go`, `merchant_test.go`. Maps a
@@ -172,8 +172,8 @@ Reviewer tier is **standard** unless a task says `SECURITY`.
   reads, every action needs a sign-in no older than 5 minutes with Google, D454's per-tier rate queues
   the excess (carried from this task's `MintCaps`) and D456's audit covers every action, reads included.
   Nothing of this task is built, and the level and shared-files tables below no longer schedule it.
-- **K2.7 The 14-day Team trial. SECURITY.** Files: `ee/keyservice/trial.go` (new), `service.go`,
-  `trial_test.go` (new). A signed-in account asks for a trial for an installation (`kind: trial`, 14 days,
+- **K2.7 The 14-day Team trial. SECURITY.** Files: `ee/keyservice/trial.go` (new; it registers its route
+  through the portal's P1.0 `/api/` registry), `trial_test.go` (new). A signed-in account asks for a trial for an installation (`kind: trial`, 14 days,
   grace 0, `check_interval` `P1D`); one per installation and account. Trial uniqueness is keyed by the Firebase project id, which is harder to mint than a caller-supplied name. Tests: `TestSecondTrialIsRefused`,
   `TestTrialIsTeamTierFourteenDays`. Depends on: K2.2 and the portal's P1.0 (the registry). Command: `go test ./ee/keyservice/ -tags ee -run 'TestSecondTrial|TestTrialIs' -count=1`.
   Commit: `ee: the Team trial`.
@@ -296,8 +296,9 @@ Edges are the "Depends on" lines.
 
 **Critical path:** K1.1 → K2.1 → K2.3 → K2.4 → K3.3 → K6.1 (six levels; K2.3 → K3.2 → K3.5 → K3.6 is as long). The sequence K2.3 → K2.4 → K2.6 → K2.7 on
 `ee/keyservice/service.go` is gone: the portal's P1.0 owns that file and mounts the `/api/` registry,
-so K2.4 and K2.7 register from their own files and K2.7 moves to level 2 with its edge on K2.6
-dropped (2026-11-13). K4.1 → K4.2 is sequential because the job's runtime is what the Terraform runs.
+so K2.3, K2.4 and K2.7 register their routes from `renew.go`, `signin.go` and `trial.go` and K2.7 moves
+to level 2 with its edge on K2.6 dropped (2026-11-13). K4.1 → K4.2 is sequential because the job's
+runtime is what the Terraform runs.
 
 ### Shared-files table
 

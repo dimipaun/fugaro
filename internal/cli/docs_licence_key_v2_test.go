@@ -159,19 +159,22 @@ func TestDocsKeySigningDesignFollowsThePortal(t *testing.T) {
 		}
 	}
 
-	// The three questions the design left open and the portal answers.
+	// The three of the design's open questions the portal answers. Each row
+	// names the decision and the day the owner answered it, which is not the day
+	// of this amendment: a row dated to the amendment would have a reader take
+	// 2026-11-13 for the answer.
 	open := docSection(t, keySigningDesign, doc, "### Open")
 	for _, tc := range []struct{ prefix, decided string }{
-		{"| D454 |", "D2187"},
-		{"| D455 |", "D2187"},
-		{"| D459 |", "D2194"},
+		{"| D454 |", "D2187, 2026-11-12"},
+		{"| D455 |", "D2187, 2026-11-12"},
+		{"| D459 |", "D2194, 2026-11-12"},
 	} {
 		r := mdRow(t, keySigningDesign, open, tc.prefix)
 		if strings.HasSuffix(strings.TrimSpace(r), "| open |") {
-			t.Errorf("%s's %s row still ends with the open status: %s decided it on 2026-11-12, and a reader of the table is otherwise told the owner has not answered", keySigningDesign, tc.prefix, tc.decided)
+			t.Errorf("%s's %s row still ends with the open status: %s decided it, and a reader of the table is otherwise told the owner has not answered", keySigningDesign, tc.prefix, tc.decided)
 		}
 		if !strings.Contains(r, tc.decided) {
-			t.Errorf("%s's %s row does not name %s as the decision: the row records who decided it and against what options", keySigningDesign, tc.prefix, tc.decided)
+			t.Errorf("%s's %s row does not carry %q: the row records who decided it, on the day the owner answered, and against what options", keySigningDesign, tc.prefix, tc.decided)
 		}
 	}
 
