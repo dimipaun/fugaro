@@ -693,10 +693,11 @@ func commandLines(section string, verbs ...string) []string {
 // run id; `fugaro budget set --global --per-run` put back into the Restore;
 // either `git diff -- .claude/settings.json` dropped; the step 3 `printable`
 // set widened to the API key, or the read reverted to a `--format` that prints
-// the whole env array; the "use fugaro image refresh, not fugaro upgrade"
-// paragraph deleted; the `github/dimipaun/fugaro` entry no longer named; the
-// "no other repository's run started" FACT deleted; and each of the stale
-// citations (doctor.go:748, cloud.go:53, runner.go:797, gcp/run.go:82-98,
+// the whole env array; the "Use `fugaro image refresh` for the image half, not
+// `fugaro update`" paragraph deleted; the `github/dimipaun/fugaro` entry no
+// longer named; the "no other repository's run started" FACT deleted; and each
+// of the stale citations (doctor.go:748, cloud.go:53, runner.go:797,
+// gcp/run.go:82-98,
 // upgrade_cloud.go:162, run.go:441 — the last a number that belongs to no
 // citation at all, since launchPolicyGates is called at run.go:473) put back;
 // and the citations the second review found drifted (run.go:507 for the
@@ -1074,19 +1075,21 @@ func TestChecklistHasCheck49(t *testing.T) {
 	// in Claude Code at user scope while `rules` and `policy` deploy the rules
 	// and the policy node, and the check must say so rather than sending the
 	// owner through writes it then has to undo. It is `fugaro update` the
-	// sentence names since U7 — `fugaro upgrade` is gone (U4) — and since the
-	// pin merge was deleted (U2, D949) it writes nothing in the checkout at
-	// all, so the pin below is what keeps the sentence that said otherwise from
-	// coming back.
+	// sentence names since U7 — `fugaro upgrade` is gone (U4). What it must not
+	// claim any more is that the converge writes nothing in the checkout at
+	// all: the pin merge is deleted (U2, D949), but the plugin step still takes
+	// a leftover pin out of `.claude/settings.json` at a person's own terminal
+	// (D943, init_plugin_stage.go's remove), and this check is entirely
+	// owner-run, so the pin below is what keeps that exception in the sentence.
 	chk49MustContain(t, section, "section", []string{
 		"Use `fugaro image refresh` for the image half, not `fugaro update`",
-		"**writes nothing in the checkout**",
+		"**So the converge can write this one file in this checkout, and that removal is the only write of its four steps here.**",
 		"`internal/cli/update_check.go` is where those four steps live (`checkSteps`): `plugin`, `cloud`, `rules`, `policy`",
 		// Both places the settings file is compared: step 8's block and
 		// step 8's FACT. One without the other is a restore that checks the
 		// file and a FACT that does not claim it.
 		"git diff -- .claude/settings.json\ncmp -s /tmp/chk49-claude-settings-before.json .claude/settings.json",
-		"`git diff -- .claude/settings.json` is empty with the file where step 3 found it",
+		"`git diff -- .claude/settings.json` holds nothing but a pin removal if the converge made one",
 	})
 
 	// The step 3 read prints the environment's NAMES and value LENGTHS, and
