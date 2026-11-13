@@ -488,9 +488,13 @@ func lsSlugs(ctx context.Context, env *cloudEnv, o *lsOptions, warn io.Writer) (
 // error row with a warning. Any other failed read but absence fails the whole
 // listing: ls never shows a status guessed from a partial read.
 //
-// It reads every run's objects first, keeps the runs f.pr selects, and
-// only then asks the backend about executions, so a PR's listing costs
-// no backend call for the runs off it.
+// It reads every run's objects first, keeps the runs f.pr selects -- and the
+// review run going on that pull request, which the fold needs and the listing
+// does not print -- and only then asks the backend about executions, so a PR's
+// listing costs no backend call for the runs off it. What --pr and --debt leave
+// out is dropped after the fold and never before it: a state is the pull
+// request's, read from every run of it the listing read, so the rows they print
+// carry the state their pull request has and not the state of the selection.
 func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]runview.Row, error) {
 	warn := f.warn
 	if warn == nil {
@@ -537,15 +541,27 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 		}
 	}
 	if f.pr != 0 {
-		runs = slices.DeleteFunc(runs, func(r runObjects) bool { return !onPR(r.in, f.pr) })
-	}
-	// The debt filter reads the task and nothing else, and it is applied here
-	// rather than beside --mine, --batch and --state because those read the
-	// row: the mark is task.Spec.Debt, which no row carries, and a run whose
-	// task.json is unreadable has no task to say it is one -- it is left out
-	// rather than guessed into a listing of the work nobody asked for.
-	if f.debt {
-		runs = slices.DeleteFunc(runs, func(r runObjects) bool { return r.in.Task == nil || !r.in.Task.Debt })
+		// The pull request's own runs, and the review run going on it: while a
+		// review is going its task is the only thing that places it on a pull
+		// request (its record names one only at the artifact stage, see the
+		// fold below), and the state of a pull request is read from every run
+		// of it, so a review going is what makes it live. The review row is
+		// kept for the fold alone and dropped before the listing prints: --pr
+		// lists the pull request's own runs, and a review of it is not one of
+		// them (stateOnly). Keeping it here rather than joining the whole
+		// window is what leaves --pr costing no backend call for the runs off
+		// the pull request.
+		kept := runs[:0]
+		for _, r := range runs {
+			switch {
+			case onPR(r.in, f.pr):
+				kept = append(kept, r)
+			case reviewPR(r.in.Task) == f.pr:
+				r.stateOnly = true
+				kept = append(kept, r)
+			}
+		}
+		runs = kept
 	}
 	if len(runs) == 0 {
 		return []runview.Row{}, nil
@@ -597,22 +613,48 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 	// review run's record carries no pull request until the artifact stage
 	// writes one, which is what ends the review
 	// (internal/runner/reviewartifact.go), so while the review is going its
-	// task is the only thing that says which pull request it is on. Only a
-	// review of exactly one places its run there: a review of several is on
-	// no single pull request, the reading continuesPRChain makes of a review
-	// launch for the same reason (chain_continues.go), and its artifact is
-	// one verdict about one head.
+	// task is the only thing that says which pull request it is on, and its
+	// artifact is one verdict about one head (reviewPR).
 	reviewing := map[string]int{}
 	for i := range rows {
-		if t := runs[i].in.Task; t != nil && len(t.ReviewPRs) == 1 {
-			reviewing[rows[i].RunID] = t.ReviewPRs[0]
+		if pr := reviewPR(runs[i].in.Task); pr != 0 {
+			reviewing[rows[i].RunID] = pr
 		}
 	}
 	// The state of each pull request the window holds, set before the filters
 	// below pick the page: a state is the pull request's, read from every run
 	// of it the listing read, so it is the same on every row of a page as on
-	// the rows --mine, --batch and --state dropped.
+	// the rows the filters below dropped.
 	markPRStates(rows, reviewing)
+	// A review run --pr kept for the fold alone is not a row it prints: the
+	// state every row of the pull request carries is read from it, and the
+	// review itself is not one of the pull request's own runs. rows is runs
+	// joined one for one, so the mark travels by index.
+	if f.pr != 0 {
+		kept := rows[:0]
+		for i, r := range rows {
+			if !runs[i].stateOnly {
+				kept = append(kept, r)
+			}
+		}
+		rows = kept
+	}
+	// The debt filter reads the task and nothing else, and it is applied after
+	// the fold rather than beside the reads because the mark is
+	// task.Spec.Debt, which no row carries: the runs it leaves out are still
+	// runs of the pull requests its rows carry, so their state is read from
+	// them too. A run whose task.json is unreadable has no task to say it is
+	// one -- it is left out rather than guessed into a listing of the work
+	// nobody asked for.
+	if f.debt {
+		kept := rows[:0]
+		for i, r := range rows {
+			if runs[i].in.Task != nil && runs[i].in.Task.Debt {
+				kept = append(kept, r)
+			}
+		}
+		rows = kept
+	}
 	rows = slices.DeleteFunc(rows, func(r runview.Row) bool {
 		return (f.mine != "" && r.RequestedBy != f.mine) || (f.batch != "" && r.Batch != f.batch) ||
 			(f.state != "" && !rowInState(r, f.state))
@@ -677,6 +719,17 @@ func onPR(in runview.Input, pr int) bool {
 	return (in.Task != nil && in.Task.PR == pr) || (in.Record != nil && in.Record.PR != nil && in.Record.PR.Number == pr)
 }
 
+// reviewPR is the pull request a review run reviews: a review names it in
+// Spec.ReviewPRs, and only a review of exactly one is on a single pull request
+// -- a review of several is on none of them (continuesPRChain reads a review
+// launch the same way, chain_continues.go). 0 for any other run.
+func reviewPR(t *task.Spec) int {
+	if t == nil || len(t.ReviewPRs) != 1 {
+		return 0
+	}
+	return t.ReviewPRs[0]
+}
+
 // mayBeOnPR reports whether a run onPR leaves out could still be on a
 // pull request: its launch.json or result.json is unreadable, so its
 // record wasn't read, and no task says it follows another PR.
@@ -694,6 +747,9 @@ type runObjects struct {
 	// unreadRecord means a corrupt object stopped the reads before the
 	// record could say which pull request the run is on.
 	unreadRecord bool
+	// stateOnly means --pr kept the run for the fold alone: a review run in
+	// flight on the pull request is a run of it, and not a row --pr lists.
+	stateOnly bool
 }
 
 // readRun reads what the bucket knows about one run; it makes no backend

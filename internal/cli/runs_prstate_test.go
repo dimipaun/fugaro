@@ -391,6 +391,84 @@ func TestPRStateReadsTheTaskWhenTheRunHasNoRecord(t *testing.T) {
 	}
 }
 
+// TestRunsLsPRStateIsTheSameUnderPRAndDebt: --pr N and --debt choose which rows
+// a listing prints and never what its fold reads, so a row they print carries
+// the state the plain listing gives it. Two runs going on a pull request are
+// what shows it: a review run of one, which --pr N keeps for the fold and does
+// not print (a review is not one of the pull request's own runs), and a run
+// --debt leaves out of its listing, which is still a run of the pull request
+// whose row it prints.
+func TestRunsLsPRStateIsTheSameUnderPRAndDebt(t *testing.T) {
+	f := newCloudFixture(t)
+	own := runIDAt(0, "000100", "a001")    // PR 31: the run that left it ready
+	review := runIDAt(0, "000200", "b001") // PR 31: a review of it, in flight
+	debt := runIDAt(1, "000300", "c001")   // PR 32: a run filed from a triage deferral
+	going := runIDAt(0, "000400", "d001")  // PR 32: a run going on the pull request
+
+	// PR 31: a run that ended ready, and a review of it that is going -- the
+	// review's own record names no pull request until its artifact stage.
+	seedSpec(t, f, prStateTaskFor(own, 31), false)
+	writeRecord(t, f, own, &runstore.Record{Version: 1, RunID: own, Repo: "acme/app", Workflow: "web",
+		Status: runstore.StatusSucceeded, Outcome: runstore.OutcomeReady, Stage: "finalize",
+		PR: &runstore.PRRef{Number: 31, URL: "https://github.com/acme/app/pull/31"}})
+	exec := seedSpec(t, f, reviewTaskFor(review, 31), true)
+	f.run.SetState(exec, backend.StateRunning)
+	writeRecord(t, f, review, &runstore.Record{Version: 1, RunID: review, Repo: "acme/app", Workflow: "web",
+		Status: runstore.StatusRunning, Stage: "review", Execution: exec})
+
+	// PR 32: a debt run that ended ready, and a run going on the pull request.
+	// The mark is the task's own field on a follow-up spec as the CLI files one
+	// (a task that names a pull request names the run before it too).
+	debtTask := prStateTaskFor(debt, 32)
+	debtTask.Debt = true
+	seedSpec(t, f, debtTask, false)
+	writeRecord(t, f, debt, &runstore.Record{Version: 1, RunID: debt, Repo: "acme/app", Workflow: "web",
+		Status: runstore.StatusSucceeded, Outcome: runstore.OutcomeReady, Stage: "finalize",
+		PR: &runstore.PRRef{Number: 32, URL: "https://github.com/acme/app/pull/32"}})
+	exec = seedSpec(t, f, prStateTaskFor(going, 32), true)
+	f.run.SetState(exec, backend.StateRunning)
+	writeRecord(t, f, going, &runstore.Record{Version: 1, RunID: going, Repo: "acme/app", Workflow: "web",
+		Status: runstore.StatusRunning, Stage: "implement", Execution: exec,
+		PR: &runstore.PRRef{Number: 32, URL: "https://github.com/acme/app/pull/32"}})
+
+	all, _ := lsJSON(t, "--since", "0")
+	want := prStatesOf(all.Runs)
+	for _, id := range []string{own, review, debt, going} {
+		if want[id] != prStateLive {
+			t.Fatalf("the fixture's run %s carries pr_state %q, want live: a run is going on both pull requests", id, want[id])
+		}
+	}
+
+	// --pr 31 prints the pull request's own run alone: the review run going on
+	// it is a run of it and not one of its runs, so it is kept for the fold and
+	// not printed -- and the run that is printed carries the state of the pull
+	// request, live, not the ready its own record ended with.
+	got, _ := lsJSON(t, "--since", "0", "--pr", "31")
+	if ids := runIDs(got.Runs); !slices.Equal(ids, []string{own}) {
+		t.Fatalf("runs ls --pr 31 listed %v, want the pull request's own runs alone: a review run of it in flight is kept for the fold, not printed", ids)
+	}
+	if got.Runs[0].PRState != want[own] {
+		t.Errorf("runs ls --pr 31 gives %s pr_state %q and the plain listing gives it %q, want the same state",
+			own, got.Runs[0].PRState, want[own])
+	}
+	// Which is what --state reads: a review going is a run going on the pull
+	// request, so the pull request's runs are the live ones.
+	got, _ = lsJSON(t, "--since", "0", "--pr", "31", "--state", "live")
+	if ids := runIDs(got.Runs); !slices.Equal(ids, []string{own}) {
+		t.Errorf("runs ls --pr 31 --state live listed %v, want %v: a review of the pull request is going", ids, []string{own})
+	}
+
+	// --debt prints the debt run alone, and its state is the pull request's:
+	// the run going on it is not a debt run and is still a run of it.
+	got, _ = lsJSON(t, "--since", "0", "--debt")
+	if ids := runIDs(got.Runs); !slices.Equal(ids, []string{debt}) {
+		t.Fatalf("runs ls --debt listed %v, want the run whose task is marked debt alone", ids)
+	}
+	if got.Runs[0].PRState != prStateLive {
+		t.Errorf("runs ls --debt gives %s pr_state %q, want %q: a run is going on its pull request", debt, got.Runs[0].PRState, prStateLive)
+	}
+}
+
 // TestPRStateReadsAReviewRunsTask: a review run is a run going on the pull
 // request it reviews, and its own record says which that is only at the
 // artifact stage, which is what ends the review -- so the fold takes the number
