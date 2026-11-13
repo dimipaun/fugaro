@@ -78,6 +78,32 @@ func TestFailureLineIsPrintedOnlyUnderALog(t *testing.T) {
 		}
 	})
 
+	t.Run("a failed command prints its error once", func(t *testing.T) {
+		r := applyingRig(t)
+		r.script["apply"] = map[string]any{"exit": 1, "stderr": "Error: quota exceeded\n"}
+		r.save(t)
+		out, errOut, err := executeStdin(t, "", "update", "--yes")
+		if err == nil {
+			t.Fatalf("the apply failed, yet the run succeeded:\n%s%s", out, errOut)
+		}
+		all := out + errOut
+		// The step that failed is the failure's own line, with the log's path,
+		// the command that explains the run and the fix under it: the error
+		// itself is printed there and once. main's top-level line would be the
+		// same error a second time, which is what the owner asked to stop
+		// seeing (2026-11-13); the exit code and the error the caller gets are
+		// unchanged.
+		if n := strings.Count(all, "quota exceeded"); n != 1 {
+			t.Errorf("the screen carries the failure %d time(s), want once:\n%s", n, all)
+		}
+		if strings.Contains(all, "fugaro: Error: quota exceeded") {
+			t.Errorf("the failed run printed its error again under the top-level banner:\n%s", all)
+		}
+		if !strings.Contains(newestLog(t, "update"), "quota exceeded") {
+			t.Errorf("the run's log lost the error the screen shortened:\n%s", newestLog(t, "update"))
+		}
+	})
+
 	t.Run("a failed read command", func(t *testing.T) {
 		f := newCloudFixture(t)
 		f.writeMarker(t, "borealis", "proj-1234")
