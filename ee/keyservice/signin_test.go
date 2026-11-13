@@ -447,6 +447,58 @@ func TestAuthorizeKeepsTheStateAndSendsTheCodeToTheListener(t *testing.T) {
 	}
 }
 
+// TestTheAuthorizeFormAllowsTheLoopbackItSendsTheCodeTo: the sign-in is a form
+// submission that is answered with a 302 to the CLI's listener, and a browser
+// checks `form-action` against the redirect a submission leads to as well as
+// against the form's own action (CSP3, and Chrome implements it). A policy of
+// `'self'` alone therefore fails where no handler can see it — the browser drops
+// the redirect and K3.3's listener waits for a code nothing sent — so the
+// authorize page allows the one origin this request's own redirect lands on, and
+// the pages that answer with a page keep the rule whole.
+func TestTheAuthorizeFormAllowsTheLoopbackItSendsTheCodeTo(t *testing.T) {
+	f, _ := subscribed(t)
+	verifier := freshVerifier(t)
+	form := f.get(RouteAuthorize, authorizeQuery(verifier))
+	if form.Code != http.StatusOK {
+		t.Fatalf("the sign-in form answered %d, want %d", form.Code, http.StatusOK)
+	}
+	policy := form.Header().Get("Content-Security-Policy")
+	// The origin the page allows is read off the redirect the same form's
+	// submission really makes, so a change to one without the other is caught
+	// rather than agreed with.
+	_, _, target := redirected(t, f.signedIn(t, f.acceptedToken(t), verifier))
+	address, err := url.Parse(target)
+	if err != nil {
+		t.Fatalf("parsing the sign-in's own target %q: %v", target, err)
+	}
+	if want := "form-action 'self' " + address.Scheme + "://" + address.Host; !strings.Contains(policy, want) {
+		t.Errorf("the sign-in page's policy %q does not allow %q, which is where its own submission is redirected: a browser drops that redirect and the CLI's listener waits for a code nothing sent", policy, want)
+	}
+	if strings.Contains(policy, "127.0.0.1:*") {
+		t.Errorf("the sign-in page allows every loopback port (%q), and its redirect goes to the one this request validated: the policy names that origin and no other", policy)
+	}
+	// §11.4's pages answer with a page and never with a redirect, so they keep
+	// the three rules whole.
+	device := f.get(RouteDeviceApprove, url.Values{})
+	if device.Code != http.StatusOK {
+		t.Fatalf("the device form answered %d, want %d", device.Code, http.StatusOK)
+	}
+	if got := device.Header().Get("Content-Security-Policy"); got != signInCSP {
+		t.Errorf("the device form's policy is %q, want %q", got, signInCSP)
+	}
+	start := f.startDevice(t, "acme-laptop")
+	confirm := f.post(RouteDeviceApprove, url.Values{
+		"user_code": {start.UserCode},
+		"id_token":  {f.acceptedToken(t)},
+	})
+	if confirm.Code != http.StatusOK {
+		t.Fatalf("the confirmation page answered %d, want %d: %s", confirm.Code, http.StatusOK, confirm.Body.String())
+	}
+	if got := confirm.Header().Get("Content-Security-Policy"); got != signInCSP {
+		t.Errorf("the confirmation page's policy is %q, want %q: it is the page the licence is handed over from and it answers with itself", got, signInCSP)
+	}
+}
+
 // TestCodeExchangeRefusesAHostileTarget is the other half of the redirect
 // rule, and the one that matters: the exchange takes no target at all. A
 // request that names one — a caller trying to move its own code to an address
@@ -1100,6 +1152,13 @@ func TestTokenFromAnotherProjectIsRefused(t *testing.T) {
 // for — the sign-in below is refused instead, and if it revokes the sign-in's own
 // issuances, the key below is revoked too. Either way this test fails and says
 // which of the two happened.
+//
+// A security review of this task asked for exactly that: the withdrawal recorded
+// on the subscription, the sign-in refusing a subscription whose issuance is
+// revoked, this test turned around, or the owner's sign-off before merge. The
+// first two are merchant.go's and store.go's (K2.5, K2.2) and the third needs
+// one of them, so what the branch carries is the report, and the finding stands
+// open on the pull request until the owner rules.
 func TestTokenFromARefundedSubscriptionStillSignsIn(t *testing.T) {
 	f, spy := signingIn(t)
 	refunded := f.purchase("evt-signin", signInOrg, 5, 365)

@@ -23,7 +23,10 @@ package keyservice
 // Every form here carries no script and submits only to itself, so the
 // deployment's CSP keeps `form-action 'self'` and the ID token travels in a POST
 // body rather than in a URL — the rule D923 states for the coordinator's own
-// authorize endpoint, read the same way. The pages these routes render are this
+// authorize endpoint, read the same way. The authorize form's page adds one
+// origin to that rule and no other page does: its submission is answered with
+// the redirect to the CLI's listener, which a browser checks `form-action`
+// against (signInRedirectCSP). The pages these routes render are this
 // file's: the plan's amendment of 2026-11-13 gives the SPA its own sign-in
 // screens (P3.5, `ee/portal/src/screens/cli/*`), and until those land the CLI's
 // two browser steps are served from here.
@@ -467,7 +470,7 @@ func (s *Service) authorizeForm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	view := signInView{Target: target, State: state, Challenge: challenge, Method: pkceMethod}
-	s.renderSignIn(w, signInTemplate, view)
+	s.renderSignIn(w, signInTemplate, view, signInRedirectCSP(target))
 }
 
 // authorizeSubmit is the sign-in itself: the ID token is verified, the account's
@@ -709,7 +712,7 @@ type deviceAnswer struct {
 // page that rendered it.
 func (s *Service) deviceApprove(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
-		s.renderSignIn(w, deviceFormTemplate, signInView{})
+		s.renderSignIn(w, deviceFormTemplate, signInView{}, signInCSP)
 		return
 	}
 	if !s.limiter.allow("ip:" + clientIP(r)) {
@@ -759,7 +762,7 @@ func (s *Service) deviceApprove(w http.ResponseWriter, r *http.Request) {
 			// what travels on is the normalised one (userCodeKey).
 			UserCode: groupCode(userCode),
 			IDToken:  form.Get("id_token"),
-		})
+		}, signInCSP)
 		return
 	}
 	approved, found := s.codes.approve(userCode, sub.ID, caller.Email, s.now())
@@ -770,7 +773,7 @@ func (s *Service) deviceApprove(w http.ResponseWriter, r *http.Request) {
 	s.renderSignIn(w, deviceDoneTemplate, confirmView{
 		Installation: approved.installation,
 		Organisation: sub.Organisation,
-	})
+	}, signInCSP)
 }
 
 // verifySignIn verifies the ID token a form carried and answers the caller it
@@ -823,6 +826,21 @@ func (s *Service) verifySignIn(ctx context.Context, raw string) (Caller, bool) {
 // the subscription, which every issue path already refuses on, or a sign-in
 // reads the revocation list for the issuances it minted. Until it does,
 // TestTokenFromARefundedSubscriptionStillSignsIn measures the behaviour.
+//
+// A sign-in adds a **door** to that hole and not the hole itself: `withdrawn`'s
+// own comment records that a renewal and a seat change inside the window already
+// mint under a fresh id no entry names. What can close it is a record of which
+// key a subscription holds, which the store does not keep — Record, Revocation
+// and KeyState carry no subscription (store.go) — and merchant.go says making
+// the list stop a reissue is the owner's decision (D2131, §5.3, §8, S3.7). So
+// closing it belongs to the merchant half or to the owner's ruling, not to a
+// repair here: reading the list for the issuances **this flow** minted is the
+// half of the second option that is available, and it catches nothing here — the
+// merchant's refund names the key its own record holds, which is the purchase's,
+// not a sign-in's — while a pairing guessed from the workspace or the address
+// would refuse a customer whose earlier key was refunded and who has bought
+// again. What closes a refund is knowing which key a subscription holds, and
+// that is the record the store has never kept.
 func (s *Service) accountLicence(ctx context.Context, email string) (Subscription, bool, error) {
 	subscriptions, err := s.store.Subscriptions(ctx)
 	if err != nil {
@@ -1200,6 +1218,33 @@ func sameAddress(a, b string) bool {
 // the admin page's carries (adminCSP), for the same reason.
 const signInCSP = "default-src 'none'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
 
+// signInRedirectCSP is the authorize form's own policy: signInCSP with the one
+// origin that form's submission ends at allowed for `form-action`.
+//
+// It is the authorize page's alone because it is the only page here whose
+// submission a redirect answers (§11.3 step 4). A browser checks `form-action`
+// against a redirect a form submission leads to as well as against the form's
+// own action, so `'self'` alone would have the browser drop the 302 to the CLI's
+// listener: the person would read a page that looks finished and K3.3's listener
+// would wait for a code nothing sent, with every handler test still green.
+//
+// What is added is the validated target's own origin and not a wildcard over
+// loopback ports: the value comes from `loopbackRedirect` in this same request,
+// which is also the address `redirectWithCode` sends the code to, so the policy
+// allows exactly the one place this page's sign-in can end up.
+func signInRedirectCSP(target string) string {
+	address, err := url.Parse(target)
+	if err != nil {
+		return signInCSP
+	}
+	host, port, err := splitAuthority(address.Host)
+	if err != nil || address.Scheme != "http" || port == "" {
+		return signInCSP
+	}
+	return "default-src 'none'; form-action 'self' " + address.Scheme + "://" + host + ":" + port +
+		"; base-uri 'none'; frame-ancestors 'none'"
+}
+
 // signInView is what the authorize form is rendered from: the three parameters
 // the person's sign-in carries back, all of them validated.
 type signInView struct {
@@ -1220,10 +1265,12 @@ type confirmView struct {
 }
 
 // renderSignIn writes one of these pages, with the three headers the admin page
-// writes for the same reasons (adminPage).
-func (s *Service) renderSignIn(w http.ResponseWriter, page *template.Template, view any) {
+// writes for the same reasons (adminPage), under the policy its caller chose:
+// every page here takes signInCSP whole except the authorize form, whose
+// submission a redirect answers (signInRedirectCSP).
+func (s *Service) renderSignIn(w http.ResponseWriter, page *template.Template, view any, policy string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Content-Security-Policy", signInCSP)
+	w.Header().Set("Content-Security-Policy", policy)
 	// The sign-in page carries the person's own ID token back and the
 	// confirmation page carries it too, and the page that mints is not a page a
 	// shared cache holds either (adminPage).
