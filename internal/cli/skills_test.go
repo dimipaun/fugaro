@@ -91,7 +91,10 @@ func init() {
 		"runs[].terminal", "runs[].settled", "runs[].base_branch", "runs[].stale_draft", "runs[].draft_fallback", "runs[].pr_status_at",
 		"runs[].launched_by", "runs[].failure_class",
 		// The state of the pull request a row carries, which the working
-		// skill's status reference reads to say which runs wait on a merge.
+		// skill's status reference reads to say which runs wait on a merge,
+		// and the number itself, which the landing skill reads to tell one
+		// pull request's runs from another's.
+		"runs[].pr",
 		"runs[].pr_state")
 	// The working skill's status reference sends a reader to --group-by and
 	// names the block it adds, so the block's own key is held to lsDoc's --
@@ -103,6 +106,10 @@ func init() {
 		"row.project_layer", "row.project_layer.sha256", "row.project_layer.generation", "row.project_layer.applied", "row.config_sha256",
 		"row.oauth_account", "halt", "verify", "failed", "flaky", "findings", "agent_message",
 		"log_tail", "draft_note", "report_path", "follow_up", "comments_path", "route_by", "reported_usd",
+		// The landing skill weighs a land against a follow-up from the
+		// record: the review rounds with their verdicts, and the findings
+		// the resolved mode let through rather than fixing.
+		"reviews", "tolerated",
 		// The checkpoint a governance halt leaves (T6.2, D329): the working
 		// skill's diagnose reference reads all six of its fields, the runner's
 		// three and the three the stopping agent answers.
