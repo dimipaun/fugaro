@@ -572,6 +572,51 @@ func TestCodeExchangeHandsTheCodeBackWhenTheMintFails(t *testing.T) {
 	}
 }
 
+// TestCodeAndDeviceAnswersAreNotCacheable: every answer these routes give that
+// carries a credential is `no-store` — the exchange's key and its renewal
+// secret, the device start's device code and the short code a person types, and
+// both of the poll's. Nothing else would notice the header going: a shared cache
+// holding one of them is a key, or a code that buys one, handed to whoever asks
+// for that URL next.
+func TestCodeAndDeviceAnswersAreNotCacheable(t *testing.T) {
+	f, _ := subscribed(t)
+	verifier := freshVerifier(t)
+	code, _, _ := redirected(t, f.signedIn(t, f.acceptedToken(t), verifier))
+	notCacheable := func(what string, rec *httptest.ResponseRecorder) {
+		t.Helper()
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s answered %d, want %d: %s", what, rec.Code, http.StatusOK, rec.Body.String())
+		}
+		if cache := rec.Header().Get("Cache-Control"); cache != "no-store" {
+			t.Errorf("%s is cacheable (%q), and what it carries is a credential", what, cache)
+		}
+	}
+	exchange := f.exchanged(code, verifier)
+	notCacheable("the exchange's answer", exchange)
+	if !strings.Contains(exchange.Body.String(), `"renewal_secret"`) {
+		t.Fatalf("the exchange's answer carries no renewal secret to keep out of a cache: %s", exchange.Body.String())
+	}
+	start := f.postJSON(RouteDeviceStart, map[string]string{"installation": "acme-laptop"})
+	notCacheable("the device start's answer", start)
+	var started deviceStartAnswer
+	if err := json.Unmarshal(start.Body.Bytes(), &started); err != nil {
+		t.Fatalf("reading the start's answer %q: %v", start.Body.String(), err)
+	}
+	if started.DeviceCode == "" || started.UserCode == "" {
+		t.Fatalf("the start's answer carries no code to keep out of a cache: %s", start.Body.String())
+	}
+	f.advance(devicePollInterval)
+	pending := f.pollDevice(t, started.DeviceCode)
+	notCacheable("a poll waiting for its person", pending)
+	f.approveDevice(t, started.UserCode, f.acceptedToken(t))
+	f.advance(devicePollInterval)
+	answered := f.pollDevice(t, started.DeviceCode)
+	notCacheable("the poll's answer", answered)
+	if !strings.Contains(answered.Body.String(), `"renewal_secret"`) {
+		t.Fatalf("the poll's answer carries no renewal secret to keep out of a cache: %s", answered.Body.String())
+	}
+}
+
 // TestCodeExchangeRefusesAnAccountHoldingNoLicence: the purchaser binding cuts
 // both ways, and this is the other one. A token for an address that never
 // bought anything — a stranger's, or an address this service has never seen —
