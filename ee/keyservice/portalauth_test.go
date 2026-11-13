@@ -216,7 +216,7 @@ func schedulerVerifier(t *testing.T) *SchedulerVerifier {
 // portalSignIn signs claims with the test's key and verifies them, which is
 // what the rule tests below drive: a refusal here is the test's own bug rather
 // than the rule's answer.
-func portalSignIn(t *testing.T, v *PortalVerifier, claims map[string]any) SignIn {
+func portalSignIn(t *testing.T, v *PortalVerifier, claims map[string]any) VerifiedSignIn {
 	t.Helper()
 	signIn, err := v.Verify(context.Background(), signPortalToken(t, portalKey(), portalKid, "RS256", claims))
 	if err != nil {
@@ -287,7 +287,7 @@ func TestTokenFromAnotherProjectIsRefused(t *testing.T) {
 	if !errors.Is(err, ErrUnverifiedSignIn) {
 		t.Errorf("Verify refused another project's token with %v, which is not the sentinel the API answers with", err)
 	}
-	if signIn != (SignIn{}) {
+	if signIn != (VerifiedSignIn{}) {
 		t.Errorf("Verify answered a sign-in beside a refusal: %+v", signIn)
 	}
 	message := err.Error()
@@ -323,7 +323,7 @@ func TestUnverifiedEmailIsRefused(t *testing.T) {
 // ASCII as an address, and access.Member is the stricter rule — exactly one @
 // with a local part and a domain on either side of it. An identity whose member
 // cannot be computed is refused here and not returned with an empty Member,
-// which is the invariant SignIn.Member documents. It is a guard rather than a
+// which is the invariant VerifiedSignIn.Member documents. It is a guard rather than a
 // courtesy: a caller comparing an empty member against a stored record is
 // comparing two empty things, and the record that would match is one nobody
 // wrote.
@@ -338,7 +338,7 @@ func TestAnAddressThatIsNoMemberIsRefused(t *testing.T) {
 			t.Errorf("the address %q was refused with %v, which is not the portal's sentinel", address, err)
 			continue
 		}
-		if signIn != (SignIn{}) {
+		if signIn != (VerifiedSignIn{}) {
 			t.Errorf("the address %q answered %+v beside its refusal, and a refused sign-in carries nothing", address, signIn)
 		}
 		if strings.Contains(err.Error(), address) {
