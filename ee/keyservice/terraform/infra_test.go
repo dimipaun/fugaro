@@ -1503,9 +1503,11 @@ func TestOnlyTheMinterCanSign(t *testing.T) {
 // The mutations this fails on: a second invoker — the same account written as an
 // _iam_binding's members list, an _iam_policy, or a plain `user:` beside it — a
 // grant on the minter in the keyring root, a scheduled job pointed at the minter
-// rather than at the API, a token minted for another account or another
-// audience, and a job's pause written as a literal rather than as the variable
-// the operator's apply sets, which is a job the next apply pauses again.
+// rather than at the API, a third scheduled job beside the two — read by name, so
+// a block with a fourth name is one no check here reads at all — a token minted
+// for another account or another audience, and a job's pause written as a literal
+// rather than as the variable the operator's apply sets, which is a job the next
+// apply pauses again.
 func TestOnlyTheAPIInvokesTheMinter(t *testing.T) {
 	// Every block in the tree that names the minter's service is one of the two
 	// the plan allows. The sweep is over the REFERENCE and not over the grant
@@ -1578,6 +1580,35 @@ func TestOnlyTheAPIInvokesTheMinter(t *testing.T) {
 			{"service_account_email", "google_service_account.scheduler.email"},
 			{"audience", "google_cloud_run_v2_service.api.uri"},
 		}, "the API verifies the scheduler's OIDC token by account AND audience (P1.3, F33), so the token is minted for the scheduler's own account and for the API's URL: any other audience is a token the API refuses, and any other account is one its list does not carry")
+	}
+
+	// And that those two are the whole of the tree's schedules, which is what makes
+	// reading them by name a census rather than a pair of names a third block can
+	// be written beside (independent review of this file). A job fires
+	// on a schedule of its own, so a third google_cloud_scheduler_job is a call
+	// none of the reads above makes: the loop is keyed to the two headers, and the
+	// minter sweep at the top of this test skips any block that does not name the
+	// minter — so a target written as a literal is a URL no output of this tree
+	// decides, and one aimed at the minter is a second caller with no IAM grant at
+	// all (Check 571).
+	held := map[string]string{
+		tfNames(servicesRoot, `resource "google_cloud_scheduler_job" "statements"`): "the statement job",
+		tfNames(servicesRoot, `resource "google_cloud_scheduler_job" "reminders"`):  "the reminder job",
+	}
+	jobs := 0
+	for _, rel := range tfFiles(t) {
+		for _, block := range tfBlocks(tfSource(t, rel), `resource "`) {
+			if !strings.Contains(tfHeader(block), `"google_cloud_scheduler_job"`) {
+				continue
+			}
+			jobs++
+			if _, ok := held[tfNames(path.Dir(rel), tfHeader(block))]; !ok {
+				t.Errorf("%s declares a scheduled job that is not one of the two this tree holds:\n%s\na job is a call that fires on its own, and the checks above read the statement and reminder jobs by name: a job beside them is a call whose target, account, audience and pause nothing here reads", rel, strings.TrimSpace(block))
+			}
+		}
+	}
+	if jobs != len(held) {
+		t.Errorf("this tree declares %d scheduled jobs, want %d: the monthly statements (P6.3) and the daily reminders (P7.1) are the portal's whole set of scheduled calls, and a job beside them calls something on a schedule no other part of this tree decides", jobs, len(held))
 	}
 
 	// And the switch the two attributes above read, whose default is what makes
@@ -1882,14 +1913,38 @@ func TestRingHoldsOneEnvironmentsKey(t *testing.T) {
 // reader: `#` is a comment to HCL and text to the rules compiler, so the wrong
 // reader drops the rest of that line, the smuggled `allow read, write: if true;`
 // is applied by the deploy, and the file's own denial further down passes this
-// check — the file losing its skeleton, and the database resource pointing at
-// another database or another mode.
+// check — the file losing its skeleton, the database resource pointing at
+// another database or another mode, and a second database beside it, whose own
+// documents these rules are not deployed on.
 func TestFirestoreRulesDenyClients(t *testing.T) {
 	database := tfRootBlock(t, servicesRoot, `resource "google_firestore_database" "portal"`)
 	tfAttrsAre(t, database, "the Firestore database in "+servicesRoot, []struct{ attr, value string }{
 		{"name", `"portal"`},
 		{"type", `"FIRESTORE_NATIVE"`},
 	}, "the portal's documents live in their own native Firestore database, separate from the installation's realtime database (spec §4): the rules below are deployed on this one, and a database named for another purpose is a database whose rules nobody reviewed")
+
+	// And that this one is the tree's only database, which is what makes the file
+	// below the whole of the fence: a database is a store with rules of its own,
+	// uploaded by its own deploy, so a second google_firestore_database — in
+	// either root, or in a file beside this one — is a store none of the rules
+	// read here is deployed on (independent review of this file; the Firestore
+	// census the Cloud Run services already have).
+	wantDatabase := tfNames(servicesRoot, `resource "google_firestore_database" "portal"`)
+	databases := 0
+	for _, rel := range tfFiles(t) {
+		for _, block := range tfBlocks(tfSource(t, rel), `resource "`) {
+			if !strings.Contains(tfHeader(block), `"google_firestore_database"`) {
+				continue
+			}
+			databases++
+			if got := tfNames(path.Dir(rel), tfHeader(block)); got != wantDatabase {
+				t.Errorf("%s declares the Firestore database %s, and this tree holds one:\n%s\nevery document the portal holds is behind the rules file this test reads and the API's checks (D2188), so a second database is a second store with rules nothing here read", rel, got, strings.TrimSpace(block))
+			}
+		}
+	}
+	if databases != 1 {
+		t.Errorf("this tree declares %d Firestore databases, want 1: the portal's documents live in one native database, and the denial above is the whole of what stands between every organisation's records and a client that reaches the store directly (D2188, Check 570)", databases)
+	}
 
 	raw, err := os.ReadFile(portalRulesPath)
 	if err != nil {
