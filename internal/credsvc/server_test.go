@@ -319,14 +319,22 @@ func (k *fakeKills) readCount() int {
 // express: a selection that is made and a credential that is spent, whose mark
 // cannot be recorded — the refusal the next call pays for (cascade.go's
 // markRefusal).
+//
+// The three per-read errors fail ONE of the three reads a selection makes and
+// no other — err fails all of them at once and so can never say which the
+// refusal was taken on, which is the one thing refusallog.go's line has to
+// name (refusallog_test.go).
 type fakeStore struct {
-	mu        sync.Mutex
-	marks     map[string]creds.Mark
-	current   map[string]string
-	leases    map[string]creds.Lease
-	rr        int64
-	err       error
-	updateErr error
+	mu         sync.Mutex
+	marks      map[string]creds.Mark
+	current    map[string]string
+	leases     map[string]creds.Lease
+	rr         int64
+	err        error
+	updateErr  error
+	marksErr   error
+	leasesErr  error
+	currentErr error
 }
 
 func newFakeStore() *fakeStore {
@@ -340,6 +348,9 @@ func (s *fakeStore) Marks(context.Context) (map[string]creds.Mark, error) {
 	defer s.mu.Unlock()
 	if s.err != nil {
 		return nil, s.err
+	}
+	if s.marksErr != nil {
+		return nil, s.marksErr
 	}
 	out := make(map[string]creds.Mark, len(s.marks))
 	for k, v := range s.marks {
@@ -372,6 +383,9 @@ func (s *fakeStore) Leases(context.Context, time.Time) ([]creds.Lease, error) {
 	if s.err != nil {
 		return nil, s.err
 	}
+	if s.leasesErr != nil {
+		return nil, s.leasesErr
+	}
 	out := make([]creds.Lease, 0, len(s.leases))
 	for _, l := range s.leases {
 		out = append(out, l)
@@ -396,6 +410,9 @@ func (s *fakeStore) Current(_ context.Context, run creds.Run) (string, bool, err
 	defer s.mu.Unlock()
 	if s.err != nil {
 		return "", false, s.err
+	}
+	if s.currentErr != nil {
+		return "", false, s.currentErr
 	}
 	name, ok := s.current[runKey(run)]
 	return name, ok, nil
