@@ -377,22 +377,32 @@ type Tx interface {
 var ErrNoDocument = errors.New("keyservice: the document is not there")
 
 // Caller is who a verified request is: the account, the address its provider
-// wrote, how it signed in and when, and the tenant when the provider is one that
-// has them (F31, D2207).
+// wrote, how it signed in and when, the tenant when the provider is one that has
+// them, and the Microsoft (Entra ID) directory the account lives in when the
+// token carries one (F31, D2207 as amended on 2026-11-13).
 type Caller struct {
 	UID      string
 	Email    string
 	Provider string
 	AuthTime time.Time
 	TenantID string
+	// DirectoryID is the Microsoft directory the sign-in came from, which is the
+	// value an SSO rule pins. It is NOT TenantID: that one is the Identity
+	// Platform tenant the CLIENT names at sign-in, and a rule over it admits
+	// whoever names a pinned value (portalauth.go's comment).
+	DirectoryID string
 }
 
-// SignIn verifies one sign-in (plan P1.3): it turns the ID token the SPA sends
-// into the caller that token names, having checked the token's audience, its
-// issuer, its signature and that the address is verified, first. What an area
-// then asks of a caller — the provider rule, a fresh sign-in, a pinned tenant —
-// is P1.3's, on this type.
-type SignIn interface {
+// SignInVerifier verifies one sign-in (plan P1.3): it turns the ID token the SPA
+// sends into the caller that token names, having checked the token's audience,
+// its issuer, its signature and that the address is verified, first. What an
+// area then asks of a caller — the provider rule, a fresh sign-in, a pinned
+// directory — is P1.3's, on the sign-in it answers.
+//
+// The name is a verifier's and not SignIn's because P1.3's own type is the
+// verified sign-in itself (portalauth.go's SignIn): the two are one concept at
+// two stages, and a package cannot hold one identifier for both.
+type SignInVerifier interface {
 	Verify(ctx context.Context, idToken string) (Caller, error)
 }
 
