@@ -47,6 +47,7 @@ Subcommands:
 - `fugaro help` -- Help about any command
 - `fugaro image` -- Build and inspect a workflow's derived container image
 - `fugaro issue` -- Read the issues saved on this machine, the ones you reported, and file one on GitHub
+- `fugaro licence` -- Install, read and renew the installation's licence key (Subscription Edition)
 - `fugaro logs` -- Print a run's logs from Cloud Logging
 - `fugaro managed` -- Act on a managed project (a project created by fugaro with the coding agent's refusal removed)
 - `fugaro models` -- Show the models this project can run, and where each is served
@@ -3762,6 +3763,173 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for sync |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro licence`
+
+Install, read and renew the installation's licence key (Subscription Edition)
+
+Install, read and renew the installation's licence key.
+
+The key belongs to the installation and not to one machine: it is written to the
+project's own store (the runs bucket), every member reads it there, and the
+per-machine key file is what a console hands a child it spawns. The commands
+without a coordinator renew by hand.
+
+  fugaro licence set       install a key you were given
+  fugaro licence status    show the tier, the seats, the expiry and the last check
+  fugaro licence refresh   ask the licence server for the next key now
+
+`fugaro update` is the whole upgrade: the installation's secret container and the
+job that renews a self-renewing key are Terraform's, and this command writes no
+part of them.
+
+Usage: `fugaro licence`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for licence |
+
+Subcommands:
+
+- `fugaro licence refresh` -- Ask the licence server for the next key now (Subscription Edition)
+- `fugaro licence set` -- Install the installation's licence key (Subscription Edition)
+- `fugaro licence status` -- Show the installation's licence: tier, seats, expiry, state and last check
+
+## `fugaro licence refresh`
+
+Ask the licence server for the next key now (Subscription Edition)
+
+Ask the licence server for the next key for this installation's key, and
+install it.
+
+This is what an installation renews by hand with: a `renewal_mode: auto` key is
+renewed by the installation's own scheduled job, and this command does the same
+one thing that job does. It sends the key's id, the workspace the key is bound
+to and the renewal secret to the licence server once, and a key that has no
+secret — an offline key — never contacts the server at all.
+
+The answer is one of three: the next key, which is verified before it is
+written (the new secret first, then the key); "nothing to renew yet", where the
+key is still further from its end than its own `renew_before_days`; and a
+revocation, in which case this key is Free from then on and the refusal names
+it. Nothing here deletes anything, and a server that cannot be reached changes
+nothing at all.
+
+The project's own key is the one renewed: a per-machine `licence.key` is never
+renewed here.
+
+It is refused inside a coding agent's session, before anything is read, as every
+cloud write is. No line of its output carries the key or the renewal secret.
+
+Usage: `fugaro licence refresh`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for refresh |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro licence set`
+
+Install the installation's licence key (Subscription Edition)
+
+Install the licence key for this installation, and the renewal secret that
+came with it.
+
+The key is read from standard input or --file: the key is read from standard input or --file, never from an argument: a key in argv is a key every local process reads.
+Line 1 is the key, and line 2 is the renewal secret — an offline key has none,
+and the key itself says which it is (`renewal_mode`). One trailing newline, a
+blank line and a CRLF line ending are all handled; more than two non-empty
+lines are refused, and no refusal repeats a line.
+
+The key is verified before anything is written, so a key this Fugaro does not
+accept — an unknown signing key, a term longer than the tier allows, a key
+bound to another workspace — is refused instead of installed, and the
+installation keeps whatever it had. The key's workspace_id must be the
+installation's Firebase project id.
+
+The key is then written to the project's own store, so every member is
+upgraded at once, and the renewal secret (when there is one) to the
+installation's Secret Manager container. Both need the container `fugaro update`
+creates: before it is there this command refuses and names that command, and it
+never creates one.
+
+The installation's renewal job is Terraform's (F10): this command writes the
+key and its secret and nothing else, and the next `fugaro update` applies the job
+that renews a `renewal_mode: auto` key. With no coordinator opted in, nothing
+renews a key but `fugaro licence refresh`.
+
+It is refused inside a coding agent's session, before anything is read, as every
+cloud write is. No line of its output carries the key.
+
+Usage: `fugaro licence set`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--file` | string | "" | no | read the key (line 1) and its renewal secret (line 2) from this file instead of standard input |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for set |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro licence status`
+
+Show the installation's licence: tier, seats, expiry, state and last check
+
+Show what this installation's licence is: the tier, the seats, the end of the
+paid period, the state the clock and the last revocation check put the key in,
+and that check.
+
+The key the answer comes from is the project's own, so every member of the
+installation sees the same figures. Where the project holds no key and this
+machine's own `licence.key` does, that key answers and the source says so.
+An installation with neither has no key at all, which is the Free state and not
+a failure: `fugaro licence set` installs one.
+
+The state is one of `active` (inside the paid period), `grace` (inside the key's own
+grace days after it), `expired` and `free` (no key at all). A key the licence
+server has revoked reads `expired` with `revoked: true` and is Free in
+behaviour: nothing is deleted and a new key restores everything.
+
+--json prints {project, state, tier, seats, paid_through, kind, renewal_mode,
+source, revoked, last_check}, with paid_through null where no key is installed
+and last_check the last revocation check's own record.
+
+This is a read: it is not refused inside a coding agent's session.
+
+Usage: `fugaro licence status`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for status |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
 
 Subcommands:
 
