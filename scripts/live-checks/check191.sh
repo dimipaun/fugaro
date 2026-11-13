@@ -63,8 +63,13 @@
 #             with `proxy: true`, and an account of the published node's
 #             `accounts` block must name it: the service offers a run only a
 #             credential of an account whose own `allow_repos` admits the run's
-#             repository (internal/credsvc's `admittedAccounts`), so a node
-#             whose block names none answers every model call of a run in it
+#             repository (internal/credsvc's `admittedAccounts`, and that
+#             admission is the intersection of THREE published facts — the
+#             node's own top-level `allow_repos`, which is the project's
+#             allow-list, the account's list, and the repository child node's
+#             `credentials.accounts`; this preflight reads the account's list
+#             alone, from the policy the step already holds), so a node whose
+#             block names none answers every model call of a run in it
 #             `state_unavailable` ("creds: no candidate credentials were
 #             offered") and the runs below would measure a halt. Check 191 stops
 #             if any of the four is not so:
@@ -369,10 +374,16 @@ any of them.
 policy   argv: the `project policy show --json` document, a repository. Prints
          whether the published block admits that repository, whether the
          proxy switch is on, and whether the node's `accounts` block admits it
-         too — the model credential's own admission, which is a different one:
-         the service offers a run only a credential of an account whose own
-         `allow_repos` holds its repository, so a node that names none is a run
-         refused `state_unavailable` at its first model call. A repository is
+         too — the model credential's own admission, which is a different one
+         from the Bitbucket token's: the service offers a run only a credential
+         of an account whose own `allow_repos` holds its repository, and that
+         admission is the intersection of three published facts (the node's own
+         top-level `allow_repos`, that account list, and the repository child
+         node's `credentials.accounts`), of which this reads the account list
+         alone — a node that names none is a run refused `state_unavailable` at
+         its first model call, while a node that names one settles nothing by
+         itself: the other two legs hold too before the service offers a run of
+         it a credential. A repository is
          matched the way the service matches it (projectpolicy.MatchRepo): the
          node's entries are provider-qualified and a segment may be a wildcard,
          so `bitbucket/workspace-a/*` admits every repository of that
@@ -1329,19 +1340,25 @@ step_policy() {
   fi
   # The model credential is admitted by a DIFFERENT list from the Bitbucket
   # token's: the service offers a run only a credential of an account whose own
-  # allow_repos names its repository (internal/credsvc's admittedAccounts), so a
-  # node whose accounts block names none answers every model call of a run in
-  # this repository state_unavailable ("creds: no candidate credentials were
-  # offered"). That is a halt on the first call rather than a reading about the
-  # proxy, and it is read here, from the policy this step already holds, before
-  # any run of the three is launched.
+  # allow_repos names its repository, and that admission is the intersection of
+  # THREE published facts (internal/credsvc's admittedAccounts) — the node's own
+  # top-level allow_repos, which this step does not read, that account list, and
+  # the repository child node's credentials.accounts, which lives in another
+  # object. Of the three this reads the account list alone, so a node whose
+  # accounts block names none is certainly a run refused at its first model call
+  # — state_unavailable, "creds: no candidate credentials were offered" — while
+  # a node that names one is only that leg of the intersection: a repository the
+  # project's allow-list has stopped admitting is stopped by the launch row
+  # below rather than here. The halt is what makes this a preflight: it is read
+  # from the policy this step already holds, before any run of the three is
+  # launched.
   if [ "$(field_of account-admitted "$got")" != yes ]; then
-    fact account-admitted FAIL "no Claude account is admitted to ${REPO}: the credentials service will refuse every model call with state_unavailable (no candidate credentials). Name an account for this repository in the local config (profile or repo-level claude_accounts), run 'fugaro project policy publish' (owner-run), then re-run"
+    fact account-admitted FAIL "no Claude account is admitted to ${REPO}: the credentials service will refuse every model call with state_unavailable (no candidate credentials). Add ${REPO} to the account's own list in the local config (claude_accounts.<name>.allow_data_to, or project_secrets.claude-oauth-token.allow_data_to for the default account), name that account in the profile this repository's workflow uses (profiles.<profile>.claude_accounts), run 'fugaro project policy publish' (owner-run), then re-run"
     return 1
   fi
   holders=$(printf '%s\n' "$got" | sed -n 's/^holder=//p' | tr '\n' ' ' | sed 's/ *$//')
   n=$(printf '%s\n' "$got" | sed -n 's/^holder=//p' | wc -l | tr -d ' ')
-  fact account-admitted PASS "the published policy's accounts block names ${REPO} in the allow_repos of ${n} Claude account$([ "$n" = 1 ] || printf 's') (${holders}): the credentials service offers a run of it a model credential of one of them, so the runs below reach a model at all"
+  fact account-admitted PASS "the published policy's accounts block names ${REPO} in the allow_repos of ${n} Claude account$([ "$n" = 1 ] || printf 's') (${holders}) — the account leg of the service's admission, which the runs below need (its other two legs, the node's own allow_repos and the repository's own credentials.accounts, are not read here)"
   # The node's half is read and it is not the whole flip: a repository the node
   # admits is served only while its own switch is on, so the row that says its
   # runs reach Bitbucket through the service — the one step_policy_switch

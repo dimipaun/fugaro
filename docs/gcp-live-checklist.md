@@ -11927,16 +11927,21 @@ runs at a path the proxy is not on; its remedy is to set `agent.auth: cascade` f
 a model credential in the service's bundle), run `fugaro update --repo` for it and run the check again.
 The same published node must also **admit the repository to a Claude account** — an `accounts` entry
 whose own `allow_repos` names it, since the service offers a run only a credential of an account that
-admits its repository (`internal/credsvc`'s `admittedAccounts`; the child node's own
-`credentials.accounts` list is the other half of that intersection) — and a node whose block names none
-fails `account-admitted` *before it launches anything*, with the `state_unavailable` ("no candidate
-credentials were offered") halt the runs would otherwise measure; its remedy is to name an account for
-the repository in the local config (a profile's or a repository's `claude_accounts`) and have the owner
-run `fugaro project policy publish`. A switch the reading cannot settle — and a service doctor reports
-as not there or as having nothing to
-serve a run's model credential out of, where every model call of a run is refused — is recorded as
-**unmeasured** (exit `2`, nothing launched) rather than as a pass. Three **sandbox** Bitbucket
-repositories — the proxied one the runs work
+admits its repository. That admission (`internal/credsvc`'s `admittedAccounts`) is the intersection of
+**three** published facts: the node's own top-level `allow_repos` (the project's allow-list, the leg
+`fugaro project repos rm` takes away), the account's own list, and the repository child node's
+`credentials.accounts`. This preflight reads the account's list alone — the other two live in other
+objects, and a repository the project's allow-list has stopped admitting is caught at the run-launch
+row below rather than here — and a node whose block names none fails `account-admitted` *before it
+launches anything*, with the `state_unavailable` ("no candidate credentials were offered") halt the
+runs would otherwise measure; its remedy is to add the repository to the account's own list in the
+local config (`claude_accounts.<name>.allow_data_to`, or `project_secrets.claude-oauth-token.allow_data_to`
+for the default account), name that account in the profile the repository's workflow uses
+(`profiles.<profile>.claude_accounts` — `fugaro accounts add <name> --repos owner/name` writes both),
+and have the owner run `fugaro project policy publish`. A switch the reading cannot settle — and a
+service doctor reports as not there or as having nothing to serve a run's model credential out of,
+where every model call of a run is refused — is recorded as **unmeasured** (exit `2`, nothing
+launched) rather than as a pass. Three **sandbox** Bitbucket repositories — the proxied one the runs work
 in, a second one for the other-repository refusal, and (with `--after-flip`) one the policy does not proxy
 — plus the number of an **open** pull request **in the proxied repository itself** (`CHECK191_OTHER_PR`):
 the run's own repository, and a pull request that is not the run's own. It has to be that repository's,
@@ -11973,11 +11978,11 @@ launched**.
 
 **What the block reads.** `proxied` (the published `bitbucket_token` block admits the repository with
 `proxy: true`, and the service's own IAM policy puts it on the credentials-service switch);
-`account-admitted` (the same node's `accounts` block admits it too — the service offers a run only a
-credential of an account whose own `allow_repos` names its repository, so a node whose block names none
-refuses every model call of a run there `state_unavailable`, "no candidate credentials were offered", and
-the check stops before any run is launched, naming the account to add to the local config and the
-owner-run `fugaro project policy publish` that carries it to the node); `run-launch` and `run-outcome`
+`account-admitted` (the same node's `accounts` block admits it too — the account leg of the admission
+above, so a node whose block names none refuses every model call of a run there `state_unavailable`, "no
+candidate credentials were offered", and the check stops before any run is launched, naming the
+account's `allow_data_to`, the profile that must name it and the owner-run `fugaro project policy
+publish` that carries it to the node); `run-launch` and `run-outcome`
 (the working run reached a final
 status, pushed its branch and opened its pull request); the seven refusal rows
 (`refusal-other-repository`, `refusal-other-ref`, `refusal-tag-ref`, `refusal-ref-delete`,

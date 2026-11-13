@@ -905,6 +905,8 @@ POLICY_EOF
   expect_contains "$out" "FACT account-admitted: FAIL" "no account: the row does not pass"
   expect_contains "$out" "no Claude account is admitted to workspace-a/repo-a" "no account: the row names the repository"
   expect_contains "$out" "state_unavailable (no candidate credentials)" "no account: the row names the refusal the runs would meet"
+  expect_contains "$out" "claude_accounts.<name>.allow_data_to" "no account: the row names the account's own list in the local config"
+  expect_contains "$out" "profiles.<profile>.claude_accounts" "no account: the row names the profile that must choose the account"
   expect_contains "$out" "fugaro project policy publish" "no account: the row names the owner-run publish"
   expect_contains "$out" "FACT run-launch: FAIL — not reached" "no account: nothing below the row was measured"
   expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "no account: no run was launched"
