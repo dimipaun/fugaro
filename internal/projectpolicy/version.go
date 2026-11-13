@@ -132,7 +132,7 @@ const Version = 7
 // introduced it: 1 is the model itself (0.8.0, internal/cli's policySince), 2
 // is the profile gate above (0.8.5), 3 the account axis (0.9.0), 4 the
 // Bitbucket token block (0.14.0), 5 the pools' owner and roster (0.23.0), 6 the
-// binaries block (0.24.0) and 7 the two model grades (0.25.0). It sits beside
+// binaries block (0.24.0) and 7 the two model grades (0.24.0). It sits beside
 // Version because a bump of Version adds its row in the same change
 // (TestVersionSinceCoversEveryVersion fails until it does), and it is
 // read by every message about a node *ahead* of its reader (SkewSentence, so
