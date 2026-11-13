@@ -126,12 +126,14 @@ func newProjectPolicyPublishCmd() *cobra.Command {
 			"config/policy/repos/$slug, holding the NAMES of its admitted accounts and\n" +
 			"nothing else. An account is admitted by the profiles that name it, each\n" +
 			"qualified by its profile's provider, and by a repository's own\n" +
-			"repos.<owner/name>.claude_accounts, qualified by that entry's provider: a\n" +
-			"repository whose runs are not on a profile job — a per-repository job, which\n" +
-			"is every Bitbucket repository — names its accounts there, because a profile\n" +
-			"is not the only kind of job its runs land on. The two are a union, and an\n" +
-			"account this config defines but neither names admits nothing a run could\n" +
-			"read. The children are narrowed before the shared node and widened\n" +
+			"repos.<owner/name>.claude_accounts, qualified by that entry's provider:\n" +
+			"an account this config defines but neither names admits nothing a run\n" +
+			"could read — a repository whose runs are not on a profile job (a\n" +
+			"per-repository job, which is every Bitbucket repository) names its\n" +
+			"accounts there, because a profile is not the only kind of job its runs\n" +
+			"land on. The two are a union, so nothing a profile admits is narrowed by\n" +
+			"a repository's entry.\n" +
+			"The children are narrowed before the shared node and widened\n" +
 			"after it, so a publish that stops between the two writes leaves the installation tighter than the config asked, never looser.\n" +
 			"When the node this publish writes carries a member an older Fugaro refuses\n" +
 			"whole — a credentials\n" +
