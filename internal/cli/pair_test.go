@@ -597,8 +597,8 @@ func TestPairRoleLowersToViewer(t *testing.T) {
 // bound on that answer and not a way around it. An operator who may not name a
 // role above their own may not name one above the entry's either — here the
 // operator holds admin and their own entry says operator, so the refusal is the
-// entry's and not the caller's — and the flag takes the node's role down from
-// the resolved one, which is what it is for.
+// entry's and not the caller's — and where the flag may lower at all it is the
+// first entry of an address that it lowers (see the disagreement below).
 func TestPairRoleFlagOnlyLowersTheResolvedRole(t *testing.T) {
 	// Above the resolved role, and equal to the operator's own: the entry's
 	// answer, not the caller's grant, is what refuses it.
@@ -622,15 +622,119 @@ func TestPairRoleFlagOnlyLowersTheResolvedRole(t *testing.T) {
 	}
 	f.pairOnlySeededEntries(t, pairDevA)
 
-	// Below the resolved role: written, with the role the flag named.
+	// The role the entry already carries: admitted, and written as it is.
 	f = newPairFixture(t, pairMe)
 	f.pairSeedEntry(pairDevA, pairMe, "operator")
-	if _, _, err := pairPair(t, f, token.Fingerprint(pairKeyBytes), "--role", "viewer"); err != nil {
+	if _, _, err := pairPair(t, f, token.Fingerprint(pairKeyBytes), "--role", "operator"); err != nil {
 		t.Fatal(err)
 	}
-	if _, role := f.pairEntryWritten(t, pairDevA); role != "viewer" {
-		t.Fatalf("--role viewer wrote %q, want viewer: the flag lowers the resolved operator", role)
+	if _, role := f.pairEntryWritten(t, pairDevA); role != "operator" {
+		t.Fatalf("--role operator wrote %q, want operator: a second device of an address carries the role its entry already resolves to", role)
 	}
+}
+
+// TestPairRefusesAnAddressItsOwnAllowlistCannotRead is the writer's half of P1's
+// fail-closed rule. The administered email is what the allowlist resolves a role
+// from, and an entry whose email cannot be canonicalised refuses the WHOLE
+// resolution — every pairing in the installation, not just this one — so the
+// command holds the address it is about to write to NormalizeEmail first.
+//
+// userEmail's own checks are not that check: it refuses an unverified address, a
+// service account and an address carrying a separator, and admits a single-label
+// domain, a domain literal, an address with no "@" and one with a non-ASCII byte.
+// Any of those written here would be this command breaking the installation it
+// was pairing into, and the node it wrote would be the reason.
+func TestPairRefusesAnAddressItsOwnAllowlistCannotRead(t *testing.T) {
+	for name, address := range map[string]string{
+		"a single-label domain": "dimi@localhost",
+		"a domain literal":      "dimi@[192.0.2.1]",
+		"no domain at all":      "dimi",
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newPairFixture(t, pairMe)
+			authenticatedUser = func(context.Context, *localcfg.Config) (string, error) { return address, nil }
+
+			out, _, err := pairRun(t, "--json")
+			if err == nil || ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v, want exit 1", err)
+			}
+			events := pairLines(t, out)
+			if len(events) != 1 || events[0].Event != pairEventRefused || events[0].Code != pairRefusedEmail {
+				t.Fatalf("events = %v, want one refused with %q", events, pairRefusedEmail)
+			}
+			if !strings.Contains(events[0].Reason, address) {
+				t.Fatalf("the refusal %q does not name the address the endpoint answered with", events[0].Reason)
+			}
+			if n := len(f.iam.SignCalls()); n != 0 {
+				t.Fatalf("a refused pairing minted %d tokens, want none: the address is checked before anything is minted", n)
+			}
+			for _, w := range f.pairWriteState() {
+				if w != nil {
+					t.Fatalf("a refused pairing wrote %v", w)
+				}
+			}
+		})
+	}
+}
+
+// TestPairRoleDisagreementRefused is the other direction of the ceiling, and it
+// is the one that keeps the allowlist readable: an address resolves to ONE role
+// (P1's rule, and the reason two exact entries that disagree are ErrAmbiguous),
+// so a device that lowered itself below the entry its own address already has
+// would not record a second opinion — it would leave every later pairing of that
+// address unable to resolve at all. The command refuses that write before it
+// makes it, and names the one alternative that works.
+func TestPairRoleDisagreementRefused(t *testing.T) {
+	f := newPairFixture(t, pairMe)
+	f.pairSeedEntry(pairDevA, pairMe, "operator")
+	out, _, err := pairRun(t, "--json", "--role", "viewer")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want exit 1", err)
+	}
+	events := pairLines(t, out)
+	if len(events) != 1 || events[0].Event != pairEventRefused || events[0].Code != pairRefusedRoleDisagrees {
+		t.Fatalf("events = %v, want one refused with %q", events, pairRefusedRoleDisagrees)
+	}
+	for _, want := range []string{pairMe, "operator", "viewer", "pair revoke"} {
+		if !strings.Contains(events[0].Reason, want) {
+			t.Fatalf("the refusal %q does not name %q: an operator who is told only that the role is wrong cannot tell what to pair instead or what to remove", events[0].Reason, want)
+		}
+	}
+	if n := len(f.iam.SignCalls()); n != 0 {
+		t.Fatalf("a refused role still called signJwt %d times", n)
+	}
+	f.pairOnlySeededEntries(t, pairDevA)
+}
+
+// TestPairAmbiguousAllowlistRefused: an installation whose entries for one
+// address disagree is a state this command will not write into — but one it can
+// still meet, from a hand-written node or a writer that is not this command — and
+// it must say which state it met. P1 refuses the whole resolution for such an
+// address (ErrAmbiguous, deliberately: picking a winner between two roles for one
+// key is a rule nobody wrote), so the pairing refuses and names both roles and
+// the deletion that repairs it, rather than reporting the allowlist as
+// unreadable.
+func TestPairAmbiguousAllowlistRefused(t *testing.T) {
+	f := newPairFixture(t, pairMe)
+	f.pairSeedEntry(pairDevA, pairMe, "operator")
+	f.pairSeedEntry(pairDevB, pairMe, "viewer")
+	out, _, err := pairRun(t, "--json")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want exit 1", err)
+	}
+	events := pairLines(t, out)
+	if len(events) != 1 || events[0].Event != pairEventRefused || events[0].Code != pairRefusedAllowlistAmbiguous {
+		t.Fatalf("events = %v, want one refused with %q", events, pairRefusedAllowlistAmbiguous)
+	}
+	for _, want := range []string{"operator", "viewer", "pair revoke"} {
+		if !strings.Contains(events[0].Reason, want) {
+			t.Fatalf("the refusal %q does not name %q", events[0].Reason, want)
+		}
+	}
+	if n := len(f.iam.SignCalls()); n != 0 {
+		t.Fatalf("a refused pairing minted %d tokens, want none", n)
+	}
+	f.pairOnlySeededEntries(t, pairDevA, pairDevB)
 }
 
 // pairSeedEntry puts one allowlist entry on the node as `fugaro pair` writes

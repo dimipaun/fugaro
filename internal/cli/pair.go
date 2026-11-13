@@ -239,20 +239,12 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 		}
 	}
 
-	// §7.1 step 2, D226: the one address this command may administer
-	// is the pairing operator's own verified one, read by the check
+	// §7.1 step 2, D226: the one address this command may administer is the
+	// pairing operator's own verified one, read by the check
 	// init_members.go's userEmail already performs for the CLI. --email is
 	// therefore not a free field: an address that is not the operator's own
 	// would put a device on D166's allowlist under an address nobody proved
 	// they hold, and the node's existence is the whole of what the rules read.
-	// The comparison is between canonical forms: own comes back trimmed and
-	// lower-cased from userEmail, and the typed value is trimmed and folded the
-	// same way before NormalizeEmail folds the domain, because the provider an
-	// address of this shape belongs to resolves the local part
-	// case-insensitively — the operator who capitalised a letter of their own
-	// address typed their own address, and refusing it would send them to
-	// change an account rather than a keystroke. What differs after both folds
-	// is a different address and is refused rather than repaired.
 	own, err := authenticatedUser(ctx, lc)
 	if err != nil {
 		// The check reads the address from the identity endpoint, so it can
@@ -262,45 +254,35 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 		// answer would go and fix the wrong thing.
 		return pairRefuse(ev, o, pairRefusalCode(err, pairRefusedEmail), err)
 	}
-	email := strings.ToLower(strings.TrimSpace(o.email))
-	if email == "" {
-		email = own
-	} else if email, err = mobileauth.NormalizeEmail(email); err != nil {
+	email, err := pairAdministeredEmail(own, o.email)
+	if err != nil {
 		return pairRefuse(ev, o, pairRefusedEmail, err)
-	} else if email != own {
-		return pairRefuse(ev, o, pairRefusedEmail,
-			fmt.Errorf("--email %s is not your own verified address (%s): a device node's administered email is an address this installation has proved the pairing operator holds, and pairing refuses one it cannot attribute to you", email, own))
 	}
 
 	// D224, and this is the place the resolution runs: once, in the CLI, at the
 	// write, for the address the entry is about to carry. `pair ls` and the
 	// console then read the role off the node and re-resolve nothing, which is
 	// what makes an entry's role a fact rather than a function of the allowlist
-	// it was read beside.
+	// it was read beside. The read is one like the probe above, so every
+	// refusal below still lands before anything is minted or written.
 	//
 	// It runs whether or not --role was given, because the flag is a bound on
-	// this answer and not a way around it: an operator who may not name a role
-	// higher than their own may not name one higher than the allowlist's answer
-	// for their address either, or the node would carry a role the allowlist
-	// does not grant and the reader that trusts the node (P4, the rules) would
-	// trust it. --role can only take the role down from here. The read is one
-	// like the probe above, so both refusals still land before anything is
-	// minted or written.
-	resolved, err := pairResolveEntryRole(ctx, lc, db, email, ownRole)
+	// this answer and not a way around it: an operator may not name a role
+	// above their own grant, and may not name one the allowlist does not grant
+	// for their address either — v1's readers (the CLI and the console, D225;
+	// never the rules) report the node's role as the person's authority, and a
+	// node holding a role the allowlist does not would be a grant nobody made.
+	role, err := pairResolveEntryRole(ctx, lc, db, email, ownRole, wantRole)
 	switch {
 	case err == nil:
 	case errors.Is(err, errPairResolvedAbove):
 		return pairRefuse(ev, o, pairRefusedRoleAbove, err)
+	case errors.Is(err, errPairRoleDisagrees):
+		return pairRefuse(ev, o, pairRefusedRoleDisagrees, err)
+	case errors.Is(err, mobileauth.ErrAmbiguous):
+		return pairRefuse(ev, o, pairRefusedAllowlistAmbiguous, err)
 	default:
 		return pairRefuse(ev, o, pairRefusalCode(err, pairRefusedAllowlistUnreadable), err)
-	}
-	role := resolved
-	if o.role != "" {
-		if !resolved.AtLeast(wantRole) {
-			return pairRefuse(ev, o, pairRefusedRoleAbove,
-				fmt.Errorf("--role %s is above the %s the allowlist resolves for %s: a device node carries the role resolved for the administered address, and --role may only lower it", wantRole, resolved, email))
-		}
-		role = wantRole
 	}
 
 	signer, err := (&cloudEnv{lc: lc}).tokenSigner(ctx)
@@ -902,6 +884,49 @@ func pairInheritedRole(grants []accesslib.Grant, me string) mobileauth.Role {
 	return accesslib.EffectiveAtProject(accesslib.Input{Grants: grants}, me)
 }
 
+// pairAdministeredEmail is the address the entry is written with (§7.1 step 2,
+// D226): the operator's own verified one, canonicalised by the same rule P1
+// reads entries with, with --email admitted only when it is that same address.
+//
+// Both sides go through NormalizeEmail, and that is the whole reason this is a
+// function rather than two lines at the call site: the value written has to be
+// one this build's own reader can read back. userEmail's checks are its own and
+// none of them promises that — the address is verified, it is no service
+// account, it carries no separator — while NormalizeEmail refuses a non-ASCII
+// byte, a missing or doubled "@", a domain literal, a single-label domain and a
+// dotted-atom violation. An entry whose administered email cannot be
+// canonicalised is exactly what P1 refuses the WHOLE resolution over, so a
+// pairing that wrote one would refuse every later pairing in the installation,
+// and the node it wrote would be the reason. The refusal is therefore here,
+// before anything is written, and it names the address rather than the entry it
+// would have made.
+//
+// The comparison is on canonical forms and folds case the way userEmail does:
+// own comes back trimmed and lower-cased from it, and the typed value is
+// trimmed and folded the same way before NormalizeEmail folds the domain,
+// because the provider an address of this shape belongs to resolves the local
+// part case-insensitively — the operator who capitalised a letter of their own
+// address typed their own address, and refusing that would send them to change
+// an account rather than a keystroke. What differs after both folds is a
+// different address and is refused rather than repaired.
+func pairAdministeredEmail(own, typed string) (string, error) {
+	mine, err := mobileauth.NormalizeEmail(strings.ToLower(strings.TrimSpace(own)))
+	if err != nil {
+		return "", fmt.Errorf("the identity endpoint answered with %q as your verified address, and that is not an address this installation's allowlist can carry (%v): a device node's administered email is what the allowlist resolves a role for, so an entry this build cannot read would refuse every pairing in the installation, and this command will not write one", own, err)
+	}
+	if strings.TrimSpace(typed) == "" {
+		return mine, nil
+	}
+	want, err := mobileauth.NormalizeEmail(strings.ToLower(strings.TrimSpace(typed)))
+	if err != nil {
+		return "", err
+	}
+	if want != mine {
+		return "", fmt.Errorf("--email %s is not your own verified address (%s): a device node's administered email is an address this installation has proved the pairing operator holds, and pairing refuses one it cannot attribute to you", want, mine)
+	}
+	return want, nil
+}
+
 // errPairResolvedAbove is D224's own refusal: the role the allowlist resolves
 // for this pairing's entry is above the one the pairing operator holds, so
 // writing it would put authority on a device that nobody bounded (RS8). It is
@@ -910,30 +935,62 @@ func pairInheritedRole(grants []accesslib.Grant, me string) mobileauth.Role {
 // about, the other names a node to fix — and they carry different wire codes.
 var errPairResolvedAbove = errors.New("pairing: the resolved entry is above the pairing operator's own role")
 
+// errPairRoleDisagrees refuses a --role that would leave one address with two
+// entries that disagree about the role — the entry the address already has in
+// one role, this device in another.
+//
+// It is a refusal and not a permission because of what the resolver does with
+// such a state: P1 answers an address whose two entries disagree with
+// ErrAmbiguous, deliberately, since picking a winner between two roles for one
+// key is a rule nobody wrote. So a pairing that wrote the disagreeing entry
+// would not merely record a second opinion — it would leave every LATER pairing
+// of that address unresolvable, and the only writer that could undo it is
+// `pair revoke`, which deletes a device. Refusing the write that would create
+// the state costs the operator one sentence and one alternative (pair this
+// device as the entry's role, or revoke the device carrying it first), which is
+// what the message names.
+//
+// The limitation it exposes is the plan's own shape and not this command's: an
+// entry is a DEVICE node (D222), so one person pairing two phones makes two
+// entries, while D224's resolution is a question about an ADDRESS — and P1 can
+// answer it only while those entries agree. One address therefore carries one
+// role, and a second device of the same address carries it too.
+var errPairRoleDisagrees = errors.New("pairing: this device's role would disagree with the entry the address already has")
+
 // pairResolveEntryRole is D224 at the write: the role the entry `fugaro pair` is
 // about to write carries, resolved ONCE, here, from the allowlist's own device
 // nodes — so no reader resolves a role, and `pair ls` prints what the node
 // holds rather than what the allowlist would say about it today.
 //
-// The three answers, and why each is the one written:
+// own is the pairing operator's own project-scope role and want is --role
+// (RoleNone when the operator gave none). The three answers, and why each is
+// the one written:
 //
 //   - An entry already names the address. P1's resolver answers, so an exact
 //     entry overrides its domain's (the spec's own rule) and the domain rule
-//     lands on the node at the write (D223) instead of at a read. A role above
-//     own is refused rather than clamped: own is what bounds a device (RS8), and
-//     a silent clamp would record a role the allowlist does not carry.
+//     lands on the node at the write (D223) instead of at a read. --role may
+//     agree with that answer or say nothing; it may not raise it (a role above
+//     own is refused rather than clamped — own is what bounds a device, RS8,
+//     and a silent clamp would record a role the allowlist does not carry) and
+//     it may not lower it (errPairRoleDisagrees: a second entry carrying
+//     another role for the same address is a state no reader can resolve).
 //   - No entry names the address. The person is not on the allowlist yet and
-//     this pairing is what puts them there, so the role is the caller's own
-//     project-scope role — Phase 6's rule, and the only admission a project
-//     whose allowlist is still empty has (D230: the first entry is the first
-//     pairing's, and the creator who runs it holds an admin).
-//   - The allowlist cannot be read. Refused, by the node that carries the value
-//     and never by the value itself. P1 refuses a whole resolution over one
-//     entry it cannot read, and this command must not paper over that: an entry
-//     nobody can identify might be the narrower one for this address, so
-//     falling through to the caller's own role would write a wider role where
-//     the node's writer meant something narrower.
-func pairResolveEntryRole(ctx context.Context, lc *localcfg.Config, db *rtdb.Client, address string, own mobileauth.Role) (mobileauth.Role, error) {
+//     this pairing is what puts them there, so the role is --role when the
+//     operator gave one (already checked against own) and the caller's own
+//     project-scope role otherwise — Phase 6's rule, and the only admission a
+//     project whose allowlist is still empty has (D230: the first entry is the
+//     first pairing's, and the creator who runs it holds an admin).
+//   - The allowlist cannot be read, or an address's entries disagree. Refused,
+//     by the node that carries the value and never by the value itself. P1
+//     refuses a whole resolution over one entry it cannot read, and this command
+//     must not paper over that: an entry nobody can identify might be the
+//     narrower one for this address, so falling through to the caller's own role
+//     would write a wider role where the node's writer meant something narrower.
+//     An address whose entries disagree (P1's ErrAmbiguous) is refused too, and
+//     the caller tells it from the two refusals above by its sentinel, because
+//     it is a state to repair (`pair ls` prints the entries, `pair revoke`
+//     deletes one) and not a role to ask about.
+func pairResolveEntryRole(ctx context.Context, lc *localcfg.Config, db *rtdb.Client, address string, own, want mobileauth.Role) (mobileauth.Role, error) {
 	exact, domains, unreadable, err := pairAllowlistEntries(ctx, lc, db)
 	if err != nil {
 		return mobileauth.RoleNone, err
@@ -943,17 +1000,29 @@ func pairResolveEntryRole(ctx context.Context, lc *localcfg.Config, db *rtdb.Cli
 			rules.PathDevices, len(unreadable), mobileauth.NodeFieldEmail, strings.Join(unreadable, ", "))
 	}
 	if !pairAllowlistNames(exact, domains, address) {
+		if want != mobileauth.RoleNone {
+			return want, nil
+		}
 		return own, nil
 	}
 	role, err := mobileauth.Resolve(exact, domains, address)
 	if err != nil {
-		return mobileauth.RoleNone, fmt.Errorf("the allowlist cannot resolve a role for %s: %w; a device node's role is resolved from the allowlist's entries at the write and nowhere else (D224), so an admin fixes the node — `fugaro pair ls` prints them — before this pairing can be written", address, err)
+		return mobileauth.RoleNone, fmt.Errorf("the allowlist cannot resolve a role for %s: %w; a device node's role is resolved from the allowlist's entries at the write and nowhere else (D224), so this pairing writes nothing until the entries are repaired — `fugaro pair ls` prints them, and `fugaro pair revoke` deletes a device whose node is the one in the way", address, err)
 	}
 	if !own.AtLeast(role) {
 		return mobileauth.RoleNone, fmt.Errorf("%w: %s's entry resolves to %s, above your own role (%s); a device cannot be more than the person pairing it, so ask an admin to write the entry, or pair it as someone who holds %s",
 			errPairResolvedAbove, address, role, own, role)
 	}
-	return role, nil
+	switch {
+	case want == mobileauth.RoleNone || want == role:
+		return role, nil
+	case role.AtLeast(want):
+		return mobileauth.RoleNone, fmt.Errorf("%w: %s is already an entry with role %s, and this device would carry %s; one address resolves to one role (that is what the entries of an address have to agree about), so pairing a second device of it as %s would leave the two unable to resolve — pair this device as %s, or revoke the device whose entry carries %s first with `fugaro pair revoke`, which `fugaro pair ls` prints",
+			errPairRoleDisagrees, address, role, want, want, role, role)
+	default:
+		return mobileauth.RoleNone, fmt.Errorf("%w: --role %s is above the %s %s's entry already resolves to, and a device node carries the role resolved for the administered address; --role may only lower a role no entry has claimed yet, and this address has one",
+			errPairResolvedAbove, want, role, address)
+	}
 }
 
 // pairAllowlistEntries reads the allowlist's device nodes as the entries the
@@ -1037,12 +1106,17 @@ func pairAllowlistEntries(ctx context.Context, lc *localcfg.Config, db *rtdb.Cli
 // The comparison is on canonical forms, so an entry written in another spelling
 // of the same address still counts as naming it: that entry is then Resolve's to
 // refuse, which is what stops a hand-edited exact entry from falling through to
-// a wider domain's role. An address this build cannot canonicalise names nothing
-// and is left to the caller's own role, exactly as it is left to Resolve.
+// a wider domain's role. An address this build cannot canonicalise is the one
+// value that cannot be compared at all, and it is answered "named" rather than
+// "absent": "absent" is the branch that writes the caller's own role, and the
+// function that refuses an address it cannot canonicalise is Resolve, which
+// canonicalises first and answers ErrNotAllowed. So the fail-closed answer here
+// is to send it there. (The caller's own address cannot be one of these:
+// pairAdministeredEmail wrote it with NormalizeEmail.)
 func pairAllowlistNames(exact, domains []mobileauth.Entry, address string) bool {
 	want, err := mobileauth.NormalizeEmail(address)
 	if err != nil {
-		return false
+		return true
 	}
 	for _, e := range exact {
 		if normal, err := mobileauth.NormalizeEmail(e.Address); err == nil && normal == want {
