@@ -255,6 +255,28 @@ node and it is over"* was written to avoid, and D222 refuses a second record for
 So the honest shape of the path is: **a provider session whose authorisation is still the node** —
 which is D221's recommendation with a sign-in bolted in front of it, and not the spec's flow.
 
+### 5.1 The allowlist predicate this would need, word for word
+
+The reconciliation wrote this mapping out at
+[reconciliation.md](reconciliation.md) §3.3, and it is what the session above would be checked
+against. It is quoted here rather than re-derived, because it is the half of §3 that decides whether
+the path is usable at all — every row that is *not* enforceable in the rules is a row that has to
+move out of them:
+
+| The spec's rule | On the device node | Enforceable in the rules? |
+| --- | --- | --- |
+| An exact address is allowed | the node at `config/admin/devices/<uid>` exists, and its `email` field equals the token's address | **Yes** — `auth.uid` is path-safe and the email is compared as a **value** (F4) |
+| A whole domain is allowed | a domain entry resolved **when the entry is written**: the person's phone is paired, and the node carries the address | **Only as a literal pattern** over `auth.token.email`; a pattern read from data is **U1**, unverified — and D223 puts the rule at administration instead |
+| An exact address overrides its domain's role | the node carries the **resolved** role, so there is nothing to resolve at read time | **Yes** — one field of one node, which is immediate (F13) |
+| Roles: viewer / operator / admin | a `role` field on the node, written day one, read by the CLI and the console; no rule reads it in v1 | **Yes, later** — `child('role').val()` is expressible and immediate; v1 grants every paired device the same `USER` and splits nothing (F12) |
+| Removal takes effect immediately | deleting the node | **Yes** — and this is the property the provider path's own session loses (§5) |
+
+Two things the table settles that a reader of §1 alone would miss. The comparison the rules can
+make is **between two values** — the token's address and a field of a node keyed by the path-safe
+`auth.uid` — so a provider session changes what the token carries and **not** what the rules
+compare; and the domain row is the one row that cannot be made enforceable at read time, which is
+D223's answer and not a gap in it.
+
 ---
 
 ## 6. What would have to be proved before a line is written
