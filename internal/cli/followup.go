@@ -779,10 +779,15 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 	// (one stored before the mix reached the launch, or launched when this
 	// repository mixed nothing), and the name the run's review stages will be
 	// served by is still the config's.
-	resolved, err := claudeAccountFor(ctx, env, repo, account, "", c.Ref, checkout())
+	resolved, alias, err := claudeAccountChoice(ctx, env, repo, account, "", c.Ref, checkout())
 	if err != nil {
 		return nil, err
 	}
+	// A follow-up names the pair only where this launch read an alias:
+	// `--pr N --token ALIAS` takes the alias' current target (D2098), while the
+	// account a follow-up inherits is one its previous run resolved, and the
+	// record carries no alias to name (F4).
+	o.account = launchAccount{Name: resolved, Alias: alias}
 	if o.token != "" && account != cmp.Or(c.OAuthToken, config.DefaultClaudeAccount) {
 		fmt.Fprintf(warn, "note: --token %s switches this follow-up from %s's Claude account %s to %s\n",
 			pluginwire.Printable(o.token), pluginwire.Printable(task.ShortRun(oneLineCLI(c.Previous.Run))),

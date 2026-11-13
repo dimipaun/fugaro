@@ -1085,6 +1085,11 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 	// gone: the read is a report about a launch that has already happened, so
 	// no run waits on it and a launch that cannot read it is still a launch.
 	res.ChainLimits = launchChainLimits(ctx, env, o, slug, spec)
+	// The account this launch resolved and the alias it read it through, which
+	// its own line names (spec §7, D2099): the spec builders above record the
+	// pair where they resolve it, and every launch shape reaches its line
+	// through this one reply.
+	res.account = o.account
 	return res, nil
 }
 
@@ -2573,10 +2578,16 @@ func resolveAttemptPlan(ctx context.Context, env *cloudEnv, o *runOptions, total
 	// network call a disallowed --token should never trigger — the account
 	// is checked against config.AllowedClaudeAccounts first, using only the
 	// local config and the checkout already in hand, no network of its own.
-	account, err := claudeAccountFor(ctx, env, repo, o.token, "", ref, checkout())
+	account, alias, err := claudeAccountChoice(ctx, env, repo, o.token, "", ref, checkout())
 	if err != nil {
 		return nil, err
 	}
+	// The pair the launch's own line names (spec §7, D2099), recorded where the
+	// account is resolved: this is the one place a first run's account is read,
+	// and the alias is the launcher's display fact — it enters no task, and the
+	// reply is built from it in finishLaunch. Every attempt of a batch carries
+	// the plan's own pair, which is one account for all of them.
+	o.account = launchAccount{Name: account, Alias: alias}
 	root := checkoutRoot(ctx, repo)
 	rcp, mode, err := chooseRecipe(ctx, env, o.recipe, checkout, root, warn, forAttempts)
 	if err != nil {
@@ -2889,10 +2900,14 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 			return "", nil, err
 		}
 	}
-	account, err := claudeAccountFor(ctx, env, repo, o.token, "", ref, checkout())
+	account, alias, err := claudeAccountChoice(ctx, env, repo, o.token, "", ref, checkout())
 	if err != nil {
 		return "", nil, err
 	}
+	// This launch's own pair, as resolveAttemptPlan records a first run's: a
+	// review-mode launch resolves its account from the flag like any fresh
+	// launch, and its line names what it read (spec §7, D2099).
+	o.account = launchAccount{Name: account, Alias: alias}
 	printRecipeNote(warn, rr, true)
 	spec := &task.Spec{Version: 1, RunID: runID, Repo: repo, Ref: ref, BaseBranch: base, Workflow: workflow, Task: text, Title: o.title, PlanTask: o.planTask,
 		RequestedBy: me, Batch: o.batch, Recipe: rr.taskRecipe(), ReviewPRs: append([]int(nil), o.pr...),

@@ -135,6 +135,40 @@ func TestLaunchTaskCarriesTheResolvedAccount(t *testing.T) {
 	}
 }
 
+// TestLaunchLineNamesTheAliasAndItsAccount is the launch's own line (spec §7,
+// D2099): a launch that read an alias prints the pair, so the operator sees
+// which alias decided the run and which account its job mounts — the account
+// alone would hide the first, the alias alone the second. A launch that read no
+// alias prints what it always printed.
+func TestLaunchLineNamesTheAliasAndItsAccount(t *testing.T) {
+	f := newCloudFixture(t)
+	f.appendConfig(t, claudeAccountsConfig+aliasBlock("reviewer", "acme-overflow")+"default_claude_account: reviewer\n")
+	oauthCheckout(t, f, "")
+	writeBuildRecord(t, f, otherSlug, "svc", release065)
+	f.run.AddJob(gcp.JobName(otherSlug, gcp.WorkflowVariant("svc", "acme-overflow")), "2", "4Gi")
+	out, _, err := execute(t, "run", "--run-id", "20261111-120000-a4a4", "A task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "launch a4a4 (account reviewer -> acme-overflow)"; !strings.Contains(out, want) {
+		t.Errorf("the launch line does not carry %q:\n%s", want, out)
+	}
+
+	// The same launch with no alias anywhere names no pair.
+	f2 := newCloudFixture(t)
+	f2.appendConfig(t, claudeAccountsConfig)
+	oauthCheckout(t, f2, "")
+	writeBuildRecord(t, f2, otherSlug, "svc", release065)
+	f2.run.AddJob(gcp.JobName(otherSlug, gcp.WorkflowVariant("svc", "acme-overflow")), "2", "4Gi")
+	out, _, err = execute(t, "run", "--run-id", "20261111-120000-a5a5", "A task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, " -> ") {
+		t.Errorf("a launch that read no alias printed an account pair:\n%s", out)
+	}
+}
+
 // The publish is the other reader an alias is resolved at (D2091, D2090): the
 // node is what every job image and every teammate's launcher reads, and it
 // holds accounts and never this machine's names for them. The tests here are
