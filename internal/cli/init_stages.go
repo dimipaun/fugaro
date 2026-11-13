@@ -102,6 +102,16 @@ type initEngine struct {
 	// list to hold, outputs that could not be read — and it is cleared by the
 	// write, so a root that runs twice lands it once.
 	accessSeed *accesslib.Node
+
+	// accessMark is the migration's other landing (update_access.go): the roles
+	// step read the installation's own lists and they hold no grant the node can
+	// rank — a grant names a person, and a group:, a domain: and a
+	// serviceAccount: are not addresses the CLI can match a caller against (F25)
+	// — so there is no node to write and the marker alone is what lands. It is
+	// what tells such an installation, which HAS run this update, from one whose
+	// lists the node has never held: the two are one state otherwise, and RS6c's
+	// gates would then never run on it. Cleared by the landing, as accessSeed is.
+	accessMark bool
 }
 
 // environment runs the environment check once (it prints the local

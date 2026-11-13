@@ -8,6 +8,7 @@ import (
 	"time"
 
 	accesslib "github.com/dimipaun/fugaro/internal/access"
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -374,7 +375,16 @@ func TestLegacyMemberFormsKeepTheirGrants(t *testing.T) {
 // made — the node stays absent, exactly as the run found it. The second update
 // is then as helpless as the first, and the flags are no way out either: they
 // fold into a node and never make one (landFlagLists).
+//
+// An absent node is what this installation and one nobody has migrated look like
+// in the database, and only the marker tells them apart (access.PathMigrated):
+// the lists it holds ARE the lists the run read, so the run records that this
+// installation has migrated and its roster is nobody. Without that the gate
+// would read the installation as one whose lists have never been migrated and
+// leave every command it guards as it was, which is what this case pins: the
+// marker stands and a project-level write is refused against the empty roster.
 func TestAMigrationWithNoUserMemberWritesNoNode(t *testing.T) {
+	noAgentSession(t)
 	legacy := []string{"group:eng@example.com", "domain:example.com", "serviceAccount:auto@proj-1234.iam.gserviceaccount.com"}
 	_, db := accessRig(t, legacy, legacy, legacy, legacy)
 	out, errOut, err := executeStdin(t, "", "update", "--yes")
@@ -388,6 +398,33 @@ func TestAMigrationWithNoUserMemberWritesNoNode(t *testing.T) {
 	if strings.Contains(all, "migrated the installation's member lists into the grants node") {
 		t.Errorf("the run says it migrated a roster it derived no grant from:\n%s", all)
 	}
+	if !accessMarked(t, db) {
+		t.Fatalf("the migration left no marker: an installation whose lists it READ and found nobody in is indistinguishable from one nobody has migrated, and the commands RS6c gates would never be checked on it:\n%s", all)
+	}
+	userPairAs(t, accessMember(t, "owner@example.com"))
+	_, _, err = execute(t, "budget", "set", "--global", "--per-run", "3")
+	accessRefused(t, err,
+		"nothing was set",
+		"setting the project's own caps needs admin at project scope",
+		"(user:owner@example.com) hold nothing in the grants node")
+	if v := db.Value(budget.PathCapsGlobal); v != nil {
+		t.Errorf("the refused set wrote %s = %v", budget.PathCapsGlobal, v)
+	}
+}
+
+// accessMarked is the migration marker as the fake database holds it: whether
+// this installation reads as one whose roles have moved out of the member lists.
+func accessMarked(t *testing.T, db *gcpfake.RTDB) bool {
+	t.Helper()
+	cl, err := newBudgetClient(t.Context(), db.URL, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marked, err := accesslib.Migrated(t.Context(), cl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return marked
 }
 
 // TestPlanIsEmptyForAPureRename: the rename moves the WORDS and not the IAM.
