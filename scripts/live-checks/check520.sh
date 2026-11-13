@@ -160,6 +160,15 @@ LAUNCH_REPO=""
 RUN_REF=""
 SETTLED=no
 MODEL_USD=""
+# PREMISE_OK is set by the one branch of step_premise that establishes the state
+# the run is a reading of. step_run reads it and nothing else: a run launched
+# after a failed premise would spend the sandbox's money measuring a state this
+# check could not name.
+PREMISE_OK=no
+# MODELS_OK is the same for step_models: two IDs that name two different models
+# are what makes a stage timing naming the vision model a reading of the rewrite
+# rather than of the coder's own model.
+MODELS_OK=no
 
 scratch_up() {
   SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/chk520.XXXXXXXX") || die "Check 520 cannot make a scratch directory"
@@ -354,11 +363,15 @@ run_bounded() { # run_bounded SECONDS KEY DIR CMD...
   shift 3
   BOUNDED_TIMED_OUT=no
   ( trap - ERR; cd "$dir" || exit 1; exec "$@" ) >>"$SCRATCH/$key.out" 2>>"$SCRATCH/$key.err" &
-  local pid=$! waited=0
+  # The poll is a tenth of a second and the bound is counted in tenths: a read
+  # that answers at once — every one of them, when the installation is healthy —
+  # would otherwise cost this check a whole second each, and the owner watches
+  # the check rather than the clock.
+  local pid=$! ticks=0 max=$((secs * 10))
   while kill -0 "$pid" 2>/dev/null; do
-    [ "$waited" -lt "$secs" ] || break
-    sleep 1
-    waited=$((waited + 1))
+    [ "$ticks" -lt "$max" ] || break
+    sleep 0.1
+    ticks=$((ticks + 1))
   done
   if kill -0 "$pid" 2>/dev/null; then
     BOUNDED_TIMED_OUT=yes
@@ -522,6 +535,7 @@ step_premise() {
     return 0
     ;;
   *"is priced without an image rate"*)
+    PREMISE_OK=yes
     fact premise PASS "doctor says: ${problem} — the coder cannot read an image and the vision slot covers it, which is the state V7 rewrites. Its own remedy line reads: ${fix}"
     return 0
     ;;
@@ -566,6 +580,7 @@ step_models() {
     fact models FAIL "the row for ${REPO} names the coder and the vision slot the same model (${VISION}): the record's stage timings would name it whether the rewrite happened or not, so nothing below could tell the rewrite from the coder's own model. Name a different model for images"
     return 0
   fi
+  MODELS_OK=yes
   fact models PASS "${REPO} runs coder ${CODER} and agent.models.vision ${VISION}: the two are different models, so a stage timing that names ${VISION} is the rewrite and not the coder"
 }
 
@@ -575,6 +590,15 @@ step_models() {
 step_run() {
   if [ -z "$PROJECT" ]; then
     unmeasured run-launched "there is no project to launch a run in: the row above says why"
+    return 0
+  fi
+  # A run is launched only once the two rows above have named the state it is a
+  # reading of — a coder that cannot read an image, a slot that covers it, and
+  # the two model IDs the record is read against. A run launched after either
+  # failed would spend the sandbox's money on a reading nobody could grade, and
+  # the FAIL row above is already the finding.
+  if [ "$PREMISE_OK" != yes ] || [ "$MODELS_OK" != yes ]; then
+    unmeasured run-launched "nothing was launched: the premise or the models row above did not establish the state this run is a reading of, and a run launched without it would spend the sandbox's money on a reading nobody could grade. Settle the row(s) above and run this check again"
     return 0
   fi
   say "launching one run from ${SANDBOX} (a real sandbox run, with what its task costs)"
@@ -725,7 +749,7 @@ step_stages() {
     return 0
   fi
   if [ -n "$wrong" ]; then
-    fact vision-stages FAIL "the record's coder-role stages do not all name the vision model ${VISION}: ${seen} — a coder-role stage on another model is either the rewrite not having happened or the stage having been pinned by hand, and the run's stages are ${names}. The record is in $SCRATCH/record.out"
+    fact vision-stages FAIL "the record's coder-role stages do not all name the vision model ${VISION}: ${seen}, and the ones on another model are ${wrong} — a coder-role stage on another model is either the rewrite not having happened or the stage having been pinned by hand, and the run's stages are ${names}. The record is in $SCRATCH/record.out"
     return 0
   fi
   fact vision-stages PASS "every coder-role stage the run ran is pinned to the vision model ${VISION} — ${seen} — read from the record's own stage timings (the run's stages are ${names}). A reviewer's stage is deliberately not rewritten (D2004) and is not graded here"
