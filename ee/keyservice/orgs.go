@@ -444,6 +444,12 @@ func (s *Service) accessTo(ctx context.Context, actor Caller, organisationID, ac
 // deletion, and the list is not the place to describe one. The order is the last
 // use, then the id, so that two organisations nobody has worked in still have an
 // order a page and a test can rely on.
+//
+// The rule every one of those memberships carries is applied to the list as it is
+// built, so a sign-in an operations or a reseller membership refuses is refused
+// the list too (D2207, F10). The list is a request that membership carries like
+// any other: a person the rule turns away is told so at their first screen rather
+// than reading a customer's name and meeting the refusal at the door it opens.
 func (s *Service) organisationsOf(ctx context.Context, actor Caller) ([]WireOrganisation, error) {
 	held, err := membershipsOf(ctx, s.docs, actor.UID)
 	if err != nil {
@@ -457,6 +463,9 @@ func (s *Service) organisationsOf(ctx context.Context, actor Caller) ([]WireOrga
 		}
 		if !present {
 			continue
+		}
+		if err := s.requireSSO(actor, org); err != nil {
+			return nil, err
 		}
 		reached = append(reached, reachableOrganisation{org: org, lastUsedAt: membership.LastUsedAt})
 	}
@@ -585,15 +594,21 @@ func (s *Service) selectOrganisation(ctx context.Context, actor Caller, organisa
 		if !present {
 			return errNoSuchOrganisation
 		}
-		if err := s.requireSSO(actor, org); err != nil {
-			return err
-		}
+		// The membership is read before the rule is applied, so that an
+		// organisation the caller does not belong to is the same 404 whether it
+		// is there or not (ownMembership's own order): a rule answered first
+		// would tell a stranger which of the ids they guessed is an operations
+		// or a reseller organisation, and only an organisation's own member is
+		// refused for the sign-in they used.
 		membership, member, err := getRecord[WireMembership](ctx, tx, membershipsCollection, membershipID(org.ID, actor.UID))
 		if err != nil {
 			return err
 		}
 		if !member {
 			return errNoSuchOrganisation
+		}
+		if err := s.requireSSO(actor, org); err != nil {
+			return err
 		}
 		now := s.now()
 		membership.LastUsedAt = &now

@@ -114,7 +114,9 @@ func (s *Service) apiListOrganisations(w http.ResponseWriter, r *http.Request) {
 	}
 	orgs, err := s.organisationsOf(r.Context(), actor)
 	if err != nil {
-		failAPI(w, err)
+		// The rule a membership carries is applied to the list, so the refusal
+		// here is the same one every other route answers it with.
+		refuseOrgAccess(w, err)
 		return
 	}
 	answerAPI(w, http.StatusOK, WireOrgList{Organisations: orgs})

@@ -71,7 +71,7 @@ var errAuditNeedsAnActor = errors.New("keyservice: an audit entry with no actor 
 // carries on after its line was not written is the one thing the log exists to
 // prevent (accessTo).
 func (s *Service) recordAudit(ctx context.Context, actor Caller, entry auditEntry) error {
-	if actor.UID == "" || strings.TrimSpace(actor.Email) == "" || strings.TrimSpace(entry.Action) == "" {
+	if strings.TrimSpace(actor.UID) == "" || strings.TrimSpace(actor.Email) == "" || strings.TrimSpace(entry.Action) == "" {
 		return errAuditNeedsAnActor
 	}
 	id, err := newID()

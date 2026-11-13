@@ -476,6 +476,10 @@ func TestSSORuleFollowsTheActorsMembership(t *testing.T) {
 		{name: "the operations organisation itself", method: http.MethodGet, path: apiOrgPathOf(operations.ID)},
 		{name: "a customer organisation", method: http.MethodGet, path: apiOrgPathOf(customer.ID)},
 		{name: "a customer organisation's members", method: http.MethodGet, path: apiOrgMembersPathOf(customer.ID)},
+		// The switcher's list is a request the membership carries like any
+		// other: it is made of the organisations those memberships are in, and
+		// the rule of each of them is applied as the list is built.
+		{name: "the switcher's list", method: http.MethodGet, path: apiOrgsPath},
 		// Selecting is the one route that uses a membership of its own subject
 		// — a person selects an organisation they belong to — so the rule it
 		// follows is that membership's: the operations organisation's.
@@ -501,12 +505,18 @@ func TestSSORuleFollowsTheActorsMembership(t *testing.T) {
 	if got := readAnswer[WireOrganisation](f, read); got.ID != customer.ID {
 		t.Errorf("the read answered the organisation %q, want %q", got.ID, customer.ID)
 	}
+	if list := f.listOrgs(); len(list) != 1 || list[0].ID != operations.ID {
+		t.Errorf("an operations member signed in with Google listed %+v, want their own organisation %q", list, operations.ID)
+	}
 
 	// A reseller's member is refused the same way until a directory is pinned
 	// (D2207's fallback: Google only, which is the rule's zero value).
 	f.actsAs(sellerUID, sellerMail, signInEmailLink)
 	if rec := f.apiAs(http.MethodGet, apiOrgPathOf(reseller.ID), ""); rec.Code != http.StatusForbidden {
 		t.Errorf("a reseller's member by email link was answered %d (%s), want the SSO refusal", rec.Code, rec.Body)
+	}
+	if rec := f.apiAs(http.MethodGet, apiOrgsPath, ""); rec.Code != http.StatusForbidden {
+		t.Errorf("a reseller's member by email link read the switcher's list %d (%s), want the SSO refusal there too: the list is the first screen of the portal", rec.Code, rec.Body)
 	}
 	f.actsAs(sellerUID, sellerMail, signInGoogle)
 	if rec := f.apiAs(http.MethodGet, apiOrgPathOf(reseller.ID), ""); rec.Code != http.StatusOK {
@@ -518,6 +528,9 @@ func TestSSORuleFollowsTheActorsMembership(t *testing.T) {
 	f.actsAs(danaUID, danaEmail, signInEmailLink)
 	if rec := f.apiAs(http.MethodGet, apiOrgPathOf(customer.ID), ""); rec.Code != http.StatusOK {
 		t.Errorf("a customer reading their own organisation by email link was answered %d (%s), want it: the rule follows operations and reseller memberships and no other", rec.Code, rec.Body)
+	}
+	if list := f.listOrgs(); len(list) != 1 || list[0].ID != customer.ID {
+		t.Errorf("a customer's switcher list by email link is %+v, want their own organisation %q: nothing follows a customer membership", list, customer.ID)
 	}
 }
 
@@ -592,6 +605,63 @@ func TestOperationsReadsAreAudited(t *testing.T) {
 	f.actsAs(opsUID, opsEmail, signInGoogle)
 	if rec := f.apiAs(http.MethodGet, apiOrgPathOf(customer.ID), ""); rec.Code != http.StatusInternalServerError {
 		t.Errorf("a read across organisations was answered %d (%s) with an unwritable log, want this service's own failure", rec.Code, rec.Body)
+	}
+}
+
+// TestAuditRefusesALineWithNoActor: the log's own guard (audit.go). A line that
+// names no account, no address or no action is refused rather than written,
+// because an entry with none of them is a read nobody is answerable for — the
+// whole of what the log exists to answer — and one is not written into the log
+// to be found later. A line that names its actor and its action is written whole,
+// and comes back with the id and the instant the writer gives it.
+func TestAuditRefusesALineWithNoActor(t *testing.T) {
+	f := newFixture(t)
+	org := f.signedUp(danaUID, danaEmail, "Alpha Ltd")
+	whole := Caller{UID: danaUID, Email: danaEmail, Provider: signInGoogle, AuthTime: f.now}
+
+	for _, tc := range []struct {
+		name  string
+		actor Caller
+		entry auditEntry
+	}{
+		{name: "no account", actor: Caller{Email: danaEmail}, entry: auditEntry{Action: actionOrganisationRead, Read: true}},
+		{name: "an account of whitespace", actor: Caller{UID: "  ", Email: danaEmail}, entry: auditEntry{Action: actionOrganisationRead, Read: true}},
+		{name: "no address", actor: Caller{UID: danaUID}, entry: auditEntry{Action: actionOrganisationRead, Read: true}},
+		{name: "an address of whitespace", actor: Caller{UID: danaUID, Email: "  "}, entry: auditEntry{Action: actionOrganisationRead, Read: true}},
+		{name: "no action", actor: whole, entry: auditEntry{Read: true}},
+		{name: "an action of whitespace", actor: whole, entry: auditEntry{Action: "  ", Read: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			before := len(f.auditEntries())
+			if err := f.svc.recordAudit(context.Background(), tc.actor, tc.entry); !errors.Is(err, errAuditNeedsAnActor) {
+				t.Fatalf("an entry with %s was refused with %v, want errAuditNeedsAnActor: a line nothing and nobody is answerable for is not one this log holds", tc.name, err)
+			}
+			if entries := f.auditEntries(); len(entries) != before {
+				t.Errorf("an entry with %s left %d line(s) in the log, want the refusal to write nothing", tc.name, len(entries)-before)
+			}
+		})
+	}
+
+	target := org.ID
+	if err := f.svc.recordAudit(context.Background(), whole, auditEntry{
+		Action:         actionOrganisationRead,
+		OrganisationID: &target,
+		Read:           true,
+	}); err != nil {
+		t.Fatalf("a line naming its actor and its action was refused: %v", err)
+	}
+	entries := f.auditEntries()
+	if len(entries) != 1 {
+		t.Fatalf("the log holds %d line(s), want the one that was written", len(entries))
+	}
+	entry := entries[0]
+	switch {
+	case entry.ActorUID != whole.UID || entry.ActorEmail != whole.Email:
+		t.Errorf("the line names the actor %q <%s>, want the caller it was written for", entry.ActorUID, entry.ActorEmail)
+	case entry.OrganisationID == nil || *entry.OrganisationID != org.ID:
+		t.Errorf("the line names the organisation %v, want %q", entry.OrganisationID, org.ID)
+	case entry.ID == "" || entry.At.IsZero():
+		t.Errorf("the line carries the id %q and the instant %s, want both", entry.ID, entry.At)
 	}
 }
 
@@ -708,6 +778,10 @@ func TestAnotherOrgsMembersAreRefused(t *testing.T) {
 	f := newFixture(t)
 	alpha := f.signedUp(danaUID, danaEmail, "Alpha Ltd")
 	beta := f.signedUp(erinUID, erinEmail, "Beta Ltd")
+	// An operations organisation somebody else is in, so the cases below read
+	// what a stranger is told about one: its existence is not a stranger's to
+	// learn from a refusal either.
+	f.seededOrganisation("org_operations", "Operations", orgTypeOperations, opsUID, opsEmail, roleMember)
 
 	f.actsAs(danaUID, danaEmail, signInGoogle)
 	for _, tc := range []struct {
@@ -731,6 +805,16 @@ func TestAnotherOrgsMembersAreRefused(t *testing.T) {
 			if missing.Code != rec.Code || missing.Body.String() != rec.Body.String() {
 				t.Errorf("the refusal for another organisation is (%d) %s and for one that is not there (%d) %s, want the two the same",
 					rec.Code, rec.Body, missing.Code, missing.Body)
+			}
+			// An operations organisation the caller does not belong to is
+			// answered the same way as one that is not there at all: the rule
+			// its members sign in by is applied to a membership of it and never
+			// to a stranger's guess, which would otherwise tell whoever asked
+			// which ids name an organisation of the operations team.
+			operations := f.apiAs(tc.method, strings.Replace(tc.path, beta.ID, "org_operations", 1), "")
+			if operations.Code != http.StatusNotFound || operations.Body.String() != rec.Body.String() {
+				t.Errorf("an operations organisation the caller is not in is answered (%d) %s, want the same not-found refusal as one that is not there (%d) %s",
+					operations.Code, operations.Body, rec.Code, rec.Body)
 			}
 		})
 	}
@@ -761,6 +845,110 @@ func TestAnotherOrgsMembersAreRefused(t *testing.T) {
 	if code := refusal(f, bare); code != "unauthenticated" {
 		t.Errorf("the refusal carries the code %q, want unauthenticated", code)
 	}
+}
+
+// TestTheSignInDoorRefusesWhatItCannotAdmit: every route of this area is behind
+// one door (apiCaller, portalToken), and what the door refuses it refuses by
+// itself and before any route is reached. A request carrying no sign-in, one
+// presented in another scheme, an empty token and a token past the bound are all
+// refused as no sign-in at all — the person has to sign in whichever it was — and
+// so is a token the verifier does not admit and a verified sign-in that names no
+// account, which is a sign-in every record here would be filed under nothing for.
+// A verifier that failed for its own reason is this service's own failure and not
+// the caller's: the person's sign-in may be perfectly good.
+func TestTheSignInDoorRefusesWhatItCannotAdmit(t *testing.T) {
+	f := newFixture(t)
+	alpha := f.signedUp(danaUID, danaEmail, "Alpha Ltd")
+	whole := Caller{UID: danaUID, Email: danaEmail, Provider: signInGoogle, AuthTime: f.now}
+
+	for _, tc := range []struct {
+		name string
+		// auth is the Authorization header as the case writes it, empty for a
+		// request that carries none.
+		auth string
+		// err and caller are what the verifier answers if it is reached.
+		err    error
+		caller Caller
+		// asked is whether the verifier is reached at all: a request the door
+		// refuses itself never reaches it.
+		asked  bool
+		status int
+		code   string
+	}{
+		{name: "no sign-in at all", status: http.StatusUnauthorized, code: "unauthenticated"},
+		{name: "another scheme", auth: "Basic " + portalIDToken, status: http.StatusUnauthorized, code: "unauthenticated"},
+		{name: "a scheme with no token", auth: portalBearerScheme, status: http.StatusUnauthorized, code: "unauthenticated"},
+		{name: "an empty token", auth: portalBearerScheme + " ", status: http.StatusUnauthorized, code: "unauthenticated"},
+		{name: "a token of whitespace", auth: portalBearerScheme + "   ", status: http.StatusUnauthorized, code: "unauthenticated"},
+		{name: "a token past the bound", auth: portalBearerScheme + " " + strings.Repeat("x", maxPortalTokenBytes+1), status: http.StatusUnauthorized, code: "unauthenticated"},
+		{
+			name: "a sign-in the verifier does not admit", auth: portalBearerScheme + " " + portalIDToken,
+			err: ErrUnverifiedSignIn, asked: true, status: http.StatusUnauthorized, code: "unauthenticated",
+		},
+		{
+			name: "a sign-in naming no account", auth: portalBearerScheme + " " + portalIDToken,
+			caller: Caller{Email: danaEmail, Provider: signInGoogle}, asked: true,
+			status: http.StatusUnauthorized, code: "unauthenticated",
+		},
+		{
+			name: "a verifier that failed for its own reason", auth: portalBearerScheme + " " + portalIDToken,
+			err: errors.New("the verifier could not read its key set"), asked: true,
+			status: http.StatusInternalServerError, code: "unavailable",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f.signIn.tokens = nil
+			f.signIn.err = tc.err
+			f.signIn.caller = tc.caller
+
+			rec := f.apiWithAuth(http.MethodGet, apiOrgsPath, tc.auth)
+			if rec.Code != tc.status {
+				t.Fatalf("%s was answered %d (%s), want %d", tc.name, rec.Code, rec.Body, tc.status)
+			}
+			if code := refusal(f, rec); code != tc.code {
+				t.Errorf("the refusal carries the code %q, want %q, which is what the SPA branches on", code, tc.code)
+			}
+			if reached := len(f.signIn.tokens) > 0; reached != tc.asked {
+				t.Errorf("the verifier was reached %t for %s, want %t: the door's own refusals are its own", reached, tc.name, tc.asked)
+			}
+			if entries := f.auditEntries(); len(entries) != 0 {
+				t.Errorf("%s wrote %d audit line(s), want a request that never reached a route to write none", tc.name, len(entries))
+			}
+		})
+	}
+
+	// And a sign-in this service admits is answered: the door is a door and not a
+	// wall, and what it hands on is the caller the verifier named.
+	f.signIn.tokens = nil
+	f.signIn.err = nil
+	f.signIn.caller = whole
+	list := f.apiWithAuth(http.MethodGet, apiOrgsPath, portalBearerScheme+" "+portalIDToken)
+	if list.Code != http.StatusOK {
+		t.Fatalf("a sign-in this service admits was answered %d (%s), want the switcher's list", list.Code, list.Body)
+	}
+	if orgs := readAnswer[WireOrgList](f, list).Organisations; len(orgs) != 1 || orgs[0].ID != alpha.ID {
+		t.Errorf("the list is %+v, want the caller's own organisation %q", orgs, alpha.ID)
+	}
+	if got := f.signIn.tokens; len(got) != 1 || got[0] != portalIDToken {
+		t.Errorf("the verifier was handed %q, want the token the request carried", got)
+	}
+}
+
+// apiWithAuth sends one request whose Authorization header is spelled by the
+// case, which is how the cases about the door's own refusals present a sign-in
+// the fixture's own helper would never build. An empty header is a request that
+// carries none.
+func (f *fixture) apiWithAuth(method, path, auth string) *httptest.ResponseRecorder {
+	f.t.Helper()
+	req := httptest.NewRequest(method, intakeOrigin+path, nil)
+	req.Header.Set("Content-Type", "application/json")
+	if auth != "" {
+		req.Header.Set("Authorization", auth)
+	}
+	req.RemoteAddr = applicantIP
+	rec := httptest.NewRecorder()
+	f.handler.ServeHTTP(rec, req)
+	return rec
 }
 
 // apiOrgPathOf and the two below spell the routes for one organisation, so a case
