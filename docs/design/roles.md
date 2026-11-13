@@ -108,7 +108,8 @@ Read together, that table says who can do what today:
 - **No viewer exists anywhere, on any surface** (F6, `docs/subscriptions/reconciliation.md:89`,
   `:101`). The `viewer` word exists in exactly two places: `internal/mobileauth`'s closed set, and
   the `--role` flag on a pairing, where it can only be reached by *lowering* a launcher's or
-  operator's device (`internal/cli/pair.go:511`). It has never been enforced by anything, and it
+  operator's device, and only where no allowlist entry names the address yet
+  (`internal/cli/pair.go:993`). It has never been enforced by anything, and it
   grants nothing: a device whose node says `viewer` reaches precisely what any other device node
   reaches.
 - **Nobody is a viewer in practice, and seats can only be estimated** (F7, `:103`): Firebase Auth
@@ -182,10 +183,11 @@ option is the one with a permanent cost: two words for one thing, in the CLI, th
 variables, `internal/cli/roles.go`'s comments and every operator's config file.
 
 Whatever the owner answers, one thing is already fixed by what exists: `fugaro pair --role` writes
-the device words `viewer`, `operator` and `admin`, and the word a pairing writes is the grants' own —
-the pairing user's highest project-scope grant (`internal/cli/pair.go:883`). The two IAM vocabularies
-meet the roles in `fugaro update`'s migration, and which list becomes which role there (D681) is the
-answer's to state.
+the device words `viewer`, `operator` and `admin`, and the word a pairing writes is the role the
+allowlist resolves for the administered address (`internal/cli/pair.go:1002`) — the grants' own, the
+pairing user's highest project-scope grant (`internal/cli/pair.go:883`), only where no entry names
+it. The two IAM vocabularies meet the roles in `fugaro update`'s migration, and which list becomes
+which role there (D681) is the answer's to state.
 
 ## 4. The viewer in the cloud (T16)
 
@@ -420,8 +422,10 @@ Restated, with its source, so that nothing below is read as open that is not.
 - **D225, v1 half (answered 2026-10-22)** — the role is a field on the device node, written day one,
   read in v1 by the CLI and the console and **never by the rules**.
   (`docs/mobile-auth/reconciliation.md:540`)
-- **Pairing decision 13 (amended 2026-10-29)** — the device role is inherited from the pairing user's
-  role and may only be lowered. (`docs/plans/2026-10-22-mobile-pairing-cli.md:477`)
+- **Pairing decision 13 (amended 2026-10-29, and again 2026-11-13 for *which* role)** — the device role
+  is inherited from the allowlist's entry for the administered address (the pairing user's own grant
+  only where no entry names the address) and may only be lowered, never below the entry the address
+  already has. (`docs/plans/2026-10-22-mobile-pairing-cli.md:477`)
 - **2026-10-30, vocabulary (was D680)** — map viewer, operator and admin onto the existing IAM lists
   now; rename the lists later. Which list becomes which role stays D681.
 - **2026-10-30, `fugaro user`** — E1 ships in 0.14.0 if it is in time.

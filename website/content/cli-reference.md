@@ -4672,7 +4672,7 @@ Flags:
 | `--name` | string | "" | no | the device's name, for pair ls and the device node's own field |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
-| `--role` | string | "" | no | the device's role: viewer, operator or admin (default: the role the allowlist resolves for your address, or your own when it names none; --role may only lower it) |
+| `--role` | string | "" | no | the device's role: viewer, operator or admin (default: the role the allowlist resolves for your address, or your own when it names none; --role may only lower it, and never below the entry an address that already has one resolves to) |
 | `--timeout` | duration | `2m0s` | no | how long to wait for the phone's key and the typed code (refused above 4m30s) |
 
 Subcommands:

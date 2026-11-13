@@ -125,7 +125,7 @@ func newPairCmd() *cobra.Command {
 	f := cmd.Flags()
 	f.StringVar(&o.name, "name", "", "the device's name, for pair ls and the device node's own field")
 	f.StringVar(&o.email, "email", "", "the administered email for the device (default, and normally the value: your own verified address, which is the only address this command may administer)")
-	f.StringVar(&o.role, "role", "", "the device's role: viewer, operator or admin (default: the role the allowlist resolves for your address, or your own when it names none; --role may only lower it)")
+	f.StringVar(&o.role, "role", "", "the device's role: viewer, operator or admin (default: the role the allowlist resolves for your address, or your own when it names none; --role may only lower it, and never below the entry an address that already has one resolves to)")
 	f.DurationVar(&o.timeout, "timeout", pairDefaultTimeout, "how long to wait for the phone's key and the typed code (refused above "+pairMaxTimeout.String()+")")
 	f.BoolVar(&o.asJSON, "json", false, "stream the pairing as newline-delimited JSON events on stdout")
 	addCloudFlags(cmd, &o.cloudOptions)

@@ -879,6 +879,46 @@ func TestPairUnreadableAllowlistEntryRefused(t *testing.T) {
 	}
 }
 
+// TestPairEntryInAnotherSpellingOfTheAddressIsNamed is the property the guard in
+// pairAllowlistNames exists for, and it is the difference between refusing and
+// granting: an entry that names the address in a spelling this build folds to
+// the same canonical form (a domain written in capitals) is an entry that NAMES
+// it, so the pairing goes to Resolve, which refuses it — its stored form is not
+// the one this package writes — instead of falling through to the branch that
+// writes the caller's own role. A raw comparison answers "absent" here, and the
+// pairing then writes the caller's own admin over a node whose writer meant
+// viewer; the same address paired twice is then two entries that disagree, which
+// P1 refuses (ErrAmbiguous) for every later pairing of it.
+func TestPairEntryInAnotherSpellingOfTheAddressIsNamed(t *testing.T) {
+	for name, seed := range map[string]string{
+		"an exact entry whose domain is capitals": "person-1@EXAMPLE.COM",
+		"a domain entry in capitals":              "EXAMPLE.COM",
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newPairFixture(t, pairMe)
+			f.pairSeedEntry(pairDevA, seed, "viewer")
+			out, _, err := pairRun(t, "--json")
+			if err == nil || ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v, want exit 1: %s names the address, so the role the pairing writes is Resolve's to refuse", err, seed)
+			}
+			events := pairLines(t, out)
+			if len(events) != 1 || events[0].Event != pairEventRefused || events[0].Code != pairRefusedAllowlistUnreadable {
+				t.Fatalf("events = %v, want one refused with %q", events, pairRefusedAllowlistUnreadable)
+			}
+			if !strings.Contains(events[0].Reason, pairMe) {
+				t.Fatalf("the refusal does not name the address it cannot resolve: %q", events[0].Reason)
+			}
+			if strings.Contains(events[0].Reason, seed) {
+				t.Fatalf("the refusal echoes the stored spelling: %q", events[0].Reason)
+			}
+			if n := len(f.iam.SignCalls()); n != 0 {
+				t.Fatalf("a refused pairing minted %d tokens, want none: the allowlist is read before anything is minted", n)
+			}
+			f.pairOnlySeededEntries(t, pairDevA)
+		})
+	}
+}
+
 // pairOnlySeededEntries holds a refusal to leaving the allowlist as it found it:
 // the seeded nodes (and nothing else), no pairing subtree and no keychain item.
 func (f *pairFixture) pairOnlySeededEntries(t *testing.T, seeded ...string) {
