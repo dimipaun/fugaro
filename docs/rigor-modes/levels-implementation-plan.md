@@ -32,8 +32,8 @@ Named here as LD11 promised (reconciliation §3a has the reasons):
 | T3.1 | its Critical-equivalence test holds Critical's thresholds and outcome for a run whose `pr.md` carries its sections, not the whole PR body |
 | T3.3 | the PR body gains the hand-back sections (LV4.3 builds on it) |
 | T4.6 | D30's filing table as amended: Critical files `open-risk` items; Startup and Pro also file the agent's listed deferrals |
-| T5.1 | the task key may lower a default for a new run (never below a floor); `hotfix` only with D12's opt-in |
-| T5.2 | a follow-up stays raise-only; `--pr N --rigor hotfix` is refused; an OPEN QUESTIONS answer is a follow-up and carries no level |
+| T5.1 | the task key may lower a default for a new run (never below a floor); `hotfix` with no opt-in (**amended 2026-11-13**: D12's opt-in was dropped rather than built, so the request itself is the door) |
+| T5.2 | a follow-up stays raise-only for every on-axis mode; `--pr N --mode hotfix` is accepted, since the request takes a hotfix run whole (**amended 2026-11-13**); an OPEN QUESTIONS answer is a follow-up and carries no level |
 | T5.5 | the recorded follow-up item carries `kind` |
 | T6.2 | `fugaro budget preview --rigor` |
 | T7.1 | the product document says "rigor level" and covers personas |
@@ -46,7 +46,7 @@ The approved plan's §4 list, unchanged (this repository has no `CLAUDE.md` and 
 
 - **Readiness is one deterministic rule inside `runner.Decide`** (D7). `Decide` takes the resolved level (T3.5) and never the persona text; a source guard pins that `outcome.go` references no persona symbol. *Pinned by LV2.2.*
 - **A floor is never lowered by a task, a follow-up, a label or a job variable** (D8, LD3). *Pinned by T1.5 and LV3.2.*
-- **Hotfix is reached only by an operator** (D12): `fugaro run --rigor hotfix` with the base branch's `rigor.hotfix` opt-in. It is refused as a project, repo, per-repo or area default, on a follow-up (`--pr N`), and from a comment. *Pinned by LV3.1 (the defaults) and the amended T5.1/T5.2.*
+- **Hotfix is reached only by an operator** (D12, **amended 2026-11-13: the gate is dropped rather than built**): `fugaro run --mode hotfix` needs no opt-in, on a first run or on a follow-up, and the request is the whole door. The command that writes a default still refuses `hotfix` in every form, and no comment reaches the mode (a task filed from one never carries it); a hand-written `rigor.default: hotfix` still resolves. *Pinned by LV3.1 (the defaults) and the amended T5.1/T5.2.*
 - **Hotfix still never deploys and never merges** (D13). *Pinned by LV4.3 and the existing D13 tests.* **Amended 2026-11-10 by D2030, D2041 and D2045 of `docs/outer-loop-escalation`:** a run still never merges and Hotfix still never deploys; the orchestrator daemon is the one thing that may merge, and ready a stalled draft, and only under D1245's gate at the head SHA it judged.
 - **A persona text is data, not code:** embedded Markdown with stable wording tests; no template that interpolates repository content. *Pinned by LV2.1.*
 - **The hand-back sections come from the agent's own hand-back file, never from the task text.** A first run's file is `pr.md`; a follow-up never writes `pr.md` (its system prompt replaces that line with `followup.SystemPromptLines`, `internal/runner/prompts.go`) and writes `followup.md` (`followupFile`, `internal/runner/followup.go`) instead, so a follow-up's hand-back is the same sections in `followup.md`. When the file is missing, the runner's fallback body embeds the task (`## Task`, `rawPRText`); no presence check reads that body, so a task carrying a "Revert plan" heading satisfies nothing. *Pinned by LV4.2 and LV5.1.*

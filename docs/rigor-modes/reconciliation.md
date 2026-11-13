@@ -1388,7 +1388,8 @@ no person stands in that path.
 only if `runner.Decide` says so, and the mode changes only what `Decide` is
 given — its policy.** Every mode opens a draft and every mode's ready state is
 Decide's answer, Hotfix included: Hotfix's difference is that its policy tolerates
-more and D12's gate decides whether the run may open at all, not that some other
+more and the operator's own request is what makes a run a Hotfix at all (D12 as
+amended 2026-11-13), not that some other
 act marks it ready. This is today's practice, read correctly: the runner opens the
 draft (`internal/runner/prflow.go`'s `openDraftPR`, `Draft: true`) and marks it
 ready itself, through `provider.UpdatePR` with `Draft: !ready`
@@ -1425,6 +1426,19 @@ the base branch's configuration — never a pull request comment, never a
 follow-up.**
 Why: the mode with the least review must not be reachable from the surface the
 owner already treats as hostile.
+
+**Amended 2026-11-13: the gate is dropped, not built, and `--mode hotfix` needs
+no opt-in.** The owner ruled that there is no way to predict when a hotfix will
+be needed, so the base-branch key this decision named is read by nothing and no
+`rigor.hotfix` gate exists (docs/rigor-command/implementation-plan.md R7, and
+F13's amendment in `docs/rigor-command/reconciliation.md` §2). The half of the
+decision that stands is the one about surfaces: the request is the operator's own
+launch — `fugaro run --mode hotfix`, on a first run or on a follow-up — and no
+comment reaches the mode, since a task filed from one never carries it.
+`fugaro rigor set` and `fugaro rigor repo` still refuse to **write** it as a
+default in any form. A hand-written `rigor.default: hotfix` in a
+`fugaro.yaml` still resolves, as it always did; whether that stays reachable is
+the owner's to rule on separately.
 
 **Recommended: `fugaro run --mode hotfix` by a person, gated on the base branch's
 configuration (`rigor.hotfix` on, plus the trusted list) — never a PR comment,
