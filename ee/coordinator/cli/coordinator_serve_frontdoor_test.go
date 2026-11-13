@@ -237,6 +237,42 @@ func TestADoorWithAMissingVariableIsRefusedByName(t *testing.T) {
 	}
 }
 
+// TestADatabaseURLThatIsNotOneIsRefused: FUGARO_RTDB_URL is read by the state
+// group, and it is checked to be a database's address — https, the database's
+// own host and nothing else — before the wiring opens it. A hand-edited entry
+// carrying a path, a credential, a query or a scheme that is not https fails
+// the revision's start rather than reaching a client's read, and the refusal
+// names the variable, because the operator's next move is to look at the
+// module that renders it.
+//
+// The guard is a decision of its own and not a formality: the reach is opened
+// with the account's database read, and an address this check let through
+// would be one a hand-edit had turned into a URL carrying credentials, or a
+// path on a database the account's one get-only role does not name.
+func TestADatabaseURLThatIsNotOneIsRefused(t *testing.T) {
+	for _, value := range []string{
+		"http://acme-project-default-rtdb.firebaseio.com",
+		"https://acme-project-default-rtdb.firebaseio.com/orchestrator",
+		"https://user:pass@acme-project-default-rtdb.firebaseio.com",
+		"https://acme-project-default-rtdb.firebaseio.com?a=b",
+		"https://acme-project-default-rtdb.firebaseio.com#frag",
+		"https://example.com",
+		"acme-project-default-rtdb.firebaseio.com",
+	} {
+		t.Run(value, func(t *testing.T) {
+			env := doorEnv()
+			env[fcli.EnvRTDBURL] = value
+			_, err := coordinatorFrontDoor(context.Background(), envLookup(env), refusalWiring(t))
+			if err == nil {
+				t.Fatalf("%q was read as the installation's database", value)
+			}
+			if !strings.Contains(err.Error(), fcli.EnvRTDBURL) {
+				t.Errorf("the refusal does not name %s: %v", fcli.EnvRTDBURL, err)
+			}
+		})
+	}
+}
+
 // TestARunsBucketThatIsNotANameIsRefused: FUGARO_RUNS_BUCKET names a bucket and
 // never a URL, and the command says so rather than handing a path to the bucket
 // opener. It is the same check on the same value the sweep makes, and it is here

@@ -392,10 +392,11 @@ resource "google_storage_bucket_iam_member" "mcp_server_runs_reader" {
 # no credential-shaped environment name, which
 # coordinator_service_test.go's TestCoordinatorServiceIsPublicAndCarriesNoCredential
 # holds against this very block — and the identity behind the port is an
-# account whose whole reach is the runs bucket's read and the store it writes
-# its own records to, so a stolen access token reaches the tools its scopes
-# name and nothing else (spec.md §8, "What a stolen access token reaches":
-# there is no credential to reach).
+# account whose whole reach is the runs bucket's read (D932), the store it
+# writes its own records to (D935) and the orchestrator's own node, read-only
+# (O16b), so a stolen access token reaches the tools its scopes name and
+# nothing else (spec.md §8, "What a stolen access token reaches": there is no
+# credential to reach).
 #
 # M9's launch grant is deliberately absent, and the absence is the design:
 # spawn_task is the one privilege this work adds, it belongs to M9's own
@@ -497,11 +498,13 @@ resource "google_cloud_run_v2_service" "coordinator_front_door" {
       # The state the front door serves, in the names the sweep already reads:
       # the project, the Firebase project and database the coordinator's
       # subtrees live in, and the runs bucket a run's artefacts (its logs and
-      # its diff) are read from (D932). None of them is a credential, no entry
-      # here has a value_source, and naming the database is not a grant on it:
-      # what this account may read there is D935's store binding, which is the
-      # one binding mcpauth_store.tf writes, so the front door reaches the runs
-      # bucket and the store's own bucket and nothing else. The store's URL is
+      # its diff) are read from (D932). None of them is a credential and no
+      # entry here has a value_source. Naming the database is not a grant on it
+      # either: the read this account has there is O16b's own, whose role and
+      # one binding live in state_read.tf, so what the front door reaches is
+      # the runs bucket (D932), the store's own bucket (D935, the one binding
+      # mcpauth_store.tf writes) and the orchestrator's node, read-only (O16b),
+      # and nothing else. The store's URL is
       # deliberately not an entry yet: the process that opens it (M5) names the
       # bucket it was handed, and the name it must be handed is the installation
       # output mcpauth_store_bucket.
