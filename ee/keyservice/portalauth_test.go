@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"testing"
@@ -358,6 +359,12 @@ func TestStaleSignInIsRefusedForMint(t *testing.T) {
 		"ten minutes in the future":    {authTime: portalNow.Add(10 * time.Minute).Unix(), within: mintWindow, refused: true},
 		"the window is the caller's":   {authTime: portalNow.Add(-4 * time.Minute).Unix(), within: time.Minute, refused: true},
 		"a window of nothing":          {authTime: portalNow.Unix(), within: 0, refused: true},
+		// The window here is the widest a caller can pass, and the age of a token
+		// that attests nothing saturates on the way to it: time.Time.Sub answers
+		// this exact value rather than a larger one, so the magnitude of the
+		// difference admits the token and the guard above the comparison is the
+		// only thing that refuses it.
+		"no sign-in time, and the widest window": {authTime: nil, within: time.Duration(math.MaxInt64), refused: true},
 	}
 	for name, tc := range cases {
 		claims := portalClaims()
