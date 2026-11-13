@@ -71,6 +71,13 @@ writers known not to ask yet:
   caller those commands refuse still reaches both writes by running it, under whatever cloud
   permissions that caller holds. That is the boundary the settings design leaves in place for a file
   the user owns (SD18): the file is local, and the enforcement is the cloud IAM at publish.
+- the published policy node, beside that stage: `fugaro project repos add|rm` and `fugaro project
+  sync` edit `allow_repos` through the same ETag-guarded write `project policy publish` uses and ask
+  no role, so a caller the publish refuses can still widen the list of repositories the project
+  admits (`fugaro project repos add '*'`). Widening that list is what the gate on `project policy
+  publish` exists to stop, so these two commands are the gap in it that is worth closing first; until
+  they are gated (Slice D: every management command asks the resolver) the only bound on the write is
+  the cloud permission the node itself needs.
 - the project layer file, which `settings set --layer project` writes: `fugaro rigor set`.
 - a repository's `fugaro.yaml`, which `settings set --layer repo` writes: `fugaro workflow add|rm`
   and `fugaro models use`.
