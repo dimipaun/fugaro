@@ -1876,9 +1876,14 @@ func TestRingHoldsOneEnvironmentsKey(t *testing.T) {
 //
 // The mutations this fails on: any rule in the file that is not the denial (an
 // `if true`, a `request.auth != null` for signed-in users, a rule that admits
-// one collection), the file losing its skeleton — an empty file deploys and
-// denies by default, and a reader cannot tell it from one nobody wrote — and the
-// database resource pointing at another database or another mode.
+// one collection), a rule the reader never sees because it sits behind a `#`,
+// `//` or `/*` written inside a quoted string on its line — which is the whole
+// reason this file is read with rulesStripComments rather than with the HCL
+// reader: `#` is a comment to HCL and text to the rules compiler, so the wrong
+// reader drops the rest of that line, the smuggled `allow read, write: if true;`
+// is applied by the deploy, and the file's own denial further down passes this
+// check — the file losing its skeleton, and the database resource pointing at
+// another database or another mode.
 func TestFirestoreRulesDenyClients(t *testing.T) {
 	database := tfRootBlock(t, servicesRoot, `resource "google_firestore_database" "portal"`)
 	tfAttrsAre(t, database, "the Firestore database in "+servicesRoot, []struct{ attr, value string }{
@@ -1890,7 +1895,7 @@ func TestFirestoreRulesDenyClients(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading %s: %v -- the rules this database is deployed with are the whole of what stops a client reading another organisation's documents", portalRulesPath, err)
 	}
-	body := tfStripComments(string(raw))
+	body := rulesStripComments(string(raw))
 	compact := tfCompact(body)
 	for _, want := range []struct{ text, why string }{
 		{"servicecloud.firestore", "the file's rules have to be the Firestore service's, or the deploy refuses the file and the database keeps the rules it had"},
@@ -1925,6 +1930,62 @@ var tfFirestoreDenials = []string{
 // the SPA it serves rather than in this tree, because the deploy that uploads it
 // is the portal's (P9.2).
 const portalRulesPath = "../../portal/firestore.rules"
+
+// rulesStripComments removes the comments a rules file has — `//` to the end of
+// its line, and `/* */` wherever it starts — while leaving its quoted strings
+// alone.
+//
+// It is not tfStripComments, and the difference is not cosmetic: HCL takes `#`
+// as a comment and has no single-quoted strings, rules have no `#` at all and
+// take both quote forms, and what a reader gets wrong here is a rule it never
+// judges. Read with the HCL reader, `function tag() { return 'a#'; } allow read,
+// write: if true;` loses everything from the `#` on, so the allow the deploy
+// applies is invisible to the check above and the file's own denial on the next
+// line is what it passes on — the client the rules were supposed to shut out
+// reads every organisation's documents, with a test that says the opposite. The
+// same happens for `//` and for `/*`, which is why the strings are skipped
+// before either is looked for.
+func rulesStripComments(src string) string {
+	var b strings.Builder
+	b.Grow(len(src))
+	for i := 0; i < len(src); {
+		switch c := src[i]; {
+		case c == '\'' || c == '"':
+			j := rulesSkipString(src, i, c)
+			b.WriteString(src[i:j])
+			i = j
+		case c == '/' && strings.HasPrefix(src[i:], "//"):
+			i = tfToLineEnd(src, i)
+		case c == '/' && strings.HasPrefix(src[i:], "/*"):
+			end := strings.Index(src[i+2:], "*/")
+			if end < 0 {
+				return b.String()
+			}
+			i += 2 + end + 2
+		default:
+			b.WriteByte(c)
+			i++
+		}
+	}
+	return b.String()
+}
+
+// rulesSkipString answers the index just past the closing quote of the string
+// starting at i, whose quote character is q, and the end of the file if there is
+// none. A backslash escapes the character after it, so an escaped quote does not
+// end the string; a rules string interpolates nothing, so its own quote is the
+// only one that does.
+func rulesSkipString(src string, i int, q byte) int {
+	for j := i + 1; j < len(src); j++ {
+		switch src[j] {
+		case '\\':
+			j++
+		case q:
+			return j + 1
+		}
+	}
+	return len(src)
+}
 
 // tfFirestoreAllows answers every `allow` statement in a rules file, compacted,
 // which is the whole of what a rules file grants: what a client may do is written
@@ -2088,7 +2149,9 @@ func TestNoServiceRunsAsADefaultAccount(t *testing.T) {
 // under a string whose interpolation holds a quote — which a reader that ended
 // the string at the first quote it saw did not see at all — a second key beside
 // the one block the checks read, the environments of `keys`' default in the
-// spellings a map key has, and the third root above, which is not.
+// spellings a map key has, the third root above, which is not, and the rules
+// file's own reader over a line that hides a granting `allow` behind a `#`, a
+// `//` or a `/*` written inside a quoted string.
 func TestTheTestsReadEveryFileOfTheTree(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -2305,6 +2368,30 @@ func TestTheTestsReadEveryFileOfTheTree(t *testing.T) {
 			t.Errorf("the file reads as %d resource blocks, want 1: the decoy header inside the second interpolation is text, and the grant written after the locals block is code — a reader that answered either one wrongly is a reader no sweep above can be built on", got)
 		}
 	})
+
+	// And the reader the portal's rules file is read with, over a file this test
+	// writes. The rules language has no `#` and both quote forms, and the check
+	// above is a rule about what the file GRANTS, so a reader that dropped the
+	// rest of a line at a `#` inside a string was a check passing on a denial
+	// while an allow on the same line was applied. The smuggled allow is written
+	// first, so a reader that lost it reads the file's own denial and says the
+	// file is exactly what it should be.
+	for _, hidden := range []string{"'a#'", "'a//'", "'a/*'", `"a#"`, `"a//"`, `"a/*"`} {
+		t.Run("an allow hidden inside "+hidden, func(t *testing.T) {
+			root := t.TempDir()
+			tfWrite(t, root, "portal/firestore.rules", "service cloud.firestore {\n  match /databases/{database}/documents {\n"+
+				"    function tag() { return "+hidden+"; } allow read, write: if true;\n"+
+				"    match /{document=**} { allow read, write: if false; }\n  }\n}\n")
+			raw, err := os.ReadFile(filepath.Join(root, "portal", "firestore.rules"))
+			if err != nil {
+				t.Fatalf("reading the scratch rules file: %v", err)
+			}
+			allows := tfFirestoreAllows(rulesStripComments(string(raw)))
+			if len(allows) != 2 || slices.Contains(tfFirestoreDenials, allows[0]) {
+				t.Errorf("a rules file whose denial follows an `allow read, write: if true;` on the same line as %s reads as %v, want the smuggled allow first and the denial second: `#`, `//` and `/*` inside a quoted string are text to the rules compiler, so a reader that took any of them for a comment dropped the allow — which the deploy applies — and left the file's own denial to pass the check above", hidden, allows)
+			}
+		})
+	}
 
 	// And the key set the checks' reads range over: they read the block the
 	// signing key is declared in, so a second key beside it — in a root of its
