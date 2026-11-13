@@ -861,25 +861,61 @@ func TestAccessRunProjectScopeRefusalNamesAUsableCommand(t *testing.T) {
 // resolver's table moves — or the day a sentence above names the wrong role —
 // this fails rather than printing a person a role nobody needs.
 func TestAccessRunActionRolesAgreeWithTheResolver(t *testing.T) {
-	const probe = "user:probe@example.com"
-	project := accesslib.Scope{Kind: accesslib.ScopeProject}
 	for action, a := range accessActions {
-		if len(accesslib.Roles()) == 0 {
-			t.Fatal("the resolver names no roles")
-		}
-		least := accesslib.RoleNone
-		for _, r := range accesslib.Roles() {
-			in := accesslib.Input{
-				Grants:     []accesslib.Grant{{User: probe, Role: r, Scope: project}},
-				AllowRepos: []string{"*"},
-			}
-			if accesslib.Allowed(in, probe, action, accessRepoA) {
-				least = r
-				break
-			}
-		}
-		if least != a.role {
+		if least := accessLeastRole(t, action); least != a.role {
 			t.Errorf("%s takes %q, and this file's refusal says %q", action, least, a.role)
+		}
+	}
+}
+
+// accessLeastRole is the least role the resolver requires for action, derived by
+// asking access.Allowed about a credential holding each role in turn: access's
+// own table is the authority, and a gate that restates it can only be read
+// wrong. Both of this package's role tables are pinned against it.
+func accessLeastRole(t *testing.T, action accesslib.Action) accesslib.Role {
+	t.Helper()
+	const probe = "user:probe@example.com"
+	if len(accesslib.Roles()) == 0 {
+		t.Fatal("the resolver names no roles")
+	}
+	for _, r := range accesslib.Roles() {
+		in := accesslib.Input{
+			Grants:     []accesslib.Grant{{User: probe, Role: r, Scope: accesslib.Scope{Kind: accesslib.ScopeProject}}},
+			AllowRepos: []string{"*"},
+		}
+		if accesslib.Allowed(in, probe, action, accessRepoA) {
+			return r
+		}
+	}
+	return accesslib.RoleNone
+}
+
+// TestAccessRunAndAccessGateRoleTablesAgree pins the two gates of this package
+// together: RS6a's accessActions and RS6c's accessActionRole are two restatements
+// of one resolver table. Neither decides anything — every check asks
+// access.Allowed — so a table that drifted from it or from its twin would print
+// a person a role nobody needs, and nothing else would notice. Each action is
+// put back to the resolver, and an action both tables name must be named with
+// one role by both.
+func TestAccessRunAndAccessGateRoleTablesAgree(t *testing.T) {
+	// accessActionRole is a switch rather than a table, so RS6c's actions are
+	// written out here: a switch that stopped answering for one of them would
+	// make accessDecide refuse it as unknown, and this is where that is read.
+	for _, action := range []accesslib.Action{
+		accesslib.ActionViewProject, accesslib.ActionManageRepo, accesslib.ActionManageProject,
+	} {
+		role, known := accessActionRole(action)
+		if !known {
+			t.Errorf("access_gate.go judges no %s, and its commands still ask about it", action)
+			continue
+		}
+		if least := accessLeastRole(t, action); least != role {
+			t.Errorf("%s takes %q, and access_gate.go's refusal says %q", action, least, role)
+		}
+	}
+	for action, a := range accessActions {
+		if role, known := accessActionRole(action); known && role != a.role {
+			t.Errorf("%s is in both gates' tables with two roles: %q here and %q in access_gate.go", action, a.role, role)
 		}
 	}
 }
