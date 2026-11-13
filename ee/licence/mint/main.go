@@ -18,12 +18,10 @@
 //	  -days 365 -kind paid -renewal-mode auto -renewal-secret-hash HASH \
 //	  -project P -location L -keyring R -key K -version V
 //
-// It writes the **v1** key, the `fgk_` format of K1.1 (D2130), and the claim
-// set it mints is the one docs/licensing/licence-key.md fixes. The older
-// `<key id>.<payload>.<signature>` format is still mintable behind the one
-// leading word `old`, which K7.3 deletes along with its verifier: the path and
-// its tests stay until then, because the two formats spell two different things
-// `-key-id` and cannot share one flag set.
+// It writes the **v1** key, the `fgk_` format of K1.1 (D2130), which is the
+// only format the licence package verifies (K7.3 removed the older
+// `<key id>.<payload>.<signature>` one), and the claim set it mints is the one
+// docs/licensing/licence-key.md fixes.
 //
 // Four rules give it its shape:
 //
@@ -100,22 +98,11 @@ const maxDays = math.MaxInt64 / int64(24*time.Hour)
 // carrying another one is refused by the verifier below instead of printed.
 const versionV1 = 1
 
-// run is main's whole body for both formats: the word `old` selects the format
-// K7.3 deletes, and everything else mints the `fgk_` key this tool exists for.
-// The word is not a flag because the two formats read two different claims out
-// of `-key-id`, and a flag set cannot spell one name twice.
+// run is main's whole body: the flags, the claim set they build and the one
+// line printed from it. The runner is the KMS seam, so the whole command is a
+// thing a test drives: a test's runner signs what gcloud would have been handed
+// and no binary is run.
 func run(args []string, out io.Writer, runner Runner) error {
-	if len(args) > 0 && args[0] == "old" {
-		return runOldFormat(args[1:], out, runner)
-	}
-	return runV1(args, out, runner)
-}
-
-// runV1 mints one v1 key: the flags, the claim set they build and the one line
-// printed from it. The runner is the KMS seam, so the whole command is a thing a
-// test drives: a test's runner signs what gcloud would have been handed and no
-// binary is run.
-func runV1(args []string, out io.Writer, runner Runner) error {
 	flags := flag.NewFlagSet("mint", flag.ContinueOnError)
 	kid := flags.String("kid", "", "the signing key id the signature is made under: the keyring entry a verifier places the key by")
 	keyID := flags.String("key-id", "", "the key's own id, for revocation and support; it is not the signing key's id")
@@ -145,9 +132,8 @@ func runV1(args []string, out io.Writer, runner Runner) error {
 	}
 	// flag.Parse stops at the first word that is not a flag, and every flag
 	// written after one is dropped without a word: a term or a workspace id
-	// there is a claim the owner asked for and a key that does not carry it. The
-	// command takes no positional argument once the format's word is read, so a
-	// word is always a mistake.
+	// there is a claim the owner asked for and a key that does not carry it. This
+	// command takes nothing but flags, so a word is always a mistake.
 	if extra := flags.Args(); len(extra) > 0 {
 		return fmt.Errorf("unexpected %s: this command takes nothing but flags, and a word that is not one stops the reading, so every flag after it is dropped in silence and the key is minted without the terms it asked for", strings.Join(extra, " "))
 	}
@@ -245,7 +231,7 @@ func runV1(args []string, out io.Writer, runner Runner) error {
 	}
 	term := time.Duration(*days) * 24 * time.Hour
 	paidThrough := issued.Add(term)
-	// The fifth, and it is the hole the first one leaves: the state MintV1 holds
+	// The fifth, and it is the hole the first one leaves: the state Mint holds
 	// the key to is the state at the claim set's own `issued_at`, which
 	// `-issued-at` moves, so a stamp in the past with a term that has run out by
 	// now passes that check -- the verifier reports an ended key as a state
@@ -256,7 +242,7 @@ func runV1(args []string, out io.Writer, runner Runner) error {
 		return fmt.Errorf("-issued-at is %s with a term of %d days, so the key would end at %s and that instant has passed: a key minted now is one the owner gives out now, and a key that has already ended is one no verifier refuses and no customer can use", issued.Format(time.RFC3339), *days, paidThrough.Format(time.RFC3339))
 	}
 
-	claims := licence.ClaimsV1{
+	claims := licence.Claims{
 		V:                 versionV1,
 		KID:               *kid,
 		KeyID:             *keyID,
@@ -285,14 +271,14 @@ func runV1(args []string, out io.Writer, runner Runner) error {
 	if err != nil {
 		return err
 	}
-	keyText, err := MintV1(context.Background(), claims, KMS{
+	keyText, err := Mint(context.Background(), claims, KMS{
 		Project:  *project,
 		Location: *location,
 		KeyRing:  *keyRing,
 		Key:      *key,
 		Version:  *version,
 		Run:      runner,
-	}, verifierV1(ring, *workspaceID))
+	}, verifier(ring, *workspaceID))
 	if err != nil {
 		return err
 	}
@@ -303,7 +289,7 @@ func runV1(args []string, out io.Writer, runner Runner) error {
 // warningsFlag collects the -warning entries: one claim set's `warnings` list,
 // in the order the owner named them. Each flag is the entry's shape --
 // `roles:from` -- and what a role or a `from` says is the claim set's and
-// K3.5's (ee/licence/keyv1.go, WarningV1), not this parser's.
+// K3.5's (ee/licence/key.go, WarningV1), not this parser's.
 type warningsFlag []licence.WarningV1
 
 // String is what the flag package prints as the flag's default: the windows an
@@ -334,7 +320,7 @@ func (w *warningsFlag) Set(text string) error {
 	return nil
 }
 
-// verifierV1 is the check the tool holds what it minted to: K1.1's verifier,
+// verifier is the check the tool holds what it minted to: K1.1's verifier,
 // over the ring the owner named and the workspace the key is bound to.
 //
 // The workspace is the one the owner is minting for rather than another
@@ -343,121 +329,17 @@ func (w *warningsFlag) Set(text string) error {
 // empty one is refused as the verifier refuses it, and the check the tool
 // cannot make for itself -- whether this key belongs to the workspace it will
 // be installed in -- is the verifier's at that installation.
-func verifierV1(ring licence.Keyring, firebaseProjectID string) VerifierV1 {
-	return func(raw []byte, now time.Time) (licence.ClaimsV1, licence.State, error) {
-		return licence.VerifyV1(raw, now, ring, firebaseProjectID)
+func verifier(ring licence.Keyring, firebaseProjectID string) Verifier {
+	return func(raw []byte, now time.Time) (licence.Claims, licence.State, error) {
+		return licence.Verify(raw, now, ring, firebaseProjectID)
 	}
-}
-
-// runOldFormat mints one key in the older `<key id>.<payload>.<signature>`
-// format, which K7.3 deletes along with its verifier. It is reached by the one
-// leading word `old`.
-func runOldFormat(args []string, out io.Writer, runner Runner) error {
-	flags := flag.NewFlagSet("mint", flag.ContinueOnError)
-	keyID := flags.String("key-id", "", "the key id the key text leads with and a verifier places the key by")
-	publicKey := flags.String("public-key", "", "the signing key's public half, unpadded base64url of the 32 bytes a keyring entry carries")
-	tier := flags.String("tier", "", "the tier the key is issued for: community, team or enterprise")
-	organisation := flags.String("organisation", "", "the organisation the key binds to: a domain, an individual as an organisation of one, or an Order Form id")
-	seats := flags.Int("seats", 0, "the seats the organisation has, at least one: compared and shown, never enforced (D439)")
-	features := flags.String("features", "", "the paid features the key turns on, comma-separated")
-	days := flags.Int("days", 0, "the term the key covers, in days from today: a renewal covers the term that begins where its predecessor ends, so it passes that term plus the 30 days the predecessor still has")
-	project := flags.String("project", "", "the GCP project the signing key lives in")
-	location := flags.String("location", "", "the signing key ring's location")
-	keyRing := flags.String("keyring", "", "the signing key ring's name")
-	key := flags.String("key", "", "the signing key's name")
-	version := flags.String("version", "", "the signing key version to sign with: an asymmetric key has no primary version, and gcloud refuses without one")
-	if err := flags.Parse(args); err != nil {
-		return err
-	}
-	// flag.Parse stops at the first word that is not a flag, and every flag
-	// written after one is dropped without a word: -seats and -features there
-	// are terms the owner asked for and a key that does not carry them. The
-	// command takes no positional argument, so a word is always a mistake.
-	if extra := flags.Args(); len(extra) > 0 {
-		return fmt.Errorf("unexpected %s: this command takes nothing but flags, and a word that is not one stops the reading, so every flag after it is dropped in silence and the key is minted without the terms it asked for", strings.Join(extra, " "))
-	}
-
-	var missing []string
-	for _, required := range []struct{ name, value string }{
-		{"key-id", *keyID},
-		{"public-key", *publicKey},
-		{"tier", *tier},
-		{"organisation", *organisation},
-		{"project", *project},
-		{"location", *location},
-		{"keyring", *keyRing},
-		{"key", *key},
-		{"version", *version},
-	} {
-		if required.value == "" {
-			missing = append(missing, "-"+required.name)
-		}
-	}
-	if len(missing) > 0 {
-		return fmt.Errorf("missing %s: a key text is an id, a claim set, and a signature over it through a KMS key's signing API", strings.Join(missing, ", "))
-	}
-	// The tool's first input rule, and it is about the claim set's sense rather
-	// than its length: a term of no days leaves a key that has already ended,
-	// which the verifier accepts -- its rule bounds a key's length -- so the
-	// tool is the only place it can be caught.
-	if *days <= 0 {
-		return errors.New("-days must be a positive number of days: a key that ends before it starts is not one anyone means to mint")
-	}
-	// The term is counted in nanoseconds, and past maxDays the product no longer
-	// fits an int64. The overflow is not always negative: 213504 days wraps to a
-	// positive quarter of an hour, which would mint a key with a 1526-second term
-	// -- inside the verifier's length bound, valid at its own `issued`, and
-	// nothing for any check after this one to catch. So the bound is on the days
-	// and not on the product. It is arithmetic and not the tier's: what a tier
-	// may be given stays the verifier's rule to state.
-	if int64(*days) > maxDays {
-		return fmt.Errorf("-days is %d, and a term that long cannot be counted: the longest term this tool can hold is %d days, and the verifier is where the ceiling anyone mints under is stated", *days, maxDays)
-	}
-	// The second input rule, and the same shape: seats are what the organisation
-	// bought (docs/licensing/licence-key.md, the claim set's row), an individual
-	// being an organisation of one (T15), so a key that claims none is a key
-	// nobody means to mint. The verifier does not catch it -- D439 makes seats
-	// compared and shown rather than enforced, so it bounds no number -- and the
-	// console draws the seat count it reads, so zero is shown to whoever holds
-	// the key instead of refused. The flag's own default is zero, which is where
-	// the silence bites: a mint that left -seats out would claim it.
-	if *seats <= 0 {
-		return errors.New("-seats must be the organisation's seat count, and at least one: a key that claims no seats is not one anyone means to mint")
-	}
-	term := time.Duration(*days) * 24 * time.Hour
-
-	ring, err := ringFromPublicKey(*keyID, *publicKey)
-	if err != nil {
-		return err
-	}
-	now := time.Now()
-	keyText, err := Mint(context.Background(), *keyID, licence.Claims{
-		Tier:         *tier,
-		Features:     featureList(*features),
-		Seats:        *seats,
-		Organisation: *organisation,
-		Issued:       now.Unix(),
-		Expires:      now.Add(term).Unix(),
-	}, KMS{
-		Project:  *project,
-		Location: *location,
-		KeyRing:  *keyRing,
-		Key:      *key,
-		Version:  *version,
-		Run:      runner,
-	}, verifier(ring))
-	if err != nil {
-		return err
-	}
-	fmt.Fprintln(out, keyText)
-	return nil
 }
 
 // ringFromPublicKey reads the public half the owner names, in the spelling a
 // keyring entry carries: the 32 raw bytes of an Ed25519 public key, base64url
-// and unpadded (ee/licence/testdata/vectors.json's keyring). S2.9 publishes the
-// owner's production half in this spelling, so what the tool checks against and
-// what a verifier holds are one text of one key.
+// and unpadded (ee/licence/testdata/vectors_v1.json's keyring). S2.9 publishes
+// the owner's production half in this spelling, so what the tool checks against
+// and what a verifier holds are one text of one key.
 func ringFromPublicKey(keyID, text string) (licence.Keyring, error) {
 	raw, err := base64.RawURLEncoding.Strict().DecodeString(strings.TrimSpace(text))
 	if err != nil {
@@ -467,25 +349,4 @@ func ringFromPublicKey(keyID, text string) (licence.Keyring, error) {
 		return nil, fmt.Errorf("the public half is %d bytes, and an Ed25519 public key's is %d", len(raw), ed25519.PublicKeySize)
 	}
 	return licence.Keyring{keyID: ed25519.PublicKey(raw)}, nil
-}
-
-// verifier is the check the old format's path holds what it minted to: the
-// old verifier's own rule, over the ring the owner named.
-func verifier(ring licence.Keyring) Verifier {
-	return func(raw []byte, now time.Time) (licence.Claims, licence.State, error) {
-		return licence.VerifyAgainst(raw, now, ring)
-	}
-}
-
-// featureList reads the comma-separated features of the old format. A key that
-// turns on no paid feature says so as an empty list rather than as a claim that
-// is missing.
-func featureList(text string) []string {
-	list := []string{}
-	for _, name := range strings.Split(text, ",") {
-		if name = strings.TrimSpace(name); name != "" {
-			list = append(list, name)
-		}
-	}
-	return list
 }

@@ -309,7 +309,7 @@ func (s *Store) RecordCheck(ctx context.Context, at time.Time, status, keyID str
 // prints an Applied prints a key's admin fields, and a caller that shows a
 // person a licence asks View.
 type Applied struct {
-	Claims licence.ClaimsV1
+	Claims licence.Claims
 	State  licence.State
 	Source Source
 	// Revoked is the applied key being the one the last check answered revoked
@@ -576,18 +576,18 @@ func markRevoked(a Applied, revokedIDs []string) Applied {
 
 // firstKey places one set of keys: the one that applies among those that verify
 // against now, and the state it is in.
-func firstKey(now time.Time, ring licence.Keyring, firebaseProjectID string, keys [][]byte) (licence.ClaimsV1, licence.State, error) {
+func firstKey(now time.Time, ring licence.Keyring, firebaseProjectID string, keys [][]byte) (licence.Claims, licence.State, error) {
 	if len(keys) == 0 {
-		return licence.ClaimsV1{}, "", licence.ErrNoKey
+		return licence.Claims{}, "", licence.ErrNoKey
 	}
 	var (
-		applied licence.ClaimsV1
+		applied licence.Claims
 		state   licence.State
 		found   bool
 		refusal error
 	)
 	for _, raw := range keys {
-		claims, st, err := licence.VerifyV1(raw, now, ring, firebaseProjectID)
+		claims, st, err := licence.Verify(raw, now, ring, firebaseProjectID)
 		if err != nil {
 			if refusal == nil {
 				refusal = err
@@ -599,7 +599,7 @@ func firstKey(now time.Time, ring licence.Keyring, firebaseProjectID string, key
 		}
 	}
 	if !found {
-		return licence.ClaimsV1{}, "", refusal
+		return licence.Claims{}, "", refusal
 	}
 	return applied, state, nil
 }

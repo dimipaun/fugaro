@@ -1201,6 +1201,62 @@ func (r *initRig) createOnApply(t *testing.T) {
 	}
 }
 
+// captureApplies makes the fake terraform copy the root's own tfvars aside on
+// every apply, and returns the directory it collects them in: one file per
+// apply, "<n>.<root>.json", numbered in the order the applies of the run run
+// and named for the working directory each ran in.
+//
+// It is how a test reads what an apply RAN WITH, which the run's own end state
+// is not: the root's tfvars are a later stage's write as much as this one's, so
+// a fact the creating apply has to be right about — the image a revision is
+// created from — is gone from the file by the time the run reports converged
+// (createOnApply is the same shape of injection, for the apply's cloud effect
+// rather than for its input).
+func (r *initRig) captureApplies(t *testing.T) string {
+	t.Helper()
+	dir := filepath.Join(r.dir, "applies")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(r.dir, "bin", "terraform")
+	old, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The count is a file because every invocation is its own process
+	// (faketerraform's own sequences are kept the same way).
+	capture := `if [ "$1" = apply ] && [ -f ` + infra.VarsFile + ` ]; then n=$(cat '` + dir + `/count' 2>/dev/null || echo 0); ` +
+		`echo $((n+1)) > '` + dir + `/count'; cp ` + infra.VarsFile + ` "` + dir + `/$n.$(basename "$(pwd)").json"; fi` + "\n"
+	lines := strings.SplitN(string(old), "\n", 2)
+	if err := os.WriteFile(path, []byte(lines[0]+"\n"+capture+lines[1]), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// capturedApplies is the tfvars every apply of one root ran with, in no
+// particular order (the files are named by a count and the root they ran in).
+func capturedApplies(t *testing.T, dir, root string) []map[string]any {
+	t.Helper()
+	paths, err := filepath.Glob(filepath.Join(dir, "*."+root+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []map[string]any
+	for _, p := range paths {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc map[string]any
+		if err := json.Unmarshal(b, &doc); err != nil {
+			t.Fatalf("%s is not the tfvars document it should be: %v", p, err)
+		}
+		out = append(out, doc)
+	}
+	return out
+}
+
 // On a fresh project the apply creates the runs bucket, with project
 // Viewers' read access; init offers to remove it right after the apply.
 func TestInitRemovesViewersOfCreatedRunsBucket(t *testing.T) {

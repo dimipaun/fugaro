@@ -163,6 +163,12 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 	if err != nil {
 		return err
 	}
+	// An account is the project's — what it may be mounted for is a
+	// project-wide list (F19) — so it is declared by a project admin and by
+	// nobody else, an admin of every enrolled repository included.
+	if err := accessGateProject(cmd.Context(), lc, nil, "nothing was written", "declaring a model account"); err != nil {
+		return err
+	}
 	// --type DECLARES an entry; it never retypes one. A name the config already
 	// defines with another type is the owner's own definition — what this
 	// command adds beside it is the account, and the entry is not its to

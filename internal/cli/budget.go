@@ -578,6 +578,16 @@ func runBudgetShow(cmd *cobra.Command, o *budgetShowOptions) error {
 			return err
 		}
 	}
+	// D1586: the document is the project's — the global block, the project's
+	// own figures and every repository's row in it — so it is read by a
+	// project-scope role, and the repositories a repository-scoped role covers
+	// are read one at a time (`runs ls --repo`, `logs`). The document's
+	// figures are always present and never nulled (the console's JSON
+	// contract), so a filtered document is not the answer here: it is not
+	// shown at all.
+	if err := accessGateProjectRead(ctx, lc, db, "the project's spend is a project-level read, so it is not shown", "reading it"); err != nil {
+		return err
+	}
 
 	var cfg dbConfig
 	if _, err := db.Get(ctx, "config", &cfg); err != nil {
@@ -1484,6 +1494,14 @@ func runBudgetSet(cmd *cobra.Command, o *budgetSetOptions) error {
 		if slug, err = repoSlugOf(ctx, lc, p.repo); err != nil {
 			return err
 		}
+		// A repository's caps are that repository's, so they are set by its
+		// admin and by nobody else — the project's own caps are the
+		// project-level pair below (F19).
+		if err := accessGateRepo(ctx, lc, db, p.repo, "nothing was set", "setting this repository's caps"); err != nil {
+			return err
+		}
+	} else if err := accessGateProject(ctx, lc, db, "nothing was set", "setting the project's own caps"); err != nil {
+		return err
 	}
 	out := cmd.OutOrStdout()
 	for attempt := 1; attempt <= setAttempts; attempt++ {
@@ -1624,6 +1642,19 @@ func budgetKillLogName(kill bool) string {
 	return "budget-resume"
 }
 
+// budgetKillDoing is what a refused kill or resume was doing, for the gate's
+// sentence: the switch is the budget admins' (docs/design/roles.md, §1.1), and
+// the scope it is set at is the scope the change needs, so halting a project and
+// halting one repository are two different grants. A resume is said as what it
+// does — runs start spending again — because that is the half a role has to
+// cover (D1542 fences it as a raise).
+func budgetKillDoing(kill bool, scope string) string {
+	if kill {
+		return "halting " + scope
+	}
+	return "letting " + scope + " spend again"
+}
+
 func runBudgetKill(cmd *cobra.Command, o *budgetKillOptions, kill bool) error {
 	ctx := cmd.Context()
 	// The flag's presence names the scope, not the string it carries: a bare
@@ -1641,6 +1672,20 @@ func runBudgetKill(cmd *cobra.Command, o *budgetKillOptions, kill bool) error {
 		return userErr("--reason is %d characters; keep it to %d", utf8.RuneCountInString(o.reason), maxKillReason)
 	}
 	if cmd.Flags().Changed("workspace") {
+		// This scope answers no resolver gate, and the reason is the shape of
+		// the roles and not an oversight: the two checks below are made with the
+		// grant the scope is SET at (F19), and --workspace is not one the roster
+		// has. It acts on the workspace's OWN project and its own database — the
+		// machine must hold that project's config to run the scope at all
+		// (workspaceOwnerConfig), and the stop it writes is fenced by the two
+		// questions every writer into a budget database asks (requireOwnBudgetDB
+		// and checkDBProject, budget_kill_workspace.go) — while a role is held at
+		// a project, at all-repos or at a repository: a workspace member holds
+		// nothing in the workspace project's node BY being a member, so the grant
+		// a check would read is the workspace project's own, which is the same
+		// question --all asks of that project. Whether a workspace's stop should
+		// answer to it is a product decision about the workspace model, reported
+		// rather than taken here.
 		return runBudgetKillWorkspace(cmd, o, kill)
 	}
 	lc, db, err := openBudget(ctx, o.cloud)
@@ -1680,6 +1725,11 @@ func runBudgetKill(cmd *cobra.Command, o *budgetKillOptions, kill bool) error {
 			return err
 		}
 		path, what = budget.PathKillRepo(slug), "repository "+repo
+		if err := accessGateRepo(ctx, lc, db, repo, declined, budgetKillDoing(kill, "this repository's runs")); err != nil {
+			return err
+		}
+	} else if err := accessGateProject(ctx, lc, db, declined, budgetKillDoing(kill, "every run of the project")); err != nil {
+		return err
 	}
 	out := cmd.OutOrStdout()
 	res, err := budget.SetKill(ctx, db, path, kill, me, o.reason, budget.KillHooks{

@@ -83,7 +83,7 @@ The owner's answers that shape this plan (2026-11-12):
 | Two concurrent reseller mints cannot pass the credit limit together | P6.2 (memory, and the emulator suite) |
 | Firestore rules deny every client access | P1.5 `TestFirestoreRulesDenyClients` |
 | No analytics before consent; Sentry sends no personal data | P1.4, P1.6 |
-| A staging key never verifies in production | `TestStagingKeyIDIsRefusedV1`; Check 574 |
+| A staging key never verifies in production | `TestStagingKeyIDIsRefused`; Check 574 |
 
 ## Limits this plan accepts
 

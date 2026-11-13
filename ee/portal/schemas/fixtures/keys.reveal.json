@@ -1,0 +1,6 @@
+{
+  "key_id": "key_1",
+  "key": "a-fixture-value-that-is-not-a-licence-key",
+  "renewal_secret": "a-fixture-value-that-is-not-the-renewal-secret",
+  "paid_through": "2026-03-10T11:00:00Z"
+}

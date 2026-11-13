@@ -8,6 +8,7 @@ import (
 	"time"
 
 	accesslib "github.com/dimipaun/fugaro/internal/access"
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -374,7 +375,16 @@ func TestLegacyMemberFormsKeepTheirGrants(t *testing.T) {
 // made — the node stays absent, exactly as the run found it. The second update
 // is then as helpless as the first, and the flags are no way out either: they
 // fold into a node and never make one (landFlagLists).
+//
+// An absent node is what this installation and one nobody has migrated look like
+// in the database, and only the marker tells them apart (access.PathMigrated):
+// the lists it holds ARE the lists the run read, so the run records that this
+// installation has migrated and its roster is nobody. Without that the gate
+// would read the installation as one whose lists have never been migrated and
+// leave every command it guards as it was, which is what this case pins: the
+// marker stands and a project-level write is refused against the empty roster.
 func TestAMigrationWithNoUserMemberWritesNoNode(t *testing.T) {
+	noAgentSession(t)
 	legacy := []string{"group:eng@example.com", "domain:example.com", "serviceAccount:auto@proj-1234.iam.gserviceaccount.com"}
 	_, db := accessRig(t, legacy, legacy, legacy, legacy)
 	out, errOut, err := executeStdin(t, "", "update", "--yes")
@@ -388,6 +398,107 @@ func TestAMigrationWithNoUserMemberWritesNoNode(t *testing.T) {
 	if strings.Contains(all, "migrated the installation's member lists into the grants node") {
 		t.Errorf("the run says it migrated a roster it derived no grant from:\n%s", all)
 	}
+	if !accessMarked(t, db) {
+		t.Fatalf("the migration left no marker: an installation whose lists it READ and found nobody in is indistinguishable from one nobody has migrated, and the commands RS6c gates would never be checked on it:\n%s", all)
+	}
+	userPairAs(t, accessMember(t, "owner@example.com"))
+	_, _, err = execute(t, "budget", "set", "--global", "--per-run", "3")
+	accessRefused(t, err,
+		"nothing was set",
+		"setting the project's own caps needs admin at project scope",
+		"(user:owner@example.com) hold nothing in the grants node")
+	if v := db.Value(budget.PathCapsGlobal); v != nil {
+		t.Errorf("the refused set wrote %s = %v", budget.PathCapsGlobal, v)
+	}
+}
+
+// TestAMigrationThatCannotRecordItselfIsNotAFailure: the marker is IAM-protected
+// exactly as the node is (both sit under config/admin, written over
+// roles/firebasedatabase.admin), so the run that records a migrated installation
+// can meet the same refusal the run that writes the node meets — and it answers
+// it the same way (landMark, accessMarkNeedsAdmin): said out loud, not a failure.
+//
+// `fugaro update` is the whole upgrade (the HARD RULE), and the thing left undone
+// here is a record, not a role: this installation's lists hold nobody the node
+// could rank, so the apply carries them whatever the marker says and nothing in
+// the run depended on the write. A run that failed here would stop the
+// installation stage — and every stage after it — for a caller who is not one of
+// the project's owners, which is the livelock the node's own refusal is written
+// against. What it costs is the state this test leaves: an installation that has
+// migrated reading as one nobody has migrated, until an owner's update records it.
+func TestAMigrationThatCannotRecordItselfIsNotAFailure(t *testing.T) {
+	noAgentSession(t)
+	legacy := []string{"group:eng@example.com", "domain:example.com", "serviceAccount:auto@proj-1234.iam.gserviceaccount.com"}
+	_, db := accessRig(t, legacy, legacy, legacy, legacy)
+	db.Deny(accesslib.PathMigrated)
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	all := accessOut(out, errOut, err)
+	if err != nil {
+		t.Fatalf("a caller whose IAM refuses the marker's write made fugaro update fail: %v\n%s", err, all)
+	}
+	if v := db.Value(accesslib.PathMigrated); v != nil {
+		t.Errorf("the marker is there though every write to it answered 401: %v", v)
+	}
+	for _, w := range []string{
+		"roles/firebasedatabase.admin",
+		"nothing in this run depends on it",
+		"the next fugaro update by a project Owner records it",
+	} {
+		if !strings.Contains(all, w) {
+			t.Errorf("the run does not say %q, so an operator whose installation stays unrecorded is told nothing:\n%s", w, all)
+		}
+	}
+}
+
+// TestUpdateDoesNotRebuildARevokedRoster: an installation whose last grant was
+// revoked holds a node that is absent, which is the state one whose lists have
+// never been migrated is in — and only the marker tells them apart
+// (access.PathMigrated). The installation's own outputs cannot tell them apart
+// either: a revocation takes the grant out of the node and writes no IAM, so the
+// revoked member is still in the lists a migration would read, and a converge
+// that took the absent node for an installation nobody has migrated would write
+// them back — its operator's revocation undone, quietly, by the one command of
+// the HARD RULE. The roles step reads the marker before it migrates (syncAccess),
+// so the node stays as absent as it was found and the derive applies the empty
+// roster the revocation made.
+func TestUpdateDoesNotRebuildARevokedRoster(t *testing.T) {
+	noAgentSession(t)
+	operators := []string{"user:ops@example.com"}
+	admins := []string{"user:root@example.com"}
+	_, db := accessRig(t, operators, admins, operators, admins)
+	db.Set(accesslib.PathMigrated, true)
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	all := accessOut(out, errOut, err)
+	if err != nil {
+		t.Fatalf("converging an installation whose last grant was revoked failed: %v\n%s", err, all)
+	}
+	if v := db.Value(accesslib.PathNode); v != nil {
+		t.Errorf("the update wrote %v at the grants node: the members the outputs still hold are back, and the revocation they were taken out by is undone:\n%s", v, all)
+	}
+	if got := accessGrants(t, db); len(got) != 0 {
+		t.Errorf("the grants node holds %v, want nobody: the installation's roster is the empty one the revocation left:\n%s", got, all)
+	}
+	if strings.Contains(all, "migrated the installation's member lists into the grants node") {
+		t.Errorf("the run says it migrated the lists into the node although the marker says the installation's roles have already moved there:\n%s", all)
+	}
+	if !strings.Contains(all, "which the installation's grants node does not") {
+		t.Errorf("the run does not say the members its own list holds are not the node's, so a revocation the node records is applied without a word:\n%s", all)
+	}
+}
+
+// accessMarked is the migration marker as the fake database holds it: whether
+// this installation reads as one whose roles have moved out of the member lists.
+func accessMarked(t *testing.T, db *gcpfake.RTDB) bool {
+	t.Helper()
+	cl, err := newBudgetClient(t.Context(), db.URL, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marked, err := accesslib.Migrated(t.Context(), cl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return marked
 }
 
 // TestPlanIsEmptyForAPureRename: the rename moves the WORDS and not the IAM.

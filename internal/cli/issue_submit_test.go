@@ -737,14 +737,7 @@ func TestIssueSubmitAskRefusesWithoutATerminal(t *testing.T) {
 // this is the machine that uploaded it (F8b).
 func submitRigIssue(t *testing.T, rig *mineRig, signature string) issues.Issue {
 	t.Helper()
-	i := mineRec("48213", signature)
-	up := rig.upload(i, rig.caller)
-	local := i
-	local.Number, local.Uploaded = up.Number, true
-	if err := rig.store.Save(local); err != nil {
-		t.Fatalf("saving this machine's copy: %v", err)
-	}
-	return local
+	return rigUploaded(t, rig, mineRec("48213", signature))
 }
 
 // sharedClaim is the claim a shared record is under, read out of the record's
@@ -1284,5 +1277,61 @@ func TestIssueSubmitRefusesAnIssueTheStoreAlreadyFiled(t *testing.T) {
 	}
 	if got := len(spy.creates()); got != 0 {
 		t.Errorf("a refused submit filed %d issue(s)", got)
+	}
+}
+
+// TestIssueSubmitSkipsResolved: `submit` with no reference goes through the
+// issues that are still waiting, and one a release fixed is not one of them
+// (acceptance 3, F9): the store's own record says the bug is gone — the
+// resolver moves a filed issue, so this one is on GitHub and then fixed — and
+// filing it again would put a fixed bug on the project's repository under this
+// person's account. Nothing copies the store's status into this machine's
+// folder (F13), so the file here still says `pending` and it is the store the
+// sweep has to ask.
+//
+// The spy is the assertion — one issue is filed, the one still waiting — and a
+// reference that names the resolved issue is refused before any preview, so
+// nobody reads a post that will never be made.
+func TestIssueSubmitSkipsResolved(t *testing.T) {
+	rig := newMineRig(t)
+	withTerminal(t, true)
+	spy := &ghSpy{url: filedIssueURL}
+	installIssueGH(t, spy)
+	waitingRec := mineRec("48242", "sig-waiting")
+	waitingRec.Summary = "the pending one"
+	waiting := rigUploaded(t, rig, waitingRec)
+	fixed := rigFiledThenFixed(t, rig, "48241", "sig-fixed", "0.22.0")
+
+	out, _, err := executeStdin(t, "y\n", "issue", "submit", "--ask")
+	if err != nil {
+		t.Fatalf("issue submit --ask: %v\n%s", err, out)
+	}
+	if got := len(spy.creates()); got != 1 {
+		t.Fatalf("submit filed %d issue(s), want the one that is pending: %v", got, spy.creates())
+	}
+	title, body := spy.filed(t, 0)
+	if !strings.Contains(title+body, waiting.Summary) {
+		t.Errorf("submit filed the wrong issue:\n%s", title+body)
+	}
+	if strings.Contains(title+body, fixed.Summary) {
+		t.Errorf("submit filed %q, which a release fixed:\n%s", fixed.Summary, title+body)
+	}
+	shared, err := issues.SharedIssue(context.Background(), rig.bucket, fixed.Number)
+	if err != nil {
+		t.Fatalf("reading the resolved issue back: %v", err)
+	}
+	if shared.Status != issues.StatusResolved || shared.ResolvedIn != "0.22.0" {
+		t.Errorf("a skipped resolved issue is %q fixed in %q, want %q in 0.22.0", shared.Status, shared.ResolvedIn, issues.StatusResolved)
+	}
+
+	out, _, err = execute(t, "issue", "submit", strconv.Itoa(fixed.Number))
+	if err == nil || !strings.Contains(err.Error(), string(issues.StatusResolved)) {
+		t.Fatalf("submit of a resolved issue: err = %v, want the refusal naming what the project's record says", err)
+	}
+	if strings.Contains(out, "Title:") {
+		t.Errorf("a refused submit printed a preview:\n%s", out)
+	}
+	if got := len(spy.creates()); got != 1 {
+		t.Errorf("a refused submit filed %d issue(s), want the 1 that was pending", got)
 	}
 }
