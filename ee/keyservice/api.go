@@ -11,7 +11,9 @@ package keyservice
 // The table is a package-level registry rather than a list in Handler because
 // the portal is built by one task per area (the plan's slices): an area file
 // registers its own routes from its init, so adding a door edits no file another
-// area holds. service.go has two writers in the plan and no area may be a third.
+// area holds. This file and service.go are the two the first area had to write
+// anyway — the seams a route is written against, and the ones Service holds —
+// and the plan's shared-files table names every task that writes either.
 //
 // A deployment that mounts no route is one this file does nothing for: P1.0 is
 // inert alone, and every seam below is a shape a later area fills.
@@ -35,6 +37,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -230,14 +233,26 @@ func (rg *apiRegistry) paths() []string {
 
 // missing refuses a deployment that holds no seam one of the mounted routes
 // reaches. It is asked at New, and only about the routes this deployment mounts.
+//
+// Every route reaching the seam is named and not the first one found: a
+// deployment that holds none holds it for all of them, and an operator who
+// supplied the seam one name asked for would meet the next name at the start
+// after it.
 func (rg *apiRegistry) missing(deps Deps) error {
 	rg.mu.Lock()
 	defer rg.mu.Unlock()
 	for _, route := range rg.routes {
 		for _, need := range route.needs {
-			if !need.held(deps) {
-				return fmt.Errorf("the API mounts %s %s, which reaches %s, and this deployment has none: the route would answer every request with a failure of its own (plan P1.0)", route.method, route.path, need)
+			if need.held(deps) {
+				continue
 			}
+			var mounts []string
+			for _, other := range rg.routes {
+				if slices.Contains(other.needs, need) {
+					mounts = append(mounts, other.method+" "+other.path)
+				}
+			}
+			return fmt.Errorf("the API mounts %s, which reach %s, and this deployment has none: each of them would answer every request with a failure of its own (plan P1.0)", strings.Join(mounts, ", "), need)
 		}
 	}
 	return nil
@@ -400,10 +415,21 @@ type Caller struct {
 // directory — is P1.3's, on the sign-in it answers.
 //
 // The name is a verifier's and not SignIn's because P1.3's own type is the
-// verified sign-in itself (portalauth.go's SignIn): the two are one concept at
-// two stages, and a package cannot hold one identifier for both.
+// verified sign-in itself (portalauth.go's VerifiedSignIn): the two are one
+// concept at two stages, and a package cannot hold one identifier for both.
+//
+// The rule is asked through this seam rather than applied beside it, for the
+// reason the verification is: a rule about a sign-in belongs to whatever holds
+// the sign-in, and a second copy of it in an area is the one thing D2207 has
+// exactly one implementation to avoid.
 type SignInVerifier interface {
 	Verify(ctx context.Context, idToken string) (Caller, error)
+	// RequireSSO refuses a caller whose sign-in the rule does not admit (D2207,
+	// F10). The rule is the caller's to build from the organisation's own record
+	// (P1.3's SSORule) and it follows the membership a request USES and not the
+	// organisation the request is about, so an area passes the membership's own
+	// organisation.
+	RequireSSO(caller Caller, rule SSORule) error
 }
 
 // Paddle is the merchant of record as the portal reaches it. Every method is one

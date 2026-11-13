@@ -53,6 +53,7 @@ func TestTheIntakeRefusesToStartInsteadOfServing(t *testing.T) {
 		{name: "no repository cap", serves: "ask the code host about every line of a 16 KiB post", edit: func(c *Config, _ *Deps) { c.MaxRepositories = 0 }},
 		{name: "no code host to read", serves: "read repositories from whatever an applicant typed", edit: func(c *Config, _ *Deps) { c.CodeHosts = nil }},
 		{name: "a code host named as a URL", serves: "compare a host against a URL and serve neither", edit: func(c *Config, _ *Deps) { c.CodeHosts = []string{"https://code.example"} }},
+		{name: "no terms version", serves: "record a sign-up's acceptance of a wording it cannot name (D2199)", edit: func(c *Config, _ *Deps) { c.TermsVersion = "  " }},
 		{name: "no store", serves: "mint a key it cannot remember and cannot tell a redelivery from a first delivery", edit: func(_ *Config, d *Deps) { d.Store = nil }},
 		{name: "no minter", serves: "sign with a service it does not have", edit: func(_ *Config, d *Deps) { d.Mints = nil }},
 		{name: "no mailer", serves: "issue a key to an address it never verified", edit: func(_ *Config, d *Deps) { d.Mailer = nil }},

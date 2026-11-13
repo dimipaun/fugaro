@@ -168,6 +168,13 @@ type Config struct {
 	// because the deploy names its own collections, and the lists themselves are
 	// data an operations owner sets.
 	TenantsCollection string
+	// TermsVersion is the version of the terms of service this deployment
+	// serves, and it is what a sign-up records as the wording the person
+	// accepted (D2199, plan P2.1). It is configuration for the plans' own
+	// reason: the deployment serves the text, two deployments can be serving
+	// different wordings at once, and a record naming one figure for both would
+	// state the wrong one of them.
+	TermsVersion string
 }
 
 // Deps is everything the intake reaches. There is no signer here and there is
@@ -231,6 +238,34 @@ type Service struct {
 	auditor    Auditor
 	now        func() time.Time
 	limiter    *throttle
+	// The seams the portal's API reaches (plan P1.0). They are held here rather
+	// than read out of Deps, because Deps is the deployment's whole shape and an
+	// area's route has no business holding the minter, the mail path and the
+	// code host to reach the document store.
+	//
+	// P1.0 declared these five on Deps and left Service without them, so every
+	// area's task would have had to edit this file to reach its own — the first
+	// area paid that once (the plan's shared-files table names it a writer of
+	// this file for doing so) and no area after it does. They are all five here
+	// for that reason and not because
+	// this area reaches them all: what an area reaches, it states on its routes
+	// (api.go's reaching), and a deployment that mounts no route of an area
+	// holds none of that area's seams.
+	docs      Docs
+	signIn    SignInVerifier
+	paddle    Paddle
+	scheduler Scheduler
+	sealer    Sealer
+	// signUpMu is one sign-up at a time in this process. F35's day's count is a
+	// read of the memberships an account owns and then a write of one more, and
+	// two sign-ups in flight together would each read a count that does not hold
+	// the other's membership yet — the limit passed by racing it. The count
+	// belongs inside the sign-up's own transaction, and this is where it is not:
+	// api.go's Tx reads and writes by id and holds no query. It is this
+	// process's, like pageMu and for the same reason — what a second process
+	// does is the store's to hold, and when the store can count inside a
+	// transaction the lock is what goes.
+	signUpMu sync.Mutex
 	// renewMu is one renewal at a time in this process. A renewal reads the key's
 	// state, mints and then writes what records the rotation, and two of them in
 	// flight together would both read "no successor yet" and both mint — of which
@@ -338,6 +373,9 @@ func New(cfg Config, deps Deps) (*Service, error) {
 			return nil, fmt.Errorf("the mint cap for %q is %d mint(s) per %s: a cap the deploy names, and a cap of none is not a limit", tier, cap.Requests, cap.Window)
 		}
 	}
+	if strings.TrimSpace(cfg.TermsVersion) == "" {
+		return nil, errors.New("the portal records the terms of service a sign-up accepted and this deployment names no version, so every organisation it created would record an acceptance that names no wording (D2199)")
+	}
 	switch {
 	case deps.Store == nil:
 		return nil, errors.New("the intake has no store, so it can neither remember a mint nor tell a redelivery from a first one")
@@ -380,6 +418,11 @@ func New(cfg Config, deps Deps) (*Service, error) {
 		auditor:    deps.Auditor,
 		now:        now,
 		limiter:    limiter,
+		docs:       deps.Docs,
+		signIn:     deps.SignIn,
+		paddle:     deps.Paddle,
+		scheduler:  deps.Scheduler,
+		sealer:     deps.Sealer,
 	}, nil
 }
 
