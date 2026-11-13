@@ -6,7 +6,7 @@ package keyservice
 // The minter's v1 half: a key built from a row of the default policy, the
 // renewal secret that goes out beside it while only its hash goes into the key,
 // and the air-gapped row whose key never contacts the server at all. Every key
-// minted here is read back through ee/licence's VerifyV1, so what these tests
+// minted here is read back through ee/licence's Verify, so what these tests
 // hold is what a released build accepts.
 
 import (
@@ -74,9 +74,9 @@ func v1Payload(t *testing.T, key string) []byte {
 
 // v1Verified is a minted key read the way a released verifier reads it, refused
 // here when it is not valid at the instant it was minted.
-func v1Verified(t *testing.T, f *fixture, key string) licence.ClaimsV1 {
+func v1Verified(t *testing.T, f *fixture, key string) licence.Claims {
 	t.Helper()
-	claims, state, err := licence.VerifyV1([]byte(key), f.now, f.ring, workspaceID)
+	claims, state, err := licence.Verify([]byte(key), f.now, f.ring, workspaceID)
 	if err != nil {
 		t.Fatalf("the minted key does not verify: %v", err)
 	}

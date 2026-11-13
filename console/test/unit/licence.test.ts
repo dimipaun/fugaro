@@ -603,12 +603,12 @@ describe('the module itself', () => {
 })
 
 // The v1 key: the licence-key-v2 format (spec sections 3, 4 and 6; decisions
-// D2130-D2146), whose Go verifier is `ee/licence/keyv1.go` and whose cases are
+// D2130-D2146), whose Go verifier is `ee/licence/key.go` and whose cases are
 // the file below.
 //
 // **The vectors are read, never copied.** `ee/licence/testdata/vectors_v1.json`
 // is the one set of claim sets, states and refusals the Go verifier and this one
-// are both held against (K1.1's `TestVectorsV1RoundTrip`, K1.4), so a copy here
+// are both held against (K1.1's `TestVectorsRoundTrip`, K1.4), so a copy here
 // would be a second contract that agrees with neither verifier. The file carries
 // the fixture's public half and signed key texts and never a private half, which
 // is what makes it a fixture a repository may hold at all.
@@ -832,7 +832,7 @@ describe('the v1 key', () => {
     // accept a key the CLI refuses, so the claim set is re-signed here with one
     // field changed at a time: the signature verifies, and the claim set is the
     // only thing that can refuse the key. Both verifiers refuse all six
-    // (`ee/licence/keyv1_test.go` mints the same wrong-type payloads).
+    // (`ee/licence/key_test.go` mints the same wrong-type payloads).
     const one = signer('a key this test minted')
     const sound = teamClaimsV1()
     sound['kid'] = one.id

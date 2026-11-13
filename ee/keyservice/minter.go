@@ -115,8 +115,30 @@ type Minted struct {
 // Mints is the intake's one route to a key, and the whole of it: the intake
 // holds a Mints and never a Signer (Check 174). The minted key is answered here
 // and not read from a store, because there is no store of keys.
+//
+// It mints the claim set of the format licence-key-v2 removed (K7.3), which is
+// why the shape below is written here rather than read from ee/licence: that
+// package reads the v1 key and no other. The routes that reach it -- the free
+// seat, the open-source grant and the request form -- carry no workspace id,
+// which every v1 key binds to (TN2), so converting them is a task of the plan's
+// own and one with a product decision in it: until it lands, what these routes
+// answer is the text they answered before the removal, which no Go verifier
+// reads any more. The console's verifier of the removed format still reads it,
+// and that reader's own removal is the console's task and not this one's.
 type Mints interface {
 	Mint(ctx context.Context, req Request) (Minted, error)
+}
+
+// intakeClaims is the payload one of the intake's routes signs: the claim set of
+// the format licence-key-v2 removed (K7.3), kept here so that the removal
+// changes nothing about what those routes mint.
+type intakeClaims struct {
+	Tier         string   `json:"tier"`
+	Features     []string `json:"features"`
+	Seats        int      `json:"seats"`
+	Organisation string   `json:"organisation"`
+	Issued       int64    `json:"issued"`
+	Expires      int64    `json:"expires"`
 }
 
 // RequestV1 is what the service asks the minter for when the key is a v1 one:
@@ -251,7 +273,7 @@ func (m Minter) Mint(ctx context.Context, req Request) (Minted, error) {
 	}
 	issued := now.UTC()
 	expires := issued.Add(term)
-	claims := licence.Claims{
+	claims := intakeClaims{
 		Tier:         req.Tier,
 		Features:     req.Features,
 		Seats:        req.Seats,
@@ -364,7 +386,7 @@ func (m Minter) MintV1(ctx context.Context, req RequestV1) (MintedV1, error) {
 	}
 	issued := now.UTC()
 	paidThrough := issued.Add(term)
-	claims := licence.ClaimsV1{
+	claims := licence.Claims{
 		V:                 versionV1,
 		KID:               kid,
 		KeyID:             keyID,
@@ -412,10 +434,12 @@ func (m Minter) MintV1(ctx context.Context, req RequestV1) (MintedV1, error) {
 	}, nil
 }
 
-// keyText is the key text the design writes: the key id, the payload and the
-// signature, all three unpadded base64url, in that order (S2.1). It is the same
-// three lines as the owner's mint tool, which this package cannot import
-// because that tool is a `main`.
+// keyText is the key text the removed format writes: the key id, the payload
+// and the signature, all three unpadded base64url, in that order (S2.1). The
+// owner's mint tool used to spell this shape too and no longer does -- it writes
+// the v1 text, the `fgk_` prefix and two parts (K7.3) -- so this is the one
+// place left that writes the three-part text, for the routes still to be
+// converted to v1.
 func keyText(keyID string, payload, signature []byte) string {
 	return keyID + "." +
 		base64.RawURLEncoding.EncodeToString(payload) + "." +
@@ -423,10 +447,10 @@ func keyText(keyID string, payload, signature []byte) string {
 }
 
 // The two spellings of the v1 format this side writes, and they are copies of
-// ee/licence's own unexported constants (keyv1.go's `keyPrefixV1` and
+// ee/licence's own unexported constants (key.go's `keyPrefixV1` and
 // `versionV1`): that package reads the format and this is the only side that
 // writes it. What holds the two together is that every key these tests mint is
-// read back through licence.VerifyV1, which refuses a text whose prefix or
+// read back through licence.Verify, which refuses a text whose prefix or
 // version was spelled wrong here.
 const (
 	keyPrefixV1 = "fgk_"

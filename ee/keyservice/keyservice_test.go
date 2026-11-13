@@ -795,20 +795,6 @@ func (f *fixture) queued() []Application {
 	return append([]Application(nil), f.store.applications...)
 }
 
-// claims verifies one minted key the way a released verifier would, and refuses
-// a key that is not valid at the instant the fixture's clock reads.
-func (f *fixture) claims(key string) licence.Claims {
-	f.t.Helper()
-	claims, state, err := licence.VerifyAgainst([]byte(key), f.now, f.ring)
-	if err != nil {
-		f.t.Fatalf("the minted key does not verify: %v", err)
-	}
-	if state != licence.Valid {
-		f.t.Fatalf("the minted key reads %s at the instant it was minted", state)
-	}
-	return claims
-}
-
 // signEvent is the merchant's own signature over one body, in the scheme the
 // intake checks: `Paddle-Signature: ts=<unix>;h1=<hmac-sha256 over "ts:body">`.
 func signEvent(secret []byte, at time.Time, body []byte) string {

@@ -15,7 +15,7 @@ package keyservice
 // `RequestV1.Policy` names one of these and the minter looks it up here.
 //
 // The table is a value and not a set of constants on the claim set because a
-// key's policy is data: ee/licence's ClaimsV1 carries each of these fields into
+// key's policy is data: ee/licence's Claims carries each of these fields into
 // the key at issue, and this is the only place the server decides what a fresh
 // key of a tier says. Overriding a row for one deal is the admin page's (K2.6)
 // and is not read here.
@@ -77,7 +77,7 @@ const (
 const dailyCheck = "P1D"
 
 // Policy is one row: the whole of what a fresh key of one tier carries, as
-// ee/licence's ClaimsV1 reads it back.
+// ee/licence's Claims reads it back.
 type Policy struct {
 	// Name is the row's name and what a mint request asks for.
 	Name string
