@@ -151,19 +151,24 @@ type layerPlan struct {
 }
 
 // layerRigor is the wizard's answer as this stage acts on it: the mode, the
-// bytes it is spliced into, the document the splice produces, and whether that
-// document is a file this run creates.
+// bytes it is spliced into, the document the splice produces, and whether the
+// write path has to create the file first.
 //
 // base is the local layer file when there is one, the published object when
 // there is not (a project whose layer someone else published: the answer
 // replaces a value in it rather than starting from nothing), and the shell
 // `fugaro rigor set` creates when neither exists — which is a first run of
 // `fugaro setup`, the only run this answer is given on.
+//
+// writeBase is set for the two bases that are not this machine's file: the
+// write path compares and swaps against the file it re-reads, so a file that is
+// not there yet is written with the base first, and one that IS there is left
+// to the swap (which is also what shows a replaced value in the diff).
 type layerRigor struct {
-	mode    rigor.Mode
-	base    []byte
-	next    []byte
-	created bool
+	mode      rigor.Mode
+	base      []byte
+	next      []byte
+	writeBase bool
 }
 
 // rigorDefaultPath is `defaults.rigor.default`, the one key the answer is
@@ -272,13 +277,13 @@ func layerPlanFor(ctx context.Context, lc *localcfg.Config, mode rigor.Mode) (*l
 	// what would catch a layer that moved in the meantime, so the answer is not
 	// gated on it twice.
 	if mode != "" {
-		base, created := p.local, false
+		base, writeBase := p.local, false
 		switch {
 		case p.exists:
 		case p.pubExists:
-			base = p.published
+			base, writeBase = p.published, true
 		default:
-			base, created = layerRigorShell(lc), true
+			base, writeBase = layerRigorShell(lc), true
 		}
 		next, err := yamledit.SetScalar(base, rigorDefaultPath, string(mode))
 		if err != nil {
@@ -291,7 +296,7 @@ func layerPlanFor(ctx context.Context, lc *localcfg.Config, mode rigor.Mode) (*l
 			// published as the shell it might have been left as.
 			return nil, userErr("%s would not read back after the rigor answer was written into it: %s", p.path, pluginwire.Printable(layerProblemsText(problems)))
 		}
-		p.rigor = &layerRigor{mode: mode, base: base, next: next, created: created}
+		p.rigor = &layerRigor{mode: mode, base: base, next: next, writeBase: writeBase}
 		p.local, p.l, p.exists = next, l, true
 		p.publish, p.adopted = true, !hasRecord
 		p.seed, p.recordGen, p.stale, p.skip = false, false, nil, ""
@@ -463,15 +468,16 @@ func (s *layerStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outc
 // write are one implementation for the two doors to the same key.
 //
 // What it brings of its own is the one thing the helper cannot know: a file
-// that is not there yet is created first, with the three anchor keys and the
-// document the edit is built from, because the helper compares and swaps
-// against a file it re-reads (rigorCreateLayerFile creates the same shell for
-// the same reason). A document this run REPLACES is not created: the diff the
-// helper prints above the write shows the value that was there beside the one
-// that replaces it, so a teammate's mode is never overwritten unseen.
+// that is not there yet is created first, with the document the edit is built
+// from (the three anchor keys, or the published object this machine has no file
+// for), because the helper compares and swaps against a file it re-reads
+// (rigorCreateLayerFile creates the same shell for the same reason). A file
+// this run REPLACES a value in is not created: the diff the helper prints above
+// the write shows the value that was there beside the one that replaces it, so
+// a teammate's mode is never overwritten unseen.
 func (s *layerStage) writeRigor(env initflow.Env, p *layerPlan) error {
 	r := s.e.r
-	if p.rigor.created {
+	if p.rigor.writeBase {
 		if err := os.MkdirAll(filepath.Dir(p.path), 0o700); err != nil {
 			return userErr("creating %s: %v", p.path, err)
 		}

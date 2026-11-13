@@ -15,6 +15,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/rigor"
 )
 
 // layerRig is updateRig with a project layer bucket this machine can read:
@@ -784,6 +785,24 @@ type layerStageRig struct {
 // recorded beside it.
 func newLayerStageRig(t *testing.T, published, local, generation string) *layerStageRig {
 	t.Helper()
+	return newLayerStageRigFor(t, published, local, generation, &initOptions{door: updateDoor.name})
+}
+
+// newRigorStageRig is that rig for a first run of `fugaro setup` that answered
+// the wizard's rigor question (task W of
+// docs/rigor-command/implementation-plan.md; D900): the same stage over the
+// same bucket, with the answer on the run's own options and the door the
+// question belongs to — the door whose Layer stage is the one that writes it.
+func newRigorStageRig(t *testing.T, published, local, generation, mode string) *layerStageRig {
+	t.Helper()
+	return newLayerStageRigFor(t, published, local, generation, &initOptions{door: setupDoor.name, rigor: mode})
+}
+
+// newLayerStageRigFor is newLayerStageRig over the run's own options, which is
+// what tells the two rigs above apart: the door decides which run this is, and
+// --rigor is the answer one of them carries.
+func newLayerStageRigFor(t *testing.T, published, local, generation string, o *initOptions) *layerStageRig {
+	t.Helper()
 	r := newLayerRig(t, published)
 	if local != "" {
 		recordLayer(t, local, generation)
@@ -800,9 +819,50 @@ func newLayerStageRig(t *testing.T, published, local, generation string) *layerS
 	// The run's own streams are the door's (newInitRun): the stage writes
 	// through initRun.w, which is the run's writer and not the buffer itself,
 	// so a test that gives this run a reporter sees what a person would.
-	run := newInitRun(cmd, &initOptions{door: updateDoor.name})
+	run := newInitRun(cmd, o)
 	run.setProject(lc)
 	return &layerStageRig{initRig: r.initRig, runs: r.runs, s: newLayerStage(&initEngine{r: run, lc: lc, path: r.cfg}), out: out}
+}
+
+// rigorObject is the project layer as this rig's bucket holds it right now.
+func rigorObject(t *testing.T, r *layerStageRig) (string, bool) {
+	t.Helper()
+	return layerObject(t, &layerRig{initRig: r.initRig, runs: r.runs})
+}
+
+// TestSetupWritesTheRigorAnswerAndPublishesItInTheSameRun is task W's half of
+// the HARD RULE (CLAUDE.md): the run that ASKED the wizard's rigor question is
+// the run that writes the answer and publishes it, so a person who answered it
+// owes no second command — and no `fugaro rigor set`, no `config publish`, no
+// re-run.
+//
+// The file this leaves is the one `fugaro rigor set` would have left (the three
+// anchor keys and the mode) and the object is that file's bytes, published
+// through the stage `fugaro update` already publishes with.
+func TestSetupWritesTheRigorAnswerAndPublishesItInTheSameRun(t *testing.T) {
+	r := newRigorStageRig(t, "", "", "", string(rigor.Critical))
+	ctx := context.Background()
+	if _, err := r.s.Apply(ctx, initflow.Env{Yes: true}); err != nil {
+		t.Fatalf("apply: %v\n%s", err, r.out)
+	}
+	got := readFileString(t, localLayerPath(t))
+	l, problems := config.ParseProjectLayer([]byte(got), config.LayerAnchor{Project: initProjectName, GCPProject: initProject})
+	if len(problems) > 0 {
+		t.Fatalf("the file this run wrote does not read back as a project layer: %s\n%s", layerProblemsText(problems), got)
+	}
+	if l.Defaults.Rigor.Default != rigor.Critical {
+		t.Errorf("the local layer file's defaults.rigor.default = %q, want critical:\n%s", l.Defaults.Rigor.Default, got)
+	}
+	obj, ok := rigorObject(t, r)
+	if !ok {
+		t.Fatalf("the run wrote the answer into %s and published nothing, so answering the wizard still costs a second command:\n%s", localLayerPath(t), r.out)
+	}
+	if obj != got {
+		t.Errorf("the published project layer is not the file this run wrote:\nfile:\n%s\nobject:\n%s", got, obj)
+	}
+	if !strings.Contains(r.out.String(), "published the project layer of "+initProjectName) {
+		t.Errorf("the run does not say it published the layer the answer went into:\n%s", r.out)
+	}
 }
 
 // put publishes text as the project layer of this rig's bucket, as another
