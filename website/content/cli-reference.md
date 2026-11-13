@@ -6507,10 +6507,33 @@ next page. The id is the run_id --json carries; one the listing does not
 hold is refused rather than answered with an empty page, which reads as no
 more runs. Neither flag goes with --watch, which redraws the whole listing.
 
---state STATE lists only runs in that state, matched against the status --json
-carries: the `halted (run_cap)` cell is --state halted, and --help lists the
-states the flag takes. A run's state is in its result.json, so this filter
-reads every run it filters -- it narrows the listing, never the reads.
+--state STATE lists only the runs in that state, one of two vocabularies.
+The first is the run's own state, matched against the status --json carries:
+the `halted (run_cap)` cell is --state halted. The second is the state of
+the pull request the run went to: live (a run is going on it), ready (no
+run is going and it waits only on a merge) or stalled (it had a run, no run
+is going, and it is not ready). That state is the pull request's and not a
+row's: the listing groups the runs it read by the pull request they carry,
+takes the newest one of each that says what the pull request is -- the run
+whose outcome is ready or draft, so a rebase or a review that left it as
+it found it does not decide -- and keeps the rows of the pull requests in
+the state asked for; --json carries it as `pr_state` on every row that has
+a pull request, and leaves it out of the rows that have none. It is the
+last state a run recorded of the pull request and not the pull request's
+state now: nothing here calls the forge, so a pull request merged or
+closed after the run that left it ready still reads ready, and one
+closed after a draft still reads stalled. A review run's pull request is
+the one its task reviews, which its record names only when the review
+ends: while it is going, its row reads that pull request's state though
+its pr is still empty. A run's own state is in its result.json, so this
+filter reads every run it filters -- it narrows the listing, never the
+reads.
+
+The fourth state of a pull request, orphan (no run ever produced or follows
+it), is one no listing of runs can name: such a pull request has no run and
+so no row here, and telling one from every other would take a call to the
+forge, which a listing of runs does not make -- --state orphan is refused
+for that reason rather than answered with an empty listing.
 
 --debt lists only the runs filed from a triage deferral: a task whose own spec
 is marked debt, which is work a run's review left behind rather than work
@@ -6552,7 +6575,7 @@ Flags:
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | only this repository (owner/name, or a path inside its checkout) |
 | `--since` | string | `7d` | no | only runs started within this long (7d, 36h, 90m; 0 for all) |
-| `--state` | string | "" | no | only runs in this state (cancelled, error, failed, halted, infra_error, launching, pending, running, succeeded, unlaunched, unreviewed) |
+| `--state` | string | "" | no | only runs in this state, a run's or its pull request's (cancelled, error, failed, halted, infra_error, launching, pending, running, succeeded, unlaunched, unreviewed, live, ready, stalled) |
 | `--watch` | bool | `false` | no | redraw until every run has settled |
 
 Subcommands:

@@ -439,6 +439,13 @@ const FULL_ROW: JSONDoc = Object.freeze({
   task_pr: 411,
   record_pr: 412,
   pr: 412,
+  // The state of the pull request above, in the owner's four words of
+  // 2026-11-12 (CLI 0.24.0, contract section 5), between `pr` and `pushed` in
+  // the struct: `runs ls` writes it on every row that carries a pull request,
+  // and `diagnose --json`'s one-run row drops it. Accepted and not read -- no
+  // screen draws it yet -- and it is a word of the CLI's own table rather than
+  // text a job wrote, so it is in `NON_TEXT_STRING_KEYS`.
+  pr_state: 'ready',
   pushed: true,
   pushed_head: 'c'.repeat(40),
   started_at: '2026-10-15T10:20:00Z',
