@@ -888,28 +888,60 @@ test_the_fake_run_refuses_an_id_the_cli_would_refuse() {
 
 # The model credential's admission, which is a DIFFERENT list from the proxy's:
 # the service offers a run only a credential of an account whose own allow_repos
-# names its repository, so a node whose accounts block names none is three runs
-# halted at their first model call — "creds: no candidate credentials were
-# offered", the halt 0.23.1 measured with every prerequisite of this check
-# passing. This is the row that stops the check there instead.
+# names its repository, so a node whose accounts block names none can never have
+# a shared Claude credential offered to a run of it. What the runs then meet is
+# the node's paid-fallback policy, so both of its answers are tested here: with
+# `oauth-only` (an absent credentials block, which is the state 0.23.1 measured
+# the halt in) every model call of theirs is refused, and with `auto` they would
+# be served by the project's paid key instead — a spend this row refuses to
+# launch on, since the bundle it would spend from is not a read the check makes.
 test_no_account_for_the_repository_stops_the_check() {
   local dir=$work/noaccount
   prepare "$dir"
   # `accounts: none`: the state the published node was in when the working run
-  # halted on 0.23.1.
+  # halted on 0.23.1. No credentials block, so the fallback in force is the
+  # default oauth-only.
   cat >"$dir/state/project-policy.json" <<'POLICY_EOF'
 {"project":"fugaro","policy":{"bitbucket_token":{"allow_repos":["bitbucket/workspace-a/repo-a"],"proxy":true},"accounts":{}}}
 POLICY_EOF
   run_check "$dir" "$script"
   expect_status "$status" 1 "no account: the check stops"
   expect_contains "$out" "FACT account-admitted: FAIL" "no account: the row does not pass"
-  expect_contains "$out" "no Claude account is admitted to workspace-a/repo-a" "no account: the row names the repository"
-  expect_contains "$out" "state_unavailable (no candidate credentials)" "no account: the row names the refusal the runs would meet"
+  expect_contains "$out" "no Claude account of the published node admits workspace-a/repo-a" "no account: the row names the repository"
+  expect_contains "$out" "no shared Claude credential can ever serve a run of it" "no account: the row says what the account leg alone settles"
+  expect_contains "$out" "does not spend (oauth-only)" "no account: the row reads the fallback in force"
+  expect_contains "$out" "every model call of the three runs below is refused" "no account: the row says the runs would be refused"
+  expect_contains "$out" "the halt of 0.23.1" "no account: the row names the halt it exists for"
   expect_contains "$out" "claude_accounts.<name>.allow_data_to" "no account: the row names the account's own list in the local config"
   expect_contains "$out" "profiles.<profile>.claude_accounts" "no account: the row names the profile that must choose the account"
   expect_contains "$out" "fugaro project policy publish" "no account: the row names the owner-run publish"
   expect_contains "$out" "FACT run-launch: FAIL — not reached" "no account: nothing below the row was measured"
   expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "no account: no run was launched"
+}
+
+# The other answer of the same gate: the node spends (`credentials.fallback:
+# auto`), so a call no shared account can serve is answered by the project's
+# paid key wherever the service's bundle holds it — it is a tier-B credential,
+# and internal/credsvc's `candidates` reads no admission for one. The row says
+# exactly that instead of the refusal the oauth-only arm states, because a
+# wording that claimed `state_unavailable` here would be false on the
+# installations this arm is for.
+test_a_spending_policy_names_the_paid_key_it_will_not_launch_on() {
+  local dir=$work/spending
+  prepare "$dir"
+  cat >"$dir/state/project-policy.json" <<'POLICY_EOF'
+{"project":"fugaro","policy":{"bitbucket_token":{"allow_repos":["bitbucket/workspace-a/repo-a"],"proxy":true},"credentials":{"fallback":"auto"},"accounts":{}}}
+POLICY_EOF
+  run_check "$dir" "$script"
+  expect_status "$status" 1 "a spending policy: the check still stops"
+  expect_contains "$out" "FACT account-admitted: FAIL" "a spending policy: the row does not pass"
+  expect_contains "$out" "credentials.fallback spends (auto)" "a spending policy: the row reads the fallback in force"
+  expect_contains "$out" "served by the project's paid key instead" "a spending policy: the row names what would serve the runs"
+  expect_contains "$out" "where the service's bundle holds that key, and refused at their first model call where it does not" "a spending policy: the row does not claim a refusal it cannot read"
+  expect_absent "$out" "state_unavailable" "a spending policy: the row names no refusal the service might not answer with"
+  expect_contains "$out" "fugaro project policy publish" "a spending policy: the row names the owner-run publish"
+  expect_contains "$out" "FACT run-launch: FAIL — not reached" "a spending policy: nothing below the row was measured"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "a spending policy: no run was launched"
 }
 
 # An account that admits ANOTHER repository is not one of this repository's: the
@@ -1811,6 +1843,7 @@ t test_the_run_id_must_name_today
 t test_the_run_id_base_must_be_todays_date_and_a_time
 t test_the_fake_run_refuses_an_id_the_cli_would_refuse
 t test_no_account_for_the_repository_stops_the_check
+t test_a_spending_policy_names_the_paid_key_it_will_not_launch_on
 t test_an_account_for_another_repository_stops_the_check
 t test_the_account_gate_is_what_stops_the_check
 t test_the_switch_being_off_stops_the_check

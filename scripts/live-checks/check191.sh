@@ -69,10 +69,14 @@
 #             allow-list, the account's list, and the repository child node's
 #             `credentials.accounts`; this preflight reads the account's list
 #             alone, from the policy the step already holds), so a node whose
-#             block names none answers every model call of a run in it
-#             `state_unavailable` ("creds: no candidate credentials were
-#             offered") and the runs below would measure a halt. Check 191 stops
-#             if any of the four is not so:
+#             block names none can never have a shared Claude credential offered
+#             to a run in it. What the runs below then meet turns on the node's
+#             `credentials.fallback`: where it does not spend, every model call
+#             of theirs is refused (the halt of 0.23.1) — and where it spends,
+#             they are served by the project's paid key instead, if the service's
+#             bundle holds it, which is not a read this check makes and not a
+#             guess it launches three runs on. Check 191 stops if any of the four
+#             is not so:
 #             the published half alone is INERT — a repository off the switch
 #             holds its own token and is served by nothing — because the fact it
 #             measures is a REFUSAL, and only the service can refuse a call it is
@@ -380,11 +384,15 @@ policy   argv: the `project policy show --json` document, a repository. Prints
          admission is the intersection of three published facts (the node's own
          top-level `allow_repos`, that account list, and the repository child
          node's `credentials.accounts`), of which this reads the account list
-         alone — a node that names none is a run refused `state_unavailable` at
-         its first model call, while a node that names one settles nothing by
-         itself: the other two legs hold too before the service offers a run of
-         it a credential. A repository is
-         matched the way the service matches it (projectpolicy.MatchRepo): the
+         alone — a node that names none can never have a shared credential
+         offered to a run of the repository at all, while a node that names one
+         settles nothing by itself: the other two legs hold too before the
+         service offers one. `fallback=` is the node's paid-fallback policy
+         (`oauth-only` when the block is absent, projectpolicy's FallbackValue),
+         which is what decides who answers a call no shared account can: the
+         project's paid key where it spends, and the refusal otherwise. A
+         repository is matched the way the service matches it
+         (projectpolicy.MatchRepo): the
          node's entries are provider-qualified and a segment may be a wildcard,
          so `bitbucket/workspace-a/*` admits every repository of that
          workspace. `holder=` names each account whose list admits it, in the
@@ -680,6 +688,14 @@ if cmd == "policy":
     print("account-admitted=%s" % ("yes" if holders else "no"))
     for name in holders:
         print("holder=%s" % word(name, 80))
+    # The paid-fallback policy in force, for the row above: it is what decides
+    # whether a call no shared account can serve is answered by the project's
+    # paid key or refused. An absent block, or a block with no fallback in it,
+    # is oauth-only (projectpolicy's FallbackValue), which is the spelling this
+    # prints — the node's own readers answer the same value through it.
+    creds = policy.get("credentials")
+    fallback = creds.get("fallback") if isinstance(creds, dict) else None
+    print("fallback=%s" % word(fallback or "oauth-only", 40))
 elif cmd == "run":
     want = sys.argv[3]
     for row in rows(sys.argv[2]):
@@ -1344,16 +1360,28 @@ step_policy() {
   # THREE published facts (internal/credsvc's admittedAccounts) — the node's own
   # top-level allow_repos, which this step does not read, that account list, and
   # the repository child node's credentials.accounts, which lives in another
-  # object. Of the three this reads the account list alone, so a node whose
-  # accounts block names none is certainly a run refused at its first model call
-  # — state_unavailable, "creds: no candidate credentials were offered" — while
-  # a node that names one is only that leg of the intersection: a repository the
-  # project's allow-list has stopped admitting is stopped by the launch row
-  # below rather than here. The halt is what makes this a preflight: it is read
-  # from the policy this step already holds, before any run of the three is
-  # launched.
+  # object. Of the three this reads the account list alone. What that settles is
+  # the ACCOUNT leg and no more: a node whose accounts block names none can
+  # never have a shared Claude credential offered to a run of this repository —
+  # tier A is the only tier that admission governs — while a node that names one
+  # is only that leg of the intersection, and a repository the project's
+  # allow-list has stopped admitting is stopped by the launch row below rather
+  # than here. Nor does it settle what the runs below then meet: a tier-B
+  # credential needs no admission at all (internal/credsvc's `candidates`), so
+  # the project's paid key answers a call no shared account can wherever the
+  # node's credentials.fallback spends AND the service's bundle holds that key,
+  # and every model call is refused only where it does not. The row is worded
+  # from that same document's fallback for both: the second is the halt of
+  # 0.23.1, and the first is three runs the check cannot know are served (the
+  # bundle is not a read it makes) and will not launch on a guess. Either way it
+  # is not a reading about the proxy, and it is read before any run of the three
+  # is launched.
   if [ "$(field_of account-admitted "$got")" != yes ]; then
-    fact account-admitted FAIL "no Claude account is admitted to ${REPO}: the credentials service will refuse every model call with state_unavailable (no candidate credentials). Add ${REPO} to the account's own list in the local config (claude_accounts.<name>.allow_data_to, or project_secrets.claude-oauth-token.allow_data_to for the default account), name that account in the profile this repository's workflow uses (profiles.<profile>.claude_accounts), run 'fugaro project policy publish' (owner-run), then re-run"
+    if [ "$(field_of fallback "$got")" = auto ]; then
+      fact account-admitted FAIL "no Claude account of the published node admits ${REPO}, so no shared Claude credential can ever serve a run of it: the service offers one only from an account whose own allow_repos admits its repository. This node's credentials.fallback spends (auto), so the three runs below would be served by the project's paid key instead — where the service's bundle holds that key, and refused at their first model call where it does not — and this check stops rather than launch them on a key it cannot read. Add ${REPO} to the account's own list in the local config (claude_accounts.<name>.allow_data_to, or project_secrets.claude-oauth-token.allow_data_to for the default account), name that account in the profile this repository's workflow uses (profiles.<profile>.claude_accounts), run 'fugaro project policy publish' (owner-run), then re-run"
+    else
+      fact account-admitted FAIL "no Claude account of the published node admits ${REPO}, so no shared Claude credential can ever serve a run of it: the service offers one only from an account whose own allow_repos admits its repository. This node's credentials.fallback does not spend ($(field_of fallback "$got")), and the project's paid key is never spent without a written 'fallback: auto' (D152), so every model call of the three runs below is refused — the halt of 0.23.1 — and the check stops rather than measure three of them. Add ${REPO} to the account's own list in the local config (claude_accounts.<name>.allow_data_to, or project_secrets.claude-oauth-token.allow_data_to for the default account), name that account in the profile this repository's workflow uses (profiles.<profile>.claude_accounts), run 'fugaro project policy publish' (owner-run), then re-run"
+    fi
     return 1
   fi
   holders=$(printf '%s\n' "$got" | sed -n 's/^holder=//p' | tr '\n' ' ' | sed 's/ *$//')
@@ -1832,7 +1860,7 @@ plan() {
       fact "$key" INFO "planned: a real run reads this row; --dry-run did not"
     done
   else
-    say "  [network, read] fugaro project policy show --project fugaro --json — whether ${REPO} is admitted with proxy: true, and whether an account of the node's accounts block admits it too (the model credential's own admission)"
+    say "  [network, read] fugaro project policy show --project fugaro --json — whether ${REPO} is admitted with proxy: true, whether an account of the node's accounts block admits it too (the model credential's own admission) and whether the node's credentials.fallback spends (which is who answers a model call no shared account can)"
     say "  [network, read] gcloud run services get-iam-policy fugaro-credentials --project=${P} --region=${L} --format=json and gcloud run jobs list --project=${P} --region=${L} --format=json — whether every job account of ${REPO} holds roles/run.invoker on the credentials service (the switch, read from the service's own policy and the repository's own jobs)"
     say "  [network, read] gcloud secrets list --project=${P} --format=json, then gcloud secrets versions list <the credentials service's bundle container> --project=${P} --format=json — whether the service has a model credential to serve a run out of, read here where doctor's own row answers about the invoker grant instead"
     say "  [network, runs] fugaro run --repo ${REPO} --run-id $(run_id work) — the throwaway run itself, whose task commits one line, pushes it and opens its pull request through the service, THEN makes the seven attempts and prints one line per attempt"

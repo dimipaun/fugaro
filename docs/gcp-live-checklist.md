@@ -11933,8 +11933,13 @@ admits its repository. That admission (`internal/credsvc`'s `admittedAccounts`) 
 `credentials.accounts`. This preflight reads the account's list alone — the other two live in other
 objects, and a repository the project's allow-list has stopped admitting is caught at the run-launch
 row below rather than here — and a node whose block names none fails `account-admitted` *before it
-launches anything*, with the `state_unavailable` ("no candidate credentials were offered") halt the
-runs would otherwise measure; its remedy is to add the repository to the account's own list in the
+launches anything*, since no shared Claude credential can ever serve a run of it. What the three runs
+would meet instead is the node's own `credentials.fallback`: where it does not spend, every model call
+of theirs is refused (the `state_unavailable` halt of 0.23.1, or the fallback-forbidden refusal when
+the service's bundle holds the paid key and the policy will not spend it), and where it spends (`auto`)
+they are served by the project's paid key instead — a tier-B credential, which needs no admission —
+as far as the service's bundle holds that key, which is not a read this check makes. The row's remedy
+is to add the repository to the account's own list in the
 local config (`claude_accounts.<name>.allow_data_to`, or `project_secrets.claude-oauth-token.allow_data_to`
 for the default account), name that account in the profile the repository's workflow uses
 (`profiles.<profile>.claude_accounts` — `fugaro accounts add <name> --repos owner/name` writes both),
@@ -11979,10 +11984,11 @@ launched**.
 **What the block reads.** `proxied` (the published `bitbucket_token` block admits the repository with
 `proxy: true`, and the service's own IAM policy puts it on the credentials-service switch);
 `account-admitted` (the same node's `accounts` block admits it too — the account leg of the admission
-above, so a node whose block names none refuses every model call of a run there `state_unavailable`, "no
-candidate credentials were offered", and the check stops before any run is launched, naming the
-account's `allow_data_to`, the profile that must name it and the owner-run `fugaro project policy
-publish` that carries it to the node); `run-launch` and `run-outcome`
+above, so a node whose block names none can never have a shared credential offered to a run there, and
+the check stops before any run is launched, naming the fallback in force and, under it, whether the
+runs would be refused or served by the project's paid key, plus the account's `allow_data_to`, the
+profile that must name it and the owner-run `fugaro project policy publish` that carries it to the
+node); `run-launch` and `run-outcome`
 (the working run reached a final
 status, pushed its branch and opened its pull request); the seven refusal rows
 (`refusal-other-repository`, `refusal-other-ref`, `refusal-tag-ref`, `refusal-ref-delete`,

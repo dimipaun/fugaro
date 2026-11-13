@@ -65,11 +65,16 @@ neither deletes nor closes them, and the block names each one.
   only a credential of an account that admits its repository, and `internal/credsvc`'s
   `admittedAccounts` is the intersection of **three** published facts — the node's own top-level
   `allow_repos` (the project's allow-list), the account's own list, and the repository child node's
-  `credentials.accounts` — so a node whose block names none is a run refused `state_unavailable`, "no
-  candidate credentials were offered", at its first model call. The check reads the account's list
-  from the same `policy show` document and fails `account-admitted` for it; the other two legs are
-  other objects, so a repository the project's allow-list has stopped admitting is caught at the
-  `run-launch` row instead). Check 191 reads the published
+  `credentials.accounts` — so a node whose block names none can never have a shared Claude credential
+  offered to a run of that repository. The check reads the account's list from the same `policy show`
+  document and fails `account-admitted` for it; the other two legs are other objects, so a repository
+  the project's allow-list has stopped admitting is caught at the `run-launch` row instead. What the
+  three runs would meet under that row is the node's `credentials.fallback`, which the row also reads:
+  where it does not spend, every model call of theirs is refused (the `state_unavailable` halt of
+  0.23.1 — "creds: no candidate credentials were offered" where the bundle holds no paid key, and the
+  fallback-forbidden refusal where it holds one the policy will not spend); where it spends (`auto`),
+  they are served by the project's paid key instead, as far as the service's bundle holds that key,
+  which is not a read this check makes). Check 191 reads the published
   policy from `fugaro project policy show --project fugaro --json` and the switch from the credentials
   service's OWN IAM policy (`gcloud run services get-iam-policy fugaro-credentials --project fugaro-dev
   --region us-east5 --format=json`) crossed with the repository's REAL jobs (the jobs whose own
@@ -197,7 +202,14 @@ about the invoker grant, doctor answered it before it ever read the bundle, so t
 bundle itself (`gcloud secrets versions list`, of the container `gcloud secrets list` names as the
 service's own) and stops unmeasured when it holds no version Secret Manager will serve.
 `proxy: true` is inert for a repository off the switch, and a row that passed on the policy alone
-would call a run at the direct path a broken proxy), `run-launch` and
+would call a run at the direct path a broken proxy), `account-admitted` (the same node's `accounts`
+block admits the repository too — the account leg of the service's admission, whose other two legs are
+the node's own top-level `allow_repos` and the repository child node's `credentials.accounts` — so a
+node whose block names none can never have a shared Claude credential offered to a run there, and the
+check stops before any run is launched, naming the `credentials.fallback` in force and, under it,
+whether the runs would be refused or served by the project's paid key, plus the account's
+`allow_data_to`, the profile that must name it and the owner-run `fugaro project policy publish` that
+carries it to the node), `run-launch` and
 `run-outcome` (the working run reached a final status, succeeded, and the service served its push and
 its pull request — the branch and the number the check leaves for you), the seven refusal rows
 (`refusal-other-repository`, `refusal-other-ref`, `refusal-tag-ref`, `refusal-ref-delete`,
@@ -251,9 +263,17 @@ knowing by name:
   stops at this row: nothing below it was measured and no run was launched.
 - **No Claude account is admitted to the repository** (`account-admitted: FAIL`) — the published node's
   `accounts` block names no account whose own `allow_repos` holds `CHECK191_REPO`, so the credentials
-  service offers a run of it no credential at all and every model call of all three runs would be
-  refused `state_unavailable` ("creds: no candidate credentials were offered") — this is the halt of
-  0.23.1 rather than a reading about the proxy. Add `CHECK191_REPO` to the account's own list in the
+  service can never offer a run of it a shared Claude credential: that admission governs tier A, and
+  the account leg is out of reach whatever the other two hold. The row says what the runs would then
+  meet, read from the same document's `credentials.fallback`: under `oauth-only` (the default, and the
+  state 0.23.1 measured the halt in) every model call of all three runs is refused —
+  `state_unavailable` ("creds: no candidate credentials were offered") where the bundle holds no paid
+  key, and the fallback-forbidden refusal ("no shared subscription credential can serve this call")
+  where it holds one the policy does not spend. Under `auto` a tier-B credential needs no admission
+  (internal/credsvc's `candidates`), so the three runs would be served by the project's paid key
+  instead, as far as the service's bundle holds that key — which the check does not read, and which is
+  a spend it will not launch on. Either way it is not a reading about the proxy. Add
+  `CHECK191_REPO` to the account's own list in the
   local config (`claude_accounts.<name>.allow_data_to`, or
   `project_secrets.claude-oauth-token.allow_data_to` for the default account; `fugaro accounts add
   <name> --repos owner/name` writes that list and the profile's entry in one step), name that account
