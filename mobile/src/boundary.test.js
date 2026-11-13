@@ -285,6 +285,15 @@ test('the app imports nothing outside mobile/ but the shared package (D119, D125
 // after its token. Folding every separator but `-` to `-` makes one spelling of
 // the name for the pattern to judge, and the pattern then reads the words
 // rather than an enumeration of the packages that happen to be named today.
+//
+// **Why the alias target is read too.** A key is not always the name that lands
+// in `node_modules`: an npm alias installs one package under another name --
+// `"fb": "npm:@react-native-firebase/auth@27.1.0"` puts the Firebase auth SDK
+// in `node_modules/fb` -- and the third review of this rule found exactly that
+// walking through a check that read keys alone, while the SDK it installs is
+// the one the rule exists to refuse. So a version that is an alias is read for
+// the package it points at, and the key and the target are judged by the same
+// two patterns; a failure names both, because the alias is what hides it.
 
 /** The dependency groups a build installs into the app, in the manifest's own
  * order: each one reaches `node_modules`, so each one is a dependency the app
@@ -306,13 +315,29 @@ function fold(name) {
   return name.toLowerCase().replace(/[@/._]+/g, '-');
 }
 
+/** The package an entry really installs: its key, or -- when the version is an
+ * npm alias -- the name the alias points at. `npm:@scope/pkg@1.2.3` and
+ * `npm:pkg` are both valid, and a scoped target keeps its own leading `@`, so
+ * the version's separator is the LAST `@` after the first character. */
+function installed(name, version) {
+  if (typeof version !== 'string' || !version.startsWith('npm:')) return name;
+  const target = version.slice('npm:'.length);
+  const at = target.lastIndexOf('@');
+  return at > 0 ? target.slice(0, at) : target;
+}
+
 /** The declared dependencies that are a provider auth SDK, sorted, each named
- * with the group it sits in -- so a failure says where to look. */
+ * with the group it sits in -- so a failure says where to look. An alias is
+ * judged by the package it installs and reported with both names: the alias is
+ * what would hide it. */
 function providerAuth(manifest) {
   const found = [];
   for (const group of INSTALLED_GROUPS) {
-    for (const name of Object.keys(manifest[group] ?? {})) {
-      if (PROVIDER_AUTH.test(fold(name)) || FIREBASE_SDK.test(name)) found.push(`${group}: ${name}`);
+    for (const [name, version] of Object.entries(manifest[group] ?? {})) {
+      const target = installed(name, version);
+      if (PROVIDER_AUTH.test(fold(target)) || FIREBASE_SDK.test(target)) {
+        found.push(target === name ? `${group}: ${name}` : `${group}: ${name} -> ${target}`);
+      }
     }
   }
   return found.sort();
@@ -340,6 +365,32 @@ test('the manifest declares no provider auth SDK (D221, D234)', () => {
   ]) {
     assert.deepEqual(providerAuth({ dependencies: { [name]: '1.0.0' } }), [`dependencies: ${name}`], name);
   }
+  // ... and an npm alias, which installs the SDK under a key of the author's
+  // choosing: the name the alias points at is what is judged, and a failure
+  // names both, because the alias is what would hide it. Mutations: read the
+  // key alone (the reviewed defect) and these go red.
+  assert.deepEqual(
+    providerAuth({ dependencies: { fb: 'npm:@react-native-firebase/auth@27.1.0' } }),
+    ['dependencies: fb -> @react-native-firebase/auth'],
+  );
+  // ... in any installed group, for the bare SDK as much as for a scoped auth
+  // package, and whatever the version is spelled as (`npm:pkg`, no version at
+  // all, is the same shape).
+  assert.deepEqual(
+    providerAuth({ optionalDependencies: { analytics: 'npm:firebase@10.0.0' } }),
+    ['optionalDependencies: analytics -> firebase'],
+    'a group that is scanned for a key is scanned for the alias target too',
+  );
+  assert.deepEqual(
+    providerAuth({ peerDependencies: { auth0: 'npm:react-native-auth0@^3.0.0' } }),
+    ['peerDependencies: auth0 -> react-native-auth0'],
+  );
+  // ... and an alias to a package that is not auth is not an offence, so the
+  // rule is still about a session rather than about the word npm.
+  assert.deepEqual(
+    providerAuth({ dependencies: { store: 'npm:expo-secure-store@14.0.0', store2: 'npm:expo-secure-store' } }),
+    [],
+  );
   // ... and the groups themselves are pinned against a written list: the loop
   // below moves with the constant it checks, and a loop that moves with what it
   // checks is exactly how `optionalDependencies` was left out of this rule in
