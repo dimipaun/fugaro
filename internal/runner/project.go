@@ -487,8 +487,32 @@ func remoteAdmissionErr(remote, kind, repo, slug string) error {
 // the installation's credentials service (B1.7). See the call site for what
 // the two facts are; this is where they are read, once, from the one read of
 // the published node.
+//
+// A project job is proxied only when the run is a review on the review-only
+// variant of it (owner direction 2026-11-13): that container mounts no
+// Bitbucket token at all, so the service's proxy is the only way it can clone
+// the pull request it reviews, and the variant exists for exactly one class.
+// The class is the run's own marker and the matched candidate's, never a
+// suffix read back out of the job's name (R2-5); the two are already held to
+// each other by checkJobClass, which runs in jobIdentity before this, so a run
+// that reaches here in a project job is in the job of its own class. Every
+// other class on a project job keeps today's answer -- a shared job serves
+// every repository of its profile and holds its own token, and the service
+// admitting a shared coding caller is B5.3, not this.
+//
+// This rule is the runner's half of the review variant, and today it is the
+// only half that exists. A Bitbucket profile is deployed no project job at
+// all (internal/infra's ProjectJobs skips a provider no shared job serves,
+// D505), so there is no Bitbucket review variant for a launch to resolve, and
+// a review launch in a Bitbucket repository is refused by internal/cli's
+// reviewJobFor before any container starts. Both halves are follow-ups, the
+// deploy one first: until it lands, no run reaches this path, and nothing here
+// is a substitute for it.
 func (r *run) proxiedBitbucket(p *projectpolicy.Policy, found, project bool, kind, repo string) bool {
-	if project || kind != gitprov.KindBitbucket || !found || p == nil || p.BitbucketToken == nil || !p.BitbucketToken.Proxy {
+	if kind != gitprov.KindBitbucket || !found || p == nil || p.BitbucketToken == nil || !p.BitbucketToken.Proxy {
+		return false
+	}
+	if project && !r.reviewClassRun() {
 		return false
 	}
 	if envLookup(r.d.Env, providers.EnvCredentialsServiceURL) == "" {
@@ -1199,13 +1223,16 @@ func (r *run) admissionCheck(ctx context.Context) error {
 	// read here, at the run's one read of the published node: the node's
 	// bitbucket_token block admits this repository with proxy: true, and the
 	// installation has the service on -- the job carries its URL, which is
-	// the only thing that says so (D146/D147). A per-repository job only
-	// (D505): a project job serves every repository of its profile, and its
-	// job account is the one the service admits, so a proxied repository is
-	// never launched onto one. Everything downstream reads this fact -- the
-	// forwarder, the credential URL, the provider and the git environment --
-	// so that no second reader can disagree with this one about which of
-	// them a repository is.
+	// the only thing that says so (D146/D147). A per-repository job (D505),
+	// and beside it the review-only variant of a project job: that container
+	// mounts no Bitbucket token, so a review run in it has nothing to clone
+	// with but the service's proxy (proxiedBitbucket has the class rule and
+	// why it is safe). A shared project job is not one -- it serves every
+	// repository of its profile, and its job account is the one the service
+	// admits, so a proxied repository is never launched onto one. Everything
+	// downstream reads this fact -- the forwarder, the credential URL, the
+	// provider and the git environment -- so that no second reader can
+	// disagree with this one about which of them a repository is.
 	r.proxied = r.proxiedBitbucket(p, found, project, kind, repo)
 	if !project {
 		// The remote is where the clone comes from, and on a per-repository job
