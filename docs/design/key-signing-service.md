@@ -28,11 +28,11 @@ revocation list the customer's own job checks (D2130, D2131).**
 **Amended 2026-11-13 by the portal (P9.1, [portal/implementation-plan.md](../portal/implementation-plan.md),
 [portal/reconciliation.md](../portal/reconciliation.md) §"What this changes in licence key v2"): the
 service is not deployed as this design's own dedicated project.** D2194 puts the API, the minter and the
-key ring in `fugaro-prod` beside the website's console, so §3.4's project, §9.1's row 5 and §6's
-page-and-queue ownership are the portal's to settle and are noted below; §5.2's deliberate refusal to
-read the merchant's timestamp is reversed by the portal's P4.2; and three of the questions §12 leaves
-open — D454, D455 and D459 — are recorded there as decided by D2187 and D2194, while the other seven
-stay open. Everything else here stands.
+key ring in `fugaro-prod` beside the website's console, so §1's project, §3.4's, §9.1's row 5 and §6's
+page-and-queue ownership, and §11's first step, are the portal's to settle and are noted below; §5.2's
+deliberate refusal to read the merchant's timestamp is reversed by the portal's P4.2; and three of the
+questions §12 leaves open — D454, D455 and D459 — are recorded there as decided by D2187 and D2194,
+while the other seven stay open. Everything else here stands.
 
 This is subscriptions **S3.1**, the first task of slice S3: the design the tasks after it are written
 against — the issuing service (S3.2), the admin page and the manual queue (S3.4), the dedicated
@@ -73,6 +73,12 @@ names the merchant and its fee rates and the tax plan are private (D430), so no 
 key, and the internet-facing intake (the forms, the merchant's events and the admin page) **split
 from a non-public minter that alone holds the signer role**. It is built **after the entity exists**
 (the service issues keys as the Licensor, item 7 of T13), and hand minting is the interim.
+
+**Amended 2026-11-13:** the project is not the service's own. D2194 puts the service in
+`fugaro-prod`, the project the website already deploys to, so the sentence above is read as
+"owner-operated in one project with the website" and what the ruling is worth keeping is the split —
+the internet-facing intake from a non-public minter that alone holds the signer role (§3.3, §9.1
+row 1).
 
 | The service is | The service is not |
 | --- | --- |
@@ -613,7 +619,11 @@ project the owner operates" — and that is why S2.10 mints by hand from S3.8 un
 1. **Create the project and the keys (S3.8).** Create the dedicated project, apply the key-ring part
    of `ee/keyservice/terraform`, create the **production** and **staging** signing keys in it, and
    **publish both public halves**. Hand minting can start here, and S2.9's production public half
-   comes from this step.
+   comes from this step. **Amended 2026-11-13:** there is no project to create — `fugaro-prod` exists
+   and hosts the website — so the step is the two applies and the two keys: the key-ring part of
+   `ee/keyservice/terraform` applied to `fugaro-prod` with the production key id, and to
+   `fugaro-staging` with the staging one, one key id per ring (D2194, D459; the portal's P1.5). Hand
+   minting starts here all the same, which is what the step is for.
 2. **Mint by hand while the service does not exist (S2.10).** The owner mints one key at a time
    through the KMS signing API with their own credentials — never a local private key file — against
    S2.1's claim set, so the interim's keys and the service's are the same format. This is what

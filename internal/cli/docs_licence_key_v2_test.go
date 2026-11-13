@@ -134,12 +134,19 @@ func TestDocsKeySigningDesignFollowsThePortal(t *testing.T) {
 		want    []string
 	}{
 		// Where the service's project is settled. The sentence names the
-		// portal's plan as the place the accepted risk is written down.
+		// portal's plan as the place the accepted risk is written down. §1 and
+		// §11 assert the same dedicated project, and §11's first step tells the
+		// owner to create it, so the amendment's "everything else stands" is
+		// only true while those two carry a note of their own.
+		{"## 1. What the service is (T13)", []string{"Amended 2026-11-13", "D2194", "`fugaro-prod`"}},
 		{"### 3.4 Where the code and the infrastructure live", []string{"Amended 2026-11-13", "D2194", "`fugaro-prod`"}},
 		// The deliberate choice not to read the merchant's timestamp.
 		{"### 5.2 Signature, idempotency and order", []string{"portal P4.2", "5-minute timestamp window", "fresh `ts`"}},
 		// The page the portal's operations API replaces.
 		{"## 6. The admin page and the manual queue", []string{"Replaced 2026-11-13 (portal P5.1, P5.3)", "D2187"}},
+		// The runbook's first step, which creates the project that D2194
+		// removes: the step is the applies and the two key ids.
+		{"## 11. The runbook", []string{"Amended 2026-11-13", "D2194", "D459"}},
 	} {
 		section := flattenDoc(docSection(t, keySigningDesign, doc, tc.section))
 		for _, want := range tc.want {
