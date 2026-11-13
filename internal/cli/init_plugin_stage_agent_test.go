@@ -45,7 +45,6 @@ import (
 // installs, the repository stage stops needs-you, and the checkout runs past
 // that stop to park its cloud half.
 func TestInitPluginStageMovesInAgentSessionAheadOfARepositoryStop(t *testing.T) {
-	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 	r := newConvergeRigYAML(t, v6Node(), convergeLegacyYAML)
 	currentRelease(t)
 	// The staleness line is once per process; an earlier test's run may have
