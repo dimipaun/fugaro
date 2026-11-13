@@ -102,6 +102,34 @@ func issueRefArg(ref string) string {
 	return strings.TrimPrefix(ref, "#")
 }
 
+// issueDetail is what a reader needs beside an issue's status for the two
+// statuses that mean more than the status alone (F27, D1752): the release that
+// fixed a `resolved` issue and the GitHub issue it was filed as, and the reason
+// a `dismissed` one closed. Every other status has nothing to add and answers
+// "".
+//
+// The release and the reason are strings a record carries — the update pass
+// wrote them, and a launcher with write access to the store's records can
+// rewrite them (F16b) — so the caller prints the whole answer through the
+// terminal pass like every other value a record supplies (F6). The URL is the
+// one value with a shape of its own and is dropped unless it is this project's
+// issue (F28).
+func issueDetail(i issues.Issue) string {
+	var parts []string
+	if i.Status == issues.StatusResolved {
+		if i.ResolvedIn != "" {
+			parts = append(parts, "fixed in "+i.ResolvedIn)
+		}
+		if u := issueURL(i.URL); u != "" {
+			parts = append(parts, u)
+		}
+	}
+	if i.Status == issues.StatusDismissed && i.ClosedAs != "" {
+		parts = append(parts, "closed as "+string(i.ClosedAs))
+	}
+	return strings.Join(parts, " ")
+}
+
 // issueJSON is one record as the `--json` documents of `issue list` and
 // `issue show` carry it: the header the codec writes, plus the four body
 // members schemas/issue-record.schema.json names (F23). The record's own
@@ -112,7 +140,9 @@ func issueRefArg(ref string) string {
 // second list of member names written here: the header, the schema and this
 // document are one shape, and a field added to the record cannot go missing
 // from the document without the schema test that pins the three together
-// saying so.
+// saying so. `resolved_in` and `closed_as` reached both documents that way —
+// two members added under names of their own, with nothing else changing
+// meaning and the record's version unmoved (F23).
 func issueJSON(i issues.Issue) (map[string]any, error) {
 	i.Version = issues.RecordVersion
 	head, err := yaml.Marshal(i)

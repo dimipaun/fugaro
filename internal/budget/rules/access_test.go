@@ -66,57 +66,36 @@ func governingPaths(t *testing.T, node string) map[string]map[string]any {
 // child — already does. This test is what decides that, and what fails if a
 // later edit moves the node or opens the subtree, whether along the node's
 // literal path or through a wildcard segment that reaches it.
+//
+// The migration marker beside the node (access.PathMigrated) is held to the
+// same proof rather than assumed to inherit it. It is a second name under the
+// same subtree, so a later edit can move or re-open one without the other, and
+// what it decides is a security answer of its own (RS6c): a client that could
+// write it would turn an installation whose roster is empty into one whose
+// lists have never been migrated, and the CLI reads that second state as
+// "restrict nothing" (internal/cli's accessJudge). A client that could read it
+// learns which installations hold a roster at all, which is the same disclosure
+// reading the node is.
 func TestNoRunTokenReadsTheAccessNode(t *testing.T) {
-	if access.PathNode != "config/admin/access" {
-		t.Fatalf("access.PathNode = %q, want config/admin/access: the node's placement is the security property (F28)", access.PathNode)
-	}
-	if access.PathNode == projectpolicy.PathShared() || strings.HasPrefix(access.PathNode, projectpolicy.PathShared()+"/") {
-		t.Fatalf("access.PathNode = %q is under %s, whose `.read: TOKEN` lets every run's agent read the whole roster (F28)", access.PathNode, projectpolicy.PathShared())
+	for _, p := range []struct {
+		field string
+		path  string
+		want  string
+	}{
+		{"access.PathNode", access.PathNode, "config/admin/access"},
+		{"access.PathMigrated", access.PathMigrated, "config/admin/access_migrated"},
+	} {
+		if p.path != p.want {
+			t.Fatalf("%s = %q, want %s: sitting under the subtree the document denies is the security property (F28)", p.field, p.path, p.want)
+		}
+		if p.path == projectpolicy.PathShared() || strings.HasPrefix(p.path, projectpolicy.PathShared()+"/") {
+			t.Fatalf("%s = %q is under %s, whose `.read: TOKEN` lets every run's agent read the whole roster (F28)", p.field, p.path, projectpolicy.PathShared())
+		}
 	}
 
 	paths := generatedPaths(t)
-
-	// The nearest generated ancestor: config/admin. Every location between it
-	// and the node carries no rule of its own, so this is the rule the database
-	// evaluates for a read of the node.
-	segs := strings.Split(access.PathNode, "/")
-	ancestor := ""
-	var attrs map[string]any
-	for i := len(segs) - 1; i >= 1; i-- {
-		if a, ok := paths[strings.Join(segs[:i], "/")]; ok {
-			ancestor, attrs = strings.Join(segs[:i], "/"), a
-			break
-		}
-	}
-	if ancestor != projectpolicy.PathAdmin() {
-		t.Fatalf("the nearest generated ancestor of %s is %q, want %q: the node must sit under the node the document denies to every client", access.PathNode, ancestor, projectpolicy.PathAdmin())
-	}
-	for _, a := range []string{".read", ".write"} {
-		v, ok := attrs[a]
-		if !ok || v != false {
-			t.Errorf("/%s %s = %v, want false: a boolean false denies every client — a run token and a signed-in user included — so nothing reads or writes the grants", ancestor, a, v)
-		}
-	}
-
-	// And nothing that governs the node grants a client read or write: an
-	// ancestor or the node itself, where a later edit that added an explicit
-	// child grant would re-open the family the ancestor closes, and every
-	// location that reaches the node through a wildcard segment. Every value
-	// that is not the boolean false counts, because the two shapes a grant is
-	// written in are an expression (a string) and the boolean true; a walk that
-	// looked only for strings would pass a `{ ".read": true }` added here.
-	gov := governingPaths(t, access.PathNode)
-	govPaths := make([]string, 0, len(gov))
-	for p := range gov {
-		govPaths = append(govPaths, p)
-	}
-	slices.Sort(govPaths)
-	for _, p := range govPaths {
-		for _, attr := range []string{".read", ".write"} {
-			if v, has := gov[p][attr]; has && v != false {
-				t.Errorf("/%s %s = %v: no client token may read or write the grants node", p, attr, v)
-			}
-		}
+	for _, node := range []string{access.PathNode, access.PathMigrated} {
+		assertNoClientReachesTheFencedPath(t, paths, node)
 	}
 
 	// The contrast that makes the placement matter: config/policy/shared, where
@@ -128,5 +107,55 @@ func TestNoRunTokenReadsTheAccessNode(t *testing.T) {
 	}
 	if r, _ := shared[".read"].(string); !strings.Contains(r, "auth.token.fp") {
 		t.Errorf("/%s .read = %v, want the TOKEN grant that makes it the wrong home for the roster (F28)", projectpolicy.PathShared(), shared[".read"])
+	}
+}
+
+// assertNoClientReachesTheFencedPath holds one path under the denied subtree to
+// the whole proof: the nearest generated ancestor denies every client, and
+// nothing that governs the path — an ancestor, the path itself, or a location
+// that reaches it through a wildcard segment — grants a client read or write.
+func assertNoClientReachesTheFencedPath(t *testing.T, paths map[string]map[string]any, node string) {
+	t.Helper()
+	// The nearest generated ancestor: config/admin. Every location between it
+	// and the path carries no rule of its own, so this is the rule the database
+	// evaluates for a read of it.
+	segs := strings.Split(node, "/")
+	ancestor := ""
+	var attrs map[string]any
+	for i := len(segs) - 1; i >= 1; i-- {
+		if a, ok := paths[strings.Join(segs[:i], "/")]; ok {
+			ancestor, attrs = strings.Join(segs[:i], "/"), a
+			break
+		}
+	}
+	if ancestor != projectpolicy.PathAdmin() {
+		t.Fatalf("the nearest generated ancestor of %s is %q, want %q: it must sit under the node the document denies to every client", node, ancestor, projectpolicy.PathAdmin())
+	}
+	for _, a := range []string{".read", ".write"} {
+		v, ok := attrs[a]
+		if !ok || v != false {
+			t.Errorf("/%s %s = %v, want false: a boolean false denies every client — a run token and a signed-in user included — so nothing reads or writes the grants", ancestor, a, v)
+		}
+	}
+
+	// And nothing that governs the path grants a client read or write: an
+	// ancestor or the path itself, where a later edit that added an explicit
+	// child grant would re-open the family the ancestor closes, and every
+	// location that reaches the path through a wildcard segment. Every value
+	// that is not the boolean false counts, because the two shapes a grant is
+	// written in are an expression (a string) and the boolean true; a walk that
+	// looked only for strings would pass a `{ ".read": true }` added here.
+	gov := governingPaths(t, node)
+	govPaths := make([]string, 0, len(gov))
+	for p := range gov {
+		govPaths = append(govPaths, p)
+	}
+	slices.Sort(govPaths)
+	for _, p := range govPaths {
+		for _, attr := range []string{".read", ".write"} {
+			if v, has := gov[p][attr]; has && v != false {
+				t.Errorf("/%s %s = %v: no client token may read or write %s", p, attr, v, node)
+			}
+		}
 	}
 }

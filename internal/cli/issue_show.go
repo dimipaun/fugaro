@@ -165,6 +165,8 @@ func printIssue(w io.Writer, i issues.Issue) error {
 	for _, f := range []struct{ name, value string }{
 		{"class", string(i.Class)},
 		{"status", string(i.Status)},
+		{"resolved_in", i.ResolvedIn},
+		{"closed_as", string(i.ClosedAs)},
 		{"run", i.Run},
 		{"reporter", i.Reporter},
 		{"created", i.Created.UTC().Format(time.RFC3339)},

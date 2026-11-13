@@ -87,7 +87,8 @@ The row is `runview.Row` (`internal/runview/runview.go:74`); it copies the recor
 halt into `Halt`, and the run's five-key status vocabulary into `Status`. The document is `lsDoc`
 (`internal/cli/runs.go:214`) — `project`, `runs`, `totals`, `warnings` — and the rows come from
 `(*cli.Cloud).LoadRows` (`internal/cli/api.go:301`), which `runs ls` and every other row reader call.
-`--state`'s closed list is `lsStates` (`internal/cli/runs.go:65`) and it is refused by
+`--state`'s closed list is `lsStateWords` (`internal/cli/runs_prstate.go:51`) — the run states plus
+the three states of a pull request — and it is refused by
 `slices.Contains`, which is the shape the design gives `--group-by`'s own closed list.
 
 **Two consequences the design's §6.1 does not carry.** First, a row key is a **contract key** for the
