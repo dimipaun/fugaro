@@ -822,10 +822,16 @@ func (s *Service) verifySignIn(ctx context.Context, raw string) (Caller, bool) {
 // the owner's decision, not a repair for that path to make), so an address that
 // was refunded can sign in and collect a fresh key for the rest of the term, and
 // a key this route minted before the refund is not named by any entry either.
-// Closing it is the merchant half's: either the refund records the withdrawal on
-// the subscription, which every issue path already refuses on, or a sign-in
-// reads the revocation list for the issuances it minted. Until it does,
-// TestTokenFromARefundedSubscriptionStillSignsIn measures the behaviour.
+// This route is what makes the gap self-serve: the refunded address can ask for
+// another key whenever it likes and as often as it likes, so §8's entry for the
+// key the refund named is left behind on the first one — an eviction of D2131's
+// revocation that needs nobody's help. The fix is one write on the merchant's
+// side — the withdrawal recorded on the subscription (K2.5, K2.2), which this
+// function and signInMint already refuse on — and until it exists
+// TestTokenFromARefundedSubscriptionStillSignsIn measures the behaviour. What
+// `withdrawn` leaves to the pairing the deploy owes (S3.7) is the other half, and
+// the test pins that too: the merchant's cancellation, the event §5.3 says stops
+// the reissue, stops the same sign-in.
 //
 // A sign-in adds a **door** to that hole and not the hole itself: `withdrawn`'s
 // own comment records that a renewal and a seat change inside the window already
@@ -839,8 +845,10 @@ func (s *Service) verifySignIn(ctx context.Context, raw string) (Caller, bool) {
 // merchant's refund names the key its own record holds, which is the purchase's,
 // not a sign-in's — while a pairing guessed from the workspace or the address
 // would refuse a customer whose earlier key was refunded and who has bought
-// again. What closes a refund is knowing which key a subscription holds, and
-// that is the record the store has never kept.
+// again, or one whose key leaked: a leak is revoked and reissued under the next
+// key_id (§8), so a workspace's revoked keys are not a statement about who is
+// entitled to sign in. What closes a refund is knowing which key a subscription
+// holds, and that is the record the store has never kept.
 //
 // The portal that replaces this reading closes it by keeping that record: a
 // refund resolves to the entitlement (P4.2) and revocation is by entitlement

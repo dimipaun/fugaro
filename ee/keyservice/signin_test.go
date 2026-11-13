@@ -1155,10 +1155,13 @@ func TestTokenFromAnotherProjectIsRefused(t *testing.T) {
 //
 // A security review of this task asked for exactly that: the withdrawal recorded
 // on the subscription, the sign-in refusing a subscription whose issuance is
-// revoked, this test turned around, or the owner's sign-off before merge. The
-// first two are merchant.go's and store.go's (K2.5, K2.2) and the third needs
-// one of them, so what the branch carries is the report, and the finding stands
-// open on the pull request until the owner rules.
+// revoked, this test turned around, or the owner's decision that the deploy
+// always pairs a refund with a cancellation (S3.7). The first two are
+// merchant.go's and store.go's (K2.5, K2.2); the second is also the one the
+// refusal cannot be built from, because a leaked key is revoked and reissued
+// under a new key_id (§8), so it would refuse a customer who is entitled to sign
+// in. The pairing is what the end of this test shows in code: the merchant's
+// cancellation, and nothing else, is the event that stops the same sign-in.
 func TestTokenFromARefundedSubscriptionStillSignsIn(t *testing.T) {
 	f, spy := signingIn(t)
 	refunded := f.purchase("evt-signin", signInOrg, 5, 365)
@@ -1200,6 +1203,16 @@ func TestTokenFromARefundedSubscriptionStillSignsIn(t *testing.T) {
 		if entry.KeyID == claims.KeyID {
 			t.Fatalf("the sign-in's key %s is on the revocation list: the gap is closed, and this test is the one to turn around", claims.KeyID)
 		}
+	}
+	// And it is not once: nothing counts the sign-ins or the keys a subscription
+	// has handed out, so the same address takes a fresh bundle every time it asks,
+	// which is what makes the hole self-serve rather than merely open.
+	again := f.signInBundle(t)
+	if spy.minted() != 2 {
+		t.Errorf("a second sign-in after the refund left the mint count at %d, want two: nothing bounds how often a refunded address takes a key", spy.minted())
+	}
+	if again.Key == fresh.Key {
+		t.Errorf("the second sign-in answered the key %s again, so the count above is not the customer asking twice", again.Key)
 	}
 	// What the gap is, exactly: the event that does reach the record — the
 	// merchant's own cancellation — stops the same sign-in dead, so a refund that
