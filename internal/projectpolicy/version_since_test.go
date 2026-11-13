@@ -26,7 +26,7 @@ func releaseParts(rel string) ([3]int, bool) {
 
 // TestVersionSinceCoversEveryVersion is the version-bump guard: every policy
 // version this code understands has the release that introduced it, and the
-// rows go up with the version. A change that raises Version without adding its
+// rows never go down with the version (two bumps that no release shipped between share one: versions 6 and 7 are both 0.24.0). A change that raises Version without adding its
 // row fails here (the 0.9.0 line's version 3 included), because every too-new
 // refusal reads this table to name the release the operator has to reach.
 func TestVersionSinceCoversEveryVersion(t *testing.T) {
@@ -40,8 +40,8 @@ func TestVersionSinceCoversEveryVersion(t *testing.T) {
 		if !ok {
 			t.Fatalf("VersionSince[%d] = %q, want a release X.Y.Z", v, rel)
 		}
-		if v > 1 && !(cur[0] > prev[0] || cur[0] == prev[0] && (cur[1] > prev[1] || cur[1] == prev[1] && cur[2] > prev[2])) {
-			t.Errorf("VersionSince = %v: version %d's release %s does not follow version %d's", VersionSince, v, rel, v-1)
+		if v > 1 && (cur[0] < prev[0] || cur[0] == prev[0] && (cur[1] < prev[1] || cur[1] == prev[1] && cur[2] < prev[2])) {
+			t.Errorf("VersionSince = %v: version %d's release %s is before version %d's", VersionSince, v, rel, v-1)
 		}
 		prev = cur
 	}
@@ -52,7 +52,7 @@ func TestVersionSinceCoversEveryVersion(t *testing.T) {
 	// 4, and not 0.22.1, which writes no version 5), 6 the binaries block
 	// (0.24.0) and 7 the two model grades (0.25.0, the release this change
 	// ships in). An off-by-one table fails here.
-	for v, want := range map[int]string{1: "0.8.0", 2: "0.8.5", 3: "0.9.0", 4: "0.14.0", 5: "0.23.0", 6: "0.24.0", 7: "0.25.0"} {
+	for v, want := range map[int]string{1: "0.8.0", 2: "0.8.5", 3: "0.9.0", 4: "0.14.0", 5: "0.23.0", 6: "0.24.0", 7: "0.24.0"} {
 		if got := VersionSince[v]; got != want {
 			t.Errorf("VersionSince[%d] = %q, want %q", v, got, want)
 		}

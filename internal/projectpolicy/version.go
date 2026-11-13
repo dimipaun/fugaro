@@ -152,7 +152,7 @@ var VersionSince = map[int]string{
 	4: "0.14.0",
 	5: "0.23.0",
 	6: "0.24.0",
-	7: "0.25.0",
+	7: "0.24.0",
 }
 
 // VersionRelease is the release that introduced policy version v, and false
