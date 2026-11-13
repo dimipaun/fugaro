@@ -124,16 +124,16 @@ type Request struct {
 	//
 	// The floors stay outside every layer and are applied over this
 	// resolution, not by it, and they are keyed by the mode the run is at
-	// (config.LevelInputs.Floor is "the owner's floor for Mode and only for
-	// it"). A request raises a mode and never lowers a floor (D8, LF5), so
-	// moving the mode may not move the run off a floor: a run a PerRun request
-	// takes to hotfix is held to hotfix's row *and* to the row the layers
-	// resolved for it, which is what LayersMode answers and what the two
-	// readers of a floor hand to policy.Effective.ReviewFloorFor. An owner who
-	// wants hotfix runs floored says so for hotfix as well: `fugaro rigor floor
-	// set hotfix l2,l3`. What no mode reaches is the security-sensitive diff's
-	// own escalation, which turns the adversarial pass on for the run whatever
-	// mode it is at (internal/runner/plan.go).
+	// (config.LevelInputs.Floor). A request raises a mode and never lowers a
+	// floor (D8, LF5), so moving the mode may not move the run off a floor: a
+	// run a PerRun request takes to hotfix is held to hotfix's row *and* to
+	// the row the layers resolved for it, which is what LayersMode answers and
+	// what the two readers of a floor hand to
+	// policy.Effective.ReviewFloorFor. An owner who wants hotfix runs floored
+	// says so for hotfix as well: `fugaro rigor floor set hotfix l2,l3`. What
+	// no mode reaches is the security-sensitive diff's own escalation, which
+	// turns the adversarial pass on for the run whatever mode it is at
+	// (internal/runner/plan.go).
 	Mode Mode
 	// Paths are the paths the run touches, matched against the area rules
 	// (D20c): the paths a caller declared at bootstrap, and the run's own

@@ -83,9 +83,13 @@ type LevelInputs struct {
 	Config *Config
 	// Mode is the run's rigor mode, and the first layer of the precedence.
 	Mode rigor.Mode
-	// Floor is the owner's floor for Mode and only for it
-	// (policy.Effective.ReviewFloor): the levels a run of that mode must
-	// run whatever a lower layer asks for. nil is no floor.
+	// Floor is the owner's floor for the run's mode: the levels a run of
+	// that mode must run whatever a lower layer asks for. nil is no floor.
+	// It is the answer policy.Effective.ReviewFloorFor gives — the row of
+	// Mode, and, when the run's own request took it off the axis (hotfix),
+	// the row of the mode the layers resolved beside it, because a request
+	// raises a mode and never lowers a floor (D8, LF5) — and never a row a
+	// resolver reads itself.
 	Floor []policy.Level
 	// Task is the task's own review_levels block, nil for none. It is
 	// written by the launcher, so it is the layer the resolver trusts
