@@ -701,6 +701,11 @@ func (e *initEngine) ensureCredentialsService(ctx context.Context) error {
 	if doc == nil { // no credentials_service in the installation's tfvars: this run deploys it
 		return e.deployCredentialsService(ctx)
 	}
+	// The installation's record says the service is deployed, and this run's spec
+	// has to say the same: the block in this document is what the run that
+	// deployed the service left behind, and the config write that records it in
+	// the local config is the last step of that run.
+	e.specReviewJobsOfTheService()
 	_, err = e.writeCarriedCredentials(ctx, doc)
 	return err
 }
@@ -1055,13 +1060,19 @@ func (e *initEngine) deployCredentialsService(ctx context.Context) error {
 		fmt.Fprintf(e.r.w, "the credentials service is not deployed: %v\n", err)
 		return nil
 	}
+	// The installation this run is turning into one that HAS the service, which
+	// the local config does not say yet: it records the block from this run's
+	// own outputs, at the end of the run (init.go's writeConfig). Both writers
+	// below read that fact off the config's block, and this is the one run where
+	// it is not there (credentialsServiceOptedIn).
+	optedIn := credentialsServiceOptedIn(e.lc)
 	// publishedVerifiers is nil on purpose, and it is not "nobody verifies":
 	// the member it feeds is prepare's, written from the effective list a few
 	// steps later (init.go's effectiveVerifiers through CarriedCredentialsService,
 	// the tolerant read of the published node), so passing the node's list here
 	// as well would be the same value read twice — and this writer makes no
 	// database call (see its own doc comment).
-	svc, err := infra.Credentials(e.lc, pinned, nil)
+	svc, err := infra.Credentials(optedIn, pinned, nil)
 	if err != nil {
 		fmt.Fprintf(e.r.w, "the credentials service is not deployed: %v\n", err)
 		return nil
@@ -1108,7 +1119,74 @@ func (e *initEngine) deployCredentialsService(ctx context.Context) error {
 	if err := e.wd.WriteVars(doc); err != nil {
 		return userErr("writing the installation's %s: %v", infra.VarsFile, err)
 	}
+	// And this run's spec gains the review jobs of that same config, the
+	// implicit default job among them (infra's implicitReviewVariant, which the
+	// config's block is the opt-in of): the job this run's own apply creates,
+	// and what every later stage of the run plans the root from.
+	e.specReviewJobsOfTheService()
 	return nil
+}
+
+// specReviewJobsOfTheService replaces this run's review set with the one the
+// installation's own record describes: the set a config that HAS the
+// credentials service composes (credentialsServiceOptedIn). Both of its callers
+// stand in front of such an installation — the run that is deploying the block
+// and the run that found the block already in the installation's tfvars,
+// whatever the local config says — and the implicit default review job is the
+// member the config's own answer is missing.
+//
+// The spec is not a local detail: every prepare of the run rewrites the
+// installation root's tfvars FROM it (init.go), so a set composed from a config
+// that names no service plans that root without the job. Where the state holds
+// the job and the config does not — a run that died between the installation
+// root's apply and the config write that records the block, the only run that
+// creates it (init.go's writeConfig, the last step) — that plan is the job's
+// own destruction, RefuseProjectJobDeletes stops the whole update on it, and the
+// writer that would have repaired the spec sits downstream of the refusal: every
+// later run repeats it, under a message naming a profile that is not what is
+// missing. The carried branch is the one that reads the installation's record as
+// the fact it is.
+//
+// A config that cannot describe the set is not a reason to stop a run: the
+// review job is what is missing, and the next run composes it from the block it
+// finds.
+func (e *initEngine) specReviewJobsOfTheService() {
+	review, err := infra.ProjectReviewJobs(credentialsServiceOptedIn(e.lc), e.spec.RunsBucket, e.spec.EnableVertex)
+	if err != nil {
+		fmt.Fprintf(e.r.w, "the review jobs are not deployed: %v\n", err)
+		return
+	}
+	e.spec.ProjectReviewJobs = review
+}
+
+// credentialsServiceOptedIn is lc as the installation this run is about to
+// deploy the credentials service into reads: the same config with an empty
+// credentials_service block when it carries none, and lc itself otherwise.
+//
+// The block's PRESENCE is the opt-in every reader of it gates on — the
+// deployment's own review-job table (infra.Credentials), the implicit default
+// review job (infra's implicitReviewVariant) and, at launch time, the checks
+// that refuse a review on an installation with no service — and the run that
+// writes the block is the one run where the config does not hold it yet. A
+// writer that read the config as it stands would compose an installation one
+// run behind the deployment: a service that exists with no review job of the
+// implicit kind, and a job that appears only on the next `fugaro update`. The
+// owner's requirement of 2026-11-13 is that a review works out of the box on
+// the installation the service was deployed for, so the two are written by the
+// one run.
+//
+// The URL is deliberately left empty, and it is not a loss: Cloud Run assigns
+// it, the audience fill writes it a few steps later in this same run
+// (fillCredentialsAudience), and an empty one is the state every variant's
+// environment is in until then (reviewVariant adds the address only when the
+// config carries one).
+func credentialsServiceOptedIn(lc *localcfg.Config) *localcfg.Config {
+	if lc == nil || lc.CredentialsService != nil {
+		return lc
+	}
+	next := *lc
+	next.CredentialsService = &localcfg.CredentialsService{}
+	return &next
 }
 
 // installationCredentialsImage is the installation root's tfvars as they stand
