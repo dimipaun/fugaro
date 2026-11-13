@@ -122,7 +122,9 @@ type Minted struct {
 // seat, the open-source grant and the request form -- carry no workspace id,
 // which every v1 key binds to (TN2), so converting them is a task of the plan's
 // own and one with a product decision in it: until it lands, what these routes
-// answer is the text they answered before the removal and no verifier reads it.
+// answer is the text they answered before the removal, which no Go verifier
+// reads any more. The console's verifier of the removed format still reads it,
+// and that reader's own removal is the console's task and not this one's.
 type Mints interface {
 	Mint(ctx context.Context, req Request) (Minted, error)
 }
