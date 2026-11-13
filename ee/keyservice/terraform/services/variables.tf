@@ -130,6 +130,41 @@ variable "secrets" {
   }
 }
 
+variable "network" {
+  description = "The network the API's egress runs over. It is this root's own rather than the project's default, for the reason the compute module's is: a default network arrives with its own firewall rules and with subnets nobody here reviewed."
+  type        = string
+  default     = "fugaro-portal-network"
+}
+
+variable "subnetwork" {
+  description = "The subnet the API's revisions take their egress address from."
+  type        = string
+  default     = "fugaro-portal-subnet"
+}
+
+variable "subnet_cidr" {
+  description = "The subnet's range. A /20 is small for the two services this project holds (Direct VPC egress consumes one address per revision instance) and wide enough that a scale-out never runs out of them."
+  type        = string
+  default     = "10.132.0.0/20"
+
+  validation {
+    condition     = can(cidrhost(var.subnet_cidr, 0))
+    error_message = "subnet_cidr must be an IPv4 range such as 10.132.0.0/20."
+  }
+}
+
+variable "router" {
+  description = "The Cloud Router the NAT is created on. Named here rather than left to the provider, because the router is what a plan's review screen shows the NAT hanging from."
+  type        = string
+  default     = "fugaro-portal-router"
+}
+
+variable "nat" {
+  description = "The Cloud NAT that carries the API's internet traffic. Paddle's API and Resend's are not Google's, so private Google access does not reach them, and an all-traffic egress with no NAT is an API that can reach the minter and nothing else."
+  type        = string
+  default     = "fugaro-portal-nat"
+}
+
 variable "manage_apis" {
   description = "Whether this root enables the APIs it needs. Off for a project whose owner enables them out of band."
   type        = bool

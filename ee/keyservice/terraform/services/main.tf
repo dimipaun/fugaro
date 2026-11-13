@@ -57,12 +57,84 @@ resource "google_project_service" "this" {
     "cloudkms.googleapis.com",
     "cloudresourcemanager.googleapis.com",
     "iam.googleapis.com",
+    "compute.googleapis.com",
   ]) : toset([])
 
   project                    = var.project
   service                    = each.value
   disable_on_destroy         = false
   disable_dependent_services = false
+}
+
+# The network the API's egress runs over. P1.5 asks for the minter's ingress to
+# be internal, and internal means "from this project's VPC": Cloud Run counts a
+# caller as internal only when its request is routed through the network, so
+# without this the platform refuses every mint call before the IAM check is
+# reached and nothing can be minted in either environment. The API's revision
+# therefore takes Direct VPC egress below, and the three resources here are what
+# it egresses onto.
+#
+# The network is this root's own rather than the project's `default`: a default
+# network arrives with auto-created subnets and its own firewall rules, none of
+# which this tree reviews, and a name this root declares is a network a plan
+# shows as a create rather than one a reader has to go and look at.
+resource "google_compute_network" "portal" {
+  project                 = var.project
+  name                    = var.network
+  auto_create_subnetworks = false
+
+  depends_on = [google_project_service.this]
+}
+
+# The subnet the API's revisions take their egress addresses from. Private Google
+# access is what carries the calls to Google's own APIs — Firestore, Secret
+# Manager, KMS through the minter's URL — over the network instead of the public
+# path, and the NAT below covers everything that is not Google's, which is where
+# Paddle and Resend are.
+resource "google_compute_subnetwork" "portal" {
+  project                  = var.project
+  name                     = var.subnetwork
+  network                  = google_compute_network.portal.id
+  region                   = var.region
+  ip_cidr_range            = var.subnet_cidr
+  private_ip_google_access = true
+}
+
+# The way out that is not Google's, and the half of an all-traffic egress that is
+# easy to leave out: a revision on this network has no external address, so with
+# no NAT it reaches the minter and the Google APIs and nothing else — no Paddle
+# charge, no Paddle event read back, no mail through Resend (deploy/terraform's
+# compute module provisions the same pair for the same reason: private Google
+# access is not a substitute for a NAT).
+resource "google_compute_router" "portal" {
+  project = var.project
+  name    = var.router
+  region  = var.region
+  network = google_compute_network.portal.id
+
+  depends_on = [google_project_service.this]
+}
+
+resource "google_compute_router_nat" "portal" {
+  project = var.project
+  name    = var.nat
+  router  = google_compute_router.portal.name
+  region  = var.region
+
+  nat_ip_allocate_option             = "AUTO_ONLY"
+  source_subnetwork_ip_ranges_to_nat = "LIST_OF_SUBNETWORKS"
+
+  # Only this root's own subnet: a NAT translates the traffic of the subnetworks
+  # it names, and a sibling's traffic is not this root's to put on the internet.
+  subnetwork {
+    name                    = google_compute_subnetwork.portal.name
+    source_ip_ranges_to_nat = ["ALL_IP_RANGES"]
+  }
+
+  log_config {
+    enable = true
+    filter = "ERRORS_ONLY"
+  }
 }
 
 # The environment's key ring, the one keyring/'s apply of the same environment
@@ -111,6 +183,24 @@ resource "google_secret_manager_secret" "this" {
   depends_on = [google_project_service.this]
 }
 
+# Who reads them: the API's account, per container. It is the process that holds
+# the Paddle key, the merchant's webhook secret, the mail key and the error DSN
+# (P1.7's config), and the minter — the one identity that signs — reads none of
+# them (§3.3, Check 571: it holds no merchant secret).
+#
+# One grant per secret rather than one on the project: an accessor granted at the
+# project reaches every secret the project ever holds, including any a later root
+# creates for another purpose, and this list is the whole of what the API may
+# read. The map is the containers' own, so the two cannot drift.
+resource "google_secret_manager_secret_iam_member" "api_reads" {
+  for_each = google_secret_manager_secret.this
+
+  project   = var.project
+  secret_id = each.value.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = google_service_account.api.member
+}
+
 resource "google_service_account" "api" {
   project      = var.project
   account_id   = var.api_account
@@ -148,6 +238,21 @@ resource "google_cloud_run_v2_service" "api" {
   template {
     service_account = google_service_account.api.email
 
+    # The API's egress, and the whole reason it is here: the minter's ingress is
+    # internal, and a call is internal only when it arrives over this project's
+    # network. ALL_TRAFFIC rather than the private ranges alone, because the
+    # minter answers on its run.app URL, which resolves like any other host — so
+    # the call that signs takes the same path as the rest of the API's traffic,
+    # and the NAT above keeps that path a way out to Paddle and Resend.
+    vpc_access {
+      egress = "ALL_TRAFFIC"
+
+      network_interfaces {
+        network    = google_compute_network.portal.id
+        subnetwork = google_compute_subnetwork.portal.id
+      }
+    }
+
     # Scale to zero: a public endpoint nobody is calling costs nothing, and a
     # cold start is what a caller waits for.
     scaling {
@@ -179,7 +284,13 @@ resource "google_cloud_run_v2_service" "api" {
 # The minter: no public invoker, and its ingress internal. The fence is the IAM
 # check the platform runs before the container, and the ingress is what keeps the
 # call the grant allows the only one the network delivers — an internal-only
-# service accepts traffic from its own project, which is where D2194 puts the API.
+# service accepts traffic from this project's network, which the API's revision
+# egresses through (see the network at the top of this file), so a caller outside
+# it is refused before IAM is consulted.
+#
+# The ingress is stated here rather than left to the provider: with ALL, the
+# internet could reach the container and the invoker grant would be the only thing
+# refusing it.
 resource "google_cloud_run_v2_service" "minter" {
   project  = var.project
   location = var.region

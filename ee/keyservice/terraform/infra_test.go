@@ -1175,6 +1175,7 @@ func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 		tfNames(servicesRoot, `resource "google_project_iam_custom_role" "handover"`):                   "the handover sealer, which encrypts and decrypts and holds no signing permission",
 		tfNames(servicesRoot, `resource "google_kms_key_ring_iam_member" "api_seals"`):                  "the API's one grant on the handover ring, which is not the ring the signer role is on",
 		tfNames(servicesRoot, `resource "google_project_iam_member" "api_datastore"`):                   "the API's reach of the portal's document store, which holds no key",
+		tfNames(servicesRoot, `resource "google_secret_manager_secret_iam_member" "api_reads"`):         "the API's read of the portal's own secrets, which the minter holds none of",
 	}
 	for _, rel := range tfFiles(t) {
 		for _, block := range tfBlocks(tfSource(t, rel), `resource "`) {
@@ -1246,18 +1247,19 @@ func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 	}
 
 	// The other half of the same boundary, over every grant in the tree rather
-	// than the signer one: the API's account is granted exactly three things and
+	// than the signer one: the API's account is granted exactly four things and
 	// no more — the invoker role on the minter, the sealer role on the handover
-	// ring, and the document store. A fourth grant is a reach nothing else here
-	// would say out loud — a KMS role that signs, or the signer's key ring, to
-	// the internet-facing account above all — and the keyring root is as good a
-	// place to write one as this one. Every one of the three is written by a
-	// block listed here, so the account's whole reach is the plan's (Check 571,
-	// Check 174).
+	// ring, the document store, and the portal's own secrets. A fifth grant is a
+	// reach nothing else here would say out loud — a KMS role that signs, or the
+	// signer's key ring, to the internet-facing account above all — and the
+	// keyring root is as good a place to write one as this one. Every one of the
+	// four is written by a block listed here, so the account's whole reach is the
+	// plan's (Check 571, Check 174).
 	allowedAPI := map[string]string{
 		`resource "google_cloud_run_v2_service_iam_member" "api_invokes_minter"`: "the authenticated call to the minter, which is what signs",
 		`resource "google_kms_key_ring_iam_member" "api_seals"`:                  "the handover ring, to encrypt and decrypt with and nothing else",
 		`resource "google_project_iam_member" "api_datastore"`:                   "the portal's own documents, which hold no key",
+		`resource "google_secret_manager_secret_iam_member" "api_reads"`:         "the portal's own secrets, which the merchant's keys are in and the minter reads none of",
 	}
 	uses := 0
 	for _, rel := range tfFiles(t) {
@@ -1272,7 +1274,32 @@ func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 		}
 	}
 	if uses != len(allowedAPI) {
-		t.Errorf("this tree grants the API's account %d times, want exactly %d: its whole reach is the authenticated call to the minter, the handover ring's sealer role and the document store (Check 571)", uses, len(allowedAPI))
+		t.Errorf("this tree grants the API's account %d times, want exactly %d: its whole reach is the authenticated call to the minter, the handover ring's sealer role, the document store and the portal's own secrets (Check 571)", uses, len(allowedAPI))
+	}
+
+	// And the secrets themselves, which are the API's to read and no other
+	// identity's: the merchant's own keys and the mail credential are in these
+	// containers, and §3.3's rule is that the identity which signs reads none of
+	// them. The grant is pinned as the attributes it writes — one member, the one
+	// role, over the containers' own map rather than over the project — and every
+	// other block in the tree that hands out a Secret Manager role is refused, so
+	// the minter's account cannot be granted one beside it.
+	reads := tfRootBlock(t, servicesRoot, `resource "google_secret_manager_secret_iam_member" "api_reads"`)
+	tfAttrsAre(t, reads, "the secret accessor grant in "+servicesRoot, []struct{ attr, value string }{
+		{"for_each", "google_secret_manager_secret.this"},
+		{"role", `"roles/secretmanager.secretAccessor"`},
+		{"member", "google_service_account.api.member"},
+	}, "the API is the process that holds the Paddle key, the merchant's webhook secret, the mail key and the error DSN (P1.7's config), so it reads the containers this root creates — one grant per secret, made on the container the same map names, because an accessor granted at the project reaches every secret the project ever holds. The minter reads none of them (§3.3, Check 571)")
+	for _, rel := range tfFiles(t) {
+		for _, block := range tfBlocks(tfSource(t, rel), `resource "`) {
+			compact := tfCompact(block)
+			if !strings.Contains(compact, "secretmanager") || !strings.Contains(compact, "member=") {
+				continue
+			}
+			if tfHeader(block) != `resource "google_secret_manager_secret_iam_member" "api_reads"` {
+				t.Errorf("%s hands out a Secret Manager role besides the API's one read:\n%s\nthe portal's secrets are the merchant's Paddle key, its webhook secret, the mail key and the error DSN, and the one identity that signs holds no merchant secret (§3.3, D2182): a second grant here is a second process reading them — the minter's account above all, which is exactly the identity the two-project split used to keep out (Check 571)", rel, strings.TrimSpace(block))
+			}
+		}
 	}
 
 	// And the identity each service RUNS as, which is the half a grant sweep
@@ -1306,6 +1333,7 @@ func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 			tfNames(servicesRoot, `resource "google_cloud_run_v2_service_iam_member" "api_invokes_minter"`): "the one identity allowed to call the minter",
 			tfNames(servicesRoot, `resource "google_kms_key_ring_iam_member" "api_seals"`):                  "the one identity allowed to decrypt a handover",
 			tfNames(servicesRoot, `resource "google_project_iam_member" "api_datastore"`):                   "the one identity allowed to read the portal's documents",
+			tfNames(servicesRoot, `resource "google_secret_manager_secret_iam_member" "api_reads"`):         "the one identity allowed to read the portal's secrets",
 		},
 	}
 	for _, rel := range tfFiles(t) {
@@ -1524,26 +1552,101 @@ func TestOnlyTheAPIInvokesTheMinter(t *testing.T) {
 
 // TestMinterIngressIsInternal: the minter's ingress is internal and the API's is
 // not, which is the network's half of the same boundary the IAM grants are the
-// other half of. D2194 is what makes the fence mean something: an internal-only
-// service accepts traffic from its own project, and the API is in it, so the
-// call the grants allow is the only one the network delivers.
+// other half of — and the API's egress, without which that half delivers
+// nothing. Cloud Run decides "internal" by where a request came from, not by
+// which project the caller belongs to, so an internal-only service whose one
+// caller has no VPC egress refuses the call it was written for: the API's
+// revision therefore leaves over this root's own network (D2194's project, P1.5's
+// fence), and the network carries it to the minter, to Google's APIs and to
+// Paddle and Resend as well.
 //
 // The mutations this fails on: the minter's ingress set to ALL — which would
 // leave the grants as the only fence, against the plan's words — the API's set
 // to internal, which would take the SPA and the merchant's webhook off the
-// internet, and a third service added without an ingress line, which takes the
-// provider's default with nothing here reading it.
+// internet, a third service added without an ingress line, which takes the
+// provider's default with nothing here reading it, the API's vpc_access block
+// dropped or narrowed to the private ranges (the call stops arriving as
+// internal), its network_interfaces naming another network, the subnet losing
+// private Google access or the NAT covering no subnet (the API's Google calls
+// and its Paddle and Resend calls stop leaving), and a vpc_access block on the
+// minter, which is an egress path the plan does not name.
 func TestMinterIngressIsInternal(t *testing.T) {
 	for _, want := range []struct{ header, ingress, why string }{
 		{`resource "google_cloud_run_v2_service" "api"`, `"INGRESS_TRAFFIC_ALL"`,
 			"the API is the portal's one public surface: the SPA posts to it from a browser and Paddle posts events to it from outside the project, so its ingress is all — its fence is the sign-in check P1.3 makes, not the network's"},
 		{`resource "google_cloud_run_v2_service" "minter"`, `"INGRESS_TRAFFIC_INTERNAL_ONLY"`,
-			"the minter is called by the API and by nothing else (D2194, P1.5): internal ingress is the network's half of that, and it is only meaningful because the caller is in the same project — the signer's"},
+			"the minter is called by the API and by nothing else (D2194, P1.5): internal ingress is the network's half of that, and it delivers that call only because the API's revisions egress through this project's network (the vpc_access asserted below) — Cloud Run treats a caller as internal by where its request came from, not by which project it is in"},
 	} {
 		block := tfRootBlock(t, servicesRoot, want.header)
 		tfAttrsAre(t, block, "the service in "+servicesRoot, []struct{ attr, value string }{
 			{"ingress", want.ingress},
 		}, want.why)
+	}
+
+	// And the egress that makes the pair above deliver the call at all, which is
+	// the half of an internal-ingress service that is easy to leave out: Cloud Run
+	// refuses a caller that is not on the project's network BEFORE it reads the
+	// invoker grant, so a minter whose only caller has no VPC egress is a minter
+	// nothing can reach — every mint call fails and no licence is issued in either
+	// environment (independent review of this file, finding 1).
+	api := tfRootBlock(t, servicesRoot, `resource "google_cloud_run_v2_service" "api"`)
+	template, ok := tfNestedBlock(api, "template")
+	if !ok {
+		t.Fatalf("the API service writes no template block, so how its call to the minter is routed is not in this tree")
+	}
+	access, ok := tfNestedBlock(template, "vpc_access")
+	if !ok {
+		t.Fatalf("the API's template writes no vpc_access block: the minter's ingress is internal-only, and a revision that does not leave over this project's network is refused by the platform before the invoker grant is read, so the fence P1.5 asks for would refuse the one caller it is written for (P1.5)")
+	}
+	tfAttrsAre(t, access, "the API's egress in "+servicesRoot, []struct{ attr, value string }{
+		{"egress", `"ALL_TRAFFIC"`},
+	}, "the call that signs takes the same path as the rest of the API's traffic: with the private ranges alone the minter's run.app URL is not one of them, so the call would leave the revision the ordinary way and arrive as an outsider")
+	interfaces, ok := tfNestedBlock(access, "network_interfaces")
+	if !ok {
+		t.Fatalf("the API's vpc_access block names no network_interfaces block, so the network its traffic leaves over is not in this tree")
+	}
+	tfAttrsAre(t, interfaces, "the API's egress in "+servicesRoot, []struct{ attr, value string }{
+		{"network", "google_compute_network.portal.id"},
+		{"subnetwork", "google_compute_subnetwork.portal.id"},
+	}, "the network is this root's own rather than the project's default, so the range a revision egresses from — and the fence the minter's ingress reads — is one a plan shows being created and one this tree reviews")
+
+	// And the network that egress lands on, which carries three kinds of traffic
+	// or the API is broken in one direction or another: the minter's call, Google's
+	// own APIs (the store the API writes and the secrets it reads), and the
+	// internet, where Paddle and Resend are. Private Google access is the second,
+	// the NAT the third, and a subnet without the one or a NAT covering no subnet
+	// is an API that can mint and cannot charge for or mail the key it minted.
+	subnet := tfRootBlock(t, servicesRoot, `resource "google_compute_subnetwork" "portal"`)
+	tfAttrsAre(t, subnet, "the portal subnet in "+servicesRoot, []struct{ attr, value string }{
+		{"network", "google_compute_network.portal.id"},
+		{"region", "var.region"},
+		{"private_ip_google_access", "true"},
+	}, "the API's Google API calls have to leave over the network the minter's call does, or an all-traffic egress turns every Firestore and Secret Manager call into one that needs the NAT: private Google access is what keeps them on Google's own path (deploy/terraform's compute module holds the same rule from the other side)")
+	nat := tfRootBlock(t, servicesRoot, `resource "google_compute_router_nat" "portal"`)
+	tfAttrsAre(t, nat, "the portal NAT in "+servicesRoot, []struct{ attr, value string }{
+		{"router", "google_compute_router.portal.name"},
+		{"region", "var.region"},
+		{"nat_ip_allocate_option", `"AUTO_ONLY"`},
+	}, "a revision on this network has no external address, so without a NAT it reaches the minter and Google's APIs and nothing else: Paddle's charge and Resend's mail are not Google's, and private Google access does not reach them (deploy/terraform's compute module provisions the same pair for the same reason)")
+	covered, ok := tfNestedBlock(nat, "subnetwork")
+	if !ok {
+		t.Fatalf("the portal NAT names no subnetwork, so it translates the traffic of nothing and the API's internet calls have no way out")
+	}
+	tfAttrsAre(t, covered, "the portal NAT in "+servicesRoot, []struct{ attr, value string }{
+		{"name", "google_compute_subnetwork.portal.name"},
+	}, "the NAT is created for this root's own subnet and no sibling's: a NAT that covered every subnet of the project would put another root's traffic on the internet under this name")
+
+	// And the minter stays OFF the network: it answers internal calls rather than
+	// making them, and what it calls is Google's APIs. A vpc_access block here
+	// would be the signer's revision given an egress path no task asks for, and an
+	// egress path is what a later task's code inherits.
+	minter := tfRootBlock(t, servicesRoot, `resource "google_cloud_run_v2_service" "minter"`)
+	minterTemplate, ok := tfNestedBlock(minter, "template")
+	if !ok {
+		t.Fatalf("the minter service writes no template block")
+	}
+	if _, ok := tfNestedBlock(minterTemplate, "vpc_access"); ok {
+		t.Errorf("the minter's template writes a vpc_access block:\nthe minter calls Google's APIs and nothing that needs the network, and what this tree grants a revision is what a later task's code can use: the signer's way out of the project is a reach the plan does not name (P1.5, Check 571)")
 	}
 
 	// And every service in the tree, which is what makes the pair above the whole
