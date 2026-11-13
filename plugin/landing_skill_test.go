@@ -75,11 +75,40 @@ func TestLandingSkillClassifiesThreeWays(t *testing.T) {
 		{"the follow-up class's third trigger", "the conflict with its base branch needs real reconciliation"},
 		{"the security path the person must rule on", "credentials, auth, policy or a write guard"},
 		{"that the security list is the repository's own", "`fugaro security paths` prints the list"},
-		{"that a path is checked rather than judged", "not one you judge from the diff"},
+		{"that a path is checked rather than guessed", "not one you guess at from a file's name"},
+		{"that the change's own paths are checked", "Check the paths the change itself touches"},
+		{"where those paths are read", "`changed_files.paths` in the run's row, step 1"},
+		{"the fallback when the row carries none", "when the row carries none because the run died before it recorded them, the branch's own diff against the base"},
+		{"that a finding is not needed for the question", "whether or not a leftover finding sits on it"},
 		{"the unreadable-record case", "no row for it at all, a finding whose impact you cannot read"},
 	} {
 		if !strings.Contains(skill, want.text) {
 			t.Errorf("%s never says %s (%q): the three classes are the skill, and one of them losing its fact is a land that should have been a follow-up, or the other way round", landingSkillPath, want.what, want.text)
+		}
+	}
+}
+
+// TestLandingSkillReadsTheChangeRunsRecord: the listing a reader classifies
+// from carries a finished independent review job's run as well, usually the
+// newest row, and that run built nothing — no test records, no findings, no
+// deferrals — so a reader taking "the last run" for the class's evidence
+// measures a land against a record that has none of it. The skill has to say
+// which row decides and which one is only a second opinion, and it has to name
+// the paths the run changed, because the security question below is asked of
+// the change and not only of the findings.
+func TestLandingSkillReadsTheChangeRunsRecord(t *testing.T) {
+	skill := landingSkillMD(t)
+	for _, want := range []struct{ what, text string }{
+		{"that a review job's run is listed too", "a finished independent review job's own run, which is usually the newest of them"},
+		{"how to tell it apart", "A review job's run is the one whose `outcome` is `reviewed`"},
+		{"that it is not the run a land is decided from", "it is not the run a land is decided from"},
+		{"what it carries instead", "it carries no test records, no findings and no deferrals"},
+		{"which row decides", "Take those from the run that built the change, the newest row whose `outcome` is not `reviewed`"},
+		{"that its verdict still counts", "as the verdict of a reader who did not write the change"},
+		{"the paths the run changed", "`runs[].changed_files.paths`, the JSON field of the paths the run changed"},
+	} {
+		if !strings.Contains(skill, want.text) {
+			t.Errorf("%s never says %s (%q): the row a land is read from is the run that built the change, and a class read off a review job's run is read off a record that carries none of its conditions", landingSkillPath, want.what, want.text)
 		}
 	}
 }
