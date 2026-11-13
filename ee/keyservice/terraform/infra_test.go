@@ -1503,8 +1503,9 @@ func TestOnlyTheMinterCanSign(t *testing.T) {
 // The mutations this fails on: a second invoker — the same account written as an
 // _iam_binding's members list, an _iam_policy, or a plain `user:` beside it — a
 // grant on the minter in the keyring root, a scheduled job pointed at the minter
-// rather than at the API, and a token minted for another account or another
-// audience.
+// rather than at the API, a token minted for another account or another
+// audience, and a job's pause written as a literal rather than as the variable
+// the operator's apply sets, which is a job the next apply pauses again.
 func TestOnlyTheAPIInvokesTheMinter(t *testing.T) {
 	// Every block in the tree that names the minter's service is one of the two
 	// the plan allows. The sweep is over the REFERENCE and not over the grant
@@ -1543,14 +1544,22 @@ func TestOnlyTheAPIInvokesTheMinter(t *testing.T) {
 	// pair the API verifies (P1.3, F33). Both are created PAUSED, because the
 	// routes they call are P6.3's and P7.1's and a job that fired before them
 	// would mail nothing at best.
-	for _, job := range []struct{ header, what, path string }{
-		{`resource "google_cloud_scheduler_job" "statements"`, "the statement job", "var.statement_job_path"},
-		{`resource "google_cloud_scheduler_job" "reminders"`, "the reminder job", "var.reminder_job_path"},
+	//
+	// The pause is read as the variable it is written with rather than as the
+	// value it happens to carry: a literal `paused = true` here is a job whose
+	// only switch is outside Terraform, and the next apply — a re-run, an image
+	// change, any infra change at all — writes the literal back and pauses the
+	// job again, mid-month and silently, which is the opposite of what the root's
+	// own comment says an owner does with the deploy (independent review of this
+	// file, finding 4).
+	for _, job := range []struct{ header, what, path, paused string }{
+		{`resource "google_cloud_scheduler_job" "statements"`, "the statement job", "var.statement_job_path", "var.statements_paused"},
+		{`resource "google_cloud_scheduler_job" "reminders"`, "the reminder job", "var.reminder_job_path", "var.reminders_paused"},
 	} {
 		block := tfRootBlock(t, servicesRoot, job.header)
 		tfAttrsAre(t, block, job.what+" in "+servicesRoot, []struct{ attr, value string }{
-			{"paused", "true"},
-		}, "the statement and reminder routes are later tasks', so the plan creates both jobs paused and the owner turns them on with the deploy (P1.5): a job that ran before its route exists answers 404 at best and mails the wrong thing at worst")
+			{"paused", job.paused},
+		}, "the statement and reminder routes are later tasks', so the plan creates both jobs paused and the owner turns them on with the deploy (P1.5): a job that ran before its route exists answers 404 at best and mails the wrong thing at worst, and a pause written as a literal is one the next apply puts back")
 		if strings.Contains(tfCompact(block), "minter") {
 			t.Errorf("%s names the minter:\n%s\nthe minter's one caller is the API, and a scheduled call to it is a second invoker written without an IAM grant at all (Check 571)", job.what, strings.TrimSpace(block))
 		}
@@ -1569,6 +1578,22 @@ func TestOnlyTheAPIInvokesTheMinter(t *testing.T) {
 			{"service_account_email", "google_service_account.scheduler.email"},
 			{"audience", "google_cloud_run_v2_service.api.uri"},
 		}, "the API verifies the scheduler's OIDC token by account AND audience (P1.3, F33), so the token is minted for the scheduler's own account and for the API's URL: any other audience is a token the API refuses, and any other account is one its list does not carry")
+	}
+
+	// And the switch the two attributes above read, whose default is what makes
+	// "created paused" true of an apply that names nothing: a default of false is
+	// both jobs firing on the first apply, before P6.3's and P7.1's routes exist,
+	// and a job with no default at all is an apply that will not run until the
+	// operator names a value — neither of which is the plan's word (P1.5). One
+	// variable per job, so the deploy that ships one route does not start the
+	// other's job with it.
+	for _, d := range []struct{ name, why string }{
+		{"statements_paused", "the statement route is P6.3's"},
+		{"reminders_paused", "the reminder route is P7.1's"},
+	} {
+		if got := tfDefaultLiteral(tfVarBlock(t, servicesRoot, d.name)); got != "true" {
+			t.Errorf("services/'s %s default reads as %q, want \"true\":\nthe job's pause is this variable, so a default of false is both jobs firing on the next apply — %s, so the call answers 404 and mails nothing — and a variable with no default stops the apply until an operator names a value", d.name, got, d.why)
+		}
 	}
 }
 

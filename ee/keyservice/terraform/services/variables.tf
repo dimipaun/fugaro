@@ -118,6 +118,26 @@ variable "reminder_job_path" {
   default     = "/api/reminders/run"
 }
 
+# The two jobs' pauses are inputs rather than literals in scheduler.tf, so that
+# the apply which ships a route is also the apply that starts its job: a literal
+# can only be changed from outside Terraform, and the next apply — a re-run, an
+# image change, any infra change at all — writes the literal back and pauses the
+# job again, mid-month and without a word. One variable per job rather than one
+# for both, because the two routes ship in different tasks (P6.3 and P7.1) and a
+# single switch would either mail reminders before their route exists or hold the
+# statements back until it does.
+variable "statements_paused" {
+  description = "Whether the monthly statement job is created paused. Its route is P6.3's, so the default keeps it off; the deploy that ships the route turns it on by setting this false in the same apply."
+  type        = bool
+  default     = true
+}
+
+variable "reminders_paused" {
+  description = "Whether the daily reminder job is created paused. Its route is P7.1's, and the same switch turns it on."
+  type        = bool
+  default     = true
+}
+
 variable "secrets" {
   description = "The secrets the services read, keyed by the name the deploy knows them by and valued with their Secret Manager ids. This root creates the empty containers; the deploy fills them (P9.2, S3.7)."
   type        = map(string)

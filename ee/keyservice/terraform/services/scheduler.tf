@@ -8,6 +8,11 @@
 # deploy that ships its route — a mail over live data is not something an apply
 # starts.
 #
+# Each pause is the root's own variable and not a literal here, so that the apply
+# which ships a route is the apply that starts its job: a pause written literally
+# can only be lifted outside Terraform, and the next apply writes it back — an
+# image change or a re-run is a job that stops firing mid-month and says nothing.
+#
 # Each call carries an OIDC token minted for the scheduler's own account with the
 # API's URL as its audience: the API verifies exactly that pair (P1.3, F33), so a
 # token from another account is refused and one minted for another audience is
@@ -37,7 +42,7 @@ resource "google_cloud_scheduler_job" "statements" {
   description = "The monthly statements run: posts to the API's statement route, which mails each reseller its month (P6.3). Paused until the deploy ships that route."
   schedule    = "0 3 1 * *"
   time_zone   = "Etc/UTC"
-  paused      = true
+  paused      = var.statements_paused
 
   retry_config {
     retry_count = 3
@@ -63,7 +68,7 @@ resource "google_cloud_scheduler_job" "reminders" {
   description = "The renewal and binding reminder run: posts to the API's reminder route, which mails the owners whose keys or bindings come due (P7.1). Paused until the deploy ships that route."
   schedule    = "0 7 * * *"
   time_zone   = "Etc/UTC"
-  paused      = true
+  paused      = var.reminders_paused
 
   retry_config {
     retry_count = 3
