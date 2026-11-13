@@ -123,13 +123,16 @@ type Request struct {
 	// decides for the run that asked for it.
 	//
 	// The floors stay outside every layer and are applied over this
-	// resolution, not by it — but they are keyed by the mode the run is at
+	// resolution, not by it, and they are keyed by the mode the run is at
 	// (config.LevelInputs.Floor is "the owner's floor for Mode and only for
-	// it"), so a run the request takes to hotfix is held to hotfix's row and
-	// not to the row of the mode the layers resolved. An owner who wants
-	// hotfix runs floored says so for hotfix: `fugaro rigor floor set hotfix
-	// l2,l3`. What no mode reaches is the security-sensitive diff's own
-	// escalation, which turns the adversarial pass on for the run whatever
+	// it"). A request raises a mode and never lowers a floor (D8, LF5), so
+	// moving the mode may not move the run off a floor: a run a PerRun request
+	// takes to hotfix is held to hotfix's row *and* to the row the layers
+	// resolved for it, which is what LayersMode answers and what the two
+	// readers of a floor hand to policy.Effective.ReviewFloorFor. An owner who
+	// wants hotfix runs floored says so for hotfix as well: `fugaro rigor floor
+	// set hotfix l2,l3`. What no mode reaches is the security-sensitive diff's
+	// own escalation, which turns the adversarial pass on for the run whatever
 	// mode it is at (internal/runner/plan.go).
 	Mode Mode
 	// Paths are the paths the run touches, matched against the area rules
@@ -141,6 +144,27 @@ type Request struct {
 	// (D22, D23's own only-tightens shape), so a later resolution that comes
 	// back weaker leaves the reached value standing.
 	Reached Mode
+}
+
+// LayersMode is the mode the layers alone resolve for req — the run's own
+// request left out of the resolution — given the answer an earlier moment gave
+// for it (reached, "" for the first), and "" when the request asks for no mode
+// a run takes whole (Mode.PerRun). For every other request the layers' answer
+// is the mode the run is at, since a request may only raise it, and there is
+// no second row for a reader of the floors to hold beside the first.
+//
+// It is the mode whose floor holds beside the requested one's (D8, LF5: a
+// request raises a mode and never lowers a floor), which is why the two
+// readers of an owner's floor — internal/runner's resolveLevelsForcing and the
+// launcher's copy in internal/cli — ask it and hand the answer to
+// policy.Effective.ReviewFloorFor. reached folds the way Resolve's own
+// Reached does, so a caller asking at each of D22's moments keeps the
+// strictest answer its layers have given.
+func LayersMode(cfg Config, req Request, reached Mode) Mode {
+	if !req.Mode.PerRun() {
+		return ""
+	}
+	return Resolve(cfg, Request{Paths: req.Paths, Reached: reached}).Mode
 }
 
 // Resolved is one resolution (D24): the mode, the layer that won, and every

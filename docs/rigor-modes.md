@@ -264,6 +264,13 @@ reviewing less: it prints what it widens, and it asks nothing either, as
 `critical` and `hotfix` are all under it: a floor of `l2` on `poc` runs the senior
 review in a mode whose own level set is the first-line review alone.
 
+**A request that moves the mode moves no floor.** The floor is read per mode, and
+a run whose own `--mode` took it to `hotfix` — the one mode a request takes whole
+(§[The hotfix mode](#the-hotfix-mode)) — is held to hotfix's row **and** to the
+row of the mode the layers resolved for it: a floor of `l2,l3` on `pro` holds a
+`fugaro run --mode hotfix` run of that repository too, so no flag drops the
+owner's minimum.
+
 ## Reading a run's mode back
 
 - **`fugaro diagnose RUN`** prints the run's `Rigor:` line — the mode, the layer

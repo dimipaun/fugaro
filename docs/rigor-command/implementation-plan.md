@@ -609,6 +609,16 @@ no opt-in, in `fugaro run` and on the follow-up path alike.
   exactly as a first run is, and a stored follow-up task that asks for it launches as it is. The
   launcher's "has no effect" note and `budget preview`'s follow the resolution, so neither claims a
   request was ignored when it was the mode the run is held to.
+- **The owner's floor moves with it.** `review_floor` is a mode→levels map (`policy.Effective`), and
+  a run reads the row of the mode it is at, so a request that moved the run off the axis would have
+  read hotfix's row — usually empty — and left the row the layers resolved behind: one flag dropping
+  a floor the owner set, silently (D8, LF5, D18, Item 3 of
+  `docs/rigor-modes/levels-reconciliation.md`). Both readers of a floor union the two rows:
+  `rigor.LayersMode` answers the mode the layers alone resolved, kept beside the record's own mode as
+  the runner's moments run, and `policy.Effective.ReviewFloorFor` — the launcher's `policy.FloorFor`,
+  off the published node — holds that row and hotfix's. An owner floor of `pro l2,l3` therefore still
+  turns the adversarial step on for a `fugaro run --mode hotfix` run, and the owner's lever for
+  flooring such a run harder is `fugaro rigor floor set hotfix l2,l3`.
 - **What did not move.** `fugaro rigor set` still refuses to **write** `hotfix` in any form it
   writes (D834, below): the ruling opens the *request*, not the writer. The four forms D834 names
   are the project default, an area rule, a repository's own block and a `--json`-silent value; only
@@ -616,10 +626,15 @@ no opt-in, in `fugaro run` and on the follow-up path alike.
   config-management's G6 and is not built. A hand-written `rigor.default: hotfix` in a layer or a
   `fugaro.yaml` stays reachable too — the ruling did not close that door either, and it is reported
   rather than changed.
-- **Tests.** `TestResolveTakesAHotfixRequestWhole` (`internal/rigor`); `TestRunTakesHotfixWithNoOptIn`,
-  `TestFollowUpTakesHotfix`, `TestStoredFollowUpKeepsAHotfixRequest`, `TestBudgetPreviewTakesHotfix`
-  and `TestDocsRigorModesProductStatesTheHotfixDoor` (`internal/cli`); and
-  `TestBootstrapRigorTakesTheRunsOwnRequestOnlyUpward`'s hotfix row (`internal/runner`). The writer
+- **Tests.** `TestResolveTakesAHotfixRequestWhole`, `TestLayersModeAnswersOnlyBesideARequestThatTakesTheRunWhole`
+  (`internal/rigor`); `TestReviewFloorForHoldsBothRowsOfAnOffAxisRequest` (`internal/policy`);
+  `TestResolveLevelsFloorHoldsForAHotfixRequest` (`internal/config`); `TestRunTakesHotfixWithNoOptIn`,
+  `TestFollowUpTakesHotfix`, `TestStoredFollowUpKeepsAHotfixRequest`, `TestBudgetPreviewTakesHotfix`,
+  `TestLaunchReviewLevelsAskHoldsTheFloorOfTheModeTheLayersResolved` and
+  `TestDocsRigorModesProductStatesTheHotfixDoor` (`internal/cli`); and
+  `TestBootstrapRigorTakesTheRunsOwnRequestOnlyUpward`'s hotfix row,
+  `TestRigorFloorHoldsWhenTheRequestTakesTheRunToHotfix` and
+  `TestLayersRigorIsKeptOnlyForARequestThatTakesTheRunWhole` (`internal/runner`). The writer
   refusal that does exist is `TestRigorSetRefusesHotfix` (`internal/cli/rigor_test.go`), unchanged by
   this task: it covers the two forms the command can write, and the `--repo` form it does not name is
   G6's to build. hotfix's levels, its 1/1 rounds and its security-only row keep the rigor table tests

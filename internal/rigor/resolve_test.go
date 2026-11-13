@@ -178,6 +178,40 @@ func TestResolveTakesAHotfixRequestWhole(t *testing.T) {
 	}
 }
 
+// TestLayersModeAnswersOnlyBesideARequestThatTakesTheRunWhole: the mode the
+// layers resolve is what a reader of the owner's floor holds beside the mode
+// the request chose (policy.Effective.ReviewFloorFor), because a request raises
+// a mode and never lowers a floor (D8, LF5). It is asked for exactly when the
+// request took the run off the axis: for every other request the layers'
+// answer is already the mode the run is at, and "" is the answer that says so.
+func TestLayersModeAnswersOnlyBesideARequestThatTakesTheRunWhole(t *testing.T) {
+	cfg := Config{
+		Project:      Startup,
+		Repo:         Pro,
+		RepoAreas:    []Area{{Name: "pay", Match: "p/**", Mode: Critical}},
+		ProjectAreas: nil,
+	}
+	for _, c := range []struct {
+		name string
+		req  Request
+		want Mode
+	}{
+		{"a request for hotfix", Request{Mode: Hotfix}, Pro},
+		{"a request for hotfix over an area", Request{Mode: Hotfix, Paths: []string{"p/x.go"}}, Critical},
+		{"a request for an on-axis mode", Request{Mode: Critical}, ""},
+		{"no request at all", Request{}, ""},
+	} {
+		if got := LayersMode(cfg, c.req, ""); got != c.want {
+			t.Errorf("%s: LayersMode = %q; want %q", c.name, got, c.want)
+		}
+	}
+	// reached folds the way Resolve's own Reached does, so a caller asking at
+	// each of D22's moments never takes the answer down.
+	if got := LayersMode(Config{Repo: Startup}, Request{Mode: Hotfix}, Critical); got != Critical {
+		t.Errorf("LayersMode(repo startup, request hotfix, reached critical) = %q; want critical: the mode the layers gave never falls", got)
+	}
+}
+
 // TestResolveNeverAnswersAnEmptyMode pins the shape every caller relies on:
 // whatever the configuration and the request say, a resolution carries a mode
 // a runner can run. An empty answer would be a run with no rigor at all.

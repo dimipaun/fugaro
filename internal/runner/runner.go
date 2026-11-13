@@ -494,6 +494,14 @@ type run struct {
 	// review, and the mode must not come from there.
 	rigorCfg rigor.Config
 	rigorRev string
+	// layersRigor is the mode the layers alone resolved at the moments that
+	// have run — the run's own request left out (rigor.LayersMode) — and it is
+	// set only when that request took the run off the axis
+	// (rigor.Mode.PerRun, hotfix). It is the mode whose floor holds beside
+	// hotfix's own row: a request raises a mode and never lowers a floor (D8,
+	// LF5), so reading only the row of the mode the request chose would lower
+	// one (policy.Effective.ReviewFloorFor, resolveLevelsForcing).
+	layersRigor rigor.Mode
 	// baseCfg is the whole resolved configuration the base branch's
 	// fugaro.yaml produced at bootstrap, of which rigorCfg is the mode's
 	// half: the triage stage's switch is the other key read from there and
