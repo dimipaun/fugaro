@@ -19,9 +19,13 @@ package keyservice
 // F10), the age of the sign-in itself (`auth_time`, not the token's `iat`, which
 // is what D2187's five minutes are about), and the tenant a Microsoft sign-in
 // has to come from. The addresses are compared through access.Member on BOTH
-// sides (F31): the member this verifier builds from the token and the member a
-// stored record carries are one spelling of one person, so a list entry cannot
-// be missed by a fold or matched by a domain's case.
+// sides (F31): the member this verifier builds and the member a stored record
+// carries are one spelling of one person, so a list entry cannot be missed by a
+// fold or matched by a domain's case. The member is built from the address as
+// the token CLAIMED it and not from mcpauth's folded one, because the two folds
+// are not the same fold: mcpauth lower-cases the whole address and access.Member
+// keeps the local part byte for byte, so building it from the folded spelling
+// would give a member a capitalised local part can never equal.
 //
 // **D2207, and what P1.3 found.** The operations organisation accepts
 // `google.com` only. A reseller organisation accepts Google, or Microsoft only
@@ -149,9 +153,11 @@ type SignIn struct {
 	UID string
 	// Email is the address the token asserted, folded by mcpauth.
 	Email string
-	// Member is access.Member(Email): the spelling a stored member is compared
-	// against, so a rule over an address compares two values this tree built.
-	// It is empty only when the address is no member, which Verify refuses.
+	// Member is access.Member of the address as the token CLAIMED it — not of
+	// Email, which mcpauth has folded whole: access.Member keeps the local part
+	// byte for byte, so a member built from the folded spelling is one no stored
+	// record can equal. It is empty only when the address is no member, which
+	// Verify refuses.
 	Member string
 	// Provider is `firebase.sign_in_provider`, read by mcpauth. It is empty when
 	// the token carries none, which RequireSSO refuses.
@@ -241,12 +247,18 @@ func (v *PortalVerifier) Verify(ctx context.Context, raw string) (SignIn, error)
 		}
 		return SignIn{}, err
 	}
-	member, err := access.Member(id.Email)
+	// The member is built from the address AS CLAIMED and not from mcpauth's
+	// folded one: access.Member keeps the local part byte for byte while mcpauth
+	// folds the whole address, so building this from the folded spelling gives a
+	// member whose local part is lower-cased — one a stored record written from
+	// a capitalised address can never equal, and one that merges two spellings
+	// access.Member calls two people.
+	member, err := access.Member(id.ClaimedEmail)
 	if err != nil {
-		// mcpauth has already folded the address to printable ASCII, so this is
-		// the "not a member" half of its rule: an address this tree cannot spell
-		// as a member is one no stored membership can be compared against, and
-		// the refusal names the shape rather than the address.
+		// mcpauth has already refused a claim that is not printable ASCII, so
+		// this is the "not a member" half of its rule: an address this tree
+		// cannot spell as a member is one no stored membership can be compared
+		// against, and the refusal names the shape rather than the address.
 		return SignIn{}, fmt.Errorf("%w: the identity's address is not one this service can compare", ErrUnverifiedSignIn)
 	}
 	return SignIn{

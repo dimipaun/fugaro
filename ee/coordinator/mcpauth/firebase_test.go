@@ -333,6 +333,12 @@ func TestTheAdmittedIdentityIsTheTokensOwn(t *testing.T) {
 	if id.UID != testUID || id.Email != testEmail {
 		t.Errorf("VerifyIDToken answered %+v, and the identity a token asserts is its uid and its folded address", id)
 	}
+	// Both spellings are carried, and the claimed one is the claim byte for
+	// byte: a caller building a member has to use that one, because its fold
+	// keeps a local part's case and this package's does not.
+	if id.ClaimedEmail != "Person-1@Example.COM" {
+		t.Errorf("the identity's claimed address is %q, and it is the email claim exactly as it arrived", id.ClaimedEmail)
+	}
 }
 
 // TestTheIdentityCarriesTheProviderTheSignInTimeAndTheTenant: the three fields

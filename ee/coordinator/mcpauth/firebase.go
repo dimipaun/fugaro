@@ -108,8 +108,15 @@ type Identity struct {
 	// against one spelling of an address rather than against the several a
 	// Unicode fold would let a claim choose.
 	Email string
+	// ClaimedEmail is the address exactly as the token carried it, before the
+	// fold above, and it is what a caller builds a member from: access.Member
+	// keeps the local part byte for byte, so a member built from the folded
+	// spelling is not the member a stored record carries whenever the local
+	// part is not already lower case (F31 of docs/portal/reconciliation.md).
+	// Nothing here is compared against it — Email is.
+	ClaimedEmail string
 	// Provider is the `firebase.sign_in_provider` the sign-in used — the claim
-	// SECURITY.md's seventh finding pins a set of, and the one a caller refuses
+	// SECURITY.md's sixth finding pins a set of, and the one a caller refuses
 	// `custom`, `anonymous`, `password` and `emailLink` on. It is empty when the
 	// token carries none or carries one this code cannot read, which every
 	// caller that cares reads as a provider it does not admit.
@@ -253,7 +260,8 @@ func (v *Verifier) VerifyIDToken(ctx context.Context, raw string) (Identity, err
 	if sub != uid {
 		return Identity{}, fmt.Errorf("%w: the identity names two different uids", ErrUnverifiedIDToken)
 	}
-	email, ok := foldEmail(claimString(claims, "email"))
+	claimedEmail := claimString(claims, "email")
+	email, ok := foldEmail(claimedEmail)
 	if !ok {
 		return Identity{}, fmt.Errorf("%w: the identity's email claim is not an address this front door can read", ErrUnverifiedIDToken)
 	}
@@ -268,11 +276,12 @@ func (v *Verifier) VerifyIDToken(ctx context.Context, raw string) (Identity, err
 		authTime = time.Unix(at, 0)
 	}
 	return Identity{
-		UID:      sub,
-		Email:    email,
-		Provider: firebaseClaim(claims, "sign_in_provider", maxProviderBytes),
-		AuthTime: authTime,
-		TenantID: firebaseClaim(claims, "tenant", maxTenantBytes),
+		UID:          sub,
+		Email:        email,
+		ClaimedEmail: claimedEmail,
+		Provider:     firebaseClaim(claims, "sign_in_provider", maxProviderBytes),
+		AuthTime:     authTime,
+		TenantID:     firebaseClaim(claims, "tenant", maxTenantBytes),
 	}, nil
 }
 
@@ -448,6 +457,11 @@ func verifyRS256(tok string, key *rsa.PublicKey) error {
 // would be matched against a list entry it is not — U+212A KELVIN SIGN
 // lowercases to 'k' and U+0130 to 'i'. Every address the identity provider
 // mints is ASCII, so nothing a real person holds is lost by the rule.
+//
+// It is NOT access.Member's fold, and the two are not interchangeable: this one
+// lower-cases the whole address, access.Member keeps the local part byte for
+// byte and folds only the domain. A caller that builds a member therefore reads
+// Identity.ClaimedEmail and never Identity.Email.
 func foldEmail(email string) (string, bool) {
 	if !printableASCII(email, maxEmailBytes) {
 		return "", false

@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/ee/coordinator/mcpauth"
+	"github.com/dimipaun/fugaro/internal/access"
 )
 
 const (
@@ -471,8 +472,15 @@ func TestTheSignInsMemberIsTheTreesSpelling(t *testing.T) {
 	if signIn.Email != "owner@example.com" {
 		t.Errorf("the sign-in's address is %q, and mcpauth folds the whole claim to lower case as ASCII", signIn.Email)
 	}
-	if signIn.Member != "user:owner@example.com" {
-		t.Errorf("the sign-in's member is %q, and the member of that token's address is user:owner@example.com", signIn.Member)
+	if signIn.Member != "user:Owner@example.com" {
+		t.Errorf("the sign-in's member is %q, and access.Member keeps the local part byte for byte: the member of Owner@Example.COM is user:Owner@example.com, and a member folded whole is one a stored record spelled that way can never equal", signIn.Member)
+	}
+	folded, err := access.Member(signIn.Email)
+	if err != nil {
+		t.Fatalf("access.Member(%q): %v", signIn.Email, err)
+	}
+	if signIn.Member == folded {
+		t.Error("the member was built from the folded address: access.Member of owner@example.com is another member, and merging the two spellings admits a person the tree's own rule calls somebody else")
 	}
 	if !SameMember("owner@example.com", "owner@EXAMPLE.com") {
 		t.Error("same member, one domain in another case: the two sides go through access.Member, so a stored record spelled with a capitalised domain is the same person")
