@@ -49,6 +49,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"google.golang.org/api/googleapi"
 
@@ -59,6 +60,7 @@ import (
 	fcli "github.com/dimipaun/fugaro/internal/cli"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // The fixture's installation: a Fugaro project of its own, its GCP project, and
@@ -620,6 +622,10 @@ func TestLicenceReadBundleRefusals(t *testing.T) {
 		{name: "an empty file", args: []string{"licence", "set", "--file", empty}, path: empty, want: []string{"no key was read from --file"}},
 		{name: "three lines in a file", args: []string{"licence", "set", "--file", three}, path: three, want: []string{"--file holds 3 lines"}},
 		{name: "a file over the cap", args: []string{"licence", "set", "--file", oversized}, path: oversized, want: []string{"over 8192 bytes"}},
+		// A directory opens and then refuses to be read, which is the other
+		// failure the --file value reaches: its own error carries the path, and
+		// the refusal may not.
+		{name: "a directory", args: []string{"licence", "set", "--file", dir}, path: dir, want: []string{"--file could not be read", "is a directory"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out, errOut, err := f.exec(t, tc.stdin, tc.args...)
@@ -693,6 +699,138 @@ func TestLicenceSetNamesAHalfWrittenPair(t *testing.T) {
 	}
 	if out != "" {
 		t.Errorf("a refused write printed %q to stdout, want nothing", out)
+	}
+}
+
+// TestLicenceSetRefusesAFlagShapedKey holds F5 at the other shape argv takes: a
+// key pasted with a leading dash is a flag, and pflag quotes the flag it could
+// not read back — "unknown shorthand flag: 'f' in -fgk_…" is the key in full. So
+// every verb answers a flag error with one fixed sentence, and no argument, in
+// either shape, is ever echoed.
+func TestLicenceSetRefusesAFlagShapedKey(t *testing.T) {
+	f := newLicenceFixture(t)
+	key := f.issuer.mint(t, f.claims())
+	f.seedSecretContainer(nil)
+
+	for _, args := range [][]string{
+		{"licence", "set", "-" + key},
+		{"licence", "set", "--" + key},
+		{"licence", "status", "-" + key},
+		{"licence", "-" + key},
+	} {
+		out, errOut, err := f.exec(t, "", args...)
+		if err == nil {
+			t.Fatalf("%v was accepted with a key in a flag position", args)
+		}
+		if code := fcli.ExitCode(err); code != fcli.ExitUserError {
+			t.Errorf("%v exited %d, want %d: %v", args, code, fcli.ExitUserError, err)
+		}
+		if !strings.Contains(err.Error(), "never the key") {
+			t.Errorf("%v was refused with %q, which does not say what the command takes instead", args, err.Error())
+		}
+		for _, text := range []string{out, errOut, err.Error()} {
+			if strings.Contains(text, key) {
+				t.Errorf("%v repeated the key: pflag quotes the flag it could not read, and the flag is the key: %q", args, text)
+			}
+		}
+		if out != "" {
+			t.Errorf("%v wrote %q to stdout, want nothing", args, out)
+		}
+	}
+	if f.object(t).Present {
+		t.Error("a flag-shaped key was written")
+	}
+}
+
+// TestLicenceRedactRemovesEverySpellingOfEveryValue pins the helper itself: the
+// bytes as they were handed to a socket, the base64 AddVersion wraps them in,
+// and nothing else — the text it was given stays readable, one line long and
+// bounded to a printable field (safetext.Field).
+func TestLicenceRedactRemovesEverySpellingOfEveryValue(t *testing.T) {
+	secret := licenceTestSecret(t)
+	key := licenceTestKeyPrefix + "not-a-key-this-test-minted"
+	text := "the body said " + secret + " then " + base64.StdEncoding.EncodeToString([]byte(secret)) +
+		" then " + key + " then " + base64.StdEncoding.EncodeToString([]byte(key)) +
+		" and " + strings.Repeat("x", 2*safetext.FieldMax)
+	got := licenceRedact(text, secret, key, "")
+	for _, form := range []string{
+		secret, base64.StdEncoding.EncodeToString([]byte(secret)),
+		key, base64.StdEncoding.EncodeToString([]byte(key)),
+	} {
+		if strings.Contains(got, form) {
+			t.Errorf("licenceRedact left a %d-byte spelling of a value in its answer: %q", len(form), got)
+		}
+	}
+	if !strings.Contains(got, "the body said") || !strings.Contains(got, "then") {
+		t.Errorf("licenceRedact answered %q, want the text it was given with the values taken out", got)
+	}
+	if n := utf8.RuneCountInString(got); n > safetext.FieldMax {
+		t.Errorf("licenceRedact answered %d runes, want at most %d (a store or a server may echo a 16 KiB body)", n, safetext.FieldMax)
+	}
+}
+
+// TestLicenceRefusalsCarryNoKeyMaterial pins licenceRedact where the material
+// would actually come back from: the licence server's own error body, which this
+// command prints (up to 16 KiB of whatever it was sent), and Secret Manager's
+// error, which echoes the payload it was handed in both spellings. Disabling the
+// redaction has to fail here: it is the whole of what keeps a secret out of a
+// terminal and out of a pasted ticket.
+func TestLicenceRefusalsCarryNoKeyMaterial(t *testing.T) {
+	t.Run("the licence server's error body", func(t *testing.T) {
+		f := newLicenceFixture(t)
+		key, secret := f.issuer.mint(t, f.claims()), licenceTestSecret(t)
+		f.seedSecretContainer([]byte(secret))
+		f.secrets.AllowAccess()
+		install(t, f, key)
+		f.serveLicenceServer(t, func(keyservice.RenewalCall) (int, string) {
+			return http.StatusInternalServerError, `{"error":"the renewal secret ` + secret + ` is not one key ` + key + ` renews with"}`
+		})
+
+		out, errOut, err := f.exec(t, "", "licence", "refresh")
+		if err == nil {
+			t.Fatal("a server answering 500 renewed the key")
+		}
+		for _, text := range []string{out, errOut, err.Error()} {
+			assertNoKeyMaterial(t, "the refusal for a server's own error body", text, key, secret)
+		}
+	})
+
+	t.Run("a Secret Manager error echoing the payload", func(t *testing.T) {
+		f := newLicenceFixture(t)
+		key, secret := f.issuer.mint(t, f.claims()), licenceTestSecret(t)
+		f.seedSecretContainer(nil)
+		f.secrets.EchoAddVersionPayload = true
+
+		out, errOut, err := f.exec(t, key+"\n"+secret+"\n", "licence", "set")
+		if err == nil {
+			t.Fatal("a write Secret Manager refused was accepted")
+		}
+		for _, text := range []string{out, errOut, err.Error()} {
+			assertNoKeyMaterial(t, "the refusal for a Secret Manager error that echoes the payload", text, key, secret)
+		}
+		if f.object(t).Present {
+			t.Error("a refused secret write still installed the key")
+		}
+	})
+}
+
+// assertNoKeyMaterial fails when text carries any spelling of the key or the
+// secret — the bytes as they are, and the base64 a payload is wrapped in — and
+// prints only the lengths, because a failure report is one more place key
+// material would reach.
+func assertNoKeyMaterial(t *testing.T, what, text, key, secret string) {
+	t.Helper()
+	for _, form := range []string{
+		key, secret,
+		base64.StdEncoding.EncodeToString([]byte(key)),
+		base64.StdEncoding.EncodeToString([]byte(secret)),
+	} {
+		if form == "" {
+			continue
+		}
+		if strings.Contains(text, form) {
+			t.Errorf("%s carries %d bytes of key material in %q", what, len(form), text)
+		}
 	}
 }
 

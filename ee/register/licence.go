@@ -457,7 +457,7 @@ func readLicenceBundle(cmd *cobra.Command, path string) (licenceBundle, error) {
 		f, err := os.Open(path)
 		if err != nil {
 			return licenceBundle{}, fcli.UserErr("nothing was read from --file (%s), and the value of --file is not echoed: it is the path of a file holding the key, and a key pasted into it is a key in argv. %s",
-				licenceOpenReason(err), licenceKeyFromStdin)
+				licenceSystemReason(err, "the file could not be opened"), licenceKeyFromStdin)
 		}
 		defer f.Close()
 		r, from = f, "--file"
@@ -466,7 +466,11 @@ func readLicenceBundle(cmd *cobra.Command, path string) (licenceBundle, error) {
 	}
 	data, err := io.ReadAll(io.LimitReader(r, licenceMaxBundleBytes+1))
 	if err != nil {
-		return licenceBundle{}, fcli.UserErr("reading the key from %s: %v", from, err)
+		// A read the file refused fails the same way an open does, and carries
+		// the same name: io.ReadAll over an *os.File returns an *os.PathError
+		// whose Path is the file it read, which is the --file value.
+		return licenceBundle{}, fcli.UserErr("%s could not be read (%s), and nothing read from it is echoed: %s",
+			from, licenceSystemReason(err, "the read failed"), licenceKeyFromStdin)
 	}
 	if len(data) > licenceMaxBundleBytes {
 		return licenceBundle{}, fcli.UserErr("the key read from %s is over %d bytes, which is more than a key and its renewal secret are: nothing was written. Line 1 is the key and line 2 the renewal secret, when the key has one",
@@ -493,18 +497,20 @@ func readLicenceBundle(cmd *cobra.Command, path string) (licenceBundle, error) {
 	return b, nil
 }
 
-// licenceOpenReason is why a file could not be opened, and never the name it was
-// asked for: os.Open's error carries that name verbatim, and the name it was
-// asked for is an argument -- the place a key pasted by mistake lands, which is
-// the one thing a refusal here may not print (F5). The reasons a path fails are
-// the system's own words ("no such file or directory", "permission denied"), and
-// they are what a person needs.
-func licenceOpenReason(err error) string {
+// licenceSystemReason is why a file call failed, and never the name it was given:
+// an *os.PathError carries that name verbatim — os.Open's, and the read an
+// *os.File makes through io.ReadAll — and the name it was given is an argument,
+// the place a key pasted by mistake lands, which is the one thing a refusal here
+// may not print (F5, F41). The reasons a path fails are the system's own words
+// ("no such file or directory", "permission denied", "is a directory"), and they
+// are what a person needs; fallback is the caller's own words for a failure with
+// none of them, because the caller knows which call it made.
+func licenceSystemReason(err error, fallback string) string {
 	var pe *os.PathError
 	if errors.As(err, &pe) && pe.Err != nil {
 		return pe.Err.Error()
 	}
-	return "the file could not be opened"
+	return fallback
 }
 
 // licenceSet: `fugaro licence set`.
