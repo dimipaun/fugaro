@@ -11923,8 +11923,16 @@ when it holds no version Secret Manager will serve. It
 fails the `proxied` row *before it launches anything* when the repository is not admitted, is admitted
 without the proxy, or is off the switch: the published half alone is **inert**, since a repository off the
 switch holds its own Bitbucket token and is served by nothing, so the check stops rather than launch three
-runs at a path the proxy is not on. The remedy is to set `agent.auth: cascade` for that repository (with a
-model credential in the service's bundle), run `fugaro update --repo` for it and run the check again; a
+runs at a path the proxy is not on; its remedy is to set `agent.auth: cascade` for that repository (with
+a model credential in the service's bundle), run `fugaro update --repo` for it and run the check again.
+The same published node must also **admit the repository to a Claude account** — an `accounts` entry
+whose own `allow_repos` names it, since the service offers a run only a credential of an account that
+admits its repository (`internal/credsvc`'s `admittedAccounts`; the child node's own
+`credentials.accounts` list is the other half of that intersection) — and a node whose block names none
+fails `account-admitted` *before it launches anything*, with the `state_unavailable` ("no candidate
+credentials were offered") halt the runs would otherwise measure; its remedy is to name an account for
+the repository in the local config (a profile's or a repository's `claude_accounts`) and have the owner
+run `fugaro project policy publish`. A
 switch the reading cannot settle — and a service doctor reports as not there or as having nothing to
 serve a run's model credential out of, where every model call of a run is refused — is recorded as
 **unmeasured** (exit `2`, nothing launched) rather than as a pass. Three **sandbox** Bitbucket
@@ -11963,7 +11971,13 @@ day is also the day the service looks a run's outcome up under — an id of anot
 ended-run probe where the service never reads. A base outside that shape is refused **before anything is
 launched**.
 
-**What the block reads.** `proxied`; `run-launch` and `run-outcome` (the working run reached a final
+**What the block reads.** `proxied` (the published `bitbucket_token` block admits the repository with
+`proxy: true`, and the service's own IAM policy puts it on the credentials-service switch);
+`account-admitted` (the same node's `accounts` block admits it too — the service offers a run only a
+credential of an account whose own `allow_repos` names its repository, so a node whose block names none
+refuses every model call of a run there `state_unavailable`, "no candidate credentials were offered", and
+the check stops before any run is launched, naming the account to add to the local config and the
+owner-run `fugaro project policy publish` that carries it to the node); `run-launch` and `run-outcome` (the working run reached a final
 status, pushed its branch and opened its pull request); the seven refusal rows
 (`refusal-other-repository`, `refusal-other-ref`, `refusal-tag-ref`, `refusal-ref-delete`,
 `refusal-other-pull-request`, `refusal-merge`, `refusal-workspaces`), each failing on the run's own line,

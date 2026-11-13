@@ -58,9 +58,16 @@ neither deletes nor closes them, and the block names each one.
   repository whose workspace is `belong` is refused by name.
 - **The credentials service on for this installation, the sandbox repository on the
   credentials-service switch (`agent.auth: cascade` for it, with a model credential in the service's
-  bundle, its root re-applied), and the sandbox repository published with `proxy: true`** (the plan's
+  bundle, its root re-applied), the sandbox repository published with `proxy: true`** (the plan's
   B1.7/B1.8, `fugaro project policy publish` from the project's
-  `project_secrets.bitbucket-token.allow_data_to`). Check 191 reads the published policy from
+  `project_secrets.bitbucket-token.allow_data_to`), **and a Claude account whose own `allow_repos`
+  names that repository** (an `accounts` entry of the same published node: the service offers a run
+  only a credential of an account that admits its repository — `internal/credsvc`'s
+  `admittedAccounts`, the intersection of the account's list with the repository child's own
+  `credentials.accounts` — so a node whose block names none is a run refused `state_unavailable`, "no
+  candidate credentials were offered", at its first model call; the check reads that half from the
+  same `policy show` document and fails `account-admitted` for it). Check 191 reads the published
+  policy from
   `fugaro project policy show --project fugaro --json` and the switch from the credentials service's
   OWN IAM policy (`gcloud run services get-iam-policy fugaro-credentials --project fugaro-dev --region
   us-east5 --format=json`) crossed with the repository's REAL jobs (the jobs whose own `FUGARO_REMOTE`
@@ -240,6 +247,16 @@ knowing by name:
   published policy does not admit `CHECK191_REPO`, or admits it without `proxy: true`. Publish the
   sandbox repository, or run this check as `--after-flip` if the flip has already happened. The check
   stops at this row: nothing below it was measured and no run was launched.
+- **No Claude account is admitted to the repository** (`account-admitted: FAIL`) — the published node's
+  `accounts` block names no account whose own `allow_repos` holds `CHECK191_REPO`, so the credentials
+  service offers a run of it no credential at all and every model call of all three runs would be
+  refused `state_unavailable` ("creds: no candidate credentials were offered") — this is the halt of
+  0.23.1 rather than a reading about the proxy. Name an account for the repository in the local config
+  (a profile's or the repository's own `claude_accounts`), have the owner run `fugaro project policy
+  publish` — the account's `allow_repos` comes from that config and nothing else writes the node — and
+  run the check again. The repository's own child node must list the account too
+  (`credentials.accounts`): the service's admission is the intersection of the two, and the node's half
+  alone does not serve a run. The check stops here, and no run was launched.
 - **The repository is off the credentials-service switch** (`proxied: FAIL`) — the published policy
   admits it with `proxy: true`, and the credentials service's OWN IAM policy does not grant
   `roles/run.invoker` to every account the repository's jobs run as, so its own `agent.auth` is not

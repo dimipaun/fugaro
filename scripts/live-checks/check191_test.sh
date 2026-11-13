@@ -669,9 +669,12 @@ prepare() { # dir
   # The checkout the flip's doctor row is read in: the sandbox repository's own,
   # which is what the check's guard resolves before anything is launched.
   printf 'https://bitbucket.org/workspace-a/repo-a.git\n' >"$1/state/origins/$(printf '%s' "$1/checkout" | sed 's|^/||; s|/|_|g')"
-  # The published node: the sandbox repository is admitted with proxy: true.
+  # The published node: the sandbox repository is admitted with proxy: true, and
+  # the accounts block names it too — the model credential's OWN admission, which
+  # is a different list from the Bitbucket token's and the one a run's first
+  # model call is served under (internal/credsvc's admittedAccounts).
   cat >"$1/state/project-policy.json" <<'POLICY_EOF'
-{"project":"fugaro","policy":{"bitbucket_token":{"allow_repos":["bitbucket/workspace-a/repo-a"],"proxy":true}}}
+{"project":"fugaro","policy":{"bitbucket_token":{"allow_repos":["bitbucket/workspace-a/repo-a"],"proxy":true},"accounts":{"acct-one":{"allow_repos":["bitbucket/workspace-a/repo-a"]}}}}
 POLICY_EOF
   # `fugaro doctor --json`: the bitbucket-direct row the flip's step reads, and
   # the credentials-service-deployed row the `proxied` step reads for the one
@@ -764,6 +767,7 @@ test_dry_run() {
   # A row the plan did not measure reads INFO, never PASS: a plan is not a
   # reading, and a block that said PASS would be one nobody took.
   expect_contains "$out" "FACT proxied: INFO — planned" "dry run: a planned row is INFO"
+  expect_contains "$out" "FACT account-admitted: INFO — planned" "dry run: the account row is planned too"
   expect_contains "$out" "FACT refusal-tag-ref: INFO — planned" "dry run: a planned attempt is INFO"
   expect_contains "$err" "the throwaway run itself" "dry run: the plan names the run it would launch"
   # Nothing was launched, read or written.
@@ -880,6 +884,70 @@ test_the_fake_run_refuses_an_id_the_cli_would_refuse() {
   fi
   expect_contains "$(cat "$dir/err")" "not the shape a run id takes" "the fake refuses a run id the CLI would"
   if [ -s "$dir/state/runs" ]; then fail "the fake recorded a run it had refused"; fi
+}
+
+# The model credential's admission, which is a DIFFERENT list from the proxy's:
+# the service offers a run only a credential of an account whose own allow_repos
+# names its repository, so a node whose accounts block names none is three runs
+# halted at their first model call — "creds: no candidate credentials were
+# offered", the halt 0.23.1 measured with every prerequisite of this check
+# passing. This is the row that stops the check there instead.
+test_no_account_for_the_repository_stops_the_check() {
+  local dir=$work/noaccount
+  prepare "$dir"
+  # `accounts: none`: the state the published node was in when the working run
+  # halted on 0.23.1.
+  cat >"$dir/state/project-policy.json" <<'POLICY_EOF'
+{"project":"fugaro","policy":{"bitbucket_token":{"allow_repos":["bitbucket/workspace-a/repo-a"],"proxy":true},"accounts":{}}}
+POLICY_EOF
+  run_check "$dir" "$script"
+  expect_status "$status" 1 "no account: the check stops"
+  expect_contains "$out" "FACT account-admitted: FAIL" "no account: the row does not pass"
+  expect_contains "$out" "no Claude account is admitted to workspace-a/repo-a" "no account: the row names the repository"
+  expect_contains "$out" "state_unavailable (no candidate credentials)" "no account: the row names the refusal the runs would meet"
+  expect_contains "$out" "fugaro project policy publish" "no account: the row names the owner-run publish"
+  expect_contains "$out" "FACT run-launch: FAIL — not reached" "no account: nothing below the row was measured"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "no account: no run was launched"
+}
+
+# An account that admits ANOTHER repository is not one of this repository's: the
+# list is the per-repository decision (D3, projectpolicy.AdmitRepo), matched
+# segment against segment, so a node whose only account is repo-b's is the same
+# stop as a node with no accounts at all — and a check that read "some account
+# exists" would pass it and launch three runs into the halt.
+test_an_account_for_another_repository_stops_the_check() {
+  local dir=$work/otheracct
+  prepare "$dir"
+  cat >"$dir/state/project-policy.json" <<'POLICY_EOF'
+{"project":"fugaro","policy":{"bitbucket_token":{"allow_repos":["bitbucket/workspace-a/repo-a"],"proxy":true},"accounts":{"acct-b":{"allow_repos":["bitbucket/workspace-a/repo-b"]}}}}
+POLICY_EOF
+  run_check "$dir" "$script"
+  expect_status "$status" 1 "an account of another repository: the check stops"
+  expect_contains "$out" "FACT account-admitted: FAIL" "an account of another repository: the row does not pass"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "an account of another repository: no run was launched"
+}
+
+# The red step for the two cases above: the copy below has the gate's own
+# comparison neutralised (its `!= yes` becomes `= yes`, so the arm is never
+# taken), and with it gone the very same policy runs past the row to its end —
+# which is the whole of what the gate is for, and what fails the moment the gate
+# stops being load-bearing.
+test_the_account_gate_is_what_stops_the_check() {
+  local dir=$work/nogate copy
+  prepare "$dir"
+  cat >"$dir/state/project-policy.json" <<'POLICY_EOF'
+{"project":"fugaro","policy":{"bitbucket_token":{"allow_repos":["bitbucket/workspace-a/repo-a"],"proxy":true},"accounts":{}}}
+POLICY_EOF
+  copy=$dir/check191-noaccountgate.sh
+  sed '/field_of account-admitted/s/!= yes/= yes/' "$script" >"$copy" 2>/dev/null || true
+  if [ ! -s "$copy" ] || cmp -s "$script" "$copy"; then
+    fail "red step: the copy is the script: the account gate's own comparison was not found to neutralise"
+    return 0
+  fi
+  run_check "$dir" "$copy"
+  expect_status "$status" 0 "red step: without the gate the run is not stopped"
+  expect_contains "$out" "CHECK 191 RESULT END (exit 0)" "red step: its block is a finished block"
+  expect_contains "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "red step: the runs are launched without the gate"
 }
 
 test_the_switch_being_off_stops_the_check() {
@@ -1297,6 +1365,7 @@ test_happy_path() {
   local want calls
   for want in \
     "FACT proxied: PASS" \
+    "FACT account-admitted: PASS" \
     "FACT run-launch: PASS" \
     "FACT run-outcome: PASS" \
     "FACT refusal-other-repository: PASS" \
@@ -1739,6 +1808,9 @@ t test_repo_guard
 t test_the_run_id_must_name_today
 t test_the_run_id_base_must_be_todays_date_and_a_time
 t test_the_fake_run_refuses_an_id_the_cli_would_refuse
+t test_no_account_for_the_repository_stops_the_check
+t test_an_account_for_another_repository_stops_the_check
+t test_the_account_gate_is_what_stops_the_check
 t test_the_switch_being_off_stops_the_check
 t test_one_job_of_the_repository_without_the_grant_is_a_switch_that_is_off
 t test_a_switch_the_check_cannot_read_is_unmeasured

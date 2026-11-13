@@ -59,8 +59,15 @@
 #             The installation must have its credentials service on, the sandbox
 #             repository must be on the credentials-service switch (agent.auth:
 #             cascade for it, with a model credential in the service's bundle,
-#             its root re-applied) and the sandbox repository must be published
-#             with `proxy: true`. Check 191 stops if any of the three is not so:
+#             its root re-applied), the sandbox repository must be published
+#             with `proxy: true`, and an account of the published node's
+#             `accounts` block must name it: the service offers a run only a
+#             credential of an account whose own `allow_repos` admits the run's
+#             repository (internal/credsvc's `admittedAccounts`), so a node
+#             whose block names none answers every model call of a run in it
+#             `state_unavailable` ("creds: no candidate credentials were
+#             offered") and the runs below would measure a halt. Check 191 stops
+#             if any of the four is not so:
 #             the published half alone is INERT — a repository off the switch
 #             holds its own token and is served by nothing — because the fact it
 #             measures is a REFUSAL, and only the service can refuse a call it is
@@ -360,11 +367,17 @@ write_reader() {
 any of them.
 
 policy   argv: the `project policy show --json` document, a repository. Prints
-         whether the published block admits that repository and whether the
-         proxy switch is on. A repository is matched the way the service matches
-         it (projectpolicy.MatchRepo): the node's entries are provider-qualified
-         and a segment may be a wildcard, so `bitbucket/workspace-a/*` admits
-         every repository of that workspace.
+         whether the published block admits that repository, whether the
+         proxy switch is on, and whether the node's `accounts` block admits it
+         too — the model credential's own admission, which is a different one:
+         the service offers a run only a credential of an account whose own
+         `allow_repos` holds its repository, so a node that names none is a run
+         refused `state_unavailable` at its first model call. A repository is
+         matched the way the service matches it (projectpolicy.MatchRepo): the
+         node's entries are provider-qualified and a segment may be a wildcard,
+         so `bitbucket/workspace-a/*` admits every repository of that
+         workspace. `holder=` names each account whose list admits it, in the
+         node's own spelling.
 run      argv: the listing's file, a run id. Prints that run's row field by
          field, `found=no` when the listing does not hold it, and — for a run
          the record halted — the halt's own reason and detail. Two derived
@@ -644,11 +657,18 @@ def switch_state(problem):
 
 cmd = sys.argv[1]
 if cmd == "policy":
-    block = ((load(sys.argv[2]) or {}).get("policy") or {}).get("bitbucket_token") or {}
+    policy = (load(sys.argv[2]) or {}).get("policy") or {}
+    block = policy.get("bitbucket_token") or {}
     repo = sys.argv[3]
     allow = block.get("allow_repos") or []
     print("admitted=%s" % ("yes" if any(inside(e, repo) for e in allow) else "no"))
     print("proxy=%s" % ("yes" if block.get("proxy") is True else "no"))
+    holders = sorted(name for name, acct in (policy.get("accounts") or {}).items()
+                     if isinstance(acct, dict)
+                     and any(inside(e, repo) for e in (acct.get("allow_repos") or [])))
+    print("account-admitted=%s" % ("yes" if holders else "no"))
+    for name in holders:
+        print("holder=%s" % word(name, 80))
 elif cmd == "run":
     want = sys.argv[3]
     for row in rows(sys.argv[2]):
@@ -1293,7 +1313,7 @@ step_policy_switch() {
 }
 
 step_policy() {
-  local doc=$SCRATCH/policy.json got
+  local doc=$SCRATCH/policy.json got holders n
   fugaro project policy show --project fugaro --json >"$doc" 2>"$SCRATCH/policy.err" || {
     fact proxied FAIL "fugaro project policy show --project fugaro --json exited non-zero: $(last_line "$(cat "$SCRATCH/policy.err")"). Nothing about the proxy switch is settled by it"
     return 1
@@ -1307,6 +1327,21 @@ step_policy() {
     fact proxied FAIL "the published policy admits ${REPO} but its bitbucket_token block does not carry proxy: true, so this repository's runs get the token MOUNTED on the job instead of through the credentials service — that is the state Check 191 measures the way OUT of, and the flip (Check 192) is what turns it on. Turn the proxy on for the installation and run this check again"
     return 1
   fi
+  # The model credential is admitted by a DIFFERENT list from the Bitbucket
+  # token's: the service offers a run only a credential of an account whose own
+  # allow_repos names its repository (internal/credsvc's admittedAccounts), so a
+  # node whose accounts block names none answers every model call of a run in
+  # this repository state_unavailable ("creds: no candidate credentials were
+  # offered"). That is a halt on the first call rather than a reading about the
+  # proxy, and it is read here, from the policy this step already holds, before
+  # any run of the three is launched.
+  if [ "$(field_of account-admitted "$got")" != yes ]; then
+    fact account-admitted FAIL "no Claude account is admitted to ${REPO}: the credentials service will refuse every model call with state_unavailable (no candidate credentials). Name an account for this repository in the local config (profile or repo-level claude_accounts), run 'fugaro project policy publish' (owner-run), then re-run"
+    return 1
+  fi
+  holders=$(printf '%s\n' "$got" | sed -n 's/^holder=//p' | tr '\n' ' ' | sed 's/ *$//')
+  n=$(printf '%s\n' "$got" | sed -n 's/^holder=//p' | wc -l | tr -d ' ')
+  fact account-admitted PASS "the published policy's accounts block names ${REPO} in the allow_repos of ${n} Claude account$([ "$n" = 1 ] || printf 's') (${holders}): the credentials service offers a run of it a model credential of one of them, so the runs below reach a model at all"
   # The node's half is read and it is not the whole flip: a repository the node
   # admits is served only while its own switch is on, so the row that says its
   # runs reach Bitbucket through the service — the one step_policy_switch
@@ -1780,7 +1815,7 @@ plan() {
       fact "$key" INFO "planned: a real run reads this row; --dry-run did not"
     done
   else
-    say "  [network, read] fugaro project policy show --project fugaro --json — whether ${REPO} is admitted with proxy: true"
+    say "  [network, read] fugaro project policy show --project fugaro --json — whether ${REPO} is admitted with proxy: true, and whether an account of the node's accounts block admits it too (the model credential's own admission)"
     say "  [network, read] gcloud run services get-iam-policy fugaro-credentials --project=${P} --region=${L} --format=json and gcloud run jobs list --project=${P} --region=${L} --format=json — whether every job account of ${REPO} holds roles/run.invoker on the credentials service (the switch, read from the service's own policy and the repository's own jobs)"
     say "  [network, read] gcloud secrets list --project=${P} --format=json, then gcloud secrets versions list <the credentials service's bundle container> --project=${P} --format=json — whether the service has a model credential to serve a run out of, read here where doctor's own row answers about the invoker grant instead"
     say "  [network, runs] fugaro run --repo ${REPO} --run-id $(run_id work) — the throwaway run itself, whose task commits one line, pushes it and opens its pull request through the service, THEN makes the seven attempts and prints one line per attempt"
@@ -1791,7 +1826,7 @@ plan() {
       IFS='|' read -r name key _ <<<"$row"
       fact "$key" INFO "planned: a real run measures the ${name} attempt; --dry-run did not"
     done
-    for key in proxied run-launch run-outcome review-run ended-identity; do
+    for key in proxied account-admitted run-launch run-outcome review-run ended-identity; do
       fact "$key" INFO "planned: a real run reads this row; --dry-run did not"
     done
   fi
@@ -1802,7 +1837,7 @@ plan() {
 # printed in this order whatever happened, one that was never reached reads
 # `FAIL — not reached`, and any other recorded key follows in the order the run
 # recorded it. That is what makes the block safe to diff between two runs.
-BLOCK_KEYS=(fugaro-version project-region xtrace dry-run proxied jobs mount accessor doctor
+BLOCK_KEYS=(fugaro-version project-region xtrace dry-run proxied account-admitted jobs mount accessor doctor
   run-launch run-outcome
   refusal-other-repository refusal-other-ref refusal-tag-ref refusal-ref-delete
   refusal-other-pull-request refusal-merge refusal-workspaces
