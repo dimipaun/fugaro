@@ -408,6 +408,12 @@ func (s *SchedulerVerifier) Verify(ctx context.Context, raw string) error {
 		}
 		return err
 	}
+	if key == nil {
+		// A key source that answers no error and no key is one nothing can be
+		// checked against, and the alternative to this refusal is a signature
+		// check that reads through the missing key.
+		return fmt.Errorf("%w: no key was returned for the token's key id", ErrUnverifiedSchedulerToken)
+	}
 	if err := verifyOIDCRS256(raw, key); err != nil {
 		return fmt.Errorf("%w: the token's signature does not verify", ErrUnverifiedSchedulerToken)
 	}

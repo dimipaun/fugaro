@@ -81,6 +81,12 @@ func (p portalKeys) Key(_ context.Context, kid string) (*rsa.PublicKey, error) {
 	return key, nil
 }
 
+// noKeys is the one key source a verifier gets no refusal out of: it answers
+// neither a key nor an error.
+type noKeys struct{}
+
+func (noKeys) Key(context.Context, string) (*rsa.PublicKey, error) { return nil, nil }
+
 // signPortalToken returns a compact RS256 JWT signed by key.
 func signPortalToken(t *testing.T, key *rsa.PrivateKey, kid, alg string, claims map[string]any) string {
 	t.Helper()
@@ -544,6 +550,17 @@ func TestSchedulerTokenNeedsItsAccountAndAudience(t *testing.T) {
 				t.Errorf("%s: the refusal names %q, and a refusal reaches a log line and an answer body", name, named)
 			}
 		}
+	}
+
+	// A key source that answers neither a key nor an error is the one shape the
+	// refusal above cannot come from the source itself, and the answer has to be
+	// a refusal rather than a signature check over nothing.
+	empty, err := NewSchedulerVerifier(portalSchedulerAccount, portalSchedulerAudience, noKeys{})
+	if err != nil {
+		t.Fatalf("NewSchedulerVerifier over an empty set: %v", err)
+	}
+	if err := empty.Verify(context.Background(), signPortalToken(t, portalKey(), portalKid, "RS256", schedulerClaims())); !errors.Is(err, ErrUnverifiedSchedulerToken) {
+		t.Errorf("a key set that answers no key: refused with %v, want the sentinel the route answers 403 from", err)
 	}
 }
 
