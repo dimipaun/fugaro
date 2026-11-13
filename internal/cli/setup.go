@@ -60,7 +60,10 @@ Enter takes, and writes the local config, so later runs ask nothing: the new
 GCP project's ID (--gcp-project; a project named after this one,
 fugaro-<name>, which Enter takes; never gcloud's default project), the region
 (--region; us-east5), the project's name (--name; from the repository's
-owner, else this directory's) and whether a repository the build can read is
+owner, else this directory's), the project's rigor mode (--rigor; how much
+review every run of it gets — poc, startup, pro, the built-in default that is
+listed first, or critical — and the one question with no suggestion, so Enter
+is not an answer there) and whether a repository the build can read is
 baked into the image its job runs (--bake-repos; yes, which makes jobs start
 faster; asked only where it can be answered, so a run with a project config
 keeps that project's answer). Every question has its flag, so only the
@@ -623,8 +626,15 @@ func setupRigorRefusal(answer string) error {
 // phase applies nothing.
 func (s *wizardStage) askRigor() error {
 	r, o := s.r, s.r.o
-	if !o.createProject {
+	if !s.creating {
 		return setupRigorRefusal(o.rigor)
+	}
+	if !o.createProject {
+		// A run that creates nothing — --config-only, --print-vars — has no
+		// installation of its own to hold a mode and no layer this run writes:
+		// the question belongs to the run that creates (setupCreates), which is
+		// also the run whose missing list carries its flag (wizardInputs).
+		return nil
 	}
 	if o.rigor != "" {
 		// The flag answered the question, and its value is read in the

@@ -40,15 +40,7 @@ import (
 // caller's. It is built from the table so that a question added to it — or
 // asked in another order — cannot leave this harness answering the wrong one.
 func rigorStdin(rigorAnswer string) string {
-	var b strings.Builder
-	for _, q := range setupQuestions {
-		if q.flag == "--rigor" {
-			b.WriteString(rigorAnswer)
-			continue
-		}
-		b.WriteString(wizardAnswers[q.flag])
-	}
-	return b.String()
+	return stdinGiving(map[string]string{"--rigor": rigorAnswer})
 }
 
 // rigorLine is the question's own line for one mode, or "" when it printed
