@@ -462,6 +462,15 @@ type Config struct {
 	// committed report carries no part of it, so a published threshold is a
 	// figure no other machine acts on.
 	Issues *Issues `yaml:"issues,omitempty"`
+	// Escalation is the outer loop's ladder as this machine states it: the
+	// thresholds, the model grades its rungs run at and the switches that
+	// decide whether the daemon acts on a stalled item at all
+	// (docs/outer-loop-escalation, E3). It is local-only for Issues' reason
+	// and one of its own: a threshold is authority rather than preference, so
+	// the block is refused by name in a repository's file and in the project
+	// layer, and Shared drops it — a launcher who could write the shared file
+	// would be choosing when every teammate's runs merge (D2032, G3).
+	Escalation *Escalation `yaml:"escalation,omitempty"`
 	// CredentialsService is the installation's credentials service
 	// (docs/credentials-service, D146/D147), or nil on an installation whose
 	// `fugaro update` could not deploy one — no Firebase backend for the
@@ -2326,6 +2335,7 @@ func (c *Config) validate() error {
 		}
 	}
 	c.validateBudget(bad)
+	c.validateEscalation(bad)
 	for _, p := range config.ValidateModelProviders(c.Providers) {
 		bad("%s: %s", p.Path, p.Message)
 	}

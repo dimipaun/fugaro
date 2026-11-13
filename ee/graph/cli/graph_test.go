@@ -90,10 +90,14 @@ import (
 // the same reason: they drive the same command tree, and without it a read
 // would go to the ambient credentials and a real runs bucket.
 //
-// It also keeps the two directories a command writes out of the developer's own
-// home — $XDG_CACHE_HOME (the update-check cache, and the project-name and
-// layer caches) and $XDG_CONFIG_HOME (checkouts.json, which the console's first
-// run reads) — and tells git not to find this repository's own fugaro.yaml, so
+// It also keeps the directories a command reads and writes out of the
+// developer's own home — $XDG_CACHE_HOME (the update-check cache, and the
+// project-name and layer caches), $XDG_CONFIG_HOME (checkouts.json, which the
+// console's first run reads) and $XDG_STATE_HOME (the run directory a local
+// scope looks in for the endpoint a daemon serves; the reader of that file
+// removes one no endpoint answers for, so a case here could otherwise take a
+// registry file out of the developer's own state directory) — and tells git not
+// to find this repository's own fugaro.yaml, so
 // a command that resolves the checkout's project resolves the fixture's and
 // never the project this repository belongs to.
 //
@@ -106,7 +110,7 @@ func TestMain(m *testing.M) {
 	os.Setenv("HTTPS_PROXY", "http://127.0.0.1:1")
 	os.Setenv("https_proxy", "http://127.0.0.1:1")
 	os.Unsetenv("STORAGE_EMULATOR_HOST")
-	for _, k := range []string{"XDG_CACHE_HOME", "XDG_CONFIG_HOME"} {
+	for _, k := range []string{"XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME"} {
 		if dir, err := os.MkdirTemp("", "fugaro-test-ee-"); err == nil {
 			os.Setenv(k, dir)
 		}
@@ -698,6 +702,55 @@ func TestGraphReadsTheOrchestratorAndLocalScopes(t *testing.T) {
 		t.Error("an orchestrator scope was answered from this machine's cached brief, want the refusal: only a local scope falls back to the cache")
 	} else if !strings.Contains(err.Error(), "fugaro orchestrator ls") {
 		t.Errorf("the refusal is %q, want it to say where the ids this installation has are listed", err)
+	}
+}
+
+// TestGraphAllDrawsAnIdNoLocalScopeNames: `all` is the union of the database's
+// ids and this machine's cached briefs, and the brief is what makes an id a local
+// scope there whatever the database holds — which is why the id of a project
+// whose name H1's pattern cannot carry must not be refused by the local source.
+// `my_project` is exactly that id: the daemon's own rule admits `_` (agentRE), so
+// the database has a state node under it and a daemon on this machine caches a
+// brief for it, while H1's narrower pattern is what no `local:<id>` named on the
+// command line may carry. `all` draws it from its node — work items and their
+// dependencies with it — instead of leaving the console's default graph short of
+// an orchestrator `fugaro orchestrator ls` lists (D1358, H1, H3).
+func TestGraphAllDrawsAnIdNoLocalScopeNames(t *testing.T) {
+	f := newGraphFixture(t)
+	f.writeStoredView(t, storedView())
+	f.writeOrchestratorState(t, "my_project", "land the state migration", "move the sweep onto the daemon")
+	f.writeCachedBrief(t, "my_project", time.Date(2026, 11, 10, 9, 30, 0, 0, time.UTC))
+
+	all := graphDocument(t, "graph", "--json")
+	if len(all.Warnings) != 0 {
+		t.Errorf("`all` warned %q, want none: the database and this machine's cache both name the id", all.Warnings)
+	}
+	if len(all.Sources) != 2 || all.Sources[1].Source != "local:my_project" || all.Sources[1].State != graph.SourceUp {
+		t.Fatalf("`all` covers %+v, want the coordinator and local:my_project up from its node", all.Sources)
+	}
+	if all.Sources[1].AsOf != nil {
+		t.Errorf("the scope claims as_of %v, want null: it was drawn from the node, which carries no time", all.Sources[1].AsOf)
+	}
+	key := graph.NodeKey("local:my_project", "wi-1")
+	seen := map[string]graph.Node{}
+	for _, n := range all.Nodes {
+		seen[n.Key] = n
+	}
+	if got, ok := seen[key]; !ok {
+		t.Fatalf("`all` drew %+v, want the node's work items keyed by local:my_project", all.Nodes)
+	} else if got.State != "queued" {
+		t.Errorf("the work item is %+v, want its phase as its state", got)
+	}
+	want := graph.Edge{From: graph.NodeKey("local:my_project", "wi-2"), To: key, Kind: graph.DependsOnEdge}
+	if len(all.Edges) != 1 || all.Edges[0] != want {
+		t.Errorf("`all`'s edges are %+v, want the node's one dependency %+v", all.Edges, want)
+	}
+
+	// The pattern still governs the argument: the same id named on the command
+	// line is refused, so the scope above is the enumeration's and not a value the
+	// command line could carry.
+	if _, _, err := execute(t, "graph", "--source", "local:my_project", "--json"); err == nil {
+		t.Error("`local:my_project` was accepted on the command line, want the scope pattern's refusal")
 	}
 }
 

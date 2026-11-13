@@ -40,7 +40,7 @@
 version: 1
 as_of:
   cli: v0.24.0
-  console: v0.121.0
+  console: v0.122.0
 never_say:
   - "any model"
   - "via MCP"
@@ -142,7 +142,7 @@ groups:
       - name: "Claude OAuth token (bring your own credentials)"
         status: supported
         edition: core
-        note: "Several named accounts per project, chosen per profile or stage; automatic failover is not claimed. Use of a subscription is subject to the provider's own terms."
+        note: "Several named accounts per project, chosen per profile or stage as before, and each one also a typed credential that an ordered pool may group and a craft's access name. Automatic failover between them is not claimed. Use of a subscription is subject to the provider's own terms."
         evidence: "internal/config/claude_accounts.go"
       - name: "Direct keys for DeepSeek and other Anthropic-compatible endpoints"
         status: supported

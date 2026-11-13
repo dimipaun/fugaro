@@ -351,8 +351,8 @@ func TestDoctorPolicyChecks(t *testing.T) {
 			t.Errorf("the check does not name the key and the node: %+v", c)
 		}
 		// The move is a newer binary the operator installs, the same one the
-		// readers' refusal names: doctor cannot offer `fugaro upgrade`, which
-		// never upgrades the binary it runs.
+		// readers' refusal names: doctor cannot offer `fugaro update`, which
+		// never installs a newer binary than the one it runs.
 		assertNamesTheBinaryUpgrade(t, c.Fix)
 		// The other side: a node whose keys this Fugaro all knows is not
 		// warned about, so the check is about the keys and not about doctor

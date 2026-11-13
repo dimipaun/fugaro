@@ -9,7 +9,6 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
-	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
@@ -32,7 +31,7 @@ import (
 func stubBuildPricer(t *testing.T) {
 	t.Helper()
 	was := newBuildPricer
-	newBuildPricer = func(*localcfg.Config) buildPricer { return fakePricer{book: pricedBook()} }
+	newBuildPricer = func(string, budget.CatalogCreds) buildPricer { return fakePricer{book: pricedBook()} }
 	t.Cleanup(func() { newBuildPricer = was })
 }
 

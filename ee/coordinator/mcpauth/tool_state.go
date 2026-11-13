@@ -8,8 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
-	"strings"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/orchestrator"
@@ -246,12 +244,11 @@ func (t stateTools) getEvents(ctx context.Context, call Call) (any, error) {
 // logEntries is the log as the tool answers it: the entries in the order the
 // server stamped them, each one's text cleaned and bounded.
 //
-// The order is read off the stamp and the derived id rather than off the order
-// the reach answered in, which is the rule the CLI applies to the same log
-// (D1230): the log is a map under its own node, so what a read returns is the
-// node's iteration order and not a sequence. The id breaks a tie between two
-// entries the server stamped in the same second, which is what makes the order
-// total rather than merely stable.
+// The order is orchestrator.SortEntries', which is the rule the CLI applies to
+// the same log (D1230): the log is a map under its own node, so what a read
+// returns is the node's iteration order and not a sequence. One function sorts
+// both surfaces' answers, so the door and the CLI cannot come to order one log
+// differently.
 //
 // The stamp is truncated to the second, which is the precision the log writes
 // (Append stamps every entry) and the only one the output schema admits: a
@@ -270,11 +267,6 @@ func logEntries(entries []orchestrator.Entry) []orchestrator.Entry {
 		e.Text = safetext.Clip(safetext.OneLine(e.Text), orchestrator.MaxAuditTextRunes)
 		out = append(out, e)
 	}
-	slices.SortFunc(out, func(a, b orchestrator.Entry) int {
-		if c := a.At.Compare(b.At); c != 0 {
-			return c
-		}
-		return strings.Compare(a.ID, b.ID)
-	})
+	orchestrator.SortEntries(out)
 	return out
 }

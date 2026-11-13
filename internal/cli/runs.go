@@ -240,7 +240,7 @@ func newRunsCmd() *cobra.Command {
 		Use:   "runs",
 		Short: "List and inspect runs",
 	}
-	cmd.AddCommand(newLsCmd(), newRunsStatsCmd(), newRunsSummaryCmd(), newRunsDigestCmd(), newRunsShowCmd())
+	cmd.AddCommand(newLsCmd(), newRunsStatsCmd(), newRunsSummaryCmd(), newRunsDigestCmd(), newRunsShowCmd(), newRunsWatchCmd())
 	return cmd
 }
 

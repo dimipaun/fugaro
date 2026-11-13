@@ -165,6 +165,25 @@ type initGate struct {
 // for a project the last read said is not managed.
 func (g *initGate) underway() bool { return g != nil && g.managed && !g.g.revoked }
 
+// factVersion is the version of the creation fact this run's own gate read
+// answered with, and 0 where it answered none (no object there, an object that
+// is not this project's marker, or a read that did not answer at all — the
+// helper keeps whatever it read even when it returns an error, and the caller
+// here drops it only on the paths where gateRun gave the run no gate).
+//
+// It is exported to the converge's steps and not to the plan: what it is for is
+// a step that reads the object ITSELF deciding, before its own read, whether
+// there is anything there for it to do (update_marker_version.go). A step that
+// judged by it what to write would be judging by a fact read at the head of a
+// run, which is exactly what D1015 refuses — this is a version the run already
+// paid for, used to skip a read and never to stand in for one.
+func (g *initGate) factVersion() int {
+	if g == nil {
+		return 0
+	}
+	return g.g.marks.Version
+}
+
 // gateRun reads the managed project's marks for this run, once, before the
 // loop's first stage (update_managed.go's one read per command, D1015).
 //

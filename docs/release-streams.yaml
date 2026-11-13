@@ -35,9 +35,9 @@ streams:
     # updater refuses a downgrade (docs/release.md, "Console releases"). Apple
     # and Lemon are avoided, and internal/streams refuses them.
     names: [Cherry, Mango, Melon, Nectarine, Orange, Papaya, Peach, Pear, Plum, Pomelo, Quince, Raspberry, Strawberry, Tangerine, Ugli, Watermelon]
-    # The last console release, console-v0.121.0 "Raspberry"; 0.122.0 "Strawberry" is next.
-    current: "0.121.0"
-    next: Strawberry
+    # The last console release, console-v0.122.0 "Strawberry"; 0.123.0 "Tangerine" is next.
+    current: "0.122.0"
+    next: Tangerine
     tag_prefix: console-v
 
   - name: mobile

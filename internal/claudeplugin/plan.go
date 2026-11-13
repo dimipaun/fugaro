@@ -82,7 +82,7 @@ type Plan struct {
 type OtherMarketError struct{ Got, Want string }
 
 func (e *OtherMarketError) Error() string {
-	return fmt.Sprintf("Claude Code's %q marketplace on this machine is %s, not %s, and fugaro upgrade never replaces it: if it is not one you trust, remove it in Claude Code with /plugin marketplace remove %s, then rerun",
+	return fmt.Sprintf("Claude Code's %q marketplace on this machine is %s, not %s, and fugaro update never replaces it: if it is not one you trust, remove it in Claude Code with /plugin marketplace remove %s, then rerun",
 		pluginwire.Marketplace, pluginwire.Printable(e.Got), e.Want, pluginwire.Marketplace)
 }
 

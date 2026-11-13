@@ -132,10 +132,23 @@ const markerBudgetJSON = `{"version":2,"gcp_project":"proj-1234","budget":{"amou
 
 // markerBuildsJSON is the version-3 object, byte for byte: the same fact and
 // the same amount, with the bound on billable image builds a managed
-// project's refresh is held to (M5, D1013). Four fields, the budget's own two
-// inside it — still no token, no key, no email, and the count is a figure this
-// package's own default, never a credential.
+// project's refresh was held to (M5, D1013). Four fields, the budget's own two
+// inside it — still no token, no key, no email, and the count is a figure an
+// installation recorded, never a credential.
 const markerBuildsJSON = `{"version":3,"gcp_project":"proj-1234","budget":{"amount":7,"currency":"USD"},"max_image_builds":1}`
+
+// markerNoBuildsJSON is the version-4 object, byte for byte: the version this
+// build writes, which records the amount and no count at all (D1543). It is
+// what `fugaro update` converges a version-3 object into.
+const markerNoBuildsJSON = `{"version":4,"gcp_project":"proj-1234","budget":{"amount":7,"currency":"USD"}}`
+
+// v3Builds is the count the version-3 fixtures carry: the one build per
+// invocation D1013's default was, which is the figure every installation that
+// recorded one has. It is a literal rather than a constant of the package
+// because the package no longer has one — nothing bounds a build by this
+// figure, and a version-3 object carries it only because that is the shape
+// version 3 was written in.
+const v3Builds = 1
 
 // The budget version's shape: the version follows the budget and nothing
 // else does, so a marker whose version and budget disagree is refused rather
@@ -200,7 +213,7 @@ func TestMarkerBudgetVersionShape(t *testing.T) {
 // project held to the default of one and a project whose recorded bound
 // nothing could read (D1013's table).
 func TestMarkerBuildsVersionShape(t *testing.T) {
-	m := Marker{Version: MarkerVersionBuilds, GCPProject: testProject, Budget: &Budget{Amount: 7, Currency: "USD"}, MaxImageBuilds: DefaultImageBuilds}
+	m := Marker{Version: MarkerVersionBuilds, GCPProject: testProject, Budget: &Budget{Amount: 7, Currency: "USD"}, MaxImageBuilds: v3Builds}
 	b, err := m.Bytes()
 	if err != nil {
 		t.Fatal(err)
@@ -270,11 +283,10 @@ func TestWriteMarkerRoundTrip(t *testing.T) {
 	}
 }
 
-// The same write for a managed creation: WriteMarker with a budget writes
-// the version that carries it — and, with it, the image build bound the
-// object's own default records, because the creation was asked for no bound
-// (M5, D1013) — and a call with a budget that is not an amount — no currency,
-// an amount of 0 — is refused with nothing written, which is the fail-closed
+// The same write for a managed creation: WriteMarker with a budget writes the
+// version that carries it, which is the version that carries the amount alone
+// (D1543) — and a call with a budget that is not an amount — no currency, an
+// amount of 0 — is refused with nothing written, which is the fail-closed
 // direction of a fact the read believes.
 func TestWriteMarkerRecordsTheBudgetItWasGiven(t *testing.T) {
 	ctx := context.Background()
@@ -285,8 +297,8 @@ func TestWriteMarkerRecordsTheBudgetItWasGiven(t *testing.T) {
 		t.Fatal(err)
 	}
 	b, ok := readMarker(t, s, testBucket)
-	if !ok || string(b) != markerBuildsJSON {
-		t.Fatalf("gs://%s/%s = %q (present %v), want %q", testBucket, MarkerObject, b, ok, markerBuildsJSON)
+	if !ok || string(b) != markerNoBuildsJSON {
+		t.Fatalf("gs://%s/%s = %q (present %v), want %q", testBucket, MarkerObject, b, ok, markerNoBuildsJSON)
 	}
 	// Once, like version 1: the amount is what the creation was required to
 	// choose, and a later run's budget flags change the Terraform budget
@@ -1416,11 +1428,11 @@ locals {
 	// The project's catalog check job's account (D1148): its grant set is
 	// pinned whole by runAccountGrants, which is the only thing that can be.
 	// A tftest cannot enumerate a module's resources, so an extra grant
-	// resource beside the five is invisible to it; this is the mechanical half
-	// that catches one — the mutation adds a project-level role to that very
-	// account, and the finding has to name the grant and the object this whole
-	// test exists for, not merely be some other refusal.
-	t.Run("a sixth grant to the catalog check account", func(t *testing.T) {
+	// resource beside the reviewed rows is invisible to it; this is the
+	// mechanical half that catches one — the mutation adds a project-level
+	// role to that very account, and the finding has to name the grant and the
+	// object this whole test exists for, not merely be some other refusal.
+	t.Run("a further grant to the catalog check account", func(t *testing.T) {
 		files := moduleFiles(t)
 		files["modules/installation/catalogcheck.tf"] += `
 resource "google_project_iam_member" "catalog_check_viewer" {
@@ -1438,9 +1450,10 @@ resource "google_project_iam_member" "catalog_check_viewer" {
 			t.Errorf("a sixth grant to the catalog check account is not refused for what it reaches:\n%s", strings.Join(scan.findings, "\n"))
 		}
 	})
-	// And the other direction: the set is exact, so dropping one of the five
-	// leaves an allowlist entry that no module grants any more, which the scan
-	// reports rather than keeping the reviewed row as if it were still there.
+	// And the other direction: the set is exact, so dropping one of the
+	// reviewed grants leaves an allowlist entry that no module grants any
+	// more, which the scan reports rather than keeping the reviewed row as if
+	// it were still there.
 	t.Run("a reviewed catalog check grant that is gone", func(t *testing.T) {
 		files := moduleFiles(t)
 		path := "modules/installation/catalogcheck.tf"
@@ -1867,6 +1880,24 @@ var runAccountGrants = setOf(
 	// and the member is the ID this scan already knows from the bundle
 	// container's grant above.
 	`google_project_iam_member | "projects/${var.credentials_service.firebase_project}/roles/fugaroCredentialsDatabase" | project=var.credentials_service.firebase_project | google_service_account.credentials[0].member | for_each= | perms=firebasedatabase.instances.get,firebasedatabase.instances.update`,
+	// Reviewed for O16b (D2020 (a)): the front door's own account, on the
+	// get-only role the same module declares for it
+	// (modules/installation/state_read.tf), in the coordinator's Firebase
+	// project — where the orchestrator's node lives (D1220) and where the
+	// database is (D6). It is the ONE grant that lets the state group's two
+	// read tools answer, and the role's whole permission list is
+	// firebasedatabase.instances.get: no storage permission at all, nothing
+	// that grants itself a role, nothing that acts as or mints for another
+	// account, and a target that is neither the runs bucket nor the
+	// installation's own project. The write is deliberately not in the list —
+	// firebasedatabase.instances.update, the only one there is, because a node
+	// write is an update: apply_patch is served by nothing (D2021) and the
+	// state's writes stay with `fugaro orchestrator patch` and the person's own
+	// credential (D1223, D1241) — so nothing here can reach the runs bucket's
+	// root. Three tests refuse a widening of this row: this one, internal/infra's
+	// TestFrontDoorHoldsNoDatabaseWrite, and the module's own
+	// TestFrontDoorStateRoleHoldsNoDatabaseWrite.
+	`google_project_iam_member | "projects/${var.coordinator.firebase_project}/roles/fugaroStateRead" | project=var.coordinator.firebase_project | google_service_account.mcp_server[0].member | for_each= | perms=firebasedatabase.instances.get`,
 	// Reviewed for C1.18: each job's account may invoke the credentials
 	// service. roles/run.invoker carries no storage permission at all — it is
 	// the right to send a request to a Cloud Run service — and the target is
@@ -2059,6 +2090,28 @@ var runAccountGrants = setOf(
 	// account: the job cannot invoke itself, and this is the one row in this
 	// block that is not the new account's.
 	`google_cloud_run_v2_job_iam_member | "roles/run.invoker" | name=google_cloud_run_v2_job.catalog_check[0].name | google_service_account.scheduler.member | for_each= | perms=`,
+	// The job's database reach (D1554): the installation's own role
+	// fugaroCatalogLease, created in the FIREBASE project and bound to this
+	// account there, whose whole permission list is the instance's two DATA
+	// permissions (pinned by perms, and by
+	// TestCatalogCheckLeaseRoleIsTheTwoDataPermissions beside tf.RolePermissions
+	// and tf.CatalogLeaseRole). It exists because each build the job submits
+	// reserves its estimated cost before Cloud Build is asked for it, and that
+	// reservation is a lease under buildleases/<slug>/<id> — a family the
+	// installation's rules deny whole to every client token, so the writer can
+	// only be an IAM identity with these two permissions on the database.
+	//
+	// What it is not: no instance LIFECYCLE (create, delete, disable, reenable,
+	// undelete) and no list, so a scheduled job nobody is watching cannot
+	// delete the database or the leases that hold every other build's cost,
+	// and no read or write of the runs bucket, the marker's root included.
+	// Realtime Database IAM has no path-level scope, so these two permissions
+	// reach the whole instance — which is exactly what the two other accounts
+	// with a database reach already hold (the coordinator's and the history
+	// job's roles/firebasedatabase.admin), and strictly less than they do. It
+	// is a second role and not a second binding of the credentials service's
+	// so that neither account's reach can grow by the other's needs.
+	`google_project_iam_member | "projects/${var.catalog_check.firebase_project}/roles/fugaroCatalogLease" | project=var.catalog_check.firebase_project | google_service_account.catalog_check[0].member | for_each= | perms=firebasedatabase.instances.get,firebasedatabase.instances.update`,
 	// And the repository root's half: roles/iam.serviceAccountUser on this
 	// repository's BUILD account, which is what makes a build of this
 	// repository's catalog entry run as this repository (D1148's whole point —
@@ -3635,8 +3688,8 @@ func TestBudgetCheck(t *testing.T) {
 // and buy nothing.
 
 // TestWriteFlagRoundTrip is the write half of the command: the object is
-// MarkerObject, it is the version that carries the amount the owner chose and
-// the bound the object's own default records, and a project that already
+// MarkerObject, it is the version that carries the amount the owner chose,
+// and a project that already
 // records an amount is refused rather than rewritten — this command adds a
 // budget, it does not edit one.
 func TestWriteFlagRoundTrip(t *testing.T) {
@@ -3651,8 +3704,8 @@ func TestWriteFlagRoundTrip(t *testing.T) {
 		t.Error("the flag reported a replacement with nothing there to replace")
 	}
 	b, ok := readMarker(t, s, testBucket)
-	if !ok || string(b) != markerBuildsJSON {
-		t.Fatalf("gs://%s/%s = %q (present %v), want %q", testBucket, MarkerObject, b, ok, markerBuildsJSON)
+	if !ok || string(b) != markerNoBuildsJSON {
+		t.Fatalf("gs://%s/%s = %q (present %v), want %q", testBucket, MarkerObject, b, ok, markerNoBuildsJSON)
 	}
 	// Once a budget is recorded: a project that already records one is not
 	// flagged again — the amount is the owner's decision at the time it was
@@ -3665,7 +3718,7 @@ func TestWriteFlagRoundTrip(t *testing.T) {
 	if replaced {
 		t.Error("the refused second call reported a replacement")
 	}
-	if b, _ := readMarker(t, s, testBucket); string(b) != markerBuildsJSON {
+	if b, _ := readMarker(t, s, testBucket); string(b) != markerNoBuildsJSON {
 		t.Errorf("the second call changed the object to %q", b)
 	}
 }
@@ -3693,7 +3746,6 @@ func TestReadFlagFactReadsTheObjectWithoutTheLabel(t *testing.T) {
 		seed   string
 		ours   bool
 		budget Budget
-		builds int64
 		want   string
 	}{
 		{name: "nothing there", ours: false, want: "is not there"},
@@ -3713,13 +3765,17 @@ func TestReadFlagFactReadsTheObjectWithoutTheLabel(t *testing.T) {
 			seed: `{"version":3,"gcp_project":"proj-1234","budget":{"amount":7,"currency":"USD"},"max_image_builds":0}`,
 			ours: false, want: "records an image build bound this build refuses",
 		},
-		{name: "this project's fact recording an amount", seed: markerBuildsJSON, ours: true, budget: Budget{Amount: 7, Currency: "USD"}, builds: 1},
+		{name: "this project's fact recording an amount", seed: markerBuildsJSON, ours: true, budget: Budget{Amount: 7, Currency: "USD"}},
 		{
+			// The count is read and judged by nothing: a fact of that version
+			// recording any count in the range is this project's fact recording
+			// the amount, which is the whole of what this read answers (D1543).
 			name: "this project's fact recording another bound",
 			seed: `{"version":3,"gcp_project":"proj-1234","budget":{"amount":7,"currency":"USD"},"max_image_builds":1000}`,
-			ours: true, budget: Budget{Amount: 7, Currency: "USD"}, builds: 1000,
+			ours: true, budget: Budget{Amount: 7, Currency: "USD"},
 		},
-		{name: "the version that records no bound", seed: markerBudgetJSON, ours: true, budget: Budget{Amount: 7, Currency: "USD"}, builds: DefaultImageBuilds},
+		{name: "the version that records no bound", seed: markerBudgetJSON, ours: true, budget: Budget{Amount: 7, Currency: "USD"}},
+		{name: "the version this build writes", seed: markerNoBuildsJSON, ours: true, budget: Budget{Amount: 7, Currency: "USD"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, f := newStorage(t)
@@ -3737,14 +3793,8 @@ func TestReadFlagFactReadsTheObjectWithoutTheLabel(t *testing.T) {
 			if tc.ours && fact.Budget != tc.budget {
 				t.Errorf("Budget = %+v, want %+v", fact.Budget, tc.budget)
 			}
-			if tc.ours && fact.Builds != tc.builds {
-				t.Errorf("Builds = %d, want %d", fact.Builds, tc.builds)
-			}
 			if !tc.ours && !strings.Contains(fact.Reason, tc.want) {
 				t.Errorf("the reason %q does not say %q", fact.Reason, tc.want)
-			}
-			if !tc.ours && fact.Builds != 0 {
-				t.Errorf("Builds = %d on an object this read does not believe: the figure is set only when Ours", fact.Builds)
 			}
 		})
 	}
@@ -3782,8 +3832,8 @@ func TestWriteFlagReplacesTheCreationFactThatRecordsNoAmount(t *testing.T) {
 	if !ok {
 		t.Fatalf("no %s in gs://%s after the flag", MarkerObject, testBucket)
 	}
-	if string(b) != markerBuildsJSON {
-		t.Errorf("after the flag gs://%s/%s = %s, want %s", testBucket, MarkerObject, b, markerBuildsJSON)
+	if string(b) != markerNoBuildsJSON {
+		t.Errorf("after the flag gs://%s/%s = %s, want %s", testBucket, MarkerObject, b, markerNoBuildsJSON)
 	}
 }
 
@@ -3853,12 +3903,15 @@ func TestWriteFlagWritesSomethingTheManagedReadBelieves(t *testing.T) {
 			if budget.Amount != 7 || budget.Currency != "USD" {
 				t.Errorf("ReadBudget after the flag = %+v, want the amount the flag recorded (7 USD)", budget)
 			}
-			builds, err := ReadImageBuilds(ctx, s, c, testFugaroProject, testProject)
-			if err != nil || !builds.OK || builds.Default || builds.Invalid {
-				t.Fatalf("ReadImageBuilds after the flag = %+v, %v; want a recorded bound, nil", builds, err)
+			// The version the flag writes, and no count in it: the flag is one
+			// of the two writers of the object, so what it leaves is the shape
+			// this build writes (D1543).
+			got, ok := readMarker(t, s, testBucket)
+			if !ok {
+				t.Fatal("the flag wrote no creation fact")
 			}
-			if builds.Builds != DefaultImageBuilds {
-				t.Errorf("ReadImageBuilds after the flag = %+v, want the bound the flag recorded (%d)", builds, DefaultImageBuilds)
+			if string(got) != markerNoBuildsJSON {
+				t.Errorf("the object the flag wrote = %s, want %s", got, markerNoBuildsJSON)
 			}
 		})
 	}
@@ -3945,5 +3998,244 @@ func TestWriteFlagNeedsTheProjectsOwnRunsBucket(t *testing.T) {
 	// A call naming no project has nothing to write a fact about.
 	if _, err := WriteFlag(ctx, s, testBucket, "", testProjectNumber, Budget{Amount: 7, Currency: "USD"}); err == nil {
 		t.Error("the flag was written with no project named")
+	}
+}
+
+// --- ConvergeMarker: D1543's migration half (T10) ---
+//
+// The step `fugaro update` runs over an installation's creation fact
+// (internal/cli/update_marker_version.go): a fact of the version that carried
+// the image build count is rewritten as the version this build writes, in
+// place, with the amount carried over — and the HARD RULE is that the upgrade
+// is that one command, so this rewrite belongs to the update rather than to a
+// second command the owner is asked to run. The tests below pin both halves of
+// it: the object the step is for, and every state it must NOT touch. The two
+// failures a migration may never make are among the latter — rewriting an
+// object the caller did not understand, and rewriting an object this build's
+// own managed read refuses whole, which would turn a refused marker into an
+// accepted one and open the gate that read keeps closed.
+
+// convergeWorld is the world these tests read and write the fact in: the
+// project's own runs bucket, and the object at the fact's key where seed is not
+// empty.
+func convergeWorld(t *testing.T, seed string) (*storage.Service, *gcpfake.GCS) {
+	t.Helper()
+	s, f := newStorage(t)
+	f.AddBucket(testBucket, testProjectNumber, testManaged)
+	if seed != "" {
+		f.Put(testBucket, MarkerObject, []byte(seed))
+	}
+	return s, f
+}
+
+// TestConvergeMarkerRewritesTheBuildsVersionInPlace: the object the step is
+// for — a version-3 fact — becomes the version this build writes, reported as
+// written, and the amount the project chose is carried over rather than
+// re-decided, defaulted or dropped here (the count is the one field that does
+// not survive, which is the whole of D1543). A second call meets the version
+// the first one wrote and is a no-op, which is what makes the step safe to
+// reach on every update an installation ever runs.
+func TestConvergeMarkerRewritesTheBuildsVersionInPlace(t *testing.T) {
+	ctx := context.Background()
+	for name, tc := range map[string]struct{ seed, want string }{
+		"the amount and count the flag wrote": {markerBuildsJSON, markerNoBuildsJSON},
+		"another amount, another count": {
+			seed: `{"version":3,"gcp_project":"proj-1234","budget":{"amount":1000,"currency":"JPY"},"max_image_builds":250}`,
+			want: `{"version":4,"gcp_project":"proj-1234","budget":{"amount":1000,"currency":"JPY"}}`,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, _ := convergeWorld(t, tc.seed)
+			wrote, err := ConvergeMarker(ctx, s, testBucket, testProject, testProjectNumber)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !wrote {
+				t.Error("the step reported that it wrote nothing, and this is the object it is for")
+			}
+			if b, ok := readMarker(t, s, testBucket); !ok || string(b) != tc.want {
+				t.Fatalf("gs://%s/%s = %q (present %v), want %q", testBucket, MarkerObject, b, ok, tc.want)
+			}
+			wrote, err = ConvergeMarker(ctx, s, testBucket, testProject, testProjectNumber)
+			if err != nil || wrote {
+				t.Errorf("the call over the converged fact = (%v, %v), want (false, nil)", wrote, err)
+			}
+			if b, _ := readMarker(t, s, testBucket); string(b) != tc.want {
+				t.Errorf("the second call changed the object to %q", b)
+			}
+		})
+	}
+}
+
+// TestConvergeMarkerLeavesTheStatesItHasNothingToDoAbout: the states that are
+// answered wrote == false with nothing written and nothing refused. A rewrite
+// of any of them would be a write with no content — and for the version-1 fact,
+// which records no amount, there is nothing a version-4 write could carry, so
+// `fugaro managed flag` is what replaces that one, when its owner runs it.
+func TestConvergeMarkerLeavesTheStatesItHasNothingToDoAbout(t *testing.T) {
+	ctx := context.Background()
+	for name, seed := range map[string]string{
+		"nothing there": "",
+		"the creation fact that records no amount":         markerJSON,
+		"the version that records the amount and no count": markerBudgetJSON,
+		"the version this build writes":                    markerNoBuildsJSON,
+		// A version this build does not know is left where it is, and that is
+		// the safe end of "a fact of any version but 3": the managed read
+		// refuses such an object whole (readFactObject), so its installation
+		// is not managed and keeps every confirmation it ever gave, and a
+		// rewrite conditioned on an object the caller did not fully
+		// understand is exactly the write this package must not make.
+		"a version this build does not know": `{"version":5,"gcp_project":"proj-1234"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, _ := convergeWorld(t, seed)
+			wrote, err := ConvergeMarker(ctx, s, testBucket, testProject, testProjectNumber)
+			if err != nil {
+				t.Fatalf("a state this step has no content for was refused: %v", err)
+			}
+			if wrote {
+				t.Error("the step wrote over an object it had nothing to write about")
+			}
+			b, ok := readMarker(t, s, testBucket)
+			switch {
+			case seed == "" && ok:
+				t.Errorf("the step wrote an object where there was none: %q", b)
+			case seed != "" && (!ok || string(b) != seed):
+				t.Errorf("gs://%s/%s = %q (present %v), want it left exactly as %q", testBucket, MarkerObject, b, ok, seed)
+			}
+		})
+	}
+}
+
+// TestConvergeMarkerRefusesWhatItMayNotRewrite: every state the step refuses
+// rather than rewrite, each leaving the object byte for byte where it was. The
+// three version-3 rows are the ones that matter most — an object whose own
+// figures this build refuses is one the managed read refuses whole, so
+// converging it as a valid version-4 fact would open a gate the read keeps
+// closed on that installation — and the amount and the count are two separate
+// refusals, so a rule dropped for one of them leaves the other's row red.
+//
+// The refusal is asserted to be ErrRefused and not merely an error: a row whose
+// refusal were deleted would reach the write, and the write's own error (or a
+// converged object) is not this package's refusal.
+func TestConvergeMarkerRefusesWhatItMayNotRewrite(t *testing.T) {
+	ctx := context.Background()
+	for name, tc := range map[string]struct {
+		seed       string
+		unreadable bool
+		want       string
+	}{
+		"an object the caller may not read": {
+			seed:       markerBuildsJSON,
+			unreadable: true,
+			want:       "cannot be read",
+		},
+		"an object that is not a marker": {
+			seed: "this is not the marker",
+			want: "not a marker for",
+		},
+		"an object carrying a key this build does not write": {
+			seed: `{"version":3,"gcp_project":"proj-1234","budget":{"amount":7,"currency":"USD"},"max_image_builds":1,"image_builds":2}`,
+			want: "not a marker for",
+		},
+		"a fact about another project": {
+			seed: `{"version":3,"gcp_project":"proj-9999","budget":{"amount":7,"currency":"USD"},"max_image_builds":1}`,
+			want: "names project proj-9999, not proj-1234",
+		},
+		"a version-3 fact that records no amount": {
+			seed: `{"version":3,"gcp_project":"proj-1234","max_image_builds":1}`,
+			want: "records no budget amount",
+		},
+		"a version-3 fact whose amount this build refuses": {
+			seed: `{"version":3,"gcp_project":"proj-1234","budget":{"amount":0,"currency":"USD"},"max_image_builds":1}`,
+			want: "records no budget amount a managed creation could have chosen",
+		},
+		// The absent key decodes to the same zero a written one would, and both
+		// are refused: a version-3 fact records a count, and one that records
+		// none is not the object this build wrote.
+		"a version-3 fact that records no count": {
+			seed: `{"version":3,"gcp_project":"proj-1234","budget":{"amount":7,"currency":"USD"}}`,
+			want: "records no image build bound this build accepts",
+		},
+		"a version-3 fact whose count this build refuses": {
+			seed: `{"version":3,"gcp_project":"proj-1234","budget":{"amount":7,"currency":"USD"},"max_image_builds":1001}`,
+			want: "records no image build bound this build accepts",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, f := convergeWorld(t, tc.seed)
+			if tc.unreadable {
+				f.FailObjectGetsAfter(testBucket, MarkerObject, 0)
+			}
+			wrote, err := ConvergeMarker(ctx, s, testBucket, testProject, testProjectNumber)
+			if err == nil {
+				t.Fatal("the step rewrote an object it may not rewrite")
+			}
+			if !errors.Is(err, ErrRefused) {
+				t.Errorf("the refusal is not this package's own (ErrRefused): %v", err)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("the refusal does not say %q: %v", tc.want, err)
+			}
+			if wrote {
+				t.Error("a refused call reported a write")
+			}
+			// The knob above refuses every later read of that object as well,
+			// so it is turned off before what is there is read back.
+			f.FailObjectGetsAfter(testBucket, MarkerObject, -1)
+			if b, ok := readMarker(t, s, testBucket); !ok || string(b) != tc.seed {
+				t.Errorf("gs://%s/%s = %q (present %v), want it left exactly as %q", testBucket, MarkerObject, b, ok, tc.seed)
+			}
+		})
+	}
+}
+
+// convergeRacer is a storage transport that writes another fact to the same key
+// just before the caller's own write of it goes out: the writer that got there
+// first — the owner's own flag, or another update — made deterministic instead
+// of raced. Every other call is delegated to the real transport, so the read
+// the caller conditions on is the fake's own answer.
+type convergeRacer struct {
+	rt    http.RoundTripper
+	f     *gcpfake.GCS
+	other []byte
+	done  bool
+}
+
+func (r *convergeRacer) RoundTrip(req *http.Request) (*http.Response, error) {
+	if !r.done && req.Method == http.MethodPost && strings.HasPrefix(req.URL.Path, "/upload/") {
+		r.done = true
+		r.f.Put(testBucket, MarkerObject, r.other)
+	}
+	return r.rt.RoundTrip(req)
+}
+
+// TestConvergeMarkerIsConditionedOnTheGenerationItRead: the write is
+// conditioned on the generation the step read (insertMarker), so a writer that
+// got there first is never clobbered. What that writer left is what is there
+// afterwards — the step does not converge on top of it — and the call answers
+// ErrAlreadyMarked rather than a success over an object it never read.
+func TestConvergeMarkerIsConditionedOnTheGenerationItRead(t *testing.T) {
+	ctx := context.Background()
+	_, f := convergeWorld(t, markerBuildsJSON)
+	other := []byte(`{"version":4,"gcp_project":"proj-1234","budget":{"amount":9,"currency":"EUR"}}`)
+	racer := &convergeRacer{rt: http.DefaultTransport, f: f, other: other}
+	s, err := storage.NewService(ctx, option.WithoutAuthentication(),
+		option.WithEndpoint(f.URL+"/storage/v1/"), option.WithHTTPClient(&http.Client{Transport: racer}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrote, err := ConvergeMarker(ctx, s, testBucket, testProject, testProjectNumber)
+	if !racer.done {
+		t.Fatal("the race never happened: no write of the fact went out")
+	}
+	if err == nil || !errors.Is(err, ErrAlreadyMarked) {
+		t.Fatalf("the step over a fact another writer replaced = %v, want ErrAlreadyMarked", err)
+	}
+	if wrote {
+		t.Error("the call reported a write the precondition refused")
+	}
+	if b, ok := readMarker(t, s, testBucket); !ok || string(b) != string(other) {
+		t.Errorf("gs://%s/%s = %q (present %v), want the other writer's fact %q", testBucket, MarkerObject, b, ok, other)
 	}
 }
