@@ -1610,6 +1610,69 @@ func TestRefundRevokesTheKey(t *testing.T) {
 	}
 }
 
+// TestARefundRevokesTheWholeRotationChain: §8 and D2131 as the owner ruled on
+// 2026-11-13 — a refund withdraws the key its event names **and every successor
+// a rotation minted from it**. Those successors are the same licence continued,
+// and the money going back has to reach them: without the walk the refunded
+// customer keeps a key nothing on the list names, because the entry is keyed by
+// the id the merchant's own transaction carries and that is the key a renewal
+// replaced.
+//
+// What the walk does not follow is a seat change's key. That record's source is
+// the merchant's own event id under the subscription, and the key it mints is a
+// different licence for the seats the customer now pays for — the other side of
+// that line is TestSeatChangeReissuesUnderANewKeyID's, and it is the reason the
+// walk matches the rotation prefix rather than following a subscription.
+func TestARefundRevokesTheWholeRotationChain(t *testing.T) {
+	f, _ := renewing(t)
+	refunded := f.purchase("evt-1", "acme.example", 5, 365)
+	untouched := f.purchase("evt-2", "widget.example", 3, 30)
+	// Two renewals, so the licence the refund names has been succeeded twice: the
+	// chain the walk has to follow is three keys long.
+	second, secondSecret := renewThroughTheEndpoint(t, f, refunded.KeyID, mailedSecret(t, f, f.mintedKeys()[0]))
+	third, _ := renewThroughTheEndpoint(t, f, second.KeyID, secondSecret)
+
+	at := f.now
+	f.event(Event{ID: "evt-3", Type: EventRefund, OccurredAt: at, Subscription: refunded.Subscription, KeyID: refunded.KeyID})
+	for _, keyID := range []string{refunded.KeyID, second.KeyID, third.KeyID} {
+		entry, held, err := f.store.Revocation(context.Background(), keyID)
+		if err != nil || !held {
+			t.Errorf("the refund left no entry for %s (held=%v err=%v), want the whole chain withdrawn", keyID, held, err)
+			continue
+		}
+		if entry.Reason != ReasonRefund || !entry.At.Equal(at) {
+			t.Errorf("the entry for %s is %+v, want %q at the event's own instant %s", keyID, entry, ReasonRefund, at)
+		}
+	}
+	if _, held, _ := f.store.Revocation(context.Background(), untouched.KeyID); held {
+		t.Errorf("the refund of %s withdrew the key %s as well, want another licence's key left alone", refunded.KeyID, untouched.KeyID)
+	}
+	if got := len(f.revocations()); got != 3 {
+		t.Errorf("§8's list holds %d entry(ies), want the three keys of the chain", got)
+	}
+
+	// The merchant redelivers it, as it redelivers everything: the walk runs
+	// again over the same chain and every entry it meets is one the list already
+	// holds, so nothing moves — not the reason and not the instant the first
+	// delivery stamped (§8, K2.2).
+	first := map[string]Revocation{}
+	for _, entry := range f.revocations() {
+		first[entry.KeyID] = entry
+	}
+	f.advance(2 * time.Hour)
+	f.event(Event{ID: "evt-3", Type: EventRefund, OccurredAt: at, Subscription: refunded.Subscription, KeyID: refunded.KeyID})
+	after := f.revocations()
+	if len(after) != len(first) {
+		t.Fatalf("§8's list holds %d entry(ies) after the redelivery, want the %d the first delivery wrote", len(after), len(first))
+	}
+	for _, entry := range after {
+		was, held := first[entry.KeyID]
+		if !held || entry.Reason != was.Reason || !entry.At.Equal(was.At) {
+			t.Errorf("the redelivered refund changed the entry for %s to %+v, want the first delivery's %+v: a refund delivered twice is one revocation from the first instant either way", entry.KeyID, entry, was)
+		}
+	}
+}
+
 // TestSeatChangeReissuesUnderANewKeyID: §5.3, §8 and K2.2 — the reissue is a
 // new key under a new `key_id`, and that is what makes §8's list usable at all.
 // An entry names one key, so a reissue that kept the id of the key it replaces
