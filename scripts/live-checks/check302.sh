@@ -51,9 +51,11 @@
 # same door `fugaro orchestrator install` has, because the steps that follow
 # are yours). The human-only steps are printed once with their exact command
 # and recorded in the block as their own row: the guardrail test
-# (`human-guardrails`), stopping the scripts' launching (`human-launching`),
-# starting the daemon (`human-daemon`), and re-arming the scripts
-# (`human-rearm`). `--dry-run` prints the plan and asks for nothing.
+# (`human-guardrails`) and stopping the scripts' launching (`human-launching`)
+# in `before`, and re-arming the scripts (`rearm`) in `rollback` — the launch
+# it is proved by is read back from the installation's own listing rather than
+# taken on your word. `human-next` is the step each phase leaves you, and
+# `--dry-run` prints the plan and asks for nothing.
 #
 # Needs:      bash, mktemp, awk, sed, find and python3 on PATH, a real
 #             terminal (the confirmation), and `fugaro` — every reading of the
@@ -68,7 +70,7 @@
 #             and this check reads it and never writes it.
 # Costs:      one `fugaro orchestrator import` of your own dump (the cutover),
 #             one `fugaro orchestrator uninstall` (the rollback), and reads:
-#             budget show, orchestrator ls/state/status/events, runs ls. No
+#             budget show, orchestrator ls/state/status, runs ls. No
 #             model call, and no run this check starts: the cutover's runs are
 #             the daemon's own and the rollback's one launch is the scripts'.
 # Runs:       by YOU, in your own terminal. No agent runs any step of it, and a
