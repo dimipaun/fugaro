@@ -9,8 +9,11 @@ import (
 	"testing"
 	"time"
 
+	"gocloud.dev/blob"
+
 	accesslib "github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -99,6 +102,52 @@ func accessRunNoProvider(t *testing.T, f *launchBudgetFixture) {
 		t.Fatal("the fixture's config lists the run's repository with a provider")
 	}
 	if err := os.WriteFile(path, []byte(updated), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// accessRunUnlistedRepo drops the fixture's config entry for the run's
+// repository: a run stored under a slug this machine's config says nothing
+// about, which is the state a checkout that does not carry the repository
+// leaves (the run of a repository somebody else works in, read by a credential
+// that holds a role in the repository itself).
+func accessRunUnlistedRepo(t *testing.T, f *launchBudgetFixture) {
+	t.Helper()
+	path := os.Getenv("FUGARO_CONFIG")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const line = "  acme/app: { provider: github, base_branch: main, workflows: [web] }\n"
+	updated := strings.Replace(string(data), line, "", 1)
+	if updated == string(data) {
+		t.Fatal("the fixture's config does not list the run's repository")
+	}
+	if err := os.WriteFile(path, []byte(updated), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// accessRunTaskUnreadable leaves the run's own record as the only thing that
+// names its repository: the task is there — the store is located by its
+// presence — but it is a document this build cannot read, which is what the
+// run's other readers (runs show's showRunRepo) already tolerate by reading the
+// record first.
+func accessRunTaskUnreadable(t *testing.T, f *cloudFixture, id string) {
+	t.Helper()
+	ctx := context.Background()
+	b, err := blob.OpenBucket(ctx, f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	s := runstore.Open(b, appSlug, id)
+	if err := s.PutFile(ctx, "task.json", []byte("this is not a task"), "application/json"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteRecord(ctx, &runstore.Record{
+		Version: 1, RunID: id, Repo: "acme/app", Workflow: "web", Status: runstore.StatusRunning,
+	}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -225,6 +274,56 @@ func TestAccessRunListsAreNotTheRoles(t *testing.T) {
 	if err := launchPolicyGates(context.Background(), env, appSlug, accessRunSpec("acme/app"), "web", false, false, io.Discard); err != nil {
 		t.Fatalf("the listed member's own launch was refused: %v", err)
 	}
+}
+
+// TestAccessRunImplicitAdminsAreNotARosterOfTheirOwn: an installation that has
+// not been updated into RS3's node yet places nobody, a config naming
+// terraform.budget_admins included — the implicit admins are half of a roster
+// whose other half is the node, and the machine's own config is not the
+// authority for it (localcfg's own words). Judged on that half alone, every
+// launcher of such an installation is refused with a remedy RS5 cannot carry
+// out while there is no node to write, which is the state access_gate.go's
+// header says this release must not break.
+//
+// The second half is the other side of the same rule: with the node there, the
+// implicit admins ARE ranked (F22) — the admin launches, and a viewer is
+// refused for the role it does not hold.
+func TestAccessRunImplicitAdminsAreNotARosterOfTheirOwn(t *testing.T) {
+	noAgentSession(t)
+	const boss = "user:boss@example.com"
+	launch := func(t *testing.T, f *launchBudgetFixture) error {
+		t.Helper()
+		env := fileEnv(t, f.cloudFixture)
+		return launchPolicyGates(context.Background(), env, appSlug, accessRunSpec("acme/app"), "web", false, false, io.Discard)
+	}
+
+	t.Run("no grants node", func(t *testing.T) {
+		f := newLaunchBudget(t, "off")
+		f.appendConfig(t, "terraform:\n  budget_admins: ['"+boss+"']\n")
+		accessRunAs(t, "user:launcher@example.com")
+		if err := launch(t, f); err != nil {
+			t.Fatalf("a launch on an installation whose roles have not moved into a node was refused: %v", err)
+		}
+	})
+
+	t.Run("the node is there", func(t *testing.T) {
+		f := newLaunchBudget(t, "off")
+		f.appendConfig(t, "terraform:\n  budget_admins: ['"+boss+"']\n")
+		accessRunNode(t, f, userStored(t, accessViewer, accesslib.RoleViewer, accessRepoA))
+
+		accessRunAs(t, boss)
+		if err := launch(t, f); err != nil {
+			t.Fatalf("the implicit admin's launch was refused: %v", err)
+		}
+		accessRunAs(t, accessViewer)
+		err := launch(t, f)
+		if err == nil || ExitCode(err) != ExitUserError {
+			t.Fatalf("the viewer's launch beside an implicit admin: err = %v (exit %d), want a refusal", err, ExitCode(err))
+		}
+		if !strings.Contains(err.Error(), "needs the role operator") {
+			t.Errorf("the refusal does not name the role the launch takes: %v", err)
+		}
+	})
 }
 
 // TestAccessRunRolesDatabaseOutageIsNotRefused: the roles database is
@@ -573,6 +672,54 @@ func TestAccessRunRepositoryComesFromTheRunItself(t *testing.T) {
 	}
 	if !cancelled(t, f.cloudFixture, id) {
 		t.Error("the cancel wrote no marker")
+	}
+}
+
+// TestAccessRunRepositoryComesFromTheRunItsRecord is the other half of the same
+// rule: the run's record is the first read `runs show` makes (showRunRepo), so
+// a run whose stored task cannot be read is still its own record's run. Read
+// from the task alone, such a run fell to project scope — refusing a credential
+// that `runs show` serves, and asking it for a wider role than the one it
+// needs.
+//
+// Nothing else in this case can name the repository: this machine's config says
+// nothing about it, so the record is the only answer there is to
+// github/acme/app, and the credential's own role is held there alone.
+func TestAccessRunRepositoryComesFromTheRunItsRecord(t *testing.T) {
+	noAgentSession(t)
+	const id = "20261113-090002-abd7"
+	f := newLaunchBudget(t, "off")
+	accessRunNode(t, f, userStored(t, accessOperator, accesslib.RoleOperator, accessRepoA))
+	accessRunUnlistedRepo(t, f)
+	accessRunAs(t, accessOperator)
+	exec := seedRun(t, f.cloudFixture, id, "", "someone@example.com", true)
+	f.run.SetState(exec, backend.StateRunning)
+	f.logging.AddJSONLines(exec, []byte(`{"time":"`+logTime(time.Second)+`","severity":"INFO","message":"stage started","stage":"implement"}
+`))
+	accessRunTaskUnreadable(t, f.cloudFixture, id)
+
+	if out, _, err := execute(t, "logs", id); err != nil || !strings.Contains(out, "stage started") {
+		t.Errorf("logs of a run whose task cannot be read = %q, %v", out, err)
+	}
+	if _, _, err := execute(t, "cancel", "--json", "--grace", "30ms", "--grace-floor", "0", "--poll", "10ms", id); err != nil {
+		t.Errorf("cancel of a run whose task cannot be read: %v", err)
+	}
+	if !cancelled(t, f.cloudFixture, id) {
+		t.Error("the cancel wrote no marker")
+	}
+	// The two that read the run's chain fail after the check, on the task they
+	// cannot read (chainLimitsOf), and that is the whole assertion here: what
+	// they must not do is refuse the credential for a role it holds.
+	for _, cmd := range [][]string{{"runs", "show", id}, {"diagnose", id}} {
+		_, _, err := execute(t, cmd...)
+		if err == nil {
+			continue
+		}
+		for _, refusal := range []string{"nothing was read", "judged at project scope", "needs the role viewer"} {
+			if strings.Contains(err.Error(), refusal) {
+				t.Errorf("%v was refused for its role, not for the task it cannot read: %v", cmd, err)
+			}
+		}
 	}
 }
 

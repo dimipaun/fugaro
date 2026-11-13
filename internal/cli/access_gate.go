@@ -39,11 +39,13 @@ import (
 // installation's own terraform lists are deliberately NOT read as roles here.
 // They are the machine's copy and not the authority (localcfg's own words):
 // RS3's migration is what moves them into the node, `fugaro update` is what
-// runs it, and until it has, every credential reads as unplaced — which is
-// the state the previous release behaved in, so the release that adds this
-// check cannot be the one that breaks an installation which has not updated.
-// A node that is there and holds grants, or a config that names an implicit
-// admin, is where the check bites.
+// runs it, and until it has run there is no node — so every credential reads
+// as unplaced, a config naming an implicit admin included, because a roster
+// the installation has not written is not half-written by one machine's copy.
+// That is the state the previous release behaved in, so the release that adds
+// this check cannot be the one that breaks an installation which has not
+// updated. The check bites once the node is there: on the grants it holds, and
+// on the implicit admins the config names beside them (F22).
 //
 // A roles database that cannot be REACHED is not a refusal either: an outage
 // is not a statement about who the caller is (rtdb's own contract separates it
@@ -117,10 +119,14 @@ func requireAccess(ctx context.Context, env *cloudEnv, action accesslib.Action, 
 // a WIDER role than the repository's, so the refusal asked for a grant the
 // person did not need.
 func requireRunAccess(ctx context.Context, env *cloudEnv, action accesslib.Action, s *runstore.Store, what string) error {
-	// A task this machine cannot read names nothing, and the error is not the
-	// refusal: the config's entry for the slug and then project scope answer
-	// instead, and neither is wider than the run's own repository.
-	repo, _ := showRunRepo(ctx, env, s, nil)
+	// The run's own record and then its task, the two reads `runs show` makes
+	// (showRunRepo): a run whose task has gone is still its record's run, and
+	// judging it at project scope would refuse the credential `runs show`
+	// serves, and ask it for a wider role than the one it needs. A read that
+	// fails names nothing: the config's entry for the slug and then project
+	// scope answer instead, and neither is wider than the run's own repository.
+	rec, _ := absent(s.ReadRecord(ctx))
+	repo, _ := showRunRepo(ctx, env, s, rec)
 	if canonical, ok := accessRunRepo(s.Slug(), repo); ok {
 		return requireAccess(ctx, env, action, canonical, what)
 	}
@@ -172,15 +178,19 @@ func accessJudge(ctx context.Context, env *cloudEnv, what string) (in accesslib.
 // implicit admins this machine can name, and the published allow_repos. placed
 // is whether anything in it places anybody.
 func accessInput(ctx context.Context, env *cloudEnv) (in accesslib.Input, placed bool, err error) {
-	grants, answered, err := accessStoredGrants(ctx, env)
+	grants, found, err := accessStoredGrants(ctx, env)
 	if err != nil {
 		return accesslib.Input{}, false, err
 	}
-	if !answered {
-		// The node could not be reached, so the roster is unknown rather than
-		// empty: the config's implicit admins are not what is left of it, and
-		// judging with them alone would refuse every credential the node places.
-		// This is where an outage stops being a refusal.
+	if !found {
+		// The installation has no grants node: its roles have not moved there
+		// yet, and neither an outage nor a config that names implicit admins
+		// makes one. Nothing is placed and nothing is judged — the config's
+		// implicit admins are half of a roster, and judging a launcher by that
+		// half alone would refuse the people the installation meant to place,
+		// with a remedy (`fugaro user grant`) that RS5 refuses while there is
+		// no node to write. This is where an outage stops being a refusal, and
+		// where an installation that has not updated keeps the behavior it had.
 		return accesslib.Input{}, false, nil
 	}
 	in = accesslib.Input{
@@ -191,14 +201,18 @@ func accessInput(ctx context.Context, env *cloudEnv) (in accesslib.Input, placed
 	return in, len(grants)+len(in.Implicit) > 0, nil
 }
 
-// accessStoredGrants is the grants node's pairs, and nothing when the
-// installation has no node to read. answered is whether the node was read
-// rather than merely empty: an installation with no node has no roles yet,
-// while one whose read failed has roles this command did not see.
+// accessStoredGrants is the grants node's pairs. found is whether the
+// installation HAS a node: an installation without one has no roles yet and is
+// judged by nothing, while one whose node is empty has been migrated and
+// really does place only its implicit admins.
 //
 // The node is the installation's whole roster (RS3 migrates the two terraform
 // lists into it), so this is the only place roles come from: an absent node is
-// an installation whose roles have not moved there yet, which places nobody.
+// an installation whose roles have not moved there yet (`fugaro update` runs
+// the migration), which places nobody. That is also the whole reason found is
+// a separate answer from "no grants": an installation that has not updated
+// must keep the behavior it had, and no machine's config makes a roster on its
+// own (the terraform lists are the machine's copy, not the authority).
 //
 // What a failed read means is the one distinction here (rtdb's own contract):
 // a refusal is the credential's (D1585 gives the node to a caller holding the
@@ -206,12 +220,12 @@ func accessInput(ctx context.Context, env *cloudEnv) (in accesslib.Input, placed
 // launcher and operator, so a credential it refuses holds no IAM on this
 // project at all — F29(b), and judging that caller by anything else would
 // place them with something they do not hold); an outage is nobody's, and
-// answers nothing — answered false, which is not the same as an empty roster
-// and must not be judged as one; anything else is a node this build cannot
-// hold whole, which is a refusal rather than a half-read roster (F27).
-func accessStoredGrants(ctx context.Context, env *cloudEnv) (grants []accesslib.Grant, answered bool, err error) {
+// answers nothing — found false, which is not the same as an empty roster and
+// must not be judged as one; anything else is a node this build cannot hold
+// whole, which is a refusal rather than a half-read roster (F27).
+func accessStoredGrants(ctx context.Context, env *cloudEnv) (grants []accesslib.Grant, found bool, err error) {
 	if env.lc.Budget == nil || env.lc.Budget.RTDBURL == "" {
-		return nil, true, nil
+		return nil, false, nil
 	}
 	_, db, err := budgetDBFor(ctx, env.lc)
 	if err != nil {
@@ -220,7 +234,7 @@ func accessStoredGrants(ctx context.Context, env *cloudEnv) (grants []accesslib.
 	node, err := accesslib.Read(ctx, db)
 	switch {
 	case errors.Is(err, rtdb.ErrPermission):
-		return nil, true, userErr("the roles could not be read: %s refused this credential's read (%v), and the installation's roles are that node. Every launcher and operator of %s holds it (roles/firebasedatabase.viewer); a repository-scoped pair alone does not, and before RS12 it grants nothing in the cloud either (finding F29b)", accesslib.PathNode, err, safetext.Field(env.lc.Name))
+		return nil, false, userErr("the roles could not be read: %s refused this credential's read (%v), and the installation's roles are that node. Every launcher and operator of %s holds it (roles/firebasedatabase.viewer); a repository-scoped pair alone does not, and before RS12 it grants nothing in the cloud either (finding F29b)", accesslib.PathNode, err, safetext.Field(env.lc.Name))
 	case errors.Is(err, rtdb.ErrUnavailable):
 		// The database is unreachable: a 5xx, a 429 or a network failure is not
 		// an answer about the caller, and refusing over one would stop the
@@ -230,10 +244,10 @@ func accessStoredGrants(ctx context.Context, env *cloudEnv) (grants []accesslib.
 		// start without an answer.
 		return nil, false, nil
 	case err != nil:
-		return nil, true, dbErr(env.lc, err, false)
+		return nil, false, dbErr(env.lc, err, false)
 	}
 	if !node.Found {
-		return nil, true, nil
+		return nil, false, nil
 	}
 	return node.Grants, true, nil
 }
