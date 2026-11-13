@@ -98,8 +98,8 @@
         "prediction": true,
         "paths": [
           "internal/cli/init_policy_migrate.go",
-          "internal/cli/init_policy_publish.go",
           "internal/cli/init_stages.go",
+          "internal/cli/project_cmd.go",
           "internal/cli/init_policy_migrate_test.go",
           "internal/cli/update_default_profile_test.go"
         ]
@@ -133,6 +133,7 @@
         "paths": [
           "internal/sharedjob/stub.go",
           "internal/infra/projectjobs.go",
+          "internal/infra/projectjobs_test.go",
           "internal/cli/shared_job_e2e_test.go"
         ]
       },
@@ -410,17 +411,15 @@
     },
     {
       "id": "M6",
-      "title": "the repo spec and the images stage stop emitting per-repository things for a shared repo",
+      "title": "the repo spec marks a shared repository",
       "run": null,
       "version": null,
-      "size": 3,
+      "size": 1,
       "footprint": {
         "prediction": true,
         "paths": [
           "internal/infra/spec.go",
-          "internal/infra/spec_test.go",
-          "internal/cli/init_images.go",
-          "internal/cli/init_images_test.go"
+          "internal/infra/spec_test.go"
         ]
       }
     },
@@ -459,7 +458,7 @@
       "footprint": {
         "prediction": true,
         "paths": [
-          "deploy/terraform/gcp/modules/project/build_identity.tf",
+          "deploy/terraform/gcp/modules/installation/build_identity.tf",
           "internal/infra/build_identity.go",
           "internal/infra/build_identity_test.go",
           "internal/credsvc/auth.go",
@@ -494,8 +493,8 @@
         "paths": [
           "internal/backend/gcp/catalog.go",
           "internal/backend/gcp/catalog_test.go",
-          "deploy/terraform/gcp/modules/repo/catalogcheck.tf",
-          "deploy/terraform/gcp/modules/project/build_identity.tf"
+          "deploy/terraform/gcp/modules/installation/build_identity.tf",
+          "deploy/terraform/gcp/modules/installation/catalogcheck.tf"
         ]
       }
     },
@@ -511,7 +510,8 @@
           "internal/catalog/fetch.go",
           "internal/catalog/fetch_test.go",
           "internal/cli/doctor_catalog.go",
-          "internal/cli/doctor_catalog_test.go"
+          "internal/cli/doctor_catalog_test.go",
+          "internal/cli/updatewarn.go"
         ]
       }
     },
@@ -520,13 +520,31 @@
       "title": "onboarding a repository applies nothing",
       "run": null,
       "version": null,
-      "size": 2.5,
+      "size": 3,
       "footprint": {
         "prediction": true,
         "paths": [
           "internal/cli/init_repo_stage.go",
           "internal/cli/init.go",
-          "internal/cli/init_repo_stage_test.go"
+          "internal/cli/init_repo_stage_test.go",
+          "internal/cli/init_images.go",
+          "internal/cli/init_images_test.go"
+        ]
+      }
+    },
+    {
+      "id": "S10",
+      "title": "shared jobs run the catalog default image",
+      "run": null,
+      "version": null,
+      "size": 2.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/infra/projectjobs.go",
+          "internal/infra/projectjobs_test.go",
+          "internal/cli/init_policy_migrate.go",
+          "internal/cli/update_default_entry_test.go"
         ]
       }
     }
@@ -746,6 +764,21 @@
       "task": "M2",
       "needs": "B6",
       "reason": "behaviour: the build and the check act as the project identity before the per-repository account is destroyed"
+    },
+    {
+      "task": "S10",
+      "needs": "I1",
+      "reason": "behaviour: the same file, infra/projectjobs.go, and shared jobs working"
+    },
+    {
+      "task": "S10",
+      "needs": "M6",
+      "reason": "behaviour: it reads the shared mark"
+    },
+    {
+      "task": "M2",
+      "needs": "S10",
+      "reason": "behaviour: the project image is deployed on the shared jobs before a root is retired"
     }
   ],
   "decoupling": [

@@ -9,14 +9,14 @@ decided per job by the credential service; `fugaro update` migrates existing pro
 | File | Role |
 | --- | --- |
 | [spec.md](spec.md) | The spec as received, byte for byte (no typo was fixed). **Where [reconciliation.md](reconciliation.md) disagrees with it, the reconciliation wins** |
-| [reconciliation.md](reconciliation.md) | The spec against the code: capability map, assumptions, findings F1–F23, decisions D2300–D2309 with the owner's answers, open items, UNVERIFIED |
-| [implementation-plan.md](implementation-plan.md) | Four slices, 33 tasks (including two contracts and two integration tasks) and two anticipated change requests, levels, critical path, shared-files table. Nothing in it is approved |
+| [reconciliation.md](reconciliation.md) | The spec against the code: capability map, assumptions, findings F1–F23, decisions D2300–D2313 with the owner's answers, open items, UNVERIFIED |
+| [implementation-plan.md](implementation-plan.md) | Four slices, 32 tasks (including two contracts and two integration tasks) and two anticipated change requests, levels, critical path, shared-files table. Nothing in it is approved |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's tasks as the graph `fugaro plan graph` reads |
 
 ## Number blocks taken
 
 Decisions **D2300–D2349** (D2300–D2312 used; D2307 unused), checks **580–589** (580, 581 and 582 used), findings and tasks local to this
-folder (F1–F23; C1, C2, S1–S9, B1–B6, B8, B9, I1, I2, N1–N3, M1, M2–M7; change requests CR1, CR2). Highest in use on `main` when taken: D2229 and Check 574; open
+folder (F1–F23; C1, C2, S1–S10, B1–B6, B8, B9, I1, I2, N1–N3, M1–M7; change requests CR1, CR2). Highest in use on `main` when taken: D2229 and Check 574; open
 pull requests' documents reach D2207.
 
 ## What a reader should not take from here
