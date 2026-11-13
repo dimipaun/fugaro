@@ -1,6 +1,10 @@
 package cli
 
-import "github.com/dimipaun/fugaro/internal/safetext"
+import (
+	"errors"
+
+	"github.com/dimipaun/fugaro/internal/safetext"
+)
 
 // Terminal-safe text. Much of what the views print
 // comes from objects the job's service account, and so the agent, can
@@ -27,6 +31,29 @@ func cellOneLine(s string) string { return safetext.TableCell(s) }
 // its controls go the way a view's do; its newlines stay, because some
 // errors list several problems.
 func ErrorText(err error) string { return multiLine(err.Error()) }
+
+// shownError is a failure the command has already printed: the step that
+// failed carries it on the screen, whole while the run has no log to keep it
+// in and one clause when it has one, with the log's path and the command that
+// resumes the run under it. The top-level line would be the same error a
+// second time (the owner's feedback of 2026-11-13), so a failed converge
+// hands its caller this instead of the bare error.
+type shownError struct{ err error }
+
+func (e *shownError) Error() string { return e.err.Error() }
+func (e *shownError) Unwrap() error { return e.err }
+
+// ShownOnScreen is whether the screen has already read this failure: main
+// prints its own "fugaro: <error>" line for every command that returns one,
+// and for these the run's own account is the whole of it — the exit code and
+// the error itself are unchanged, so a caller that reads them sees exactly what
+// it saw before.
+func ShownOnScreen(err error) bool {
+	var shown interface{ shownOnScreen() bool }
+	return errors.As(err, &shown)
+}
+
+func (e *shownError) shownOnScreen() bool { return true }
 
 // multiLine is like oneLine, but keeps newlines, for blocks printed as
 // several lines (the agent's message).

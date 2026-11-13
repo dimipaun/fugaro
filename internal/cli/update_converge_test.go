@@ -511,7 +511,9 @@ func TestUpdateInAnAgentSessionHoldsTheNodeAtItsVersion(t *testing.T) {
 	recorded := credentialsServiceEntry(t, r.imagesRig)["image"]
 
 	out, errOut, err := executeStdin(t, "", "update", "--yes")
-	s := out + errOut
+	// What the policy stage says it did with the node is the run's own
+	// account, so the log is read beside the screen (stageDetail).
+	s := out + errOut + newestLog(t, "update")
 	if err != nil && !strings.Contains(s, "left for you") {
 		t.Fatalf("an update in a coding agent's session failed with something other than the steps it leaves for the user: %v\n%s", err, s)
 	}

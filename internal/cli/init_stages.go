@@ -218,6 +218,7 @@ func (e *initEngine) options() initflow.Options {
 		// reporter — --print-vars, --forget, --config-only, or a test's
 		// hand-built engine — prints exactly what it printed before.
 		Report:  r.rep,
+		Detail:  r.accountWriter(),
 		Project: r.projectName, GCPProject: r.gcpProject, Region: e.lc.Region,
 		Redact: e.redact, OnPreview: func(rs []initflow.StageResult) { e.previewed = rs },
 		// The managed gate is `fugaro update`'s (D1016, update_managed.go):

@@ -365,7 +365,7 @@ func TestUpdateConvergesASplitWorkspaceOwnerInOneCommand(t *testing.T) {
 	// The step's line is the first clause of its reason and the log the whole of
 	// it (report.Brief), so the owner sees the skip on the screen and reads why
 	// it did not run — the pair, the config key and the way out — in the log.
-	if !strings.Contains(out, "– skipped      workspace-project this installation declares a workspace of its own") {
+	if !strings.Contains(out+newestLog(t, "update"), "– skipped      workspace-project this installation declares a workspace of its own") {
 		t.Errorf("the update's screen does not show the workspace's own project skipped for the split:\n%s", out)
 	}
 	whole := out + newestLog(t, "update")

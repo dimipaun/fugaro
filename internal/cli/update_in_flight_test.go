@@ -623,15 +623,26 @@ func rulePaths(t *testing.T, doc []byte) map[string]string {
 // inFlightLine is the update's own line about the runs in flight: the one line
 // of the transcript that names them, and the whole of what the door says about
 // them.
+//
+// The log is read beside the screen for the reason the door's line is split at
+// all: the screen names the steps and the clause that says why each can reach a
+// run is the run's own account (update_in_flight.go, §9.2), so the whole of
+// what the door says about the runs is the two together.
 func inFlightLine(t *testing.T, out string) string {
 	t.Helper()
-	for _, line := range strings.Split(out, "\n") {
-		if strings.Contains(line, "run(s) are in flight") {
-			return line
+	first := func(s string) string {
+		for _, line := range strings.Split(s, "\n") {
+			if strings.Contains(line, "run(s) are in flight") {
+				return line
+			}
 		}
+		return ""
 	}
-	t.Fatalf("the update printed nothing about the runs in flight:\n%s", out)
-	return ""
+	screen := first(out)
+	if screen == "" {
+		t.Fatalf("the update printed nothing about the runs in flight:\n%s", out)
+	}
+	return screen + "\n" + first(newestLog(t, "update"))
 }
 
 // microsPtr is what the caps a fixture seeds are: pointers, an absent side being

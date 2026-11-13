@@ -1112,7 +1112,7 @@ func runInit(r *initRun) error {
 		// header written on one terminal without the line coming down first
 		// read as one run-together line (see initRun.notes).
 		o.cloud.stderr = r.notes
-		return e.converge(cmd.Context())
+		return r.failureShown(e.converge(cmd.Context()))
 	}
 
 	// Both records of a managed installation are asked HERE, at the door,
@@ -1531,6 +1531,32 @@ func (r *initRun) progress() io.Writer {
 // through the caller's run, and a run whose log could not be opened prints
 // what it always printed rather than swallowing it (streamOut, G5).
 func (r *initRun) stageDetail() io.Writer { return streamOut(r.rep, r.repLog, r.w) }
+
+// failureShown marks a failed converge's error as one the screen has already
+// read. The step that failed printed it — whole while the run has no log to
+// keep it in (G5: what it printed is all there is), one clause plus the log's
+// path and the command that resumes the run when it has one — so main's
+// top-level line would be the same error a second time (the owner's feedback of
+// 2026-11-13). A run that stopped for a cause that is not a failure — a
+// refusal, a step left for you — is not this case: the error it returns is the
+// error's whole self, and nothing printed it.
+func (r *initRun) failureShown(err error) error {
+	if err == nil || r.res.Failed == nil || r.rep == nil || !r.rep.KeepsLog() {
+		return err
+	}
+	return &shownError{err: err}
+}
+
+// accountWriter is stageDetail for the loop's own plan view, and nil where
+// there is no log to keep it in: a run whose log could not be opened has
+// nowhere to hide the table (G5), so the loop keeps it on screen there
+// (initflow hides it in Detail alone).
+func (r *initRun) accountWriter() io.Writer {
+	if r.repLog == nil {
+		return nil
+	}
+	return r.stageDetail()
+}
 
 // planBlock prints a plan for the person who has to confirm it, and keeps the
 // whole of it for the run's own record: the counts and the changes they must
@@ -4269,9 +4295,15 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 		return err
 	}
 	if !o.forget {
-		w := r.w
+		// The ceiling and the keys the layer would clamp are the run's own
+		// account of what it is about to apply, not the step's line: with a
+		// reporter they take its stream (stageDetail), and a run with no log
+		// still prints them where it always did (G5). --print-vars is the
+		// exception the flag makes: stderr stays the account's, stdout is the
+		// tfvars alone.
+		w := r.stageDetail()
 		if o.printVars {
-			w = cmd.ErrOrStderr() // stdout stays the tfvars alone
+			w = cmd.ErrOrStderr()
 		}
 		printCeiling(w, lc, cfg)
 	}

@@ -402,7 +402,7 @@ func TestUpdateLayerStageIsANoOpWhenNothingChanged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fugaro update: %v\n%s%s", err, out, errOut)
 	}
-	all := out + errOut
+	all := out + errOut + newestLog(t, "update")
 	if row := planRowOf(all, "layer"); !strings.HasPrefix(row, markDone+" done") {
 		t.Errorf("the layer stage is not the no-op it is: %q\n%s", row, all)
 	}
@@ -438,7 +438,7 @@ func TestUpdateLayerStageSkipsWhenNoLayerFile(t *testing.T) {
 		if err != nil {
 			t.Fatalf("fugaro update: %v\n%s%s", err, out, errOut)
 		}
-		all := out + errOut
+		all := out + errOut + newestLog(t, "update")
 		if row := planRowOf(all, "layer"); !strings.HasPrefix(row, markSkipped+" skipped") {
 			t.Errorf("the layer stage is not skipped: %q\n%s", row, all)
 		}
@@ -483,7 +483,7 @@ func TestUpdateLayerStageSkipsWithNoLocalFileAndNoPublishedLayer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fugaro update: %v\n%s%s", err, out, errOut)
 	}
-	all := out + errOut
+	all := out + errOut + newestLog(t, "update")
 	if row := planRowOf(all, "layer"); !strings.HasPrefix(row, markSkipped+" skipped") {
 		t.Errorf("the layer stage is not skipped: %q\n%s", row, all)
 	}
@@ -726,7 +726,7 @@ func TestUpdateLayerStageSkipsAGSBucketOnFakeEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fugaro update: %v\n%s%s", err, out, errOut)
 	}
-	all := out + errOut
+	all := out + errOut + newestLog(t, "update")
 	if row := planRowOf(all, "layer"); !strings.HasPrefix(row, markSkipped+" skipped") {
 		t.Errorf("the layer stage did not skip the fake-endpoint bucket: %q\n%s", row, all)
 	}

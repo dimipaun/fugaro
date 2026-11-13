@@ -490,8 +490,12 @@ func TestUpdateConvergesTwiceAndSaysNoChanges(t *testing.T) {
 		if err != nil {
 			t.Fatalf("run %d: %v\n%s", i, err, out)
 		}
-		if !strings.Contains(out, markDone+" done") || !strings.Contains(out, "No changes") {
-			t.Errorf("run %d does not report a converged installation:\n%s", i, out)
+		// The step line is the screen's; "No changes" is what the run says about
+		// the step it decided not to take, so it is read where the run keeps it —
+		// and -v is what brings it back to the terminal (§9.2).
+		whole := out + newestLog(t, "update")
+		if !strings.Contains(whole, markDone+" done") || !strings.Contains(whole, "No changes") {
+			t.Errorf("run %d does not report a converged installation:\n%s", i, whole)
 		}
 		if strings.Contains(out, markLeft+" ") || strings.Contains(out, markWaiting+" ") {
 			t.Errorf("run %d leaves something for the user:\n%s", i, out)

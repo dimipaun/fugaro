@@ -607,7 +607,10 @@ func TestUpdateReportsTheKeysItCannotConvert(t *testing.T) {
 		"  team-b: { allow_data_to: [dimipaun/fugaro] }\n"+
 		"default_claude_account: team-a\nstages:\n  implement: { claude_account: team-b }\n")
 	registerInstallation(t, r.initRig)
-	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	// The note and the write it belongs to are the run's own account of the
+	// file it converged, so both are in the log beside the screen (stageDetail),
+	// and the order between them is the log's.
+	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"}) + newestLog(t, "update")
 
 	note := "note: crafts.coder:"
 	if !strings.Contains(out, note) {

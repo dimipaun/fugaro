@@ -1393,8 +1393,13 @@ func TestUpdateManagedTerminalAsksNothing(t *testing.T) {
 	if !strings.Contains(got, initflow.GateProceeded()) {
 		t.Errorf("the run does not say what decided the step:\n%s", got)
 	}
-	if !strings.Contains(got, "Review: project ") {
-		t.Errorf("the run took no confirmation and printed no review of what it would do:\n%s", got)
+	// The review is the run's own account of what it would do, and the gate
+	// stands in for the confirmation it used to precede: the screen is the
+	// steps (§9.2), so it is read from the log the run keeps, and -v brings it
+	// back to the terminal.
+	whole := got + newestLog(t, "update")
+	if !strings.Contains(whole, "Review: project ") {
+		t.Errorf("the run took no confirmation and printed no review of what it would do:\n%s", whole)
 	}
 	recs := audits(t, r)
 	if len(recs) == 0 {
