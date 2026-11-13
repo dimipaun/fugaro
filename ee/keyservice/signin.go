@@ -619,11 +619,17 @@ func (s *Service) deviceStart(w http.ResponseWriter, r *http.Request) {
 // whose licence it is, and a person who approves a code that is never polled
 // again — the ordinary ending of a terminal that was closed — leaves no key
 // behind at all.
+//
+// It is the one route of this flow that is **not** on the intake's own rate
+// (§7.2). The CLI is told to ask every five seconds for the code's ten minutes,
+// so one sign-in is up to 120 requests — four times that hour's whole budget for
+// one address, on a bucket the mail forms share: a person who signs in would
+// lock themselves and everyone behind the same address out of the forms, and the
+// poll would end in the intake's uniform refusal, which a CLI cannot tell from a
+// code that has expired. What bounds this route instead is the interval below,
+// kept per code by `pollable`, and the code itself, which is 256 bits of the
+// system's randomness and not a thing anybody guesses at.
 func (s *Service) devicePoll(w http.ResponseWriter, r *http.Request) {
-	if !s.limiter.allow("ip:" + clientIP(r)) {
-		refuseDevicePoll(w)
-		return
-	}
 	var call struct {
 		DeviceCode string `json:"device_code"`
 	}

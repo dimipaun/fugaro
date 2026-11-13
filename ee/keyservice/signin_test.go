@@ -848,6 +848,32 @@ func TestDeviceCodeExpiresAndIsRateLimited(t *testing.T) {
 	}
 }
 
+// TestDeviceCodePollsForItsWholeLife: the start's answer tells the CLI to ask
+// every five seconds for ten minutes, and the poll is not on the intake's own
+// rate — that bucket is the mail forms' (the fixture's is fifty an hour), and
+// one sign-in's polls would empty it, ending the flow in the intake's uniform
+// refusal and locking every caller behind the same address out of the forms.
+// What bounds the poll is the interval it keeps per code, so the whole life of
+// one code is answered `pending` and the forms still answer beside it.
+func TestDeviceCodePollsForItsWholeLife(t *testing.T) {
+	f, _ := subscribed(t)
+	start := f.startDevice(t, "acme-laptop")
+	// One poll short of the code's life: the last one the CLI sends lands on the
+	// instant the code expires, which is its own test.
+	life := int(deviceCodeTTL/devicePollInterval) - 1
+	for poll := 1; poll <= life; poll++ {
+		f.advance(devicePollInterval)
+		if rec := f.pollDevice(t, start.DeviceCode); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), DevicePending) {
+			t.Fatalf("poll %d of the code's life answered %d %s, want %s", poll, rec.Code, rec.Body.String(), DevicePending)
+		}
+	}
+	// The same address, still inside the intake's window: a sign-in must not
+	// cost the person signing in — or anyone sharing their address — the forms.
+	if rec := f.apply("someone@acme.example"); rec.Code != http.StatusOK {
+		t.Errorf("the free-seat form answered %d after a sign-in's polls, want %d: the poll is spending the intake's own rate", rec.Code, http.StatusOK)
+	}
+}
+
 // TestUnknownAndExpiredDeviceCodesAnswerAlike: the poll is reachable by anyone
 // and the codes are short, so what it must never be is a way to ask whether a
 // code exists. A code that was never issued and one that has run out are
