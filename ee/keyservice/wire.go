@@ -59,12 +59,15 @@ func registerWire(name string, alloc func() any) {
 // decodeWire reads one body into the shape its route mounts, strictly: the body
 // has to be an object, it has to hold exactly the shape's fields, and it has to
 // hold each of them once (CLAUDE.md's rule that a wire format decodes strictly,
-// F20). Every portal route reads its request body through this function, so a
-// body whose *shape* the schema refuses must not arrive at a handler looking
-// valid. What a body's values say is not this function's to judge: an enum value
-// the schema does not name, a project id its pattern refuses (F41's, the one
-// that keeps an id safe to put in a host name), a seat count below its minimum,
-// an empty id where it forbids an empty one — each of those is the handler's own
+// F20). A portal route reads its request body through this function, so a body
+// whose *shape* the schema refuses must not arrive at a handler looking valid.
+// P1.1 adds no route of its own — the shapes land here, the routes that mount
+// them in the tasks after it — and this function is what the two share.
+//
+// What a body's values say is not this function's to judge: an enum value the
+// schema does not name, a project id its pattern refuses (F41's, the one that
+// keeps an id safe to put in a host name), a seat count below its minimum, an
+// empty id where it forbids an empty one — each of those is the handler's own
 // check, and TestWireHoldsTheShapeAndNotTheValues pins that split.
 //
 // encoding/json alone gives none of that. It matches a field name ignoring case,
