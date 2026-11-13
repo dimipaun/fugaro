@@ -57,7 +57,7 @@ Also check `fugaro version` and `fugaro backends ls`, which prints the backends 
 
 ### Does the project publish a project layer?
 
-`fugaro config layer --json` takes `project:` and `gcp_project:` from the checkout's `fugaro.yaml`, else from the selected project config (`$FUGARO_PROJECT`/`$FUGARO_CONFIG`), never a flag. Read `profiles:` and `default_profile:` from the `yaml` key; where it prints a layer, tell the user which profiles it offers and ask whether the repository fits one, and fugaro config init --yes then writes the minimal file `fugaro config show --json` confirms ([reference/discovery.md](reference/discovery.md) has the steps, the scratch file and what a real quirk needs). Where no layer applies, or the repository fits no profile, follow the investigative path below.
+`fugaro config layer --json` takes `project:` and `gcp_project:` from the checkout's `fugaro.yaml`, else from the selected project config (`$FUGARO_PROJECT`/`$FUGARO_CONFIG`), never a flag. Its four keys are `where`, `generation`, `sha256` and `yaml`; `profiles:` and `default_profile:` are keys inside that text, not fields of the object. Where it prints a layer, tell the user which profiles it offers and ask whether the repository fits one, and fugaro config init --yes then writes the minimal file `fugaro config show --json` confirms ([reference/discovery.md](reference/discovery.md) has the steps, the scratch file and what a real quirk needs). Where no layer applies, or the repository fits no profile, follow the investigative path below.
 
 ## 2. Investigate the repository
 
