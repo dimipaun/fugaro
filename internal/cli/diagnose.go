@@ -272,6 +272,13 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 		return nil, remote(fmt.Errorf("run %s: expected one row, got %d", run, len(rows)))
 	}
 	d := &Diagnosis{Row: rows[0], ReportPath: s.Prefix() + "report.md"}
+	// The row's pull request state is a listing's answer, folded from every run
+	// of the pull request the listing read; this read holds one run, so a state
+	// read from it alone would be a claim about the pull request that this
+	// command cannot support (runview.Row.PRState). It is dropped rather than
+	// guessed, the way every other field of the row is absent when nothing
+	// recorded it.
+	d.Row.PRState = ""
 	d.DraftNote = draftNote(d.Row, time.Now())
 	d.Row.Reason, d.FailureClass = red(d.Row.Reason), d.Row.FailureClass
 	if h := d.Row.Halt; h != nil {

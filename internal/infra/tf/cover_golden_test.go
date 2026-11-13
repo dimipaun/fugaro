@@ -66,6 +66,14 @@ func TestGoldenPlansAreCovered(t *testing.T) {
 		// for the same reason any other person-grant is, and the one grant of
 		// theirs the run does not cover whole is pinned below.
 		"installation-credentials": {"user:person-1@example.com"},
+		// The credentials service ON and NO profiles at all: the ONE implicit
+		// default review job (the owner's requirement of 2026-11-13) is
+		// planned here and nowhere else — its job, its own account and its two
+		// bucket grants, with no secret grant and no shared coding job beside
+		// them (TestGoldenImplicitReviewJobIsDeployedWithoutProfiles reads the
+		// whole of it). The fixture names no operator or launcher, so no
+		// person's grant is in this plan.
+		"installation-review": nil,
 		// The coordinator's opt-in ON (coordinator plan P5): its account, the
 		// account's two reads, its job and schedule, and the Firebase root's
 		// database grant to it. TestTheCoordinatorIsInTheOptInGoldensOnly
@@ -631,7 +639,7 @@ func TestTheCoordinatorIsInTheOptInGoldensOnly(t *testing.T) {
 		},
 		"firebase-coordinator": {"module.firebase.google_project_iam_member.coordinator_database[0]"},
 	}
-	for _, name := range []string{"installation", "installation-accounts", "installation-managed", "installation-credentials", "installation-adopt",
+	for _, name := range []string{"installation", "installation-accounts", "installation-managed", "installation-credentials", "installation-review", "installation-adopt",
 		"installation-coordinator", "installation-viewers", "firebase", "firebase-same-project", "firebase-adopt", "firebase-coordinator", "firebase-viewers",
 		"installation-catalog-add-repo"} {
 		var got []string

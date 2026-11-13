@@ -354,8 +354,9 @@ standard, with the Docs and console-contract pins in the same pull request. **SE
 **Owner-run:** no.
 
 - **Files (7):** `internal/cli/runs.go` (the flag, `lsOptions`, `lsDoc.Groups`, the refusals — the
-  closed value list and the refusal by `slices.Contains` are the shape `--state` and `lsStates`
-  (`:65`) already have), `internal/cli/runs_group.go` (new: the grouping over the rows the listing
+  closed value list and the refusal by `slices.Contains` are the shape `--state` and `lsStateWords`
+  (`runs_prstate.go:51`: the run states plus the states of a pull request) already have),
+  `internal/cli/runs_group.go` (new: the grouping over the rows the listing
   already read, `(*cli.Cloud).LoadRows`, `internal/cli/api.go:301`), `internal/cli/runs_group_test.go`
   (new), `internal/cli/runs_test.go`, `internal/cli/testdata/runs_group.golden` (new),
   `console/docs/json-contract.md` (the `groups` row — the pin sees this key through

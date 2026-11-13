@@ -1719,7 +1719,7 @@ the service opt-in, and they stay correct the day it is not.
       a **table of the two sites**: each still literal, each still on one named account of this run's
       project, each still with `var.operators` as its only member. `TestInstallationServiceAccountGrantsNameTheirAccount`
       (`:1902`) keeps holding every `google_service_account_iam_member` in the module to a literal account
-      path built from `var.project` — the shape `scheduler.tf:28` already uses for the operators'
+      path built from `var.project` — the shape `deploy/terraform/gcp/modules/installation/scheduler.tf:28` already uses for the operators'
       `serviceAccountUser` on the scheduler's account — so the new grant is written the way the module
       already writes one and the guard needs no exception for it. **This widening is the task's reason to
       exist and not a side effect of it**: with `deployerTokenCreator` unchanged, `fugaro update` refuses

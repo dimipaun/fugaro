@@ -133,13 +133,16 @@ type ReviewJobAccount struct {
 //
 // It mirrors SharedJobAccountsFor deliberately, down to its fail-closed shape:
 // the set is computed from the *published policy* rather than listed, so an
-// installation that publishes no profile for an account admits no review job
-// for it, and an account the service admits is an account the deployer
-// created. TestReviewAccountsAreTheNamesProjectJobsDeploys builds one
-// installation both ways and requires the two answers to agree, and
-// TestSharedAndReviewSetsAreDisjoint requires the two classes not to overlap —
-// an account in both would be refused everywhere (verifyJob) and the review
-// job could never mint.
+// installation that publishes no profile for an account derives no review job
+// for it, and an account the service admits is an account the deployer created.
+// TestReviewAccountsAreTheNamesProjectJobsDeploys builds one installation both
+// ways and requires the two answers to agree, and TestSharedAndReviewSetsAreDisjoint
+// requires the two classes not to overlap — an account in both would be refused
+// everywhere (verifyJob) and the review job could never mint. What the
+// deployment holds and this derivation cannot is the implicit default job of an
+// installation with no profiles at all (the paragraph after the axis's
+// non-account values): the two sides agree over the profile-derived variants, and
+// that one row is the deliberate difference.
 //
 // The account name is the one the admissions speak, and the axis spells the
 // default account as the empty string: that mapping is
@@ -153,6 +156,22 @@ type ReviewJobAccount struct {
 // it, so the value is a review job whose ONE offered credential is the bundle
 // entry the pairing looks up under that value rather than an account's token —
 // which is exactly what this class is (D1417, and AK6a for the second value).
+//
+// It is the POLICY side of the deployed set and not the set the service starts
+// with: AuthConfig.ReviewJobAccounts is the deployment's OWN table, the rows the
+// installation's tfvars write into the service's environment
+// (internal/infra's ProjectReviewJobs rendered as FUGARO_REVIEW_JOB_ACCOUNTS,
+// internal/cli's credentialsServiceReviewJobAccounts), because this service
+// builds its configuration from its environment and reads no policy (D143).
+// The two agree over every profile-derived variant, and they differ by ONE row
+// on purpose: an installation that has opted into the service and declares no
+// profile at all deploys the single implicit default review job (internal/infra's
+// implicitReviewVariant, the owner's requirement of 2026-11-13), whose triple no
+// published profile states — so the deployment admits a caller of that job and
+// this derivation, which reads profiles, cannot name it. What the row buys the
+// caller is one gate further in: the pairing still requires the account to be
+// admitted to the run identity's repository by the policy's own admissions
+// (pairReview), which is the half C1's piece 2 carries.
 func ReviewJobAccountsFor(p *projectpolicy.Policy, gcpProject string) []ReviewJobAccount {
 	if p == nil {
 		return nil

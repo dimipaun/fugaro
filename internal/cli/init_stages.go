@@ -103,6 +103,16 @@ type initEngine struct {
 	// write, so a root that runs twice lands it once.
 	accessSeed *accesslib.Node
 
+	// accessMark is the migration's other landing (update_access.go): the roles
+	// step read the installation's own lists and they hold no grant the node can
+	// rank — a grant names a person, and a group:, a domain: and a
+	// serviceAccount: are not addresses the CLI can match a caller against (F25)
+	// — so there is no node to write and the marker alone is what lands. It is
+	// what tells such an installation, which HAS run this update, from one whose
+	// lists the node has never held: the two are one state otherwise, and RS6c's
+	// gates would then never run on it. Cleared by the landing, as accessSeed is.
+	accessMark bool
+
 	// flagFactVersion is the version the self-flag step's own read of the
 	// creation fact answered with, and 0 where that step read nothing
 	// (update_selfflag.go). The marker step asks it beside the gate's version
@@ -701,7 +711,12 @@ func (e *initEngine) ensureCredentialsService(ctx context.Context) error {
 	if doc == nil { // no credentials_service in the installation's tfvars: this run deploys it
 		return e.deployCredentialsService(ctx)
 	}
-	_, err = e.writeCarriedCredentials(doc)
+	// The installation's record says the service is deployed, and this run's spec
+	// has to say the same: the block in this document is what the run that
+	// deployed the service left behind, and the config write that records it in
+	// the local config is the last step of that run.
+	e.specReviewJobsOfTheService()
+	_, err = e.writeCarriedCredentials(ctx, doc)
 	return err
 }
 
@@ -710,20 +725,21 @@ func (e *initEngine) ensureCredentialsService(ctx context.Context) error {
 // one — brought up to date with this machine's config, and returns the document
 // it wrote.
 //
-// The document goes back on disk BEFORE anything that can fail. prepare
-// (init.go) is what rewrites the installation's tfvars from this run's spec and
-// carries the block forward, and it is steps away: PrepareWorkdir has already
-// deleted the file, so a failure in between — the resolve below, which reaches
-// for cosign and for the registry and can fail for either — would leave an
-// installation whose tfvars hold no block at all. The next run reads that as
-// "no service yet", composes a fresh one from the local config alone, and
-// applies it: the block's URL — the audience every caller's ID token is minted
-// for, which only the tfvars and the module's outputs carry — is gone from the
-// desired state, so the revision is left admitting nobody until the audience
-// fill puts it back, and any member the deployed block carried beyond what this
-// machine's config states is lost with it. Putting the document the carry is
-// about to use back closes the window this resolve opened, and costs one write
-// of a file prepare rewrites a few steps later.
+// The document goes back on disk BEFORE anything that can fail and return.
+// prepare (init.go) is what rewrites the installation's tfvars from this run's
+// spec and carries the block forward, and it is steps away: PrepareWorkdir has
+// already deleted the file, so a step in between that returned its error — the
+// carries below reach for cosign, for the registry and for this machine's
+// config, and either of them can fail — would leave an installation whose tfvars
+// hold no block at all. The next run reads that as "no service yet", composes a
+// fresh one from the local config alone, and applies it: the block's URL — the
+// audience every caller's ID token is minted for, which only the tfvars and the
+// module's outputs carry — is gone from the desired state, so the revision is
+// left admitting nobody until the audience fill puts it back, and any member the
+// deployed block carried beyond what this machine's config states is lost with
+// it. Putting the document the carry is about to use back closes the window
+// PrepareWorkdir opened, and costs one write of a file prepare rewrites a few
+// steps later.
 //
 // A run that fails before that rewrite leaves the file on disk, and that is the
 // point rather than a leak to clean up: nothing removes a workdir on the error
@@ -747,7 +763,7 @@ func (e *initEngine) ensureCredentialsService(ctx context.Context) error {
 // workdir held it, which is the fail-closed direction — an installation whose
 // config cannot describe the table keeps the table it has — and the same shape
 // the deploy path answers a config that cannot carry the service with.
-func (e *initEngine) writeCarriedCredentials(doc []byte) ([]byte, error) {
+func (e *initEngine) writeCarriedCredentials(ctx context.Context, doc []byte) ([]byte, error) {
 	next := doc
 	if e.lc != nil {
 		refreshed, err := infra.RefreshCredentialsServiceJobAccounts(doc, e.lc)
@@ -771,7 +787,7 @@ func (e *initEngine) writeCarriedCredentials(doc []byte) ([]byte, error) {
 	// (the job-table refresh above answers the same way): an installation whose
 	// intake is not written keeps the one it has, and an installation that has
 	// none is up to date about everything else.
-	if withIntake, err := carriedIntake(next); err != nil {
+	if withIntake, err := e.carriedIntake(ctx, next); err != nil {
 		fmt.Fprintf(e.r.w, "the secrets intake is not deployed: %v\n", err)
 	} else {
 		next = withIntake
@@ -783,25 +799,50 @@ func (e *initEngine) writeCarriedCredentials(doc []byte) ([]byte, error) {
 }
 
 // carriedIntake is doc with the secrets intake's block added when it holds
-// none, carrying the image doc already records for the credentials service.
+// none, carrying the image the apply that follows will create the service from:
+// this release's pin, when the recorded one is a release this binary is past.
 //
-// The image is the recorded one and not a resolve of this run's: the intake
-// runs the same reference the service does, the credentials-service stage moves
-// both onto this release's pin a few stages later, and a second resolve here
-// would be a second registry read for one answer — and, on the path this
-// function exists for (an installation that has the service and no intake yet),
-// the only resolve of the run.
+// Why the recorded image is not good enough here, and why the pin cannot wait
+// for the credentials-service stage a few steps later. This block is written
+// before the apply that CREATES the intake's service, and the image in it is
+// the binary that service runs: an installation that skipped the release the
+// intake shipped in has a recorded image whose binary has no `intake serve`
+// subcommand (intake.tf's own args), so the revision the apply creates exits on
+// start and the apply fails — with the block already on disk, which is what
+// every rerun then repeats. The credentials service's own process is a
+// different question and keeps the recorded image until that stage: the node it
+// reads per call may not be raised before the process that reads it is replaced
+// (the owner's ruling of 2026-11-10), and the intake reads no such node.
+//
+// The resolve is the run's one (credentialsResolve, memoized): the policy
+// stage's precondition and the credentials-service stage's move read this same
+// answer, so pinning here costs no second registry read. A resolve that fails
+// returns with the block unwritten — an installation keeps no intake rather
+// than one whose revision cannot come up — and the failure is still the run's
+// where it belongs: the policy stage's precondition refuses a stale recorded
+// image before the node it reads moves, and a run whose node is already at this
+// version meets the same memoized error at the credentials-service stage, whose
+// move returns a resolve it cannot make.
 //
 // A document that carries no image for the service gets no intake: without one
 // there is nothing for the module's container to run, and the block would be a
-// revision that never comes up.
-func carriedIntake(doc []byte) ([]byte, error) {
+// revision that never comes up. A run with no release of its own — a
+// development build, which this function's callers have already refused a
+// deployment for — keeps the recorded image rather than resolving one.
+func (e *initEngine) carriedIntake(ctx context.Context, doc []byte) ([]byte, error) {
 	if _, have, err := infra.IntakeOf(doc); err != nil || have {
 		return doc, err
 	}
 	image, ok, err := infra.CredentialsServiceImageOf(doc)
 	if err != nil || !ok {
 		return doc, err
+	}
+	if ver := releaseVersion(); ver != "" && credentialsImageStale(ver, image) {
+		pinned, err := e.credentialsResolve(ctx)
+		if err != nil {
+			return doc, err
+		}
+		image = pinned
 	}
 	return infra.SetIntake(doc, infra.Intake(image))
 }
@@ -935,7 +976,7 @@ func (e *initEngine) moveCredentialsImage(ctx context.Context) error {
 	if doc == nil { // no block: nothing to move (the stage's own skip says why)
 		return nil
 	}
-	next, err := e.writeCarriedCredentials(doc)
+	next, err := e.writeCarriedCredentials(ctx, doc)
 	if err != nil {
 		return err
 	}
@@ -1029,13 +1070,19 @@ func (e *initEngine) deployCredentialsService(ctx context.Context) error {
 		fmt.Fprintf(e.r.w, "the credentials service is not deployed: %v\n", err)
 		return nil
 	}
+	// The installation this run is turning into one that HAS the service, which
+	// the local config does not say yet: it records the block from this run's
+	// own outputs, at the end of the run (init.go's writeConfig). Both writers
+	// below read that fact off the config's block, and this is the one run where
+	// it is not there (credentialsServiceOptedIn).
+	optedIn := credentialsServiceOptedIn(e.lc)
 	// publishedVerifiers is nil on purpose, and it is not "nobody verifies":
 	// the member it feeds is prepare's, written from the effective list a few
 	// steps later (init.go's effectiveVerifiers through CarriedCredentialsService,
 	// the tolerant read of the published node), so passing the node's list here
 	// as well would be the same value read twice — and this writer makes no
 	// database call (see its own doc comment).
-	svc, err := infra.Credentials(e.lc, pinned, nil)
+	svc, err := infra.Credentials(optedIn, pinned, nil)
 	if err != nil {
 		fmt.Fprintf(e.r.w, "the credentials service is not deployed: %v\n", err)
 		return nil
@@ -1082,7 +1129,74 @@ func (e *initEngine) deployCredentialsService(ctx context.Context) error {
 	if err := e.wd.WriteVars(doc); err != nil {
 		return userErr("writing the installation's %s: %v", infra.VarsFile, err)
 	}
+	// And this run's spec gains the review jobs of that same config, the
+	// implicit default job among them (infra's implicitReviewVariant, which the
+	// config's block is the opt-in of): the job this run's own apply creates,
+	// and what every later stage of the run plans the root from.
+	e.specReviewJobsOfTheService()
 	return nil
+}
+
+// specReviewJobsOfTheService replaces this run's review set with the one the
+// installation's own record describes: the set a config that HAS the
+// credentials service composes (credentialsServiceOptedIn). Both of its callers
+// stand in front of such an installation — the run that is deploying the block
+// and the run that found the block already in the installation's tfvars,
+// whatever the local config says — and the implicit default review job is the
+// member the config's own answer is missing.
+//
+// The spec is not a local detail: every prepare of the run rewrites the
+// installation root's tfvars FROM it (init.go), so a set composed from a config
+// that names no service plans that root without the job. Where the state holds
+// the job and the config does not — a run that died between the installation
+// root's apply and the config write that records the block, the only run that
+// creates it (init.go's writeConfig, the last step) — that plan is the job's
+// own destruction, RefuseProjectJobDeletes stops the whole update on it, and the
+// writer that would have repaired the spec sits downstream of the refusal: every
+// later run repeats it, under a message naming a profile that is not what is
+// missing. The carried branch is the one that reads the installation's record as
+// the fact it is.
+//
+// A config that cannot describe the set is not a reason to stop a run: the
+// review job is what is missing, and the next run composes it from the block it
+// finds.
+func (e *initEngine) specReviewJobsOfTheService() {
+	review, err := infra.ProjectReviewJobs(credentialsServiceOptedIn(e.lc), e.spec.RunsBucket, e.spec.EnableVertex)
+	if err != nil {
+		fmt.Fprintf(e.r.w, "the review jobs are not deployed: %v\n", err)
+		return
+	}
+	e.spec.ProjectReviewJobs = review
+}
+
+// credentialsServiceOptedIn is lc as the installation this run is about to
+// deploy the credentials service into reads: the same config with an empty
+// credentials_service block when it carries none, and lc itself otherwise.
+//
+// The block's PRESENCE is the opt-in every reader of it gates on — the
+// deployment's own review-job table (infra.Credentials), the implicit default
+// review job (infra's implicitReviewVariant) and, at launch time, the checks
+// that refuse a review on an installation with no service — and the run that
+// writes the block is the one run where the config does not hold it yet. A
+// writer that read the config as it stands would compose an installation one
+// run behind the deployment: a service that exists with no review job of the
+// implicit kind, and a job that appears only on the next `fugaro update`. The
+// owner's requirement of 2026-11-13 is that a review works out of the box on
+// the installation the service was deployed for, so the two are written by the
+// one run.
+//
+// The URL is deliberately left empty, and it is not a loss: Cloud Run assigns
+// it, the audience fill writes it a few steps later in this same run
+// (fillCredentialsAudience), and an empty one is the state every variant's
+// environment is in until then (reviewVariant adds the address only when the
+// config carries one).
+func credentialsServiceOptedIn(lc *localcfg.Config) *localcfg.Config {
+	if lc == nil || lc.CredentialsService != nil {
+		return lc
+	}
+	next := *lc
+	next.CredentialsService = &localcfg.CredentialsService{}
+	return &next
 }
 
 // installationCredentialsImage is the installation root's tfvars as they stand
