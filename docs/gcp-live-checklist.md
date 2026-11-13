@@ -12418,6 +12418,18 @@ this check the gate on slice 2). **Nothing in this section has been run, and it 
 and not after. It is **OWNER-RUN**, with the owner's own Claude login: **no agent runs any step of it**, and no step pastes the
 login's credential.
 
+**Run it:**
+
+```bash
+bash scripts/live-checks/check303.sh --installation <name> --yes
+```
+
+**You** run it, with your own Claude login, and **no agent runs any step of it**. It states the **bound it will not pass** — at most
+the day cap's decision calls, about the dollars the check's own per-call number gives them, the placeholder you correct for the model
+your policy picks — **before anything is spent**, and `--yes` is the whole of the consent that spends it: without `--yes` it prints
+the bound and stops. It starts no cloud run, no job and no image build, and `--dry-run` prints the guards, the bound and the plan
+without making a call.
+
 **What it will read.**
 
 1. **One real decision call**, through the bounded agent, on a case the plan's table names as a judgement case. **FACT:** the model
@@ -12443,6 +12455,20 @@ until this check's number confirms or replaces them.
 the `ee/` registration and the core's extension point). **Nothing in this section has been run, and it cannot run before O17 is
 built.** It is **OWNER-RUN**, with **two people**: no agent runs any step of it.
 
+**Run it** — one script, two phases, one per person:
+
+```bash
+bash scripts/live-checks/check304.sh first-person  --installation <name> --from <user:address> --to <user:address>
+bash scripts/live-checks/check304.sh second-person --installation <name> --as <user:address> --handoff <the record the first phase wrote>
+```
+
+The first phase **checks the Subscription Edition build the handoff lives in before anything else** and stops naming it when the
+binary is a core build; it then reads the agent's node and the handoff verb's help, prints — as lines **for the first person to type**,
+never as something it runs — the handoff itself and the exact second-person line, and writes the record that line needs (mode 0600,
+the path the first phase prints). The second phase runs on the **receiving** person's own machine and their own credentials, reads the
+same node and the lease from that session, and reports both readings. Neither phase writes anything on the installation and neither
+makes a model call; `--dry-run` prints one phase's plan and changes nothing.
+
 **What it will read.**
 
 1. **The handoff.** An agent handed from one developer to another by an **owner or an admin**, on a real installation. **FACT:** the
@@ -12467,6 +12493,22 @@ It is **OWNER-RUN**: **no agent runs any step of it**.
 One thing has to be there before any of it is read, and it is the installation's own switch: **the front door on** — the `mcp_server` key
 that renders the service, its account and the door's own entry onto the revision (`var.mcp_server`; D934, and the switch the state read
 arrives under). An installation that never asked serves a 404 on every path of the door and has nothing for this check to read.
+
+**Run it:**
+
+```bash
+bash scripts/live-checks/check305.sh --installation <name> [--door <url>] [--agent <id>]
+```
+
+**You** run it, on your own installation with the front door on and **never `belong`**, and **no agent runs any step of it**. It finds
+the door the way a client does (the installation's own service URLs, probed with the door's protected-resource metadata, so an
+installation that never turned the switch on stops saying so), settles the **release** question with the door's own **`tools/list`**
+rather than with a version string — the release a build reports is a fact, the tools the door serves are the gate, so a door serving a
+build without O16b's state group stops with the release it needs and claims no reading — and then signs itself in **twice**, once for
+`state:read` and once for a token holding only the task scopes, printing the authorization URL for **you** to approve on the page's
+own device. **No token is ever printed**: both are minted into the check's own scratch directory (mode 0600, removed with it) and the
+block carries rows about them and never a value. Nothing is created, granted or deleted, `--save <dir>` keeps the documents it read
+for pasting back, and `--dry-run` prints the plan and calls nothing.
 
 **What it will read.**
 
