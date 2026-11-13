@@ -108,8 +108,11 @@ func init() {
 		"log_tail", "draft_note", "report_path", "follow_up", "comments_path", "route_by", "reported_usd",
 		// The landing skill weighs a land against a follow-up from the
 		// record: the review rounds with their verdicts, and the findings
-		// the resolved mode let through rather than fixing.
-		"reviews", "tolerated",
+		// the resolved mode let through rather than fixing. It reads the
+		// head each of the two covered too, which is the same condition
+		// under two spellings — the verify record's head_sha and the
+		// review's head — so a skill naming the wrong one fails here.
+		"reviews", "tolerated", "verify[].head_sha", "reviews[].verdict", "reviews[].head",
 		// The checkpoint a governance halt leaves (T6.2, D329): the working
 		// skill's diagnose reference reads all six of its fields, the runner's
 		// three and the three the stopping agent answers.

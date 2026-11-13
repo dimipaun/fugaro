@@ -12,11 +12,14 @@ package plugin_test
 
 import (
 	"os"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/cli"
+	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/verify"
 )
 
 const landingSkillPath = "skills/landing/SKILL.md"
@@ -140,44 +143,107 @@ func TestLandingSkillResolvesItsCommands(t *testing.T) {
 // TestLandingSkillResolvesATrivialConflictLocally: landing includes the
 // conflict with the base branch when there is one, and the recipe is the one
 // the repository's own rules allow: a worktree rather than the checkout, the
-// base merged into the branch, a plain push and never a force, and the
-// distinction that makes the class honest — a conflict needing two designs
-// reconciled is not trivial, and is a follow-up's work.
+// base merged into the branch, the tests run on the merge commit before
+// anything is pushed (the class was read from tests passing on the final
+// commit, and a merge commit nobody tested is a head that condition no longer
+// covers), a plain push and never a force, and the distinction that makes the
+// class honest — a conflict needing two designs reconciled is not trivial, and
+// is a follow-up's work.
 func TestLandingSkillResolvesATrivialConflictLocally(t *testing.T) {
 	skill := landingSkillMD(t)
 	for _, want := range []struct{ what, text string }{
 		{"the worktree", "git worktree add ../land-<N> <branch>"},
 		{"the base merged in", "`git fetch origin <base>`, then `git merge origin/<base>`"},
 		{"what a trivial resolution is", "a lock file, a generated file, two additions in different places"},
+		{"that the checks run on the merge commit", "run the repository's own checks on the merge commit"},
+		{"the checks themselves", "fugaro verify build\nfugaro verify test"},
+		{"that an untested head voids the class", "a merge commit nobody tested is a head that condition no longer covers"},
+		{"that a refused resolution is not a land", "A resolution the tests refuse is not a trivially resolved conflict"},
+		{"that the push waits for the tests", "When they pass, push the resolution"},
 		{"the plain push", "git push origin HEAD"},
 		{"that a push is never forced", "plain and never a force"},
 		{"that a redesign is not a conflict to take", "one that needs two designs reconciled is a follow-up's work"},
 	} {
 		if !strings.Contains(skill, want.text) {
-			t.Errorf("%s never says %s (%q): landing a conflicted pull request without this is either a merge the branch cannot take or a redesign done in the dark", landingSkillPath, want.what, want.text)
+			t.Errorf("%s never says %s (%q): landing a conflicted pull request without this is either a merge the branch cannot take, or a merge the class's own condition no longer covers", landingSkillPath, want.what, want.text)
 		}
 	}
 }
 
-// TestLandingSkillFilesTheLeftovers: the leftover findings reach a list, and
-// the skill says both halves of how: the run's own deferrals are already in the
-// pull request's status section and `fugaro followups` is what turns them into
-// tasks — planned first, because `--launch` starts runs and spends — and a
-// finding the record does not carry goes where the person keeps their list, one
-// line each.
+// TestLandingSkillFilesTheLeftovers: the leftover findings reach a list, and the
+// skill says both halves of how — and which list holds which, because the two
+// are not the same one. `fugaro followups` reads the run's deferrals, which the
+// pull request's status section carries and which `--launch` files as tasks
+// (planned first, since it starts runs and spends); a finding the mode tolerated
+// in a round that ended without a stop is in no deferral at all, so it is never
+// filed by that command and goes one line each where the person keeps their
+// list, like a finding the record does not carry.
 func TestLandingSkillFilesTheLeftovers(t *testing.T) {
 	skill := landingSkillMD(t)
 	for _, want := range []struct{ what, text string }{
 		{"where the run's deferrals are listed", "Deferred (follow-ups)"},
 		{"the command that files them", "fugaro followups <run>"},
+		{"that it reads that list and no other", "That list and no other is what `fugaro followups <run>` reads"},
+		{"that it waits for the merge", "and it runs only once the pull request is merged"},
 		{"the cap on one call", "--max"},
 		{"that the plan is read before the launch", "Read the plan back with the person before the launch"},
 		{"that launching spends", "--launch` starts runs and spends money"},
-		{"where a finding outside the record goes", "where the person keeps their list"},
+		{"where the tolerated leftovers are read", "the report's own Tolerated table"},
+		{"that they are in no deferral", "leaves them there and not among the deferrals"},
+		{"that followups files none of them", "`fugaro followups` files nothing for them"},
+		{"where a tolerated one goes", "Write them one line each where the person keeps their list"},
+		{"where a finding outside the record goes", "So does a finding the record does not carry at all"},
 		{"that a comment is never copied into a task", "Never copy a pull request comment into a task's text"},
 	} {
 		if !strings.Contains(skill, want.text) {
 			t.Errorf("%s never says %s (%q): a land whose leftovers reach no list is a land that lost the review's findings", landingSkillPath, want.what, want.text)
 		}
 	}
+}
+
+// TestLandingSkillNamesTheFieldsTheRecordsCarry: the report the skill reads is
+// two records under one call, and the commit each half covered is spelled
+// differently in them — `head_sha` in the verify record and `head` in the
+// review's. A skill that named one for the other would still read as prose and
+// still be wrong, so each claim is held to the struct that carries it: the
+// paths are the ones the cli's claims table holds to the same structs, and a
+// rename on either side fails here too.
+func TestLandingSkillNamesTheFieldsTheRecordsCarry(t *testing.T) {
+	skill := landingSkillMD(t)
+	verifyRecord := reflect.TypeOf(verify.Record{})
+	review := reflect.TypeOf(runstore.ReviewSummary{})
+	for _, c := range []struct {
+		claim string
+		typ   reflect.Type
+		field string
+	}{
+		{"verify[].head_sha", verifyRecord, "head_sha"},
+		{"reviews[].verdict", review, "verdict"},
+		{"reviews[].head", review, "head"},
+	} {
+		if !strings.Contains(skill, "`"+c.claim+"`") {
+			t.Errorf("%s no longer names `%s`: this test holds a claim the skill does not make", landingSkillPath, c.claim)
+			continue
+		}
+		if !hasJSONTag(c.typ, c.field) {
+			t.Errorf("%s claims `%s`, but %s has no %q field: the skill reads a field the record does not carry", landingSkillPath, c.claim, c.typ, c.field)
+		}
+	}
+}
+
+// hasJSONTag reports whether a struct or slice-of-struct carries name as a
+// json tag.
+func hasJSONTag(t reflect.Type, name string) bool {
+	for t.Kind() == reflect.Pointer || t.Kind() == reflect.Slice {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct {
+		return false
+	}
+	for i := range t.NumField() {
+		if tag, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ","); tag == name {
+			return true
+		}
+	}
+	return false
 }
