@@ -129,6 +129,7 @@ func runPlugin(t *testing.T, e *initEngine) *initflow.Result {
 // against the tree the merge was in, where the stage's plan created the file.
 func TestPluginStageWritesNoSettingsFile(t *testing.T) {
 	releaseBuild(t, "0.2.0")
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 	f := testutil.NewClaudePluginFake(t, "[]", "[]")
 	f.On(t, "plugins", userInstall("0.2.0"), argsInstall...)
 	settings := wiringCheckout(t, "")
@@ -151,6 +152,7 @@ func TestPluginStageWritesNoSettingsFile(t *testing.T) {
 // first left them and has nothing to do.
 func TestInitPluginStageInstallsInClaudeCode(t *testing.T) {
 	releaseBuild(t, "0.2.0")
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 	f := testutil.NewClaudePluginFake(t, "[]", "[]")
 	f.On(t, "plugins", userInstall("0.2.0"), argsInstall...)
 	wiringCheckout(t, "")
@@ -647,6 +649,7 @@ func TestInitPluginStageOutsideACheckoutInstallsOnTheMachine(t *testing.T) {
 // in the checkout is written at all any more.
 func TestInitPluginStageFindsTheCheckoutFromASubdirectory(t *testing.T) {
 	releaseBuild(t, "0.2.0")
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 	f := testutil.NewClaudePluginFake(t, "[]", "[]")
 	f.On(t, "plugins", userInstall("0.2.0"), argsInstall...)
 	dir := repoCheckout(t, githubOrigin, "")
@@ -675,6 +678,7 @@ func TestInitPluginStageFindsTheCheckoutFromASubdirectory(t *testing.T) {
 // settings file (reconciliation.md F14).
 func TestInitPluginStageFindsALinkedWorktree(t *testing.T) {
 	releaseBuild(t, "0.2.0")
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 	f := testutil.NewClaudePluginFake(t, "[]", "[]")
 	f.On(t, "plugins", userInstall("0.2.0"), argsInstall...)
 	main := repoCheckout(t, githubOrigin, "")
