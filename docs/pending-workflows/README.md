@@ -3296,9 +3296,82 @@ Rules 2 and 3 report rather than fail because most of what they find is not a
 bug: a fixture that pins its own clock a line later looks the same to a shell
 script as one that never did. The script prints one `warn:` line per hit and
 says so in its summary; promoting either rule to a failure is the one-line
-change its own header describes, once the tree it reports on is clean. The
-counts on this tree at the time of staging are in the pull request that added
-it.
+change its own header describes, once the tree it reports on is clean.
+
+**The counts, so that whether a rule is promoted is a decision a reader makes
+from this page rather than from a pull request's list.** Staged against
+the tree of **2026-11-13**, the script printed **80** rule 2 warnings and **32**
+rule 3 ones, and exited 0 with `ci-hygiene: clean (112 report-only warning(s))`.
+The 80 split by which signal fired: **13** where the window holds `time.Now()`
+and **67** where it holds a fixture built with no clock (`newX(t)`), which is the
+noisy half of the heuristic. The line numbers below are a snapshot of that day,
+and they move with the code under them: `bash scripts/ci-hygiene.sh` prints the
+current list, and it is the one to read before promoting a rule.
+
+Rule 2, the 13 hits whose window holds `time.Now()`:
+
+`ee/graph/source_orchestrator_test.go:825`;
+`internal/cli/doctor_brokering_test.go:1706,1724,2318,2324`;
+`internal/cli/managed_status_test.go:399`; `internal/cli/runs_test.go:2453`;
+`internal/cli/stats_test.go:737`; `internal/rtdb/clock_test.go:28,29,46,61,81`.
+
+Rule 2, the 67 hits whose window holds `newX(t)`:
+
+`ee/coordinator/mcpauth/tool_state_test.go:295,390`;
+`ee/graph/cli/graph_test.go:611,722,776,908`;
+`ee/report/cli/report_test.go:228,913,981`; `ee/report/cli/runid_test.go:43`;
+`internal/budget/rollover_test.go:202,207,213,838`;
+`internal/budget/session_test.go:458,508`; `internal/cli/api_test.go:412`;
+`internal/cli/cloudrun_golden_test.go:43`;
+`internal/cli/diagnose_test.go:659,706,882`;
+`internal/cli/doctor_brokering_test.go:1748,1774,1800`;
+`internal/cli/estimate_test.go:297`;
+`internal/cli/issue_mine_test.go:237,242,248,255,757`;
+`internal/cli/runs_digest_test.go:103,197,255,272,273,320,321,373,448,511,512,513,557,558,560,821,827,831,943,959,1155,1199,1234`;
+`internal/cli/runs_group_test.go:272`;
+`internal/cli/shortid_sweep_test.go:216`;
+`internal/creds/mergemint_test.go:140,186,232,287,321,340`;
+`internal/runner/mutation_test.go:742`;
+`internal/runner/reviewartifact_test.go:218`;
+`internal/runstore/runstore_test.go:349,1035,1230,1359`.
+
+Rule 3, the 32 hits, each with the bound its assertion uses:
+
+`internal/agent/agent_test.go:145` (5*time.Second);
+`internal/budget/session_test.go:947` (400*time.Millisecond);
+`internal/claudeplugin/claudeplugin_test.go:143` (10*time.Second);
+`internal/cli/cancel_test.go:546` (300*time.Millisecond);
+`internal/cli/layer_resolve_test.go:163` (2*time.Second);
+`internal/cli/propagation_retry_test.go:630` (30*time.Second);
+`internal/cli/run_test.go:717` (4*time.Second);
+`internal/cli/updatewarn_test.go:622` (500*time.Millisecond);
+`internal/cli/watch_queued_scan_test.go:184` (2*time.Second);
+`internal/cli/watch_queued_test.go:494` (5*time.Second);
+`internal/e2e/budget_test.go:276` (40*time.Second);
+`internal/gateway/gateway_test.go:581` (5*time.Second);
+`internal/gateway/lease_test.go:530` (2*time.Second);
+`internal/gateway/oauth_test.go:438` (5*time.Second);
+`internal/gateway/retry_test.go:688` (5*time.Second);
+`internal/gateway/route_test.go:300` (2*time.Second);
+`internal/headroomproc/headroomproc_test.go:217` (5*time.Second);
+`internal/infra/workdirlock_test.go:206` (2*time.Second);
+`internal/mirror/mirror_test.go:727,777` (5*time.Second, 10*time.Second);
+`internal/procgroup/procgroup_test.go:47,64,102` (5*time.Second);
+`internal/projectpolicy/match_test.go:334` (100*time.Millisecond);
+`internal/runner/artifact_test.go:3244,3493` (20*time.Second, 1*time.Second);
+`internal/runner/backend_run_test.go:389` (500*time.Millisecond);
+`internal/runner/mutation_test.go:397` (20*time.Second);
+`internal/verify/verify_test.go:292` (10*time.Second);
+`internal/watch/prstate_query_test.go:88` (10*time.Second);
+`scripts/release_test.go:1625,1667` (30*time.Second).
+
+**Most of the `newX(t)` half is not a bug**: a fixture whose clock is pinned a
+line later, a test that only marshals a record or an instant handed to the
+fixture as an argument is indistinguishable, to a shell script, from a store
+that never chose its clock. If the owner would rather not read that noise, the
+two ways to cut it are both in the one branch: drop the `newX(t)` signal (13
+hits left), or require the fixture's variable to appear in a call beside the
+instant.
 
 **To copy it in**, from the repository root — copy the two lines into the
 `check` job of `.github/workflows/ci.yml`, after its last step, and then:
