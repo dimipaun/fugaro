@@ -11,7 +11,9 @@ package credsvc
 // and again on 2026-11-13, and the service's log said nothing about which of
 // its reads had failed. Every test here fails exactly ONE read and reads the
 // line back, so a read that stops being named — or a label that starts being
-// written for the wrong one — is red.
+// written for the wrong one — is red. The candidate list's own build is the one
+// refusal the line does not label, and its case below pins that shape too: an
+// empty read beside a message that names the read itself.
 //
 // The sentinel is the second half of that. Each failure carries a
 // credential-shaped string built at test time and planted INSIDE the error's
