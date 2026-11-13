@@ -3,6 +3,8 @@ package plugin_test
 import (
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
 // TestUpdateSkill: the skill checks, runs the plugin half, hands over the one
@@ -70,6 +72,45 @@ func TestWorkingAndSetupCarryTheSessionStartNudge(t *testing.T) {
 		} {
 			if !strings.Contains(skill, want) {
 				t.Errorf("%s never says %q", path, want)
+			}
+		}
+	}
+}
+
+// TestTheNudgeOffersFugaroUpdateOnlyWhereTheFixNamesIt: with the trigger keyed
+// on severity, the warning checks that reach the sentence are not all `fugaro
+// update`'s. A pin newer than this binary names `brew upgrade` and says the
+// update never moves a pin down, and a foreign marketplace is the user's own
+// decision (`internal/pluginwire/status.go`); a login unit that could not be
+// read or rendered names the shell or the file (`internal/cli/doctor.go`,
+// `orchestrator-unit`). So the nudge offers `fugaro update` only where the
+// check's own `fix` is its own line, and relays that check's own fix otherwise.
+//
+// The warning states are read, not restated: were every one of them the
+// command's, the conditional would be dead and this test says so.
+func TestTheNudgeOffersFugaroUpdateOnlyWhereTheFixNamesIt(t *testing.T) {
+	relayed := map[string]bool{}
+	for _, s := range []pluginwire.State{
+		pluginwire.Outdated, pluginwire.Newer, pluginwire.Unpinned, pluginwire.Foreign, pluginwire.InstalledDiffers,
+	} {
+		if s.Severity() != pluginwire.SeverityWarning {
+			t.Errorf("%s is no longer a warning state; the nudge keys its trigger on severity", s)
+			continue
+		}
+		if !strings.HasPrefix(s.Fix(), "run fugaro update") {
+			relayed[string(s)] = true
+		}
+	}
+	for _, s := range []pluginwire.State{pluginwire.Newer, pluginwire.Foreign} {
+		if !relayed[string(s)] {
+			t.Errorf("%s's fix now runs `fugaro update`; if that is real, the nudge's conditional is dead", s)
+		}
+	}
+	for _, path := range []string{"plugin/skills/working/SKILL.md", "plugin/skills/setup/SKILL.md"} {
+		skill := readRepoFile(t, path)
+		for _, want := range []string{"where that `fix` is `fugaro update`'s, the command below", "otherwise that `fix` itself, as printed"} {
+			if !strings.Contains(skill, want) {
+				t.Errorf("%s never says %q, so a check whose fix is not the update's own is handed a command that changes nothing", path, want)
 			}
 		}
 	}
