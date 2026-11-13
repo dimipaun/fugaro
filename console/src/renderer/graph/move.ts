@@ -245,6 +245,22 @@ export const MOVE_UNREADABLE_WORD = 'the console could not read this move’s an
 export const MOVE_OPEN_LABEL = 'Move…'
 export const MOVE_TARGET_LABEL = 'move this task to'
 
+/** MOVE_TARGET_UNCHOSEN is the value of the select's not-yet-chosen option, and
+ * it is a value no release key can be: a box's key is 64 lowercase hex
+ * characters and the unassign is the empty string, so a lone dash is neither.
+ *
+ * **It is what the control is drawn on rather than the first box of its list.**
+ * A browser pre-selects the first option of a `<select>` nobody has touched and
+ * reports a `change` only when the value differs from the one it holds, so a
+ * control drawn on the first box would swallow the choice of that box -- and of
+ * the unassign, on a drawing whose boxes are all finished and whose list
+ * therefore holds that option alone. The entry refuses this value, so a person
+ * choosing it makes no request at all. */
+export const MOVE_TARGET_UNCHOSEN = '-'
+
+/** MOVE_TARGET_UNCHOSEN_LABEL is what that option reads as. */
+export const MOVE_TARGET_UNCHOSEN_LABEL = 'choose a release'
+
 /** MOVE_STATUSES is §6.24's four statuses, and it is the **whole** vocabulary
  * this build reads: `moveAnswerOf` refuses an answer carrying any other word,
  * because a status is what a screen decides from -- whether the move applied,
@@ -551,6 +567,15 @@ export function moveSheet(factory: ScreenFactory, sheet: MoveSheet, targets: rea
     // a word of a command: even here, what leaves the renderer is an id.
     const options = make(factory, 'select', MOVE_TARGET_CLASS)
     options.setAttribute('aria-label', MOVE_TARGET_LABEL)
+    // The control opens on this and not on a box: `MOVE_TARGET_UNCHOSEN` states
+    // why, and `selected` says it in the markup as well, the way the scope
+    // control does -- a drawing is the state it was made with, and a control
+    // whose selection the browser inferred from first-in-the-list would make the
+    // first box's own choice unreportable.
+    const unchosen = literal(make(factory, 'option'), MOVE_TARGET_UNCHOSEN_LABEL)
+    unchosen.setAttribute('value', MOVE_TARGET_UNCHOSEN)
+    unchosen.setAttribute('selected', 'selected')
+    options.append(unchosen)
     for (const target of targets) {
       const option = literal(make(factory, 'option'), target.name.ok ? target.name.text : UNAVAILABLE_MARK)
       option.setAttribute('value', target.key)

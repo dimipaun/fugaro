@@ -36,6 +36,8 @@ import {
   MOVE_FROM_LABEL,
   MOVE_MAX_FIELD_CODE_POINTS,
   MOVE_TASK_LABEL,
+  MOVE_TARGET_UNCHOSEN,
+  MOVE_TARGET_UNCHOSEN_LABEL,
   MOVE_TO_LABEL,
   MOVE_UNASSIGNED_WORD,
   MOVE_UNDO_LABEL,
@@ -483,9 +485,20 @@ describe('the sheet a row’s own button opens', () => {
     const select = ofClass(root, 'graph-move-target')
     expect(select).toHaveLength(1)
     const options = everyNode(select[0] as FakeNode).filter((each) => each.tagName === 'OPTION')
-    // The values are the record’s keys and the empty string for the unassign:
-    // what leaves the renderer is an id, and the unassign declares no box at all.
-    expect(options.map((each) => each.getAttribute('value'))).toEqual([BOX, OTHER, ''])
+    // **The control opens on its own not-yet-chosen option and not on a box.** A
+    // browser pre-selects a `<select>`'s first option and reports a `change` only
+    // when the value differs from the one it holds, so a list drawn on the first
+    // box would swallow that box's own choice -- and the unassign's, on a drawing
+    // whose boxes are all finished. `selected` says so in the markup too, and the
+    // value is one no key can be (a box is 64 lowercase hex, the unassign `''`).
+    expect(options[0]?.getAttribute('value')).toBe(MOVE_TARGET_UNCHOSEN)
+    expect(options[0]?.getAttribute('selected')).toBe('selected')
+    expect(options[0]?.textContent).toBe(MOVE_TARGET_UNCHOSEN_LABEL)
+    // Then the values are the record’s keys and the empty string for the
+    // unassign: what leaves the renderer is an id, and the unassign declares no
+    // box at all.
+    expect(options.map((each) => each.getAttribute('value'))).toEqual([MOVE_TARGET_UNCHOSEN, BOX, OTHER, ''])
+    expect(options.slice(1).map((each) => each.getAttribute('selected'))).toEqual([null, null, null])
     // The last option is the unassign, in the console’s own words.
     expect(options.at(-1)?.textContent).toBe(MOVE_UNASSIGNED_WORD)
     // **Nothing is confirmed before a request exists**: the choosing sheet is a
@@ -496,10 +509,25 @@ describe('the sheet a row’s own button opens', () => {
     expect(ofClass(root, 'graph-move-cancel')).toHaveLength(1)
   })
 
+  it('offers the unassign alone on a drawing that lists no box, and it is reachable', () => {
+    // The degenerate drawing the placeholder exists for: every box of the record
+    // is finished, so the list a person gets is the unassign and nothing else --
+    // and the control is still drawn on its own option rather than on that one,
+    // so choosing it reports a change like any other choice.
+    const root = drawn({ request: null, answer: null, sentence: null }, [])
+    const options = everyNode(ofClass(root, 'graph-move-target')[0] as FakeNode).filter(
+      (each) => each.tagName === 'OPTION',
+    )
+    expect(options.map((each) => each.getAttribute('value'))).toEqual([MOVE_TARGET_UNCHOSEN, ''])
+    expect(options[0]?.getAttribute('selected')).toBe('selected')
+  })
+
   it('offers no empty option for a target the console cannot name', () => {
     const root = drawn({ request: null, answer: null, sentence: null }, [aTarget(BOX, 7)])
-    const option = everyNode(root).find((each) => each.tagName === 'OPTION')
-    expect(option?.getAttribute('value')).toBe(BOX)
+    const options = everyNode(root).filter((each) => each.tagName === 'OPTION')
+    // The placeholder first, then the box: the target's own option is found by
+    // the value it carries rather than by being first in the list.
+    const option = options.find((each) => each.getAttribute('value') === BOX)
     // A name the sanitizer refused is drawn as the shared unavailable mark rather
     // than as an empty label, so the row a person picks is never blank.
     expect(option?.textContent).toBe(UNAVAILABLE_MARK)

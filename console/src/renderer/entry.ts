@@ -271,6 +271,7 @@ import {
   MOVE_CONFIRM_CLASS,
   MOVE_OPEN_CLASS,
   MOVE_TARGET_CLASS,
+  MOVE_TARGET_UNCHOSEN,
   MOVE_UNDO_CLASS,
   MOVE_UNREADABLE_WORD,
   MoveFlow,
@@ -5019,7 +5020,13 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       surface.nodeOf(target).addEventListener('change', () => {
         const key = choosing
         if (key === null) return
-        openMove(key, valueOf(surface, target))
+        const chosen = valueOf(surface, target)
+        // The control opens on its own not-yet-chosen option
+        // (`MOVE_TARGET_UNCHOSEN`), which is a value no box key can be and is
+        // not a choice: the sheet stays up with nothing asked of the record,
+        // exactly as it does before anyone has touched the list.
+        if (chosen === MOVE_TARGET_UNCHOSEN) return
+        openMove(key, chosen)
       })
     }
     const confirmButton = classed(drawn, MOVE_CONFIRM_CLASS)[0]
