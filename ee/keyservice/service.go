@@ -200,6 +200,10 @@ type Service struct {
 	auditor    Auditor
 	now        func() time.Time
 	limiter    *throttle
+	// pollLimiter is the device poll's own rate, per address, and it is a bucket
+	// of its own rather than the intake's: one sign-in is up to 120 polls, four
+	// times the intake's whole hourly budget for one address (devicePoll).
+	pollLimiter *throttle
 	// signIn is §11's verifier of the licence project's own ID tokens, and codes
 	// is what the two sign-in flows are holding: an authorize code between its
 	// sign-in and its exchange, and a device code between the CLI's start and
@@ -336,25 +340,33 @@ func New(cfg Config, deps Deps) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The poll's rate is this package's and not the deploy's (devicePollLimits),
+	// so this cannot fail while that constant is a rate — and it is checked
+	// rather than assumed because the constant is a line somebody can edit.
+	pollLimiter, err := newThrottle(devicePollLimits, now)
+	if err != nil {
+		return nil, fmt.Errorf("the device poll's rate is %d request(s) per %s: a poll with no rate is one a stranger sets", devicePollLimits.Requests, devicePollLimits.Window)
+	}
 	cfg.FreeMailDomains = lowerAll(cfg.FreeMailDomains)
 	return &Service{
-		cfg:        cfg,
-		freeSeat:   *cfg.FreeSeat,
-		openSource: *cfg.OpenSource,
-		store:      deps.Store,
-		mints:      deps.Mints,
-		mintsV1:    deps.MintsV1,
-		mail:       deps.Mailer,
-		host:       deps.CodeHost,
-		proofs:     deps.Proofs,
-		signedIn:   deps.Owner,
-		stepUp:     deps.StepUp,
-		alerts:     deps.Notifier,
-		auditor:    deps.Auditor,
-		now:        now,
-		limiter:    limiter,
-		signIn:     deps.SignIn,
-		codes:      newSignInCodes(),
+		cfg:         cfg,
+		freeSeat:    *cfg.FreeSeat,
+		openSource:  *cfg.OpenSource,
+		store:       deps.Store,
+		mints:       deps.Mints,
+		mintsV1:     deps.MintsV1,
+		mail:        deps.Mailer,
+		host:        deps.CodeHost,
+		proofs:      deps.Proofs,
+		signedIn:    deps.Owner,
+		stepUp:      deps.StepUp,
+		alerts:      deps.Notifier,
+		auditor:     deps.Auditor,
+		now:         now,
+		limiter:     limiter,
+		pollLimiter: pollLimiter,
+		signIn:      deps.SignIn,
+		codes:       newSignInCodes(),
 	}, nil
 }
 

@@ -874,6 +874,60 @@ func TestDeviceCodePollsForItsWholeLife(t *testing.T) {
 	}
 }
 
+// TestDeviceCodePollsAreBounded: the poll is reachable by anyone and it reads
+// the table every other route of the flow takes the same lock on, so what a
+// stranger can make it do has to be bounded by something other than how many
+// times they ask. Two things do it — a code this process is not holding is
+// recorded nowhere, so the poll table holds one row per code the start route
+// issued, and a caller above the poll's own rate is turned away before it reaches
+// that table — and a flood of guesses must therefore leave every table exactly as
+// it was, with the forms beside it still answering.
+func TestDeviceCodePollsAreBounded(t *testing.T) {
+	f, _ := subscribed(t)
+	start := f.startDevice(t, "acme-laptop")
+	// One poll of the live code, which is what a flow's own first poll does: the
+	// table then holds what one running sign-in has it hold.
+	if rec := f.pollDevice(t, start.DeviceCode); rec.Code != http.StatusOK {
+		t.Fatalf("the flow's own first poll answered %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	before := f.codesHeld()
+	// Codes this service never issued, until the poll's own rate says stop. Each
+	// one is a guess at a 256-bit code, and it must cost the service a lookup and
+	// nothing it keeps.
+	at := 0
+	for guess := 1; guess <= 400 && at == 0; guess++ {
+		if rec := f.pollDevice(t, freshSecret(t)); rec.Code == http.StatusTooManyRequests {
+			at = guess
+		}
+	}
+	if at == 0 {
+		t.Fatal("400 polls of codes this service never issued were all served: the poll has no rate of its own")
+	}
+	if after := f.codesHeld(); after != before {
+		t.Errorf("a flood of %d polls left the flow holding %+v, want %+v: an unauthenticated poll is growing what every route of the flow locks", at, after, before)
+	}
+	// The poll's rate is its own bucket and not the intake's, so the flood above
+	// must not have spent the forms' allowance for the address it came from.
+	if rec := f.apply("someone@acme.example"); rec.Code != http.StatusOK {
+		t.Errorf("the free-seat form answered %d after a flood of polls, want %d: the poll is spending the intake's own rate", rec.Code, http.StatusOK)
+	}
+}
+
+// codeTables is how many rows the two flows are holding: the authorize codes,
+// the device codes, and the poll bookkeeping. The test drives one request at a
+// time, so this reads the maps without the lock the routes take.
+type codeTables struct {
+	codes   int
+	devices int
+	polls   int
+}
+
+func (f *fixture) codesHeld() codeTables {
+	f.t.Helper()
+	tables := f.svc.codes
+	return codeTables{codes: len(tables.codes), devices: len(tables.devices), polls: len(tables.polls)}
+}
+
 // TestUnknownAndExpiredDeviceCodesAnswerAlike: the poll is reachable by anyone
 // and the codes are short, so what it must never be is a way to ask whether a
 // code exists. A code that was never issued and one that has run out are
@@ -920,6 +974,77 @@ func TestTokenFromAnotherProjectIsRefused(t *testing.T) {
 	wrongIssuer := f.tokenWith(t, "iss", "https://securetoken.google.com/"+anotherProject)
 	if rec := f.signedIn(t, wrongIssuer, verifier); rec.Code != http.StatusForbidden {
 		t.Errorf("a token another project issued answered %d, want %d", rec.Code, http.StatusForbidden)
+	}
+}
+
+// TestTokenFromARefundedSubscriptionStillSignsIn: the gap §8 leaves, stated and
+// measured rather than hidden. A refund or a chargeback revokes the key its event
+// names and leaves the subscription uncancelled (merchant.go's `withdrawn`, whose
+// own comment says why: what a refund ends is the owner's decision), and the
+// sign-in mints from the subscription's record — so the customer who was
+// refunded signs back in and collects a fresh key for the rest of the term, and
+// that key is named by no revocation at all.
+//
+// This test pins today's behaviour on purpose, and it is the one to turn around
+// when the merchant's half closes the gap: if the refund records the withdrawal
+// on the subscription — the smaller fix, which accountLicence's comment argues
+// for — the sign-in below is refused instead, and if it revokes the sign-in's own
+// issuances, the key below is revoked too. Either way this test fails and says
+// which of the two happened.
+func TestTokenFromARefundedSubscriptionStillSignsIn(t *testing.T) {
+	f, spy := signingIn(t)
+	refunded := f.purchase("evt-signin", signInOrg, 5, 365)
+	// The merchant's own refund of the key the purchase minted, signed as the
+	// merchant signs: the same event TestRefundRevokesTheKey delivers, and the
+	// one thing that happens is §8's entry for that key.
+	if rec := f.event(Event{ID: "evt-refund", Type: EventRefund, KeyID: refunded.KeyID}); rec.Code != http.StatusOK {
+		t.Fatalf("the refund answered %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	listed := f.revocations()
+	if len(listed) != 1 || listed[0].KeyID != refunded.KeyID {
+		t.Fatalf("the refund wrote %+v, want one entry for the key it named", listed)
+	}
+	// The subscription itself is untouched, which is the gap: nothing about it
+	// says the money came back.
+	sub, held, err := f.store.Subscription(context.Background(), "sub-"+signInOrg)
+	if err != nil || !held {
+		t.Fatalf("reading the subscription back (%v, held=%v)", err, held)
+	}
+	if sub.Cancelled {
+		t.Fatalf("the refund cancelled the subscription: this test is the statement of a gap that is now closed by the merchant's half, turn it around")
+	}
+	// And the refunded address signs in, which is the gap: a key minted after the
+	// money went back, for the rest of a term nobody is paying for, and the
+	// revocation list does not know its name.
+	verifier := freshVerifier(t)
+	code, _, _ := redirected(t, f.signedIn(t, f.acceptedToken(t), verifier))
+	fresh := decodeBundle(t, f.exchanged(code, verifier))
+	if spy.minted() != 1 {
+		t.Errorf("the refunded address's sign-in minted %d key(s), want one: the flow reaches a subscription nothing cancelled", spy.minted())
+	}
+	claims := v1Verified(t, f, fresh.Key)
+	records := f.records()
+	last := records[len(records)-1]
+	if last.Source != signInSource("sub-"+signInOrg, claims.KeyID) || last.Email != signInAddress {
+		t.Errorf("the sign-in wrote %q for %q, want the refunded subscription's own record for %q", last.Source, last.Email, signInAddress)
+	}
+	for _, entry := range listed {
+		if entry.KeyID == claims.KeyID {
+			t.Fatalf("the sign-in's key %s is on the revocation list: the gap is closed, and this test is the one to turn around", claims.KeyID)
+		}
+	}
+	// What the gap is, exactly: the event that does reach the record — the
+	// merchant's own cancellation — stops the same sign-in dead, so a refund that
+	// recorded the withdrawal here would be caught by this test rather than
+	// silently closing the hole.
+	f.event(Event{ID: "evt-cancel", Type: EventCancellation, Organisation: signInOrg})
+	f.advance(time.Hour)
+	after := f.signedIn(t, f.acceptedToken(t), freshVerifier(t))
+	if after.Code != http.StatusForbidden {
+		t.Errorf("a sign-in for a cancelled subscription answered %d, want %d: the cancellation is the event that reaches this record", after.Code, http.StatusForbidden)
+	}
+	if body := strings.TrimSpace(after.Body.String()); body != refuseNoLicence {
+		t.Errorf("the cancelled subscription was refused with %q, want %q", body, refuseNoLicence)
 	}
 }
 

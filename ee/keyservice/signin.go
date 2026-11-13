@@ -91,6 +91,20 @@ const (
 	devicePollInterval = 5 * time.Second
 )
 
+// The device poll's own bucket, and the one rate in this file rather than the
+// deploy's (§7.2's caps are capacity decisions; this one is the flow's own
+// shape). It is ten polls a minute for every one the flow asks on, which is one
+// every half second sustained: room for several terminals behind one address,
+// since a sign-in is twelve a minute, and still a bound on what a stranger can
+// make an unauthenticated route do. It is derived from the interval rather than
+// configured because a rate below the flow's own would break the flow — the
+// start answer tells the CLI the interval, so a deployment that set the two
+// apart would be telling the CLI something untrue.
+var devicePollLimits = Limits{
+	Requests: 10 * int(time.Minute/devicePollInterval),
+	Window:   time.Minute,
+}
+
 // The bounds on what a caller may name. The state is the CLI's own random value
 // and the challenge is RFC 7636's 43 to 128 characters; the installation is
 // untrusted text a person reads on the approve page.
@@ -209,20 +223,28 @@ type deviceCode struct {
 // that a short code cannot be hashed into safety: what bounds it is its ten
 // minutes and the poll's rate, not the digest.
 //
-// Nothing here caps how many codes one process holds: what bounds them is their
-// own window, swept on the way past every write, and the intake's throttle in
-// front of the routes. So the throttle is not optional on these routes, and the
-// rate it allows is the deploy's to set — a deployment under a flood of device
-// starts holds as many entries as its own rate lets through in ten minutes.
+// Nothing here caps how many codes one process holds: what bounds the **code**
+// tables is each code's own window, swept on the way past every write, and the
+// intake's throttle in front of the two start routes. So that throttle is not
+// optional there, and the rate it allows is the deploy's to set — a deployment
+// under a flood of device starts holds as many entries as its own rate lets
+// through in ten minutes.
+//
+// The poll route is the exception and needs no such help from the intake: it
+// holds one entry per code this process is already holding (polls), it records
+// nothing for a code it does not hold, and what a stranger can make it do is one
+// lookup and one lock per request, behind the poll's own rate (Service.pollLimiter).
 type signInCodes struct {
 	mu      sync.Mutex
 	codes   map[string]*authorizeCode
 	devices map[string]*deviceCode
-	// polls is when each **presented** device code was last polled, keyed by its
-	// digest rather than by the code the service holds: a code it never issued
-	// then gets a bucket of its own, so a flood of guesses is slowed down here
-	// before it reaches the lookup and a poll naming no live code is answered
-	// the same whether it arrives early or not.
+	// polls is when each device code **this process holds** was last polled,
+	// keyed by the digest of the code the CLI presents. An entry is written only
+	// for a code found in `devices` and is dropped by `sweep` when that code
+	// ends, so the table can never hold more than the codes themselves — a code
+	// the service never issued is answered and recorded nowhere, which is what
+	// keeps the poll from being a way to grow this table or to make every other
+	// route of the flow wait behind a sweep.
 	polls map[string]time.Time
 }
 
@@ -292,59 +314,52 @@ func (c *signInCodes) keepDevice(device string, held deviceCode, now time.Time) 
 	c.devices[digest(device)] = &held
 }
 
-// pollable answers whether one poll of a device code may proceed, and it is the
-// rate §11.4's flow is given: a CLI that polls faster than the interval the
-// start answered with is told to slow down rather than served, which is what
-// keeps the poll from being a way to walk a code space. A code the service has
-// never issued gets a bucket of its own (polls), so an unknown code polled twice
-// in a row is answered exactly like a live one polled twice.
-func (c *signInCodes) pollable(device string, now time.Time) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	for key, at := range c.polls {
-		if !now.Before(at.Add(devicePollInterval)) {
-			delete(c.polls, key)
-		}
-	}
-	key := digest(device)
-	if at, seen := c.polls[key]; seen && now.Before(at.Add(devicePollInterval)) {
-		return false
-	}
-	c.polls[key] = now
-	return true
-}
-
-// claimDevice is the poll's whole read under one lock. An expired code is
-// dropped rather than answered, so a code that has run out costs nothing to
-// hold — and it answers `false` exactly as an unknown one does, which is the
-// uniformity the poll route's own sentence is about.
+// pollDevice is the poll's whole exchange with the table, under one lock, and
+// the order of the three things it does is what each of them needs:
 //
-// An **approved** code is removed in the same breath as it is read, and that
-// ordering is the point: the mint behind it talks to the store, so it is slower
-// than the poll interval whenever the deployment is, and two polls a moment
-// apart would otherwise both find the code and one approval would hand out two
-// keys. Taking it here is the order the authorize route takes (spend/unspend),
-// and a mint that fails hands it back (unspendDevice). A code still waiting for
-// its person is left where it is: that poll answers `pending`, which is the
-// ordinary case and must not cost the CLI its code.
-func (c *signInCodes) claimDevice(device string, now time.Time) (deviceCode, bool) {
+//   - a code this process is **not holding** is answered without being recorded,
+//     so the poll table only ever holds codes the start route issued. The poll
+//     is reachable by anyone and takes the lock every other route of this flow
+//     waits on, so a flood of guesses must not be able to grow that table or to
+//     leave the sweep below with work to do: what a guesser costs is one lookup.
+//   - the interval is kept **only for a code that is held**: the rate the start
+//     answered with is the rate of the flow's own polls, and an unknown code
+//     polled twice is answered the same as one polled once (`refuseDevicePoll`,
+//     which is the uniformity the poll route's sentence is about).
+//   - an approved code is taken out in the same read that finds it, so one
+//     approval answers one key however slow the mint behind it is, and a mint
+//     that fails hands it back (unspendDevice).
+func (c *signInCodes) pollDevice(device string, now time.Time) (deviceCode, pollAnswer) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.sweep(now)
 	key := digest(device)
 	held, found := c.devices[key]
 	if !found {
-		return deviceCode{}, false
+		return deviceCode{}, pollUnknown
 	}
-	if !now.Before(held.expires) {
-		delete(c.devices, key)
-		return deviceCode{}, false
+	if at, seen := c.polls[key]; seen && now.Before(at.Add(devicePollInterval)) {
+		return deviceCode{}, pollTooSoon
 	}
+	c.polls[key] = now
 	if !held.approved {
-		return *held, true
+		return *held, pollPending
 	}
 	delete(c.devices, key)
-	return *held, true
+	return *held, pollApproved
 }
+
+// pollAnswer is what the poll's read of the table found: a code it is not
+// holding, a code held and asked about inside the interval, one still waiting
+// for its person, and one that person has approved.
+type pollAnswer int
+
+const (
+	pollUnknown pollAnswer = iota
+	pollTooSoon
+	pollPending
+	pollApproved
+)
 
 // unspendDevice hands an approved code back when the mint behind it failed, for
 // the reason `unspend` and `verifyLink` hand theirs back: the person approved and
@@ -399,7 +414,15 @@ func (c *signInCodes) deviceByUserCode(userCode string, now time.Time) (deviceCo
 	return deviceCode{}, false
 }
 
-// sweep drops every code whose window has closed. The caller holds the lock.
+// sweep drops every code whose window has closed, and the poll bookkeeping that
+// belongs to it. The caller holds the lock.
+//
+// The poll table is swept **here** and not by the poll that would have read it,
+// because the two ways an entry can end are both endings of the code rather than
+// of the poll: the code expires, or the code is claimed and answered (the mint
+// may still be running, and `unspendDevice` puts both back together). So the
+// poll table holds one entry per code this process is holding and never more:
+// what bounds it is the start route's rate, not how many times somebody polls.
 func (c *signInCodes) sweep(now time.Time) {
 	for key, held := range c.codes {
 		if !now.Before(held.expires) {
@@ -409,6 +432,11 @@ func (c *signInCodes) sweep(now time.Time) {
 	for key, held := range c.devices {
 		if !now.Before(held.expires) {
 			delete(c.devices, key)
+		}
+	}
+	for key := range c.polls {
+		if _, held := c.devices[key]; !held {
+			delete(c.polls, key)
 		}
 	}
 }
@@ -626,10 +654,18 @@ func (s *Service) deviceStart(w http.ResponseWriter, r *http.Request) {
 // one address, on a bucket the mail forms share: a person who signs in would
 // lock themselves and everyone behind the same address out of the forms, and the
 // poll would end in the intake's uniform refusal, which a CLI cannot tell from a
-// code that has expired. What bounds this route instead is the interval below,
-// kept per code by `pollable`, and the code itself, which is 256 bits of the
-// system's randomness and not a thing anybody guesses at.
+// code that has expired. What bounds it instead is its own rate per address
+// (pollLimiter), the interval kept per code (pollDevice), and the code itself,
+// which is 256 bits of the system's randomness and not a thing anybody guesses
+// at. The rate is checked first, so a flood is turned away before it reaches the
+// table every other route of the flow takes the lock on, and both refusals say
+// what to do — 429 and the interval — rather than the uniform sentence a CLI
+// cannot tell from a code that has expired.
 func (s *Service) devicePoll(w http.ResponseWriter, r *http.Request) {
+	if !s.pollLimiter.allow("ip:" + clientIP(r)) {
+		refuseSlowPoll(w)
+		return
+	}
 	var call struct {
 		DeviceCode string `json:"device_code"`
 	}
@@ -637,17 +673,15 @@ func (s *Service) devicePoll(w http.ResponseWriter, r *http.Request) {
 		refuseDevicePoll(w)
 		return
 	}
-	now := s.now()
-	if !s.codes.pollable(call.DeviceCode, now) {
-		refuseSlowPoll(w)
-		return
-	}
-	held, found := s.codes.claimDevice(call.DeviceCode, now)
-	if !found {
+	held, answer := s.codes.pollDevice(call.DeviceCode, s.now())
+	switch answer {
+	case pollUnknown:
 		refuseDevicePoll(w)
 		return
-	}
-	if !held.approved {
+	case pollTooSoon:
+		refuseSlowPoll(w)
+		return
+	case pollPending:
 		writeBundle(w, deviceAnswer{Status: DevicePending})
 		return
 	}
@@ -781,6 +815,18 @@ func (s *Service) verifyIDToken(ctx context.Context, raw string) (mcpauth.Identi
 // address. Where an account has bought more than one, the newest subscription is
 // the one answered; picking among several, and the seats the account holds
 // rather than bought, are the account page's (K5.1).
+//
+// What "running" is read from is the subscription's own record, and that is a
+// gap this route has rather than one it makes: §8's refund and chargeback write
+// the revocation list for the key the event names and leave the subscription
+// uncancelled (merchant.go's `withdrawn`, which says why — what a refund ends is
+// the owner's decision, not a repair for that path to make), so an address that
+// was refunded can sign in and collect a fresh key for the rest of the term, and
+// a key this route minted before the refund is not named by any entry either.
+// Closing it is the merchant half's: either the refund records the withdrawal on
+// the subscription, which every issue path already refuses on, or a sign-in
+// reads the revocation list for the issuances it minted. Until it does,
+// TestTokenFromARefundedSubscriptionStillSignsIn measures the behaviour.
 func (s *Service) accountLicence(ctx context.Context, email string) (Subscription, bool, error) {
 	subscriptions, err := s.store.Subscriptions(ctx)
 	if err != nil {
@@ -833,6 +879,9 @@ func (s *Service) signInMint(ctx context.Context, subscriptionID, account string
 	if !held {
 		return MintedV1{}, fmt.Errorf("%w: no subscription %s is recorded", ErrNoLicence, subscriptionID)
 	}
+	// What stops a subscription here is the merchant's cancellation and nothing
+	// else — not a refund, which revokes the key it names and leaves this record
+	// as it was (accountLicence's own note on the gap).
 	if sub.Cancelled {
 		return MintedV1{}, fmt.Errorf("%w: the subscription %s is cancelled", ErrNoLicence, sub.ID)
 	}
