@@ -59,12 +59,13 @@ REGION=us-east5
 REPO=acme/legacy
 REPO2=acme/second
 
-# Every credential-shaped value in this suite is a sentinel. The one the fake
-# puts in the stored view is a Google API key, because that is the shape a
-# document could carry by accident; the one it puts in the command's own message
-# is a bearer token. Neither may reach the block, and neither may survive in a
+# Every credential-shaped value in this suite is a sentinel that says so. The
+# one the fake puts in the stored view is shaped like a Google API key, because
+# that is the shape a document could carry by accident and the reader has to
+# recognise it as one; the one it puts in the command's own message is shaped
+# like a bearer token. Neither may reach the block, and neither may survive in a
 # file the run left behind.
-APIKEY_SENTINEL=AIza149MUSTNOTBEPRINTED0123456789012345
+APIKEY_SENTINEL=AIzaSENTINEL149mustnotbeprinted000000
 BEARER_SENTINEL=BEARER-SENTINEL-149-must-not-be-printed
 
 # Every fact key the run's block must carry, whatever it measured.
@@ -295,7 +296,7 @@ assert_no_secret() {
   for sentinel in "$APIKEY_SENTINEL" "$BEARER_SENTINEL"; do
     expect_absent "$(cat "$dir/out" "$dir/err" 2>/dev/null || true)" "$sentinel" "$what: a credential in the block"
   done
-  found=$(grep -rlE 'SENTINEL-149-must-not-be-printed|AIza149MUSTNOTBEPRINTED' "$dir/tmp" 2>/dev/null || true)
+  found=$(grep -rlE 'SENTINEL-?149' "$dir/tmp" 2>/dev/null || true)
   [ -n "$found" ] && fail "$what: a credential survived in $found"
   return 0
 }
