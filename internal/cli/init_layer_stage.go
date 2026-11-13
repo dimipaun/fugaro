@@ -15,6 +15,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/yamledit"
 )
 
 // The project layer as a stage of the converge (D830/D831), and the one local
@@ -137,6 +139,50 @@ type layerPlan struct {
 	// generation this machine's file was written from, so publishing would
 	// replace someone else's newer layer with this older file.
 	stale *layerGenerationState
+
+	// rigor is the wizard's rigor answer (task W of
+	// docs/rigor-command/implementation-plan.md; D900), when this run was
+	// given one: the mode it writes into the file before publishing it. The
+	// state above is then the state AFTER the write — local, l and exists
+	// describe the document this run leaves — so the publish below is the
+	// ordinary one and the answer reaches the project in the run that asked
+	// for it.
+	rigor *layerRigor
+}
+
+// layerRigor is the wizard's answer as this stage acts on it: the mode, the
+// bytes it is spliced into, the document the splice produces, and whether the
+// write path has to create the file first.
+//
+// base is the local layer file when there is one, the published object when
+// there is not (a project whose layer someone else published: the answer
+// replaces a value in it rather than starting from nothing), and the shell
+// `fugaro rigor set` creates when neither exists — which is a first run of
+// `fugaro setup`, the only run this answer is given on.
+//
+// writeBase is set for the two bases that are not this machine's file: the
+// write path compares and swaps against the file it re-reads, so a file that is
+// not there yet is written with the base first, and one that IS there is left
+// to the swap (which is also what shows a replaced value in the diff).
+type layerRigor struct {
+	mode      rigor.Mode
+	base      []byte
+	next      []byte
+	writeBase bool
+}
+
+// rigorDefaultPath is `defaults.rigor.default`, the one key the answer is
+// written to: the project layer's default mode (internal/config's
+// ProjectLayer.Defaults.Rigor).
+var rigorDefaultPath = []string{"defaults", "rigor", "default"}
+
+// layerRigorShell is the document a created layer file starts from: the three
+// anchor keys of the layer format, and nothing else — the same shell
+// `fugaro rigor set` creates (rigor.go's rigorCreateLayerFile), so the file a
+// setup run leaves behind and the file that command leaves behind are one
+// document and not two spellings of one.
+func layerRigorShell(lc *localcfg.Config) []byte {
+	return []byte(fmt.Sprintf("version: 1\nproject: %s\ngcp_project: %s\n", lc.Name, lc.GCPProject))
 }
 
 // layerGenerationState is D854's third value for the layer: what this machine's
@@ -154,7 +200,7 @@ func (s layerGenerationState) text() string {
 func (s *layerStage) plan(ctx context.Context) (*layerPlan, error) {
 	if !s.planned {
 		s.planned = true
-		s.p, s.err = layerPlanFor(ctx, s.e.lc)
+		s.p, s.err = layerPlanFor(ctx, s.e.lc, rigor.Mode(s.e.r.o.rigor))
 	}
 	return s.p, s.err
 }
@@ -163,7 +209,12 @@ func (s *layerStage) plan(ctx context.Context) (*layerPlan, error) {
 // refusal here is the run's (a local file that does not parse is an edit the
 // operator has to fix before anything can be published from it); a bucket that
 // cannot be read is not, and is reported as the skipped stage it is.
-func layerPlanFor(ctx context.Context, lc *localcfg.Config) (*layerPlan, error) {
+//
+// mode is the wizard's rigor answer, and "" for every run that was not asked
+// (task W of docs/rigor-command/implementation-plan.md; D900): an answer turns
+// the state below into the state it leaves, because the run that asks writes
+// what it was told.
+func layerPlanFor(ctx context.Context, lc *localcfg.Config, mode rigor.Mode) (*layerPlan, error) {
 	p := &layerPlan{lc: lc, url: recordReadURL(lc)}
 	path, err := localcfg.LayerFile(os.Getenv, lc.Name)
 	if err != nil {
@@ -207,6 +258,50 @@ func layerPlanFor(ctx context.Context, lc *localcfg.Config) (*layerPlan, error) 
 	}
 	recorded, rerr := strconv.ParseInt(p.recorded, 10, 64)
 	hasRecord := p.recorded != "" && rerr == nil
+	// The wizard's rigor answer (task W; D900) is spliced into the file before
+	// the state below is read, and it is read here rather than in Apply because
+	// the check, the plan the operator is shown and the apply are one read: what
+	// the answer leaves is a local file that differs from the published object,
+	// which is the publish this stage already knows how to make.
+	//
+	// The three bases are the file, the published object and the shell, in that
+	// order: a project whose layer someone else published gets the value they
+	// set REPLACED in their document (the diff the write path prints shows it),
+	// and a project with no layer at all gets the file `fugaro rigor set` would
+	// have created — which is what makes the answer reach the project in this
+	// run instead of a second command (the HARD RULE).
+	//
+	// D854's stale state is not a state this answer can be in: it needs a
+	// generation this machine's config records, the answer is given on a first
+	// run, and a first run records none. The comparison the publish makes is
+	// what would catch a layer that moved in the meantime, so the answer is not
+	// gated on it twice.
+	if mode != "" {
+		base, writeBase := p.local, false
+		switch {
+		case p.exists:
+		case p.pubExists:
+			base, writeBase = p.published, true
+		default:
+			base, writeBase = layerRigorShell(lc), true
+		}
+		next, err := yamledit.SetScalar(base, rigorDefaultPath, string(mode))
+		if err != nil {
+			return nil, userErr("writing the rigor mode into %s: %v", p.path, err)
+		}
+		l, problems := projectLayerProblems(next, lc)
+		if len(problems) > 0 {
+			// A backstop: the answer is one scalar the layer parser reads, and
+			// a document that does not read back is refused rather than
+			// published as the shell it might have been left as.
+			return nil, userErr("%s would not read back after the rigor answer was written into it: %s", p.path, pluginwire.Printable(layerProblemsText(problems)))
+		}
+		p.rigor = &layerRigor{mode: mode, base: base, next: next, writeBase: writeBase}
+		p.local, p.l, p.exists = next, l, true
+		p.publish, p.adopted = true, !hasRecord
+		p.seed, p.recordGen, p.stale, p.skip = false, false, nil, ""
+		return p, nil
+	}
 	switch {
 	case !p.exists && !p.pubExists:
 		p.skip = fmt.Sprintf("there is no local layer file at %s and this project has published no layer: there is nothing to seed the file from and nothing to publish", p.path)
@@ -276,6 +371,8 @@ func (s *layerStage) Check(ctx context.Context) (initflow.Status, error) {
 	switch {
 	case p.skip != "":
 		return initflow.Status{State: initflow.Skipped, Detail: p.skip}, nil
+	case p.rigor != nil:
+		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("the wizard's rigor answer (%s) is written into %s: this run writes it and publishes the project layer, after your confirmation", p.rigor.mode, p.path)}, nil
 	case p.seed:
 		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("there is no local layer file at %s: this run seeds it from the published project layer (generation %d)", p.path, p.gen)}, nil
 	case p.stale != nil:
@@ -309,6 +406,8 @@ func (s *layerStage) Plan(ctx context.Context, env initflow.Env) (initflow.Plan,
 // this run's plan.
 func (p *layerPlan) planDetail() string {
 	switch {
+	case p.rigor != nil:
+		return fmt.Sprintf("write the wizard's rigor answer (%s) into %s and publish the project layer, after your confirmation", p.rigor.mode, p.path)
 	case p.seed:
 		return fmt.Sprintf("seed %s from the published project layer (generation %d), after your confirmation", p.path, p.gen)
 	case p.stale != nil:
@@ -335,6 +434,18 @@ func (s *layerStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outc
 	switch {
 	case p.skip != "":
 		return initflow.Outcome{Detail: p.skip}, nil
+	case p.rigor != nil:
+		// The answer is written first and the object published after it, which
+		// is the order the two writes have to be in: the file is this machine's
+		// own and the publish is the cloud step the confirmation belongs to.
+		// A run whose confirmation is not given therefore leaves the answer
+		// written and the file UNPUBLISHED — the state `fugaro config layer`
+		// and `fugaro doctor` report, whose one documented next step is
+		// `fugaro update` — rather than a file nobody can publish.
+		if err := s.writeRigor(env, p); err != nil {
+			return initflow.Outcome{}, err
+		}
+		return s.publish(ctx, env, p)
 	case p.seed:
 		return s.seed(env, p)
 	case p.stale != nil:
@@ -348,6 +459,44 @@ func (s *layerStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outc
 		return initflow.Outcome{Changed: true, Detail: fmt.Sprintf("recorded the published project layer's generation (%d) in %s", p.gen, p.configPath)}, nil
 	}
 	return initflow.Outcome{Detail: fmt.Sprintf("the local layer file is the published project layer (generation %d)", p.gen)}, nil
+}
+
+// writeRigor writes the wizard's rigor answer into the local layer file (task W
+// of docs/rigor-command/implementation-plan.md; D900) through the one settings
+// write path (internal/cli/settings_write.go) — the helper `fugaro rigor set`
+// calls — so the diff, the coding-agent refusal, the backup and the atomic
+// write are one implementation for the two doors to the same key.
+//
+// What it brings of its own is the one thing the helper cannot know: a file
+// that is not there yet is created first, with the document the edit is built
+// from (the three anchor keys, or the published object this machine has no file
+// for), because the helper compares and swaps against a file it re-reads
+// (rigorCreateLayerFile creates the same shell for the same reason). A file
+// this run REPLACES a value in is not created: the diff the helper prints above
+// the write shows the value that was there beside the one that replaces it, so
+// a teammate's mode is never overwritten unseen.
+func (s *layerStage) writeRigor(env initflow.Env, p *layerPlan) error {
+	r := s.e.r
+	if p.rigor.writeBase {
+		if err := os.MkdirAll(filepath.Dir(p.path), 0o700); err != nil {
+			return userErr("creating %s: %v", p.path, err)
+		}
+		if err := writeFileAtomic(p.path, p.rigor.base); err != nil {
+			return userErr("creating %s: %v", p.path, err)
+		}
+	}
+	return applySettingsEdit(r.cmd, p.lc, settingsEdit{
+		Path: p.path,
+		Old:  p.rigor.base,
+		New:  p.rigor.next,
+		What: fmt.Sprintf("this writes the wizard's rigor answer (%s) into %s, the project layer this run publishes: it is the mode every run of project %s resolves against where nothing narrower sets one", p.rigor.mode, p.path, pluginwire.Printable(p.lc.Name)),
+		Kind: settingsDocLayer,
+		// The command the coding-agent refusal names: the same change, from the
+		// door that makes it outside a setup run.
+		Command: "fugaro rigor set " + string(p.rigor.mode),
+		Yes:     env.Yes,
+		Ask:     r.asksBack(),
+	})
 }
 
 // seed writes the published object's bytes to the local layer file, which is

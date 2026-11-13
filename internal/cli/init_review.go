@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -11,7 +12,9 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/rigor"
 )
 
 // The run's one confirmation (design m11 §9, "one confirmation per run").
@@ -597,6 +600,18 @@ func (e *initEngine) reviewScreen(ctx context.Context, why string) {
 	if o.billingAccount != "" {
 		fmt.Fprintf(w, "  %-15s %s (from --billing-account; the only account a budget may name)\n", "billing account:", pluginwire.Printable(o.billingAccount))
 	}
+	// The project's rigor mode, resolved the one way (task W of
+	// docs/rigor-command/implementation-plan.md; D900): what every run of this
+	// project gets where nothing narrower sets one — the repository's own
+	// fugaro.yaml, an area rule, the run's --mode — and the layer that set it.
+	// The word beside the mode is what tells a project that answered the
+	// wizard's question (`pro (project)`) from one that has not (`pro
+	// (default)`): the built-in default is reported as the built-in default
+	// rather than as a choice somebody made, and it is the one reading this
+	// summary owes a converge, which asks nothing and rewrites nothing.
+	if res, ok := e.projectRigor(); ok {
+		fmt.Fprintf(w, "  %-15s %s (%s)\n", "rigor mode:", pluginwire.Printable(string(res.Mode)), pluginwire.Printable(string(res.From)))
+	}
 	fmt.Fprintln(w, "Every Terraform plan is shown as it runs. It is covered only if it consists of creates and in-place updates of the installation's own resource kinds, its attributes are the modules' (images in this project's registry, jobs of this project called by Fugaro's accounts, logs to this project, private buckets, this project's names), and it grants only the modules' roles to the members above or to Fugaro's own service accounts. Anything else (a destroy or replace, a binding or policy, a key, another project, an unlisted member) is shown and then applied, and where nobody is at the terminal the run leaves it to you.")
 	if managed {
 		fmt.Fprintln(w, "What the gate does not stand in for, and still asks separately (the gate judges a document, and these are not documents):")
@@ -676,6 +691,50 @@ func (e *initEngine) planOnlyReview(ctx context.Context, stages []initflow.Stage
 }
 
 // alertEmail is the alert email in effect and where it comes from.
+// projectRigor is the mode every run of this project resolves to where nothing
+// narrower sets one, with the layer that set it: the run's own answer to the
+// wizard's question when it has one (the mode this very run writes into the
+// project layer), else the project layer as this machine holds it, and else the
+// built-in default. rigor's one resolver answers it (D24), so the line cannot
+// disagree with what a run of the project actually gets.
+//
+// The layer is read from this machine's own file and not from the published
+// object: this block is the summary printed before the run's first apply, and a
+// cloud read for one line would make every converge — and every test of one —
+// depend on the runs bucket answering. What the file says is what the owner
+// edits and what this run publishes, and the Layer stage later in the same
+// converge is what seeds the file from the published object where it is not
+// there yet; a file that is absent or does not read is the built-in default
+// rather than a guess, which is the one thing this line may never be.
+func (e *initEngine) projectRigor() (rigor.Resolved, bool) {
+	cfg := rigor.Config{}
+	switch {
+	case e.r != nil && e.r.o.rigor != "":
+		cfg.Project = rigor.Mode(e.r.o.rigor)
+	case e.lc != nil && e.lc.Name != "":
+		path, err := localcfg.LayerFile(os.Getenv, e.lc.Name)
+		if err != nil {
+			return rigor.Resolved{}, false
+		}
+		data, err := readLayerFile(path)
+		switch {
+		case errors.Is(err, os.ErrNotExist):
+		case err != nil:
+			return rigor.Resolved{}, false
+		default:
+			l, problems := projectLayerProblems(data, e.lc)
+			if len(problems) > 0 {
+				// A layer that does not read resolves against nothing rather
+				// than against the half of it that parsed: the stage that
+				// publishes it is where that is reported with its fix.
+				return rigor.Resolved{}, false
+			}
+			cfg.Project, cfg.ProjectAreas = l.Defaults.Rigor.Default, l.Defaults.Rigor.Areas
+		}
+	}
+	return rigor.Resolve(cfg, rigor.Request{}), true
+}
+
 func (e *initEngine) alertEmail() (string, string) {
 	switch o := e.r.o; {
 	case o.alertEmail != "":

@@ -1058,11 +1058,16 @@ var initFlagCases = map[string]string{
 	// bake-repos (IS7) is one of them: it answers the wizard's own question and
 	// writes the switch, and it is asked — and taken — on a first run of setup
 	// only, so no confirmation is touched by it either way.
+	// rigor (task W of docs/rigor-command/implementation-plan.md; D900) is the
+	// other: the wizard's own question, asked on a first run of setup and
+	// refused by name on a converge, whose write is the layer stage's — the
+	// confirmation it reaches is confirmStageWrite's, which the property
+	// already covers.
 	"admin": "value", "alert-email": "value", "bake-repos": "value", "base": "value", "base-image": "value", "billing-account": "value", "budget": "value",
 	"budget-admin": "value", "budget-currency": "value", "budget-mode": "value", "config": "value",
 	"display-name": "value", "expect-digest": "value", "gcp-project": "value", "github-app-id": "value",
 	"image-source": "value", "name": "value", "no-log-isolation": "value",
-	"operator": "value", "parent": "value", "project": "value", "region": "value",
+	"operator": "value", "parent": "value", "project": "value", "region": "value", "rigor": "value",
 	"registry-cleanup": "value", "runs-bucket": "value", "scheduler-region": "value",
 	"state-bucket": "value; under --managed the value must be the derived fugaro-tfstate-<gcp-project> and anything else refuses the creation before the project stage (checkManagedStateBucket, Task 4.5/D59), the way a bad --budget-currency refuses it",
 }

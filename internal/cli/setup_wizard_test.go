@@ -11,6 +11,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -53,6 +54,10 @@ var wizardAnswers = map[string]string{
 	"--gcp-project": "proj-1234\n",
 	"--region":      "\n",
 	"--name":        "\n",
+	// The rigor question has no suggestion on purpose (task W of
+	// docs/rigor-command/implementation-plan.md; D900): Enter is not an answer,
+	// so this is a value and not the "\n" every other row takes.
+	"--rigor": "pro\n",
 	// The bake question's suggestion is yes (IS7), and Enter is the answer
 	// every run of this harness that is about something else gives it.
 	"--bake-repos": "\n",
@@ -62,29 +67,61 @@ var wizardAnswers = map[string]string{
 // gives its flag to, in the order the wizard asks them, and returns the
 // options that flag sets.
 func stdinFor(flag string) string {
+	return stdinExcept(flag)
+}
+
+// stdinExcept is stdinFor for a caller that answers more than one question
+// with a flag: every row but the ones `flags` names is asked at the terminal.
+func stdinExcept(flags ...string) string {
+	return stdinGiving(nil, flags...)
+}
+
+// stdinGiving is the answers above, with two overrides: the rows `gives` names
+// are written as the caller says rather than as wizardAnswers says — which is
+// how a test answers one question with a value of its own — and the rows
+// `except` names are not written at all, because a question its flag answers
+// is not one the terminal is asked.
+func stdinGiving(gives map[string]string, except ...string) string {
+	skip := map[string]bool{}
+	for _, flag := range except {
+		skip[flag] = true
+	}
 	var b strings.Builder
 	for _, q := range setupQuestions {
-		if q.flag != flag {
-			b.WriteString(wizardAnswers[q.flag])
+		if skip[q.flag] {
+			continue
 		}
+		if line, ok := gives[q.flag]; ok {
+			b.WriteString(line)
+			continue
+		}
+		b.WriteString(wizardAnswers[q.flag])
 	}
 	return b.String()
 }
 
-func optionsFor(flag string) *initOptions {
+// optionsFor is the options a run has when the given flags were passed: one
+// question answered per flag, and the rest of the wizard's questions left for
+// the terminal. A caller that models a rerun passes every flag the run it is
+// resuming was given, plus the one the question it stopped at is answered with.
+func optionsFor(flags ...string) *initOptions {
 	o := &initOptions{door: setupDoor.name}
-	switch flag {
-	case "--gcp-project":
-		o.cloud.gcpProject = "proj-1234"
-	case "--region":
-		o.cloud.region = defaultRegion
-	case "--name":
-		o.name = "aurora"
-	case "--bake-repos":
-		// The value the flag names, and the fact that it was passed: a run that
-		// answers the question with the flag is the run whose answer the local
-		// config keeps, either way (init.go's bakeReposChanged).
-		o.bakeRepos, o.bakeReposChanged = true, true
+	for _, flag := range flags {
+		switch flag {
+		case "--gcp-project":
+			o.cloud.gcpProject = "proj-1234"
+		case "--region":
+			o.cloud.region = defaultRegion
+		case "--name":
+			o.name = "aurora"
+		case "--rigor":
+			o.rigor = "pro"
+		case "--bake-repos":
+			// The value the flag names, and the fact that it was passed: a run that
+			// answers the question with the flag is the run whose answer the local
+			// config keeps, either way (init.go's bakeReposChanged).
+			o.bakeRepos, o.bakeReposChanged = true, true
+		}
 	}
 	return o
 }
@@ -494,7 +531,7 @@ func TestSetupAsksBakeDefaultYes(t *testing.T) {
 	// Every other question is answered, so the bake question is this run's only
 	// one and every line read below belongs to it.
 	only := func() *initOptions {
-		return &initOptions{name: initProjectName, cloud: cloudOptions{gcpProject: initProject, region: defaultRegion}}
+		return &initOptions{name: initProjectName, cloud: cloudOptions{gcpProject: initProject, region: defaultRegion}, rigor: string(rigor.Pro)}
 	}
 	ask := func(stdin string) (*initRun, *strings.Builder) {
 		t.Helper()

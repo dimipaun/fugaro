@@ -12,6 +12,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -101,7 +102,7 @@ func TestProjectIDDefaultIsFugaroName(t *testing.T) {
 	// the ID question is the one Enter that matters here (the second is the
 	// bake question's, whose answer is the suggestion either way; IS7).
 	var out strings.Builder
-	r := &initRun{o: &initOptions{name: "aurora", cloud: cloudOptions{region: defaultRegion}}, w: &out, in: bufio.NewReader(strings.NewReader("\n\n")), cmd: NewRootCmd()}
+	r := &initRun{o: &initOptions{name: "aurora", cloud: cloudOptions{region: defaultRegion}, rigor: string(rigor.Pro)}, w: &out, in: bufio.NewReader(strings.NewReader("\n\n")), cmd: NewRootCmd()}
 	if err := r.gatherInputs(t.Context()); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
@@ -122,7 +123,7 @@ func TestProjectIDDefaultIsFugaroName(t *testing.T) {
 	testutil.Git(t, work, "init", "-q")
 	t.Chdir(work)
 	out.Reset()
-	r = &initRun{o: &initOptions{cloud: cloudOptions{region: defaultRegion}}, w: &out, in: bufio.NewReader(strings.NewReader("\n\n\n")), cmd: NewRootCmd()}
+	r = &initRun{o: &initOptions{cloud: cloudOptions{region: defaultRegion}, rigor: string(rigor.Pro)}, w: &out, in: bufio.NewReader(strings.NewReader("\n\n\n")), cmd: NewRootCmd()}
 	if err := r.gatherInputs(t.Context()); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
@@ -147,7 +148,7 @@ func TestProjectIDSuggestionIsTheCredentialProjectSecond(t *testing.T) {
 	t.Setenv("GOOGLE_CLOUD_PROJECT", "env-proj-1")
 	fakeTerminal(t)
 	var out strings.Builder
-	r := &initRun{o: &initOptions{door: setupDoor.name, name: "aurora", cloud: cloudOptions{region: defaultRegion}}, w: &out, in: bufio.NewReader(strings.NewReader("\n\n")), cmd: NewRootCmd()}
+	r := &initRun{o: &initOptions{door: setupDoor.name, name: "aurora", cloud: cloudOptions{region: defaultRegion}, rigor: string(rigor.Pro)}, w: &out, in: bufio.NewReader(strings.NewReader("\n\n")), cmd: NewRootCmd()}
 	if err := r.gatherInputs(t.Context()); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
@@ -388,7 +389,7 @@ func TestProjectIDNeverFromGcloudDefault(t *testing.T) {
 	noInstallation(t)
 	fakeTerminal(t)
 	var out strings.Builder
-	r := &initRun{o: &initOptions{name: "aurora", cloud: cloudOptions{region: "us-east5"}}, w: &out, in: bufio.NewReader(strings.NewReader("\n\n")), cmd: NewRootCmd()}
+	r := &initRun{o: &initOptions{name: "aurora", cloud: cloudOptions{region: "us-east5"}, rigor: string(rigor.Pro)}, w: &out, in: bufio.NewReader(strings.NewReader("\n\n")), cmd: NewRootCmd()}
 	r.cmd.SetIn(strings.NewReader(""))
 	if err := r.gatherInputs(t.Context()); err != nil {
 		t.Fatal(err)
@@ -398,7 +399,7 @@ func TestProjectIDNeverFromGcloudDefault(t *testing.T) {
 	}
 	// A person who means another id types it, and it is what the run takes.
 	out.Reset()
-	r = &initRun{o: &initOptions{name: "aurora", cloud: cloudOptions{region: "us-east5"}}, w: &out, in: bufio.NewReader(strings.NewReader("proj-5678\n\n")), cmd: NewRootCmd()}
+	r = &initRun{o: &initOptions{name: "aurora", cloud: cloudOptions{region: "us-east5"}, rigor: string(rigor.Pro)}, w: &out, in: bufio.NewReader(strings.NewReader("proj-5678\n\n")), cmd: NewRootCmd()}
 	if err := r.gatherInputs(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -434,7 +435,10 @@ func TestFirstRunAsksWithSuggestions(t *testing.T) {
 	t.Chdir(root)
 	fakeTerminal(t)
 	var out strings.Builder
-	r := &initRun{o: &initOptions{}, w: &out, in: bufio.NewReader(strings.NewReader("\n\n\n\n")), cmd: NewRootCmd()}
+	// The rigor mode is typed rather than passed: this run is the wizard with
+	// no flags at all, and the rigor question is the one of its questions Enter
+	// is not an answer to (task W).
+	r := &initRun{o: &initOptions{}, w: &out, in: bufio.NewReader(strings.NewReader("\n\n\n" + string(rigor.Pro) + "\n\n")), cmd: NewRootCmd()}
 	if err := r.gatherInputs(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -454,7 +458,7 @@ func TestFirstRunAsksWithSuggestions(t *testing.T) {
 	// A bad answer is asked again; a question that suggests nothing is not
 	// answered by an input that ends — there is nothing to take — and the run
 	// refuses rather than go on with an empty value.
-	r = &initRun{o: &initOptions{name: "aurora", cloud: cloudOptions{region: "us-east5"}}, w: &out, in: bufio.NewReader(strings.NewReader("Not A Project\nproj-1234\n\n")), cmd: NewRootCmd()}
+	r = &initRun{o: &initOptions{name: "aurora", cloud: cloudOptions{region: "us-east5"}, rigor: string(rigor.Pro)}, w: &out, in: bufio.NewReader(strings.NewReader("Not A Project\nproj-1234\n\n")), cmd: NewRootCmd()}
 	if err := r.gatherInputs(t.Context()); err != nil || r.o.cloud.gcpProject != "proj-1234" {
 		t.Errorf("a bad answer: %v, %q", err, r.o.cloud.gcpProject)
 	}
@@ -624,7 +628,7 @@ func TestCheckoutProjectNeverNamesANewInstallation(t *testing.T) {
 	var out strings.Builder
 	// An empty answer to the name, then the name; the run's last question (the
 	// bake switch) takes the suggestion.
-	r := &initRun{o: &initOptions{cloud: cloudOptions{gcpProject: "proj-1234", region: "us-east5"}}, w: &out, in: bufio.NewReader(strings.NewReader("\nmy-team\n\n")), cmd: NewRootCmd()}
+	r := &initRun{o: &initOptions{cloud: cloudOptions{gcpProject: "proj-1234", region: "us-east5"}, rigor: string(rigor.Pro)}, w: &out, in: bufio.NewReader(strings.NewReader("\nmy-team\n\n")), cmd: NewRootCmd()}
 	if err := r.gatherInputs(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -633,7 +637,7 @@ func TestCheckoutProjectNeverNamesANewInstallation(t *testing.T) {
 	}
 	// With --name it is the user's own word, and the bake switch — the wizard's
 	// last question (IS7) — takes the suggestion.
-	r = &initRun{o: &initOptions{name: "evil-project", cloud: cloudOptions{gcpProject: "proj-1234", region: "us-east5"}}, w: &out, in: bufio.NewReader(strings.NewReader("\n")), cmd: NewRootCmd()}
+	r = &initRun{o: &initOptions{name: "evil-project", cloud: cloudOptions{gcpProject: "proj-1234", region: "us-east5"}, rigor: string(rigor.Pro)}, w: &out, in: bufio.NewReader(strings.NewReader("\n")), cmd: NewRootCmd()}
 	if err := r.gatherInputs(t.Context()); err != nil {
 		t.Errorf("--name: %v", err)
 	}
@@ -746,7 +750,7 @@ func TestRegionDefaultIsUsEast5(t *testing.T) {
 	// the only question of the wizard's this run has to answer for the rest of
 	// the test to read the region: the bake switch's Enter follows it (IS7).
 	first := func(stdin string) (*initRun, *strings.Builder) {
-		return wizardRun(t, stdin, &initOptions{name: initProjectName, cloud: cloudOptions{gcpProject: initProject}})
+		return wizardRun(t, stdin, &initOptions{name: initProjectName, cloud: cloudOptions{gcpProject: initProject}, rigor: string(rigor.Pro)})
 	}
 	r, out := first("\n\n")
 	if err := r.gatherInputs(t.Context()); err != nil {
@@ -787,7 +791,7 @@ func TestRegionQuestionIsNotTheFirestoreQuestion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	regionRun, out := wizardRun(t, "\n\n", &initOptions{name: initProjectName, cloud: cloudOptions{gcpProject: initProject}})
+	regionRun, out := wizardRun(t, "\n\n", &initOptions{name: initProjectName, cloud: cloudOptions{gcpProject: initProject}, rigor: string(rigor.Pro)})
 	if err := regionRun.gatherInputs(t.Context()); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}

@@ -8,6 +8,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/spf13/cobra"
 )
 
@@ -59,7 +60,10 @@ Enter takes, and writes the local config, so later runs ask nothing: the new
 GCP project's ID (--gcp-project; a project named after this one,
 fugaro-<name>, which Enter takes; never gcloud's default project), the region
 (--region; us-east5), the project's name (--name; from the repository's
-owner, else this directory's) and whether a repository the build can read is
+owner, else this directory's), the project's rigor mode (--rigor; how much
+review every run of it gets — poc, startup, pro, the built-in default that is
+listed first, or critical — and the one question with no suggestion, so Enter
+is not an answer there) and whether a repository the build can read is
 baked into the image its job runs (--bake-repos; yes, which makes jobs start
 faster; asked only where it can be answered, so a run with a project config
 keeps that project's answer). Every question has its flag, so only the
@@ -404,6 +408,18 @@ var setupQuestions = []wizardQuestion{
 		missing: "--name <name>",
 	},
 	{
+		// The rigor question (task W of
+		// docs/rigor-command/implementation-plan.md; D900, the owner's ruling
+		// of 2026-10-31). It is asked after the name, because the mode is
+		// about the project the name settles, and it is the one question of
+		// this table with no suggestion: a mode nobody typed is the state the
+		// task ends, so Enter is not an answer here (askRigor).
+		what:    "the project's rigor mode",
+		label:   "Rigor mode",
+		flag:    "--rigor",
+		missing: "--rigor <mode>",
+	},
+	{
 		// The bake switch (IS7 of docs/image-setup-skill/implementation-plan.md;
 		// D1901). Its missing is empty on purpose: a run that cannot ask takes
 		// this answer itself — an absent key means yes, which is the
@@ -474,6 +490,183 @@ func (s *wizardStage) askBake() error {
 	return nil
 }
 
+// rigorQuestionLead is the line above the four modes, and the whole of what
+// tells the reader that Enter is not an answer here: every other question of
+// this wizard takes its suggestion with Enter, and this one has none
+// (askRigor).
+const rigorQuestionLead = "the project's rigor mode decides how much review every run of it gets; type one of them (this is the one question of the wizard with no suggestion, so Enter is not an answer):"
+
+// rigorHotfixRefusal is D834's sentence, in the words `fugaro rigor set` refuses
+// hotfix with (rigor.go's runRigorSet). It is spelled twice rather than
+// referenced because that command's sentence is built inline in a call this
+// task does not own; the test that holds the two doors to one sentence is what
+// keeps them from drifting (TestSetupRigorRefusesHotfix).
+const rigorHotfixRefusal = "hotfix is not a mode a layer sets: it is an operator's own per-run mode, reached with `fugaro run --mode hotfix`, and no layer may set it as a default or as an area rule; nothing was written"
+
+// rigorChoice is one line of the rigor question: the mode, and the wizard's own
+// sentence about what it costs. Everything else the line says is read from the
+// two tables that hold it — the review a mode runs by default
+// (rigor.DefaultLevels) and the rounds it spends (rigor.DefaultRounds) — so the
+// question cannot describe a mode as anything other than what a run of it does.
+type rigorChoice struct {
+	mode rigor.Mode
+	cost string
+}
+
+// rigorChoices is the question's list, and `pro` first is the whole of what
+// "the recommended answer" is: it is rigor.Default, the mode every project that
+// says nothing already runs (D19), so the recommendation asks nobody to change
+// what they have. Hotfix is not in the list and is not writable: it is a
+// per-run mode (D12, D834), refused by name where it is typed or passed.
+var rigorChoices = []rigorChoice{
+	{mode: rigor.Pro, cost: "it is the built-in default, so it is what a project that says nothing already runs today"},
+	{mode: rigor.Startup, cost: "less spend, less to spend it on"},
+	{mode: rigor.POC, cost: "the cheapest mode there is"},
+	{mode: rigor.Critical, cost: "the most review, and the most money"},
+}
+
+// printRigorChoices prints one line per mode, in the list's order, the way the
+// billing question prints its own list: what review the mode runs, the rounds
+// it spends by default, and what it costs.
+func (r *initRun) printRigorChoices() {
+	for _, c := range rigorChoices {
+		levels, err := rigor.DefaultLevels(c.mode)
+		if err != nil {
+			// The level table's answer for a mode it does not hold. This list
+			// names four modes the table has, so a line is never missing for
+			// this reason; a line whose review said nothing would be worse
+			// than no line, which is why the mode is skipped rather than
+			// described by a guess (DefaultLevels refuses to guess too).
+			continue
+		}
+		fmt.Fprintf(r.w, "  %s: %s; by default %s — %s\n",
+			c.mode, rigorReviewWords(levels), rigorRoundWords(rigor.DefaultRounds(c.mode)), c.cost)
+	}
+}
+
+// rigorRoundWords is a mode's loop counts in words, singular where the count is
+// one: the line is what a person deciding how much a mode costs reads, and "1
+// senior rounds" is a sentence they have to translate.
+func rigorRoundWords(r rigor.Rounds) string {
+	round := func(n int, what string) string {
+		if n == 1 {
+			return fmt.Sprintf("%d %s round", n, what)
+		}
+		return fmt.Sprintf("%d %s rounds", n, what)
+	}
+	return round(r.Inner, "first-line") + " and " + round(r.Senior, "senior")
+}
+
+// rigorReviewWords is what review a mode runs, in the question's words, read
+// off the mode's own row of the level table (rigor/levels.go): level 1 is the
+// first-line review, level 2 the senior review that decides readiness, level 3
+// the adversarial pass after it.
+func rigorReviewWords(l rigor.Levels) string {
+	switch {
+	case l.L3 == rigor.LevelOn:
+		return "review level 2 and review level 3, the adversarial pass after the senior one"
+	case l.L2 == rigor.LevelOn:
+		return "review level 2, the senior review that decides readiness, and no adversarial pass"
+	case l.L1 == rigor.LevelOn:
+		return "review level 1 only, the first-line review, which then decides readiness"
+	}
+	return "no review at all"
+}
+
+// setupRigorMode is the rigor question's own reading of an answer: the mode it
+// names, or the refusal the closed vocabulary gives everything else — the list
+// is rigor.ModeList's one spelling, so a near miss is refused in the wizard's
+// words exactly as `fugaro run --mode` refuses it (F8).
+//
+// hotfix is in the vocabulary and not in this answer: it is off the axis and an
+// operator's own per-run mode, so no layer sets it, and the refusal is D834's
+// sentence — the one `fugaro rigor set` gives it, not a second one saying the
+// same thing (rigorHotfixRefusal).
+func setupRigorMode(v string) (rigor.Mode, error) {
+	mode := rigor.Mode(strings.TrimSpace(v))
+	if !rigor.Known(mode) {
+		return "", errors.New("not a rigor mode: use " + rigor.ModeList())
+	}
+	if mode == rigor.Hotfix {
+		return "", errors.New(rigorHotfixRefusal)
+	}
+	return mode, nil
+}
+
+// setupRigorRefusal is --rigor on a run that is not a first run of `fugaro
+// setup`. The mode of a project that already exists is the project's own — it
+// is asked once, where the installation is created — so the flag is refused by
+// name rather than honoured as a second door to the same key, and the sentence
+// names the one command that does change a project's default.
+func setupRigorRefusal(answer string) error {
+	if answer == "" {
+		return nil
+	}
+	return userErr("--rigor is a first run's flag: this installation already has a project config, so its rigor mode is asked once, when the installation is created, and the one command that changes a project's default is `fugaro rigor set %s`; nothing was asked and nothing was written", pluginwire.Printable(answer))
+}
+
+// askRigor is the wizard's rigor question (task W of
+// docs/rigor-command/implementation-plan.md; D900): the project's default mode,
+// asked once, with no suggestion and no silent default — Enter prints "a value
+// is needed" and the question is asked again (initRun.prompt with an empty
+// suggestion), which is the state the owner's ruling of 2026-10-31 ends.
+//
+// It asks nothing where nobody can answer (canAsk: --yes, --json,
+// --non-interactive, a pipe): the flag is in the run's missing list there
+// (wizardInputs), so such a run is refused with `--rigor <mode>` rather than
+// given the recommendation in the caller's place — a scripted setup is exactly
+// where a default nobody typed would be least visible.
+//
+// Only the run that creates the installation is asked. A project config that
+// is already selected never arrives here — ask refuses --rigor with the one
+// sentence that names `fugaro rigor set`, and asks nothing — and a run that
+// creates nothing (--config-only, --print-vars) has no installation of its own
+// to hold a mode and no layer it writes.
+//
+// The answer is recorded on --rigor's own field, which is where a scripted run
+// answers the same question and where the Layer stage reads it from — this
+// phase applies nothing.
+func (s *wizardStage) askRigor() error {
+	r, o := s.r, s.r.o
+	if !o.createProject {
+		return nil
+	}
+	if o.rigor != "" {
+		// The flag answered the question, and its value is read in the
+		// question's own words: a near miss and hotfix are refused here with
+		// the sentences they are refused with when they are typed, so the flag
+		// is not a looser door to the same key.
+		mode, err := setupRigorMode(o.rigor)
+		if err != nil {
+			return userErr("--rigor %s is %v", pluginwire.Printable(o.rigor), err)
+		}
+		o.rigor = string(mode)
+		return nil
+	}
+	if !r.canAsk() {
+		return nil
+	}
+	q := questionFor("--rigor")
+	s.a.asked = append(s.a.asked, q.label)
+	fmt.Fprintln(r.w, rigorQuestionLead)
+	r.printRigorChoices()
+	v, err := r.prompt(valueSpec{what: q.what, flag: q.flag}, "", func(v string) error {
+		_, verr := setupRigorMode(v)
+		return verr
+	})
+	if err != nil {
+		return err
+	}
+	mode, err := setupRigorMode(v)
+	if err != nil {
+		// The prompt validated the same value one line above, so this cannot
+		// be reached; a mode is stored only where it read back as a mode.
+		return err
+	}
+	o.rigor = string(mode)
+	return nil
+}
+
 // bakeAnswer is the bake question's own reading of an answer: the two things it
 // has to say — yes and no, which is how the question is asked — and the
 // spellings the same switch is written in elsewhere, since --bake-repos and
@@ -541,10 +734,24 @@ func wizardStages(ctx context.Context, r *initRun) []initflow.Stage {
 // --managed, --parent and --display-name by name.
 func (r *initRun) settleCreation(firstRun bool) error {
 	o := r.o
-	if firstRun && o.door != updateDoor.name && !o.configOnly && !o.printVars && !o.forget {
+	if o.setupCreates(firstRun) {
 		o.createProject = true
 	}
 	return o.checkCreateProject()
+}
+
+// setupCreates is whether this run stands a new installation up, and therefore
+// whether it is the run the wizard's questions about a new project are asked
+// on: settleCreation's own condition, named once so the questions the phase
+// asks (wizardInputs' missing list, askRigor) and the creation the settle
+// records cannot drift apart.
+//
+// It is not --create-project: that field is what this SETTLES, and a run reads
+// it to act. A first run of `fugaro setup` creates, and so does nothing else:
+// `fugaro update` never creates, and --config-only and --print-vars write or
+// print from an installation that is already there.
+func (o *initOptions) setupCreates(firstRun bool) bool {
+	return firstRun && o.door != updateDoor.name && !o.configOnly && !o.printVars && !o.forget
 }
 
 // announceAlreadySetUp is setup's one line for a run whose installation is

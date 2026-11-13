@@ -109,6 +109,15 @@ func (r *initRun) wizardInputs(ctx context.Context) (name, fromCheckout string, 
 			flags = append(flags, appIDFlag)
 		}
 	}
+	// The rigor question is a first run's, and a run that cannot ask is refused
+	// with the flag that answers it like every other question (task W): the
+	// recommended mode is not taken for the caller, because a scripted setup is
+	// where a default nobody typed would be least visible. It is named after
+	// the flags above, which are the ones the run cannot start without, and the
+	// list comes from the table so the sentence and the row cannot drift.
+	if r.o.setupCreates(creating) && r.o.rigor == "" {
+		flags = append(flags, questionFor("--rigor").missing)
+	}
 	return name, fromCheckout, flags, true
 }
 
@@ -216,6 +225,13 @@ func (s *wizardStage) ask(ctx context.Context) error {
 		// and nothing is asked. Nothing is created either, unless the config is
 		// the one a first run wrote when it paused for billing: the rerun
 		// resumes that creation (the project stage reads the project again).
+		//
+		// --rigor is refused here rather than ignored (task W): the mode of a
+		// project that already exists is the project's own, and the one command
+		// that changes it is `fugaro rigor set`.
+		if err := setupRigorRefusal(o.rigor); err != nil {
+			return err
+		}
 		return r.settleCreation(r.selectedPending(ctx))
 	}
 	if len(s.missing) > 0 && !r.canAsk() {
@@ -307,6 +323,13 @@ func (s *wizardStage) ask(ctx context.Context) error {
 			return s.answer(err)
 		}
 		o.name = v
+	}
+	// The rigor question (task W; D900) is asked after the name, because the
+	// mode is about the project the name settles, and before the bake one: the
+	// run that asked it writes the answer in the same run (the Layer stage),
+	// and a question this phase cannot answer stops here like any other.
+	if err := s.askRigor(); err != nil {
+		return s.answer(err)
 	}
 	// The bake question (IS7, D1901) is asked after the name and before the
 	// billing one: it is about the project the answers above settled rather

@@ -20,6 +20,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/billing"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/rigor"
 )
 
 // billing_prompt_test.go pins the wizard's billing question, task W4.3 of
@@ -108,11 +109,12 @@ func pickerRun(t *testing.T, terminal bool, stdin string, o *initOptions) (*init
 
 // pickerAnswers is the stdin that answers the wizard's questions before the
 // billing one — the GCP project (there is none to suggest here, so Enter is
-// not an answer), the region (Enter), the name (Enter) and the bake switch
-// (Enter, which is the suggestion an installation that never answers it reads
-// as anyway; IS7) — with answer answering the billing question.
+// not an answer), the region (Enter), the name (Enter), the rigor mode (the
+// one question with no suggestion, so a mode is typed; task W) and the bake
+// switch (Enter, which is the suggestion an installation that never answers it
+// reads as anyway; IS7) — with answer answering the billing question.
 func pickerAnswers(answer string) string {
-	return "proj-1234\n" + "\n" + "\n" + "\n" + answer + "\n"
+	return "proj-1234\n" + "\n" + "\n" + string(rigor.Pro) + "\n" + "\n" + answer + "\n"
 }
 
 // billingListCalls is how many times the account list was asked for: the
@@ -341,7 +343,7 @@ func TestPickerNeverRunsUnderJSON(t *testing.T) {
 	// that would refuse it: the only thing between this run and the account
 	// list is the condition under test.
 	r, out := pickerRun(t, true, "", &initOptions{asJSON: true, createProject: true, name: "aurora",
-		cloud: cloudOptions{gcpProject: "proj-1234", region: defaultRegion}})
+		cloud: cloudOptions{gcpProject: "proj-1234", region: defaultRegion}, rigor: string(rigor.Pro)})
 	pickerSources(t, f)
 	if err := r.gatherInputs(t.Context()); err != nil {
 		t.Fatalf("%v\n%s", err, out)
@@ -362,7 +364,7 @@ func TestPickerNeverRunsNonInteractive(t *testing.T) {
 	f.AddAccountNamed(acct, "the operator's own account", true)
 
 	r, out := pickerRun(t, true, "", &initOptions{nonInteractive: true, createProject: true, name: "aurora",
-		cloud: cloudOptions{gcpProject: "proj-1234", region: defaultRegion}})
+		cloud: cloudOptions{gcpProject: "proj-1234", region: defaultRegion}, rigor: string(rigor.Pro)})
 	pickerSources(t, f)
 	if err := r.gatherInputs(t.Context()); err != nil {
 		t.Fatalf("%v\n%s", err, out)
@@ -415,7 +417,7 @@ func TestBillingChoiceFailsAtOnceWithoutATerminal(t *testing.T) {
 	f.AddAccountNamed(acct, "the operator's own account", true)
 
 	r, out := pickerRun(t, false, "", &initOptions{createProject: true, name: "aurora",
-		cloud: cloudOptions{gcpProject: "proj-1234", region: defaultRegion}})
+		cloud: cloudOptions{gcpProject: "proj-1234", region: defaultRegion}, rigor: string(rigor.Pro)})
 	pickerSources(t, f)
 	err := r.gatherInputs(t.Context())
 	if err == nil {
@@ -491,7 +493,7 @@ func TestPickerNeverRunsUnderYes(t *testing.T) {
 	f.AddAccountNamed(acct, "the operator's own account", true)
 
 	o := &initOptions{yes: true, createProject: true, name: "aurora",
-		cloud: cloudOptions{gcpProject: "proj-1234", region: defaultRegion}}
+		cloud: cloudOptions{gcpProject: "proj-1234", region: defaultRegion}, rigor: string(rigor.Pro)}
 	r, out := pickerRun(t, true, "", o)
 	pickerSources(t, f)
 	if err := r.gatherInputs(t.Context()); err != nil {
@@ -1253,7 +1255,7 @@ func TestEnablingIsTheRunsOwnConfirmationAndNeverUnderYes(t *testing.T) {
 		f := gcpfake.NewBilling(t)
 		pickerDisabledOnThisProject(t, f)
 		o := &initOptions{yes: true, createProject: true, name: "aurora",
-			cloud: cloudOptions{gcpProject: "proj-1234", region: defaultRegion}}
+			cloud: cloudOptions{gcpProject: "proj-1234", region: defaultRegion}, rigor: string(rigor.Pro)}
 		r, out := pickerRun(t, true, "", o)
 		ran := pickerGcloudRunner(t, f)
 		if err := r.gatherInputs(t.Context()); err != nil {
