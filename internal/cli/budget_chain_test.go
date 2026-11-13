@@ -72,8 +72,10 @@ func TestChainRaiseRewritesTheRootTask(t *testing.T) {
 		t.Fatalf("budget chain raise: %v", err)
 	}
 	// The command says what it moved and where the limit is kept: the run the
-	// caller named, and the run that began the chain.
-	for _, want := range []string{showRoot, showTip, "4 dollars -> 6 dollars", "45m0s -> 1h30m0s"} {
+	// caller named, and the run that began the chain, each named by its ending
+	// (spec.md §1) — a person reads runs that way, and `runs show` is where
+	// the whole ID comes from.
+	for _, want := range []string{task.ShortRun(showRoot), task.ShortRun(showTip), "4 dollars -> 6 dollars", "45m0s -> 1h30m0s"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the raise's output does not name %q: %s", want, out)
 		}

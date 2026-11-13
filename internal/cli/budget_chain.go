@@ -108,6 +108,14 @@ func newBudgetChainRaiseCmd() *cobra.Command {
 
 func runChainRaise(cmd *cobra.Command, o *chainRaiseOptions, ref string) error {
 	ctx := cmd.Context()
+	// This run's account and its log (D1352), under the name a person typed:
+	// the raise is a write, and a write says what it did in one step rather
+	// than in lines only the terminal ever sees.
+	rep, sink := reporterFor(cmd, "budget-chain-raise", nil)
+	if sink != nil {
+		defer func() { _ = sink.Close() }()
+	}
+	defer rep.Summary()
 	// The caller's own words first, before any read: a mistyped figure or a
 	// missing reason costs no bucket access and leaves nothing behind.
 	figures, err := chainRaiseFigures(cmd, o)
@@ -186,14 +194,19 @@ func runChainRaise(cmd *cobra.Command, o *chainRaiseOptions, ref string) error {
 		return remote(fmt.Errorf("the raise is recorded in runs/%s/%s/result.json, but rewriting runs/%s/%s/task.json failed: %w", slug, root, slug, root, err))
 	}
 
-	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "raised the chain of run %s, begun by %s\n", s.Slug()+"/"+s.RunID(), root)
+	// The step is the write, and the lines under it are what it wrote: the
+	// figures in the dimension's own words, the reason the record keeps, and
+	// the command that reads both back (runs show's details view, which is
+	// where a person copies a whole run ID from, D1705).
+	tip := task.ShortRun(s.RunID())
+	rep.Step("chain").Done(fmt.Sprintf("raised the chain of run %s, begun by %s", tip, task.ShortRun(root)))
+	out := sayThrough(rep, cmd.OutOrStdout())
 	for _, l := range raised {
 		fmt.Fprintf(out, "  %s: %s -> %s\n", chainDimensionWord(l.Dimension), chainAmountText(l.Dimension, l.From), chainAmountText(l.Dimension, l.To))
 	}
 	fmt.Fprintf(out, "reason: %s\n", reason)
-	fmt.Fprintf(out, "the next launch that continues this chain carries what is left of it; runs/%s/%s/task.json holds the new figures, and the raise is recorded in runs/%s/%s/result.json\n",
-		slug, root, slug, root)
+	fmt.Fprintf(out, "the next launch that continues this chain carries what is left of it; `fugaro runs show %s --repo %s` reads the new figures and the record the raise is in\n",
+		tip, slug)
 	return nil
 }
 
