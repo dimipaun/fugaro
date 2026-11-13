@@ -10,20 +10,23 @@ package keyservice
 //
 // What proves the person is a Firebase ID token of the **owner's own licence
 // project** — never a customer's workspace project, whose token would prove only
-// that somebody controls it (F14, D2144, TN3) — verified by
-// `ee/coordinator/mcpauth`'s verifier rather than by a second implementation of
-// the same rules. That verifier pins the audience to the project's bare id, the
-// issuer to the same project, and `email_verified` to true, and the last of the
-// three is not a detail here: it is the whole **purchaser binding**. A key is
-// handed to the account whose verified address the licence was bought with, so a
-// token asserting an address its holder never proved must not reach a key, and
-// the verifier refuses it before this file reads a claim.
+// that somebody controls it (F14, D2144, TN3) — verified by the deployment's one
+// sign-in verifier (`Deps.SignIn`, the portal's own seam) rather than by a
+// second implementation of the same rules here. That verifier pins the audience
+// to the project's bare id, the issuer to the same project, and
+// `email_verified` to true, and the last of the three is not a detail here: it
+// is the whole **purchaser binding**. A key is handed to the account whose
+// verified address the licence was bought with, so a token asserting an address
+// its holder never proved must not reach a key, and the verifier refuses it
+// before this file reads a claim.
 //
-// The site's pages are K5.1's and the server is this one: every form here
-// carries no script and submits only to itself, so the deployment's CSP keeps
-// `form-action 'self'` and the ID token travels in a POST body rather than in a
-// URL — the rule D923 states for the coordinator's own authorize endpoint, read
-// the same way.
+// Every form here carries no script and submits only to itself, so the
+// deployment's CSP keeps `form-action 'self'` and the ID token travels in a POST
+// body rather than in a URL — the rule D923 states for the coordinator's own
+// authorize endpoint, read the same way. The pages these routes render are this
+// file's: the plan's amendment of 2026-11-13 gives the SPA its own sign-in
+// screens (P3.5, `ee/portal/src/screens/cli/*`), and until those land the CLI's
+// two browser steps are served from here.
 //
 // The codes are **this process's**. An authorize code lives five minutes and a
 // device code ten, and what holds them is a map on the service rather than the
@@ -52,8 +55,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/dimipaun/fugaro/ee/coordinator/mcpauth"
 )
 
 // The routes. The first four are the CLI's and carry what a program carries; the
@@ -170,19 +171,6 @@ func refuseSignInToken(w http.ResponseWriter) {
 func refuseDevicePoll(w http.ResponseWriter) {
 	http.Error(w, refuseDevice, http.StatusForbidden)
 }
-
-// SignIn verifies the site's sign-in and answers the account it attests.
-//
-// It is `mcpauth.Verifier` — the coordinator's verifier, whose rules are the
-// licence project's too (D2144, TN3) — and the assertion below is what keeps
-// that true: a deployment passes one in through Deps, and a change to the
-// verifier's signature is a compile error here rather than a route that quietly
-// trusts nothing.
-type SignIn interface {
-	VerifyIDToken(ctx context.Context, raw string) (mcpauth.Identity, error)
-}
-
-var _ SignIn = (*mcpauth.Verifier)(nil)
 
 // authorizeCode is one authorize request between its sign-in and its exchange:
 // the subscription the account's key is minted for, the PKCE challenge the
@@ -515,12 +503,12 @@ func (s *Service) authorizeSubmit(w http.ResponseWriter, r *http.Request) {
 		refuseSignInToken(w)
 		return
 	}
-	identity, ok := s.verifyIDToken(r.Context(), form.Get("id_token"))
+	caller, ok := s.verifySignIn(r.Context(), form.Get("id_token"))
 	if !ok {
 		refuseSignInToken(w)
 		return
 	}
-	sub, held, err := s.accountLicence(r.Context(), identity.Email)
+	sub, held, err := s.accountLicence(r.Context(), caller.Email)
 	if err != nil {
 		fail(w, err)
 		return
@@ -537,7 +525,7 @@ func (s *Service) authorizeSubmit(w http.ResponseWriter, r *http.Request) {
 	now := s.now()
 	s.codes.keep(code, authorizeCode{
 		subscription: sub.ID,
-		account:      identity.Email,
+		account:      caller.Email,
 		challenge:    challenge,
 		expires:      now.Add(authorizeCodeTTL),
 	}, now)
@@ -734,7 +722,7 @@ func (s *Service) deviceApprove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	form := r.PostForm
-	identity, ok := s.verifyIDToken(r.Context(), form.Get("id_token"))
+	caller, ok := s.verifySignIn(r.Context(), form.Get("id_token"))
 	if !ok {
 		refuseSignInToken(w)
 		return
@@ -744,7 +732,7 @@ func (s *Service) deviceApprove(w http.ResponseWriter, r *http.Request) {
 		refuseDevicePoll(w)
 		return
 	}
-	sub, held, err := s.accountLicence(r.Context(), identity.Email)
+	sub, held, err := s.accountLicence(r.Context(), caller.Email)
 	if err != nil {
 		fail(w, err)
 		return
@@ -774,7 +762,7 @@ func (s *Service) deviceApprove(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	approved, found := s.codes.approve(userCode, sub.ID, identity.Email, s.now())
+	approved, found := s.codes.approve(userCode, sub.ID, caller.Email, s.now())
 	if !found {
 		refuseDevicePoll(w)
 		return
@@ -785,27 +773,33 @@ func (s *Service) deviceApprove(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// verifyIDToken verifies the ID token a form carried and answers the account it
+// verifySignIn verifies the ID token a form carried and answers the caller it
 // attests, or false for every reason it was refused.
+//
+// The seam is the portal's own (`Deps.SignIn`, P1.0, P1.3), and the rules the
+// purchaser binding rests on — the audience, the issuer, the signature and
+// `email_verified` — are the ones its contract states it checked before it
+// answers a caller (api.go): both this flow and the SPA's are answered by one
+// verifier, because two would be two answers about whose account a token names.
 //
 // A deployment holding no verifier is a deployment that can hand nobody a key,
 // and it is refused here rather than at the door: the routes' answer is the
 // sign-in's own uniform sentence, which is what an unconfigured service has to
 // say to a person either way.
-func (s *Service) verifyIDToken(ctx context.Context, raw string) (mcpauth.Identity, bool) {
+func (s *Service) verifySignIn(ctx context.Context, raw string) (Caller, bool) {
 	if s.signIn == nil {
-		return mcpauth.Identity{}, false
+		return Caller{}, false
 	}
-	identity, err := s.signIn.VerifyIDToken(ctx, raw)
+	caller, err := s.signIn.Verify(ctx, raw)
 	if err != nil {
 		// What is logged is the verifier's own sentence and never the token: it
 		// names the rule that refused (the audience, the issuer, the email, the
-		// window) and no value out of the token, which is the rule mcpauth's own
-		// refusals keep.
+		// window) and no value out of the token, which is the rule the verifier's
+		// own refusals keep.
 		log.Printf("keyservice: the site's sign-in refused an ID token: %v", err)
-		return mcpauth.Identity{}, false
+		return Caller{}, false
 	}
-	return identity, true
+	return caller, true
 }
 
 // accountLicence is the purchaser binding: the subscription a signed-in
@@ -1192,7 +1186,7 @@ func untrustedName(name string) (string, bool) {
 }
 
 // sameAddress answers whether two addresses are the same one, folded to lower
-// case as ASCII for the reason mcpauth's own fold is ASCII-only: a Unicode fold
+// case as ASCII for the reason the verifier's own fold is ASCII-only: a Unicode fold
 // would match a spelling the sign-in never proved. Both sides are printable
 // ASCII already — the forms' and the merchant's grammar on one side, the
 // verifier's own fold on the other — so this fold is exact rather than

@@ -47,7 +47,10 @@ const (
 	RouteOpenSource = "/open-source"
 	RouteRequest    = "/request"
 	RouteVerify     = "/verify"
-	RouteWebhook    = "/webhook"
+	// The merchant's events are the portal's API door and not the site's: F16
+	// moves the route under the subtree Hosting rewrites here (api.go), and the
+	// merchant's own webhook is configured at that address (P0.2).
+	RouteWebhook = "/api/paddle/webhook"
 	// The renewal and the status routes are the site's forms' siblings and not
 	// the site's own (§7, §8): the customer's project is what asks them, and
 	// what they carry is a key's secret rather than an applicant's address.
@@ -58,6 +61,13 @@ const (
 	// hand back is a key, and the routes themselves are named in signin.go
 	// beside the rules that answer them.
 )
+
+func init() {
+	// The merchant's event route is the intake's own API door, registered here
+	// from the table every area registers into: an area adds its own routes from
+	// its own file's init, so no later task edits this one (api.go).
+	registerAPI(http.MethodPost, RouteWebhook, (*Service).webhook, withBody(maxEventBytes))
+}
 
 // The bounds on what a stranger may hand the service. Each is a body a form or a
 // merchant event is expected to fit in by orders of magnitude, and the point of
@@ -138,6 +148,29 @@ type Config struct {
 	// They are here rather than in Paid because a merchant event's plan is the
 	// event's and this one is an Order Form's.
 	PagePlans []Plan
+	// PaddleAPIKey is the merchant of record's own key (P4.1). It is the
+	// deploy's secret and it stays here: a transaction the browser could create
+	// is one whose custom_data is the buyer's to forge (F15).
+	PaddleAPIKey []byte
+	// ResendKey is the mail provider's key (P0.2), which is what the API's own
+	// mail path sends with (P2.2).
+	ResendKey []byte
+	// SentryDSN is where the API reports what failed (P1.6). Empty is off, and
+	// off is a deployment that reports nowhere rather than one that reports to
+	// whatever a body names.
+	SentryDSN string
+	// SchedulerAudience is the audience Cloud Scheduler's tokens carry (F33):
+	// the API checks the account and this, so a token minted for another
+	// service is refused even when an allowed account signed it.
+	SchedulerAudience string
+	// SealerKeyName is the KMS key the handover is sealed under (F3, P1.7).
+	SealerKeyName string
+	// TenantsCollection is the document collection the organisations' lists are
+	// kept in: the invitation domains the operations organisation allows and the
+	// Microsoft tenants a reseller pins (D2207, plan P5.1). It is configuration
+	// because the deploy names its own collections, and the lists themselves are
+	// data an operations owner sets.
+	TenantsCollection string
 }
 
 // Deps is everything the intake reaches. There is no signer here and there is
@@ -173,14 +206,25 @@ type Deps struct {
 	// the process's own log, which is the project's log sink as far as this
 	// package can express one (§6).
 	Auditor Auditor
-	// SignIn may be nil: it is §11's verifier of the licence project's own ID
-	// tokens (D2144, TN3), and a deployment wired without one refuses every
-	// caller of the two sign-in flows rather than handing a key to a token
-	// nothing checked. A deployment that serves them passes the coordinator's
-	// verifier, whose rules are the licence project's too — the seam is here so
-	// that the routes are driven in a test without the project's public keys.
-	SignIn SignIn
-	Now    func() time.Time
+	// The seams the portal's API reaches (P1.0). Each may be nil: a deployment
+	// that mounts no route reaching one has no business holding it, and New
+	// refuses a missing seam only when a mounted route declares it (api.go).
+	Docs Docs
+	// SignIn is **one** verifier of the licence project's own ID tokens: the
+	// portal's API reaches it (P1.0, P1.3) and so do §11.3's and §11.4's sign-in
+	// flows (signin.go, D2144, TN3). The two share the seam rather than holding
+	// one each, because a deployment that verified a token one way for the SPA
+	// and another for the CLI would be two answers about whose account it is.
+	//
+	// The two read a nil differently on purpose: the API refuses the start when
+	// a mounted route declares it (api.go), and the sign-in flows refuse every
+	// caller of theirs, at the request, with the sign-in's own uniform sentence
+	// rather than a key nothing checked.
+	SignIn    SignIn
+	Paddle    Paddle
+	Scheduler Scheduler
+	Sealer    Sealer
+	Now       func() time.Time
 }
 
 // Service is the intake.
@@ -332,6 +376,9 @@ func New(cfg Config, deps Deps) (*Service, error) {
 	case deps.Notifier == nil:
 		return nil, errors.New("the intake has no notifier, so a queued request would wait for an owner who is never told")
 	}
+	if err := apiRoutes.missing(deps); err != nil {
+		return nil, err
+	}
 	now := deps.Now
 	if now == nil {
 		now = time.Now
@@ -373,14 +420,14 @@ func New(cfg Config, deps Deps) (*Service, error) {
 // Handler serves the intake. The methods are part of its routes: the three
 // forms are POSTs because an application carries an address, and the
 // verification link is a GET because it is a link in a mail. The page below is
-// the one surface whose routes carry none.
+// the one surface whose routes carry none, and the portal's own routes are the
+// API's table's (api.go) rather than lines here.
 func (s *Service) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST "+RouteFreeSeat, s.freeSeatForm)
 	mux.HandleFunc("POST "+RouteOpenSource, s.openSourceForm)
 	mux.HandleFunc("POST "+RouteRequest, s.requestForm)
 	mux.HandleFunc("GET "+RouteVerify, s.verifyLink)
-	mux.HandleFunc("POST "+RouteWebhook, s.webhook)
 	// §7's renewal and §8's status: POSTs, because what they carry is a key's
 	// secret and a secret never belongs in a URL.
 	mux.HandleFunc("POST "+RouteRenew, s.renew)
@@ -403,6 +450,10 @@ func (s *Service) Handler() http.Handler {
 	mux.HandleFunc("POST "+RouteDevicePoll, s.devicePoll)
 	mux.HandleFunc("GET "+RouteDeviceApprove, s.deviceApprove)
 	mux.HandleFunc("POST "+RouteDeviceApprove, s.deviceApprove)
+	// Every door of the portal's API, from the table the areas register into.
+	// The two sets do not overlap: the API's are all under the subtree Hosting
+	// rewrites to this service (api.go's apiPrefix) and these are the CLI's own.
+	apiRoutes.mount(mux, s)
 	return mux
 }
 

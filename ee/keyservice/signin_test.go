@@ -145,6 +145,23 @@ func (f *fixture) tokenWith(t *testing.T, claim string, value any) string {
 	return signIDToken(t, signInKey(), licenceKeyID, "RS256", claims)
 }
 
+// licenceSignIn is the coordinator's verifier behind the portal's seam
+// (`Deps.SignIn`, api.go): the flows call the one verifier the SPA's API also
+// reaches, and what answers them in these tests is the code that really pins the
+// audience, the issuer and `email_verified` rather than a stub that agrees with
+// the routes. P1.3's `portalauth.go` is the production half of this pairing, and
+// it carries the provider and the tenant the portal's `Caller` adds; these flows
+// read the address and nothing else, which is what the purchaser binding is.
+type licenceSignIn struct{ *mcpauth.Verifier }
+
+func (v licenceSignIn) Verify(ctx context.Context, idToken string) (Caller, error) {
+	identity, err := v.Verifier.VerifyIDToken(ctx, idToken)
+	if err != nil {
+		return Caller{}, err
+	}
+	return Caller{UID: identity.UID, Email: identity.Email}, nil
+}
+
 // signingIn is the fixture with the two doors these routes need wired: the
 // licence project's own verifier behind Deps.SignIn, and a v1 minter behind
 // Deps.MintsV1 — the same minter the fixture signs with, so a key a test reads
@@ -178,7 +195,7 @@ func signingInWith(t *testing.T, edit func(*fixture)) (*fixture, *v1Spy) {
 		if err != nil {
 			t.Fatalf("building the licence project's verifier: %v", err)
 		}
-		f.deps.SignIn = verifier
+		f.deps.SignIn = licenceSignIn{verifier}
 		edit(f)
 	})
 	return f, spy
