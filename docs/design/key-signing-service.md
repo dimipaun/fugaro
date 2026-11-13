@@ -270,9 +270,9 @@ the five variables they alone use (`network`, `subnetwork`, `subnet_cidr`, `rout
 them. That is the whole saving: no fixed charge, and Paddle and Resend return to Cloud Run's ordinary
 egress, which the API already pays for. `TestMinterIngressIsInternal` is the pin that moves — its
 internal-ingress, `vpc_access`, subnet and NAT assertions are what this deletes — and the fence left
-standing is `TestTheMinterHasNoPublicInvoker` and `TestOnlyTheAPIInvokesTheMinter`, which live in a
-`//go:build terraform` file **no CI job runs** (this document's status line): the one lock left is a
-hand-run test until the staged workflow change lands.
+standing is `TestTheMinterHasNoPublicInvoker` and `TestOnlyTheAPIInvokesTheMinter`, in the
+`//go:build terraform` file this document's status line covers: the one lock left is a test, and
+what a test is worth is that line's answer rather than this note's.
 
 **The security difference.** Internal ingress refuses an outside caller at the network layer, before
 IAM and before any container. All ingress lets the request reach the platform's front end, which
@@ -281,9 +281,9 @@ is read and nothing is signed, so an outsider's happy case gains a 403 and the s
 What matters is the other fence failing: internal ingress is a second lock, so a later
 `invoker_iam_disabled = true` or a stray `allUsers` binding still leaves an outsider outside, while
 under all ingress that same mistake is the signer open to the internet. **Logs:** each refusal is
-recorded (a caller refused at the edge is not a request on an internal-only service at all), so
-probes are visible and a flood of them bills as log ingestion. **DoS:** a request refused before an
-instance exists costs no vCPU or memory, so the minter stays at zero and a flood spends no budget.
+recorded, so probes are visible and a flood of them bills as log ingestion. **DoS:** a request
+refused before an instance exists costs no vCPU or memory, so the minter stays at zero and a flood
+spends no compute budget; what it consumes is the project's log ingestion.
 
 **(c) Split the egress.** Cloud Run's Direct VPC egress has two modes per revision — all traffic, or
 the private ranges — and no per-destination or host-based routing (a Serverless VPC Access connector
