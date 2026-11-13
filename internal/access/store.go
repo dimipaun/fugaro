@@ -40,8 +40,8 @@ import (
 // which is why the roster is not a secret from the project's own members.
 const PathNode = "config/admin/access"
 
-// PathMigrated is the marker every write of the node leaves beside it: the one
-// thing that tells an installation whose roles ARE the node's from one whose
+// PathMigrated is the marker the write that leaves no node leaves beside it: the
+// one thing that tells an installation whose roles ARE the node's from one whose
 // lists have not been migrated into it at all.
 //
 // The two are one state otherwise. A Realtime Database list is an object with
@@ -50,9 +50,12 @@ const PathNode = "config/admin/access"
 // and Read answers Found=false for both. A reader that must not confuse them —
 // RS6c's gate, which leaves an unmigrated installation's commands as they were
 // and judges a migrated one's empty roster as nobody — asks Migrated. The marker
-// is written BEFORE the node (WriteIfMatch), so a write that empties the node
-// leaves it standing: revoking the last grant is a roster of nobody, and never
-// an installation nobody has migrated.
+// is written BEFORE the node, and only for the write that empties it
+// (WriteIfMatch): a write that lands grants is its own record that the
+// installation has migrated, so revoking the last grant is a roster of nobody
+// and never an installation nobody has migrated, while a write whose node then
+// fails leaves the installation reading as one nobody has migrated rather than
+// frozen as a roster of nobody.
 //
 // It sits under the same fence the node does (PathNode): written over IAM,
 // unreadable to a client token, and read by the CLI the way the node is.
@@ -377,9 +380,11 @@ func (s Scope) String() string {
 // object and is pruned, and no node is left to find (WriteIfMatch). Neither is
 // "everyone": the zero Node grants nobody anything beyond the implicit admins
 // the caller supplies, so a caller that read nothing admits nobody. The two are
-// told apart by PathMigrated, which every write of the node leaves behind: an
-// absent node with the marker is a roster of no grants, and one without it is an
-// installation whose lists the node has never held.
+// told apart by PathMigrated, which the write that leaves no node leaves behind:
+// an absent node with the marker is a roster of no grants, and one without it is
+// an installation whose lists the node has never held — or one whose node was
+// deleted by hand, which the next update migrates again rather than reading as a
+// roster of nobody.
 type Node struct {
 	// Grants are the stored role and scope pairs, in the node's order.
 	Grants []Grant
@@ -436,10 +441,13 @@ func Migrated(ctx context.Context, db *rtdb.Client) (bool, error) {
 	return found && marked, nil
 }
 
-// MarkMigrated writes the marker, and is called by WriteIfMatch before the node
-// itself: a write that lands the empty list — the last grant's revocation —
-// leaves no node to read the installation's state from, so the marker is the
-// whole of what says the installation has migrated.
+// MarkMigrated writes the marker, and is called by WriteIfMatch for the one
+// write that leaves no node to read the installation's state from: a write that
+// lands the empty list — the last grant's revocation — is pruned whole, so the
+// marker is the whole of what says the installation has migrated. A write that
+// lands grants calls neither this nor anything else of its own: the node it
+// writes is that record, and a marker standing before a node write that then
+// failed would read as an installation whose roster is nobody.
 //
 // An installation already marked is not written again. Two writers racing to
 // mark one installation are both right, so the loser's rtdb.ErrPrecondition is
@@ -474,10 +482,10 @@ func MarkMigrated(ctx context.Context, db *rtdb.Client) error {
 // implicit admins. That is what the plan means by an absent node being the
 // migrated lists' meaning and never "everyone".
 //
-// A node that was never written reads the same way, and the marker this leaves
-// beside it (MarkMigrated) is what tells the two apart for a reader that must:
-// Found=false with the marker is a roster of no grants, and Found=false without
-// it is an installation whose lists the node has never held.
+// A node that was never written reads the same way, and the marker the empty
+// write leaves beside it (MarkMigrated) is what tells the two apart for a reader
+// that must: Found=false with the marker is a roster of no grants, and
+// Found=false without it is an installation whose lists the node has never held.
 //
 // It refuses a document its own reader would refuse (Encode) and lets
 // rtdb.PutIfMatch refuse an empty ETag, which is no precondition at all.
@@ -486,12 +494,18 @@ func WriteIfMatch(ctx context.Context, db *rtdb.Client, grants []Grant, etag str
 	if err != nil {
 		return err
 	}
-	// The marker first and never after: the write that empties the node leaves
-	// nothing to read the installation's state from, and a marker written
-	// afterwards would be the one step that can fail between the two — leaving
-	// the roster of nobody reading as a database nobody has migrated.
-	if err := MarkMigrated(ctx, db); err != nil {
-		return err
+	// The marker only for the write that lands no node, and first and never
+	// after: an emptied list is pruned, so the marker is the whole of what tells
+	// the installation's state from a database that never migrated — and written
+	// afterwards it would be the one step that can fail between the two, leaving
+	// the roster of nobody reading as a database nobody has migrated. A write
+	// that lands grants is the record itself and marks nothing: if its node write
+	// then fails, an installation that has never migrated must read as one,
+	// rather than as an installation frozen at a roster of nobody.
+	if len(grants) == 0 {
+		if err := MarkMigrated(ctx, db); err != nil {
+			return err
+		}
 	}
 	doc := json.RawMessage(raw)
 	if err := db.PutIfMatch(ctx, PathNode, etag, doc); err != nil {

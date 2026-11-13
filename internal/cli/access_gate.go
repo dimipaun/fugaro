@@ -29,9 +29,9 @@ import (
 //
 // An installation that HAS migrated is judged by its roster whatever that roster
 // holds, and an emptied one is judged by the empty roster: the node and the
-// marker the migration leaves beside it (access.PathMigrated) are what tell the
-// two apart, because an absent node is what a project nobody has migrated and a
-// project whose last grant was revoked look like in the database. What is NOT
+// marker the write that empties it leaves beside it (access.PathMigrated) are
+// what tell the two apart, because an absent node is what a project nobody has
+// migrated and a project whose last grant was revoked look like in the database. What is NOT
 // the rule is "everyone holds everything": wherever an installation has a roster
 // every check below is made, and a roster that cannot be READ is a refusal
 // rather than an empty one — failing open there would hand the strongest roles

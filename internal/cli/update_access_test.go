@@ -450,6 +450,42 @@ func TestAMigrationThatCannotRecordItselfIsNotAFailure(t *testing.T) {
 	}
 }
 
+// TestUpdateDoesNotRebuildARevokedRoster: an installation whose last grant was
+// revoked holds a node that is absent, which is the state one whose lists have
+// never been migrated is in — and only the marker tells them apart
+// (access.PathMigrated). The installation's own outputs cannot tell them apart
+// either: a revocation takes the grant out of the node and writes no IAM, so the
+// revoked member is still in the lists a migration would read, and a converge
+// that took the absent node for an installation nobody has migrated would write
+// them back — its operator's revocation undone, quietly, by the one command of
+// the HARD RULE. The roles step reads the marker before it migrates (syncAccess),
+// so the node stays as absent as it was found and the derive applies the empty
+// roster the revocation made.
+func TestUpdateDoesNotRebuildARevokedRoster(t *testing.T) {
+	noAgentSession(t)
+	operators := []string{"user:ops@example.com"}
+	admins := []string{"user:root@example.com"}
+	_, db := accessRig(t, operators, admins, operators, admins)
+	db.Set(accesslib.PathMigrated, true)
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	all := accessOut(out, errOut, err)
+	if err != nil {
+		t.Fatalf("converging an installation whose last grant was revoked failed: %v\n%s", err, all)
+	}
+	if v := db.Value(accesslib.PathNode); v != nil {
+		t.Errorf("the update wrote %v at the grants node: the members the outputs still hold are back, and the revocation they were taken out by is undone:\n%s", v, all)
+	}
+	if got := accessGrants(t, db); len(got) != 0 {
+		t.Errorf("the grants node holds %v, want nobody: the installation's roster is the empty one the revocation left:\n%s", got, all)
+	}
+	if strings.Contains(all, "migrated the installation's member lists into the grants node") {
+		t.Errorf("the run says it migrated the lists into the node although the marker says the installation's roles have already moved there:\n%s", all)
+	}
+	if !strings.Contains(all, "which the installation's grants node does not") {
+		t.Errorf("the run does not say the members its own list holds are not the node's, so a revocation the node records is applied without a word:\n%s", all)
+	}
+}
+
 // accessMarked is the migration marker as the fake database holds it: whether
 // this installation reads as one whose roles have moved out of the member lists.
 func accessMarked(t *testing.T, db *gcpfake.RTDB) bool {
