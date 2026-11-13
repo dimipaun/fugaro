@@ -63,12 +63,19 @@ const (
 var portalDecisionRowRE = regexp.MustCompile(`^\| (D[0-9]{4}) \|`)
 
 // portalTaskHeadingRE matches the plan's task heading, `- **P1.0 The API …**`.
+// The bullet and not a section is the unit, because that is where the plan
+// writes a task's own Depends-on line.
 var portalTaskHeadingRE = regexp.MustCompile(`(?m)^- \*\*(P[0-9]\.[0-9]+)\b`)
 
-// portalTaskTokenRE finds a plan task token in prose ("P3.6", "P9.1").
+// portalTaskTokenRE finds a plan task token ("P3.6", "P9.1") wherever a task is
+// named by one: the level table's cells and the Depends-on lines both spell
+// them this way, and it is the same spelling on both sides that lets one be
+// read against the other.
 var portalTaskTokenRE = regexp.MustCompile(`\bP[0-9]\.[0-9]+\b`)
 
 // portalLevelRowRE matches a row of the plan's level table, `| 3 | P1.7, P3.3 |`.
+// The plan's other tables open a row with a number too (the checks table's
+// `| 570 |`), which is why each is read inside the table its header bounds.
 var portalLevelRowRE = regexp.MustCompile(`^\| ([0-9]+) \| (.+) \|$`)
 
 // portalCheckRowRE matches a row of the plan's checks table, `| 570 | … |`.
@@ -101,7 +108,7 @@ func portalTable(t *testing.T, path, doc, header string) []string {
 
 // portalDecision is one row of the reconciliation's decisions table.
 type portalDecision struct {
-	number  string   // "D2180"
+	number  string
 	columns []string // the five cells, trimmed, in the table's order
 }
 
