@@ -233,6 +233,11 @@ import {
   LAUNCH_TITLE_CLASS,
 } from '../../src/renderer/screens/launch'
 import {
+  MOVE_TARGET_UNCHOSEN,
+  MOVE_TARGET_UNCHOSEN_LABEL,
+  MOVE_UNASSIGNED_WORD,
+} from '../../src/renderer/graph/move'
+import {
   FakeDocument,
   FakeNode,
   aReducedCompatibility,
@@ -2381,9 +2386,10 @@ function railBridge(
   rows: readonly Record<string, unknown>[],
   answers: Readonly<Record<string, AReply>> = {},
   onboard?: Readonly<Record<string, unknown>>,
+  reads: Readonly<Record<string, AReply>> = {},
 ): FakeBridge & { readonly rail: readonly { readonly name: string; readonly args: unknown }[] } {
   const frame = syntheticDocuments()[0] as Readonly<Record<string, unknown>>
-  const base = fakeBridge({ replies: { subscribeLive: () => snapshotReply(frame, nowStamp()) } })
+  const base = fakeBridge({ replies: { subscribeLive: () => snapshotReply(frame, nowStamp()), ...reads } })
   const rail: { name: string; args: unknown }[] = []
   for (const name of [
     'listInstallations',
@@ -8263,5 +8269,447 @@ describe('the Graph’s scope', () => {
     expect(calls.filter((call) => call.name === 'graphRead')).toEqual([])
     expect(scopeChosen(document)).toBe(GRAPH_SCOPE_PLAN)
     expect(classed(panelOf(document), 'graph-node').length).toBeGreaterThan(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The move's renderer half (GV3.2, design section 5.1 rule 14).
+//
+// `graph-move.test.ts` holds the flow and the sheet, `ipc.test.ts` and
+// `spawn.test.ts` hold the fence's main-process half. **What is driven here is
+// the wiring between them**, which nothing else can reach: the drag on a record
+// task's row and the drop on a release box, the row's own "Move…" button, the
+// select of boxes, the three buttons, Escape, the re-read a move the record
+// applied is followed by, and the flow dropped when the operator switches
+// installation. A regression here is a version of the screen that draws a
+// confirmation and sends something else -- or nothing at all, which is what a
+// `<select>` drawn on its first box sent before the placeholder was added.
+// ---------------------------------------------------------------------------
+
+const MOVE_NODE = 'coordinator:gv/GV3.2'
+const MOVE_TASK = 'GV/GV3.2'
+const MOVE_LOOSE_NODE = 'coordinator:gv/GV4.9'
+const MOVE_LOOSE_TASK = 'GV/GV4.9'
+const MOVE_BOX = 'a'.repeat(64)
+const MOVE_OTHER = 'b'.repeat(64)
+
+/** moveGraphDocument is one `graph --json` document with the record's own members
+ * (GV4.1): two boxes of one stream, one task placed in the first and one in no
+ * box at all -- which is what draws the lane's unassigned group, the second drop
+ * target -- decoded by the console's own decoder, since a case here drives the
+ * document a real read answers with. */
+function moveGraphDocument(): Record<string, unknown> {
+  return {
+    version: GRAPH_DOCUMENT_VERSION,
+    stream_id: '',
+    seq: 0,
+    generated_at: '2026-11-12T10:30:00Z',
+    sources: [{ source: 'coordinator', state: 'up', as_of: null, reason: '' }],
+    releases: [
+      { key: MOVE_BOX, stream: 'gv', id: 'rel-1', name: '0.12.0', state: 'open', order: 1 },
+      { key: MOVE_OTHER, stream: 'gv', id: 'rel-2', name: '0.13.0', state: 'planned', order: 2 },
+    ],
+    nodes: [
+      {
+        key: MOVE_NODE,
+        source: 'coordinator',
+        kind: 'task',
+        id: MOVE_TASK,
+        title: 'drag, preview, confirm, undo',
+        repo: '',
+        state: 'ready',
+        release: MOVE_BOX,
+        updated: null,
+        plan: 'GV/GV.md',
+        stream: 'gv',
+      },
+      {
+        key: MOVE_LOOSE_NODE,
+        source: 'coordinator',
+        kind: 'task',
+        id: MOVE_LOOSE_TASK,
+        title: 'the open edges',
+        repo: '',
+        state: 'ready',
+        release: '',
+        updated: null,
+        plan: 'GV/GV.md',
+        stream: 'gv',
+      },
+    ],
+    edges: [],
+    warnings: [],
+  }
+}
+
+/** moveAnswer is one `roadmap.move` answer as the source writes one: the argv
+ * main built out of the document, the task and the two sides. The words are the
+ * main process's own, which is why this case may spell them here. */
+function moveAnswer(
+  options: { readonly to?: string; readonly status?: string | null } = {},
+): Record<string, unknown> {
+  const to = options.to ?? MOVE_OTHER
+  return {
+    argv: [
+      '/opt/fugaro/bin/fugaro',
+      'coordinator',
+      'roadmap',
+      'move',
+      '--json',
+      MOVE_TASK,
+      '--to',
+      to,
+      '--expect',
+      MOVE_BOX,
+      '--project',
+      'acme',
+    ],
+    task: { key: MOVE_NODE, id: MOVE_TASK, title: 'drag, preview, confirm, undo' },
+    from: { key: MOVE_BOX, name: '0.12.0' },
+    to: to === '' ? null : { key: to, name: '0.13.0' },
+    refusal: null,
+    outcome:
+      options.status === null || options.status === undefined
+        ? null
+        : { status: options.status, request: 'req-1', reason: null, current: null },
+    sentence: null,
+  }
+}
+
+/** moveBridge is the fake bridge the move's cases are driven with: the Graph
+ * opened on the coordinator scope -- the plan read refuses for want of a
+ * checkout, which is H9's own fallback and the same door the scope cases above
+ * use -- with the record's document answered for that scope, and
+ * `moveRoadmapTask` recorded in the order it was called. `replies` is what the
+ * write answers, one per call; a call past the list is a refusal naming the
+ * case, so a case that sent one call too many fails on the call it did not
+ * expect rather than on an assertion about `sent`. */
+function moveBridge(
+  replies: readonly Record<string, unknown>[],
+  rows?: readonly Record<string, unknown>[],
+): FakeBridge & { readonly sent: readonly Readonly<Record<string, unknown>>[] } {
+  vi.stubGlobal('Worker', FakeWorker)
+  // The three reads go in through the bridge's own `replies`, so each of them
+  // stays the recorded call `fakeBridge` wrapped it in: `calls` is what says a
+  // move that applied was followed by a re-read, and a case that installed its
+  // own functions over the top would be reading a list nothing writes to.
+  const reads: Readonly<Record<string, AReply>> = {
+    planStatus: () => ({ ok: false, reason: NO_PLAN_CHECKOUT }),
+    graphRead: () => graphReply(moveGraphDocument()),
+    graphWatch: () => graphReply(moveGraphDocument()),
+  }
+  const base =
+    rows === undefined
+      ? graphBridge(reads)
+      : railBridge(
+          [...rows],
+          {
+            chooseInstallation: () => ({
+              ok: true,
+              data: { rows: [...rows].reverse().map((row) => ({ ...row, open: row['open'] !== true })) },
+            }),
+          },
+          undefined,
+          reads,
+        )
+  const sent: Record<string, unknown>[] = []
+  base.bridge['moveRoadmapTask'] = (args: unknown): unknown => {
+    sent.push(args as Record<string, unknown>)
+    return replies[sent.length - 1] ?? { ok: false, reason: 'this case gave the move no answer' }
+  }
+  return { ...base, sent }
+}
+
+/** scopeRow is one row of the coordinator drawing by the key it carries. */
+function scopeRow(document: FakeDocument, key: string): FakeNode {
+  const row = classed(panelOf(document), 'graph-scope-node').find((each) => each.attributes.get('data-key') === key)
+  if (row === undefined) throw new Error(`the scope drawing holds no row for ${key}`)
+  return row
+}
+
+/** moveButton is one row's own "Move…" control, by the key it is about. */
+function moveButton(document: FakeDocument, key: string): FakeNode {
+  const button = classed(panelOf(document), 'graph-move-open').find((each) => each.attributes.get('data-key') === key)
+  if (button === undefined) throw new Error(`the drawing holds no move control for ${key}`)
+  return button
+}
+
+/** movedSheet is the sheet on the drawing, and its phase. */
+function movedSheet(document: FakeDocument): FakeNode | undefined {
+  return classed(panelOf(document), 'graph-move')[0]
+}
+
+/** theSelect is the sheet's own select of boxes. */
+function theSelect(document: FakeDocument): FakeNode {
+  const select = classed(panelOf(document), 'graph-move-target')[0]
+  if (select === undefined) throw new Error('the choosing sheet drew no select')
+  return select
+}
+
+/** optionValues is a select's options' values, in the drawing's order. */
+function optionValues(select: FakeNode): readonly (string | null)[] {
+  return everyNode(select)
+    .filter((each) => each.tagName === 'OPTION')
+    .map((each) => each.getAttribute('value'))
+}
+
+/** chooseBox is a person's own choice on the sheet's select: the value a browser
+ * puts on the control, and the change it reports for it. */
+async function chooseBox(document: FakeDocument, value: string): Promise<void> {
+  const select = theSelect(document)
+  select.value = value
+  select.change()
+  await flush()
+}
+
+/** FakeDrag is the event a browser hands a drag handler: the transfer a
+ * `dragstart` writes its payload into, and the `preventDefault` a target's own
+ * answer is. */
+interface FakeDrag {
+  readonly dataTransfer: { setData(type: string, value: string): void }
+  readonly written: (readonly [string, string])[]
+  readonly defaultPrevented: { value: boolean }
+  preventDefault(): void
+}
+
+/** fireDrag dispatches one drag event on a drawn node and answers the event, so
+ * a case can read what a transfer was handed and whether the console took the
+ * event rather than leaving it to the window -- **the payload is the console's
+ * own to write**, which is why the event here is handed over empty. The fake
+ * document has no drag of its own (`fakeDom.ts` offers a click, a change and a
+ * key), and a drag is the one gesture of this screen: the listener is on the
+ * node, so the case fires it with the event a real browser would. */
+function fireDrag(node: FakeNode, type: string): FakeDrag {
+  const event: FakeDrag = {
+    dataTransfer: { setData: (kind, value) => event.written.push([kind, value]) },
+    written: [],
+    defaultPrevented: { value: false },
+    preventDefault: () => {
+      event.defaultPrevented.value = true
+    },
+  }
+  for (const listener of node.listeners.get(type) ?? []) {
+    ;(listener as unknown as (fired: FakeDrag) => void)(event)
+  }
+  return event
+}
+
+describe('the move the Graph screen wires', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  /** openMoveGraph boots a console on the coordinator scope and answers its
+   * document, which is the picture the move's gestures are drawn on. */
+  async function openMoveGraph(bridge: Record<string, unknown>): Promise<FakeDocument> {
+    const document = await openGraph(bridge)
+    const row = scopeRow(document, MOVE_NODE)
+    // The non-vacuity guard: the drawing is the record's, so the two gestures
+    // exist on it at all.
+    expect(row.attributes.get('draggable'), 'the record’s row is not draggable').toBe('true')
+    expect(classed(panelOf(document), 'graph-scope-box').map((each) => each.attributes.get('data-release'))).toEqual([
+      MOVE_BOX,
+      MOVE_OTHER,
+    ])
+    return document
+  }
+
+  it('opens the sheet on the row’s own button, and the select sends the box a person chose', async () => {
+    const { bridge, sent } = moveBridge([{ ok: true, data: moveAnswer() }])
+    const document = await openMoveGraph(bridge)
+
+    moveButton(document, MOVE_NODE).click()
+    await flush()
+    // **The keyboard's way in sends nothing by itself**: the sheet is the list of
+    // boxes and nothing has been asked of the record yet.
+    expect(sent).toEqual([])
+    const choosing = movedSheet(document)
+    expect(choosing?.attributes.get('data-phase')).toBe('choosing')
+    // The control opens on its own not-yet-chosen option, and the boxes after it
+    // are the record's keys with the unassign last: an option's value is an id
+    // and never a word of a command line.
+    const select = theSelect(document)
+    expect(optionValues(select)).toEqual([MOVE_TARGET_UNCHOSEN, MOVE_BOX, MOVE_OTHER, ''])
+    expect(
+      everyNode(select)
+        .filter((each) => each.tagName === 'OPTION')
+        .map((each) => each.textContent),
+    ).toEqual([MOVE_TARGET_UNCHOSEN_LABEL, '0.12.0', '0.13.0', MOVE_UNASSIGNED_WORD])
+
+    await chooseBox(document, MOVE_BOX)
+    // What left the renderer is the row's key and the box's, and the call is the
+    // **preview**: `confirmed` is false, so no child was spawned for it.
+    expect(sent).toEqual([{ node: MOVE_NODE, toRelease: MOVE_BOX, confirmed: false }])
+    expect(movedSheet(document)?.attributes.get('data-phase')).toBe('preview')
+    // The confirmation is up, drawn from the answer the main process composed --
+    // and the confirming button is the only way the other half can be asked for.
+    expect(classed(panelOf(document), 'graph-move-confirm')).toHaveLength(1)
+    expect(classed(panelOf(document), 'graph-move-undo')).toHaveLength(0)
+  })
+
+  it('sends the confirming half only from the confirm button, and re-reads the graph after a move that applied', async () => {
+    const { bridge, sent, calls } = moveBridge([
+      { ok: true, data: moveAnswer() },
+      { ok: true, data: moveAnswer({ status: 'applied' }) },
+    ])
+    const document = await openMoveGraph(bridge)
+    const before = calls.filter((call) => call.name === 'graphRead').length
+
+    moveButton(document, MOVE_NODE).click()
+    await flush()
+    await chooseBox(document, MOVE_BOX)
+    // The preview and the write are the same two ids, and the boolean is the
+    // whole of the difference: a confirmed call for a pair nobody previewed is
+    // refused by the source, so this is the one shape a confirm may send.
+    classed(panelOf(document), 'graph-move-confirm')[0]?.click()
+    await flush()
+    expect(sent).toEqual([
+      { node: MOVE_NODE, toRelease: MOVE_BOX, confirmed: false },
+      { node: MOVE_NODE, toRelease: MOVE_BOX, confirmed: true },
+    ])
+    expect(movedSheet(document)?.attributes.get('data-phase')).toBe('answered')
+    // **The move applied, so the document in hand is the one from before it**:
+    // the console reads the graph again, and the way back is offered over the
+    // fresh read rather than over the stale one (`--expect` is what the record
+    // holds now).
+    expect(calls.filter((call) => call.name === 'graphRead').length).toBe(before + 1)
+    expect(classed(panelOf(document), 'graph-move-undo')).toHaveLength(1)
+  })
+
+  it('sends nothing when the sheet is declined, by Cancel or by Escape', async () => {
+    // Two previews, one per opening: a sheet is opened twice here, and the
+    // second one is the one Escape closes.
+    const { bridge, sent } = moveBridge([
+      { ok: true, data: moveAnswer() },
+      { ok: true, data: moveAnswer() },
+    ])
+    const document = await openMoveGraph(bridge)
+
+    moveButton(document, MOVE_NODE).click()
+    await flush()
+    await chooseBox(document, MOVE_BOX)
+    expect(sent).toHaveLength(1)
+    classed(panelOf(document), 'graph-move-cancel')[0]?.click()
+    await flush()
+    // The request is dropped with the sheet: a second press on a button that is
+    // no longer drawn, or a confirm from a key the flow no longer holds, has
+    // nothing to send.
+    expect(sent).toHaveLength(1)
+    expect(movedSheet(document)).toBeUndefined()
+
+    // The same for the Escape that stands for Cancel, from inside the sheet.
+    moveButton(document, MOVE_NODE).click()
+    await flush()
+    await chooseBox(document, MOVE_BOX)
+    const previews = sent.length
+    movedSheet(document)?.press('Escape')
+    await flush()
+    expect(sent, 'the Escape sent something').toHaveLength(previews)
+    expect(movedSheet(document)).toBeUndefined()
+    // And the keyboard went back to the row the move was about rather than
+    // nowhere: a reader who cancels with the keyboard is left on the control
+    // that opened the sheet.
+    expect(document.activeElement).toBe(scopeRow(document, MOVE_NODE))
+  })
+
+  it('leaves the sheet up and asks the record nothing when the placeholder is chosen', async () => {
+    // **The defect the placeholder exists for.** A browser pre-selects the first
+    // option of a `<select>` nobody has touched, and reports a `change` only when
+    // the value differs from the one it holds -- so a control drawn on the first
+    // box would swallow that box's own choice. It is drawn on a value no release
+    // key can be, and choosing it is not a request.
+    const { bridge, sent } = moveBridge([{ ok: true, data: moveAnswer() }])
+    const document = await openMoveGraph(bridge)
+    moveButton(document, MOVE_NODE).click()
+    await flush()
+    await chooseBox(document, MOVE_TARGET_UNCHOSEN)
+    expect(sent).toEqual([])
+    expect(movedSheet(document)?.attributes.get('data-phase')).toBe('choosing')
+    // The box the browser would otherwise have reported as the value is chose-
+    // able after it, which is the whole point: the first box of the drawing is
+    // reachable from this control.
+    await chooseBox(document, MOVE_BOX)
+    expect(sent).toEqual([{ node: MOVE_NODE, toRelease: MOVE_BOX, confirmed: false }])
+  })
+
+  it('previews a drag and a drop, the unassigned group included', async () => {
+    const { bridge, sent } = moveBridge([
+      { ok: true, data: moveAnswer() },
+      { ok: true, data: moveAnswer({ to: '' }) },
+    ])
+    const document = await openMoveGraph(bridge)
+
+    // A drag on a task in a box, dropped on the other box: the two ids are the
+    // row's key and the box's own `data-release`.
+    const row = scopeRow(document, MOVE_NODE)
+    const started = fireDrag(row, 'dragstart')
+    expect(started.written, 'the drag wrote no payload into the transfer').toEqual([['text/plain', MOVE_NODE]])
+    const box = classed(panelOf(document), 'graph-scope-box').find(
+      (each) => each.attributes.get('data-release') === MOVE_OTHER,
+    )
+    if (box === undefined) throw new Error('the drawing holds no second box')
+    const over = fireDrag(box, 'dragover')
+    expect(over.defaultPrevented.value, 'the box did not say the drag was welcome').toBe(true)
+    const dropped = fireDrag(box, 'drop')
+    expect(dropped.defaultPrevented.value).toBe(true)
+    await flush()
+    expect(sent).toEqual([{ node: MOVE_NODE, toRelease: MOVE_OTHER, confirmed: false }])
+    classed(panelOf(document), 'graph-move-cancel')[0]?.click()
+    await flush()
+
+    // And the unassigned group is a target like any other, whose key is the empty
+    // string the operation declares for it (D2114) -- never a word of the argv.
+    const loose = classed(panelOf(document), 'graph-scope-unassigned')[0]
+    if (loose === undefined) throw new Error('the drawing holds no unassigned group')
+    fireDrag(scopeRow(document, MOVE_NODE), 'dragstart')
+    fireDrag(loose, 'drop')
+    await flush()
+    expect(sent.at(-1)).toEqual({ node: MOVE_NODE, toRelease: '', confirmed: false })
+  })
+
+  it('offers the way back as the inverse move, previewed like any other', async () => {
+    const { bridge, sent } = moveBridge([
+      { ok: true, data: moveAnswer() },
+      { ok: true, data: moveAnswer({ status: 'applied' }) },
+      { ok: true, data: moveAnswer({ to: MOVE_BOX }) },
+    ])
+    const document = await openMoveGraph(bridge)
+    moveButton(document, MOVE_NODE).click()
+    await flush()
+    await chooseBox(document, MOVE_OTHER)
+    classed(panelOf(document), 'graph-move-confirm')[0]?.click()
+    await flush()
+
+    classed(panelOf(document), 'graph-move-undo')[0]?.click()
+    await flush()
+    // Undo is the same operation with the two boxes exchanged, and it is a
+    // **preview**: the way back is drawn and confirmed like any other move, so
+    // nothing ran here.
+    expect(sent.at(-1)).toEqual({ node: MOVE_NODE, toRelease: MOVE_BOX, confirmed: false })
+    expect(movedSheet(document)?.attributes.get('data-phase')).toBe('preview')
+  })
+
+  it('drops a preview made against one installation when the operator switches', async () => {
+    // **`forgetLive`'s `moveFlow = null`.** The request a confirm would send and
+    // the answer an undo inverts are both about the record the console just left,
+    // so the flow goes with the screen. The listener of the button a case held on
+    // to is still attached to the node -- exactly as a keyboard press on a
+    // detached control is -- and it finds a flow that holds nothing.
+    const { bridge, sent } = moveBridge([{ ok: true, data: moveAnswer() }], [
+      listRow('acme', { open: true }),
+      listRow('orbit'),
+    ])
+    const document = await openMoveGraph(bridge)
+    moveButton(document, MOVE_NODE).click()
+    await flush()
+    await chooseBox(document, MOVE_BOX)
+    const confirm = classed(panelOf(document), 'graph-move-confirm')[0]
+    expect(sent).toHaveLength(1)
+
+    rowNamed(document, 'orbit').click()
+    await flush()
+    confirm?.click()
+    await flush()
+    expect(sent, 'a preview made against the old installation was confirmed after the switch').toHaveLength(1)
   })
 })

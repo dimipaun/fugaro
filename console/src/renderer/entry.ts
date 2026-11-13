@@ -3929,6 +3929,16 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * offered across two installations.
    */
   let moveFlow: MoveFlow | null = null
+  /**
+   * **The two gestures in flight live out here, with the flow, and not inside
+   * `wireGraph`.** Every redraw wires a freshly drawn tree, so a variable
+   * declared in there is a new one per drawing: the key the row's button opened
+   * the sheet for would be gone by the time the select's own change listener --
+   * a listener of the drawing that very redraw made -- read it, and the sheet
+   * would answer nothing whatever a person chose.
+   */
+  let dragging: string | null = null
+  let choosing: string | null = null
   const moveFlowNow = (): MoveFlow => {
     moveFlow ??= new MoveFlow({
       move: async (args) => {
@@ -4901,9 +4911,6 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      * inverse move, previewed the same way, so there is no path from this screen
      * to a move nobody was shown.
      */
-    let dragging: string | null = null
-    let choosing: string | null = null
-
     /** drawMove puts one sheet on the drawing -- `null` closes it -- and leaves
      * the keyboard on the control that sheet is answered with. */
     const drawMove = (sheet: MoveSheet | null, focus: FocusTarget | null): void => {
@@ -8665,9 +8672,12 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     graph.screen?.dispose()
     graph.screen = null
     // And the move in hand is that installation's too: the request a confirm
-    // would send, and the answer an undo inverts, are both about the record the
-    // console just left.
+    // would send, the answer an undo inverts and the two gestures in flight are
+    // all about the record the console just left -- a drag whose `dragend` never
+    // came would otherwise make the next drop move this installation's key.
     moveFlow = null
+    dragging = null
+    choosing = null
     graph.readAt = 0
     // The scope is the same kind of fact: the plan scope's document belongs to
     // the installation that is gone, so the next one opens on the scope the
