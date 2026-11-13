@@ -92,8 +92,15 @@ var licenceServerURL = "https://keys.fugaro.dev"
 // here and stays empty until S2.9 publishes the owner's production public keys
 // in ee/licence's own table, which is where the halves belong: a key nothing in
 // the ring can verify is refused by `set` rather than installed, and `status`
-// answers the refusal rather than reading it as Free. It is a variable so that
-// a test can install the ring of a keypair it minted at run time.
+// answers the refusal rather than reading it as Free.
+//
+// **Until then no key is accepted by a released build**, and that is the honest
+// answer rather than a gap: the production ring is empty today (ee/licence's
+// productionKeyring), so there is nothing a key could be verified against. S2.9
+// has one line to add here — this variable has to become that same ring, which
+// is what keeps one build's trusted keys one list — and K7.3, which renames the
+// two verifiers into one, is the other task that moves it. It is a variable so
+// that a test can install the ring of a keypair it minted at run time.
 var licenceRing = licence.Keyring{}
 
 // licenceNow is the clock: the state a key is in is a fact about an instant,
