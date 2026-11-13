@@ -11085,8 +11085,9 @@ run any step against `belong`**, and **no agent runs any step of it**.
 ([bitbucket-credentials/implementation-plan.md](bitbucket-credentials/implementation-plan.md), its
 "Checks this plan takes (Checks 145–154)" and its task **T1.3**). The script that runs its CLI half
 is `scripts/live-checks/check149.sh`, with its own test `check149_test.sh`, and it is the one check
-of the block that runs on **your own machine** with no cloud project, no installation and no
-credential.
+of the block that runs on **your own machine**: it names a sandbox installation and its project,
+makes the console's own read of that project's database as you, and writes nothing — no project
+state, no run, no credential and no host.
 
 **What the check confirms.** **U9** end to end: whether a console child can make the D364 read — the
 coordinator's stored view (`coordinator/repos/<slug>/`), read as the signed-in person through
