@@ -595,7 +595,8 @@ person who wants the files, which is why `--dir` survives rather than being repl
   carries), D970, D971 (the learning's two ends) and the whole of the learning channel.**
 - **They leave Check 136 where it is** (F13): a report run's own pull request is still the owner's
   registered check. The **two** live checks the rulings add — the owner proving the prefix-limited
-  listing grant (`objectListPrefix`) lists `runs/<slug>/` **and `reports/`** while refusing the root
+  listing grant (`objectListPrefix`) lists the four prefixes the reports job lists (`runs/<slug>/`,
+  `reports/<slug>/`, `reports/<slug>/<YYYY>/` and `reports/<YYYY>/`) while refusing the root
   listing and `tokens/` and `cache/`, and the owner enabling the
   reports job by the setting and reading its first stored report — are **named and not numbered**;
   the folder holds no check block, so the task that writes each takes the number free at its merge,
