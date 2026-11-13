@@ -248,6 +248,10 @@ type Row struct {
 	// `orphan` — a pull request no run ever produced or follows — is one no
 	// listing of runs can answer, because such a pull request has no row.
 	//
+	// It is the last state a run recorded of the pull request and not the
+	// pull request's state now: no forge is read, so one merged or closed
+	// after the run that left it `ready` still reads `ready`.
+	//
 	// It is the LISTING's computation and not Join's: whether a run is going
 	// on a pull request is a fact about every run of that pull request, and
 	// Join sees one. A read that holds a window of runs groups them by the
