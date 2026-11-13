@@ -183,6 +183,7 @@ variable "catalog_check" {
     scheduler_region = string
     schedule         = optional(string, "17 4 * * *")
     paused           = optional(bool, true)
+    firebase_project = optional(string)
     env              = map(string)
     definitions_condition = object({
       title      = string

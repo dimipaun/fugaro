@@ -1723,20 +1723,31 @@ func TestMCPAccountIsItsOwnPrincipalKind(t *testing.T) {
 	if slices.Contains(FugaroAccounts, MCPServerAccountID) {
 		t.Errorf("the front door's account is one of FugaroAccounts, so every toAccounts row accepts it")
 	}
-	rows := 0
+	// The account's two grants and no third (O16b added the state group's read
+	// to D935's store): the table is where a grant of another role to this
+	// account would have to be written down, and this is the count that makes
+	// writing one a decision. Each of the two is narrowed further by its own
+	// check — the store's by the bucket (mcpauthStoreGrant, below), the state
+	// group's by its role and project (mcpauthStateReadGrant,
+	// TestCoverAdmitsTheStateReadGrantOnPurpose).
+	wantRows := map[string]string{
+		rowType:                     rowRole,
+		"google_project_iam_member": customKey + MCPStateReadRole,
+	}
+	got := map[string]string{}
 	for typ, row := range grantRules {
 		for key, w := range row {
 			if w&toMCP == 0 {
 				continue
 			}
-			rows++
-			if typ != rowType || key != rowRole {
-				t.Errorf("%s %s: the row accepts the front door's account, whose one grant is D935's store", typ, key)
+			if _, twice := got[typ]; twice {
+				t.Errorf("%s carries toMCP on more than one role: the front door's account holds the store's objectAdmin and the database's read, and a third role is a widening this table has not decided", typ)
 			}
+			got[typ] = key
 		}
 	}
-	if rows != 1 {
-		t.Errorf("%d rows carry toMCP, want the one the module writes for this account: %s %s", rows, rowType, rowRole)
+	if !maps.Equal(got, wantRows) {
+		t.Errorf("the rows carrying toMCP are %v, want %v: the front door's account holds D935's store and the orchestrator's node, read-only, and nothing else (D920, D935, O16b)", got, wantRows)
 	}
 
 	// The grant as the module writes it, on the store's own bucket.
@@ -1788,6 +1799,76 @@ func TestMCPAccountIsItsOwnPrincipalKind(t *testing.T) {
 		ch := rc(rowType, map[string]any{"member": "serviceAccount:" + MCPServerAccountID + "@fp-2.iam.gserviceaccount.com", "role": rowRole, "bucket": b}, map[string]any{}, "create")
 		if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); len(got) == 0 {
 			t.Errorf("objectAdmin on %s to %s@fp-2 is covered: the front door is %s@proj-1 and nothing else", b, MCPServerAccountID, MCPServerAccountID)
+		}
+	}
+}
+
+// TestCoverAdmitsTheStateReadGrantOnPurpose is O16b's half of the plan
+// review: the front door's read of the orchestrator's node is covered, and
+// nothing but that one grant is.
+//
+// It has to be covered, because the run's one confirmation is what applies the
+// release that turns the front door on: a plan review that refused the grant
+// would ask the owner for a second confirmation over a step that is meant to
+// be one. And it has to be the ONLY thing covered for this account, because
+// Realtime Database IAM has no path-level scope: a project binding of this
+// role is a read of the WHOLE database of that project — every run's state,
+// the policy, the kill switches and the credentials' own nodes — so the grant
+// is the reach D2020 (a) answered for, and the role's permission list
+// (MCPStateReadPermissions) is where the read/write direction is decided.
+//
+// The mutations this fails on: the state-read row dropped from grantRules (the
+// grant would be refused and the release would ask twice), the row widened to
+// another kind of principal, the role's pin given the write, the role moved to
+// another project than the grant's, and a condition on the binding.
+func TestCoverAdmitsTheStateReadGrantOnPurpose(t *testing.T) {
+	const member = "serviceAccount:" + MCPServerAccountID + "@proj-1.iam.gserviceaccount.com"
+	const role = "projects/proj-1/roles/" + MCPStateReadRole
+	const rowType = "google_project_iam_member"
+
+	// The pin, the module's permission list and the list this file exports are
+	// one list: the role the module creates is the role the review reads, and
+	// neither may gain a second permission.
+	if want := MCPStateReadPermissions; !slices.Equal(RolePermissions[MCPStateReadRole], want) {
+		t.Errorf("RolePermissions[%s] = %v, want exactly %v: a second permission here is a second permission over the whole database", MCPStateReadRole, RolePermissions[MCPStateReadRole], want)
+	}
+	if !slices.Contains(FugaroRoles, MCPStateReadRole) {
+		t.Errorf("FugaroRoles does not name %s, so a grant of this role is refused outright", MCPStateReadRole)
+	}
+	if slices.Contains(MCPStateReadPermissions, "firebasedatabase.instances.update") {
+		t.Errorf("MCPStateReadPermissions holds the write: the state group's writes stay with `fugaro orchestrator patch` and the person's own credential (D1223, D1241), and apply_patch is served by nothing (D2021)")
+	}
+
+	// The grant as the module writes it: the front door's own account, the
+	// role on the project it was declared in, no condition.
+	grant := rc(rowType, map[string]any{"member": member, "role": role, "project": "proj-1"}, map[string]any{}, "create")
+	if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{grant}}, nil); len(got) != 0 {
+		t.Errorf("O16b's state-read grant to the front door's account: NotCovered = %q, want it covered: the grant is what `fugaro update --mcp-server` creates for the state group, and a plan review that refused it would ask the owner for a second confirmation", got)
+	}
+
+	// Everything else that could arrive in its place, one case each: the read
+	// on another project's role, the write role (the credentials service's own,
+	// which is the two data permissions), another member, another role of the
+	// account's, and a condition the module never writes (RTDB cannot express a
+	// path prefix, so the condition would fence nothing).
+	cond := []any{map[string]any{"title": gcp.LauncherBucketConditionTitle, "expression": gcp.LauncherBucketCondition("fugaro-runs-proj-1"), "description": nil}}
+	for _, tc := range []struct {
+		what  string
+		after map[string]any
+	}{
+		{"the read declared in a project the grant is not in", map[string]any{"member": member, "role": "projects/fp-2/roles/" + MCPStateReadRole, "project": "proj-1"}},
+		{"the read on a project this run does not know", map[string]any{"member": member, "role": "projects/fp-3/roles/" + MCPStateReadRole, "project": "fp-3"}},
+		{"the credentials service's database role, which holds the write too", map[string]any{"member": member, "role": "projects/proj-1/roles/" + CredentialsDatabaseRole, "project": "proj-1"}},
+		{"the store's role on the project", map[string]any{"member": member, "role": "roles/storage.objectAdmin", "project": "proj-1"}},
+		{"the read to a person on the review screen", map[string]any{"member": "user:me@example.com", "role": role, "project": "proj-1"}},
+		{"the read to a job account", map[string]any{"member": "serviceAccount:fugaro-history@proj-1.iam.gserviceaccount.com", "role": role, "project": "proj-1"}},
+		{"the read to a lookalike in another project", map[string]any{"member": "serviceAccount:" + MCPServerAccountID + "@fp-2.iam.gserviceaccount.com", "role": role, "project": "proj-1"}},
+		{"the read under a condition", map[string]any{"member": member, "role": role, "project": "proj-1", "condition": cond}},
+		{"the read with a computed role", map[string]any{"member": member, "project": "proj-1"}},
+	} {
+		ch := rc(rowType, tc.after, map[string]any{}, "create")
+		if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); len(got) == 0 {
+			t.Errorf("%s is covered: the front door's account reads the orchestrator's node through one custom role on one project, and every other grant is a widening no `fugaro update` confirmation announced", tc.what)
 		}
 	}
 }

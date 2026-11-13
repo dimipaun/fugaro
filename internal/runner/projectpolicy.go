@@ -388,7 +388,7 @@ func (r *run) budgetClient(ctx context.Context) (*rtdb.Client, error) {
 // is "1", which only a launcher from before the seal writes, so the token it
 // minted is unsealed and under runs/, and this runner reads neither.
 func errLauncherPredatesSeal(runID string) error {
-	return fmt.Errorf("%s is 1, so the fugaro that launched this run predates the seal of the budget token: it wrote the token unsealed, where this runner never reads one, and handed this execution no key; nothing was read. Upgrade the launching fugaro (fugaro upgrade), then start a new run (fugaro run with the same task): run %s has launched, and retrying its run id would only report it", BudgetTokenEnv, runID)
+	return fmt.Errorf("%s is 1, so the fugaro that launched this run predates the seal of the budget token: it wrote the token unsealed, where this runner never reads one, and handed this execution no key; nothing was read. Upgrade the launching fugaro (brew upgrade dimipaun/tap/fugaro), run 'fugaro update' with the newer binary, then start a new run (fugaro run with the same task): run %s has launched, and retrying its run id would only report it", BudgetTokenEnv, runID)
 }
 
 // takeBudgetToken reads the run's sealed token object. It has one call site —

@@ -85,9 +85,9 @@ func newMinted(t *testing.T) minted {
 
 // key mints one key text for the claim set a project key starts from, with
 // mutate applied where a test moves one claim.
-func (m minted) key(t *testing.T, mutate func(*licence.ClaimsV1)) string {
+func (m minted) key(t *testing.T, mutate func(*licence.Claims)) string {
 	t.Helper()
-	claims := licence.ClaimsV1{
+	claims := licence.Claims{
 		V:            1,
 		KID:          testKeyID,
 		KeyID:        "lk_test_0001",
@@ -163,9 +163,9 @@ func TestProjectStoreKeepsTwoKeys(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	m := newMinted(t)
-	long := m.key(t, func(c *licence.ClaimsV1) { c.KeyID = "lk_test_long"; c.PaidThrough = at(300) })
-	short := m.key(t, func(c *licence.ClaimsV1) { c.KeyID = "lk_test_short"; c.PaidThrough = at(30) })
-	third := m.key(t, func(c *licence.ClaimsV1) { c.KeyID = "lk_test_third"; c.PaidThrough = at(90) })
+	long := m.key(t, func(c *licence.Claims) { c.KeyID = "lk_test_long"; c.PaidThrough = at(300) })
+	short := m.key(t, func(c *licence.Claims) { c.KeyID = "lk_test_short"; c.PaidThrough = at(30) })
+	third := m.key(t, func(c *licence.Claims) { c.KeyID = "lk_test_third"; c.PaidThrough = at(90) })
 
 	if keys, err := r.store.Keys(ctx); err != nil || len(keys) != 0 {
 		t.Fatalf("a project with no key answers %d keys and %v, want none and no error: the no-key state is the store being empty (D2143)", len(keys), err)
@@ -348,8 +348,8 @@ func TestTheStoreNeverDropsAConcurrentWrite(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	m := newMinted(t)
-	renewed := m.key(t, func(c *licence.ClaimsV1) { c.KeyID = "lk_test_renewed"; c.PaidThrough = at(300) })
-	mine := m.key(t, func(c *licence.ClaimsV1) { c.KeyID = "lk_test_mine"; c.PaidThrough = at(30) })
+	renewed := m.key(t, func(c *licence.Claims) { c.KeyID = "lk_test_renewed"; c.PaidThrough = at(300) })
+	mine := m.key(t, func(c *licence.Claims) { c.KeyID = "lk_test_mine"; c.PaidThrough = at(30) })
 
 	// The renewal lands between this writer's read and its write, which is what
 	// mutate has to notice: the closure runs after the read and before commit.
@@ -414,7 +414,7 @@ func TestTheStoreNeverLogsAKey(t *testing.T) {
 	r := newRig(t)
 	m := newMinted(t)
 	const noteCanary = "a-note-no-store-output-may-name"
-	key := m.key(t, func(c *licence.ClaimsV1) { c.Note = noteCanary })
+	key := m.key(t, func(c *licence.Claims) { c.Note = noteCanary })
 
 	if err := r.store.Install(ctx, []byte(key)); err != nil {
 		t.Fatalf("installing a key: %v", err)
@@ -474,7 +474,7 @@ func TestTheStoreNeverLogsAKey(t *testing.T) {
 	// not written again -- a key already held is not installed twice -- so this
 	// is a second, different text.
 	r.gcs.DenyWrites(testBucket, Object)
-	fresh := m.key(t, func(c *licence.ClaimsV1) { c.KeyID = "lk_test_denied" })
+	fresh := m.key(t, func(c *licence.Claims) { c.KeyID = "lk_test_denied" })
 	if err := r.store.Install(ctx, []byte(fresh)); !errors.Is(err, ErrObject) {
 		t.Fatalf("a write the bucket refused = %v, want ErrObject", err)
 	} else if piece, found := carries(err.Error(), fresh, key); found {
@@ -515,7 +515,7 @@ func TestAViewerReadsTheStateNotTheKey(t *testing.T) {
 		hashCanary = "the-renewal-secrets-hash-no-viewer-may-read"
 	)
 	daily := "P1D"
-	key := m.key(t, func(c *licence.ClaimsV1) {
+	key := m.key(t, func(c *licence.Claims) {
 		c.KeyID = "lk_test_viewer"
 		c.Seats = 7
 		c.CheckInterval = &daily
@@ -568,7 +568,7 @@ func TestAViewerReadsTheStateNotTheKey(t *testing.T) {
 	t.Run("the project's key wins over the machine's", func(t *testing.T) {
 		// The machine holds a key that would apply longer: the project's still
 		// answers, and the view says which store did (D2137).
-		machine := m.key(t, func(c *licence.ClaimsV1) { c.Seats = 99; c.PaidThrough = at(390) })
+		machine := m.key(t, func(c *licence.Claims) { c.Seats = 99; c.PaidThrough = at(390) })
 		view, err := r.store.View(ctx, at(30), m.ring, testFirebaseProject, [][]byte{[]byte(machine)})
 		if err != nil {
 			t.Fatalf("View with a differing machine key: %v", err)
@@ -611,7 +611,7 @@ func TestAViewerReadsTheStateNotTheKey(t *testing.T) {
 		if err := refused.store.Install(ctx, []byte(stranger.key(t, nil))); err != nil {
 			t.Fatalf("installing a key signed by another keypair: %v", err)
 		}
-		machine := m.key(t, func(c *licence.ClaimsV1) { c.Seats = 99 })
+		machine := m.key(t, func(c *licence.Claims) { c.Seats = 99 })
 
 		applied, err := refused.store.Active(ctx, at(30), m.ring, testFirebaseProject, [][]byte{[]byte(machine)})
 		if err == nil {
@@ -681,7 +681,7 @@ func TestAViewerReadsTheStateNotTheKey(t *testing.T) {
 		// What it does not carry is the revocation: that is about the key_id the
 		// check named, so a reissue after a leak is free of the leaked key's
 		// answer.
-		fresh := m.key(t, func(c *licence.ClaimsV1) {
+		fresh := m.key(t, func(c *licence.Claims) {
 			c.KeyID = "lk_test_installed_after_a_check"
 			c.PaidThrough = at(390)
 		})
@@ -715,8 +715,8 @@ func TestAViewerReadsTheStateNotTheKey(t *testing.T) {
 		// one that applies: the other one has not been checked and cannot stand
 		// in -- what answers is the key the last check was about.
 		revoked := newRig(t)
-		first := m.key(t, func(c *licence.ClaimsV1) { c.KeyID = "lk_test_first"; c.PaidThrough = at(30) })
-		second := m.key(t, func(c *licence.ClaimsV1) { c.KeyID = "lk_test_second"; c.PaidThrough = at(300) })
+		first := m.key(t, func(c *licence.Claims) { c.KeyID = "lk_test_first"; c.PaidThrough = at(30) })
+		second := m.key(t, func(c *licence.Claims) { c.KeyID = "lk_test_second"; c.PaidThrough = at(300) })
 		for _, key := range []string{first, second} {
 			if err := revoked.store.Install(ctx, []byte(key)); err != nil {
 				t.Fatalf("installing a key: %v", err)

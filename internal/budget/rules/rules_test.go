@@ -789,6 +789,158 @@ func TestDeviceNodesAreClientDenied(t *testing.T) {
 	}
 }
 
+// TestDeviceNodeCarriesNoShapeRule is P2's fourth claim — the plan's red step
+// calls it "the document moved" — and the one its three emulator cases cannot
+// reach: reconciliation §F29 reads the node as `{ ".read": false, ".write":
+// false }` with **no `.validate` over it, no `$other` beneath it, and nothing in
+// the document naming a child of it**, and that absence, not the fields, is what
+// makes the administered email and the role (D222, D225) children whose arrival
+// changes nothing. No rule reads one, so an entry carrying them is admitted
+// exactly as a bare one is, an installation whose document predates them needs
+// no redeploy, and the deployed document takes no generation.
+//
+// It reads testdata/rules.golden.json rather than Generate(), and it pins the
+// node's own attributes, every node on the way to it — the root and `config`
+// included, because a rule on either, or on a wildcard spelling such as
+// `config/admin/$x` that covers the entry just as the literal path does,
+// constrains the entry's shape as much as one on `config/admin` does — every
+// path beneath it and every occurrence of its path anywhere in the document,
+// because the byte
+// comparison in TestRulesGolden is satisfied by regenerating the golden — which
+// is exactly how a shape rule arrives: whoever writes it runs UPDATE_GOLDEN=1 in
+// the same change, and the diff is then the only place the generation would be
+// seen. TestDeviceNodesAreClientDenied reads Generate() and so catches the
+// change before it is regenerated; neither reading subsumes the other, and this
+// one is the fence that survives the regeneration. A rule over this node, or one
+// that reads a child of it, is a generation of its own (§F29's "what would force
+// a generation later", D225's later half), so it has to fail here as well.
+//
+// The occurrences are read as spellings rather than as text: adjacent string
+// literals are joined back up before the search, so the `devices` segment cut in
+// two and put back together is seen, and a literal naming the path counts as a
+// mention of it wherever it is built with a `+`, so a segment stood in for by a
+// `$` capture is seen too. That last reading is anchored on `config/admin` and
+// not on `config`, because a capture holds one segment and a rule that builds
+// some other `config/…` path names neither the node nor a child of it: this
+// fence may not accuse one of that. It is a fence over spellings and not a
+// parser — a path assembled from pieces that never sit next to each other in the
+// expression would still slip past it — but a reader that gets past it has to
+// name the node somehow else, and TestUserClaimRequiresTheDeviceNode holds the
+// document's one allowed reach to its exact text.
+//
+// Hand mutation this fails on, each with the golden regenerated — or edited
+// outright, which is the same thing to a test that reads the golden — so that
+// the byte comparison cannot object: `".read": "USER"` or `".write": "USER"` on
+// the `$uid` entry (the attribute set), a `".validate"` beside them or on
+// `config/admin/devices` above it (the same, and it is why every node on the way
+// to the entry is read here at all: a rule on the parent constrains every entry
+// under it), that `".validate"` on `config` or on the root instead, or on a
+// `config/admin/$x` that covers the entry (the way there, which follows a
+// wildcard segment as it follows the literal spelling), a `$other` child beneath
+// the node (the paths), a USER that also required `child('role').exists()` (the
+// occurrences), and a reader spelled around the entry — `root.child(
+// 'config/admin/devices/' + auth.uid + '/role')`, one `child()` call and a
+// concatenation, one call per segment, `root.child('config').child('admin')
+// .child('devices').child(auth.uid).child('role')`, or the `devices` segment
+// itself cut in two and put back together, `'config/admin/dev' + 'ices'`, or
+// stood in for by a capture, `'config/admin/' + $k`: a test that matched the
+// literal path, or a `.child(` *after* the entry's own chain, sees none of them
+// (the occurrences again).
+//
+// The two predicates and the USER are caught twice over:
+// TestDeviceNodesAreClientDenied and TestUserClaimRequiresTheDeviceNode hold the
+// document to the expression each expects to find, and a regenerated golden does
+// not break them. Everything else in that list is caught by nothing else, which
+// is what this test is for.
+func TestDeviceNodeCarriesNoShapeRule(t *testing.T) {
+	raw, err := os.ReadFile(goldenPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("%s is not JSON: %v", goldenPath, err)
+	}
+	node := PathDevices + "/$uid"
+	segments := strings.Split(node, "/")
+	// The one reach the document is allowed on the node: the conjunct that asks
+	// whether the entry exists. It is taken out of an expression whole, and what
+	// is left must name no part of the path — every spelling of the path carries
+	// the `devices` segment, so a reader written one `.child()` per segment is as
+	// visible here as the literal one.
+	entry := "root.child('" + PathDevices + "').child(auth.uid).exists()"
+	devices := segments[len(segments)-2]
+	// A literal can be cut in two around the word (`'config/admin/dev' +
+	// 'ices'`), so the pieces are put back together before the search, and a
+	// capture can stand in for a whole segment (`'config/admin/' + $k`), so a
+	// literal naming the path counts as a mention of it wherever it is built with
+	// a `+`. Anchored on `config/admin` and not on `config`: a `$` variable holds
+	// exactly one segment, so a capture can only stand in for `admin` or
+	// `devices`, and a rule that builds some other `config/…` path — a per-repo
+	// cap or kill lookup — names neither the node nor a child of it.
+	split := regexp.MustCompile(`'\s*\+\s*'`)
+	captured := regexp.MustCompile(`'[^']*config/admin[^']*'\s*\+|\+\s*'[^']*config/admin[^']*'`)
+	// How far a path reaches towards the node: a wildcard segment matches any one
+	// of the node's, so `config/admin/$x` covers the entry as surely as the
+	// literal path does, and a rule there constrains its shape for the same
+	// reason one on `config/admin/devices` does.
+	reach := func(p string) (int, bool) {
+		var given []string
+		if p != "" {
+			given = strings.Split(p, "/")
+		}
+		for i, s := range given {
+			if i == len(segments) {
+				break
+			}
+			if s != segments[i] && !strings.HasPrefix(s, "$") {
+				return 0, false
+			}
+		}
+		return len(given), true
+	}
+	var found bool
+	var beneath, occurrences []string
+	walk(doc["rules"], nil, func(path []string, attrs map[string]any) {
+		p := strings.Join(path, "/")
+		n, covers := reach(p)
+		switch {
+		case covers && n == len(segments):
+			found = true
+			if len(attrs) != 2 || attrs[".read"] != false || attrs[".write"] != false {
+				t.Errorf("/%s carries %v, want exactly {\".read\": false, \".write\": false}: a rule over the node is a rules generation (§F29), and it is the first one that reads a child of it that D225's later half is for", p, attrs)
+			}
+		case covers && n < len(segments):
+			for a, v := range attrs {
+				if (a != ".read" && a != ".write") || v != false {
+					t.Errorf("/%s carries %s = %v: the way to the entry is IAM-only, and a rule anywhere on it — a `.validate` here, or under a wildcard that covers the entry — is a rule over the entry's shape and moves the document (§F29)", p, a, v)
+				}
+			}
+		case covers:
+			beneath = append(beneath, "/"+p)
+		}
+		for a, v := range attrs {
+			expr, ok := v.(string)
+			if !ok {
+				continue
+			}
+			rest := split.ReplaceAllString(strings.ReplaceAll(expr, entry, ""), "")
+			if strings.Contains(rest, devices) || captured.MatchString(rest) {
+				occurrences = append(occurrences, "/"+p+" "+a)
+			}
+		}
+	})
+	if !found {
+		t.Fatalf("%s carries no /%s: the deployed document denies the node USER's device conjunct reads", goldenPath, node)
+	}
+	if len(beneath) > 0 {
+		t.Errorf("%s names %s beneath /%s: nothing in the document may name a child of the node, or the entry stops being one whose fields are optional", goldenPath, strings.Join(beneath, ", "), node)
+	}
+	if len(occurrences) > 0 {
+		t.Errorf("%s names %q outside the conjunct that asks whether the entry exists, in %s: only %s may mention the path — this reading joins literals split around a `+` and follows a `$` capture joined to one, so the whole segment need not be written out — because a rule that reads a child of the node is D225's later half and a rules generation of its own (§F29)", goldenPath, PathDevices, strings.Join(occurrences, ", "), entry)
+	}
+}
+
 // TestUserClaimRequiresTheDeviceNode: D166's conjunct, in every read and write
 // USER or MAILBOX reaches. The property is the one an operator relies on when
 // they revoke a phone — deleting one child takes every family away at once —

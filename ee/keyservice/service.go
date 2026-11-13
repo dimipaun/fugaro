@@ -47,8 +47,23 @@ const (
 	RouteOpenSource = "/open-source"
 	RouteRequest    = "/request"
 	RouteVerify     = "/verify"
-	RouteWebhook    = "/webhook"
+	// The merchant's events are the portal's API door and not the site's: F16
+	// moves the route under the subtree Hosting rewrites here (api.go), and the
+	// merchant's own webhook is configured at that address (P0.2).
+	RouteWebhook = "/api/paddle/webhook"
+	// The renewal and the status routes are the site's forms' siblings and not
+	// the site's own (§7, §8): the customer's project is what asks them, and
+	// what they carry is a key's secret rather than an applicant's address.
+	RouteRenew  = "/renew"
+	RouteStatus = "/status"
 )
+
+func init() {
+	// The merchant's event route is the intake's own API door, registered here
+	// from the table every area registers into: an area adds its own routes from
+	// its own file's init, so no later task edits this one (api.go).
+	registerAPI(http.MethodPost, RouteWebhook, (*Service).webhook, withBody(maxEventBytes))
+}
 
 // The bounds on what a stranger may hand the service. Each is a body a form or a
 // merchant event is expected to fit in by orders of magnitude, and the point of
@@ -129,6 +144,29 @@ type Config struct {
 	// They are here rather than in Paid because a merchant event's plan is the
 	// event's and this one is an Order Form's.
 	PagePlans []Plan
+	// PaddleAPIKey is the merchant of record's own key (P4.1). It is the
+	// deploy's secret and it stays here: a transaction the browser could create
+	// is one whose custom_data is the buyer's to forge (F15).
+	PaddleAPIKey []byte
+	// ResendKey is the mail provider's key (P0.2), which is what the API's own
+	// mail path sends with (P2.2).
+	ResendKey []byte
+	// SentryDSN is where the API reports what failed (P1.6). Empty is off, and
+	// off is a deployment that reports nowhere rather than one that reports to
+	// whatever a body names.
+	SentryDSN string
+	// SchedulerAudience is the audience Cloud Scheduler's tokens carry (F33):
+	// the API checks the account and this, so a token minted for another
+	// service is refused even when an allowed account signed it.
+	SchedulerAudience string
+	// SealerKeyName is the KMS key the handover is sealed under (F3, P1.7).
+	SealerKeyName string
+	// TenantsCollection is the document collection the organisations' lists are
+	// kept in: the invitation domains the operations organisation allows and the
+	// Microsoft tenants a reseller pins (D2207, plan P5.1). It is configuration
+	// because the deploy names its own collections, and the lists themselves are
+	// data an operations owner sets.
+	TenantsCollection string
 }
 
 // Deps is everything the intake reaches. There is no signer here and there is
@@ -139,6 +177,12 @@ type Deps struct {
 	Mints    Mints
 	Mailer   Mailer
 	CodeHost CodeHost
+	// MintsV1 may be nil: it is the intake's route to a v1 key, which the
+	// renewal endpoint is the only caller of (§7, K2.3), and a deployment that
+	// mints only the older format has none. The renewal route then answers that
+	// it cannot mint rather than reaching for a signer this half never holds
+	// (Check 174).
+	MintsV1 MintsV1
 	// Proofs may be nil: D452 is open, and a service with no proof check
 	// refuses the open-source programme rather than treating a public
 	// repository as proof of who is asking (§4.4).
@@ -158,7 +202,15 @@ type Deps struct {
 	// the process's own log, which is the project's log sink as far as this
 	// package can express one (§6).
 	Auditor Auditor
-	Now     func() time.Time
+	// The seams the portal's API reaches (P1.0). Each may be nil: a deployment
+	// that mounts no route reaching one has no business holding it, and New
+	// refuses a missing seam only when a mounted route declares it (api.go).
+	Docs      Docs
+	SignIn    SignIn
+	Paddle    Paddle
+	Scheduler Scheduler
+	Sealer    Sealer
+	Now       func() time.Time
 }
 
 // Service is the intake.
@@ -168,6 +220,7 @@ type Service struct {
 	openSource Plan
 	store      Store
 	mints      Mints
+	mintsV1    MintsV1
 	mail       Mailer
 	host       CodeHost
 	proofs     Proofs
@@ -177,6 +230,16 @@ type Service struct {
 	auditor    Auditor
 	now        func() time.Time
 	limiter    *throttle
+	// renewMu is one renewal at a time in this process. A renewal reads the key's
+	// state, mints and then writes what records the rotation, and two of them in
+	// flight together would both read "no successor yet" and both mint — of which
+	// only one can be the rotation the store records, so the other would answer
+	// with a key nothing would let renew (renew's own comment).
+	//
+	// It is this process's, like pageMu above and for the same reason: what a
+	// second instance does is decided by the store's record of the rotation and
+	// by the handover beside it (D2135), which is where the 24-hour window lives.
+	renewMu sync.Mutex
 	// pageMu is the page's actions one at a time. A minting action is a count,
 	// an audit line and a key, and the count reads the record the key writes:
 	// two of them in flight together would each count a record that does not
@@ -288,6 +351,9 @@ func New(cfg Config, deps Deps) (*Service, error) {
 	case deps.Notifier == nil:
 		return nil, errors.New("the intake has no notifier, so a queued request would wait for an owner who is never told")
 	}
+	if err := apiRoutes.missing(deps); err != nil {
+		return nil, err
+	}
 	now := deps.Now
 	if now == nil {
 		now = time.Now
@@ -303,6 +369,7 @@ func New(cfg Config, deps Deps) (*Service, error) {
 		openSource: *cfg.OpenSource,
 		store:      deps.Store,
 		mints:      deps.Mints,
+		mintsV1:    deps.MintsV1,
 		mail:       deps.Mailer,
 		host:       deps.CodeHost,
 		proofs:     deps.Proofs,
@@ -318,14 +385,18 @@ func New(cfg Config, deps Deps) (*Service, error) {
 // Handler serves the intake. The methods are part of its routes: the three
 // forms are POSTs because an application carries an address, and the
 // verification link is a GET because it is a link in a mail. The page below is
-// the one surface whose routes carry none.
+// the one surface whose routes carry none, and the portal's own routes are the
+// API's table's (api.go) rather than lines here.
 func (s *Service) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST "+RouteFreeSeat, s.freeSeatForm)
 	mux.HandleFunc("POST "+RouteOpenSource, s.openSourceForm)
 	mux.HandleFunc("POST "+RouteRequest, s.requestForm)
 	mux.HandleFunc("GET "+RouteVerify, s.verifyLink)
-	mux.HandleFunc("POST "+RouteWebhook, s.webhook)
+	// §7's renewal and §8's status: POSTs, because what they carry is a key's
+	// secret and a secret never belongs in a URL.
+	mux.HandleFunc("POST "+RouteRenew, s.renew)
+	mux.HandleFunc("POST "+RouteStatus, s.status)
 	// §6's page: where the queue is read and where the owner's key is minted.
 	// The patterns carry no method, and the exact one beside the subtree is
 	// what keeps the mux from answering a bare /admin with a redirect to
@@ -334,6 +405,8 @@ func (s *Service) Handler() http.Handler {
 	// (adminSurface).
 	mux.HandleFunc(RouteAdmin, s.adminSurface)
 	mux.HandleFunc(RouteAdmin+"/", s.adminSurface)
+	// Every door of the portal's API, from the table the areas register into.
+	apiRoutes.mount(mux, s)
 	return mux
 }
 

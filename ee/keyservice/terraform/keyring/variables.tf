@@ -6,6 +6,20 @@ variable "project" {
   type        = string
 }
 
+variable "environment" {
+  description = "The environment this apply is for: it names the key ring the signing key is created in and the key id created in it (D459). One apply, one environment, one key."
+  type        = string
+
+  # The set of environments is `keys`' own entry names, read rather than written
+  # a second time: a value this admits and the map does not name is an apply that
+  # would create no key at all, and an environment the map names and this refuses
+  # is a key id no apply can create.
+  validation {
+    condition     = contains(keys(var.keys), var.environment)
+    error_message = "environment must be one of the environments the keys map names."
+  }
+}
+
 variable "region" {
   description = "The key ring's location. A key ring cannot move after creation, and the services that sign with it run where they are cheapest to run, so this names the keys' home rather than the service's."
   type        = string
@@ -17,13 +31,13 @@ variable "region" {
 }
 
 variable "keyring" {
-  description = "The key ring's name: one ring holds both keys (D459(a))."
+  description = "The key ring's name stem: the ring this apply creates is this name and the environment joined by a dash, one ring per environment (D459). Both roots join the two the same way, so the ring services/ names is the ring this root created."
   type        = string
   default     = "fugaro-licence"
 }
 
 variable "keys" {
-  description = "The environments the service mints for, and each one's key id. The id names the environment (S2.1, §2), so a production verifier refuses a staging key rather than half-accepting it."
+  description = "The environments the service mints for, and each one's key id. The id names the environment (S2.1, §2), so a production verifier refuses a staging key rather than half-accepting it, and the apply of an environment creates the one entry it names."
   type        = map(string)
 
   default = {

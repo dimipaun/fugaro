@@ -4,9 +4,13 @@
 package keyservice
 
 // The paid path: the merchant of record's events (§5). Paddle is the merchant
-// for Team checkout (D442), a purchase mints a key stating the seats bought, a
-// seat change reissues, a cancellation stops the reissue, and a test-mode event
-// mints a staging key and nothing else.
+// for Team checkout (D442), a purchase mints a v1 key stating the seats bought,
+// a seat change reissues under a new key id, a refund or a chargeback withdraws
+// the one key its event names (§8, D2131 — see `withdrawn` for what that does
+// not stop), a cancellation stops the reissue, and
+// a test-mode event mints a staging key and nothing else. Enterprise is not this
+// path: it is invoiced directly by the entity and its key is the admin page's
+// (D2141, §5.5).
 //
 // Two rules give this path its shape, and both are about not minting twice: a
 // body is verified **before it is read**, and what was minted for which source
@@ -26,6 +30,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/dimipaun/fugaro/ee/licence"
 )
 
 // Mode is whether an event is the merchant's live one or its test one.
@@ -47,13 +53,32 @@ func ModeFor(env Environment) Mode {
 	return Live
 }
 
-// The three event types this path acts on (§5.1). Anything else the merchant
+// The event types this path acts on (§5.1, §8). Anything else the merchant
 // sends is read, recorded as nothing and answered: an event the service does
 // not know is not a reason to answer the merchant with an error it would retry.
 const (
 	EventPurchase     = "purchase"
 	EventSeatChange   = "seat_change"
 	EventCancellation = "cancellation"
+	// EventRefund and EventChargeback are the merchant giving the money back:
+	// what they withdraw is the key the buyer holds, and it is §8's revocation
+	// list that is written (D2131).
+	EventRefund     = "refund"
+	EventChargeback = "chargeback"
+)
+
+// The reasons §8's list holds that this path writes. Reason is the licensor's
+// own word for an entry and never what reaches the holder (K2.2), so it is
+// written here where the event that carries it is read.
+//
+// ReasonRefund and ReasonChargeback are the money the merchant returned.
+// ReasonUnrecorded is the service withdrawing its own key: one it minted and
+// mailed but could not record, which is a second live key for a purchase that
+// already has one, or a key the store has no issuance for at all (K2.2).
+const (
+	ReasonRefund     = "refund"
+	ReasonChargeback = "chargeback"
+	ReasonUnrecorded = "unrecorded"
 )
 
 // SigningHeader is the header the merchant signs with. It is Paddle's own name
@@ -63,7 +88,10 @@ const SigningHeader = "Paddle-Signature"
 
 // RenewalLead is T26's 30 days: the next key is minted inside this window
 // before the term it follows ends, so two keys overlap for a month and an
-// issuing outage bites only once it lasts past 60 days (§8).
+// issuing outage bites only once it lasts past 60 days (§8). It is the lead for
+// every term longer than twice it, and `Renew` holds a shorter term's window to
+// that term's own half — a monthly row's term is 28 to 31 days, so this lead
+// would open the window before the purchase that starts it.
 const RenewalLead = 30 * 24 * time.Hour
 
 var (
@@ -83,13 +111,14 @@ var (
 	// owner's alerting see it (§5.1).
 	ErrNoBuyer = errors.New("keyservice: the event carries no address a key can be mailed to")
 	// ErrNoClaims is an event that does not say what to mint: a purchase or a
-	// seat change with no organisation, no seats or no term. Those three are the
+	// seat change with no organisation, no workspace id, no seats or no term,
+	// or one whose term is not a period this checkout sells. Those four are the
 	// claims a key would carry and the term it would cover, so an event missing
 	// one is one this service cannot serve — and it is refused, like an event
 	// with no instant, rather than dropped: an event dropped here is a customer
 	// who has paid and receives nothing, with nothing recorded, nothing mailed,
 	// nothing queued and nothing logged, and the merchant never sends it again.
-	// What has to carry the three is the deploy's payload → `Event` mapping
+	// What has to carry the four is the deploy's payload → `Event` mapping
 	// (S3.7).
 	ErrNoClaims = errors.New("keyservice: the event does not say what to mint")
 	// ErrNoInstant is an event with no instant of its own. §5.2 orders the
@@ -116,9 +145,24 @@ type Event struct {
 	// and it is where the key is mailed: the record's personal data is the
 	// minimum a key's delivery needs (§7.3). An event without one is refused
 	// rather than minted for, because the key it would carry reaches nobody.
-	Email    string `json:"email"`
-	Seats    int    `json:"seats"`
-	TermDays int    `json:"term_days"`
+	Email string `json:"email"`
+	// WorkspaceID is the Firebase project id of the workspace the customer
+	// bought for, and it is the binding every v1 key carries and every verifier
+	// compares (D2134 as amended by TN2). The deploy's mapping carries it out of
+	// the checkout's own data, where the buyer picked the workspace, and a key
+	// minted without one is refused by every verifier that reads it — so a
+	// purchase or a seat change without one is refused here rather than minted
+	// into a key nobody can install.
+	WorkspaceID string `json:"workspace_id"`
+	Seats       int    `json:"seats"`
+	TermDays    int    `json:"term_days"`
+	// KeyID is the key a refund or a chargeback withdraws. §8's list is keyed by
+	// the key and not by the subscription, so what the event names is the key the
+	// buyer holds — and resolving the merchant's own transaction or subscription
+	// to it is the deploy's mapping (S3.7), which is why the field is here rather
+	// than looked up: the store is a list of who holds a licence and never of the
+	// licences (K2.2, §7.3).
+	KeyID string `json:"key_id"`
 }
 
 // VerifySignature checks the merchant's signature over the raw body, in the
@@ -224,10 +268,16 @@ func (s *Service) webhook(w http.ResponseWriter, r *http.Request) {
 	s.accept(w)
 }
 
-// apply is one event's effect on the store: §5.2's idempotency first, then the
-// subscription's own order, then the type. Both guards are before any mint, and
-// both are refusals to act rather than errors — a redelivery and a late event
-// are the merchant's ordinary traffic.
+// apply is one event's effect on the store: §5.2's idempotency first, then §8's
+// withdrawal where the event is one, then the subscription's own order, then the
+// type. Every guard is before any mint, and each is a refusal to act rather than
+// an error — a redelivery and a late event are the merchant's ordinary traffic.
+//
+// The withdrawal is ahead of the ordering guard and not behind it, because §5.2
+// orders the *subscription's* state and a withdrawal is not part of it: a refund
+// whose instant is older than the subscription's own — the merchant's webhook
+// arrived after a seat change moved that instant forward — would be dropped for
+// good by that guard, leaving the money returned and the key live.
 //
 // An event about a subscription the store does not hold is the one case that is
 // an error, and it is a `500` so the merchant sends it again. It is not
@@ -245,6 +295,15 @@ func (s *Service) apply(ctx context.Context, e Event) error {
 		return err
 	} else if held {
 		return s.completed(ctx, e, record)
+	}
+	// The money coming back is §8's own entry and not the subscription's state,
+	// so it is applied here, before the subscription is read: what a refund
+	// withdraws is the key the event names, and a withdrawal that arrives before
+	// the purchase it belongs to has to land as much as one that arrives after it
+	// — the key it names is the key it names either way, and the store refuses an
+	// entry that names none (K2.2).
+	if e.Type == EventRefund || e.Type == EventChargeback {
+		return s.withdrawn(ctx, e)
 	}
 	sub, held, err := s.store.Subscription(ctx, e.Subscription)
 	if err != nil {
@@ -331,11 +390,27 @@ func (s *Service) completed(ctx context.Context, e Event, record Record) error {
 		sub.ID = e.Subscription
 		sub.Organisation = record.Organisation
 		sub.Seats = record.Seats
-		sub.TermDays = daysBetween(record.Issued, record.Expires)
+		sub.TermDays = record.TermDays
+		if sub.TermDays < 1 {
+			// A record an earlier deploy wrote names no term of its own, and the
+			// length of the key it minted is the only term it has left to state.
+			// The repair may not carry that absence into the state: a subscription
+			// at zero days is one `checkoutPolicy` does not sell, so every renewal
+			// and every seat change after it is refused for good (D442).
+			sub.TermDays = daysBetween(record.Issued, record.Expires)
+		}
 		sub.Email = to
 		sub.At = e.OccurredAt
-		if record.Expires.After(sub.Expires) {
-			sub.Expires = record.Expires
+		// The workspace is the event's and not the record's: the issuance record
+		// carries no workspace id, so a purchase whose subscription write failed
+		// and is repaired here would otherwise leave a record that names none —
+		// and Renew refuses such a record rather than minting a key every
+		// verifier refuses (TN2, §5.1).
+		if e.WorkspaceID != "" {
+			sub.WorkspaceID = e.WorkspaceID
+		}
+		if end := entitlementEnd(record); end.After(sub.Expires) {
+			sub.Expires = end
 		}
 		return s.store.SaveSubscription(ctx, sub)
 	case EventSeatChange:
@@ -343,6 +418,9 @@ func (s *Service) completed(ctx context.Context, e Event, record Record) error {
 			return nil
 		}
 		sub.Seats = record.Seats
+		if e.WorkspaceID != "" {
+			sub.WorkspaceID = e.WorkspaceID
+		}
 		sub.At = e.OccurredAt
 		return s.store.SaveSubscription(ctx, sub)
 	}
@@ -351,33 +429,95 @@ func (s *Service) completed(ctx context.Context, e Event, record Record) error {
 
 // purchased mints the first key of a subscription and records the term it
 // covers. The mint happens through the minter and never through a signer here,
-// and the seats are the ones the merchant's event names (§5.1).
+// the seats are the ones the merchant's event names (§5.1), and the row is the
+// one its term is sold under.
+//
+// Enterprise is refused before any of that, and it is refused rather than sold
+// the Team row: §5.5's keys are invoiced directly by the entity and minted from
+// the admin page, so a deployment whose paid plan names the Enterprise tier is
+// one whose checkout would price a tier that is never self-serve — and the
+// customer would be mailed a key for a licence nobody sold them (D2141).
 func (s *Service) purchased(ctx context.Context, e Event) error {
-	if e.Organisation == "" || e.Seats < 1 || e.TermDays < 1 {
+	if s.cfg.Paid.Tier != licence.TierTeam {
+		return fmt.Errorf("the checkout sells Team keys and this deployment's paid plan names the %s tier, and an Enterprise key is invoiced directly and minted from the admin page (D2141, §5.5)", s.cfg.Paid.Tier)
+	}
+	if e.Organisation == "" || e.WorkspaceID == "" || e.Seats < 1 || e.TermDays < 1 {
 		return fmt.Errorf("%w: the purchase %s", ErrNoClaims, e.ID)
+	}
+	policy, sold := checkoutPolicy(e.TermDays)
+	if !sold {
+		return fmt.Errorf("%w: the purchase %s names a term the checkout does not sell (D442)", ErrNoClaims, e.ID)
 	}
 	to, deliverable := address(e.Email)
 	if !deliverable {
 		return fmt.Errorf("%w: the purchase %s", ErrNoBuyer, e.ID)
 	}
-	minted, err := s.mint(ctx, s.mintRequest(s.cfg.Paid, e.Organisation, e.Seats, e.TermDays), to, e.ID)
+	minted, err := s.paid(ctx, s.paidRequest(policy, e.WorkspaceID, e.Organisation, e.Seats, e.TermDays), to, e.ID)
 	if err != nil {
 		return err
 	}
 	return s.store.SaveSubscription(ctx, Subscription{
 		ID:           e.Subscription,
 		Organisation: e.Organisation,
+		WorkspaceID:  e.WorkspaceID,
 		Seats:        e.Seats,
 		TermDays:     e.TermDays,
 		Email:        to,
 		At:           e.OccurredAt,
-		Expires:      minted.Record.Expires,
+		Expires:      entitlementEnd(minted.Record),
 	})
+}
+
+// entitlementEnd is the end of the term an issuance stands for: the instant its
+// key was minted plus the term that issuance is for — the term a purchase
+// bought, the whole days a renewal covers, or the row's own term where the
+// request named none. It is the subscription's own end and never the key's,
+// because D2202 caps a connected row's key at thirty days while the entitlement
+// the customer bought runs the term they bought — a subscription stored with the
+// key's end would open an annual renewal's window at the purchase itself and
+// move the term on by a month a year.
+//
+// The term is whole days and the end a caller may have named is an instant, so
+// it is read as a lower bound and not as the end itself: the minter rounds the
+// days up (store.go's field comment), which puts this answer at the entitlement's
+// own end or up to a day past it and never before it. The direction is the
+// package's own — days rounded up are days the customer keeps — and the exact
+// instant is what the record's own `Expires` states for the key it minted.
+//
+// A record with no term at all is the fallback and only that: nothing in this
+// service mints one (the minter writes the term it resolved, the row's own
+// included), so it is a record the store already holds from a deployment that
+// wrote the field's absence, and the key's end is the only length such a record
+// states.
+func entitlementEnd(record Record) time.Time {
+	if record.TermDays < 1 {
+		return record.Expires
+	}
+	return record.Issued.Add(time.Duration(record.TermDays) * 24 * time.Hour)
 }
 
 // seatChanged reissues inside the term the customer already paid for: `seats`
 // is a claim in the key, and the term is not (§5.3). The new key covers what is
-// left of the term, so it ends where the key it replaces ends.
+// left of that term — which for a connected row's key is D2202's thirty days
+// from the reissue, and never a term taken off the subscription — so the seats
+// move, the key is as long as any other key of its row, and the subscription's
+// own end is where it was.
+//
+// The reissue is a **new key**, under a new `key_id`, and that is the whole of
+// what makes §8's list able to withdraw it: an entry names one key, so a
+// reissued key that kept the id of the key it replaces would be withdrawn by a
+// refund of the one the customer no longer holds, and a key reissued after a
+// leak would inherit the leak's entry (K2.2, K2.1).
+//
+// The workspace the reissued key binds to is the event's own, out of the same
+// checkout data the purchase's came from (S3.7), and a seat change whose event
+// names none is refused rather than minted bound to nothing (TN2, §5.1). The
+// subscription the store holds names one too, written by the purchase and kept
+// current here, so the event's is a second statement of the same binding rather
+// than the only one — and it is the event's that the minted key carries, because
+// a seat change is the merchant's statement of the subscription as it now is.
+// (Whether a nameless event should fall back to the stored binding instead of
+// being refused is a question for the owner, not a decision this path makes.)
 //
 // A cancelled subscription gets nothing here, as it gets nothing from Renew: the
 // key the customer holds keeps working until it expires and no second one is
@@ -393,11 +533,11 @@ func (s *Service) seatChanged(ctx context.Context, e Event, sub Subscription) er
 		// ordinary traffic, and a 500 would have the merchant retry it forever.
 		return nil
 	}
-	if e.Seats < 1 {
+	if e.Seats < 1 || e.WorkspaceID == "" {
 		// The same refusal a purchase without seats gets, and for the same
-		// reason: a seat change that names no seats is one this service cannot
-		// serve, and a customer who has paid for one receives nothing if it is
-		// dropped quietly.
+		// reason: a seat change that names no seats or no workspace is one this
+		// service cannot serve, and a customer who has paid for one receives
+		// nothing if it is dropped quietly.
 		return fmt.Errorf("%w: the seat change %s", ErrNoClaims, e.ID)
 	}
 	days := daysBetween(s.now(), sub.Expires)
@@ -411,17 +551,70 @@ func (s *Service) seatChanged(ctx context.Context, e Event, sub Subscription) er
 	if !deliverable {
 		return fmt.Errorf("%w: the seat change %s", ErrNoBuyer, e.ID)
 	}
-	if _, err := s.mint(ctx, s.mintRequest(s.cfg.Paid, sub.Organisation, e.Seats, days), to, e.ID); err != nil {
+	policy, sold := checkoutPolicy(sub.TermDays)
+	if !sold {
+		return fmt.Errorf("%w: the seat change %s is for a subscription whose term is not one the checkout sells (D442)", ErrNoClaims, e.ID)
+	}
+	if _, err := s.paid(ctx, s.paidRequest(policy, e.WorkspaceID, sub.Organisation, e.Seats, days), to, e.ID); err != nil {
 		return err
 	}
 	sub.Seats = e.Seats
+	sub.WorkspaceID = e.WorkspaceID
 	sub.At = e.OccurredAt
 	return s.store.SaveSubscription(ctx, sub)
 }
 
+// withdrawn writes §8's entry for one key the merchant has given the money back
+// for (D2131). It is the whole of the event's effect: the key stops being
+// renewable and the customer's own job reads it as revoked, and nothing about
+// the subscription moves — a refund is not a cancellation, and the merchant's
+// cancellation is the event that stops the reissue (§5.3).
+//
+// What it therefore does **not** do is end the subscription's ability to mint:
+// a seat change or a renewal inside the window mints a fresh key under a fresh
+// id, which no entry on this list names, so a withdrawn subscription keeps
+// issuing unless the merchant's cancellation arrives too. That is the shape
+// §5.3 and §8 state between them — the list withdraws keys, the cancellation
+// ends the subscription — and it puts the pairing on the deploy's event mapping
+// (S3.7). Making the store's own list stop a reissue would mean recording which
+// key a subscription currently holds, which is a decision for the owner rather
+// than a repair to make here.
+//
+// Nothing is recorded here, and that is deliberate: §5.2's idempotency is a
+// record of an **issuance**, and a withdrawal mints none. Two things make a
+// redelivery harmless anyway — the event id is only ever read for a source it
+// might have minted, and the list itself refuses to change an entry it holds, so
+// a refund delivered twice is one revocation from the first instant either way
+// (K2.2).
+//
+// A refund whose event names no key is refused by the store rather than
+// dropped, and that is the whole of the check here: the one entry an unnamed key
+// would write answers for every key nobody named, which is every project
+// dropped to Free by a record nobody meant to write (K2.2).
+func (s *Service) withdrawn(ctx context.Context, e Event) error {
+	reason := ReasonRefund
+	if e.Type == EventChargeback {
+		reason = ReasonChargeback
+	}
+	return s.store.Revoke(ctx, Revocation{KeyID: e.KeyID, Reason: reason, At: e.OccurredAt})
+}
+
 // Renew mints the next key for one subscription when T26's window is open: 30
-// days before the term it follows ends, its `issued` on the day the service
-// runs, its `expires` at the end of the term it covers.
+// days before the term it follows ends, or half that term where half is shorter
+// than the lead, which every monthly row's is, its `issued` on the day the
+// service runs, its `expires` at the end of the key it mints — D2202's thirty
+// days for a row whose key checks the server, however long the term behind it
+// runs.
+//
+// The key is a v1 one, minted through the same path a purchase uses and not
+// through the older format's `mint`: what every issue path hands a customer is
+// the same format (D2130), a renewal is a new key under a new `key_id` — the one
+// a refund or a leak is later named by (§8) — it carries the workspace binding
+// TN2 requires, and it is mailed with its own renewal secret and written into
+// the key state, so that the term after this one can be renewed at all (D2135,
+// K2.3). The row is the one the subscription's term is sold under, which is what
+// makes a renewal minted inside a term the customer is in carry that term's
+// grace and renewal mode (D2133, D442).
 //
 // What calls it is the merchant's renewal or the scheduler that reads one, and
 // the route and the authentication that reach it are the deploy's (§5.3) — this
@@ -430,8 +623,10 @@ func (s *Service) seatChanged(ctx context.Context, e Event, sub Subscription) er
 // second call is 395 days early and does nothing.
 //
 // Nothing is minted for a cancelled subscription, and nothing is withdrawn from
-// one: the key the customer holds keeps working until it expires, because the
-// service has no revocation (S2.1, §5.3).
+// one: withdrawing a key is §8's revocation and it is the refund's and the
+// chargeback's, and a renewal is neither — the key the customer holds is left
+// exactly as it is, and the next trigger is what finds the subscription
+// cancelled and stops (D2131, §5.3).
 //
 // The key is mailed, and mailed to the address the subscription kept from its
 // purchase: the renewal happens months after the event that carried the address
@@ -439,6 +634,14 @@ func (s *Service) seatChanged(ctx context.Context, e Event, sub Subscription) er
 // address is not one the intake can mail to is refused with ErrNoBuyer rather
 // than minted for — the term would otherwise advance on a key that reached
 // nobody, and the source is spent once, so that term could never be re-minted.
+//
+// The workspace and the row come from the subscription's own record, and a
+// record that carries neither the binding nor a term the checkout sells is
+// refused rather than minted: a v1 key with no workspace id is one every
+// verifier refuses (TN2), and one minted for a period nobody sells is a licence
+// the customer paid for with whatever they paid (D442). The refusal is visible
+// and the trigger sends it again — the state is what has to be repaired, and a
+// key minted to fit it would be the wrong key.
 //
 // The mint and the store write are two writes, as a purchase's are, and the same
 // failure is repaired the same way: the source is recorded before the term is
@@ -456,54 +659,90 @@ func (s *Service) seatChanged(ctx context.Context, e Event, sub Subscription) er
 // ordinary webhook latency or a merchant retry, would be dropped for good: the
 // subscription would never cancel, and every later renewal would mint another
 // key for a customer who has left (§5.2, §5.3).
-func (s *Service) Renew(ctx context.Context, subscriptionID string) (Minted, bool, error) {
+func (s *Service) Renew(ctx context.Context, subscriptionID string) (MintedV1, bool, error) {
 	sub, held, err := s.store.Subscription(ctx, subscriptionID)
 	if err != nil {
-		return Minted{}, false, err
+		return MintedV1{}, false, err
 	}
 	if !held {
-		return Minted{}, false, fmt.Errorf("%w: %s", ErrUnknownSubscription, subscriptionID)
+		return MintedV1{}, false, fmt.Errorf("%w: %s", ErrUnknownSubscription, subscriptionID)
 	}
 	if sub.Cancelled {
-		return Minted{}, false, nil
+		return MintedV1{}, false, nil
 	}
 	now := s.now()
-	if now.Before(sub.Expires.Add(-RenewalLead)) {
-		return Minted{}, false, nil
+	// T26's lead is 30 days and a monthly row's term is 28 to 31, so a fixed
+	// lead opens the window at or before the purchase itself: the trigger that
+	// fires then mints a second key for the whole of the term the customer is in
+	// and the next one, and the month the merchant billed has bought two. The
+	// term's own half is the bound, and it is the half the lead may not exceed:
+	// the window still opens inside the term the customer is in, which is the
+	// overlap T26 wants — an issuing outage is survived by the key already
+	// installed — and it opens in the term's second half rather than on its first
+	// day. A year's half is far longer than the lead, so an annual or an
+	// Enterprise row renews exactly where it did.
+	lead := RenewalLead
+	if half := time.Duration(sub.TermDays) * 12 * time.Hour; sub.TermDays > 0 && half < lead {
+		lead = half
+	}
+	if now.Before(sub.Expires.Add(-lead)) {
+		return MintedV1{}, false, nil
 	}
 	next := sub.Expires.Add(time.Duration(sub.TermDays) * 24 * time.Hour)
 	days := daysBetween(now, next)
 	if days < 1 {
-		return Minted{}, false, nil
+		return MintedV1{}, false, nil
 	}
 	source := "renew:" + sub.ID + ":" + sub.Expires.UTC().Format(time.RFC3339)
 	if record, minted, err := s.recorded(ctx, source); err != nil {
-		return Minted{}, false, err
+		return MintedV1{}, false, err
 	} else if minted {
 		// One mint per (subscription, term, seats) (§5.2): the source names the
 		// term, so a second trigger inside the window finds this and stops — and
 		// what it stops on is the record, which is where the term's end is if the
 		// first trigger minted and could not save.
-		return Minted{}, false, s.renewed(ctx, sub, record)
+		return MintedV1{}, false, s.renewed(ctx, sub, record)
+	}
+	policy, sold := checkoutPolicy(sub.TermDays)
+	if !sold {
+		return MintedV1{}, false, fmt.Errorf("%w: the renewal of the subscription %s is for a term the checkout does not sell (D442)", ErrNoClaims, sub.ID)
+	}
+	// The key a renewal mints covers the rest of the term the customer is in and
+	// the whole of the next one, so it is longer than a term: on the window's
+	// first day it asks for the subscription's own days plus T26's 30-day lead,
+	// and the tier's ceiling is exactly a year plus that lead. A leap year is 366
+	// days, so that first day would ask for 396 and the minter would refuse it —
+	// and every trigger after it too, at 500, if this answer were an error rather
+	// than nothing to do. Waiting the one day is what the lead means for a year
+	// that is a day longer, and it keeps `paid_through` exactly the end of the
+	// term the key covers rather than a day short of it.
+	if row, known := DefaultPolicy(policy); known {
+		if maximum, bounded := tierMaxTerm[row.Tier]; bounded && days > int(maximum/(24*time.Hour)) {
+			return MintedV1{}, false, nil
+		}
+	}
+	if sub.WorkspaceID == "" {
+		return MintedV1{}, false, fmt.Errorf("%w: the renewal of the subscription %s, whose record names no workspace (TN2)", ErrNoClaims, sub.ID)
 	}
 	to, deliverable := address(sub.Email)
 	if !deliverable {
-		return Minted{}, false, fmt.Errorf("%w: the subscription %s", ErrNoBuyer, sub.ID)
+		return MintedV1{}, false, fmt.Errorf("%w: the subscription %s", ErrNoBuyer, sub.ID)
 	}
-	answer, err := s.mint(ctx, s.mintRequest(s.cfg.Paid, sub.Organisation, sub.Seats, days), to, source)
+	answer, err := s.paid(ctx, s.paidRequest(policy, sub.WorkspaceID, sub.Organisation, sub.Seats, days), to, source)
 	if err != nil {
-		return Minted{}, false, err
+		return MintedV1{}, false, err
 	}
 	sub.Expires = next
 	if err := s.store.SaveSubscription(ctx, sub); err != nil {
-		return Minted{}, false, err
+		return MintedV1{}, false, err
 	}
 	return answer, true, nil
 }
 
 // renewed finishes a renewal whose key is already minted and whose term the
-// store did not take: the record names the end of the term it covers, so the
-// state the customer paid for is written from it.
+// store did not take: the record names the term it was minted for, so the state
+// the customer paid for is written from it — and it is the term that is written,
+// not the end of the key, which D2202 caps at thirty days below it.
 // The subscription's own end is the test — it is what the window and the source
 // are both computed from — and a state the term has already moved past is left
 // alone, so a stale source cannot pull it back.
@@ -512,11 +751,246 @@ func (s *Service) Renew(ctx context.Context, subscriptionID string) (Minted, boo
 // merchant's timeline and not the service's, and the repair's own instant is not
 // an event on it.
 func (s *Service) renewed(ctx context.Context, sub Subscription, record Record) error {
-	if !sub.Expires.Before(record.Expires) {
+	end := entitlementEnd(record)
+	if !sub.Expires.Before(end) {
 		return nil
 	}
-	sub.Expires = record.Expires
+	sub.Expires = end
 	return s.store.SaveSubscription(ctx, sub)
+}
+
+// checkoutRows is the whole of what the checkout sells: the Team month and the
+// Team year (D442, spec section 12.1). The two rows are the plans a merchant
+// event may be minted under, and Enterprise is not one of them — §5.5's keys are
+// invoiced directly and minted from the admin page (D2141).
+var checkoutRows = []struct {
+	policy string
+	period time.Duration
+	// floor is the shortest term this row is sold for, and it is below the
+	// period for the monthly row alone: the merchant bills a **calendar** month,
+	// which February makes 28 days, so a TermDays of 28, 29 or 31 is the month
+	// the customer bought rather than a period nobody sells.
+	//
+	// ceiling is the longest, and it is the calendar's own bound for the same
+	// reason: no month is longer than 31 days and no year longer than 366. It is
+	// what keeps a term the minter would refuse out of the checkout — the tier's
+	// ceiling is a year plus T26's lead (395 days), so a term past a year is
+	// minted by nobody, and a purchase carrying one would answer 500 to every
+	// redelivery for ever rather than fail once, visibly, at the checkout.
+	floor   time.Duration
+	ceiling time.Duration
+}{
+	{PolicyTeamMonthly, monthTerm, 28 * 24 * time.Hour, 31 * 24 * time.Hour},
+	{PolicyTeamAnnual, yearTerm, yearTerm, 366 * 24 * time.Hour},
+}
+
+// checkoutPolicy answers the row one transaction's term is sold under: the
+// longest row the term covers, so that a renewal — which covers what is left of
+// the term the customer is in and is therefore longer than a fresh period — is
+// minted under the row the customer bought rather than under a longer one.
+//
+// A term shorter than the shortest row's floor is refused rather than sold the
+// cheapest one, and it is the minter's own refusal of a term that is not a term
+// read the way it is at the checkout: a key minted for a period nobody sells is
+// a licence the customer paid for with whatever they paid. The floor and not the
+// period is what decides it, because a refusal here is a 500 the merchant
+// retries for ever — a customer whose February month came through as 28 days
+// would never be minted a key at all.
+func checkoutPolicy(termDays int) (string, bool) {
+	policy, sold := "", false
+	term := time.Duration(termDays) * 24 * time.Hour
+	for _, row := range checkoutRows {
+		if term >= row.floor && term <= row.ceiling {
+			policy, sold = row.policy, true
+		}
+	}
+	return policy, sold
+}
+
+// paidRequest is the minter's v1 Request for one term of one subscription: the
+// row the term is sold under, the workspace the checkout bound, and the claims
+// and the term in days the merchant's event names (§5.1). It is the v1 twin of
+// mintRequest, and the difference between the two is the format: this one names
+// a row of the policy table, and the row is where the grace, the renewal mode
+// and the check interval come from — the caller names none of them (D2133,
+// D2138).
+func (s *Service) paidRequest(policy, workspaceID, organisation string, seats, days int) RequestV1 {
+	return RequestV1{
+		Environment:  s.cfg.Environment,
+		Policy:       policy,
+		WorkspaceID:  workspaceID,
+		Organisation: organisation,
+		Seats:        seats,
+		TermDays:     days,
+	}
+}
+
+// paid is the paid path's mint: it asks the minter for one v1 key, mails the
+// bundle to the buyer, and writes the issuance and the key's renewal state.
+//
+// The format is the point of the type assertion. The intake holds one Mints —
+// the minter's own service (Check 174) — and the minter answers the older
+// format's route and the v1 route through the same client, so a service that
+// could not answer a v1 request is refused here rather than handed a key in a
+// format no released verifier reads: what a customer buys is a v1 key, which is
+// the key whose `key_id` a revocation can name and whose claim set carries the
+// policy (§8, D2130).
+//
+// The bundle is mailed for the reason every other issue path's is (D2135): the
+// secret's hash goes into the key and the secret goes to the buyer, and only the
+// two together can renew. A key mailed without it is a licence that lapses at
+// the end of its term with nothing the customer can do about it.
+//
+// The order is mint, mail, record, and then the key's renewal state — the same
+// order `mint` states and for the same reason: a record written for a mail that
+// failed is a source spent on a key nobody holds. The state is written last
+// because it is the half a failure may lose: an issuance and a key state are two
+// writes, and the pair's safe half is a key the store can revoke and cannot
+// renew (K2.2). A failure there is still answered, so the deploy's alerting sees
+// a key whose renewal nothing can serve.
+//
+// That order's own price is a different thing in v1 than it was in the older
+// format, and it is paid here: `mint` could say that the two keys one source
+// mints twice are "the same key in every claim", and that is not true of a v1
+// mint — MintV1 makes a fresh key_id and a fresh renewal secret every call. So a
+// key minted and mailed and then **not** recorded is not a duplicate of the
+// recorded one: it is a second live key, with no issuance and no key state, so
+// nothing can renew it, a refund mapped to the recorded key_id leaves it live,
+// and the operator reading the store cannot see it at all. The issuance write is
+// therefore the one that withdraws the key it was about when it fails — where
+// the store really holds no record of that key, which is read back rather than
+// taken from the write's answer — which is what puts that key in §8's list where
+// the licensor can see and act on it. A
+// failed key state withdraws nothing: it is the pair's safe half (above), and
+// the key it belongs to is one the store holds, so a revocation can name it and
+// a redelivery can finish it.
+func (s *Service) paid(ctx context.Context, req RequestV1, applicant, source string) (MintedV1, error) {
+	mints, answersV1 := s.mints.(MintsV1)
+	if !answersV1 {
+		return MintedV1{}, errors.New("the intake's minter does not answer a v1 mint request, and the paid path issues v1 keys")
+	}
+	answer, err := mints.MintV1(ctx, req)
+	if err != nil {
+		return MintedV1{}, err
+	}
+	answer.Record.Source = source
+	answer.Record.Email = applicant
+	if applicant != "" {
+		if err := s.mail.Send(ctx, paidKeyMail(applicant, answer.Key, answer.RenewalSecret)); err != nil {
+			return MintedV1{}, err
+		}
+	}
+	if err := s.store.SaveIssuance(ctx, answer.Record); err != nil {
+		// The key has already been mailed, so a failure here is answered with the
+		// key withdrawn: an unrecorded key left live is one no refund can name and
+		// no renewal can serve. A redelivery then finds the source free and mints
+		// the key the customer actually keeps, which is the path the older format
+		// took by minting the same key twice — and it is the source, not the key,
+		// that has to be unspent for that to work.
+		//
+		// The store's answer is not the state, though, and this is the one place
+		// the difference matters: a store that commits and then reports the
+		// failure — a timeout on the way back, or an internal retry that answers
+		// ErrAlreadyRecorded — has this key in hand, and withdrawing it would take
+		// the customer's own key away. Worse, the redelivery that follows finds
+		// the source spent and repairs nothing but the subscription, so the key the
+		// customer paid for would be one withdrawn entry and nothing else, with no
+		// key state for the term after it. So the record is re-read before
+		// anything is withdrawn: only a source the store really holds no record
+		// for, or one it holds under a different key — the delivery that lost its
+		// race — has this key withdrawn.
+		held, recorded, readErr := s.recorded(ctx, source)
+		if readErr != nil {
+			// A store that cannot be read is a store that cannot be asked, so
+			// nothing is withdrawn on its answer: a withdrawal that lands on a
+			// recorded key is the customer's licence gone for good, while a key
+			// whose record cannot be read is one the merchant's retry re-reads.
+			return MintedV1{}, errors.Join(err, readErr)
+		}
+		if !recorded || held.KeyID != answer.Record.KeyID {
+			if withdrawErr := s.withdrawUnrecorded(ctx, answer.Record.KeyID); withdrawErr != nil {
+				return MintedV1{}, errors.Join(err, withdrawErr)
+			}
+			return MintedV1{}, err
+		}
+		// The record is this key's, so the write landed and the pair is finished
+		// below rather than left for the redelivery, which would find the source
+		// spent and write no key state: a key the customer holds and can never
+		// renew is the half this path exists to avoid.
+	}
+	// The hash written is the hash the key carries, which is the request's own
+	// when the answer holds no secret: D2200's reissue keeps the entitlement's
+	// existing hash and answers no new secret at all, so a state hashed from the
+	// empty answer would file every reissued key under `digest("")` — a key whose
+	// holder can never renew it, holding a secret the store does not know. The
+	// state is still written for a reissue, because a key state is keyed by the
+	// key's own id and the reissue has a new one: skipping it would leave a key
+	// nothing can renew just the same.
+	secretHash := req.RenewalSecretHash
+	if answer.RenewalSecret != "" {
+		secretHash = digest(answer.RenewalSecret)
+	}
+	// The workspace goes in with the hash, and it is the request's own: that is
+	// the workspace the key was minted into, and `/renew` mints the successor
+	// into it. It has to be here, because D2202 makes a connected key thirty days
+	// of the term it was sold for and `/renew` is the door that carries the
+	// entitlement from one of those to the next — a purchased key whose state
+	// names no workspace is refused there, and an annual purchase would then be
+	// dark from the end of its first key until the merchant's own renewal, which
+	// opens RenewalLead before the subscription's end and so on day 335 of a year
+	// (renew.go's `renewable`).
+	//
+	// What naming it costs is that `/renew` reads no subscription either, so a
+	// key whose subscription the merchant has since cancelled renews here too.
+	// That gate is P3.6's and the plan says so — "`/renew` issues only while the
+	// entitlement runs", `TestRenewalStopsWhenTheEntitlementEnds` — and it needs
+	// the record to carry the subscription the key was minted for.
+	if err := s.store.SaveKeyState(ctx, KeyState{
+		KeyID:             answer.Record.KeyID,
+		WorkspaceID:       req.WorkspaceID,
+		RenewalSecretHash: secretHash,
+	}); err != nil {
+		return MintedV1{}, err
+	}
+	return answer, nil
+}
+
+// withdrawUnrecorded puts the key a failed write was about into §8's list: it is
+// a key that exists — it was mailed — and that the store has no issuance for, so
+// the list is the only place the licensor can see it. The store takes an entry
+// for a key it never issued for exactly this reason (K2.2).
+func (s *Service) withdrawUnrecorded(ctx context.Context, keyID string) error {
+	return s.store.Revoke(ctx, Revocation{KeyID: keyID, Reason: ReasonUnrecorded, At: s.now()})
+}
+
+// paidKeyMail carries D2135's bundle: the key on the first line and the renewal
+// secret on the second, which is the pair a renewal is made of and the only
+// place either is written down outside the key ring. The store holds the
+// secret's hash and never the secret (K2.2, §7.3), so a customer who loses this
+// mail holds a key that runs to its own end and no further.
+//
+// A reissue that keeps the entitlement's existing hash is mailed its key alone
+// (D2200): the minter answered no secret, because there is no new one to hand
+// out and the holder still has the one this service sent them, so the second
+// line is left out rather than mailed empty — a bundle whose second half is
+// nothing asks a customer to keep a blank line as the thing they renew with.
+func paidKeyMail(to, key, secret string) Message {
+	if secret == "" {
+		return Message{
+			To:      to,
+			Subject: keySubject,
+			Body: "Your Fugaro licence key:\n\n" + key + "\n\n" +
+				"This key replaces one you already hold, and the renewal secret you were sent with it is unchanged.\n" +
+				"Install it in the console, or keep it for the CLI.\n",
+		}
+	}
+	return Message{
+		To:      to,
+		Subject: keySubject,
+		Body: "Your Fugaro licence key:\n\n" + key + "\n" + secret + "\n\n" +
+			"Keep both lines: the first is the key and the second is its renewal secret.\n" +
+			"Install them in the console, or keep them for the CLI.\n",
+	}
 }
 
 // mintRequest is the minter's Request for one plan: the claims, and a term in days.

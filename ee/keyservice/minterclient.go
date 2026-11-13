@@ -58,7 +58,11 @@ func (r RemoteMints) Mint(ctx context.Context, req Request) (Minted, error) {
 // deployment's pair, the call is the platform-authenticated one (Check 174), and
 // the secret is the second line of the bundle an issue path shows once and never
 // stores (D2135). An answer without one is refused here rather than passed on,
-// because a key whose secret the intake never saw is a key nobody can renew.
+// because a key whose secret the intake never saw is a key nobody can renew —
+// with one exception, and it is the request's own: a reissue that keeps the
+// entitlement's existing hash is answered with no secret at all (D2200), because
+// the holder already has the one they were sent, and refusing that answer would
+// leave the reissue lane with no way to reach the minter in a deployment at all.
 func (r RemoteMints) MintV1(ctx context.Context, req RequestV1) (MintedV1, error) {
 	var minted MintedV1
 	if err := r.call(ctx, RouteMintV1, req, &minted); err != nil {
@@ -67,7 +71,7 @@ func (r RemoteMints) MintV1(ctx context.Context, req RequestV1) (MintedV1, error
 	if minted.Key == "" || minted.Record.KeyID == "" {
 		return MintedV1{}, errors.New("the minter answered no key")
 	}
-	if minted.RenewalSecret == "" {
+	if minted.RenewalSecret == "" && req.RenewalSecretHash == "" {
 		return MintedV1{}, errors.New("the minter answered no renewal secret, and a key that cannot renew is not one this service issues (D2135)")
 	}
 	return minted, nil

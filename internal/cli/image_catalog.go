@@ -367,6 +367,12 @@ func runImageAdd(cmd *cobra.Command, o cloudOptions, name string, tags []string,
 	if err != nil {
 		return err
 	}
+	// The catalog is the project's (F19, and D1584 for the entries), so an
+	// admin of every enrolled repository holds none of it: the entry is
+	// written by a project admin or by nobody.
+	if err := accessGateProject(ctx, onDisk, nil, "nothing was written", "adding an image catalog entry"); err != nil {
+		return err
+	}
 	// Refused before the entry is written, and with the sentence the build
 	// itself would give: the operator hears it here rather than at `fugaro
 	// image build`, which is after the typed confirmation for a billable
@@ -480,6 +486,9 @@ func runImageRm(cmd *cobra.Command, o cloudOptions, name string) error {
 	}
 	path, onDisk, old, err := catalogConfig(ctx, o)
 	if err != nil {
+		return err
+	}
+	if err := accessGateProject(ctx, onDisk, nil, "nothing was removed", "removing an image catalog entry"); err != nil {
 		return err
 	}
 	cat := onDisk.ImageCatalog
