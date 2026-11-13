@@ -178,7 +178,7 @@ func TestAdoptOlderInstallationReportsNoChanges(t *testing.T) {
 	if !strings.Contains(details["plugin"], "removed the fugaro@fugaro pin from") {
 		t.Errorf("the plugin stage says %q, want the pin it took out\nstages %+v", details["plugin"], res.Stages)
 	}
-	if got := upgradeRead(t, settings); got != "{}\n" {
+	if got := convergeRead(t, settings); got != "{}\n" {
 		t.Errorf("the checkout's settings after the run:\n%s\nwant the leftover pin taken out:\n%s", got, "{}\n")
 	}
 }

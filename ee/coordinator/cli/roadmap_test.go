@@ -610,8 +610,10 @@ func TestRoadmapNeverWritesTheDatabaseItself(t *testing.T) {
 	writers := []string{"openCoordinatorStore", "CoordinatorDB", "coordinator.Store", "rtdb.", "runstore."}
 	// credentiallock.go is on the same path — it is what the credential is
 	// swapped under — so it is held to the same property rather than left as
-	// the one file of the three nobody checks.
-	for _, name := range []string{"roadmap.go", "login.go", "credentiallock.go"} {
+	// the one file of the group nobody checks. roadmap_publish.go, which reads
+	// a checkout, is held to it by TestPublishNeverWritesTheDatabaseItself,
+	// beside the code that file holds.
+	for _, name := range []string{"roadmap.go", "roadmap_move.go", "login.go", "credentiallock.go"} {
 		fset := token.NewFileSet()
 		file, err := parser.ParseFile(fset, name, nil, parser.ImportsOnly)
 		if err != nil {
@@ -639,14 +641,22 @@ func TestRoadmapNeverWritesTheDatabaseItself(t *testing.T) {
 		}
 	}
 	// And the positive half: the calls it does make are the door's own
-	// endpoints and the catalogue's own tool names.
-	source, err := os.ReadFile("roadmap.go")
-	if err != nil {
-		t.Fatal(err)
+	// endpoints and the catalogue's own tool names. The two files are read
+	// together, because the group's writes are split across them — the
+	// transport and the group in roadmap.go, the move in its own file — and a
+	// name check against one of the two would pass while the other reached the
+	// record another way.
+	source := ""
+	for _, name := range []string{"roadmap.go", "roadmap_move.go"} {
+		data, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		source += string(data)
 	}
-	for _, want := range []string{"mcpauth.MCPPath", "roadmap_need", "roadmap_unneed", "roadmap_release_set", "roadmap_request"} {
-		if !strings.Contains(string(source), want) {
-			t.Errorf("roadmap.go does not name %s, so this test is asserting nothing about the route it is meant to pin", want)
+	for _, want := range []string{"mcpauth.MCPPath", "roadmap_need", "roadmap_unneed", "roadmap_move", "roadmap_release_set", "roadmap_request"} {
+		if !strings.Contains(source, want) {
+			t.Errorf("the roadmap commands do not name %s, so this test is asserting nothing about the route it is meant to pin", want)
 		}
 	}
 }

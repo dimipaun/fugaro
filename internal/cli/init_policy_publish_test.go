@@ -166,8 +166,8 @@ func accountMembersOn(t *testing.T, db *gcpfake.RTDB) (string, map[string]string
 	return account, stages
 }
 
-// ceilingOn is nodeCeiling for a database held without a fixture — the upgrade
-// door's tests hold the fake itself. The database hands numbers back as
+// ceilingOn is nodeCeiling for a database held without a fixture — the tests
+// that hold the fake itself. The database hands numbers back as
 // json.Number when the write came over HTTP and as float64 when the fake was
 // seeded directly, and both shapes are read here.
 func ceilingOn(t *testing.T, db *gcpfake.RTDB) float64 {
@@ -1700,55 +1700,6 @@ func TestUpdatePublishUnchangedNodeAsksNothingNew(t *testing.T) {
 	}
 	if got := nodeCeiling(t, f); got != 5 {
 		t.Errorf("the node's ceiling is %v, want the untouched 5", got)
-	}
-}
-
-// TestUpgradePublishLooserNodeRefusesYesAlone: the other door that writes a
-// ceiling is `fugaro upgrade`'s policy step, and it runs the same confirmation.
-// --yes is the flag the whole upgrade is run with, so this is where a loosening
-// publish would be confirmed by it and nowhere else — the step refuses, names
-// the member that loosens and the command that reaches the same publish at a
-// terminal, and leaves the node where it was.
-func TestUpgradePublishLooserNodeRefusesYesAlone(t *testing.T) {
-	noTerminal(t)
-	old := selfCommand
-	selfCommand = func() string { return "fugaro" }
-	t.Cleanup(func() { selfCommand = old })
-
-	r := upgradeRigWithGitHubAppID(t)
-	db := gcpfake.NewRTDB(t)
-	db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "project": initProjectName, "gcp_project": initProject, "version": 1})
-	db.Set(budget.PathProject, initProjectName)
-	db.Set(budget.PathMode, budget.ModeEnforce)
-	db.Set(budget.PathLimits, map[string]any{"maxReserveMicros": 5_000_000})
-	// The local project config states a per-run ceiling above the published
-	// one, and the node is already at this version under deployed rules: the
-	// whole of this run's write would be the loosening publish.
-	r.appendConfig(t, "budget: { mode: enforce, per_run_usd: 7, rtdb_url: "+db.URL+", firebase_project: \""+initProject+"\" }\n")
-	db.SetRules([]byte(`{"rules":{".read":false}}`))
-	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
-	db.Set(projectpolicy.PathShared(), v3Node(map[string]any{
-		"version": projectpolicy.Version,
-		"budget":  map[string]any{"mode": "enforce", "per_run_usd": 5},
-	}))
-
-	got, out := runUpgradePolicyStep(t, r.root)
-	if got.state != stepFailed || got.code != ExitUserError {
-		t.Fatalf("--yes alone on the upgrade door is %s (exit %d): %s\n%s", got.state, got.code, got.reason, out)
-	}
-	for _, want := range []string{"budget.per_run_usd", "5", "7", "fugaro update", "needs a real terminal"} {
-		if !strings.Contains(got.reason, want) {
-			t.Errorf("the refusal does not say %q: %s", want, got.reason)
-		}
-	}
-	// The sentence is said once: what the step printed and the reason the
-	// command reports are one block to the person reading them, and a block
-	// that repeats the sentence reads as two findings.
-	if n := strings.Count(out+got.reason, "does not stand in"); n != 1 {
-		t.Errorf("the loosening sentence appears %d times in what the upgrade prints, want once:\n%s%s", n, out, got.reason)
-	}
-	if got := ceilingOn(t, db); got != 5 {
-		t.Errorf("the node's ceiling is %v, want the published 5: the upgrade step wrote the loosening", got)
 	}
 }
 

@@ -467,11 +467,40 @@ const VerifierAccountID = "fugaro-verifier"
 // package reads differently. It is NOT among FugaroAccounts, for the
 // credentials and coordinator accounts' reason: its grants are a project-wide
 // reach that no `fugaro update` confirmation announced, so it is read as a
-// kind of its own (toCatalogCheck) and every role it is given is refused
-// unless a row carries that bit — which is the bucket rows' objectUser one
-// alone, and only through bucketCondition's catalogRecordsGrant, the check
-// that pins the grant to one repository's records condition (D1148).
+// kind of its own (toCatalogCheck), and a row accepts it only where the row
+// carries that bit — which ONE row does, the bucket rows' objectUser, and only
+// through bucketCondition's catalogRecordsGrant, the check that pins the grant
+// to one repository's records condition (D1148).
+//
+// Every other grant to it is one the tables do not cover, and what a managed
+// apply then does with it is D1545's answer and not the pre-D1545 one: the
+// grant table is one of that decision's three CONTENT sites
+// (managed_cover.go's NotCoveredSplit names them), so the grant is a finding
+// the gate records and warns about — the run prints it, files a warned record
+// in the audit family and `doctor` reports that record as a finding — while
+// the verdict's OK stays true and the apply goes ahead, a coding agent's
+// session included, with nothing typed and no terminal. The grant of
+// CatalogLeaseRole below is one of these, and deliberately not a row: a row
+// would be the quieter outcome of the two, since the grant would be covered
+// and announced by the gate's own line, and what the tables' silence buys is
+// that the reach is never granted without the run naming it in its own words.
+// Read the paragraph above at that size: the fence is a warning the owner can
+// find again in `doctor`, not a question asked before the grant is made.
 const CatalogCheckAccountID = "fugaro-catalog-check"
+
+// CatalogLeaseRole is the custom role the catalog check job's account holds in
+// the installation's Firebase project: the two Realtime Database DATA
+// permissions its build leases are written with (catalogcheck.tf, D1554). It
+// is a SECOND role rather than a second grant of CredentialsDatabaseRole, even
+// though the two pin the same two permissions today, because the two accounts'
+// reach must not be able to grow by the other's needs: a permission the
+// credentials service needs next is not one the unattended nightly job gets,
+// and RolePermissions pins each list on its own.
+//
+// It is created in the Firebase project, which is why roleKey resolves it
+// through that project and not through the installation's alone (Cover.Projects
+// carries a verified Firebase project for the reason).
+const CatalogLeaseRole = "fugaroCatalogLease"
 
 // MCPServerAccountID is the front door's own service account (D920), the one
 // modules/installation/coordinator.tf creates in the installation's project
@@ -537,7 +566,7 @@ const (
 // own account (MCPServerAccountID), for the same reason (toCoordinator,
 // toCatalogCheck, toMCP).
 var (
-	FugaroRoles    = []string{"fugaroLauncher", ViewerRole, "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder", CloudAssetRole, CredentialsDatabaseRole, WorkspaceReadRole, IntakeSecretsRole, SecretListerRole, DeployerRole, DeployerStorageRole, DeployerSecretRole, DeployerAccountRole, DeployerAPIKeyRole, DeployerRepositoryRole, DeployerRunJobRole, DeployerSchedulerRole}
+	FugaroRoles    = []string{"fugaroLauncher", ViewerRole, "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder", CloudAssetRole, CredentialsDatabaseRole, CatalogLeaseRole, WorkspaceReadRole, IntakeSecretsRole, SecretListerRole, DeployerRole, DeployerStorageRole, DeployerSecretRole, DeployerAccountRole, DeployerAPIKeyRole, DeployerRepositoryRole, DeployerRunJobRole, DeployerSchedulerRole}
 	FugaroAccounts = []string{"fugaro-scheduler", "fugaro-history", "fugaro-token-signer", "fugaro-reaper", "fugaro-preload"}
 )
 
@@ -1023,6 +1052,16 @@ var RolePermissions = map[string][]string{
 	// installation's database. credentials.tf lists both permissions with their
 	// reasons; TestCredentialsDatabaseRoleIsTheTwoDataPermissions is the pin.
 	CredentialsDatabaseRole: {"firebasedatabase.instances.get", "firebasedatabase.instances.update"},
+	// The catalog check job's database role (D1554): the two permissions
+	// catalogcheck.tf lists, and the same two the credentials role above pins.
+	// They are a second entry and not a shared one on purpose — the two
+	// accounts hold the same surface today, and neither may grow it because the
+	// other needed a permission. The job reads the leases it left behind, the
+	// day's counters and the database's mark, and writes the lease it takes and
+	// settles (internal/budget/lease_build.go); it never touches the instance's
+	// lifecycle, which is what roles/firebasedatabase.admin would hand it.
+	// TestCatalogLeaseRoleIsTheTwoDataPermissions is the pin.
+	CatalogLeaseRole: {"firebasedatabase.instances.get", "firebasedatabase.instances.update"},
 	// The dynamic class's write half (intake.tf, D1931, DS2.2): what the
 	// intake may do to a container, and no read at all — it creates one, adds a
 	// version to it and deletes it, and it must not be able to read a value
@@ -1141,6 +1180,19 @@ var credentialsServiceEnv = []string{
 	"FUGARO_LAUNCHER_ACCOUNTS",
 }
 
+// intakeServiceArgs and intakeServiceEnv are the argv and the environment
+// intake.tf writes for the secrets intake's container, and nothing else is
+// admitted on it: the released image's `intake serve` subcommand (the image is
+// the credentials service's own, whose default command serves the other
+// service), and the four names internal/cli/intake_serve.go reads — the
+// project, the service's own URL (the audience a caller's ID token is minted
+// for), the runs bucket holding the derived admin list, and the launcher class
+// the process admits.
+var (
+	intakeServiceArgs = []string{"intake", "serve"}
+	intakeServiceEnv  = []string{"FUGARO_GCP_PROJECT", "FUGARO_INTAKE_URL", "FUGARO_RUNS_BUCKET", "FUGARO_LAUNCHER_ACCOUNTS"}
+)
+
 // CredentialsServiceEnvAwaitingTheModule are the names credentialsServiceEnv
 // admits that the installation module does not render yet: the cover is what
 // one `fugaro update` confirmation covers, so a name is added to the allow-list
@@ -1241,7 +1293,7 @@ func (c Cover) notCoveredSplit(p *Plan, imports []ImportKey) (all, integrity, co
 	}
 	creates := creates(p)
 	createdSAIDs, heldSAIDs := planAccounts(p)
-	creds := planCredentialsAccounts(p)
+	creds := planServiceAccounts(p)
 	dep := planDeployer(p)
 	for _, rc := range p.ResourceChanges {
 		acts := rc.Change.Actions
@@ -1322,7 +1374,7 @@ func (c Cover) notCoveredSplit(p *Plan, imports []ImportKey) (all, integrity, co
 // CONTENT for a type the modules do not carry, and its warning must not stop
 // the rules that judge the resource itself from answering. "" when the change
 // passes all of them.
-func (c Cover) notCoveredIntegrity(rc ResourceChange, imports []ImportKey, creates, createdSAIDs, heldSAIDs map[string]bool, creds credentialsPlan) string {
+func (c Cover) notCoveredIntegrity(rc ResourceChange, imports []ImportKey, creates, createdSAIDs, heldSAIDs map[string]bool, creds serviceAccountsPlan) string {
 	switch {
 	case rc.Change.Importing != nil && !c.importOK(rc.Change.Importing.ID):
 		return "imports " + rc.Change.Importing.ID + ", which is not in this run's projects"
@@ -1389,16 +1441,24 @@ func planAccounts(p *Plan) (created, held map[string]bool) {
 	return created, held
 }
 
-// credentialsAccountResource is the name of the installation module's own
-// service account for the credentials service: resource
-// "google_service_account" "credentials" in
-// modules/installation/credentials.tf. It is counted, so a plan's address for
-// it ends in google_service_account.credentials[0].
-const credentialsAccountResource = "credentials"
+// credentialsAccountResource and intakeAccountResource are the names of the
+// installation module's own two service accounts for its two Cloud Run
+// services: resource "google_service_account" "credentials" in
+// modules/installation/credentials.tf and "intake" in intake.tf. Both are
+// counted, so a plan's address for either ends in
+// google_service_account.<name>[0].
+const (
+	credentialsAccountResource = "credentials"
+	intakeAccountResource      = "intake"
+	// intakeServiceResource is the Cloud Run service's own resource name:
+	// intake.tf names the service and the account that runs it the same word,
+	// and the service case dispatches on this one (cloudRunServiceName).
+	intakeServiceResource = "intake"
+)
 
-// credentialsPlan is that account as a plan carries it, which the
-// credentials-service case reads: the account ID the module's own resource
-// holds, by module, and whether this plan creates it or leaves it in place.
+// accountPlan is one of those accounts as a plan carries it, which the two
+// service cases read: the account ID the module's own resource holds, by
+// module, and whether this plan creates it or leaves it in place.
 //
 // It is deliberately not planAccounts' wider pair. modules/installation also
 // creates the deployer, the history and the scheduler accounts, so a check
@@ -1408,46 +1468,68 @@ const credentialsAccountResource = "credentials"
 // unknown-email arm vacuously (the review round that found this: the check was
 // weaker than the case comment, the plan paragraph and the commit message all
 // claimed).
-type credentialsPlan struct {
-	// id is the account ID of the module's google_service_account.credentials,
-	// by module: the local part the service's template.service_account must
-	// carry.
+type accountPlan struct {
+	// id is the account ID of the module's resource this plan was read for, by
+	// module: the local part the service's template.service_account must carry.
 	id map[string]string
-	// created is the modules whose credentials account this plan creates, held
-	// the modules it leaves in place (created, updated or unchanged, never
-	// deleted — planAccounts' rule). A replace is in both.
+	// created is the modules whose account this plan creates, held the modules
+	// it leaves in place (created, updated or unchanged, never deleted —
+	// planAccounts' rule). A replace is in both.
 	created map[string]bool
 	held    map[string]bool
 }
 
-// planCredentialsAccounts reads that account out of a plan. Every change
+// serviceAccountsPlan is the installation module's two service accounts as a plan
+// carries them, which the google_cloud_run_v2_service case reads: the
+// credentials service's (D146) and the secrets intake's (D1931, DS2.2).
+//
+// They are two and not one because the two services run as two different
+// identities: a check that admitted either for both would let a plan run the
+// intake's container as the account that reads every model credential in the
+// bundle — the account the intake's own roles deliberately keep free of every
+// read (R3) — or the credentials service's as the account that only writes
+// dynamic containers.
+type serviceAccountsPlan struct {
+	credentials accountPlan
+	intake      accountPlan
+}
+
+// planServiceAccounts reads the two accounts out of a plan. Every change
 // counts, a no-op included: an unchanged account is one the plan holds and the
 // service it runs keeps naming, which is the shape of every plan after the one
 // that created the service.
-func planCredentialsAccounts(p *Plan) credentialsPlan {
-	c := credentialsPlan{id: map[string]string{}, created: map[string]bool{}, held: map[string]bool{}}
+func planServiceAccounts(p *Plan) serviceAccountsPlan {
+	c := serviceAccountsPlan{
+		credentials: accountPlan{id: map[string]string{}, created: map[string]bool{}, held: map[string]bool{}},
+		intake:      accountPlan{id: map[string]string{}, created: map[string]bool{}, held: map[string]bool{}},
+	}
 	for _, rc := range p.ResourceChanges {
-		id, ok := credentialsAccountOf(rc)
-		if !ok || id == "" {
-			continue
-		}
-		pre := modulePrefix(rc)
-		c.id[pre] = id
-		if len(rc.Change.Actions) > 0 && !slices.Contains(rc.Change.Actions, "delete") {
-			c.held[pre] = true
-		}
-		if slices.Contains(rc.Change.Actions, "create") {
-			c.created[pre] = true
+		for _, a := range []struct {
+			resource string
+			plan     *accountPlan
+		}{{credentialsAccountResource, &c.credentials}, {intakeAccountResource, &c.intake}} {
+			id, ok := accountOfResource(rc, a.resource)
+			if !ok || id == "" {
+				continue
+			}
+			pre := modulePrefix(rc)
+			a.plan.id[pre] = id
+			if len(rc.Change.Actions) > 0 && !slices.Contains(rc.Change.Actions, "delete") {
+				a.plan.held[pre] = true
+			}
+			if slices.Contains(rc.Change.Actions, "create") {
+				a.plan.created[pre] = true
+			}
 		}
 	}
 	return c
 }
 
-// credentialsAccountOf reads rc as the module's credentials account and
-// returns the account ID it carries. ok is false for every other resource,
+// accountOfResource reads rc as the module's account resource named resource
+// and returns the account ID it carries. ok is false for every other resource,
 // the module's own siblings included: the resource name after the module
-// prefix must be exactly "credentials", counted or not.
-func credentialsAccountOf(rc ResourceChange) (id string, ok bool) {
+// prefix must be exactly that name, counted or not.
+func accountOfResource(rc ResourceChange, resource string) (id string, ok bool) {
 	if rc.Type != "google_service_account" {
 		return "", false
 	}
@@ -1459,14 +1541,36 @@ func credentialsAccountOf(rc ResourceChange) (id string, ok bool) {
 	if !found {
 		return "", false
 	}
-	// "credentials" or "credentials[0]": the name, then the count index when
-	// the address carries one. A different resource of the same module — the
-	// deployer's address ends in ...google_service_account.fugaro_deployer, and
-	// the fixtures' siblings in ...google_service_account.x — is not this one.
-	if name, _, _ := strings.Cut(rest, "["); name != credentialsAccountResource {
+	// "intake" or "intake[0]": the name, then the count index when the address
+	// carries one. A different resource of the same module — the deployer's
+	// address ends in ...google_service_account.fugaro_deployer, and the
+	// fixtures' siblings in ...google_service_account.x — is not this one.
+	if name, _, _ := strings.Cut(rest, "["); name != resource {
 		return "", false
 	}
 	return str(rc.Change.After["account_id"]), true
+}
+
+// cloudRunServiceName is the installation module's Cloud Run service rc names,
+// and "" for everything else: the resource name after the module prefix,
+// counted or not. It is the same read accountOfResource makes one level over,
+// and the two service cases dispatch on it — the credentials service and the
+// intake are one module's two services, and which rules a change is held to
+// may not be a hand-edited label or a container's own args.
+func cloudRunServiceName(rc ResourceChange) string {
+	if rc.Type != "google_cloud_run_v2_service" {
+		return ""
+	}
+	pre := modulePrefix(rc)
+	if pre == "" {
+		return ""
+	}
+	rest, found := strings.CutPrefix(rc.Address, pre+"."+rc.Type+".")
+	if !found {
+		return ""
+	}
+	name, _, _ := strings.Cut(rest, "[")
+	return name
 }
 
 // deployerPlan is what a plan does about the deployer (D75, Task 1.5).
@@ -1567,7 +1671,7 @@ func (c Cover) GrantsNotCovered(p *Plan) []string {
 	add := func(rc ResourceChange, why string) { out = append(out, safetext.Field(rc.Address)+" ("+why+")") }
 	made := creates(p)
 	createdSAIDs, heldSAIDs := planAccounts(p)
-	creds := planCredentialsAccounts(p)
+	creds := planServiceAccounts(p)
 	dep := planDeployer(p)
 	for _, rc := range p.ResourceChanges {
 		acts := rc.Change.Actions
@@ -2692,7 +2796,7 @@ func objects(v any) []map[string]any {
 // this project, a private bucket, this run's projects and buckets, the
 // billing account the review showed, and the web key's two API targets. ""
 // when all is as the modules write it.
-func (c Cover) attributes(rc ResourceChange, creates, createdSAIDs, heldSAIDs map[string]bool, creds credentialsPlan) string {
+func (c Cover) attributes(rc ResourceChange, creates, createdSAIDs, heldSAIDs map[string]bool, creds serviceAccountsPlan) string {
 	a := rc.Change.After
 	if a == nil {
 		a = map[string]any{}
@@ -2763,6 +2867,16 @@ func (c Cover) attributes(rc ResourceChange, creates, createdSAIDs, heldSAIDs ma
 			}
 		}
 	case "google_cloud_run_v2_service":
+		// The installation module's two services are two shapes, and which
+		// rules a change is held to is the resource the plan names and nothing
+		// an editor of the variables can reach: intake.tf hardcodes the
+		// intake's account, its args and its environment names, so the change
+		// at that address is the intake's, and everything else falls to the
+		// credentials service's case below — which is what refuses a Cloud Run
+		// service this module does not create.
+		if cloudRunServiceName(rc) == intakeServiceResource {
+			return c.intakeServiceChange(rc, a, rc.Change.AfterUnknown, pre, creds, proj)
+		}
 		// The credentials service (D146, C1.18): the one container image in
 		// the tree that is not a job's. Its container sits one `template`
 		// shorter than a job's (template[0].containers[0]), and it is held to
@@ -3174,18 +3288,119 @@ func (c Cover) pinOK(ref, proj string) bool {
 // is not the module's plan — it runs the bundle-reading image as somebody
 // else's identity — while the unknown-email arm, which only required that the
 // module create *some* account, was satisfied by all three of them.
-func (c Cover) serviceAccount(a map[string]any, unk any, pre string, creds credentialsPlan) string {
+func (c Cover) serviceAccount(a map[string]any, unk any, pre string, plans serviceAccountsPlan) string {
+	return c.accountFrom(a, unk, pre, plans.credentials, "the credentials service", credentialsAccountResource)
+}
+
+// intakeAccount is serviceAccount's check on the other service of the same
+// module (DS2.2, DS4.1): the plan's own google_service_account.intake[0],
+// which intake.tf writes into the template and which the same rules hold.
+//
+// It is a check of its own rather than the credentials service's with another
+// message, because the two accounts are two: admitting the credentials
+// account here would run the intake's container as the identity that reads
+// every model credential in the bundle, and admitting the intake's there would
+// run the credentials service as an account whose whole reach is two
+// conditioned secret roles and one object read.
+func (c Cover) intakeAccount(a map[string]any, unk any, pre string, plans serviceAccountsPlan) string {
+	return c.accountFrom(a, unk, pre, plans.intake, "the secrets intake", intakeAccountResource)
+}
+
+// accountFrom is the check both of the above are: the account a covered
+// service's template names must be the plan's own resource named resource, in
+// this run's project and in the service's module, and the plan must create or
+// hold it (the whole of the reasoning is serviceAccount's comment above).
+func (c Cover) accountFrom(a map[string]any, unk any, pre string, plan accountPlan, what, resource string) string {
 	if unknownAt(unk, "template", 0, "service_account") {
-		if !creds.created[pre] {
+		if !plan.created[pre] {
 			return "runs as an account that is not known and this plan creates none for it"
 		}
 		return ""
 	}
 	email := str(at(a["template"], "service_account"))
 	sm := saMember.FindStringSubmatch("serviceAccount:" + email)
-	id, known := creds.id[pre]
-	if sm == nil || !slices.Contains(c.Projects, sm[2]) || !known || id != sm[1] || !(creds.created[pre] || creds.held[pre]) {
-		return "runs as " + email + ", not the account this module creates for the credentials service (google_service_account.credentials[0])"
+	id, known := plan.id[pre]
+	if sm == nil || !slices.Contains(c.Projects, sm[2]) || !known || id != sm[1] || !(plan.created[pre] || plan.held[pre]) {
+		return "runs as " + email + ", not the account this module creates for " + what + " (google_service_account." + resource + "[0])"
+	}
+	return ""
+}
+
+// intakeServiceChange holds the secrets intake's own service (DS2.2, DS4.1) to
+// the same four rules the credentials service's change is held to, and the
+// whole of the reasoning is that case's comment. Two of the four are the
+// intake's own, and they are why the branch exists:
+//
+//   - the argv. The intake runs the credentials service's own image — the
+//     released binary, one pin — and that image's default command is
+//     `credentials serve`, so the module tells the two services apart by
+//     `args = ["intake", "serve"]` (intake.tf). A change whose args are not
+//     exactly that pair is refused in both directions: none would serve the
+//     credentials service's routes from the intake's own URL, as the account
+//     that writes this installation's dynamic secrets, and anything else would
+//     run code the module does not write. The command is still empty, as the
+//     credentials service's is: the image's entrypoint is the binary.
+//   - the account, which is the intake's own google_service_account.intake[0]
+//     (intakeAccount) and never its sibling's: the two services may not swap
+//     identities, or the intake would run as the account that reads every model
+//     credential in the bundle — the read its own two roles deliberately do not
+//     hold (R3, F30).
+//
+// The environment is the four names the process reads (intakeServiceEnv), held
+// to literal values and no value_source for the credentials service's reason:
+// an environment is the one path a value could reach this process without a
+// Secret Manager read, and this process writes containers it never reads.
+func (c Cover) intakeServiceChange(rc ResourceChange, a map[string]any, unk any, pre string, plans serviceAccountsPlan, proj string) string {
+	if unknown(rc.Change, "invoker_iam_disabled") {
+		return "an IAM setting that is not known"
+	}
+	if a["invoker_iam_disabled"] != false {
+		return "a service that does not require IAM, which would let anyone invoke the account that writes this installation's dynamic secrets"
+	}
+	cs := objects(at(a["template"], "containers"))
+	if unknownAt(unk, "template", 0, "containers") {
+		return "containers that are not known"
+	}
+	if len(cs) == 0 {
+		return "no container"
+	}
+	if why := c.intakeAccount(a, unk, pre, plans); why != "" {
+		return why
+	}
+	for i, m := range cs {
+		cp := []any{"template", 0, "containers", i}
+		for _, attr := range []string{"image", "command", "args"} {
+			if unknownAt(unk, append(slices.Clone(cp), attr)...) {
+				return "a container " + attr + " that is not known"
+			}
+		}
+		img := str(m["image"])
+		if !c.credentialsImageOK(img, proj) {
+			return fmt.Sprintf("runs the image %q, which is not this installation's released pin read back through the pull-through repository (%s/%s/%s/%s/fugaro-<kind>:<version>@sha256:<digest>): the intake is a subcommand of the released binary, so it runs the credentials service's own pin and never an image of its own",
+				img, c.Registry, proj, c.Ghcr, c.Owner)
+		}
+		cmd, args := strList(m["command"]), strList(m["args"])
+		if len(cmd) != 0 || !slices.Equal(args, intakeServiceArgs) {
+			return "a container whose command or args are not the module's: the intake runs the released image with no command of its own and args " +
+				strings.Join(intakeServiceArgs, " ") + ", and a change that named anything else would either serve the credentials service's routes here or run code intake.tf does not write"
+		}
+		if unknownAt(unk, append(slices.Clone(cp), "env")...) {
+			return "an environment that is not known"
+		}
+		for j, e := range objects(m["env"]) {
+			ep := append(slices.Clone(cp), "env", j)
+			if unknownAt(unk, append(slices.Clone(ep), "name")...) || unknownAt(unk, append(slices.Clone(ep), "value")...) ||
+				unknownAt(unk, append(slices.Clone(ep), "value_source")...) {
+				return "an environment variable that is not known"
+			}
+			if n := str(e["name"]); !slices.Contains(intakeServiceEnv, n) {
+				return fmt.Sprintf("an environment variable %q, which the secrets intake does not read: its container sets only %s",
+					n, strings.Join(intakeServiceEnv, ", "))
+			}
+			if refs := objects(e["value_source"]); len(refs) > 0 {
+				return "an environment variable whose value comes from a source rather than the module: this service's environment is the module's own names and nothing else"
+			}
+		}
 	}
 	return ""
 }

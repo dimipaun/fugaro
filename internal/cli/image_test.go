@@ -627,7 +627,7 @@ func TestImageBuildWithoutABudgetBackendBuildsUncounted(t *testing.T) {
 	// a lookup that ran here would be a request the installation holds no
 	// permission for, so the failure is the assertion.
 	was := newBuildPricer
-	newBuildPricer = func(*localcfg.Config) buildPricer {
+	newBuildPricer = func(string, budget.CatalogCreds) buildPricer {
 		t.Error("the Cloud Billing price lookup ran on an installation with no budget backend")
 		return fakePricer{book: pricedBook()}
 	}

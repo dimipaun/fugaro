@@ -167,7 +167,10 @@ func TestManagedCreationRecordsTheAmount(t *testing.T) {
 		if !ok {
 			t.Fatalf("no %s in gs://%s after the run that created the project:\n%s", managed.MarkerObject, bucket, refusalText(out, errOut, nil))
 		}
-		want := `{"version":3,"gcp_project":"` + newProj + `","budget":{"amount":7,"currency":"USD"},"max_image_builds":1}`
+		// Version 4 and no count: the amount alone is what the fact records,
+		// and a creation writes it that way from the start rather than writing
+		// the version a release behind wrote (D1543).
+		want := `{"version":4,"gcp_project":"` + newProj + `","budget":{"amount":7,"currency":"USD"}}`
 		if b != want {
 			t.Errorf("gs://%s/%s = %s, want %s", bucket, managed.MarkerObject, b, want)
 		}
@@ -322,7 +325,7 @@ func TestAResumedCreationIsMarkedManaged(t *testing.T) {
 	if !ok {
 		t.Fatalf("a resumed creation wrote no gs://%s/%s:\n%s", bucket, managed.MarkerObject, all)
 	}
-	if want := `{"version":3,"gcp_project":"` + newProj + `","budget":{"amount":7,"currency":"USD"},"max_image_builds":1}`; got != want {
+	if want := `{"version":4,"gcp_project":"` + newProj + `","budget":{"amount":7,"currency":"USD"}}`; got != want {
 		t.Errorf("gs://%s/%s = %s, want %s", bucket, managed.MarkerObject, got, want)
 	}
 	if v := r.crm.Labels(newProj)[managed.ProjectLabelKey]; v != managed.ProjectLabelValue {
@@ -405,7 +408,8 @@ func TestManagedBudgetFiguresAreChecked(t *testing.T) {
 		})
 	}
 
-	// The bound is a bound: the largest amount is a creation like any other.
+	// The amount's own range is the whole of what is judged here: a managed
+	// creation records the amount and nothing else, whatever the figure.
 	t.Run("the largest amount in the range", func(t *testing.T) {
 		r, bucket := newManagedCreateRig(t)
 		out, errOut, err := r.run(t, true, createStdin,
@@ -415,7 +419,7 @@ func TestManagedBudgetFiguresAreChecked(t *testing.T) {
 			t.Fatalf("%v\n%s", err, refusalText(out, errOut, nil))
 		}
 		b, ok := markerAt(t, r.gcs, bucket)
-		want := `{"version":3,"gcp_project":"` + newProj + `","budget":{"amount":10000000,"currency":"EUR"},"max_image_builds":1}`
+		want := `{"version":4,"gcp_project":"` + newProj + `","budget":{"amount":10000000,"currency":"EUR"}}`
 		if !ok || b != want {
 			t.Errorf("gs://%s/%s = %s (present %v), want %s", bucket, managed.MarkerObject, b, ok, want)
 		}

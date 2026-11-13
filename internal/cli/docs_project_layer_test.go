@@ -521,7 +521,7 @@ func TestNoShippedTextNamesTheRetiredOAuthGate(t *testing.T) {
 // TestDocsProjectLayerStatesThePolicyVersionItShips: docs/project-layer.md's
 // reference paragraph said, in the present tense, that "the policy is version 2
 // from fugaro 0.8.5" — and the bump to version 7 raises `projectpolicy.Version`
-// (VersionSince[7] = "0.25.0", the release that states the escalation ladder's
+// (VersionSince[7] = "0.24.0", the release that states the escalation ladder's
 // model grades in the node), so the sentence must name the version and release
 // this tree writes. The paragraph now leads with version 7 and keeps version 6
 // as the node that came before it, which is what the table says.

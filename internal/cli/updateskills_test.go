@@ -132,7 +132,7 @@ func TestUpdateSkillsNeedsNoCredentials(t *testing.T) {
 	}
 	// The pin an older fugaro left is not this command's to move: it comes out
 	// of the run byte for byte as it went in (U2).
-	if got := upgradeRead(t, settings); got != wiredAt("v0.1.0") {
+	if got := convergeRead(t, settings); got != wiredAt("v0.1.0") {
 		t.Errorf("settings = %s, want the leftover pin as it was", got)
 	}
 	for _, fl := range []string{"project", "region", "repo"} {
@@ -246,7 +246,7 @@ func TestUpdateSkillsLeavesAnUnreadableFileAlone(t *testing.T) {
 	if !strings.Contains(out, "installed 0.2.0") {
 		t.Errorf("out = %q", out)
 	}
-	if got := upgradeRead(t, settings); got != content {
+	if got := convergeRead(t, settings); got != content {
 		t.Errorf("rewritten: %q, want %q", got, content)
 	}
 	// A file that cannot be parsed is one of "not wired"'s states, and that
@@ -501,7 +501,7 @@ func TestUpdateSkillsHasNoWriteFlags(t *testing.T) {
 	if _, _, err := execute(t, "update-skills", "--dir", root); err != nil {
 		t.Fatalf("a fork's leftover pin is no refusal any more (nothing writes it): %v", err)
 	}
-	if got := upgradeRead(t, settings); got != content {
+	if got := convergeRead(t, settings); got != content {
 		t.Errorf("settings = %s, want the fork's pin as it was", got)
 	}
 }
@@ -550,7 +550,7 @@ func TestDisabledPluginReported(t *testing.T) {
 	if err != nil || !strings.Contains(out, "installed 0.2.0") {
 		t.Fatalf("err=%v out=%q", err, out)
 	}
-	if got := upgradeRead(t, settings); got != content {
+	if got := convergeRead(t, settings); got != content {
 		t.Errorf("settings = %s, want the file as it was", got)
 	}
 }
@@ -574,7 +574,7 @@ func TestUpdateSkillsLeavesEveryCheckoutFileAlone(t *testing.T) {
 		if err != nil || !strings.Contains(out, "installed 0.2.0") {
 			t.Errorf("%s: err=%v out=%q stderr=%q", name, err, out, errOut)
 		}
-		if got := upgradeRead(t, settings); got != content {
+		if got := convergeRead(t, settings); got != content {
 			t.Errorf("%s: rewritten:\n%s", name, got)
 		}
 		js, _, err := execute(t, "update-skills", "--json", "--dir", root)
