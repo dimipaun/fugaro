@@ -55,7 +55,11 @@ fugaro creds ls
 
 1. **The kill switch.** `fugaro budget show` says who set it, when and why. If it was deliberate, stop here.
 2. **The service itself.** Read the service's own state before you act on it — **zero instances is not a fault**: Cloud Run scales it to zero between reviews, the first call after idle pays about a second of cold start and is served, and the installation's module sets no minimum instance count ([spec.md](spec.md) states the design). The shapes that do answer nothing are §1's own reads failing: a service **never applied** (`NotFound`), a revision that **fails to start** (the `gcloud run services describe` status names it, and the image is what to re-deploy), and a caller **IAM refuses** (`PermissionDenied` — the repository job's `run.invoker` member, §1's third read). Re-deploy the released image for a revision that will not start; fix the invoker grant for a caller that is not allowed to reach it.
-3. **The bundle.** `fugaro creds ls` answers a **named failure** for every way the bundle can be missing, and **never an empty list**: a document this command can list always holds at least one credential, because the loader refuses an empty one. Read the failure it names — each is a different repair:
+3. **The service's own line.** Once you know the service is up and still refused — `state_unavailable` or `exhausted_until` on a call a run made — the cause is in the service's **own** log and nowhere else: the sentence a run halts on is the refusal's *class*, and the gateway reduces it to one line for the agent, so which of the service's reads failed is not in the run's record at all. Every refusal of a model call writes one WARN line beside the act's audit line: `credsvc: refused`, carrying the refusal's `type` and `status`, the `repository` and `run` it was about, and the two fields to read — **`read`**, which names the read that failed: `kills` (the stop switches could not be read), `policy_shared` (the project's published node), `policy_repo` (a repository's own node), `bundle`, `candidates` (the crafts and the admissions that fill the list), `selector_marks`, `selector_leases`, `selector_current` (the cascade's own three reads of the shared state, each its own node), `secret_read` (a per-secret container) or `upstream_send` — and **`error_class`**, the Go type of the error underneath. An empty `read` with an empty `error_class` is a refusal nothing failed on: the stop switch being ON, a wait, or a request this service's rules refuse. The line never carries the error's text, because a database error embeds the path it read, and never a credential. Read them for one run:
+   ```bash
+   gcloud logging read 'resource.labels.service_name="fugaro-credentials" AND jsonPayload.run="<run id>"' --freshness=1d --format=json
+   ```
+4. **The bundle.** `fugaro creds ls` answers a **named failure** for every way the bundle can be missing, and **never an empty list**: a document this command can list always holds at least one credential, because the loader refuses an empty one. Read the failure it names — each is a different repair:
 
    | `fugaro creds ls` says | What it means | What you do |
    |---|---|---|
@@ -66,7 +70,7 @@ fugaro creds ls
    | `this identity may not read the bundle container <id> in project <gcp-project>` | The read is the owner's own project IAM — `secretmanager.versions.get`, and Project Owner or Editor carries it. | Run it as an operator; nothing was read. |
 
    Two failures the table does not cover, because neither is about the bundle: the command is refused outright in a coding agent's session (the header), and any answer of the project's API that the command does not recognise comes back as the server's own text, bounded to one printable field — a read that failed for a reason of its own, not a bundle state.
-4. **The rules marker.** `creds_rules_denied` is a *deployed rules* problem, not a service problem: see §5.
+5. **The rules marker.** `creds_rules_denied` is a *deployed rules* problem, not a service problem: see §5.
 
 ## 4. A run halted for a missing credential
 
