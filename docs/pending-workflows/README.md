@@ -9,7 +9,7 @@ The console's Windows installer pack,
 `console-windows.yml`, was copied in on **2026-11-10** and its staged copy
 removed; it was a release-time job rather than a pull-request check (see
 `## console-windows.yml` below, which is the record of that change).
-**Four further files here are not workflows at all: `website-promote-comments.md`, `mobile-release-comments.md`, `console-release-comments.md` and `console-linux-comments.md`** — comment-only corrections. The first three were staged on **2026-11-07**, for three workflow files whose comments still say a reviewer approves a release; the fourth on **2026-11-09**, for a comment of `.github/workflows/console-linux.yml` whose count of pinned Electron hashes went stale when the `win32-x64` hash landed. They are `.md` on purpose: they are not pending workflows, they are not enumerated as such by the docs tests or by `website/test/readme.mjs`, and neither count above moves. See `## The comment-only fragments` below.
+**Five further files here are not workflows at all: `website-promote-comments.md`, `mobile-release-comments.md`, `console-release-comments.md`, `console-linux-comments.md` and `ci-hygiene.yml.snippet`.** The first four are comment-only corrections: the first three were staged on **2026-11-07**, for three workflow files whose comments still say a reviewer approves a release; the fourth on **2026-11-09**, for a comment of `.github/workflows/console-linux.yml` whose count of pinned Electron hashes went stale when the `win32-x64` hash landed. The fifth, `ci-hygiene.yml.snippet`, is the `hygiene` step for the `check` job of `.github/workflows/ci.yml`. The four are `.md` and the fifth is a `.yml.snippet` for the same reason: none of the five is a pending workflow, none is enumerated as such by the docs tests or by `website/test/readme.mjs` (both walk this directory for `.ya?ml` alone), and neither count above moves. See `## The comment-only fragments` below — which maintains the four remaining names in the list above, and only those — and `## ci-hygiene.yml.snippet` for the fifth.
 **Two other files stay staged here by design: `console-tests.yml` and `console-release.yml`.** Both were copied into `.github/workflows/` by the owner, and unlike every other file here their staged copies are kept, because their tests assert the copy under `.github/workflows/` is byte-identical to the staged one (see their sections below). Nothing else is pending: the shared package's test job, `shared-tests.yml` (mobile plan Task P4.3), was copied into `.github/workflows/` by the owner on 2026-10-22 (its staged copy is removed; see `## shared-tests.yml` below); Dependabot's watch over `console/`'s npm dependencies, `dependabot-console.yml`, was copied over `.github/dependabot.yml` on the owner's approval of 2026-10-23 (its staged copy is removed; see `## dependabot-console.yml` below); the mobile app's release workflow, `mobile-release.yml`, was copied into `.github/workflows/` on the owner's approval of 2026-10-23 (its staged copy is removed; see `## mobile-release.yml` below); the website's two manual deploy workflows, `website-preview.yml` and `website-promote.yml` (#566), were copied into `.github/workflows/` by the owner (their staged copies are removed); `ci.yml` was copied in on 2026-10-17 (#504, staged copy removed in #508) and staged
 again on 2026-11-08 for the workspaces work's `workspace` root and the longer test timeout,
 which entered the tree after that copy; that staging was copied in on **2026-11-11** (#2350) and
@@ -3200,11 +3200,13 @@ fragment's own `git rm` line exactly as written lands that commit. Three edits
 go with it, and each of the 2026-11-07 fragments repeats them in its own "How to
 apply" so the two halves of the procedure cannot part:
 
-1. **The opening line's second sentence shrinks, and then goes.** That is the
-   one beginning *Four further files here are not workflows at all*. While one
-   fragment is still here, drop the names that are gone from its list; when the
-   **last** of them is applied, delete the sentence outright, so the opening
-   states the two pending files and the two files kept by design and names
+1. **The opening line's second sentence is this directory's list of the files
+   that are not workflows, and a copy-in drops the name it applied.** That is the
+   one beginning *Five further files here are not workflows at all*: applying a
+   fragment — its `git rm` and all — takes that fragment's name out of the list,
+   and once the four comment-only ones are gone the sentence keeps
+   `ci-hygiene.yml.snippet` and drops the rest, so the opening states the two
+   pending files, the two files kept by design and that snippet, and names
    nothing that is no longer in this directory.
 2. **This whole section goes with the fragment applied last**, whichever of the
    four it is — `## The comment-only fragments`, down to the line before
@@ -3307,13 +3309,19 @@ git add .github/workflows/ci.yml
 git commit -m "ci: run the hygiene check in the check job"
 ```
 
-**That commit owes this page one line and nothing else.** Unlike every other
+**That commit owes this page two edits and nothing else.** Unlike every other
 staged file here, this one is not a `.ya?ml` name, so it is not counted as a
-pending workflow: neither this page's opening line, nor `website/README.md`,
-nor `internal/cli`'s docs tests, nor `website/test/readme.mjs` moves when it is
-copied in — all of them read only `.ya?ml` files in this directory. What moves
-is the status line above, which becomes **"`ci-hygiene.yml.snippet` is applied,
-not pending."**, and this section stays as the record of what the step does.
+pending workflow: no pending-workflow count — not this page's, not
+`website/README.md`'s, not `internal/cli`'s docs tests', not
+`website/test/readme.mjs`' — moves when it is copied in, because all of them read
+only `.ya?ml` files in this directory. What moves is the status line above,
+which becomes **"`ci-hygiene.yml.snippet` is applied, not pending."**, and the
+opening line's second sentence, which lists the files here that are not
+workflows: with this one gone from the directory its name goes with it, and that
+sentence becomes *Four further files here are not workflows at all* with the four
+comment-only fragments (the procedure under `## The comment-only fragments` says
+the same from the other direction). This section stays as the record of what the
+step does.
 There is no byte-identity clause for it either: the snippet is a fragment, not
 a copy of the file it goes into.
 
