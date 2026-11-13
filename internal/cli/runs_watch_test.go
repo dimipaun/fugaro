@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/pflag"
 	"gocloud.dev/blob"
 
+	accesslib "github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
@@ -216,8 +217,14 @@ func TestRunsWatchPrintsTheTriageWithoutWriting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runs watch: %v (%s)", err, errOut)
 	}
-	if n := calls(); n != 0 {
-		t.Errorf("runs watch made %d database call(s) on a fresh connection: the triage line a long run leaves is the tick's to write, and this command is a print", n)
+	// The one thing this command reads from the database is the roles node the
+	// gate every reading command shares asks for (RS6a), and it reads nothing
+	// else: the triage line a long run leaves is the tick's to write, and this
+	// command is a print. The reads are named rather than counted, because a
+	// count alone cannot tell a roles read from a read that reaches the daemon's
+	// own nodes, and the failure has to say which one it was.
+	if got := calls.all(); len(got) != 1 || got[0] != "GET /"+accesslib.PathNode+".json" {
+		t.Errorf("runs watch made the database calls %v, and one read of the roles (%s) is the whole of it: the triage line a long run leaves is the tick's to write, and this command is a print", got, accesslib.PathNode)
 	}
 	if dbAfter, _ := json.Marshal(f.db.Value("/")); string(dbAfter) != string(dbBefore) {
 		t.Errorf("runs watch changed the project's database:\nbefore %s\nafter  %s", dbBefore, dbAfter)

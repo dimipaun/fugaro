@@ -193,6 +193,8 @@ func accessInput(ctx context.Context, env *cloudEnv) (in accesslib.Input, placed
 		// with a remedy (`fugaro user grant`) that RS5 refuses while there is
 		// no node to write. This is where an outage stops being a refusal, and
 		// where an installation that has not updated keeps the behavior it had.
+		// A node a revoke emptied is this same state (accessStoredGrants), so it
+		// is not judged either.
 		return accesslib.Input{}, false, nil
 	}
 	in = accesslib.Input{
@@ -204,9 +206,15 @@ func accessInput(ctx context.Context, env *cloudEnv) (in accesslib.Input, placed
 }
 
 // accessStoredGrants is the grants node's pairs. found is whether the
-// installation HAS a node: an installation without one has no roles yet and is
-// judged by nothing, while one whose node is empty has been migrated and
-// really does place only its implicit admins.
+// installation has a node at all: one without a node places nobody this build
+// can read and is judged by nothing.
+//
+// There is no second state to tell that apart from. The database keeps no
+// member for an empty list — an empty grants list is an empty object and is
+// pruned (access.Node's own words), so a project that migrated and holds no
+// grants reads as the very same absent node as one that has not migrated — and
+// the gate therefore judges neither. A revoke that takes the last stored grant
+// away leaves that state behind.
 //
 // The node is the installation's whole roster (RS3 migrates the two terraform
 // lists into it), so this is the only place roles come from: an absent node is

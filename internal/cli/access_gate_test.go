@@ -13,6 +13,7 @@ import (
 
 	accesslib "github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -629,6 +630,53 @@ func TestAccessRunsLsListsInScope(t *testing.T) {
 		}
 		if !strings.Contains(errOut, "holds no role") {
 			t.Errorf("the listing dropped the run in silence: stderr %q", errOut)
+		}
+	})
+}
+
+// TestAccessRunsWatchPrintsOnlyTheRunsInScope: `runs watch` prints runs ls's
+// own listing, and its own comment promises that a run it prints is a run a
+// listing shows. A row carries the run's repository, its pull request and the
+// triage's outcome, so this command applies the listing's filter too (D1586's
+// read half): a credential whose `runs ls` hides another repository's runs must
+// not read them here, and what the filter leaves out is said rather than
+// dropped in silence.
+func TestAccessRunsWatchPrintsOnlyTheRunsInScope(t *testing.T) {
+	noAgentSession(t)
+	// The window is measured back from the clock lsNow reads, so the id is
+	// minted against it rather than fixed (TestNoFixedRunIDsInRecencyTests).
+	id := recentRunID(t, time.Minute, "abd4")
+	ref := appSlug + "/" + id
+
+	t.Run("in scope", func(t *testing.T) {
+		f := newLaunchBudget(t, "off")
+		accessRunNode(t, f, userStored(t, accessViewer, accesslib.RoleViewer, accessRepoA))
+		accessRunAs(t, accessViewer)
+		seedRun(t, f.cloudFixture, id, "", "someone@example.com", false)
+		installWatchProvider(t, &fake.Provider{Repo: "acme/app"})
+
+		doc := watchJSON(t)
+		if len(doc.Runs) != 1 || doc.Runs[0].Run != ref {
+			t.Fatalf("runs watch printed %+v, want the credential's own repository's run %s", doc.Runs, ref)
+		}
+		if strings.Contains(strings.Join(doc.Warnings, "\n"), "holds no role") {
+			t.Errorf("the print left out a run of the credential's own repository: %v", doc.Warnings)
+		}
+	})
+
+	t.Run("another repository only", func(t *testing.T) {
+		f := newLaunchBudget(t, "off")
+		accessRunNode(t, f, userStored(t, accessViewer, accesslib.RoleViewer, accessRepoB))
+		accessRunAs(t, accessViewer)
+		seedRun(t, f.cloudFixture, id, "", "someone@example.com", false)
+		installWatchProvider(t, &fake.Provider{Repo: "acme/app"})
+
+		doc := watchJSON(t)
+		if len(doc.Runs) != 0 {
+			t.Errorf("runs watch printed a run of a repository the credential holds no role in: %+v", doc.Runs)
+		}
+		if !strings.Contains(strings.Join(doc.Warnings, "\n"), "holds no role") {
+			t.Errorf("the print dropped the run in silence: %v", doc.Warnings)
 		}
 	})
 }
