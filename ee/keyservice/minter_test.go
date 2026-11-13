@@ -14,6 +14,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -108,6 +109,52 @@ func TestTheMinersCeilingsAreTheVerifiers(t *testing.T) {
 	}
 	if minted.Record.Source != "" {
 		t.Errorf("the minter named the source %q: what minted a key is the caller's to say, and the record is written where the store is (§5.2)", minted.Record.Source)
+	}
+}
+
+// TestTheIntakesMintedPayloadCarriesTheNamesItsReadersParse: what the intake's
+// own route signs is the claim set of the format licence-key-v2 removed (K7.3),
+// and the things that read it are not this package: the console's verifier of
+// that format (console/src/main/licence.ts) and the app's
+// (mobile/src/licence/verify.js) both parse the payload by field name, in
+// another language, and this side decodes no key text at all. The tags are
+// therefore a wire format, and nothing on this side would notice one of them
+// moving: the fixture round-trip that held them (the licence package's
+// TestVectorsRoundTrip over the committed testdata/vectors.json) read the
+// format K7.3 removed and went with it. The names are pinned here instead, as
+// the text of a payload rather than by decoding into the very struct the
+// producer marshals, which would move both ends together.
+//
+// A renamed tag is the mutation this holds: the free-seat, open-source and
+// request-form routes would go on answering keys that both readers refuse, and
+// no Go test would fail.
+func TestTheIntakesMintedPayloadCarriesTheNamesItsReadersParse(t *testing.T) {
+	f := newFixture(t)
+	minter := Minter{Signer: f.signer, Keys: f.keys, Environment: Production, Now: f.clock}
+	minted, err := minter.Mint(context.Background(), Request{
+		Environment:  Production,
+		Tier:         licence.TierTeam,
+		Features:     []string{"seats", "sso"},
+		Seats:        3,
+		Organisation: "acme.example",
+		Plan:         paidPlanName,
+		TermDays:     365,
+	})
+	if err != nil {
+		t.Fatalf("minting a year for the team tier: %v", err)
+	}
+	parts := strings.Split(minted.Key, ".")
+	if len(parts) != 3 {
+		t.Fatalf("the minted key %q is not the three parts the intake's route writes", minted.Key)
+	}
+	payload, err := base64.RawURLEncoding.Strict().DecodeString(parts[1])
+	if err != nil {
+		t.Fatalf("the minted key's payload is not unpadded base64url: %v", err)
+	}
+	want := fmt.Sprintf(`{"tier":"team","features":["seats","sso"],"seats":3,"organisation":"acme.example","issued":%d,"expires":%d}`,
+		f.now.Unix(), f.now.Add(365*day).Unix())
+	if string(payload) != want {
+		t.Errorf("the intake's route minted the payload\n%s\nand the six names the console's verifier and the app's parse are\n%s\nthe two read this text by field name in another language, and a name that moved would refuse every key those routes answer with no Go test failing", payload, want)
 	}
 }
 
