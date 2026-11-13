@@ -50,6 +50,8 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/api/googleapi"
+
 	"github.com/dimipaun/fugaro/ee/keyservice"
 	"github.com/dimipaun/fugaro/ee/licence"
 	"github.com/dimipaun/fugaro/ee/licence/project"
@@ -499,6 +501,245 @@ func TestLicenceSetRefusesAKeyInArgv(t *testing.T) {
 	}
 	if f.object(t).Present {
 		t.Error("a key in argv was written: the position is refused before anything is read")
+	}
+}
+
+// TestLicenceSetReadsTheBundleFromAFile drives the other route a bundle arrives
+// by: the file an issue path writes, holding the key on line 1 and its renewal
+// secret on line 2. Both halves land, and neither the bundle nor the path is
+// printed — the value of --file is an argument, and this command echoes no
+// argument position (F5).
+func TestLicenceSetReadsTheBundleFromAFile(t *testing.T) {
+	f := newLicenceFixture(t)
+	key, secret := f.issuer.mint(t, f.claims()), licenceTestSecret(t)
+	f.seedSecretContainer(nil)
+	path := filepath.Join(t.TempDir(), "licence.key")
+	if err := os.WriteFile(path, []byte(key+"\n"+secret+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out, errOut, err := f.exec(t, "", "licence", "set", "--file", path)
+	if err != nil {
+		t.Fatalf("licence set --file = %v (stdout %q, stderr %q)", err, out, errOut)
+	}
+	obj := f.object(t)
+	if !obj.Present || len(obj.Keys) != 1 || obj.Keys[0] != key {
+		t.Errorf("the project's object holds %+v, want the one key the file held", obj.Keys)
+	}
+	if got := f.secrets.Latest(f.secretContainer()); string(got) != secret {
+		t.Errorf("the renewal secret container holds %q, want the secret the file held on line 2", got)
+	}
+	for _, text := range []string{out, errOut} {
+		if strings.Contains(text, key) || strings.Contains(text, secret) {
+			t.Errorf("licence set --file printed the bundle: %q", text)
+		}
+		if strings.Contains(text, path) {
+			t.Errorf("licence set --file printed %q, and the value of --file is an argument position this command does not echo: %q", path, text)
+		}
+	}
+
+	// The same file through a path that is not there is the refusal a mistyped
+	// path gets, and it names the reason rather than the path.
+	missing := filepath.Join(t.TempDir(), "not-there.key")
+	msg := mustRun(t, f, "licence", "set", "--file", missing)
+	if !strings.Contains(msg, "no such file or directory") {
+		t.Errorf("a path that is not there was refused with %q, which does not say why", msg)
+	}
+	if strings.Contains(msg, missing) {
+		t.Errorf("the refusal repeated the path: %q", msg)
+	}
+}
+
+// TestLicenceSetRefusesAKeyPastedIntoTheFileFlag is the --file position read the
+// way argv is, because it is argv: a person who pastes the key where the path
+// belongs gets a refusal that says why the file could not be opened and never
+// the value it was given — which os.Open's own error carries verbatim, and which
+// is the key itself here.
+func TestLicenceSetRefusesAKeyPastedIntoTheFileFlag(t *testing.T) {
+	f := newLicenceFixture(t)
+	key, secret := f.issuer.mint(t, f.claims()), licenceTestSecret(t)
+	f.seedSecretContainer(nil)
+
+	for _, pasted := range []string{key, key + "\n" + secret} {
+		out, errOut, err := f.exec(t, "", "licence", "set", "--file", pasted)
+		if err == nil {
+			t.Fatal("a key pasted into --file was accepted as a path")
+		}
+		if code := fcli.ExitCode(err); code != fcli.ExitUserError {
+			t.Errorf("a key pasted into --file exited %d, want %d: %v", code, fcli.ExitUserError, err)
+		}
+		if !strings.Contains(err.Error(), "not echoed") || !strings.Contains(err.Error(), "--file") {
+			t.Errorf("a key pasted into --file was refused with %q, which does not say where the key does go", err.Error())
+		}
+		for _, text := range []string{out, errOut, err.Error()} {
+			if strings.Contains(text, key) || strings.Contains(text, secret) {
+				t.Errorf("the refusal repeated the pasted value: %q", text)
+			}
+		}
+		if out != "" {
+			t.Errorf("a refused --file wrote %q to stdout, want nothing", out)
+		}
+	}
+	if f.object(t).Present {
+		t.Error("a key pasted into --file was written")
+	}
+	if f.secrets.Latest(f.secretContainer()) != nil {
+		t.Error("a key pasted into --file put a version in the renewal secret container")
+	}
+}
+
+// TestLicenceReadBundleRefusals holds the three ways a bundle can be wrong —
+// nothing read, more lines than a key and its secret, more bytes than the cap —
+// on both routes a bundle arrives by, and what every one of them owes: nothing
+// is written, and no line of what was read is repeated (the count of lines is
+// what is wrong, and a line is a key).
+func TestLicenceReadBundleRefusals(t *testing.T) {
+	f := newLicenceFixture(t)
+	f.seedSecretContainer(nil)
+	dir := t.TempDir()
+	write := func(name, content string) string {
+		t.Helper()
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	over := strings.Repeat("k", licenceMaxBundleBytes+1)
+	empty, three, oversized := write("empty.key", ""), write("three.key", "one\ntwo\nthree\n"), write("over.key", over)
+	for _, tc := range []struct {
+		name  string
+		args  []string
+		stdin string
+		path  string
+		want  []string
+	}{
+		{name: "nothing on stdin", args: []string{"licence", "set"}, want: []string{"no key was read from standard input"}},
+		{name: "three lines on stdin", args: []string{"licence", "set"}, stdin: "one\ntwo\nthree\n", want: []string{"standard input holds 3 lines"}},
+		{name: "over the cap on stdin", args: []string{"licence", "set"}, stdin: over, want: []string{"over 8192 bytes"}},
+		{name: "an empty file", args: []string{"licence", "set", "--file", empty}, path: empty, want: []string{"no key was read from --file"}},
+		{name: "three lines in a file", args: []string{"licence", "set", "--file", three}, path: three, want: []string{"--file holds 3 lines"}},
+		{name: "a file over the cap", args: []string{"licence", "set", "--file", oversized}, path: oversized, want: []string{"over 8192 bytes"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, errOut, err := f.exec(t, tc.stdin, tc.args...)
+			if err == nil {
+				t.Fatalf("%v was accepted", tc.args)
+			}
+			if code := fcli.ExitCode(err); code != fcli.ExitUserError {
+				t.Errorf("%v exited %d, want %d: %v", tc.args, code, fcli.ExitUserError, err)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("%v was refused with %q, which does not say %q", tc.args, err.Error(), want)
+				}
+			}
+			for _, text := range []string{out, errOut, err.Error()} {
+				if strings.Contains(text, "kkkk") {
+					t.Errorf("the refusal repeated what it read: %q", text)
+				}
+				if tc.path != "" && strings.Contains(text, tc.path) {
+					t.Errorf("the refusal repeated the value of --file: %q", text)
+				}
+			}
+			if out != "" {
+				t.Errorf("%v wrote %q to stdout, want nothing", tc.args, out)
+			}
+		})
+	}
+	if f.object(t).Present {
+		t.Error("a refused bundle was written")
+	}
+	if f.secrets.Latest(f.secretContainer()) != nil {
+		t.Error("a refused bundle put a version in the renewal secret container")
+	}
+}
+
+// TestLicenceSetNamesAHalfWrittenPair drives the one failure the two writes can
+// leave behind: the renewal secret lands and the project's key does not. The
+// refusal has to say which half is missing and what writes the pair again —
+// a person told only that a write failed would refresh into a 403 that outlasts
+// the failure — and it may not repeat the bundle on the way out.
+//
+// The bucket is blocked rather than the store: a directory stands where the
+// project's object goes, which is a write nothing can complete.
+func TestLicenceSetNamesAHalfWrittenPair(t *testing.T) {
+	f := newLicenceFixture(t)
+	key, secret := f.issuer.mint(t, f.claims()), licenceTestSecret(t)
+	f.seedSecretContainer(nil)
+	if err := os.MkdirAll(filepath.Join(f.dir, "runs", licenceTestObjectPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	out, errOut, err := f.exec(t, key+"\n"+secret+"\n", "licence", "set")
+	if err == nil {
+		t.Fatal("licence set wrote a key the bucket refused")
+	}
+	if code := fcli.ExitCode(err); code != fcli.ExitUserError {
+		t.Errorf("a half-written pair exited %d, want %d: %v", code, fcli.ExitUserError, err)
+	}
+	for _, want := range []string{"not a pair yet", "fugaro licence set", f.secretContainer()} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %q does not name %q", err.Error(), want)
+		}
+	}
+	if got := f.secrets.Latest(f.secretContainer()); string(got) != secret {
+		t.Errorf("the renewal secret container holds %q, want the secret that landed before the key was attempted: the refusal describes a state, and the state has to be the one it describes", got)
+	}
+	for _, text := range []string{out, errOut, err.Error()} {
+		if strings.Contains(text, key) || strings.Contains(text, secret) {
+			t.Errorf("the refusal repeated the bundle: %q", text)
+		}
+	}
+	if out != "" {
+		t.Errorf("a refused write printed %q to stdout, want nothing", out)
+	}
+}
+
+// TestLicenceSecretPermissionNamesTheCallsOwnPermissions holds what a permission
+// refusal may not do: send an operator to a grant that leaves the refusal where
+// it was. Reading the container is secrets.get and then versions.access on the
+// version, and writing a version is versions.add; secretmanager.versions.get
+// reads a version's metadata and is none of the three, so naming it costs a
+// round trip to a grant that changes nothing.
+func TestLicenceSecretPermissionNamesTheCallsOwnPermissions(t *testing.T) {
+	s := &licenceSecrets{project: licenceTestGCP, id: licenceRenewalSecretID(licenceTestProject)}
+	denied := &googleapi.Error{Code: http.StatusForbidden, Message: "Permission 'secretmanager.versions.access' denied on resource"}
+	for _, tc := range []struct {
+		op    string
+		want  []string
+		never []string
+	}{
+		{
+			op:    "read",
+			want:  []string{"secretmanager.secrets.get", "secretmanager.versions.access"},
+			never: []string{"secretmanager.versions.get", "secretmanager.versions.add"},
+		},
+		{
+			op:    "write",
+			want:  []string{"secretmanager.versions.add"},
+			never: []string{"secretmanager.versions.get", "secretmanager.versions.access"},
+		},
+	} {
+		t.Run(tc.op, func(t *testing.T) {
+			err := s.apiErr(tc.op, denied, nil)
+			if code := fcli.ExitCode(err); code != fcli.ExitUserError {
+				t.Errorf("a denied %s exited %d, want %d: %v", tc.op, code, fcli.ExitUserError, err)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal for a denied %s does not name %s: %q", tc.op, want, err.Error())
+				}
+			}
+			for _, never := range tc.never {
+				if strings.Contains(err.Error(), never) {
+					t.Errorf("the refusal for a denied %s names %s, which its own call does not use: %q", tc.op, never, err.Error())
+				}
+			}
+			if !strings.Contains(err.Error(), s.id) {
+				t.Errorf("the refusal for a denied %s does not name the container: %q", tc.op, err.Error())
+			}
+		})
 	}
 }
 

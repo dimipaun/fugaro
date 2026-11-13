@@ -407,10 +407,25 @@ func (s *licenceSecrets) apiErr(op string, err error, values []string) error {
 		return fcli.UserErr("the installation's renewal secret container %s is not in project %s: `fugaro update` creates it and no licence command does, so run `fugaro update` and then set the key again",
 			safetext.Field(s.id), safetext.Field(s.project))
 	case errors.As(err, &ge) && ge.Code == http.StatusForbidden:
-		return fcli.UserErr("this identity may not %s the renewal secret container %s in project %s: it needs secretmanager.versions.get and secretmanager.versions.add on that one secret, which a project owner has",
-			op, safetext.Field(s.id), safetext.Field(s.project))
+		return fcli.UserErr("this identity may not %s the renewal secret container %s in project %s: it needs %s on that one secret, which a project owner has",
+			op, safetext.Field(s.id), safetext.Field(s.project), licenceSecretPermission(op))
 	}
 	return fcli.RemoteErr(errors.New(licenceRedact(err.Error(), values...)))
+}
+
+// licenceSecretPermission is the IAM permission the call behind one op needs,
+// named the way an operator grants it. Reading the container is two of them --
+// the container's own metadata (secrets.get) and then one version's payload
+// (versions.access) -- and writing a version is a third (versions.add). They are
+// named apart because a refusal that lists a permission its own call does not
+// use sends an operator to a grant that leaves the refusal exactly where it was:
+// secretmanager.versions.get reads a version's metadata and is not what a
+// payload read asks for.
+func licenceSecretPermission(op string) string {
+	if op == "write" {
+		return "secretmanager.versions.add"
+	}
+	return "secretmanager.secrets.get and secretmanager.versions.access"
 }
 
 // licenceBundle is what `set` was handed: the key, and the renewal secret the
@@ -428,6 +443,11 @@ type licenceBundle struct {
 //
 // Nothing a refusal says repeats a line: the count of lines is what is wrong
 // when anything is, and the argument position is one a pasted key lands in.
+//
+// The value of --file is such a position, so no refusal here echoes it either:
+// a key pasted where a path belongs is refused with the reason the file could
+// not be opened and never with the value, which is what os.Open's own error
+// would carry. A reader of these messages knows the path it typed.
 func readLicenceBundle(cmd *cobra.Command, path string) (licenceBundle, error) {
 	var (
 		r    io.Reader
@@ -436,10 +456,11 @@ func readLicenceBundle(cmd *cobra.Command, path string) (licenceBundle, error) {
 	if path != "" {
 		f, err := os.Open(path)
 		if err != nil {
-			return licenceBundle{}, fcli.UserErr("reading the key from %s: %v", safetext.Field(path), err)
+			return licenceBundle{}, fcli.UserErr("nothing was read from --file (%s), and the value of --file is not echoed: it is the path of a file holding the key, and a key pasted into it is a key in argv. %s",
+				licenceOpenReason(err), licenceKeyFromStdin)
 		}
 		defer f.Close()
-		r, from = f, "--file "+safetext.Field(path)
+		r, from = f, "--file"
 	} else {
 		r, from = cmd.InOrStdin(), "standard input"
 	}
@@ -470,6 +491,20 @@ func readLicenceBundle(cmd *cobra.Command, path string) (licenceBundle, error) {
 		b.secret = lines[1]
 	}
 	return b, nil
+}
+
+// licenceOpenReason is why a file could not be opened, and never the name it was
+// asked for: os.Open's error carries that name verbatim, and the name it was
+// asked for is an argument -- the place a key pasted by mistake lands, which is
+// the one thing a refusal here may not print (F5). The reasons a path fails are
+// the system's own words ("no such file or directory", "permission denied"), and
+// they are what a person needs.
+func licenceOpenReason(err error) string {
+	var pe *os.PathError
+	if errors.As(err, &pe) && pe.Err != nil {
+		return pe.Err.Error()
+	}
+	return "the file could not be opened"
 }
 
 // licenceSet: `fugaro licence set`.
@@ -565,6 +600,14 @@ func licenceSet(cmd *cobra.Command, o *licenceSetOptions) error {
 		}
 	}
 	if err := project.New(cloud.RunsBucket()).Install(ctx, []byte(bundle.key)); err != nil {
+		if bundle.secret != "" {
+			// The secret landed and the key did not: the container is a version
+			// ahead of the project, and that is a state a person has to undo
+			// (licenceHalfWritten).
+			return fcli.UserErr("%s. The project write failed with: %s",
+				licenceHalfWritten(lc, "run `fugaro licence set` again with the same key and secret, which writes the key the secret was written for"),
+				licenceRedact(err.Error(), bundle.key, bundle.secret))
+		}
 		return licenceObjectErr(err, bundle.key)
 	}
 	w := cmd.OutOrStdout()
@@ -920,6 +963,13 @@ func licenceRefresh(cmd *cobra.Command, o *licenceRefreshOptions) error {
 		}
 	}
 	if err := store.Install(ctx, []byte(answer.Key)); err != nil {
+		if answer.RenewalSecret != "" {
+			// The secret landed and the key did not: the state licenceHalfWritten
+			// describes, which a person has to undo.
+			return fcli.UserErr("%s. The project write failed with: %s",
+				licenceHalfWritten(lc, "run `fugaro licence set` with the key and the renewal secret this installation was issued, which is the bundle that last worked, and then `fugaro licence refresh` again: the licence server keeps a renewal's answer for 24 hours, so the successor it already minted is the one that comes back"),
+				licenceRedact(err.Error(), answer.Key, answer.RenewalSecret))
+		}
 		return licenceObjectErr(err, answer.Key)
 	}
 	w := cmd.OutOrStdout()
@@ -929,6 +979,23 @@ func licenceRefresh(cmd *cobra.Command, o *licenceRefreshOptions) error {
 		fmt.Fprintln(cmd.ErrOrStderr(), "note: the licence server answered no renewal secret with the new key, so this installation cannot renew again without one: paste it with `fugaro licence set`")
 	}
 	return nil
+}
+
+// licenceHalfWritten is the state a failure between the two writes leaves: the
+// renewal secret is a version of the container and the key it belongs to is not
+// in the project, so the container's newest secret is not the one the installed
+// key names, and a refresh that proves itself with the newest one asks the
+// server about a pair it never issued — a 403 that outlasts the failure. It is
+// not a lost licence: no version is retired, and the server keeps a renewal's
+// answer for 24 hours. What restores the pair is `set`, the only writer of both
+// halves, so the sentence always ends in what to run.
+//
+// The order the two writes are made in is the one that leaves this state rather
+// than its mirror: a key whose secret is not in the container cannot renew at
+// all, while a container a version ahead is undone by writing the pair again.
+func licenceHalfWritten(lc *localcfg.Config, remedy string) string {
+	return fmt.Sprintf("the renewal secret is in the container %s and the key it belongs to is not in the project, so the two are not a pair yet and nothing can renew until they are: %s",
+		safetext.Field(licenceRenewalSecretID(lc.Name)), remedy)
 }
 
 // licenceRenewRequest calls the licence server's renewal route once (K2.3's
@@ -942,7 +1009,10 @@ func licenceRefresh(cmd *cobra.Command, o *licenceRefreshOptions) error {
 // field is added and never retyped). A 403 is the one answer the server gives
 // every caller it will not serve, and it says nothing about which of the two
 // things was wrong — an unknown key id or a wrong secret on the one hand, and a
-// key bound to another workspace on the other — so neither does this.
+// key bound to another workspace on the other — so the refusal does not claim to
+// know either: what it does instead is name the states a person can check and
+// the command that writes the pair again, because the one a half-written renewal
+// leaves behind (licenceHalfWritten) reaches this branch too.
 func licenceRenewRequest(ctx context.Context, call keyservice.RenewalCall, secret string) (keyservice.Answer, error) {
 	body, err := json.Marshal(call)
 	if err != nil {
@@ -968,7 +1038,7 @@ func licenceRenewRequest(ctx context.Context, call keyservice.RenewalCall, secre
 		return keyservice.Answer{}, fcli.RemoteErr(fmt.Errorf("the licence server's answer is over %d bytes", licenceMaxAnswerBytes))
 	}
 	if resp.StatusCode == http.StatusForbidden {
-		return keyservice.Answer{}, fcli.UserErr("the licence server refused the renewal of key %s: either the key id and the renewal secret are not the pair it holds, or the key is bound to another workspace. The installation's key and the secret that came with it are what `fugaro licence set` writes, and a key whose secret was rotated cannot be renewed with the old one", safetext.Field(call.KeyID))
+		return keyservice.Answer{}, fcli.UserErr("the licence server refused the renewal of key %s: the renewal secret sent is not the one that key renews with, or the key is bound to another workspace. A renewal interrupted between its two writes leaves the container holding a secret the installed key does not name, and a key that was reissued renews with the secret that came with it: `fugaro licence set`, with the key and the renewal secret this installation was issued, writes the pair", safetext.Field(call.KeyID))
 	}
 	if resp.StatusCode != http.StatusOK {
 		return keyservice.Answer{}, fcli.RemoteErr(fmt.Errorf("the licence server answered HTTP %d: %s", resp.StatusCode, licenceRedact(string(payload), secret)))
