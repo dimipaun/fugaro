@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"slices"
 
 	accesslib "github.com/dimipaun/fugaro/internal/access"
@@ -59,27 +60,35 @@ import (
 //
 // Who the caller is comes from the credential and never from this machine's
 // config or git (finding F21), and it is read through userCallerLookup, the one
-// seam `fugaro user grant` reads it through. A credential it cannot read is
-// admitted rather than refused: a service account's address is not a person the
-// grants can name, access.Caller says so by refusing it, and the two explicit
-// publish doors are what a script or a runbook with such a credential uses —
-// `fugaro config publish FILE` and `fugaro project policy publish` keep working
+// seam `fugaro user grant` reads it through. A service account's credential is
+// admitted rather than refused, and it is the ONLY credential that is: such an
+// address is not a person the grants can name, access.Caller refuses it as
+// access.ErrServiceAccount, and the two explicit publish doors are what a
+// script or a runbook with such a credential uses — `fugaro config publish
+// FILE` and `fugaro project policy publish` keep working under it
 // (settings-commands spec §9). Refusing there would turn this gate into a
 // requirement to be a person, which no design here asks for.
+//
+// Every other way the caller cannot be read — no credentials, an expired or
+// unverified one, the provider not answering — refuses the write instead. That
+// is the difference between a fact and a gap: a service account is a credential
+// this design knows the answer for, while an identity lookup that failed is a
+// question left unanswered, and a check that admits whenever it cannot read the
+// credential is off exactly when the credential is broken.
 //
 // An installation with no roles at all — no grants node and no lists of its own
 // — is not judged: its roles are nobody's, which is the state every
 // installation that has not migrated its lists is in, and one it converges out
-// of at its next `fugaro update` (RS3). And a caller the roles it DOES have
+// of at its next `fugaro update` (RS3). Neither is one whose database this CLI
+// cannot read at all (settingsAccessInput). And a caller the roles it DOES have
 // place nowhere is admitted rather than refused, which is the same answer
 // `fugaro user grant` gives one (user_grant.go's own doc): this installation's
 // GCP owners and editors are implicit project admins (F17.3) and live in its
-// IAM policy, which the CLI does not read here. So is a credential the CLI
-// cannot read at all, which is what a service account's is (the F21 paragraph
-// above). All three are stated limits rather than oversights — the gate decides
-// what it can read and never more — and the last two are pinned by
+// IAM policy, which the CLI does not read here. The last two are stated limits
+// rather than oversights — the gate decides what it can read and never more —
+// and they are pinned by
 // TestAccessSettingsUnplacedCallerIsTheImplicitAdmin and
-// TestAccessSettingsServiceAccountKeepsThePublishDoorsWorking.
+// TestAccessSettingsUnreachableDatabaseIsNotJudged.
 //
 // what names the write for the refusal.
 func settingsAccessGate(ctx context.Context, lc *localcfg.Config, what string) error {
@@ -130,10 +139,19 @@ func settingsAccessNoRepo() (string, error) { return "", nil }
 // caller is placed and only where the action reads one, so neither a checkout
 // whose repository cannot be told nor a repository the caller never named is
 // resolved for a write no role of theirs decides.
+//
+// Only a service account's credential is admitted unread — that is what
+// access.ErrServiceAccount marks out, and the F21 paragraph above says why —
+// and every other failure to read the caller refuses the write rather than
+// letting it through, because a caller that admits whenever it cannot read a
+// credential is one that stops checking as soon as the credential breaks.
 func settingsAccessJudge(ctx context.Context, in accesslib.Input, action accesslib.Action, what string, repoOf func() (string, error)) error {
 	caller, err := userCallerLookup(ctx)
-	if err != nil {
+	switch {
+	case errors.Is(err, accesslib.ErrServiceAccount):
 		return nil
+	case err != nil:
+		return settingsAccessUnreadable(what, err)
 	}
 	if !settingsAccessPlaces(in, caller) {
 		return nil
@@ -178,28 +196,25 @@ func settingsAccessRepo(ctx context.Context, lc *localcfg.Config, o settingsWrit
 // settingsAccessInput is the resolver's own input, and whether this
 // installation has any roles to judge the caller against at all.
 //
-// The roles are the grants node where the installation has one (D1585), and
+// The roles are the grants node where this CLI can read one (D1585), and
 // otherwise the two IAM lists of this machine's own config, which are the whole
 // of the roles an installation with no Firebase backend has (accessNoBackend).
-// The node is read once, under the same two checks every other reader of that
-// database makes (the database is this project's, and it is reachable at all):
-// a write judged against another project's grants, or against none because a
-// read failed, would be a write judged by nobody.
+//
+// A database it cannot read is NOT an error here, and that is deliberate: the
+// file a settings write edits is this machine's own, so the one thing that must
+// not decide the write is a network read of it. An unreachable database, one
+// that is another project's, one whose read fails — each leaves this CLI with
+// no node to judge against, which is the state settingsAccessNode reports, and
+// the write is then judged the way an installation with no node is judged: by
+// the lists this machine's own config carries, or not at all (SD18's boundary
+// is IAM at publish, and the person at the terminal can edit these files with
+// an editor). A local error stays an error: the lists are read from a file this
+// CLI can read, and a malformed address in one is worth telling the caller
+// about rather than swallowing.
 func settingsAccessInput(ctx context.Context, lc *localcfg.Config) (accesslib.Input, bool, error) {
 	in := accesslib.Input{Implicit: userImplicitAdmins(lc), AllowRepos: settingsAccessEveryRepo}
 	if lc.Budget != nil && lc.Budget.RTDBURL != "" {
-		_, db, err := budgetDBFor(ctx, lc)
-		if err != nil {
-			return in, false, err
-		}
-		if err := checkDBProject(ctx, db, lc); err != nil {
-			return in, false, err
-		}
-		node, err := accesslib.Read(ctx, db)
-		if err != nil {
-			return in, false, dbErr(lc, err, false)
-		}
-		if node.Found {
+		if node, ok := settingsAccessNode(ctx, lc); ok {
 			in.Grants = node.Grants
 			return in, true, nil
 		}
@@ -210,6 +225,36 @@ func settingsAccessInput(ctx context.Context, lc *localcfg.Config) (accesslib.In
 	}
 	in.Grants = grants
 	return in, len(in.Grants)+len(in.Implicit) > 0, nil
+}
+
+// settingsAccessNode is the grants node where this CLI can read one: the
+// database this machine's config names, proven to be this project's and
+// reachable, and holding the node. Everything else — no budget backend, no
+// credentials for it, an outage, another project's database, no node — is the
+// same answer, "no roles here", because the only thing this gate may do with a
+// database it cannot read is fall back to what it can read locally, and never
+// refuse a file edit for it.
+func settingsAccessNode(ctx context.Context, lc *localcfg.Config) (accesslib.Node, bool) {
+	_, db, err := budgetDBFor(ctx, lc)
+	if err != nil {
+		return accesslib.Node{}, false
+	}
+	if err := checkDBProject(ctx, db, lc); err != nil {
+		return accesslib.Node{}, false
+	}
+	node, err := accesslib.Read(ctx, db)
+	if err != nil || !node.Found {
+		return accesslib.Node{}, false
+	}
+	return node, true
+}
+
+// settingsAccessUnreadable refuses a write by a credential whose caller the CLI
+// cannot read. It is not a role refusal — there is no role to name, because the
+// caller is unknown — so it says which question could not be asked and what
+// answers it, rather than naming an admin the caller might go and find.
+func settingsAccessUnreadable(what string, err error) error {
+	return userErr("nothing was written: %s, and the credential this command would use is one whose caller the CLI could not read (%v), so whether it may make this write cannot be asked. The caller is the credential and never this machine's config or git (finding F21), and a check that admits a credential it cannot read is no check: sign in again with a credential the CLI can verify (gcloud auth application-default login), and have a project admin make the write if it is not yours to make", what, err)
 }
 
 // settingsAccessEveryRepo is the allow_repos this gate resolves under, and it

@@ -83,6 +83,20 @@ and SD18 answers that question as "anyone may edit their own file; the boundary 
 publish". The check is partial until the writers above are gated too, and the list is where the
 enforcement stands rather than proof that nothing else writes these files.
 
+Two further answers are part of the check rather than gaps in it, and both follow from a write being
+an edit of a file:
+
+- **A service account's credential is admitted without asking, and no other unreadable credential
+  is.** A `.gserviceaccount.com` address is not a person the grants can name, and it is the
+  credential a script or a runbook uses the two explicit publish doors with, so it is admitted.
+  Every other way the caller cannot be read — no credentials, an expired one, an identity endpoint
+  that did not answer — refuses the write: a check that admits a caller it could not identify is off
+  exactly when the credential is broken.
+- **The write is judged against the roles this CLI can read.** Its grants node where it can read one,
+  and otherwise the lists in the machine's own config; an installation whose database is unreachable,
+  or is another project's, is judged by those lists or not at all. A file on this machine is not
+  refused a write because a network read failed; the boundary is IAM at publish.
+
 **Scope values:** `project`, `all-repos`, or a comma-separated list of repo names, for example `frontend,api`. The names `project` and `all-repos` are reserved, and Fugaro refuses to create or register a repo with either name.
 
 **Wildcards:** repo names in a scope can use simple glob-style `*` patterns, for example `dimipaun/*` or `acme/api-*`. Only plain stars are supported, not regular expressions. A wildcard scope automatically covers new repos that match it, just like `all-repos`. The list command shows which repos each pattern matches right now.

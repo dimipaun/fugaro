@@ -3,6 +3,7 @@ package access
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -217,14 +218,16 @@ func isImplicit(in Input, caller string) bool {
 // A credential it cannot read — no Google credentials, a token whose userinfo
 // refuses, an address a grant member could not carry, a service account's
 // address, an unverified address — returns an error and no member, so a caller
-// that ignores the error still holds nothing that could match a grant.
+// that ignores the error still holds nothing that could match a grant. The
+// service account's is the one of those a caller acts on rather than prints,
+// and it says which it is (ErrServiceAccount).
 func Caller(ctx context.Context) (string, error) {
 	address, err := credentialEmail(ctx)
 	if err != nil {
 		return "", err
 	}
 	if strings.HasSuffix(strings.ToLower(address), serviceAccountSuffix) {
-		return "", fmt.Errorf("the credential is a service account's (%s is not a person the grants can name)", address)
+		return "", fmt.Errorf("%w (%s is not a person the grants can name)", ErrServiceAccount, address)
 	}
 	member, err := Member(address)
 	if err != nil {
@@ -232,6 +235,21 @@ func Caller(ctx context.Context) (string, error) {
 	}
 	return member, nil
 }
+
+// ErrServiceAccount is the refusal Caller returns for a service account's
+// credential, and it is a sentinel because what it carries is a fact a caller
+// decides on rather than one it prints: such a credential is not a person, and
+// a command whose check is about people — the settings and policy writes
+// (RS6b) — admits it without asking, which is what keeps `fugaro config
+// publish FILE` and `fugaro project policy publish` working under one, as
+// docs/settings-commands requires of those two doors.
+//
+// It is deliberately not "the credential could not be read". Every OTHER way
+// Caller fails — no Google credentials, an outage, an address the provider has
+// not verified — is a question left unanswered, and a caller that reads that as
+// "nobody in particular" turns its check off exactly when the credential is
+// broken, which is when a check is worth having.
+var ErrServiceAccount = errors.New("the credential is a service account's")
 
 // serviceAccountSuffix is how a service account's address ends. Such a
 // credential is not a person: grants are members, and a member is an address a

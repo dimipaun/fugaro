@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -120,14 +121,35 @@ func settingsAccessCloudRoles(t *testing.T, f *cloudFixture, grants ...accesslib
 	f.appendConfig(t, "budget: { mode: enforce, per_run_usd: 5, firebase_project: "+initProject+", rtdb_url: "+db.URL+" }\n")
 }
 
-// settingsAccessCallerFails makes the caller unreadable for the rest of the
-// test: a command that reads it fails on it, so the case below — a write an
-// installation with no roles makes — holds without asserting on a call count.
-func settingsAccessCallerFails(t *testing.T) {
+// settingsAccessCallerIs points the caller lookup at one answer for the rest of
+// the test, so a case about what the gate does with a credential it cannot read
+// does not depend on who is signed in on the machine running the suite.
+func settingsAccessCallerIs(t *testing.T, err error) {
 	t.Helper()
 	old := userCallerLookup
-	userCallerLookup = func(context.Context) (string, error) { return "", errors.New("no credential in this test") }
+	userCallerLookup = func(context.Context) (string, error) { return "", err }
 	t.Cleanup(func() { userCallerLookup = old })
+}
+
+// settingsAccessCallerFails makes the caller unreadable for the rest of the
+// test, for reasons that are nothing to do with the credential being a service
+// account's: no credentials, an expired one, an endpoint that did not answer.
+// It is the answer the gate refuses on, and the one an installation with no
+// roles never reaches (no roles, no judgement).
+func settingsAccessCallerFails(t *testing.T) {
+	t.Helper()
+	settingsAccessCallerIs(t, errors.New("no credential in this test"))
+}
+
+// settingsAccessServiceAccount makes the caller a service account's credential:
+// the error access.Caller returns for one, sentinel included, which is the only
+// unreadable credential this gate admits. It is spelled here rather than
+// fetched from access.Caller so the case is about the gate's rule; access's own
+// TestCallerIsTheCredentialNotGitConfig pins that Caller returns this error for
+// a .gserviceaccount.com address.
+func settingsAccessServiceAccount(t *testing.T) {
+	t.Helper()
+	settingsAccessCallerIs(t, fmt.Errorf("%w (fugaro-run@example.iam.gserviceaccount.com is not a person the grants can name)", accesslib.ErrServiceAccount))
 }
 
 // TestAccessSettingsRepoAdminCannotChangeProjectGuardrails: the guardrails of a
@@ -376,13 +398,16 @@ func TestAccessSettingsUnplacedCallerIsTheImplicitAdmin(t *testing.T) {
 
 // TestAccessSettingsServiceAccountKeepsThePublishDoorsWorking: a service
 // account's credential is not a person the grants can name, so access.Caller
-// refuses its address and this gate cannot read who is calling at all. The two
-// explicit publish doors are what a script or a runbook with such a credential
-// uses, and they keep working (settings-commands spec §9): a caller the CLI
-// cannot read is admitted rather than refused, the same answer an unplaced
-// caller gets, because the gate decides what it can read and never more. The
-// installations here DO have roles, so the caller would be judged if it could
-// be read — without this rule every machine credential loses the doors.
+// refuses its address — as access.ErrServiceAccount, which is how the gate
+// tells this refusal from an identity it could not read. The two explicit
+// publish doors are what a script or a runbook with such a credential uses, and
+// they keep working (settings-commands spec §9): this one credential is admitted
+// rather than refused. The installations here DO have roles, so a caller the
+// node DID place would be judged — without this rule every machine credential
+// loses the doors, and a rule that kept any unreadable credential out of the
+// check (TestAccessSettingsUnreadableCallerIsRefused) is not what this is:
+// admitting a service account is the design's answer for a fact it knows, and
+// every other unreadable credential is a question left unanswered.
 func TestAccessSettingsServiceAccountKeepsThePublishDoorsWorking(t *testing.T) {
 	t.Run("config publish", func(t *testing.T) {
 		f := newCloudFixture(t)
@@ -390,7 +415,7 @@ func TestAccessSettingsServiceAccountKeepsThePublishDoorsWorking(t *testing.T) {
 		publishedLayer(t, f, "")
 		noAgentSession(t)
 		settingsAccessCloudRoles(t, f, userStored(t, settingsAccessRepoUser, accesslib.RoleAdmin, "bitbucket/acme/sandbox"))
-		settingsAccessCallerFails(t)
+		settingsAccessServiceAccount(t)
 		layer := layerFile(t, testProjectLayer)
 
 		if out, _, err := execute(t, "config", "publish", "--executable-changes", layer); err != nil {
@@ -405,7 +430,7 @@ func TestAccessSettingsServiceAccountKeepsThePublishDoorsWorking(t *testing.T) {
 		f := newProjectFixture(t, "")
 		noAgentSession(t)
 		f.db.Set(accesslib.PathNode, accessNodeDoc(userStored(t, settingsAccessRepoUser, accesslib.RoleAdmin, "bitbucket/acme/sandbox")))
-		settingsAccessCallerFails(t)
+		settingsAccessServiceAccount(t)
 
 		if out, _, err := execute(t, "project", "policy", "publish"); err != nil {
 			t.Fatalf("a service account's credential was refused the policy door: %v\n%s", err, out)
@@ -418,13 +443,117 @@ func TestAccessSettingsServiceAccountKeepsThePublishDoorsWorking(t *testing.T) {
 	t.Run("settings set --layer project", func(t *testing.T) {
 		settingsAccessRig(t, userStored(t, settingsAccessRepoUser, accesslib.RoleAdmin, "bitbucket/acme/sandbox"))
 		layer := settingsAccessLayerFile(t, settingsAccessLayerProfile)
-		settingsAccessCallerFails(t)
+		settingsAccessServiceAccount(t)
 
 		if out, _, err := execute(t, "settings", "set", "layer.default_profile", "svc", "--layer", "project", "--yes"); err != nil {
 			t.Fatalf("a service account's credential was refused the project layer: %v\n%s", err, out)
 		}
 		if !strings.Contains(readFileString(t, layer), "default_profile: svc") {
 			t.Error("the layer file does not carry the write")
+		}
+	})
+}
+
+// TestAccessSettingsUnreadableCallerIsRefused: a credential whose caller the
+// CLI cannot read is refused, and it is refused on the write whatever the
+// caller's roles would have been. A service account's credential is the one
+// exception (the test above), because that is a fact about the credential the
+// design answers for; no credentials, an expired token, a userinfo endpoint
+// that timed out or refused are not — they are a question left unanswered, and
+// a gate that admits a caller it could not identify stops checking exactly when
+// the credential is broken. The writes here would all LAND if the caller could
+// be read (a project-scope admin's layer write; the same admin's publish), so
+// what each refusal proves is the unreadable credential alone.
+func TestAccessSettingsUnreadableCallerIsRefused(t *testing.T) {
+	t.Run("settings set --layer project", func(t *testing.T) {
+		settingsAccessRig(t,
+			userStored(t, settingsAccessProjectUser, accesslib.RoleAdmin, "project"),
+			userStored(t, settingsAccessRepoUser, accesslib.RoleAdmin, "bitbucket/acme/sandbox"),
+		)
+		layer := settingsAccessLayerFile(t, settingsAccessLayerProfile)
+		before := readFileString(t, layer)
+		settingsAccessCallerIs(t, errors.New("context deadline exceeded"))
+
+		out, _, err := execute(t, "settings", "set", "layer.default_profile", "svc", "--layer", "project", "--yes")
+		if err == nil {
+			t.Fatalf("a caller the CLI could not read made a project-level write:\n%s", out)
+		}
+		if ExitCode(err) != ExitUserError {
+			t.Errorf("exit %d, want %d (a user error: nothing was attempted)", ExitCode(err), ExitUserError)
+		}
+		for _, want := range []string{"nothing was written", "whose caller the CLI could not read", "context deadline exceeded"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal does not say %q: %v", want, err)
+			}
+		}
+		if readFileString(t, layer) != before {
+			t.Error("the refused write changed the layer file")
+		}
+	})
+
+	t.Run("config publish", func(t *testing.T) {
+		f := newCloudFixture(t)
+		isolateCache(t)
+		publishedLayer(t, f, "")
+		noAgentSession(t)
+		settingsAccessCloudRoles(t, f, userStored(t, settingsAccessProjectUser, accesslib.RoleAdmin, "project"))
+		settingsAccessCallerIs(t, errors.New("no Google credentials"))
+		layer := layerFile(t, testProjectLayer)
+
+		if _, _, err := execute(t, "config", "publish", "--executable-changes", layer); err == nil {
+			t.Fatal("a caller the CLI could not read published the project layer")
+		}
+		if bucketText(t, f, config.LayerKey) != "" {
+			t.Error("the refused publish wrote the project layer")
+		}
+	})
+}
+
+// TestAccessSettingsUnreachableDatabaseIsNotJudged: the roles live in the
+// budget database, and a settings write edits a file. A database this CLI
+// cannot read — an outage, a URL pointing nowhere, another project's — is
+// therefore not a refusal and not an error: the write is judged the way an
+// installation with no node is judged, by the lists this machine's own config
+// carries, and where those say nothing it is not judged at all. Both callers
+// here WOULD be judged against the node — one is admin of a single repository
+// and is refused the project layer by the test above when the node answers, the
+// other is the project's admin — so what the write landing proves is that the
+// unreachable database is what changed. Making file edits depend on a network
+// read is the alternative, and it takes `--layer project` and `--layer repo`
+// away from every installation whose database is down (SD18: the file is the
+// person's, and the boundary is IAM at publish).
+func TestAccessSettingsUnreachableDatabaseIsNotJudged(t *testing.T) {
+	t.Run("a project-layer write", func(t *testing.T) {
+		_, db := settingsAccessRig(t,
+			userStored(t, settingsAccessProjectUser, accesslib.RoleAdmin, "project"),
+			userStored(t, settingsAccessRepoUser, accesslib.RoleAdmin, "bitbucket/acme/sandbox"),
+		)
+		layer := settingsAccessLayerFile(t, settingsAccessLayerProfile)
+		db.Refuse(503, "UNAVAILABLE", "", "down")
+
+		userPairAs(t, settingsAccessRepoUser)
+		out, _, err := execute(t, "settings", "set", "layer.default_profile", "svc", "--layer", "project", "--yes")
+		if err != nil {
+			t.Fatalf("a database that is down refused a write to a file on this machine: %v\n%s", err, out)
+		}
+		if !strings.Contains(readFileString(t, layer), "default_profile: svc") {
+			t.Error("the layer file does not carry the write")
+		}
+	})
+
+	t.Run("a repo-layer write", func(t *testing.T) {
+		r, db := settingsAccessRig(t, userStored(t, settingsAccessRepoUser, accesslib.RoleAdmin, "bitbucket/acme/sandbox"))
+		settingsAccessSecondRepo(t, r, "acme/other")
+		own := settingsAccessCheckout(t, "acme/sandbox")
+		db.Refuse(503, "UNAVAILABLE", "", "down")
+
+		userPairAs(t, settingsAccessRepoUser)
+		out, _, err := execute(t, "settings", "set", "git.base_branch", "develop", "--layer", "repo", "--repo", "acme/sandbox", "--yes")
+		if err != nil {
+			t.Fatalf("a database that is down refused a write to a checkout's own file: %v\n%s", err, out)
+		}
+		if got := readFileString(t, own); !strings.Contains(got, "base_branch: develop") {
+			t.Errorf("the checkout's fugaro.yaml does not carry the write:\n%s", got)
 		}
 	})
 }
