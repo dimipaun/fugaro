@@ -436,6 +436,11 @@ var censusOutputDirs = []string{
 	"mobile/dist",
 	"mobile/web-build",
 	"mobile/.expo",
+	// ee/portal/.gitignore: the bundle `vite build` writes, which Hosting is
+	// fed from (P9.2) and which nobody reads as source. The portal's
+	// node_modules is on censusOutputNames with the other apps', from the same
+	// lockfile the licence audit reads.
+	"ee/portal/dist",
 	// testdata/fixture-repo/.gitignore: a fixture repository's own build
 	// directory, which the second walk reaches because testdata/ is not a live
 	// root.
@@ -451,7 +456,8 @@ var censusOutputDirs = []string{
 // censusOutputNames are ignored by name at any depth.
 var censusOutputNames = []string{
 	// website/.gitignore, the console's, mobile/.gitignore,
-	// deploy/sandbox/.gitignore, internal/budget/rules/emulator/.gitignore and
+	// ee/portal/.gitignore, deploy/sandbox/.gitignore,
+	// internal/budget/rules/emulator/.gitignore and
 	// testdata/fixture-repo/.gitignore all declare it, and the reason is the
 	// same under each: `npm ci` writes a tree nobody reviews from a lockfile
 	// that already pins it.
@@ -1039,6 +1045,10 @@ var censusIgnored = []struct {
 	{"mobile/.gitignore", "*.log", "mobile/app.log", false},
 	{"mobile/.gitignore", "google-services.json", "mobile/google-services.json", false},
 	{"mobile/.gitignore", "GoogleService-Info.plist", "mobile/GoogleService-Info.plist", false},
+	// The portal's own two lines: the fourth app in the tree, installed from
+	// its own lockfile and built by Vite rather than by a native toolchain.
+	{"ee/portal/.gitignore", "node_modules/", "ee/portal/node_modules/react/index.js", false},
+	{"ee/portal/.gitignore", "dist/", "ee/portal/dist/index.html", false},
 	{"deploy/sandbox/.gitignore", "node_modules/", "deploy/sandbox/node_modules/tfjs/index.js", false},
 	{"deploy/sandbox/.gitignore", "junit.xml", "deploy/sandbox/junit.xml", false},
 	{"internal/budget/rules/emulator/.gitignore", "node_modules/", "internal/budget/rules/emulator/node_modules/x/index.js", false},
