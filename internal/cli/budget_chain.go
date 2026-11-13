@@ -109,8 +109,8 @@ func newBudgetChainRaiseCmd() *cobra.Command {
 func runChainRaise(cmd *cobra.Command, o *chainRaiseOptions, ref string) error {
 	ctx := cmd.Context()
 	// This run's account and its log (D1352), under the name a person typed:
-	// the raise is a write, and a write says what it did in one step rather
-	// than in lines only the terminal ever sees.
+	// the raise is a write like `budget set` and `budget kill` beside it, so
+	// it says what it did in one step and keeps that step.
 	rep, sink := reporterFor(cmd, "budget-chain-raise", nil)
 	if sink != nil {
 		defer func() { _ = sink.Close() }()
@@ -206,7 +206,7 @@ func runChainRaise(cmd *cobra.Command, o *chainRaiseOptions, ref string) error {
 	}
 	fmt.Fprintf(out, "reason: %s\n", reason)
 	fmt.Fprintf(out, "the next launch that continues this chain carries what is left of it; `fugaro runs show %s --repo %s` reads the new figures and the record the raise is in\n",
-		tip, slug)
+		tip, quoteWord(slug))
 	return nil
 }
 
