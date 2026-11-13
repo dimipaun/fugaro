@@ -1386,7 +1386,7 @@ step_policy() {
   fi
   holders=$(printf '%s\n' "$got" | sed -n 's/^holder=//p' | tr '\n' ' ' | sed 's/ *$//')
   n=$(printf '%s\n' "$got" | sed -n 's/^holder=//p' | wc -l | tr -d ' ')
-  fact account-admitted PASS "the published policy's accounts block names ${REPO} in the allow_repos of ${n} Claude account$([ "$n" = 1 ] || printf 's') (${holders}) — the account leg of the service's admission, which the runs below need (its other two legs, the node's own allow_repos and the repository's own credentials.accounts, are not read here)"
+  fact account-admitted PASS "the published policy's accounts block names ${REPO} in the allow_repos of ${n} Claude account$([ "$n" = 1 ] || printf 's') (${holders}) — the account leg of the service's admission, which is what offers a run a shared (tier A) Claude credential: a tier-B one is the project's paid key, and no admission governs it. The admission's other two legs, the node's own allow_repos and the repository's own credentials.accounts, are not read here"
   # The node's half is read and it is not the whole flip: a repository the node
   # admits is served only while its own switch is on, so the row that says its
   # runs reach Bitbucket through the service — the one step_policy_switch
