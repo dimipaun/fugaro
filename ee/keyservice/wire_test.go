@@ -18,6 +18,9 @@ package keyservice
 // side alone — a Go field no schema property describes, or a property no Go
 // field reads — is exactly the drift a fixture is written to miss, and the plan
 // invites it, since every later task owns one area's file and adds fields to it.
+// Every level is compared and not only the shape's own, because a nested def —
+// an organisation's terms, a reseller's rates, a statement's lines — has no
+// fixture of its own to be read against.
 //
 // A field the schema does not know is refused by both readers. One that accepted
 // more than the other would be a field the SPA believes is served and the API
@@ -91,7 +94,7 @@ func TestWireFixturesDecodeStrictly(t *testing.T) {
 			continue
 		}
 		def := strings.TrimPrefix(shapeName, shape.area+".")
-		wireAssertSameFields(t, shapeName, value, wireProperties(t, shape.area, def))
+		wireAssertSameFields(t, shapeName, shape.area, def, value)
 		if err := wireSchemaDef(t, shape.area, def).Validate(wireInstance(t, fixture)); err != nil {
 			t.Errorf("%s/%s: the %s schema's own %s subschema refuses the fixture the Go decoder accepted: %v",
 				wireFixtureDir, name, shape.area, def, err)
@@ -121,6 +124,7 @@ func TestWireFixturesDecodeStrictly(t *testing.T) {
 		}
 		wireAssertClosed(t, file)
 		wireAssertRootCovers(t, file, area)
+		wireAssertDefsAreReached(t, file, area)
 	}
 }
 
@@ -241,57 +245,123 @@ func wireShapeNames() []string {
 	return names
 }
 
-// wireAssertSameFields refuses a field one reader has and the other does not: a
-// Go field the shape's subschema does not describe is a field the SPA cannot
-// know is served, and a property no Go field reads is one the API drops however
-// faithfully the schema promises it.
-func wireAssertSameFields(t *testing.T, shapeName string, value any, properties []string) {
+// wireAssertSameFields refuses a field one reader has and the other does not, at
+// every level: a Go field a subschema does not describe is a field the SPA
+// cannot know is served, and a property no Go field reads is one the API drops
+// however faithfully the schema promises it. It follows a property that holds
+// another object into the def that object is described by, because those defs —
+// an organisation's terms, a reseller's rates, a statement's lines — are not
+// registered shapes, so no fixture and no other check reaches them.
+func wireAssertSameFields(t *testing.T, shapeName, area, def string, value any) {
 	t.Helper()
-	held := make(map[string]bool)
-	wireFieldNames(reflect.TypeOf(value).Elem(), held)
-	for _, name := range properties {
-		if !held[name] {
+	wireSameFields(t, shapeName, reflect.TypeOf(value).Elem(), wireAreaDoc(t, area), def)
+}
+
+// wireSameFields compares one Go type with one subschema of an area's file, in
+// both directions, and goes a level deeper where a property names another def.
+// at is the path a failure prints, spelled as the SPA reads the shape.
+func wireSameFields(t *testing.T, at string, typ reflect.Type, doc map[string]any, def string) {
+	t.Helper()
+	described, ok := wireDef(t, doc, def, at)["properties"].(map[string]any)
+	if !ok {
+		t.Errorf("%s: $defs/%s describes no properties, so nothing under it is compared", at, def)
+		return
+	}
+	held := make(map[string]reflect.Type, typ.NumField())
+	wireFieldTypes(typ, held)
+	for _, name := range slices.Sorted(maps.Keys(described)) {
+		field, ok := held[name]
+		if !ok {
 			t.Errorf("%s: the schema describes a %q property this build reads nothing into, so a route would drop a field the SPA is told it is served",
-				shapeName, name)
+				at, name)
+			continue
 		}
 		delete(held, name)
+		nested, ok := wireRefTarget(described[name])
+		if !ok {
+			continue
+		}
+		field = wireElement(field)
+		if field.Kind() != reflect.Struct {
+			t.Errorf("%s.%s: the schema holds an object this build reads as %s, so one of the two has the wrong shape", at, name, field)
+			continue
+		}
+		wireSameFields(t, at+"."+name, field, doc, nested)
 	}
 	for _, name := range slices.Sorted(maps.Keys(held)) {
-		t.Errorf("%s: this build reads a %q field the shape's subschema does not describe, so the SPA cannot know it is served",
-			shapeName, name)
+		t.Errorf("%s: this build reads a %q field the schema does not describe, so the SPA cannot know it is served", at, name)
 	}
 }
 
-// wireFieldNames collects one type's own JSON names. Nested types are their own
-// defs and are reached through the property that holds them, so this reads the
-// shape's level and no deeper.
-func wireFieldNames(t reflect.Type, into map[string]bool) {
+// wireFieldTypes collects one type's own JSON names and what they hold, which is
+// what its subschema's properties are compared with before the walk goes deeper.
+func wireFieldTypes(t reflect.Type, into map[string]reflect.Type) {
 	for i := range t.NumField() {
-		name := strings.Split(t.Field(i).Tag.Get("json"), ",")[0]
+		field := t.Field(i)
+		name := strings.Split(field.Tag.Get("json"), ",")[0]
 		if name != "" && name != "-" {
-			into[name] = true
+			into[name] = field.Type
 		}
 	}
 }
 
-// wireProperties is the names one shape's subschema describes, which is the list
-// the Go type has to read exactly.
-func wireProperties(t *testing.T, area, def string) []string {
+// wireElement is the type a field holds once its pointers and slices are
+// unwrapped, so an object, a pointer to one and a list of them compare alike.
+func wireElement(t reflect.Type) reflect.Type {
+	for t.Kind() == reflect.Pointer || t.Kind() == reflect.Slice {
+		t = t.Elem()
+	}
+	return t
+}
+
+// wireRefTarget is the def one property's value is described by, and false for a
+// property that holds no object: a $ref of its own, a list whose items are one,
+// or a nullable object, whose anyOf carries the $ref beside its null branch.
+func wireRefTarget(property any) (string, bool) {
+	object, ok := property.(map[string]any)
+	if !ok {
+		return "", false
+	}
+	if def, ok := wireRef(object); ok {
+		return def, true
+	}
+	for _, key := range []string{"anyOf", "oneOf"} {
+		branches, _ := object[key].([]any)
+		for _, branch := range branches {
+			if def, ok := wireRef(branch); ok {
+				return def, true
+			}
+		}
+	}
+	return wireRef(object["items"])
+}
+
+// wireRef is one subschema's own reference to a def of the same file, if it has
+// one.
+func wireRef(node any) (string, bool) {
+	object, ok := node.(map[string]any)
+	if !ok {
+		return "", false
+	}
+	ref, ok := object["$ref"].(string)
+	if !ok || !strings.HasPrefix(ref, wireDefPrefix) {
+		return "", false
+	}
+	return strings.TrimPrefix(ref, wireDefPrefix), true
+}
+
+// wireDef is one subschema of an area's file by name.
+func wireDef(t *testing.T, doc map[string]any, def, at string) map[string]any {
 	t.Helper()
-	file := filepath.Join(wireSchemaDir, area+".schema.json")
-	defs, ok := wireAreaDoc(t, area)["$defs"].(map[string]any)
+	defs, ok := doc["$defs"].(map[string]any)
 	if !ok {
-		t.Fatalf("%s holds no $defs, so no shape in the %s area has a subschema", file, area)
+		t.Fatalf("%s: the file holds no $defs, so $defs/%s is not there", at, def)
 	}
-	shape, ok := defs[def].(map[string]any)
+	object, ok := defs[def].(map[string]any)
 	if !ok {
-		t.Fatalf("%s: the %s area holds no $defs/%s, so nothing validates the %s shape", file, area, def, area+"."+def)
+		t.Fatalf("%s: the file holds no $defs/%s, so no subschema describes that shape", at, def)
 	}
-	properties, ok := shape["properties"].(map[string]any)
-	if !ok {
-		t.Fatalf("%s: $defs/%s describes no properties", file, def)
-	}
-	return slices.Sorted(maps.Keys(properties))
+	return object
 }
 
 // wireAssertRootCovers refuses an area whose root oneOf does not reach every
@@ -331,6 +401,65 @@ func wireAssertRootCovers(t *testing.T, file, area string) {
 		if !registered[def] {
 			t.Errorf("%s: the root oneOf names $defs/%s and this build registers no %s.%s shape, so the file advertises a shape nothing decodes",
 				file, def, area, def)
+		}
+	}
+}
+
+// wireAssertDefsAreReached refuses a def nothing refers to. A def is reached
+// from the root oneOf — the list a reader takes for the area's shapes — through
+// the properties that name it, and a def outside that closure is described by
+// the file and read by nobody: no fixture stands for it, this guard never
+// compares it, and it is what a shape left behind after its branch was removed
+// looks like.
+func wireAssertDefsAreReached(t *testing.T, file, area string) {
+	t.Helper()
+	doc := wireAreaDoc(t, area)
+	defs, ok := doc["$defs"].(map[string]any)
+	if !ok {
+		t.Errorf("%s holds no $defs, so it describes no shape at all", file)
+		return
+	}
+	reached := make(map[string]bool, len(defs))
+	var reach func(def string)
+	reach = func(def string) {
+		if reached[def] {
+			return
+		}
+		reached[def] = true
+		below := make(map[string]bool)
+		wireRefsUnder(defs[def], below)
+		for _, next := range slices.Sorted(maps.Keys(below)) {
+			reach(next)
+		}
+	}
+	for _, branch := range wireArray(t, file, doc["oneOf"]) {
+		named := make(map[string]bool)
+		wireRefsUnder(branch, named)
+		for _, def := range slices.Sorted(maps.Keys(named)) {
+			reach(def)
+		}
+	}
+	for _, def := range slices.Sorted(maps.Keys(defs)) {
+		if !reached[def] {
+			t.Errorf("%s: $defs/%s is described and nothing refers to it, so nothing validates against it and no fixture stands for it", file, def)
+		}
+	}
+}
+
+// wireRefsUnder collects every def one subschema refers to, wherever the
+// reference sits, which is what decides whether a def is reached.
+func wireRefsUnder(node any, into map[string]bool) {
+	switch value := node.(type) {
+	case map[string]any:
+		if def, ok := wireRef(value); ok {
+			into[def] = true
+		}
+		for _, child := range value {
+			wireRefsUnder(child, into)
+		}
+	case []any:
+		for _, child := range value {
+			wireRefsUnder(child, into)
 		}
 	}
 }
