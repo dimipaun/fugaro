@@ -81,6 +81,28 @@ func accessRunUnreachableDB(t *testing.T, f *launchBudgetFixture) {
 	}
 }
 
+// accessRunNoProvider leaves the fixture's config entry for the run's
+// repository without a provider, which is a state a machine's config can be in:
+// the checkout's own fugaro.yaml decides a repository's provider at run time,
+// and until an update writes one the entry names the repository alone.
+func accessRunNoProvider(t *testing.T, f *launchBudgetFixture) {
+	t.Helper()
+	path := os.Getenv("FUGARO_CONFIG")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const with, without = "acme/app: { provider: github, base_branch: main, workflows: [web] }",
+		"acme/app: { base_branch: main, workflows: [web] }"
+	updated := strings.Replace(string(data), with, without, 1)
+	if updated == string(data) {
+		t.Fatal("the fixture's config lists the run's repository with a provider")
+	}
+	if err := os.WriteFile(path, []byte(updated), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // accessRunSpec is a launch's task for one repository, the shape
 // launchPolicyGates is handed by the launcher.
 func accessRunSpec(repo string) *task.Spec {
@@ -519,6 +541,39 @@ func TestAccessRunDiagnoseIsReadInScope(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestAccessRunRepositoryComesFromTheRunItself: the run's own task names the
+// repository its logs, its cancel and its diagnosis are judged at, so an
+// operator holding the role there reaches all three even when this machine's
+// config lists that repository without a provider. Read from the config alone
+// they fell to project scope instead and refused a person whose repository
+// grant is exactly the one that should do — and the refusal asked an admin for
+// a wider role than the one they needed.
+func TestAccessRunRepositoryComesFromTheRunItself(t *testing.T) {
+	noAgentSession(t)
+	const id = "20261113-090000-abd5"
+	f := newLaunchBudget(t, "off")
+	accessRunNode(t, f, userStored(t, accessOperator, accesslib.RoleOperator, accessRepoA))
+	accessRunNoProvider(t, f)
+	accessRunAs(t, accessOperator)
+	exec := seedRun(t, f.cloudFixture, id, "", "someone@example.com", true)
+	f.run.SetState(exec, backend.StateRunning)
+	f.logging.AddJSONLines(exec, []byte(`{"time":"`+logTime(time.Second)+`","severity":"INFO","message":"stage started","stage":"implement"}
+`))
+
+	if out, _, err := execute(t, "logs", id); err != nil || !strings.Contains(out, "stage started") {
+		t.Errorf("logs of a run whose config entry names no provider = %q, %v", out, err)
+	}
+	if _, _, err := execute(t, "diagnose", id); err != nil {
+		t.Errorf("diagnose of a run whose config entry names no provider: %v", err)
+	}
+	if _, _, err := execute(t, "cancel", "--json", "--grace", "30ms", "--grace-floor", "0", "--poll", "10ms", id); err != nil {
+		t.Errorf("cancel of a run whose config entry names no provider: %v", err)
+	}
+	if !cancelled(t, f.cloudFixture, id) {
+		t.Error("the cancel wrote no marker")
+	}
 }
 
 // TestAccessRunProjectScopeRefusalNamesAUsableCommand: a run under a slug this

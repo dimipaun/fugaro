@@ -103,15 +103,28 @@ func requireAccess(ctx context.Context, env *cloudEnv, action accesslib.Action, 
 	return accessRefusal(env, in, caller, action, repo, what)
 }
 
-// requireRunAccess is requireAccess for a run a command has the slug of and
-// nothing else (cancel, logs): the repository is this machine's config entry
-// for that slug (accessSlugRepos). A slug the config cannot name is judged at
-// project scope by requireProjectAccess.
-func requireRunAccess(ctx context.Context, env *cloudEnv, action accesslib.Action, slug, what string) error {
-	if canonical, ok := accessSlugRepos(env.lc)[slug]; ok {
+// requireRunAccess is requireAccess for a run a command has located (cancel,
+// logs, diagnose): the repository is the run's OWN, read from its task or its
+// record the way `runs show` and `runs ls` read it (showRunRepo, accessRunRepo),
+// because a run is what names the repository it belongs to. This machine's
+// config entry for the slug (accessSlugRepo) is the fallback for a run whose
+// task has gone, and project scope the last one, for a run nothing names a
+// repository for at all.
+//
+// Judging these from the config alone is what made a run readable through
+// `runs show` and refused through `logs` and `cancel` whenever the config
+// listed its repository without a provider or did not list it: project scope is
+// a WIDER role than the repository's, so the refusal asked for a grant the
+// person did not need.
+func requireRunAccess(ctx context.Context, env *cloudEnv, action accesslib.Action, s *runstore.Store, what string) error {
+	repo, _ := showRunRepo(ctx, env, s, nil)
+	if canonical, ok := accessRunRepo(s.Slug(), repo); ok {
 		return requireAccess(ctx, env, action, canonical, what)
 	}
-	return requireProjectAccess(ctx, env, action, slug, what)
+	if canonical, ok := accessSlugRepo(env.lc, s.Slug()); ok {
+		return requireAccess(ctx, env, action, canonical, what)
+	}
+	return requireProjectAccess(ctx, env, action, s.Slug(), what)
 }
 
 // requireProjectAccess is requireAccess for a subject nothing here can name as
@@ -258,32 +271,37 @@ func accessRunRepo(slug, repo string) (canonical string, ok bool) {
 	return canonical, true
 }
 
-// accessSlugRepos is the canonical repository of each storage slug this
-// machine's config lists, keyed by the slug itself: logs resolves a run from
-// its slug, and the canonical form needs the provider, which only the config's
-// own entry carries. An entry with no provider is left out rather than guessed
-// at — the checkout's fugaro.yaml decides its provider at run time — which is
-// what userKnownRepos leaves out for `fugaro user ls` and for the same reason.
-func accessSlugRepos(lc *localcfg.Config) map[string]string {
-	out := map[string]string{}
+// accessSlugRepo is the canonical repository this machine's config lists under
+// a run's own storage slug: the run is located from the slug, and the canonical
+// form needs the provider. An entry that names no provider is resolved against
+// the slug rather than dropped — the checkout's fugaro.yaml decides a
+// repository's provider at run time, so the config can be without one, and the
+// slug carries the kind itself, task.Slug being a hash of the pair. Only a pair
+// that rebuilds the slug is answered with, so a repository no kind agrees about
+// is left out; which is userKnownRepos's own rule for `fugaro user ls`.
+func accessSlugRepo(lc *localcfg.Config, slug string) (string, bool) {
 	if lc == nil {
-		return out
+		return "", false
 	}
 	for name, r := range lc.Repos {
-		if r.Provider == "" {
+		kind := r.Provider
+		if kind == "" {
+			k, ok := runner.ProviderForSlug(slug, name)
+			if !ok {
+				continue
+			}
+			kind = k
+		}
+		if got, err := task.Slug(kind, name); err != nil || got != slug {
 			continue
 		}
-		slug, err := task.Slug(r.Provider, name)
+		canonical, err := projectpolicy.Canonical(kind, name)
 		if err != nil {
 			continue
 		}
-		canonical, err := projectpolicy.Canonical(r.Provider, name)
-		if err != nil {
-			continue
-		}
-		out[slug] = canonical
+		return canonical, true
 	}
-	return out
+	return "", false
 }
 
 // accessRowGate is `runs ls`'s reading of the roles: the input and the caller
@@ -368,10 +386,13 @@ func accessRefusal(env *cloudEnv, in accesslib.Input, caller string, action acce
 		accessFix(env, caller, a.role, fmt.Sprintf("%s user ls --repo %s", selfCommand(), repo), repo))
 }
 
-// accessProjectRefusal is accessRefusal for a run whose repository this
-// machine's config cannot name: the question is the credential's project-scope
-// role, because a grant at a repository scope is about repositories that have a
-// canonical name.
+// accessProjectRefusal is accessRefusal for a run NOTHING names a repository
+// for: neither its task nor its record, read first, nor this machine's config.
+// The question is then the credential's project-scope role, because a grant at
+// a repository scope is about repositories that have a canonical name, and the
+// sentence says that this is why — a person reading it must not be told to ask
+// for a wider role than the one they need, which is what made the old wording
+// misleading wherever the run's own repository had simply not been looked at.
 func accessProjectRefusal(env *cloudEnv, in accesslib.Input, caller string, action accesslib.Action, slug, what string) error {
 	a, ok := accessActions[action]
 	if !ok {
@@ -381,7 +402,7 @@ func accessProjectRefusal(env *cloudEnv, in accesslib.Input, caller string, acti
 	if r := accesslib.EffectiveAtProject(in, caller); r != accesslib.RoleNone {
 		held = "the role " + string(r) + " at project scope"
 	}
-	return userErr("%s: the run is stored under %s, a repository this machine's config cannot name (provider/owner/name), so %s it is judged at project scope and the credential this command is using (%s) holds %s there.%s",
+	return userErr("%s: the run is stored under %s, and neither its own task or record nor this machine's config names its repository (provider/owner/name), so %s it is judged at project scope — no repository scope can be written for a repository nothing here can name — and the credential this command is using (%s) holds %s there.%s",
 		what, safetext.Field(slug), a.word, caller, held,
 		accessFix(env, caller, a.role, selfCommand()+" user ls", "project"))
 }

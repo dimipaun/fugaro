@@ -215,14 +215,15 @@ func runDiagnose(cmd *cobra.Command, o *diagnoseOptions, ref string) error {
 	if err != nil {
 		return err
 	}
+	s := runstore.Open(env.bucket.Bucket, slug, id)
 	// A diagnosis prints the run's logs and the chain it belongs to, which is
 	// the read D1586 scopes to the run's own repository, so the same check
 	// `fugaro logs` and `fugaro runs show` make stands here — before the row,
-	// the logs or the chain are read at all (plan task RS6a).
-	if err := requireRunAccess(ctx, env, accesslib.ActionViewRepo, slug, "nothing was read"); err != nil {
+	// the logs or the chain are read at all, and judged at the repository the
+	// run's own task names (plan task RS6a).
+	if err := requireRunAccess(ctx, env, accesslib.ActionViewRepo, s, "nothing was read"); err != nil {
 		return err
 	}
-	s := runstore.Open(env.bucket.Bucket, slug, id)
 	l, err := viewLaunch(ctx, env, s, id)
 	var refused error // an execution checkExecution won't follow
 	switch {

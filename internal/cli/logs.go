@@ -76,12 +76,12 @@ func runLogs(cmd *cobra.Command, o *logsOptions, ref string) error {
 	if err != nil {
 		return err
 	}
-	// The role check (plan task RS6a) is after the run is located — a slug and a
-	// run id name the repository the roles are held in, and only the located run
-	// has both — and before a line of the run's output is printed: D1586's read
+	// The role check (plan task RS6a) is after the run is located — the run's own
+	// task names the repository the roles are held in, and only the located run
+	// has it — and before a line of the run's output is printed: D1586's read
 	// half, which leaves a reader to the runs and logs of its own repositories.
 	// --url is refused with it: the console link is a read of the same run.
-	if err := requireRunAccess(ctx, env, accesslib.ActionViewRepo, s.Slug(), "nothing was read"); err != nil {
+	if err := requireRunAccess(ctx, env, accesslib.ActionViewRepo, s, "nothing was read"); err != nil {
 		return err
 	}
 	if o.url {

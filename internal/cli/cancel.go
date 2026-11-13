@@ -163,8 +163,9 @@ func cancelRun(ctx context.Context, env *cloudEnv, o *cancelOptions, arg string,
 	// no log and marks nothing. D1587 gives cancel to an operator within scope
 	// — an ordinary viewer does not cancel at all, and the run's own launcher is
 	// not asked: the cloud bundles cancel on every run, so the scope is the
-	// check.
-	if err := requireRunAccess(ctx, env, accesslib.ActionCancel, slug, "nothing was cancelled"); err != nil {
+	// check. The scope is the run's own repository, which its stored task names
+	// (requireRunAccess reads it there, as `runs show` does).
+	if err := requireRunAccess(ctx, env, accesslib.ActionCancel, runstore.Open(env.bucket.Bucket, slug, id), "nothing was cancelled"); err != nil {
 		return err
 	}
 	if newRep != nil {
