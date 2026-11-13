@@ -62,8 +62,8 @@
 // the table of commands and flags the console must never reach: every write
 // subcommand on this tree -- including the converge, `setup` and `update`, which
 // create a project and apply Terraform -- the `secrets` commands, the retired
-// `init` tombstone and the hidden `exec`, the hidden
-// `budget history` job command, `image git-credential`
+// `init` tombstone and the hidden `exec`, the hidden `budget history` job
+// command, `image git-credential`
 // (it prints a credential), the project-centric phase 1 commands that write or
 // publish, and the flags that make a read-only command into something else
 // (`--follow`, `--check-github-app`, `--strict`, `--csv`, `--watch`, the watch
