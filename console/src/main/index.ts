@@ -522,8 +522,10 @@ function licenceReplyFor(installation: string | undefined): LicenceReply {
   return licenceStore.read(project, new Date())
 }
 
-/** licenceSave is `licence.save`'s handler, and the console's third write: the
- * key the operator pasted, verified before it is kept. A key that does not
+/** licenceSave is `licence.save`'s handler, and the console's fourth write --
+ * the one that writes and spawns nothing, which is why it has no row of the
+ * design's section 8 (`console/docs/json-contract.md` states the count): the key
+ * the operator pasted, verified before it is kept. A key that does not
  * verify is a **throw**, which `registerConsoleHandlers` turns into the reply's
  * `reason` -- the verifier's own sentence, drawn beside the box -- and the
  * installation keeps the key it had. */

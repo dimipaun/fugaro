@@ -3074,12 +3074,12 @@ interface DashboardDeps {
    * changes a file on disk rather than starting a run. */
   readonly settingsBridge: SettingsBridge
   /** moveBridge is the Graph screen's own write (`roadmap.move`, GV3.2): the
-   * console's fourth write, and the one that changes what every other console of
+   * console's third write, and the one that changes what every other console of
    * the project is drawn from. */
   readonly moveBridge: MoveBridge
   /** licenceBridge is the Project tab's licence key (`licence.save`, S2.7): the
-   * console's third write, and the one that keeps a credential the console hands
-   * to every child it spawns. */
+   * console's fourth write, and the one that writes and spawns nothing -- it
+   * keeps a credential the console hands to every child it spawns. */
   readonly licenceBridge: LicenceBridge
   /** linkBridge is the Coordinator's numbers (`link.openPullRequest`, K2a): the
    * one operation that leaves this window, and the only one handed a triple
