@@ -223,7 +223,7 @@ func settingsAccessRepo(ctx context.Context, lc *localcfg.Config, o settingsWrit
 // the provider — the pair a checkout is remembered by.
 func settingsAccessOriginRepo(ctx context.Context) (string, error) {
 	oi, ok := readOrigin(ctx, ".")
-	if ok && !oi.Rewritten {
+	if ok {
 		if provider := providerForHost(oi.Host); provider != "" {
 			if canonical, err := projectpolicy.Canonical(provider, oi.Repo); err == nil {
 				return canonical, nil
