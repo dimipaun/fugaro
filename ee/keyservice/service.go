@@ -243,9 +243,10 @@ type Service struct {
 	// code host to reach the document store.
 	//
 	// P1.0 declared these five on Deps and left Service without them, so every
-	// area's task would have had to edit this file to reach its own — which is
-	// the edit the plan's shared-files table exists to prevent (service.go is
-	// P1.0's and P9.3's). They are all five here for that reason and not because
+	// area's task would have had to edit this file to reach its own — the first
+	// area paid that once (the plan's shared-files table names it a writer of
+	// this file for doing so) and no area after it does. They are all five here
+	// for that reason and not because
 	// this area reaches them all: what an area reaches, it states on its routes
 	// (api.go's reaching), and a deployment that mounts no route of an area
 	// holds none of that area's seams.

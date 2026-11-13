@@ -253,7 +253,11 @@ not exist yet.
 ### Slice P2: tenancy
 
 - **P2.1 Organisations and memberships. SECURITY.**
-  - Files: `ee/keyservice/orgs.go`, `api_orgs.go`, `audit.go`, `orgs_test.go` (new).
+  - Files: `ee/keyservice/orgs.go`, `api_orgs.go`, `audit.go`, `orgs_test.go` (new); also the shared files the
+    table below lists against it — `api.go` (the interfaces a route is written against) and `service.go` (the
+    seams a route reaches the store, the mail path and the rest through), `keyservice_test.go`,
+    `portalauth.go`/`portalauth_test.go` (the adapter behind those seams) and `startup_test.go`. P2.1 is the
+    first area task, so it is the one that takes them; the areas after it add files of their own.
   - Sign-up creates a customer organisation, records the terms' version and time, and creates the
     free-seat entitlement through the `onOrgCreated` hooks that P3.1 registers (D2199). Organisation types and roles; the last-used organisation; operations
     reads across organisations, audited; the SSO rule by the actor's membership; a per-account daily limit
@@ -558,8 +562,8 @@ Edges:
 | Level | Tasks (run together) |
 | --- | --- |
 | 0 | P1.0, P1.1, P1.2, P1.3, P1.5, P1.8, P9.1, P9.5 |
-| 1 | P1.4, P1.6, P2.1 |
-| 2 | P2.2, P2.3, P3.1, P3.4, P3.5, P4.4, P5.3, P6.4, P9.2 |
+| 1 | P1.4, P2.1 |
+| 2 | P1.6, P2.2, P2.3, P3.1, P3.4, P3.5, P4.4, P5.3, P6.4, P9.2 |
 | 3 | P1.7, P3.3, P4.1, P7.1 |
 | 4 | P4.2 |
 | 5 | P3.6, P4.3 |
@@ -578,7 +582,9 @@ P6.
 
 Why some of it is sequential:
 
-- `service.go` has two writers, P1.0 (level 0) and P9.3 (level 7); `merchant.go` has P4.2 then P3.6.
+- `service.go` has three writers, P1.0 (level 0), P2.1 (level 1, which takes the seams onto `Service`) and
+  P9.3 (level 7); `api.go` has three as well — P1.0 (0), P2.1 (1) and P1.6 (2) — which is why P1.6 is at
+  level 2 and not beside P2.1; `merchant.go` has P4.2 then P3.6.
 - Every API task needs the sign-in (P1.3), the store (P1.2) and the organisation model (P2.1).
 - Paddle events create entitlements (P3.1) for transactions the checkout created (P4.1).
 - Renewal, reveal, operations' key actions and deletion all need the entitlement-aware renewal (P3.6).
@@ -590,24 +596,29 @@ Files written by more than one task. Every other file has one writer.
 
 | File | Writers (level) |
 | --- | --- |
-| `ee/keyservice/service.go`, `startup_test.go` | P1.0 (0), P9.3 (7) |
+| `ee/keyservice/service.go`, `startup_test.go` | P1.0 (0), P2.1 (1), P9.3 (7) |
 | `ee/keyservice/store.go` | P3.6 (5) |
 | `ee/keyservice/firestore_store.go` | P1.2 (0), P3.6 (5) |
-| `ee/keyservice/keyservice_test.go` | P1.0 (0), P3.6 (5) |
+| `ee/keyservice/keyservice_test.go` | P1.0 (0), P2.1 (1), P3.6 (5) |
 | `ee/keyservice/merchant.go` | P4.2 (4), P3.6 (5) |
 | `ee/keyservice/renew.go` | P3.6 (5) |
 | `ee/keyservice/minter.go`, `policy.go` | P1.8 (0) |
-| `ee/keyservice/api.go` | P1.0 (0), P1.6 (1) |
-| `go.mod`, `go.sum` | P1.2 (0), P1.6 (1), P1.7 (3) |
+| `ee/keyservice/api.go` | P1.0 (0), P2.1 (1), P1.6 (2) |
+| `ee/keyservice/portalauth.go`, `portalauth_test.go` | P1.3 (0), P2.1 (1) |
+| `go.mod`, `go.sum` | P1.2 (0), P1.6 (2), P1.7 (3) |
 | `ee/keyservice/orgs.go` | P2.1 (1); P3.1 registers a hook, it does not edit the file |
-| `ee/keyservice/wire_<area>.go`, `ee/portal/schemas/<area>.schema.json`, `ee/portal/src/api/types/<area>.ts` | P1.1 or P1.4 (0, 1), then the one task of that area (2 or later) |
+| `ee/keyservice/wire_<area>.go`, `ee/portal/schemas/<area>.schema.json`, `ee/portal/src/api/types/<area>.ts` | P1.1 or P1.4 (0, 1), then the one task of that area (1 or later) |
 | `ee/coordinator/mcpauth/firebase.go` | P1.3 (0) |
 | `ee/keyservice/admin.go`, `admin_test.go`, root `firebase.json`, website key files | P9.3 (7) |
 | `docs/licence-key-v2/*`, `docs/design/key-signing-service.md` | P9.1 (0) |
 | `docs/gcp-live-checklist.md` | P9.4 (10) |
 
-No level holds two writers of one file. API routes register through `registerAPI` (P1.0) and screens through
-`import.meta.glob` (P1.4), so adding an area edits no shared file.
+No level holds two writers of one file — which is what put P1.6 at level 2 rather than beside P2.1: both write
+`api.go`. API routes register through `registerAPI` (P1.0) and screens through `import.meta.glob` (P1.4), so an
+area adds its own routes and screens without editing the registry or the shell. What an area does edit is the
+seam it is the first to reach — `api.go` for the interfaces a route is written against, `service.go` for the
+seams `Service` holds, and `portalauth.go` for the adapter that puts the verifier behind them — and those
+three sit in the table above for that reason, each with the level that first wrote it.
 
 ## Checks this plan takes (570–579)
 

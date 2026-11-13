@@ -525,6 +525,102 @@ func TestResellerMicrosoftNeedsAPinnedTenant(t *testing.T) {
 	}
 }
 
+// TestTheSeamCarriesEveryFactOfASignIn: PortalSignIn is what a deployment hands
+// Deps.SignIn, so it is the production path by which the API's routes reach
+// every rule in this file, and signInOf/callerOf are the one place a fact can be
+// lost between the seam's Caller and the VerifiedSignIn the rules are written
+// over. Every field of the conversion is pinned in both directions, and each of
+// the three facts a rule reads is read once through the seam rather than out of
+// the conversion's own struct: a field dropped here compiles, fails closed, and
+// refuses a person who did nothing wrong.
+func TestTheSeamCarriesEveryFactOfASignIn(t *testing.T) {
+	ctx := context.Background()
+	v := portalVerifier(t)
+	seam := PortalSignIn{Verifier: v}
+
+	// A Microsoft sign-in carrying a tenant, which is the case all three carried
+	// facts are legible on: a Google sign-in has no tenant and is admitted by
+	// every rule.
+	caller, err := seam.Verify(ctx, signPortalToken(t, portalKey(), portalKid, "RS256", microsoftTenantClaims()))
+	if err != nil {
+		t.Fatalf("the seam refused a token this project signed: %v", err)
+	}
+	want := Caller{
+		UID:      portalUID,
+		Email:    "owner@contoso.example",
+		Provider: signInMicrosoft,
+		AuthTime: portalNow.Add(-time.Minute),
+		TenantID: portalTenant,
+	}
+	if caller.UID != want.UID {
+		t.Errorf("the seam's caller names the account %q, want the token's subject %q", caller.UID, want.UID)
+	}
+	if caller.Email != want.Email {
+		t.Errorf("the seam's caller carries the address %q, want the token's own %q", caller.Email, want.Email)
+	}
+	if caller.Provider != want.Provider {
+		t.Errorf("the seam's caller carries the provider %q, want %q: the SSO rule reads it", caller.Provider, want.Provider)
+	}
+	if !caller.AuthTime.Equal(want.AuthTime) {
+		t.Errorf("the seam's caller carries the sign-in instant %s, want the token's auth_time %s: the freshness rule reads it", caller.AuthTime, want.AuthTime)
+	}
+	if caller.TenantID != want.TenantID {
+		t.Errorf("the seam's caller carries the tenant %q, want the token's %q: a reseller's pinned list is compared against it", caller.TenantID, want.TenantID)
+	}
+
+	// The other direction, whole: a caller the seam answered, as the sign-in the
+	// rules are written over and back, is the same caller field for field — so
+	// neither conversion drops one, whichever way a later rule reaches it.
+	if back := callerOf(signInOf(caller)); back != caller {
+		t.Errorf("a caller through signInOf and back is %+v, want the one Verify answered %+v", back, caller)
+	}
+
+	// And each rule reads what it carried, through the seam rather than through
+	// the conversion alone: an operations organisation admits a Microsoft sign-in
+	// nowhere, a reseller's list admits this one for the tenant the token pinned
+	// and refuses it for a tenant nobody did.
+	if err := seam.RequireSSO(caller, SSORule{Operations: true}); !errors.Is(err, ErrSSORequired) {
+		t.Errorf("an operations rule answered a Microsoft caller %v, want the SSO refusal", err)
+	}
+	if err := seam.RequireSSO(caller, SSORule{MicrosoftTenants: []string{portalTenant}}); err != nil {
+		t.Errorf("a reseller's list that pins this sign-in's tenant refused it (%v): the provider and the tenant did not cross the seam", err)
+	}
+	if err := seam.RequireSSO(caller, SSORule{MicrosoftTenants: []string{"tenant-nobody-pinned"}}); !errors.Is(err, ErrTenantNotPinned) {
+		t.Errorf("a reseller's list pinning another tenant answered %v, want the tenant refusal: the rule read the caller's own tenant", err)
+	}
+	if err := v.FreshWithin(signInOf(caller), 5*time.Minute); err != nil {
+		t.Errorf("a sign-in a minute old was not fresh within five minutes (%v): the instant did not cross the seam", err)
+	}
+	if err := v.FreshWithin(signInOf(caller), 30*time.Second); !errors.Is(err, ErrStaleSignIn) {
+		t.Errorf("a sign-in a minute old was treated as fresh within thirty seconds (%v): the rule read the caller's own sign-in instant", err)
+	}
+
+	// The admitted direction, so that none of the above is a seam that refuses
+	// everything: a Google caller without a tenant is the caller an operations
+	// organisation admits.
+	google, err := seam.Verify(ctx, signPortalToken(t, portalKey(), portalKid, "RS256", portalClaims()))
+	if err != nil {
+		t.Fatalf("the seam refused a Google token this project signed: %v", err)
+	}
+	if google.Provider != signInGoogle || google.TenantID != "" {
+		t.Errorf("a Google sign-in arrived as provider %q and tenant %q, want google.com and no tenant", google.Provider, google.TenantID)
+	}
+	if err := seam.RequireSSO(google, SSORule{Operations: true}); err != nil {
+		t.Errorf("an operations rule refused a Google caller: %v", err)
+	}
+
+	// What the seam refuses is this verifier's refusal and not one of its own: a
+	// token from another project is the same sentinel the API's door branches
+	// on, answered by the verifier through the adapter.
+	elsewhere := portalClaims()
+	elsewhere["aud"] = portalOtherProject
+	elsewhere["iss"] = "https://securetoken.google.com/" + portalOtherProject
+	_, err = seam.Verify(ctx, signPortalToken(t, portalKey(), portalKid, "RS256", elsewhere))
+	if !errors.Is(err, ErrUnverifiedSignIn) {
+		t.Errorf("the seam answered another project's token with %v, want ErrUnverifiedSignIn: the adapter is a pass-through and not a second verifier", err)
+	}
+}
+
 // TestTheSignInsMemberIsTheTreesSpelling: F31's rule that both sides of an
 // address comparison go through access.Member. The member folds the domain and
 // keeps the local part byte for byte — a mail system that treats the local part

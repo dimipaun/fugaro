@@ -11,7 +11,9 @@ package keyservice
 // The table is a package-level registry rather than a list in Handler because
 // the portal is built by one task per area (the plan's slices): an area file
 // registers its own routes from its init, so adding a door edits no file another
-// area holds. service.go has two writers in the plan and no area may be a third.
+// area holds. This file and service.go are the two the first area had to write
+// anyway — the seams a route is written against, and the ones Service holds —
+// and the plan's shared-files table names every task that writes either.
 //
 // A deployment that mounts no route is one this file does nothing for: P1.0 is
 // inert alone, and every seam below is a shape a later area fills.
