@@ -151,6 +151,13 @@ RUN_REF=""
 SETTLED=no
 CANCEL_DONE=no
 CANCEL_OK=""
+# PREMISE_OK is set by the one branch of step_premise that establishes the state
+# the run is a reading of, and step_run reads it and nothing else. This check is
+# free only BECAUSE the run it launches is refused at bootstrap: a run launched
+# after a premise that did not hold — a slot that is set, or a coder that reads
+# the picture itself — would go through implement and spend the sandbox's money,
+# which is the one thing this check promises it never does.
+PREMISE_OK=no
 
 scratch_up() {
   SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/chk521.XXXXXXXX") || die "Check 521 cannot make a scratch directory"
@@ -316,11 +323,15 @@ run_bounded() { # run_bounded SECONDS KEY DIR CMD...
   shift 3
   BOUNDED_TIMED_OUT=no
   ( trap - ERR; cd "$dir" || exit 1; exec "$@" ) >>"$SCRATCH/$key.out" 2>>"$SCRATCH/$key.err" &
-  local pid=$! waited=0
+  # The poll is a tenth of a second and the bound is counted in tenths: a read
+  # that answers at once — every one of them, when the installation is healthy —
+  # would otherwise cost this check a whole second each, and the owner watches
+  # the check rather than the clock.
+  local pid=$! ticks=0 max=$((secs * 10))
   while kill -0 "$pid" 2>/dev/null; do
-    [ "$waited" -lt "$secs" ] || break
-    sleep 1
-    waited=$((waited + 1))
+    [ "$ticks" -lt "$max" ] || break
+    sleep 0.1
+    ticks=$((ticks + 1))
   done
   if kill -0 "$pid" 2>/dev/null; then
     BOUNDED_TIMED_OUT=yes
@@ -490,6 +501,7 @@ step_premise() {
   case "$problem" in
   *"is priced without an image rate"*"agent.models.vision is unset"*)
     fact premise PASS "doctor says: ${problem} — the coder cannot read an image and the slot is UNSET, which is the state the refusal below is for. The task names $(task_image "$TASK"), so the run's bootstrap refuses it"
+    PREMISE_OK=yes
     return 0
     ;;
   *"is priced with an image rate"*)
@@ -511,6 +523,14 @@ step_premise() {
 step_run() {
   if [ -z "$PROJECT" ]; then
     unmeasured run-launched "there is no project to launch a run in: the row above says why"
+    return 0
+  fi
+  # A run is launched only once the premise has named the state it is a reading
+  # of. This check's whole cost argument is that the run is refused at
+  # bootstrap: launched after a premise that did not hold, it would reach
+  # implement and spend, and the FAIL row above is already the finding.
+  if [ "$PREMISE_OK" != yes ]; then
+    unmeasured run-launched "nothing was launched: the premise row above did not establish the state this run is a reading of, and a run launched without it would reach a stage and spend the sandbox's money — the one thing this check promises it never does. Settle the premise row and run this check again"
     return 0
   fi
   say "launching one run from ${SANDBOX} (refused at bootstrap, so nothing billable)"
@@ -568,7 +588,7 @@ step_terminal() {
   fi
   SETTLED=yes
   fact terminal PASS "${RUN_ID} ended in ${waited}s (status=${run_status:-unknown}, stage=${stage:-unknown}, read from fugaro runs ls --json): the run reached its end on its own, and nothing had to be cancelled"
-  if [ -z "$CANCEL_DONE" ]; then
+  if [ "$CANCEL_DONE" != yes ]; then
     fact cancelled INFO "not needed: the run ended by itself in ${waited}s, so this check cancelled nothing. It would have cancelled it with 'fugaro cancel --now' from the step that gives up waiting and from its own exit trap"
   fi
 }
