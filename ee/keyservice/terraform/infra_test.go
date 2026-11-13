@@ -608,23 +608,72 @@ func tfUnheldDefaults(t *testing.T, dir string) []string {
 	return out
 }
 
+// tfVarBlock answers the one `variable "<name>"` block a root declares, whichever
+// of that root's files holds it, so that a check about a variable's default or
+// its validation reads the block rather than searching a file's text. Terraform
+// refuses a variable declared twice in one directory, and two declarations are a
+// tree that does not validate.
+func tfVarBlock(t *testing.T, root, name string) string {
+	t.Helper()
+	var found []string
+	for _, rel := range tfRootFiles(t, root) {
+		src := tfSource(t, filepath.Join(root, rel))
+		found = append(found, tfBlocksUntil(src, `variable "`+name+`"`, tfVarBlockEnds)...)
+	}
+	if len(found) != 1 {
+		t.Fatalf("%s declares variable %q %d times, want exactly 1: the blocks that decide what an apply means are read by name, so a variable that is gone or duplicated is a rule that would pass by reading nothing", root, name, len(found))
+	}
+	return found[0]
+}
+
+// tfStringList answers the quoted strings written in a value, in the order it
+// writes them, and nothing that is not a quoted string: a validation's condition
+// names the values it admits as string literals, and a name written in a
+// description or a comment is not one — the same reading tfMapKeys makes of a
+// map's keys, one value up.
+func tfStringList(value string) []string {
+	var out []string
+	for i := 0; i < len(value); {
+		if value[i] != '"' {
+			i++
+			continue
+		}
+		j, ok := tfSkipString(value, i)
+		if !ok {
+			return out
+		}
+		out = append(out, value[i+1:j-1])
+		i = j
+	}
+	return out
+}
+
 // tfUnheldKeys answers, sorted and named by root, every `google_kms_crypto_key`
-// the tree under dir declares outside the one block it may hold. The signer role
-// is granted on the key ring rather than on a key, so a key in that ring is one
-// the minter signs with whichever block created it, and the checks that read the
-// key's algorithm, its protection level and its lifecycle read one block: a
-// sweep of the type that read all of them would still hold nothing about the
-// ring's key set, and this list is what refuses a key no check looked at.
+// the tree under dir declares outside the two blocks it may hold: the signing key
+// keyring/ creates, and the handover key services/ creates in its own ring. The
+// signer role is granted on the key ring rather than on a key, so a key in that
+// ring is one the minter signs with whichever block created it, and the checks
+// that read the key's algorithm, its protection level and its lifecycle read one
+// block: a sweep of the type that read all of them would still hold nothing about
+// the ring's key set, and this list is what refuses a key no check looked at.
+//
+// The handover key is held here rather than admitted silently because it is a
+// key in the same project as the signer's: it is read by
+// TestOnlyTheAPIDecryptsHandovers and TestOnlyTheMinterCanSign, which is what
+// makes it a key this suite has looked at (D2182, D2194).
 func tfUnheldKeys(t *testing.T, dir string) []string {
 	t.Helper()
-	held := tfNames(keyringRoot, `resource "google_kms_crypto_key" "signing"`)
+	held := map[string]bool{
+		tfNames(keyringRoot, `resource "google_kms_crypto_key" "signing"`):   true,
+		tfNames(servicesRoot, `resource "google_kms_crypto_key" "handover"`): true,
+	}
 	var out []string
 	for _, rel := range tfTerraform(t, dir) {
 		for _, block := range tfBlocks(tfSource(t, filepath.Join(dir, rel)), `resource "`) {
 			if !strings.Contains(tfHeader(block), `"google_kms_crypto_key"`) {
 				continue
 			}
-			if name := tfNames(path.Dir(rel), tfHeader(block)); name != held {
+			if name := tfNames(path.Dir(rel), tfHeader(block)); !held[name] {
 				out = append(out, name)
 			}
 		}
@@ -634,13 +683,14 @@ func tfUnheldKeys(t *testing.T, dir string) []string {
 }
 
 // tfRingEnvironments answers the environments the key ring root under dir
-// declares in its `keys` default, sorted. The key block's `for_each = var.keys`
-// creates one signing key per entry, so that map is the ring's key set — and the
-// signer role is granted on the ring, which reaches every key in it. A third
-// entry is therefore a third signing key the minter can sign with, and one whose
-// algorithm, protection level and lifecycle no check above reads (D459(a), §2).
-// The entries are read out of the map the block writes rather than searched for
-// in its text: a description string naming an environment is not one.
+// declares in its `keys` default, sorted. The key block takes its id from that
+// map — one entry per environment an apply of this root may carry — and the
+// signer role is granted on that environment's key ring, which reaches every key
+// in it. A third entry is therefore a third environment whose apply creates a
+// third signing key the minter can sign with, and one whose algorithm,
+// protection level and lifecycle no check above reads (D459, §2). The entries are
+// read out of the map the block writes rather than searched for in its text: a
+// description string naming an environment is not one.
 func tfRingEnvironments(t *testing.T, dir string) []string {
 	t.Helper()
 	var out []string
@@ -649,13 +699,13 @@ func tfRingEnvironments(t *testing.T, dir string) []string {
 		for _, block := range tfBlocksUntil(src, `variable "keys"`, tfVarBlockEnds) {
 			value, ok := tfAttr(block, "default")
 			if !ok || !strings.HasPrefix(value, "{") {
-				t.Fatalf("keyring/'s `keys` variable writes no map default (it writes %q): the key block's for_each creates one signing key per entry, so that map is the ring's key set", value)
+				t.Fatalf("keyring/'s `keys` variable writes no map default (it writes %q): the key block's id is the entry this map gives the environment an apply carries, so that map is the set of key ids this service mints with", value)
 			}
 			out = append(out, tfMapKeys(value)...)
 		}
 	}
 	if len(out) == 0 {
-		t.Fatalf("keyring/ declares no `keys` variable with a map default: `for_each = var.keys` on the key block would then create no key at all, and every check above reads a block that makes nothing")
+		t.Fatalf("keyring/ declares no `keys` variable with a map default: the key block would then have no id at all, and every check above reads a block that makes nothing")
 	}
 	slices.Sort(out)
 	return out
@@ -980,39 +1030,40 @@ func tfWantedDefaults() string {
 // with `skip_initial_version_creation`, whose material an external machine would
 // generate), an external_key_uri appearing on a version, the algorithm or
 // protection level moving off the pair the verifiers were built for, a second
-// key resource beside this one, or a third environment in the `keys` default
-// the one block creates a key per.
+// key resource beside the two this tree holds, or a third environment in the
+// `keys` default the one block takes the key id of.
 func TestTheSigningKeyIsNonExportable(t *testing.T) {
 	key := tfRootBlock(t, keyringRoot, `resource "google_kms_crypto_key" "signing"`)
 
-	// The block above is the whole of this tree's key material, so it is refused
-	// to any block but this one rather than found by a sweep of the type: the
-	// signer role is granted at the key RING, which reaches every key in it, so
-	// a second google_kms_crypto_key — in either root — is a key the reads below
-	// never reach, with an algorithm, a protection level and a lifecycle of its
-	// own. `for_each = var.keys` puts production and staging under the one block,
-	// so the answer for a second one is a list's absence, not a second read of
-	// the same attributes.
+	// The block above is the whole of this tree's SIGNING key material, so it is
+	// refused to any block but this one (and the handover key services/ creates,
+	// which cannot sign) rather than found by a sweep of the type: the signer
+	// role is granted at the key RING, which reaches every key in it, so a second
+	// google_kms_crypto_key in that ring — in either root — is a key the reads
+	// below never reach, with an algorithm, a protection level and a lifecycle of
+	// its own. The block creates one key, so the answer for a second one is a
+	// list's absence, not a second read of the same attributes.
 	if extra := tfUnheldKeys(t, "."); len(extra) != 0 {
-		t.Errorf("this tree declares a KMS crypto key beside the one block above: %s\nthe signer role is granted on the key ring, so every key in it is one the minter signs with, and the checks here read that one block alone: a second key is a second algorithm, a second protection level and a lifecycle nothing here holds (Check 174, S3.5). The one key this service holds is %s", strings.Join(extra, ", "), tfNames(keyringRoot, `resource "google_kms_crypto_key" "signing"`))
+		t.Errorf("this tree declares a KMS crypto key beside the two blocks it may hold: %s\nthe signer role is granted on the key ring, so every key in it is one the minter signs with, and the checks here read that one block alone: a second key is a second algorithm, a second protection level and a lifecycle nothing here holds (Check 174, S3.5). The two keys this tree holds are %s and %s", strings.Join(extra, ", "), tfNames(keyringRoot, `resource "google_kms_crypto_key" "signing"`), tfNames(servicesRoot, `resource "google_kms_crypto_key" "handover"`))
 	}
 
-	// And the set that one block MAKES, which is the other half of the same
-	// rule: `for_each = var.keys` is what creates a key, so keyring/'s default
-	// for that variable is the ring's key set, and the signer role is granted on
-	// the ring rather than on a key. A third entry there is a third signing key
-	// the minter can sign with, made by a block whose algorithm, protection level
-	// and lifecycle are read once, for the key id the two environments hold.
-	// The ids themselves are not held: rotation is a new id in this map (§11),
-	// and what this refuses is a new environment.
+	// And the set of environments that one block draws from, which is the other
+	// half of the same rule: the key's id is `var.keys[var.environment]`, so
+	// keyring/'s default for that map is the set of key ids an apply of this root
+	// may create, and the signer role is granted on the ring the environment names
+	// rather than on a key. A third entry there is a third environment whose apply
+	// creates a third signing key — in a ring services/ would grant the minter the
+	// signer role on — made by a block whose algorithm, protection level and
+	// lifecycle are read once, for the two key ids this suite holds. The ids
+	// themselves are not held: rotation is a new id in this map (§11), and what
+	// this refuses is a new environment.
 	if got := tfRingEnvironments(t, "."); !slices.Equal(got, []string{"production", "staging"}) {
-		t.Errorf("the keys keyring/ creates are keyed %v, want [production staging]: the key block's for_each makes one signing key per entry, the signer role is granted on the key ring so the minter can sign with every key in it, and the checks above read the one block — so a third environment is a third key none of them holds (D459(a), S2.1, §2, S3.5)", got)
+		t.Errorf("the environments keyring/ mints for are %v, want [production staging]: the key's id is the one this map names for the environment an apply carries, the signer role is granted on that environment's key ring, and the checks above read the one block — so a third environment is a third key none of them holds (D459, S2.1, §2, S3.5)", got)
 	}
 
 	tfAttrsAre(t, key, "the signing key in "+keyringRoot, []struct{ attr, value string }{
-		{"for_each", "var.keys"},
 		{"purpose", `"ASYMMETRIC_SIGN"`},
-	}, "S2.1 fixes the algorithm as Ed25519, which the three verifiers verify, and the key is signed with through the API rather than from a file. for_each is the ring's key set — one key per environment keyring/ declares, which is what makes the two keys D459(a) names rather than a literal list only those keys' own ids would cover")
+	}, "S2.1 fixes the algorithm as Ed25519, which the three verifiers verify, and the key is signed with through the API rather than from a file. The block creates ONE key — the one whose id var.keys names for the environment this apply carries — because a ring holds one environment's key and no for_each spans the map (D459, TestRingHoldsOneEnvironmentsKey)")
 
 	// The algorithm and the protection level are written one level down, inside
 	// version_template, so they are read out of that block rather than looked for
@@ -1069,7 +1120,7 @@ func TestTheSigningKeyIsNonExportable(t *testing.T) {
 // the licences it signed with no revocation to notice it by (§11). Rotation is a
 // new key id published in the three verifiers, never an apply's side effect,
 // which is what the key's own comment and the root's say and what this holds:
-// `for_each = var.keys` puts both keys under this one block, so the lifecycle
+// the one block creates the key of the environment an apply carries, so the lifecycle
 // covers production and staging alike.
 //
 // The mutation this fails on: the lifecycle block deleted, or its
@@ -1089,19 +1140,19 @@ func TestTheSigningKeyIsNeverDestroyedByAnApply(t *testing.T) {
 // TestOnlyTheMinterHoldsTheSignerRole: the signer role reaches exactly one
 // identity, and it is the minter's account — and that account is the one the
 // minter service RUNS as, since a service running as another identity is that
-// identity. The intake is reachable from the internet — a person's browser, the
-// merchant's webhook, the owner's admin page — so an intake that could sign
-// would make T13's split a comment rather than a boundary, and Check 174's "the
-// intake's identity [is] refused" is this test's no.
+// identity. The API is reachable from the internet — the SPA in a person's
+// browser, the merchant's webhook, the scheduler's monthly call — so an API that
+// could sign would make T13's split a comment rather than a boundary, and Check
+// 174's refusal of the internet-facing half's identity is this test's no.
 //
 // The mutations this fails on, and the red step the plan names first: the
-// grant's member spelled google_service_account.intake.member, the intake
+// grant's member spelled google_service_account.api.member, the API
 // service's template.service_account set to the minter's account, and — the
 // same grant header the list already carries — a second signer grant appended
 // to keyring/, or written in a root this tree does not have today, which is why
 // both allow-lists name a root beside the header and tfFiles refuses a third.
 func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
-	// Every block in the tree that grants anything at all is one of the four
+	// Every block in the tree that grants anything at all is one of the seven
 	// grants this service is allowed to hold, and the list is the whole of it.
 	// A count of grants of one resource TYPE in one file would miss a second
 	// holder written another way — the same role granted with
@@ -1117,10 +1168,13 @@ func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 	// test's own detailed checks call home for the keys, and a list keyed by the
 	// header alone would read it as the grant services/ makes and pass it.
 	sanctioned := map[string]string{
-		tfNames(keyringRoot, `resource "google_project_iam_custom_role" "signer"`):                         "the signer role itself, and the whole of what signing takes",
-		tfNames(servicesRoot, `resource "google_kms_key_ring_iam_member" "minter_signs"`):                  "its one grant, to the minter's account",
-		tfNames(servicesRoot, `resource "google_cloud_run_v2_service_iam_member" "intake_public"`):         "the intake's public invoker, which reaches no key at all",
-		tfNames(servicesRoot, `resource "google_cloud_run_v2_service_iam_member" "intake_invokes_minter"`): "the intake's one reach, the authenticated call to the minter",
+		tfNames(keyringRoot, `resource "google_project_iam_custom_role" "signer"`):                      "the signer role itself, and the whole of what signing takes",
+		tfNames(servicesRoot, `resource "google_kms_key_ring_iam_member" "minter_signs"`):               "its one grant, to the minter's account",
+		tfNames(servicesRoot, `resource "google_cloud_run_v2_service_iam_member" "api_public"`):         "the API's public invoker, which reaches no key at all",
+		tfNames(servicesRoot, `resource "google_cloud_run_v2_service_iam_member" "api_invokes_minter"`): "the API's reach of the minter, the authenticated call that signs",
+		tfNames(servicesRoot, `resource "google_project_iam_custom_role" "handover"`):                   "the handover sealer, which encrypts and decrypts and holds no signing permission",
+		tfNames(servicesRoot, `resource "google_kms_key_ring_iam_member" "api_seals"`):                  "the API's one grant on the handover ring, which is not the ring the signer role is on",
+		tfNames(servicesRoot, `resource "google_project_iam_member" "api_datastore"`):                   "the API's reach of the portal's document store, which holds no key",
 	}
 	for _, rel := range tfFiles(t) {
 		for _, block := range tfBlocks(tfSource(t, rel), `resource "`) {
@@ -1175,8 +1229,10 @@ func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 	// leaves every default in the tree exactly as pinned while the grant is made
 	// on another ring. The two blocks that name the ring — keyring/ creating it,
 	// services/ reading it — each write all three of the ring's attributes from
-	// their variables, so the ring the grant reaches is keyring/'s var.keyring,
-	// and with the defaults held above it is one ring under one name.
+	// their variables, so the ring the grant reaches is keyring/'s var.keyring
+	// plus the environment this apply names (D459: one ring per environment,
+	// which TestRingHoldsOneEnvironmentsKey holds), and with the defaults held
+	// above it is one ring under one name.
 	for _, ring := range []struct{ root, header string }{
 		{keyringRoot, `resource "google_kms_key_ring" "signing"`},
 		{servicesRoot, `data "google_kms_key_ring" "signing"`},
@@ -1184,37 +1240,46 @@ func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 		block := tfRootBlock(t, ring.root, ring.header)
 		tfAttrsAre(t, block, "the key ring block in "+ring.root, []struct{ attr, value string }{
 			{"project", "var.project"},
-			{"name", "var.keyring"},
+			{"name", `"${var.keyring}-${var.environment}"`},
 			{"location", "var.region"},
-		}, "the signer grant is made on this block's ring, so a name written literally here — and not from the variable both roots hold to one literal — points the grant at a ring no default in this tree decides (Check 174, S3.5)")
+		}, "the signer grant is made on this block's ring, so a name written literally here — and not from the variables both roots hold to one literal — points the grant at a ring no default in this tree decides, and the environment in the name is what makes the ring the one this apply's key is in (Check 174, S3.5, D459)")
 	}
 
 	// The other half of the same boundary, over every grant in the tree rather
-	// than the signer one: the intake's account is granted exactly one thing, the
-	// invoker role on the minter. A second grant is a reach nothing else here
-	// would say out loud — a KMS role to the internet-facing account above all,
-	// and the keyring root is as good a place to write one as this one.
+	// than the signer one: the API's account is granted exactly three things and
+	// no more — the invoker role on the minter, the sealer role on the handover
+	// ring, and the document store. A fourth grant is a reach nothing else here
+	// would say out loud — a KMS role that signs, or the signer's key ring, to
+	// the internet-facing account above all — and the keyring root is as good a
+	// place to write one as this one. Every one of the three is written by a
+	// block listed here, so the account's whole reach is the plan's (Check 571,
+	// Check 174).
+	allowedAPI := map[string]string{
+		`resource "google_cloud_run_v2_service_iam_member" "api_invokes_minter"`: "the authenticated call to the minter, which is what signs",
+		`resource "google_kms_key_ring_iam_member" "api_seals"`:                  "the handover ring, to encrypt and decrypt with and nothing else",
+		`resource "google_project_iam_member" "api_datastore"`:                   "the portal's own documents, which hold no key",
+	}
 	uses := 0
 	for _, rel := range tfFiles(t) {
 		for _, block := range tfBlocks(tfSource(t, rel), `resource "`) {
-			if !strings.Contains(tfCompact(block), "google_service_account.intake.member") {
+			if !strings.Contains(tfCompact(block), "google_service_account.api.member") {
 				continue
 			}
 			uses++
-			if tfHeader(block) != `resource "google_cloud_run_v2_service_iam_member" "intake_invokes_minter"` {
-				t.Errorf("%s grants the intake's account something besides the invoker role on the minter:\n%s\nthe intake holds no KMS role and reaches the signer only through the minter (Check 174)", rel, strings.TrimSpace(block))
+			if _, ok := allowedAPI[tfHeader(block)]; !ok {
+				t.Errorf("%s grants the API's account something besides its three reaches:\n%s\nthe API holds nothing that signs and nothing that reaches a signing key: its account is the minter's only invoker, the handover ring's only decrypter and the document store's reader (Check 174, Check 571)", rel, strings.TrimSpace(block))
 			}
 		}
 	}
-	if uses != 1 {
-		t.Errorf("this tree grants the intake's account %d times, want exactly 1: its whole reach is the authenticated call to the minter", uses)
+	if uses != len(allowedAPI) {
+		t.Errorf("this tree grants the API's account %d times, want exactly %d: its whole reach is the authenticated call to the minter, the handover ring's sealer role and the document store (Check 571)", uses, len(allowedAPI))
 	}
 
 	// And the identity each service RUNS as, which is the half a grant sweep
 	// cannot see: a service that runs as another account IS that account, so an
-	// intake whose template names the minter's would hold the signer role from
+	// API whose template names the minter's would hold the signer role from
 	// the internet while every grant above stayed exactly as written.
-	for _, service := range []string{"intake", "minter"} {
+	for _, service := range []string{"api", "minter"} {
 		block := tfRootBlock(t, servicesRoot, `resource "google_cloud_run_v2_service" "`+service+`"`)
 		template, ok := tfNestedBlock(block, "template")
 		if !ok {
@@ -1222,23 +1287,25 @@ func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 		}
 		tfAttrsAre(t, template, "the "+service+" service", []struct{ attr, value string }{
 			{"service_account", "google_service_account." + service + ".email"},
-		}, "the split between the intake and the minter is a split of identities, so the internet-facing service must not run as the one the signer role is granted to (Check 174, D450(a))")
+		}, "the split between the API and the minter is a split of identities, so the internet-facing service must not run as the one the signer role is granted to (Check 174, D450(a))")
 	}
 
-	// The two accounts are named in exactly the blocks the design allows, so a
-	// third one has to be argued for rather than added: the minter's in its own
-	// service and the one grant, the intake's in its own service and the one
-	// invoker grant. A resource outside that list naming either account is an
-	// identity taken where it was not meant to go; the outputs name both, and a
-	// value handed out is not a reach.
+	// The accounts are named in exactly the blocks the plan allows, so a new one
+	// has to be argued for rather than added: the minter's in its own service and
+	// the one grant, the API's in its own service and the three reaches above.
+	// A resource outside that list naming any of them is an identity taken where
+	// it was not meant to go; the outputs name them, and a value handed out is
+	// not a reach.
 	referrers := map[string]map[string]string{
 		"google_service_account.minter.": {
 			tfNames(servicesRoot, `resource "google_cloud_run_v2_service" "minter"`):          "the service that runs as it",
 			tfNames(servicesRoot, `resource "google_kms_key_ring_iam_member" "minter_signs"`): "the one identity granted the signer role",
 		},
-		"google_service_account.intake.": {
-			tfNames(servicesRoot, `resource "google_cloud_run_v2_service" "intake"`):                           "the service that runs as it",
-			tfNames(servicesRoot, `resource "google_cloud_run_v2_service_iam_member" "intake_invokes_minter"`): "the one identity allowed to call the minter",
+		"google_service_account.api.": {
+			tfNames(servicesRoot, `resource "google_cloud_run_v2_service" "api"`):                           "the service that runs as it",
+			tfNames(servicesRoot, `resource "google_cloud_run_v2_service_iam_member" "api_invokes_minter"`): "the one identity allowed to call the minter",
+			tfNames(servicesRoot, `resource "google_kms_key_ring_iam_member" "api_seals"`):                  "the one identity allowed to decrypt a handover",
+			tfNames(servicesRoot, `resource "google_project_iam_member" "api_datastore"`):                   "the one identity allowed to read the portal's documents",
 		},
 	}
 	for _, rel := range tfFiles(t) {
@@ -1249,7 +1316,7 @@ func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 					continue
 				}
 				if _, ok := allowed[tfNames(path.Dir(rel), tfHeader(block))]; !ok {
-					t.Errorf("%s reaches %s from a block that is not one of the two the design allows:\n%s\nthe minter's account is the one identity that signs and the intake's is the one caller it has, so a third block naming either — in either root — is an identity taken where it was not meant to go (Check 174)", rel, account, strings.TrimSpace(block))
+					t.Errorf("%s reaches %s from a block that is not one of the ones the plan allows:\n%s\nthe minter's account is the one identity that signs and the API's is the one caller it has, so a block outside the list naming either — in either root — is an identity taken where it was not meant to go (Check 174, Check 571)", rel, account, strings.TrimSpace(block))
 				}
 			}
 		}
@@ -1257,13 +1324,15 @@ func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 }
 
 // TestTheMinterHasNoPublicInvoker: the minter is not reachable from the
-// internet, and the intake is the one caller it has. Three things decide that,
-// and all three are asserted here rather than left to the design's prose: the
+// internet, and the API is the one caller it has. Two of the three things that
+// decide that are asserted here rather than left to the design's prose: the
 // minter's service REQUIRES IAM — with the flag true Cloud Run serves every
 // caller the network delivers, which would leave the grants below as decoration
-// and a minter that anyone may invoke — no binding anywhere hands the internet
-// an invoker but the intake's own public one, and the minter's only invoker is
-// the intake's account. Check 174 again, from the network's side.
+// and a minter that anyone may invoke — and no binding anywhere hands the
+// internet an invoker but the API's own public one. The third, that the API's
+// account is the minter's ONLY invoker, is TestOnlyTheAPIInvokesTheMinter's, and
+// the fourth, its network fence, is TestMinterIngressIsInternal's. Check 174
+// again, from the network's side.
 func TestTheMinterHasNoPublicInvoker(t *testing.T) {
 	minter := tfRootBlock(t, servicesRoot, `resource "google_cloud_run_v2_service" "minter"`)
 	tfAttrsAre(t, minter, "the minter service in "+servicesRoot, []struct{ attr, value string }{
@@ -1274,41 +1343,558 @@ func TestTheMinterHasNoPublicInvoker(t *testing.T) {
 	// over one spelling of one attribute: `member = "allUsers"`, a
 	// google_cloud_run_v2_service_iam_binding writing `members = ["allUsers"]`,
 	// an `_iam_policy`, a second service's binding — all of them say allUsers,
-	// and the intake's own public binding is the only one of them this service
+	// and the API's own public binding is the only one of them this service
 	// is allowed. What a policy read from a file would say is beyond a sweep over
 	// this tree, and nothing here reads one.
 	public := 0
 	for _, rel := range tfFiles(t) {
 		f := tfCompact(tfSource(t, rel))
 		if strings.Contains(f, `"allAuthenticatedUsers"`) {
-			t.Errorf("%s grants allAuthenticatedUsers: any Google account is not the intake's caller, and a signed-in stranger reaching the minter would sign with the key ring", rel)
+			t.Errorf("%s grants allAuthenticatedUsers: any Google account is not the API's caller, and a signed-in stranger reaching the minter would sign with the key ring", rel)
 		}
 		public += strings.Count(f, `"allUsers"`)
 	}
 	if public != 1 {
-		t.Errorf("this tree grants allUsers %d times, want exactly 1: the intake is the one public surface, and every other binding — on the minter above all — hands the internet an invoker it should not have", public)
+		t.Errorf("this tree grants allUsers %d times, want exactly 1: the API is the one public surface, and every other binding — on the minter above all — hands the internet an invoker it should not have", public)
 	}
 
 	// The binding the count above is about, read as the attributes it writes: a
-	// block that kept the intake's name in a condition title or a description
+	// block that kept the API's name in a condition title or a description
 	// while its `name` pointed at the minter would open the signer's door and
-	// still mention the intake, which is why the two attributes are read rather
+	// still mention the API, which is why the two attributes are read rather
 	// than the words around them.
-	publicBlock := tfRootBlock(t, servicesRoot, `resource "google_cloud_run_v2_service_iam_member" "intake_public"`)
+	publicBlock := tfRootBlock(t, servicesRoot, `resource "google_cloud_run_v2_service_iam_member" "api_public"`)
 	tfAttrsAre(t, publicBlock, "the allUsers binding in "+servicesRoot, []struct{ attr, value string }{
 		{"member", `"allUsers"`},
-		{"name", "google_cloud_run_v2_service.intake.name"},
-		{"location", "google_cloud_run_v2_service.intake.location"},
+		{"name", "google_cloud_run_v2_service.api.name"},
+		{"location", "google_cloud_run_v2_service.api.location"},
 		{"role", `"roles/run.invoker"`},
-	}, "the single public grant has to be this resource, on the intake and on nothing else — a public invoker on the minter is the internet reaching the service that signs (Check 174)")
+	}, "the single public grant has to be this resource, on the API and on nothing else — a public invoker on the minter is the internet reaching the service that signs (Check 174)")
 
-	invoker := tfRootBlock(t, servicesRoot, `resource "google_cloud_run_v2_service_iam_member" "intake_invokes_minter"`)
+}
+
+// TestOnlyTheMinterCanSign: signing is one permission, in one role, held by one
+// account — and the portal's own key is one that cannot sign at all. D2194 puts
+// every one of the portal's services in the signer's project, so the old fence
+// between two projects is gone and what is left is this: the signer role is the
+// ONLY route to useToSign, it is granted at the ring to the minter's account
+// alone (TestOnlyTheMinterHoldsTheSignerRole), and the key the API holds a grant
+// on is a symmetric one whose purpose is encrypt and decrypt.
+//
+// The mutations this fails on: a second block carrying useToSign — a role
+// services/ defines, an _iam_binding names, or a policy read from a file — a
+// predefined role that reaches signing by another name (cloudkms.signerVerifier
+// also reads the public key and verifies; owner and editor reach the key ring
+// itself), the handover key taking ASYMMETRIC_SIGN so the API's account could
+// mint with it, and the sealer role growing a third permission.
+func TestOnlyTheMinterCanSign(t *testing.T) {
+	// The sweep is over the permission and over the role ids rather than over one
+	// resource type: IAM writes the same grant as an _iam_member, an _iam_binding
+	// or an _iam_policy, and a custom role is a resource of its own, so a list
+	// that counted holders of one type would pass a second route to signing
+	// written in another spelling.
+	signerRole := tfNames(keyringRoot, `resource "google_project_iam_custom_role" "signer"`)
+	signingRoles := []string{
+		`"roles/owner"`,
+		`"roles/editor"`,
+		`"roles/cloudkms.admin"`,
+		`"roles/cloudkms.signer"`,
+		`"roles/cloudkms.signerVerifier"`,
+	}
+	for _, rel := range tfFiles(t) {
+		for _, block := range tfBlocks(tfSource(t, rel), `resource "`) {
+			name := tfNames(path.Dir(rel), tfHeader(block))
+			compact := tfCompact(block)
+			if strings.Contains(compact, "useToSign") && name != signerRole {
+				t.Errorf("%s writes a signing permission outside keyring/'s signer role:\n%s\nthe whole of what signing takes is that one role, granted at the ring to the minter's account (Check 174, S3.3), so a second block carrying useToSign — whatever it is called, in either root — is a second identity that can mint a licence key", rel, strings.TrimSpace(block))
+			}
+			for _, role := range signingRoles {
+				if strings.Contains(compact, role) {
+					t.Errorf("%s names the predefined role %s:\na predefined role reaches signing through more permissions than the one this service needs — cloudkms.signerVerifier also reads the public key and verifies, and owner and editor reach the key ring itself — so the signer role is the custom role keyring/ defines and nothing predefined (Check 174, S3.3)", rel, role)
+				}
+			}
+		}
+	}
+
+	// And the key the API may use, which is the same rule from the portal's side:
+	// a purpose of ENCRYPT_DECRYPT with the symmetric algorithm is what makes the
+	// handover key a key that seals and opens a reveal bundle and can produce no
+	// signature at all (D2182).
+	handover := tfRootBlock(t, servicesRoot, `resource "google_kms_crypto_key" "handover"`)
+	tfAttrsAre(t, handover, "the handover key in "+servicesRoot, []struct{ attr, value string }{
+		{"key_ring", "google_kms_key_ring.handover.id"},
+		{"purpose", `"ENCRYPT_DECRYPT"`},
+	}, "the 24-hour reveal handover is stored encrypted under a key only the API's account may use (D2182), so its purpose is encrypt and decrypt: an ASYMMETRIC_SIGN key here would be a second key the API's account could mint a licence with")
+	version, ok := tfNestedBlock(handover, "version_template")
+	if !ok {
+		t.Fatalf("the handover key in %s writes no version_template block, so the algorithm it is created with is the provider's default", servicesRoot)
+	}
+	tfAttrsAre(t, version, "the handover key in "+servicesRoot, []struct{ attr, value string }{
+		{"algorithm", `"GOOGLE_SYMMETRIC_ENCRYPTION"`},
+	}, "the handover key seals and opens what is stored, so it is symmetric (D2182): an asymmetric algorithm here would be a key pair whose public half is published nowhere and whose private half is what the API holds")
+
+	// And the permissions the API's grant on that ring is made of, which is the
+	// other half of the same pair: the sealer role holds the two encrypt and
+	// decrypt permissions and no third, so even a ring holding a signing key
+	// would give the API no way to sign with it.
+	sealer := tfRootBlock(t, servicesRoot, `resource "google_project_iam_custom_role" "handover"`)
+	tfAttrsAre(t, sealer, "the handover role in "+servicesRoot, []struct{ attr, value string }{
+		{"role_id", "var.handover_role"},
+		{"permissions", `["cloudkms.cryptoKeyVersions.useToEncrypt", "cloudkms.cryptoKeyVersions.useToDecrypt"]`},
+	}, "the API encrypts a handover and decrypts it once, and signs nothing anywhere (D2182, Check 571): a third permission here — useToSign above all — is a role that mints")
+}
+
+// TestOnlyTheAPIInvokesTheMinter: the minter has one caller, and it is the API's
+// account. The minter is a service the platform checks IAM for
+// (TestTheMinterHasNoPublicInvoker) behind a network fence
+// (TestMinterIngressIsInternal), so what is left is who the platform lets in,
+// and the answer is one account: the API's, whose ID token the call carries.
+//
+// The mutations this fails on: a second invoker — the same account written as an
+// _iam_binding's members list, an _iam_policy, or a plain `user:` beside it — a
+// grant on the minter in the keyring root, a scheduled job pointed at the minter
+// rather than at the API, and a token minted for another account or another
+// audience.
+func TestOnlyTheAPIInvokesTheMinter(t *testing.T) {
+	// Every block in the tree that names the minter's service is one of the two
+	// the plan allows. The sweep is over the REFERENCE and not over the grant
+	// resource type, because a block that reaches a service is a block that may
+	// reach it by a route no grant resource writes — an invoker binding is one
+	// spelling, and the allow-list above is the other half.
+	allowed := map[string]string{
+		tfNames(servicesRoot, `resource "google_cloud_run_v2_service" "minter"`):                        "the minter itself",
+		tfNames(servicesRoot, `resource "google_cloud_run_v2_service_iam_member" "api_invokes_minter"`): "the API's one reach, the authenticated call that signs",
+	}
+	for _, rel := range tfFiles(t) {
+		for _, block := range tfBlocks(tfSource(t, rel), `resource "`) {
+			if !strings.Contains(tfCompact(block), "google_cloud_run_v2_service.minter.") {
+				continue
+			}
+			if _, ok := allowed[tfNames(path.Dir(rel), tfHeader(block))]; !ok {
+				t.Errorf("%s reaches the minter's service from a block that is not one of the two the plan allows:\n%s\nthe minter is the one service that signs and it has one caller, so a second block naming it — in either root, whatever the resource is called — is a second way in (Check 174, Check 571)", rel, strings.TrimSpace(block))
+			}
+		}
+	}
+
+	// And that one grant, read as the attributes it writes: one member, and it is
+	// the API's account. A list, a condition, or a second member written any other
+	// way is what the sweep above refuses; this is the positive half.
+	invoker := tfRootBlock(t, servicesRoot, `resource "google_cloud_run_v2_service_iam_member" "api_invokes_minter"`)
 	tfAttrsAre(t, invoker, "the invoker grant on the minter in "+servicesRoot, []struct{ attr, value string }{
 		{"name", "google_cloud_run_v2_service.minter.name"},
 		{"location", "google_cloud_run_v2_service.minter.location"},
-		{"member", "google_service_account.intake.member"},
+		{"member", "google_service_account.api.member"},
 		{"role", `"roles/run.invoker"`},
-	}, "the minter has no public invoker, and the intake's ID token is what the platform checks before its container runs (D450(a))")
+	}, "the minter has no public invoker, and the API's ID token is what the platform checks before its container runs (D450(a), D2194)")
+
+	// The scheduler is the API's second caller, and it calls the API rather than
+	// the minter: the jobs' targets name the API's URL, and their OIDC tokens are
+	// minted for the scheduler's own account with that URL as the audience — the
+	// pair the API verifies (P1.3, F33). Both are created PAUSED, because the
+	// routes they call are P6.3's and P7.1's and a job that fired before them
+	// would mail nothing at best.
+	for _, job := range []struct{ header, what, path string }{
+		{`resource "google_cloud_scheduler_job" "statements"`, "the statement job", "var.statement_job_path"},
+		{`resource "google_cloud_scheduler_job" "reminders"`, "the reminder job", "var.reminder_job_path"},
+	} {
+		block := tfRootBlock(t, servicesRoot, job.header)
+		tfAttrsAre(t, block, job.what+" in "+servicesRoot, []struct{ attr, value string }{
+			{"paused", "true"},
+		}, "the statement and reminder routes are later tasks', so the plan creates both jobs paused and the owner turns them on with the deploy (P1.5): a job that ran before its route exists answers 404 at best and mails the wrong thing at worst")
+		if strings.Contains(tfCompact(block), "minter") {
+			t.Errorf("%s names the minter:\n%s\nthe minter's one caller is the API, and a scheduled call to it is a second invoker written without an IAM grant at all (Check 571)", job.what, strings.TrimSpace(block))
+		}
+		target, ok := tfNestedBlock(block, "http_target")
+		if !ok {
+			t.Fatalf("%s writes no http_target block, so what it calls is not in this tree", job.what)
+		}
+		tfAttrsAre(t, target, job.what, []struct{ attr, value string }{
+			{"uri", `"${google_cloud_run_v2_service.api.uri}${` + job.path + `}"`},
+		}, "the jobs call the API, which is the service that holds the store the statements and the reminders are read from (Check 571): a URL written as a literal would be a target no output of this tree decides")
+		token, ok := tfNestedBlock(target, "oidc_token")
+		if !ok {
+			t.Fatalf("%s writes no oidc_token block, so the account the API sees is not in this tree", job.what)
+		}
+		tfAttrsAre(t, token, job.what, []struct{ attr, value string }{
+			{"service_account_email", "google_service_account.scheduler.email"},
+			{"audience", "google_cloud_run_v2_service.api.uri"},
+		}, "the API verifies the scheduler's OIDC token by account AND audience (P1.3, F33), so the token is minted for the scheduler's own account and for the API's URL: any other audience is a token the API refuses, and any other account is one its list does not carry")
+	}
+}
+
+// TestMinterIngressIsInternal: the minter's ingress is internal and the API's is
+// not, which is the network's half of the same boundary the IAM grants are the
+// other half of. D2194 is what makes the fence mean something: an internal-only
+// service accepts traffic from its own project, and the API is in it, so the
+// call the grants allow is the only one the network delivers.
+//
+// The mutations this fails on: the minter's ingress set to ALL — which would
+// leave the grants as the only fence, against the plan's words — the API's set
+// to internal, which would take the SPA and the merchant's webhook off the
+// internet, and a third service added without an ingress line, which takes the
+// provider's default with nothing here reading it.
+func TestMinterIngressIsInternal(t *testing.T) {
+	for _, want := range []struct{ header, ingress, why string }{
+		{`resource "google_cloud_run_v2_service" "api"`, `"INGRESS_TRAFFIC_ALL"`,
+			"the API is the portal's one public surface: the SPA posts to it from a browser and Paddle posts events to it from outside the project, so its ingress is all — its fence is the sign-in check P1.3 makes, not the network's"},
+		{`resource "google_cloud_run_v2_service" "minter"`, `"INGRESS_TRAFFIC_INTERNAL_ONLY"`,
+			"the minter is called by the API and by nothing else (D2194, P1.5): internal ingress is the network's half of that, and it is only meaningful because the caller is in the same project — the signer's"},
+	} {
+		block := tfRootBlock(t, servicesRoot, want.header)
+		tfAttrsAre(t, block, "the service in "+servicesRoot, []struct{ attr, value string }{
+			{"ingress", want.ingress},
+		}, want.why)
+	}
+
+	// And every service in the tree, which is what makes the pair above the whole
+	// of it: a third service is a third surface, and one written without an
+	// ingress line is a surface whose fence is the provider's default.
+	services := 0
+	for _, rel := range tfFiles(t) {
+		for _, block := range tfBlocks(tfSource(t, rel), `resource "`) {
+			if !strings.Contains(tfHeader(block), `"google_cloud_run_v2_service"`) {
+				continue
+			}
+			services++
+			ingress, ok := tfAttr(block, "ingress")
+			if !ok || (tfCompact(ingress) != `"INGRESS_TRAFFIC_ALL"` && tfCompact(ingress) != `"INGRESS_TRAFFIC_INTERNAL_ONLY"`) {
+				t.Errorf("%s declares a Cloud Run service whose ingress reads %q:\nevery service this tree declares states its ingress, and the two the plan creates are the API's (all) and the minter's (internal): a service with no ingress line takes the provider's default, so a later change of that default would open or close a surface with nothing in this tree to review", rel, ingress)
+			}
+		}
+	}
+	if services != 2 {
+		t.Errorf("this tree declares %d Cloud Run services, want 2: the portal's surface is the API and the minter (D2194), and every check here is written against those two", services)
+	}
+}
+
+// TestOnlyTheAPIDecryptsHandovers: the reveal handover is stored encrypted under
+// a KMS key in its own ring, and the API's account is the only identity that may
+// use it. D2182 as amended puts the sealed bundle in the store the API writes
+// and nowhere else, so the key that opens it is the API's and no other service in
+// the project — the minter above all, which holds the signer role on another ring
+// and nothing here.
+//
+// The mutations this fails on: the grant's member spelled with another account,
+// a second member on the same grant, a second block holding useToEncrypt or
+// useToDecrypt, the sealer grant moved onto the SIGNER's ring (which would make
+// the API an identity in the ring the signer grant is on), and either of the two
+// defaults the grant is decided by changed in variables.tf.
+func TestOnlyTheAPIDecryptsHandovers(t *testing.T) {
+	grant := tfRootBlock(t, servicesRoot, `resource "google_kms_key_ring_iam_member" "api_seals"`)
+	tfAttrsAre(t, grant, "the handover grant in "+servicesRoot, []struct{ attr, value string }{
+		{"key_ring_id", "google_kms_key_ring.handover.id"},
+		{"role", `"projects/${var.project}/roles/${var.handover_role}"`},
+		{"member", "google_service_account.api.member"},
+	}, "the API encrypts the handover it stores and decrypts it once, 24 hours later (D2182): one member and one role, on the handover's own ring — a second member is a second identity that can open every sealed reveal, and a grant on the signing ring is the API inside the ring the signer role is granted on (Check 571)")
+
+	// The ring and the key in it are this root's own, and the name they share is
+	// the one variable: the key's whole id is its ring's path plus that name, so a
+	// second key in this ring is a key the grant above reaches whichever block
+	// created it.
+	ring := tfRootBlock(t, servicesRoot, `resource "google_kms_key_ring" "handover"`)
+	tfAttrsAre(t, ring, "the handover ring in "+servicesRoot, []struct{ attr, value string }{
+		{"project", "var.project"},
+		{"name", "var.handover_key"},
+		{"location", "var.region"},
+	}, "the handover key is in a ring of its own rather than in the signing ring (D459, D2194): the signer role is granted at the RING, so a key ring holding both an encryption key and a signing key is a ring where one grant reaches both")
+	tfAttrsAre(t, tfRootBlock(t, servicesRoot, `resource "google_kms_crypto_key" "handover"`), "the handover key in "+servicesRoot, []struct{ attr, value string }{
+		{"name", "var.handover_key"},
+	}, "the key and its ring carry the one name this variable holds, so the key id the deploy passes to the API is the ring's path plus it, and a second name here is a second literal the deploy has to know")
+
+	// Every block in the tree that names the handover ring or the handover key is
+	// one of the three that are allowed to, so a second reach is refused whatever
+	// it is called.
+	reach := map[string]string{
+		tfNames(servicesRoot, `resource "google_kms_key_ring" "handover"`):             "the ring itself",
+		tfNames(servicesRoot, `resource "google_kms_crypto_key" "handover"`):           "the key itself",
+		tfNames(servicesRoot, `resource "google_kms_key_ring_iam_member" "api_seals"`): "the API's one grant on it",
+	}
+	for _, rel := range tfFiles(t) {
+		for _, block := range tfBlocks(tfSource(t, rel), `resource "`) {
+			compact := tfCompact(block)
+			if !strings.Contains(compact, "google_kms_key_ring.handover.") && !strings.Contains(compact, "google_kms_crypto_key.handover.") {
+				continue
+			}
+			if _, ok := reach[tfNames(path.Dir(rel), tfHeader(block))]; !ok {
+				t.Errorf("%s reaches the handover ring from a block that is not one of the three the plan allows:\n%s\nthe API is the only identity that seals a handover and the only one that opens it (D2182), so a second block naming the ring or the key — in either root — is a second reach of every sealed reveal in the store (Check 571)", rel, strings.TrimSpace(block))
+			}
+		}
+	}
+
+	// And the permission, over the whole tree rather than over the one role the
+	// plan names: encrypt and decrypt are what the sealer role holds and nothing
+	// else in this tree writes either.
+	for _, rel := range tfFiles(t) {
+		for _, block := range tfBlocks(tfSource(t, rel), `resource "`) {
+			compact := tfCompact(block)
+			if !strings.Contains(compact, "useToEncrypt") && !strings.Contains(compact, "useToDecrypt") {
+				continue
+			}
+			if tfHeader(block) != `resource "google_project_iam_custom_role" "handover"` {
+				t.Errorf("%s writes an encrypt or decrypt permission outside the handover role:\n%s\nthe sealed handover is the API's alone (D2182): a second role or binding carrying useToDecrypt is a second identity that can open every reveal in the store, which is the one thing the encryption is for (Check 571)", rel, strings.TrimSpace(block))
+			}
+		}
+	}
+
+	// And what the grant actually REACHES: both of its attributes name variables,
+	// so the ring the API may decrypt in and the role it holds there are these two
+	// defaults, and nothing else in the tree reads them.
+	for _, d := range []struct{ name, want string }{
+		{"handover_key", `"fugaro-portal-handover"`},
+		{"handover_role", `"fugaroHandoverSealer"`},
+	} {
+		if got := tfDefaultLiteral(tfVarBlock(t, servicesRoot, d.name)); got != d.want {
+			t.Errorf("services/'s %s default reads as %s, want %s:\nthe sealer grant names both variables, so a default changed here moves the grant to another ring or hands the API another role with every block above still reading as written (D2182, Check 571)", d.name, got, d.want)
+		}
+	}
+}
+
+// TestRingHoldsOneEnvironmentsKey: one ring holds one environment's key, which is
+// what D459's open question is decided as. An apply carries an environment, the
+// ring it creates is that environment's, and the one key inside it is the id the
+// map names for it — so production's ring holds only the production key and
+// staging's only the staging key, and the signer grant, made at the ring, reaches
+// exactly one.
+//
+// The mutations this fails on: an `environment` with a default (an apply that
+// names nothing mints production's key), a validation admitting an environment
+// the map does not name (or a map naming one the validation refuses), the ring
+// named by a literal in either root, and the key block ranging over the map with
+// a for_each or a count, which puts both environments' keys in one ring.
+func TestRingHoldsOneEnvironmentsKey(t *testing.T) {
+	for _, root := range []string{keyringRoot, servicesRoot} {
+		block := tfVarBlock(t, root, "environment")
+		if got := tfDefaultLiteral(block); got != "" {
+			t.Errorf("%s gives `environment` the default %s:\nthe environment decides which key id this apply creates and which ring it is created in, so a default is what lets an apply mint one environment's key while the operator believes it named the other (D459)", root, got)
+		}
+	}
+
+	// The two roots have to admit the SAME set, and it is the set the map names:
+	// keyring/ reads it out of the map it keys the key id with, services/ writes
+	// it as the list of environments it will grant the signer role for, and a
+	// value one admits and the other does not is a root that cannot be planned
+	// against the other.
+	validation, ok := tfNestedBlock(tfVarBlock(t, keyringRoot, "environment"), "validation")
+	if !ok {
+		t.Fatalf("keyring/'s `environment` writes no validation block, so an apply of this root accepts any string at all and creates a ring and a key id for it")
+	}
+	condition, _ := tfAttr(validation, "condition")
+	if tfCompact(condition) != `contains(keys(var.keys),var.environment)` {
+		t.Errorf("keyring/'s validation condition reads %s, want contains(keys(var.keys), var.environment):\nthe environments an apply may name are exactly the entries of the map the key's id comes from, and a condition written as a list of literals is a second place to keep the two in step (D459)", condition)
+	}
+	servicesValidation, ok := tfNestedBlock(tfVarBlock(t, servicesRoot, "environment"), "validation")
+	if !ok {
+		t.Fatalf("services/'s `environment` writes no validation block, so the ring it reads and the role it grants are decided by whatever string an apply carries")
+	}
+	servicesCondition, _ := tfAttr(servicesValidation, "condition")
+	held := tfRingEnvironments(t, ".")
+	if got := tfStringList(servicesCondition); !slices.Equal(got, held) {
+		t.Errorf("services/'s validation admits %v and keyring/'s `keys` map names %v:\nthe two roots describe ONE set of environments — the one an apply carries, the key id it creates and the ring services/ grants the signer role on — so a value one admits and the other does not is a ring services/ reads and keyring/ never created (D459)", got, held)
+	}
+
+	// And the ring both roots name, which is the environment's: the same
+	// expression in each, so what keyring/ creates is what services/ reads.
+	ringName, _ := tfAttr(tfRootBlock(t, keyringRoot, `resource "google_kms_key_ring" "signing"`), "name")
+	dataName, _ := tfAttr(tfRootBlock(t, servicesRoot, `data "google_kms_key_ring" "signing"`), "name")
+	if tfCompact(ringName) != tfCompact(dataName) {
+		t.Errorf("keyring/ names its ring %s and services/ reads %s:\nthe signer grant is made on the ring services/ reads, so the two roots write one expression — a ring named differently in either is a grant on a ring that does not exist (Check 174, D459)", ringName, dataName)
+	}
+	if !strings.Contains(ringName, "var.environment") {
+		t.Errorf("the key ring's name reads %s and names no environment:\none ring holds one environment's key (D459), and the name is the half of that a plan's review screen shows — a ring named the same in both environments is a ring an apply of either silently adds a second key to", ringName)
+	}
+
+	// And the one key inside it: the id the map gives the environment an apply
+	// carries, created once rather than once per entry of the map.
+	key := tfRootBlock(t, keyringRoot, `resource "google_kms_crypto_key" "signing"`)
+	tfAttrsAre(t, key, "the signing key in "+keyringRoot, []struct{ attr, value string }{
+		{"key_ring", "google_kms_key_ring.signing.id"},
+		{"name", "var.keys[var.environment]"},
+	}, "the ring holds one environment's key, and it is the id var.keys names for the environment this apply carries (D459): the published verifier key ids are the map's values, so the ring an id lives in is the environment's and not a second name")
+	for _, attr := range []string{"for_each", "count"} {
+		if got, ok := tfAttr(key, attr); ok {
+			t.Errorf("the signing key block writes %s = %s:\na block that ranges over the map creates every environment's key in ONE ring, which is the state D459 decides against — and the signer role, granted at the ring, cannot tell the two apart (D459)", attr, got)
+		}
+	}
+}
+
+// TestFirestoreRulesDenyClients: the portal's clients reach no document
+// directly. D2188 fixes the SPA's data path as the API and only the API, so the
+// Firestore rules the database is deployed with deny every client read and every
+// client write — the store is reachable through the API's account (which
+// TestOnlyTheMinterHoldsTheSignerRole holds to three reaches) and through
+// nothing else.
+//
+// The mutations this fails on: any rule in the file that is not the denial (an
+// `if true`, a `request.auth != null` for signed-in users, a rule that admits
+// one collection), the file losing its skeleton — an empty file deploys and
+// denies by default, and a reader cannot tell it from one nobody wrote — and the
+// database resource pointing at another database or another mode.
+func TestFirestoreRulesDenyClients(t *testing.T) {
+	database := tfRootBlock(t, servicesRoot, `resource "google_firestore_database" "portal"`)
+	tfAttrsAre(t, database, "the Firestore database in "+servicesRoot, []struct{ attr, value string }{
+		{"name", `"portal"`},
+		{"type", `"FIRESTORE_NATIVE"`},
+	}, "the portal's documents live in their own native Firestore database, separate from the installation's realtime database (spec §4): the rules below are deployed on this one, and a database named for another purpose is a database whose rules nobody reviewed")
+
+	raw, err := os.ReadFile(portalRulesPath)
+	if err != nil {
+		t.Fatalf("reading %s: %v -- the rules this database is deployed with are the whole of what stops a client reading another organisation's documents", portalRulesPath, err)
+	}
+	body := tfStripComments(string(raw))
+	compact := tfCompact(body)
+	for _, want := range []struct{ text, why string }{
+		{"servicecloud.firestore", "the file's rules have to be the Firestore service's, or the deploy refuses the file and the database keeps the rules it had"},
+		{"match/databases/{database}/documents", "a rules file with no match on the portal's documents path matches nothing, which denies by default and is indistinguishable from a file nobody wrote"},
+	} {
+		if !strings.Contains(compact, want.text) {
+			t.Errorf("ee/portal/firestore.rules does not write %s: %s", want.text, want.why)
+		}
+	}
+
+	allows := tfFirestoreAllows(body)
+	if len(allows) == 0 {
+		t.Fatalf("ee/portal/firestore.rules writes no allow statement at all: an empty file denies every client by default, and this rule is the read that says so in as many words, so a file that says nothing is one no reviewer can tell from a truncation")
+	}
+	for _, allow := range allows {
+		if slices.Contains(tfFirestoreDenials, allow) {
+			continue
+		}
+		t.Errorf("ee/portal/firestore.rules grants %q, and every rule in this file denies:\nthe SPA reaches its data through the API and never through the client SDK (D2188, Check 570), so a rule that admits a client — `if true`, or a `request.auth` that admits any signed-in person — hands over every organisation's billing, every reveal bundle and the audit trail without one of the API's checks or its audit line", allow)
+	}
+}
+
+// tfFirestoreDenials are the spellings of the one rule this file may hold: a
+// denial of every read and every write, which is what D2188 leaves a client.
+var tfFirestoreDenials = []string{
+	"allowread,write:iffalse;",
+	"allowread:iffalse;",
+	"allowwrite:iffalse;",
+}
+
+// portalRulesPath is the rules file from this package's directory: it lives beside
+// the SPA it serves rather than in this tree, because the deploy that uploads it
+// is the portal's (P9.2).
+const portalRulesPath = "../../portal/firestore.rules"
+
+// tfFirestoreAllows answers every `allow` statement in a rules file, compacted,
+// which is the whole of what a rules file grants: what a client may do is written
+// nowhere else, so this is the set the rule above judges.
+func tfFirestoreAllows(body string) []string {
+	var out []string
+	for i := 0; ; {
+		j := strings.Index(body[i:], "allow")
+		if j < 0 {
+			return out
+		}
+		start := i + j
+		end := strings.IndexByte(body[start:], ';')
+		if end < 0 {
+			return append(out, tfCompact(body[start:]))
+		}
+		out = append(out, tfCompact(body[start:start+end+1]))
+		i = start + end + 1
+	}
+}
+
+// TestNoServiceRunsAsADefaultAccount: every Cloud Run service in this tree runs
+// as an account the same root declares, and every scheduled call is made by one.
+// A revision whose template names no account runs as the project's default
+// Compute Engine account, which the project created with Editor — so with D2194
+// putting the signer in the same project, a service that runs as it is a service
+// whose identity is a predefined role nobody wrote in this tree.
+//
+// The mutations this fails on: a service with its `service_account` line deleted,
+// an account_id spelled as a literal address rather than declared here, a
+// scheduled job whose token is minted for the default account, and any of the
+// three spellings that address has.
+func TestNoServiceRunsAsADefaultAccount(t *testing.T) {
+	declared := map[string]bool{}
+	for _, rel := range tfFiles(t) {
+		for _, block := range tfBlocks(tfSource(t, rel), `resource "`) {
+			if strings.Contains(tfHeader(block), `"google_service_account"`) {
+				declared[tfNames(path.Dir(rel), tfHeader(block))] = true
+			}
+		}
+	}
+	if len(declared) < 3 {
+		t.Fatalf("this tree declares %d service account(s), and the portal's infrastructure needs the API's, the minter's and the scheduler's: a check that read them out of an empty map would pass every service below", len(declared))
+	}
+
+	// accountName answers the declared account a block's attribute names, and
+	// whether it names one at all: the read is an attribute of the block, so a
+	// description or a labels map spelling an account out is not one.
+	accountName := func(t *testing.T, root, got string) (string, bool) {
+		t.Helper()
+		rest, ok := strings.CutPrefix(tfCompact(got), "google_service_account.")
+		if !ok {
+			return "", false
+		}
+		name, ok := strings.CutSuffix(rest, ".email")
+		if !ok {
+			return "", false
+		}
+		return tfNames(root, `resource "google_service_account" "`+name+`"`), true
+	}
+
+	services := 0
+	for _, rel := range tfFiles(t) {
+		root := path.Dir(rel)
+		for _, block := range tfBlocks(tfSource(t, rel), `resource "`) {
+			header := tfHeader(block)
+			switch {
+			case strings.Contains(header, `"google_cloud_run_v2_service"`):
+				services++
+				template, ok := tfNestedBlock(block, "template")
+				if !ok {
+					t.Errorf("%s declares a Cloud Run service with no template block: the account its revision runs as is the project's default, which is the account this rule refuses", rel)
+					continue
+				}
+				got, ok := tfAttr(template, "service_account")
+				if !ok {
+					t.Errorf("%s declares a Cloud Run service whose template names no service_account:\nthe revision then runs as the project's default Compute Engine account, created with Editor in a project that holds the signer (D2194), so the service's identity is a predefined role no block in this tree writes (Check 571)", rel)
+					continue
+				}
+				name, ok := accountName(t, root, got)
+				if !ok || !declared[name] {
+					t.Errorf("%s declares a Cloud Run service that runs as %s, which this root does not declare:\nthe identity a revision runs as is the whole of what its code can do, and an account named here rather than created here — a default one above all — is one no block in this tree grants anything to and no review of it reads (Check 571)", rel, got)
+				}
+			case strings.Contains(header, `"google_cloud_scheduler_job"`):
+				target, ok := tfNestedBlock(block, "http_target")
+				if !ok {
+					continue
+				}
+				token, ok := tfNestedBlock(target, "oidc_token")
+				if !ok {
+					t.Errorf("%s declares a scheduled job with no oidc_token block: the API verifies that token's account (P1.3), and a job that sends none is a call the API refuses", rel)
+					continue
+				}
+				got, _ := tfAttr(token, "service_account_email")
+				name, ok := accountName(t, root, got)
+				if !ok || !declared[name] {
+					t.Errorf("%s declares a scheduled job whose token is minted for %q, which this root does not declare:\nthe account is half of what the API verifies (P1.3, F33), so an account named here rather than created here — the project's default above all — is one the API's list does not carry (Check 571)", rel, got)
+				}
+			}
+		}
+	}
+	if services != 2 {
+		t.Errorf("this tree declares %d Cloud Run services, want 2: the API and the minter are the portal's whole surface (D2194), and both run as their own declared account", services)
+	}
+
+	// And the address itself, in every spelling a configuration carries it: a
+	// literal address is an account this tree does not declare even when the
+	// attribute is written the long way round.
+	for _, rel := range tfFiles(t) {
+		compact := tfCompact(tfSource(t, rel))
+		for _, spelling := range []string{
+			"-compute@developer.gserviceaccount.com",
+			"@appspot.gserviceaccount.com",
+			`service_account="default"`,
+		} {
+			if strings.Contains(compact, spelling) {
+				t.Errorf("%s writes %s: a service that runs as the project's default account runs as a predefined role the project created it with — Editor, in a project that holds the signer (D2194) — and every grant this suite reads is made to a declared account (Check 571)", rel, spelling)
+			}
+		}
+	}
 }
 
 // TestTheTestsReadEveryFileOfTheTree: everything Terraform would read under
@@ -1342,7 +1928,7 @@ func TestTheMinterHasNoPublicInvoker(t *testing.T) {
 // The cases below are the reviewer's mutations, built in a scratch tree: an
 // override flipping the minter's IAM flag, a suffixed override adding
 // `useToVerify` to the signer role, a JSON file granting the signer role, an
-// override in JSON naming the intake in the signer grant, a variable file naming
+// override in JSON naming the API in the signer grant, a variable file naming
 // another role and an auto-loaded one in JSON, a second plain HCL file in a root
 // — admitted, because the rule is one FORM per root and not one file — the
 // defaults rule over a tree that changed one of them, the same rule against a
@@ -1384,16 +1970,16 @@ func TestTheTestsReadEveryFileOfTheTree(t *testing.T) {
 			write: map[string]string{
 				"services/main.tf": "resource \"google_kms_key_ring_iam_member\" \"minter_signs\" {\n" +
 					"  member = google_service_account.minter.member\n}\n",
-				"services/extra.tf.json": `{"resource":{"google_kms_key_ring_iam_binding":{"second":{"role":"projects/x/roles/fugaroKeySigner","members":["serviceAccount:intake@example.iam.gserviceaccount.com"],"key_ring_id":"x"}}}}`,
+				"services/extra.tf.json": `{"resource":{"google_kms_key_ring_iam_binding":{"second":{"role":"projects/x/roles/fugaroKeySigner","members":["serviceAccount:api@example.iam.gserviceaccount.com"],"key_ring_id":"x"}}}}`,
 			},
 			refused: []string{"services/extra.tf.json"},
 		},
 		{
-			name: "an override in JSON naming the intake in the signer grant",
+			name: "an override in JSON naming the API in the signer grant",
 			write: map[string]string{
 				"services/main.tf": "resource \"google_kms_key_ring_iam_member\" \"minter_signs\" {\n" +
 					"  member = google_service_account.minter.member\n}\n",
-				"services/override.tf.json": `{"resource":{"google_kms_key_ring_iam_member":{"minter_signs":{"member":"${google_service_account.intake.member}"}}}}`,
+				"services/override.tf.json": `{"resource":{"google_kms_key_ring_iam_member":{"minter_signs":{"member":"${google_service_account.api.member}"}}}}`,
 			},
 			refused: []string{"services/override.tf.json"},
 		},
@@ -1421,7 +2007,7 @@ func TestTheTestsReadEveryFileOfTheTree(t *testing.T) {
 		{
 			name: "a second plain HCL file in a root",
 			write: map[string]string{
-				"services/main.tf":   "resource \"google_service_account\" \"intake\" {}\n",
+				"services/main.tf":   "resource \"google_service_account\" \"api\" {}\n",
 				"services/grants.tf": "resource \"google_kms_key_ring_iam_member\" \"minter_signs\" {}\n",
 			},
 		},
@@ -1610,7 +2196,7 @@ func TestTheTestsReadEveryFileOfTheTree(t *testing.T) {
 			"  type        = map(string)\n\n"+
 			"  default = {\n    production = \"fugaro-licence-production\"\n    staging    = \"fugaro-licence-staging\"\n    dev        = \"fugaro-licence-dev\"\n  }\n}\n")
 		if got := tfRingEnvironments(t, root); slices.Equal(got, held) {
-			t.Errorf("a third entry in `keys`' default reads as %v, which is the held set: the key block's for_each makes one signing key per entry, so the third environment is a third key the minter's ring-level role reaches and no check reads", got)
+			t.Errorf("a third entry in `keys`' default reads as %v, which is the held set: the key block names the id this map gives the environment an apply carries, so the third environment is a third key an apply creates in a ring the minter's role is granted on and no check reads", got)
 		}
 	})
 
@@ -1634,7 +2220,7 @@ func TestTheTestsReadEveryFileOfTheTree(t *testing.T) {
 			tfWrite(t, root, "keyring/variables.tf", "variable \"keys\" {\n"+
 				"  default = {\n    \"production\" = \"fugaro-licence-production\"\n    \"staging\"    = \"fugaro-licence-staging\"\n"+written+"  }\n}\n")
 			if got := tfRingEnvironments(t, root); slices.Equal(got, held) {
-				t.Errorf("a third environment written as %q reads as %v, which is the held set: the key block's for_each makes one signing key per entry whatever the entry is spelled with, and the signer role is granted on the ring, so the third one is a key the minter can sign with that no check reads", strings.TrimSpace(written), got)
+				t.Errorf("a third environment written as %q reads as %v, which is the held set: the key block names the id this map gives the environment an apply carries, whatever the entry is spelled with, and the signer role is granted on that environment's ring, so the third one is a key the minter can sign with that no check reads", strings.TrimSpace(written), got)
 			}
 		}
 	})
