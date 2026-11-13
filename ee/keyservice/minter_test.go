@@ -78,38 +78,28 @@ func TestTheMinersCeilingsAreTheVerifiers(t *testing.T) {
 			t.Errorf("the minter minted %d days for tier %q, one day past what it accepts (%d)", ceiling+1, tier, ceiling)
 		}
 
-		// The verifier's own answer at the same two terms, over a key built by
-		// hand: the minter's refusal has to be the verifier's bound and not a
-		// second one that happens to be nearby.
-		issued := f.now
-		at := handMinted(t, f, productionKeyID, licence.Claims{
-			Tier: tier, Features: []string{"seats"}, Seats: 1, Organisation: "acme.example",
-			Issued:  issued.Unix(),
-			Expires: issued.Add(time.Duration(ceiling) * day).Unix(),
-		})
-		if _, state, err := licence.VerifyAgainst([]byte(at), f.now, f.ring); err != nil || state != licence.Valid {
-			t.Errorf("a key at the minter's ceiling (%d days, tier %q) reads %v, %v, want valid at its own instant", ceiling, tier, state, err)
+		// The verifier's own answer at the same two terms, over a v1 key built by
+		// hand: the minter's refusal has to be the bound a released build carries
+		// and not a second one that happens to be nearby. The bound is read out of
+		// a v1 key because the format the intake's own route writes is one the
+		// licence package no longer reads (K7.3): the table the two sides share is
+		// this one, and a v1 key is what can be held to it.
+		if _, state, err := licence.Verify([]byte(handMintedV1(t, f, tier, f.now, time.Duration(ceiling)*day)), f.now, f.ring, workspaceID); err != nil || state != licence.Active {
+			t.Errorf("a v1 key at the minter's ceiling (%d days, tier %q) reads %v, %v, want active at its own instant", ceiling, tier, state, err)
 		}
-		past := handMinted(t, f, productionKeyID, licence.Claims{
-			Tier: tier, Features: []string{"seats"}, Seats: 1, Organisation: "acme.example",
-			Issued:  issued.Unix(),
-			Expires: issued.Add(time.Duration(ceiling+1) * day).Unix(),
-		})
-		if _, _, err := licence.VerifyAgainst([]byte(past), f.now, f.ring); err == nil {
-			t.Errorf("the verifier accepts %d days for tier %q while the minter refuses it: the two bounds are one bound (S2.1)", ceiling+1, tier)
+		if _, _, err := licence.Verify([]byte(handMintedV1(t, f, tier, f.now, time.Duration(ceiling+1)*day)), f.now, f.ring, workspaceID); !errors.Is(err, licence.ErrLifetime) {
+			t.Errorf("the verifier answers %v for %d days at tier %q while the minter refuses it, want ErrLifetime: the two bounds are one bound (S2.1)", err, ceiling+1, tier)
 		}
 	}
 
-	// And what the minter does mint is a key a released verifier reads: the
-	// claims are the request's, and the id names the environment.
+	// And what the minter does mint carries the request's own claims: the tier,
+	// the seats and the organisation the intake asked for, dated by the minter's
+	// own clock and running for the term it was given.
 	minted, err := minter.Mint(context.Background(), request(licence.TierTeam, 365))
 	if err != nil {
 		t.Fatalf("minting a year for the team tier: %v", err)
 	}
-	claims, _, err := licence.VerifyAgainst([]byte(minted.Key), f.now, f.ring)
-	if err != nil {
-		t.Fatalf("the minted key does not verify: %v", err)
-	}
+	claims := intakeMinted(t, f, minted.Key)
 	if claims.Tier != licence.TierTeam || claims.Seats != 1 || claims.Organisation != "acme.example" {
 		t.Errorf("the minted claims are %+v, want the request's own", claims)
 	}
@@ -235,19 +225,60 @@ func TestTheMinterClientTakesItsTokenFromTheMetadataServer(t *testing.T) {
 	}
 }
 
-// handMinted is one key text built the way a minter builds one, so that a test
-// can hold the verifier to a claim set the minter would not mint. The key is
-// the fixture's own, generated in this process (.claude/rules/ee.md, R5).
-func handMinted(t *testing.T, f *fixture, id string, claims licence.Claims) string {
+// handMintedV1 is one v1 key text built by hand: a claim set of the format for
+// one tier and one term, so that a test can hold a released build's verifier to
+// the very term the minter's own ceiling is measured at. The key is the
+// fixture's own, generated in this process (.claude/rules/ee.md, R5).
+func handMintedV1(t *testing.T, f *fixture, tier string, issued time.Time, term time.Duration) string {
 	t.Helper()
+	claims := licence.Claims{
+		V:            versionV1,
+		KID:          productionKeyID,
+		KeyID:        "lk_hand_minted",
+		WorkspaceID:  workspaceID,
+		Organisation: "acme.example",
+		Tier:         tier,
+		Seats:        1,
+		IssuedAt:     issued,
+		PaidThrough:  issued.Add(term),
+		GraceDays:    30,
+		RenewalMode:  licence.RenewalAuto,
+		Kind:         licence.KindPaid,
+	}
 	payload, err := json.Marshal(claims)
 	if err != nil {
 		t.Fatalf("encoding the claims: %v", err)
 	}
-	signature := ed25519.Sign(f.signer.priv, payload)
-	return id + "." +
-		base64.RawURLEncoding.EncodeToString(payload) + "." +
-		base64.RawURLEncoding.EncodeToString(signature)
+	return keyTextV1(payload, ed25519.Sign(f.signer.priv, payload))
+}
+
+// intakeMinted reads a key the intake's own route minted: its three parts, its
+// payload decoded, and its signature held to the key ring the fixture mints
+// under. The claim set is the format licence-key-v2 removed (K7.3), which the
+// licence package no longer reads, so what a test can hold about such a key is
+// its shape and its signature and not a verification.
+func intakeMinted(t *testing.T, f *fixture, key string) intakeClaims {
+	t.Helper()
+	parts := strings.Split(key, ".")
+	if len(parts) != 3 {
+		t.Fatalf("the minted key %q is not the three parts the intake's route writes", key)
+	}
+	payload, err := base64.RawURLEncoding.Strict().DecodeString(parts[1])
+	if err != nil {
+		t.Fatalf("the minted key's payload is not unpadded base64url: %v", err)
+	}
+	signature, err := base64.RawURLEncoding.Strict().DecodeString(parts[2])
+	if err != nil {
+		t.Fatalf("the minted key's signature is not unpadded base64url: %v", err)
+	}
+	if !ed25519.Verify(f.signer.priv.Public().(ed25519.PublicKey), payload, signature) {
+		t.Fatal("the minted key's signature is not the key ring's over the payload it carries")
+	}
+	var claims intakeClaims
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		t.Fatalf("the minted key's payload is not a claim set: %v", err)
+	}
+	return claims
 }
 
 // TestTheMinterRefusesWhatItCannotSign: every claim the minter will not sign is
@@ -361,8 +392,8 @@ func TestTheMinterRefusesWhatItCannotSign(t *testing.T) {
 				if err != nil {
 					t.Fatalf("the minter refused the request the intake builds: %v", err)
 				}
-				if _, _, err := licence.VerifyAgainst([]byte(minted.Key), f.now, f.ring); err != nil {
-					t.Errorf("the minted key does not verify: %v", err)
+				if claims := intakeMinted(t, f, minted.Key); claims.Tier != request.Tier || claims.Seats != request.Seats {
+					t.Errorf("the minted claims are %+v, want the request's own", claims)
 				}
 				if minted.Record.Seats != 1 || minted.Record.Expires.Sub(minted.Record.Issued) != 365*day {
 					t.Errorf("the record is %+v, want the request's seats and term", minted.Record)
@@ -494,9 +525,7 @@ func TestTheMinersRouteRefusesWhatItCannotServe(t *testing.T) {
 				if err := json.Unmarshal(rec.Body.Bytes(), &minted); err != nil {
 					t.Fatalf("reading the answer back: %v", err)
 				}
-				if _, _, err := licence.VerifyAgainst([]byte(minted.Key), f.now, f.ring); err != nil {
-					t.Errorf("the key the route answered does not verify: %v", err)
-				}
+				intakeMinted(t, f, minted.Key)
 				return
 			}
 			if spy.calls != 0 {

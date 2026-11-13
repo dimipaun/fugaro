@@ -1399,14 +1399,14 @@ func TestTestModeEventsMintStagingKeysOnly(t *testing.T) {
 	staging := newFixtureIn(t, Staging)
 	staging.purchase("evt-1", "acme.example", 5, 365)
 	key := staging.mintedKeys()[0]
-	claims, state, err := licence.VerifyV1([]byte(key), staging.now, staging.ring, workspaceID)
+	claims, state, err := licence.Verify([]byte(key), staging.now, staging.ring, workspaceID)
 	if err != nil || state != licence.Active {
 		t.Fatalf("the staging ring reads its own key as %v, %v", state, err)
 	}
 	if claims.KID != stagingKeyID {
 		t.Errorf("a test-mode purchase minted a key under the ring %q, want the staging id %q", claims.KID, stagingKeyID)
 	}
-	if _, _, err := licence.VerifyV1([]byte(key), staging.now, licence.Keyring{productionKeyID: staging.ring[productionKeyID]}, workspaceID); !errors.Is(err, licence.ErrUnknownKeyID) {
+	if _, _, err := licence.Verify([]byte(key), staging.now, licence.Keyring{productionKeyID: staging.ring[productionKeyID]}, workspaceID); !errors.Is(err, licence.ErrUnknownKeyID) {
 		t.Errorf("a production keyring read a staging key as %v, want ErrUnknownKeyID", err)
 	}
 

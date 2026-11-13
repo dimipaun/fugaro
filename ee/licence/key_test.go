@@ -3,16 +3,28 @@
 
 package licence
 
-// The verifier's tests (subscriptions plan S2.3), and the generator of the one
-// set of vectors all three verifiers share (S2.6).
+// The verifier's tests (licence-key-v2 plan K1.1) and its generator of the
+// vector file the console's verifier is read against (K1.4).
 //
 // **Every key here is minted in the process that reads it.** A fixture file
 // holding a private half would be key material in a repository whatever it is
-// called (.claude/rules/ee.md, R5), so fixtureKey generates a keypair per call
-// and the private half never leaves memory. That is also why the negative
-// vectors can exist without the owner's production key: what the file carries
-// is a public half and a signature over it, and TestGenerateVectors mints the
-// pair it signs them with on the spot.
+// called (.claude/rules/ee.md), so newFixtureKey generates a keypair per call
+// and the private half never leaves memory. What testdata/vectors_v1.json
+// carries is a public half and signed key texts, which is what a verifier's
+// fixture is allowed to carry and what the console's parity test reads.
+//
+// The keys are shaped as they are so that the file is the *only* shared thing
+// the two verifiers have: the claim sets are the ones a licence server would
+// mint (a whole policy in the key, times as RFC 3339 stamps, `check_interval`
+// as an ISO 8601 duration), the clock is one fixed instant the whole file is
+// read at, and each vector sits on a boundary or a refusal the two verifiers
+// have to agree on exactly. A vector set whose answers depended on the day the
+// test ran would prove nothing on the day it was regenerated.
+//
+// The package's own rules are tested here too: no file of the package may reach
+// the network or import outside the verifier's list, and the CLI's key file and
+// the one environment variable it hands a key over in are read the way
+// docs/licensing/licence-key.md says.
 
 import (
 	"bytes"
@@ -60,21 +72,9 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// The two key ids the vectors are signed under. Neither is a production id and
-// neither ever becomes one: TestTestKeyIDIsNotInTheProductionKeyring holds the
-// fixture's id out of the compiled keyring, and the staging id is the one a
-// sandbox installation is minted under (docs/licensing/licence-key.md,
-// "Test-mode keys"), which every production build refuses for the id alone.
-//
-// They are base64url-safe because the key text's first part is base64url in a
-// production key: an id with a `.` in it would split the key into four parts.
-const (
-	fixtureKeyID = "licence-test-fixture-1"
-	stagingKeyID = "licence-staging-sandbox-1"
-)
-
 // fixtureKey is a throwaway Ed25519 keypair, generated per call: the private
-// half is what mints the vectors, and it is never written anywhere.
+// half is what mints the keys and the vectors, and it is never written
+// anywhere.
 type fixtureKey struct {
 	id   string
 	priv ed25519.PrivateKey
@@ -95,8 +95,82 @@ func (f fixtureKey) public() string {
 	return base64.RawURLEncoding.EncodeToString(f.pub)
 }
 
-// signClaims mints the key text for a claim set: the payload is the claim set
-// marshalled as it is, and the signature is over exactly those bytes.
+// ringOf is the keyring a verifier is asked with: the fixture's id and no
+// other, which is what makes TestStagingKeyIDIsRefused a test of the keyring
+// rather than of the staging key's own bytes.
+func ringOf(f fixtureKey) Keyring {
+	return Keyring{f.id: f.pub}
+}
+
+// The two key ids the vectors are signed under. Neither is a production id and
+// neither ever becomes one: TestStagingKeyIDIsRefused holds both out of the
+// compiled keyring, and the staging id is the one a sandbox installation is
+// minted under (docs/licensing/licence-key.md, "Test-mode keys"), which every
+// production build refuses for the id alone.
+const (
+	fixtureV1KeyID = "licence-test-fixture-v1"
+	stagingV1KeyID = "licence-staging-sandbox-v1"
+)
+
+// firebaseProjectV1 is the workspace Firebase project id the tests bind a key
+// to. It is a test project's id and not any real one: what the verifier
+// compares is two strings, and the test supplies both.
+const firebaseProjectV1 = "fugaro-test-project"
+
+// upgradeMessage is the spec's refusal for a key of a version this build does
+// not read, word for word (spec section 4). It is written out here rather than
+// read from ErrNewerVersion, so that a change to the sentinel's text is a
+// failing test rather than a test that agrees with whatever the text became.
+const upgradeMessage = "This licence key requires a newer version of Fugaro. Upgrade Fugaro to use it."
+
+// The canaries the ordering test plants in a payload whose signature does not
+// verify. Each is a string no refusal may ever contain: a claim read out of an
+// unverified payload is text an attacker chose, and a refusal is a sentence a
+// user pastes into a ticket.
+const (
+	canaryNote         = "a-note-no-refusal-may-name"
+	canaryWorkspace    = "a-workspace-no-refusal-may-name"
+	canaryOrganisation = "an-organisation-no-refusal-may-name"
+	canaryKeyID        = "a-key-id-no-refusal-may-name"
+)
+
+// v1Now is the clock every v1 test reads a key at, and the instant the keys are
+// issued from: a fixed date rather than time.Now, because a key's state is the
+// thing under test and a clock that moved would move it.
+var v1Now = time.Date(2026, 11, 12, 0, 0, 0, 0, time.UTC)
+
+// atV1 is a day offset from v1Now, which is how the tests place a key's term and
+// its boundaries.
+func atV1(days int) time.Time { return v1Now.Add(time.Duration(days) * 24 * time.Hour) }
+
+// v1Claims is the claim set the tests start from: a paid Team key, bound to the
+// test workspace, checking daily.
+func v1Claims() Claims {
+	interval := "P1D"
+	return Claims{
+		V:                 versionV1,
+		KID:               fixtureV1KeyID,
+		KeyID:             "lk_test_0001",
+		WorkspaceID:       firebaseProjectV1,
+		Organisation:      "example.com",
+		Tier:              TierTeam,
+		Seats:             5,
+		IssuedAt:          atV1(0),
+		PaidThrough:       atV1(365),
+		GraceDays:         30,
+		RenewalMode:       RenewalAuto,
+		RenewBeforeDays:   7,
+		CheckInterval:     &interval,
+		RenewalSecretHash: "a-hash-of-the-renewal-secret-and-not-the-secret",
+		Warnings:          []WarningV1{{Roles: []string{"admin"}, From: "grace_start"}},
+		Kind:              KindPaid,
+		Note:              "a test key",
+	}
+}
+
+// signClaims mints a v1 key text for a claim set: the payload is the claim
+// set marshalled as it is, the signature is over exactly those bytes, and the
+// id travels inside the payload rather than in front of it.
 func (f fixtureKey) signClaims(t *testing.T, c Claims) string {
 	t.Helper()
 	payload, err := json.Marshal(c)
@@ -106,358 +180,1015 @@ func (f fixtureKey) signClaims(t *testing.T, c Claims) string {
 	return f.signRaw(t, payload)
 }
 
-// signRaw mints the key text over bytes that are not a claim set at all. The
-// two vectors that need it (a payload that is not JSON, a truncated one) are
-// the only way to reach the claims refusal: the signature has to verify over
-// the bytes before anything parses them.
+// signRaw mints a v1 key text over bytes that are not a claim set at all,
+// which is the only way to reach the refusals that sit behind a verified
+// signature.
 func (f fixtureKey) signRaw(t *testing.T, payload []byte) string {
 	t.Helper()
-	return encodeKey(f.id, payload, ed25519.Sign(f.priv, payload))
+	return encodeKey(payload, ed25519.Sign(f.priv, payload))
 }
 
-// encodeKey renders the three parts, base64url and unpadded, the way the
-// design writes a key.
-func encodeKey(id string, payload, signature []byte) string {
-	return id + "." +
+// encodeKey renders a v1 key text the way the format writes one: the prefix,
+// the payload and the signature, both unpadded base64url.
+func encodeKey(payload, signature []byte) string {
+	return keyPrefixV1 +
 		base64.RawURLEncoding.EncodeToString(payload) + "." +
 		base64.RawURLEncoding.EncodeToString(signature)
 }
 
-// ringOf is the keyring a verifier is asked with: the fixture's id and no
-// other, which is what makes TestStagingKeyIDIsRefused a test of the keyring
-// rather than of the staging key's own bytes.
-func ringOf(f fixtureKey) Keyring {
-	return Keyring{f.id: f.pub}
+// sameClaims compares two claim sets, holding the two stamps to the instant
+// they name rather than to the wall-clock bookkeeping time.Time carries
+// alongside it.
+func sameClaims(a, b Claims) bool {
+	if !a.IssuedAt.Equal(b.IssuedAt) || !a.PaidThrough.Equal(b.PaidThrough) {
+		return false
+	}
+	a.IssuedAt, b.IssuedAt = time.Time{}, time.Time{}
+	a.PaidThrough, b.PaidThrough = time.Time{}, time.Time{}
+	return reflect.DeepEqual(a, b)
 }
 
-// base64Alphabet is the unpadded base64url alphabet, which the re-spelling below
-// indexes into.
-const base64Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
-
-// respellFinalCharacter answers the same bytes spelled with the final base64url
-// character's spare bits set. One key has one spelling, and the vector built
-// with this is what carries that rule to the console's and the app's verifiers
-// as well as to this one: a decoder that is not strict reads this text as the
-// same bytes, so a key's signature would verify over a second spelling of its
-// own claim set.
-//
-// The re-spelling is checked here, in the generator, because a vector that
-// turned out to be canonical would prove nothing: the spare bits are what the
-// final one or two bytes leave over, and a part whose length is a multiple of
-// three has none.
-func respellFinalCharacter(t *testing.T, part string) string {
+// refusedAs holds a refusal to its sentinel, the zero claim set and no state: a
+// verifier that answered a claim set beside an error would be handing a caller
+// something to read out of a key it refused.
+func refusedAs(t *testing.T, got Claims, state State, err error, want error) {
 	t.Helper()
-	decoded, err := base64.RawURLEncoding.DecodeString(part)
+	if !errors.Is(err, want) {
+		t.Fatalf("the key answered %v (%s), want %v", err, state, want)
+	}
+	if !reflect.DeepEqual(got, Claims{}) || state != "" {
+		t.Fatalf("a refused key answered the claim set %+v in state %s, want neither: nothing is read out of a key this verifier refuses", got, state)
+	}
+}
+
+// TestVerifyFgkKey is the round trip: a whole v1 key verifies against a keyring
+// that holds its id, answers its claims and the state the clock puts it in, and
+// a text that is not the format is refused as malformed before any keyring is
+// consulted.
+func TestVerifyFgkKey(t *testing.T) {
+	fixture := newFixtureKey(t, fixtureV1KeyID)
+	want := v1Claims()
+	key := fixture.signClaims(t, want)
+
+	if !strings.HasPrefix(key, keyPrefixV1) {
+		t.Fatalf("a v1 key text is %q, want the %s prefix: it is what makes a key recognisable in a log and a scanner (spec section 3.1)", key, keyPrefixV1)
+	}
+	if parts := strings.Split(key, "."); len(parts) != 2 {
+		t.Fatalf("a v1 key text is %d parts, want the payload and the signature", len(parts))
+	}
+
+	got, state, err := Verify([]byte(key), atV1(30), ringOf(fixture), firebaseProjectV1)
 	if err != nil {
-		t.Fatalf("%q is not base64url: %v", part, err)
+		t.Fatalf("a v1 key inside its term: %v", err)
 	}
-	spare := 0
-	switch len(decoded) % 3 {
-	case 1:
-		spare = 4
-	case 2:
-		spare = 2
+	if state != Active {
+		t.Fatalf("a key 30 days into a 365-day term is %s, want %s", state, Active)
 	}
-	if spare == 0 || part == "" {
-		t.Fatalf("a part of %d bytes leaves no spare bit in its final character, so it has one spelling and nothing to re-spell here", len(decoded))
+	if !sameClaims(got, want) {
+		t.Fatalf("the key answered %+v, want %+v", got, want)
 	}
-	index := strings.IndexByte(base64Alphabet, part[len(part)-1])
-	if index < 0 {
-		t.Fatalf("%q does not end in a base64url character", part)
+
+	// The text is read as it is written: the prefix leads, there are exactly two
+	// parts, and both are base64url. Every one of these is refused before the
+	// keyring is consulted.
+	rest := strings.TrimPrefix(key, keyPrefixV1)
+	parts := strings.Split(rest, ".")
+	for _, tt := range []struct {
+		name string
+		key  string
+	}{
+		{"no prefix", rest},
+		{"one part", keyPrefixV1 + parts[0]},
+		{"three parts", key + ".AAAA"},
+		{"an empty payload part", keyPrefixV1 + "." + parts[1]},
+		{"an empty signature part", keyPrefixV1 + parts[0] + "."},
+		{"a part outside the alphabet", keyPrefixV1 + "%%%.%%%"},
+		{"a part that is not a whole number of bytes", keyPrefixV1 + "A." + parts[1]},
+		// Go's base64 skips a carriage return or a newline wherever it meets
+		// one, so both of these decode to the key above and verify unless the
+		// parts are held to the alphabet: a text with a line folded into it
+		// would be a second spelling of one key, and one key has one spelling.
+		{"a payload part with a newline in it", keyPrefixV1 + parts[0][:4] + "\n" + parts[0][4:] + "." + parts[1]},
+		{"a signature part with a carriage return in it", keyPrefixV1 + parts[0] + "." + parts[1][:4] + "\r\n" + parts[1][4:]},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, state, err := Verify([]byte(tt.key), atV1(30), ringOf(fixture), firebaseProjectV1)
+			refusedAs(t, got, state, err, ErrMalformedV1)
+		})
 	}
-	respelled := part[:len(part)-1] + string(base64Alphabet[index|((1<<spare)-1)])
-	if _, err := base64.RawURLEncoding.Strict().DecodeString(respelled); err == nil {
-		t.Fatalf("%q is the canonical spelling after all, so the vector built from it would prove nothing", respelled)
+
+	// The rule above is about the *inside* of a part, not the key's outer
+	// whitespace: a key pasted with a newline after it is the key, and it
+	// answers its claims.
+	got, state, err = Verify([]byte(key+"\n"), atV1(30), ringOf(fixture), firebaseProjectV1)
+	if err != nil {
+		t.Fatalf("a key with a trailing newline is refused: %v -- a key arrives by paste, and the whitespace around the text is not part of it", err)
 	}
-	same, err := base64.RawURLEncoding.DecodeString(respelled)
-	if err != nil || !bytes.Equal(same, decoded) {
-		t.Fatalf("the re-spelling of %q is not the same bytes (%v), so it is not a second spelling of one part", part, err)
+	if state != Active || !sameClaims(got, want) {
+		t.Fatalf("a key with a trailing newline answered the claim set %+v in state %s, want the key's own", got, state)
 	}
-	return respelled
+
+	// A payload signed as it is spelled and then re-spelled is a different byte
+	// string: the signature is over the raw bytes, so it fails rather than
+	// verifying as the same claims.
+	signed, err := json.Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	respelled := bytes.Replace(signed, []byte(`":`), []byte(`": `), 1)
+	got, state, err = Verify([]byte(encodeKey(respelled, ed25519.Sign(fixture.priv, signed))), atV1(30), ringOf(fixture), firebaseProjectV1)
+	refusedAs(t, got, state, err, ErrSignature)
+
+	// And an id no keyring holds is refused for the id alone.
+	foreign := want
+	foreign.KID = "licence-someone-elses-key-v1"
+	got, state, err = Verify([]byte(fixture.signClaims(t, foreign)), atV1(30), ringOf(fixture), firebaseProjectV1)
+	refusedAs(t, got, state, err, ErrUnknownKeyID)
 }
 
-func TestVerifyRefusesBeforeParsing(t *testing.T) {
-	fixture := newFixtureKey(t, fixtureKeyID)
-	now := time.Now()
+// TestNoClaimIsReadBeforeTheSignatureVerifies is the rule every later task
+// consumes: the signature is verified over the payload's raw bytes before any
+// claim is read, and no claim of a payload whose signature did not verify
+// reaches a refusal. The canaries below are planted in the claims and in the
+// text itself; a refusal that named one would be a refusal echoing text an
+// attacker chose.
+func TestNoClaimIsReadBeforeTheSignatureVerifies(t *testing.T) {
+	fixture := newFixtureKey(t, fixtureV1KeyID)
+	stranger := newFixtureKey(t, "licence-a-stranger-v1")
 
-	// An id the keyring does not hold, with two parts that are not base64url at
-	// all: the refusal is the id, because an id the build cannot place is a key
-	// whose other parts are never decoded (docs/licensing/licence-key.md, "The
-	// check"). A verifier that decoded first would report a malformed part for
-	// a key whose only fault is that this build does not know it.
-	_, _, err := verify([]byte("an-id-this-keyring-does-not-hold.%%%.%%%"), now, ringOf(fixture))
-	if !errors.Is(err, ErrUnknownKeyID) {
-		t.Fatalf("a key whose id is not in the keyring answered %v, want ErrUnknownKeyID: the id leads, so the other two parts are not read at all", err)
+	// A claim set carrying canaries, signed by a key the ring does not hold
+	// under the id the payload names. The signature fails, so the claims behind
+	// it are never read.
+	planted := v1Claims()
+	planted.Note = canaryNote
+	planted.WorkspaceID = canaryWorkspace
+	planted.Organisation = canaryOrganisation
+	planted.KeyID = canaryKeyID
+	payload, err := json.Marshal(planted)
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	// The id is known, the payload is not JSON, and the signature is not the
-	// one that payload was signed with: the refusal is the signature. Nothing
-	// parsed the payload, which is the rule the whole design rests on -- no
-	// claim is read out of a payload whose signature did not verify.
-	raw := encodeKey(fixture.id, []byte("this is not a claim set"), bytes.Repeat([]byte{7}, ed25519.SignatureSize))
-	_, _, err = verify([]byte(raw), now, ringOf(fixture))
-	if !errors.Is(err, ErrSignature) {
-		t.Fatalf("a payload that is not JSON with a signature that does not verify answered %v, want ErrSignature: the signature is checked over the raw bytes, before anything parses them", err)
-	}
-}
-
-func TestVerifyUnknownKeyID(t *testing.T) {
-	fixture := newFixtureKey(t, fixtureKeyID)
-	staging := newFixtureKey(t, stagingKeyID)
-	raw := staging.signClaims(t, Claims{
-		Tier: TierTeam, Features: []string{"coordinator"}, Seats: 3,
-		Organisation: "example.com", Issued: time.Now().Add(-24 * time.Hour).Unix(),
-		Expires: time.Now().Add(300 * 24 * time.Hour).Unix(),
-	})
-
-	claims, state, err := verify([]byte(raw), time.Now(), ringOf(fixture))
-	if !errors.Is(err, ErrUnknownKeyID) {
-		t.Fatalf("a key signed by an id outside the keyring answered %v (%s, %s), want ErrUnknownKeyID", err, claims.Organisation, state)
-	}
-}
-
-// TestTheKeyIDIsHeldToTheBase64urlAlphabet holds the id's spelling, which is the
-// one part of a key text nothing decodes. An id outside the alphabet is refused
-// with the shape rather than answered as an id this build does not hold, and its
-// own characters are not written into the refusal: a refusal is a line a
-// terminal prints and a log keeps.
-func TestTheKeyIDIsHeldToTheBase64urlAlphabet(t *testing.T) {
-	fixture := newFixtureKey(t, fixtureKeyID)
-	// A space, a terminal escape, and the two characters standard base64 has and
-	// base64url does not.
-	for _, id := range []string{"a key id with spaces", "licence-\x1b[31mred", "licence+plus", "licence/id"} {
-		raw := encodeKey(id, []byte("{}"), make([]byte, ed25519.SignatureSize))
-		_, _, err := verify([]byte(raw), time.Now(), ringOf(fixture))
-		if !errors.Is(err, ErrMalformed) {
-			t.Errorf("the key id %q answered %v, want ErrMalformed: a key text is three base64url parts, and the id is one of them", id, err)
-		} else if strings.Contains(err.Error(), "\x1b") {
-			t.Errorf("the refusal for %q carries the id's own characters, so whatever an id holds reaches the terminal it is printed at", id)
+	got, state, err := Verify([]byte(encodeKey(payload, ed25519.Sign(stranger.priv, payload))), atV1(30), ringOf(fixture), firebaseProjectV1)
+	refusedAs(t, got, state, err, ErrSignature)
+	for _, canary := range []string{canaryNote, canaryWorkspace, canaryOrganisation, canaryKeyID} {
+		if strings.Contains(err.Error(), canary) {
+			t.Errorf("the signature refusal is %q, and it names %q: a claim of a payload whose signature did not verify is text an attacker chose", err, canary)
 		}
 	}
 
-	// The fixture's own id is base64url, so this is a rule about the alphabet
-	// rather than a refusal of every key.
-	valid := fixture.signClaims(t, Claims{Tier: TierTeam, Features: []string{}, Seats: 1, Organisation: "example.com", Issued: 1, Expires: 100})
-	if _, _, err := verify([]byte(valid), time.Unix(2, 0), ringOf(fixture)); err != nil {
-		t.Fatalf("a key whose id is %q was refused: %v", fixtureKeyID, err)
-	}
-}
+	// The same payload with a claim this build cannot read *and* a signature
+	// that does not verify: the refusal is the signature's, and it is the case
+	// that says the claim decode never ran, because a verifier that decoded
+	// first would answer ErrClaims here.
+	broken := append(bytes.TrimSuffix(payload, []byte("}")), []byte(`,"seats":"five"}`)...)
+	got, state, err = Verify([]byte(encodeKey(broken, ed25519.Sign(stranger.priv, broken))), atV1(30), ringOf(fixture), firebaseProjectV1)
+	refusedAs(t, got, state, err, ErrSignature)
 
-// TestAClaimSetWithNoOrganisationIsRefused holds the one claim the format itself
-// requires: a key binds to an organisation, and a claim set with none is not one
-// this verifier can place. It is also the only refusal made by reading a claim,
-// so the payload's signature has already verified by the time it is made.
-func TestAClaimSetWithNoOrganisationIsRefused(t *testing.T) {
-	fixture := newFixtureKey(t, fixtureKeyID)
-	raw := fixture.signClaims(t, Claims{Tier: TierTeam, Features: []string{}, Seats: 1, Organisation: "", Issued: 1, Expires: 100})
-	claims, state, err := verify([]byte(raw), time.Unix(2, 0), ringOf(fixture))
-	if !errors.Is(err, ErrClaims) {
-		t.Fatalf("a claim set with no organisation answered %v, want ErrClaims", err)
+	// An id the ring does not hold, refused for the id alone: the refusal names
+	// no part of the payload, and the payload's id is one of the canaries.
+	unknown := planted
+	unknown.KID = canaryKeyID
+	got, state, err = Verify([]byte(fixture.signClaims(t, unknown)), atV1(30), ringOf(fixture), firebaseProjectV1)
+	refusedAs(t, got, state, err, ErrUnknownKeyID)
+	if strings.Contains(err.Error(), canaryKeyID) {
+		t.Errorf("the unknown-id refusal is %q, and it names %q: the id is a claim of an unverified payload", err, canaryKeyID)
 	}
-	if !reflect.DeepEqual(claims, Claims{}) || state != "" {
-		t.Fatalf("a refused key answered %+v (%s), want no claims and no state", claims, state)
-	}
-}
 
-func TestGraceIsThirtyDays(t *testing.T) {
-	if grace != 30*24*time.Hour {
-		t.Fatalf("the grace is %s, want 30 days: B17's number is a ruling rather than a tuning, and the 30-day issue lead of a renewal is measured against it", grace)
-	}
-	fixture := newFixtureKey(t, fixtureKeyID)
-	expires := time.Date(2026, 11, 8, 0, 0, 0, 0, time.UTC)
-	raw := fixture.signClaims(t, Claims{
-		Tier: TierCommunity, Features: []string{}, Seats: 1, Organisation: "an-individual",
-		Issued:  expires.Add(-365 * 24 * time.Hour).Unix(),
-		Expires: expires.Unix(),
-	})
-
+	// A payload that is not a claim set at all names no keyring entry, so there
+	// is nothing to verify it with: it is refused as malformed, and the refusal
+	// carries neither the bytes nor the error encoding/json would have written
+	// about them.
 	for _, tt := range []struct {
-		name string
-		now  time.Time
-		want State
+		name    string
+		payload []byte
 	}{
-		{"a second inside the term", expires.Add(-time.Second), Valid},
-		{"the second the term ends", expires, Valid},
-		{"a second past the term", expires.Add(time.Second), Grace},
-		{"the last second of the grace", expires.Add(30 * 24 * time.Hour), Grace},
-		{"a second past the grace", expires.Add(30*24*time.Hour + time.Second), Expired},
-		{"long past the grace", expires.Add(400 * 24 * time.Hour), Expired},
+		{"not JSON at all", []byte("this is " + canaryNote)},
+		{"a JSON array", []byte(`["` + canaryNote + `"]`)},
+		{"JSON null", []byte("null")},
+		{"an object with no id", []byte(`{"v":1,"note":"` + canaryNote + `"}`)},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			claims, got, err := verify([]byte(raw), tt.now, ringOf(fixture))
-			if err != nil {
-				t.Fatalf("%v", err)
-			}
-			if got != tt.want {
-				t.Fatalf("a key expiring at %s read at %s is %s, want %s", expires, tt.now, got, tt.want)
-			}
-			if claims.Organisation != "an-individual" {
-				t.Fatalf("the claims came back as %+v", claims)
+			got, state, err := Verify([]byte(encodeKey(tt.payload, ed25519.Sign(fixture.priv, tt.payload))), atV1(30), ringOf(fixture), firebaseProjectV1)
+			refusedAs(t, got, state, err, ErrMalformedV1)
+			if strings.Contains(err.Error(), canaryNote) {
+				t.Errorf("the refusal is %q, and it names %q: the text behind an unverified signature is text an attacker chose", err, canaryNote)
 			}
 		})
 	}
 }
 
-func TestExpiredAfterGrace(t *testing.T) {
-	fixture := newFixtureKey(t, fixtureKeyID)
-	expires := time.Date(2026, 11, 8, 0, 0, 0, 0, time.UTC)
-	raw := fixture.signClaims(t, Claims{
-		Tier: TierEnterprise, Features: []string{"sso"}, Seats: 40, Organisation: "example.com",
-		Issued:  expires.Add(-365 * 24 * time.Hour).Unix(),
-		Expires: expires.Unix(),
-	})
+// TestHigherPolicyVersionIsRefusedNotFree holds the spec's section 4 rule: a key
+// of a version this build does not read is refused with the upgrade message and
+// never falls back to Free. The refusal is the version's alone and is reached
+// before the claim set is decoded: the payload below carries a claim this build
+// cannot decode at all -- `seats` retyped to a string, which is a version 2 the
+// spec's "a field never changes meaning, retyping bumps the version" allows --
+// so a verifier that decoded the claim set first answers the claim refusal here
+// instead of the upgrade message.
+func TestHigherPolicyVersionIsRefusedNotFree(t *testing.T) {
+	fixture := newFixtureKey(t, fixtureV1KeyID)
 
-	// The state is a property of the key and the clock, so a key past its grace
-	// stays expired however far the clock is wound on: nothing here is a
-	// function of how long ago the lapse was.
-	for _, now := range []time.Time{
-		expires.Add(31 * 24 * time.Hour),
-		expires.Add(365 * 24 * time.Hour),
-		expires.Add(10 * 365 * 24 * time.Hour),
-	} {
-		got, state, err := verify([]byte(raw), now, ringOf(fixture))
-		if err != nil {
-			t.Fatalf("%v", err)
+	payload, err := json.Marshal(map[string]any{
+		"v":              2,
+		"kid":            fixtureV1KeyID,
+		"key_id":         "lk_from_the_future",
+		"workspace_id":   firebaseProjectV1,
+		"organisation":   "example.com",
+		"tier":           TierEnterprise,
+		"seats":          "fifty",
+		"issued_at":      atV1(0),
+		"paid_through":   atV1(365),
+		"grace_days":     30,
+		"renewal_mode":   RenewalAuto,
+		"check_interval": "P1D",
+		"entitlements":   []string{"sso"},
+		"kind":           KindPaid,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := fixture.signRaw(t, payload)
+
+	got, state, err := Verify([]byte(key), atV1(30), ringOf(fixture), firebaseProjectV1)
+	refusedAs(t, got, state, err, ErrNewerVersion)
+	if err.Error() != upgradeMessage {
+		t.Fatalf("a version 2 key is refused with %q, want the message the spec pins word for word: %q", err, upgradeMessage)
+	}
+	if state != "" {
+		t.Fatalf("a refused key answered the state %s: a key this build does not read is not a key it can place, and it never falls back to Free", state)
+	}
+
+	// A signed key with no version at all is not a v1 key either, and it is
+	// refused as a claim set rather than read as one.
+	noVersion, err := json.Marshal(map[string]any{
+		"kid":          fixtureV1KeyID,
+		"workspace_id": firebaseProjectV1,
+		"tier":         TierTeam,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, state, err = Verify([]byte(fixture.signRaw(t, noVersion)), atV1(30), ringOf(fixture), firebaseProjectV1)
+	refusedAs(t, got, state, err, ErrClaims)
+}
+
+// TestUnknownFieldsInASignedKeyAreIgnored holds D2146: a field this build does
+// not know is ignored, so that a field added within version 1 has a safe
+// default in a build that predates it. The exception is the signature's, which
+// is why TestUnknownFieldsNeedAVerifiedSignature is the other half of this
+// pair.
+func TestUnknownFieldsInASignedKeyAreIgnored(t *testing.T) {
+	fixture := newFixtureKey(t, fixtureV1KeyID)
+	want := v1Claims()
+
+	signed, err := json.Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := append(bytes.TrimSuffix(signed, []byte("}")), []byte(`,"entitlements":["sso"],"covered_until":"2027-11-12T00:00:00Z"}`)...)
+
+	got, state, err := Verify([]byte(fixture.signRaw(t, payload)), atV1(30), ringOf(fixture), firebaseProjectV1)
+	if err != nil {
+		t.Fatalf("a signed key carrying two fields this build does not know: %v", err)
+	}
+	if state != Active {
+		t.Fatalf("the key is %s, want %s", state, Active)
+	}
+	if !sameClaims(got, want) {
+		t.Fatalf("the key answered %+v, want the claim set it carries: %+v", got, want)
+	}
+
+	// A field this build *does* know, carrying the wrong type, is still an
+	// error: the tolerance is for fields nobody here has heard of, not for a
+	// claim set whose own shape is broken.
+	broken := append(bytes.TrimSuffix(signed, []byte("}")), []byte(`,"seats":"five"}`)...)
+	got, state, err = Verify([]byte(fixture.signRaw(t, broken)), atV1(30), ringOf(fixture), firebaseProjectV1)
+	refusedAs(t, got, state, err, ErrClaims)
+
+	// And bytes after the claim set are not a second claim set to ignore: the
+	// decode runs to the end of the payload.
+	trailing := append(append([]byte{}, signed...), []byte(`{}`)...)
+	got, state, err = Verify([]byte(fixture.signRaw(t, trailing)), atV1(30), ringOf(fixture), firebaseProjectV1)
+	refusedAs(t, got, state, err, ErrClaims)
+}
+
+// TestUnknownFieldsNeedAVerifiedSignature is the other half of D2146: the
+// unknown-field tolerance belongs to a *signed* key and to nothing else. A text
+// with no signature is never read at all, and a payload whose signature does
+// not verify never reaches the decode the tolerance lives in.
+func TestUnknownFieldsNeedAVerifiedSignature(t *testing.T) {
+	fixture := newFixtureKey(t, fixtureV1KeyID)
+	stranger := newFixtureKey(t, "licence-a-stranger-v1")
+
+	// A v1 text with no signature part: there is nothing to verify, so there is
+	// no key here to read.
+	payload, err := json.Marshal(v1Claims())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, state, err := Verify([]byte(keyPrefixV1+base64.RawURLEncoding.EncodeToString(payload)), atV1(30), ringOf(fixture), firebaseProjectV1)
+	refusedAs(t, got, state, err, ErrMalformedV1)
+
+	// A payload with an unknown field whose signature does not verify is
+	// refused for the signature: the tolerance is applied after verification,
+	// never before it.
+	unknown := append(bytes.TrimSuffix(payload, []byte("}")), []byte(`,"entitlements":["sso"]}`)...)
+	got, state, err = Verify([]byte(encodeKey(unknown, ed25519.Sign(stranger.priv, unknown))), atV1(30), ringOf(fixture), firebaseProjectV1)
+	refusedAs(t, got, state, err, ErrSignature)
+}
+
+// TestStagingKeyIDIsRefused is the staging refusal: a production keyring holds
+// production ids only, so a sandbox key is refused for its id alone (F17).
+func TestStagingKeyIDIsRefused(t *testing.T) {
+	staging := newFixtureKey(t, stagingV1KeyID)
+	claims := v1Claims()
+	claims.KID = stagingV1KeyID
+
+	got, state, err := Verify([]byte(staging.signClaims(t, claims)), atV1(30), productionKeyring, firebaseProjectV1)
+	refusedAs(t, got, state, err, ErrUnknownKeyID)
+
+	for _, id := range []string{fixtureV1KeyID, stagingV1KeyID} {
+		if _, held := productionKeyring[id]; held {
+			t.Fatalf("the production keyring holds %s: a test or staging key must never license a build, and the keyring is what decides", id)
 		}
-		if state != Expired {
-			t.Fatalf("a key expiring at %s read at %s is %s, want %s", expires, now, state, Expired)
+	}
+	file := loadVectors(t)
+	for id := range file.Keyring {
+		if _, held := productionKeyring[id]; held {
+			t.Fatalf("testdata/vectors_v1.json is signed under %s, which the production keyring holds", id)
 		}
-		if got.Tier != TierEnterprise {
-			t.Fatalf("the claims of an expired key are still the key's own, got %+v", got)
-		}
+	}
+	if _, held := productionKeyring[file.Staging.ID]; held {
+		t.Fatalf("the production keyring holds the vectors' staging id %s", file.Staging.ID)
 	}
 }
 
+// TestKeyBeyondTheTierLifetimeIsRefused holds the tier's maximum lifetime,
+// which the format keeps as `paid_through - issued_at` plus the thirty-day lead
+// a renewal is minted inside (T26). The ceiling is read from both sides for
+// every tier: at it the key is good, a second past it is refused.
 func TestKeyBeyondTheTierLifetimeIsRefused(t *testing.T) {
-	fixture := newFixtureKey(t, fixtureKeyID)
-	issued := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	fixture := newFixtureKey(t, fixtureV1KeyID)
+
+	for tier, maximum := range tierMaxTerm {
+		t.Run(tier, func(t *testing.T) {
+			atCeiling := v1Claims()
+			atCeiling.Tier = tier
+			atCeiling.IssuedAt = v1Now
+			atCeiling.PaidThrough = v1Now.Add(maximum)
+
+			if _, state, err := Verify([]byte(fixture.signClaims(t, atCeiling)), atV1(30), ringOf(fixture), firebaseProjectV1); err != nil {
+				t.Fatalf("a %s key at the longest term its tier allows: %v", tier, err)
+			} else if state != Active {
+				t.Fatalf("a %s key at the longest term its tier allows is %s, want %s", tier, state, Active)
+			}
+
+			past := atCeiling
+			past.PaidThrough = v1Now.Add(maximum + time.Second)
+			got, state, err := Verify([]byte(fixture.signClaims(t, past)), atV1(30), ringOf(fixture), firebaseProjectV1)
+			refusedAs(t, got, state, err, ErrLifetime)
+		})
+	}
+
+	// The gross case beside the boundary: a term far past the maximum, signed
+	// properly, is refused for its length alone.
+	over := v1Claims()
+	over.IssuedAt = atV1(-500)
+	over.PaidThrough = atV1(100)
+	got, state, err := Verify([]byte(fixture.signClaims(t, over)), atV1(30), ringOf(fixture), firebaseProjectV1)
+	refusedAs(t, got, state, err, ErrLifetime)
+}
+
+// TestGraceUsesTheKeysOwnDays holds the grace to the key's own `grace_days` and
+// never to a number compiled into this build (D2133, D2138): two keys that
+// expire at the same instant, carrying different graces, are in different
+// states at the same clock reading.
+func TestGraceUsesTheKeysOwnDays(t *testing.T) {
+	fixture := newFixtureKey(t, fixtureV1KeyID)
+	paidThrough := atV1(0)
 
 	for _, tt := range []struct {
-		name   string
-		tier   string
-		term   time.Duration
-		refuse bool
+		name  string
+		grace int
+		at    time.Time
+		want  State
 	}{
-		{"a year's term", TierTeam, 365 * 24 * time.Hour, false},
-		{"a year and the 30-day issue lead", TierTeam, tierMaxTerm[TierTeam], false},
-		{"a second past the tier's maximum", TierTeam, tierMaxTerm[TierTeam] + time.Second, true},
-		{"the same maximum on the free tier", TierCommunity, tierMaxTerm[TierCommunity], false},
-		{"past the free tier's maximum", TierCommunity, tierMaxTerm[TierCommunity] + time.Second, true},
-		{"past the enterprise maximum", TierEnterprise, tierMaxTerm[TierEnterprise] + 24*time.Hour, true},
+		{"the last second of the term", 30, paidThrough, Active},
+		{"a second past the term, in grace", 30, paidThrough.Add(time.Second), Grace},
+		{"the last second of a thirty-day grace", 30, paidThrough.Add(30 * 24 * time.Hour), Grace},
+		{"a second past a thirty-day grace", 30, paidThrough.Add(30*24*time.Hour + time.Second), Expired},
+		{"ten days into a forty-five day grace", 45, paidThrough.Add(10 * 24 * time.Hour), Grace},
+		{"the same instant with no grace at all", 0, paidThrough.Add(10 * 24 * time.Hour), Expired},
+		{"a second past a term with no grace", 0, paidThrough.Add(time.Second), Expired},
+		{"a second past a term whose grace is negative", -1, paidThrough.Add(time.Second), Expired},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			raw := fixture.signClaims(t, Claims{
-				Tier: tt.tier, Features: []string{}, Seats: 1, Organisation: "example.com",
-				Issued:  issued.Unix(),
-				Expires: issued.Add(tt.term).Unix(),
-			})
-			claims, state, err := verify([]byte(raw), issued, ringOf(fixture))
-			if tt.refuse {
-				if !errors.Is(err, ErrLifetime) {
-					t.Fatalf("a %s key with a term of %s verified as %s (%s), want ErrLifetime: the tier's maximum is the bound the design states, and the renewal's 30-day lead is why it is the term plus 30 days", tt.tier, tt.term, state, claims.Organisation)
+			claims := v1Claims()
+			claims.IssuedAt = paidThrough.Add(-365 * 24 * time.Hour)
+			claims.PaidThrough = paidThrough
+			claims.GraceDays = tt.grace
+
+			_, state, err := Verify([]byte(fixture.signClaims(t, claims)), tt.at, ringOf(fixture), firebaseProjectV1)
+			if err != nil {
+				t.Fatalf("%v", err)
+			}
+			if state != tt.want {
+				t.Fatalf("a key with %d days of grace read at %s is %s, want %s", tt.grace, tt.at, state, tt.want)
+			}
+		})
+	}
+}
+
+// TestGraceDaysPastADurationIsTheLongestGrace pins graceDuration's clamp, which
+// nothing else holds: a duration in nanoseconds runs out at about 106,751 days,
+// and with the clamp deleted the multiply wraps, so a key whose grace_days is
+// past what a duration holds answers a window far shorter than the one it
+// states -- expired, for a grace a licence server meant to outlast the term.
+func TestGraceDaysPastADurationIsTheLongestGrace(t *testing.T) {
+	longest := graceDuration(maxIntervalDays + 1)
+	if longest < 36500*24*time.Hour {
+		t.Fatalf("a grace past what a duration holds is %v, want the longest grace there is: the arithmetic wrapped instead of stopping at the bound", longest)
+	}
+	for _, days := range []int{maxIntervalDays + 1, 1 << 40, (1 << 62) - 1} {
+		if got := graceDuration(days); got != longest {
+			t.Fatalf("graceDuration(%d) is %v, want %v: every grace past the bound is the same grace", days, got, longest)
+		}
+	}
+
+	// End to end, because the state is what a caller reads: a key with a grace
+	// longer than any duration is still in grace a century after its paid term.
+	fixture := newFixtureKey(t, fixtureV1KeyID)
+	claims := v1Claims()
+	claims.PaidThrough = atV1(-36500)
+	claims.IssuedAt = atV1(-36500 - 365)
+	claims.GraceDays = 1 << 40
+	_, state, err := Verify([]byte(fixture.signClaims(t, claims)), atV1(0), ringOf(fixture), firebaseProjectV1)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	if state != Grace {
+		t.Fatalf("a key with %d days of grace read a century past its paid term is %s, want %s: a grace past what a duration holds is the longest grace, not a shorter window", claims.GraceDays, state, Grace)
+	}
+}
+
+// TestParseISODurationRefusesWhatItCannotHold pins the bound on the two forms
+// F16 admits. A duration in nanoseconds runs out at about 106,751 days, so the
+// parser stops at maxIntervalDays and refuses a longer text rather than letting
+// the multiply wrap it into a window far shorter than the key says; `P<n>W`
+// multiplies by seven, so its bound is the same span counted in weeks.
+//
+// Nothing else holds either guard: with the bound deleted the whole package is
+// green, and `P99999999999999999999D` answers a wrapped duration and no error.
+func TestParseISODurationRefusesWhatItCannotHold(t *testing.T) {
+	longest := time.Duration(maxIntervalDays) * 24 * time.Hour
+	for _, tt := range []struct {
+		name string
+		text string
+		want time.Duration
+		ok   bool
+	}{
+		{"the longest count of days there is", fmt.Sprintf("P%dD", maxIntervalDays), longest, true},
+		{"one day past it", fmt.Sprintf("P%dD", maxIntervalDays+1), 0, false},
+		{"the longest count of weeks there is", fmt.Sprintf("P%dW", maxIntervalDays/7), longest, true},
+		{"one week past it", fmt.Sprintf("P%dW", maxIntervalDays/7+1), 0, false},
+		{"a run of digits nobody meant", "P99999999999999999999D", 0, false},
+		{"the same run in weeks", "P99999999999999999999W", 0, false},
+		{"the largest number an int64 holds", "P9223372036854775807D", 0, false},
+		{"no interval at all", "P0D", 0, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseISODuration(tt.text)
+			if !tt.ok {
+				if !errors.Is(err, ErrDuration) {
+					t.Fatalf("ParseISODuration(%q) is %v and %v, want the duration refusal: a span past what a duration holds must not be wrapped into a shorter one", tt.text, got, err)
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("a %s key with a term of %s was refused: %v", tt.tier, tt.term, err)
+				t.Fatalf("ParseISODuration(%q): %v", tt.text, err)
 			}
-			if state != Valid {
-				t.Fatalf("a key minted at %s with a term of %s read at %s is %s, want %s", issued, tt.term, issued, state, Valid)
+			if got != tt.want {
+				t.Fatalf("ParseISODuration(%q) is %v, want %v", tt.text, got, tt.want)
 			}
 		})
 	}
+}
 
-	// A tier this verifier does not know is a claim set it cannot place, and
-	// the refusal names the claim rather than repeating its value.
-	raw := fixture.signClaims(t, Claims{
-		Tier: "unlimited", Features: []string{}, Seats: 1, Organisation: "example.com",
-		Issued: issued.Unix(), Expires: issued.Add(30 * 24 * time.Hour).Unix(),
-	})
-	if _, _, err := verify([]byte(raw), issued, ringOf(fixture)); !errors.Is(err, ErrClaims) {
-		t.Fatalf("a key of an unknown tier answered %v, want ErrClaims", err)
+// TestKeyWithoutWorkspaceIDIsRefused: the workspace is what binds a key to one
+// installation, so a key carrying none is a claim set this verifier cannot
+// place (D2134 as amended by TN2). The refusal names no value.
+func TestKeyWithoutWorkspaceIDIsRefused(t *testing.T) {
+	fixture := newFixtureKey(t, fixtureV1KeyID)
+
+	for _, tt := range []struct {
+		name        string
+		workspaceID string
+		drop        bool
+	}{
+		{"an empty workspace id", "", false},
+		{"no workspace id field at all", "", true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			claims := v1Claims()
+			claims.WorkspaceID = tt.workspaceID
+			var key string
+			if tt.drop {
+				key = fixture.signRaw(t, dropFieldV1(t, claims, "workspace_id"))
+			} else {
+				key = fixture.signClaims(t, claims)
+			}
+
+			got, state, err := Verify([]byte(key), atV1(30), ringOf(fixture), firebaseProjectV1)
+			refusedAs(t, got, state, err, ErrClaims)
+		})
 	}
 }
 
-func TestTestKeyIDIsNotInTheProductionKeyring(t *testing.T) {
-	file := loadVectors(t)
-	for _, id := range []string{fixtureKeyID, stagingKeyID} {
-		if _, held := productionKeyring[id]; held {
-			t.Fatalf("the production keyring holds %s: a test or staging key must never license a build, and the keyring is what decides (docs/licensing/licence-key.md, \"Test-mode keys\")", id)
-		}
-	}
-	for id := range file.Keyring {
-		if _, held := productionKeyring[id]; held {
-			t.Fatalf("testdata/vectors.json is signed under %s, which the production keyring holds", id)
-		}
-	}
-}
+// TestWorkspaceIDMustMatchTheFirebaseProject: the claim is compared with the id
+// the caller read from the project's own config, and the two must be equal. An
+// empty id from the caller never matches, so a caller that could not read one
+// refuses every key rather than accepting any.
+func TestWorkspaceIDMustMatchTheFirebaseProject(t *testing.T) {
+	fixture := newFixtureKey(t, fixtureV1KeyID)
+	claims := v1Claims()
+	claims.WorkspaceID = "a-workspace-firebase-project"
+	key := fixture.signClaims(t, claims)
 
-func TestStagingKeyIDIsRefused(t *testing.T) {
-	file := loadVectors(t)
-	staging := file.vectorNamed(t, "a staging key")
-	if staging.Refused != "unknown-key-id" {
-		t.Fatalf("the staging vector is spelled %q, want unknown-key-id: production verifiers refuse a staging key for its id alone", staging.Refused)
+	if _, state, err := Verify([]byte(key), atV1(30), ringOf(fixture), "a-workspace-firebase-project"); err != nil {
+		t.Fatalf("a key read in the workspace it is bound to: %v", err)
+	} else if state != Active {
+		t.Fatalf("the key is %s, want %s", state, Active)
 	}
-	claims, state, err := Verify([]byte(staging.Key), time.Unix(file.Now, 0))
-	if !errors.Is(err, ErrUnknownKeyID) {
-		t.Fatalf("Verify answered %v (%s, %s) for a staging key, want ErrUnknownKeyID", err, claims.Organisation, state)
-	}
-}
 
-func TestOverlappingKeysPickTheLatest(t *testing.T) {
-	file := loadVectors(t)
-	ring := file.ring(t)
-
-	// The pair the design is about (T26): two keys installed at once, and the
-	// verifier takes the one with the later expiry among those that verify.
-	for _, c := range file.Installed {
-		t.Run(c.Name, func(t *testing.T) {
-			for name, raw := range c.Keys {
-				if name == c.Applies {
+	for _, tt := range []struct {
+		name string
+		id   string
+	}{
+		{"another project's id", "another-firebase-project"},
+		{"no id at all", ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, state, err := Verify([]byte(key), atV1(30), ringOf(fixture), tt.id)
+			refusedAs(t, got, state, err, ErrWorkspace)
+			for _, value := range []string{claims.WorkspaceID, tt.id} {
+				if value == "" {
 					continue
 				}
-				// The pair is only interesting while both keys are good, so the
-				// test would prove nothing if the other one were refused.
-				if _, _, err := verify([]byte(raw), time.Unix(file.Now, 0), ring); err != nil {
-					t.Fatalf("the %s key of the pair is refused too (%v), so the choice is not what this case measures", name, err)
+				if strings.Contains(err.Error(), value) {
+					t.Errorf("the workspace refusal is %q, and it names %q: neither id is a secret, and neither belongs in a sentence a user pastes into a ticket", err, value)
 				}
 			}
-			want, _, err := verify([]byte(c.Keys[c.Applies]), time.Unix(file.Now, 0), ring)
-			if err != nil {
-				t.Fatalf("the key this case says applies is refused: %v", err)
+		})
+	}
+}
+
+// dropFieldV1 answers a claim set's payload with one field removed, which is the
+// only way to build a key that does not carry the field at all rather than
+// carrying it empty.
+func dropFieldV1(t *testing.T, c Claims, field string) []byte {
+	t.Helper()
+	var object map[string]json.RawMessage
+	signed, err := json.Marshal(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(signed, &object); err != nil {
+		t.Fatal(err)
+	}
+	delete(object, field)
+	trimmed, err := json.Marshal(object)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return trimmed
+}
+
+// The v1 vector file: the claim sets, states and refusals the Go verifier and
+// the console's v1 verifier (K1.4) are both read against.
+const vectorsFile = "testdata/vectors_v1.json"
+
+// vectorFile is that file's shape. It is JSON a TypeScript verifier reads
+// without a Go type, so it carries strings, numbers and booleans only -- no Go
+// spelling of a state or a refusal, just the names the two verifiers agree on.
+type vectorFile struct {
+	// Note is what the file is and what it is not: throwaway test keys, never a
+	// production one.
+	Note string `json:"note"`
+	// Now is the clock every vector is read at, in Unix seconds.
+	Now int64 `json:"now"`
+	// FirebaseProjectID is the workspace id the verifier is asked with: the
+	// whole file is one workspace, because the binding is what a v1 key is
+	// checked against and a per-vector id would hide a verifier that ignored it.
+	FirebaseProjectID string `json:"firebase_project_id"`
+	// Keyring is the public half of each key a verifier is asked with, named by
+	// key id.
+	Keyring map[string]string `json:"keyring"`
+	// Staging is the sandbox key, deliberately not in Keyring.
+	Staging vectorKey `json:"staging"`
+	// Vectors is one key and what a verifier must answer for it.
+	Vectors []vectorCase `json:"vectors"`
+}
+
+type vectorKey struct {
+	Note      string `json:"note"`
+	ID        string `json:"id"`
+	PublicKey string `json:"public_key"`
+}
+
+type vectorCase struct {
+	Name string `json:"name"`
+	Key  string `json:"key"`
+	// State and Claims are what an accepted key answers; Refused is the part a
+	// refused one fails on. Exactly one half is set.
+	State   string  `json:"state,omitempty"`
+	Claims  *Claims `json:"claims,omitempty"`
+	Refused string  `json:"refused,omitempty"`
+}
+
+// vectorRefusals names each refusal as the file spells it. The console's
+// verifier reads the same names out of the same file.
+var vectorRefusals = map[string]error{
+	"malformed":      ErrMalformedV1,
+	"unknown-key-id": ErrUnknownKeyID,
+	"signature":      ErrSignature,
+	"claims":         ErrClaims,
+	"lifetime":       ErrLifetime,
+	"newer-version":  ErrNewerVersion,
+	"workspace":      ErrWorkspace,
+	"duration":       ErrDuration,
+}
+
+// boundaryVectors names the vectors that sit on a second a verifier can get
+// wrong while every other vector still answers the same: both ends of the paid
+// term, both ends of the grace, and the tier's longest term from both sides.
+var boundaryVectors = []string{
+	"a key at the second its paid term ends",
+	"a key a second into its grace",
+	"a key at the last second of its grace",
+	"a key a second past its grace",
+	"a key at the longest term its tier allows",
+	"a term a second past the tier's maximum",
+	"a check interval longer than a duration holds",
+	"a grace longer than a duration holds",
+}
+
+// loadVectors reads the v1 file the two verifiers are read against.
+func loadVectors(t *testing.T) vectorFile {
+	t.Helper()
+	data, err := os.ReadFile(vectorsFile)
+	if err != nil {
+		t.Fatalf("%s: %v -- the vectors are the set the console's verifier shares with this one, so a verifier whose tests cannot read them proves nothing", vectorsFile, err)
+	}
+	var file vectorFile
+	if err := json.Unmarshal(data, &file); err != nil {
+		t.Fatalf("%s is not the JSON this file's shape declares: %v", vectorsFile, err)
+	}
+	return file
+}
+
+// ringV1 is the keyring the v1 vectors are asked with: the file's own keys,
+// decoded.
+func (f vectorFile) ring(t *testing.T) Keyring {
+	t.Helper()
+	ring := make(Keyring, len(f.Keyring))
+	for id, encoded := range f.Keyring {
+		key, err := base64.RawURLEncoding.DecodeString(encoded)
+		if err != nil {
+			t.Fatalf("the keyring's %s is not base64url: %v", id, err)
+		}
+		if len(key) != ed25519.PublicKeySize {
+			t.Fatalf("the keyring's %s is %d bytes, and an Ed25519 public key is %d", id, len(key), ed25519.PublicKeySize)
+		}
+		ring[id] = ed25519.PublicKey(key)
+	}
+	return ring
+}
+
+// vectorNamed answers the vector a test names, so a test about one vector
+// fails by name rather than by index if the file is reordered.
+func (f vectorFile) vectorNamed(t *testing.T, name string) vectorCase {
+	t.Helper()
+	for _, v := range f.Vectors {
+		if v.Name == name {
+			return v
+		}
+	}
+	t.Fatalf("%s carries no vector named %q", vectorsFile, name)
+	return vectorCase{}
+}
+
+// TestVectorsRoundTrip replays the whole file through this verifier: every
+// vector's answer, every refusal, and the boundaries by name. It is what keeps
+// the file the console reads honest about the verifier it claims to describe.
+func TestVectorsRoundTrip(t *testing.T) {
+	file := loadVectors(t)
+	ring := file.ring(t)
+	now := time.Unix(file.Now, 0)
+
+	if len(file.Keyring) != 1 {
+		t.Fatalf("the vectors' keyring holds %d keys, want exactly the fixture's one", len(file.Keyring))
+	}
+	if len(file.Vectors) < 15 {
+		t.Fatalf("the vectors file carries %d vectors, and it was written to carry both halves", len(file.Vectors))
+	}
+
+	seen := map[string]bool{}
+	for _, v := range file.Vectors {
+		t.Run(v.Name, func(t *testing.T) {
+			claims, state, err := Verify([]byte(v.Key), now, ring, file.FirebaseProjectID)
+			if v.Refused != "" {
+				want, ok := vectorRefusals[v.Refused]
+				if !ok {
+					t.Fatalf("the vector names the refusal %q, which is not one of the eight the v1 verifiers share", v.Refused)
+				}
+				if !errors.Is(err, want) {
+					t.Fatalf("the vector is read as %v (%s), want %v", err, state, want)
+				}
+				return
 			}
-			got, state, err := active(ring, rawKeys(t, c.Keys), time.Unix(file.Now, 0))
 			if err != nil {
 				t.Fatalf("%v", err)
 			}
-			if !reflect.DeepEqual(got, want) {
-				t.Fatalf("the store applied %+v, want the %s key's %+v", got, c.Applies, want)
+			if State(v.State) != state {
+				t.Fatalf("the vector is %s, want %s", state, v.State)
 			}
-			if wantState := State(c.State); state != wantState {
-				t.Fatalf("the store answered %s, want %s", state, wantState)
+			if v.Claims == nil {
+				t.Fatalf("an accepted vector carries no claim set, so nothing holds the payload to the terms it states")
+			}
+			if !sameClaims(claims, *v.Claims) {
+				t.Fatalf("the key's claims are %+v, want %+v", claims, *v.Claims)
 			}
 		})
+		seen[v.State+v.Refused] = true
 	}
 
-	// The file's order is not the order the store reads: a map has none. The
-	// two keys are read the other way round here, and the answer is the same.
-	pair := file.Installed[0]
-	reversed := [][]byte{[]byte(pair.Keys[pair.Applies])}
-	for name, raw := range pair.Keys {
-		if name != pair.Applies {
-			reversed = append(reversed, []byte(raw))
+	// Each refusal and each state is in the file: a vector set that lost its
+	// negative half would still round-trip green.
+	for name := range vectorRefusals {
+		if !seen[name] {
+			t.Errorf("no vector in the file is refused as %s", name)
 		}
 	}
-	want, _, err := verify([]byte(pair.Keys[pair.Applies]), time.Unix(file.Now, 0), ring)
-	if err != nil {
-		t.Fatalf("%v", err)
+	for _, want := range []string{string(Active), string(Grace), string(Expired)} {
+		if !seen[want] {
+			t.Errorf("no vector in the file is %s", want)
+		}
 	}
-	got, _, err := active(ring, reversed, time.Unix(file.Now, 0))
-	if err != nil {
-		t.Fatalf("%v", err)
+	for _, name := range boundaryVectors {
+		file.vectorNamed(t, name)
 	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("with the keys the other way round the store applied %+v, want %+v", got, want)
+}
+
+// TestGenerateVectors rewrites testdata/vectors_v1.json. It is skipped unless
+// the environment asks for it, so a plain `go test` never rewrites a file under
+// a reviewer's feet: the signatures are freshly minted on every run and a
+// rewritten file is a diff nobody asked for. Run it when the claim set, a state
+// or a refusal changes:
+//
+//	FUGARO_LICENCE_WRITE_VECTORS_V1=1 go test -tags ee ./ee/licence/ -run TestGenerateVectors -count=1
+func TestGenerateVectors(t *testing.T) {
+	if os.Getenv("FUGARO_LICENCE_WRITE_VECTORS_V1") == "" {
+		t.Skip("set FUGARO_LICENCE_WRITE_VECTORS_V1=1 to rewrite testdata/vectors_v1.json")
+	}
+	data, err := json.MarshalIndent(generateVectors(t), "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(vectorsFile, append(data, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("wrote %s", vectorsFile)
+}
+
+// generateVectors mints the v1 file's vectors. Every signature is made here,
+// in this process, with a keypair thrown away when the test ends: the file
+// holds the public half and the signed key texts and nothing a verifier could
+// mint with (.claude/rules/ee.md).
+func generateVectors(t *testing.T) vectorFile {
+	t.Helper()
+	fixture := newFixtureKey(t, fixtureV1KeyID)
+	staging := newFixtureKey(t, stagingV1KeyID)
+
+	now := time.Date(2026, 11, 12, 0, 0, 0, 0, time.UTC)
+	days := func(n int) time.Time { return now.Add(time.Duration(n) * 24 * time.Hour) }
+
+	// base is the claim set every vector starts from: a paid Team key bound to
+	// the file's workspace, whose term and grace each vector then moves.
+	base := func() Claims {
+		interval := "P1D"
+		return Claims{
+			V:                 versionV1,
+			KID:               fixture.id,
+			KeyID:             "lk_vectors_0001",
+			WorkspaceID:       "fugaro-test-project",
+			Organisation:      "example.com",
+			Tier:              TierTeam,
+			Seats:             5,
+			IssuedAt:          days(-30),
+			PaidThrough:       days(335),
+			GraceDays:         30,
+			RenewalMode:       RenewalAuto,
+			RenewBeforeDays:   7,
+			CheckInterval:     &interval,
+			RenewalSecretHash: "a-hash-of-the-renewal-secret-and-not-the-secret",
+			Warnings:          []WarningV1{{Roles: []string{"admin"}, From: "grace_start"}},
+			Kind:              KindPaid,
+			Note:              "a test key",
+		}
+	}
+
+	file := vectorFile{
+		Note:              "The claim sets, states and refusals the Go v1 verifier and the console's are both read against (licence-key-v2 plan K1.1, K1.4; spec sections 3, 4 and 6). Every key here is minted by a throwaway test keypair whose private half was generated in the process that wrote this file and never written down; no build trusts it, and ee/licence/key.go's production keyring holds no id at all until S2.9 publishes the owner's production key. `now` is the clock every vector is read at, `firebase_project_id` is the workspace the verifier is asked with, `state` and `claims` are what an accepted key answers, and `refused` is the part a refused one fails on, named as the two verifiers name it.",
+		Now:               now.Unix(),
+		FirebaseProjectID: "fugaro-test-project",
+		Keyring:           map[string]string{fixture.id: fixture.public()},
+		Staging: vectorKey{
+			Note:      "The sandbox key: minted under the staging id for tests and for a sandbox installation, and in no production keyring, so a production verifier refuses it for the id alone.",
+			ID:        staging.id,
+			PublicKey: staging.public(),
+		},
+	}
+
+	accept := func(name string, key string, state State, claims Claims) {
+		file.Vectors = append(file.Vectors, vectorCase{Name: name, Key: key, State: string(state), Claims: &claims})
+	}
+	refuse := func(name, key, refusal string) {
+		file.Vectors = append(file.Vectors, vectorCase{Name: name, Key: key, Refused: refusal})
+	}
+	sign := func(c Claims) string { return fixture.signClaims(t, c) }
+
+	// The paid term and the two ends of the grace. The clock is one instant for
+	// the whole file, so each boundary is a key whose paid_through sits at that
+	// distance from it.
+	active := base()
+	accept("a team key inside its paid term", sign(active), Active, active)
+
+	atTermEnd := base()
+	atTermEnd.IssuedAt = days(-365)
+	atTermEnd.PaidThrough = days(0)
+	accept("a key at the second its paid term ends", sign(atTermEnd), Active, atTermEnd)
+
+	intoGrace := base()
+	intoGrace.IssuedAt = days(-366)
+	intoGrace.PaidThrough = days(0).Add(-time.Second)
+	accept("a key a second into its grace", sign(intoGrace), Grace, intoGrace)
+
+	lastGraceSecond := base()
+	lastGraceSecond.IssuedAt = days(-395)
+	lastGraceSecond.PaidThrough = days(-30)
+	accept("a key at the last second of its grace", sign(lastGraceSecond), Grace, lastGraceSecond)
+
+	pastGrace := base()
+	pastGrace.IssuedAt = days(-396)
+	pastGrace.PaidThrough = days(-30).Add(-time.Second)
+	accept("a key a second past its grace", sign(pastGrace), Expired, pastGrace)
+
+	longPast := base()
+	longPast.IssuedAt = days(-455)
+	longPast.PaidThrough = days(-90)
+	accept("a key long past its grace", sign(longPast), Expired, longPast)
+
+	// The tier's longest term from both sides, taken from the verifier's own
+	// table so a key minted at the ceiling stays inside it.
+	maximum := tierMaxTerm[TierTeam]
+	atCeiling := base()
+	atCeiling.IssuedAt = days(-30)
+	atCeiling.PaidThrough = days(-30).Add(maximum)
+	accept("a key at the longest term its tier allows", sign(atCeiling), Active, atCeiling)
+
+	pastCeiling := base()
+	pastCeiling.IssuedAt = days(-30)
+	pastCeiling.PaidThrough = days(-30).Add(maximum + time.Second)
+	refuse("a term a second past the tier's maximum", sign(pastCeiling), "lifetime")
+
+	// A field added within version 1 is ignored by a build that predates it, so
+	// this vector is accepted with the claims it knows (D2146).
+	withUnknown := base()
+	signed, err := json.Marshal(withUnknown)
+	if err != nil {
+		t.Fatal(err)
+	}
+	extended := append(bytes.TrimSuffix(signed, []byte("}")), []byte(`,"entitlements":["sso"]}`)...)
+	accept("a signed key carrying a field this build does not know", fixture.signRaw(t, extended), Active, withUnknown)
+
+	// The refusals. Each one moves exactly one thing away from a good key.
+	badInterval := base()
+	hourly := "PT1H"
+	badInterval.CheckInterval = &hourly
+	refuse("a check interval this verifier does not read", sign(badInterval), "duration")
+
+	// The two bounds on a span. An interval past what a duration holds is not an
+	// interval this verifier reads, and a grace past it is the longest grace
+	// there is rather than the shorter window the arithmetic would wrap into.
+	absurdInterval := base()
+	absurd := "P99999999999999999999D"
+	absurdInterval.CheckInterval = &absurd
+	refuse("a check interval longer than a duration holds", sign(absurdInterval), "duration")
+
+	longGrace := base()
+	longGrace.IssuedAt = days(-400)
+	longGrace.PaidThrough = days(-30)
+	longGrace.GraceDays = 1 << 40
+	accept("a grace longer than a duration holds", sign(longGrace), Grace, longGrace)
+
+	noWorkspace := base()
+	noWorkspace.WorkspaceID = ""
+	refuse("a key with no workspace id", sign(noWorkspace), "claims")
+
+	otherWorkspace := base()
+	otherWorkspace.WorkspaceID = "another-firebase-project"
+	refuse("a key bound to another workspace", sign(otherWorkspace), "workspace")
+
+	unknownTier := base()
+	unknownTier.Tier = "unlimited"
+	refuse("a tier this verifier does not know", sign(unknownTier), "claims")
+
+	// The version 2 payload carries a claim this build cannot decode at all --
+	// `seats` retyped to a string, which is what a version bump allows -- so
+	// this is the vector that says the version is read before the claim set is:
+	// a verifier that decoded first would answer `claims` here.
+	newer := base()
+	newer.V = 2
+	newerSpelled, err := json.Marshal(newer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newerPayload := append(bytes.TrimSuffix(newerSpelled, []byte("}")), []byte(`,"seats":"fifty"}`)...)
+	refuse("a key of a version this build does not read", fixture.signRaw(t, newerPayload), "newer-version")
+
+	foreign := base()
+	foreign.KID = "licence-someone-elses-key-v1"
+	refuse("a key id this build does not hold", sign(foreign), "unknown-key-id")
+
+	stagingClaims := base()
+	stagingClaims.KID = staging.id
+	refuse("a staging key", staging.signClaims(t, stagingClaims), "unknown-key-id")
+
+	// A payload signed as it is spelled and then re-spelled: the signature is
+	// over the raw bytes, so one key has one spelling.
+	spelled, err := json.Marshal(base())
+	if err != nil {
+		t.Fatal(err)
+	}
+	respelled := bytes.Replace(spelled, []byte(`":`), []byte(`": `), 1)
+	refuse("a payload signed as it is spelled, re-spelled", encodeKey(respelled, ed25519.Sign(fixture.priv, spelled)), "signature")
+
+	// A payload changed after it was signed, in a way this build cannot read:
+	// the answer is the signature's, and this is the vector that says the claim
+	// decode waits for it. A verifier that read the claims first would answer
+	// the claim refusal here.
+	broken := append(bytes.TrimSuffix(spelled, []byte("}")), []byte(`,"seats":"five"}`)...)
+	refuse("a claim set this build cannot read behind a signature that does not verify", encodeKey(broken, ed25519.Sign(fixture.priv, spelled)), "signature")
+
+	// A payload that is not a claim set, and the three texts that are not the
+	// format: the shape and the payload are refused before any keyring is
+	// consulted, which is why a key with no id in it is a malformed text rather
+	// than an unknown one.
+	refuse("a payload that is not a claim set", fixture.signRaw(t, []byte("this is not a claim set")), "malformed")
+	refuse("a key text that is not a v1 key", "a-key-text-with-no-prefix.QUJD.REVG", "malformed")
+	good := sign(base())
+	parts := strings.Split(strings.TrimPrefix(good, keyPrefixV1), ".")
+	refuse("a key text with one part", keyPrefixV1+parts[0], "malformed")
+	refuse("a part that is not base64url", keyPrefixV1+"%%%.%%%", "malformed")
+
+	return file
+}
+
+// openTestStore answers the CLI's store over a config directory of the test's
+// own: the environment is read through the caller-supplied getenv, which is
+// what keeps this off the developer's own machine.
+func openTestStore(t *testing.T) *Store {
+	t.Helper()
+	dir := t.TempDir()
+	store, err := Open(func(name string) string {
+		if name == "XDG_CONFIG_HOME" {
+			return dir
+		}
+		return ""
+	})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if dir := filepath.Dir(store.path); dir == "" || !strings.HasSuffix(filepath.ToSlash(dir), "/fugaro") {
+		t.Fatalf("the store's key file is %s, want it under the CLI's own config directory", store.path)
+	}
+	return store
+}
+
+// writeKeyFile writes the store's key file at a mode the test chooses: the mode
+// is half of what the store reads.
+func writeKeyFile(t *testing.T, store *Store, mode fs.FileMode, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(store.path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(store.path, []byte(body), mode); err != nil {
+		t.Fatal(err)
+	}
+	// WriteFile keeps an existing file's mode, so a second call at a different
+	// mode has to set it.
+	if err := os.Chmod(store.path, mode); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -465,9 +1196,11 @@ func TestOverlappingKeysPickTheLatest(t *testing.T) {
 // one key per line, at most two, because two is what the renewal's overlap
 // installs (T26, docs/licensing/licence-key.md, "Storage and hand-off").
 func TestTheKeyFileIsReadAtMostTwoLines(t *testing.T) {
-	fixture := newFixtureKey(t, fixtureKeyID)
-	first := fixture.signClaims(t, Claims{Tier: TierTeam, Features: []string{}, Seats: 1, Organisation: "example.com", Issued: 1, Expires: 2})
-	second := fixture.signClaims(t, Claims{Tier: TierTeam, Features: []string{}, Seats: 1, Organisation: "example.com", Issued: 1, Expires: 3})
+	fixture := newFixtureKey(t, fixtureV1KeyID)
+	later := v1Claims()
+	later.PaidThrough = atV1(400)
+	first := fixture.signClaims(t, v1Claims())
+	second := fixture.signClaims(t, later)
 
 	store := openTestStore(t)
 	writeKeyFile(t, store, 0o600, first+"\n\n"+second+"\n")
@@ -481,8 +1214,8 @@ func TestTheKeyFileIsReadAtMostTwoLines(t *testing.T) {
 
 	// A key file another local user can read is the file F41 is about, and the
 	// design keeps it at 0600. The refusal is the store's because nothing else
-	// writes the file: the operator does, or the console hands a key over in
-	// the environment instead.
+	// writes the file: the operator does, or the console hands a key over in the
+	// environment instead.
 	writeKeyFile(t, store, 0o644, first+"\n")
 	if _, err := store.Keys(); !errors.Is(err, ErrKeyFile) {
 		t.Fatalf("a key file of mode 0644 answered %v, want ErrKeyFile", err)
@@ -504,9 +1237,6 @@ func TestNoKeyIsTheStoreBeingEmpty(t *testing.T) {
 	if len(keys) != 0 {
 		t.Fatalf("a store with no key file read %q", keys)
 	}
-	if _, _, err := store.Active(time.Now()); !errors.Is(err, ErrNoKey) {
-		t.Fatalf("an empty store answered %v, want ErrNoKey", err)
-	}
 }
 
 func TestTheEnvironmentKeyIsRemovedBeforeAnyChildStarts(t *testing.T) {
@@ -518,8 +1248,8 @@ func TestTheEnvironmentKeyIsRemovedBeforeAnyChildStarts(t *testing.T) {
 		os.Exit(0)
 	}
 
-	fixture := newFixtureKey(t, fixtureKeyID)
-	key := fixture.signClaims(t, Claims{Tier: TierTeam, Features: []string{}, Seats: 2, Organisation: "example.com", Issued: 1, Expires: 4000000000})
+	fixture := newFixtureKey(t, fixtureV1KeyID)
+	key := fixture.signClaims(t, v1Claims())
 	t.Setenv(EnvironmentKey, key)
 
 	// The control: before the registration point a child of this process does
@@ -564,9 +1294,9 @@ func childEnvironmentKey(t *testing.T) string {
 	return string(out)
 }
 
-// TestLicencePackageImportsNoNetwork holds the rule the plan pins for this task:
-// a key verifier makes no network call, so it cannot phone home, look a key up
-// or check a revocation -- there is no server to ask (D308).
+// TestLicencePackageImportsNoNetwork holds the rule the verifier is built
+// under: a key check makes no network call, so it cannot phone home, look a key
+// up or check a revocation -- there is no server to ask (D308).
 //
 // The rule is two readings of the same thing. No file here, test or not, may
 // import a net package. And the package's own files may import nothing outside
@@ -578,16 +1308,16 @@ func TestLicencePackageImportsNoNetwork(t *testing.T) {
 	allowed := []string{
 		"bytes",           // the claim set is decoded from the payload's own bytes
 		"crypto/ed25519",  // the one algorithm a key is signed with (D308)
-		"encoding/base64", // the key text's three parts
+		"encoding/base64", // the key text's two parts
 		"encoding/json",   // the claim set
 		"errors",          // the refusals
-		"fmt",             // a refusal names the key id and the part that failed
+		"fmt",             // a refusal names the part that failed
 		"io",              // the strict decode reads to the end of the payload
 		"io/fs",           // the key file's absence is a state and not an error (F43)
 		"os",              // the key file, and the one variable taken out of the environment
 		"path/filepath",   // the key file's place under the config directory
 		"runtime",         // the platform the config directory is the platform's own
-		"strings",         // the key text's three parts, and the file's lines
+		"strings",         // the key text's two parts, and the file's lines
 		"time",            // the clock the caller passes and the grace against it
 		"github.com/dimipaun/fugaro/internal/localcfg", // the CLI's own config directory
 	}
@@ -621,451 +1351,4 @@ func TestLicencePackageImportsNoNetwork(t *testing.T) {
 			}
 		}
 	}
-}
-
-func TestVectorsRoundTrip(t *testing.T) {
-	file := loadVectors(t)
-	ring := file.ring(t)
-	now := time.Unix(file.Now, 0)
-
-	if len(file.Keyring) != 1 {
-		t.Fatalf("the vectors' keyring holds %d keys, want exactly the fixture's one: a second key would have to be there for a vector's reason", len(file.Keyring))
-	}
-	if len(file.Vectors) < 10 || len(file.Installed) < 2 {
-		t.Fatalf("the vectors file carries %d vectors and %d installed cases, and it was written to carry both halves", len(file.Vectors), len(file.Installed))
-	}
-
-	seen := map[string]bool{}
-	for _, v := range file.Vectors {
-		t.Run(v.Name, func(t *testing.T) {
-			claims, state, err := verify([]byte(v.Key), now, ring)
-			if v.Refused != "" {
-				want, ok := vectorRefusals[v.Refused]
-				if !ok {
-					t.Fatalf("the vector names the refusal %q, which is not one of the five the verifiers share", v.Refused)
-				}
-				if !errors.Is(err, want) {
-					t.Fatalf("the vector is read as %v (%s, %s), want %v", err, claims.Organisation, state, want)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("%v", err)
-			}
-			if State(v.State) != state {
-				t.Fatalf("the vector is %s, want %s", state, v.State)
-			}
-			if v.Claims == nil {
-				t.Fatalf("an accepted vector carries no claim set, so nothing holds the payload to the terms it states")
-			}
-			if !reflect.DeepEqual(claims, *v.Claims) {
-				t.Fatalf("the key's claims are %+v, want %+v", claims, *v.Claims)
-			}
-		})
-		seen[v.State+v.Refused] = true
-	}
-
-	// Each of the five refusals is in the file: a vector set that lost the
-	// negative half would still round-trip green.
-	for name := range vectorRefusals {
-		if !seen[name] {
-			t.Errorf("no vector in the file is refused as %s", name)
-		}
-	}
-	// The three states, so that a file that lost one of them is not green.
-	for _, want := range []string{string(Valid), string(Grace), string(Expired)} {
-		if !seen[want] {
-			t.Errorf("no vector in the file is %s", want)
-		}
-	}
-	// The boundaries by name rather than by count. They are the seconds the
-	// three verifiers have to agree on exactly (S2.6), and every one of them is
-	// individually deletable: the file would still round-trip green without the
-	// vector at exactly `expires`, or the one at exactly thirty days past it,
-	// because another vector in the file answers the same state.
-	for _, name := range boundaryVectors {
-		file.vectorNamed(t, name)
-	}
-}
-
-// TestGenerateVectors rewrites testdata/vectors.json. It is skipped unless the
-// environment asks for it, so a plain `go test` never rewrites a file under a
-// reviewer's feet: the vectors' signatures are freshly minted on every run, and
-// a rewritten file is a diff nobody asked for. Run it when the claim set, a
-// state or a refusal changes:
-//
-//	FUGARO_LICENCE_WRITE_VECTORS=1 go test -tags ee ./ee/licence/ -run TestGenerateVectors -count=1
-func TestGenerateVectors(t *testing.T) {
-	if os.Getenv("FUGARO_LICENCE_WRITE_VECTORS") == "" {
-		t.Skip("set FUGARO_LICENCE_WRITE_VECTORS=1 to rewrite testdata/vectors.json")
-	}
-	data, err := json.MarshalIndent(generateVectors(t), "", "  ")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(vectorsFile, append(data, '\n'), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Logf("wrote %s", vectorsFile)
-}
-
-// vectorsFile is the one set of vectors all three verifiers are read against
-// (S2.6): the Go one, the console's (S2.4) and the app's (S2.5).
-const vectorsFile = "testdata/vectors.json"
-
-// vectorFile is that file's shape. It is JSON a TypeScript and a JavaScript
-// verifier read without a Go type, so it carries strings, numbers and booleans
-// only -- no Go spelling of a state or a refusal, just the names the three
-// verifiers agree on.
-type vectorFile struct {
-	// Note is what the file is and what it is not: throwaway test keys, never
-	// a production one.
-	Note string `json:"note"`
-	// Now is the clock every vector is read at, in Unix seconds. One clock for
-	// the file rather than one per vector, because the boundaries are the
-	// interesting part and they are easier to see as expiry dates against a
-	// single now.
-	Now int64 `json:"now"`
-	// Keyring is the public half of each key a verifier is asked with, named by
-	// key id.
-	Keyring map[string]string `json:"keyring"`
-	// Staging is the sandbox key, which is deliberately not in Keyring: a
-	// production verifier holds production ids only.
-	Staging vectorKey `json:"staging"`
-	// Vectors is one key and what a verifier must answer for it.
-	Vectors []vectorCase `json:"vectors"`
-	// Installed is a store holding more than one key and the one that applies.
-	Installed []installedCase `json:"installed"`
-}
-
-type vectorKey struct {
-	Note      string `json:"note"`
-	ID        string `json:"id"`
-	PublicKey string `json:"public_key"`
-}
-
-type vectorCase struct {
-	Name string `json:"name"`
-	Key  string `json:"key"`
-	// State and Claims are what an accepted key answers; Refused is the part a
-	// refused one fails on. Exactly one half is set.
-	State   string  `json:"state,omitempty"`
-	Claims  *Claims `json:"claims,omitempty"`
-	Refused string  `json:"refused,omitempty"`
-}
-
-type installedCase struct {
-	Name string `json:"name"`
-	// Keys is every installed key, named so that Applies can point at one.
-	Keys map[string]string `json:"keys"`
-	// Applies is the installed key the verifier must take: the one with the
-	// later expiry among those that verify (T26).
-	Applies string `json:"applies"`
-	State   string `json:"state"`
-}
-
-// vectorRefusals names each refusal as the file spells it. The names are what
-// the three verifiers agree on; each answers its own error, which is why the
-// file carries a name rather than this package's sentinel's text.
-// boundaryVectors names the vectors that sit on a second a verifier can get
-// wrong while every other vector in the file still answers the same: the last
-// second of the term, both ends of the grace, the first second past it, the
-// tier's longest term and the second past that. TestVectorsRoundTrip asks for
-// them by name because a count does not hold them -- each one is deletable on
-// its own, and a boundary the three verifiers disagree about is discovered in
-// production rather than here.
-var boundaryVectors = []string{
-	"a key at the second its term ends",
-	"a key a second into its grace",
-	"a key at the last second of its grace",
-	"a key a second past its grace",
-	"a key at the longest term its tier allows",
-	"a term a second past the tier's maximum",
-}
-
-var vectorRefusals = map[string]error{
-	"malformed":      ErrMalformed,
-	"unknown-key-id": ErrUnknownKeyID,
-	"signature":      ErrSignature,
-	"claims":         ErrClaims,
-	"lifetime":       ErrLifetime,
-}
-
-// loadVectors reads the file every verifier is read against.
-func loadVectors(t *testing.T) vectorFile {
-	t.Helper()
-	data, err := os.ReadFile(vectorsFile)
-	if err != nil {
-		t.Fatalf("%s: %v -- the vectors are the one set the three verifiers share, so a verifier whose tests cannot read them proves nothing", vectorsFile, err)
-	}
-	var file vectorFile
-	if err := json.Unmarshal(data, &file); err != nil {
-		t.Fatalf("%s is not the JSON this file's shape declares: %v", vectorsFile, err)
-	}
-	return file
-}
-
-// ring is the keyring the vectors are asked with: the file's own keys, decoded.
-func (f vectorFile) ring(t *testing.T) Keyring {
-	t.Helper()
-	ring := make(Keyring, len(f.Keyring))
-	for id, encoded := range f.Keyring {
-		key, err := base64.RawURLEncoding.DecodeString(encoded)
-		if err != nil {
-			t.Fatalf("the keyring's %s is not base64url: %v", id, err)
-		}
-		if len(key) != ed25519.PublicKeySize {
-			t.Fatalf("the keyring's %s is %d bytes, and an Ed25519 public key is %d", id, len(key), ed25519.PublicKeySize)
-		}
-		ring[id] = ed25519.PublicKey(key)
-	}
-	return ring
-}
-
-// vectorNamed answers the vector a test names, so a test about one vector fails
-// by name rather than by index if the file is reordered.
-func (f vectorFile) vectorNamed(t *testing.T, name string) vectorCase {
-	t.Helper()
-	for _, v := range f.Vectors {
-		if v.Name == name {
-			return v
-		}
-	}
-	t.Fatalf("%s carries no vector named %q", vectorsFile, name)
-	return vectorCase{}
-}
-
-// rawKeys is an installed set as the store reads it: the file's keys, in
-// whatever order the map hands them over.
-func rawKeys(t *testing.T, keys map[string]string) [][]byte {
-	t.Helper()
-	raw := make([][]byte, 0, len(keys))
-	for _, key := range keys {
-		raw = append(raw, []byte(key))
-	}
-	return raw
-}
-
-// openTestStore answers the CLI's store over a config directory of the test's
-// own: the environment is read through the caller-supplied getenv, which is
-// what keeps this off the developer's own machine.
-func openTestStore(t *testing.T) *Store {
-	t.Helper()
-	dir := t.TempDir()
-	store, err := Open(func(name string) string {
-		if name == "XDG_CONFIG_HOME" {
-			return dir
-		}
-		return ""
-	})
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	if dir := filepath.Dir(store.path); dir == "" || !strings.HasSuffix(filepath.ToSlash(dir), "/fugaro") {
-		t.Fatalf("the store's key file is %s, want it under the CLI's own config directory", store.path)
-	}
-	return store
-}
-
-// writeKeyFile writes the store's key file at a mode the test chooses: the mode
-// is half of what the store reads.
-func writeKeyFile(t *testing.T, store *Store, mode fs.FileMode, body string) {
-	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(store.path), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(store.path, []byte(body), mode); err != nil {
-		t.Fatal(err)
-	}
-	// WriteFile keeps an existing file's mode, so a second call at a different
-	// mode has to set it.
-	if err := os.Chmod(store.path, mode); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// generateVectors mints the file's vectors. Every signature is made here, in
-// this process, with a keypair that is thrown away when the test ends: the file
-// holds the public half and the signed key text and nothing a verifier could
-// mint with (.claude/rules/ee.md).
-func generateVectors(t *testing.T) vectorFile {
-	t.Helper()
-	fixture := newFixtureKey(t, fixtureKeyID)
-	staging := newFixtureKey(t, stagingKeyID)
-
-	// The clock the whole file is read at. A fixed date rather than time.Now:
-	// the file is committed, and a vector's answer must not change with the day
-	// the test runs.
-	now := time.Date(2026, 11, 8, 0, 0, 0, 0, time.UTC).Unix()
-	days := func(n int) int64 { return now + int64(n)*24*60*60 }
-
-	file := vectorFile{
-		Note:    "The claim sets, states and refusals the Go, console and app verifiers are all read against (subscriptions plan S2.6, design docs/licensing/licence-key.md). Every key here is minted by a throwaway test keypair whose private half was generated in the process that wrote this file and never written down; no build trusts it, and ee/licence/key.go's production keyring holds no id at all until S2.9 publishes the owner's production key. `now` is the clock every vector is read at; `state` and `claims` are what an accepted key answers and `refused` is the part a refused one fails on, named as the three verifiers name it.",
-		Now:     now,
-		Keyring: map[string]string{fixture.id: fixture.public()},
-		Staging: vectorKey{
-			Note:      "The sandbox key: minted under the staging id for tests and for a sandbox installation, and in no production keyring, so a production verifier refuses it for the id alone (docs/licensing/licence-key.md, \"Test-mode keys\").",
-			ID:        staging.id,
-			PublicKey: staging.public(),
-		},
-	}
-
-	accept := func(name string, key string, state State, claims Claims) {
-		file.Vectors = append(file.Vectors, vectorCase{Name: name, Key: key, State: string(state), Claims: &claims})
-	}
-	refuse := func(name, key, refusal string) {
-		file.Vectors = append(file.Vectors, vectorCase{Name: name, Key: key, Refused: refusal})
-	}
-
-	// The term, and the two ends of the grace. The expiries are the boundaries
-	// and the clock is the same for all of them, so each boundary is a key
-	// whose expiry sits at that distance from now.
-	accept("a team key inside its term",
-		fixture.signClaims(t, Claims{Tier: TierTeam, Features: []string{"coordinator"}, Seats: 5, Organisation: "example.com", Issued: days(-30), Expires: days(335)}),
-		Valid,
-		Claims{Tier: TierTeam, Features: []string{"coordinator"}, Seats: 5, Organisation: "example.com", Issued: days(-30), Expires: days(335)})
-	accept("a key at the second its term ends",
-		fixture.signClaims(t, Claims{Tier: TierCommunity, Features: []string{}, Seats: 1, Organisation: "an-individual", Issued: days(-365), Expires: days(0)}),
-		Valid,
-		Claims{Tier: TierCommunity, Features: []string{}, Seats: 1, Organisation: "an-individual", Issued: days(-365), Expires: days(0)})
-	accept("a key a second into its grace",
-		fixture.signClaims(t, Claims{Tier: TierTeam, Features: []string{}, Seats: 3, Organisation: "example.com", Issued: days(-366), Expires: days(0) - 1}),
-		Grace,
-		Claims{Tier: TierTeam, Features: []string{}, Seats: 3, Organisation: "example.com", Issued: days(-366), Expires: days(0) - 1})
-	accept("a key at the last second of its grace",
-		fixture.signClaims(t, Claims{Tier: TierEnterprise, Features: []string{"sso"}, Seats: 40, Organisation: "an-order-form-id", Issued: days(-395), Expires: days(-30)}),
-		Grace,
-		Claims{Tier: TierEnterprise, Features: []string{"sso"}, Seats: 40, Organisation: "an-order-form-id", Issued: days(-395), Expires: days(-30)})
-	accept("a key a second past its grace",
-		fixture.signClaims(t, Claims{Tier: TierTeam, Features: []string{}, Seats: 3, Organisation: "example.com", Issued: days(-396), Expires: days(-30) - 1}),
-		Expired,
-		Claims{Tier: TierTeam, Features: []string{}, Seats: 3, Organisation: "example.com", Issued: days(-396), Expires: days(-30) - 1})
-	accept("a key long past its grace",
-		fixture.signClaims(t, Claims{Tier: TierCommunity, Features: []string{}, Seats: 1, Organisation: "an-individual", Issued: days(-455), Expires: days(-90)}),
-		Expired,
-		Claims{Tier: TierCommunity, Features: []string{}, Seats: 1, Organisation: "an-individual", Issued: days(-455), Expires: days(-90)})
-
-	// The tier's longest term, at the length it allows and a second past it: the
-	// pair is the bound read from both sides, and the lengths come from the
-	// verifier's own constants so a key minted at the ceiling stays inside it.
-	longest := int64(year+termLead) / int64(time.Second)
-	accept("a key at the longest term its tier allows",
-		fixture.signClaims(t, Claims{Tier: TierEnterprise, Features: []string{"sso"}, Seats: 40, Organisation: "an-order-form-id", Issued: days(-30), Expires: days(-30) + longest}),
-		Valid,
-		Claims{Tier: TierEnterprise, Features: []string{"sso"}, Seats: 40, Organisation: "an-order-form-id", Issued: days(-30), Expires: days(-30) + longest})
-	refuse("a term a second past the tier's maximum",
-		fixture.signClaims(t, Claims{Tier: TierTeam, Features: []string{}, Seats: 1, Organisation: "example.com", Issued: days(-30), Expires: days(-30) + longest + 1}),
-		"lifetime")
-
-	// A term far past the maximum, signed properly: the signature verifies and
-	// the key is refused for its length alone, which is the gross case beside the
-	// boundary above.
-	refuse("a term longer than its tier allows",
-		fixture.signClaims(t, Claims{Tier: TierTeam, Features: []string{}, Seats: 1, Organisation: "example.com", Issued: days(-500), Expires: days(100)}),
-		"lifetime")
-
-	// The non-canonical signature: the same claims, spelled differently, with
-	// the signature over the spelling that was actually signed. Re-wrapping or
-	// re-encoding a claim set is a different byte string and fails the
-	// signature rather than verifying as the same claims.
-	signed, err := json.Marshal(Claims{Tier: TierTeam, Features: []string{}, Seats: 1, Organisation: "example.com", Issued: days(-10), Expires: days(355)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	respelled := bytes.Replace(signed, []byte(`":`), []byte(`": `), 1)
-	refuse("a claim set signed as it is spelled, re-spelled",
-		encodeKey(fixture.id, respelled, ed25519.Sign(fixture.priv, signed)),
-		"signature")
-
-	// A key id no keyring holds, with a payload and a signature that are good
-	// under another id: the id alone is the refusal.
-	foreignClaims := Claims{Tier: TierTeam, Features: []string{}, Seats: 1, Organisation: "example.com", Issued: days(-10), Expires: days(355)}
-	foreignPayload, err := json.Marshal(foreignClaims)
-	if err != nil {
-		t.Fatal(err)
-	}
-	refuse("a key id this build does not hold",
-		encodeKey("licence-someone-elses-key-1", foreignPayload, ed25519.Sign(fixture.priv, foreignPayload)),
-		"unknown-key-id")
-
-	refuse("a staging key",
-		staging.signClaims(t, Claims{Tier: TierTeam, Features: []string{}, Seats: 1, Organisation: "example.com", Issued: days(-10), Expires: days(355)}),
-		"unknown-key-id")
-
-	// The three payloads that are signed but are not a claim set this verifier
-	// can read. They are the only way to reach the claims refusal: the
-	// signature has to verify over the bytes before anything parses them.
-	refuse("a payload that is not a claim set",
-		fixture.signRaw(t, []byte("this is not a claim set")),
-		"claims")
-	refuse("a claim set with a field this verifier does not know",
-		fixture.signRaw(t, []byte(fmt.Sprintf(`{"tier":"team","features":[],"seats":1,"organisation":"example.com","issued":%d,"expires":%d,"covers_until":%d}`, days(-10), days(355), days(355)))),
-		"claims")
-	refuse("a truncated claim set",
-		fixture.signRaw(t, []byte(`{"tier":"team","features":[],"seats":1,"organisation"`)),
-		"claims")
-	// The claim set binds to an organisation: a key issued to nobody is one this
-	// verifier cannot place, and it is refused as the claim set it is rather than
-	// read as a key that happens to carry no organisation.
-	refuse("a claim set with no organisation to bind it to",
-		fixture.signClaims(t, Claims{Tier: TierTeam, Features: []string{}, Seats: 1, Organisation: "", Issued: days(-10), Expires: days(355)}),
-		"claims")
-	// And nothing is read out of a claim set with bytes behind it: the decode
-	// runs to the end of the payload, so a second object after the first is a
-	// claim set the verifier does not know rather than one it reads and ignores
-	// the rest of.
-	refuse("a claim set with bytes after it",
-		fixture.signRaw(t, []byte(fmt.Sprintf(`{"tier":"team","features":[],"seats":1,"organisation":"example.com","issued":%d,"expires":%d}{}`, days(-10), days(355)))),
-		"claims")
-
-	// Not three parts, and a part that is not base64url: the shape of the key
-	// text is refused before any keyring is consulted.
-	refuse("a key text that is not three parts",
-		fixture.id+"."+base64.RawURLEncoding.EncodeToString(foreignPayload),
-		"malformed")
-	refuse("a part that is not base64url",
-		fixture.id+".%%%.%%%",
-		"malformed")
-	// Every part is base64url, and that is a rule about one spelling rather than
-	// about bytes: this payload is a claim set spelled with its final character's
-	// padding bits set, which a decoder that is not strict reads as the same
-	// bytes. One key has one spelling.
-	spelled := fixture.signClaims(t, Claims{Tier: TierTeam, Features: []string{}, Seats: 1, Organisation: "example.com", Issued: days(-10), Expires: days(355)})
-	parts := strings.Split(spelled, ".")
-	refuse("a payload spelled with its padding bits set",
-		parts[0]+"."+respellFinalCharacter(t, parts[1])+"."+parts[2],
-		"malformed")
-	// The id is base64url like the other two parts, and it is the one nothing
-	// decodes: an id carrying characters outside the alphabet is refused with the
-	// shape, before any keyring is consulted and before the id is written into a
-	// refusal. Its payload and signature are good, so a verifier that skipped the
-	// rule would answer unknown-key-id here.
-	refuse("a key id that is not base64url",
-		"a key id with spaces."+base64.RawURLEncoding.EncodeToString(foreignPayload)+"."+base64.RawURLEncoding.EncodeToString(ed25519.Sign(fixture.priv, foreignPayload)),
-		"malformed")
-
-	// The overlap (T26): two keys installed at once, and the one with the later
-	// expiry among those that verify is the one that applies.
-	file.Installed = append(file.Installed,
-		installedCase{
-			Name: "a renewal arriving while the key it follows is still valid",
-			Keys: map[string]string{
-				"current": fixture.signClaims(t, Claims{Tier: TierTeam, Features: []string{}, Seats: 5, Organisation: "example.com", Issued: days(-320), Expires: days(45)}),
-				"renewal": fixture.signClaims(t, Claims{Tier: TierTeam, Features: []string{}, Seats: 5, Organisation: "example.com", Issued: days(-1), Expires: days(364)}),
-			},
-			Applies: "renewal",
-			State:   string(Valid),
-		},
-		installedCase{
-			Name: "a key whose term has run out beside the key that follows it",
-			Keys: map[string]string{
-				"current": fixture.signClaims(t, Claims{Tier: TierTeam, Features: []string{}, Seats: 5, Organisation: "example.com", Issued: days(-368), Expires: days(-3)}),
-				"renewal": fixture.signClaims(t, Claims{Tier: TierTeam, Features: []string{}, Seats: 5, Organisation: "example.com", Issued: days(-1), Expires: days(364)}),
-			},
-			Applies: "renewal",
-			State:   string(Valid),
-		},
-	)
-
-	return file
 }
