@@ -811,12 +811,17 @@ func TestDeviceNodesAreClientDenied(t *testing.T) {
 // own (§F29's "what would force a generation later", D225's later half), so it
 // has to fail here as well.
 //
-// Hand mutation this fails on, each with the golden regenerated so that only
-// this test can object: `".read": "USER"` or `".write": "USER"` on the `$uid`
-// entry (the attribute set), a `".validate"` beside them, a `$other` child
-// beneath the node (the paths), and a USER that also required
-// `child('role').exists()` (the readers) — the last of which every other reading
-// of the document passes, which is why it is worth pinning here.
+// Hand mutation this fails on, each with the golden regenerated so that the byte
+// comparison cannot object: `".read": "USER"` or `".write": "USER"` on the `$uid`
+// entry (the attribute set), a `".validate"` beside them (the same), a `$other`
+// child beneath the node (the paths), and a USER that also required
+// `child('role').exists()` (the readers). The two predicates and the USER are
+// caught twice over — TestDeviceNodesAreClientDenied and
+// TestUserClaimRequiresTheDeviceNode hold the document to the expression each
+// expects to find there, which a regenerated golden does not break. The shape
+// rule and the `$other` are caught by nothing else once the golden is
+// regenerated, and the readers scan is what holds §F29's sentence for a rule
+// that reads one of the fields without carrying the mu claim.
 func TestDeviceNodeCarriesNoShapeRule(t *testing.T) {
 	raw, err := os.ReadFile(goldenPath)
 	if err != nil {
