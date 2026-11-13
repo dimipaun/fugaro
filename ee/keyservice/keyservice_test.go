@@ -165,9 +165,14 @@ func (p *proofSpy) Proved(_ context.Context, _ OpenSource) (Proof, error) {
 // recordingMints is the minter as a test sees it: the fixture's own Minter,
 // with what it minted kept aside. The record holds no key material (§7.3), so
 // the key texts a test reads back through the verifier are the ones kept here.
+//
+// It answers both formats, because the intake reaches one minter: the paid path
+// mints v1 keys and the free routes still mint the older format's, which is the
+// pair K7.3 collapses.
 type recordingMints struct {
-	inner Mints
-	keys  []string
+	inner   Mints
+	innerV1 MintsV1
+	keys    []string
 	// log, when a test sets it, is the order hook: a mint is written down where
 	// the key comes out, which is what makes "the audit line is written before
 	// the key is returned" a claim a test can read.
@@ -179,11 +184,24 @@ func (r *recordingMints) Mint(ctx context.Context, req Request) (Minted, error) 
 	if err != nil {
 		return Minted{}, err
 	}
+	r.recorded(minted.Key)
+	return minted, nil
+}
+
+func (r *recordingMints) MintV1(ctx context.Context, req RequestV1) (MintedV1, error) {
+	minted, err := r.innerV1.MintV1(ctx, req)
+	if err != nil {
+		return MintedV1{}, err
+	}
+	r.recorded(minted.Key)
+	return minted, nil
+}
+
+func (r *recordingMints) recorded(key string) {
 	if r.log != nil {
 		r.log.add("mint")
 	}
-	r.keys = append(r.keys, minted.Key)
-	return minted, nil
+	r.keys = append(r.keys, key)
 }
 
 // ownerSpy is the project's identity in a test: the account a request arrives
@@ -365,7 +383,8 @@ func newFixtureWith(t *testing.T, env Environment, edit func(*fixture)) *fixture
 	f.stepUp = &stepUpSpy{accept: true, accepts: stepUpCode}
 	f.notifier = &notifierSpy{}
 	f.auditor = &auditorSpy{}
-	f.recording = &recordingMints{inner: Minter{Signer: f.signer, Keys: f.keys, Environment: env, Now: f.clock}}
+	minter := Minter{Signer: f.signer, Keys: f.keys, Environment: env, Now: f.clock}
+	f.recording = &recordingMints{inner: minter, innerV1: minter}
 	f.cfg = &Config{
 		Environment: env,
 		Keys:        f.keys,
@@ -549,6 +568,16 @@ func (f *fixture) records() []Record {
 	return out
 }
 
+// revocations is every entry of §8's revocation list the store holds.
+func (f *fixture) revocations() []Revocation {
+	f.t.Helper()
+	entries, err := f.store.Revocations(context.Background())
+	if err != nil {
+		f.t.Fatalf("reading the revocation list: %v", err)
+	}
+	return entries
+}
+
 // queued is every application a person has to decide.
 func (f *fixture) queued() []Application {
 	f.t.Helper()
@@ -620,6 +649,7 @@ func (f *fixture) purchase(id, domain string, seats, termDays int) Record {
 		OccurredAt:   f.now,
 		Subscription: "sub-" + domain,
 		Organisation: domain,
+		WorkspaceID:  workspaceID,
 		Email:        buyerAddress(domain),
 		Seats:        seats,
 		TermDays:     termDays,
@@ -646,6 +676,12 @@ func (f *fixture) event(e Event) *httptest.ResponseRecorder {
 	}
 	if e.OccurredAt.IsZero() {
 		e.OccurredAt = f.now
+	}
+	// A purchase's and a seat change's key binds to a workspace, so an event
+	// that names none is filled with the fixture's own: a test about the binding
+	// sets one of its own (§5.1, TN2).
+	if e.WorkspaceID == "" {
+		e.WorkspaceID = workspaceID
 	}
 	return f.deliver(e)
 }

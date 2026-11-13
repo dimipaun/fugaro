@@ -266,10 +266,10 @@ func TestTheFrontDoorIsOneInstanceBecauseItsBoundsAreInMemory(t *testing.T) {
 // tokens at the credentials service and holds the FP's database admin through
 // the Firebase root (D922's writer), and a public endpoint whose identity held
 // any of those would make spec.md §8's "no forge credential … there is none to
-// reach" false the day it is turned on. What this account holds is two grants —
-// the runs bucket's read (D932) and the store's objectAdmin (D935, in
-// mcpauth_store.tf) — and nothing else in this tree or the Firebase root grants
-// it anything.
+// reach" false the day it is turned on. What this account holds is three grants
+// — the runs bucket's read (D932), the store's objectAdmin (D935, in
+// mcpauth_store.tf) and the database read (O16b, in state_read.tf) — and
+// nothing else in this tree or the Firebase root grants it anything.
 //
 // A container that fell back to the default compute account would run the
 // front door as an identity nothing in this tree granted anything to and
@@ -279,8 +279,9 @@ func TestTheFrontDoorIsOneInstanceBecauseItsBoundsAreInMemory(t *testing.T) {
 // The mutations this fails on: a template with no service_account, a service
 // account that is not the front door's own (the coordinator's, whose comment
 // above says what it holds), an account created on the coordinator's opt-in
-// rather than the front door's, and a second grant — a secret, a project role,
-// a database role — named anywhere in this file for that account.
+// rather than the front door's, and a grant beyond the runs bucket's named in
+// this file for that account — a secret, a project role, a database role: the
+// account's other two grants are each a file of their own.
 func TestCoordinatorServiceHasItsOwnAccount(t *testing.T) {
 	code := tfSource(t, coordinatorTF)
 	svc := tfResource(t, code, "google_cloud_run_v2_service", "coordinator_front_door")
@@ -314,7 +315,7 @@ func TestCoordinatorServiceHasItsOwnAccount(t *testing.T) {
 		{"the front door's opt-in", `(?m)^\s*count\s*=\s*local\.mcp_server_on\b`},
 	} {
 		if !regexp.MustCompile(want.re).MatchString(grant) {
-			t.Errorf("%s: the front door's runs-bucket grant sets no %s (D932: the tools behind the port answer with a run's recorded artefacts, and this read is one of the account's two grants, the other being the store's in %s):\n%s", coordinatorTF, want.what, mcpauthStoreTF, grant)
+			t.Errorf("%s: the front door's runs-bucket grant sets no %s (D932: the tools behind the port answer with a run's recorded artefacts, and this read is one of the account's three grants, the others being the store's in %s and the database's in %s):\n%s", coordinatorTF, want.what, mcpauthStoreTF, stateReadTF, grant)
 		}
 	}
 	if strings.Contains(code, "roles/firebasedatabase.admin") {
