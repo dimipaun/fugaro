@@ -156,7 +156,10 @@ it. Two facts keep that from being the provider path in miniature, and both are 
 2. **The pin is a closed set, and the provider path's set is not.** `workspaceSignInPath` names its
    entries; the provider path would have to name its own per project, and every later provider (or
    every provider the owner enables in the console by hand) is a change to a security check that
-   lives in **this repository** while the configuration lives in **the owner's console**.
+   lives in **this repository** while the configuration lives in **the owner's console**. **The two
+   sets are also not one a subtraction reaches**: against the workspace's three admissions, the
+   table above adds `microsoft.com`, refuses the sign-up setting the workspace admits, and takes the
+   email link only if D228 is reopened (§6.4).
 
 The narrower refusal is therefore a **security surface of its own**, reviewed as one: what it admits
 is a project-wide door, and the two entries that would do the damage — `signIn.anonymous.enabled` and
@@ -311,9 +314,16 @@ None of them exists, and none is proposed here as work to do:
    the specification, and the proof is a **test in `internal/cli`** over `PublicSignUp`'s output: a
    configuration enabling `google.com` and `microsoft.com` is admitted; one enabling
    `signIn.anonymous.enabled`, or `apple.com`, or an IdP name the table does not carry, is refused
-   **by name**. The workspace's `workspaceSignInPath` and its tests are the shape to copy, and the
-   provider path's table is strictly narrower than that one in exactly one field (the sign-up
-   setting, §2.5).
+   **by name**. The workspace's `workspaceSignInPath` and its tests are the shape to copy, and **the
+   difference from that function is not one field — it runs both ways**, which is why the table and
+   not the function is the specification. Against `workspaceSignInPath`'s three admissions
+   (`signIn.email.enabled`, the sign-up setting, and `google.com` under either IdP list), the
+   provider path **adds** `microsoft.com`, **drops** the sign-up setting
+   (`client.permissions.disabledUserSignup is false` is refused, §2.5), and admits
+   `signIn.email.enabled` — which the workspace pin admits outright — **only if D228's refusal is
+   reopened**. So a narrowing derived from the workspace's function by subtraction is wrong in both
+   directions at once: it refuses every correctly configured Microsoft project, and it admits the
+   email link this folder refused by name.
 5. **That the per-project console steps are performed and stay performed.** Authorised domains, the
    OAuth client registration and the action URL are hand-made, per project, in the console. Nothing
    in this repository reads them today; a check that reads them back is the precondition, in the
