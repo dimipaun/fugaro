@@ -168,8 +168,10 @@ type Policy struct {
 	Name string
 	// Tier is the tier every key of this row carries.
 	Tier string
-	// Kind is `paid` or `trial`; a `comped` key is the founder's and carries a
-	// row of its own when the admin page mints one (K2.6).
+	// Kind is one of licence's three: `paid` for every row that is sold, `trial`
+	// for the trial, and `comped` for the free seat, which is the one comped row
+	// this table carries (D2199, D2184). The founder's own comped key is the
+	// admin page's and carries no row here (K2.6).
 	Kind string
 	// Term is the row's lifetime, and it is what a mint request that names no
 	// term of its own is minted for: a first purchase is the plan's own period.

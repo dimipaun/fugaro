@@ -930,20 +930,24 @@ func (s *Service) paid(ctx context.Context, req RequestV1, applicant, source str
 	if answer.RenewalSecret != "" {
 		secretHash = digest(answer.RenewalSecret)
 	}
-	// The state carries the hash and not the workspace, although the request
-	// names one and the key is bound to it, and that is the half of the pair that
-	// has to stay shut: `/renew` mints its successor into the state's own
-	// workspace, reads nothing else, and never looks at the subscription the key
-	// was minted for, so a state naming a workspace is a purchased key that
-	// renews itself every month after the subscription behind it is cancelled —
-	// a signed term nobody paid for, and D2202 is what makes it unbounded rather
-	// than a month of grace: the key in hand runs thirty days, so the door serves
-	// the whole of a licence the merchant has stopped selling. A state that names
-	// none is refused there instead (K2.3), which costs a renewal rather than a
-	// term; the gate that would let this state name its workspace is renew.go's
-	// to write and the plan's to decide.
+	// The workspace goes in with the hash, and it is the request's own: that is
+	// the workspace the key was minted into, and `/renew` mints the successor
+	// into it. It has to be here, because D2202 makes a connected key thirty days
+	// of the term it was sold for and `/renew` is the door that carries the
+	// entitlement from one of those to the next — a purchased key whose state
+	// names no workspace is refused there, and an annual purchase would then be
+	// dark from the end of its first key until the merchant's own renewal, which
+	// opens RenewalLead before the subscription's end and so on day 335 of a year
+	// (renew.go's `renewable`).
+	//
+	// What naming it costs is that `/renew` reads no subscription either, so a
+	// key whose subscription the merchant has since cancelled renews here too.
+	// That gate is P3.6's and the plan says so — "`/renew` issues only while the
+	// entitlement runs", `TestRenewalStopsWhenTheEntitlementEnds` — and it needs
+	// the record to carry the subscription the key was minted for.
 	if err := s.store.SaveKeyState(ctx, KeyState{
 		KeyID:             answer.Record.KeyID,
+		WorkspaceID:       req.WorkspaceID,
 		RenewalSecretHash: secretHash,
 	}); err != nil {
 		return MintedV1{}, err
