@@ -1,0 +1,201 @@
+{
+  "note": "The claim sets, states and refusals the Go, console and app verifiers are all read against (subscriptions plan S2.6, design docs/licensing/licence-key.md). Every key here is minted by a throwaway test keypair whose private half was generated in the process that wrote this file and never written down; no build trusts it, and ee/licence/key.go's production keyring holds no id at all until S2.9 publishes the owner's production key. `now` is the clock every vector is read at; `state` and `claims` are what an accepted key answers and `refused` is the part a refused one fails on, named as the three verifiers name it.",
+  "now": 1794096000,
+  "keyring": {
+    "licence-test-fixture-1": "2EBtpDUTvr07BQYDZlfPI5NFlCoY5BBJnQngU_7fw7A"
+  },
+  "staging": {
+    "note": "The sandbox key: minted under the staging id for tests and for a sandbox installation, and in no production keyring, so a production verifier refuses it for the id alone (docs/licensing/licence-key.md, \"Test-mode keys\").",
+    "id": "licence-staging-sandbox-1",
+    "public_key": "9UpKldjjHPsMMlyluBE2vv_fPvz1sJEniYmmadFZ9zg"
+  },
+  "vectors": [
+    {
+      "name": "a team key inside its term",
+      "key": "licence-test-fixture-1.eyJ0aWVyIjoidGVhbSIsImZlYXR1cmVzIjpbImNvb3JkaW5hdG9yIl0sInNlYXRzIjo1LCJvcmdhbmlzYXRpb24iOiJleGFtcGxlLmNvbSIsImlzc3VlZCI6MTc5MTUwNDAwMCwiZXhwaXJlcyI6MTgyMzA0MDAwMH0.DAhIM8IEv20rywXMzTB9y-mItJh6i8GfkIobwU-0C-B6elJE-rNOM3ketHaTChEE9aGrDrNXjwt1TpTZDnjaBA",
+      "state": "valid",
+      "claims": {
+        "tier": "team",
+        "features": [
+          "coordinator"
+        ],
+        "seats": 5,
+        "organisation": "example.com",
+        "issued": 1791504000,
+        "expires": 1823040000
+      }
+    },
+    {
+      "name": "a key at the second its term ends",
+      "key": "licence-test-fixture-1.eyJ0aWVyIjoiY29tbXVuaXR5IiwiZmVhdHVyZXMiOltdLCJzZWF0cyI6MSwib3JnYW5pc2F0aW9uIjoiYW4taW5kaXZpZHVhbCIsImlzc3VlZCI6MTc2MjU2MDAwMCwiZXhwaXJlcyI6MTc5NDA5NjAwMH0.w1WlQXiWAba9kfP2q_phTvjOfLwFHk3NaUjAEucmyNEwQrHRBE8sXX8OfFBNE-MVaoAkCrRk9LdjYNff3IgzDg",
+      "state": "valid",
+      "claims": {
+        "tier": "community",
+        "features": [],
+        "seats": 1,
+        "organisation": "an-individual",
+        "issued": 1762560000,
+        "expires": 1794096000
+      }
+    },
+    {
+      "name": "a key a second into its grace",
+      "key": "licence-test-fixture-1.eyJ0aWVyIjoidGVhbSIsImZlYXR1cmVzIjpbXSwic2VhdHMiOjMsIm9yZ2FuaXNhdGlvbiI6ImV4YW1wbGUuY29tIiwiaXNzdWVkIjoxNzYyNDczNjAwLCJleHBpcmVzIjoxNzk0MDk1OTk5fQ.e_JcJClx2V2QtlagiMaJ8YmfPmBvOXerf6FsKU8LJ2cvpyMe59K8x_mQt59cQWjM-WIXg0N_3StYkuZP5yDYAA",
+      "state": "grace",
+      "claims": {
+        "tier": "team",
+        "features": [],
+        "seats": 3,
+        "organisation": "example.com",
+        "issued": 1762473600,
+        "expires": 1794095999
+      }
+    },
+    {
+      "name": "a key at the last second of its grace",
+      "key": "licence-test-fixture-1.eyJ0aWVyIjoiZW50ZXJwcmlzZSIsImZlYXR1cmVzIjpbInNzbyJdLCJzZWF0cyI6NDAsIm9yZ2FuaXNhdGlvbiI6ImFuLW9yZGVyLWZvcm0taWQiLCJpc3N1ZWQiOjE3NTk5NjgwMDAsImV4cGlyZXMiOjE3OTE1MDQwMDB9.le1fPC2Hc-r8NG0exeDkvK2pzMzY_GPGC_MN2Q4fpxpVJUmjSy6jJilsYsR1Xtf_nOS4M7S1AFO7rA6YN7jqBw",
+      "state": "grace",
+      "claims": {
+        "tier": "enterprise",
+        "features": [
+          "sso"
+        ],
+        "seats": 40,
+        "organisation": "an-order-form-id",
+        "issued": 1759968000,
+        "expires": 1791504000
+      }
+    },
+    {
+      "name": "a key a second past its grace",
+      "key": "licence-test-fixture-1.eyJ0aWVyIjoidGVhbSIsImZlYXR1cmVzIjpbXSwic2VhdHMiOjMsIm9yZ2FuaXNhdGlvbiI6ImV4YW1wbGUuY29tIiwiaXNzdWVkIjoxNzU5ODgxNjAwLCJleHBpcmVzIjoxNzkxNTAzOTk5fQ.3uio-QQ-STMIm7ziUAODrN31SsX0sZXKjYUcxSdje87FXAZ2LPGrVk2wYSxQmVf7Uk4Z6Twv55ocFjPTq1FuCQ",
+      "state": "expired",
+      "claims": {
+        "tier": "team",
+        "features": [],
+        "seats": 3,
+        "organisation": "example.com",
+        "issued": 1759881600,
+        "expires": 1791503999
+      }
+    },
+    {
+      "name": "a key long past its grace",
+      "key": "licence-test-fixture-1.eyJ0aWVyIjoiY29tbXVuaXR5IiwiZmVhdHVyZXMiOltdLCJzZWF0cyI6MSwib3JnYW5pc2F0aW9uIjoiYW4taW5kaXZpZHVhbCIsImlzc3VlZCI6MTc1NDc4NDAwMCwiZXhwaXJlcyI6MTc4NjMyMDAwMH0.L1URVOvsFHC9kyV6IZ77l4eoy9LHyTT1jooupA-BWffmu0-dm3VEH2kQVNvfgZB2nA6KovPDK2ccxsrBtAYUBg",
+      "state": "expired",
+      "claims": {
+        "tier": "community",
+        "features": [],
+        "seats": 1,
+        "organisation": "an-individual",
+        "issued": 1754784000,
+        "expires": 1786320000
+      }
+    },
+    {
+      "name": "a key at the longest term its tier allows",
+      "key": "licence-test-fixture-1.eyJ0aWVyIjoiZW50ZXJwcmlzZSIsImZlYXR1cmVzIjpbInNzbyJdLCJzZWF0cyI6NDAsIm9yZ2FuaXNhdGlvbiI6ImFuLW9yZGVyLWZvcm0taWQiLCJpc3N1ZWQiOjE3OTE1MDQwMDAsImV4cGlyZXMiOjE4MjU2MzIwMDB9.zaJZ9TQ864Tpu4-0H07en7gLpMg8l8-DyUTRZORwwBi9naa630pSNflM4uhCzZrBt5MaatkDykRHkyJUpjD1CA",
+      "state": "valid",
+      "claims": {
+        "tier": "enterprise",
+        "features": [
+          "sso"
+        ],
+        "seats": 40,
+        "organisation": "an-order-form-id",
+        "issued": 1791504000,
+        "expires": 1825632000
+      }
+    },
+    {
+      "name": "a term a second past the tier's maximum",
+      "key": "licence-test-fixture-1.eyJ0aWVyIjoidGVhbSIsImZlYXR1cmVzIjpbXSwic2VhdHMiOjEsIm9yZ2FuaXNhdGlvbiI6ImV4YW1wbGUuY29tIiwiaXNzdWVkIjoxNzkxNTA0MDAwLCJleHBpcmVzIjoxODI1NjMyMDAxfQ.FEQ1kTY467V4zzpfSSgiinC_GXDwCNQgkZO__ase2CjTurmSNxdhZ-nxouuGQmNbNJaHwifA3fvdkB-Fso_eAQ",
+      "refused": "lifetime"
+    },
+    {
+      "name": "a term longer than its tier allows",
+      "key": "licence-test-fixture-1.eyJ0aWVyIjoidGVhbSIsImZlYXR1cmVzIjpbXSwic2VhdHMiOjEsIm9yZ2FuaXNhdGlvbiI6ImV4YW1wbGUuY29tIiwiaXNzdWVkIjoxNzUwODk2MDAwLCJleHBpcmVzIjoxODAyNzM2MDAwfQ.Mwc4KUl34xBWfkFoGWuf7Zo4WwkA3lenXWkuaUI67Brp5aeEXN4Ro7IK5piW43NMAKZZYSzOOo_bd-lduGjjAQ",
+      "refused": "lifetime"
+    },
+    {
+      "name": "a claim set signed as it is spelled, re-spelled",
+      "key": "licence-test-fixture-1.eyJ0aWVyIjogInRlYW0iLCJmZWF0dXJlcyI6W10sInNlYXRzIjoxLCJvcmdhbmlzYXRpb24iOiJleGFtcGxlLmNvbSIsImlzc3VlZCI6MTc5MzIzMjAwMCwiZXhwaXJlcyI6MTgyNDc2ODAwMH0.-CeFLeisnwAYJGtL98bOuAnMJ_sXtyB4uO5VkEy4FuBrCKEU_BoFx4h3NimW1MUCksNxdGbvzxKctroQo-MWDA",
+      "refused": "signature"
+    },
+    {
+      "name": "a key id this build does not hold",
+      "key": "licence-someone-elses-key-1.eyJ0aWVyIjoidGVhbSIsImZlYXR1cmVzIjpbXSwic2VhdHMiOjEsIm9yZ2FuaXNhdGlvbiI6ImV4YW1wbGUuY29tIiwiaXNzdWVkIjoxNzkzMjMyMDAwLCJleHBpcmVzIjoxODI0NzY4MDAwfQ.-CeFLeisnwAYJGtL98bOuAnMJ_sXtyB4uO5VkEy4FuBrCKEU_BoFx4h3NimW1MUCksNxdGbvzxKctroQo-MWDA",
+      "refused": "unknown-key-id"
+    },
+    {
+      "name": "a staging key",
+      "key": "licence-staging-sandbox-1.eyJ0aWVyIjoidGVhbSIsImZlYXR1cmVzIjpbXSwic2VhdHMiOjEsIm9yZ2FuaXNhdGlvbiI6ImV4YW1wbGUuY29tIiwiaXNzdWVkIjoxNzkzMjMyMDAwLCJleHBpcmVzIjoxODI0NzY4MDAwfQ.F_Ho-8k-SLoHO5c5R4SmiDjq8Llvc7SF57um5Lx1WvuAaglhuFz5z0vhrCyn9tLHOYTqniYedM8Ajjdmh-qIDA",
+      "refused": "unknown-key-id"
+    },
+    {
+      "name": "a payload that is not a claim set",
+      "key": "licence-test-fixture-1.dGhpcyBpcyBub3QgYSBjbGFpbSBzZXQ.MNoFTAW7wYFmFmfeh7eRwPCKQpM47w2W9vPiriPkDH9Ok9kkPsLUatj-bxmsmLOqoN3u8oVZsVK9lj0xb_AxDQ",
+      "refused": "claims"
+    },
+    {
+      "name": "a claim set with a field this verifier does not know",
+      "key": "licence-test-fixture-1.eyJ0aWVyIjoidGVhbSIsImZlYXR1cmVzIjpbXSwic2VhdHMiOjEsIm9yZ2FuaXNhdGlvbiI6ImV4YW1wbGUuY29tIiwiaXNzdWVkIjoxNzkzMjMyMDAwLCJleHBpcmVzIjoxODI0NzY4MDAwLCJjb3ZlcnNfdW50aWwiOjE4MjQ3NjgwMDB9.1iZqSo9Tj_50o0aoxt8vRqbu9xiDeWdQfEpcXOO0N4qrcB2QSPXJkbZlc4R4BY18vYuIPv7TTrm71kSPwDlrCg",
+      "refused": "claims"
+    },
+    {
+      "name": "a truncated claim set",
+      "key": "licence-test-fixture-1.eyJ0aWVyIjoidGVhbSIsImZlYXR1cmVzIjpbXSwic2VhdHMiOjEsIm9yZ2FuaXNhdGlvbiI.LorJRHnRx63jYojg28eaxuOsNVH9xzlJt6NVKQGhtDx_BndDZqrQPZcIYTFM2LlMOFykbVfTG_iVWz8G-YggCQ",
+      "refused": "claims"
+    },
+    {
+      "name": "a claim set with no organisation to bind it to",
+      "key": "licence-test-fixture-1.eyJ0aWVyIjoidGVhbSIsImZlYXR1cmVzIjpbXSwic2VhdHMiOjEsIm9yZ2FuaXNhdGlvbiI6IiIsImlzc3VlZCI6MTc5MzIzMjAwMCwiZXhwaXJlcyI6MTgyNDc2ODAwMH0.tTMEeRBdYYjW2i6wAnWLSK8PnsXkKY05d4Fn_6wHopnWJd0s9Z_6koSpZMjUy5APAp0mUV6ZCWmxti3RWyzQAA",
+      "refused": "claims"
+    },
+    {
+      "name": "a claim set with bytes after it",
+      "key": "licence-test-fixture-1.eyJ0aWVyIjoidGVhbSIsImZlYXR1cmVzIjpbXSwic2VhdHMiOjEsIm9yZ2FuaXNhdGlvbiI6ImV4YW1wbGUuY29tIiwiaXNzdWVkIjoxNzkzMjMyMDAwLCJleHBpcmVzIjoxODI0NzY4MDAwfXt9.Q8uWQ6KWuU_scc-EVuAZuXbd8V6xucv7atcX8uACffvhaGwkKw88O2Vp7nJhjY287wXAufYH1eq8svgOWWBiAA",
+      "refused": "claims"
+    },
+    {
+      "name": "a key text that is not three parts",
+      "key": "licence-test-fixture-1.eyJ0aWVyIjoidGVhbSIsImZlYXR1cmVzIjpbXSwic2VhdHMiOjEsIm9yZ2FuaXNhdGlvbiI6ImV4YW1wbGUuY29tIiwiaXNzdWVkIjoxNzkzMjMyMDAwLCJleHBpcmVzIjoxODI0NzY4MDAwfQ",
+      "refused": "malformed"
+    },
+    {
+      "name": "a part that is not base64url",
+      "key": "licence-test-fixture-1.%%%.%%%",
+      "refused": "malformed"
+    },
+    {
+      "name": "a payload spelled with its padding bits set",
+      "key": "licence-test-fixture-1.eyJ0aWVyIjoidGVhbSIsImZlYXR1cmVzIjpbXSwic2VhdHMiOjEsIm9yZ2FuaXNhdGlvbiI6ImV4YW1wbGUuY29tIiwiaXNzdWVkIjoxNzkzMjMyMDAwLCJleHBpcmVzIjoxODI0NzY4MDAwff.-CeFLeisnwAYJGtL98bOuAnMJ_sXtyB4uO5VkEy4FuBrCKEU_BoFx4h3NimW1MUCksNxdGbvzxKctroQo-MWDA",
+      "refused": "malformed"
+    },
+    {
+      "name": "a key id that is not base64url",
+      "key": "a key id with spaces.eyJ0aWVyIjoidGVhbSIsImZlYXR1cmVzIjpbXSwic2VhdHMiOjEsIm9yZ2FuaXNhdGlvbiI6ImV4YW1wbGUuY29tIiwiaXNzdWVkIjoxNzkzMjMyMDAwLCJleHBpcmVzIjoxODI0NzY4MDAwfQ.-CeFLeisnwAYJGtL98bOuAnMJ_sXtyB4uO5VkEy4FuBrCKEU_BoFx4h3NimW1MUCksNxdGbvzxKctroQo-MWDA",
+      "refused": "malformed"
+    }
+  ],
+  "installed": [
+    {
+      "name": "a renewal arriving while the key it follows is still valid",
+      "keys": {
+        "current": "licence-test-fixture-1.eyJ0aWVyIjoidGVhbSIsImZlYXR1cmVzIjpbXSwic2VhdHMiOjUsIm9yZ2FuaXNhdGlvbiI6ImV4YW1wbGUuY29tIiwiaXNzdWVkIjoxNzY2NDQ4MDAwLCJleHBpcmVzIjoxNzk3OTg0MDAwfQ.YXMzKf1yApdJhSjk62mDeFe2EiQTEtUv3P1pTakwL_rwpzGGOLVeln_ZAM8oIzHSWqO93YGWW9Jyum-F4ODSDg",
+        "renewal": "licence-test-fixture-1.eyJ0aWVyIjoidGVhbSIsImZlYXR1cmVzIjpbXSwic2VhdHMiOjUsIm9yZ2FuaXNhdGlvbiI6ImV4YW1wbGUuY29tIiwiaXNzdWVkIjoxNzk0MDA5NjAwLCJleHBpcmVzIjoxODI1NTQ1NjAwfQ.ujEm1mIYGSGUapikrUQJyH53jo2OTwBMrFB9DuEZ19TvafOUVM0NMk8efOR8pOiSjqr0Nsf4qQq9VKh34kWcBQ"
+      },
+      "applies": "renewal",
+      "state": "valid"
+    },
+    {
+      "name": "a key whose term has run out beside the key that follows it",
+      "keys": {
+        "current": "licence-test-fixture-1.eyJ0aWVyIjoidGVhbSIsImZlYXR1cmVzIjpbXSwic2VhdHMiOjUsIm9yZ2FuaXNhdGlvbiI6ImV4YW1wbGUuY29tIiwiaXNzdWVkIjoxNzYyMzAwODAwLCJleHBpcmVzIjoxNzkzODM2ODAwfQ.131UlPkKbVxNOVjDmju9u_DV7staQaFTpBIYF_UHPIwQARz5f_PiFag3y4Y3fFwwPsTwxnADZgolw3bS1GXYBA",
+        "renewal": "licence-test-fixture-1.eyJ0aWVyIjoidGVhbSIsImZlYXR1cmVzIjpbXSwic2VhdHMiOjUsIm9yZ2FuaXNhdGlvbiI6ImV4YW1wbGUuY29tIiwiaXNzdWVkIjoxNzk0MDA5NjAwLCJleHBpcmVzIjoxODI1NTQ1NjAwfQ.ujEm1mIYGSGUapikrUQJyH53jo2OTwBMrFB9DuEZ19TvafOUVM0NMk8efOR8pOiSjqr0Nsf4qQq9VKh34kWcBQ"
+      },
+      "applies": "renewal",
+      "state": "valid"
+    }
+  ]
+}

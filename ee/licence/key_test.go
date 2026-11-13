@@ -13,6 +13,12 @@ package licence
 // carries is a public half and signed key texts, which is what a verifier's
 // fixture is allowed to carry and what the console's parity test reads.
 //
+// **The older format's fixture stays beside it.** `testdata/vectors.json` is
+// the vectors of the `<key id>.<payload>.<signature>` key this package no
+// longer verifies (K7.3): the console's reader of that format and the app's
+// still test against it, so the file leaves with those two readers rather than
+// with the Go verifier.
+//
 // The keys are shaped as they are so that the file is the *only* shared thing
 // the two verifiers have: the claim sets are the ones a licence server would
 // mint (a whole policy in the key, times as RFC 3339 stamps, `check_interval`
