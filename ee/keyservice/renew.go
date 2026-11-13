@@ -453,7 +453,8 @@ func (s *Service) renew(w http.ResponseWriter, r *http.Request) {
 	// the seat change — end where those paths asked for them and on no grid at all.
 	// A gate that asked for a whole term of room past the key refused every one of
 	// them, which is a paid licence dark from the end of the key in hand
-	// (TestARenewalOffTheTermGridIsServed, TestASeatChangesKeyRenewsWhileTheTermRuns,
+	// (TestAMerchantRenewalsKeyRenewsOffTheTermGrid,
+	// TestASeatChangesKeyRenewsWhileTheTermRuns,
 	// TestAMonthBilledInTwentyEightDaysRenewsToTheSubscriptionsEnd), and it is the
 	// mint below rather than this check that keeps the successor inside what was
 	// bought (`renewalDays`).
@@ -650,17 +651,19 @@ func renewable(record Record, policy Policy, now time.Time) bool {
 // holder asked for before, and a term longer than the tier allows is the
 // minter's refusal rather than a clamp in this file (Check 175).
 //
-// What it never asks for is a day the subscription has not reached, and that is
-// the gate's own second half rather than a second gate: past the end of the key
-// in hand the two ends are not on one grid (D2202), so a request measured by the
-// row's period alone runs past what the customer bought wherever the subscription
-// ends inside it — an annual subscription reaches a year beyond a thirty-day key
-// where the successor above it is a month, and a key whose end is a few days
-// short of the subscription's (the chain arriving at the merchant's renewal) has
-// days of room and not a period. A record standing for a term nobody paid for is
-// read by `entitlementEnd` (merchant.go), which is what the subscription's own
-// end would be repaired from: the mint is capped instead, so the successor ends
-// where the money does.
+// What it never asks for is a day the subscription has not reached, which is the
+// other half of the gate's own question: the gate reads whether the money ends
+// past the key in hand, and this is what keeps the successor inside it. It has to
+// be said here because past that point the two ends are not on one grid (D2202):
+// a request measured by the row's period alone runs past what the customer bought
+// wherever the subscription ends inside it — an annual subscription reaches a
+// year beyond a thirty-day key, where the successor above it is a month, and a
+// key whose end is days short of the subscription's (the chain arriving at the
+// merchant's renewal) has days of room and not a period. The difference is not
+// only the key's: a record standing for a term nobody paid for is read by
+// `entitlementEnd` (merchant.go), which is what a lost renewal's subscription is
+// repaired from. So the mint is capped, and the successor ends where the money
+// does.
 //
 // The term is in whole days, because that is the unit `RequestV1.TermDays`
 // states and the minter dates the successor from its own clock and never from a
@@ -672,9 +675,9 @@ func renewable(record Record, policy Policy, now time.Time) bool {
 // measures from the end the key in hand carries. The round is what that costs,
 // and a job running at a fixed minute pays it once: the successor's end is on
 // that minute, so its window opens on it too and the term after is exact.
-func renewalDays(record Record, policy Policy, now time.Time, paidThrough time.Time) int {
+func renewalDays(record Record, policy Policy, now time.Time, subscriptionEnd time.Time) int {
 	days := daysBetween(now, covered(record, policy, now))
-	if rest := daysBetween(now, paidThrough); rest < days {
+	if rest := daysBetween(now, subscriptionEnd); rest < days {
 		days = rest
 	}
 	return days
