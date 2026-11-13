@@ -159,13 +159,13 @@ var (
 	ErrUnverifiedSchedulerToken = errors.New("keyservice: the Cloud Scheduler token is not verified")
 )
 
-// SignIn is a verified portal sign-in: who signed in, with what, when, and the
+// VerifiedSignIn is a verified portal sign-in: who signed in, with what, when, and the
 // member the address folds to.
 //
 // It is not a permission. What the person may do is their memberships' answer,
 // read from the store where the request is turned into an action; what this
 // carries is only what the token proved and what a rule over it needs.
-type SignIn struct {
+type VerifiedSignIn struct {
 	// UID is the Firebase uid, which is the key every membership record is
 	// written under — an address changes hands, a uid does not.
 	UID string
@@ -262,13 +262,13 @@ func NewPortalVerifier(projectID string, keys mcpauth.KeySource, opts ...PortalO
 // can answer the person without reading a message. A key set that could not be
 // read is passed through unwrapped, because it is this service's failure and not
 // the person's.
-func (v *PortalVerifier) Verify(ctx context.Context, raw string) (SignIn, error) {
+func (v *PortalVerifier) Verify(ctx context.Context, raw string) (VerifiedSignIn, error) {
 	id, err := v.verify.VerifyIDToken(ctx, raw)
 	if err != nil {
 		if errors.Is(err, mcpauth.ErrUnverifiedIDToken) {
-			return SignIn{}, fmt.Errorf("%w: %w", ErrUnverifiedSignIn, err)
+			return VerifiedSignIn{}, fmt.Errorf("%w: %w", ErrUnverifiedSignIn, err)
 		}
-		return SignIn{}, err
+		return VerifiedSignIn{}, err
 	}
 	// The member is built from the address AS CLAIMED and not from mcpauth's
 	// folded one: access.Member keeps the local part byte for byte while mcpauth
@@ -282,9 +282,9 @@ func (v *PortalVerifier) Verify(ctx context.Context, raw string) (SignIn, error)
 		// this is the "not a member" half of its rule: an address this tree
 		// cannot spell as a member is one no stored membership can be compared
 		// against, and the refusal names the shape rather than the address.
-		return SignIn{}, fmt.Errorf("%w: the identity's address is not one this service can compare", ErrUnverifiedSignIn)
+		return VerifiedSignIn{}, fmt.Errorf("%w: the identity's address is not one this service can compare", ErrUnverifiedSignIn)
 	}
-	return SignIn{
+	return VerifiedSignIn{
 		UID:      id.UID,
 		Email:    id.Email,
 		Member:   member,
@@ -305,7 +305,7 @@ func (v *PortalVerifier) Verify(ctx context.Context, raw string) (SignIn, error)
 // the rule follows the ACTOR and not the organisation the request is about — and
 // a customer membership is not one of those, so a request that uses only one
 // never reaches this.
-func (v *PortalVerifier) RequireSSO(signIn SignIn, rule SSORule) error {
+func (v *PortalVerifier) RequireSSO(signIn VerifiedSignIn, rule SSORule) error {
 	switch signIn.Provider {
 	case signInGoogle:
 		return nil
@@ -332,7 +332,7 @@ func (v *PortalVerifier) RequireSSO(signIn SignIn, rule SSORule) error {
 // The age is `auth_time`'s and not the token's `iat`: an ID token lives an hour,
 // so a token minted this minute can attest a sign-in from this morning, and a
 // step-up measured on `iat` would be a step-up over the wrong fact.
-func (v *PortalVerifier) FreshWithin(signIn SignIn, within time.Duration) error {
+func (v *PortalVerifier) FreshWithin(signIn VerifiedSignIn, within time.Duration) error {
 	if within <= 0 {
 		// A window of nothing is a configuration mistake, and the answer that
 		// keeps it from becoming "everything is fresh" is a refusal.
