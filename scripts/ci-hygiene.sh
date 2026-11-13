@@ -25,8 +25,9 @@
 # fixtures that DO pin their clock (a `newX(t)` line beside a literal instant
 # says nothing about the clock the fixture reads), so they are a report for the
 # owner to read rather than a build to fail. Rule 1 is exact and does fail the
-# build. Promote either of the other two by making its function count into
-# `violations` instead of `warnings`, once the tree it reports on is empty.
+# build. Promote either of the other two by writing `violation` where its
+# `report` line at the end of this file writes `warn`, once the tree it reports
+# on is empty.
 #
 # A rule 1 violation has no line, and prints 0 there.
 set -uo pipefail
@@ -155,20 +156,21 @@ rule_wall_clock_bounds() {
   done < <(git grep -l -E 'time\.Since\(' -- '*_test.go' || true)
 }
 
-# A rule reports `path<TAB>line<TAB>detail` and this is what turns that into a
-# line: rules 2 and 3 go through the `warn` one, so promoting either is the
-# one-line change the header describes.
-report_only() {  # RULE
+# report RULE EMITTER: rules 2 and 3 print `path<TAB>line<TAB>detail` and this
+# hands each line to EMITTER. Every rule goes through it with `warn` while it
+# reports only, and changing that one word to `violation` is what promotes a
+# rule -- the change the header describes.
+report() {  # RULE EMITTER
   local path num detail
   while IFS=$'\t' read -r path num detail; do
     [ -n "${path:-}" ] || continue
-    warn "$path" "$num" "$1" "$detail"
+    "$2" "$path" "$num" "$1" "$detail"
   done
 }
 
 rule_stray_backup_files
-report_only fixed-clock-instant < <(rule_fixed_clock_instants)
-report_only wall-clock-bound < <(rule_wall_clock_bounds)
+report fixed-clock-instant warn < <(rule_fixed_clock_instants)
+report wall-clock-bound warn < <(rule_wall_clock_bounds)
 
 if [ "$violations" -gt 0 ]; then
   printf 'ci-hygiene: %d violation(s), %d report-only warning(s)\n' "$violations" "$warnings"
