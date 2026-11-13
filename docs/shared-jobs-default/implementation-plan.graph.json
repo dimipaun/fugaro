@@ -49,6 +49,7 @@
         "paths": [
           "internal/credsvc/bitbucketproxy.go",
           "internal/credsvc/server.go",
+          "internal/credsvc/auth.go",
           "internal/credsvc/bitbucketproxy_test.go",
           "internal/credsvc/sharedjobs_test.go"
         ]
@@ -64,9 +65,9 @@
         "prediction": true,
         "paths": [
           "internal/runner/runner.go",
-          "internal/runner/projectjob.go",
+          "internal/runner/project.go",
           "internal/runner/gitproxy_test.go",
-          "internal/runner/projectjob_test.go"
+          "internal/runner/shared_bitbucket_test.go"
         ]
       }
     },
@@ -81,8 +82,9 @@
         "paths": [
           "internal/cli/project_job.go",
           "internal/cli/launch_budget.go",
-          "internal/runner/project.go",
-          "internal/cli/project_job_test.go"
+          "internal/runner/projectjob.go",
+          "internal/cli/project_job_test.go",
+          "internal/runner/projectjob_test.go"
         ]
       }
     },
@@ -111,7 +113,8 @@
       "footprint": {
         "prediction": true,
         "paths": [
-          "internal/cli/init_credentials.go",
+          "internal/cli/update_proxy_switch.go",
+          "internal/cli/init_stages.go",
           "internal/cli/update_in_flight.go",
           "docs/design/update-in-flight.md",
           "internal/cli/update_in_flight_test.go"
@@ -145,7 +148,7 @@
           "docs/git-providers.md",
           "docs/checkout.md",
           "docs/design/project-centric.md",
-          "internal/cli/docs_bitbucket_token_test.go"
+          "internal/cli/docs_project_wide_git_test.go"
         ]
       }
     },
@@ -194,6 +197,7 @@
         "paths": [
           "internal/credsvc/buildtoken.go",
           "internal/credsvc/server.go",
+          "internal/credsvc/bitbucketproxy.go",
           "internal/credsvc/buildtoken_test.go",
           "internal/credsvc/audit.go"
         ]
@@ -211,7 +215,7 @@
           "internal/backend/gcp/catalog.go",
           "internal/cli/gitcred.go",
           "internal/imagebake/imagebake.go",
-          "internal/imagebake/imagebake_test.go",
+          "internal/imagebake/bake_test.go",
           "internal/cli/image_build_catalog.go"
         ]
       }
@@ -318,9 +322,9 @@
         "paths": [
           "deploy/terraform/gcp/modules/repo/workflows.tf",
           "deploy/terraform/gcp/modules/repo/registry.tf",
+          "deploy/terraform/gcp/modules/repo/build.tf",
           "deploy/terraform/gcp/modules/repo/check.tf",
-          "internal/infra/spec.go",
-          "internal/infra/spec_test.go"
+          "internal/infra/repo_module_test.go"
         ]
       }
     },
@@ -386,7 +390,39 @@
       }
     },
     {
-      "id": "R1",
+      "id": "S9",
+      "title": "a baked checkout on a project job is sanitised and verified",
+      "run": null,
+      "version": null,
+      "size": 2.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runner/projectjob.go",
+          "internal/runner/projectjob_test.go",
+          "internal/gitops/gitops.go",
+          "internal/gitops/reset_test.go"
+        ]
+      }
+    },
+    {
+      "id": "M6",
+      "title": "the repo spec and the images stage stop emitting per-repository things for a shared repo",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/infra/spec.go",
+          "internal/infra/spec_test.go",
+          "internal/cli/init_images.go",
+          "internal/cli/init_images_test.go"
+        ]
+      }
+    },
+    {
+      "id": "CR1",
       "title": "the shared-job contract, amended",
       "kind": "contract_change",
       "run": null,
@@ -399,7 +435,7 @@
       }
     },
     {
-      "id": "R2",
+      "id": "CR2",
       "title": "the build-token contract, amended",
       "kind": "contract_change",
       "run": null,
@@ -504,16 +540,6 @@
       "reason": "the end-to-end test needs the runner's behaviour"
     },
     {
-      "task": "M1",
-      "needs": "I1",
-      "reason": "behaviour: removing the per-repository jobs is safe only once shared jobs work"
-    },
-    {
-      "task": "M1",
-      "needs": "S5",
-      "reason": "behaviour: the default profile must exist before the jobs go"
-    },
-    {
       "task": "M2",
       "needs": "M1",
       "reason": "behaviour: it retires what M1 stopped emitting"
@@ -552,6 +578,41 @@
       "task": "M5",
       "needs": "B4",
       "reason": "behaviour: the same file, docs/gcp-live-checklist.md, one writer per level"
+    },
+    {
+      "task": "S9",
+      "needs": "S4",
+      "reason": "behaviour: the same file, runner/projectjob.go"
+    },
+    {
+      "task": "S9",
+      "needs": "S3",
+      "reason": "behaviour: it resets the checkout the proxied fetch then updates"
+    },
+    {
+      "task": "I1",
+      "needs": "S9",
+      "reason": "the integration runs the baked checkout on a shared job"
+    },
+    {
+      "task": "M6",
+      "needs": "I1",
+      "reason": "behaviour: marking a repository shared is safe only once shared jobs work"
+    },
+    {
+      "task": "M6",
+      "needs": "S5",
+      "reason": "behaviour: the default profile must exist before the jobs stop being emitted"
+    },
+    {
+      "task": "M1",
+      "needs": "M6",
+      "reason": "behaviour: the module reads the shared mark M6 emits"
+    },
+    {
+      "task": "B4",
+      "needs": "S8",
+      "reason": "behaviour: the same file, docs/gcp-live-checklist.md, one writer per level"
     }
   ],
   "decoupling": [
@@ -585,7 +646,7 @@
   ],
   "contract_changes": [
     {
-      "change": "R1",
+      "change": "CR1",
       "contract": "C1",
       "raised_by": "S2",
       "reason": "the pairing may need the workflow name",
@@ -595,7 +656,7 @@
       ]
     },
     {
-      "change": "R2",
+      "change": "CR2",
       "contract": "C2",
       "raised_by": "B1",
       "reason": "a time-to-live cap may belong in the request",
