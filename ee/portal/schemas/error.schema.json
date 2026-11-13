@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/ee/portal/schemas/error.schema.json",
   "title": "Portal API refusal",
-  "description": "The one shape the portal's API refuses with (portal plan P1.0, P1.1). Every route answers it, so it is the one shape here that is not mounted by name: the SPA branches on `code` and shows `message`, and a route that answered a sentence of its own would put the frontend's behaviour in wording that changes. Every object in this folder is closed, because the Go reader (ee/keyservice/wire_*.go, decodeWire) refuses an unknown field: a body or an answer that carried one is a schema and a reader that disagree, and the fixture tests in ee/keyservice/wire_test.go are what catch it.",
+  "description": "The one shape the portal's API refuses with (portal plan P1.0, P1.1): one object under `error`, exactly as the API's own writer sends it (`refuseAPI`, ee/keyservice/api.go), so the shape the SPA is handed is the shape the service produces — TestWireRefusalIsTheAPIsOwnBody reads the API's own refusal through this schema and through the Go reader, and is what holds the two together. Every route answers it, so it is the one shape here that is not mounted by name: the SPA branches on the fault's `code` and shows its `message`, and a route that answered a sentence of its own would put the frontend's behaviour in wording that changes. Every object in this folder is closed, because the Go reader (ee/keyservice/wire_*.go, decodeWire) refuses an unknown field: a body or an answer that carried one is a schema and a reader that disagree, and the fixture tests in ee/keyservice/wire_test.go are what catch it.",
   "oneOf": [
     {
       "$ref": "#/$defs/refusal"
@@ -11,7 +11,20 @@
   "$defs": {
     "refusal": {
       "type": "object",
-      "description": "A refusal: the machine's name for what went wrong and a sentence for the person. It never carries the request, an address or a token — a refusal is read by whoever sent the request and by logs, and neither is a place for the body someone sent.",
+      "description": "A refusal's whole body: the fault, under the one key the SPA reads it from. The key is part of the wire format and not a container the API may drop, because a body that carried the fault at the root would be a different shape to every reader of it (CLAUDE.md: a field never changes meaning).",
+      "additionalProperties": false,
+      "required": [
+        "error"
+      ],
+      "properties": {
+        "error": {
+          "$ref": "#/$defs/fault"
+        }
+      }
+    },
+    "fault": {
+      "type": "object",
+      "description": "The fault: the machine's name for what went wrong and a sentence for the person. It never carries the request, an address or a token — a refusal is read by whoever sent the request and by logs, and neither is a place for the body someone sent.",
       "additionalProperties": false,
       "required": [
         "code",

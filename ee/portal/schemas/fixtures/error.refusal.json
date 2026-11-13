@@ -1,4 +1,6 @@
 {
-  "code": "key_revoked",
-  "message": "This key was revoked by the licensor."
+  "error": {
+    "code": "key_revoked",
+    "message": "This key was revoked by the licensor."
+  }
 }
