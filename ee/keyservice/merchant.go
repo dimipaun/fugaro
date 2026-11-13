@@ -595,7 +595,9 @@ func (s *Service) withdrawn(ctx context.Context, e Event) error {
 // Renew mints the next key for one subscription when T26's window is open: 30
 // days before the term it follows ends, or half that term where half is shorter
 // than the lead, which every monthly row's is, its `issued` on the day the
-// service runs, its `expires` at the end of the term it covers.
+// service runs, its `expires` at the end of the key it mints — D2202's thirty
+// days for a row whose key checks the server, however long the term behind it
+// runs.
 //
 // The key is a v1 one, minted through the same path a purchase uses and not
 // through the older format's `mint`: what every issue path hands a customer is

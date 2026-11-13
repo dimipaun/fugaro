@@ -416,6 +416,27 @@ func TestTheIntakeMintsAV1KeyThroughTheMinterService(t *testing.T) {
 			t.Error("the intake's half accepted a mint with no renewal secret, want a refusal: a key nobody can renew is not one this service issues (D2135)")
 		}
 	})
+
+	// The one answer with no secret the intake's half does pass on, and the lane
+	// it exists for: a reissue that keeps the entitlement's existing hash is
+	// answered with no new secret (D2200), and a client that refused it would
+	// leave that reissue unable to reach the minter anywhere but a test's own
+	// in-process wiring.
+	t.Run("a reissue that keeps the entitlement's hash crosses with no secret", func(t *testing.T) {
+		kept := digest("the secret this entitlement was issued with")
+		request := v1Request(PolicyTeamMonthly)
+		request.RenewalSecretHash = kept
+		reissued, err := mints.MintV1(context.Background(), request)
+		if err != nil {
+			t.Fatalf("the intake's half refused the minter's reissue answer: %v", err)
+		}
+		if reissued.RenewalSecret != "" {
+			t.Errorf("the reissue answered the secret %q, want none: the holder keeps the one they were sent (D2200)", reissued.RenewalSecret)
+		}
+		if got := v1Verified(t, f, reissued.Key).RenewalSecretHash; got != kept {
+			t.Errorf("the reissued key crossed the wire carrying %q, want the hash the request kept (%q)", got, kept)
+		}
+	})
 }
 
 // mustJSON is a value as JSON, for the tests that read what a key, a claim set
