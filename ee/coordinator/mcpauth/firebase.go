@@ -84,6 +84,10 @@ const (
 	maxProviderBytes = 64
 	// maxTenantBytes bounds `firebase.tenant`, the Identity Platform tenant id.
 	maxTenantBytes = 128
+	// maxDirectoryBytes bounds a Microsoft (Entra ID) directory id. It is a GUID
+	// and the bound is orders of magnitude above one; the value is a claim out
+	// of a token and the reader's own bound is what keeps it a token.
+	maxDirectoryBytes = 128
 )
 
 // ErrUnverifiedIDToken is a Firebase ID token this front door does not admit.
@@ -129,12 +133,24 @@ type Identity struct {
 	AuthTime time.Time
 	// TenantID is `firebase.tenant`: the Identity Platform tenant the sign-in
 	// came from, and empty for a project that runs none. It is the tenant the
-	// CLIENT names at sign-in and not the directory an account lives in, and it
-	// is the ONLY tenant-shaped value a Firebase ID token carries — Firebase
-	// forwards no Microsoft (Entra ID) directory id, so a Microsoft sign-in
-	// carries no directory to pin and a caller whose rule needs one refuses it
-	// (D2207, pinned by ee/keyservice's TestResellerMicrosoftNeedsAPinnedTenant).
+	// CLIENT names at sign-in and NOT the directory an account lives in, which is
+	// DirectoryID: a rule over this value admits whoever names a pinned one, and
+	// ee/keyservice's SSO rule reads the directory and never this (D2207 as
+	// amended on 2026-11-13).
 	TenantID string
+	// DirectoryID is the Microsoft (Entra ID) directory the person's account
+	// lives in: the `tid` claim of the verified token, read by directoryID below
+	// out of whichever of the two shapes the project's Microsoft provider writes
+	// it in. It is empty for every sign-in that carries none — a Google sign-in,
+	// a Microsoft one whose provider forwards no directory, one whose two claims
+	// disagree about the directory — and a caller whose rule needs a directory
+	// refuses it rather than reading the empty value as one.
+	//
+	// Both shapes are inside the SIGNED token, which is the whole point of it
+	// (D2207's amendment, ee/keyservice's TestMicrosoftDirectoryIsPinned): the
+	// provider's own report of where an account lives cannot be chosen by the
+	// person signing in, unlike the Identity Platform tenant above.
+	DirectoryID string
 }
 
 // Verifier verifies the Firebase ID tokens this installation's project signs.
@@ -266,12 +282,12 @@ func (v *Verifier) VerifyIDToken(ctx context.Context, raw string) (Identity, err
 	if !ok {
 		return Identity{}, fmt.Errorf("%w: the identity's email claim is not an address this front door can read", ErrUnverifiedIDToken)
 	}
-	// The three fields a caller adds its own rules over are READ and never
+	// The four fields a caller adds its own rules over are READ and never
 	// required, which is the line between them and everything above: an absent
-	// or unreadable provider, sign-in time or tenant is not a token this front
-	// door refuses — the launcher and operator lists (D933) never look at one —
-	// and it is answered as absent so that a caller whose rule needs it refuses
-	// it rather than reading an empty value as a match.
+	// or unreadable provider, sign-in time, tenant or directory is not a token
+	// this front door refuses — the launcher and operator lists (D933) never look
+	// at one — and it is answered as absent so that a caller whose rule needs it
+	// refuses it rather than reading an empty value as a match.
 	var authTime time.Time
 	if at, ok := claimInt(claims, "auth_time"); ok {
 		authTime = time.Unix(at, 0)
@@ -283,7 +299,36 @@ func (v *Verifier) VerifyIDToken(ctx context.Context, raw string) (Identity, err
 		Provider:     firebaseClaim(claims, "sign_in_provider", maxProviderBytes),
 		AuthTime:     authTime,
 		TenantID:     firebaseClaim(claims, "tenant", maxTenantBytes),
+		DirectoryID:  directoryID(claims),
 	}, nil
+}
+
+// directoryID reads the Microsoft (Entra ID) directory id a verified token
+// carries, or answers empty.
+//
+// Two shapes carry it, and both are read because which one a deployment's
+// Microsoft provider writes is the provider's configuration and not this code's
+// to choose: a token that carries Microsoft's own claim set holds `tid` at its
+// own top level, and Identity Platform's OIDC providers put the provider's
+// claims under `firebase.sign_in_attributes`, where the same directory arrives
+// as `sign_in_attributes.tid`. Both are inside the signed payload, so neither is
+// a value the person signing in names — which is the whole difference between
+// this and `firebase.tenant` (Identity.TenantID).
+//
+// A token carrying both and disagreeing about the directory is answered as
+// carrying none, by the same rule that answers an unreadable value as absent:
+// two values for one fact is not a fact a caller's pin can be built on, and the
+// empty answer is the one every caller treats as "not something I admit".
+func directoryID(claims map[string]any) string {
+	top := stringClaim(claims, "tid", maxDirectoryBytes)
+	attribute := firebaseAttribute(claims, "tid", maxDirectoryBytes)
+	if top != "" && attribute != "" && top != attribute {
+		return ""
+	}
+	if top != "" {
+		return top
+	}
+	return attribute
 }
 
 // firebaseClaim reads one string out of the token's `firebase` claim object.
@@ -296,6 +341,33 @@ func (v *Verifier) VerifyIDToken(ctx context.Context, raw string) (Identity, err
 func firebaseClaim(claims map[string]any, key string, max int) string {
 	fb, _ := claims["firebase"].(map[string]any)
 	value, _ := fb[key].(string)
+	if !printableASCII(value, max) {
+		return ""
+	}
+	return value
+}
+
+// firebaseAttribute reads one string out of the token's own
+// `firebase.sign_in_attributes` object: the claim set an Identity Platform OIDC
+// or SAML provider's attributes arrive in. It holds firebaseClaim's rule — a
+// value this code cannot read as a short token of printable ASCII is answered as
+// absent — and it is a second reader rather than a path through that one because
+// the object it reads is a level deeper.
+func firebaseAttribute(claims map[string]any, key string, max int) string {
+	fb, _ := claims["firebase"].(map[string]any)
+	attrs, _ := fb["sign_in_attributes"].(map[string]any)
+	value, _ := attrs[key].(string)
+	if !printableASCII(value, max) {
+		return ""
+	}
+	return value
+}
+
+// stringClaim reads one string claim of the token's own claim set, holding
+// firebaseClaim's rule one level up: only a short token of printable ASCII is
+// answered, and anything else is absent.
+func stringClaim(claims map[string]any, key string, max int) string {
+	value, _ := claims[key].(string)
 	if !printableASCII(value, max) {
 		return ""
 	}
