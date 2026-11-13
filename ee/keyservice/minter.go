@@ -301,6 +301,7 @@ func (m Minter) Mint(ctx context.Context, req Request) (Minted, error) {
 			Organisation: req.Organisation,
 			Issued:       issued,
 			Expires:      expires,
+			TermDays:     req.TermDays,
 		},
 	}, nil
 }
@@ -500,6 +501,11 @@ func (m Minter) MintV1(ctx context.Context, req RequestV1) (MintedV1, error) {
 			Organisation: req.Organisation,
 			Issued:       issued,
 			Expires:      paidThrough,
+			// The term the request named, and not the term this key was minted
+			// for: D2202 caps the key below what the caller asked for when the
+			// caller is the paid path, and what that path is rebuilding from the
+			// record is the entitlement and not the key (S3.5).
+			TermDays: req.TermDays,
 		},
 	}, nil
 }

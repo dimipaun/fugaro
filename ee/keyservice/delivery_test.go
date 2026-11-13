@@ -198,11 +198,16 @@ func TestAPurchaseWhoseSubscriptionWriteFailedIsCompleted(t *testing.T) {
 	if err != nil || !held {
 		t.Fatalf("the redelivered purchase left no subscription (held=%v, err=%v), want the state the record describes", held, err)
 	}
-	if sub.Organisation != "acme.example" || sub.Seats != 5 || sub.TermDays != daysBetween(record.Issued, record.Expires) {
+	if sub.Organisation != "acme.example" || sub.Seats != 5 || sub.TermDays != 365 {
 		t.Errorf("the repaired subscription is %+v, want the record's own organisation, seats and term", sub)
 	}
-	if !sub.Expires.Equal(record.Expires) {
-		t.Errorf("the repaired subscription expires %s, want the key's own term %s", sub.Expires, record.Expires)
+	// The term the purchase bought, and not the end of the key that was minted
+	// for it: D2202 caps a connected row's key at thirty days, and a repair that
+	// read the term off the key would file a year's purchase as a month's — the
+	// same subscription resolved through a different checkout row, a different
+	// lead and a different end.
+	if want := record.Issued.Add(365 * day); !sub.Expires.Equal(want) {
+		t.Errorf("the repaired subscription expires %s, want the end of the term the customer bought (%s), which is not the end of the key (%s) (D2202)", sub.Expires, want, record.Expires)
 	}
 	if sub.Email != buyerAddress("acme.example") {
 		t.Errorf("the repaired subscription holds the address %q, want the buyer's, which the renewal needs", sub.Email)

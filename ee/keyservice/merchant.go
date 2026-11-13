@@ -390,7 +390,7 @@ func (s *Service) completed(ctx context.Context, e Event, record Record) error {
 		sub.ID = e.Subscription
 		sub.Organisation = record.Organisation
 		sub.Seats = record.Seats
-		sub.TermDays = daysBetween(record.Issued, record.Expires)
+		sub.TermDays = record.TermDays
 		sub.Email = to
 		sub.At = e.OccurredAt
 		// The workspace is the event's and not the record's: the issuance record
@@ -401,8 +401,8 @@ func (s *Service) completed(ctx context.Context, e Event, record Record) error {
 		if e.WorkspaceID != "" {
 			sub.WorkspaceID = e.WorkspaceID
 		}
-		if record.Expires.After(sub.Expires) {
-			sub.Expires = record.Expires
+		if end := entitlementEnd(record); end.After(sub.Expires) {
+			sub.Expires = end
 		}
 		return s.store.SaveSubscription(ctx, sub)
 	case EventSeatChange:
@@ -456,13 +456,35 @@ func (s *Service) purchased(ctx context.Context, e Event) error {
 		TermDays:     e.TermDays,
 		Email:        to,
 		At:           e.OccurredAt,
-		Expires:      minted.Record.Expires,
+		Expires:      entitlementEnd(minted.Record),
 	})
+}
+
+// entitlementEnd is the end of the term an issuance stands for: the instant its
+// key was minted plus the term the request asked that key to cover. It is the
+// subscription's own end and never the key's, because D2202 caps a connected
+// row's key at thirty days while the entitlement the customer bought runs the
+// term they bought — a subscription stored with the key's end would open an
+// annual renewal's window at the purchase itself and move the term on by a month
+// a year.
+//
+// The fallback is for an issuance whose request named no term: those are the
+// paths that mint one key for a row's own length (a trial, a free seat, an
+// open-source key) and build no subscription out of it, so nothing measures a
+// term from their records and the key's end is all that one says.
+func entitlementEnd(record Record) time.Time {
+	if record.TermDays < 1 {
+		return record.Expires
+	}
+	return record.Issued.Add(time.Duration(record.TermDays) * 24 * time.Hour)
 }
 
 // seatChanged reissues inside the term the customer already paid for: `seats`
 // is a claim in the key, and the term is not (§5.3). The new key covers what is
-// left of the term, so it ends where the key it replaces ends.
+// left of that term — which for a connected row's key is D2202's thirty days
+// from the reissue, and never a term taken off the subscription — so the seats
+// move, the key is as long as any other key of its row, and the subscription's
+// own end is where it was.
 //
 // The reissue is a **new key**, under a new `key_id`, and that is the whole of
 // what makes §8's list able to withdraw it: an entry names one key, so a
@@ -699,8 +721,9 @@ func (s *Service) Renew(ctx context.Context, subscriptionID string) (MintedV1, b
 }
 
 // renewed finishes a renewal whose key is already minted and whose term the
-// store did not take: the record names the end of the term it covers, so the
-// state the customer paid for is written from it.
+// store did not take: the record names the term it was minted for, so the state
+// the customer paid for is written from it — and it is the term that is written,
+// not the end of the key, which D2202 caps at thirty days below it.
 // The subscription's own end is the test — it is what the window and the source
 // are both computed from — and a state the term has already moved past is left
 // alone, so a stale source cannot pull it back.
@@ -709,10 +732,11 @@ func (s *Service) Renew(ctx context.Context, subscriptionID string) (MintedV1, b
 // merchant's timeline and not the service's, and the repair's own instant is not
 // an event on it.
 func (s *Service) renewed(ctx context.Context, sub Subscription, record Record) error {
-	if !sub.Expires.Before(record.Expires) {
+	end := entitlementEnd(record)
+	if !sub.Expires.Before(end) {
 		return nil
 	}
-	sub.Expires = record.Expires
+	sub.Expires = end
 	return s.store.SaveSubscription(ctx, sub)
 }
 

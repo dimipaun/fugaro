@@ -40,6 +40,14 @@ type Record struct {
 	Email        string    `json:"email"`
 	Issued       time.Time `json:"issued"`
 	Expires      time.Time `json:"expires"`
+	// TermDays is the term in whole days this issuance stands for: the term a
+	// purchase bought, or the whole days a renewal covers. It is the
+	// **entitlement's** own length and not the key's — D2202 caps a connected
+	// row's key at thirty days while the term the customer paid for runs its
+	// own length — and it is what the subscription's end is rebuilt from when
+	// the record is the only thing left of an issuance whose subscription write
+	// did not land (S3.5, §5.1).
+	TermDays int `json:"term_days"`
 }
 
 // Application is one request a person has to decide (§4.5): the ones the
