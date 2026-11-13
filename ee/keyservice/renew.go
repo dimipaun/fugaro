@@ -456,8 +456,8 @@ func (s *Service) renew(w http.ResponseWriter, r *http.Request) {
 	// (TestAMerchantRenewalsKeyRenewsOffTheTermGrid,
 	// TestASeatChangesKeyRenewsWhileTheTermRuns,
 	// TestAMonthBilledInTwentyEightDaysRenewsToTheSubscriptionsEnd), and it is the
-	// mint below rather than this check that keeps the successor inside what was
-	// bought (`renewalDays`).
+	// mint below rather than this check that keeps the successor to what was
+	// bought, up to the whole-day round the term's own unit costs (`renewalDays`).
 	//
 	// The answer is the key's own state and not the uniform refusal, for the reason
 	// the two checks around it give theirs: the caller proved its secret, and its key
@@ -484,8 +484,19 @@ func (s *Service) renew(w http.ResponseWriter, r *http.Request) {
 		Policy:       key.policy.Name,
 		WorkspaceID:  key.state.WorkspaceID,
 		Organisation: key.record.Organisation,
-		Seats:        key.record.Seats,
-		TermDays:     renewalDays(key.record, key.policy, now, sub.Expires),
+		// The subscription's own seats and not the key's, because the two are
+		// separately true: §5.3 moves the seats inside the term the customer has
+		// already paid for — `seatChanged` mints the key with the count the
+		// merchant sent and keeps the subscription's current — while the key it
+		// supersedes runs to its own end still stating the count it was minted
+		// with. A chain continued from that key would hand back the seats the
+		// customer has given up, at the price of the ones it pays for, for as long
+		// as the subscription runs
+		// (TestASupersededKeysChainCarriesTheSubscriptionsSeats), while the
+		// merchant's own renewal mints from this count already (merchant.Renew),
+		// so the two routes into the term after a key agree on what it states.
+		Seats:    sub.Seats,
+		TermDays: renewalDays(key.record, key.policy, now, sub.Expires),
 	})
 	if err != nil {
 		fail(w, err)
@@ -651,19 +662,32 @@ func renewable(record Record, policy Policy, now time.Time) bool {
 // holder asked for before, and a term longer than the tier allows is the
 // minter's refusal rather than a clamp in this file (Check 175).
 //
-// What it never asks for is a day the subscription has not reached, which is the
-// other half of the gate's own question: the gate reads whether the money ends
-// past the key in hand, and this is what keeps the successor inside it. It has to
-// be said here because past that point the two ends are not on one grid (D2202):
-// a request measured by the row's period alone runs past what the customer bought
+// What it never asks for is a period the subscription has not reached, which is
+// the other half of the gate's own question: the gate reads whether the money ends
+// past the key in hand, and this is what keeps the successor to it. It has to be
+// said here because past that point the two ends are not on one grid (D2202): a
+// request measured by the row's period alone runs past what the customer bought
 // wherever the subscription ends inside it — an annual subscription reaches a
 // year beyond a thirty-day key, where the successor above it is a month, and a
 // key whose end is days short of the subscription's (the chain arriving at the
 // merchant's renewal) has days of room and not a period. The difference is not
 // only the key's: a record standing for a term nobody paid for is read by
 // `entitlementEnd` (merchant.go), which is what a lost renewal's subscription is
-// repaired from. So the mint is capped, and the successor ends where the money
-// does.
+// repaired from. So the mint is capped, and the cap is a whole number of days
+// like every other term here.
+//
+// The capped day is the round `daysBetween` makes and not the instant the money
+// ends, so a call at another hour of the day than the subscription's own end asks
+// for the day it lands in and the successor runs out up to 23h59m past that end
+// (TestARenewalOffTheHourEndsWithinADayOfTheSubscriptionsEnd). Day-aligned calls
+// are what make the two look equal, and the fixture that reads them is aligned
+// (TestARenewalMintsOnlyIntoATermTheSubscriptionCovers). Up rather than down, for
+// the reason the paragraph below gives: a successor short of the money leaves the
+// subscription's last hours outside every key, and the renewal after it — the
+// gate still finds the money past this key — would be minted for the day those
+// hours fall in. Up is what ends the chain instead: the successor's end is on or
+// past the subscription's, the gate refuses the renewal after it, and the licence
+// stops once, at the money.
 //
 // The term is in whole days, because that is the unit `RequestV1.TermDays`
 // states and the minter dates the successor from its own clock and never from a

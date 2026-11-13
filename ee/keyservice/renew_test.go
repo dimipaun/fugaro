@@ -1160,8 +1160,99 @@ func TestAMonthBilledInTwentyEightDaysRenewsToTheSubscriptionsEnd(t *testing.T) 
 	if got := spy.minted(); got != 1 {
 		t.Errorf("the minter was asked for %d key(s), want the one successor", got)
 	}
+	// The fixture's calls land on the hour the keys were issued at, which is what
+	// makes the capped term the exact remainder of the subscription. A call at any
+	// other hour asks for the day it lands in
+	// (TestARenewalOffTheHourEndsWithinADayOfTheSubscriptionsEnd).
 	if last := v1Verified(t, f, answer.Key).PaidThrough; !last.Equal(moved.Expires) {
 		t.Errorf("the successor ends at %s, want the subscription's own end %s: a renewal covers the days that are left and never a period of its own", last, moved.Expires)
+	}
+}
+
+// TestARenewalOffTheHourEndsWithinADayOfTheSubscriptionsEnd: a term is whole days
+// and the minter dates the successor from its own clock, so the cap at the
+// subscription's end is a day and not an instant: a call at another hour of the
+// day than that end asks for the day it lands in and runs out up to one day past
+// the money, which is the overlap the round-up admits for a term everywhere else.
+// Up is the direction that ends the licence cleanly — a successor short of the
+// money would leave the subscription's last hours outside every key, and the
+// renewal after it would be minted for the day those hours fall in — and this is
+// the call the day-aligned fixtures never make.
+func TestARenewalOffTheHourEndsWithinADayOfTheSubscriptionsEnd(t *testing.T) {
+	f, spy := renewing(t)
+	bought := f.purchase("evt-hour-1", "acme.example", 5, 28)
+	theMerchantRenews(t, f, bought)
+	moved, held, err := f.store.Subscription(context.Background(), bought.Subscription)
+	if err != nil || !held {
+		t.Fatalf("reading the subscription back after the merchant's renewal: held=%v err=%v", held, err)
+	}
+	if got := len(f.mintedKeys()); got != 2 {
+		t.Fatalf("the purchase and the merchant's renewal minted %d key(s), want the merchant's key beside the purchase's", got)
+	}
+	keyID := v1Verified(t, f, f.mintedKeys()[1]).KeyID
+	secret := mailedSecret(t, f, f.mintedKeys()[1])
+
+	f.inTheRenewalWindow(t, keyID)
+	// Seven hours and thirty-seven minutes into the day, which is what makes the
+	// capped term round up to a whole day rather than land on the money's own end.
+	f.advance(7*time.Hour + 37*time.Minute)
+	answer := answerOf(t, f.call(RouteRenew, RenewalCall{KeyID: keyID, WorkspaceID: workspaceID, RenewalSecret: secret}))
+	if answer.Key == "" {
+		t.Fatalf("the key was answered %+v, want a successor: the money reaches past its end", answer)
+	}
+	successor := v1Verified(t, f, answer.Key)
+	if !successor.PaidThrough.After(moved.Expires) {
+		t.Errorf("the successor ends at %s, want past the subscription's own end %s: a call at another hour of the day asks for the day it lands in", successor.PaidThrough, moved.Expires)
+	}
+	if late := successor.PaidThrough.Sub(moved.Expires); late > 24*time.Hour {
+		t.Errorf("the successor runs %s past the subscription's own end, want no more than the day the whole-day term costs it", late)
+	}
+
+	f.inTheRenewalWindow(t, successor.KeyID)
+	stopped := answerOf(t, f.call(RouteRenew, RenewalCall{KeyID: successor.KeyID, WorkspaceID: workspaceID, RenewalSecret: answer.RenewalSecret}))
+	if stopped.Key != "" || stopped.NewerKey {
+		t.Errorf("the successor was answered %+v, want no key: its own end is past the money, so the term after it is not one the subscription has paid for", stopped)
+	}
+	if got := spy.minted(); got != 1 {
+		t.Errorf("the minter was asked for %d key(s), want the one successor", got)
+	}
+}
+
+// TestASupersededKeysChainCarriesTheSubscriptionsSeats: a seat change reissues
+// the key the customer runs and leaves the key it supersedes running to its own
+// end (§5.3, T25's accepted leakage), so a downgraded licence holds two keys for
+// a while and the older one still states the seats it was minted with. What its
+// renewal may not do is hand those seats back: the count the customer bought is
+// the subscription's own, kept current by the seat change, and the key minted for
+// the term after this one states it — as the merchant's own renewal already does.
+func TestASupersededKeysChainCarriesTheSubscriptionsSeats(t *testing.T) {
+	f, spy := renewing(t)
+	bought := f.purchase("evt-seats-down-1", "acme.example", 8, 365)
+	superseded := v1Verified(t, f, f.mintedKeys()[0]).KeyID
+	secret := mailedSecret(t, f, f.mintedKeys()[0])
+	f.advance(10 * day)
+	f.event(Event{ID: "evt-seats-down-2", Type: EventSeatChange, Organisation: "acme.example", Seats: 3, TermDays: 365})
+	sub, held, err := f.store.Subscription(context.Background(), bought.Subscription)
+	if err != nil || !held {
+		t.Fatalf("reading the subscription back: held=%v err=%v", held, err)
+	}
+	if sub.Seats != 3 {
+		t.Fatalf("the subscription holds %d seat(s), want the 3 the seat change sent: the count the customer pays for is what a renewal is read against", sub.Seats)
+	}
+	if got := f.issuance(t, superseded).Seats; got != 8 {
+		t.Fatalf("the superseded key states %d seat(s), want the 8 it was minted with: a reissue never edits the key it replaces", got)
+	}
+
+	f.inTheRenewalWindow(t, superseded)
+	answer := answerOf(t, f.call(RouteRenew, RenewalCall{KeyID: superseded, WorkspaceID: workspaceID, RenewalSecret: secret}))
+	if answer.Key == "" {
+		t.Fatalf("the superseded key was answered %+v, want a successor: the money reaches past its own end and the licence it belongs to is live", answer)
+	}
+	if got := spy.minted(); got != 1 {
+		t.Fatalf("the minter was asked for %d key(s), want the one successor", got)
+	}
+	if got := v1Verified(t, f, answer.Key).Seats; got != 3 {
+		t.Errorf("the successor states %d seat(s), want the 3 the customer pays for: a licence that has given seats up may not renew at the count it gave up", got)
 	}
 }
 
