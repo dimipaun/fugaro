@@ -17,9 +17,9 @@
 //   * **the ask-your-admin state is the ONE refusal that means the installation
 //     would not have this phone** (docs/mobile-auth, Task P4; the spec's step
 //     5), and it is drawn beside the demo control rather than in front of it:
-//     the fourth test presses the control with the state on, because the
-//     mutation that matters is a sign-in that gates the way in for the people
-//     the state is about.
+//     the test that presses the control with the state on is the one that
+//     fails if a sign-in ever gates the way in for the people the state is
+//     about.
 
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -128,8 +128,6 @@ test('a screen built without its pieces is refused, not defaulted', () => {
   assert.throws(() => screen({ onTryDemo: 'enter' }), /demo control/);
   assert.throws(() => screen({ pairingScreen: 'later' }), /pairing seam/);
 });
-
-// --- the ask-your-admin state (Task P4; the spec's step 5) ------------------
 
 test('the installation’s refusal is the state, and the demo is not behind it', () => {
   // The refusal the exchange answers with is the one that means the
