@@ -14,9 +14,14 @@ package credsvc
 // the candidates and admissions and the selector's own reads equally likely. A
 // failure an operator cannot diagnose is a product defect, so the refusals of a
 // model call whose run identity this service verified write this line: the
-// refusal's type and status, the run and the repository it was about, the same
-// class-only sentence the run is sent, and the two facts only the service has —
-// which read failed, and the Go type of the error it failed with. Where the
+// refusal's type and status, the run and the repository it was about, the
+// sentence the run is sent, and the two facts only the service has — which read
+// failed, and the Go type of the error it failed with. That sentence is this
+// service's own class-only one everywhere but in the one place where the run is
+// sent another system's text instead — a selection that failed on the state,
+// which the run is told in the store's own words (refuseSelection) — and there
+// the line carries this service's sentence for it (selectionUnreadable), so the
+// store's text stops at the run and never reaches the log. Where the
 // refusal is not one read's failure — a decision this service takes (the stop
 // switch, a request it does not read, a node that is not published), or a
 // step's failure rather than a read's (the candidate list's own build) — the
@@ -44,7 +49,9 @@ package credsvc
 //     (dynamicsecrets.go's read), so the cause is carried as its Go type
 //     (error_class, a %T and nothing else) and as the label of the read that
 //     produced it. The message field is not the error's: it is the sentence the
-//     run is already sent, which every refusal on this path builds as a class.
+//     run is already sent, which every refusal on this path builds as a class —
+//     and where that sentence would be another system's text, which the one case
+//     above is, the line writes this service's sentence for it instead.
 //   - no credential, token, bundle value or request body is written. There is
 //     no field one could be put in — the message is the run's own sentence, the
 //     read is a label this file owns, and the class is a type name — and the

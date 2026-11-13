@@ -11,20 +11,25 @@ package credsvc
 // and again on 2026-11-13, and the service's log said nothing about which of
 // its reads had failed. Every test here fails exactly ONE read and reads the
 // line back, so a read that stops being named — or a label that starts being
-// written for the wrong one — is red. The candidate list's own build is the one
-// refusal the line does not label, and its case below pins that shape too: an
-// empty read beside a message that names the read itself.
+// written for the wrong one — is red, and every label of refusallog.go's set is
+// pinned by one of them. The candidate list's own build is the one refusal the
+// line does not label, and its case below pins that shape too: an empty read
+// beside a message that names the read itself.
 //
-// The sentinel is the second half of that. Each failure carries a
-// credential-shaped string built at test time and planted INSIDE the error's
-// text, which is the shape an error that quotes what it was reading has, and
-// the line's own JSON must contain none of it: the class the line carries is
-// the planted type's (%T) and never its text.
+// The sentinel is the second half of that. Every failure a test can plant
+// carries a credential-shaped string built at test time and put INSIDE the
+// error's text, which is the shape an error that quotes what it was reading
+// has, and the line's own JSON must contain none of it: the class the line
+// carries is the planted type's (%T) and never its text. The two failures a
+// test cannot plant — the model prices a catalogue cannot render, and a slip
+// store whose rules deny the read — carry the class of the failure that really
+// happens there instead.
 
 import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -34,7 +39,9 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
+	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // refusalTestErr is a read's failure as a test plants it: the text it carries
@@ -151,7 +158,9 @@ func refusedJSON(t *testing.T, s *svc) string {
 // Mutation (run, restore): drop the labelRead from any one of the reads this
 // table fails — server.go's stop switches, its policy read or its bundle load,
 // or creds' state wrapper (refusallog.go's stateReads) — and that case is red:
-// the line names no read.
+// the line names no read. The reads this table cannot fail in a row of its own
+// have a test each beside it: the per-secret container, the upstream send, the
+// slip store, the state the selector WRITES (state_write), and the model prices.
 //
 // The candidate list has a case of its own below, and it is the one refusal
 // this line writes with no read: the list is a step and not a read of one node
@@ -504,6 +513,106 @@ func TestRefusalLogNamesTheSlipReadThatFailed(t *testing.T) {
 	}
 	if logged := s.logs.String(); strings.Contains(logged, secret) {
 		t.Errorf("the service's log carries the claim secret the call presented: %s", logged)
+	}
+	if lines := forwardLines(t, auditLog); len(lines) != 1 {
+		t.Fatalf("a refused call wrote %d forward audit lines, want exactly 1: %v", len(lines), lines)
+	} else {
+		checkAuditShape(t, lines[0])
+	}
+}
+
+// TestRefusalLogNamesTheStateWriteThatFailed: the selector's state is written
+// as well as read, and a write that failed is not a read that failed — the
+// label says which of the two it was (stateWrite), so an operator who greps
+// `read=selector_marks` is never handed a call whose mark could not be written.
+// The credential is spent by then (the upstream answered a usage limit) and the
+// refusal names it, because what the failure costs the NEXT call is that call
+// being sent to this credential again.
+//
+// Mutation (run, restore): label the write with one of the selector's reads —
+// or drop the labelRead from creds' state wrapper — and this case is red: the
+// line names the wrong read, or none.
+func TestRefusalLogNamesTheStateWriteThatFailed(t *testing.T) {
+	sentinel := fakeCred(t, "sentinel")
+	s, auditLog := refusalSvc(t, func(s *svc, _ *Config) {
+		s.state.updateErr = &refusalTestErr{text: "writing " + sentinel + " failed"}
+		s.up.Script = []anthropicfake.Reply{
+			anthropicfake.Error(http.StatusTooManyRequests, "rate_limit_error", "usage limit reached"),
+		}
+	})
+
+	resp, body := s.call(t, callBody("refused"))
+	if resp.StatusCode != StatusUnavailable {
+		t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusUnavailable, body)
+	}
+	if e := refusal(t, resp.StatusCode, body); e.Error != ErrorStateUnavailable {
+		t.Errorf("the refusal is %q, want %q", e.Error, ErrorStateUnavailable)
+	}
+
+	line := oneRefusalLine(t, s)
+	for field, want := range map[string]any{
+		"type":        ErrorStateUnavailable,
+		"status":      refusedStatus(StatusUnavailable),
+		"read":        stateWrite,
+		"error_class": refusalTestClass,
+		"message":     markRefusal,
+	} {
+		if line[field] != want {
+			t.Errorf("the refusal's line %s = %v, want %q", field, line[field], want)
+		}
+	}
+	if logged := s.logs.String(); strings.Contains(logged, sentinel) {
+		t.Errorf("the service's log carries the text of the error it refused on: %s", logged)
+	}
+	if lines := forwardLines(t, auditLog); len(lines) != 1 {
+		t.Fatalf("a refused call wrote %d forward audit lines, want exactly 1: %v", len(lines), lines)
+	} else {
+		checkAuditShape(t, lines[0])
+	}
+}
+
+// TestRefusalLogNamesTheModelPricesReadThatFailed: the table the request's own
+// check bounds a call by is built out of the shared node's prices, and a rate
+// the catalogue cannot render leaves the table unbuildable. The read is named
+// so that an operator can tell it from the node's own read in one word: the two
+// refusals are both `state_unavailable` on the project's policy, and only the
+// label and the class say that it was the build of the table (request.go) and
+// not the published node itself (readPolicyShared) that failed.
+//
+// Mutation (run, restore): drop the labelRead from server.go's prices branch
+// and the line names an empty read.
+func TestRefusalLogNamesTheModelPricesReadThatFailed(t *testing.T) {
+	// A rate the catalogue cannot render — an infinity is not JSON — so the
+	// failure is encoding/json's own and not one this test plants.
+	inf := math.Inf(1)
+	s, auditLog := refusalSvc(t, func(s *svc, _ *Config) {
+		s.policy.shared.Prices = projectpolicy.Prices{
+			testModel: {InputPerM: &inf, OutputPerM: &inf},
+		}
+	})
+
+	resp, body := s.call(t, callBody("refused"))
+	if resp.StatusCode != StatusUnavailable {
+		t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusUnavailable, body)
+	}
+	if e := refusal(t, resp.StatusCode, body); e.Error != ErrorStateUnavailable {
+		t.Errorf("the refusal is %q, want %q", e.Error, ErrorStateUnavailable)
+	}
+
+	line := oneRefusalLine(t, s)
+	// The class is the encoder's own type and not one of this package's: what
+	// the encoder's text names is the rate it could not render, and the class
+	// is all of that the line may carry.
+	for field, want := range map[string]any{
+		"type":        ErrorStateUnavailable,
+		"status":      refusedStatus(StatusUnavailable),
+		"read":        readPolicyPrices,
+		"error_class": "*json.UnsupportedValueError",
+		"message":     "the project's model prices could not be read",
+	} {
+		if line[field] != want {
+			t.Errorf("the refusal's line %s = %v, want %q", field, line[field], want)
+		}
 	}
 	if lines := forwardLines(t, auditLog); len(lines) != 1 {
 		t.Fatalf("a refused call wrote %d forward audit lines, want exactly 1: %v", len(lines), lines)
