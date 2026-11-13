@@ -98,6 +98,7 @@ func TestAPIRoutesComeFromTheRegistry(t *testing.T) {
 		take func()
 	}{
 		{"a route outside the rewrite's subtree", func() { registerAPI(http.MethodGet, "/elsewhere", apiProbe.serve) }},
+		{"a route at the subtree itself", func() { registerAPI(http.MethodGet, apiPrefix, apiProbe.serve) }},
 		{"a route registered twice", func() { registerAPI(http.MethodPost, apiProbePath, apiProbe.serve) }},
 		{"a route with no method", func() { registerAPI("", "/api/nothing", apiProbe.serve) }},
 		{"a route with no handler", func() { registerAPI(http.MethodGet, "/api/nothing", nil) }},
@@ -238,15 +239,24 @@ func TestNewRefusesASeamOnlyAMountedRouteReaches(t *testing.T) {
 	}
 }
 
-// TestClientAddressBehindHostingIsTheCallers: F34 — behind Hosting's rewrite to
-// this service the caller's own address is the last entry the platform did not
-// write itself, and never the Hosting edge, which every caller shares, nor an
-// entry the caller wrote. A caller can only ever prepend to X-Forwarded-For, so
-// what it sends never becomes the address a rate is counted by.
+// TestClientAddressBehindHostingIsTheCallers: F34 — the address a route counts a
+// caller's rate by is the **last** entry of X-Forwarded-For, the one the
+// platform's own front end appended, and never an entry a caller wrote. That is
+// the intake's rule (service.go's clientIP) and the API adds no second one: the
+// service answers everyone at its own address as well as through Hosting's
+// rewrite (F21), so a request that arrives directly carries the caller's forged
+// entries in front of the platform's append, and a rule that read the entry
+// before the last would hand that caller a fresh bucket per forged line — the
+// bypass a rate exists to refuse (§7.2).
+//
+// Which entry the platform appends behind Hosting — the caller, or the edge
+// every caller shares — is F34 and stays unverified here: it is a property of
+// the deployed chain, not of this code, and the reconciliation's open list
+// carries it. No route may be built on an answer this test cannot give.
 func TestClientAddressBehindHostingIsTheCallers(t *testing.T) {
 	const (
 		caller = "198.51.100.9"
-		edge   = "10.0.0.1"
+		forged = "203.0.113.5"
 		peer   = "10.0.0.2:443"
 	)
 
@@ -256,23 +266,18 @@ func TestClientAddressBehindHostingIsTheCallers(t *testing.T) {
 		want      string
 	}{
 		{
-			name:      "the edge appended the caller's address and the platform's front end the edge's",
-			forwarded: []string{caller + ", " + edge},
-			want:      caller,
-		},
-		{
-			name:      "an entry the caller wrote itself does not become the caller's address",
-			forwarded: []string{"192.0.2.7, " + caller + ", " + edge},
-			want:      caller,
-		},
-		{
-			name:      "the caller's own entries are read past however many of them arrive",
-			forwarded: []string{"192.0.2.7", "2001:db8::1, " + caller, edge},
-			want:      caller,
-		},
-		{
-			name:      "a request the edge did not rewrite carries the address the front end appended",
+			name:      "the one entry the platform appended",
 			forwarded: []string{caller},
+			want:      caller,
+		},
+		{
+			name:      "an entry a caller wrote itself does not become the address a rate is counted by",
+			forwarded: []string{forged + ", " + caller},
+			want:      caller,
+		},
+		{
+			name:      "however many entries a caller writes, across however many lines",
+			forwarded: []string{forged, "192.0.2.7, 2001:db8::1", caller},
 			want:      caller,
 		},
 	} {
@@ -282,8 +287,8 @@ func TestClientAddressBehindHostingIsTheCallers(t *testing.T) {
 				req.Header.Add("X-Forwarded-For", header)
 			}
 			req.RemoteAddr = peer
-			if got := apiClientIP(req); got != tc.want {
-				t.Errorf("the caller's address is %q, want %q", got, tc.want)
+			if got := clientIP(req); got != tc.want {
+				t.Errorf("the address the request is counted by is %q, want %q", got, tc.want)
 			}
 		})
 	}
@@ -292,7 +297,7 @@ func TestClientAddressBehindHostingIsTheCallers(t *testing.T) {
 	// there is.
 	bare := httptest.NewRequest(http.MethodPost, intakeOrigin+apiProbePath, nil)
 	bare.RemoteAddr = peer
-	if got, want := apiClientIP(bare), "10.0.0.2"; got != want {
+	if got, want := clientIP(bare), "10.0.0.2"; got != want {
 		t.Errorf("a request with no forwarded address is %q, want the peer %q", got, want)
 	}
 }

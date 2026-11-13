@@ -5,8 +5,8 @@ package keyservice
 
 // The portal's API mount (portal plan P1.0): the door Firebase Hosting rewrites
 // /api/** to (F21), the table every area registers its routes into, the one
-// refusal shape, the cap on a route's body, the caller's own address behind the
-// rewrite, and the seams the areas' routes reach.
+// refusal shape, the cap on a route's body, the caller's address a rate is
+// counted by, and the seams the areas' routes reach.
 //
 // The table is a package-level registry rather than a list in Handler because
 // the portal is built by one task per area (the plan's slices): an area file
@@ -15,6 +15,17 @@ package keyservice
 //
 // A deployment that mounts no route is one this file does nothing for: P1.0 is
 // inert alone, and every seam below is a shape a later area fills.
+//
+// The caller's address is the intake's own rule (service.go's clientIP) and
+// there is deliberately no second reader here. F34 — whether the entry the
+// platform appends behind Hosting is the caller's or the Hosting edge's — is not
+// settled by any test in this repository: it is a property of the deployed
+// chain, and the reconciliation's open list still carries it. What is settled is
+// the half a rate rests on, which is that the entry read is the platform's own
+// append and never one a caller wrote: the service answers everyone at its own
+// address too (F21's rewrite is not the only way in), and a caller that reached
+// it directly with one entry of its own in front of the platform's would name
+// its own bucket under any rule that read further left.
 
 import (
 	"bytes"
@@ -163,6 +174,8 @@ func (rg *apiRegistry) add(route apiRoute) {
 		panic("keyservice: the API route " + route.method + " " + route.path + " has no handler")
 	case !strings.HasPrefix(route.path, apiPrefix):
 		panic("keyservice: the API route " + route.method + " " + route.path + " is not under " + apiPrefix + ", the subtree Hosting rewrites to this service")
+	case route.path == apiPrefix:
+		panic("keyservice: the API route " + route.method + " " + apiPrefix + " is the subtree itself, which Handler mounts for every path no area registered: the two patterns are one, and the mux refuses the pair when it is built")
 	case route.maxBytes < 1:
 		panic("keyservice: the API route " + route.method + " " + route.path + " has no body cap, and a route a stranger can post to is one whose body the service has to hold")
 	}
@@ -322,48 +335,6 @@ func refuseAPI(w http.ResponseWriter, status int, code, message string) {
 	w.Header().Set("Content-Type", apiJSONType)
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(apiError{Error: apiFault{Code: code, Message: message}})
-}
-
-// apiClientIP is the caller's own address behind Hosting's rewrite to this
-// service, which F34 left to P1.0 to settle.
-//
-// Hosting stands in front of Cloud Run and Cloud Run's own front end in front of
-// the service, and each appends the address it saw to whatever arrived: the
-// caller's address is then the entry between the two — the last entry the
-// platform did not write itself. It is not an entry a caller can choose:
-// everything a caller may send lands to the left of it, so adding a line to
-// X-Forwarded-For cannot buy a fresh bucket. The entry to its right is the
-// Hosting edge, which every caller shares, so reading the last entry would be
-// reading one bucket for the whole internet — the intake's own reason for
-// reading past a caller's entries (§7.2).
-//
-// A chain of one entry is a request the edge did not rewrite (a local run, a
-// direct hop), and there the only entry is the caller's. With no header at all
-// the peer is the only address there is.
-func apiClientIP(r *http.Request) string {
-	entries := forwardedEntries(r)
-	switch {
-	case len(entries) == 0:
-		return hostOf(r.RemoteAddr)
-	case len(entries) == 1:
-		return entries[0]
-	}
-	return entries[len(entries)-2]
-}
-
-// forwardedEntries is every entry of X-Forwarded-For, in the order the header
-// holds them, across however many lines it arrived in. A proxy appends, so the
-// rightmost entry is the nearest hop's.
-func forwardedEntries(r *http.Request) []string {
-	var entries []string
-	for _, header := range r.Header.Values("X-Forwarded-For") {
-		for _, entry := range strings.Split(header, ",") {
-			if trimmed := strings.TrimSpace(entry); trimmed != "" {
-				entries = append(entries, trimmed)
-			}
-		}
-	}
-	return entries
 }
 
 // Docs is the portal's own document store (plan P1.2): named collections of
