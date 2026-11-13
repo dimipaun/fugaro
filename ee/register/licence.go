@@ -1075,7 +1075,18 @@ func licenceRenewRequest(ctx context.Context, call keyservice.RenewalCall, secre
 		return keyservice.Answer{}, fcli.RemoteErr(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	client := &http.Client{Timeout: licenceRenewTimeout}
+	// The client answers the response it was given and follows no redirect: a
+	// 307 or 308 from the licence server's address re-sends this very request —
+	// the key id and the renewal secret, which is the whole of the proof the
+	// server asks for — to whatever host and scheme the Location names, and the
+	// answer that comes back would be read as the licence server's own, a
+	// `revoked` among them, which is then written to the project's object for
+	// good. Not following one is what makes the sentence above true: the secret
+	// travels to the licence server's address and to no other.
+	client := &http.Client{
+		Timeout:       licenceRenewTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
 	defer client.CloseIdleConnections()
 	resp, err := client.Do(req)
 	if err != nil {

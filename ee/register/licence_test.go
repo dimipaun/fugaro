@@ -47,6 +47,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -216,6 +217,18 @@ type renewServer struct {
 	mu    sync.Mutex
 	calls []keyservice.RenewalCall
 	reply func(keyservice.RenewalCall) (int, string)
+	// redirectTo, when set, is the Location every answer carries: the address a
+	// client that follows a redirect would carry the renewal to next.
+	redirectTo string
+}
+
+// redirect makes the server answer every call with a 308 to location. It takes
+// the lock the answer is built under so that a test setting it and the server
+// goroutine reading it are ordered.
+func (s *renewServer) redirect(location string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.redirectTo = location
 }
 
 // serveLicenceServer points the command's licence server at a fake route and
@@ -240,10 +253,18 @@ func (f *licenceFixture) serveLicenceServer(t *testing.T, reply func(keyservice.
 		}
 		s.mu.Lock()
 		s.calls = append(s.calls, call)
-		s.mu.Unlock()
-		status, answer := http.StatusOK, `{"status":"ok"}`
+		status, answer, location := http.StatusOK, `{"status":"ok"}`, s.redirectTo
 		if s.reply != nil {
 			status, answer = s.reply(call)
+		}
+		if location != "" {
+			// A 308 keeps the method and the body: what a client that follows
+			// one re-sends is this very renewal, secret and all.
+			status, answer = http.StatusPermanentRedirect, ""
+		}
+		s.mu.Unlock()
+		if location != "" {
+			w.Header().Set("Location", location)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
@@ -1424,6 +1445,61 @@ func TestLicenceRefreshCallsTheServerOnce(t *testing.T) {
 	}
 	if !strings.Contains(out, project.Object) {
 		t.Errorf("the renewal's answer %q does not say where the key was installed", out)
+	}
+}
+
+// TestLicenceRefreshRefusesARedirect holds the client's own rule: a 308 from
+// the licence server's address is the answer, and it is not followed. A
+// followed one re-sends the renewal — the key id and the renewal secret, which
+// is the whole of the proof the server asks for — to whatever host and scheme
+// the Location names, and reads that host's answer as the licence server's: a
+// `revoked` among them is written to the project's object for good, so a
+// redirect would be both a leak of the secret and a way to make an installation
+// Free. The renewal goes to the licence server's address and nowhere else.
+func TestLicenceRefreshRefusesARedirect(t *testing.T) {
+	f := newLicenceFixture(t)
+	claims := f.claims()
+	key, secret := f.issuer.mint(t, claims), licenceTestSecret(t)
+	f.seedSecretContainer(nil)
+	if _, _, err := f.exec(t, key+"\n"+secret+"\n", "licence", "set"); err != nil {
+		t.Fatalf("licence set = %v", err)
+	}
+	f.secrets.AllowAccess()
+	before := f.object(t).Raw
+
+	// Where the redirect points. It must never be called, and it answers the
+	// one status that would be recorded if it were.
+	var followed atomic.Int64
+	elsewhere := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		followed.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"status":"`+keyservice.StatusRevoked+`"}`)
+	}))
+	t.Cleanup(elsewhere.Close)
+
+	server := f.serveLicenceServer(t, nil)
+	// Another host over plain http: a redirect changes the scheme as readily as
+	// the address, and both are what the client refuses to take an answer from.
+	server.redirect(elsewhere.URL + keyservice.RouteRenew)
+
+	_, _, err := f.exec(t, "", "licence", "refresh")
+	if err == nil {
+		t.Fatal("a redirect was answered as though the licence server had renewed")
+	}
+	if code := fcli.ExitCode(err); code != fcli.ExitRemoteError {
+		t.Errorf("the redirect exited %d, want %d: %v", code, fcli.ExitRemoteError, err)
+	}
+	if !strings.Contains(err.Error(), "308") {
+		t.Errorf("the refusal %q does not say what the licence server answered", err.Error())
+	}
+	if got := followed.Load(); got != 0 {
+		t.Errorf("the redirect delivered the renewal %d time(s) to the host it named: the renewal secret goes to the licence server's address and nowhere else", got)
+	}
+	if server.count() != 1 {
+		t.Errorf("the licence server was called %d times, want exactly one", server.count())
+	}
+	if got := f.object(t).Raw; !bytes.Equal(got, before) {
+		t.Error("a redirect rewrote the project's object: what the licence server did not answer is not written")
 	}
 }
 
