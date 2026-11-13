@@ -200,6 +200,9 @@ func runAccountsPoolAdd(cmd *cobra.Command, name string, members []string, o acc
 	if err != nil {
 		return err
 	}
+	if err := accessGateProject(cmd.Context(), lc, nil, "nothing was written", "declaring a model pool"); err != nil {
+		return err
+	}
 	// The pool this command would write, judged by the block's own rule
 	// (config.ValidatePools) against the credentials this document defines: the
 	// name, the strategy, the members and the namespace a credential shares
@@ -298,6 +301,9 @@ spent, so a coding agent's session is refused, --yes included.`,
 func runAccountsPoolRm(cmd *cobra.Command, name string, o accountsPoolWriteOptions) error {
 	sel, lc, err := settingsSelection()
 	if err != nil {
+		return err
+	}
+	if err := accessGateProject(cmd.Context(), lc, nil, "nothing was written", "removing a model pool"); err != nil {
 		return err
 	}
 	pool, ok := accountsPoolOf(lc, name)

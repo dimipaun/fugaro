@@ -663,6 +663,13 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 		// step it printed a cross on `Storing <name>` with the path of the
 		// empty log this command's door had already filed, for a store it
 		// never called.
+		// The project's copy is the one every admitted repository may mount,
+		// which makes it the project's own thing to store (F19's project
+		// layer; a repository's own copy is the branch below, and it is the
+		// repository's).
+		if err := accessGateProject(ctx, env.lc, nil, "nothing was written", "storing the project's copy of a secret"); err != nil {
+			return err
+		}
 		if !projectWideAccepted(env.lc, name) {
 			return projectWideRefusal(env.lc, name)
 		}
@@ -673,6 +680,12 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 	}
 	r, err := resolveSecretRepo(cmd, env, o.cloud, o.repo)
 	if err != nil {
+		return err
+	}
+	// A repository's own copy is that repository's, so it is stored by its
+	// admin: it is what a repository-scoped role is for, and a grant over
+	// another repository is not one over this.
+	if err := accessGateRepo(ctx, env.lc, nil, r.repo, "nothing was written", "storing a repository's copy of a secret"); err != nil {
 		return err
 	}
 	_, reserved := config.ReservedSecrets[name]
@@ -842,6 +855,12 @@ func secretsSetPolicy(cmd *cobra.Command, o secretsOptions, name string) error {
 	}
 	sel, lc, err := settingsSelection()
 	if err != nil {
+		return err
+	}
+	// The entry is the project's own — it is what says which repositories may
+	// mount the value and whether the credentials service forwards it — so it
+	// is written by a project admin (F19's project layer).
+	if err := accessGateProject(cmd.Context(), lc, nil, "nothing was written", "changing who may mount a secret"); err != nil {
 		return err
 	}
 	block, err := secretsPolicyBlock(lc, name)

@@ -89,7 +89,10 @@ func init() {
 		"runs[].run", "runs[].repo", "runs[].status", "runs[].stage", "runs[].reason", "runs[].halt", "runs[].pr_url",
 		"runs[].branch", "runs[].outcome", "runs[].created", "runs[].cost", "runs[].cost.route_by", "runs[].cost.reported_usd",
 		"runs[].terminal", "runs[].settled", "runs[].base_branch", "runs[].stale_draft", "runs[].draft_fallback", "runs[].pr_status_at",
-		"runs[].launched_by", "runs[].failure_class")
+		"runs[].launched_by", "runs[].failure_class",
+		// The state of the pull request a row carries, which the working
+		// skill's status reference reads to say which runs wait on a merge.
+		"runs[].pr_state")
 	// The working skill's status reference sends a reader to --group-by and
 	// names the block it adds, so the block's own key is held to lsDoc's --
 	// beside the rows, never instead of them, and only when a grouping was

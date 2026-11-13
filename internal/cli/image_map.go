@@ -83,6 +83,12 @@ func runImageMapSet(cmd *cobra.Command, o cloudOptions, repo, entry string) erro
 	if err != nil {
 		return err
 	}
+	// The map is published with the catalog, from whichever machine wrote it
+	// (D1906): what a job of every repository runs is the project's, so it is
+	// the project admin's to write.
+	if err := accessGateProject(ctx, onDisk, nil, "nothing was written", "writing the project's image map"); err != nil {
+		return err
+	}
 	// The key written is the canonical form of the repository — the name a job's
 	// own repository is looked up by (D1906) — and the value is resolved the way
 	// every --repo is: owner/name passes through, a path becomes the owner/name

@@ -7,11 +7,12 @@ suite (S3.5, written 2026-11-09), and `ee/keyservice/` holds the service itself 
 minter, the checks and the record, one Go package (S3.2, written 2026-11-10). Neither root has been
 applied: S3.8 applies the key ring and S3.7 the services, both OWNER-RUN, so no key and no running
 service exists yet, and nothing in S3.2 has run outside a test. **The package is not a program yet**:
-the two roots' `intake_image` and `minter_image` are built from it, and what builds one — a `main`
-per half and, behind it, the durable store, the code host's client, the mail provider, D452's proof
-check and the key ring's signing client — is S3.7's deploy, so this tree holds no entry point and no
-Dockerfile and there is nothing here to run. The admin page and the manual queue (§6) are written
-too — `admin.go` and `queue.go` (S3.4, written 2026-11-11) — and what they leave to the owner is
+`api_image` and `minter_image` — the API's and the minter's, the two the services root declares —
+are built from it, and what builds them — a `main` per half and, behind it, the durable store, the
+code host's client, the mail provider, D452's proof check and the key ring's signing client — is
+S3.7's deploy, so this tree holds no entry point and no Dockerfile and there is nothing here to run.
+The admin page and the manual queue (§6) are written too — `admin.go` and `queue.go` (S3.4, written
+2026-11-11) — and what they leave to the owner is
 what §6 already names: **D454**'s caps are configuration New refuses to start without, and
 **D455**'s factor and **D456**'s destination are seams, so a deployment that names no factor renders
 the page read-only and mints nothing from it.
