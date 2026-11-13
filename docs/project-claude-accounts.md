@@ -23,9 +23,9 @@ Neither is the agent's: `fugaro secrets set` reads a value only from stdin or a 
 never from an argument, a flag or the environment.
 
 **§12 to §14 are the vocabulary built on top of this page.** An account is one type of a
-**credential** (§12), credentials group into ordered **pools** (§13), and the four **crafts** of a
-run — coder, first-line review, senior review, security review — choose the model and the credential
-or pool their calls go out on (§14). §1 to §11 describe the account itself, and every rule in them
+**credential** (§12), credentials group into ordered **pools** (§13), and the five **crafts** of a
+run — coder, first-line review, senior review, security review and the escalation ladder's merge
+judge — choose the model and the credential or pool their calls go out on (§14). §1 to §11 describe the account itself, and every rule in them
 still holds.
 
 ## 1. What a named account is

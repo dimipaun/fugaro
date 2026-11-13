@@ -37,7 +37,7 @@ type Grade struct {
 // Grades is one layer's grades by name: the project's own answer, which a
 // later layer may not write at all (G3).
 //
-// A map and not a struct with two fields, unlike config.Crafts' four: the
+// A map and not a struct with two fields, unlike config.Crafts' five: the
 // grades are a closed set too, and the set is internal/escalation's (Grade),
 // which this package may not import — escalation imports this one. A name
 // outside the vocabulary is refused where the block is written

@@ -314,9 +314,10 @@ pool that mixes the two halves can fail over only where the credential is chosen
 stage boundary** and not mid-call: a run that is served by its own gateway cannot hand one call to
 the credentials service, and the other way round.
 
-A run's four **crafts** — coder, first-line review, senior review and security review — each name a
-model and an **access**, the credential or pool their calls go out on, and the two halves inherit
-separately: the first-line review follows the coder, the security review follows the senior review
+A run's five **crafts** — coder, first-line review, senior review, security review and the escalation
+ladder's merge judge — each name a model and an **access**, the credential or pool their calls go out
+on, and the two halves inherit separately: the first-line review follows the coder, and the security
+review and the merge judge follow the senior review
 (§"The senior reviewer on a provider route" above is that rule for the reviewer's model).
 `fugaro craft ls` prints, per craft, the model and the access it resolves to and where each came
 from — offline. A craft's access is written in the repository's own `fugaro.yaml`

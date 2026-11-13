@@ -77,7 +77,7 @@ type poolChoice struct {
 	// it, and the answer decides whether a pool serves anything at all.
 	read   bool
 	spread bool
-	// crafts is the resolver's answer for this run's four crafts, computed
+	// crafts is the resolver's answer for this run's five crafts, computed
 	// once. An access is resolved from the run's own file and the owner's
 	// published node, and neither changes under a run.
 	crafts map[string]craft.Effective

@@ -5812,7 +5812,7 @@ func runSlipEnv(ctx context.Context, env *cloudEnv, spec *task.Spec, slug, workf
 }
 
 // slipCredentialNames are the credentials the run's slip asks the service to
-// serve: what each of the four crafts resolves to for this launch, deduplicated
+// serve: what each of the five crafts resolves to for this launch, deduplicated
 // — the same answer `fugaro craft ls` prints and the same one the runner will
 // make its calls with, because the resolution is internal/craft's and not a
 // second rule here (that package's own promise: a launcher and a runner cannot

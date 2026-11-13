@@ -148,7 +148,7 @@ func craftRows() []craftLsRow {
 	}
 }
 
-// TestCraftLsTheThreeLayers is the read's own test: the four crafts, each
+// TestCraftLsTheThreeLayers is the read's own test: the fixture's crafts, each
 // half with the layer it came from — the checkout's file, the installation's
 // config, the project layer file — and the pool that serves nothing yet said
 // so on the rows that name it, including the row that inherits it.

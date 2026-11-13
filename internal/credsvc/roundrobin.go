@@ -18,7 +18,7 @@ package credsvc
 // already passes the settings).
 //
 // **A call this service cannot attribute to one craft does not rotate.** The
-// wire carries no craft (C1.10): a candidate list is the union of the four
+// wire carries no craft (C1.10): a candidate list is the union of the five
 // crafts' accesses (pool.go), so a project whose crafts go out on two different
 // pools hands one call one list. Rotating that list would apply one pool's
 // strategy to another pool's members — a member used out of the order its owner
