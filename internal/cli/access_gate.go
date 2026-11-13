@@ -117,6 +117,9 @@ func requireAccess(ctx context.Context, env *cloudEnv, action accesslib.Action, 
 // a WIDER role than the repository's, so the refusal asked for a grant the
 // person did not need.
 func requireRunAccess(ctx context.Context, env *cloudEnv, action accesslib.Action, s *runstore.Store, what string) error {
+	// A task this machine cannot read names nothing, and the error is not the
+	// refusal: the config's entry for the slug and then project scope answer
+	// instead, and neither is wider than the run's own repository.
 	repo, _ := showRunRepo(ctx, env, s, nil)
 	if canonical, ok := accessRunRepo(s.Slug(), repo); ok {
 		return requireAccess(ctx, env, action, canonical, what)
@@ -128,10 +131,13 @@ func requireRunAccess(ctx context.Context, env *cloudEnv, action accesslib.Actio
 }
 
 // requireProjectAccess is requireAccess for a subject nothing here can name as
-// a canonical repository — a run stored under a slug this machine's config does
-// not list, a row whose task is unreadable. It asks the project-scope question
-// instead: no repository-scoped grant can be about a repository nothing can
-// name, so only a role covering the whole installation reaches it.
+// a canonical repository: a run whose own task and record name none and whose
+// slug this machine's config does not answer for, a row whose task is
+// unreadable. It asks the project-scope question instead — no repository-scoped
+// grant can be about a repository nothing can name, so only a role covering the
+// whole installation reaches it — and it is the last fallback, never the
+// shortcut: everything that can name a repository is judged at that repository
+// first (requireRunAccess).
 func requireProjectAccess(ctx context.Context, env *cloudEnv, action accesslib.Action, slug, what string) error {
 	a, ok := accessActions[action]
 	if !ok {
