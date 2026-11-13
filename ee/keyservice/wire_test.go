@@ -380,6 +380,28 @@ func TestWireHoldsTheShapeAndNotTheValues(t *testing.T) {
 	}
 }
 
+// TestWireRefusalIsTheAPIsOwnBody holds the error shape to the body the portal
+// actually answers a refusal with. `refuseAPI` (ee/keyservice/api.go, P1.0)
+// writes one object under `error`, which `TestAPIErrorsAreUniform` pins, so a
+// schema that described the fault at the root — flat, `code` and `message` where
+// the body has `error` — would refuse every refusal the service sends: closed as
+// it is, it would call the body's one field unknown, and the SPA would have no
+// shape at all for the one answer every route can give. The shape is read from
+// the API's own writer rather than from a second copy of it, so the two cannot
+// drift apart again.
+func TestWireRefusalIsTheAPIsOwnBody(t *testing.T) {
+	body, err := json.Marshal(apiError{Error: apiFault{Code: "key_revoked", Message: "This key was revoked by the licensor."}})
+	if err != nil {
+		t.Fatalf("the API's own refusal does not marshal: %v", err)
+	}
+	if err := wireSchemaDef(t, "error", "refusal").Validate(wireInstance(t, body)); err != nil {
+		t.Errorf("the error shape refuses the body refuseAPI writes, and that body is every refusal the portal sends: %v", err)
+	}
+	if err := decodeWire(body, wireShapes["error.refusal"].alloc()); err != nil {
+		t.Errorf("this build cannot read the body refuseAPI writes into %T: %v", wireShapes["error.refusal"].alloc(), err)
+	}
+}
+
 // wireNested is one object inside a shape's fixture with the def that describes
 // it: the path to it — a field name, then an index per list element — and the
 // subschema a body there is read against.
