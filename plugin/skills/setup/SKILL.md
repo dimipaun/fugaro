@@ -29,13 +29,13 @@ Ground rules:
 
 ## 1. Preconditions
 
-Run `fugaro doctor --offline --json` once at the start of a session: where a check comes back with `skipped: false` and `ok: false`, tell the user in one sentence what it is and offer the one command that fixes it, for the user to run in their own terminal window, not through the agent:
+Run `fugaro doctor --offline --json` once at the start of a session: where its `ok` is false, or a check is `ok: false` with a `severity` other than `info`, tell the user in one sentence what it is and offer the one command that fixes it, for the user to run in their own terminal window, not through the agent:
 
 ```bash user-runs
 fugaro update
 ```
 
-A coding agent's session cannot apply cloud changes, by design: never look for a flag or another command that would let this session apply those writes, and never unset the marker that says this session is one; a session that opens with a status report nobody asked for is the failure this sentence exists to avoid, so if everything `--offline` could check is ok, say nothing and carry on. Where `plugin-install` is not ok the user has no Fugaro skills yet: the wizard's own step comes first.
+A coding agent's session cannot apply cloud changes, by design: never look for a flag or another command that would let this session apply those writes, and never unset the marker that says this session is one. A check `--offline` did not run comes back `skipped: true` with severity `info`, and is not one of these. Where `plugin-install` is not ok the user has no Fugaro skills yet, so the wizard's own step comes first; and a session that opens with a status report nobody asked for is the failure this sentence exists to avoid, so if everything `--offline` could check is ok, say nothing and carry on.
 
 From the repository root (`git rev-parse --show-toplevel`) run `fugaro doctor --json`. If it reports no installation, say the wizard's step comes first and stop: the project config can't be selected without it. The user runs it once per project, in their own terminal window, not through the agent:
 

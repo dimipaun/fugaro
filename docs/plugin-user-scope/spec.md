@@ -304,14 +304,14 @@ offline verdicts where a newer CLI would be the only fix.
 **The exact skill sentence (D947).** `working`'s opening and `setup`'s first step say, once, in the
 skill's own voice:
 
-> At the start of a session, run `fugaro doctor --offline --json` once. If any check comes back with
-> `skipped: false` and `ok: false`, tell the user in one sentence what it is — in plain words, not the
-> check's own text — and offer the one command that fixes it: `fugaro update`, in their own terminal
-> window, not through the agent. A coding agent's session cannot apply cloud changes, by design: never
-> look for a flag or another command that would let this session apply those writes, and never unset the
-> marker that says this session is one. If everything `--offline` could check is ok, say nothing and
-> carry on: a session that opens with a status report nobody asked for is the failure this sentence
-> exists to avoid.
+> At the start of a session, run `fugaro doctor --offline --json` once. If its `ok` is false, or any check is
+> `ok: false` with a `severity` other than `info`, tell the user in one sentence what it is — in plain words,
+> not the check's own text — and offer the one command that fixes it: `fugaro update`, in their own terminal
+> window, not through the agent. A check `--offline` did not run comes back `skipped: true` with severity
+> `info`, and is not one of these. A coding agent's session cannot apply cloud changes, by design: never look
+> for a flag or another command that would let this session apply those writes, and never unset the marker that
+> says this session is one. If everything `--offline` could check is ok, say nothing and carry on: a session
+> that opens with a status report nobody asked for is the failure this sentence exists to avoid.
 
 **Half of that is not new wording, and that is the point.** The last two sentences are
 `plugin/skills/upgrade/SKILL.md:27`'s, already pinned verbatim by `plugin/upgrade_skill_test.go:18,20`

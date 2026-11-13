@@ -58,7 +58,8 @@ func TestWorkingAndSetupCarryTheSessionStartNudge(t *testing.T) {
 		skill := readRepoFile(t, path)
 		for _, want := range []string{
 			"`fugaro doctor --offline --json`",
-			"`skipped: false` and `ok: false`",
+			"its `ok` is false, or a check is `ok: false` with a `severity` other than `info`",
+			"A check `--offline` did not run comes back `skipped: true` with severity `info`, and is not one of these.",
 			"one sentence",
 			"```bash user-runs\nfugaro update\n```",
 			"A coding agent's session cannot apply cloud changes, by design",

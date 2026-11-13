@@ -12,13 +12,13 @@ Fugaro runs one coding task in a fleeting cloud worker: it checks out the reposi
 
 ## At the start of a session
 
-Run `fugaro doctor --offline --json` once. If any check comes back with `skipped: false` and `ok: false`, tell the user in one sentence what it is — in plain words, not the check's own text — and offer the one command that fixes it, for the user to run in their own terminal window, not through the agent:
+Run `fugaro doctor --offline --json` once. If its `ok` is false, or a check is `ok: false` with a `severity` other than `info`, tell the user in one sentence what it is — in plain words, not the check's own text — and offer the one command that fixes it, for the user to run in their own terminal window, not through the agent:
 
 ```bash user-runs
 fugaro update
 ```
 
-A coding agent's session cannot apply cloud changes, by design: never look for a flag or another command that would let this session apply those writes, and never unset the marker that says this session is one. If everything `--offline` could check is ok, say nothing and carry on: a session that opens with a status report nobody asked for is the failure this sentence exists to avoid.
+A check `--offline` did not run comes back `skipped: true` with severity `info`, and is not one of these. A coding agent's session cannot apply cloud changes, by design: never look for a flag or another command that would let this session apply those writes, and never unset the marker that says this session is one. If everything `--offline` could check is ok, say nothing and carry on: a session that opens with a status report nobody asked for is the failure this sentence exists to avoid.
 
 ## Decide first
 
