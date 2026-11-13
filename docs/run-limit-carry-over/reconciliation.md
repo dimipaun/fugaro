@@ -210,8 +210,11 @@ per-run and daily caps, which are the database's rules (spec §4, §9, T2/T4/T5;
 Every cap in the system today is either the
 owner's (the database, `fugaro budget set`) or the launcher's (a launch argument), and a chain limit is a
 **launcher's** number (D1045). Because that number lives in the **root launch's `task.json`** (D1046), raising
-an exhausted chain is a **rewrite of that stored task**, carrying the reason for the raise — no new command,
-no new node and no operator-only write path. *What that costs, said plainly because the alternative is a claim
+an exhausted chain is a **rewrite of that stored task**, carrying the reason for the raise — no new node and
+no operator-only write path, plus the one command L9 shipped, `fugaro budget chain raise`, which is that
+rewrite's supported path (2026-11-13, at implementation: the "no new command" this row first said was the
+plan's prose, while its own file list asked for the subcommand — the D1061 row below carries the same
+correction). *What that costs, said plainly because the alternative is a claim
 the tree does not support:* the launcher holds `objectUser` on the `runs/` and `tokens/` prefixes (F21) and
 can rewrite that task exactly as an operator can, so this is a **convention the installation states**, not a
 bound the platform enforces —

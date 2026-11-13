@@ -280,7 +280,7 @@ A file that more than one task writes, and what each writes there.
 | File | Tasks | What each writes |
 | --- | --- | --- |
 | `internal/budget/ledger.go` | L1, and read by L0 | L1 adds the named read; L0 consumes it through its one-method `LedgerReader` interface, so the fake in L0's tests is the whole seam |
-| `schemas/schemas_test.go` | L2, L6 | one row per new schema or new member |
+| `schemas/schemas_test.go` | L2, L6, L9 | one row per new schema or new member (L9's is `result.json`'s `chain_raises`) |
 | `internal/cli/run.go` | L3, L4, L7 | L3 the four flags, L4 `--continues` and the follow-up inheritance, L7 the reply's members |
 | `internal/cli/runs.go` | L4, L6 | L4 the `--pr`-found-nothing hint, L6 the `runs show` subcommand registration |
 | `internal/task/task.go` | L2, and read by L3 | L2 adds the four `Overrides` members; L3 writes them |
