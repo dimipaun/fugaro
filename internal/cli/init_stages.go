@@ -713,19 +713,18 @@ func (e *initEngine) ensureCredentialsService(ctx context.Context) error {
 // The document goes back on disk BEFORE anything that can fail. prepare
 // (init.go) is what rewrites the installation's tfvars from this run's spec and
 // carries the block forward, and it is steps away: PrepareWorkdir has already
-// deleted the file, so a failure in between — the resolve the intake's own
-// block makes (carriedIntake), which reaches for cosign and for the registry
-// and can fail for either, and which is a warning here for exactly this window
-// — would leave an installation whose tfvars hold no block at all. The next
-// run reads that as "no service yet", composes a fresh one from the local
-// config alone, and
-// applies it: the block's URL — the audience every caller's ID token is minted
-// for, which only the tfvars and the module's outputs carry — is gone from the
-// desired state, so the revision is left admitting nobody until the audience
-// fill puts it back, and any member the deployed block carried beyond what this
-// machine's config states is lost with it. Putting the document the carry is
-// about to use back closes the window this resolve opened, and costs one write
-// of a file prepare rewrites a few steps later.
+// deleted the file, so a failure in between — the resolve carriedIntake makes
+// for the intake's own pin, which reaches for cosign and for the registry and
+// can fail for either — would leave an installation whose tfvars hold no block
+// at all. The next run reads that as "no service yet", composes a fresh one
+// from the local config alone, and applies it: the block's URL — the audience
+// every caller's ID token is minted for, which only the tfvars and the module's
+// outputs carry — is gone from the desired state, so the revision is left
+// admitting nobody until the audience fill puts it back, and any member the
+// deployed block carried beyond what this machine's config states is lost with
+// it. Putting the document the carry is about to use back closes the window the
+// resolve opened, and costs one write of a file prepare rewrites a few steps
+// later.
 //
 // A run that fails before that rewrite leaves the file on disk, and that is the
 // point rather than a leak to clean up: nothing removes a workdir on the error
@@ -810,7 +809,9 @@ func (e *initEngine) writeCarriedCredentials(ctx context.Context, doc []byte) ([
 //
 // A document that carries no image for the service gets no intake: without one
 // there is nothing for the module's container to run, and the block would be a
-// revision that never comes up.
+// revision that never comes up. A run with no release of its own — a
+// development build, which this function's callers have already refused a
+// deployment for — keeps the recorded image rather than resolving one.
 func (e *initEngine) carriedIntake(ctx context.Context, doc []byte) ([]byte, error) {
 	if _, have, err := infra.IntakeOf(doc); err != nil || have {
 		return doc, err
