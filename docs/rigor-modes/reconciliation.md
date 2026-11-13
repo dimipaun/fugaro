@@ -874,7 +874,10 @@ puts on the pair's own task (`internal/cli/recipes_skew.go`: a runner older than
 the release the ab field landed in refuses the whole task at bootstrap, the
 champion's arm included, so such an image is sampled on without the pair rather
 than launched with it), added one more image-skew `Since` constant and left the
-image-skew row at 38, so it moves to 39; a recount on 2026-11-12 found 40 before this constant and 41 with it, so the row reads 41.) They
+image-skew row at 38, so it moves to 39; a recount on 2026-11-12 found 40 before this constant and 41 with it, so the row reads 41.
+Amended 2026-11-13: `internal/cli/docs_portal_test.go`, the portal folder's pin
+over its plan's number blocks, its decision rows and its level table (P9.5),
+moved the table's row from 132 to 133.) They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.
@@ -893,7 +896,7 @@ stale has found a merge that did not.
 | Files in `internal/runner` that mention `Severity` at all | 4 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
 | Image-skew `Since` constants | 44 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
-| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 132 | `ls internal/cli/docs_*_test.go \| wc -l` |
+| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 133 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
 | Published project-policy version | 7 | `sed -n 's/^const Version = //p' internal/projectpolicy/version.go` |
 | Blocks the project layer's `defaults:` may set whose value names a repository | 0 | `sed -n '/^type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Repo\|Repos\|Repository)'` |
