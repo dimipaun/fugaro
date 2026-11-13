@@ -257,6 +257,35 @@ const (
 	// names none must still start, with a launcher class that admits nobody,
 	// rather than be a service that will not bind a port.
 	envLauncherAccounts = "FUGARO_LAUNCHER_ACCOUNTS"
+	// envSharedJobAccounts is the installation's shared project jobs -- the
+	// job a coding run of a profile's repositories runs in -- as
+	// {"profile","provider","account","repos"} objects, one per job whose
+	// service account may call the service as a shared caller (C3.9's coding
+	// half, internal/credsvc's ClassShared). It is the review document's own
+	// shape over the coding axis, and it differs from it in the one member
+	// the class's binding needs: the repositories the profile is bound to,
+	// which is what G21 holds a shared caller's identity to, and which the
+	// service cannot read for itself at pairing time (the mint reads no
+	// policy at all, C2.1).
+	//
+	// The accounts are DERIVED from the first three fields
+	// (credsvc.SharedJobAccountFor), for the reason the review document gives:
+	// the service account is a derivation of the profile, the provider and the
+	// account, so a table of emails would be a second spelling that can drift
+	// from the accounts the deployer created. "account" is the axis's own
+	// spelling, in which the empty string is the default account, and it is
+	// config.ReviewVariantAccount's mapping for the names the deployer spells.
+	//
+	// It is read as an OPTIONAL value by the rule envReviewJobAccounts states:
+	// the name arrives with the deployment of the shared jobs, so an
+	// installation whose module does not render it yet must start the service
+	// it always did, with an empty shared set, rather than refuse to bind a
+	// port. An empty set is this class's fail-closed statement: verifyJob
+	// answers no shared class at all and every caller of it is refused whole,
+	// which is exactly the state Global Constraint 6 held this class in before
+	// this task. A value that is present and is not the document below is a
+	// deployment that is wrong, and is refused here rather than read as empty.
+	envSharedJobAccounts = "FUGARO_SHARED_JOB_ACCOUNTS"
 )
 
 // credentialsServiceEnvNames is the whole of this command's REQUIRED
@@ -351,12 +380,17 @@ var credentialsTest *credentialsWiring
 // process's log handler. Nothing is guessed and nothing is defaulted: a
 // missing or malformed name is a refusal that names it.
 //
-// The set left empty on purpose is the shared project jobs' one
-// (AuthConfig.SharedJobAccounts): under Global Constraint 6 this service admits
-// runs in per-repository jobs only until the phase-3 shared-job rules land, and
-// an empty set is that statement rather than a fact the deployment has to make.
-// The day those rules land it is a read of the policy this service already
-// reads (credsvc.SharedJobAccountsFor), not a variable.
+// The shared project jobs' class (AuthConfig.SharedJobAccounts and
+// Config.SharedAccounts, which are the same rows) comes from the deployment
+// too: FUGARO_SHARED_JOB_ACCOUNTS, the coding half of the class the review
+// entry below carries, whose rows are the (profile, provider, account) triples
+// the shared jobs were deployed over plus the repositories each profile is
+// bound to — the member G21 needs and the policy read would have supplied
+// (credsvc.SharedJobAccountsFor derives the same rows from a published policy,
+// which is what a caller holding the document can compare against). An empty
+// set is this class's fail-closed statement: no shared caller is admitted at
+// all, which is the state of every installation whose module does not render
+// the entry yet.
 //
 // The review-only variant's accounts (AuthConfig.ReviewJobAccounts and
 // Config.ReviewAccounts, which are the same list) come from the deployment
@@ -450,6 +484,16 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 	if err != nil {
 		return credsvc.Config{}, userErr("%v", err)
 	}
+	// The shared coding class (B5.1), read by the review class's own rule and
+	// for the same reason: the entry arrives with the deployment of the shared
+	// jobs, so an installation whose module does not render it starts with an
+	// empty set and refuses every caller of the class whole -- the state this
+	// class was in under Global Constraint 6 -- rather than refuse to bind a
+	// port (`envSharedJobAccounts` states the direction and why it matters).
+	sharedAccounts, err := credentialsServiceSharedJobAccounts(getenv(envSharedJobAccounts), env[envGCPProject])
+	if err != nil {
+		return credsvc.Config{}, userErr("%v", err)
+	}
 	// The database's shape, then the database itself: a URL that is not a
 	// Firebase Realtime Database at all is a different refusal from one that
 	// names another installation's database.
@@ -533,6 +577,13 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 		// module renders no review-job document starts in, and a caller of the
 		// class is then no class at all rather than a class with no route.
 		ReviewJobAccounts: reviewAccounts,
+		// The shared coding class (B5.1): the jobs a coding run in a shared
+		// project job runs in, by the service account each one was deployed
+		// as, with the profile it belongs to and the repositories that
+		// profile is bound to. Empty is the state an installation whose module
+		// renders no shared-job document starts in, and a caller of the class
+		// is then a caller no route is served for.
+		SharedJobAccounts: sharedAccounts,
 		Keys:              credsvc.NewGoogleKeys(),
 		JobKeys:           credsvc.NewGoogleKeys(credsvc.WithKeysEndpoint(credsvc.GoogleOAuthCertsURL)),
 		Outcomes:          credsvc.RTDBOutcomes{DB: db},
@@ -574,10 +625,16 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 		// review table is non-empty and whose repository table is empty, which
 		// is the one pair the two are read as (server.go).
 		ReviewAccounts: reviewAccounts,
+		// The shared coding class's own table (B5.1): the same rows
+		// AuthConfig.SharedJobAccounts holds, because the pairing needs the
+		// profile and the repositories the row is bound to where the verifier
+		// needs only the class.
+		SharedAccounts: sharedAccounts,
 		// The repository table, which is the pairing's second step for a
-		// review caller (C3.9a) and is read from this variable's own input
-		// above rather than from the published policy: the table must be the
-		// one the per-repository bindings are made from.
+		// review caller (C3.9a) and for a shared one (B5.1), and is read from
+		// this variable's own input above rather than from the published
+		// policy: the table must be the one the per-repository bindings are
+		// made from.
 		Repos: repos,
 		Log:   log,
 	}, nil
@@ -874,6 +931,93 @@ func credentialsServiceReviewJobAccounts(raw, gcpProject string) ([]credsvc.Revi
 	// disagrees with itself rather than a document this function can repair.
 	slices.SortFunc(out, func(a, b credsvc.ReviewJobAccount) int { return cmp.Compare(a.Email, b.Email) })
 	return slices.Compact(out), nil
+}
+
+// credentialsServiceSharedJobAccounts turns FUGARO_SHARED_JOB_ACCOUNTS into
+// the shared class's table (C3.9's coding half, B5.1): one row per shared
+// project job this installation deployed, keyed by the service account the
+// caller is verified as, carrying the profile it belongs to and the
+// repositories that profile is bound to.
+//
+// The document is a JSON array of {"profile": ..., "provider": ...,
+// "account": ..., "repos": [...]} objects — the review document's own axis,
+// which is the axis one shared job per (profile, provider, account) is
+// deployed over (config.ProjectJobAccounts over a profile's job profile), plus
+// the one member the coding class needs that the review class does not: the
+// repositories G21 holds a shared caller's run identity to. They are the
+// profile's own allow_repos as the installation published them, and they
+// travel here because the service cannot read them at pairing time — the mint
+// reads no policy at all (C2.1, D145) — where the review class resolves its
+// repository from the run identity's slug alone (RepositoryTableFor).
+//
+// The account may be absent, which is the axis's spelling of the default
+// account, and each row's service account is derived from the first three
+// fields by credsvc.SharedJobAccountFor — the same derivation the policy read
+// makes (credsvc.SharedJobAccountsFor), so there is one spelling of these names
+// and not two.
+//
+// The two rules the class-specific entries are read by hold here
+// (`envSharedJobAccounts` states them): an absent or empty value is the EMPTY
+// set, the fail-closed statement that this installation admits no shared
+// project job — every caller of the class is then refused whole, which is the
+// state of an installation whose module does not render the entry yet — while
+// a value that is present and is not this document is refused here, because it
+// is a deployment that is wrong and would otherwise be read as a service that
+// admits nobody. An empty array is the empty set and not a refusal, for the
+// review table's reason: an installation that deploys no shared job still
+// starts and refuses the class.
+//
+// An entry's `repos` must be PRESENT — an empty array is the deny-all profile
+// and not a refusal, and a missing one is a document nobody could have written
+// on purpose, refused by name rather than read as the same thing.
+//
+// A REFUSAL NAMES A VARIABLE AND AN ENTRY, NEVER A VALUE.
+func credentialsServiceSharedJobAccounts(raw, gcpProject string) ([]credsvc.SharedJobAccount, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	var rows []struct {
+		Profile  string    `json:"profile"`
+		Provider string    `json:"provider"`
+		Account  string    `json:"account"`
+		Repos    *[]string `json:"repos"`
+	}
+	dec := json.NewDecoder(strings.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&rows); err != nil {
+		return nil, fmt.Errorf("%s is not the installation's shared project job accounts: it must be a JSON array of {\"profile\": ..., \"provider\": ..., \"account\": ..., \"repos\": [...]} objects, one per shared project job this installation deployed. Nothing was started and no credential was issued", envSharedJobAccounts)
+	}
+	out := make([]credsvc.SharedJobAccount, 0, len(rows))
+	for i, r := range rows {
+		if r.Profile == "" || r.Provider == "" {
+			// The index and the field names, not the entry, by the review
+			// table's own rule: the row is a value of this environment, and
+			// the refusal has to be actionable without it.
+			return nil, fmt.Errorf("%s: entry %d has no profile or no provider (both are required: the shared job's service account is derived from the profile, the provider and the account, and a row without them names an account nobody deployed)", envSharedJobAccounts, i)
+		}
+		if !task.ValidProvider(r.Provider) {
+			return nil, fmt.Errorf("%s: entry %d names a provider that is not a provider kind (lower case, starting with a letter), so the shared job's service account cannot be derived from it and would be one this installation cannot have deployed", envSharedJobAccounts, i)
+		}
+		if r.Repos == nil {
+			return nil, fmt.Errorf("%s: entry %d names no repositories at all (the member is required, and an empty array is how a profile bound to none is written): a shared caller is served for the identity's repository only when the profile admits it, so a row read as deny-all is a job this service refuses every call of", envSharedJobAccounts, i)
+		}
+		for _, repo := range *r.Repos {
+			if repo == "" {
+				return nil, fmt.Errorf("%s: entry %d has an empty entry in repos (every entry is one canonical \"<provider>/<owner>/<name>\" repository, and an empty one admits nothing)", envSharedJobAccounts, i)
+			}
+		}
+		out = append(out, credsvc.SharedJobAccountFor(r.Profile, r.Provider, r.Account, *r.Repos, gcpProject))
+	}
+	// The same order the policy read makes (credsvc.SharedJobAccountsFor), and
+	// the repeats are NOT dropped here, which is the one difference from the
+	// review table: a row carries its profile and its repositories, so two rows
+	// that name one account are either the same row twice — which
+	// credsvc.NewAuthenticator and NewServer both read as one — or a deployment
+	// that binds one account to two profiles, which both refuse by name. A
+	// document this function collapsed on the email alone would hide the second
+	// from them.
+	slices.SortFunc(out, func(a, b credsvc.SharedJobAccount) int { return cmp.Compare(a.Email, b.Email) })
+	return out, nil
 }
 
 // The host's own bounds. A proxied model call is long-lived -- it streams a

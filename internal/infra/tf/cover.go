@@ -1265,7 +1265,7 @@ var credentialsServiceEnv = []string{
 	"FUGARO_CREDENTIALS_SERVICE_URL", "FUGARO_JOB_ACCOUNTS",
 	"FUGARO_VERIFIER_ACCOUNTS", "FUGARO_PERSON_ACCOUNTS",
 	"FUGARO_COORDINATOR_ACCOUNT", "FUGARO_REVIEW_JOB_ACCOUNTS",
-	"FUGARO_LAUNCHER_ACCOUNTS",
+	"FUGARO_LAUNCHER_ACCOUNTS", "FUGARO_SHARED_JOB_ACCOUNTS",
 }
 
 // intakeServiceArgs and intakeServiceEnv are the argv and the environment
@@ -1288,17 +1288,24 @@ var (
 // in the same binary — deploy/terraform is embedded — so the order is the
 // cover's and not a release's).
 //
-// It is empty: the last name on it, FUGARO_LAUNCHER_ACCOUNTS (the launcher
-// class's list, D1938, F25), left it in the change that made
-// installation/credentials.tf render it (DS2.2), and FUGARO_REVIEW_JOB_ACCOUNTS
-// left it the same way before that. The function stays, empty rather than
-// removed, because it is the tripwire and not a carve-out: two tests hold it —
+// FUGARO_SHARED_JOB_ACCOUNTS is on it now (B5.1): the service reads it as an
+// optional value (internal/cli's envSharedJobAccounts), and the module that
+// renders it from the shared jobs an installation deploys is the deployment
+// side's own step — which is why the name is here, on the allow-list ahead of
+// its module, rather than nowhere. Until that step every installation renders
+// the entry nowhere, the service starts with an empty shared set and the class
+// is refused whole: the fail-closed state B5.1 leaves production in. Before it,
+// FUGARO_LAUNCHER_ACCOUNTS (the launcher class's list, D1938, F25) left this
+// list in the change that made installation/credentials.tf render it (DS2.2),
+// and FUGARO_REVIEW_JOB_ACCOUNTS left it the same way before that.
+//
+// The function is the tripwire and not a carve-out: two tests hold it —
 // the golden test below fails on a name that is both here and on the plan, and
 // internal/cli's TestCredentialsServiceEnvIsTheDeploymentsOwn fails on one that
 // is here and in the module's own source — so a name added ahead of its module
 // cannot be left behind once the module renders it.
 func CredentialsServiceEnvAwaitingTheModule() []string {
-	return nil
+	return []string{"FUGARO_SHARED_JOB_ACCOUNTS"}
 }
 
 // APITargets are the two services the Firebase web key may call, sorted;
