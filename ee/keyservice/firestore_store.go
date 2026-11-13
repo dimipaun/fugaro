@@ -42,10 +42,13 @@ package keyservice
 // produces: merchant, renew and admin each name what they minted for. The suite
 // in firestore_store_test.go runs against both stores and so cannot state this,
 // which is why it is written here and pinned beside it
-// (TestTheDocstoreRefusesARecordNobodyNamed).
+// (TestTheDocstoreRefusesARecordNobodyNamed). A lookup of such a name is the
+// other half of the rule and is answered by both stores alike, as a record the
+// store does not hold (one, below): the id it is handed is the request's.
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/dimipaun/fugaro/ee/keyservice/docstore"
@@ -312,16 +315,28 @@ func (s *DocStore) Trials(ctx context.Context) ([]Trial, error) {
 	return whole[Trial](ctx, s.db, trialCollection)
 }
 
-// one reads a record by id. An id nobody named is answered as a record the
-// store does not hold rather than refused, which is what store.go's memory
-// store answers and what the callers do with it — a merchant event naming no
-// subscription reaches this lookup (merchant.go's apply), and the document seam
-// on its own would turn that into an error the handler has no answer for.
+// one reads a record by id. An id nobody named, and one the backend cannot file,
+// are answered as a record the store does not hold rather than refused, which is
+// what store.go's memory store answers and what the callers do with it: the id
+// here is the request's — a merchant event naming no subscription reaches this
+// lookup (merchant.go's apply), and renew.go's proved hands it the key_id of an
+// unauthenticated body — so the seam's refusal, right as it is for a write,
+// would turn a stranger's key_id into the service failing to read, where every
+// route answers one uniform refusal. It would also answer one request two ways:
+// the memory store the handler tests drive files whatever it is handed, so a
+// divergence here is one the tests of those callers never show.
+//
+// What decides it is the seam's own sentinel and not a second copy of the name
+// rule here, so the two stay one rule.
 func (s *DocStore) one(ctx context.Context, collection, id string, out any) (bool, error) {
 	if id == "" {
 		return false, nil
 	}
-	return s.db.Get(ctx, collection, id, out)
+	held, err := s.db.Get(ctx, collection, id, out)
+	if errors.Is(err, docstore.ErrUnstorableName) {
+		return false, nil
+	}
+	return held, err
 }
 
 // whole reads one collection and decodes every document into its record. The

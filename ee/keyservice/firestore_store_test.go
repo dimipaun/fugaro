@@ -48,6 +48,7 @@ func storeSuite(t *testing.T, name string, open func(t *testing.T) Store) {
 		t.Run("AnApplicationIsUpsertedById", func(t *testing.T) { testApplicationUpsert(t, open) })
 		t.Run("AVerificationIsUpsertedById", func(t *testing.T) { testVerificationUpsert(t, open) })
 		t.Run("ASubscriptionIsReadBackById", func(t *testing.T) { testSubscription(t, open) })
+		t.Run("ALookupOfANameTheStoreCannotFileIsNotHeld", func(t *testing.T) { testUnstorableLookup(t, open) })
 		t.Run("ARevocationIsWrittenOnce", func(t *testing.T) { testRevocationOnce(t, open) })
 		t.Run("ARevocationNamesTheKeyItWithdraws", func(t *testing.T) { testRevocationUnnamed(t, open) })
 		t.Run("AKeyStateKeepsItsDigestThroughASighting", func(t *testing.T) { testTouchKey(t, open) })
@@ -197,6 +198,47 @@ func testSubscription(t *testing.T, open func(t *testing.T) Store) {
 	}
 	if len(all) != 1 {
 		t.Errorf("the store holds %d subscription(s), want 1", len(all))
+	}
+}
+
+// testUnstorableLookup is the read half of a name the store cannot file, and it
+// is the half whose id comes out of a request: renew.go's proved hands KeyState
+// and Revocation the key_id of an unauthenticated body, and a merchant event
+// naming no subscription reaches Subscription. A store that answered the
+// refusal its write path owes would turn a stranger's guess into the service
+// failing to read, where every route answers one uniform refusal, and it would
+// answer one request two ways — store.go's memory store files whatever it is
+// handed and has always answered (false, nil) here.
+//
+// The empty id is a row of the same shape and not a rule of its own: both are
+// names no record of the service could have, and both are answered as a record
+// the store does not hold.
+func testUnstorableLookup(t *testing.T, open func(t *testing.T) Store) {
+	for _, tc := range []struct{ why, id string }{
+		{"an id nobody named", ""},
+		{"an id carrying the store's path separator", "a/b"},
+		{"an id of two periods", ".."},
+		{"an id in the database's reserved form", "__x__"},
+		{"an id carrying a control character", "fgk_one\ttwo"},
+	} {
+		t.Run(tc.why, func(t *testing.T) {
+			ctx := context.Background()
+			store := open(t)
+			check := func(what string, held bool, err error) {
+				t.Helper()
+				if held || err != nil {
+					t.Errorf("%s of %s = (%v, %v), want (false, nil): what the store cannot file it also does not hold, and a lookup's id is the request's, so the refusal belongs to the caller who wrote the record and not to the one who asked for it", what, tc.why, held, err)
+				}
+			}
+			_, held, err := store.KeyState(ctx, tc.id)
+			check("KeyState", held, err)
+			_, held, err = store.Revocation(ctx, tc.id)
+			check("Revocation", held, err)
+			_, held, err = store.Subscription(ctx, tc.id)
+			check("Subscription", held, err)
+			_, held, err = store.Handover(ctx, tc.id, issuedAt)
+			check("Handover", held, err)
+		})
 	}
 }
 
