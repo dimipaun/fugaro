@@ -8211,10 +8211,17 @@ and file names, so a command the answer prints is checked against this CLI's
 own command tree before it is shown as runnable, and anything else is marked
 as unchecked.
 
+It runs on your own Claude credential and reads no secret: CLAUDE_CODE_OAUTH_TOKEN
+or ANTHROPIC_API_KEY if either is set in this environment, and otherwise the
+logged-in claude on this machine, which is run as it is and needs no gcloud. It
+never reads the project's account out of Secret Manager.
+
 The command reads no stdin. Typing it is the consent: one line says which
 provider and what class of data the redacted evidence goes to, and then the
-diagnosis runs. With no credential, or with the source at this version out of
-reach, it prints the evidence where it is and exits non-zero instead.
+diagnosis runs. With no credential at all, or with the source at this version
+out of reach, it prints the evidence where it is and exits non-zero instead: a
+machine with no credential is told to log in with the claude CLI, or to set one
+of the two variables, and to run the command again.
 
 Usage: `fugaro troubleshoot [RUN ID]`
 

@@ -32,10 +32,11 @@ var ownCredentialEnv = []string{
 
 // Handle is the one credential a local diagnosis may use: an account's token,
 // held in this process's memory, and the environment of the one child that may
-// see it. The value is a field of this type and nowhere else — the handle
-// writes no file, keeps no cache and has no accessor that stores anything,
-// which is what "held in memory only and never written to disk" means (F7, the
-// plan's global constraints).
+// see it — or the machine's own logged-in claude (LocalHandle), which is a
+// credential this process never holds at all. The value is a field of this
+// type and nowhere else — the handle writes no file, keeps no cache and has no
+// accessor that stores anything, which is what "held in memory only and never
+// written to disk" means (F7, the plan's global constraints).
 //
 // The zero Handle is no credential at all and must never be used: Resolve
 // returns one only beside an error.
@@ -56,6 +57,11 @@ type Handle struct {
 	// own distinguishes the person's own credential from the project's
 	// account: the two are sent to a provider under different terms (F6).
 	own bool
+	// local marks the machine's own logged-in claude (LocalHandle). The child
+	// inherits that login from the home directory its own environment names, so
+	// this handle carries no value: env and secret are empty, there is nothing
+	// to hand the child and nothing for the redactor to replace.
+	local bool
 }
 
 // handleFields is Handle without its methods, so the methods below can print a
@@ -126,13 +132,40 @@ func (h Handle) Secret() string { return h.secret }
 // names — the account, never a value or a prefix of one.
 func (h Handle) Account() string { return h.account }
 
-// Own reports whether the credential is the person's own — the login this
-// machine already holds, which is why a diagnosis still works when the cloud is
-// what is broken — rather than the project's account read out of Secret
-// Manager. The two are sent to a provider under different terms (F6): the
-// person's own credential is theirs, while the project's account is used only
-// because its allow_data_to covers this repository (D1601).
+// Own reports whether the credential is the person's own — a value of their
+// environment or the login this machine already holds, which is why a diagnosis
+// still works when the cloud is what is broken — rather than the project's
+// account read out of Secret Manager. The two are sent to a provider under
+// different terms (F6): the person's own credential is theirs, while the
+// project's account is used only because its allow_data_to covers this
+// repository (D1601).
 func (h Handle) Own() bool { return h.own }
+
+// Local reports whether the credential is the machine's own claude login
+// (LocalHandle) rather than a value this process holds: the one handle with no
+// value anywhere in this process, which is what the egress line says when it
+// tells the person no token of Fugaro's is being sent.
+func (h Handle) Local() bool { return h.local }
+
+// carries reports whether the handle names a credential a child can reach a
+// provider with: a value in its environment, or the login it inherits from the
+// machine's own home directory. A handle that carries neither is the zero
+// Handle, which no caller may build (Resolve and LocalHandle are the only
+// constructors).
+func (h Handle) carries() bool { return h.secret != "" || h.local }
+
+// LocalHandle is the credential of the machine's own logged-in claude: the
+// login claude already holds under this user's home directory, which the child
+// reads there for itself. It carries no value — there is nothing to write into
+// the child's environment and nothing for the redactor to replace — which is
+// why it is a constructor rather than a field a caller fills.
+//
+// It is what `fugaro troubleshoot` runs on when neither credential variable is
+// set: the person has a logged-in claude and the command needs nothing else,
+// and it reads no secret of the installation's and needs no gcloud (the owner's
+// report of 2026-11-13). The login is the person's own, so the egress line
+// names their own login and says Fugaro sends no token (D1606).
+func LocalHandle() Handle { return Handle{own: true, local: true} }
 
 // Accounts is what the selected configuration says about the Claude accounts a
 // local diagnosis may use: this checkout's repository, the claude_accounts
@@ -199,6 +232,31 @@ func (a Accounts) choice() (name, key string) {
 // prevent, outside anything this package can check.
 type SecretReader func(name string) (string, error)
 
+// Own is the credential the person's own environment holds, and whether either
+// variable is set: D1601's first answer alone, without the project's account
+// that Resolve falls back on. It is what a caller that reads no secret of the
+// installation's asks — `fugaro troubleshoot`, which runs on the login this
+// machine already holds when neither variable is set (LocalHandle) and never
+// needs gcloud.
+//
+// A variable that is set to a value too short to redact is an error rather than
+// "not set": the person put a value there, and a diagnosis that quietly ran on
+// some other credential would be running on something the environment did not
+// say.
+//
+// env is in os.Environ's form and is read, never written.
+func Own(env []string) (Handle, bool, error) {
+	for _, name := range ownCredentialEnv {
+		v := envValue(env, name)
+		if v == "" {
+			continue
+		}
+		h, err := newHandle(name, "in "+name, v, "", true)
+		return h, err == nil, err
+	}
+	return Handle{}, false, nil
+}
+
 // Resolve returns the credential a local diagnosis may use, in D1601's order.
 // The person's own credential comes first, read out of env and costing no cloud
 // call and no project account — which is what makes a diagnosis work when the
@@ -211,10 +269,8 @@ type SecretReader func(name string) (string, error)
 // environment is not removed from it (the caller composes the child's
 // environment from the handle, which carries this credential and no other).
 func Resolve(env []string, accounts Accounts, read SecretReader) (Handle, error) {
-	for _, name := range ownCredentialEnv {
-		if v := envValue(env, name); v != "" {
-			return newHandle(name, "in "+name, v, "", true)
-		}
+	if h, ok, err := Own(env); ok || err != nil {
+		return h, err
 	}
 
 	name, key := accounts.choice()
@@ -281,7 +337,7 @@ func Resolve(env []string, accounts Accounts, read SecretReader) (Handle, error)
 // environment or the secret of the project's account.
 func newHandle(envName, what, value, account string, own bool) (Handle, error) {
 	if len(value) < 4 {
-		return Handle{}, fmt.Errorf("the credential %s is shorter than 4 bytes, so it cannot be redacted safely: a value that short would be replaced in everything this diagnosis prints, ordinary words among it. Replace it with the account's real credential",
+		return Handle{}, fmt.Errorf("the credential %s is shorter than 4 bytes, so it cannot be redacted safely: a value that short would be replaced in everything this diagnosis prints, ordinary words among it, and a value that short is usually a placeholder left in the environment rather than a credential. Replace it with the account's real credential",
 			pluginwire.Printable(what))
 	}
 	return Handle{env: []string{envName + "=" + value}, secret: value, account: account, own: own}, nil
