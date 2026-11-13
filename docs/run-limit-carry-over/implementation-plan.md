@@ -249,18 +249,24 @@ the gateway changes (D1059). The ledger figures it can read are its own run's (L
 ## L9. Raising a chain that has spent its limit: a record rewrite with a reason (D1061). **SEC**
 
 A chain limit is a launcher's number held in the **root launch's `task.json`** (D1046), so raising an
-exhausted chain is a **rewrite of that stored task, with the reason for the raise recorded** — no new command
-and no new node (F22, spec §4). The design does not pretend a launcher cannot do it: a launcher holds
+exhausted chain is a **rewrite of that stored task, with the reason for the raise recorded** — no new node,
+no operator-only write path, and **one new command, which the file list below is** (F22, spec §4). The design
+does not pretend a launcher cannot do it: a launcher holds
 `objectUser` on the `runs/` and `tokens/` prefixes (F21), so what this task builds is the **supported path**
 an honest launcher uses, and
 the reason it is a convention rather than a platform-enforced bound is written where a reader finds it
 (spec §9).
 
-- **Files (4):** `internal/cli/budget_chain.go` (new: the subcommand, beside the budget family, rewriting the
+- **Files (9):** `internal/cli/budget_chain.go` (new: the subcommand, beside the budget family, rewriting the
   root run's stored task through the same runs-bucket path a launcher already has, and recording the reason),
   `internal/cli/budget_chain_test.go` (new: the rewrite, the reason, and the refusals),
   `internal/runstore/runstore.go` (the record gains the raise's entry — who, when, from, to and why — beside
-  the policy record it already writes at `:859-865`), `internal/runstore/runstore_test.go`.
+  the policy record it already writes at `:859-865`), `internal/runstore/runstore_test.go`,
+  `schemas/result.schema.json` and `schemas/schemas_test.go` (the member is a wire shape, and this record's
+  schema is closed, so both learn it in the same change), `website/content/cli-reference.md` (regenerated,
+  not hand-edited: a new visible command changes the tree the reference is written from),
+  `internal/cli/report_exempt.go` and `internal/cli/noprompt_harness_test.go` (the two censuses a new
+  mutating command has to answer: the reporter, and the closed-stdin run).
 - **Red step:** `TestChainRaiseRewritesTheRootTask` fails while the subcommand does not exist;
   `TestChainRaiseRefusesAnEmptyReason` fails while a reasonless raise is accepted.
 - **Tests:** `TestChainRaiseRewritesTheRootTask`, `TestChainRaiseRecordsTheReasonAndTheFigures`,

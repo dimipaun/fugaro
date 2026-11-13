@@ -196,8 +196,12 @@ func runChainRaise(cmd *cobra.Command, o *chainRaiseOptions, ref string) error {
 
 	// The step is the write, and the lines under it are what it wrote: the
 	// figures in the dimension's own words, the reason the record keeps, and
-	// the command that reads both back (runs show's details view, which is
-	// where a person copies a whole run ID from, D1705).
+	// which run's record that is — the run that began the chain and not the one
+	// the caller named, because the chain's limit is that run's alone (D1046).
+	// The line names the object for the reason it cannot name a command: no
+	// command of this tree reads a raise back yet (runs show prints the chain
+	// and what is left of its limit, and nothing else of the record), so the
+	// stored record is where the reason is and the honest place to point at.
 	tip := task.ShortRun(s.RunID())
 	rep.Step("chain").Done(fmt.Sprintf("raised the chain of run %s, begun by %s", tip, task.ShortRun(root)))
 	out := sayThrough(rep, cmd.OutOrStdout())
@@ -205,8 +209,8 @@ func runChainRaise(cmd *cobra.Command, o *chainRaiseOptions, ref string) error {
 		fmt.Fprintf(out, "  %s: %s -> %s\n", chainDimensionWord(l.Dimension), chainAmountText(l.Dimension, l.From), chainAmountText(l.Dimension, l.To))
 	}
 	fmt.Fprintf(out, "reason: %s\n", reason)
-	fmt.Fprintf(out, "the next launch that continues this chain carries what is left of it; `fugaro runs show %s --repo %s` reads the new figures and the record the raise is in\n",
-		tip, quoteWord(slug))
+	fmt.Fprintf(out, "recorded in runs/%s/%s/result.json, the record of the run that began this chain; the next launch that continues it carries what is left of the limit\n",
+		slug, root)
 	return nil
 }
 
