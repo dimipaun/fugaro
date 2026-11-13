@@ -56,8 +56,9 @@ import (
 //     and a path that resolved to nothing when the day came would be the price
 //     of a decision re-derived from a citation that had rotted.
 //   - TestDocsMobileAuthProviderIsRefusedNotPlanned -- provider-sign-in.md
-//     carries its own statement of what it is (refused, not a part, a task or a
-//     plan), states that D221's answer is not reopened by it, and carries none
+//     carries its own statement of what it is (refused: a path nobody has
+//     taken, not a plan, a design or an approval), states that D221's answer is
+//     not reopened by it, and carries none
 //     of the folder's ruling vocabulary. The plan says why this one is a check
 //     and not a hope: the document *"describes an alternative and must not read
 //     as a ruling"*, and "the owner has decided" is a sentence a later edit can
@@ -648,10 +649,13 @@ func TestDocsMobileAuthProviderSymbolsResolve(t *testing.T) {
 
 const (
 	// mobileAuthProviderStatus is the document's own statement of what it is.
-	// The one thing a reader must not take it for is a plan: D221's alternative
-	// is refused, `docs/pending-workflows/` is the model, and a document that
-	// lost this line would look like work waiting to be done.
-	mobileAuthProviderStatus = "**Status: refused. Nothing below is built, planned or approved, and this document is not a part, a task or a plan.**"
+	// The two things a reader must not take it for are a plan and an approval:
+	// D221's alternative is refused, `docs/pending-workflows/` is the model, and
+	// a document that lost this line would look like work waiting to be done.
+	// It is deliberately not written as "not a part": the plan's P6 **is** a
+	// part, and this document is what that part delivers, so the sentence that
+	// says the document is refused must not also say the plan has no such part.
+	mobileAuthProviderStatus = "**Status: refused. Nothing below is built, planned or approved: this document describes a path nobody has taken, every line of it is refused, and it is not a plan, a design or an approval.**"
 
 	// mobileAuthProviderPurpose is the sentence the plan writes for this
 	// document's purpose, and it is the reason the folder carries a document
@@ -748,7 +752,7 @@ func TestDocsMobileAuthProviderIsRefusedNotPlanned(t *testing.T) {
 	// reason that function gives.
 	doc := normSpace(readDoc(t, mobileAuthProvider))
 	for _, want := range []struct{ sentence, why string }{
-		{mobileAuthProviderStatus, "the document states what it is, and the one thing a reader must not take it for is a plan or a part"},
+		{mobileAuthProviderStatus, "the document states what it is, and the two things a reader must not take it for are a plan and an approval"},
 		{mobileAuthProviderPurpose, "the plan writes this document's purpose, and it is why a reader is sent here rather than to a decision that was re-derived"},
 		{mobileAuthProviderNoRuling, "the document describes an alternative to an answered decision, and saying so is what keeps it from reading as a reopening"},
 	} {

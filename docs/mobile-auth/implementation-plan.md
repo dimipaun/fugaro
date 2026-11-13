@@ -105,8 +105,8 @@ Named, so that a reader does not look for it and a later writer does not re-add 
   project, no change to `refusePublicSignUp` in v1 (D221). The change is written down in P6 and
   nowhere executed. **P6 discharges the writing-down and builds none of it**:
   [provider-sign-in.md](provider-sign-in.md) carries the configuration delta, the attack surface
-  and the per-provider verified-email question, is a document rather than a part of the plan, and
-  says of itself that it is refused.
+  and the per-provider verified-email question, and says of itself that it is refused — the document
+  is what P6 delivers, and nothing in it is proposed as work.
 - **The email-link flow** (D228): no action URL, no App Links, no `assetlinks.json`, no
   `apple-app-site-association`, no committed reverse-DNS identity in `mobile/`.
 - **The app's per-project Firebase instance** (D234): no Firebase SDK in `mobile/package.json`, no

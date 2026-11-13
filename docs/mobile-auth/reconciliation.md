@@ -493,8 +493,8 @@ identity claim checked once, at pairing.
 
 The alternative above is discharged as documentation rather than built, in
 [provider-sign-in.md](provider-sign-in.md) (P6): it writes §3 out in full, so that whoever wants
-this path next reads a document instead of re-deriving the decision. It is not a part of the plan
-and it changes nothing here.
+this path next reads a document instead of re-deriving the decision. It changes nothing here: it is
+the document P6 delivers, and no line of it is proposed as work.
 
 ### D222 — What is the allowlist, and where does it live?
 

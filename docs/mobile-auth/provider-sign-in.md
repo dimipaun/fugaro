@@ -1,7 +1,7 @@
 # The provider path, written out and refused
 
-**Status: refused. Nothing below is built, planned or approved, and this document is not a part, a
-task or a plan.**
+**Status: refused. Nothing below is built, planned or approved: this document describes a path nobody
+has taken, every line of it is refused, and it is not a plan, a design or an approval.**
 
 This is **P6** of [implementation-plan.md](implementation-plan.md): **D221's alternative,
 discharged as documentation and not built**. The decision it belongs to is
