@@ -314,23 +314,50 @@ func (c *signInCodes) pollable(device string, now time.Time) bool {
 	return true
 }
 
-// device answers the device code one poll named. An expired code is dropped
-// rather than answered, so a code that has run out costs nothing to hold — and
-// it answers `false` exactly as an unknown one does, which is the uniformity the
-// poll route's own sentence is about.
-func (c *signInCodes) device(device string, now time.Time) (deviceCode, bool) {
+// claimDevice is the poll's whole read under one lock. An expired code is
+// dropped rather than answered, so a code that has run out costs nothing to
+// hold — and it answers `false` exactly as an unknown one does, which is the
+// uniformity the poll route's own sentence is about.
+//
+// An **approved** code is removed in the same breath as it is read, and that
+// ordering is the point: the mint behind it talks to the store, so it is slower
+// than the poll interval whenever the deployment is, and two polls a moment
+// apart would otherwise both find the code and one approval would hand out two
+// keys. Taking it here is the order the authorize route takes (spend/unspend),
+// and a mint that fails hands it back (unspendDevice). A code still waiting for
+// its person is left where it is: that poll answers `pending`, which is the
+// ordinary case and must not cost the CLI its code.
+func (c *signInCodes) claimDevice(device string, now time.Time) (deviceCode, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	key := digest(device)
 	held, found := c.devices[key]
-	if !found {
+	if !found || !now.Before(held.expires) {
+		if found {
+			delete(c.devices, key)
+		}
 		return deviceCode{}, false
 	}
-	if !now.Before(held.expires) {
-		delete(c.devices, key)
-		return deviceCode{}, false
+	if !held.approved {
+		return *held, true
 	}
+	delete(c.devices, key)
 	return *held, true
+}
+
+// unspendDevice hands an approved code back when the mint behind it failed, for
+// the reason `unspend` and `verifyLink` hand theirs back: the person approved and
+// no key arrived, and a terminal should not have to be approved again because
+// the service's minter was briefly unhappy. A code whose window closed while the
+// mint was running is not put back: it is over.
+func (c *signInCodes) unspendDevice(device string, held deviceCode, now time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !now.Before(held.expires) {
+		return
+	}
+	c.sweep(now)
+	c.devices[digest(device)] = &held
 }
 
 // approve marks the code one signed-in person answered, and it is looked up by
@@ -369,17 +396,6 @@ func (c *signInCodes) deviceByUserCode(userCode string, now time.Time) (deviceCo
 		}
 	}
 	return deviceCode{}, false
-}
-
-// spendDevice drops one device code once its key has been answered. A code
-// answers with a key once: a second poll that reached the same code would hand a
-// bearer credential out again, and the CLIs that could receive it are not this
-// service's to tell apart.
-func (c *signInCodes) spendDevice(device string, now time.Time) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.sweep(now)
-	delete(c.devices, digest(device))
 }
 
 // sweep drops every code whose window has closed. The caller holds the lock.
@@ -619,7 +635,7 @@ func (s *Service) devicePoll(w http.ResponseWriter, r *http.Request) {
 		refuseSlowPoll(w)
 		return
 	}
-	held, found := s.codes.device(call.DeviceCode, now)
+	held, found := s.codes.claimDevice(call.DeviceCode, now)
 	if !found {
 		refuseDevicePoll(w)
 		return
@@ -630,10 +646,13 @@ func (s *Service) devicePoll(w http.ResponseWriter, r *http.Request) {
 	}
 	minted, err := s.signInMint(r.Context(), held.subscription, held.account)
 	if err != nil {
+		// The code is handed back for the reason the exchange hands its own
+		// back: a mint that failed is a key nobody received, and the person
+		// already approved this installation once.
+		s.codes.unspendDevice(call.DeviceCode, held, s.now())
 		s.answerMintFailure(w, err)
 		return
 	}
-	s.codes.spendDevice(call.DeviceCode, now)
 	writeBundle(w, deviceAnswer{Status: DeviceOK, Key: minted.Key, RenewalSecret: minted.RenewalSecret})
 }
 
@@ -875,10 +894,12 @@ func (s *Service) answerMintFailure(w http.ResponseWriter, err error) {
 // redirectWithCode sends §11.3's step 4: the code and the state back to the
 // CLI's listener.
 //
-// The target is the one the code was stored with and never a value read from
-// this request, which is the property an authorization code's whole security
-// rests on: a code is a bearer credential for one exchange, and one sent to an
-// address the caller could still choose would be the key itself.
+// The target is the one the caller asked for, and the whole of what makes it
+// safe is that it came out of `loopbackRedirect` in the same request, which
+// rebuilds a loopback address from a validated port — this function echoes and
+// judges nothing. That matters because a code is a bearer credential for one
+// exchange: one sent to an address the caller could still choose would be the
+// key itself, so any new caller here has to pass a target that came from there.
 func (s *Service) redirectWithCode(w http.ResponseWriter, r *http.Request, target, code, state string) {
 	address, err := url.Parse(target)
 	if err != nil {

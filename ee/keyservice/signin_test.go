@@ -158,11 +158,20 @@ func signingIn(t *testing.T) (*fixture, *v1Spy) {
 // which is what a test about the throttle needs and no other test ever meets.
 func signingInWithin(t *testing.T, limits Limits) (*fixture, *v1Spy) {
 	t.Helper()
+	return signingInWith(t, func(f *fixture) { f.cfg.Throttle = limits })
+}
+
+// signingInWith is the fixture the two above are built on, with one more edit
+// for the tests about the store. The mint is the one write on this path, so what
+// a store that refuses the write — or that takes longer over it than the poll
+// interval — does to a code is a thing only a swapped store can show.
+func signingInWith(t *testing.T, edit func(*fixture)) (*fixture, *v1Spy) {
+	t.Helper()
 	spy := &v1Spy{}
 	f := newFixtureWith(t, Production, func(f *fixture) {
 		spy.inner = Minter{Signer: f.signer, Keys: f.keys, Environment: f.env, Now: f.clock}
 		f.deps.MintsV1 = spy
-		f.cfg.Throttle = limits
+		f.cfg.Throttle = Limits{Requests: 50, Window: time.Hour}
 		verifier, err := mcpauth.NewVerifier(licenceProject,
 			publishedKeys{licenceKeyID: &signInKey().PublicKey},
 			mcpauth.WithVerifyClock(f.clock))
@@ -170,6 +179,7 @@ func signingInWithin(t *testing.T, limits Limits) (*fixture, *v1Spy) {
 			t.Fatalf("building the licence project's verifier: %v", err)
 		}
 		f.deps.SignIn = verifier
+		edit(f)
 	})
 	return f, spy
 }
@@ -183,6 +193,39 @@ func subscribed(t *testing.T) (*fixture, *v1Spy) {
 	f, spy := signingIn(t)
 	f.purchase("evt-signin", signInOrg, 5, 365)
 	return f, spy
+}
+
+// subscribedWithStore is `subscribed` behind a store of the test's choosing,
+// built around the fixture's own store so the subscription the merchant's
+// purchase wrote is the one the mint reads back. The purchase is delivered
+// before the swap and the intake is built again around it, so the store the
+// wrapper sits on has the purchase in it and every write through the wrapper is
+// this flow's own.
+func subscribedWithStore(t *testing.T, wrap func(*fixture, *Memory) Store) (*fixture, *v1Spy) {
+	t.Helper()
+	f, spy := signingInWith(t, func(*fixture) {})
+	f.purchase("evt-signin", signInOrg, 5, 365)
+	f.deps.Store = wrap(f, f.store)
+	f.start()
+	return f, spy
+}
+
+// slowIssuances is the store as a deployment whose write outlives the poll
+// interval: the fixture's clock moves by what the write "took", so a test can
+// put the next poll a full interval behind the first one's claim while the first
+// one's mint is still running.
+type slowIssuances struct {
+	*Memory
+	took    time.Duration
+	advance func(time.Duration)
+}
+
+func (s *slowIssuances) SaveIssuance(ctx context.Context, r Record) error {
+	if err := s.Memory.SaveIssuance(ctx, r); err != nil {
+		return err
+	}
+	s.advance(s.took)
+	return nil
 }
 
 // freshVerifier is a PKCE verifier generated as the test runs: 256 bits of the
@@ -480,6 +523,55 @@ func TestCodeIsSingleUse(t *testing.T) {
 	}
 }
 
+// TestAuthorizeCodeLivesFiveMinutes: the code's window is the other bound on it
+// and it is checked in the same locked read as the spent flag, so a code past it
+// mints nothing — and the refusal is the sign-in's own uniform sentence, which
+// says nothing about whether the code was ever real.
+func TestAuthorizeCodeLivesFiveMinutes(t *testing.T) {
+	f, spy := subscribed(t)
+	verifier := freshVerifier(t)
+	expired, _, _ := redirected(t, f.signedIn(t, f.acceptedToken(t), verifier))
+	f.advance(authorizeCodeTTL)
+	late := f.exchanged(expired, verifier)
+	if late.Code != http.StatusForbidden {
+		t.Errorf("an exchange after the code's life answered %d, want %d: %s", late.Code, http.StatusForbidden, late.Body.String())
+	}
+	if body := strings.TrimSpace(late.Body.String()); body != refuseSignIn {
+		t.Errorf("an expired code was refused with %q, want the uniform sentence %q", body, refuseSignIn)
+	}
+	if spy.minted() != 0 {
+		t.Errorf("an expired code minted %d key(s), want none", spy.minted())
+	}
+	// A second inside the window is still the window: what the route refuses is
+	// an expired code and not every exchange that arrives late.
+	fresh, _, _ := redirected(t, f.signedIn(t, f.acceptedToken(t), verifier))
+	f.advance(authorizeCodeTTL - time.Second)
+	decodeBundle(t, f.exchanged(fresh, verifier))
+}
+
+// TestCodeExchangeHandsTheCodeBackWhenTheMintFails: the code is spent before the
+// key is minted, so a mint that failed has to hand it back — otherwise a person
+// whose exchange failed on the service's side signs in at the terminal all over
+// again because the minter was briefly unhappy. Handing it back is safe because
+// the code is only ever spent by a caller that proved the verifier, and the
+// retry has to prove it again.
+func TestCodeExchangeHandsTheCodeBackWhenTheMintFails(t *testing.T) {
+	f, _ := subscribedWithStore(t, func(_ *fixture, store *Memory) Store {
+		return &failingIssuances{Memory: store, refuse: 1}
+	})
+	verifier := freshVerifier(t)
+	code, _, _ := redirected(t, f.signedIn(t, f.acceptedToken(t), verifier))
+	failed := f.exchanged(code, verifier)
+	if failed.Code == http.StatusOK {
+		t.Fatalf("an exchange whose mint failed answered %d: %s", failed.Code, failed.Body.String())
+	}
+	// The same code and the same verifier: the sign-in is not asked for again.
+	answer := decodeBundle(t, f.exchanged(code, verifier))
+	if claims := v1Verified(t, f, answer.Key); claims.WorkspaceID != workspaceID {
+		t.Errorf("the retried exchange minted for the workspace %q, want %q", claims.WorkspaceID, workspaceID)
+	}
+}
+
 // TestCodeExchangeRefusesAnAccountHoldingNoLicence: the purchaser binding cuts
 // both ways, and this is the other one. A token for an address that never
 // bought anything — a stranger's, or an address this service has never seen —
@@ -612,6 +704,62 @@ func TestDeviceCodeAnswersTheKeyOnceApproved(t *testing.T) {
 	// browser anywhere it likes.
 	if !strings.HasPrefix(start.VerificationURI, intakeOrigin) {
 		t.Errorf("the verification address is %q, want one built from the intake's own origin %q", start.VerificationURI, intakeOrigin)
+	}
+}
+
+// TestDeviceCodeAnswersOneKeyWhenItsMintOutlivesThePoll: the approved code is
+// taken out of the table **before** the key is minted, so a second poll that
+// arrives while the first one's mint is still running finds nothing. A code
+// dropped only after the mint returns would hand a second key to a second poll,
+// and a store slower than the five-second interval the start advertises is all
+// it takes: one approval, two bearer credentials.
+func TestDeviceCodeAnswersOneKeyWhenItsMintOutlivesThePoll(t *testing.T) {
+	f, spy := subscribedWithStore(t, func(f *fixture, store *Memory) Store {
+		return &slowIssuances{Memory: store, took: devicePollInterval, advance: f.advance}
+	})
+	start := f.startDevice(t, "acme-laptop")
+	f.approveDevice(t, start.UserCode, f.acceptedToken(t))
+	f.advance(devicePollInterval)
+	first := f.pollBundle(t, start.DeviceCode)
+	// The mint took a whole interval, so this poll is inside the code's life and
+	// past the rate the start asked for: it reaches the code, and the code is
+	// gone.
+	again := f.pollDevice(t, start.DeviceCode)
+	if again.Code != http.StatusForbidden {
+		t.Errorf("a poll arriving behind a slow mint answered %d, want %d: %s", again.Code, http.StatusForbidden, again.Body.String())
+	}
+	if body := strings.TrimSpace(again.Body.String()); body != refuseDevice {
+		t.Errorf("the second poll was refused with %q, want %q", body, refuseDevice)
+	}
+	if strings.Contains(again.Body.String(), first.Key) {
+		t.Error("the second poll repeated the key the first one was answered with")
+	}
+	if spy.minted() != 1 {
+		t.Errorf("one approval minted %d key(s), want one", spy.minted())
+	}
+}
+
+// TestDeviceCodeHandsItsCodeBackWhenTheMintFails is the other half of taking the
+// code before the mint: a poll that failed hands it back, because the person
+// approved this installation once and the key that failed is one nobody
+// received. Without the hand-back the terminal polls a code this service has
+// dropped and is told, for the rest of the ten minutes, that its approval was
+// never there.
+func TestDeviceCodeHandsItsCodeBackWhenTheMintFails(t *testing.T) {
+	f, _ := subscribedWithStore(t, func(_ *fixture, store *Memory) Store {
+		return &failingIssuances{Memory: store, refuse: 1}
+	})
+	start := f.startDevice(t, "acme-laptop")
+	f.approveDevice(t, start.UserCode, f.acceptedToken(t))
+	f.advance(devicePollInterval)
+	failed := f.pollDevice(t, start.DeviceCode)
+	if failed.Code == http.StatusOK {
+		t.Fatalf("a poll whose mint failed answered %d: %s", failed.Code, failed.Body.String())
+	}
+	f.advance(devicePollInterval)
+	answer := f.pollBundle(t, start.DeviceCode)
+	if claims := v1Verified(t, f, answer.Key); claims.WorkspaceID != workspaceID {
+		t.Errorf("the retried poll minted for the workspace %q, want %q", claims.WorkspaceID, workspaceID)
 	}
 }
 
