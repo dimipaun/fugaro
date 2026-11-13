@@ -1398,6 +1398,11 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
    * graphReads is the same cache for `graph.read`, keyed by the binding *and*
    * the scope: one scope's document is not another's, and the read is one child
    * per scope, so two scopes must not share a floor.
+   *
+   * **One event empties it, and it is not a binding change**: a write the record
+   * applied. The floor is a claim about the document, and §6.24's `applied` is
+   * the record changed under it -- so `roadmapMove` below drops every entry,
+   * which is what makes the screen's own re-read after a move a real read.
    */
   const graphReads = new Map<string, { readonly reading: Promise<Snapshot>; at: number | null }>()
 
@@ -1910,8 +1915,23 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
      * key was listed) are that class's too, on the document it holds -- and the
      * state the record has moved past since (`--expect`) is the CLI's, whose
      * refusal is the sentence the screen shows.
+     *
+     * **It is the one call that empties the graph read's floor.** An `applied`
+     * outcome is the record changed (§6.24), so every `graph.read` answer held
+     * here was read before the move: served from that floor, the screen's own
+     * re-read of the document the move changed would be the pre-move document,
+     * the source would not be re-taught what the record holds now, and the undo
+     * the sheet offers next -- `--expect` is the release the record holds **now**
+     * (design section 5.1 rule 14) -- would be built with the release from before
+     * the move and refused as stale by the CLI's compare-and-set, as would any
+     * further move of that task, for up to a minute. `refused`, `failed` and
+     * `pending` change nothing and leave the floor where it is.
      */
-    roadmapMove: (args) => read('roadmap.move', (source) => source.roadmapMove(args)),
+    roadmapMove: async (args) => {
+      const answer = await read('roadmap.move', (source) => source.roadmapMove(args))
+      if (answer.outcome?.status === 'applied') graphReads.clear()
+      return answer
+    },
     /** managedStatus has no precondition and no cadence, for
      * coordinatorIntents's reason: the marks and the audit record are the
      * caller's own database node, so there is no directory on this machine to
