@@ -997,6 +997,42 @@ test_a_restore_that_could_not_delete_is_a_fail() {
   expect_contains "$out" "the slug " "stuck Restore: the row names what to delete by hand"
 }
 
+# The year object is seeded under `reports/<YYYY>/`, and that prefix is shared
+# with the owner's own reports, so the Restore deletes this run's object BY NAME
+# and never as the prefix: `rm -r gs://B/reports/<YYYY>/` would take the owner's
+# reports with it. This is the case that holds both halves of that — an object of
+# the owner's is under the same year prefix before the run and is still there
+# after it, and the rm the run made names this run's own year object and no bare
+# year prefix. It also holds the READ-BACK by name: a read-back of the bare year
+# prefix would find the owner's object and print a Restore that did not finish.
+test_the_restore_deletes_the_year_object_by_name() {
+  setup_case year-name relative
+  # The object has to be seeded BEFORE the run, so the year cannot be read out of
+  # the run's own output the way year_of does: it is today's UTC year, the same
+  # expression the check draws its own from.
+  year=$(date -u +%Y)
+  owner_report="reports/$year/owner-report.md"
+  mkdir -p "$dir/state/objects/reports/$year"
+  printf 'a report of the owners, not this check s\n' >"$dir/state/objects/$owner_report"
+  run340_default
+  slug=$(slug_of "$dir")
+  [ -n "$slug" ] || fail "year object by name: the run did not say which slug it drew"
+  expect_status "$status" 0 "year object by name"
+  expect_contains "$out" "FACT restore: PASS — " "year object by name: the Restore confirmed what it deleted"
+  [ -f "$dir/state/objects/$owner_report" ] ||
+    fail "year object by name: the Restore took the owner's own object under reports/$year/ — the year object may be deleted only as the one object it is, never as that prefix"
+  left=$(find "$dir/state/objects" -type f ! -path "$dir/state/objects/$owner_report" | tr '\n' ' ')
+  [ -z "$left" ] || fail "year object by name: the Restore left seeded objects behind: $left"
+  # What the one rm named, as the fake recorded the command line. The spaces
+  # around each needle are what tell the two apart: this run's year object is
+  # `gs://B/reports/<YYYY>/chk340-<slug>.md`, which carries the year prefix as its
+  # own beginning, and only a bare-prefix delete ends at `<YYYY>/`.
+  rm_call=$(grep -m1 '^gcloud storage rm' "$dir/state/calls" || true)
+  [ -n "$rm_call" ] || fail "year object by name: the run made no rm call"
+  expect_contains " $rm_call " " gs://$BUCKET/reports/$year/$slug.md " "year object by name: the rm names this run's year object"
+  expect_absent " $rm_call " " gs://$BUCKET/reports/$year/ " "year object by name: the rm names no bare year prefix, which would delete the owner's reports"
+}
+
 # A grant that takes effect late must not be read as a refusal: this is the one
 # reading that would pick the WRONG form, so a listing that must succeed is
 # retried. The fake refuses the first two attempts.
@@ -1818,6 +1854,7 @@ t test_a_listing_that_does_not_hold_is_a_fail
 t test_a_grant_wider_than_the_two_prefixes_is_a_fail
 t test_a_root_listing_that_is_allowed_is_a_fail
 t test_a_restore_that_could_not_delete_is_a_fail
+t test_the_restore_deletes_the_year_object_by_name
 t test_a_passing_run_reads_the_policy_back
 t test_a_restore_that_cannot_read_back_does_not_pass
 t test_a_restore_that_cannot_read_the_policy_does_not_pass
