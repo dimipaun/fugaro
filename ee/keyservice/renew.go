@@ -545,9 +545,18 @@ func (s *Service) renew(w http.ResponseWriter, r *http.Request) {
 	// being minted — the subscription would come back live and the next renewal
 	// would mint into it. A cancelled subscription's end is moved for nobody:
 	// nothing renews from it again.
+	//
+	// It also moves only forward, which is the rule both of this file's other
+	// writers of a subscription's end keep (`completed`, `renewed`), and it is the
+	// guard that keeps this write from being a step backwards: the key being
+	// rotated is not always the one the merchant's last renewal minted — a holder
+	// may renew from a key the subscription has already moved past, and its own
+	// record ends where its own term did — so writing that end back would truncate
+	// the store's record of the paid term, open the merchant's renewal window
+	// early and refuse a renewal of the successor for a term the customer paid for.
 	if current, held, err := s.store.Subscription(r.Context(), sub.ID); err != nil {
 		log.Printf("keyservice: reading the subscription %s back before moving its end: %v", sub.ID, err)
-	} else if held && !current.Cancelled {
+	} else if held && !current.Cancelled && current.Expires.Before(record.Expires) {
 		current.Expires = record.Expires
 		if err := s.store.SaveSubscription(r.Context(), current); err != nil {
 			log.Printf("keyservice: moving the subscription %s to the term the key %s covers: %v", sub.ID, record.KeyID, err)
@@ -615,11 +624,15 @@ func (s *Service) sight(ctx context.Context, keyID string) {
 //
 // What it bounds is the rate and not the payment, and the payment is `renew`'s
 // own gate rather than this function's: the record names the subscription the
-// key was minted for — written by every mint site and inherited by the successor
-// the endpoint writes — and `renew` reads it, and how it has moved since, before
-// a key is minted at all. So this window answers whether the term *after* the
-// one the customer is in is the next one to sign, and the gate answers whether
-// anybody paid for it.
+// key was sold under — written by `paid`, the one mint site a merchant sale goes
+// through, and inherited by the successor the endpoint writes — and `renew`
+// reads it, and how it has moved since, before a key is minted at all. A record
+// naming none is refused there and not passed on to this window: it is a key no
+// subscription paid for — the admin page's, the free seat's, the trial's, all of
+// them minted through `mint` (see `Record.Subscription`) — and a mint here would
+// hand it a term nobody bought. So this window answers whether the term *after*
+// the one the customer is in is the next one to sign, and the gate answers
+// whether anybody paid for it.
 func renewable(record Record, policy Policy, now time.Time) bool {
 	lead := time.Duration(policy.RenewBeforeDays) * 24 * time.Hour
 	return !now.Before(record.Expires.Add(-lead))

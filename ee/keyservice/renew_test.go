@@ -626,6 +626,50 @@ func TestAPurchasedKeyRenewsAndItsSuccessorInheritsItsWorkspaceAndSubscription(t
 	}
 }
 
+// TestTheEndpointNeverMovesASubscriptionBackwards: a subscription's end moves
+// only forward, which is the rule both other writers of it keep (`completed`,
+// `renewed`) and the rule this endpoint's own write has to keep too. The key a
+// holder rotates is not always the one the merchant's last renewal minted — the
+// job may be installed for a key the subscription has already moved past, and
+// that key's own record ends where its own term did — so writing that end back
+// would truncate the store's record of the paid term: the merchant's renewal
+// window opens early, and the gate refuses a renewal of the successor for a term
+// the customer has paid for.
+func TestTheEndpointNeverMovesASubscriptionBackwards(t *testing.T) {
+	f, _ := renewing(t)
+	bought := f.purchase("evt-1", "acme.example", 5, 30)
+	// The merchant renews the licence twice, so the subscription's record of the
+	// paid term is two terms past the key the customer still holds.
+	f.advance(16 * day)
+	if _, renewed, err := f.svc.Renew(context.Background(), bought.Subscription); err != nil || !renewed {
+		t.Fatalf("the merchant's first renewal minted nothing (renewed=%v, err=%v)", renewed, err)
+	}
+	f.advance(30 * day)
+	if _, renewed, err := f.svc.Renew(context.Background(), bought.Subscription); err != nil || !renewed {
+		t.Fatalf("the merchant's second renewal minted nothing (renewed=%v, err=%v)", renewed, err)
+	}
+	paid, held, err := f.store.Subscription(context.Background(), bought.Subscription)
+	if err != nil || !held {
+		t.Fatalf("reading the subscription back: held=%v err=%v", held, err)
+	}
+	if !paid.Expires.After(bought.Expires) {
+		t.Fatalf("the subscription ends at %s and the purchase's key at %s, want the subscription ahead of it: the case this pins is a key the subscription has moved past", paid.Expires, bought.Expires)
+	}
+
+	successor, _ := renewThroughTheEndpoint(t, f, bought.KeyID, mailedSecret(t, f, f.mintedKeys()[0]))
+	if !successor.Expires.Before(paid.Expires) {
+		t.Fatalf("the successor covers to %s and the subscription ends at %s, want the successor behind it: otherwise this key's term would be the subscription's own end", successor.Expires, paid.Expires)
+	}
+	after, _, err := f.store.Subscription(context.Background(), bought.Subscription)
+	if err != nil {
+		t.Fatalf("reading the subscription back after the rotation: %v", err)
+	}
+	if !after.Expires.Equal(paid.Expires) {
+		t.Errorf("the rotation of %s moved the subscription's end from %s to %s, and the successor it minted covers only to %s: the terms the merchant has been paid for are not this key's to give back",
+			bought.KeyID, paid.Expires, after.Expires, successor.Expires)
+	}
+}
+
 // TestACancelledSubscriptionsKeyIsRefused: a key whose subscription the merchant
 // has cancelled is handed no successor, because the term after this one is one
 // nobody is paying for. The key itself is left alone and its holder is told its

@@ -6,11 +6,11 @@ package keyservice
 // The paid path: the merchant of record's events (§5). Paddle is the merchant
 // for Team checkout (D442), a purchase mints a v1 key stating the seats bought,
 // a seat change reissues under a new key id, a refund or a chargeback withdraws
-// the key its event names and every successor a renewal minted from it (§8,
-// D2131 — see `withdrawn` for what that does not stop), a cancellation stops the
-// reissue, and a test-mode event mints a staging key and nothing else. Enterprise
-// is not this path: it is invoiced directly by the entity and its key is the
-// admin page's (D2141, §5.5).
+// the key its event names and every other key the same licence holds (§8, D2131
+// — see `withdrawn` for how the walk finds them and what that does not stop), a
+// cancellation stops the reissue, and a test-mode event mints a staging key and
+// nothing else. Enterprise is not this path: it is invoiced directly by the
+// entity and its key is the admin page's (D2141, §5.5).
 //
 // Two rules give this path its shape, and both are about not minting twice: a
 // body is verified **before it is read**, and what was minted for which source
@@ -93,6 +93,13 @@ const SigningHeader = "Paddle-Signature"
 // that term's own half — a monthly row's term is 28 to 31 days, so this lead
 // would open the window before the purchase that starts it.
 const RenewalLead = 30 * 24 * time.Hour
+
+// renewalPrefix opens the source the merchant's own renewal writes, and it is
+// its own name because two things read it: that renewal, and §8's walk from a
+// refunded key to the other keys of the licence, which has no key id to follow
+// there — the source carries the subscription and the term instead, and it is
+// the subscription the walk matches on.
+const renewalPrefix = "renew:"
 
 var (
 	// ErrSignature is a body the merchant did not sign, or a header this
@@ -526,22 +533,29 @@ func (s *Service) seatChanged(ctx context.Context, e Event, sub Subscription) er
 }
 
 // withdrawn writes §8's entries for a key the merchant has given the money back
-// for (D2131): the one the event names and every successor a rotation minted
-// from it. It is the whole of the event's effect: those keys stop being
+// for (D2131): the one the event names and every other key the same licence
+// holds. It is the whole of the event's effect: those keys stop being
 // renewable and the customer's own job reads them as revoked, and nothing about
 // the subscription moves — a refund is not a cancellation, and the merchant's
 // cancellation is the event that stops the reissue (§5.3).
 //
-// The chain is the **rotation** chain and nothing else, and that is the owner's
-// ruling of 2026-11-13: the keys a renewal minted from this one are the same
-// licence continued, so the money going back has to reach them, while a seat
-// change's key is a different licence the customer still pays for and a refund
-// of the key it replaced must not touch it. The two are told apart by the
-// record's source — a rotation writes `rotation:<the key it replaces>`
-// (see `rotationSource`), a seat change writes the merchant's own event id under
-// its subscription — so the walk follows the former and stops on the latter.
-// Without it a customer who renewed once and then obtained a refund kept a key
-// nothing named and nothing could name: every entry on this list is a key id,
+// The chain is the chain of one **licence** and nothing else, and that is the
+// owner's ruling of 2026-11-13. Two routes mint the licence's next key and the
+// walk follows both: the `/renew` endpoint's rotation, whose record says
+// `rotation:<the key it replaces>` (see `rotationSource`), and the merchant's own
+// renewal, whose record says `renew:<the subscription>:<the term>` and names no
+// predecessor key — the key a paying customer actually holds, since a renewal is
+// §5.1's ordinary route. The subscription is what the second route is followed
+// by, and it is the refunded key's own record that says which one that is; the
+// event's own word for it stands in where the store holds no record of the key,
+// because a key whose issuance write failed is still one §8 has to withdraw.
+// That is also what keeps a **seat change's** key out of the walk: it is a
+// different licence the customer still pays for — and a refund of the key it
+// replaced must not touch it — while sharing the subscription, so what tells the
+// two apart is the source rather than the subscription alone.
+//
+// Without the walk a customer who renewed once and then obtained a refund kept a
+// key nothing named and nothing could name: every entry on this list is a key id,
 // and the id the refund carries is the superseded one.
 //
 // It is still not a cancellation: nothing here ends the subscription's ability
@@ -581,17 +595,43 @@ func (s *Service) withdrawn(ctx context.Context, e Event) error {
 	if err != nil {
 		return err
 	}
+	// The subscription the refunded key was sold under. The record is the
+	// authority and the event is the fallback: a refund reaches keys whose
+	// issuance the store never took, and then the merchant's own word for the
+	// subscription is all there is to match a renewal of the licence by.
+	subscription := e.Subscription
+	for _, record := range records {
+		if record.KeyID == e.KeyID {
+			subscription = record.Subscription
+			break
+		}
+	}
 	// successors indexes the rotations the store holds by the key they replace,
-	// so the walk from a refunded key to what a renewal minted from it is a
-	// lookup rather than a scan per step.
+	// so the step from a key to what the endpoint minted from it is a lookup
+	// rather than a scan.
 	successors := map[string][]string{}
 	for _, record := range records {
 		if from, rotation := strings.CutPrefix(record.Source, rotationPrefix); rotation {
 			successors[from] = append(successors[from], record.KeyID)
 		}
 	}
+	// The refunded key and every merchant renewal of its own subscription start
+	// the walk, and each of those is then followed through the rotations it has.
 	seen := map[string]bool{e.KeyID: true}
-	for walk := []string{e.KeyID}; len(walk) > 0; {
+	walk := []string{e.KeyID}
+	if subscription != "" {
+		for _, record := range records {
+			if record.Subscription != subscription || !strings.HasPrefix(record.Source, renewalPrefix) || seen[record.KeyID] {
+				continue
+			}
+			seen[record.KeyID] = true
+			walk = append(walk, record.KeyID)
+			if err := s.store.Revoke(ctx, Revocation{KeyID: record.KeyID, Reason: reason, At: e.OccurredAt}); err != nil {
+				return err
+			}
+		}
+	}
+	for len(walk) > 0 {
 		keyID := walk[len(walk)-1]
 		walk = walk[:len(walk)-1]
 		for _, next := range successors[keyID] {
@@ -700,7 +740,7 @@ func (s *Service) Renew(ctx context.Context, subscriptionID string) (MintedV1, b
 	if days < 1 {
 		return MintedV1{}, false, nil
 	}
-	source := "renew:" + sub.ID + ":" + sub.Expires.UTC().Format(time.RFC3339)
+	source := renewalPrefix + sub.ID + ":" + sub.Expires.UTC().Format(time.RFC3339)
 	if record, minted, err := s.recorded(ctx, source); err != nil {
 		return MintedV1{}, false, err
 	} else if minted {

@@ -1673,6 +1673,68 @@ func TestARefundRevokesTheWholeRotationChain(t *testing.T) {
 	}
 }
 
+// TestARefundRevokesTheMerchantRenewalsOfTheLicenceToo: the same ruling on the
+// other route a licence's next key is minted by. A merchant renewal names the
+// subscription and the term it covers and **not** the key it follows — and that
+// key is the one a paying customer actually holds, since a renewal is §5.1's
+// ordinary route — so a walk that follows the rotation chain alone leaves it
+// live, and `/renew` hands its holder a fresh successor for a licence the money
+// has gone back for. The refund names the purchase's key, because that is the
+// key the merchant's own transaction resolves to and the store holds no
+// subscription-to-key index.
+//
+// The seat change beside them is the other side of the line: its record carries
+// the same subscription and the merchant's event id for a source, so it is the
+// source that keeps the walk off a key the customer still pays for.
+func TestARefundRevokesTheMerchantRenewalsOfTheLicenceToo(t *testing.T) {
+	f, _ := renewing(t)
+	refunded := f.purchase("evt-1", "acme.example", 5, 30)
+	untouched := f.purchase("evt-2", "widget.example", 3, 30)
+
+	f.advance(20 * day)
+	minted, renewed, err := f.svc.Renew(context.Background(), refunded.Subscription)
+	if err != nil || !renewed {
+		t.Fatalf("the merchant's renewal of %s minted nothing (renewed=%v, err=%v), so there is no second key of the licence to withdraw", refunded.Subscription, renewed, err)
+	}
+	if minted.Record.Subscription != refunded.Subscription {
+		t.Fatalf("the renewal's record names the subscription %q, want the purchase's %q: it is what the walk follows", minted.Record.Subscription, refunded.Subscription)
+	}
+	before := len(f.records())
+	f.event(Event{ID: "evt-4", Type: EventSeatChange, Organisation: "acme.example", Seats: 8, TermDays: 30})
+	records := f.records()
+	if len(records) != before+1 {
+		t.Fatalf("the seat change minted %d key(s), want one", len(records)-before)
+	}
+	reissued := records[len(records)-1].KeyID
+	// And the endpoint's rotation of the renewal, so the walk also has to carry
+	// on from a key it reached by subscription rather than by prefix.
+	rotated, _ := renewThroughTheEndpoint(t, f, minted.Record.KeyID, minted.RenewalSecret)
+	if rotated.KeyID == reissued {
+		t.Fatalf("the endpoint's rotation of %s minted the seat change's key %s", minted.Record.KeyID, reissued)
+	}
+
+	at := f.now
+	f.event(Event{ID: "evt-3", Type: EventRefund, OccurredAt: at, Subscription: refunded.Subscription, KeyID: refunded.KeyID})
+	for _, keyID := range []string{refunded.KeyID, minted.Record.KeyID, rotated.KeyID} {
+		entry, held, err := f.store.Revocation(context.Background(), keyID)
+		if err != nil || !held {
+			t.Errorf("the refund left no entry for %s (held=%v err=%v), want every key of the licence withdrawn: a refunded customer keeps no key a renewal minted for the subscription", keyID, held, err)
+			continue
+		}
+		if entry.Reason != ReasonRefund || !entry.At.Equal(at) {
+			t.Errorf("the entry for %s is %+v, want %q at the event's own instant %s", keyID, entry, ReasonRefund, at)
+		}
+	}
+	for _, keyID := range []string{reissued, untouched.KeyID} {
+		if entry, held, _ := f.store.Revocation(context.Background(), keyID); held {
+			t.Errorf("the refund of %s withdrew the key %s (%+v), want a licence the customer still pays for left alone", refunded.KeyID, keyID, entry)
+		}
+	}
+	if got := len(f.revocations()); got != 3 {
+		t.Errorf("§8's list holds %d entry(ies), want the three keys of the refunded licence", got)
+	}
+}
+
 // TestSeatChangeReissuesUnderANewKeyID: §5.3, §8 and K2.2 — the reissue is a
 // new key under a new `key_id`, and that is what makes §8's list usable at all.
 // An entry names one key, so a reissue that kept the id of the key it replaces
