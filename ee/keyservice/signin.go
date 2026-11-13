@@ -209,6 +209,12 @@ type deviceCode struct {
 // what is compared is the digest of what the person typed — with the honest note
 // that a short code cannot be hashed into safety: what bounds it is its ten
 // minutes and the poll's rate, not the digest.
+//
+// Nothing here caps how many codes one process holds: what bounds them is their
+// own window, swept on the way past every write, and the intake's throttle in
+// front of the routes. So the throttle is not optional on these routes, and the
+// rate it allows is the deploy's to set — a deployment under a flood of device
+// starts holds as many entries as its own rate lets through in ten minutes.
 type signInCodes struct {
 	mu      sync.Mutex
 	codes   map[string]*authorizeCode
@@ -524,7 +530,7 @@ func (s *Service) token(w http.ResponseWriter, r *http.Request) {
 		s.answerMintFailure(w, err)
 		return
 	}
-	writeAnswer(w, tokenAnswer{Key: minted.Key, RenewalSecret: minted.RenewalSecret})
+	writeBundle(w, tokenAnswer{Key: minted.Key, RenewalSecret: minted.RenewalSecret})
 }
 
 // tokenAnswer is what the exchange answers: the two lines of the bundle and
@@ -574,7 +580,7 @@ func (s *Service) deviceStart(w http.ResponseWriter, r *http.Request) {
 		installation: installation,
 		expires:      now.Add(deviceCodeTTL),
 	}, now)
-	writeAnswer(w, struct {
+	writeBundle(w, struct {
 		DeviceCode      string `json:"device_code"`
 		UserCode        string `json:"user_code"`
 		VerificationURI string `json:"verification_uri"`
@@ -621,7 +627,7 @@ func (s *Service) devicePoll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !held.approved {
-		writeAnswer(w, deviceAnswer{Status: DevicePending})
+		writeBundle(w, deviceAnswer{Status: DevicePending})
 		return
 	}
 	minted, err := s.signInMint(r.Context(), held.subscription, held.account)
@@ -630,7 +636,7 @@ func (s *Service) devicePoll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.codes.spendDevice(call.DeviceCode, now)
-	writeAnswer(w, deviceAnswer{Status: DeviceOK, Key: minted.Key, RenewalSecret: minted.RenewalSecret})
+	writeBundle(w, deviceAnswer{Status: DeviceOK, Key: minted.Key, RenewalSecret: minted.RenewalSecret})
 }
 
 // deviceAnswer is what the poll answers: `pending` while the person has not
@@ -700,8 +706,11 @@ func (s *Service) deviceApprove(w http.ResponseWriter, r *http.Request) {
 		s.renderSignIn(w, deviceConfirmTemplate, confirmView{
 			Installation: asking.installation,
 			Organisation: sub.Organisation,
-			UserCode:     form.Get("user_code"),
-			IDToken:      form.Get("id_token"),
+			// What the page carries back is the code as this service read it
+			// and not the text that was typed: the two are the same code, and
+			// what travels on is the normalised one (userCodeKey).
+			UserCode: groupCode(userCode),
+			IDToken:  form.Get("id_token"),
 		})
 		return
 	}
@@ -898,6 +907,15 @@ func readCall(w http.ResponseWriter, r *http.Request, into any) bool {
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.DisallowUnknownFields()
 	return dec.Decode(into) == nil
+}
+
+// writeBundle writes one of these routes' answers. It is writeAnswer with the
+// one header these answers need and the minter's own route does not: every one
+// of them carries a credential — a key and its renewal secret, a device code, a
+// short code — and a shared cache is not a place any of them belongs.
+func writeBundle(w http.ResponseWriter, minted any) {
+	w.Header().Set("Cache-Control", "no-store")
+	writeAnswer(w, minted)
 }
 
 // loopbackRedirect reads the target §11.3's code may be sent to, from either
@@ -1127,6 +1145,10 @@ type confirmView struct {
 func (s *Service) renderSignIn(w http.ResponseWriter, page *template.Template, view any) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Content-Security-Policy", signInCSP)
+	// The sign-in page carries the person's own ID token back and the
+	// confirmation page carries it too, and the page that mints is not a page a
+	// shared cache holds either (adminPage).
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	if err := page.Execute(w, view); err != nil {

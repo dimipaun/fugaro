@@ -349,8 +349,14 @@ func withRedirect(redirectURI, port string) url.Values {
 func TestAuthorizeKeepsTheStateAndSendsTheCodeToTheListener(t *testing.T) {
 	f, spy := subscribed(t)
 	verifier := freshVerifier(t)
-	if rec := f.get(RouteAuthorize, authorizeQuery(verifier)); rec.Code != http.StatusOK {
-		t.Fatalf("the sign-in form answered %d, want %d", rec.Code, http.StatusOK)
+	form := f.get(RouteAuthorize, authorizeQuery(verifier))
+	if form.Code != http.StatusOK {
+		t.Fatalf("the sign-in form answered %d, want %d", form.Code, http.StatusOK)
+	}
+	// The form carries the person's token back, so it is not a page a shared
+	// cache holds.
+	if cache := form.Header().Get("Cache-Control"); cache != "no-store" {
+		t.Errorf("the sign-in page is cacheable (%q), and it carries the person's own token", cache)
 	}
 	rec := f.signedIn(t, f.acceptedToken(t), verifier)
 	code, state, target := redirected(t, rec)
