@@ -11097,11 +11097,8 @@ settled by the code already: the console spawns reads that depend on ADC (`budge
 `coordinator status` itself, and this is the reading that says the replacement works on a real
 machine.
 
-**What you type** (task T1.3, which depends on **T1.2** — the console view — and on **T0.2**):
-
-```bash
-bash scripts/live-checks/check149.sh --project <name> [--console-ok]
-```
+**Run it** (task T1.3, which depends on **T1.2** — the console view — and on **T0.2**):
+`bash scripts/live-checks/check149.sh --project <name> [--console-ok]`.
 
 The script is the CLI half as ONE command. It settles `<name>` against this machine's own configs
 (`fugaro config list --json`, a local read: it opens no bucket and needs no project selected),
