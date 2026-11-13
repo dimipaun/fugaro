@@ -380,6 +380,41 @@ func TestAccessRunUnreadableRolesNodeIsRefused(t *testing.T) {
 	}
 }
 
+// TestAccessRunDeniedRolesReadIsRefused is the third state of the same node,
+// and the one the check must not answer with silence: the node is there and
+// answers 401 to this credential's read — a rule that does not grant it, which
+// rtdb reports as ErrPermission and never as an outage. That is the credential's
+// own refusal and not a roster of nobody (D1585 gives the node to every launcher
+// and operator through roles/firebasedatabase.viewer, so a credential it refuses
+// holds no IAM on this project at all): judging it against the config's implicit
+// admins, or as an installation that places nobody, would place it with
+// something it does not hold (F29b). The launch is refused before anything is
+// stored or started, which is what the empty execution list and the missing task
+// below are.
+func TestAccessRunDeniedRolesReadIsRefused(t *testing.T) {
+	noAgentSession(t)
+	f := newLaunchBudget(t, "off")
+	accessRunNode(t, f, userStored(t, accessViewer, accesslib.RoleViewer, accessRepoA))
+	f.db.DenyRead(accesslib.PathNode)
+	accessRunAs(t, accessViewer)
+
+	_, _, err := runBudget(t)
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("the denied roles read: err = %v (exit %d), want a refusal", err, ExitCode(err))
+	}
+	for _, want := range []string{accesslib.PathNode, "finding F29b"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Errorf("%d executions were created for a refused launch", n)
+	}
+	if storedTask(t, f.cloudFixture) {
+		t.Error("the refused launch stored its task")
+	}
+}
+
 // TestAccessRunUnreadableCredentialIsRefused: the roles come from the
 // credential the command is using (F21), so a credential whose address cannot
 // be read is refused rather than allowed through — and the refusal says which
