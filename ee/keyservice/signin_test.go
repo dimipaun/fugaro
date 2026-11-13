@@ -711,6 +711,88 @@ func TestDeviceCodeNamesTheInstallationBeforeItApproves(t *testing.T) {
 	}
 }
 
+// TestDeviceCodeApproveRefusesASignInItCannotVerify: the approve route is the
+// door a typed user code opens, and what is behind it is a licence — so the
+// guard that the person asking for one is **signed in** is what binds the
+// handover to an account rather than to whoever completes a code. Every token
+// the licence project did not sign, or signed for an address its holder never
+// proved, or did not issue at all is refused with the sign-in's own uniform
+// sentence, on the request that renders the confirmation as much as on the one
+// that approves, and the code is left waiting.
+func TestDeviceCodeApproveRefusesASignInItCannotVerify(t *testing.T) {
+	f, spy := subscribed(t)
+	cases := map[string]string{
+		"another project's token":            signIDToken(t, signInKey(), licenceKeyID, "RS256", f.licenceClaims(anotherProject)),
+		"an address its holder never proved": f.tokenWith(t, "email_verified", false),
+		"not a token at all":                 "not-a-token",
+	}
+	for name, token := range cases {
+		start := f.startDevice(t, "acme-laptop")
+		confirm := f.post(RouteDeviceApprove, url.Values{"user_code": {start.UserCode}, "id_token": {token}})
+		if confirm.Code != http.StatusForbidden {
+			t.Errorf("%s: the confirmation page answered %d, want %d: %s", name, confirm.Code, http.StatusForbidden, confirm.Body.String())
+		}
+		if body := strings.TrimSpace(confirm.Body.String()); body != refuseSignIn {
+			t.Errorf("%s: the confirmation was refused with %q, want the uniform sentence %q", name, body, refuseSignIn)
+		}
+		done := f.post(RouteDeviceApprove, url.Values{
+			"user_code": {start.UserCode},
+			"id_token":  {token},
+			"confirm":   {"1"},
+		})
+		if done.Code != http.StatusForbidden {
+			t.Errorf("%s: the approval answered %d, want %d: %s", name, done.Code, http.StatusForbidden, done.Body.String())
+		}
+		// Nothing was approved: the code the terminal is holding is still
+		// waiting for a person, and no key exists behind it.
+		f.advance(devicePollInterval)
+		if rec := f.pollDevice(t, start.DeviceCode); !strings.Contains(rec.Body.String(), DevicePending) {
+			t.Errorf("%s: the poll answered %d %s, want %s: the code was approved without a sign-in", name, rec.Code, rec.Body.String(), DevicePending)
+		}
+	}
+	if spy.minted() != 0 {
+		t.Errorf("a sign-in that did not verify minted %d key(s), want none", spy.minted())
+	}
+}
+
+// TestDeviceCodeApproveRefusesAnAccountHoldingNoLicence is the other half of the
+// same guard: a verified sign-in is not a licence. An address that bought
+// nothing is refused at the confirmation — before the page that names the
+// installation is rendered at all — so the code stays unapproved rather than
+// binding a subscription the account does not hold.
+func TestDeviceCodeApproveRefusesAnAccountHoldingNoLicence(t *testing.T) {
+	f, spy := subscribed(t)
+	start := f.startDevice(t, "acme-laptop")
+	stranger := f.tokenWith(t, "email", "stranger@elsewhere.example")
+	confirm := f.post(RouteDeviceApprove, url.Values{"user_code": {start.UserCode}, "id_token": {stranger}})
+	if confirm.Code != http.StatusForbidden {
+		t.Fatalf("the confirmation page answered %d for an account holding no licence, want %d: %s", confirm.Code, http.StatusForbidden, confirm.Body.String())
+	}
+	if body := strings.TrimSpace(confirm.Body.String()); body != refuseNoLicence {
+		t.Errorf("the confirmation was refused with %q, want %q", body, refuseNoLicence)
+	}
+	if strings.Contains(confirm.Body.String(), "acme-laptop") {
+		t.Error("the page named the requesting installation to an account that holds no licence")
+	}
+	done := f.post(RouteDeviceApprove, url.Values{
+		"user_code": {start.UserCode},
+		"id_token":  {stranger},
+		"confirm":   {"1"},
+	})
+	if done.Code != http.StatusForbidden {
+		t.Errorf("the approval answered %d, want %d: %s", done.Code, http.StatusForbidden, done.Body.String())
+	}
+	// The code is still nobody's: an account with no licence cannot bind this
+	// installation to a subscription it does not hold.
+	f.advance(devicePollInterval)
+	if rec := f.pollDevice(t, start.DeviceCode); !strings.Contains(rec.Body.String(), DevicePending) {
+		t.Errorf("the poll answered %d %s, want %s: the code was approved for an account holding no licence", rec.Code, rec.Body.String(), DevicePending)
+	}
+	if spy.minted() != 0 {
+		t.Errorf("an account holding no licence minted %d key(s), want none", spy.minted())
+	}
+}
+
 // TestDeviceCodeAnswersTheKeyOnceApproved is §11.4 end to end: the CLI starts,
 // the person signs in and confirms, and the poll that follows is answered with
 // the bundle — once. What is minted is the same account's subscription as the
