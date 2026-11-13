@@ -374,6 +374,61 @@ func TestAccessSettingsUnplacedCallerIsTheImplicitAdmin(t *testing.T) {
 	}
 }
 
+// TestAccessSettingsServiceAccountKeepsThePublishDoorsWorking: a service
+// account's credential is not a person the grants can name, so access.Caller
+// refuses its address and this gate cannot read who is calling at all. The two
+// explicit publish doors are what a script or a runbook with such a credential
+// uses, and they keep working (settings-commands spec §9): a caller the CLI
+// cannot read is admitted rather than refused, the same answer an unplaced
+// caller gets, because the gate decides what it can read and never more. The
+// installations here DO have roles, so the caller would be judged if it could
+// be read — without this rule every machine credential loses the doors.
+func TestAccessSettingsServiceAccountKeepsThePublishDoorsWorking(t *testing.T) {
+	t.Run("config publish", func(t *testing.T) {
+		f := newCloudFixture(t)
+		isolateCache(t)
+		publishedLayer(t, f, "")
+		noAgentSession(t)
+		settingsAccessCloudRoles(t, f, userStored(t, settingsAccessRepoUser, accesslib.RoleAdmin, "bitbucket/acme/sandbox"))
+		settingsAccessCallerFails(t)
+		layer := layerFile(t, testProjectLayer)
+
+		if out, _, err := execute(t, "config", "publish", "--executable-changes", layer); err != nil {
+			t.Fatalf("a service account's credential was refused the publish door: %v\n%s", err, out)
+		}
+		if bucketText(t, f, config.LayerKey) != testProjectLayer {
+			t.Error("the publish wrote no layer")
+		}
+	})
+
+	t.Run("project policy publish", func(t *testing.T) {
+		f := newProjectFixture(t, "")
+		noAgentSession(t)
+		f.db.Set(accesslib.PathNode, accessNodeDoc(userStored(t, settingsAccessRepoUser, accesslib.RoleAdmin, "bitbucket/acme/sandbox")))
+		settingsAccessCallerFails(t)
+
+		if out, _, err := execute(t, "project", "policy", "publish"); err != nil {
+			t.Fatalf("a service account's credential was refused the policy door: %v\n%s", err, out)
+		}
+		if f.db.Value(projectpolicy.PathShared()) == nil {
+			t.Error("the publish wrote no policy node")
+		}
+	})
+
+	t.Run("settings set --layer project", func(t *testing.T) {
+		settingsAccessRig(t, userStored(t, settingsAccessRepoUser, accesslib.RoleAdmin, "bitbucket/acme/sandbox"))
+		layer := settingsAccessLayerFile(t, settingsAccessLayerProfile)
+		settingsAccessCallerFails(t)
+
+		if out, _, err := execute(t, "settings", "set", "layer.default_profile", "svc", "--layer", "project", "--yes"); err != nil {
+			t.Fatalf("a service account's credential was refused the project layer: %v\n%s", err, out)
+		}
+		if !strings.Contains(readFileString(t, layer), "default_profile: svc") {
+			t.Error("the layer file does not carry the write")
+		}
+	})
+}
+
 // TestAccessSettingsInstallationWithoutRolesIsUnchanged: an installation with
 // no grants node and no lists of its own is the world before roles existed —
 // its machine's project config is the whole of its roles — so the writes land

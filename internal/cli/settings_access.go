@@ -48,15 +48,24 @@ import (
 // still reaches both writes through `update` — under whatever cloud
 // permissions that caller holds, which is the boundary SD18 leaves in place.
 // And the writers outside this task that reach the same single write path,
-// `applySettingsEdit`, without asking are `project repos set`, `project routing
-// set` and `project profile set|add|rm`, which edit this machine's project
-// config exactly as `settings set --layer local` does. RS6b covers the commands
-// in its own file list; the enforcement of the rest is follow-up work, and
-// until it lands it is partial rather than complete.
+// `applySettingsEdit`, without asking are the ones whose keys live in the same
+// three files: `fugaro rigor set` (the project layer file); `fugaro workflow
+// add|rm` and `fugaro models use` (a repository's fugaro.yaml); and, in this
+// machine's own project config, `project repos set`, `project routing set`,
+// `project profile set|add|rm`, `models add|rm`, `rigor floor`, `accounts …`,
+// `secrets …`, `workspace` and `project clone-url`. RS6b covers the commands in
+// its own file list; the same list is in docs/roles-scopes/spec.md, and until
+// the rest is gated the enforcement is partial rather than complete.
 //
 // Who the caller is comes from the credential and never from this machine's
 // config or git (finding F21), and it is read through userCallerLookup, the one
-// seam `fugaro user grant` reads it through.
+// seam `fugaro user grant` reads it through. A credential it cannot read is
+// admitted rather than refused: a service account's address is not a person the
+// grants can name, access.Caller says so by refusing it, and the two explicit
+// publish doors are what a script or a runbook with such a credential uses —
+// `fugaro config publish FILE` and `fugaro project policy publish` keep working
+// (settings-commands spec §9). Refusing there would turn this gate into a
+// requirement to be a person, which no design here asks for.
 //
 // An installation with no roles at all — no grants node and no lists of its own
 // — is not judged: its roles are nobody's, which is the state every
@@ -65,9 +74,12 @@ import (
 // place nowhere is admitted rather than refused, which is the same answer
 // `fugaro user grant` gives one (user_grant.go's own doc): this installation's
 // GCP owners and editors are implicit project admins (F17.3) and live in its
-// IAM policy, which the CLI does not read here. Both are stated limits rather
-// than oversights, and the second one is pinned by
-// TestAccessSettingsUnplacedCallerIsTheImplicitAdmin.
+// IAM policy, which the CLI does not read here. So is a credential the CLI
+// cannot read at all, which is what a service account's is (the F21 paragraph
+// above). All three are stated limits rather than oversights — the gate decides
+// what it can read and never more — and the last two are pinned by
+// TestAccessSettingsUnplacedCallerIsTheImplicitAdmin and
+// TestAccessSettingsServiceAccountKeepsThePublishDoorsWorking.
 //
 // what names the write for the refusal.
 func settingsAccessGate(ctx context.Context, lc *localcfg.Config, what string) error {
@@ -121,7 +133,7 @@ func settingsAccessNoRepo() (string, error) { return "", nil }
 func settingsAccessJudge(ctx context.Context, in accesslib.Input, action accesslib.Action, what string, repoOf func() (string, error)) error {
 	caller, err := userCallerLookup(ctx)
 	if err != nil {
-		return userErr("this command decides what you may change from the credential it is using, and it could not read who that credential belongs to: %v. The caller is the credential and never the local config's `user:` key or git config user.email (finding F21): sign in with gcloud auth application-default login and run this again", err)
+		return nil
 	}
 	if !settingsAccessPlaces(in, caller) {
 		return nil

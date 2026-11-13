@@ -64,20 +64,24 @@ Roles and scopes are managed only through Fugaro commands, never by editing file
 
 The role check is in front of the commands that write a project's settings, policy and recipes
 (`fugaro settings set|unset` at the project and repo layers, `config publish`, `recipes publish`,
-`project policy publish`). Two ways round it are known and not yet closed:
+`project policy publish`). The same three files are still written without asking, and these are the
+writers known not to ask yet:
 
-- `fugaro update` publishes the same project layer and the same policy node from its own stages and
-  asks no role, so a caller those commands refuse still reaches both writes by running it, under
-  whatever cloud permissions that caller holds. That is the boundary the settings design leaves in
-  place for a file the user owns (SD18): the file is local, and the enforcement is the cloud IAM at
-  publish.
-- `project repos set`, `project routing set` and `project profile set|add|rm` write this machine's
-  own project config, the file `settings set --layer local` writes, and they do not ask either.
+- `fugaro update` publishes the same project layer and the same policy node from its own stages, so a
+  caller those commands refuse still reaches both writes by running it, under whatever cloud
+  permissions that caller holds. That is the boundary the settings design leaves in place for a file
+  the user owns (SD18): the file is local, and the enforcement is the cloud IAM at publish.
+- the project layer file, which `settings set --layer project` writes: `fugaro rigor set`.
+- a repository's `fugaro.yaml`, which `settings set --layer repo` writes: `fugaro workflow add|rm`
+  and `fugaro models use`.
+- this machine's own project config, which `settings set --layer local` writes: `project repos set`,
+  `project routing set`, `project profile set|add|rm`, and the other families whose keys live in that
+  file (`models add|rm`, `rigor floor`, `accounts …`, `secrets …`, `workspace`, `project clone-url`).
 
 **A `--layer local` write is not judged at all**, by design: it edits this machine's own config file,
 and SD18 answers that question as "anyone may edit their own file; the boundary stays IAM at
-publish". Closing the two gaps above is follow-up work, and until it lands the enforcement is
-partial rather than complete.
+publish". The check is partial until the writers above are gated too, and the list is where the
+enforcement stands rather than proof that nothing else writes these files.
 
 **Scope values:** `project`, `all-repos`, or a comma-separated list of repo names, for example `frontend,api`. The names `project` and `all-repos` are reserved, and Fugaro refuses to create or register a repo with either name.
 
