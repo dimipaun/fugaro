@@ -684,15 +684,17 @@ about, kept explicit for the reason the accounts' own agreement gives.
 
 ## 14. Crafts: which model, and whose credential
 
-A run has four **crafts**: `coder`, `review` (the first-line review), `senior-review` and
-`security-review`. Each craft has **two halves** — the model it runs, and the **access**: the
-credential or pool its calls go out on — and the two halves **inherit separately**, so a craft that
-sets one half keeps the other half it follows:
+There are five **crafts**: `coder`, `review` (the first-line review), `senior-review`,
+`security-review` and the escalation ladder's `merge-judge`, which a judge run's single stage is
+charged to. Each craft has **two halves** — the model it runs, and the **access**: the credential or
+pool its calls go out on — and the two halves **inherit separately**, so a craft that sets one half
+keeps the other half it follows:
 
 | Craft | Follows |
 | --- | --- |
 | `review` | `coder` |
 | `security-review` | `senior-review` |
+| `merge-judge` | `senior-review` |
 
 A craft no layer sets an access for resolves to the project's **default credential**, which is the
 built-in `vertex` at the floor of the layers.
