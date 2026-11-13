@@ -11,14 +11,17 @@ package keyservice
 // breaks is a rule that would first be broken in production, on the records of
 // whoever holds a licence.
 //
-// What the suite cannot hold is where a store is *slower* (a lookup by a field
-// that is not the document's id, a record written twice where the memory store
-// writes once); those are named in firestore_store.go and are not answers, so
-// they are not cases here.
+// What the suite cannot hold is where the two stores differ on purpose. One is
+// a difference of cost (a read-modify-write where the memory store writes once,
+// a record the database's own TTL collects); those are named in
+// firestore_store.go. The other is a difference of answer — a record nobody
+// named — and it is a case of its own below, because the suite runs against
+// both stores and so can only hold what they agree on.
 
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -34,7 +37,9 @@ var (
 	expiresAt = issuedAt.Add(365 * 24 * time.Hour)
 )
 
-// storeSuite is one case of the suite and the store it runs against.
+// storeSuite runs the suite against one store, under the name it is reported
+// as. The store comes from a constructor and not a value, because each case
+// needs one the earlier cases have not written to.
 func storeSuite(t *testing.T, name string, open func(t *testing.T) Store) {
 	t.Helper()
 	t.Run(name, func(t *testing.T) {
@@ -113,7 +118,10 @@ func testIssuanceSource(t *testing.T, open func(t *testing.T) Store) {
 	for _, r := range held {
 		sources = append(sources, r.Source)
 	}
-	sortStrings(sources)
+	// Sorted here because the two stores answer a list in different orders —
+	// one appends, one files by document id — and the interface promises
+	// neither.
+	slices.Sort(sources)
 	if strings.Join(sources, ",") != "evt_1,evt_2,rotation:fgk_1" {
 		t.Errorf("the store holds %v, want one record per source: a source with a colon in it — a rotation's — is a name like any other and not a path the store may split", sources)
 	}
@@ -350,16 +358,5 @@ func TestTheDocstoreRefusesARecordNobodyNamed(t *testing.T) {
 				t.Errorf("%s = %v, want docstore.ErrUnnamed: the empty id is the one id every unnamed record would share, so a store that kept one would answer every lookup that named nothing", tc.name, err)
 			}
 		})
-	}
-}
-
-// sortStrings orders a suite's list in place; the stores answer a list in
-// different orders (one appends, one sorts by document id) and the interface
-// promises neither.
-func sortStrings(in []string) {
-	for i := 1; i < len(in); i++ {
-		for j := i; j > 0 && in[j] < in[j-1]; j-- {
-			in[j], in[j-1] = in[j-1], in[j]
-		}
 	}
 }
