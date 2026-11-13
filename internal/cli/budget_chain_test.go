@@ -246,6 +246,55 @@ func TestChainRaiseLeavesTheTaskUntouchedOnFailure(t *testing.T) {
 	}
 }
 
+// TestChainRaiseRefusesInAnAgentSession is the fence the policy puts on every
+// raise form (D1542, D1552): a chain's limit is what runs may spend, so raising
+// it is the owner's own step and no coding agent's session may make one
+// (docs/no-prompt-policy/implementation-plan.md T3, spec §4). The refusal
+// carries the exact invocation its owner runs themselves — including the run it
+// acts on, which is a positional word this command cannot lose — and it comes
+// before the chain is read, so a refused raise leaves the bucket as it stands.
+func TestChainRaiseRefusesInAnAgentSession(t *testing.T) {
+	f := chainRaiseRig(t)
+	old := selfCommand
+	selfCommand = func() string { return "fugaro" }
+	t.Cleanup(func() { selfCommand = old })
+	agentSession(t)
+	before := chainTaskBytes(t, f, showRoot)
+	_, err := chainRaise(t, "--max-usd", "6", "--reason", "one more round")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("a coding agent's session raised a chain: err = %v, want a refusal", err)
+	}
+	for _, want := range []string{
+		"CLAUDECODE",
+		"owner's own step",
+		"nothing was changed",
+		// The whole invocation, the run it acts on included: an owner who reads
+		// only the refusal has to be able to run it as it stands.
+		"fugaro budget chain raise " + showTip + " --max-usd=6 --reason='one more round' --repo=acme/app --project=aurora",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if after := chainTaskBytes(t, f, showRoot); after != before {
+		t.Errorf("a refused raise rewrote the stored task:\n%s", after)
+	}
+	if rec := showRecord(t, f, showRoot); len(rec.ChainRaises) != 0 {
+		t.Errorf("a refused raise was recorded: %+v", rec.ChainRaises)
+	}
+
+	// And the fence is the marker and nothing else: the same raise at the
+	// owner's own terminal goes through, which is what makes the refusal a step
+	// its owner can take rather than a wall.
+	noAgentSession(t)
+	if _, err := chainRaise(t, "--max-usd", "6", "--reason", "one more round"); err != nil {
+		t.Fatalf("the raise was refused outside an agent session: %v", err)
+	}
+	if rec := showRecord(t, f, showRoot); len(rec.ChainRaises) != 1 {
+		t.Errorf("the raise made at the owner's terminal recorded %d entries, want 1", len(rec.ChainRaises))
+	}
+}
+
 // TestRunRefusesARaiseShapedFlag is the other half of L9's shape: a launcher
 // raises a chain through the stored task and nowhere else. `fugaro run` has no
 // flag that raises a limit — its own --max-* may only tighten the ceiling the

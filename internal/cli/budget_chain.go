@@ -86,6 +86,9 @@ func newBudgetChainRaiseCmd() *cobra.Command {
 			"why is the whole of what tells a raise from a rewritten limit.\n\n" +
 			"The project's own budget is untouched: the per-run cap and the daily and\n" +
 			"project caps are the database's rules, and a raise moves none of them.\n\n" +
+			"A raise is the owner's own step, as every raise form is (D1542): a coding\n" +
+			"agent's session is refused and handed the command to run itself at its own\n" +
+			"terminal, so a session cannot raise a chain's limit.\n\n" +
 			"The run that began the chain has to have finished. A run writes its own\n" +
 			"result.json while it is going, so an entry recorded in one still in flight\n" +
 			"would be lost under the run's next write; a raise is refused while that run\n" +
@@ -136,6 +139,19 @@ func runChainRaise(cmd *cobra.Command, o *chainRaiseOptions, ref string) error {
 	}
 	s, err := artifactsRun(ctx, env, ref, o.repo, resolveRunOpts(cmd, false))
 	if err != nil {
+		return err
+	}
+	// A raise is the owner's own step (D1542, D1552): it moves what runs may
+	// spend, and the policy states that no raise form is open to a coding
+	// agent's session (docs/no-prompt-policy/implementation-plan.md T3, which
+	// names `budget set`'s caps, `budget resume` and the ceilings — this is
+	// the same act on a chain's own limit, and the fence is the same one).
+	//
+	// The refusal carries the invocation this run is, so its owner can act on
+	// it: ownerRaiseCommand prints the repository this run resolved and the
+	// project it acted on, and it comes before the chain is read and before
+	// either write, so a refused raise leaves the bucket as it stands.
+	if err := raiseOwnerOnly(cmd, "raising the chain of run "+task.ShortRun(s.RunID()), ownerRaiseCommand(cmd, o.repo, env.lc.Name)); err != nil {
 		return err
 	}
 	slug := s.Slug()

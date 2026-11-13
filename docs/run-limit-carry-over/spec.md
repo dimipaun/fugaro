@@ -250,7 +250,10 @@ record already keeps the reason a looser policy value was dropped (`policy.ignor
 `internal/runstore/runstore.go:865`). **The supported path is one command, `fugaro budget chain raise` (§7):**
 it makes those two writes through the runs-bucket access a launcher already holds, refuses a raise with
 no reason and a figure that is not above the one in force, and opens neither the budget database nor the
-published policy, because a chain has no cap of its own for it to move. **Said
+published policy, because a chain has no cap of its own for it to move. It is a **raise**, so it carries the
+fence every other raise form carries (D1542, D1552): a coding agent's session is refused and handed the
+invocation its owner runs themselves, which the no-prompt policy states as a rule of its own — no raise form
+is open to a session (`docs/no-prompt-policy/implementation-plan.md:56`, T3). **Said
 plainly, because the alternative is a claim this design cannot support: a launcher can do the same.** It holds
 `objectUser` on the `runs/` and `tokens/` prefixes (F21) and can rewrite that task exactly as an operator can,
 so the rule is
@@ -431,9 +434,9 @@ by anything here.
 
 - It adds **no** new ceiling, cap or default of its own: every number is one the owner, the team or the
   branch already set, and a chain limit exists only when a launch sets one (§2).
-- It adds **no node and no rule** to the budget database, and the only wire member it adds anywhere is
-  `chain_raises` on `result.json` — the log of the raises L9 makes, which no read is built from (D1046,
-  D1051, §7).
+- It adds **no node, no rule and no wire field** to the budget database — and to `result.json`, whose
+  additions §7 lists with the rest of this design's, it adds one: `chain_raises`, the log of the raises L9
+  makes, which no read is built from (D1046, D1051, §7).
 - It does not touch the gateway's ledger, the lease, the sweeper or the budget rules (D1059).
 - It does not make the console pass a limit; the console's never-table keeps `--total-timeout` and gains
   nothing (D1055).

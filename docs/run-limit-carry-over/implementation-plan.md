@@ -257,21 +257,26 @@ an honest launcher uses, and
 the reason it is a convention rather than a platform-enforced bound is written where a reader finds it
 (spec §9).
 
-- **Files (9):** `internal/cli/budget_chain.go` (new: the subcommand, beside the budget family, rewriting the
-  root run's stored task through the same runs-bucket path a launcher already has, and recording the reason),
-  `internal/cli/budget_chain_test.go` (new: the rewrite, the reason, and the refusals),
+- **Files (11):** `internal/cli/budget_chain.go` (new: the subcommand, beside the budget family, rewriting
+  the root run's stored task through the same runs-bucket path a launcher already has, and recording the
+  reason), `internal/cli/budget_chain_test.go` (new: the rewrite, the reason, the refusals, and the fence),
+  `internal/cli/budget.go` (the registration, as L6's own list names its own),
   `internal/runstore/runstore.go` (the record gains the raise's entry — who, when, from, to and why — beside
   the policy record it already writes at `:859-865`), `internal/runstore/runstore_test.go`,
   `schemas/result.schema.json` and `schemas/schemas_test.go` (the member is a wire shape, and this record's
   schema is closed, so both learn it in the same change), `website/content/cli-reference.md` (regenerated,
   not hand-edited: a new visible command changes the tree the reference is written from),
+  `website/src/components/CapsCosts.astro` (the caps guide prints the whole `fugaro budget` interface and
+  stops the build for a subcommand it does not carry, so the new heading lands in that list too),
   `internal/cli/report_exempt.go` and `internal/cli/noprompt_harness_test.go` (the two censuses a new
   mutating command has to answer: the reporter, and the closed-stdin run).
 - **Red step:** `TestChainRaiseRewritesTheRootTask` fails while the subcommand does not exist;
-  `TestChainRaiseRefusesAnEmptyReason` fails while a reasonless raise is accepted.
+  `TestChainRaiseRefusesAnEmptyReason` fails while a reasonless raise is accepted;
+  `TestChainRaiseRefusesInAnAgentSession` fails while the raise is open to an agent session.
 - **Tests:** `TestChainRaiseRewritesTheRootTask`, `TestChainRaiseRecordsTheReasonAndTheFigures`,
   `TestChainRaiseRefusesAnEmptyReason`, `TestChainRaiseLeavesTheTaskUntouchedOnFailure`,
-  `TestRunRefusesARaiseShapedFlag` (no launcher-reachable raise flag on `fugaro run`).
+  `TestChainRaiseRefusesInAnAgentSession`, `TestRunRefusesARaiseShapedFlag` (no launcher-reachable raise
+  flag on `fugaro run`).
 
 ## Shared files
 

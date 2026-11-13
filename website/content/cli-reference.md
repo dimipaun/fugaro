@@ -1127,6 +1127,10 @@ why is the whole of what tells a raise from a rewritten limit.
 The project's own budget is untouched: the per-run cap and the daily and
 project caps are the database's rules, and a raise moves none of them.
 
+A raise is the owner's own step, as every raise form is (D1542): a coding
+agent's session is refused and handed the command to run itself at its own
+terminal, so a session cannot raise a chain's limit.
+
 The run that began the chain has to have finished. A run writes its own
 result.json while it is going, so an entry recorded in one still in flight
 would be lost under the run's next write; a raise is refused while that run
