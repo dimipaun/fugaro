@@ -1342,7 +1342,7 @@ func TestUpdateConvergesAnInstallationThatSkippedTheIntakeInOneRun(t *testing.T)
 	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.intake", "create"))
 	credentialsOutputs(t, r)
 	// The installation's record: the service, on a release that predates the
-	// intake (0.23.0), and no intake block at all.
+	// intake, and no intake block at all.
 	seedCredentialsService(t, r, oldCredentialsRef("0.22.3"))
 	applies := r.captureApplies(t)
 
