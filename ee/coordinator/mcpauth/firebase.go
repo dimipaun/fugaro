@@ -460,8 +460,12 @@ func verifyRS256(tok string, key *rsa.PublicKey) error {
 //
 // It is NOT access.Member's fold, and the two are not interchangeable: this one
 // lower-cases the whole address, access.Member keeps the local part byte for
-// byte and folds only the domain. A caller that builds a member therefore reads
-// Identity.ClaimedEmail and never Identity.Email.
+// byte and folds only the domain. A caller that builds a member to compare
+// against access.Member's spelling therefore reads Identity.ClaimedEmail, which
+// is the address as claimed — ee/keyservice's portal verifier is the one that
+// does. The `user:<email>` entry this package's own verifySignIn writes is not
+// that comparison and is deliberately built from Email: authorize.go says there
+// that the fold is the endpoint's own.
 func foldEmail(email string) (string, bool) {
 	if !printableASCII(email, maxEmailBytes) {
 		return "", false
