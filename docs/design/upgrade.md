@@ -6,7 +6,10 @@ Status: design approved by the owner (2026-10-08), **rewritten as the one-comman
 every step it had lives in `fugaro update`, the converge this repository already had
 (`internal/cli/update.go`, `internal/cli/update_check.go`). The design's own delivery was release **0.5.2**,
 which shipped under the retired name; what this document describes now is the tree the plugin-user-scope
-work leaves, and its release is the one that carries U0–U8.
+work leaves, and its release is the one that carries U0–U8. That is why the skill this document is about is
+`/fugaro:update`: the file in the tree today is `plugin/skills/upgrade/` with `name: upgrade`, and U6
+renames it (D953) — the two are one release's, the one that carries U0–U8, so a reader of this branch alone
+still finds `/fugaro:upgrade` on disk.
 
 ## Problem
 
@@ -28,10 +31,12 @@ a converging run into exit 1 for that user was refused by name (D950,
 ## Behaviour
 
 ```
-fugaro update [--check] [--yes]
-              [--repo R] [--workflow W]... [--image-source S] [--expect-digest KIND=sha256:H]...
+fugaro update [--check [PATH]] [--yes]
+              [--repo [PATH]] [--image-source S] [--expect-digest KIND=sha256:H]...
               [--config F] [--project P] [--gcp-project G] [--region R]
 ```
+
+`PATH` is a checkout and only these two modes read one: `--check` reads the checkout's own files and writes nothing, and `--repo` onboards that checkout's repository instead of converging the installation. **`--repo` takes no value and there is no `--workflow`** — both spellings were the retired command's, whose usage line this block used to be; `fugaro update --help` is the list this door has.
 
 `fugaro update` re-converges an installation and the checkout it stands in: it is the same engine and the
 same stages as `fugaro setup`, and what differs is what the two doors may create. It creates nothing — the

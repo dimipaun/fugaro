@@ -114,6 +114,12 @@ func TestDocsDesignListsEveryUpgradeStep(t *testing.T) {
 		"In a coding agent's session the diff is printed and nothing is written",
 		// `--check` survived the retired command and `--local` did not (D948).
 		"**`--local` is gone**",
+		// The usage block is this door's, not the retired command's under a new
+		// name: `--repo` is a switch and PATH is its argument, `--check` takes
+		// PATH too, and there is no `--workflow` (init.go's flag set, and its
+		// own Use is "update [--repo [PATH]]").
+		"fugaro update [--check [PATH]] [--yes]",
+		"[--repo [PATH]] [--image-source S] [--expect-digest KIND=sha256:H]...",
 	} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("docs/design/upgrade.md does not say %q", want)
@@ -126,7 +132,7 @@ func TestDocsDesignListsEveryUpgradeStep(t *testing.T) {
 	// and the doc is where an older reader looks for the command's shape: the
 	// step, its flag, its count and the retired command's own usage line stay
 	// gone together.
-	for _, gone := range []string{"--allow-fork", "five steps", "runs pin and plugin", "fugaro upgrade [PATH"} {
+	for _, gone := range []string{"--allow-fork", "five steps", "runs pin and plugin", "fugaro upgrade [PATH", "[--repo R]", "[--workflow W]"} {
 		if strings.Contains(doc, gone) {
 			t.Errorf("docs/design/upgrade.md still says %q", gone)
 		}
