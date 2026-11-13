@@ -17,9 +17,13 @@ package credsvc
 // refusal's type and status, the run and the repository it was about, the same
 // class-only sentence the run is sent, and the two facts only the service has —
 // which read failed, and the Go type of the error it failed with. Where the
-// refusal is not one read's failure but a step's — the candidate list's own
-// build — the sentence itself names what failed and the two fields are empty
-// (the label block below).
+// refusal is not one read's failure — a decision this service takes (the stop
+// switch, a request it does not read, a node that is not published), or a
+// step's failure rather than a read's (the candidate list's own build) — the
+// sentence itself names what happened and the two fields are empty (the label
+// block below). That shape is not the model call's either: this line is written
+// wherever the shared refusal path is (the mint, the sign, the pairing, the
+// proxy), and those refusals are decisions rather than failed reads.
 //
 // A refusal taken BEFORE the identity is verified is the exception, and it is
 // the one refusal that cannot be written here at all: there is no verified run
