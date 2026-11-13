@@ -200,6 +200,15 @@ func ladderCoveredDigest(s State, w WorkItem, at time.Time) (Digest, bool) {
 // are still theirs to spend. A rung 1 resume is not planned here at all
 // (LadderLaunch): the ladder's executor asks for that one, and what this
 // function reads is what a person's approval plans by itself.
+//
+// The write that records the attempt does not count that way yet, so a retry
+// this plans over a ladder run recorded under the approval is one it refuses
+// (TestRetryOverALadderRunIsRefusedByTheWriteSide, and the gap this task
+// reports): patch.go's commitIntent spends the allowance by every attempt
+// recorded under it, whatever recipe ran it (AttemptsUnder). What the write
+// side owes is this count, and until it holds it the item waits — the direction
+// that starts nothing rather than the one that spends a person's attempt on a
+// run the ladder launched.
 func nextAttempt(s State, w WorkItem) (Action, bool) {
 	approval := w.Approved
 	if approval == nil || !startable(w.Phase) {

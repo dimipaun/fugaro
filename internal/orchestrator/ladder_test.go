@@ -213,8 +213,21 @@ func TestImportanceRuleSecurityOrImpact5IsImportant(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "unscored",
-			f:    orchestrator.FollowUp{Scores: []rigor.Score{{Class: rigor.Security}}},
+			name: "a finding nobody scored",
+			f:    orchestrator.FollowUp{Scores: []rigor.Score{{Class: rigor.Correctness}}},
+			want: true,
+		},
+		{
+			name: "a score outside the scale",
+			f:    orchestrator.FollowUp{Scores: []rigor.Score{finding(1, 9, 1, rigor.Correctness)}},
+			want: true,
+		},
+		{
+			name: "an unscored finding beside a mild one",
+			f: orchestrator.FollowUp{Scores: []rigor.Score{
+				finding(2, 1, 1, rigor.Cosmetic),
+				{Class: rigor.Maintainability},
+			}},
 			want: true,
 		},
 	}
@@ -259,8 +272,9 @@ func TestApprovalAttemptsCountNormalRunsOnly(t *testing.T) {
 	// The same item with a ladder run the daemon recorded as an intent: a rebase
 	// the executor launched under the same approval. It is not a run of the spec
 	// the approval covers, so the person's second attempt is still what the plan
-	// holds — the approval's allowance is read off its own runs (the write side
-	// has to count the same way for the retry to land: E10a records the run).
+	// holds — the approval's allowance is read off its own runs. The write side
+	// counts the wider way and refuses that retry until it counts this one
+	// (TestRetryOverALadderRunIsRefusedByTheWriteSide).
 	rebase := item
 	rebase.Recipe = "rebase"
 	s.Intents = append(s.Intents, orchestrator.Intent{
@@ -294,6 +308,60 @@ func TestApprovalAttemptsCountNormalRunsOnly(t *testing.T) {
 		})
 	if got := orchestrator.LadderRuns(resume, item); got != 4 {
 		t.Fatalf("LadderRuns is %d, and the third run of the item's own recipe is the ladder's", got)
+	}
+}
+
+// TestRetryOverALadderRunIsRefusedByTheWriteSide is the other half of the gap
+// this task reports, read at the allowance. The plan's count is the rule D2042
+// states — the runs of the item's own recipe a person's approval pays for
+// (normalRunsUnder, G15) — and the write that records an attempt still spends
+// the allowance by every attempt under the approval, whichever recipe ran it
+// (patch.go's commitIntent, via AttemptsUnder). The two differ exactly where a
+// ladder run sits under the approval as an intent, and there the plan holds a
+// retry the state refuses: the plan is right and the write side owes the count,
+// so what this pins is that nothing starts — no run id is used, nothing is
+// committed — and the item waits rather than spending a person's attempt on a
+// run the ladder launched.
+//
+// It is the same gap as TestLadderResumeIsRefusedByTheWriteSide and it closes
+// the same way: the write side counts normal runs only (attempts whose digest
+// is the approval's), and this test changes with it.
+func TestRetryOverALadderRunIsRefusedByTheWriteSide(t *testing.T) {
+	now := o6Now()
+	at := now.Add(-time.Hour)
+	item, first := o6FailedItem("wi-1", at, now.Add(-30*time.Minute))
+	item.Escalation = atRung1(now.Add(-2*time.Hour), 1)
+	rebase := item
+	rebase.Recipe = "rebase"
+	// The item the two attempts leave: the second is the rebase the executor
+	// launched, so the item carries that attempt and its run id.
+	item.Attempts = 2
+	item.RunID = "20261107-105000-cccc"
+	s := o6Node(t, now, item)
+	s.Intents = []orchestrator.Intent{first, {
+		ID:         orchestrator.IntentID("wi-1", 2),
+		RunID:      "20261107-105000-cccc",
+		SpecDigest: orchestrator.SpecDigest(rebase),
+		ApprovalAt: at.UTC(),
+		At:         now.Add(-20 * time.Minute),
+		Outcome:    orchestrator.OutcomeSucceeded,
+	}}
+
+	a := onlyAction(t, orchestrator.Plan(s, orchestrator.RunView{}, o6Caps(), now))
+	if a.Kind != orchestrator.ActionRetry || a.Attempt != 3 {
+		t.Fatalf("the plan is %+v, and the approval's own last run is the one a retry answers", a)
+	}
+	if got := orchestrator.AttemptsUnder(s, "wi-1", at); got != 2 {
+		t.Fatalf("AttemptsUnder is %d, and the two attempts under the approval are what the write side counts", got)
+	}
+
+	o := newO6Starter(t, s, now, "20261107-130000-aaaa")
+	err := o.run(a)
+	if !errors.Is(err, orchestrator.ErrActorNotAllowed) || !strings.Contains(err.Error(), "the approval covers") {
+		t.Fatalf("the write answered the plan's retry with %v, and what it counts is every attempt under the approval", err)
+	}
+	if o.wrote || o.s.Rev != s.Rev || len(o.l.started) != 0 {
+		t.Fatalf("the refused retry wrote %v and started %v", o.wrote, o.l.started)
 	}
 }
 
