@@ -19,11 +19,14 @@ import (
 
 // settings_access_test.go is RS6b's own behaviour: the writes of the settings,
 // config, policy and recipe surfaces ask the resolver before they land, and the
-// table is the layer each write lands in — the project's own files and the
-// published document are project-level and take admin at project scope, while a
-// repository's fugaro.yaml takes admin at a scope covering that repository
+// table is the layer each write lands in — the project layer's own file and the
+// published documents are project-level and take admin at project scope, while
+// a repository's fugaro.yaml takes admin at a scope covering that repository
 // (finding F19, the spec's "repo admins can change repo settings only within
-// the guardrails set at project level").
+// the guardrails set at project level"). This machine's own project config is
+// the row of the table with no role at all: it is a file one person owns, and
+// SD18 answers that question as "anyone may edit their own file; the boundary
+// stays IAM at publish".
 //
 // Every case here is a caller the grants node places: the resolver binds a
 // caller the node names, and the two callers the node does not name — this
@@ -130,44 +133,56 @@ func settingsAccessCallerFails(t *testing.T) {
 // TestAccessSettingsRepoAdminCannotChangeProjectGuardrails: the guardrails of a
 // project are its own admins' (spec: "repo admins can change repo settings only
 // within the guardrails set at project level"), so an admin whose scope is one
-// repository is refused both project-level writes — the project layer file, and
-// this machine's own project config — with the role and the scope the write
-// needs named, and neither file moves.
+// repository is refused the project layer's file, with the role and the scope
+// the write needs named, and the file does not move.
+//
+// The other file this level of the table holds — this machine's own project
+// config — is not judged at all, and the same caller's write lands in it. SD18
+// answers that question as it stands ("anyone may edit their own file; the
+// boundary stays IAM at publish", spec §8): the file is one person's, on their
+// own machine, and what it holds reaches the project through a write that is
+// judged — the publishes — or through `update`, under the cloud permissions of
+// whoever runs it.
 func TestAccessSettingsRepoAdminCannotChangeProjectGuardrails(t *testing.T) {
 	r, _ := settingsAccessRig(t, userStored(t, settingsAccessRepoUser, accesslib.RoleAdmin, "bitbucket/acme/sandbox"))
 	layer := settingsAccessLayerFile(t, settingsAccessLayerProfile)
 	layerBefore, localBefore := readFileString(t, layer), readFileString(t, r.cfg)
 	userPairAs(t, settingsAccessRepoUser)
 
-	for _, tc := range []struct {
-		name string
-		args []string
-	}{
-		{"the project layer's guardrails", []string{"settings", "set", "layer.default_profile", "svc", "--layer", "project", "--yes"}},
-		{"this machine's own project config", []string{"settings", "set", "max_parallel", "5", "--layer", "local", "--yes"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			_, _, err := execute(t, tc.args...)
-			if err == nil {
-				t.Fatalf("a repository-scoped admin made a project-level write: %v", tc.args)
-			}
-			if ExitCode(err) != ExitUserError {
-				t.Errorf("exit %d, want %d (a user error: nothing was attempted)", ExitCode(err), ExitUserError)
-			}
-			if !strings.Contains(err.Error(), "admin at project scope") {
-				t.Errorf("the refusal does not name the role and the scope the write needs: %v", err)
-			}
-			if !strings.Contains(err.Error(), "finding F19") {
-				t.Errorf("the refusal does not say where the rule comes from: %v", err)
-			}
-			if !strings.Contains(err.Error(), "admin at bitbucket/acme/sandbox") {
-				t.Errorf("the refusal does not say what the caller holds: %v", err)
-			}
-			if readFileString(t, layer) != layerBefore || readFileString(t, r.cfg) != localBefore {
-				t.Error("the refused write changed a project file")
-			}
-		})
-	}
+	t.Run("the project layer's guardrails", func(t *testing.T) {
+		_, _, err := execute(t, "settings", "set", "layer.default_profile", "svc", "--layer", "project", "--yes")
+		if err == nil {
+			t.Fatal("a repository-scoped admin made a project-level write")
+		}
+		if ExitCode(err) != ExitUserError {
+			t.Errorf("exit %d, want %d (a user error: nothing was attempted)", ExitCode(err), ExitUserError)
+		}
+		if !strings.Contains(err.Error(), "admin at project scope") {
+			t.Errorf("the refusal does not name the role and the scope the write needs: %v", err)
+		}
+		if !strings.Contains(err.Error(), "finding F19") {
+			t.Errorf("the refusal does not say where the rule comes from: %v", err)
+		}
+		if !strings.Contains(err.Error(), "admin at bitbucket/acme/sandbox") {
+			t.Errorf("the refusal does not say what the caller holds: %v", err)
+		}
+		if readFileString(t, layer) != layerBefore || readFileString(t, r.cfg) != localBefore {
+			t.Error("the refused write changed a project file")
+		}
+	})
+
+	t.Run("this machine's own project config", func(t *testing.T) {
+		out, _, err := execute(t, "settings", "set", "max_parallel", "5", "--layer", "local", "--yes")
+		if err != nil {
+			t.Fatalf("a repository-scoped admin was refused their own machine's config file: %v\n%s", err, out)
+		}
+		if !strings.Contains(readFileString(t, r.cfg), "max_parallel: 5") {
+			t.Error("this machine's own project config does not carry the write")
+		}
+		if readFileString(t, layer) != layerBefore {
+			t.Error("the local write changed the project layer file")
+		}
+	})
 }
 
 // TestAccessSettingsRepoAdminChangesRepoSettingWithinGuardrail: the other half
@@ -250,12 +265,14 @@ func TestAccessSettingsDryRunAnswersWithoutARole(t *testing.T) {
 }
 
 // TestAccessSettingsProjectAdminMakesBothWrites: the project-scope admin is
-// admitted at both layers, so the refusals above are a comparison against the
-// caller's own scope and not a refusal of the writes themselves. The one
-// caller without a project-scope role is refused the project's own files even
-// where its scope is every repository (F19: an all-repos admin holds no
-// project-level thing) — which is the distinction between the two admin scopes,
-// exercised here at the surface where both writes are files.
+// admitted at both judged layers, so the refusal above is a comparison against
+// the caller's own scope and not a refusal of the write itself. The one caller
+// without a project-scope role is refused the project layer even where its
+// scope is every repository (F19: an all-repos admin holds no project-level
+// thing) — which is the distinction between the two admin scopes, exercised
+// here at the surface where both writes are files. The machine's own config is
+// the file neither role is asked about (SD18), so the all-repos admin's write
+// there lands as the project admin's does.
 func TestAccessSettingsProjectAdminMakesBothWrites(t *testing.T) {
 	r, _ := settingsAccessRig(t,
 		userStored(t, settingsAccessProjectUser, accesslib.RoleAdmin, "project"),
@@ -276,23 +293,61 @@ func TestAccessSettingsProjectAdminMakesBothWrites(t *testing.T) {
 	}
 
 	// The all-repos admin, on the same two files: every repository's settings
-	// are theirs and the project's are not. Each write names a value the file
-	// above does not hold, so each one is a write and not the "already reads
-	// what was asked for" that needs no role at all.
+	// are theirs and the project layer is not. The value each write names is
+	// one the file above does not hold, so each one is a write and not the
+	// "already reads what was asked for" that needs no role at all.
 	userPairAs(t, settingsAccessEveryUser)
 	layerBefore, localBefore := readFileString(t, layer), readFileString(t, r.cfg)
-	for _, args := range [][]string{
-		{"settings", "set", "layer.default_profile", "web", "--layer", "project", "--yes"},
-		{"settings", "set", "max_parallel", "4", "--layer", "local", "--yes"},
-	} {
-		if _, _, err := execute(t, args...); err == nil {
-			t.Fatalf("an all-repos admin made a project-level write: %v", args)
-		} else if !strings.Contains(err.Error(), "admin at project scope") {
-			t.Errorf("the refusal does not name the role and the scope the write needs: %v", err)
-		}
+	if _, _, err := execute(t, "settings", "set", "layer.default_profile", "web", "--layer", "project", "--yes"); err == nil {
+		t.Fatal("an all-repos admin made a project-level write")
+	} else if !strings.Contains(err.Error(), "admin at project scope") {
+		t.Errorf("the refusal does not name the role and the scope the write needs: %v", err)
 	}
-	if readFileString(t, layer) != layerBefore || readFileString(t, r.cfg) != localBefore {
-		t.Error("the refused write changed a project file")
+	if readFileString(t, layer) != layerBefore {
+		t.Error("the refused write changed the project layer file")
+	}
+
+	if out, _, err := execute(t, "settings", "set", "max_parallel", "4", "--layer", "local", "--yes"); err != nil {
+		t.Fatalf("an all-repos admin was refused their own machine's config file: %v\n%s", err, out)
+	}
+	if readFileString(t, r.cfg) == localBefore {
+		t.Error("this machine's own project config does not carry the all-repos admin's write")
+	}
+}
+
+// TestAccessSettingsUnsetAsksTheSameQuestion: `settings unset` makes the same
+// write a set does — taking a value away moves what a run gets exactly as
+// writing one does — so it is judged in the same place and by the same rule.
+// The repository-scoped admin's unset of a project-layer key is refused with the
+// layer's file untouched, and the project-scope admin's lands. It is pinned
+// here because the two are separate call sites: without this, the unset path
+// could lose its judgement and the rest of the family would stay green.
+func TestAccessSettingsUnsetAsksTheSameQuestion(t *testing.T) {
+	settingsAccessRig(t,
+		userStored(t, settingsAccessRepoUser, accesslib.RoleAdmin, "bitbucket/acme/sandbox"),
+		userStored(t, settingsAccessProjectUser, accesslib.RoleAdmin, "project"),
+	)
+	layer := settingsAccessLayerFile(t, settingsAccessLayerProfile+"default_profile: svc\n")
+	before := readFileString(t, layer)
+
+	userPairAs(t, settingsAccessRepoUser)
+	_, _, err := execute(t, "settings", "unset", "layer.default_profile", "--layer", "project", "--yes")
+	if err == nil {
+		t.Fatal("a repository-scoped admin unset a project-layer key")
+	}
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "admin at project scope") {
+		t.Errorf("the refusal is not the role's: exit %d, %v", ExitCode(err), err)
+	}
+	if readFileString(t, layer) != before {
+		t.Error("the refused unset changed the project layer file")
+	}
+
+	userPairAs(t, settingsAccessProjectUser)
+	if out, _, err := execute(t, "settings", "unset", "layer.default_profile", "--layer", "project", "--yes"); err != nil {
+		t.Fatalf("the project's own admin was refused the unset: %v\n%s", err, out)
+	}
+	if strings.Contains(readFileString(t, layer), "default_profile") {
+		t.Error("the project admin's unset did not take the key out of the layer file")
 	}
 }
 

@@ -36,13 +36,23 @@ import (
 //     answered that question as it stands — "anyone may edit their own file;
 //     the boundary stays IAM at publish", with enforcing roles locally rejected
 //     because a file the user owns cannot carry the enforcement
-//     (docs/settings-commands spec §8). Its values reach the project only
-//     through a write that IS judged here — the publish of the layer and the
-//     `update` that applies this machine's lists — and those run with the cloud
-//     permissions of whoever runs them, which is what SD18's "at publish" means.
-//     The layer file a `--layer project` write edits is the project's own copy
-//     of its guardrails and is judged with it, because F19 names the project
-//     layer itself.
+//     (docs/settings-commands spec §8). The layer file a `--layer project`
+//     write edits is the project's own copy of its guardrails and is judged
+//     with it, because F19 names the project layer itself.
+//
+// What this gate does NOT reach is stated here rather than left to be found:
+// the write a `--layer local` edit leads to is not judged either. `fugaro
+// update` publishes the layer (`init_layer_stage.go`) and the policy node
+// (`init_policy_publish.go`) from its own stages, and asks no role, so a caller
+// this gate refuses in front of `config publish` or `project policy publish`
+// still reaches both writes through `update` — under whatever cloud
+// permissions that caller holds, which is the boundary SD18 leaves in place.
+// And the writers outside this task that reach the same single write path,
+// `applySettingsEdit`, without asking are `project repos set`, `project routing
+// set` and `project profile set|add|rm`, which edit this machine's project
+// config exactly as `settings set --layer local` does. RS6b covers the commands
+// in its own file list; the enforcement of the rest is follow-up work, and
+// until it lands it is partial rather than complete.
 //
 // Who the caller is comes from the credential and never from this machine's
 // config or git (finding F21), and it is read through userCallerLookup, the one
@@ -71,7 +81,9 @@ func settingsAccessGate(ctx context.Context, lc *localcfg.Config, what string) e
 // settingsAccessWrite is settingsAccessGate for `settings set` and
 // `settings unset`: the layer the write lands in is what makes it a
 // project-level or a repository-level surface, and a repository-level one
-// resolves the canonical repository the write is judged in.
+// resolves the canonical repository the write is judged in. The local layer is
+// neither: it is this machine's own file and SD18's answer is that whoever is
+// at this terminal edits it.
 //
 // It is asked where the write would be made and never before, and it is asked
 // for a write alone: a key that already reads what was asked for, or one that is
@@ -81,7 +93,7 @@ func settingsAccessGate(ctx context.Context, lc *localcfg.Config, what string) e
 // make (and the agent-session fence, which a dry run does meet, is about the
 // session rather than the file).
 func settingsAccessWrite(ctx context.Context, lc *localcfg.Config, o settingsWriteOptions, target settingsTarget, what string) error {
-	if o.dryRun {
+	if o.dryRun || target.layer == settingsLayerLocal {
 		return nil
 	}
 	if target.layer != settingsLayerRepo {

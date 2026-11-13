@@ -60,6 +60,25 @@ Roles and scopes are managed only through Fugaro commands, never by editing file
 - Changes take effect right away, with no prompts and no follow-up steps (see the Composite Management Commands Spec).
 - The console uses the same commands.
 
+### What the role check does not cover yet
+
+The role check is in front of the commands that write a project's settings, policy and recipes
+(`fugaro settings set|unset` at the project and repo layers, `config publish`, `recipes publish`,
+`project policy publish`). Two ways round it are known and not yet closed:
+
+- `fugaro update` publishes the same project layer and the same policy node from its own stages and
+  asks no role, so a caller those commands refuse still reaches both writes by running it, under
+  whatever cloud permissions that caller holds. That is the boundary the settings design leaves in
+  place for a file the user owns (SD18): the file is local, and the enforcement is the cloud IAM at
+  publish.
+- `project repos set`, `project routing set` and `project profile set|add|rm` write this machine's
+  own project config, the file `settings set --layer local` writes, and they do not ask either.
+
+**A `--layer local` write is not judged at all**, by design: it edits this machine's own config file,
+and SD18 answers that question as "anyone may edit their own file; the boundary stays IAM at
+publish". Closing the two gaps above is follow-up work, and until it lands the enforcement is
+partial rather than complete.
+
 **Scope values:** `project`, `all-repos`, or a comma-separated list of repo names, for example `frontend,api`. The names `project` and `all-repos` are reserved, and Fugaro refuses to create or register a repo with either name.
 
 **Wildcards:** repo names in a scope can use simple glob-style `*` patterns, for example `dimipaun/*` or `acme/api-*`. Only plain stars are supported, not regular expressions. A wildcard scope automatically covers new repos that match it, just like `all-repos`. The list command shows which repos each pattern matches right now.
