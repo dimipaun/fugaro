@@ -87,8 +87,10 @@ func Run(t *testing.T, open Factory) {
 	t.Run("ATransactionCommitsTogether", func(t *testing.T) { testCommitTogether(t, open) })
 	t.Run("ATransactionThatFailsWritesNothing", func(t *testing.T) { testFailedTransaction(t, open) })
 	t.Run("ATransactionReadsBeforeItWrites", func(t *testing.T) { testReadAfterWrite(t, open) })
+	t.Run("ATransactionQueriesTheCollectionItReads", func(t *testing.T) { testTransactionQuery(t, open) })
 	t.Run("ATransactionIsNotNested", func(t *testing.T) { testNestedTransaction(t, open) })
 	t.Run("ARefusedCallIsRefusedByName", func(t *testing.T) { testUnnamed(t, open) })
+	t.Run("ANameTheBackendCannotFileIsRefused", func(t *testing.T) { testUnstorableName(t, open) })
 }
 
 func ctx() context.Context { return context.Background() }
@@ -395,6 +397,93 @@ func testReadAfterWrite(t *testing.T, open Factory) {
 	if _, err := s.Query(ctx(), collection, docstore.Query{Where: []docstore.Where{{Field: "name", Equals: "acme"}}}); err != nil {
 		t.Errorf("the collection after the refused transaction: %v", err)
 	}
+
+	// A query is a read too, and the same rule covers it: a function that wrote
+	// and then listed the collection it wrote into would be reading back its own
+	// staged writes, which is the state the backend it commits onto may never
+	// reach (docs.go's Transaction).
+	err = s.RunTransaction(ctx(), func(ctx context.Context, tx docstore.Transaction) error {
+		if err := tx.Put(ctx, collection, "two", map[string]any{"name": "beta"}); err != nil {
+			return err
+		}
+		if _, err := tx.Query(ctx, collection, docstore.Query{}); err != nil {
+			return err
+		}
+		return errors.New("the transaction queried a collection it had already written and the store said nothing")
+	})
+	if !errors.Is(err, docstore.ErrReadAfterWrite) {
+		t.Errorf("Query after Put inside a transaction = %v, want docstore.ErrReadAfterWrite", err)
+	}
+}
+
+// testTransactionQuery is the other half of a transaction's reads: a query
+// inside one answers the collection the transaction commits onto, in the same
+// order and by the same matching as the store's own query, and the writes a
+// function bases on it land with the commit.
+//
+// It is here because the seam offers the call and a backend-specific guard
+// beside it would otherwise be dead code: what a query of a collection means
+// has to be one answer on both backends, and a transaction is where the answer
+// decides what a function writes.
+func testTransactionQuery(t *testing.T, open Factory) {
+	s := open(t)
+	for _, id := range []string{"a", "b"} {
+		doc(t, s, id, map[string]any{"open": true, "n": 1})
+	}
+	doc(t, s, "c", map[string]any{"open": false, "n": 1})
+
+	err := s.RunTransaction(ctx(), func(ctx context.Context, tx docstore.Transaction) error {
+		held, err := tx.Query(ctx, collection, docstore.Query{Where: []docstore.Where{{Field: "open", Equals: true}}})
+		if err != nil {
+			return err
+		}
+		if ids := strings.Join(idsOf(held), ","); ids != "a,b" {
+			return fmt.Errorf("the transaction's query answered %v, want [a b]: a query inside a transaction matches and orders the way the store's own does", ids)
+		}
+		for _, d := range held {
+			var got struct {
+				N int `json:"n"`
+			}
+			if err := d.Decode(&got); err != nil {
+				return err
+			}
+			if err := tx.Put(ctx, collection, d.ID, map[string]any{"open": true, "n": got.N + 1}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("RunTransaction = %v, want nil", err)
+	}
+	for id, want := range map[string]int{"a": 2, "b": 2, "c": 1} {
+		var got struct {
+			N int `json:"n"`
+		}
+		held, err := s.Get(ctx(), collection, id, &got)
+		if err != nil || !held {
+			t.Fatalf("after the transaction committed, Get(%s) = (%v, %v), want the document it wrote", id, held, err)
+		}
+		if got.N != want {
+			t.Errorf("the document %s carries n=%d, want %d: the transaction wrote back what its own query answered, and a document the query did not match is untouched", id, got.N, want)
+		}
+	}
+
+	// A transaction reads the collection as it stands when it runs: the writes
+	// the one above committed are what the next one's query answers.
+	err = s.RunTransaction(ctx(), func(ctx context.Context, tx docstore.Transaction) error {
+		held, err := tx.Query(ctx, collection, docstore.Query{})
+		if err != nil {
+			return err
+		}
+		if ids := strings.Join(idsOf(held), ","); ids != "a,b,c" {
+			return fmt.Errorf("a query inside a transaction answered %v, want [a b c]: the transaction reads the collection the last commit left, not one it saw before", ids)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("RunTransaction = %v, want nil", err)
+	}
 }
 
 func testNestedTransaction(t *testing.T, open Factory) {
@@ -433,6 +522,50 @@ func testUnnamed(t *testing.T, open Factory) {
 	}
 	if err := s.Put(ctx(), collection, "one", map[string]any(nil)); !errors.Is(err, docstore.ErrNotADocument) {
 		t.Errorf("Put of a nil map = %v, want docstore.ErrNotADocument", err)
+	}
+}
+
+// testUnstorableName is the other half of a name: not empty but one the
+// deploy's backend cannot file, which is the case a store that only checked for
+// the empty string would let through in a test and lose in the deploy (docs.go's
+// ErrUnstorableName). Every call that takes a name is held to it, and the
+// transaction's own writes with them — the guard is the store's, not one
+// method's.
+func testUnstorableName(t *testing.T, open Factory) {
+	s := open(t)
+	slashed := "one/two"
+	for _, tc := range []struct {
+		name string
+		call func() error
+	}{
+		{"a put with a slash in the id", func() error { return s.Put(ctx(), collection, slashed, map[string]any{"a": 1}) }},
+		{"a put with a slash in the collection", func() error { return s.Put(ctx(), slashed, "one", map[string]any{"a": 1}) }},
+		{"a get with a slash in the id", func() error { _, err := s.Get(ctx(), collection, slashed, nil); return err }},
+		{"a get with a slash in the collection", func() error { _, err := s.Get(ctx(), slashed, "one", nil); return err }},
+		{"a delete with a slash in the id", func() error { return s.Delete(ctx(), collection, slashed) }},
+		{"a query of a collection with a slash in it", func() error { _, err := s.Query(ctx(), slashed, docstore.Query{}); return err }},
+		{"a put under the id a single period", func() error { return s.Put(ctx(), collection, ".", map[string]any{"a": 1}) }},
+		{"a put under the id two periods", func() error { return s.Put(ctx(), collection, "..", map[string]any{"a": 1}) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.call(); !errors.Is(err, docstore.ErrUnstorableName) {
+				t.Errorf("%s = %v, want docstore.ErrUnstorableName: the backend reads a slash as a path separator rather than as a character of a name, so a document written under one would sit where a query of the collection the caller named never returns it", tc.name, err)
+			}
+		})
+	}
+
+	if err := s.RunTransaction(ctx(), func(ctx context.Context, tx docstore.Transaction) error {
+		return tx.Put(ctx, collection, slashed, map[string]any{"a": 1})
+	}); !errors.Is(err, docstore.ErrUnstorableName) {
+		t.Errorf("a transaction's Put under a name with a slash = %v, want docstore.ErrUnstorableName", err)
+	}
+
+	held, err := s.Query(ctx(), collection, docstore.Query{})
+	if err != nil {
+		t.Fatalf("Query after the refused calls: %v", err)
+	}
+	if len(held) != 0 {
+		t.Errorf("the collection holds %v after calls the store refused, want nothing: a name that is refused is a document that is not written", idsOf(held))
 	}
 }
 
@@ -493,6 +626,66 @@ func TestTransactionRetriesOnConflict(t *testing.T) {
 	}
 	if got.N != 101 {
 		t.Errorf("the counter is %d, want 101: the retry read the write that conflicted with it (100) and added its own increment to that, and the increment the conflicted attempt staged landed nowhere", got.N)
+	}
+}
+
+// TestTransactionRetriesAQueryOnConflict is the query half of the rule above,
+// and it is written against the memory store alone for the same reason: the
+// conflict has to be provoked from inside the function to be a case and not a
+// race.
+//
+// What it pins is what a query contributes to the read set — the collection as
+// a whole and not the documents it answered (memory.go's memCollection). Both
+// writers below move the collection while the function sits between its query
+// and its commit: one writes a document the query matched, one drops a document
+// it did not. A read set that never recorded the query, or that watched only
+// what the query returned, is a transaction that commits onto a collection that
+// moved, which is a decision made on a list that no longer exists.
+func TestTransactionRetriesAQueryOnConflict(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		write func(store *docstore.Memory) error
+	}{
+		{"another instance writes a document the query answered", func(store *docstore.Memory) error {
+			return store.Put(context.Background(), collection, "a", map[string]any{"open": true, "n": 100})
+		}},
+		{"another instance drops a document the query did not answer", func(store *docstore.Memory) error {
+			return store.Delete(context.Background(), collection, "c")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := docstore.NewMemory()
+			for _, id := range []string{"a", "b"} {
+				if err := store.Put(context.Background(), collection, id, map[string]any{"open": true, "n": 1}); err != nil {
+					t.Fatalf("Put(%s): %v", id, err)
+				}
+			}
+			if err := store.Put(context.Background(), collection, "c", map[string]any{"open": false, "n": 1}); err != nil {
+				t.Fatalf("Put(c): %v", err)
+			}
+
+			attempts := 0
+			err := store.RunTransaction(ctx(), func(ctx context.Context, tx docstore.Transaction) error {
+				attempts++
+				held, err := tx.Query(ctx, collection, docstore.Query{Where: []docstore.Where{{Field: "open", Equals: true}}})
+				if err != nil {
+					return err
+				}
+				if len(held) != 2 {
+					return fmt.Errorf("the transaction's query answered %d documents, want the two that are open", len(held))
+				}
+				if attempts == 1 {
+					return tc.write(store)
+				}
+				return tx.Put(ctx, collection, "seen", map[string]any{"open": true})
+			})
+			if err != nil {
+				t.Fatalf("RunTransaction = %v, want nil: a transaction whose query read a collection that has moved runs again on the one that replaced it", err)
+			}
+			if attempts != 2 {
+				t.Fatalf("the transaction's function ran %d time(s), want 2: a query's read set is the collection it read, so a write to that collection between the read and the commit is a conflict and not a state the transaction never saw", attempts)
+			}
+		})
 	}
 }
 

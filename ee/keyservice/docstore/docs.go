@@ -44,8 +44,10 @@ import (
 )
 
 // Store is the portal's storage. Get, Put and Delete address one document by
-// its collection and its id, Query reads a collection, and RunTransaction runs
-// a function whose reads and writes land together or not at all.
+// its collection and its id — two names the backend has to be able to file a
+// document under, which is what ErrUnstorableName answers for — Query reads a
+// collection, and RunTransaction runs a function whose reads and writes land
+// together or not at all.
 //
 // Nothing here is a schema: a collection is a name a caller chose, and this
 // package never sees the shape of what is written in one beyond the JSON object
@@ -163,6 +165,22 @@ type Where struct {
 // than written: the empty id is the one name every unnamed caller would share,
 // so a document under it would answer every such call at once.
 var ErrUnnamed = errors.New("docstore: a document is named by its collection and its id")
+
+// ErrUnstorableName is a document named by something the backend the deploy
+// names cannot file a document under.
+//
+// A slash is a path separator there and not a character of a name: the client
+// builds a resource path out of the two strings it is handed, so a name
+// carrying one addresses a subcollection, or a path the backend refuses, rather
+// than a document of the collection the caller named — a write lands where a
+// query of that collection never returns it and a read answers about something
+// else. The two period ids are the pair the backend refuses outright, and they
+// are the same hazard from the other side: a caller that meant a document of
+// its own would get the path traversal instead.
+//
+// The memory store refuses a name like this as the deploy's store does, so a
+// caller that would produce one meets it in a test rather than in the deploy.
+var ErrUnstorableName = errors.New("docstore: a document's name has to be one the store can file it under")
 
 // ErrNotADocument is a Put of something that is not a JSON object — a number, a
 // string, a nil map. A store of documents holds objects, and a value with no

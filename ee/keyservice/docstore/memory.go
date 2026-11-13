@@ -5,6 +5,7 @@ package docstore
 
 import (
 	"context"
+	"strings"
 	"sync"
 )
 
@@ -109,8 +110,8 @@ func (m *Memory) Delete(_ context.Context, collection, id string) error {
 }
 
 func (m *Memory) Query(_ context.Context, collection string, q Query) ([]Document, error) {
-	if collection == "" {
-		return nil, ErrUnnamed
+	if err := namedCollection(collection); err != nil {
+		return nil, err
 	}
 	m.mu.Lock()
 	docs, err := m.snapshot(collection)
@@ -246,8 +247,8 @@ func (tx *memTx) Put(_ context.Context, collection, id string, doc any) error {
 }
 
 func (tx *memTx) Query(_ context.Context, collection string, q Query) ([]Document, error) {
-	if collection == "" {
-		return nil, ErrUnnamed
+	if err := namedCollection(collection); err != nil {
+		return nil, err
 	}
 	if tx.written {
 		return nil, ErrReadAfterWrite
@@ -295,10 +296,35 @@ func (tx *memTx) commit() (bool, error) {
 	return true, nil
 }
 
-// named refuses a document nothing named.
+// named refuses a document the store could not file: one nothing named, or one
+// named by something the deploy's backend cannot hold.
 func named(collection, id string) error {
 	if collection == "" || id == "" {
 		return ErrUnnamed
 	}
+	if !fileable(collection) || !fileable(id) {
+		return ErrUnstorableName
+	}
 	return nil
+}
+
+// namedCollection is named's collection half, for the calls that read a whole
+// collection and have no document to name.
+func namedCollection(collection string) error {
+	if collection == "" {
+		return ErrUnnamed
+	}
+	if !fileable(collection) {
+		return ErrUnstorableName
+	}
+	return nil
+}
+
+// fileable reports whether a name is one the deploy's backend can file a
+// document under. It is the store that names a database behaving as itself
+// here: what it keeps as a filename this one keeps as a map key, so a name the
+// database reads as a path has to be refused by both, or a caller would learn
+// in the deploy what a test let through (ErrUnstorableName).
+func fileable(name string) bool {
+	return !strings.Contains(name, "/") && name != "." && name != ".."
 }

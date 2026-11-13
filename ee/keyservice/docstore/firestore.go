@@ -95,8 +95,8 @@ func (f *Firestore) Delete(ctx context.Context, collection, id string) error {
 }
 
 func (f *Firestore) Query(ctx context.Context, collection string, q Query) ([]Document, error) {
-	if collection == "" {
-		return nil, ErrUnnamed
+	if err := namedCollection(collection); err != nil {
+		return nil, err
 	}
 	docs, err := readAll(f.client.Collection(collection).Documents(ctx))
 	if err != nil {
@@ -170,8 +170,8 @@ func (t *firestoreTx) Put(_ context.Context, collection, id string, doc any) err
 }
 
 func (t *firestoreTx) Query(_ context.Context, collection string, q Query) ([]Document, error) {
-	if collection == "" {
-		return nil, ErrUnnamed
+	if err := namedCollection(collection); err != nil {
+		return nil, err
 	}
 	if t.wrote {
 		return nil, ErrReadAfterWrite
