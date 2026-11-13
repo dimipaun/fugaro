@@ -152,7 +152,10 @@ prompt, never from an argument, a flag or the environment.
 - **Removing an account.** `fugaro accounts rm <name>` is the inverse and converges the same way: it
   refuses while a profile still lists the account — `fugaro accounts rm <name> --profile PROFILE`
   takes the name out of one profile's list alone — and once no profile lists it, the declaration,
-  the secret and the job go together. A committed `fugaro.yaml` that still names the account in
+  the secret and the job go together. A `repos.<owner/name>.claude_accounts` that names the account
+  is cleared with the declaration (§2, §3): the entry is what admits that repository's own runs, and
+  left behind it would name an account the file no longer defines, which the next
+  `fugaro project policy publish` refuses. A committed `fugaro.yaml` that still names the account in
   `agent.oauth_token` is warned about rather than edited — that file belongs to the repository, not
   to this installation.
 
