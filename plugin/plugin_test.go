@@ -133,7 +133,7 @@ func TestSkillSetIsSeven(t *testing.T) {
 		}
 		names[name] = true
 	}
-	want := []string{"setup", "working", "routing", "parallelism", "upgrade", "orchestrator", "images"}
+	want := []string{"setup", "working", "routing", "parallelism", "update", "orchestrator", "images"}
 	if len(names) != len(want) {
 		t.Fatalf("skills = %v, want exactly %v", names, want)
 	}
