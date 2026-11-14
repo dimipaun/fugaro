@@ -1677,8 +1677,9 @@ Write the minimal fugaro.yaml of a repository whose project publishes a project 
 Write the minimal fugaro.yaml (version, project, gcp_project) into this checkout, for a project that
 publishes a project layer. It asks nothing and takes no flag for the write: the file it writes is a
 repository file, reviewed and committed like any other. It never overwrites a fugaro.yaml, and writes
-nothing that does not resolve against the project layer. Unlike fugaro config publish, it never refuses in a coding-agent session: it writes
-a repository file, which still goes through a reviewed pull request, not a published, trusted object.
+nothing that does not resolve against the project layer. Unlike fugaro config publish, it never refuses
+in a coding-agent session: it writes a repository file, which still goes through a reviewed pull
+request, not a published, trusted object.
 
 Usage: `fugaro config init`
 
@@ -4295,8 +4296,9 @@ IAM call at all; undoing the fence is not revocation and is not offered here
 
 Run it in your own terminal, as an operator, with your own credentials. The
 permission you give is the PROJECT_ID argument itself: it names the one project
-whose marks come off, and nothing stands in for naming it — not a flag, not a pipe. A coding agent's session is refused, and a
-Fugaro run's own process is refused.
+whose marks come off, and nothing stands in for naming it — not a flag, not a
+pipe. A coding agent's session is refused, and a Fugaro run's own process is
+refused.
 
 PROJECT_ID must be the exact GCP project ID of the installation selected by
 --project, --config or the checkout: one invocation names one project, and
@@ -5614,8 +5616,8 @@ refused before it mints a git token — unless another entry on the list still
 admits it, which is the case a pattern makes (github/acme/app stays admitted
 while github/acme/* is there); the confirmation says which of the two it is.
 Removing * refuses every repository the rest of the list does not admit.
-So it asks you to type the project's name, and while a run is in flight nothing
-confirms it.
+So it asks you to type the project's name, and while a run is in flight only
+that typing confirms it.
 
 Usage: `fugaro project repos rm <provider/owner/name | owner/name | *>`
 
@@ -8202,10 +8204,9 @@ widened role) is not covered by the run's confirmation: it is shown and then
 applied, and left for you where nobody is at the terminal. The confirmation is
 per run and never stored. Any other project
 (one an earlier run created and this one resumed, unmarked, or a mark that
-fails to read) keeps its own confirmation at each step;
-the ordinary steps are confirmed by that run's own confirmation as ever;
---json, a pipe and a coding agent never take it; --plan-only shows the review
-and applies nothing.
+fails to read) keeps its own confirmation at each step, taken at your own
+terminal; --json, a pipe and a coding agent never give one; --plan-only shows
+the review and applies nothing.
 
 What that confirmation covers: the ordinary steps, which are the installation's and the
 Firebase root's Terraform applies, the images' copy, the local config's
@@ -8219,10 +8220,9 @@ the run was given. What
 it still never covers: creating a project or linking billing, a secret, and
 the Firestore database's permanent location, this door's first-time question.
 With no terminal, or with --json, each of those is left for you, with the
-one line to run. A first run that does ask the billing question — a pipe for
-standard input, neither given — stops there instead: with no
-terminal the question is refused at once, in the sentence naming --link-billing,
-before any account of yours is read. In a coding agent's environment (CLAUDECODE, CLAUDE_CODE_ENTRYPOINT,
+one line to run: a first run that reaches the billing question is refused at
+once, in the sentence naming --link-billing, before any account of yours is
+read. In a coding agent's environment (CLAUDECODE, CLAUDE_CODE_ENTRYPOINT,
 CLAUDE_CODE_REMOTE, CURSOR_AGENT or AI_AGENT is set) setup
 applies nothing and says to run it in your own terminal
 window; --plan-only and the read-only checks still work, and so does setup
