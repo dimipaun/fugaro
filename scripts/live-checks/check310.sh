@@ -1332,8 +1332,9 @@ step_failure() {
 #!/usr/bin/env bash
 # A fake terraform for Check 310's forced failure: it answers the version
 # question the CLI asks before it converges, and refuses every other subcommand
-# with the shape of a real terraform error. It writes nothing and changes
-# nothing anywhere, so the failure it forces costs nothing but the reading.
+# with the shape of a real terraform error. It changes nothing anywhere: the one
+# file it writes is the marker in the check's own scratch directory below, and
+# the failure it forces costs nothing but the reading.
 set -euo pipefail
 for a in "$@"; do
   case "$a" in
@@ -1350,6 +1351,13 @@ for a in "$@"; do
     ;;
   esac
 done
+# The marker, on a subcommand that is not the version question: how the check
+# knows this shim ran. Reading that off the screen instead would make a CLI whose
+# failure keeps no error text look like a shim that never started, and the two
+# are opposite readings of the same run.
+if [ -n "${CHECK310_TF_MARKER:-}" ]; then
+  printf '%s\n' "${1:-?}" >"$CHECK310_TF_MARKER" 2>/dev/null || true
+fi
 printf 'check310 fake terraform: reading the installation root\n'
 printf 'check310-shim-marker: this line is in the log and was never on the screen\n'
 printf 'Error: could not read the installation root state\n\n' >&2
@@ -1359,7 +1367,8 @@ exit 1
 SHIM_EOF
   chmod +x "$shim/terraform"
 
-  run_tty failure env ${ENVV[@]+"${ENVV[@]}"} PATH="$shim:$PATH" fugaro update
+  run_tty failure env ${ENVV[@]+"${ENVV[@]}"} PATH="$shim:$PATH" \
+    CHECK310_TF_MARKER="$SCRATCH/tf-ran" fugaro update
   # Taken here, for the same reason as the plan view's: the log this run filed
   # is what the failure's own path has to point at, and it is read from the
   # directory as it stands the moment the run returned.
@@ -1372,7 +1381,11 @@ SHIM_EOF
   full=$(field full_output)
   diagnose=$(field diagnose)
   context=$(field context)
-  if grep -q terraform "$TTY_OUT" 2>/dev/null; then tf_ran=yes; fi
+  # The shim's own marker, not the word on the screen: a failure screen that
+  # keeps no error text says nothing about whether the shim started, and reading
+  # the absence of the word as "it never ran" would report the failure as one
+  # that landed before the stage it in fact landed in.
+  if [ -f "$SCRATCH/tf-ran" ]; then tf_ran=yes; fi
 
   # The log the run filed, read out of the directory rather than out of its own
   # line: the two have to be the same file for the path under the failure to
@@ -1685,13 +1698,17 @@ step_verdict() {
   exit "$1"
 }
 
-# verdict_from_facts: 1 when a judged fact failed, 0 when none did. The rows are
-# read back out of the run's own fact file rather than remembered, so the exit
-# status cannot drift from the block.
+# verdict_from_facts: 1 when a judged fact failed or was never recorded, 0 when
+# every one of them holds. The rows are read back out of the run's own fact file
+# rather than remembered, so the exit status cannot drift from the block — and a
+# judged key with no row is a row the block prints as "FAIL — not reached", which
+# is not a row that holds: a run that skipped one of these steps may not end
+# saying every fact holds.
 verdict_from_facts() {
-  local facts=$1 key
+  local facts=$1 key row
   for key in update-tty tty-colour tty-spin plan-only plan-log no-color piped json json-stderr failure failure-id failure-log log-plain log-mode retention retention-guards doctor installation restore; do
-    if [ "$(printf '%s\n' "$facts" | sed -n "s/^$key|\([A-Z]*\)|.*/\1/p" | head -1)" = FAIL ]; then
+    row=$(printf '%s\n' "$facts" | sed -n "s/^$key|\([A-Z]*\)|.*/\1/p" | head -1)
+    if [ "$row" != PASS ] && [ "$row" != INFO ]; then
       return 1
     fi
   done

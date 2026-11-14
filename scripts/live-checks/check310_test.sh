@@ -337,9 +337,13 @@ def update(argv):
                        "left": ("○", "33")}[state]
         sep = " " if state == "done" else ": "
         reason = msg if state == "failed" else REASONS[s]
-        human.write(paint(glyph, code, colour) + " " + s + sep + reason + "\n")
+        # fail-bare: the failed step line keeps no error text on the screen
+        # either, so nothing a person sees names what failed or where its log
+        # is; the log itself still holds the text, as a run's own log does.
+        human_reason = "" if MODE == "fail-bare" and state == "failed" else reason
+        human.write(paint(glyph, code, colour) + " " + s + sep + human_reason + "\n")
         log.write(paint(glyph, code, MODE == "log-ansi") + " " + s + sep + reason + "\n")
-        if state == "failed" and MODE != "fail-no-context":
+        if state == "failed" and MODE not in ("fail-no-context", "fail-bare"):
             for line in context:
                 human.write("    " + line + "\n")
                 log.write("    " + line + "\n")
@@ -349,7 +353,7 @@ def update(argv):
             log.write(shim_out)
         if MODE in ("fail-screen", "fail-both"):
             human.write(shim_out)
-        if MODE != "fail-no-full-output":
+        if MODE not in ("fail-no-full-output", "fail-bare"):
             human.write("    full output: " + path + "\n")
             log.write("    full output: " + path + "\n")
         if MODE != "fail-no-diagnose":
@@ -645,6 +649,22 @@ case_fail_no_context() {
   expect_status "$status" 1 "a failure with no context on the screen"
   expect_fact "$out" failure FAIL "a failure with no context on the screen"
   expect_fact "$out" failure-log PASS "a failure with no context on the screen"
+}
+
+# A failure screen that keeps nothing at all: no error text on the failed step
+# line, no context under it and no log path. The shim really ran, so this is a
+# failure the check has to read as a screen that says nothing — reading the word
+# 'terraform' off the screen instead made it a shim that never started, and such
+# a run ended 0 with log-plain never measured at all.
+case_fail_bare() {
+  setup_case fail_bare fail-bare
+  run310
+  local out
+  out=$(block)
+  expect_status "$status" 1 "a failure screen that keeps nothing"
+  expect_fact "$out" failure FAIL "a failure screen that keeps nothing"
+  expect_fact "$out" failure-log PASS "a failure screen that keeps nothing"
+  expect_fact "$out" log-plain PASS "a failure screen that keeps nothing"
 }
 
 case_fail_no_full_output() {
@@ -1000,6 +1020,7 @@ tests=(
   summary_mismatch
   json_extra
   fail_no_context
+  fail_bare
   fail_no_full_output
   fail_no_diagnose
   fail_wrong_id
