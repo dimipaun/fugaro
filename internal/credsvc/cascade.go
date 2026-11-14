@@ -129,7 +129,132 @@ func (s *Server) candidates(ctx context.Context, id Identity, canonical string, 
 		}
 		out = append(out, c)
 	}
-	return out, strategy, skipped, nil
+	// What the repository's OWN configuration says its runs go out on narrows
+	// the admission once more, and it is read from the record `fugaro update`
+	// wrote rather than from what this call declares (creds/repoauth, D2070 (a),
+	// R7): the declaration is checked against the record and never trusted, and
+	// a repository whose record says something this call does not declare is
+	// refused rather than served the cascade (G16).
+	rec, found, err := s.cfg.State.RepoAuth(ctx, id.Slug)
+	if err != nil {
+		return nil, creds.StrategyFailover, nil, err
+	}
+	var record *creds.RepoAuth
+	if found {
+		record = &rec
+	}
+	out, dropped, err := narrowToRepoAuth(out, record, id.AuthMode, id.AuthAccount)
+	if err != nil {
+		return nil, creds.StrategyFailover, nil, err
+	}
+	return out, strategy, append(skipped, dropped...), nil
+}
+
+// The two auths a non-cascade record may name that this service can serve a
+// call by, spelled as config.AgentAuths spells them.
+const (
+	authModeOAuth  = "oauth"
+	authModeAPIKey = "api-key"
+)
+
+// narrowToRepoAuth narrows a call's admission to what its repository's own
+// recorded auth says it goes out on, and it is the whole of B2.1's boundary.
+//
+// A nil record is a repository no update has recorded, and a `cascade` one is a
+// repository whose runs are the cascade: both keep today's list, because an
+// installation this release has not written, and a repository that asks for the
+// cascade, are served exactly as they were before this narrowing existed.
+//
+// Every other record serves the call only what it names:
+//
+//   - `oauth` keeps the ONE tier-A credential of the declared account, and the
+//     record has to name that account. A record that names none of its own
+//     workflows' accounts is one nothing can be decided from, and a call that
+//     declares an account its repository does not use is refused rather than
+//     served — the paid key beside that subscription is not this repository's.
+//   - `api-key` keeps tier B alone, and no account may be declared beside it: an
+//     account names a subscription, and a call that declares both has declared
+//     two contradictory things.
+//   - any other recorded auth (`vertex`) is refused. The service holds no
+//     credential of that kind — the built-in Vertex credential's calls are the
+//     project's own GCP service and are made where the run authenticates as
+//     vertex — so a repository whose record says so is served nothing here.
+//
+// The mode is checked against the record and not the other way round: a call
+// that declares nothing where its record says `oauth` is refused, which is the
+// case the boundary exists for — the agent holds the run identity, so "I
+// declared nothing" must not be a way to the whole cascade.
+//
+// The list it answers is a narrowing of the admission this function is handed
+// and never a widening of it: the declared account's credential has to be in
+// the list already, so a record can only ever take away from what O4's
+// admission, the crafts and the bundle allowed (G16's direction).
+//
+// A declared account is normalized the way the record's own writer normalizes
+// one (config.ReviewVariantAccount), so the unsuffixed default account may be
+// declared as the empty string or by its name and means the same credential.
+// That is not a hole: the record still has to name the account, so a call that
+// declares none is served the default account only where its repository's own
+// configuration names that account.
+func narrowToRepoAuth(cands []creds.Credential, rec *creds.RepoAuth, mode, account string) ([]creds.Credential, []Tried, error) {
+	if rec == nil || rec.Auth == config.AuthCascade {
+		return cands, nil, nil
+	}
+	if mode != rec.Auth {
+		return nil, nil, &poolRefusal{message: fmt.Sprintf("this repository's recorded auth is %s, and this call %s: the credentials service serves a repository only the auth its own configuration records, and never the cascade (docs/secrets-brokering, D2070)", rec.Auth, declaredAuthText(mode))}
+	}
+	if account != "" && rec.Auth != authModeOAuth {
+		return nil, nil, &poolRefusal{message: fmt.Sprintf("this repository's recorded auth is %s, and this call declares the account %q beside it: an account names a subscription, and the credentials service serves a repository only the auth its own configuration records (docs/secrets-brokering, D2070)", rec.Auth, account)}
+	}
+	switch rec.Auth {
+	case authModeOAuth:
+		account = config.ReviewVariantAccount(account)
+		if !rec.NamesAccount(account) {
+			return nil, nil, &poolRefusal{message: fmt.Sprintf("this repository's recorded auth is oauth, and this call declares the account %q, which its record does not name (it names %s): the credentials service serves a repository only the accounts its own configuration records (docs/secrets-brokering, D2070)", account, rec.AccountText())}
+		}
+		out, dropped := keepCandidates(cands, func(c creds.Credential) bool {
+			return c.Tier == creds.TierA && c.Name == account
+		})
+		if len(out) == 0 {
+			return nil, dropped, &poolRefusal{message: fmt.Sprintf("this repository's recorded auth is oauth and its record names the account %q, and no credential this call may be served by is that account's: the account is not in this service's bundle, or the repository is not admitted to it (docs/secrets-brokering, D2070)", account)}
+		}
+		return out, dropped, nil
+	case authModeAPIKey:
+		out, dropped := keepCandidates(cands, func(c creds.Credential) bool { return c.Tier == creds.TierB })
+		if len(out) == 0 {
+			return nil, dropped, &poolRefusal{message: "this repository's recorded auth is api-key, and this service's bundle holds no paid key to serve it by (docs/secrets-brokering, D2070)"}
+		}
+		return out, dropped, nil
+	}
+	return nil, nil, &poolRefusal{message: fmt.Sprintf("this repository's recorded auth is %s, which the credentials service does not serve a call by: only a repository whose auth is cascade, oauth or api-key is served here (docs/secrets-brokering, D2070)", rec.Auth)}
+}
+
+// declaredAuthText is what a call declared, as one clause of a refusal: the
+// auth by name, or the fact that it declared none. The name is a value of
+// config.AgentAuths and the clause is never the caller's own text.
+func declaredAuthText(mode string) string {
+	if mode == "" {
+		return "declares no auth"
+	}
+	return fmt.Sprintf("declares the auth %q", mode)
+}
+
+// keepCandidates splits a list by one rule, reporting what it dropped as the
+// credentials this call may not be served by (ReasonNotAdmitted, the reason a
+// review caller's list is built by and the reason the crafts' own narrowing
+// reports). The reason set is closed, so a credential a repository's own
+// configuration leaves out is "not admitted" and not a fifth reason.
+func keepCandidates(cands []creds.Credential, keep func(creds.Credential) bool) ([]creds.Credential, []Tried) {
+	out := make([]creds.Credential, 0, len(cands))
+	var dropped []Tried
+	for _, c := range cands {
+		if keep(c) {
+			out = append(out, c)
+			continue
+		}
+		dropped = append(dropped, Tried{Name: c.Name, Tier: wireTier(c.Tier), Reason: ReasonNotAdmitted})
+	}
+	return out, dropped
 }
 
 // reviewOfferings is the set a review caller is offered FROM: the bundle's

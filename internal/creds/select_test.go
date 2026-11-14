@@ -35,6 +35,9 @@ type fakeStore struct {
 	// what a selection does when the decision it made cannot be recorded.
 	placeErr error
 
+	// repoAuth is the repository auth records the fake holds, by slug.
+	repoAuth map[string]RepoAuth
+
 	// fail makes one read method answer an error, keyed by the method's name
 	// ("Marks", "Leases", "Current", "RoundRobin"): the state a store cannot
 	// read is the case Select's fail-closed contract is about, and a fake that
@@ -48,9 +51,10 @@ type fakeStore struct {
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		marks:   map[string]Mark{},
-		leases:  map[string]Lease{},
-		current: map[string]string{},
+		marks:    map[string]Mark{},
+		leases:   map[string]Lease{},
+		current:  map[string]string{},
+		repoAuth: map[string]RepoAuth{},
 	}
 }
 
@@ -184,6 +188,20 @@ func (f *fakeStore) Current(_ context.Context, r Run) (string, bool, error) {
 	}
 	n, ok := f.currentOf(r)
 	return n, ok, nil
+}
+
+// RepoAuth answers the repository auth record the fake holds. No test of this
+// package's selection sets one: the record narrows a call in the service
+// (internal/credsvc), and here it is the interface's fourth read, answered as
+// the absent record a repository no update has written has.
+func (f *fakeStore) RepoAuth(_ context.Context, slug string) (RepoAuth, bool, error) {
+	if err := f.failed("RepoAuth"); err != nil {
+		return RepoAuth{}, false, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	rec, ok := f.repoAuth[slug]
+	return rec, ok, nil
 }
 
 // setRoundRobin seeds the tie-breaking counter, so a test can state the value a

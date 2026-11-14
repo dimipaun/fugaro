@@ -116,6 +116,13 @@ const (
 	readSelectorMarks   = "selector_marks"
 	readSelectorLeases  = "selector_leases"
 	readSelectorCurrent = "selector_current"
+	// readRepoAuth is the repository auth record (creds.RepoAuth), read on
+	// every call before the admission is narrowed to it (B2.1). It is a read of
+	// its own rather than one of the selector's three: it is the repository's
+	// own configuration and not the cascade's shared state, and a call refused
+	// on a record that could not be read is a different incident from one
+	// refused on the marks.
+	readRepoAuth = "repo_auth"
 	// stateWrite is the state a selection WRITES rather than reads: the mark a
 	// 401 or a usage limit leaves, the run's own placement, and the round-robin
 	// counter a rotation advances. It is labelled for the reason the three reads
@@ -235,6 +242,11 @@ func (r *stateReads) Leases(ctx context.Context, now time.Time) ([]creds.Lease, 
 func (r *stateReads) Current(ctx context.Context, run creds.Run) (string, bool, error) {
 	name, found, err := r.Store.Current(ctx, run)
 	return name, found, labelRead(readSelectorCurrent, err)
+}
+
+func (r *stateReads) RepoAuth(ctx context.Context, slug string) (creds.RepoAuth, bool, error) {
+	rec, found, err := r.Store.RepoAuth(ctx, slug)
+	return rec, found, labelRead(readRepoAuth, err)
 }
 
 func (r *stateReads) UpdateMark(ctx context.Context, name string, f func(creds.Mark, bool) (creds.Mark, error)) (creds.Mark, error) {

@@ -115,15 +115,44 @@ func TestCredsIsNotReachableFromARun(t *testing.T) {
 // (internal/budget/rules/testdata/rules.golden.json, which
 // TestCredsIsDeniedByAnExplicitNode holds the generated document to).
 //
-// The record is the one node under creds/ whose path is built from a name the
-// CLI and the service share rather than from a run's own identity, so it is the
-// one where "the rules deny creds/" could quietly stop being true of the node
-// the code writes: a later move of the family out of creds/ — to the runs
-// bucket, under runs/, anywhere a run token reads — would leave every other
-// test in this repository green and hand a run's process the list of containers
-// its repository may fetch. What this pins is the pair: the path the CODE
-// builds, and the grants the DOCUMENT carries over it.
+// The record is one of the nodes under creds/ whose path is built from a name
+// the CLI and the service share rather than from a run's own identity, so it is
+// where "the rules deny creds/" could quietly stop being true of the node the
+// code writes: a later move of the family out of creds/ — to the runs bucket,
+// under runs/, anywhere a run token reads — would leave every other test in
+// this repository green and hand a run's process the list of containers its
+// repository may fetch. What this pins is the pair: the path the CODE builds,
+// and the grants the DOCUMENT carries over it.
 func TestBoundaryDeniesRunsTheWorkflowSecretsRecord(t *testing.T) {
+	rules := rulesDocument(t)
+	for _, slug := range boundarySlugs {
+		assertDenied(t, rules, PathWorkflowSecrets(slug), "the record names the containers a repository's job may fetch")
+	}
+}
+
+// TestBoundaryDeniesRunsTheRepoAuthRecord: the same pair for the repository
+// auth record, and for a sharper reach — this node says which credential a
+// repository's runs are served by, so a run identity that could READ it learns
+// which accounts the installation holds, and one that could WRITE it widens its
+// own repository to the whole bundle, paid key included. It is the node B2.1
+// reads on every call, so the path the service builds and the grants the
+// document carries over it are pinned together here as well.
+func TestBoundaryDeniesRunsTheRepoAuthRecord(t *testing.T) {
+	rules := rulesDocument(t)
+	for _, slug := range boundarySlugs {
+		assertDenied(t, rules, PathRepoAuth(slug), "the record says which credential a repository's runs are served by")
+	}
+}
+
+// boundarySlugs are the two slug spellings the paths are built from: the GitHub
+// and the Bitbucket shape a task's own slug has.
+var boundarySlugs = []string{"gh-acme-app-1a2b", "bb-acme-web-9f8e"}
+
+// rulesDocument is the rules document the generator produces, read from the
+// golden that pins it (internal/budget/rules/testdata/rules.golden.json, which
+// TestCredsIsDeniedByAnExplicitNode holds the generated document to).
+func rulesDocument(t *testing.T) map[string]any {
+	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("..", "budget", "rules", "testdata", "rules.golden.json"))
 	if err != nil {
 		t.Fatalf("reading the rules document the generator produces: %v", err)
@@ -137,29 +166,35 @@ func TestBoundaryDeniesRunsTheWorkflowSecretsRecord(t *testing.T) {
 	if len(doc.Rules) == 0 {
 		t.Fatal("the rules document carries no rules object, so this test would read every path as denied by an empty walk")
 	}
-	for _, slug := range []string{"gh-acme-app-1a2b", "bb-acme-web-9f8e"} {
-		node := doc.Rules
-		for _, segment := range strings.Split(PathWorkflowSecrets(slug), "/") {
-			assertNoGrant(t, node, PathWorkflowSecrets(slug))
-			next, ok := rulesChildAt(node, segment)
-			if !ok {
-				// Nothing below this node: the rules that reach it are the
-				// ones already read, and they cascade down to the record.
-				break
-			}
-			node = next
+	return doc.Rules
+}
+
+// assertDenied walks the path the code builds through the document and fails if
+// any node on it grants a read or a write. why is what the node holds, so a
+// failure reads as the reach it would hand over.
+func assertDenied(t *testing.T, rules map[string]any, path, why string) {
+	t.Helper()
+	node := rules
+	for _, segment := range strings.Split(path, "/") {
+		assertNoGrant(t, node, path, why)
+		next, ok := rulesChildAt(node, segment)
+		if !ok {
+			// Nothing below this node: the rules that reach it are the ones
+			// already read, and they cascade down to the record.
+			break
 		}
-		assertNoGrant(t, node, PathWorkflowSecrets(slug))
+		node = next
 	}
+	assertNoGrant(t, node, path, why)
 }
 
 // assertNoGrant fails if node grants a read or a write to anything: a record
 // under a node that admits a client is a record that client reads.
-func assertNoGrant(t *testing.T, node map[string]any, path string) {
+func assertNoGrant(t *testing.T, node map[string]any, path, why string) {
 	t.Helper()
 	for _, attr := range []string{".read", ".write"} {
 		if v, ok := node[attr]; ok && v != false {
-			t.Errorf("/%s inherits %s = %#v from the rules document: the record names the containers a repository's job may fetch, and no run identity may read it (O1, D136)", path, attr, v)
+			t.Errorf("/%s inherits %s = %#v from the rules document: %s, and no run identity may reach it (O1, D136)", path, attr, v, why)
 		}
 	}
 }
