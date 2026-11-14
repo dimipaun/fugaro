@@ -205,7 +205,7 @@ const (
 // accounts family, whose `accounts rm` clears a name with the declaration it
 // names -- the generic path writes neither half.
 const (
-	cfmRegistryRows   = 437
+	cfmRegistryRows   = 443
 	cfmAllowlistNamed = 105
 )
 
@@ -468,6 +468,11 @@ func TestDocsConfigManagementRelativeCitationsResolve(t *testing.T) {
 // list carries, and the eight scalars beside them (the four a mode reads, the
 // cost ceiling, the critical-path factor, the judge's grade and the readiness
 // switch) are reached by the block's own prefix.
+//
+// T2 of docs/bitbucket-token-types/ is the last mover, by six rows and by none:
+// the local config's own `bitbucket_tokens.*` block is the machine's file, one
+// row per member of a typed Bitbucket token's record, and no name or prefix in
+// the allowlist reaches it.
 //
 // It counts through the same predicate the write path uses, so the test and the
 // command cannot disagree about what "the allowlist carries" means: the three

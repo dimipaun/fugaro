@@ -117,6 +117,18 @@ func (c *Config) Shared() *Config {
 	// who could write this key into the runs bucket's shared file would be
 	// choosing where a run sends the Bitbucket token.
 	s.BitbucketAPIRoots = nil
+	// BitbucketTokens is operator-only for project_secrets' reason, and the
+	// drop carries one of its own that is sharper: the block is what a request
+	// is matched against — a record's coverage decides which token carries
+	// which call (R1, D2351) — so a launcher who could write it into the runs
+	// bucket's shared file would be stating its own token's reach, the one
+	// fact the operator's local config is the only writer of. It travels to a
+	// run through the policy node instead, and it is dropped here besides so
+	// that an older CLI's strict ParseShared never meets the key at all: a
+	// shared file carrying it stops an un-upgraded teammate with "field
+	// bitbucket_tokens not found in type localcfg.Config", a lockout over a
+	// block none of their runs reads.
+	s.BitbucketTokens = nil
 	// CloneURLs is the owner's policy too, and travels the same way: `fugaro
 	// project policy publish` copies it into the policy node, which the runner
 	// reads and fails closed on. A launcher who could write this key into the

@@ -399,6 +399,24 @@
         "bitbucket_api_roots": {
           "default": "unset = the provider's public API"
         },
+        "bitbucket_tokens.*.coverage": {
+          "default": "unset = required: the repository, workspace or workspace slug this token reaches"
+        },
+        "bitbucket_tokens.*.expires": {
+          "default": "unset = none: no expiry date is recorded"
+        },
+        "bitbucket_tokens.*.name": {
+          "default": "unset = required: the name the bundle key and every audit line are spelled from"
+        },
+        "bitbucket_tokens.*.project_key": {
+          "default": "unset = none: kept for display, and never matched"
+        },
+        "bitbucket_tokens.*.project_uuid": {
+          "default": "unset = none: a project token names its project by UUID or key"
+        },
+        "bitbucket_tokens.*.type": {
+          "default": "unset = required: repo, project or workspace, and coverage is read as the same fact"
+        },
         "bucket_url": {
           "default": "unset = derived from runs_bucket"
         },

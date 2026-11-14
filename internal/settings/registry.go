@@ -811,6 +811,20 @@ var localRows = []Row{
 	loc("secret_rotation_days", "0: no rotation period is recorded", "secrets", docSetup),
 	loc("secret_expires", "none: no expiry date is recorded", "secrets", docSetup),
 	loc("bitbucket_api_roots", "the provider's public API", "secrets", docSetup),
+	// The Bitbucket tokens block (T2, R1): what each stored access token
+	// reaches, as the operator's own local config states it. A record's name is
+	// what the bundle key bitbucket-token--<name> is spelled from and what
+	// every audit line carries; the value itself is in the service's bundle
+	// and the identity and verified_at are in the creds state store, so no row
+	// here holds either (R12) — and the owner column is `secrets`, the token
+	// family's, because the block is stated in the machine's own config like
+	// bitbucket_api_roots above it.
+	loc("bitbucket_tokens.*.coverage", "required: the repository, workspace or workspace slug this token reaches", "secrets", docSetup),
+	loc("bitbucket_tokens.*.expires", "none: no expiry date is recorded", "secrets", docSetup),
+	loc("bitbucket_tokens.*.name", "required: the name the bundle key and every audit line are spelled from", "secrets", docSetup),
+	loc("bitbucket_tokens.*.project_key", "none: kept for display, and never matched", "secrets", docSetup),
+	loc("bitbucket_tokens.*.project_uuid", "none: a project token names its project by UUID or key", "secrets", docSetup),
+	loc("bitbucket_tokens.*.type", "required: repo, project or workspace, and coverage is read as the same fact", "secrets", docSetup),
 
 	loc("batch.image", "Fugaro's own batch image", "setup", "docs/backends.md"),
 	loc("batch.machine_type", "the batch design's own machine", "setup", "docs/backends.md"),

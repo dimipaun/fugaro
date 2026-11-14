@@ -900,6 +900,7 @@ func TestSharedNeverPublishedCatchesTheDecodedSections(t *testing.T) {
 		{"triage", "triage: false\n"},
 		{"backend", "backend: cloud-batch\n"},
 		{"clone_urls", "clone_urls:\n    github/acme/app: https://github.com/acme/app\n"},
+		{"bitbucket_tokens", "bitbucket_tokens:\n    - {name: ci, type: repo, coverage: [belong/edgeweb]}\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, err := localcfg.Parse([]byte(validShared() + tc.yaml))

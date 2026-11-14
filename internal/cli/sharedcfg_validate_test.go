@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -345,6 +346,40 @@ func TestSharedConfigRefusesBitbucketAPIRoots(t *testing.T) {
 	if strings.ContainsAny(err.Error(), "\n\x1b\a") {
 		t.Errorf("the refusal is not one clean line: %q", err.Error())
 	}
+}
+
+// TestSharedConfigRefusesBitbucketTokens: the typed-token records are the
+// operator's own, one step nearer the token than the API roots above — a
+// record's coverage is what a request is matched against (R1, D2351), so a
+// launcher with objectAdmin on the runs bucket who published a block there
+// would be stating which of this project's calls its own token carries.
+// localcfg.Config.Shared nils the block, and this reader refuses it by key and
+// again by value; the drop is what keeps an older CLI, whose localcfg.Config
+// has no such field, from refusing the whole shared file over the key and
+// locking a teammate who has not upgraded out of every run.
+func TestSharedConfigRefusesBitbucketTokens(t *testing.T) {
+	if !slices.Contains(sharedForbidden, "bitbucket_tokens") {
+		t.Error("sharedForbidden does not name bitbucket_tokens, so a published record would be read")
+	}
+	for name, data := range map[string]string{
+		"a record":       "bitbucket_tokens:\n    - {name: ci, type: repo, coverage: [belong/edgeweb]}\n",
+		"an empty block": "bitbucket_tokens: {}\n",
+	} {
+		_, err := ParseShared([]byte(validShared()+data), sharedAnchor)
+		if err == nil {
+			t.Fatalf("%s published in the shared config was accepted", name)
+		}
+		for _, want := range []string{"bitbucket_tokens", "never published", "fugaro update"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%s: the refusal does not say %q: %v", name, want, err)
+			}
+		}
+		if strings.ContainsAny(err.Error(), "\n\x1b\a") {
+			t.Errorf("%s: the refusal is not one clean line: %q", name, err.Error())
+		}
+	}
+	// The decoded value is the second net and has its own case in the table of
+	// TestSharedNeverPublishedCatchesTheDecodedSections (sharedcfg_test.go).
 }
 
 // A published image_source other than the default is accepted only on a
