@@ -20,11 +20,16 @@ import (
 // which keys may name an alias is the key's own business (localcfg's
 // choiceRefProblem), and where a name is resolved is the reader's.
 //
-// The readers that write a name out or hold one to a rule each resolve first:
-// the publish (the two members it copies into the node), the launch (the flag,
-// the stage keys and the project default, before the allow-list is asked —
-// claudeAccountFor and the three helpers beside it), `fugaro validate` (the
-// same stage accounts, stageAccountProblems), the job set (the variant it
+// The readers that write a name out or hold one to a rule each resolve first,
+// and each resolves the names a person wrote in this invocation rather than the
+// ones a record already holds — a task's OAuthToken and the account a follow-up
+// inherits were written after a launch resolved them, so they name the account
+// itself and a name this block answers to is refused there (internal/cli's
+// nameOrigin): the publish (the two members it copies into the node), the
+// launch (a written --token, the stage keys and the project default, before
+// the allow-list is asked — claudeAccountFor and the three helpers beside it),
+// `fugaro validate` (the same stage accounts, stageAccountProblems), the job
+// set (the variant it
 // builds and the token that variant mounts, internal/infra's
 // mixedStageAccounts and mixedDefaultAccount), the craft migration
 // (internal/cli/init_craft_migrate.go, D2102: the accounts the installation's

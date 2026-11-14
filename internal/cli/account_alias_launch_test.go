@@ -64,7 +64,7 @@ func TestLaunchResolvesAnAliasOnEveryRung(t *testing.T) {
 		}
 		// The account the reviews run on, which is what the runner's environment
 		// and the stage's own job variant are built from.
-		got, err := claudeAccountFor(context.Background(), env, "acme/other", "", "review", "", co)
+		got, err := claudeAccountFor(context.Background(), env, "acme/other", "", "review", "", co, nameWritten)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -323,6 +323,121 @@ func TestRepeatRefusesAStoredAccountTheRepositoryMayNoLongerUse(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not say %q: %v", want, err)
 		}
+	}
+}
+
+// aliasRenameFixture is the installation the rename cases below are measured
+// on: acme/app checked out with agent.auth oauth, one account that admits it,
+// and — where a launch's own name was an account once — that name defined as an
+// alias of it, which ValidateAccountAliases admits exactly because the two are
+// not in claude_accounts together any more.
+func aliasRenameFixture(t *testing.T) *cloudFixture {
+	t.Helper()
+	f := newCloudFixture(t)
+	f.appendConfig(t, "claude_accounts:\n  acme-personal: { allow_data_to: [\"acme/app\"] }\n"+
+		aliasBlock("acme-overflow", "acme-personal"))
+	baseBranchCheckout(t, "acme/app", aliasChainYAML, "main")
+	writeBuildRecord(t, f, appSlug, "web", release065)
+	// Both variants exist, so a launch that resolved the recorded name through
+	// the alias block would start on the other one rather than fail for a job
+	// the installation does not have: the refusal below is the alias rule's and
+	// not a missing job's.
+	f.run.AddJob(gcp.JobName(appSlug, gcp.WorkflowVariant("web", "acme-overflow")), "2", "4Gi")
+	f.run.AddJob(gcp.JobName(appSlug, gcp.WorkflowVariant("web", "acme-personal")), "2", "4Gi")
+	return f
+}
+
+// The owner's rename, and the one shape that must not follow it: a name a
+// *record* carries is the account itself — a task's OAuthToken and the account
+// a follow-up inherits were written down after a launch resolved them (F4) — so
+// it stands as written and is never read through the alias block again. The
+// block may still take the name over (the account is gone from claude_accounts,
+// so there is no clash to refuse): what is refused is the launch, because the
+// checks it makes would then be asked about the alias' target while the job the
+// task starts still mounts the recorded name's token — the allow-list judging
+// one account and the credential being another. The three tests below are the
+// three places a recorded name reaches the walk: the repeat funnel
+// (storedRepeat), --retry's stored task, and the account a follow-up inherits.
+
+// TestRepeatRefusesAStoredNameThatIsAnAliasNow is the repeat funnel's own case:
+// a stored task naming an account the file no longer has.
+func TestRepeatRefusesAStoredNameThatIsAnAliasNow(t *testing.T) {
+	f := newCloudFixture(t)
+	f.appendConfig(t, "claude_accounts:\n  acme-personal: { allow_data_to: [\"acme/app\"] }\n"+
+		aliasBlock("acme-overflow", "acme-personal"))
+	oauthCheckout(t, f, "")
+	const id = "20261113-120000-c2c2"
+	spec := firstRunSpec(id)
+	spec.OAuthToken = "acme-overflow"
+	seedSpec(t, f, spec, false)
+
+	b, err := blobx.Open(context.Background(), f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = storedRepeat(context.Background(), envOn(t, f, b), appSlug, &runOptions{runID: id}, 0, "x", 0)
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want the repeat refused on the stored name the alias block answers", err)
+	}
+	for _, want := range []string{"acme-overflow", "acme-personal"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+}
+
+// TestRetryRefusesAStoredNameThatIsAnAliasNow is the same name at --retry,
+// which launches a stored task as it stands (retrySpec): the job it starts is
+// the stored name's variant, so the name is judged as written and the launch is
+// refused rather than moved to the account the name means today.
+func TestRetryRefusesAStoredNameThatIsAnAliasNow(t *testing.T) {
+	f := aliasRenameFixture(t)
+	const id = "20261113-120000-c3c3"
+	spec := firstRunSpec(id)
+	spec.OAuthToken = "acme-overflow"
+	seedSpec(t, f, spec, false)
+
+	_, _, err := execute(t, "run", "--retry", id)
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want the retry refused on the stored name the alias block answers", err)
+	}
+	for _, want := range []string{"acme-overflow", "acme-personal"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want the refusal to start nothing", n)
+	}
+}
+
+// TestFollowUpRefusesAnInheritedNameThatIsAnAliasNow is the third place, and
+// the one the launch line would otherwise lie about: a follow-up inherits its
+// previous run's account (D2098), and that name is the account the previous run
+// resolved and wrote down. Reading it through the alias block now would switch
+// the follow-up to whatever the name means today, silently and on a credential
+// nobody judged, so it is refused — --token is where the operator says which
+// account they want, and that flag may name the alias.
+func TestFollowUpRefusesAnInheritedNameThatIsAnAliasNow(t *testing.T) {
+	f := aliasRenameFixture(t)
+	spec := firstRunSpec(rootID)
+	spec.OAuthToken = "acme-overflow"
+	seedSpec(t, f, spec, false)
+	rec := prRecord(rootID, "", 7, 1)
+	rec.StartedAt = time.Now().Add(-time.Hour)
+	writeRecord(t, f, rootID, rec)
+
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "A follow-up")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want the follow-up refused on the inherited name the alias block answers", err)
+	}
+	for _, want := range []string{"acme-overflow", "acme-personal"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want the refusal to start nothing", n)
 	}
 }
 

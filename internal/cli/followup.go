@@ -657,7 +657,7 @@ func storedRepeat(ctx context.Context, env *cloudEnv, slug string, o *runOptions
 	// whole rule every other launch is: the allow-list, the auth clause, the
 	// mix a config may not declare (config.CheckStageAccountMix) and the
 	// budget mode that mix needs (config.CheckMixBudget).
-	if _, err := claudeAccountFor(ctx, env, have.Repo, cmp.Or(have.OAuthToken, config.DefaultClaudeAccount), "", have.Ref, checkoutOf(ctx, have.Repo)()); err != nil {
+	if _, err := claudeAccountFor(ctx, env, have.Repo, cmp.Or(have.OAuthToken, config.DefaultClaudeAccount), "", have.Ref, checkoutOf(ctx, have.Repo)(), nameRecorded); err != nil {
 		return nil, err
 	}
 	return have, nil
@@ -754,11 +754,12 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 	// special-cased: like a first run's empty default, it simply makes
 	// account the reserved name, which claudeAccountAllowed always allows.
 	account := c.OAuthToken
+	origin := nameRecorded
 	if account == "" {
 		account = config.DefaultClaudeAccount
 	}
 	if o.token != "" {
-		account = o.token
+		account, origin = o.token, nameWritten
 	}
 	// c.OAuthToken (the inherited case) came from the previous run's
 	// task.json, bucket data a launcher can write directly: its shape was
@@ -772,6 +773,14 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 	// (claudeAccountFor), so a follow-up launch is refused a mix its config
 	// may not declare exactly as a fresh one is.
 	//
+	// The two names are not read the same way (nameOrigin): the inherited
+	// account is the one its previous run resolved and wrote down, so it stands
+	// as written and the alias block may not answer it — a name the block does
+	// answer to is refused rather than followed, because following it would
+	// move this follow-up onto an account nothing judged while the job it starts
+	// mounts the inherited name's token. Only --token, a name written now, may
+	// name an alias (D2098: an explicit --token takes the alias' current target).
+	//
 	// What the walk resolves is what the follow-up launches as, the inherited
 	// name included: a mixed run starts on the job that mounts its account's
 	// token (claudeAccountFor's mixedRunAccount), and a follow-up of one has
@@ -779,7 +788,7 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 	// (one stored before the mix reached the launch, or launched when this
 	// repository mixed nothing), and the name the run's review stages will be
 	// served by is still the config's.
-	resolved, alias, err := claudeAccountChoice(ctx, env, repo, account, "", c.Ref, checkout())
+	resolved, alias, err := claudeAccountChoice(ctx, env, repo, account, "", c.Ref, checkout(), origin)
 	if err != nil {
 		return nil, err
 	}
