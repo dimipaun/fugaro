@@ -18,7 +18,7 @@ As of 2026-11-14, read from `main`, the open pull requests and each plan's task 
 
 | Spec | Merged | Left |
 | --- | --- | --- |
-| bitbucket-credentials | 11/12 | owner Checks 149 and 148's read half (Check 145 ran 2026-11-14 with U3 unmeasured: its second workspace did not exist, so it re-runs against a real second Bitbucket workspace) (S2, D1961); T3.3's trust paths (S3 is otherwise superseded by the secrets-brokering proxy chain, 2026-11-10) |
+| bitbucket-credentials | 11/12 | owner Check 149; 148's read half parked by the owner 2026-11-14 until the coordinator job is deployed (`fugaro update --firebase-project <id> --coordinator`) (Check 145 ran 2026-11-14: U3 shows the read token reaches past its workspace; the owner accepted the reach, D360 and D361 stand) (S2, D1961); T3.3's trust paths (S3 is otherwise superseded by the secrets-brokering proxy chain, 2026-11-10) |
 | cli-output-console-graph | 30/32 | owner CL12 (Checks 310 and 311) and CG12 (Checks 313 and 314; Check 312 passed 2026-11-13) |
 | compute-backend | 5/7 | Task 12 is owner-run (Check 57b, and Check 124 for `--provision-batch`); Task 13 only if Task 14's answer needs it |
 | console-dependency-graph | 15/17 | GV3.2 (live, follow-up run on draft #2501) |
