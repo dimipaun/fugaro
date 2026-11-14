@@ -217,20 +217,28 @@ run_bounded() { # run_bounded SECONDS KEY CMD...
   shift 2
   BOUNDED_TIMED_OUT=no
   "$@" >>"$SCRATCH/$key.out" 2>>"$SCRATCH/$key.err" &
-  local pid=$! waited=0
-  while kill -0 "$pid" 2>/dev/null; do
-    [ "$waited" -lt "$secs" ] || break
-    sleep 1
-    waited=$((waited + 1))
-  done
-  if kill -0 "$pid" 2>/dev/null; then
-    BOUNDED_TIMED_OUT=yes
-    kill -TERM "$pid" 2>/dev/null || true
-    sleep 2
-    kill -KILL "$pid" 2>/dev/null || true
-  fi
+  local pid=$!
+  # A watchdog rather than a poll: waiting on the child costs nothing when it
+  # ends at once, and this check runs a dozen commands before its first row.
+  # The marker file is how the watchdog says it fired -- a killed child and one
+  # that exited non-zero are not the same reading.
+  rm -f "$SCRATCH/${key}.timed-out"
+  (
+    sleep "$secs"
+    if kill -0 "$pid" 2>/dev/null; then
+      : >"$SCRATCH/${key}.timed-out"
+      kill -TERM "$pid" 2>/dev/null || true
+      sleep 2
+      kill -KILL "$pid" 2>/dev/null || true
+    fi
+  ) &
+  local watch=$!
   BOUNDED_STATUS=0
   wait "$pid" 2>/dev/null || BOUNDED_STATUS=$?
+  [ ! -e "$SCRATCH/${key}.timed-out" ] || BOUNDED_TIMED_OUT=yes
+  kill -TERM "$watch" 2>/dev/null || true
+  wait "$watch" 2>/dev/null || true
+  rm -f "$SCRATCH/${key}.timed-out"
   # The output of a token mint is a credential: it is readable by this shell and
   # by nobody else, whatever the umask the owner's shell carries.
   chmod 600 "$SCRATCH/$key.out" "$SCRATCH/$key.err" 2>/dev/null || true

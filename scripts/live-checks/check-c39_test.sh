@@ -97,6 +97,11 @@ run)
       echo "ERROR: (gcloud.run.jobs.describe) NOT_FOUND: the job is not there" >&2
       exit 1
     fi
+    # A tool that never answers: the check's own bound is what has to end it,
+    # and the case that measures it sets the bound to a couple of seconds.
+    if [ "$mode" = job-describe-hangs ]; then
+      sleep 300
+    fi
     printf '{"spec":{"template":{"spec":{"serviceAccountName":"%s","containers":[{"env":%s}]}}}}\n' "$sa" "$secrets"
     ;;
   services)
@@ -564,6 +569,19 @@ test_a_census_naming_no_review_job_is_a_finding() {
   expect_contains "$out" "names no review job" "a census naming no review job: what it read"
 }
 
+test_a_job_that_never_answers_is_not_measured() {
+  local dir=$work/hangs
+  prepare "$dir"
+  # The check's own bound, not a tool's answer: the fake sleeps far longer than
+  # the two seconds it is given, so the row this case reads is the one the bound
+  # writes -- and the case would hang for five minutes if it did not fire.
+  run_ok "$dir" FAKE_MODE=job-describe-hangs CHECK530_TIMEOUT_SECONDS=2
+  expect_status "$status" 2 "a job describe that never answers"
+  expect_contains "$out" "FACT job-no-secret: FAIL" "a job describe that never answers: the row"
+  expect_contains "$out" "could not be described" "a job describe that never answers: the reason is the bound, not a finding"
+  expect_contains "$err" "could NOT measure job-no-secret" "a job describe that never answers: the exit names it"
+}
+
 test_a_review_job_that_mounts_a_secret_is_a_finding() {
   local dir=$work/mounts
   prepare "$dir"
@@ -764,6 +782,7 @@ t test_an_installation_naming_belong_stops_the_check
 t test_a_warning_service_stops_the_check
 t test_a_doctor_without_the_census_row_is_not_measured
 t test_a_census_naming_no_review_job_is_a_finding
+t test_a_job_that_never_answers_is_not_measured
 t test_a_review_job_that_mounts_a_secret_is_a_finding
 t test_a_review_account_that_reads_secrets_is_a_finding
 t test_a_missing_signature_is_not_measured
