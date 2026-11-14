@@ -18,26 +18,41 @@
 // screen's reading of a refusal and not the client's decoding of one -- which
 // `test/api.test.ts` already pins.
 //
+// **The route is read from the other side, because the port above is what a
+// person never sees.** The app mounts `route.element`, and what builds the port
+// there is the session: a case at the end of this file renders that element
+// with a fake `AuthPort` and a stubbed `fetch`, so the wiring is covered rather
+// than assumed. It is the one place here that names the API's paths as this
+// screen spells them (`api.ts` explains why they are spelled at all).
+//
 // The rendering paths a case reaches are named when the case is written, not
 // quoted: a heading by its role, a section by its own label, and the file's one
 // sentence of its own by value, so a rewording that loses the promise fails here
 // rather than passing with a screen that says something else.
 
-import { cleanup, render, screen, within } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { act, cleanup, render, screen, within } from '@testing-library/react'
+import type { ReactElement } from 'react'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from '../../api/client'
+import type { AuthPort, SignedInUser } from '../../auth/session'
+import { SessionProvider } from '../../auth/session'
 import type { KeyMetadata } from '../../api/types/keys'
 import type { ResellerCustomer } from '../../api/types/resellers'
 import type { Statement } from '../../api/types/statements'
-import { routes } from '../../routes'
+import { SIGN_IN_PATH, routes } from '../../routes'
 import type { ResellerApi } from './api'
 import { ResellerScreen } from './reseller'
 import { route } from './route'
 
 // The suite runs without the runner's globals, so React Testing Library cannot
 // register its own cleanup: a screen a case rendered is still in the document
-// when the next case asks for a heading.
-afterEach(cleanup)
+// when the next case asks for a heading. The route cases stub `fetch`, which is
+// the runner's global rather than a spy, so it is undone by hand.
+afterEach(() => {
+  cleanup()
+  vi.unstubAllGlobals()
+})
 
 // Two customers and two lines, and no two figures the same: the month's
 // accrual is the sum of its lines, so a screen that drew the statement's total
@@ -258,4 +273,172 @@ describe('the reseller screen', () => {
     expect(alert.textContent).toBe(GENERIC_FAILURE)
     expect(alert.textContent).not.toContain('the SDK said something')
   })
+})
+
+// What a person is signed in as, and the token the API client is handed below.
+const PERSON: SignedInUser = {
+  uid: 'uid-1',
+  email: 'reseller@example.com',
+  provider: 'google.com',
+  authTime: 1_700_000_000_000,
+}
+
+const TOKEN = 'token-one'
+
+/**
+ * A session port whose first answer the case gives, so `loading` can be held
+ * open: `answer` is the callback the provider subscribed with, and it throws
+ * rather than quietly doing nothing when the route never subscribed at all --
+ * which is itself a reading of the code under test.
+ */
+function session(overrides: Partial<AuthPort> = {}): {
+  auth: AuthPort
+  answer: (user: SignedInUser | null) => void
+} {
+  let subscribed: ((user: SignedInUser | null) => void) | null = null
+  const auth: AuthPort = {
+    watch: (onUser) => {
+      subscribed = onUser
+      return () => {}
+    },
+    idToken: () => Promise.resolve(TOKEN),
+    signIn: () => Promise.resolve(),
+    sendSignInLink: () => Promise.resolve(),
+    isSignInLink: () => false,
+    completeSignInLink: () => Promise.resolve(),
+    signOut: () => Promise.resolve(),
+    ...overrides,
+  }
+  return {
+    auth,
+    answer: (user) => {
+      if (subscribed === null) {
+        throw new Error('the route never watched the session')
+      }
+      subscribed(user)
+    },
+  }
+}
+
+/** One request the route's own API client sent, as the client sent it. */
+interface Sent {
+  url: string
+  headers: Record<string, string>
+}
+
+/** The API's answers, by the path this screen's `api.ts` spells. */
+const ANSWERS: Record<string, unknown> = {
+  '/api/resellers/customers': CUSTOMERS,
+  '/api/statements': [STATEMENT],
+  '/api/resellers/customers/org_acme/keys': KEYS.org_acme,
+  '/api/resellers/customers/org_borealis/keys': [],
+}
+
+/**
+ * A `fetch` that answers from the table above and records what was asked for.
+ * The route builds its own client -- that is the wiring under test -- so the
+ * transport it will use is the runner's global, and this is what stands there.
+ */
+function transport(sent: Sent[]): void {
+  vi.stubGlobal('fetch', (url: string, init: { headers: Record<string, string> }) => {
+    sent.push({ url, headers: init.headers })
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve(ANSWERS[url] ?? null),
+    } as unknown as Response)
+  })
+}
+
+/**
+ * The route as the app mounts it: collected by the glob, rendered at its own
+ * path inside a router. The sign-in path is a stand-in route rather than the
+ * sign-in screen, so what a redirect asserts is the path -- the fact
+ * `src/routes.ts` holds -- and not that screen's own copy.
+ */
+function shell(auth: AuthPort): ReactElement {
+  return (
+    <MemoryRouter initialEntries={[route.path]}>
+      <SessionProvider port={auth}>
+        <Routes>
+          <Route path={route.path} element={route.element} />
+          <Route path={SIGN_IN_PATH} element={<p>the sign-in screen answers this path</p>} />
+          <Route path="*" element={<p>no screen answers this path</p>} />
+        </Routes>
+      </SessionProvider>
+    </MemoryRouter>
+  )
+}
+
+describe('the reseller route', () => {
+  it('sends a visitor with no session to sign in, and reads nothing for them', async () => {
+    const sent: Sent[] = []
+    transport(sent)
+    const { auth, answer } = session()
+
+    render(shell(auth))
+    await act(async () => {
+      answer(null)
+    })
+
+    expect(screen.getByText('the sign-in screen answers this path')).toBeDefined()
+    expect(screen.queryByRole('region', { name: 'Customers' })).toBeNull()
+    expect(sent).toEqual([])
+  })
+
+  it('reads nothing until the session has answered, then reads with the token it holds', async () => {
+    const sent: Sent[] = []
+    transport(sent)
+    const { auth, answer } = session()
+
+    render(shell(auth))
+
+    // The SDK has not answered yet. The flush is what makes this an assertion
+    // about the read rather than about the render: the client asks the port for
+    // a token before it sends anything, so a screen that read while loading
+    // would have sent its requests by the end of this turn -- and, the port
+    // being what its screen keys on, would keep drawing them for the rest of
+    // the visit.
+    await act(async () => {})
+    expect(screen.getByRole('status').textContent).toBe('Loading…')
+    expect(sent).toEqual([])
+
+    await act(async () => {
+      answer(PERSON)
+    })
+
+    const customers = within(await screen.findByRole('region', { name: 'Customers' }))
+    expect(customers.getByText('Acme Ltd')).toBeDefined()
+    expect(sent.map((request) => request.url)).toEqual([
+      '/api/resellers/customers',
+      '/api/statements',
+      '/api/resellers/customers/org_acme/keys',
+      '/api/resellers/customers/org_borealis/keys',
+    ])
+    for (const request of sent) {
+      expect(request.headers.Authorization).toBe(`Bearer ${TOKEN}`)
+    }
+  })
+
+  it('takes a signed-out person’s figures off the page and sends them to sign in', async () => {
+    const sent: Sent[] = []
+    transport(sent)
+    const { auth, answer } = session()
+
+    render(shell(auth))
+    await act(async () => {
+      answer(PERSON)
+    })
+    expect((await screen.findByRole('region', { name: 'Customers' })).textContent).toContain('Acme Ltd')
+
+    await act(async () => {
+      answer(null)
+    })
+
+    expect(screen.queryByText('Acme Ltd')).toBeNull()
+    expect(screen.queryByText('$30.00')).toBeNull()
+    expect(screen.queryByRole('region', { name: 'Customers' })).toBeNull()
+    expect(screen.getByText('the sign-in screen answers this path')).toBeDefined()
+  })
+
 })
