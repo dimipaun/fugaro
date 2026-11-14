@@ -45,7 +45,6 @@ import (
 type catalogStaleEntry struct {
 	entry config.Entry
 	repo  infra.CatalogCheckRepoSpec
-	base  string // the base reference the entry's record names
 }
 
 // catalogStaleSet is what the images stage reads of the installation's
@@ -117,7 +116,7 @@ func (s *imagesStage) staleCatalog(ctx context.Context) catalogStaleSet {
 			case rec == nil || !catalogBaseStale(rec.BaseRef):
 				continue
 			}
-			se := catalogStaleEntry{entry: e, repo: rs, base: rec.BaseRef}
+			se := catalogStaleEntry{entry: e, repo: rs}
 			if here != "" && sameRepo(rs.Repo, here) {
 				set.here = append(set.here, se)
 			} else {
