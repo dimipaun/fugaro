@@ -42,12 +42,12 @@ wider.
   build's identity to the entry's repositories **for this build** — the pairing is keyed on the identity *and* the
   build the request names (rule 2) — and the build's git talks to the credentials service's proxy, as a job's does,
   on the proxy route the service already serves (rule 9). The grant is not a secret: what every call presents is
-  the build identity's own ID token, which the generated clone step fetches for itself and which this contract
-  hands to no other step — the entry's build is handed none, though it runs as the same account and can ask the
-  metadata server for one ([below](#what-this-contract-cannot-promise)). It carries an expiry all the same, on the
-  service's own instant: the pairing is what stands between the build's git and the entry's repositories, so it is
-  bounded by its build instead of left standing for the next one. Two builds of one project at once are not
-  isolated from each other, and this contract does not say they are ([below](#what-this-contract-cannot-promise)).
+  the build identity's own ID token, which the generated clone step fetches for itself and which reaches **that
+  step alone** — never the entry's build, which is built where that identity is not obtainable (rule 4). It
+  carries an expiry all the same, on the service's own instant: the pairing is what stands between the build's git
+  and the entry's repositories, so it is bounded by its build instead of left standing for the next one. Two
+  builds of one project at once are not isolated from each other, and this contract does not say they are
+  ([below](#what-this-contract-cannot-promise)).
 
 ## The rules (F19)
 
@@ -65,18 +65,20 @@ wider.
    it (rules 8 and 9), never the build id. What the key cannot do, and what closing it would take, is
    [below](#what-this-contract-cannot-promise).
 3. **The clone runs in a step Fugaro generates entirely.** The generated step is a Dockerfile of the engine's own,
-   built from the pinned base digest with `GIT_CONFIG_NOSYSTEM=1`, and it alone is handed the credential (B8). It is a
+   built from the pinned base digest with `GIT_CONFIG_NOSYSTEM=1`, and it alone holds the credential (B8). It is a
    **separate build step**, not a stage of the entry's Dockerfile: BuildKit hands a build's secret to every `RUN`
    that asks for it by id, so a stage inside the entry's build is readable by the entry's own steps, however the
    clone is scoped (F19, review round 2). The checkout reaches the entry's build as a **named build context**.
-4. **The entry's build is handed no secret and no identity of its own.** No `--secret` argument, no secret mount,
-   no service account of its own: a catalog entry may not ask for either, and one that does is refused by name,
-   with the line it is written on (B9, D2311). The entry's `RUN` steps cannot read the credential the clone was
-   given and cannot alter the clone's tools, because they never share a stage with them. **What this rule is not
-   is a statement that the entry's build has no identity**: the entry's Dockerfile is built by the same Cloud
-   Build execution as the clone (B2, B8), which runs as the project's build identity (B5), so an entry's `RUN` can
-   ask the metadata server for that account's token. That is the hole this rule does not close, and what closing
-   it would take is [below](#what-this-contract-cannot-promise).
+4. **The entry's build carries no secret and no identity.** No `--secret` argument, no secret mount, no service
+   account of its own: a catalog entry may not ask for either, and one that does is refused by name, with the line
+   it is written on (B9, D2311). The entry's `RUN` steps cannot read the credential the clone was given and cannot
+   alter the clone's tools, because they never share a stage with them. And the entry's Dockerfile is **built where
+   the project's build identity is not obtainable** (B5): in an execution of its own, run as an account that is not
+   that identity and has no invoker on the build route, so that the token an entry's `RUN` can mint for itself is
+   neither one the build route accepts nor one the proxy has paired (the answer above). That last part is a
+   requirement on the build's topology and not an observation about it, and what holds it is a test B2 and B8 owe
+   rather than anything in this contract's shape
+   ([below](#the-fence-is-a-requirement-on-the-builds-topology-and-this-shape-cannot-hold-it)).
 5. **The credential is written per host, and offered to that host alone.** A clone, fetch, push or LFS URL on any
    other host — a URL written in `.gitmodules` or `.lfsconfig` included — is refused **before any credential is
    offered**, and `protocol.ext` and `protocol.file` are set to never (B8). A repository that names another host
@@ -89,12 +91,12 @@ wider.
    promotes (B3, R2). That scan is the second fence, not the first: it looks for credentials, not for source an
    entry copied (F19). The Bitbucket answer leaves no credential of the build's to revoke; what ends there is the
    pairing, at the grant's expiry and no later (rule 2).
-8. **One project identity, and the union.** A catalog build runs as the project's one build identity (B5, B6),
-   which can reach the union of every catalog entry's repositories of its project. What keeps that from being the
-   compromise it looks like is not the identity's reach but the request's: a build asks for its own entry's
-   repositories, the service refuses anything outside them by name, and every mint is audited (B1). **This is the
-   contract's sharpest edge and the reason the rules above are the fence**: the identity is the project's, so the
-   narrowing lives in the route and in the generated step, never in the identity's grants.
+8. **One project identity, and the union.** The step that mints and holds the credential runs as the project's one
+   build identity (B5, B6), which can reach the union of every catalog entry's repositories of its project. What
+   keeps that from being the compromise it looks like is not the identity's reach but the request's: a build asks
+   for its own entry's repositories, the service refuses anything outside them by name, and every mint is audited
+   (B1). **This is the contract's sharpest edge and the reason the rules above are the fence**: the identity is the
+   project's, so the narrowing lives in the route and in the generated step, never in the identity's grants.
 9. **The build route is the build's alone, and the proxy route is the one other route it reaches.** Every other
    caller class is refused on the build route (B1), and the build identity is refused on every other route of the
    service **except the Bitbucket proxy route** — `/v1/bitbucket/proxy/` (`internal/credsvc/wire.go`), which is
@@ -106,26 +108,23 @@ wider.
 
 ## What this contract cannot promise
 
-### An entry's Dockerfile can reach the project's build identity
+### The fence is a requirement on the build's topology, and this shape cannot hold it
 
-The whole catalog build runs as the project's one build account (B5), and the entry's Dockerfile is built by that
-same Cloud Build execution (B2, B8). What that means for a container in it is in this repository's own words: the
-one step that runs repository code does it through `docker run --network none`, because a container in this build
-is otherwise on the cloudbuild network "next to the metadata server and the build account's token"
-(`images/derived/cloudbuild.yaml`). An entry's `RUN` can therefore mint that account's token. For the Bitbucket
-answer that token **is** the credential the proxy accepts, so an entry can reach the proxy without any `--secret`;
-for the GitHub answer the same token is what the build route accepts, and the entry can name any entry of the
-project there (rule 8). B9's refusal of `--secret` does not close this, and the test B8 owes
-(`TestEntryBuildCarriesNoSecretAndNoIdentity`) checks the build's configuration, not what its containers can
-reach.
+Rule 4 is written as a requirement and not as an observation, because the build as it stands today does not meet
+it: the whole catalog build runs as the project's one build account (B5) and the entry's Dockerfile is built by
+that same Cloud Build execution (B2, B8), whose containers are, in this repository's own words, on the cloudbuild
+network "next to the metadata server and the build account's token" (`images/derived/cloudbuild.yaml`). In that
+topology an entry's `RUN` can mint the account's token — which for Bitbucket **is** the credential the proxy
+accepts, with no `--secret` for B9 to refuse, and for GitHub is what the build route accepts, so the entry could
+name any entry of the project (rule 8). B9's refusal does not close that, and
+`TestEntryBuildCarriesNoSecretAndNoIdentity` checks the build's configuration, not what its containers can reach,
+so it is not the test of rule 4.
 
-Closing it is a decision, and it is B2's and B8's rather than this contract's:
-
-1. **Build the entry's Dockerfile where the build identity is not obtainable** — a separate execution, or an
-   account with no invoker on the build route — with the test those tasks then owe: the entry's build step has no
-   path to the build account's token.
-2. **Take the entry's Dockerfile as trusted code**, which is what it is today, and say so where an entry is
-   accepted: an entry is repository-controlled code that runs as the project's build identity.
+So B2 and B8 owe the topology that makes rule 4 true — the entry's Dockerfile built in an execution of its own, as
+an account other than the project's build identity and with no invoker on the build route — and the test that
+holds it: what an entry's build step can mint for itself is refused at the build route and at the proxy. Nothing
+in this contract's shape enforces the requirement, and a build that runs the entry's Dockerfile as the project's
+build identity does not meet it.
 
 ### Two Bitbucket builds of one project at once are not isolated from each other
 
@@ -136,7 +135,7 @@ life; it does not separate them, and a contract over a shape cannot. The key is 
 repositories either: the identity can already ask for any of the project's entries by name, and the service
 answers from that entry's map (rule 8), so a build that wanted another entry's repositories would name that entry
 rather than take a pairing over. What keeps the clone's credential out of the entry's own hands is F19's fence
-around the clone (rules 3 to 7) — with the exception above, which is the hole that fence does not close.
+around the clone (rules 3 to 7), rule 4's topology included.
 
 Closing the gap is a decision, and there are four ways to take it:
 
@@ -146,8 +145,7 @@ Closing the gap is a decision, and there are four ways to take it:
    launcher's, not this contract's.
 3. **The grant's URL is the build's own**, and the proxy serves a call on it against the pairing that URL was
    issued for rather than against the identity's. That separates two honest builds without a token, and whether
-   B1's proxy can key on the URL is B1's to say — but it fences nothing against an entry, which can read the
-   clone's URL out of the checkout it was handed and mint the account's token itself.
+   B1's proxy can key on the URL is B1's to say.
 4. **A per-build credential at the proxy** — the Fugaro-issued token D2302 rejected, which would have to be
    reopened, and which F19 exists to avoid.
 
@@ -158,9 +156,10 @@ in it says they are.
 
 - **The build (B2, B8)** may rely on: the two answer shapes above and nothing else; a refusal naming the thing
   that was refused (the repository, the line, the host); a credential or pairing keyed to its own build and not
-  to a neighbour's, though not isolation from that neighbour (see above); and no credential handed to it — for
-  Bitbucket it is handed none at all, though an entry's `RUN` can mint the account's own (above). It may not read
-  anything out of a `Stub` in a shipped path (I2 deletes the stub) and may not fall back to a wider credential.
+  to a neighbour's, though not isolation from that neighbour (see above); and no credential of its own to hold —
+  for Bitbucket it holds none at all — with the entry's Dockerfile built where the project's build identity is not
+  obtainable (rule 4). It may not read anything out of a `Stub` in a shipped path (I2 deletes the stub) and may not
+  fall back to a wider credential.
 - **The service (B1)** may rely on: a request that names an entry, **the build it is made for**, one provider and
   the canonical names of the entry's repositories; a build identity it can verify; and a caller that does no
   narrowing of its own, so every rule is the service's to apply. The build id and the provider are the caller's

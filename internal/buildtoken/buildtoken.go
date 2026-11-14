@@ -8,14 +8,13 @@
 // reaches all of them (F19, docs/shared-jobs-default/reconciliation.md). The
 // fence is therefore the build's own and it is not in this package: the clone
 // runs in a build step whose Dockerfile Fugaro generates entirely and which
-// alone is handed the credential, the entry's own build is handed no secret
-// mount and no identity of its own, and what reaches the entry is the checkout
-// as a named build context. That fence is a fence around the credential and not
-// around the identity: the entry's build runs in the same Cloud Build execution
-// as the clone, as the project's build account, so an entry's RUN can ask the
-// metadata server for that account's token. Nothing here enforces any of that,
-// and nothing here decides who may call: this package is the shape the two sides
-// are written against, and the rules they both rely on are stated in
+// alone holds the credential, the entry's own build carries no secret mount and
+// no identity — it is built where the project's build identity is not
+// obtainable, which is a requirement on the build's topology and not an
+// observation about it (rule 4) — and what reaches the entry is the checkout as
+// a named build context. Nothing here enforces any of that, and nothing here
+// decides who may call: this package is the shape the two sides are written
+// against, and the rules they both rely on are stated in
 // docs/shared-jobs-default/contract-build-token.md.
 //
 // The service side is the build route (B1); the build side is the bake plan
@@ -112,15 +111,12 @@ type Token struct {
 // URL, which has paired this build's identity to Repositories.
 //
 // The grant is not a secret — what every call presents is the build identity's
-// own ID token, which the generated clone step fetches for itself and which this
-// contract hands to no other step (B8) — but the pairing it describes is not
-// nothing: it is what stands between the build's git and the entry's
-// repositories, so it is bounded by the build rather than left standing. Nor is
-// the pairing what keeps the entry's own steps out of the proxy: the entry's
-// Dockerfile is built by the same execution, as the same account, so its RUN can
-// mint that identity's ID token for itself
-// (docs/shared-jobs-default/contract-build-token.md, "What this contract cannot
-// promise").
+// own ID token, which the generated clone step fetches for itself and which
+// reaches that step alone, never the entry's build: the entry's Dockerfile is
+// built where that identity is not obtainable (rule 4 of
+// docs/shared-jobs-default/contract-build-token.md) — but the pairing it
+// describes is not nothing: it is what stands between the build's git and the
+// entry's repositories, so it is bounded by the build rather than left standing.
 type ProxyGrant struct {
 	// URL is the proxy endpoint a baked repository's clone, fetch, push and LFS
 	// URLs are rewritten to, as a job's forwarder rewrites its own (insteadOf).
