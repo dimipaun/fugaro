@@ -30,6 +30,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/mailbox/keychain"
 	"github.com/dimipaun/fugaro/internal/mirror"
+	"github.com/dimipaun/fugaro/internal/mobileauth"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
@@ -342,6 +343,29 @@ type Config struct {
 	// project gives no repository a URL, which is how a published block is
 	// taken away on purpose.
 	CloneURLs map[string]string `yaml:"clone_urls,omitempty"`
+	// MobileAllow is the DECLARED mobile allowlist (docs/mobile-auth, D231):
+	// the people and domains this project admits from a phone, each with the
+	// uid its device node is keyed by and the role it grants. It is the seed
+	// `fugaro project policy publish` writes into config/admin/devices and the
+	// record of what that node carries, and the node is what the deployed rules
+	// read: an entry declared here and not on the node admits nobody, because a
+	// publish seeds a project whose device node is not there yet and never
+	// re-adds what `fugaro pair revoke` removed.
+	//
+	// Only the owner sets it, here or in the published node, and that is the
+	// security half of the block rather than its convenience: the role it names
+	// is an authority over every run's messages and spending, and every other
+	// store is one a run or a teammate can write — a repository's own
+	// fugaro.yaml travels with the checkout a run is handed, so a declaration
+	// there would be a way for a pull request to add an admin, and the shared
+	// config in the runs bucket is writable by any launcher, so Shared drops
+	// the block and internal/cli's ParseShared refuses the key.
+	//
+	// A slice and not a pointer, like bitbucket_tokens: nil is "this file
+	// declares nothing", and an empty written block declares nothing either,
+	// because a declaration is a list of people rather than a switch with an
+	// empty state of its own.
+	MobileAllow []mobileauth.Declared `yaml:"mobile_allow,omitempty"`
 	// VerifierAccounts are the identities that may ask the installation's
 	// credentials service whether a verdict's signature is its own (C3.9g3,
 	// D1068, D1075): the coordinator's own account once it exists, and the
@@ -2404,6 +2428,7 @@ func (c *Config) validate() error {
 	}
 	c.validateBudget(bad)
 	c.validateEscalation(bad)
+	c.validateMobileAllow(bad)
 	for _, p := range config.ValidateModelProviders(c.Providers) {
 		bad("%s: %s", p.Path, p.Message)
 	}

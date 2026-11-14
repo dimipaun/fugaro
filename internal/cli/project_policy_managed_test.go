@@ -15,6 +15,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	managed "github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/initflow"
@@ -457,6 +458,39 @@ func TestPolicyPublishManagedAdmitsANarrowerNode(t *testing.T) {
 	// rule that says the node held nothing else that moved.
 	if !mentions(rec.Rules, policyUnjudgedRule) {
 		t.Errorf("the record of an admitted publish does not name %q among the rules that passed: %v", policyUnjudgedRule, rec.Rules)
+	}
+}
+
+// The declared allowlist is the one member of this command a session must not
+// write, and the gate is not what stops it: the gate judges the policy node
+// (policyUnjudgedRule reads the members of the node this command publishes),
+// while the device node is what admits a phone to every run of the project. A
+// managed session whose node is narrower than the one it replaces is therefore
+// ADMITTED — and it seeds no device, and says so, because admitting a person is
+// a person's write (`fugaro pair`).
+func TestPolicyPublishManagedSeedsNoDeviceNode(t *testing.T) {
+	f := newManagedPolicyFixture(t, "")
+	narrowingFixture(t, f, 9)
+	// The declaration is added to the file and the device node cleared AFTER
+	// the gate's own publish: that publish was a person's, so it seeded the
+	// node from a file that declared nothing yet, and what this test is about
+	// is a session that finds the declaration and no node.
+	f.rewriteConfig(t, declaredMobileAllow)
+	f.db.Set(rules.PathDevices, nil)
+	t.Setenv("CLAUDECODE", "1")
+
+	out, errOut, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatalf("a managed project refused a node narrower than the one it replaces: %v\n%s%s", err, out, errOut)
+	}
+	if v := f.db.Value(rules.PathDevices); v != nil {
+		t.Errorf("a coding agent's session seeded the device node with %v: what admits a phone to every run of the project is a person's write", v)
+	}
+	if !strings.Contains(out, "a device is a person's write") {
+		t.Errorf("the session was not told what it left unwritten:\n%s", out)
+	}
+	if got := f.audits(t); len(got) != 1 || got[0].Verdict != managedmode.AuditAdmitted {
+		t.Errorf("the publish's record is %+v, want the one admission the narrower node earns", got)
 	}
 }
 

@@ -205,7 +205,7 @@ const (
 // accounts family, whose `accounts rm` clears a name with the declaration it
 // names -- the generic path writes neither half.
 const (
-	cfmRegistryRows   = 443
+	cfmRegistryRows   = 446
 	cfmAllowlistNamed = 105
 )
 
