@@ -111,7 +111,10 @@
 # judged apart.
 #
 # CHECK310_RUN_TIMEOUT bounds each `fugaro` call in seconds (default 1800, 0
-# for none): a converge that hangs must not hang the check that watches it.
+# for none): a converge that hangs must not hang the check that watches it. The
+# bound is `timeout`'s own, so it holds where the machine has one — GNU
+# coreutils, which macOS does not ship — and without one a hung call is the
+# owner's own to interrupt.
 set -euo pipefail
 # -E as well, so the ERR trap below is inherited by the functions: without it a
 # failing command inside one of them ends the run with no fact recorded at all,
@@ -212,8 +215,10 @@ READER=""
 PTY=""
 # The seeds and the guard entries this run put in the log directory, one name to
 # a line, and the logs of the owner's own that the rule removed and this run put
-# back. All three are read by the teardown.
+# back. All three are read by the teardown, and the seeds list is read out of its
+# own file before the scratch directory holding it goes.
 SEEDS_FILE=""
+SEEDS_CAPTURED=""
 GUARDS_FILE=""
 RESTORED_FILE=""
 # The log directory, and the log the failure run wrote in it.
@@ -247,6 +252,10 @@ scratch_up() {
 # subshell.
 cleanup() {
   FACTS_CAPTURED=$(cat "$FACTS_FILE" 2>/dev/null || true)
+  # The seeds list lives in the scratch directory, which remove_scratch takes
+  # with it: it is read here, while the file is still there, so the guard over
+  # the names in finish can still run.
+  SEEDS_CAPTURED=$(cat "$SEEDS_FILE" 2>/dev/null || true)
   unseed
   remove_scratch
 }
@@ -723,13 +732,18 @@ def retention_survivors(entries, command, keep, now):
     """The rule of internal/report/logsink.go pruneLogs, written again here.
 
     The log just created counts as the newest whatever its name says, the others
-    sort by time then name, and a log is kept when it is inside the newest 50 AND
-    no older than 14 days.
+    sort by time and then by name — largest first, which is the tie-break
+    pruneLogs' own sort.Slice writes — and a log is kept when it is inside the
+    newest 50 AND no older than 14 days.
     """
     mine = candidates(entries, command)
     keep_first = [e for e in mine if e[0] == keep]
     rest = [e for e in mine if e[0] != keep]
-    rest.sort(key=lambda e: (-stamp_at(e[1]), e[0]))
+    # Two passes rather than one key: Python cannot negate a string, and the
+    # second sort is stable, so the name order survives it. Which of two logs of
+    # the same second the rule removes is decided here.
+    rest.sort(key=lambda e: e[0], reverse=True)
+    rest.sort(key=lambda e: stamp_at(e[1]), reverse=True)
     ordered = keep_first + rest
     survivors, removed = [], []
     for i, (name, stamp) in enumerate(ordered):
@@ -1759,12 +1773,12 @@ finish() {
   # The seeds and the guard entries this check put in the log directory are read
   # back rather than assumed: a run that leaves them behind has changed a
   # directory of yours and has to say so.
-  if [ -n "$LOGDIR" ] && [ -s "$SEEDS_FILE" ]; then
+  if [ -n "$LOGDIR" ] && [ -n "$SEEDS_CAPTURED" ]; then
     local left=""
     while IFS= read -r name; do
       [ -n "$name" ] || continue
       if [ -e "$LOGDIR/$name" ]; then left="$left$name "; fi
-    done <"$SEEDS_FILE"
+    done <<<"$SEEDS_CAPTURED"
     if [ -n "$left" ]; then
       facts="${facts}"$'\n'"scratch|FAIL|this check's seeded logs are STILL in $LOGDIR: ${left}— remove them yourself, they are not logs"
     else

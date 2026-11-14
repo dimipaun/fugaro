@@ -175,7 +175,11 @@ def prune(d, cmd, keep):
             continue
         cands.append((n, m.group(2)))
     keep_first = [c for c in cands if c[0] == keep]
-    rest = sorted([c for c in cands if c[0] != keep], key=lambda c: c[1], reverse=True)
+    # Time, then name largest first where two logs share a stamp: the fake stands
+    # in for the CLI's own pruneLogs, whose tie-break decides which of the two
+    # goes when the count boundary falls between them.
+    rest = sorted([c for c in cands if c[0] != keep], key=lambda c: c[0], reverse=True)
+    rest.sort(key=lambda c: c[1], reverse=True)
     ordered = keep_first + rest
     now = time.time()
     for i, (n, stamp) in enumerate(ordered):
@@ -410,22 +414,26 @@ FUGARO_EOF
 write_fake "$work"
 
 # ------------------------------------------------------------------ the fixtures
-# seed_owner DIR N LIST [DAYS]: N logs of the owner's own in the directory, 13
-# days old unless DAYS says otherwise, so the rule removes them while the seeds
+# seed_owner DIR N LIST [DAYS] [TIE]: N logs of the owner's own in the directory,
+# 13 days old unless DAYS says otherwise, so the rule removes them while the seeds
 # stand in for 51 runs and the check has to put them back. A log past the 14 days
 # is removed by the FIRST run of the check instead, before the seeds exist — the
 # machine whose last fugaro run is a fortnight old — which is what DAYS is for.
-# Their names are written to LIST for the assertions.
+# TIE gives the two oldest one stamp between them, which is the case the rule's
+# own tie-break — the name, largest first — decides. Their names are written to
+# LIST for the assertions.
 seed_owner() {
-  python3 - "$1" "$2" "$3" "${4:-13}" <<'PY'
+  python3 - "$1" "$2" "$3" "${4:-13}" "${5:-0}" <<'PY'
 import os
 import sys
 import time
 
 d, n, listing, days = sys.argv[1], int(sys.argv[2]), sys.argv[3], int(sys.argv[4])
+tie = int(sys.argv[5])
 names = []
 for i in range(n):
-    stamp = time.strftime("%Y%m%d%H%M%S", time.gmtime(time.time() - days * 24 * 3600 - i * 3600))
+    step = n - 2 if tie and i == n - 1 else i
+    stamp = time.strftime("%Y%m%d%H%M%S", time.gmtime(time.time() - days * 24 * 3600 - step * 3600))
     name = "update-%s-%d.log" % (stamp, 600000 + i)
     path = os.path.join(d, name)
     with open(path, "w") as fh:
@@ -485,10 +493,12 @@ calls() { cat "$case_dir/calls" 2>/dev/null || true; }
 
 # no_seeds_left: the log directory holds none of this check's own seeds. The
 # seeds are the names the reader builds (update-<14 digits>-7000NN.log inside
-# the 14 days, -800NNN past them), which is what the glob below is.
+# the 14 days, -800NNN past them), which is what the glob below is: the six
+# digits of the pid, not a first digit of 7 or 8 — a fake `fugaro` of this test
+# gets pids of its own, and one of those starts with an 8 often enough.
 no_seeds_left() {
   local f left=""
-  for f in "$case_dir/state/fugaro/logs"/update-??????????????-[78]*.log; do
+  for f in "$case_dir/state/fugaro/logs"/update-??????????????-[78]00[0-9][0-9].log; do
     [ -e "$f" ] || continue
     left="$left${f##*/} "
   done
@@ -551,6 +561,10 @@ case_happy() {
   expect_fact "$out" doctor PASS "the happy run"
   expect_fact "$out" restore PASS "the happy run"
   expect_fact "$out" scratch PASS "the happy run"
+  # The seeds list is read back out of the directory rather than assumed: a row
+  # that names them is a row that could only be written with the list still in
+  # hand, which is what the scratch directory going takes away.
+  expect_contains "$out" "seeded log(s) and the five guard entries are out of" "the happy run"
   expect_no_fail "$out" "the happy run"
   expect_calls "$case_dir/calls" "$THE_CALLS"
   no_seeds_left
@@ -777,6 +791,25 @@ case_owner_logs_removed_early() {
   owner_logs_kept
 }
 
+# Two logs of the owner's own in the same second, and the count boundary falls
+# between them: the rule's own tie-break — the name, largest first — decides
+# which of the two goes, so a prediction that ordered them the other way copies
+# the wrong one aside and leaves the other removed for good.
+case_retention_tie() {
+  setup_case retention_tie happy
+  rm -f "$case_dir/state/fugaro/logs"/*
+  seed_owner "$case_dir/state/fugaro/logs" 46 "$case_dir/ownerlogs" 1 1
+  run310
+  local out
+  out=$(block)
+  expect_status "$status" 0 "two logs of one second at the count boundary"
+  expect_fact "$out" retention PASS "two logs of one second at the count boundary"
+  expect_fact "$out" restore PASS "two logs of one second at the count boundary"
+  expect_contains "$(errout)" "of your own log(s) fall inside what the rule removes" "two logs of one second at the count boundary"
+  no_seeds_left
+  owner_logs_kept
+}
+
 case_belong() {
   setup_case belong happy
   CASE_ARGS=(--installation belong)
@@ -935,6 +968,7 @@ tests=(
   plan_log_empty
   restore_eat_owner
   owner_logs_removed_early
+  retention_tie
   belong
   other_refused_names
   gcp_refused

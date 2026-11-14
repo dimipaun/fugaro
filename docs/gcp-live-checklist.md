@@ -13879,7 +13879,8 @@ never printed the account this check reads, a tool is missing, an internal error
 `restore`; `belong`, `xtrace`, `agent`, `platform`, `fugaro`, `logdir` and `ls` are the guards and the readings around
 them. The knobs are `CHECK310_INSTALLATION` (the installation to drive; the same as `--installation`),
 `CHECK310_DRY_RUN` (the same as `--dry-run`) and `CHECK310_RUN_TIMEOUT` (1800 seconds: how long one `fugaro` call may
-take before the check gives up on it, `0` for no bound).
+take before the check gives up on it, on a machine with `timeout` — GNU coreutils; macOS ships none, so a call there
+is unbounded — and `0` for no bound).
 
 **What it does not read.** `doctor`'s default view (G9) is a screen, and this check compares no screens;
 `fugaro -v` against `fugaro update -v` (G10) is not one of the five commands the plan's row names; and G11 — an agent
