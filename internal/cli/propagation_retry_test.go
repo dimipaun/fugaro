@@ -168,6 +168,7 @@ func happyInstallation(t *testing.T, r *initRig, changes ...planChange) {
 // applied, rather than the old saved plan being applied a second time.
 func TestPropagationRetryRerunsTheInstallationStep(t *testing.T) {
 	noPropagationWaits(t)
+	fakeTerminal(t)
 	r := updateRig(t)
 	happyInstallation(t, r)
 	r.script["apply@installation"] = []any{
@@ -202,6 +203,7 @@ func TestPropagationRetryRerunsTheInstallationStep(t *testing.T) {
 // on the same service, which is the whole case.
 func TestPropagationRetryKeepsRetryingAfterItsOwnApplyCreated(t *testing.T) {
 	noPropagationWaits(t)
+	fakeTerminal(t)
 	r := updateRig(t)
 	// The first attempt's plan is the reported failure's own: the service this
 	// apply creates and the two grants on it. The re-plan holds the grants
@@ -236,8 +238,8 @@ func TestPropagationRetryKeepsRetryingAfterItsOwnApplyCreated(t *testing.T) {
 	}
 }
 
-// A retried plan is judged afresh, and in a project that is not managed with
-// --yes the guard is the whole of that judgement: the retry re-plans, so a
+// A retried plan is judged afresh, and in a project that is not managed the
+// guard is the whole of that judgement: the retry re-plans, so a
 // plan the guard refuses is refused before it is applied, and never applied
 // under the confirmation given to a plan that did not hold what it holds. The
 // refusal here is the one only the guard sees -- a delete nobody allowed --
@@ -245,6 +247,7 @@ func TestPropagationRetryKeepsRetryingAfterItsOwnApplyCreated(t *testing.T) {
 // guard on the retry's own plan the delete would go through unnamed.
 func TestPropagationRetryHoldsTheNewPlanToTheGuard(t *testing.T) {
 	noPropagationWaits(t)
+	fakeTerminal(t)
 	r := updateRig(t)
 	// The first attempt's plan is the reported failure's own, which the guard
 	// admits; the re-plan holds those changes AND a delete nothing allowed.
@@ -559,6 +562,7 @@ func TestPropagationRetryStopsOnAnythingElse(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			noPropagationWaits(t)
+			fakeTerminal(t)
 			r := updateRig(t)
 			happyInstallation(t, r, tc.changes...)
 			r.script["apply@installation"] = map[string]any{"exit": 1, "stderr": tc.stderr}
@@ -586,6 +590,7 @@ func TestPropagationRetryStopsOnAnythingElse(t *testing.T) {
 // this retry existed.
 func TestPropagationRetryStopsAfterTheLastWait(t *testing.T) {
 	noPropagationWaits(t)
+	fakeTerminal(t)
 	r := updateRig(t)
 	happyInstallation(t, r)
 	r.script["apply@installation"] = map[string]any{"exit": 1, "stderr": theReported404s}

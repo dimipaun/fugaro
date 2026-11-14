@@ -641,6 +641,10 @@ func TestManagedInitRefusalNamesNoFlag(t *testing.T) {
 func TestManagedInitApprovesExactlyWhatAnyInitApproves(t *testing.T) {
 	const a = "user:a@example.com"
 	address := `module.installation.google_storage_bucket_iam_member.state["` + a + `"]`
+	// The person at the terminal is what confirms the applies the flag used to
+	// (T11, docs/no-prompt-policy): (c) is still the guard's own refusal, before
+	// any confirmation, and (d) and (e) are the applies that go through.
+	fakeTerminal(t)
 
 	// (c) An address on the owner's list does not permit a fugaro setup --yes
 	// delete, and the entry here is the strongest one there is: it names this
@@ -756,6 +760,9 @@ func TestManagedInitApprovesExactlyWhatAnyInitApproves(t *testing.T) {
 // absent or false where the fence is owed, so the installation plans no scoped
 // role and no conditioned binding at all.
 func TestManagedInitWritesTheDeployerScopeFromTheCreationFact(t *testing.T) {
+	// The person at the terminal is what confirms the apply the flag used to
+	// (T11, docs/no-prompt-policy).
+	fakeTerminal(t)
 	for name, managedProject := range map[string]bool{"managed": true, "not managed": false} {
 		r := newInitRig(t)
 		if managedProject {
@@ -1016,6 +1023,10 @@ func workdirDiff(before, after map[string]string) string {
 func TestForgetRefusesAFenceTheMarksNoLongerAdmitTo(t *testing.T) {
 	r := newInitRig(t)
 	r.managedRuns(t, initProjectName, initProject)
+	// The person at the terminal is what confirms the fixture's apply the flag
+	// used to (T11, docs/no-prompt-policy); the rollback itself is refused for
+	// the fence before any confirmation, so a terminal changes nothing there.
+	fakeTerminal(t)
 	// The fixture's own run writes the fence into the installation's document,
 	// which is the record this test is about; without it the second run has
 	// nothing to refuse for and this test would pass for the wrong reason.
@@ -1113,6 +1124,9 @@ func TestForgetRefusesAFenceTheMarksNoLongerAdmitTo(t *testing.T) {
 func TestConfigOnlyKeepsTheManagedDeployerScope(t *testing.T) {
 	r := newInitRig(t)
 	r.managedRuns(t, initProjectName, initProject)
+	// The person at the terminal is what confirms the fixture's apply the flag
+	// used to (T11, docs/no-prompt-policy).
+	fakeTerminal(t)
 	if out, _, err := executeStdin(t, "", "setup"); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -1140,6 +1154,9 @@ func TestConfigOnlyKeepsTheManagedDeployerScope(t *testing.T) {
 func TestPrintVarsKeepsTheManagedDeployerScope(t *testing.T) {
 	r := newInitRig(t)
 	r.managedRuns(t, initProjectName, initProject)
+	// The person at the terminal is what confirms the fixture's apply the flag
+	// used to (T11, docs/no-prompt-policy).
+	fakeTerminal(t)
 	if out, _, err := executeStdin(t, "", "setup"); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}

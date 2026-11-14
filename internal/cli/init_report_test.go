@@ -594,8 +594,16 @@ func TestUpdateLogRedactsAValueAStageHoldsMidRun(t *testing.T) {
 // TestUpdateJSONUnchanged: --json is a contract (F8). stdout is one document
 // and nothing else — no step line, no ANSI, no carriage return — and the
 // human account goes to stderr, where the converge's own writer already went.
+//
+// --json confirms no step (T7, docs/no-prompt-policy): a run that has one to
+// take is refused rather than applied under it, so the run read here is one
+// with nothing to confirm — an installation that already matches — which is
+// the shape every --json converge has now. The plan runs and its own output is
+// what the log has to hold.
 func TestUpdateJSONUnchanged(t *testing.T) {
-	applyingRig(t)
+	r := updateRig(t)
+	r.script["plan"] = map[string]any{"exit": 0, "stdout": convergeNoise + "\n"}
+	r.save(t)
 	out, errOut, err := executeStdin(t, "", "update", "--json")
 	if err != nil {
 		t.Fatalf("%v\n%s%s", err, out, errOut)

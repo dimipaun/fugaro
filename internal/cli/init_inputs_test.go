@@ -318,22 +318,23 @@ func TestProjectIDDefaultIsNotTakenWhenItExists(t *testing.T) {
 	}
 }
 
-// TestGatherInputsNonInteractiveNamesEveryFlag: the ID's default is a
+// TestGatherInputsWithoutATerminalNamesEveryFlag: the ID's default is a
 // suggestion, never an answer taken on nobody's behalf. A run that cannot ask —
-// --non-interactive, or any of the other flags that turn the questions off —
-// still refuses, and the one error names every flag that is missing, the ID's
-// among them (D4 changes the suggestion, not what a scripted run must pass).
-func TestGatherInputsNonInteractiveNamesEveryFlag(t *testing.T) {
+// no terminal on stdin, which is what a pipe, --json and a coding agent's
+// session all are — still refuses, and the one error names every flag that is
+// missing, the ID's among them (D4 changes the suggestion, not what a scripted
+// run must pass).
+func TestGatherInputsWithoutATerminalNamesEveryFlag(t *testing.T) {
 	firstRunEnv(t)
 	noInstallation(t)
-	fakeTerminal(t) // a terminal does not make it ask
+	noTerminal(t)
 	// Every flag but the ID's: the ID's own default is what a run may not take
 	// for a person, so it is the one still missing.
 	_, _, err := executeStdin(t, "aurora\n", "setup", "--name", "aurora", "--region", defaultRegion)
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
-	if !strings.Contains(err.Error(), "--non-interactive: missing") || !strings.Contains(err.Error(), "--gcp-project <id>") {
+	if !strings.Contains(err.Error(), "there is no project config yet: pass") || !strings.Contains(err.Error(), "--gcp-project <id>") {
 		t.Errorf("the refusal does not name the id's flag: %v", err)
 	}
 	if strings.Contains(err.Error(), "\n") {
@@ -511,17 +512,20 @@ func TestPromptChoiceEndedInputIsNoAnswer(t *testing.T) {
 	}
 }
 
-// --non-interactive never asks and names every missing flag in one error:
+// A run with no terminal never asks and names every missing flag in one error:
 // the three inputs, and the GitHub App's ID of a GitHub checkout whose
 // default branch has its fugaro.yaml.
-func TestNonInteractiveNamesFlags(t *testing.T) {
+func TestARunThatCannotAskNamesEveryFlag(t *testing.T) {
 	firstRunEnv(t)
-	fakeTerminal(t) // a terminal does not make it ask
+	noTerminal(t)
 	_, _, err := executeStdin(t, "aurora\n", "setup")
 	if ExitCode(err) != ExitUserError || err == nil || strings.Contains(err.Error(), "\n") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
-	for _, f := range []string{"--non-interactive: missing", "--name", "--gcp-project", "--region"} {
+	if !strings.Contains(err.Error(), "there is no project config yet: pass") {
+		t.Errorf("the refusal is not the one sentence naming the flags: %v", err)
+	}
+	for _, f := range []string{"--name <name>", "--gcp-project <id>", "--region <region>"} {
 		if !strings.Contains(err.Error(), f) {
 			t.Errorf("the error lacks %q: %v", f, err)
 		}
@@ -534,17 +538,19 @@ func TestNonInteractiveNamesFlags(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "--gcp-project") || strings.Contains(err.Error(), "--name") || strings.Contains(err.Error(), "--region") {
 		t.Errorf("only --gcp-project is missing: %v", err)
 	}
-	// --yes does not supply inputs either, and without --non-interactive and
-	// without a terminal the same flags are named.
-	_, _, err = executeStdin(t, "aurora\n", "setup")
+	// A run whose stdout is one document never asks either — not even at a
+	// terminal: --json confirms no step and answers no question, so the same
+	// flags are named.
+	fakeTerminal(t)
+	_, _, err = executeStdin(t, "aurora\n", "setup", "--json")
 	if err == nil || !strings.Contains(err.Error(), "--name") || !strings.Contains(err.Error(), "--gcp-project") {
-		t.Errorf("--yes: %v", err)
+		t.Errorf("--json: %v", err)
 	}
 }
 
 // In a GitHub checkout whose default branch has a fugaro.yaml, the App's ID
-// is one more flag in the same error.
-func TestNonInteractiveNamesAppIDToo(t *testing.T) {
+// is one more flag in a run that cannot ask.
+func TestTheAppIDIsNamedWhenTheCheckoutNeedsIt(t *testing.T) {
 	firstRunEnv(t)
 	root := repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", "aurora", ""))
 	t.Chdir(root)

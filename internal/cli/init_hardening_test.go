@@ -24,6 +24,9 @@ func grantChange(name, member, role string, actions ...string) planChange {
 func TestInitHardeningAllowsOnlyTheLauncherGrantDeletes(t *testing.T) {
 	const a, o = "user:a@example.com", "user:o@example.com"
 	args := []string{"setup", "--operator", a, "--operator", o, "--admin", o}
+	// The person at the terminal is what confirms the apply the flag used to
+	// (T11, docs/no-prompt-policy).
+	fakeTerminal(t)
 
 	r := newInitRig(t)
 	r.stateBucket()
@@ -121,6 +124,9 @@ func TestInitAdmitsTheLauncherGrantUpgrade(t *testing.T) {
 	const a, o = "user:a@example.com", "user:o@example.com"
 	bucket := "fugaro-runs-" + initProject
 	args := []string{"setup", "--operator", a, "--operator", o, "--admin", o}
+	// The person at the terminal is what confirms the apply the flag used to
+	// (T11, docs/no-prompt-policy).
+	fakeTerminal(t)
 
 	r := newInitRig(t)
 	r.stateBucket()
@@ -168,6 +174,9 @@ func TestInstallationAtThePreviousVersionConvergesIssuesGrant(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := updateRig(t)
+			// The person at the terminal is what confirms the replace the flag
+			// used to (T11, docs/no-prompt-policy).
+			fakeTerminal(t)
 			// The installation's own members, as the local config records
 			// them: the guard judges the replace against the launcher list
 			// this run holds, and an installation's list is what its config
