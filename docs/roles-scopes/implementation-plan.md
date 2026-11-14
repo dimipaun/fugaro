@@ -67,8 +67,10 @@ standard.
 - **Slice B — the rename and the viewer (RS3, RS4).** The migration in `update`; the viewer list and
   its read-only role.
 - **Slice C — the commands (RS5, RS8, RS9).** `fugaro user` grants with scopes; pairing; the lapse input.
-- **Slice D — enforcement in the commands and the console (RS6a–c, RS7).** Every management command
-  asks the resolver; the console reads through the same commands.
+- **Slice D — enforcement in the commands and the console (RS6a–c, RS7).** The goal: every management
+  command asks the resolver, and the console reads through the same commands. What this slice's file
+  list names is gated; the writers of the same files that it does not name still ask nothing, which
+  the stated limits record (`spec.md`).
 - **Slice E — closing (RS10).** Docs, skills, release notes. **Later, not planned here: RS12**, per-repo
   cloud enforcement.
 

@@ -486,10 +486,12 @@ build decided, and this is where a reader of the roles meets them.
   per-repository grant until the later slice that adds one (D1580, `docs/roles-scopes/reconciliation.md`).
 - **D690 and D691 are superseded, and D446 is narrowed with them.** D690(a) — the CLI does not rank
   its own commands — and D691(a) — the console does not know a role — were the answers this document
-  carried on 2026-10-30; D1580's answer of 2026-11-07 replaces both, so every management command asks
-  the resolver and the console reads the same commands' `--json` output. D446's "enforced
-  system-wide, the cloud included" holds for the project-wide lists, and a scoped role is the check
-  above.
+  carried on 2026-10-30; D1580's answer of 2026-11-07 replaces both, so the management commands the
+  plan's Slice D gates ask the resolver and the console reads the same commands' `--json` output. That
+  slice is not the whole of the tree: the writers of the same files that it does not name still ask no
+  role, and the stated limits name them (`docs/roles-scopes/spec.md`, the release notes). D446's
+  "enforced system-wide, the cloud included" holds for the project-wide lists, and a scoped role is
+  the check above.
 - **An agent session is a courtesy.** A grant or a revoke in a coding-agent session is refused
   (D1590), and agent sessions are detected by environment variables an agent can unset: a courtesy,
   not a barrier (`internal/agentenv`).
