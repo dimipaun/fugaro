@@ -1360,6 +1360,7 @@ type proxyAsks struct {
 
 	mu    sync.Mutex
 	asked []proxyAsked
+	snap  bbtokens.Snapshot
 }
 
 // proxyAsked is one question the route put to the store: the canonical
@@ -1369,9 +1370,10 @@ type proxyAsked struct {
 	write     bool
 }
 
-func (p *proxyAsks) Select(_ context.Context, _ bbtokens.Snapshot, canonical string, write bool) (bbtokens.Choice, error) {
+func (p *proxyAsks) Select(_ context.Context, snap bbtokens.Snapshot, canonical string, write bool) (bbtokens.Choice, error) {
 	p.mu.Lock()
 	p.asked = append(p.asked, proxyAsked{canonical: canonical, write: write})
+	p.snap = snap
 	p.mu.Unlock()
 	if p.err != nil {
 		return bbtokens.Choice{}, p.err
@@ -1384,6 +1386,15 @@ func (p *proxyAsks) questions() []proxyAsked {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return append([]proxyAsked(nil), p.asked...)
+}
+
+// snapshot is the last snapshot the route handed the store: the two documents
+// the request was decided and served from, as a Selector implementation
+// receives them.
+func (p *proxyAsks) snapshot() bbtokens.Snapshot {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.snap
 }
 
 // proxyAuth is the credential the upstream was shown for a git call: the
@@ -1590,6 +1601,90 @@ func TestProxyAuditNamesTheToken(t *testing.T) {
 			t.Errorf("%s carries the value of the legacy entry, which did not serve this call", what)
 		}
 	}
+
+	// A refusal taken AFTER the token was chosen names that token too, on both
+	// of this route's refusal helpers — and the facts read that refusal is
+	// about really was made with it. A line naming the installation's own key
+	// instead would describe a request that never happened: the chosen token
+	// was already presented to bitbucket.org by the time either refusal is
+	// taken, so the installation's key never touched this request at all.
+	foreignFacts := `{"source":{"branch":{"name":"someone-elses-branch"},"repository":{"full_name":"` +
+		testBitbucketRepo + `"}},"destination":{"branch":{"name":"main"}}}`
+	write := []byte(`{"title":"the run's work"}`)
+
+	t.Run("a refusal of the facts read names the chosen token", func(t *testing.T) {
+		// The facts read answers an error status: refuseUnavailable, taken past
+		// the choice.
+		s, up, _, _ := proxyTokensSvc(t, &bbtokens.Stub{Selected: proxyNamedToken})
+		up.answerWith(http.StatusInternalServerError, foreignFacts)
+
+		resp, ans := s.proxyCall(t, http.MethodPut, proxyPath(proxyRESTPath("/pullrequests/7")), write)
+		proxyRefused(t, resp, ans, http.StatusServiceUnavailable, ErrorStateUnavailable, "could not be read")
+		if got := auditField(s.onlyAuditLine(t), "credential"); got != string(proxyNamedToken) {
+			t.Errorf("the refusal's line names the credential %q, want the chosen token (%q): it was the one presented to bitbucket.org for the facts read that failed", got, proxyNamedToken)
+		}
+	})
+
+	t.Run("a refusal of the write names the chosen token", func(t *testing.T) {
+		// The facts read succeeds and reports a source that is not this run's:
+		// the CheckPRWrite refusal, also taken past the choice.
+		s, up, _, named := proxyTokensSvc(t, &bbtokens.Stub{Selected: proxyNamedToken})
+		up.mu.Lock()
+		up.answer = func(r *http.Request) proxyAnswer {
+			if r.Method != http.MethodGet {
+				return proxyAnswer{status: http.StatusOK, body: []byte("{}")}
+			}
+			return proxyAnswer{status: http.StatusOK, body: []byte(foreignFacts)}
+		}
+		up.mu.Unlock()
+
+		resp, ans := s.proxyCall(t, http.MethodPut, proxyPath(proxyRESTPath("/pullrequests/7")), write)
+		proxyRefused(t, resp, ans, http.StatusBadRequest, ErrorRequestRefused, gitproxy.ReasonOtherPullRequest)
+
+		seen := up.calls()
+		if len(seen) != 1 || seen[0].auth != "Bearer "+named {
+			t.Errorf("the upstream saw %+v, want the facts read alone and made with the chosen token (%s)", seen, proxyNamedToken)
+		}
+		if got := auditField(s.onlyAuditLine(t), "credential"); got != string(proxyNamedToken) {
+			t.Errorf("the refusal's line names the credential %q, want the chosen token (%q): it is the credential the facts the write was refused on were read with", got, proxyNamedToken)
+		}
+	})
+
+	t.Run("the snapshot the store is handed renders no value", func(t *testing.T) {
+		// The snapshot is a public struct handed to every Selector
+		// implementation, and the values it carries are the installation's
+		// Bitbucket tokens: a rendering of it must name the document keys and
+		// nothing else (C1's BundleTokens, and Entry's rule on this side).
+		sel := &proxyAsks{name: proxyNamedToken}
+		s, up, legacy, named := proxyTokensSvc(t, sel)
+		up.answerWith(http.StatusOK, "{}")
+
+		resp, ans := s.proxyCall(t, http.MethodGet, proxyPath(proxyRESTPath("")), nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("the read answered %d, want 200 (%s)", resp.StatusCode, ans)
+		}
+		snap := sel.snapshot()
+		var buf bytes.Buffer
+		slog.New(slog.NewTextHandler(&buf, nil)).Info("the snapshot", "snapshot", snap, "tokens", snap.Bundle)
+
+		rendered := []string{
+			fmt.Sprintf("%v", snap.Bundle),
+			fmt.Sprintf("%+v", snap.Bundle),
+			fmt.Sprintf("%#v", snap.Bundle),
+			fmt.Sprintf("%s", snap.Bundle),
+			fmt.Sprintf("%v", snap),
+			fmt.Sprintf("%#v", snap),
+			buf.String(),
+		}
+		for _, text := range rendered {
+			if strings.Contains(text, named) || strings.Contains(text, legacy) {
+				t.Errorf("a rendering of the snapshot carries a token value: %s", text)
+			}
+		}
+		if !strings.Contains(rendered[0], string(proxyNamedToken)) {
+			t.Errorf("%%v = %q, want the document keys (it is what an operator reads)", rendered[0])
+		}
+	})
 }
 
 // TestProxyRefusesUncoveredRepository: a repository no token covers is refused

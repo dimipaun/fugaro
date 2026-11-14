@@ -79,6 +79,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -142,10 +143,13 @@ const proxyUnaudited = "the Bitbucket call is refused because this service could
 // every token an installation that stored no named one has. It is not a value
 // read out of the bundle, so a line is the same whether the bundle has been
 // read or not, and an operator greps one word for every refusal this route
-// takes above the selection (routeAct's rule for the mint's App key). A line
-// for a call that got as far as a choice names the CHOSEN token's document key
-// instead (T8, R9), which is what tells an operator which of several tokens
-// served a request.
+// takes above the selection (routeAct's rule for the mint's App key).
+//
+// It SEEDS the route's own credential variable rather than fixing what every
+// line says: once a token is chosen that variable holds the chosen token's
+// document key, and the refusal and act lines written from there on name it
+// (T8, R9) — which is what tells an operator which of several tokens a request
+// was served with, or failed to be served with.
 func gitproxyAct(kind gitproxy.Kind) (purpose, credential string) {
 	if kind == gitproxy.KindREST {
 		return PurposeBitbucketAPI, config.BitbucketSecret
@@ -297,6 +301,32 @@ func (b bundleTokens) Value(name bbtokens.Name) (string, bool) {
 	return value, ok
 }
 
+// String renders the snapshot's tokens as their document keys, which is what
+// makes a rendering of a Snapshot safe.
+//
+// The redaction has to be here and not on the map's value type: fmt prints a
+// map's values structurally through the same rule it prints an unexported
+// field by, so a Stringer on the value type would not be reached through `%v`
+// of this struct. A Snapshot is handed to every Selector implementation and
+// the values it carries are the installation's Bitbucket tokens, so the type
+// that holds them is the type that must not render them — the contract's own
+// rule that a value is behind a method and "nothing renders it"
+// (bbtokens.BundleTokens), which Entry and Bundle keep on this side too.
+func (b bundleTokens) String() string {
+	names := make([]string, 0, len(b.names))
+	for _, n := range b.names {
+		names = append(names, string(n))
+	}
+	return "credsvc.bundleTokens(" + strings.Join(names, ", ") + ")"
+}
+
+// GoString is String for `%#v`, which would otherwise print the struct —
+// values included.
+func (b bundleTokens) GoString() string { return b.String() }
+
+// LogValue is String for slog, so a line that logs a snapshot carries names.
+func (b bundleTokens) LogValue() slog.Value { return slog.StringValue(b.String()) }
+
 // bitbucketProxy answers one call of the run's Bitbucket traffic. It is reached
 // from ServeHTTP's branch, below the two identities, the pairing and the stop
 // switches, and it does there what every other route does: it names the call,
@@ -380,7 +410,7 @@ func (s *Server) bitbucketProxy(ctx context.Context, w http.ResponseWriter, r *h
 		// bitbucket.org compressed. The header itself is left alone: a fetch
 		// legitimately arrives encoded and is forwarded unparsed.
 		if !identityEncoded(r.Header.Values("Content-Encoding")) {
-			s.refuseProxy(ctx, w, id, purpose, refusalEncodedBody)
+			s.refuseProxy(ctx, w, id, purpose, credential, refusalEncodedBody)
 			return
 		}
 		updates, consumed, err := gitproxy.ReadUpdateRequest(r.Body, maxUpdateRequestBytes)
@@ -389,7 +419,7 @@ func (s *Server) bitbucketProxy(ctx context.Context, w http.ResponseWriter, r *h
 			// is the operator's (the service's own log line carries it) and the
 			// caller's answer is the class, which is never a byte of what it
 			// sent.
-			s.refuseProxyReason(ctx, w, id, purpose, gitproxy.ReasonPushUnread, err)
+			s.refuseProxyReason(ctx, w, id, purpose, credential, gitproxy.ReasonPushUnread, err)
 			return
 		}
 		req.Updates = updates
@@ -399,11 +429,11 @@ func (s *Server) bitbucketProxy(ctx context.Context, w http.ResponseWriter, r *h
 
 	shared, found, err := s.cfg.Policy.Shared(ctx)
 	if err != nil || !found {
-		s.refuseUnavailable(ctx, w, id, purpose, "the project's policy could not be read")
+		s.refuseUnavailable(ctx, w, id, purpose, credential, "the project's policy could not be read")
 		return
 	}
 	if verdict := gitproxy.Decide(req, proxyIdentity(id), canonical, shared.BitbucketToken); !verdict.Allow {
-		s.refuseProxy(ctx, w, id, purpose, verdict.Reason)
+		s.refuseProxy(ctx, w, id, purpose, credential, verdict.Reason)
 		return
 	}
 
@@ -423,7 +453,7 @@ func (s *Server) bitbucketProxy(ctx context.Context, w http.ResponseWriter, r *h
 	case req.Call == gitproxy.CallPRCreate, req.Call == gitproxy.CallPRUpdate, req.Call == gitproxy.CallPRComment:
 		raw, err := readBoundedBody(r.Body, maxPRWriteBodyBytes)
 		if err != nil {
-			s.refuseProxy(ctx, w, id, purpose, gitproxy.ReasonBodyMalformed)
+			s.refuseProxy(ctx, w, id, purpose, credential, gitproxy.ReasonBodyMalformed)
 			return
 		}
 		body = bytes.NewReader(raw)
@@ -450,7 +480,7 @@ func (s *Server) bitbucketProxy(ctx context.Context, w http.ResponseWriter, r *h
 	// never a call forwarded without one.
 	b, err := s.cfg.Bundles.Load(ctx)
 	if err != nil {
-		s.refuseUnavailable(ctx, w, id, purpose, BundleRefusal(err))
+		s.refuseUnavailable(ctx, w, id, purpose, credential, BundleRefusal(err))
 		return
 	}
 
@@ -468,12 +498,12 @@ func (s *Server) bitbucketProxy(ctx context.Context, w http.ResponseWriter, r *h
 			// it is about and never a token, and the caller is told the class
 			// alone — the refusal's own sentence, which names the repository, is
 			// what the operator's line carries as the cause.
-			s.refuseProxyReason(ctx, w, id, purpose, string(refusal.Class), refusal)
+			s.refuseProxyReason(ctx, w, id, purpose, credential, string(refusal.Class), refusal)
 			return
 		}
 		// A store that could not answer is not the caller's refusal: nothing
 		// was chosen, so nothing may be forwarded.
-		s.refuseUnavailable(ctx, w, id, purpose, "the Bitbucket token could not be chosen")
+		s.refuseUnavailable(ctx, w, id, purpose, credential, "the Bitbucket token could not be chosen")
 		return
 	}
 	credential = string(name)
@@ -491,11 +521,11 @@ func (s *Server) bitbucketProxy(ctx context.Context, w http.ResponseWriter, r *h
 			if err != nil {
 				// The pull request could not be read: a write whose facts are
 				// unknown is refused rather than checked against nothing.
-				s.refuseUnavailable(ctx, w, id, purpose, "the pull request a write names could not be read")
+				s.refuseUnavailable(ctx, w, id, purpose, credential, "the pull request a write names could not be read")
 				return
 			}
 			if verdict := gitproxy.CheckPRWrite(pr, prBody, proxyIdentity(id), canonical); !verdict.Allow {
-				s.refuseProxy(ctx, w, id, purpose, verdict.Reason)
+				s.refuseProxy(ctx, w, id, purpose, credential, verdict.Reason)
 				return
 			}
 		}
@@ -639,10 +669,13 @@ func (s *Server) readPRFacts(ctx context.Context, req gitproxy.Request, token st
 // The order is the point of it:
 //
 //   - the upstream request is built from the classified parts (upstreamURL) and
-//     carries the bundle's token and nothing of the caller's own credentials:
-//     the Authorization header is set here and the caller's is dropped
-//     (dropRequestHeaders), so the job's Google ID token and this contract's
-//     headers never leave the process.
+//     carries the token this request was served with and nothing of the
+//     caller's own credentials: the Authorization header is set here and the
+//     caller's is dropped (dropRequestHeaders), so the job's Google ID token
+//     and this contract's headers never leave the process. Every line this
+//     function writes — the act's and each refusal's — names that same token's
+//     document key (R9), since it is the credential the call carried when it
+//     was made or failed.
 //   - the upstream is called before the line is written, because a call that
 //     never reached bitbucket.org is a REFUSAL and not an act: it is answered
 //     as state_unavailable and its line says so.
@@ -656,12 +689,12 @@ func (s *Server) readPRFacts(ctx context.Context, req gitproxy.Request, token st
 func (s *Server) forwardBitbucket(ctx context.Context, w http.ResponseWriter, r *http.Request, req gitproxy.Request, id Identity, purpose, credential, token string, body io.Reader, contentLength int64) {
 	target, err := upstreamURL(req)
 	if err != nil {
-		s.refuseUnavailable(ctx, w, id, purpose, "the Bitbucket call could not be addressed")
+		s.refuseUnavailable(ctx, w, id, purpose, credential, "the Bitbucket call could not be addressed")
 		return
 	}
 	up, err := http.NewRequestWithContext(ctx, r.Method, target, body)
 	if err != nil {
-		s.refuseUnavailable(ctx, w, id, purpose, "the Bitbucket call could not be built")
+		s.refuseUnavailable(ctx, w, id, purpose, credential, "the Bitbucket call could not be built")
 		return
 	}
 	up.Header = forwardHeaders(r.Header)
@@ -682,7 +715,7 @@ func (s *Server) forwardBitbucket(ctx context.Context, w http.ResponseWriter, r 
 	}
 	resp, err := s.bitbucketClient().Do(up)
 	if err != nil {
-		s.refuseUnavailable(ctx, w, id, purpose, "bitbucket.org could not be reached")
+		s.refuseUnavailable(ctx, w, id, purpose, credential, "bitbucket.org could not be reached")
 		return
 	}
 	defer resp.Body.Close()
@@ -895,8 +928,8 @@ func itoa(n int) string { return fmt.Sprintf("%d", n) }
 // the status of the answer and not its body, so the operator reading Cloud
 // Logging (and Check 191, which reads it as the owner's instrument) has this
 // line and no other.
-func (s *Server) refuseProxy(ctx context.Context, w http.ResponseWriter, id Identity, purpose, class string) {
-	s.refuseProxyReason(ctx, w, id, purpose, class, nil)
+func (s *Server) refuseProxy(ctx context.Context, w http.ResponseWriter, id Identity, purpose, credential, class string) {
+	s.refuseProxyReason(ctx, w, id, purpose, credential, class, nil)
 }
 
 // refuseProxyReason is refuseProxy with the cause of a refusal kept for the
@@ -906,9 +939,15 @@ func (s *Server) refuseProxy(ctx context.Context, w http.ResponseWriter, id Iden
 // sentence is the class alone. The line is written whether or not there is a
 // cause: what the operator needs from it is the class, and a refusal decided by
 // the rules (a ref, a repository, a pull request) has no cause to carry.
-func (s *Server) refuseProxyReason(ctx context.Context, w http.ResponseWriter, id Identity, purpose, class string, cause error) {
+//
+// credential is what the refusal's audit line names, and the caller passes the
+// route's own variable rather than a constant: a refusal taken before a token
+// was chosen names config.BitbucketSecret, and one taken after the choice names
+// the chosen token's document key (R9), because that token was already
+// presented to bitbucket.org for this request's pull-request facts read.
+func (s *Server) refuseProxyReason(ctx context.Context, w http.ResponseWriter, id Identity, purpose, credential, class string, cause error) {
 	s.logProxyRefusal(id, purpose, class, cause)
-	s.refuseCall(ctx, w, id, purpose, config.BitbucketSecret, "", StatusRequestRefused, ErrorRequestRefused, requestRefused+class)
+	s.refuseCall(ctx, w, id, purpose, credential, "", StatusRequestRefused, ErrorRequestRefused, requestRefused+class)
 }
 
 // logProxyRefusal writes this route's own line for a refusal: the class, which
@@ -929,6 +968,11 @@ func (s *Server) logProxyRefusal(id Identity, purpose, class string, cause error
 // that is not the caller's: the policy, the bundle, the credential or
 // bitbucket.org itself. It is a typed refusal the run halts on and never a
 // fallback (D143), and it is recorded like every other refusal on this route.
-func (s *Server) refuseUnavailable(ctx context.Context, w http.ResponseWriter, id Identity, purpose, message string) {
-	s.refuseCall(ctx, w, id, purpose, config.BitbucketSecret, "", StatusUnavailable, ErrorStateUnavailable, message)
+//
+// credential is what the refusal's audit line names, read off the route's own
+// variable for refuseProxyReason's reason: a refusal of the upstream call
+// itself is taken after a token was chosen and names that token (R9), because
+// it is the credential the call carried when it failed.
+func (s *Server) refuseUnavailable(ctx context.Context, w http.ResponseWriter, id Identity, purpose, credential, message string) {
+	s.refuseCall(ctx, w, id, purpose, credential, "", StatusUnavailable, ErrorStateUnavailable, message)
 }
