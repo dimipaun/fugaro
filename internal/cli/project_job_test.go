@@ -2260,6 +2260,38 @@ func TestRunRepoInItsCheckoutWithNoFugaroYAMLKeepsThePerRepositoryJob(t *testing
 	}
 }
 
+// TestLaunchProjectJobServesBakedWorkflows is D2304: a `checkout: baked`
+// workflow runs on a shared project job like every other workflow of its
+// profile, so the checkout mode no longer chooses the job model. What the mode
+// still chooses is the job's *image* — a baked workflow runs the repository's
+// own derived image and the launch's gates judge it by that image's build
+// record (checkImageSince, which the fixture writes) while a clone workflow
+// runs the installation's base image — and the two questions are separate
+// ones: before this, `checkout: clone` was a precondition of the shared job
+// (launchProjectJobFor), so every baked workflow of a migrated project stayed
+// on a per-repository job the retirement then deletes (M2, D2303), and the
+// repository's work ran on a job whose profile its owner had already left.
+//
+// Mutation (run, restore): read the checkout mode in launchProjectJobFor again
+// (return nil, nil for a workflow that is not `checkout: clone`) — the launch
+// goes to the per-repository job and this test fails.
+func TestLaunchProjectJobServesBakedWorkflows(t *testing.T) {
+	f := newProjectJobFixture(t)
+	baked := strings.Replace(projectJobRepoYAML, "checkout: clone", "checkout: baked", 1)
+	if !strings.Contains(baked, "checkout: baked") {
+		t.Fatal("the fixture has no checkout: clone to put a baked workflow in its place")
+	}
+	projectJobCheckoutYAML(t, baked)
+
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261114-130000-aaaa", "Add a feature"); err != nil {
+		t.Fatalf("a launch of a baked workflow: %v", err)
+	}
+	calls := f.run.RunRequests()
+	if len(calls) != 1 || calls[0].Job != f.job {
+		t.Fatalf("the launch made %d jobs.run calls (%+v), want one on the shared job %s: a baked workflow runs on a shared job like any other (D2304)", len(calls), calls, f.job)
+	}
+}
+
 // With no profiles published the per-repository job is not a guess — it is
 // the only job there is — so a launch from outside the checkout still takes
 // it. Both shapes of "no profiles" are pinned: an installation that has
