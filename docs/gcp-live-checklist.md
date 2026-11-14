@@ -520,6 +520,42 @@ written, and it takes another number if it merges after this. The check is owner
 runs any step of it** — it reads and writes on your own Windows machine and in one WSL distribution,
 **never `belong`**, and it is **NOT RUN**.
 
+**Check 120, 121 and 122 are the mobile telemetry phase's, and Task P7.5 is the task that writes
+them here** (`docs/mobile/implementation-plan.md`, its Phase 7 and its task **P7.5**; the authority
+for their text, their flags, their allow-list and their labels is
+[plans/2026-10-19-mobile-telemetry.md](plans/2026-10-19-mobile-telemetry.md) — §12 for each check,
+§2.2 for the reading that chose the numbers: the first free number after every claim, three out of
+the block above 119). The phase puts **Firebase Crashlytics and Firebase Analytics in the Expo app
+at `mobile/`**, reporting to a Firebase project **Fugaro operates and not an installation's** —
+**`fugaro-prod`**, the owner's own name for it, and the same project the website lives in — and
+every part of it but this task is merged: the config plugin, the never-committed native files and
+the build-time guard (**P7.1**), the statement the shell renders and the `/privacy/` URL beside it
+(**P7.2**), the closed event allow-list with the scans that hold it (**P7.3**), and the live privacy
+page held true of the build that ships (**P7.4**). **120** is that the reports arrive, that they
+arrive **from the first launch**, and that they arrive at **`fugaro-prod` and no other project** —
+followed by its two negative halves: the app's own shell, and the **absent `AD_ID` permission, read
+from the built artifact's merged manifest** rather than from the source. **121** is a real crash
+reaching that project **with nothing that names anything in it**, and its control: the first
+internal build, which carries neither SDK, produces **no report at all**. **122** is the **two store
+forms and the live privacy statement**, read against what the app actually sends — category by
+category and sentence by sentence — because the page is already live and already ahead of the
+build. All three are **owner-run**: a real device, a signed build, a real network, two store
+consoles and the Firebase console, none of which an agent may touch — **no agent runs any step of
+any of them** — and all three are **NOT RUN**. **Two changes dated after this text stand over it,
+and the three sections carry both rather than smoothing them over.** The plan's own always-on answer
+was superseded on **2026-10-30** by the owner's ruling (recorded as **D731** in
+[review-levels-ab-jobmax/reconciliation.md](review-levels-ab-jobmax/reconciliation.md)):
+**crash reports are on by default and opt-out, and Firebase Analytics is dropped from the app**. The
+amendment to the plan's own text and scan is task **T0.1** and the build is task **T3.1**
+([review-levels-ab-jobmax/implementation-plan.md](review-levels-ab-jobmax/implementation-plan.md)),
+with the owner's two store forms re-answered by **T3.2** once T3.1 has shipped — and **none of the
+three has landed**, which is why the app still declares both reporters and why the statement P7.2
+ships makes **no claim about how collection is turned off, in either direction**. And **no merged
+task of the phase wires the app's own event senders**: P7.3's module writes to a port shaped like
+the SDK's own surface, `mobile/index.js` is where that port is wired, and nothing wires it — so
+**120's first reading has a step that says what has to exist before it can pass**, rather than
+reading as a state of this tree.
+
 **Check 124 is the Cloud Batch backend's own, and it is the next number free above 123** (the
 compute-backend plan `docs/plans/2026-10-19-compute-backend.md`, whose design is
 `docs/design/compute-backend.md`; the subject is the **opt-in Cloud Batch backend** — the
@@ -929,6 +965,9 @@ probe account carries predefined grants only).
 | 313 | CG13's endpoint on a real machine ([`docs/cli-output-console-graph/`](cli-output-console-graph/implementation-plan-graph.md), its **CG12** row 313, its task **CG13b** and the decision **D1359**, all of 2026-11-06): the registry file the daemon writes under the state directory (`<UserDir state>/fugaro/run/<id>.json`) is mode **0600** in a mode **0700** directory and carries a **nonce** minted per start; nothing about it is judged by a **pid** — liveness is a **handshake** with the file's own token (the answer must read back the id and the nonce, which a port or a pid another process took over cannot) plus the **lock** the daemon holds for its life (an `flock` the kernel drops when the process dies); `fugaro graph --source local:<id>` answers and goes through `endpoint.Probe`; a `kill -9` of the daemon leaves a file the reader must judge dead, **remove**, and never let it touch a **live process that has taken the pid**; and a **reboot** mints a different nonce. The three things CG13b's tests can only fake are real here: a SIGKILL that leaves a file behind, an `flock` the kernel drops, and a loopback listener that answers. A daemon a login unit supervises (launchd's `KeepAlive`, systemd's `Restart=always`) restarts itself within 5 to 10 seconds, so the crash half wants one started **by hand**: where the daemon came back the check reports that half as **NOT MEASURED** (exit 2) with the one line that fixes it, rather than misjudging it | See "Check 313" below; `bash scripts/live-checks/check313.sh [--id <the orchestrator's id>]` is the whole check **before** the reboot, and `bash scripts/live-checks/check313.sh --phase reboot --previous-nonce <the value the first block printed>` is what you run **after rebooting and starting a daemon again** — it repeats every reading and adds the nonce comparison. **You** run it, on your own machine, against a daemon you can lose, with an id that is **not `belong`** (refused before anything is read), and **no agent runs any step of it** | One loopback handshake, one local read and two `fugaro` commands: no model call, no run, no cloud call, nothing billable. **USER-RUN, NOT RUN.** |
 | 314 | The person's viewer role over `orchestrator/` ([`docs/cli-output-console-graph/`](cli-output-console-graph/implementation-plan-graph.md), its **CG12** row 314, the round-3 ruling **T2** of 2026-11-06 and its scheduling row **B4**; CG4 and CG6 merged on 2026-11-10): **T2 is UNVERIFIED until you run it** — no rules test can read a project's IAM, so whether `roles/firebasedatabase.viewer` on a **person's** credential covers the `orchestrator/` subtree is this reading and no other. `fugaro orchestrator ls --json` (CG4's shallow read of that subtree plus one lease read per id) **is** the read T2 is, made by your installation's own application-default credential; the check reads that credential's **type** first (a service account's, an impersonation's or a workload-identity federation's answers a different question and stops the run), reads the installation's own config file for the project its database belongs to (`budget.firebase_project`, else `gcp_project`) and reads the policy **on that project**, reads the roles the policy binds to `user:<the account>` or to its domain, and then reads the listing. A role that covers the whole project (`roles/owner`, `roles/editor`, `roles/firebasedatabase.admin`) bound beside viewer, or an `orchestrator/` holding no node, makes T2 **NOT MEASURED** (exit 2) rather than passed; a refused read is quoted and read as T2 answered **NO**. H7 — that no run or token identity reads or writes it — is CG6's pin, not this check's | See "Check 314" below; `bash scripts/live-checks/check314.sh [--project <name>] [--account <address>]` is the whole check. **You** run it, on a sandbox installation, **never `belong`** (refused in what you type and in what `doctor` answers), and **no agent runs any step of it** | One credential-file read, one `fugaro doctor --json`, one `gcloud projects get-iam-policy` and one `fugaro orchestrator ls --json`: no model call, no run, nothing billable, nothing written. **USER-RUN, NOT RUN.** |
 | 210 | A sampled run's shadow publishes nothing ([`docs/model-ab-testing/`](model-ab-testing/implementation-plan.md), its **Check 210** and task **A2.2**; **D550**–**D557**'s sampler — `ab.rate` and its ceiling, the daily cap, the champion's own hash of the run ID — **D554**'s publish mode `none`, and **A2.1**'s tests for the boundary this plan's Global constraints table states, "a challenger never pushes, never opens, updates or comments on a PR"): on the sandbox installation whose published project layer sets `ab.rate: 0.10` with one challenger named and whose repository carries no `ab.rate: 0` opt-out, small sandbox tasks launched until `fugaro runs ls` shows a pair (about ten launches expected at 0.10, the owner stopping at thirty, and **no flag forces a sample**) — and then, of that pair's two arms, exactly one `fugaro/<run-id>` branch on the remote and one pull request, both the champion's: the challenger's own record carries `ab.arm: challenger`, `ab.publish: none`, `ab.challenger` (the model the owner named) with `challenger_source: owner` and `outcome: none`, and **no** branch and **no** pull request, while **both** arms' patch objects are in the bucket — each fact read where it is written rather than from the row that claims it | See "Check 210" below; `bash scripts/live-checks/check210.sh --sandbox <a sandbox repository checkout> --yes` is the whole of it, its sibling test `scripts/live-checks/check210_test.sh` drives it against fake `fugaro`, `gcloud`, `git` and `gh` only and launches nothing, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project, account or region naming that installation is refused by name, and so is a coding agent's session); **no agent runs any step of it** | Up to **THIRTY sandbox runs** and what their tasks cost — each champion's implement stage and its review rounds, on the sandbox's own budget — plus the branches and pull requests those champions leave: **billable, and `--yes` is required** before anything is launched. Everything else is a read (the layer, `doctor`, both records out of the runs bucket, the remote's branch list, both patch objects, `fugaro ab --json`), and the launches stop at the **first** pair, so a sandbox already sampling at 0.10 costs a fraction of the bound. The teardown is part of the check: a launch that has not ended is stopped with `fugaro cancel --now` and read back, then every pull request this check's champions opened is closed and every branch they pushed is deleted, each read back. **OWNER-RUN, NOT RUN.** |
+| 120 | The reports arrive, from the first launch, at `fugaro-prod` and no other project ([`mobile/implementation-plan.md`](mobile/implementation-plan.md), its Phase 7 and its task **P7.5**; [plans/2026-10-19-mobile-telemetry.md](plans/2026-10-19-mobile-telemetry.md) §12 is the authority for the text, §2.2 for the numbers being the first free ones after every claim, and the phase's merged code is `mobile/app.config.js`, `mobile/firebase.json` and `mobile/src/telemetry/`): a **signed build of the app carrying the reporters** (Check 89's path), installed on a **real device** and launched with **nothing touched** — no sheet, no switch, no prompt — watched in the Firebase console, where the arrival is read **at the first launch** and **for `fugaro-prod` and for no other project** — on this tree that is **Analytics' automatic `first_open` and `session_start`**, the app's own senders being unwired and Crashlytics recording no launch that does not crash; then the two negative halves, which are what the check is for: the shell's statement is the one `mobile/src/telemetry/notice.js` holds, with the `/privacy/` URL it carries drawn as **text** — the app has **no link opener**, so the URL is text whatever the host list says and answering **D124** does not change that (the section carries the dated correction to §12) — and the **built artifact's merged manifest declares no `AD_ID` permission**, read from the artifact rather than the source | See "Check 120" below; **you** run it, at your own terminal, on your own device, with your own EAS project, your own store credentials and your own Firebase console — Check 89's build is the build it reads, and this work writes no script — **never `belong`**, and **no agent runs any step of it** | One signed build and one installation on one device, plus the minutes the console takes to show an event: **no run, no job, no model call and no dollar** — the build and the device are your own, and the app's own reports are the only bytes the check sends, to the project you operate. The link half waits on a task that grows the app's link opener — the shell draws the URL as text, so the owner's host list naming `fugaro.dev` is not what it waits on; the event half is written against **the build that ships**, because the owner's ruling of 2026-10-30 drops Analytics (**T3.1** builds it, **T0.1** amends the plan), and no merged task wires the app's own senders — step 1 says what has to exist first. **OWNER-RUN, NOT RUN.** |
+| 121 | A real crash reaches `fugaro-prod`, and nothing in the report names anything ([`mobile/implementation-plan.md`](mobile/implementation-plan.md), its Phase 7 and its task **P7.5**; [plans/2026-10-19-mobile-telemetry.md](plans/2026-10-19-mobile-telemetry.md) §12 for the text and §7 for the ban list and the redaction rule; the merged code is `mobile/src/telemetry/breadcrumbs.js`, which takes a constant from its own list or the text through `shared/digest`'s `redact`): crash the app deliberately on a freshly installed device, and the report appears in **Crashlytics under `fugaro-prod`** — with **no message text, no mailbox key, no account id, no `authUid`, no project id, no token and no MAC** in its breadcrumbs, its custom keys, its logs or its device fields, **no `setUserId`** and **no advertising identifier** — and then the control, which is the half that proves the reporting is the SDKs': **the same crash on the first internal build, which carries neither SDK, produces no report at all** | See "Check 121" below; **you** run it, at your own terminal, on your own two builds and one device, with your own Firebase console — no script of this work's — **never `belong`**, and **no agent runs any step of it** | Two builds, one device and one deliberate crash: **no run, no job, no model call and no dollar**, and nothing is created in any project by the check — the reports are the builds' own. Its first half is read against the posture the build carries: the plan wrote it as the always-on answer, and the owner's ruling of 2026-10-30 (**D731**) makes crash reports **on by default and opt-out**, built by **T3.1** after **T0.1** amends the plan, so the section says which build each half is read on. **OWNER-RUN, NOT RUN.** |
+| 122 | The two store forms and the live privacy statement match what the app sends ([`mobile/implementation-plan.md`](mobile/implementation-plan.md), its Phase 7 and its task **P7.5**; [plans/2026-10-19-mobile-telemetry.md](plans/2026-10-19-mobile-telemetry.md) §12 for the text, §8.1 and §8.2 for the two forms category by category and §8.3 for the page being already live and already ahead of the build): Play's **Data safety** form and the App Store **privacy label** as you answered them, read **against the traffic observed in 120 and 121** — every ticked category justified by something seen, and the over-declared ones recorded **as** over-declared, in your own words — and then `https://fugaro.dev/privacy/`, the URL both listings point at, read **sentence by sentence** against the build: every provider and category it names is one the app sends, and every category the app sends is one it names | See "Check 122" below; **you** run it, in your own Play console, App Store Connect and browser, with the build 120 and 121 measured — nothing here is an agent's, and no script of this work's exists — **never `belong`**, and **no agent runs any step of it** | No build, no device, no run and no dollar: two consoles and one page, read against readings you already have. Its two store forms are re-answered by **T3.2** once **T3.1** has shipped the owner's ruling of 2026-10-30 (Analytics dropped, crash reports opt-out), so the section says which answers it holds the build to and which it waits for. **OWNER-RUN, NOT RUN.** |
 | C0 | The console-coordinator page's reads, timed and sized ([`docs/console-coordinator-v2/`](console-coordinator-v2/implementation-plan.md) §C0, and its [`spec.md`](console-coordinator-v2/spec.md) §2.2, whose `(unmeasured)` cells are what this produces; **C0 is a plan task and not a register number — it claims none and reserves none**): `fugaro runs ls --json --since 24h`, `--since 7d`, `--since 0`, `--since 24h --limit 50` and `--since 24h --limit 20` (both limits, because the plan's own row names 50 while the spec's halted-or-failed-job cell reads 20), `coordinator status --from-store --all --json` **once per installation named** — that document's size is a function of the repository count, so two installations give two points on the curve the spec's `~724 KB` is one of — `plan status --json --all` once per checkout named, and `budget show --json`: each run the way the console spawns it, each timed with bash's own `TIMEFORMAT` and sized by the document's own length on stdout | See "Check C0" below; `bash scripts/live-checks/check-c0.sh --project <name> [--project <name>...] [--checkout <path>...]` is the whole of it — a FACT row per read, a table of bytes and seconds, and one `CELL` line per read in the wording the spec's cells need — and **you** run it, on an installation you name, never `belong` (a project or a checkout naming that installation is refused before any read is made); **no agent runs any step of it** | Nothing billable and no model call. **Every command it runs is a read** — the runs listing, the stored view, the plan walk and the budget document — so there is nothing to tear down and the `restore` row says so; the only thing it removes is its own scratch directory, from its exit trap even on a failed read or a Ctrl-C. `plan status` is the one read that is not a single call: it walks the checkout and asks the forge about the pull requests its tasks carry, one `gh` per joined pull request, at most 32 (`planMaxLookups`). **USER-RUN, NOT RUN.** |
 | 310 | The CLI's default output at a real terminal, on macOS ([`docs/cli-output-console-graph/`](cli-output-console-graph/implementation-plan-output.md), its task **CL12** and the guarantees **G1**–**G8** that plan's **CL5b**, **CL9** and **CL10** were written to, whose own table names the five commands below): `fugaro update` at a real terminal draws the colour and the line in flight and prints one line per step with a closing line and an exit status that agree with it (G1, G3, G4); `fugaro setup --plan-only` prints the plan view, and its log holds the same rows, whole and uncoloured (CL5a); `NO_COLOR=1 fugaro update` and `fugaro update \| cat` print every step with no escape sequence and no carriage return (G1, G4); `fugaro update --json` puts one document on stdout and the account on stderr (G2); a forced failure inside a stage prints the step's name, the last lines of the stage's own output and the log's path, and its log is 0600 inside a 0700 directory and holds what the screen did not (G5, G8); and the retention rule removes the oldest log past 14 days or past the newest 50 per command name and touches nothing else — another command's log, a link, a directory, a name that is not the sink's (G6); `fugaro doctor --json` files no log at all (G7) | See "Check 310" below; `bash scripts/live-checks/check310.sh` is the whole of it — one idempotent script, one `PASS`/`FAIL`/`INFO` line per fact, and `--dry-run` to print what it would run without running any of it — and its sibling test `scripts/live-checks/check310_test.sh` drives it against a fake `fugaro` and a fake `terraform` only; **you** run it, on your own machine and your own terminal, against an installation the check reads from `fugaro doctor --json` or you name with `--installation`, and an installation the register refuses by name — `belong`, `belong-*`, `fugaro-dev`, `fugaro-belong` or `edge-devel-dimi` — or a project naming `belong`, `fugaro-dev` or `edge-devel-dimi`, is refused before the first `fugaro update` and before any call at all when you name it yourself (otherwise `fugaro doctor --json` is the read that names it); **no agent runs any step of it** (a coding agent's session is refused outright) | Four `fugaro update` runs and one `fugaro setup --plan-only`, every one of them a re-converge of an installation that already exists: on a converged one each applies nothing and costs nothing billable, and **no model call is made by any step of this check**. The forced-failure run writes nothing at all — its `terraform` is a fake that answers the version question, refuses the rest, and leaves one marker in the check's own scratch directory and nothing anywhere else. Nothing is created and nothing is granted; the only writes are the log directory and the check's own scratch directory, whose 54 seeded logs are removed again, and any of your own logs the retention rule removes while the check runs are copied aside before its first `fugaro` call and put back byte for byte. **USER-RUN, NOT RUN.** |
 | 311 | The same default output on Windows — Windows Terminal and the legacy console ([`docs/cli-output-console-graph/`](cli-output-console-graph/implementation-plan-output.md), its task **CL12** and its own 311 row; the reconciliation's **T4** and **T4(a)**, **D1355**, and the sentence `internal/report/style.go` carries — the ANSI sixteen are what every terminal draws and what the legacy Windows console draws "once virtual terminal processing is on (Check 311)"): whether both consoles draw the colour and the line in flight the reporter draws at a real terminal, whether `NO_COLOR` set to anything and a pipe turn both off there too with every step still printed, whether `--json`'s stdout is one document a Windows shell parses, and — the reading this check exists for — whether the legacy console draws the escapes or prints them, since **nothing in this tree calls `termenv`'s `EnableVirtualTerminalProcessing`** | See "Check 311" below; the steps are the same commands typed in each console, by **you**, on a Windows machine with the CLI installed, and **no agent runs any step of it** — there is **no script** for this one: it is the procedure below, because the subject is a console on a machine no test in this repository can reach | One installation's own `fugaro update` runs in each console, on an installation that is already converged: each applies nothing and **no model call is made**. Nothing is created, granted or deleted, and the log directory is the only thing written. A legacy console that prints the escape sequences is the finding this check exists to make — and it is a **code** decision (the virtual-terminal call), not a reason to edit this row. **USER-RUN, NOT RUN.** |
@@ -15502,6 +15541,438 @@ machine's, so the only thing to clean up is `%TEMP%\check311` if you want it gon
 one, paste the closing line of `fugaro update` from each console, the one-liners' output (`False`, `False`, and the
 parsed document), and — if the legacy console printed escapes — the two lines exactly as they appeared. That is what
 says whether the reporter's colour rule holds on Windows, and it is the whole of what this check decides.
+
+## Check 120: the reports arrive, from the first launch, at `fugaro-prod` and no other project (a signed build carrying the reporters on a real device, your own Firebase console and your own store accounts; run by you; NOT RUN)
+
+**NOT RUN.** Written by **Task P7.5** for the mobile telemetry phase
+(`docs/mobile/implementation-plan.md`, its Phase 7; the authority for this check's text is
+[plans/2026-10-19-mobile-telemetry.md](plans/2026-10-19-mobile-telemetry.md) §12, with §2.2 for the
+numbers, §4.2 for the flags, §5 for the project and §6 for the shell), and written here because
+this is the file the owner runs live checks out of. It is the first of the phase's three readings no
+hermetic test can take: `mobile/src/app-config.test.js` and `mobile/src/app-config.ids.test.js` read
+the plugin list, the ad-ID walk and the identities out of the **source**,
+`mobile/src/telemetry/analytics-calls.test.js` scans the app's own code for the calls the
+allow-list refuses, and `mobile/src/telemetry/events.test.js` drives the event module against a
+**fake port** — and none of them has a device, a network, a native SDK or a store build. **No agent
+runs any step of it**: every step below is yours, at your own terminal, on your own device, with
+your own EAS project, your own store credentials and your own Firebase console.
+
+**What this check measures.** Four readings. **First, that the reports arrive at all, and at the
+project the owner operates** — **`fugaro-prod`** and no other: the app's own events in that
+project's console, and none of them in any other Firebase project you have (an installation's, the
+sandbox's). **Second, that they arrive at the first launch** rather than at any later moment: the
+plan wrote this as its always-on answer, and the owner's ruling of **2026-10-30** leaves the arrival
+at the first launch where it is while making the posture **on by default and opt-out** — so what a
+first launch shows is the default, not a consent step. **Third, the shell**: the paragraph the app
+shows is the one `mobile/src/telemetry/notice.js` holds, rendered by `mobile/src/app/root.js` as the
+shell's last child, carrying **no control** that turns the reports off, and the `/privacy/` URL
+beside it. **Fourth, the artifact**: the built app's **merged manifest declares no `AD_ID`
+permission**, read from the artifact rather than from the source — so the identifier the page
+promises is absent is absent in the build a store holds.
+
+**What this check is not.** It is not the **static** half of the same facts: the four collection
+switches in `mobile/firebase.json`, the plugin list and the ad-ID walk in `mobile/app.config.js`, and
+the scan that refuses a collection call in the app's source are all read by tests on this tree, and
+what is left to this check is the **built artifact** and a **real console**. It is not the **store
+path** — that is Check 89's, and this check reads the build Check 89 produces without repeating it.
+It is not a reading of a **crash** or of what the crash report holds: that is Check 121. It is not
+the labels or the page: that is Check 122. And it is not a measurement of **which** screens a person
+reaches — the `screen_shown` names are the app's own screen set (§7.2's closed enum), and this check
+reads that they arrive, not that they are interesting.
+
+**What has to exist before it runs, and two of these are not true of this tree.**
+
+- **A build that carries the reporters and the native config.** The two identity variables
+  (`FUGARO_IOS_BUNDLE_ID`, `FUGARO_ANDROID_PACKAGE`) exported in your shell, and the two **file**
+  variables (`GOOGLE_SERVICES_JSON`, `GOOGLE_SERVICE_INFO_PLIST`) set in the EAS environment the
+  profile names — a build whose resolved config carries no readable native config file stops in the
+  guard rather than building an app with dead reporting (P7.1b). Check 89's command is the build.
+- **The project and its two apps.** `fugaro-prod` exists and the owner creates the two Firebase apps
+  in it by hand (§5) — no step here creates a project, a member or a key, and no service account may
+  be granted any Analytics or Crashlytics read.
+- **The senders, wired — and nothing wires them today.** P7.3's module writes to a port shaped like
+  the SDK's own surface, and `mobile/index.js` is where that port is wired: it is the one file that
+  knows what a device is, and **no merged task of the phase wires it**, so a build made from this
+  tree emits no event of the app's own — what step 2 reads in `fugaro-prod` on such a build is
+  **Analytics' own automatic events**, `first_open` and `session_start`, which the SDK sends with no
+  code of the app's because `mobile/firebase.json` sets `analytics_auto_collection_enabled: true`.
+  **Crashlytics sends no record of a launch that does not crash** — it reports crashes and non-fatal
+  errors, so a clean first launch leaves its view empty, and an empty Crashlytics view is this
+  build's expected state rather than a finding. This is stated here rather than left for you to
+  discover, and the wiring is a task no phase has taken.
+- **The ruling of 2026-10-30, read against the build.** The owner's ruling drops **Firebase
+  Analytics** from the app and makes crash reports opt-out; task **T0.1** amends the plan's text and
+  its scan, task **T3.1** is the build, and task **T3.2** re-answers the two store forms
+  ([review-levels-ab-jobmax/implementation-plan.md](review-levels-ab-jobmax/implementation-plan.md)).
+  **None of the three has landed.** So the event half of the first reading is the plan's, written
+  against a build that still carries Analytics — and on **this** tree Analytics is the only thing a
+  clean launch sends at all, Crashlytics reporting no launch that does not crash. After T3.1 the app
+  carries no Analytics and a first launch that does not crash sends **nothing**: the first-launch
+  arrival can then be read only from a **deliberate crash or a non-fatal error**, which is **Check
+  121**'s path, so step 2's first reading is taken on a build that still carries Analytics (this
+  tree's), and on T3.1's build the first-launch reading is Check 121's.
+- **The link half cannot pass on this tree, and the owner's host list is not what holds it back.**
+  The app has **no link opener at all**: `mobile/src/app/root.js` draws what `notice()` returns as
+  **text**, unconditionally, which `mobile/src/telemetry/notice.js` states of itself — "the app has
+  no opener today, so `mobile/src/app/root.js` draws the URL as text whatever the answer".
+  `shared/url`'s shipped `DEFAULT_HOST_ALLOW_LIST` is **empty** until you answer **D124**, so
+  `privacyLink` returns the refusal `allow-list-empty` — and **answering D124 does not turn the URL
+  into a link**, because the opener is a task **no phase has taken**, the way no merged task wires
+  the event senders above. **Dated correction (2026-11-14):** the plan's **§12** and its **§6** read
+  the text-drawn URL as D124's state alone, and that is not enough — the link half of step 4 is run
+  once a task grows the opener, so until one does, step 4 reads the **string** and expects **text**,
+  and a URL drawn as text is this tree's own state rather than a broken app.
+
+**Method.** One build, one device, one launch and three reads; nothing is created in any cloud
+project, and no script of this work's exists for any of it.
+
+1. **Build the app that carries the reporters.** `eas build --profile internal` from `mobile/`, with
+   the two identity variables exported and the two file variables set in the EAS environment the
+   profile reads (`mobile/README.md`, "Building for internal testing"). **FACT:** the build ends
+   without an error and the artifact for your device's platform is produced. **What failing looks
+   like:** the build stops in the config, naming one of the two native config variables and the
+   platform — that is the guard doing its job, and it is a stop before a build rather than an SDK
+   that reports nothing.
+2. **Install it, launch it, touch nothing, and watch the console.** Install the artifact on a device,
+   open the app, and **touch nothing**: there is no sheet, no switch and no prompt. In the Firebase
+   console of **`fugaro-prod`**, look for the app's own traffic at this first launch. **FACT:** the
+   first launch's traffic is in `fugaro-prod` — where the senders are wired, the app's events
+   (`app_launch`, then a `screen_shown` as each screen is reached;
+   `mobile/src/telemetry/events.js`'s seven-name allow-list, §7.2) — and it is there **at the first
+   launch** rather than at any later moment. **On a build from this tree the arrival to read is
+   Analytics', not the app's and not Crashlytics':** the app's events need the wiring no merged task
+   has done, and **Crashlytics reports crashes and non-fatal errors only — a launch that does not
+   crash leaves no record in it at all**. What this build sends at a clean first launch is
+   `first_open` and `session_start`, which the Analytics SDK collects by itself
+   (`mobile/firebase.json`'s `analytics_auto_collection_enabled: true`); read them in **DebugView**
+   or in the realtime view, and **leave the Crashlytics view for Check 121**, where the crash that
+   fills it is deliberate. **Two things this step reads against, stated rather than assumed:** the
+   senders (above — no merged task wires them, so on this tree the arrival is Analytics' automatic
+   events), and the owner's ruling of 2026-10-30, after whose build (T3.1) Analytics is gone and a
+   first launch that does not crash sends **nothing** — the first-launch arrival is then read from a
+   **deliberate crash or a non-fatal error**, which is **Check 121**'s path, and this step's first
+   reading is taken on a build that still carries Analytics. **What failing looks like:** **nothing
+   at all** in `fugaro-prod` from an app that was launched, on an artifact that carries the reporters
+   and a config that resolved them — not even Analytics' `first_open` — the failure this check exists
+   for, and the one an app whose native config was silently dropped produces. **Read again before
+   calling it:** Analytics reports on its own schedule, so an event that has not been reported yet
+   and one that was never sent look alike in a console read too early. **On T3.1's build "nothing at
+   all" is the expected state, not this failure**: without Analytics a clean launch sends nothing,
+   and the first-launch reading there is Check 121's.
+3. **Read every other project, and find nothing.** In the same console, open every other Firebase
+   project you have — an installation's own, the sandbox's — over the same window. **FACT:** no event
+   of the app's and no crash of the app's is in any of them — on a build from this tree the same
+   reading is taken of **Analytics' automatic events**, which is what step 2 finds in `fugaro-prod`
+   and what must be in no other project. **Why this is a step of its own:** "the
+   app reports to `fugaro-prod`" is two claims, and the second — *and to no other project* — is the
+   one an installation's config could quietly falsify, because the app signs in to an installation's
+   own Firebase for other reasons entirely. **What failing looks like:** the app's traffic in an
+   installation's project, which is a finding for this plan's owner and not a misconfiguration of
+   yours.
+4. **Read the shell, and the sentence in it.** Open the app's first screen again and read what it
+   says about the reports, then read the URL beside it. **FACT:** the paragraph is the one
+   `mobile/src/telemetry/notice.js` holds — what is sent, to whose project, what a report holds, why
+   it is read, and the three things never sent — and the app carries **no control** that turns the
+   reports off. The string on screen is `https://fugaro.dev/privacy/`, and it is **text** — the app
+   has no link opener, so it is drawn as text **whatever the host list says**, **D124** answered or
+   not (**dated 2026-11-14**: the plan's §12 reads this as D124's state alone; the opener is a task
+   no phase has taken, so this step reads the string and not a link). **What has moved under the
+   ruling of 2026-10-30:** the statement this build carries makes **no claim about how collection is
+   turned off, in either direction** —
+   the clause the plan wrote for its always-on answer is gone, and the opt-out control does not exist
+   yet — so this reading is re-run against the build **T3.1** produces, where the app carries the
+   switch and the sentence beside it. **What failing looks like:** a paragraph that is not the one
+   the module holds, or a control this build should not have; a URL drawn as text is **not** a
+   failure — it is this tree's own state, and the reason the link half is not read here.
+5. **Read the built artifact's merged manifest for `AD_ID`.** Take the artifact you built — the app
+   bundle or the APK, not the checkout — and read its merged manifest (for an Android App Bundle,
+   bundletool's manifest dump; for an APK, `aapt2 dump xmltree --file AndroidManifest.xml`). **FACT:**
+   `com.google.android.gms.permission.AD_ID` is **absent** from the merged manifest, which is the
+   removal `mobile/app.config.js` writes through Expo's own blocked permissions and the one reading
+   that cannot be taken from the source. **On iOS**, read the Podfile the build generated for the
+   analytics variant: it carries `$RNFirebaseAnalyticsWithoutAdIdSupport = true` and links no
+   `AdSupport` framework — §14's first **UNVERIFIED** row, read at the first store build that carries
+   the SDKs, which is this one. **What failing looks like:** the permission present in the merged
+   manifest — a build a store reads as "this app uses the advertising id", against a page that
+   promises the opposite.
+
+**Passes when:** the build produces an artifact; a first launch puts the app's own traffic in
+`fugaro-prod` and at the first launch — on a build from this tree that traffic is **Analytics'
+automatic `first_open` and `session_start`**, the app's own events needing the wiring no merged task
+has done and Crashlytics recording no launch that does not crash; no other Firebase project holds
+any of it; the shell shows the
+statement the module holds with no control that stops the reports, and the URL is the `/privacy/` one
+**drawn as text**, whatever the host list says — this tree has no link opener, so the link half is
+not read here; and the artifact's merged manifest declares no `AD_ID` permission and the iOS build
+links no `AdSupport`.
+
+**Fails when:** the build stops in the config guard, or produces no artifact; nothing reaches
+`fugaro-prod` from a launched app whose artifact carries the reporters — read after Analytics' own
+reporting window, and **not** read on a T3.1 build, where a clean launch sends nothing and the
+first-launch arrival is **Check 121**'s; the app's traffic appears in another project; the shell's paragraph is not the module's, or a control that stops the reports is
+there; or `AD_ID` is in the merged manifest, or `AdSupport` is linked.
+
+**Paste back** (no secret, no value of any variable, nothing from a project): the platform and the
+profile you built; the artifact's file name and whether the build reported signed; what the console
+of `fugaro-prod` showed at the first launch and roughly when, and what the other projects showed; the
+shell's paragraph as you read it on the device, and whether the URL was a link or text; and the merged
+manifest line for `AD_ID` as your tool printed it — present or absent, and the tool you used. Plus
+your device and OS version, the date, and the app's version and build number. Until this check runs,
+whether a real device's first launch reaches `fugaro-prod` is **UNVERIFIED**, and the row stays
+**NOT RUN**.
+
+**Restore.** Nothing is created in any cloud project by the check: no project, no member, no key, no
+run and no job. What the check leaves is a build and an installed app.
+
+- **The build and the installation are yours to keep or delete**: remove the app from the device and
+  delete the build from your EAS project if you do not want it, and note that the **two native
+  config files** the build used are EAS environment files, not files in any checkout — nothing here
+  writes one to disk.
+- **The app's own reports are not retractable**: a crash record in `fugaro-prod` and an event in its
+  Analytics property are what the console holds, and neither store offers a "forget this
+  installation" that this check should use — a real device's report is the point of the reading.
+- **Delete nothing in `fugaro-prod`** on this check's account, and never touch `belong`: the only
+  projects this check reads are `fugaro-prod` and the others you already have.
+
+**Cost.** One signed build, one installation on one device and the minutes the console takes to show
+an event: **no run, no job, no model call and no dollar**, and nothing billable beyond the build and
+the device, which are your own. The app's reports are the only bytes the check sends, to the project
+you operate.
+
+## Check 121: a real crash reaches `fugaro-prod`, and nothing in the report names anything (a signed build carrying the reporters, one real crash on a fresh installation, and the Crashlytics console; run by you; NOT RUN)
+
+**NOT RUN.** Written by **Task P7.5** for the same phase and the same authority as Check 120
+(`docs/mobile/implementation-plan.md`'s Phase 7; [plans/2026-10-19-mobile-telemetry.md](plans/2026-10-19-mobile-telemetry.md)
+§12 for the text, §7.1 for the ban list, §7.3 for the redaction rule and §14 for what stays
+unverified). Its **static** half is on this tree: `mobile/src/telemetry/breadcrumbs.js` takes either
+a constant from the module's own list or the text through `shared/digest`'s `redact`, and
+`mobile/src/telemetry/analytics-calls.test.js` and `events.test.js` hold the ban list and the
+never-send rule. What no test has is a **crash**: the redaction is a property of a report that only
+exists after one, on a device, through a native SDK. **No agent runs any step of it** — the crash is
+yours, the device is yours, and the console is yours.
+
+**What this check measures.** Two readings. **First, that a real crash reaches `fugaro-prod`, and
+that the report names nothing.** The report appears in Crashlytics under that project, and its
+breadcrumbs, its custom keys, its logs and its device fields contain **no message text, no mailbox
+key, no account id, no `authUid`, no project id, no token and no MAC**; `setUserId` is absent from
+it; and **no advertising identifier is in it**. **Second, the control**: the same crash on the **first
+internal build**, which carries neither SDK, produces **no report at all** — which is what makes the
+first reading a fact about the SDKs rather than about something else in the app.
+
+**What this check is not.** It is not a **fuzz** of the redactor: the awkward inputs the redactor is
+fed — a message carrying a token shape, a home path and a repository name — are
+`analytics-calls.test.js`'s and `events.test.js`'s, and this check reads the report a real crash
+produced. It is not the allow-list's own reading — that is Check 120's. It is not a claim that the
+report is **empty**: Crashlytics carries what the SDK carries by default (the device model, the OS
+version, the app's own version and the frames of the crash), and the ban list is about the things
+that **name** something, not about the report being short. It is not the **store's** view of the
+crash: nothing here reads a store console. And it is not a **repeated** reading: one crash on each of
+two builds is the whole of it, and a second crash proves nothing further.
+
+**What has to exist before it runs.**
+
+- **Both builds.** The build Check 120 made, and the **first** internal build — the one that carries
+  neither SDK (the plan's §9 answer) — installed on the same device, one at a time. The first build
+  is a build of a commit before the phase's packages landed, or a profile built without the plugin
+  entries; what matters is that its artifact carries neither reporter.
+- **A way to crash the app deliberately.** The app has no settings screen and no debug menu of its
+  own, so the crash comes from the build's own affordance: a development build's way of forcing a
+  crash, or a debug-only trigger you are willing to have on the device for the length of the check.
+  **This step is yours and no agent does it.**
+- **The posture the report is read under.** The plan wrote this check around its always-on answer;
+  the owner's ruling of **2026-10-30** makes crash reports **on by default and opt-out**, and the
+  build that carries the switch is task **T3.1**'s (after **T0.1** amends the plan). So on a build
+  before T3.1 the report arrives with nothing consented to and nothing to consent to; on the build
+  T3.1 produces it arrives because the reports are on and you have not turned them off. **Say in your
+  paste-back which of the two you ran**, because the two are the same reading of a different posture.
+
+**Method.** Two installations, two crashes, one console. Nothing is created in the cloud, and the
+teardown is the two installations you removed.
+
+1. **Install the SDK-carrying build on a device you are willing to crash.** Install it fresh — not
+   over a previous installation — and open it once so it starts and reports. **FACT:** the app opens,
+   and the console of `fugaro-prod` shows the app's own traffic from that launch (Check 120's step 2).
+2. **Crash it deliberately, and let the app send.** Cause the crash, then open the app again briefly
+   so the report is sent. **FACT:** the crash appears in the Crashlytics console under
+   **`fugaro-prod`**, with the app's own version and build number, and it is the crash you caused
+   rather than another. **What failing looks like:** no issue appears after the app has run again —
+   a crash that never arrives is this project's worst failure mode, because the only other signal is
+   a user's prose.
+3. **Read the report for the things it must not name.** Open the issue and go through its parts: the
+   **breadcrumbs**, the **custom keys**, the **logs**, and the device fields. **FACT:** every one of
+   them is free of **message text, a mailbox key, an account id, an `authUid`, a project id, a token
+   and a MAC**; the breadcrumbs are the constants `mobile/src/telemetry/breadcrumbs.js` holds or text
+   that passed through `shared/digest`'s `redact`; **`setUserId` is absent**, so the report carries no
+   user identifier of the app's; and **no advertising identifier appears anywhere in it**. **What
+   failing looks like:** any of those values in any of those fields, or a user identifier on the
+   report — a finding for this plan's owner **and** a stop on shipping, because the page promises
+   none of them.
+4. **Read the second project once more.** In the same console, check that the crash is **not** in any
+   other Firebase project you have. **FACT:** the crash is in `fugaro-prod` and nowhere else.
+5. **Then the control: the same crash on the first build.** Install the first internal build — the
+   one that carries neither SDK (the plan's §9 answer) — on the same device, crash it the same way,
+   open it again, and wait as long as you waited in step 2. **FACT:** **no report of it appears
+   anywhere** — not in `fugaro-prod`, not in any other project. **Why this is the control:** it is
+   the half that proves the reporting is the **SDKs'** and not something else in the app, and without
+   it a report in step 2 says only that *something* sent one.
+
+**Passes when:** the deliberate crash on the SDK-carrying build appears in Crashlytics under
+`fugaro-prod` and in no other project; its breadcrumbs, custom keys, logs and device fields name
+nothing on the ban list; `setUserId` is absent from it; no advertising identifier is in it; and the
+same crash on the first internal build produces no report at all.
+
+**Fails when:** no report arrives from the SDK-carrying build; any of the banned values appears in
+any part of the report, or a user identifier does; an advertising identifier is in it; the crash
+appears in another project; or the first build produces a report — which would mean the reporting is
+not the SDKs' and the whole reading is about something else.
+
+**Paste back** (no message text, no account, no identifier, nothing from a project): the two builds
+and the commits or versions they were made from; how the crash was caused, in one line and without
+the text of anything; whether the report appeared, and roughly how long it took; what each part of
+the report held, described rather than quoted — "the breadcrumbs were the app's own constants" is
+the answer, and **no field's content itself**; whether `setUserId` was present, and whether any
+advertising identifier was; what the first build did; and which of the two postures above the build
+carried. Plus your device and OS version and the date. Until this check runs, whether a real crash
+reaches `fugaro-prod` at all, and whether a real report is free of the ban list, are **UNVERIFIED**,
+and the row stays **NOT RUN**.
+
+**Restore.** Nothing is created in the cloud: no project, no member, no key, no run and no job.
+
+- **The two installations go**: remove the first build and the SDK-carrying build from the device
+  when you are done, so the device is not left crashing on purpose.
+- **The reports stay**: a crash record in `fugaro-prod` is not retractable, and the check does not
+  try — the report is the reading. Do **not** delete the issue to tidy up: the next person to read
+  this row needs to know it was there.
+- **Never touch `belong`**, and read no other project but the ones you already have.
+
+**Cost.** Two builds, two installations and two deliberate crashes: **no run, no job, no model call
+and no dollar**, and nothing billable beyond the builds and the device. The app's own reports are the
+only bytes the check sends.
+
+## Check 122: the two store forms and the live privacy statement match what the app sends (your own Play console, your own App Store Connect, and the live page in a browser; run by you; NOT RUN)
+
+**NOT RUN.** Written by **Task P7.5** for the same phase and the same authority as Checks 120 and 121
+(`docs/mobile/implementation-plan.md`'s Phase 7; [plans/2026-10-19-mobile-telemetry.md](plans/2026-10-19-mobile-telemetry.md)
+§12 for the text, §8.1 for Play's Data safety form category by category, §8.2 for the App Store
+label, and §8.3 for the page being already live and already ahead of the build). It is the one
+reading of the three that **cannot be taken by any test at all**, and its two halves are why: a store
+form is a page in a console no Go test, no node test and no agent can open, and the live page is a
+URL whose words have to be read against a build rather than against a checkout. **No agent runs any
+step of it**: the two consoles are yours, your answers are yours, and so is the judgement of whether
+a sentence is true of the build.
+
+**What this check measures.** Two readings, and it is their **agreement** that is the check.
+**First, the two forms.** Play's **Data safety** form and the App Store **privacy label** as you
+answered them, read **category by category** against the plan's §8.1 and §8.2 — and against the
+**traffic 120 and 121 observed**, because a ticked category is a claim about what the app sends and
+the only evidence for it is a report or an event somebody saw. The two categories the plan records
+as **over-declared on purpose** (`User IDs`, `Other in-app messages`) are read as over-declared and
+written down in your own words, so that the next reader meets a decision rather than an error.
+**Second, the page.** `https://fugaro.dev/privacy/` — the URL both store listings point at — read
+**sentence by sentence** against the build: every provider and every category it names is one the app
+actually sends, and every category the app sends is one it names.
+
+**What this check is not.** It is not the **website's own gates**: `website/test/privacy.mjs` holds
+the page's app sentences to the plan and to `mobile/package.json` in both directions, and it passes
+on this tree — what a test cannot do is open the two consoles or decide whether a submitted form
+matches a build. It is not the **labels' text** as a document: the forms are answers in two consoles,
+recorded in your own notes, and the plan's §8 tables are what they are read against. It is not a
+reading of **which** categories the SDKs collect in the abstract: it is a reading of the app you
+measured in 120 and 121, so **run it after them**, and a category you cannot tie to something you saw
+is a category you should be able to say why you ticked.
+
+**What has to exist before it runs.**
+
+- **The two readings of 120 and 121**, because the first half is answered from them. With neither
+  run, this check reduces to reading two consoles, and the plan's rule is that the labels are
+  answered **from what the SDKs actually collect** rather than from what the SDKs document.
+- **The forms as you submitted them** — Play's Data safety answers and the App Store Connect privacy
+  answers — and your own notes of them, which is where they live: no file in this repository holds
+  them and nothing reads them.
+- **The build that is being submitted**, so that "what the app sends" has a referent: the page's app
+  paragraph is already **live** and already **ahead** of the build (it says so itself: earlier builds
+  of the app sent nothing at all), and the plan's §8.3 rule is that **the build does not ship until
+  the page and the build agree**.
+- **The owner's ruling of 2026-10-30, which re-answers both forms.** It drops **Firebase Analytics**
+  from the app and makes crash reports **opt-out**; task **T3.1** is the build that carries it and
+  task **T3.2** is the owner's own pass over the two forms in the two consoles
+  ([review-levels-ab-jobmax/implementation-plan.md](review-levels-ab-jobmax/implementation-plan.md)) —
+  Play's Data safety loses Analytics and Crash logs become optional. **Neither has landed**, so this
+  check as written holds the forms the plan's §8 answers describe, and the forms T3.2 leaves are read
+  the same way, against the same page and the same two readings. **Say which pair of forms you read.**
+
+**Method.** Two consoles and one page, and no command of this work's. Read them in this order, and
+read them **against each other** rather than one after the other.
+
+1. **Write down what the app sends, from the two readings you already have.** From 120: the events
+   the console showed, and whether anything arrived at all. From 121: the crash report and each part
+   of it. **FACT:** a short list — crash reports, or crash reports and usage events, plus what the
+   report holds — with **nothing on it that you did not see**. This list is what the two forms and
+   the page are read against, and writing it first is what keeps the reading about the app rather
+   than about the forms.
+2. **Read Play's Data safety form, category by category.** Open the form in the Play console and go
+   through the declarations against the plan's §8.1 table and against step 1's list. **FACT:** every
+   ticked category is justified by something on step 1's list, and the two over-declared categories
+   (`User IDs`, `Other in-app messages`) are ticked **and recorded as over-declared**, in your own
+   words — the plan's own note is that over-declaring in this direction is the policy risk worth
+   taking, and the record is what makes it a decision. **No Advertising ID type is declared in the
+   form**, which is a fact about the build that Check 120's step 5 reads from the artifact. **What
+   failing looks like:** a ticked category you cannot tie to anything you saw, or an Advertising ID
+   declaration beside a build whose manifest declares no `AD_ID`.
+3. **Read the App Store privacy label the same way.** Go through App Store Connect's answers against
+   the plan's §8.2 table and against step 1's list. **FACT:** the label ticked is the one the plan's
+   table gives — **Crash Data**, **Performance Data**, **Other Diagnostic Data**, **Device ID** and
+   **Product Usage** (as Product Interaction) for the events, with **User ID** and **Advertising
+   Data** **not** ticked — and every ticked type is one step 1 supports. **What failing looks like:**
+   a type ticked that the app does not send, or one the app does send left unticked.
+4. **Read the live page, sentence by sentence.** Open `https://fugaro.dev/privacy/` in a browser and
+   read its app paragraph word by word against step 1's list. **FACT:** the page's app paragraph and
+   step 1's list agree **in both directions** — every provider and category the paragraph names is
+   one the app sends, and every category the app sends is one the paragraph names — including the two
+   sentences no ruling moves: the app carries **no advertising identifier**, and the earlier builds
+   that carry no reporters **send nothing at all**. **What failing looks like:** a sentence about a
+   provider the app no longer carries (the one the ruling of 2026-10-30 makes true of the next
+   build), a category the app sends that the page does not name, or the reverse. **The build does not
+   ship until the two agree** — that is the plan's rule, and this step is where it is read.
+5. **Decide, and write down the decision rather than the doubt.** If the three agree, the check
+   passes and you are done. If they do not, the failing side is named: the **form** (re-answer it —
+   **T3.2** is that pass), the **page** (a website change, and its own gates move with it), or the
+   **build** (a finding for this plan's owner). **The mismatch you may not resolve by shipping** is a
+   page that names something the app sends and a form that does not, or the reverse: the page is
+   live, the store listing points at it, and the two are what a user reads before installing.
+
+**Passes when:** every ticked category on both forms is justified by traffic seen in 120 and 121;
+the two over-declared categories are recorded as over-declared, in your words, with no Advertising ID
+type or User ID ticked on the App Store label; and the live page's app paragraph and the build agree
+in both directions, sentence by sentence.
+
+**Fails when:** a category is ticked that nothing you saw justifies, or one is left unticked that
+something you saw does; an advertising-identifier or user-identifier type is declared over a build
+that carries neither; or the live page and the build disagree in either direction — a page naming a
+provider the app does not send, or an app sending a category the page does not name.
+
+**Paste back** (no secret, no account id, no screenshot of a console page if it would carry one): the
+list you wrote in step 1; the two forms as you read them — the categories ticked, the two you record
+as over-declared and why, and whether either console's own wording forced anything; the page's app
+paragraph as you read it, and which of its sentences you checked against which category; and, if the
+three did not agree, which side you decided was wrong and what you did about it. Plus the date, the
+build you were submitting, and which pair of forms you read. Until this check runs, whether either
+submitted form matches what the app sends is **UNVERIFIED** — the plan's §14 keeps it open — and the
+row stays **NOT RUN**.
+
+**Restore.** Nothing at all: this check reads two consoles and one public page and writes nothing
+anywhere but your own notes.
+
+- **The forms are not "restored"**: if you re-answered one during the check, that is the answer, and
+  the console keeps its history.
+- **Nothing on the page is changed by the check**, and no store listing, no submission and no release
+  is made by it — a submission is its own act, and the plan's rule is only that it waits until the
+  page and the build agree.
+- **Never touch `belong`**: no step here names it, and the two consoles are your own accounts.
+
+**Cost.** Two consoles and one page: **no build, no device, no run, no job and no dollar**. It is the
+one check of the three that costs nothing but the reading, and it is the one that decides whether
+what you are about to submit is true.
 
 ## Check 230: the author, the committer and the trailers, on GitHub and on Bitbucket (two sandbox repositories carrying `git.author: launcher`, a third with no such key, and their forges; never `belong`; run by you; NOT RUN)
 
