@@ -873,6 +873,8 @@ probe account carries predefined grants only).
 | 520 | A text-only coder reads a screenshot, on the vision model ([`docs/vision-model/`](vision-model/implementation-plan.md), its **Check 520** and task **V8**; **V1**'s `agent.models.vision`, **V2**'s `model_prices.*.image_tokens`, **V7**'s rewrite of the coder role, and **D2016** — which is why the state this measures is the coder priced **without** an image rate and not the plan's "with"): the sandbox repository's coder is priced without an image rate and `agent.models.vision` names a model that can read one, and one run whose task names a console `__screenshots__` PNG (the issue's own case, run `20261107-104613-b2af`) passes `implement` — and `fix`, where the recipe runs one — reaches its own `result.json`, and there every coder-role stage timing names the **vision** model's ID while `cost.model_by` carries that same model, so the split the issue is about is read from the record and not from the configuration; `fugaro diagnose <run> --json` prints the same split through the command an owner reads a run with | See "Check 520" below; `bash scripts/live-checks/check520.sh --sandbox <a sandbox repository checkout> --yes` is the whole of it, its sibling test `scripts/live-checks/check520_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call, and so is a coding agent's session); **no agent runs any step of it** | ONE sandbox run and what its task costs — the model spend of its coder-role stages, on the sandbox's own budget — plus the pull request that run opens: **billable, and `--yes` is required** before anything is launched. Every other call is a read (doctor, `models ls`, the run record, `diagnose`), and `CHECK520_MAX_MODEL_USD` turns the run's own figure into a criterion when you set it. The run's pull request and branch are left open for you to close. **OWNER-RUN, NOT RUN.** |
 | 521 | The early refusal, and the sentence an owner acts on ([`docs/vision-model/`](vision-model/implementation-plan.md), its **Check 521** and task **V8**; **V5**'s bootstrap refusal — "the coder can't read an image the task names" — and **D2005**, **D2006** and **D2001**): a repository whose coder is priced without an image rate and with **no** `agent.models.vision`, and a task whose text names a `.png`: the run is refused at **bootstrap**, before its first stage, so no stage's work is paid for and thrown away — the failure the refusal exists to remove; its record's `failure_class` is `config_invalid`, its `reason` names the slot to set and the price member that gives that slot's model an image rate, its stage list is **empty** and its cost is **zero** | See "Check 521" below; `bash scripts/live-checks/check521.sh --sandbox <a sandbox repository checkout>` is the whole of it, its sibling test `scripts/live-checks/check521_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call, and so is a coding agent's session); **no agent runs any step of it** | **NOTHING billable and no model call**: the run is refused at bootstrap, before its first stage, so no stage's work is paid for and the budget is not touched — which is why this check needs no `--yes`. It does start one Cloud Run job execution, and **nothing it launches outlives it**: a run that has not ended within `CHECK521_RUN_TIMEOUT_SECONDS` is cancelled with `fugaro cancel --now`, from the step that gives up on it and from the script's own exit trap. **OWNER-RUN, NOT RUN.** |
 | 292 | A catalog entry whose source names a build `context:` is built with the repository's files in it ([`docs/catalog-build-context/`](catalog-build-context/implementation-plan.md) §6, its **Check 292** and task **CB5**; that folder's **F22**, **F29**, **F30**, **F32** and **F33**, and **D1402**, **D1403**, **D1408** and **D1409**; the amendment it folds into is [`docs/project-image-catalog/context-design.md`](project-image-catalog/context-design.md), its §A5, §A6, §C3, §C4, §C5 and the fold-in at §11): one entry built from a repository's Dockerfile in a **subdirectory**, whose `COPY` reaches a file of the repository — the build the catalog could not run before this work — read back four ways: the built image **contains the copied file**, the record names **one** commit (`source_commit` and `context_commit` the same, and the image's `org.opencontainers.image.revision` that commit), the staged context **fires** the nightly decision with the `catalog-context` reason and the rebuild it submits is pinned to the staged commit, and after that rebuild the same entry decides **without** that reason. **What the plan's own step 4 cannot be run as written is the point of the section below:** the trigger's subject is the digest the operator's own copy **staged**, not the branch, so a pushed commit fires nothing by itself — the check is written against the code and says so | See "Check 292" below; **you** run it, on the **sandbox installation and the sandbox repository only, never `belong`**, from the sandbox repository's checkout, and **no agent runs any step of it** (there is **no script**: the check is the steps below) | One Cloud Build that runs (`fugaro image build <entry>`), one submitted-and-cancelled before its steps run (the staging that leaves the record behind), and the one rebuild the project's catalog check job submits when the entry fires: **all billable, and the rebuild is the point of the step**. Nothing is granted, no run is launched and no model is called, so there is no run spend. Two commits are pushed to the sandbox repository's branch and reverted (a third when step 5 loses its race with the build it cancels), and the entry, its staged objects, its record, its check state and its image are the check's own — the entry and its objects are removed in the Restore, the image is left in the shared registry (`fugaro image rm` never deletes one). **OWNER-RUN, NOT RUN.** |
+| 313 | CG13's endpoint on a real machine ([`docs/cli-output-console-graph/`](cli-output-console-graph/implementation-plan.md), its **CG12** row 313, its task **CG13b** and the decision **D1359**, all of 2026-11-06): the registry file the daemon writes under the state directory (`<UserDir state>/fugaro/run/<id>.json`) is mode **0600** in a mode **0700** directory and carries a **nonce** minted per start; nothing about it is judged by a **pid** — liveness is a **handshake** with the file's own token (the answer must read back the id and the nonce, which a port or a pid another process took over cannot) plus the **lock** the daemon holds for its life (an `flock` the kernel drops when the process dies); `fugaro graph --source local:<id>` answers and goes through `endpoint.Probe`; a `kill -9` of the daemon leaves a file the reader must judge dead, **remove**, and never let it touch a **live process that has taken the pid**; and a **reboot** mints a different nonce. The three things CG13b's tests can only fake are real here: a SIGKILL that leaves a file behind, an `flock` the kernel drops, and a loopback listener that answers. A daemon a login unit supervises (launchd's `KeepAlive`, systemd's `Restart=always`) restarts itself within 5 to 10 seconds, so the crash half wants one started **by hand**: where the daemon came back the check reports that half as **NOT MEASURED** (exit 2) with the one line that fixes it, rather than misjudging it | See "Check 313" below; `bash scripts/live-checks/check313.sh [--id <the orchestrator's id>]` is the whole check **before** the reboot, and `bash scripts/live-checks/check313.sh --phase reboot --previous-nonce <the value the first block printed>` is what you run **after rebooting and starting a daemon again** — it repeats every reading and adds the nonce comparison. **You** run it, on your own machine, against a daemon you can lose, with an id that is **not `belong`** (refused before anything is read), and **no agent runs any step of it** | One loopback handshake, one local read and two `fugaro` commands: no model call, no run, no cloud call, nothing billable. **USER-RUN, NOT RUN.** |
+| 314 | The person's viewer role over `orchestrator/` ([`docs/cli-output-console-graph/`](cli-output-console-graph/implementation-plan.md), its **CG12** row 314, the round-3 ruling **T2** of 2026-11-06 and its scheduling row **B4**; CG4 and CG6 merged on 2026-11-10): **T2 is UNVERIFIED until you run it** — no rules test can read a project's IAM, so whether `roles/firebasedatabase.viewer` on a **person's** credential covers the `orchestrator/` subtree is this reading and no other. `fugaro orchestrator ls --json` (CG4's shallow read of that subtree plus one lease read per id) **is** the read T2 is, made by your installation's own application-default credential; the check reads that credential's **type** first (a service account's, an impersonation's or a workload-identity federation's answers a different question and stops the run), reads the installation's own config file for the project its database belongs to (`budget.firebase_project`, else `gcp_project`) and reads the policy **on that project**, reads the roles the policy binds to `user:<the account>` or to its domain, and then reads the listing. A role that covers the whole project (`roles/owner`, `roles/editor`, `roles/firebasedatabase.admin`) bound beside viewer, or an `orchestrator/` holding no node, makes T2 **NOT MEASURED** (exit 2) rather than passed; a refused read is quoted and read as T2 answered **NO**. H7 — that no run or token identity reads or writes it — is CG6's pin, not this check's | See "Check 314" below; `bash scripts/live-checks/check314.sh [--project <name>] [--account <address>]` is the whole check. **You** run it, on a sandbox installation, **never `belong`** (refused in what you type and in what `doctor` answers), and **no agent runs any step of it** | One credential-file read, one `fugaro doctor --json`, one `gcloud projects get-iam-policy` and one `fugaro orchestrator ls --json`: no model call, no run, nothing billable, nothing written. **USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -12643,6 +12645,163 @@ refusal named.
 
 **Paste back:** the `tools/list` answer, the two documents, the scope refusals, the role's permission list and the policy read-back — and
 **never a credential, and never a token**.
+
+## Check 313: CG13's endpoint on a real machine — one script you run (your own machine and a daemon you can lose, an id that is not `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **CG12** of the cli-output-console-graph plan
+([`docs/cli-output-console-graph/implementation-plan.md`](cli-output-console-graph/implementation-plan.md), its **CG12** row 313, its task **CG13b** and the decision **D1359**, all of 2026-11-06; the local scope's preference for a live endpoint is **CG13c** and **T5(a)**). CG13b's own tests hold the endpoint hermetically, and the three
+things they can only fake are what this check is for: a **SIGKILL** that leaves a file behind, an **`flock` the kernel
+drops** when the process dies, and a **loopback listener** that answers the handshake. It is **OWNER-RUN**: **no agent runs
+any step of it**, and an id naming the owner's own installation (`belong`) is refused before anything is read.
+
+**Run it:**
+
+```bash
+bash scripts/live-checks/check313.sh
+bash scripts/live-checks/check313.sh --id <the orchestrator's id>
+bash scripts/live-checks/check313.sh --phase reboot --previous-nonce <the value the first block printed>
+```
+
+The first form is the whole check before the reboot, and the id comes from the one registry file under
+`<state>/fugaro/run` — with more than one file the check **stops and lists them** rather than picking, because killing the
+wrong daemon is the one thing it must not do. The state directory is the one `localcfg.UserDir` resolves (`$XDG_STATE_HOME`
+where it is set and absolute, else `~/.local/state`, which is the answer on macOS too: the plan's row spells the expansion
+out because `${XDG_STATE_HOME:-...}` would read `/fugaro/run`). `--fugaro-flags '<flags>'` adds flags to every `fugaro`
+call, and `--dry-run` prints the plan and makes **no call at all**.
+
+**The reboot is the one manual phase.** Start a daemon (`fugaro orchestrator run`), run the check, then **reboot**, start a
+daemon again, and run the same script with `--phase reboot --previous-nonce <the value the first block printed>`: it repeats
+every reading and adds one — the registry file the new daemon wrote carries a **different nonce** than the first run's, which
+is the half of the nonce's meaning no single start can show (it is minted per start and never reused, D1359). A reboot also
+drops every lock and every listener of the previous boot, so the readings after it are of a fresh file that only the
+handshake and the lock decide.
+
+**What the daemon's supervisor does to the crash half.** The installed daemon is a **login unit** that restarts it
+(launchd's `KeepAlive`, systemd's `Restart=always` with `RestartSec=5`), so a SIGKILL of a supervised daemon is undone
+within about 5 to 10 seconds: a fresh process takes the lock and writes a fresh file at the same path. The crash half
+therefore wants a daemon **started by hand in a terminal**, and the check guards the other case rather than misjudging it —
+after the kill it compares the file it finds with the one it killed, and where a different file is there it records
+`crash-half` and reports the **crash half as NOT MEASURED (exit 2)** with the one line that fixes it: stop the unit, or
+start a daemon by hand. That is a stop and not a finding: the endpoint's live half still holds, and the row says so.
+
+**Reading the `CHECK 313 RESULT` block.** ONE block on stdout, a `FACT <key>: PASS|FAIL|INFO — <detail>` line per fact,
+ending `CHECK 313 RESULT END (exit N)`. The rows are, in order:
+
+- **`id`** — which orchestrator this run read, on the command line or read out of the one registry file, and that it is one a
+  `local:` scope names (CG1's own pattern: 40 characters of `[a-z0-9-]`, which is the limit CG13c names rather than widens).
+- **`belong`** — the id does not name the owner's own installation. A name that merely contains `belong` is refused too.
+- **`xtrace`** — this shell was not started with tracing on. `bash -x` prints the line that carries the endpoint's token, so
+  a shell that arrived tracing is stopped before the token is read.
+- **`state-dir`** — the state directory resolved the way `localcfg.UserDir` does, and the run directory read for its mode.
+- **`registry-file`** — the file exists, is a regular file and not a symlink, is mode **0600**, and sits in a mode **0700**
+  directory.
+- **`registry-fields`** — the document carries the id, the daemon's pid, the literal `127.0.0.1:<port>` the listener bound, a
+  32-byte token and a 32-byte **nonce** as hex, and a start time. The **nonce is printed** here (it is the half of the pair
+  that proves identity rather than admitting anything, and the reboot phase needs it); **the token never is**.
+- **`handshake`** — the check performs D1359's handshake itself: `GET http://<addr>/state` with `Authorization: Bearer <the
+  file's token>`, and the answer must carry `X-Fugaro-Orchestrator` equal to the id and `X-Fugaro-Nonce` equal to the file's
+  nonce. The token travels in a mode-0600 `curl` config file inside the run's own mode-0700 scratch directory and **never on
+  a command line** (`ps` shows a process's argv to every user on the machine — the pattern Checks 91, 300 and 361 use).
+- **`lock-held`** — the `<id>.lock` beside the file is **held**: an exclusive `flock` taken here must **fail**. That lock is
+  what the daemon holds for its life, and it is why the kernel — and not a pid — decides whether a file is removable.
+- **`daemon-pid`** — the pid the file names is really the daemon's: `ps -o command= -ww` carries `orchestrator` and `run`. A
+  file naming a process that is not the daemon **stops the run** instead of being killed, which is the reading that matters
+  more than any row below it.
+- **`graph-live`** — `fugaro graph --source local:<id> --json` answers while the daemon is live. This is the read that goes
+  through `endpoint.Probe`, and the local scope prefers the live endpoint (CG13c, T5(a)).
+- **`crash`** — the `kill -9` was made, and the process is gone.
+- **`crash-half`** — `INFO`, and it says which of the two cases this run was: the file found after the kill is still the dead
+  daemon's own (so the reading below is that daemon's and nothing else wrote it), or a **new daemon** a supervisor started
+  answered at the same path (so the crash half was **NOT MEASURED**).
+- **`graph-after-crash`** — the same scope read again after the kill: it must still answer, from the node or the cache, which
+  is the fallback T5(a) gives a daemon that is not running.
+- **`dead-file`** — the registry file is **gone**: the read that found the handshake failing and the lock free removed it.
+- **`lock-free`** — the lock is **free** — the kernel dropped it with the process, which is the whole reason the lock and not
+  the pid decides removability.
+- **`pid-reuse`** — a **live process that has taken the pid is never touched.** A pid from a previous boot is a number the
+  kernel hands out again on its own schedule, so the check does not wait for that lottery: it puts the dead daemon's **own
+  file** back, byte for byte, with the one field the reader must not consult replaced by the pid of a live process it starts,
+  and reads the scope once more. The reader must still judge it dead — nothing answers the handshake and the lock is free —
+  remove it, and leave that process **running and unsignalled**.
+- **`reboot-nonce`** — with `--phase reboot`, the new daemon's nonce differs from `--previous-nonce`, and with no
+  `--previous-nonce` the row records that it was not measured rather than passing.
+- **`endpoint`** — the verdict: the live half and the crash half, or the live half with the crash half named as not measured.
+- **`teardown`** — what this run left behind: the copy of the dead daemon's own registry is gone, the process it started to
+  hold the dead pid is gone, and there is nothing to start again (the daemon it killed stays killed).
+
+Exit `0` means every fact held; `1` means one did not (a mode, a handshake, a lock, a removal, or a live process this check
+had to leave alone — each row says which); `2` means the run could not tell (a guard stopped it, no daemon is running, the
+pid is not the daemon's, the daemon came back before the crash half's read, a tool is missing, an internal error ended it).
+
+**What it writes, and what it never does.** It signals exactly one process — the pid the registry file names, and only when
+its command line is the daemon's. It writes exactly one file outside its own scratch directory: the copy of the dead daemon's
+own registry described under `pid-reuse`, at the same 0600 in the same 0700 directory, removed by the read that judges it
+dead and by this run's own teardown if that read did not — and written **only where the crash half was measured**, so a daemon
+that came back never has its file overwritten. It creates no cloud resource, spends nothing and touches no project: the only
+network call is the loopback handshake. `CHECK313_WAIT_SECONDS`, `CHECK313_DECOY_SECONDS` and `CHECK313_CURL_SECONDS` bound
+the waits (10, 600 and 10) and exist so the script's own test can run the same code in a second or two.
+
+**Cost.** Nothing: one loopback handshake, one local read, two `fugaro` commands and one `kill -9`. No model call, no run, no
+cloud call. **Restore.** The run's own trap does it, a Ctrl-C included: the token file, the handshake's `curl` config file,
+the process it started and the scratch directory are removed and read back. What it does **not** undo is the `kill -9`,
+which is the point of it: **start a daemon again for the reboot phase**, or leave it to the login unit.
+
+**Paste back:** the whole block to the coordinator, and the `--phase reboot` block beside it. The block carries the **nonce**,
+which is meant to be pasted, and **never the token**: the `registry-fields` row prints the nonce and the check's own row says
+the token was read into a mode-0600 file and never printed.
+
+**What the live run cannot settle.** A pid that the kernel hands to another process by itself is a lottery this check does
+not wait for: it plants the dead file with a live pid instead, which reads the same behaviour (the reader consults neither)
+without depending on the machine's timing. A daemon whose supervisor restarts it makes the crash half unmeasurable, and the
+check says so rather than pretending. The hermetic half is `scripts/live-checks/check313_test.sh`, run from
+`scripts/live_checks_test.go` — a fake `fugaro` and a fake `curl` beside a real loopback daemon of the test's own, so the
+mode, the nonce, the handshake, the SIGKILL, the removed dead file and the pid a live process takes are all readings of
+processes and files the test owns — and **no agent ran any step of this check**.
+
+## Check 314: the person's viewer role over `orchestrator/` — one script you run (a sandbox installation, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **CG12** of the cli-output-console-graph plan
+([`docs/cli-output-console-graph/implementation-plan.md`](cli-output-console-graph/implementation-plan.md), its **CG12** row 314, its scheduling row **B4**, and the round-3 ruling **T2** of 2026-11-06; CG4 and CG6 merged on 2026-11-10). **T2 is UNVERIFIED until you run it**: the ruling says a person's credential carrying `roles/firebasedatabase.viewer` on the Firebase project may read the `orchestrator/` subtree, and no test can settle it, because a rules test evaluates the Security Rules and never the project's IAM — the question is what the database admits for a **person's** identity, and that is a property of your project's policy. This check reads it. It is **OWNER-RUN**: **no agent runs any step of it**.
+
+**Run it:**
+
+```bash
+bash scripts/live-checks/check314.sh
+bash scripts/live-checks/check314.sh --project <the installation's name>
+bash scripts/live-checks/check314.sh --project <name> --account someone@example.com
+```
+
+With no `--project` the check asks your installation itself (`fugaro doctor --json`); an installation's name it cannot answer for is a **stop**, not a guess. A project named `belong` — typed or answered by `doctor` — is refused before anything is read. `--account` says which person's roles the policy is read for when the account `gcloud` reports is not the one the CLI will use; `--fugaro-flags '<flags>'` adds flags to every `fugaro` call, and `--dry-run` prints the plan and makes **no call at all**. Environment: `CHECK314_PROJECT`, `CHECK314_ACCOUNT`, `CHECK314_DRY_RUN`, `CHECK314_FUGARO`, `CHECK314_GCLOUD`.
+
+**The read itself is the fact T2 is.** `fugaro orchestrator ls --json` (CG4's shallow read of that subtree into `db.Keys`, plus one lease read per id) is the CLI making exactly the read the ruling is about, on the credential an owner's machine really holds — the installation's application-default credential. The check does not mint a token of its own and writes nothing: it reads the credential's own file to see its **type**, reads the project the installation's database lives in, reads that project's IAM policy through `gcloud`, and then makes the read.
+
+**What the check reads, in order.** The rows are, in order:
+
+- **`xtrace`** — this shell was not started with tracing on. `bash -x` would print the policy's contents and the ADC file's path, so a shell that arrived tracing is stopped first.
+- **`credential`** — the **type** of the credential the CLI will use. The check mirrors `google.DefaultTokenSource`'s own order (`$GOOGLE_APPLICATION_CREDENTIALS`, else the ADC file under `$CLOUDSDK_CONFIG` or `${XDG_CONFIG_HOME:-$HOME/.config}/gcloud/application_default_credentials.json`) and reads only the file's type: **`authorized_user` PASSes**, which is the person's own login and the credential T2 is about. A **service account's** credential, an **impersonation** or a **workload-identity federation** answers a different question — whether a robot may read the subtree, which is H7's ground and not this ruling's — and the row says so and **stops** (exit 2) rather than reporting a green line about the wrong identity. A missing, unreadable or non-JSON file stops too, with the one command that fixes it (`gcloud auth application-default login`).
+- **`project`** — which installation this run is about, and where the answer came from (you typed it, or `fugaro doctor --json` answered it). Doctor's **exit status is not what the premise is read from**: the CLI prints its document and exits non-zero when any check fails, and an owner's machine with an unrelated check in the red still answers the project correctly, so the document is read and the status is ignored. A typed `--project` that doctor answers differently is a **stop**.
+- **`belong`** — the project is not the owner's own installation. Refused in what was typed and again in what doctor answered, and a name that merely contains `belong` is refused too.
+- **`database`** — the project the database belongs to, read out of the installation's own config file (`$XDG_CONFIG_HOME/fugaro/projects/<name>.yaml`, or the one `--config` names). It is **`budget.firebase_project` where that is set, and `gcp_project` otherwise** — the read is governed by the policy of the project the database lives in, which is **not** always the installation's `gcp_project`, and a check that read the wrong project's policy would report a green line about a policy that admits nothing.
+- **`account`** — the person the policy is read for: `gcloud config get-value account`, or `--account`. An `(unset)`/empty answer, or a **service account** address, is a **stop**: the default `gcloud` account store and the ADC file are two different stores, and if they name different people then the roles read here are **not** the roles the read is made under — the row says exactly that, and `--account` is how an owner fixes it.
+- **`policy`** — the project's IAM policy was read (`gcloud projects get-iam-policy <database project> --format=json`). A refusal is a **stop** with the role and the project it needs.
+- **`viewer`** — the policy really binds the **Viewer** role to that person (`roles/firebasedatabase.viewer`, or any role whose permission set covers it — `roles/firebasedatabase.admin`, `roles/owner`, `roles/editor` all do). A policy that does not is a **FAIL** (exit 1): the premise of this check is not there, and the reading below would be about somebody else.
+- **`broader`** — whether a role that covers the **whole project** is bound to that person **beside** viewer (`roles/owner`, `roles/editor`, `roles/firebasedatabase.admin`; the domains whose default grants include one are checked too). A broad role bound beside viewer means the read below may be passing because of it, so the check reports the roles **and who they are bound to** and marks T2 **NOT MEASURED** (exit 2) rather than passed: the ruling is about viewer alone.
+- **`listing`** — `fugaro orchestrator ls --json` was run, and what it answered: the number of ids the subtree holds, and whether the command refused the read. The CLI's own sentence for a permission failure ("*project X's budget database refused the read: you need the Viewer role on its Firebase project…*") is quoted verbatim and read as **T2 answered NO** — the person's own credential was refused, which is the negative half of the ruling, and it is a finding (`t2` FAILs, exit 1). A refusal for any other reason (the database unconfigured, the network, a wrong project) is quoted as well, but it is a **NOT MEASURED** (exit 2) and not a finding: the check cannot read a refusal it cannot attribute to the role.
+- **`node`** — what the subtree holds: the ids, their lease holder and whether their cache is stale, taken from the document the CLI printed. A subtree that holds **no node** makes T2 **NOT MEASURED** (exit 2): a shallow read of an empty subtree is not evidence that viewer covers a populated one, and a green line from it would be a lie of exactly the kind this check exists to prevent. A document that is not a listing at all is a **FAIL**. A listing that never answered records this row as INFO and does not read the subtree at all.
+- **`rules`** — the RG-baseline check: what CG6 pins for the same subtree (that **no run's or token's identity** may read or write `orchestrator/`) is recorded here as an **INFO** row, citing the hermetic test that holds it, so the two halves of the subtree's access story are read in one place and neither is mistaken for the other.
+- **`t2`** — the ruling's verdict, in one line: **HOLDS** (viewer alone covered the subtree, and the read listed it), **does NOT hold** (the person's credential was refused), or **NOT MEASURED** (a broader role was bound beside viewer, or the subtree held nothing, or the read never answered).
+- **`teardown`** — what this run left behind, which is nothing: the check wrote no file anywhere but its own mode-0700 scratch directory, which the trap removes.
+
+Exit `0` means T2 holds; `1` means it does not, or the premise was not there (each row says which); `2` means the run could not tell (the credential is not a person's, the project is ambiguous, the policy refused, a broader role was in the way, the subtree was empty).
+
+**What it cannot settle.** A role granted at a **group**, **folder** or **organization** level is not in the project policy this check reads: a person whose viewer arrives through a group shows **no viewer binding**, and the check reports that as a FAIL rather than digging — the reading it wants is the policy of the database's own project, and widening it would change the question. Nor does it settle which person the ADC file belongs to: the file carries no address, so the pairing of `gcloud`'s account with the ADC credential is an owner-owned premise, stated on the `account` row. And **H7** — that no run's or token's identity reads or writes the subtree — is **CG6's pin and not this check's**: no IAM reading can settle it, and CG6's own test says so. The hermetic half is `scripts/live-checks/check314_test.sh`, run from `scripts/live_checks_test.go` — a fake `fugaro` whose `doctor --json` and `orchestrator ls --json` answer out of the case's own files and a fake `gcloud` that answers the account and the project's policy, so every row above is a reading of a file the test writes, the policy is checked on the **database's** project in the split layout, a refusal is read as the ruling answered NO, and a run that stopped early is shown to have called nothing further — and **no agent ran any step of this check**.
+
+**Cost.** Nothing. One read of the credential file's type, one `fugaro doctor --json`, one `gcloud projects get-iam-policy` and one `fugaro orchestrator ls --json`: no model call, no run, nothing billable, and **nothing is written** — no cloud resource, no config, no policy.
+
+**Restore.** Nothing to restore. The check writes nothing outside its own scratch directory, which its trap removes on any exit, a Ctrl-C included; it mints no token and changes no policy.
+
+**Paste back:** the whole `CHECK 314 RESULT` block. The credential file's **path** and its **type** are printed; its contents never are.
+
 
 ## Check 340: the prefix-limited listing grant — one script you run (a sandbox bucket only, never `belong`; run by you; NOT RUN)
 
