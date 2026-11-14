@@ -112,6 +112,13 @@ ref=$slug/$judge_run
 champion_model=anthropic/claude-opus-5.5
 challenger_model=openai/gpt-4o
 judge_model=anthropic/claude-haiku-4.5
+# The branch the fake runs list answers with for the mode a case bends
+# (rows-branch, rows-branch-and-pr): a name the release would only carry if the
+# run pushed a branch of its own, since a healthy evaluate-mode run's row carries
+# the branch lock's key 'fugaro/<its own run id>' and nothing else. The fake
+# spells it itself -- it sees only its own environment -- so the two are kept the
+# same by hand.
+other_branch=fugaro/chk211-run-0002
 # What the judge was handed, as A5.2 stores it: the fixed system text and the
 # two swapped prompts, none of which names a run, a branch, a pair or a model.
 JUDGE_SYSTEM='You compare two changes and answer with one line: the better one, then one word for why.'
@@ -207,8 +214,14 @@ ended_yes() {
 # row whose `run` ref is empty is the one shape that leaves the check with no
 # prefix to read, and a row that never reads as ended is the one the teardown
 # has to settle itself.
+#
+# The default branch is the one a healthy evaluate-mode run really carries:
+# internal/runner's runEvaluateMode writes "fugaro/<its own run id>" as the
+# branch lock's key and never pushes it, so a row without it would be a row no
+# real release produces -- and a check that graded it as a published branch
+# would fail every correct release.
 rows_doc() {
-  local terminal=true status=succeeded outcome=judged branch="" pr=0 runref="$FAKE_SLUG/$FAKE_RUN_ID"
+  local terminal=true status=succeeded outcome=judged branch="fugaro/$FAKE_RUN_ID" pr=0 runref="$FAKE_SLUG/$FAKE_RUN_ID"
   case "$mode" in
   rows-running)
     if ! ended_yes "$FAKE_RUN_ID"; then terminal=false; status=running; outcome=""; fi
@@ -223,10 +236,15 @@ rows_doc() {
     return 0
     ;;
   rows-no-ref) runref="" ;;
-  rows-branch) branch="fugaro/$FAKE_RUN_ID" ;;
+  rows-no-branch) branch="" ;;
+  # A branch the release would only carry if the run pushed one: a healthy
+  # evaluate-mode run's row carries the branch lock's key 'fugaro/<its own run
+  # id>' and nothing else. This fake sees only its own environment, so the name
+  # is spelled here and the case that reads it spells the same one.
+  rows-branch) branch="fugaro/chk211-run-0002" ;;
   rows-pr) pr=41 ;;
   rows-branch-and-pr)
-    branch="fugaro/$FAKE_RUN_ID"
+    branch="fugaro/chk211-run-0002"
     pr=41
     ;;
   esac
@@ -501,6 +519,18 @@ json.dump(d,open(path,'w'))
 into_input() { # into_input DIR I WHERE TEXT
   edit_json "$1/json/bucket/ab/inputs/$(input_name "$2").json" \
     "for ps in d['passes']: ps['$3'] = (ps.get('$3') or '') + ' $4'"
+}
+
+# bend_champion_model / bend_challenger_model DIR MODEL: the arm's model as the
+# manifest carries it. A5.1's vocabulary is drawn from that string, so a case
+# bends it to read one word the release does or does not redact.
+bend_champion_model() { # bend_champion_model DIR MODEL
+  edit_json "$1/json/bucket/ab/manifest.json" \
+    "for v in d['pairs']: v['champion']['model'] = '$2'"
+}
+bend_challenger_model() { # bend_challenger_model DIR MODEL
+  edit_json "$1/json/bucket/ab/manifest.json" \
+    "for v in d['pairs']: v['challenger']['model'] = '$2'"
 }
 
 prepare() { # prepare DIR [PAIRS]
@@ -1044,13 +1074,36 @@ test_a_row_without_a_ref_is_not_measured() {
   expect_absent "$gcalls" "storage cat" "a row without a ref: no key is guessed"
 }
 
+test_the_branch_lock_key_is_not_a_published_branch() {
+  # The healthy row: an evaluate-mode run's record carries the branch lock's key
+  # "fugaro/<its own run id>" (internal/runner's runEvaluateMode) and never
+  # pushes it, so a row that graded any branch as a published one would fail
+  # every correct release. This is that row, read as it really comes.
+  local dir=$work/lock
+  prepare "$dir"
+  run_check "$dir"
+  expect_status "$status" 0 "the branch lock's key"
+  expect_contains "$out" "FACT publishes-nothing: PASS" "the branch lock's key: the row"
+  expect_contains "$out" "branch 'fugaro/${judge_run}'" "the branch lock's key: the branch it read"
+  expect_contains "$out" "the branch lock's key alone and never pushes it" "the branch lock's key: why it is not a push"
+}
+
+test_a_row_with_no_branch_at_all_is_not_a_finding() {
+  local dir=$work/nobranch
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=rows-no-branch
+  expect_status "$status" 0 "a row with no branch"
+  expect_contains "$out" "FACT publishes-nothing: PASS" "a row with no branch: the row"
+  expect_contains "$out" "branch 'none'" "a row with no branch: what it read"
+}
+
 test_a_run_that_published_a_branch_is_a_finding() {
   local dir=$work/branch
   prepare "$dir"
   run_check "$dir" FAKE_MODE=rows-branch
   expect_status "$status" 1 "a run that published a branch"
   expect_contains "$out" "FACT publishes-nothing: FAIL" "a run that published a branch: the row"
-  expect_contains "$out" "carries branch 'fugaro/${judge_run}'" "a run that published a branch: the branch it found"
+  expect_contains "$out" "carries branch '${other_branch}', which is not 'fugaro/${judge_run}'" "a run that published a branch: the branch it found and the key it is not"
   expect_contains "$out" "A5.2, TestJudgeRunPublishesNothing" "a run that published a branch: why it matters"
 }
 
@@ -1321,14 +1374,62 @@ test_a_run_id_shaped_string_in_the_prompt_is_a_finding() {
   expect_contains "$out" "the prompt carries the run-id shape '20260101-010101-abcd'" "a run-ID-shaped string in the prompt: the hit"
 }
 
-test_a_commit_trailer_in_the_prompt_is_a_finding() {
-  local dir=$work/hittrailer
+test_a_line_that_looks_like_a_commit_trailer_is_not_a_finding() {
+  # The plan's U1 names a commit trailer, and the object A5.1 anonymises carries
+  # no commit metadata to strip: it is a TREE diff (bundle.go's Patch.Diff). A
+  # hunk that mentions its own tooling is diff body text -- this repository alone
+  # has 22 tracked files carrying "generated with" and 5 carrying "noreply@" --
+  # so a row that graded those strings would fail a correct release and call it
+  # the anonymiser not holding.
+  local dir=$work/trailer
   prepare "$dir"
-  into_input "$dir" 1 prompt "Co-Authored-By: someone@example.invalid"
+  into_input "$dir" 1 prompt "Co-Authored-By: someone@example.invalid noreply@example.invalid generated with a tool"
   run_check "$dir"
-  expect_status "$status" 1 "a commit trailer in the prompt"
-  expect_contains "$out" "FACT input-blind: FAIL" "a commit trailer in the prompt: the row"
-  expect_contains "$out" "the prompt carries the trailer 'co-authored-by:'" "a commit trailer in the prompt: the hit"
+  expect_status "$status" 0 "a line that looks like a commit trailer"
+  expect_contains "$out" "FACT input-blind: PASS" "a line that looks like a commit trailer: the row"
+  expect_absent "$out" "the prompt carries the trailer" "a line that looks like a commit trailer: no hit is reported"
+}
+
+test_a_variant_word_after_the_version_is_not_a_finding() {
+  # A5.1's walk of a model's name stops at its version (bundle.go's versionWord),
+  # so 'flash' in deepseek-v4-flash is not in the vocabulary: it names no model
+  # on its own, and a diff saying "flash" is a diff, not a leak.
+  local dir=$work/hitvariant
+  prepare "$dir"
+  bend_challenger_model "$dir" deepseek/deepseek-v4-flash
+  into_input "$dir" 1 prompt "flash"
+  run_check "$dir"
+  expect_status "$status" 0 "a variant word after the version"
+  expect_contains "$out" "FACT input-blind: PASS" "a variant word after the version: the row"
+  expect_absent "$out" "the prompt carries the model" "a variant word after the version: no hit is reported"
+}
+
+test_a_word_before_the_version_is_a_finding() {
+  # The other half of the same rule: the words up to the version ARE the model's
+  # name, so the same ID's own word is a leak and the row names it.
+  local dir=$work/hitname
+  prepare "$dir"
+  bend_challenger_model "$dir" deepseek/deepseek-v4-flash
+  into_input "$dir" 1 prompt "deepseek"
+  run_check "$dir"
+  expect_status "$status" 1 "a word before the version"
+  expect_contains "$out" "FACT input-blind: FAIL" "a word before the version: the row"
+  expect_contains "$out" "the prompt carries the model 'deepseek'" "a word before the version: the hit"
+}
+
+test_the_family_word_of_a_claude_id_is_a_finding() {
+  # config.ModelFamily is part of A5.1's vocabulary: an ID spelled without its
+  # vendor still redacts 'anthropic'. The champion here is written that way, so a
+  # prompt naming the family is a hit -- a reader that took the words from the ID
+  # alone would miss it and pass a leak.
+  local dir=$work/hitfamily
+  prepare "$dir"
+  bend_champion_model "$dir" claude-opus-5-5
+  into_input "$dir" 1 prompt "anthropic"
+  run_check "$dir"
+  expect_status "$status" 1 "the family word of a Claude ID"
+  expect_contains "$out" "FACT input-blind: FAIL" "the family word of a Claude ID: the row"
+  expect_contains "$out" "the prompt carries the model 'anthropic'" "the family word of a Claude ID: the hit"
 }
 
 test_a_system_text_that_names_a_run_is_a_finding() {
@@ -1460,6 +1561,8 @@ t test_a_run_that_never_ends_is_not_measured_and_cancelled
 t test_a_run_the_cancel_does_not_end_is_a_finding
 t test_a_run_the_runs_list_does_not_carry_is_a_finding
 t test_a_row_without_a_ref_is_not_measured
+t test_the_branch_lock_key_is_not_a_published_branch
+t test_a_row_with_no_branch_at_all_is_not_a_finding
 t test_a_run_that_published_a_branch_is_a_finding
 t test_a_run_that_opened_a_pull_request_is_a_finding
 t test_a_runs_list_that_fails_is_not_measured
@@ -1484,7 +1587,10 @@ t test_a_pair_id_in_the_prompt_is_a_finding
 t test_a_model_word_in_the_prompt_is_a_finding
 t test_the_judge_models_own_word_in_the_prompt_is_a_finding
 t test_a_run_id_shaped_string_in_the_prompt_is_a_finding
-t test_a_commit_trailer_in_the_prompt_is_a_finding
+t test_a_line_that_looks_like_a_commit_trailer_is_not_a_finding
+t test_a_variant_word_after_the_version_is_not_a_finding
+t test_a_word_before_the_version_is_a_finding
+t test_the_family_word_of_a_claude_id_is_a_finding
 t test_a_system_text_that_names_a_run_is_a_finding
 t test_a_model_named_in_the_answer_is_recorded_and_not_graded
 t test_the_two_passes_disagreeing_is_recorded_and_not_graded

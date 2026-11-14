@@ -26,9 +26,12 @@
 #     pass's system text or prompt may carry either arm's run ID, either arm's
 #     branch, the pair ID, the arms' or the judge's model (their IDs, their
 #     names and their vendor family — A5.1's redaction vocabulary, whose
-#     shortest word is four bytes), a run-ID-shaped string, or a commit trailer.
-#     A5.1 refuses a pair whose diff names a run and redacts a model word to one
-#     placeholder, so a hit here is the anonymiser not holding on a real pair;
+#     shortest word is four bytes) or a run-ID-shaped string. A5.1 refuses a
+#     pair whose diff names a run and redacts a model word to one placeholder,
+#     so a hit here is the anonymiser not holding on a real pair. The plan's U1
+#     also names a commit trailer, and the object graded here cannot carry one:
+#     A5.1 anonymises a tree diff, which holds no commit metadata at all (the
+#     note on the vocabulary below says what a trailer-shaped line in one is);
 #   * U2, RECORDED and never graded: how often a judge names a model. The
 #     plan's literal question — "which model wrote A?" — has no surface in this
 #     release, and the check says so in the row rather than inventing one: the
@@ -81,10 +84,11 @@
 #             1: a criterion did not hold — a build without the judge, a layer
 #             naming no judge model, fewer than five pairs, a verdict that does
 #             not match its manifest, or a stored input that names a run, a
-#             branch, a model or a trailer. 2: the check could not measure — a
-#             tool is missing, the checkout is not one, a `--json` document
-#             could not be read, a launch was refused, or the judge run had not
-#             ended. A key the run never reached reads `FAIL — not reached`.
+#             branch, a model or a run ID's shape. 2: the check could not
+#             measure — a tool is missing, the checkout is not one, a `--json`
+#             document could not be read, a launch was refused, or the judge run
+#             had not ended. A key the run never reached reads `FAIL — not
+#             reached`.
 #
 # A NOTE ON WHAT IS NEVER PRINTED: no credential value reaches this script's
 # stdout, its stderr, the block or the scratch directory. The rows carry run
@@ -364,23 +368,64 @@ def top_keys(text):
     return out
 
 
-# A5.1's own shapes, spelled here because the release's are unexported: the run
-# ID's shape as an unanchored search (bundle.go's runIDGuess) and the commit
-# trailers the plan's U1 names. The trailers are the attribution ones — a line
-# that names the person or the client that wrote the change — and not the
-# run's own `Fugaro-*` metadata, which a model word inside would catch anyway.
+# A5.1's own shape, spelled here because the release's is unexported: the run
+# ID's shape as an unanchored search (bundle.go's runIDGuess).
 RUNID_RE = re.compile(r"(?i)[0-9]{8}-[0-9]{6}-[0-9a-f]{4}")
-TRAILERS = ("co-authored-by:", "signed-off-by:", "reviewed-by:", "generated with", "noreply@")
+
+# The plan's U1 also names a commit trailer, and there is nothing of that kind
+# here to grade: the object A5.1 anonymises is a TREE diff, the change between
+# the run's start commit and its final head, so it carries no commit metadata at
+# all (bundle.go's Patch.Diff says so) and nothing strips any. A line in one
+# that looks like a trailer is diff body text — this repository alone has 22
+# tracked files carrying "generated with" and 5 carrying "noreply@" — so a row
+# that graded those strings would fail a correct release on a hunk that mentions
+# its own tooling and call it the anonymiser not holding.
+
+
+def version_word(w):
+    """A word of a model's name that is its version rather than part of what the
+    model is called ('5' in claude-opus-5-5, 'v4' in deepseek-v4-pro), and where
+    A5.1's walk of the name stops (bundle.go's versionWord)."""
+    if not w:
+        return True
+    if w[0].isdigit():
+        return True
+    return len(w) > 1 and w[0] in "vV" and w[1].isdigit()
 
 
 def model_words(mid):
-    """A model ID and the words its name is built from: the ID whole, and every
-    segment of it at least four bytes long — the line minModelWord draws, so
-    'opus' is a word and 'gpt' is not, and a version number never is."""
-    out = [mid]
-    for part in re.split(r"[/\-.]", mid):
-        if len(part) >= 4 and not part.isdigit() and part not in out:
-            out.append(part)
+    """A model ID and every word A5.1's vocabulary holds for it (bundle.go's
+    modelWords): the ID whole, the name it is served under, the vendor family it
+    belongs to (config.ModelFamily — 'anthropic' for a Claude ID, the prefix for
+    a provider ID) and the words its name is built from UP TO its version, where
+    the walk stops. A word is at least four bytes (minModelWord), which is the
+    line that keeps the vocabulary from eating ordinary text.
+
+    The stop is what leaves a variant word in the diff on purpose: 'flash' in
+    deepseek-v4-flash names no model on its own, so a diff saying "flash" is not
+    a leak, while a diff saying "deepseek" is — and a reader that kept going past
+    the version would report the first as the anonymiser not holding."""
+    out = []
+
+    def put(word):
+        word = (word or "").lower()
+        if len(word) >= 4 and word not in out:
+            out.append(word)
+
+    mid = mid.strip()
+    if not mid:
+        return out
+    put(mid)
+    name = mid.rsplit("/", 1)[-1]
+    put(name)
+    if "/" in mid:
+        put(mid.split("/", 1)[0])
+    elif mid.startswith("claude-"):
+        put("anthropic")
+    for w in [part for part in re.split(r"[-._@]", name) if part]:
+        if version_word(w):
+            break
+        put(w)
     return out
 
 
@@ -434,9 +479,6 @@ def scan(text, needles):
         if any(m.group(0) == value for _, value in needles):
             continue
         yield "run-id shape", m.group(0), ""
-    for t in TRAILERS:
-        if t in low:
-            yield "trailer", t, ""
 
 
 what = sys.argv[1]
@@ -919,14 +961,25 @@ step_end() {
     return 0
   fi
   fact run-end PASS "the judge run ${RUN_ID} has ended (status $(rcol "$row" 3), outcome $(rcol "$row" 9)) after ${waited}s, and its objects are under runs/${REF}/ — the prefix the rows below read. A judge run's own manifest lists the pairs it took, so the reading below is of a run that finished its work"
-  local branch pr
+  local branch pr lock
   branch=$(rcol "$row" 7)
   pr=$(rcol "$row" 8)
-  if [ -n "$branch" ] || [ "${pr:-0}" != 0 ]; then
-    fact publishes-nothing FAIL "the judge run's row carries branch '${branch:-none}' and pull request ${pr:-0}: a judge run publishes nothing — it holds no git credential, pushes no branch, opens no pull request and comments on nothing (A5.2, TestJudgeRunPublishesNothing) — and a judge run with either is a finding about the release rather than about the sandbox. The row is in $SCRATCH/rows.out"
+  # An evaluate-mode run writes r.rec.Branch = "fugaro/<its own run id>" and
+  # never pushes it: that string is the branch LOCK's key and nothing else
+  # (internal/runner's runEvaluateMode, whose arm says so; review mode's is the
+  # same), so a healthy judge run's own row carries it and a row that graded any
+  # branch as a published one would fail every correct release. What such a run
+  # may not carry is a pull request, or a branch that is not that key.
+  lock="fugaro/${RUN_ID}"
+  if [ "${pr:-0}" != 0 ]; then
+    fact publishes-nothing FAIL "the judge run's row carries pull request ${pr}: a judge run publishes nothing — it holds no git credential, pushes no branch, opens no pull request and comments on nothing (A5.2, TestJudgeRunPublishesNothing) — and a judge run with one is a finding about the release rather than about the sandbox. The row is in $SCRATCH/rows.out"
     return 0
   fi
-  fact publishes-nothing PASS "the judge run's row carries no branch and no pull request (outcome $(rcol "$row" 9)): the run judged and wrote its own objects, and pushed nothing anywhere — the teardown below therefore has no branch to delete and no pull request to close"
+  if [ -n "$branch" ] && [ "$branch" != "$lock" ]; then
+    fact publishes-nothing FAIL "the judge run's row carries branch '${branch}', which is not '${lock}' — the branch lock's key this run's own mode writes and never pushes (internal/runner's runEvaluateMode) — so it is a branch the run pushed, and a judge run publishes nothing: no branch of its own, no pull request, no comment (A5.2, TestJudgeRunPublishesNothing). The row is in $SCRATCH/rows.out"
+    return 0
+  fi
+  fact publishes-nothing PASS "the judge run's row carries no pull request and no branch of its own (branch '${branch:-none}': an evaluate-mode run writes '${lock}' as the branch lock's key alone and never pushes it, and any other name would have been a push), so the run judged and wrote its own objects and pushed nothing anywhere (outcome $(rcol "$row" 9)) — the teardown below therefore has no branch to delete and no pull request to close"
 }
 
 # bucket_cat KEY DEST: one object out of the runs bucket at the judge run's own
@@ -1067,8 +1120,8 @@ step_verdicts() {
 # verdicts name — the object the judge saw, read from the run's own prefix — and
 # U2's numbers are taken from the same read. The scan is A5.1's own vocabulary:
 # either arm's run ID, either arm's branch, the pair ID, the arms' and the
-# judge's models with the words their names are built from, a run-ID-shaped
-# string, and a commit trailer.
+# judge's models with the words their names are built from, and a run-ID-shaped
+# string.
 step_inputs() {
   if [ "$VERDICTS_OK" != yes ]; then
     unmeasured input-blind "there are no verdicts naming the stored judge inputs, so nothing was scanned: the row above says why"
@@ -1120,7 +1173,7 @@ step_inputs() {
   if [ -n "$hits" ]; then
     fact input-blind FAIL "the stored judge input names something it must not: ${hits}. A5.1's bundle is what keeps this from happening — it REFUSES a diff carrying a run ID, a branch or the pair ID and REDACTES every model word to one placeholder — and a judge run over real pairs is where that promise is read rather than asserted (TestBundleCarriesNoIdentifier). ${read_n} stored input(s) were read (${chars} characters of system text and prompt); the objects themselves are under runs/${REF}/ab/inputs/ and the read is in $SCRATCH/input-*.out"
   else
-    fact input-blind PASS "all ${read_n} stored judge input(s) the verdicts name — ${chars} characters of system text and prompt, every pass of every judged pair — carry no run ID of either arm, no branch, no pair ID, no model (the arms', the judge's, or a word their names are built from), no run-ID-shaped string and no commit trailer. This is U1 read from the object the judge was handed rather than from the anonymiser's own test"
+    fact input-blind PASS "all ${read_n} stored judge input(s) the verdicts name — ${chars} characters of system text and prompt, every pass of every judged pair — carry no run ID of either arm, no branch, no pair ID, no model (the arms', the judge's, or a word their names are built from — the vocabulary A5.1 redacts with) and no run-ID-shaped string. This is U1 read from the object the judge was handed rather than from the anonymiser's own test"
   fi
   local challenger=0 champion=0 tie=0 winner=""
   while IFS= read -r line; do
@@ -1259,7 +1312,7 @@ plan() {
   say "  [network, read] fugaro recipes ls --json in ${SANDBOX} — the catalog's ab-judge recipe, launchable, one ab_judge step"
   say "  [network, read] fugaro config layer --json in ${SANDBOX} — the published layer's ab: block, which must name judge_model"
   say "  [network, BILLABLE] fugaro run --repo ${SANDBOX} --recipe ab-judge --json — ONE judge run, two model calls per pair on ab.judge_model over up to ${JUDGE_MANIFEST_MAX} pairs"
-  say "  [read] fugaro runs ls --repo ${SANDBOX} --json — the judge run's own row: that it ended, and that it carries no branch and no pull request"
+  say "  [read] fugaro runs ls --repo ${SANDBOX} --json — the judge run's own row: that it ended, that it carries no pull request, and that its branch is the branch lock's key 'fugaro/<the run id>' alone and not a branch of its own"
   say "  [read] gcloud storage cat gs://fugaro-runs-<the project>/runs/<the slug>/<the run>/ab/manifest.json and ab/verdicts.json — the launcher's manifest and the run's verdicts, under the run's own prefix"
   say "  [read] gcloud storage cat of each stored judge input the verdicts name (ab/inputs/<hex>.json) — the object the judge was handed, scanned for U1"
   say "  [WRITE, the teardown] a judge run that has not ended is stopped with fugaro cancel --now and read back as ended. Nothing is deleted: the run's objects are what the report reads"
