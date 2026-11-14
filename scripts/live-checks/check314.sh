@@ -558,7 +558,11 @@ COVERING_ROLES=(roles/owner roles/editor roles/firebasedatabase.admin)
 judge_broader() {
   local r found=()
   for r in "${COVERING_ROLES[@]}"; do
-    if has_role "$ROLES,$DOMAIN_ROLES" "$r"; then found+=("$r"); fi
+    if has_role "$ROLES" "$r"; then
+      found+=("$r (bound to $MEMBER)")
+      continue
+    fi
+    if has_role "$DOMAIN_ROLES" "$r"; then found+=("$r (bound to $POLICY_DOMAIN)"); fi
   done
   if [ ${#found[@]} -eq 0 ]; then
     fact broader PASS "no role that covers the whole project (roles/owner, roles/editor, roles/firebasedatabase.admin) is bound to $MEMBER or to its domain in the project's own policy, so the read below is attributable to the viewer role T2 is about"
@@ -566,7 +570,7 @@ judge_broader() {
   fi
   BROADER=$(printf '%s, ' "${found[@]}")
   BROADER=${BROADER%, }
-  fact broader INFO "$MEMBER carries $BROADER on $DB_PROJECT (or its domain does), and a role that covers the whole project reads every node whatever else it holds: the read below cannot be attributed to roles/firebasedatabase.viewer, so T2 is NOT MEASURED by this run. Run this check as a person whose ONLY grant on the project is the viewer role -- a second account, or a sandbox project of its own"
+  fact broader INFO "a role that covers the whole project is bound on $DB_PROJECT for this person: $BROADER. Such a role reads every node whatever else the person holds, so the read below cannot be attributed to roles/firebasedatabase.viewer and T2 is NOT MEASURED by this run. Run this check as a person whose ONLY grant on the project is the viewer role -- a second account, or a sandbox project of its own"
 }
 
 # -------------------------------------------------------------- the read itself
