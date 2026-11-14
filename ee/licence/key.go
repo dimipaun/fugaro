@@ -494,7 +494,7 @@ func graceDuration(days int) time.Duration {
 	if days <= 0 {
 		return 0
 	}
-	if int64(days) > maxIntervalDays {
+	if int64(days) > MaxIntervalDays {
 		return time.Duration(1<<62 - 1)
 	}
 	return time.Duration(days) * 24 * time.Hour
@@ -520,11 +520,16 @@ func knownKind(kind string) bool {
 	return false
 }
 
-// maxIntervalDays is the longest span, in days, that still fits a time.Duration
+// MaxIntervalDays is the longest span, in days, that still fits a time.Duration
 // with room for the multiply below. A duration in nanoseconds runs out at about
 // 106,751 days, and the parser and the grace arithmetic both stop here so that
 // neither wraps a value too large into a window far shorter than the key says.
-const maxIntervalDays = (1 << 62) / (24 * 60 * 60 * 1_000_000_000)
+//
+// It is exported because a reader that places a key's own dates — the warnings
+// of plan K3.5, which count a window from the start of the grace — must stop at
+// the same day this arithmetic does, or the two would name different instants
+// for one key (ee/register's warn.go).
+const MaxIntervalDays = (1 << 62) / (24 * 60 * 60 * 1_000_000_000)
 
 // ParseISODuration reads the ISO 8601 durations a v1 key may carry: `P<n>D` and
 // `P<n>W`, and nothing else (F16). `PT1H`, `P1M`, `P1Y` and a duration spelled
@@ -550,7 +555,7 @@ func ParseISODuration(text string) (time.Duration, error) {
 	case 'D':
 		return time.Duration(value) * 24 * time.Hour, nil
 	case 'W':
-		if value > maxIntervalDays/7 {
+		if value > MaxIntervalDays/7 {
 			return 0, ErrDuration
 		}
 		return time.Duration(value) * 7 * 24 * time.Hour, nil
@@ -575,7 +580,7 @@ func decimalDigits(text string) (int64, bool) {
 			return 0, false
 		}
 		days = days*10 + int64(c-'0')
-		if days > maxIntervalDays {
+		if days > MaxIntervalDays {
 			return 0, false
 		}
 	}
