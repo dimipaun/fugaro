@@ -917,49 +917,65 @@ func TestAnotherOrgsMembersAreRefused(t *testing.T) {
 	f := newFixture(t)
 	alpha := f.signedUp(danaUID, danaEmail, "Alpha Ltd")
 	beta := f.signedUp(erinUID, erinEmail, "Beta Ltd")
-	// An operations organisation somebody else is in, so the cases below read
-	// what a stranger is told about one: its existence is not a stranger's to
-	// learn from a refusal either.
+	// An operations organisation and a reseller somebody else is in, so the cases
+	// below read what a stranger is told about them: their existence, and which
+	// of them is which, is not a stranger's to learn from a refusal either.
 	f.seededOrganisation("org_operations", "Operations", orgTypeOperations, opsUID, opsEmail, roleMember)
+	f.seededOrganisation("org_reseller", "Partner Ltd", orgTypeReseller, sellerUID, sellerMail, roleMember)
 
-	f.actsAs(danaUID, danaEmail, signInGoogle)
-	for _, tc := range []struct {
-		name   string
-		method string
-		path   string
-	}{
-		{name: "another organisation's record", method: http.MethodGet, path: apiOrgPathOf(beta.ID)},
-		{name: "another organisation's members", method: http.MethodGet, path: apiOrgMembersPathOf(beta.ID)},
-		{name: "selecting another organisation", method: http.MethodPost, path: apiOrgSelectPathOf(beta.ID)},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			rec := f.apiAs(tc.method, tc.path, "")
-			if rec.Code != http.StatusNotFound {
-				t.Fatalf("%s was answered %d (%s), want the not-found refusal", tc.name, rec.Code, rec.Body)
-			}
-			// The same answer an organisation that is not there gets, so nothing
-			// about another customer's organisation is told by the refusal: which
-			// ids exist is a list of who the portal's customers are.
-			missing := f.apiAs(tc.method, strings.Replace(tc.path, beta.ID, "org_nobody", 1), "")
-			if missing.Code != rec.Code || missing.Body.String() != rec.Body.String() {
-				t.Errorf("the refusal for another organisation is (%d) %s and for one that is not there (%d) %s, want the two the same",
-					rec.Code, rec.Body, missing.Code, missing.Body)
-			}
-			// An operations organisation the caller does not belong to is
-			// answered the same way as one that is not there at all: the rule
-			// its members sign in by is applied to a membership of it and never
-			// to a stranger's guess, which would otherwise tell whoever asked
-			// which ids name an organisation of the operations team.
-			operations := f.apiAs(tc.method, strings.Replace(tc.path, beta.ID, "org_operations", 1), "")
-			if operations.Code != http.StatusNotFound || operations.Body.String() != rec.Body.String() {
-				t.Errorf("an operations organisation the caller is not in is answered (%d) %s, want the same not-found refusal as one that is not there (%d) %s",
-					operations.Code, operations.Body, rec.Code, rec.Body)
-			}
-		})
+	// The stranger probes with both of the sign-ins one may have: Google, which
+	// every rule admits, and the email link, which the operations and the
+	// reseller rules refuse. The second is what reads the ORDER of the two — the
+	// membership and the rule — because a rule is the membership's and never the
+	// guessed organisation's: a service that asked the rule first, as one bounded
+	// by the organisation the request is ABOUT, would answer a stranger's guess of
+	// org_operations or org_reseller with 403 sso_required where every other id
+	// gets the 404, which is the list of the portal's special organisations handed
+	// to whoever asks.
+	for _, signIn := range []string{signInGoogle, signInEmailLink} {
+		f.actsAs(danaUID, danaEmail, signIn)
+		for _, tc := range []struct {
+			name   string
+			method string
+			path   string
+		}{
+			{name: "another organisation's record", method: http.MethodGet, path: apiOrgPathOf(beta.ID)},
+			{name: "another organisation's members", method: http.MethodGet, path: apiOrgMembersPathOf(beta.ID)},
+			{name: "selecting another organisation", method: http.MethodPost, path: apiOrgSelectPathOf(beta.ID)},
+		} {
+			t.Run(tc.name+" signed in with "+signIn, func(t *testing.T) {
+				rec := f.apiAs(tc.method, tc.path, "")
+				if rec.Code != http.StatusNotFound {
+					t.Fatalf("%s was answered %d (%s), want the not-found refusal", tc.name, rec.Code, rec.Body)
+				}
+				// The same answer an organisation that is not there gets, so nothing
+				// about another customer's organisation is told by the refusal: which
+				// ids exist is a list of who the portal's customers are.
+				missing := f.apiAs(tc.method, strings.Replace(tc.path, beta.ID, "org_nobody", 1), "")
+				if missing.Code != rec.Code || missing.Body.String() != rec.Body.String() {
+					t.Errorf("the refusal for another organisation is (%d) %s and for one that is not there (%d) %s, want the two the same",
+						rec.Code, rec.Body, missing.Code, missing.Body)
+				}
+				// An operations or a reseller organisation the caller does not
+				// belong to is answered the same way as one that is not there at
+				// all: the rule its members sign in by is applied to a membership
+				// of it and never to a stranger's guess, which would otherwise tell
+				// whoever asked which ids name an organisation of the operations
+				// team or of a reseller.
+				for _, special := range []string{"org_operations", "org_reseller"} {
+					guessed := f.apiAs(tc.method, strings.Replace(tc.path, beta.ID, special, 1), "")
+					if guessed.Code != http.StatusNotFound || guessed.Body.String() != rec.Body.String() {
+						t.Errorf("the %s %s the caller is not in is answered (%d) %s, want the same not-found refusal as one that is not there (%d) %s",
+							special, tc.name, guessed.Code, guessed.Body, rec.Code, rec.Body)
+					}
+				}
+			})
+		}
 	}
 
 	// Their own organisation, and only their own, is what they read: the list is
 	// one organisation, its members are one person.
+	f.actsAs(danaUID, danaEmail, signInGoogle)
 	if list := f.listOrgs(); len(list) != 1 || list[0].ID != alpha.ID {
 		t.Errorf("the switcher's list is %+v, want only the caller's own organisation %q", list, alpha.ID)
 	}
