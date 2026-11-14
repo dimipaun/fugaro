@@ -112,13 +112,20 @@ async function read(client: ApiClient): Promise<PortalData> {
   return { workspaces: workspaces.workspaces, entitlements: entitlements.entitlements }
 }
 
-/** The workspaces whose licence is granted and not yet bound (D2196, F25). */
+/**
+ * The licences that are granted and not yet bound (D2196, D2199, F25).
+ *
+ * An entitlement names a workspace or names none: sign-up's free seat is
+ * granted to the organisation before any workspace exists, which is the state
+ * the schema calls "granted outside any workspace" and exactly the state that
+ * needs binding (F6, D2184). So this asks the entitlement and not a card --
+ * filtering on a workspace would drop the one licence a person has and leave
+ * them no way to bind it, while a card's own entitlement is found through
+ * `workspace.entitlement_id` anyway.
+ */
 function unbound(entitlements: readonly Entitlement[]): Entitlement[] {
   return entitlements.filter(
-    (entitlement) =>
-      entitlement.workspace_id !== null &&
-      entitlement.bound_at === null &&
-      entitlement.status === 'active',
+    (entitlement) => entitlement.bound_at === null && entitlement.status === 'active',
   )
 }
 

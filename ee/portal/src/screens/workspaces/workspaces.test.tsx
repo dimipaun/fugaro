@@ -266,6 +266,36 @@ describe('the workspace screen', () => {
     expect(screen.queryByRole('region', { name: 'Licences not bound yet' })).toBeNull()
   })
 
+  it('shows a licence granted outside any workspace, and binds it', async () => {
+    // Sign-up's free seat is granted to the organisation before any workspace
+    // exists (F6, D2184, D2199): the entitlement names no workspace, no card
+    // can match it, and binding is the only way it ever reaches one.
+    const { client, calls } = portal({
+      workspaces: [],
+      entitlements: [{ ...paid(), id: 'ent_org', workspace_id: null }],
+    })
+    show(client)
+
+    const pending = await screen.findByRole('region', { name: 'Licences not bound yet' })
+    expect(within(pending).getByText(/3 seats/)).toBeDefined()
+
+    fireEvent.change(within(pending).getByLabelText('Firebase project id'), {
+      target: { value: 'example-portal' },
+    })
+    fireEvent.click(within(pending).getByRole('button', { name: 'Bind' }))
+
+    await waitFor(() => {
+      expect(calls).toContainEqual({
+        path: '/api/workspaces/bind',
+        method: 'POST',
+        body: { entitlement_id: 'ent_org', project_id: 'example-portal' },
+      })
+    })
+    await waitFor(() => {
+      expect(screen.queryByRole('region', { name: 'Licences not bound yet' })).toBeNull()
+    })
+  })
+
   it('rebinds a bound workspace to another project', async () => {
     const { client, calls } = portal({ workspaces: [bound()], entitlements: [paid()] })
     show(client)
