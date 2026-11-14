@@ -50,6 +50,19 @@ Look at `.github/workflows/*.yml`, `bitbucket-pipelines.yml`, `.gitlab-ci.yml`, 
 
 Fugaro detects the package manager itself, from `packageManager` in `package.json` or else the lockfile, and installs dependencies: `yarn install --immutable` (Yarn 2 and later), `yarn install --frozen-lockfile` (Yarn 1), `pnpm fetch` then an offline `pnpm install --frozen-lockfile`, or `npm ci`. You don't configure that, with one exception: `image.skip_build_scripts: true` skips package lifecycle and build scripts (`--mode=skip-build` for Yarn 2 and later, `--ignore-scripts` for the others), so the build command must build whatever the tests need. If `fugaro validate` says `packageManager` and the lockfile disagree, tell the user; don't delete either.
 
+## The project layer
+
+`fugaro config layer --json` takes `project:` and `gcp_project:` from the `fugaro.yaml` of the checkout it runs in, else from the selected project config (`$FUGARO_PROJECT`/`$FUGARO_CONFIG`), never a flag. Its four keys are `where`, `generation`, `sha256` and `yaml`; `profiles:` and `default_profile:` are keys inside that text, not fields of the object. Run it directly; a checkout with no `fugaro.yaml` fails with a guided sentence naming /fugaro:setup: then ask for the project and its GCP project, write a scratch `fugaro.yaml` with only `version`, `project` and `gcp_project`, and run it.
+
+**If it prints a layer,** read `profiles:` and `default_profile:` from its `yaml` field, tell the user which profiles it offers and which is the default, and ask only whether the repository fits one. If it does:
+1. Delete any scratch `fugaro.yaml` you wrote above (`fugaro config init` refuses to overwrite a file that is not byte-identical to what it would write), then write the minimal file with fugaro config init --yes (add `--profile NAME` or `--base-branch BRANCH` if it needs one).
+2. Run `fugaro config show --json`, and confirm with the user the commands and image it resolved to.
+3. Run `fugaro validate --json`, then check the image the workflow runs (steps 6, 7 and 10).
+
+A real quirk needs the full form, not the minimal file's top-level `profile:`: `fugaro validate` refuses it beside `workflows:`, so move it to `workflows.default.profile:` with the one changed field, and never copy the rest of the profile's values in.
+
+**If no layer applies, or the repository fits no profile,** delete any scratch `fugaro.yaml` and follow the investigative path.
+
 ## Machine size
 
 Match what CI gives its build and test steps. Bitbucket `size: 1x/2x/4x/8x` is 4/8/16/32 GB; GitHub-hosted `ubuntu-latest` has 7 GB on a private repository's standard runner and 16 GB on a public one. Use that memory, rounded up to a Cloud Run size, plus about 1Gi for the agent, which runs in the same container. When the estimate exceeds CI's memory, first look for how CI copes (`--maxWorkers=1`, a nightly-only suite) and mirror it. If CI raises the Node heap with `--max-old-space-size=<MB>` and the runner uses parallel workers, check workers times heap plus 2Gi against that figure. Defaults: 4 CPUs and 8Gi; a server whose tests start services usually needs 16Gi. Cloud Run allows 16Gi at most with 4 CPUs, and 32Gi with 8.

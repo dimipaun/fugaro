@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+# See ee/LICENSE for the terms.
+# The portal's install and build output (P1.4). `npm ci` writes node_modules/
+# and `vite build` writes dist/, and neither is a fact about the source: the
+# lockfile is what an install reproduces from, and dist/ is an artefact a
+# machine rebuilds. Committing either would put hundreds of megabytes of
+# somebody else's code under ee/, which is exactly what the licence audit
+# reads the lockfile instead of.
+node_modules/
+dist/
