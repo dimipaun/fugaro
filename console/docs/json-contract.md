@@ -972,8 +972,10 @@ mark the service changed at the same moment is re-read rather than
 overwritten: the callback clears the mark only while its state is still the one
 the confirmation named, so a `broken` mark the service recorded while the
 operator was reading the confirmation of an `exhausted` one is refused rather
-than cleared (both are clearable, but they are two different holds). Flags: `--yes` (skips the typed confirmation of the project's
-name), plus the cloud flags. It prints one line naming the account and the
+than cleared (both are clearable, but they are two different holds). It asks
+nothing and its only flags are the cloud ones: the typed confirmation of the
+project's name this command used to take is gone with the no-prompt policy
+(T11), and the states judged above are what refuse a clear. It prints one line naming the account and the
 state it cleared, and **no value of any kind**. A `broken` or `exhausted` mark
 is clearable; a `backed_off` one is refused (a probe clears it, C1.12) and a
 state this Fugaro does not know is refused rather than overwritten. `NAME` must
@@ -2662,7 +2664,7 @@ registry (D1102).
 | `default` | object | never | never | the built-in default: the value and the constant that holds it, or the sentence saying what unset means. **Exactly one of the two is set** |
 | `state` | string | never | never | the read's own words for the row: a stale layer's age (`stale 3h`), or `unread: <what could not be read>`. The console's argv deliberately omits `--offline`, so an unreachable layer says so and the row is drawn as unread rather than as a value |
 | `sensitive` | bool | **yes** | never | `omitempty`, so it appears only on a sensitive row. **The console drops such a row whole** — no key, no value, no control (D1111, the owner's ruling of 2026-11-01) — which is why the `value` member above is absent for one |
-| `writable` | bool | never | never | whether the **generic path** may write this key (`settings set KEY --layer <L> --yes -- <VALUE>`). Written on every row — a consumer branches on the value, never on the member's presence |
+| `writable` | bool | never | never | whether the **generic path** may write this key (`settings set KEY --layer <L> -- <VALUE>`). Written on every row — a consumer branches on the value, never on the member's presence |
 | `owner` | string | never | never | the command that writes the key (`settingsOwnerCommands`, `internal/cli/settings_read.go`, D1178): `fugaro settings set` on a row the generic path writes, the family that writes one it does not (`fugaro models`, `fugaro rigor set`, `fugaro rigor floor`, `fugaro accounts`, `fugaro secrets`, `fugaro project`, `fugaro workspace`, `fugaro image map`), and, for a key no command edits, a sentence naming the command that carries its file — `fugaro setup` and `fugaro update` for the installation's own keys, `fugaro config publish` for a key the layer file states and `fugaro config init` for one the repository's own file is opened with. **A `writable: false` row never spells the generic writer**: the write is what decides (D1102), and a row whose owner were `fugaro settings set` would say a command writes a key it has just refused. **`""` is a row no command writes** — the literal `*` of a wildcard row, which `settings set` writes only in its concrete spellings — and it is also what a CLI that predates D1178 wrote on every row it did not name, so a consumer treats the empty and the absent member the same way, and the screen draws this member only on a row `writable: false` — which is the one member a screen's drawing turns on |
 | `target_layer` | string | never | never | the layer a write with **no** `--layer` lands in: the narrowest of `repo`, `project` and `local` the key may be set in (`settingsDefaultLayer`, `internal/cli/settings_set.go`), and the layer the console passes back as `--layer` — what the window showed is what is spawned (D1105). **It is a fact about the key and not about the generic path's allowlist**, so it is **non-empty on a row the generic path refuses**: `mailbox.keychain_item` is `writable: false` with `owner: fugaro secrets` and `target_layer: "local"`. `""` is a key none of the three layers holds, which is a row no edit may target — a document from a CLI older than D1102 carries no such member at all, and it reads the same — and **empty is not a layer a screen can pass**: such a row gains no pencil, whatever `writable` says |
 | `levels` | array of level rows | **yes** | never | one row per layer that sets the key, for `--why`. Absent when the read did not compute them |
@@ -2715,14 +2717,15 @@ write** (the settings-edit plan's C3, design §5.1 rule 12, SECURITY-SENSITIVE
 because a new write always is). `settings.edit` drives the pair on the argv
 §5.1's write row spells and nothing else of the group: the dry run's is
 `settings set|unset KEY --layer <L> --dry-run --json --project <name> [--config
-<path>] [-- <VALUE>]`, and the confirmed write is the same line with `--yes` in
-place of `--dry-run --json` — the flag is on **both** phases, because the
-console's child has no terminal to answer the CLI's ordinary y/N with, and what
-the dry run's classification decides is the console's own window's shape and not
-the argv (§6.20). **Neither `--layer` nor a phase word is a renderer's**: the
-layer is this read's own `target_layer`, held in the console's main process, and
-the two phase spellings are that process's own — so no payload of a renderer's
-can name a layer the CLI did not offer, which is the whole of D1105.
+<path>] [-- <VALUE>]`, and the confirmed write is the same line with the phase
+words taken out — the write carries no flag at all, because the CLI asks no
+confirmation any more and the console's child has no terminal to answer one with
+(no-prompt policy, T11), and what the dry run's classification decides is the
+console's own window's shape and not the argv (§6.20). **Neither `--layer` nor a
+phase word is a renderer's**: the layer is this read's own `target_layer`, held
+in the console's main process, and the one phase spelling is that process's own
+— so no payload of a renderer's can name a layer the CLI did not offer, which is
+the whole of D1105.
 
 **The group's other words stay off this surface.** `settings get` reads a single
 key this screen does not need (the row set is the whole document); the group's
@@ -2811,24 +2814,21 @@ one `FIELD`/`VALUE` row per member, in this document's own order, so the two
 shapes cannot drift into two contracts.
 
 **The phase words are exclusive, and that is the command's own rule**
-(`settingsDryRunFlags`, `askConflict`). `--json` without `--dry-run` is refused
-("`--json` is the dry run's document"), `--dry-run` with `--yes` is refused too
-("a dry run says what the edit would do and writes nothing, `--yes` answers a
-write"), and so is `--dry-run` with **`--ask`**, the slot's third word: `--ask`
-is about the confirmations a write is given, which a dry run has none of and
-asks for none of (a managed project writes on the gate's verdict and asks
-nothing, and `--ask` is the flag that puts those questions back), and `--ask`
-beside `--yes` is refused as well, because the two are the slot's two answers to
-the same question. **A console passes exactly one of the two spellings this
-document is about** — `--dry-run --json` or `--yes` — and the CLI is what makes
-that a property rather than a convention: `--ask` is not a word of the console's
-argv (design §5.1 rule 6), because the questions it restores are asked at a
-terminal and the console's child, whose stdin is ignored, is given `--yes`
-instead. **The layer is never guessed by the console** either: the CLI itself falls back to the narrowest layer when `--layer` is
+(`settingsDryRunFlags`). `--json` without `--dry-run` is refused ("`--json` is
+the dry run's document"), and so is `--dry-run` with **`--ask`**, the other word
+of the group: `--ask` is about the confirmations a write is given, which a dry
+run has none of and asks for none of (a managed project writes on the gate's
+verdict and asks nothing, and `--ask` is the flag that puts those questions
+back). **A console passes the dry run's spelling and nothing else** —
+`--dry-run --json` for the read, and no flag at all for the write — and the CLI
+is what makes that a property rather than a convention: `--ask` is not a word of
+the console's argv (design §5.1 rule 6), because the questions it restores are
+asked at a terminal and the console's child has none, so the write it spawns
+asks nothing and needs no flag to say so. **The layer is never guessed by the console** either: the CLI itself falls back to the narrowest layer when `--layer` is
 omitted, but the console always names one (`argvFor` refuses a settings edit without it), the layer must be
 one `settingsWriteLayers` names, and a layer outside them is a refusal rather
 than a document. The command is the same pair §6.19's paragraph describes, so the
-`--`-terminated value, the two spellings the console passes and the layer's
+`--`-terminated value, the phase words the console passes and the layer's
 provenance are written down there and not twice here.
 
 ### 6.21 `fugaro managed status --json` — a managed project's marks, its trail and its last update

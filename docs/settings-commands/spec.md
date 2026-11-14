@@ -217,7 +217,7 @@ non-zero with the nearest registry names. It is a narrower `settings` and shares
 ### 4.2 `set`
 
 ```
-fugaro settings set KEY VALUE [--layer local|project|repo] [--repo R] [--yes]
+fugaro settings set KEY VALUE [--layer local|project|repo] [--repo R]
 fugaro settings set KEY --add V | --remove V [--layer …]     # string-list keys
 ```
 
@@ -237,7 +237,7 @@ In order:
    here, with the loader's own message.
 4. **Refuse in a coding agent's session** when the target is outside the repository — `--layer
    local` and `--layer project` write `~/.config/fugaro`, so under `agentenv.Marker` they print the
-   diff and the command and write nothing, `--yes` included (SD9). `--layer repo` writes a file
+   diff and the command and write nothing (SD9). `--layer repo` writes a file
    inside the repository, which an agent may edit anyway, and is allowed — **except for a write that
    asks for the typed project name**: loosening a ceiling or removing a floor is refused in an agent
    session even at `--layer repo`, printing the diff and the command and writing nothing. The typed
@@ -254,9 +254,10 @@ the layer's own `defaults.agent.max_budget_usd`, the cap every repository the la
 with — and `governance.*`), removing a `review_floor` entry, turning a `followup.*` key on or adding
 a name to one of its lists (`--add` on `followup.trusted` widens who may steer a run; `--remove`
 takes a name off and is the ordinary write), or writing a key the registry marks as a floor.
-**D1107 (owner, 2026-11-01) amends this for
-`set` and `unset` alone:** these two take `--yes` for that form outside a coding agent's session,
-and the typed name is still what a real terminal asks for; `fugaro project repos rm` and `fugaro
+**D1107 (owner, 2026-11-01) amended this for
+`set` and `unset` alone:** these two took `--yes` for that form outside a coding agent's session;
+with that flag gone the owner answers that form at their own real terminal, and the typed name is
+still what that terminal asks for; `fugaro project repos rm` and `fugaro
 update`'s publish of a looser node are the doors where nothing stands in for it.
 
 **A value is never written as an empty list.** A list key emptied by `--remove` is refused, or the
@@ -265,7 +266,7 @@ where absent and empty mean different things.
 
 ### 4.3 `unset`
 
-`fugaro settings unset KEY [--layer …] [--repo R] [--yes]` removes the key from that layer so the
+`fugaro settings unset KEY [--layer …] [--repo R]` removes the key from that layer so the
 layer below decides again. It never writes a default in its place (the reason `rigor unset` gives:
 a written default is indistinguishable from a deliberate pin and silently wrong the day the built-in
 changes). Nothing to remove is a **no-op with a sentence and exit 0**, so an idempotent script does
@@ -388,8 +389,8 @@ Four mechanisms, each built once, each named here so no plan builds a second:
 | Mechanism | Owner | How this design uses it |
 | --- | --- | --- |
 | **The shared comment-preserving editor** | `internal/yamledit` — **one package, one owning task** (the editor task, E3), which lands it **first** in the joint order of the implementation plan. Neither this design nor the `models` or `rigor` design builds a second one | `settings get\|set\|unset` calls it for all three documents: `--layer local` (the local project config), `--layer project` (the local layer file) and `--layer repo` (`fugaro.yaml`). It holds generic **locate-and-splice** operations — set a scalar, remove a key, add or remove a list item, upsert or remove a sequence item by key — that parse to *locate* the node and splice the bytes, never re-emitting the document. The plan adds a cross-document test that all three documents preserve comments, key order and every untouched byte the same way (D847) |
-| **The diff-and-confirm UX** | `lineDiff`, `backupFile` (`<file>.bak-<timestamp>`, mode 0600) and `writeFileAtomic` (`internal/cli/init.go`), plus `confirmTyped`/`confirmTypedStrict` (`internal/cli/budget.go`) | Every write in §4 and §5 uses all five; the sensitive directions use the typed form, which `--yes` never covers |
-| **The coding-agent-session refusal** | `agentMarker`/`agentEnv` over `agentenv.Marker` (`internal/cli/initsecrets.go`), as `config publish` and `recipes publish` already refuse | `settings set\|unset --layer local\|project` and every family that writes outside a repository print the diff and the command and write nothing, `--yes` included (SD9). Reads always run |
+| **The diff-and-confirm UX** | `lineDiff`, `backupFile` (`<file>.bak-<timestamp>`, mode 0600) and `writeFileAtomic` (`internal/cli/init.go`), plus `confirmTyped`/`confirmTypedStrict` (`internal/cli/budget.go`) | Every write in §4 and §5 uses all five; the sensitive directions use the typed form, which no flag stands in for |
+| **The coding-agent-session refusal** | `agentMarker`/`agentEnv` over `agentenv.Marker` (`internal/cli/initsecrets.go`), as `config publish` and `recipes publish` already refuse | `settings set\|unset --layer local\|project` and every family that writes outside a repository print the diff and the command and write nothing (SD9). Reads always run |
 | **The `next: fugaro update` line** | the `models` spec §4.6 and the `rigor` spec §3.7 | Every write command here prints that one line and nothing else (SD3, SD4) |
 
 Three things this design shares the other way, and none is a new mechanism of its own: the **editor**

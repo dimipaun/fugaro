@@ -660,7 +660,7 @@ security-sensitive.
 
 The coordinator's aggregation job is **OFF by default**: an installation that has not opted in
 has no coordinator account, no grant, no job and no schedule, and `fugaro update` plans none of
-them. The owner opts in once, at a real terminal (`--yes` never covers it, and a coding agent's
+them. The owner opts in once, at a real terminal (no flag covers it, and a coding agent's
 session is refused), per installation:
 
 ```sh

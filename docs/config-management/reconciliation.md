@@ -294,7 +294,7 @@ rather than its conclusion.
   (D848), and removing or retyping one bumps it. The console pins the version it reads —
   `SETTINGS_VIEW_DOC_VERSION = 1` (`console/src/main/settingsview.ts:42`) refuses any document at another
   version (`:181`) — so a version 2 would break **every** settings edit the console makes, which is the
-  edit it spawns `settings set … --yes` behind; keeping version 1 and adding optional members is what
+  edit it spawns `settings set …` behind; keeping version 1 and adding optional members is what
   makes "the console keeps working unchanged" true rather than hoped for. An old document that carries
   none of the new members still decodes and still draws. This design edits no console file.
   Cost of the alternative: a version bump is a version the console must be taught in the same release,
@@ -308,8 +308,8 @@ rather than its conclusion.
   Recommendation: the entry pair goes through the same `settingsTypedWrite` classification
   (`internal/cli/settings_set.go:1878`) and the same `applySettingsEdit`
   (`internal/cli/settings_write.go:86`), so a widening is still the typed project name (**D846**,
-  `docs/settings-commands/reconciliation.md:218`), `--yes` still answers it only outside a coding
-  agent's session (**D1107**, `internal/cli/settings_write.go:127`) and the agent-session fence
+  `docs/settings-commands/reconciliation.md:218`), answered only outside a coding
+  agent's session (**D1107**, `internal/cli/settings_write.go:127`), and the agent-session fence
   (`:106`) still comes first. Adding a `secrets` member or an `allow_data_to` value is a widening by the
   same rule, which is what makes D1180's rows possible at all.
   Cost of the alternative: a second classification for entries is a second place a ceiling can be
@@ -369,12 +369,12 @@ rather than its conclusion.
 - **D1170 (lowering or removing a `review_floor` entry takes the project's name typed at a terminal) —
   OPEN, recommended.**
   Recommendation: `fugaro rigor floor` removes and lowers through `confirmTypedStrict`
-  (`internal/cli/budget.go:250`) with no `--yes` standing in, and the agent-session fence comes first, so
+  (`internal/cli/budget.go:250`) with no flag standing in, and the agent-session fence comes first, so
   a managed project's gate never sees the step at all (D1180). Removal is not a plan a document can show:
   what it deletes is a floor, and D1026's rule — a `Typed` step is never admitted
   (`docs/managed-agent-converge/reconciliation.md:223`) — is what keeps the decision in the owner's own
   hands.
-  Cost of the alternative: a `--yes`-able floor removal is a removal an agent can perform in a loop
+  Cost of the alternative: a floor removal a flag could answer is a removal an agent can perform in a loop
   where each step looks additive, which is the whole class of change the typed form exists for. Cost of
   the recommendation: a person removing a stale floor at a terminal types a project name they already
   know, and a script that wants it unattended cannot have it — accepted, because that script is exactly

@@ -198,7 +198,7 @@ commands. The other two doors that reach this stage through `initStages` —
 `fugaro setup`, and `fugaro accounts add` / `accounts rm` — are not the update
 door either, so they keep the answer they had before this ruling, which is the
 ruling of 2026-11-06: a managed project's own session is told the count as a note
-and writes, and every other session is refused without `--yes`
+and writes, and every other session is refused
 (`inflightManaged`, `policyMigrateStage.inflightAnswer`, which reads the answer
 off the door rather than taking it as a parameter). The one line above is the
 update door's and is not printed by those doors.

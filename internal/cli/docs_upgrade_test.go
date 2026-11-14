@@ -118,7 +118,7 @@ func TestDocsDesignListsEveryUpgradeStep(t *testing.T) {
 		// name: `--repo` is a switch and PATH is its argument, `--check` takes
 		// PATH too, and there is no `--workflow` (init.go's flag set, and its
 		// own Use is "update [--repo [PATH]]").
-		"fugaro update [--check [PATH]] [--yes]",
+		"fugaro update [--check [PATH]]",
 		"[--repo [PATH]] [--image-source S] [--expect-digest KIND=sha256:H]...",
 	} {
 		if !strings.Contains(doc, want) {

@@ -6,7 +6,7 @@ Oct 15, 2026 · @Dimi
 
 In a Fugaro-managed project, the agent runs Terraform and other cloud operations end to end with no human confirmation. It reviews each plan itself before applying it.
 
-Today every cloud command stops for confirmation: typing yes, confirming the project, and more. The `--yes` flag skips these, but needing it everywhere is a pain. The prompts also protect little, because humans rarely read Terraform plan output. An agent that checks every resource change is the better reviewer.
+Today every cloud command stops for confirmation: typing yes, confirming the project, and more. The `--yes` flag used to skip these, but needing it everywhere was a pain. The prompts also protect little, because humans rarely read Terraform plan output. An agent that checks every resource change is the better reviewer.
 
 This is safe because a managed project is disposable. It holds only Fugaro resources, and it can be rebuilt from the project Git repo. Even deleting the whole project loses almost nothing.
 
@@ -43,7 +43,7 @@ In a managed project, every cloud operation runs without prompts, and the agent 
 6. Apply the saved plan with no confirmation.
 7. Store the plan and the review in the project repo for audit.
 
-In projects that aren't managed, today's confirmations and the `--yes` flag stay as they are.
+In projects that aren't managed, the confirmations stay as they are: the owner answers them at their own real terminal, a non-terminal session is refused, and `--ask` is the one flag that puts a managed project's confirmations back.
 
 ## Cost safeguards
 
@@ -84,7 +84,6 @@ Proposed names; final names are open.
 | `budget.monthly` in project config | Monthly budget amount used for alerts and the optional hard stop |
 | `fugaro restore` | Rebuilds a lost managed project from the repo into a new project ID |
 | `fugaro secrets status` | Shows which required secrets are missing after a restore |
-| `--yes` | Still supported for projects that aren't managed |
 
 ## Open questions
 

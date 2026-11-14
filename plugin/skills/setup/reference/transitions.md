@@ -5,7 +5,7 @@
 
 A `fugaro.yaml` edit that stops producing something the repository already has — `agent.auth` switched between `oauth` and `api-key`, a workflow or a secret dropped — **retires** the resources behind it. Two of them no apply can delete: a secret container carries `prevent_destroy`, and a job whose variant has left the file keeps `deletion_protection = true` in the state, past what `--allow-job-delete` can lower. They must leave Terraform's *state* first.
 
-**This is not an agent session's to run.** A typed confirmation naming the project guards it, and it refuses `--yes`, `--json` and a pipe by design; never pass `--yes`, `--allow-delete` or `--allow-job-delete` for the user either. Your part is the file edit and the pull request; afterwards the user runs this in their own terminal, not through the agent:
+**This is not an agent session's to run.** A typed confirmation naming the project guards it, and it refuses `--json` and a pipe by design; never pass `--allow-delete` or `--allow-job-delete` for the user either. Your part is the file edit and the pull request; afterwards the user runs this in their own terminal, not through the agent:
 
 ```bash user-runs
 fugaro update --repo --retire

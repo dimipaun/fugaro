@@ -143,7 +143,7 @@ out. Refusing `repos add` while `sync` stays open would close nothing — an age
 one calls the other and widens the same list — and `repos rm` is in the parity set for the reason
 `user rm` and `allow-delete` are: a door that can un-enroll every repository (`rm *`) is the same
 class as one that can enroll it, and the typed project name that guards it today is the human
-confirmation `--yes` may not stand in for (SD9, D846), a different guard from this one (spec §6.1).
+confirmation no flag stands in for (SD9, D846), a different guard from this one (spec §6.1).
 The deliberate exceptions — `budget set|kill` and `accounts clear` — stay.
 
 **F17: Conflicts. `config show` reports a clamped value as if it were in force.** A repository's

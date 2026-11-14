@@ -99,7 +99,7 @@ Every write ends with one line: next: fugaro update.`,
 	f.StringSliceVar(&o.allowRepos, "allow-repos", nil, "profiles.NAME.allow_repos: the repositories the profile serves, comma-separated; the list is written whole")
 	f.StringSliceVar(&o.claudeAccounts, "claude-accounts", nil, "profiles.NAME.claude_accounts: the Claude accounts the profile serves, comma-separated; the list is written whole")
 	f.StringSliceVar(&o.workflows, "workflows", nil, "repos.REPO.workflows: which of the repository's own workflows this project runs, comma-separated; the selection is written whole")
-	f.BoolVar(&o.ask, "ask", false, "in a project whose marks say it is managed, ask the confirmation this write would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe, --non-interactive); a no-op with a sentence in a project that is not managed; refused beside --yes")
+	f.BoolVar(&o.ask, "ask", false, "in a project whose marks say it is managed, ask the confirmation this write would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed")
 	return cmd
 }
 

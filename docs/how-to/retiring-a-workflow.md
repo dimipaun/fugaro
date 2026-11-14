@@ -20,7 +20,7 @@ fugaro update --repo --retire
 It is the whole transition, in the order the design fixes:
 
 1. **Remove the protected addresses from Terraform's state**, with `terraform state rm` — a secret container, and a job the state still holds with its protection on. This destroys nothing in GCP, and it runs before the plan because no plan can be made until it has.
-2. **Plan, print the plan's own counts and its full delete list, and confirm again.** The project's name is typed at a real terminal, twice over the command; `--yes`, `--json`, `--non-interactive`, a pipe and a coding agent's session take neither confirmation.
+2. **Plan, print the plan's own counts and its full delete list, and confirm again.** The project's name is typed at a real terminal, twice over the command; `--json`, a pipe and a coding agent's session take neither confirmation.
 3. **Apply, then delete the orphaned Cloud Run jobs through the Cloud Run API** — only jobs carrying this repository's own labels, of a variant the configuration no longer builds. A job that is not ours, or another variant's, is refused, with the `gcloud run jobs delete` command to run by hand.
 4. **Say what is left** if it stops in the middle: the addresses that left the state (alive in GCP, with nothing managing them until the delete runs) and the `gcloud` command that finishes it. Rerunning is safe — an address the state no longer holds is not removed again, and the orphaned jobs are found by their labels.
 
@@ -30,7 +30,7 @@ It is the whole transition, in the order the design fixes:
 
 A [managed project](../design/managed-projects.md) delivers itself, so its repository step takes no confirmation, and **plain `fugaro update` makes the retirement by itself** — no `--retire`, no typed project name: it removes the protected addresses from Terraform's state, plans, applies and deletes the orphaned jobs through the Cloud Run API, in the order below, and still writes the plan, the full delete list and the project's own audit record.
 
-Only the **derived** resources of that repository are retired that way: the IAM grants, the service accounts, the Cloud Run jobs and the Scheduler entries of a workflow, account or variant the configuration no longer produces. A retirement whose set holds **one** address that is not one of those — a bucket or an object, a secret container, an Artifact Registry repository, a database, a log bucket, the installation's own resources, or a type this CLI has no decision about — stops, names that address and the reason it stopped, and keeps the two typed confirmations and the `--retire` command this page documents. A coding agent's session, `--ask`, `--json`, `--non-interactive` and a pipe are never retired by themselves either, whatever the plan says.
+Only the **derived** resources of that repository are retired that way: the IAM grants, the service accounts, the Cloud Run jobs and the Scheduler entries of a workflow, account or variant the configuration no longer produces. A retirement whose set holds **one** address that is not one of those — a bucket or an object, a secret container, an Artifact Registry repository, a database, a log bucket, the installation's own resources, or a type this CLI has no decision about — stops, names that address and the reason it stopped, and keeps the two typed confirmations and the `--retire` command this page documents. A coding agent's session, `--ask`, `--json` and a pipe are never retired by themselves either, whatever the plan says.
 
 ## The manual order
 

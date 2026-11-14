@@ -16,7 +16,10 @@ an approval. The owner answered
 **every one of D1100–D1121 on 2026-11-01** ([spec.md](spec.md)): D1102–D1106 and D1108–D1121 as
 recommended, and **D1107 in his own words — `fugaro settings set|unset` accepts `--yes` for a
 widening outside an agent session**, and the console gets no hook and no marker. Only the shape of
-**P4** changed: it is that CLI change, not the console-only flag the design had recommended. This
+**P4** changed: it is that CLI change, not the console-only flag the design had recommended.
+**T11 of `docs/no-prompt-policy/` has since taken that flag out of every command, this one included:**
+a widening is answered at the CLI's own terminal and refused in a coding agent's session, the
+console's own window is what asks for it, and no flag answers anything. This
 document adds no
 code, no schema, no console source, no fixture and no workflow: it names the files the tasks will
 touch and edits none of them.
@@ -42,7 +45,7 @@ rather than the new flag and the new child-environment key the design had propos
         │                           │
         C2                          │           ← the pencil and the dialog's content
         │                           │
-        C3 ─────────────────────────┘           ← the write, the dry run, the widening `--yes`
+        C3 ─────────────────────────┘           ← the write, the dry run, the widening's own confirmation
         │
         C4                                       ← the hermetic e2e and the fixture
         │
@@ -70,8 +73,8 @@ later is the fourth-copy defect the settings design's own F12 exists to prevent,
 
 **Why P3 and P4 are separable.** P3 gives the console a machine-readable widening classification
 (**D1106**), which is needed by **every** edit — it is what decides the dialog's shape. P4 is what
-lets the console **perform** a widening: the CLI consults `--yes` on the path that demanded the
-typed project name, **outside an agent session** (**D1107**). They are two different questions — how
+lets the console **perform** a widening: the CLI's write needs no confirmation flag, so the
+console's own window is what answers the widening, **outside an agent session** (**D1107**). They are two different questions — how
 the console knows, and whether the CLI lets it — asked of two different refusals, and a reviewer who
 wants only the first can take P3 alone and leave every widening row showing a command to copy.
 
@@ -183,7 +186,6 @@ console rule; P1 and P4 are **SEC** on their own merits (§4 says why each).
 - **Interface:** `fugaro settings set KEY VALUE --layer L --dry-run --json` prints `{version, key,
   layer, path, changed, widening, why, old, new, refusal}`, writes nothing and leaves no backup.
   `--dry-run` without `--json` prints the same facts as the table the command already prints.
-  `--dry-run` with `--yes` is refused (the two answer different questions).
 - **The classification is S5's, not a second copy:** `widening` is the value of the existing
   `settingsTypedWrite` decision — the same call that decides whether the typed name is demanded — so
   a key added to `settingsCeilingKey` or a list rule changed in `settingsListSubset` changes the
@@ -207,23 +209,22 @@ console rule; P1 and P4 are **SEC** on their own merits (§4 says why each).
   offering a widening, and getting it wrong in the widening direction is a limit raised behind a
   one-click dialog.
 
-### P4. `settings set|unset` accept `--yes` for a widening, outside an agent session (**D1107**). **SEC** — **size S**
+### P4. `settings set|unset` confirm a widening at the owner's own real terminal, outside an agent session (**D1107**). **SEC** — **size S**
 
-- **Files:** `internal/cli/settings_write.go` (`applySettingsEdit`: the typed path consults `--yes`,
-  **after** the agent-session refusal), `internal/cli/settings_set.go` (`set` and `unset` — `--yes`
-  is already a flag of both, so this is the refusal's sentence and the help text, not a new word),
-  `internal/cli/settings_yes_widening_test.go` (new), and
-  `docs/settings-commands/reconciliation.md` (**the D846 entry gains the sentence that `settings
-  set|unset` no longer demand the typed name outside an agent session, and that `fugaro update`
-  still does**).
+- **Files:** `internal/cli/settings_write.go` (`applySettingsEdit`: the typed path takes no
+  confirmation flag, **after** the agent-session refusal), `internal/cli/settings_set.go` (`set` and `unset` — the
+  refusal's sentence and the help text), `internal/cli/settings_yes_widening_test.go` (new), and
+  `docs/settings-commands/reconciliation.md` (**the D846 entry records that `settings
+  set|unset` answer a widening outside an agent session, and that `fugaro update`
+  still demands the typed name**).
 - **The order of the two refusals is the whole of the change, and it is the security property:**
   `agentenv.Marker(os.Getenv)` is consulted **first** and the command refuses a coding agent's
-  session whatever else is passed, so **`--yes` never lifts that fence**; only then does `--yes`
-  stand in for the typed name. With no terminal and no `--yes`, the behaviour is S5's today.
+  session whatever else is passed, so **no flag lifts that fence**; only then is the widening
+  answered by the owner at their own real terminal. With no terminal and no flag, the behaviour is S5's today.
 - **What it does not touch, and the task says so where it writes:** `fugaro update`'s typed
   confirmation, which is a different path and where D846 is unchanged; the ordinary confirmation
-  `--yes` already answered (**F5**); the agent-session refusal; the compare-and-swap; and what the
-  write puts on disk. The flag changes **who confirms**, never **what is written**.
+  (**F5**); the agent-session refusal; the compare-and-swap; and what the
+  write puts on disk. The confirmation changes **who confirms**, never **what is written**.
 - **Tests:** `TestSettingsSetAcceptsYesForAWidening` and the `unset` form,
   `TestSettingsSetRefusesAYesWideningInAnAgentSession` (each of `agentenv.Markers`, one case each),
   `TestSettingsSetYesWideningStillWritesTheSameBytes` (the flag changes who confirms, never what is
@@ -233,7 +234,7 @@ console rule; P1 and P4 are **SEC** on their own merits (§4 says why each).
 - **Why SEC:** it is the one task here that moves a confirmation rule, and independent review is the
   point. What keeps it narrow is the refusal that stays in front of it.
 - **There is no console side to this task.** The console gets no flag, no marker and no typed name;
-  it spawns `settings set KEY --layer <L> --yes -- <VALUE>`, which C3 builds.
+  it spawns `settings set KEY --layer <L> -- <VALUE>`, which C3 builds.
 
 ## 5. Console tasks
 
@@ -299,12 +300,12 @@ console rule; P1 and P4 are **SEC** on their own merits (§4 says why each).
 - **SEC because** the dialog is the confirmation rule 11's pattern is copied for; the review is what
   decides whether the copy kept the gate.
 
-### C3. The write: `settings.edit`, the dry run, and the widening `--yes` (D1103, D1104, D1105, D1112, D1114, D1115). **SEC** — **size L**
+### C3. The write: `settings.edit`, the dry run, and the widening's own confirmation (D1103, D1104, D1105, D1112, D1114, D1115). **SEC** — **size L**
 
 - **Files:** `console/src/main/ipc.ts` (`settings.edit`, its exact-argv row, **rule 5's count 26 →
   27 in the same commit**, and the never table re-read rather than edited),
   `console/src/main/spawn.ts` (the row — and **no** new key in `CHILD_ENV_KEYS`, since the ruling
-  means the console passes `--yes` rather than a flag of its own: §5.1 rule 8's "nothing added"
+  means the console passes no flag of its own and relies on its own confirmation: §5.1 rule 8's "nothing added"
   stands), `console/src/main/confirm.ts` (**generalized from one view to a union**, D1115, with
   `LaunchConfirmer`'s seam widened to take either view and its `close()` kept as the tab-leave and
   installation-change cancel), `console/src/main/launch.ts` (the launch's own view moves behind the
@@ -316,9 +317,9 @@ console rule; P1 and P4 are **SEC** on their own merits (§4 says why each).
 - **The two spawns per confirmed edit, in this order:** first `settings set KEY --layer <L>
   --dry-run --json --project <name> [--config <path>]` (or the `unset` form) — nothing is written,
   and its document is what the window draws; then, on a yes from the window's own top frame,
-  `settings set KEY --layer <L> --yes -- <VALUE> --project <name> [--config <path>]` — the same
+  `settings set KEY --layer <L> -- <VALUE> --project <name> [--config <path>]` — the same
   argv for a widening and for a narrowing, because after **D1107** the CLI needs nothing more from
-  the console than `--yes`, and the console's own extra tick is the window's business and not an
+  the console than its own confirmation, and the console's own extra tick is the window's business and not an
   argv word.
 - **Why `--` and why the layer is explicit (D1104, D1105):** the value is a **positional** argument,
   so the terminator is the only thing that keeps a value spelled `-draft` or `--layer` from being

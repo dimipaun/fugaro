@@ -490,14 +490,14 @@ export const SPAWN_FLAGS: readonly string[] = Object.freeze([
   // the id the main process generated rather than one the CLI would invent.
   '--task-file',
   '--run-id',
-  // The settings write's three, and `settings.edit`'s argv is the only place any
-  // of them can appear (the settings-edit plan's C3): `--layer` is the layer the
-  // read's own row named, and `--dry-run`/`--yes` are the phase the main process
-  // decided -- no renderer argument, and no field of the operation's schema,
-  // spells either (`SETTINGS_EDIT_PHASE_WORDS`).
+  // The settings write's two, and `settings.edit`'s argv is the only place
+  // either can appear (the settings-edit plan's C3): `--layer` is the layer the
+  // read's own row named, and `--dry-run` is the classification phase the main
+  // process decided -- no renderer argument, and no field of the operation's
+  // schema, spells either (`SETTINGS_EDIT_PHASE_WORDS`). The write itself
+  // carries no flag at all: the CLI asks nothing.
   '--layer',
   '--dry-run',
-  '--yes',
   // The roadmap move's two (GV3.2), and `roadmap.move`'s argv is the only place
   // either can appear: `--to` is the release box the task was dropped on (or the
   // CLI's `none`), and `--expect` is the release the document this installation
@@ -1156,10 +1156,11 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     //
     // **`<phase>` is the main process's too, and it is one of three spellings**
     // (`SETTINGS_EDIT_PHASE_WORDS`): the dry run's `--dry-run --json`, and then
-    // `--yes` for the confirmed write -- for a widening and for a narrowing
-    // alike, because the console's child has no terminal to answer the CLI's
-    // ordinary y/N with. `--yes` answers that confirmation (D1107), and no flag,
-    // marker variable or typed name of the console's exists for it: the
+    // no word at all for the confirmed write -- for a widening and for a
+    // narrowing alike. The write carries no flag because the CLI asks nothing:
+    // `applySettingsEdit` refuses a write only inside a coding agent's session,
+    // never a plain piped one (`internal/cli/settings_write.go`), so no flag,
+    // marker variable or typed name of the console's exists for it. The
     // console's extra tick is the window's business and not an argv word.
     //
     // **The value is the one word behind a `--` terminator**, and it is emitted
@@ -1522,20 +1523,18 @@ export const SETTINGS_EDIT_OPERATION = 'settings.edit'
  *   - `narrowing` is the second spawn otherwise, answered by the window the
  *     operator read with no tick of its own.
  *
- * The two write phases are spawned with **the same argv**: `--yes` is on both
- * (D1107, the settings-edit plan's C3). What the classification decides is the
- * console's own question -- the tick, which gates Confirm -- and not a word of
- * what the child is told, because the console spawns every child with stdin
- * `'ignore'`: the CLI's ordinary y/N has no terminal to be asked at and refuses
- * a write without the flag (`confirmSettingsWrite`,
- * `internal/cli/settings_write.go`), so a narrowing that left it off would fail
- * every time.
+ * The two write phases are spawned with **the same argv**: neither carries a
+ * flag (D1107, the settings-edit plan's C3). What the classification decides is
+ * the console's own question -- the tick, which gates Confirm -- and not a word
+ * of what the child is told: `applySettingsEdit` writes for any session that is
+ * not a coding agent's, terminal or not (`internal/cli/settings_write.go`), so
+ * the two phases differ in nothing the CLI sees.
  *
- * **The `--yes` word lives here and nowhere else**, which is what keeps it out
- * of a renderer's reach: no argument, no schema key and no row declares it. A
- * phase that carried it where it does not belong, or dropped it where it does,
- * is this table being wrong, and `spawn.test.ts`'s phase-table case is the one
- * that fails when it is.
+ * **The phase words live here and nowhere else**, which is what keeps them out
+ * of a renderer's reach: no argument, no schema key and no row declares them. A
+ * phase that carried a word where it does not belong, or dropped one where it
+ * does, is this table being wrong, and `spawn.test.ts`'s phase-table case is the
+ * one that fails when it is.
  */
 export type SettingsEditPhase = 'dry-run' | 'widening' | 'narrowing'
 
@@ -1546,8 +1545,8 @@ export type SettingsEditPhase = 'dry-run' | 'widening' | 'narrowing'
  * because a string off a wire reads as a key of any table). */
 export const SETTINGS_EDIT_PHASE_WORDS: Readonly<Record<SettingsEditPhase, readonly string[]>> = Object.freeze({
   'dry-run': Object.freeze(['--dry-run', '--json']),
-  widening: Object.freeze(['--yes']),
-  narrowing: Object.freeze(['--yes']),
+  widening: Object.freeze([]),
+  narrowing: Object.freeze([]),
 })
 
 /** SETTINGS_EDIT_LAYERS is the whole of the layer vocabulary
@@ -1755,7 +1754,7 @@ export function argvFor(
      * main process decided from the dry run's document, and the layer the read's
      * own row named. Both are required by the one row that carries a
      * `layerFlag` and refused by every other row, for `runId`'s reason -- the
-     * layer and the `--yes` are the two words a renderer must not be able to
+     * layer and the phase are the two facts a renderer must not be able to
      * choose (D1105, D1107). */
     readonly settingsEdit?: { readonly phase: SettingsEditPhase; readonly layer: string } | undefined
     /** `roadmapMove` is the move's own three words (GV3.2): the document's `id`

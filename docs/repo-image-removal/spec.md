@@ -260,9 +260,9 @@ They are destroyed by the flow the tree already has and by nothing else:
   in [reconciliation.md](reconciliation.md) §5 and is not hidden here: until the owner runs it for a
   repository, that repository's converge is refused.
 - **Retirement is owner-run: `fugaro update --repo <r> --retire`**, with the two typed confirmations
-  `--yes` cannot cover (`internal/cli/init.go:444`; the flow is `internal/cli/init_retire.go:22` and
-  the set it acts on is `internal/infra/retire.go:26`). A coding agent's session, a pipe, `--json` and
-  `--non-interactive` cover neither.
+  no flag covers (`internal/cli/init.go:444`; the flow is `internal/cli/init_retire.go:22` and
+  the set it acts on is `internal/infra/retire.go:26`). A coding agent's session, a pipe and `--json`
+  answer neither.
 - **It is never automatic.** No `fugaro update` converge, no `setup`, no managed gate and no run
   performs it; the retirement set is *printed* by an ordinary run and acted on only under `--retire`.
 - **The plan shows the destroy and refuses it without the flag.** The retirement set names each address

@@ -970,7 +970,7 @@ func mobileReleaseCheckJob(t *testing.T, path, platform string, job mobileReleas
 			if !strings.Contains(cmd, mobileReleaseEnvExecCommand) {
 				t.Errorf("the %s job's submission does not run under `eas env:exec production`: the local `eas-cli` process needs the identity the environment carries, or it stops before it uploads anything", platform)
 			}
-			if !strings.Contains(cmd, "--yes") {
+			if !strings.Contains(cmd, "--non-interactive") {
 				t.Errorf("the %s job's submission is missing --non-interactive", platform)
 			}
 			if !strings.Contains(cmd, "--id") || !strings.Contains(cmd, mobileReleaseBuildJSONPath) {

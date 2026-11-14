@@ -155,7 +155,7 @@ building.
 
 `init_inputs.go`'s `gatherInputs` asks, in order, for the GCP project id, the
 region, and the project name; each answer has a suggestion and three tries
-(`prompt`). `canAsk()` is `¬--non-interactive ∧ ¬--yes ∧ ¬--json ∧
+(`prompt`). `canAsk()` is `¬--json ∧
 ¬--print-vars ∧ terminal`; when it is false, `gatherInputs` refuses with **one**
 error naming **every** missing flag (`MissingInputsError`), and
 `initflow.Run` repeats that check for `InputStage.Missing()`. The first-run
@@ -217,7 +217,7 @@ quietly implemented — the reversal also makes two comments false, and it needs
 a new privacy story: what is listed, to whom, on what surface, and what is never
 listed. See D6, which recommends a narrow reversal (open accounts, ids and
 display names only, in the interactive wizard at a real terminal, never under
-`--json`, `--non-interactive` or an agent session) and keeping the rule for
+`--json` or an agent session) and keeping the rule for
 every non-interactive path.
 
 ### F6 — The guided fallback exists and stays · **Exists**
@@ -237,7 +237,7 @@ what makes F5's reversal safe.
 banners — **CREATE the project**, **ADD Firebase to an existing project**, and
 **this LINKS billing account X to project Y** — each asking the user to type the
 project's name or id, and each reachable only through `canType()` (`terminal ∧
-¬--non-interactive ∧ ¬--json ∧ ¬agentEnv`). The Firestore location is typed in
+¬--json ∧ ¬agentEnv`). The Firestore location is typed in
 `init_firebase.go`; a billable first image build is typed in `init_images.go`
 and `init_review.go`.
 
@@ -246,7 +246,7 @@ Firebase, images, installation-second-pass, repository — and `RunCovers`, whic
 is `runCovered[name] ∧ YesCovers(name)`; `noYes` (seven occurrences, same file)
 is what a stage declares itself as never covered. `internal/cli/init_stages.go`
 is what *registers* the stages and hands them to `initflow.Run`. So project
-creation, secrets and compute are **never** covered by `--yes`, and
+creation, secrets and compute are **never** covered by a confirmation flag, and
 `internal/initflow/loop_test.go`'s `TestYesDoesNotCoverCreateOrBilling` pins
 exactly that.
 
@@ -268,7 +268,7 @@ plan's global constraints make this a hard rule with its own test.
   `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_SSE_PORT`,
   `CLAUDE_CODE_REMOTE`, `CURSOR_AGENT`, `AI_AGENT`) and `agentMarker(os.Getenv)`,
   which returns the first one set → `agentEnv`; with one set nothing is applied,
-  `--yes` or not.
+  flag or not.
 - `refuseAppKeyReadInAgent`, `refuseHTTP2Debug`.
 
 **Consequence.** `fugaro setup` inherits every one of these for free by calling
@@ -310,8 +310,8 @@ each returns `Done`/"No changes" when there is nothing to do. `init_stages.go`'s
 `outcome()` maps the result onto exit codes and calls `markCreated`.
 
 **Consequence.** `fugaro update` = the same loop, registered without
-`projectStage` and without `computeStage` (nothing to create), with `--yes`
-allowed to be the normal mode, and with the closing text naming `update`. It is
+`projectStage` and without `computeStage` (nothing to create), with every
+confirmation answered at the owner's own real terminal as the normal mode, and with the closing text naming `update`. It is
 a small task. The interesting part is *what it refuses* (F16) and how it
 differs from `upgrade` (F13).
 
@@ -865,7 +865,7 @@ an API on someone else's project as a side effect of a setup wizard is exactly
 the kind of surprise the refusals in F8 exist to prevent. So:
 
 - quota project **is** the project being set up → offer to enable it, typed
-  (`--yes` never covers it), naming the project and the API;
+  (no flag covers it), naming the project and the API;
 - quota project is **another** project → refuse, and print the exact
   `gcloud services enable cloudbilling.googleapis.com --project <quota>` line
   plus who to ask;
@@ -875,7 +875,7 @@ the kind of surprise the refusals in F8 exist to prevent. So:
 **Answered 2026-10-20: as recommended — only with a typed confirmation, only
 when the API is disabled, and never when the quota project is not the project
 being set up.** W4.4's refusal is written to exactly these three rules, and
-`--yes` never covers the enable.
+no flag covers the enable.
 
 *Alternative:* always enable behind a typed confirmation. Cost: writes to a
 project the user did not choose in the wizard, and on a project that may be
@@ -937,8 +937,8 @@ gets a hole in it.
 accounts only** (a closed account cannot be linked), show **display name and
 id**, pick by number, one account is the default, none is one message naming the
 console and the guided gcloud line. Show it **only** in the interactive wizard
-at a real terminal — never under `--json`, `--non-interactive`, or an agent
-session (the same four conditions as `canType()`), and never store the list.
+at a real terminal — never under `--json` or an agent
+session (the same conditions as `canType()`), and never store the list.
 `internal/infra/projectcreate.go`'s comment and `init_project.go`'s doc comment
 become false and must be rewritten in the same commit, and
 `internal/gcpfake/billing.go` (which already has `accounts`, `Link`,
@@ -955,7 +955,7 @@ covers it.
 
 **Answered 2026-10-20: as recommended, both sub-questions included** — the
 wizard lists the open accounts the logged-in user can use, in the interactive
-wizard at a real terminal only, never under `--json`, `--non-interactive` or an
+wizard at a real terminal only, never under `--json` or an
 agent session, and never stored; the picker asks the Cloud Billing API with the
 user's ADC **and** falls back to `gcloud billing accounts list` when the API is
 unavailable and gcloud is on PATH, saying which one answered; and the account a

@@ -86,7 +86,7 @@ type initOptions struct {
 	baseKinds                       []string // --base: base kinds to mirror now
 	imageSource                     string   // --image-source: a fork's own release registry/owner
 	expectDigests                   []string // --expect-digest KIND=sha256:...: the digest a release tag must resolve to
-	replaceImages                   []string // --replace-image KIND: kinds (history) whose tag in your registry may be replaced, each an ordinary covered step (askCovered: D12's answer of 2026-10-20 covers it in both doors, and a person at a real terminal without --yes confirms it there, typing nothing); a base kind is refused there, since nothing is copied for it any more
+	replaceImages                   []string // --replace-image KIND: kinds (history) whose tag in your registry may be replaced, each an ordinary covered step (askCovered: D12's answer of 2026-10-20 covers it in both doors, and a person at a real terminal confirms it there, typing nothing); a base kind is refused there, since nothing is copied for it any more
 	operators, admins               []string
 	budget                          int64
 	budgetCurrency, billingAccount  string
@@ -115,7 +115,7 @@ type initOptions struct {
 	// (managed_ask.go, initflow.AskDecision).
 	ask                                 bool
 	provisionBatch                      bool   // --provision-batch: provision the Batch backend's installation-level root (owner-run, typed confirmation)
-	coordinator                         bool   // --coordinator: opt the installation in to the coordinator's aggregation job (owner-run, at a terminal, never --yes)
+	coordinator                         bool   // --coordinator: opt the installation in to the coordinator's aggregation job (owner-run, at a terminal, and no flag stands in for one)
 	onboardRepo                         string // --onboard-repo owner/name: the explicit opt-in to onboard the checkout's repository
 	allowDelete                         []string
 	operatorsChanged, adminsChanged     bool
@@ -519,7 +519,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	f.BoolVar(&o.printVars, "print-vars", false, "print the Terraform variables and exit, with no cloud calls and no Terraform (ungated: no discovery, and with --repo no readiness gates)")
 	f.BoolVar(&o.configOnly, "config-only", false, "only write the local config, from the installation's outputs (else the flags)")
 	f.BoolVar(&o.publishConfig, "publish-config", false, "publish the shared config to the runs bucket and stop ("+d.name+" does it after it writes the local config)")
-	f.BoolVar(&o.anchor, "anchor", false, "in a checkout of an onboarded repository, only write the gcp_project line into its fugaro.yaml, after checking that every workflow's job image was submitted by fugaro "+gcpProjectFieldSince+" or later and built FROM a release base image of "+gcpProjectFieldSince+" or later, and that no base image the local config sets is a development or older one (no Terraform, no publish, no image copy; the diff, then --yes writes or a person at the terminal confirms it)")
+	f.BoolVar(&o.anchor, "anchor", false, "in a checkout of an onboarded repository, only write the gcp_project line into its fugaro.yaml, after checking that every workflow's job image was submitted by fugaro "+gcpProjectFieldSince+" or later and built FROM a release base image of "+gcpProjectFieldSince+" or later, and that no base image the local config sets is a development or older one (no Terraform, no publish, no image copy; the diff, then the person at the terminal confirms it, and a run with no terminal prints the line and writes nothing)")
 	f.BoolVar(&o.forget, "forget", false, "roll back: turn log isolation and registry cleanup off, then remove every address from Terraform's state. An installation that holds the managed deployer's fence has no rollback and this is refused there: the state removal would leave the seven scoped roles and their seven conditioned bindings live in the project, accounted for by nothing, and taking the project out of managed mode does not remove them (docs/design/managed-projects.md §10.2, \"Rolling back\")")
 	f.StringArrayVar(&o.allowDelete, "allow-delete", nil, "a resource address the plan may delete or replace (repeatable)")
 	f.BoolVar(&o.provisionBatch, "provision-batch", false, "after the installation's ordinary steps, provision the Batch compute backend into a state of its own (design docs/design/compute-backend.md §8.1 task 6): the Compute and Batch APIs, the run accounts' IAM, the launcher's, reaper's and preload accounts and roles, a Cloud NAT and router, and a preloaded boot image rebuilt on a schedule. It is money (a billable build, a NAT's hours) and permanent, so it takes a person at a real terminal; nothing runs it by default, and an installation reaches the backend only after this has run and `doctor` passes its gate. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor)")
@@ -2411,7 +2411,7 @@ type stepConfirmation int
 
 const (
 	stepLeave stepConfirmation = iota // nothing was asked: the caller leaves the step
-	stepByYes                         // --yes confirmed it: show no prompt
+	stepByYes                         // the run carries its own answer: show no prompt
 	stepTyped                         // the person types this step's own confirmation
 )
 
@@ -2439,26 +2439,12 @@ func (r *initRun) stepConfirmation(class initflow.ConfirmClass) stepConfirmation
 
 // neverConfirmsBuild is the parenthetical that follows "it needs the person at
 // a real terminal" in the warning a run that could not confirm a billable image
-// build prints: which ways of running do not give that confirmation. It names
-// --yes as the way that does, because D12's answer of 2026-10-20 covers the
-// build in BOTH front doors (askCovered) — a line that told the reader "--yes
-// never confirms it" would name the one flag that does. The steps that stay
-// Typed write their own line, at their own call site, where "--yes never
-// confirms it" is true.
-//
-// agent is the run's own reading of the coding-agent marker, and it is why this
-// is a function: a `--repo` run has no agent gate in front of the build (the
-// converge plans read-only instead, so it never prints this), so an agent's
-// session does reach the warning — and there --yes is the flag that session
-// refuses, so naming it would be a recipe for getting past the check, in text
-// the agent reads (AgentAdvice). The clause is chosen by the marker, as
-// convergeOptIn's is.
-func neverConfirmsBuild(agent bool) string {
-	if agent {
-		return "no terminal, --json, a pipe and a coding agent never confirm it"
-	}
-	return "no terminal, --json, a pipe and a coding agent never confirm it, and --yes does"
-}
+// build prints: which ways of running do not give that confirmation. No flag
+// gives it (T11, docs/no-prompt-policy removed the --yes that did), and the
+// sentence is the same in a coding agent's session as anywhere else: it names
+// no route to take, which is what a line read by an agent has to be
+// (AgentAdvice).
+const neverConfirmsBuild = "no terminal, --json, a pipe and a coding agent never confirm it"
 
 // askClass is the confirmation of a step that is money or permanent, of the
 // class. It shows the banner, and reachable says whether it could be asked at
@@ -5445,7 +5431,7 @@ func (r *initRun) buildImages(ctx context.Context, lc *localcfg.Config, cfg *con
 		}
 		if !reachable {
 			r.buildsLeft = append(r.buildsLeft, name)
-			r.warn(fmt.Sprintf("the first image build of %s/%s is billable and was not confirmed: it needs the person at a real terminal ("+neverConfirmsBuild(r.conditions().Agent != "")+"), so its job waits for it: in your own terminal window, run fugaro image build --repo %s --workflow %s (it asks nothing), then "+r.o.doorProgram()+" --repo", spec.Name, name, spec.Name, name))
+			r.warn(fmt.Sprintf("the first image build of %s/%s is billable and was not confirmed: it needs the person at a real terminal ("+neverConfirmsBuild+"), so its job waits for it: in your own terminal window, run fugaro image build --repo %s --workflow %s (it asks nothing), then "+r.o.doorProgram()+" --repo", spec.Name, name, spec.Name, name))
 			continue
 		}
 		if !ok {

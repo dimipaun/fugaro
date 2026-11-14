@@ -351,16 +351,16 @@ than when it was written: nothing else in the tree will ever take those two entr
   already installed at user scope), and removes them.
 - **It never commits.** The change is the working tree's, like every other edit this CLI makes to a
   checkout's files; the user reviews it with `git diff` and commits it or does not.
-- **`--yes` confirms it; a terminal asks.** It is a local file write on this machine, the same class the
+- **A person at their own real terminal confirms it.** It is a local file write on this machine, the same class the
   pin's own write was confirmed by. Refusing to remove without a typed confirmation would be the second
   command the HARD RULE forbids, in the shape of "run `fugaro update`, then answer a question you did not
   expect".
-- **In a coding agent's session the diff is printed and nothing is written**, `--yes` included. The
+- **In a coding agent's session the diff is printed and nothing is written**. The
   removal is a change to a file the repository commits, and an agent does not decide that. The stage says
   the exact line to run in the user's own terminal.
 - **`fugaro` never unsets the marker to get around this**, and no flag, environment variable or
   "non-interactive" mode exists that would. The refusal is the one `fugaro update` already makes for the
-  writes that reach outside the machine (its own help text, `--yes`), and it stays a refusal.
+  writes that reach outside the machine (its own help text), and it stays a refusal.
 - **A pin that is not removable is not a failure.** A file that is not valid JSON, a fork's marketplace, a
   pin whose ref is not a release tag: each is left exactly as it is, with the existing refusal text, and
   the run continues to the next stage. `update` is converging a machine, not validating a repository.
@@ -388,7 +388,7 @@ than when it was written: nothing else in the tree will ever take those two entr
     job (check, explain, hand over the one command) is the job that stays.
   - `plugin/skills_lint_test.go:583`'s `userRunsAllowed` names `fugaro upgrade`; it becomes `fugaro
     update` (already in the list) and `fugaro upgrade` is removed.
-  - `plugin/skills_lint_test.go:749`'s `upgradeYesOnly` allows `--yes` on `fugaro upgrade` in a
+  - `plugin/skills_lint_test.go:749`'s `upgradeYesOnly` allows `fugaro upgrade` in a
     `user-runs` block and on nothing else; it is re-pointed at `fugaro update`, which is now the command
     that carries the cloud half.
   - `plugin/upgrade_skill_test.go` becomes `plugin/update_skill_test.go` and is rewritten against the
@@ -568,8 +568,8 @@ correctness condition, and [implementation-plan.md](implementation-plan.md)'s ta
 ## 12. What this work does not do
 
 - **It writes no code.** Four documents, one commit.
-- **It does not change `fugaro update`'s cloud behaviour**, its confirmations, its typed project names,
-  its `--yes` coverage or the checkout stage's parked-cloud machinery for an agent session.
+- **It does not change `fugaro update`'s cloud behaviour**, its confirmations, its typed project names
+  or the checkout stage's parked-cloud machinery for an agent session.
 - **It does not move the *skills' content* into the image or a package manager.** The plugin reaches people
   through Claude Code's marketplace, which is what the `claude` CLI speaks; a second distribution channel
   is a separate decision and is not taken here.

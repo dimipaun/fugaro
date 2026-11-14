@@ -139,7 +139,7 @@ print today, from the published policy; the spec's §2.4 says so, and `set` stat
 lower it.
 
 **F11: Exists. The typed confirmation.** `confirmTyped` and `confirmTypedStrict`
-(`internal/cli/budget.go`) ask for the project's name, and `--yes` does not stand in for the strict
+(`internal/cli/budget.go`) ask for the project's name, and no flag stands in for the strict
 form, which is what `fugaro project repos rm` uses and why (`confirmRemovalStrict`,
 `internal/cli/project_cmd.go`). *Consequence:* the lowering confirmation of D832 is this helper, not
 a new one.
@@ -184,7 +184,7 @@ so a pair written by hand cannot sit in a layer either.
 wrap `agentenv.Marker`, and `fugaro config publish` refuses on it before anything else
 (`internal/cli/config_publish.go`). The wording that refusal uses — and the one the `models` commands
 reuse (SD9, D789 there) — is not "refuse before saying anything": the command prints **the diff and
-the command it would have run** and writes nothing, `--yes` included, so the person reading the
+the command it would have run** and writes nothing, so the person reading the
 transcript sees exactly what was asked for and exactly what was not done. *Consequence:* `set`/`unset`
 of the **project layer** write a file outside every repository and are refused in those words there
 (spec §3 step 3), and §4's lowering confirmation inherits them, because a typed project name is a

@@ -538,12 +538,9 @@ func TestConfigInitWritesTheMinimalFile(t *testing.T) {
 	if err := os.Remove(filepath.Join(dir, "fugaro.yaml")); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := execute(t, "config", "init", "--project", "aurora"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--yes") {
-		t.Fatalf("without --yes: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "fugaro.yaml")); err == nil {
-		t.Fatal("written without --yes")
-	}
+	// It asks nothing and takes no flag for the write (T11 of
+	// docs/no-prompt-policy): the file it writes is a repository file,
+	// reviewed and committed like any other, so one run is one write.
 	out, _, err := execute(t, "config", "init", "--project", "aurora", "--base-branch", "develop")
 	if err != nil || !strings.Contains(out, "wrote") {
 		t.Fatalf("out %q, %v", out, err)

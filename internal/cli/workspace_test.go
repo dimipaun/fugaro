@@ -329,8 +329,7 @@ func TestWorkspaceAddRefusesAnIssuerTheProjectDoesNotMint(t *testing.T) {
 			"--firebase-project", "project-ws",
 			"--issuer", issuer,
 			"--assertion-key", "marker-assertion-key",
-			"--service-account", "marker-workspace@project-ws.iam.gserviceaccount.com",
-			"--yes")
+			"--service-account", "marker-workspace@project-ws.iam.gserviceaccount.com")
 		if err == nil {
 			t.Fatalf("--issuer %s was accepted:\n%s", issuer, out)
 		}
@@ -352,8 +351,7 @@ func TestWorkspaceAddRefusesAPinThatIsNotWhole(t *testing.T) {
 	_, _, err := execute(t, "workspace", "add", "workspace-alpha",
 		"--firebase-project", "project-ws",
 		"--issuer", "https://securetoken.google.com/project-ws",
-		"--service-account", "marker-workspace@project-ws.iam.gserviceaccount.com",
-		"--yes")
+		"--service-account", "marker-workspace@project-ws.iam.gserviceaccount.com")
 	if err == nil || !strings.Contains(err.Error(), "--assertion-key") {
 		t.Fatalf("a pin without an assertion key: %v", err)
 	}
@@ -456,8 +454,7 @@ func TestMemberAddReplacesTheEntryItAlreadyDeclares(t *testing.T) {
 		"--firebase-project", "aurora-fb",
 		"--fp", "aurora",
 		"--exchange-url", "https://exchange.example.com/v2",
-		"--repo", "owner/repo-new",
-		"--yes"}
+		"--repo", "owner/repo-new"}
 	out, _, err := execute(t, ours...)
 	if err != nil {
 		t.Fatalf("workspace member add: %v\n%s", err, out)

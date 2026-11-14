@@ -55,7 +55,7 @@ Fugaro detects the package manager itself, from `packageManager` in `package.jso
 `fugaro config layer --json` takes `project:` and `gcp_project:` from the `fugaro.yaml` of the checkout it runs in, else from the selected project config (`$FUGARO_PROJECT`/`$FUGARO_CONFIG`), never a flag. Its four keys are `where`, `generation`, `sha256` and `yaml`; `profiles:` and `default_profile:` are keys inside that text, not fields of the object. Run it directly; a checkout with no `fugaro.yaml` fails with a guided sentence naming /fugaro:setup: then ask for the project and its GCP project, write a scratch `fugaro.yaml` with only `version`, `project` and `gcp_project`, and run it.
 
 **If it prints a layer,** read `profiles:` and `default_profile:` from its `yaml` field, tell the user which profiles it offers and which is the default, and ask only whether the repository fits one. If it does:
-1. Delete any scratch `fugaro.yaml` you wrote above (`fugaro config init` refuses to overwrite a file that is not byte-identical to what it would write), then write the minimal file with fugaro config init --yes (add `--profile NAME` or `--base-branch BRANCH` if it needs one).
+1. Delete any scratch `fugaro.yaml` you wrote above (`fugaro config init` refuses to overwrite a file that is not byte-identical to what it would write), then write the minimal file with `fugaro config init` (add `--profile NAME` or `--base-branch BRANCH` if it needs one).
 2. Run `fugaro config show --json`, and confirm with the user the commands and image it resolved to.
 3. Run `fugaro validate --json`, then check the image the workflow runs (steps 6, 7 and 10).
 
