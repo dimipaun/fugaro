@@ -90,7 +90,7 @@ const licenceWarnGraceDaysBound = 1 << 20
 // hold the key, the seats and the walk-back). The narrower windows are the
 // console's and the app's to deliver, and they know their reader: an operator
 // who must be told in the last week is told there, with the field below.
-var licenceWarnRole = access.RoleAdmin
+const licenceWarnRole = access.RoleAdmin
 
 // licenceWarning is one window as this build reads it: the roles it reaches at
 // this build's own resolution, the instant it opens, and the claim it was
