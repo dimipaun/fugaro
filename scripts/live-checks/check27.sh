@@ -1047,15 +1047,28 @@ step_update() {
   fi
   local changes
   changes=$(grep -c 'No changes' "$UPDATE2_LOG" 2>/dev/null || true)
-  if [ "${changes:-0}" -eq 0 ]; then
-    fact update FAIL "the second fugaro update printed no 'No changes' line at all: this is the one assertion step 4 makes, and a converge that finds work on a converged installation has not converged it ($UPDATE2_LOG)"
-    stop "the second fugaro update printed no 'No changes' ($UPDATE2_LOG): step 4's assertion did not hold"
+  # EVERY stage's own line must be a converged one. Step 4 asserts `No changes`
+  # for every stage, and a stage the first run did not settle says so instead:
+  # initflow's plan view draws it `changed` for a stage that applied something,
+  # `will do` for one with work left and `left for you` for one that needs you
+  # (loop.go's stateLabel) — a transcript where one stage prints `changed` and
+  # the rest `No changes` is exactly the non-converging run this step forbids,
+  # and no line saying "work" at all need appear. The LAST line naming a stage
+  # is the stage's own; the lines before it are progress.
+  local stage line bad="" why=""
+  for stage in installation firebase images installation-2 secrets plugin; do
+    line=$(grep -E "(^|[[:space:]])$stage([[:space:]]|\$)" "$UPDATE2_LOG" 2>/dev/null | tail -1 || true)
+    case "$line" in
+    *"No changes"* | "  done "*) continue ;;
+    esac
+    bad="$bad $stage"
+    why="$why; $stage: $(one_line "${line:-(no line names this stage)}")"
+  done
+  if [ -n "$bad" ]; then
+    fact update FAIL "the second fugaro update does not read No changes for every stage — step 4's own assertion — and these are not converged:$why ($UPDATE2_LOG)"
+    stop "the second fugaro update still has work on:$bad ($UPDATE2_LOG): step 4's 'No changes for every stage' did not hold"
   fi
-  if grep -qE 'will do|applying|Creating |Updating ' "$UPDATE2_LOG" 2>/dev/null; then
-    fact update FAIL "the second fugaro update still names work it would do ($(one_line "$(grep -m1 -E 'will do|applying|Creating |Updating ' "$UPDATE2_LOG" 2>/dev/null)")): the first run did not converge everything"
-    stop "the second fugaro update still has work to do ($UPDATE2_LOG): step 4's 'No changes for every stage' did not hold"
-  fi
-  fact update PASS "the first run exits 0 and converges what was left; the second exits 0 with $(one_line "${changes}") 'No changes' line(s) and no work named ($UPDATE2_LOG)"
+  fact update PASS "the first run exits 0 and converges what was left; the second exits 0 with every stage's own line reading No changes (${changes:-0} line(s) naming it in $UPDATE2_LOG)"
 }
 
 # step_secrets: the installation's secret containers, LISTED and never counted —
@@ -1158,14 +1171,14 @@ restore_run() {
   #    Firebase default bucket and Artifact Registry's own, and those are the
   #    project's, not a prefix of anything this check may remove.
   local bucket
-  for bucket in "fugaro-runs-$P" "fugaro-state-$P"; do
+  for bucket in "fugaro-runs-$P" "fugaro-tfstate-$P"; do
     gcloud storage rm --recursive "gs://$bucket" --project="$P" >&2 || true
   done
   read_out gcloud storage buckets list --project="$P" --format='value(name)'
   if [ "$READ_STATUS" -ne 0 ]; then
     unknown="$unknown (the bucket list could not be read: $(one_line "$READ_OUT"))"
   else
-    for bucket in "fugaro-runs-$P" "fugaro-state-$P"; do
+    for bucket in "fugaro-runs-$P" "fugaro-tfstate-$P"; do
       if grep -qxF "$bucket" <<<"$READ_OUT"; then bad="$bad bucket:$bucket"; fi
     done
     left=$(rows_of "$READ_OUT" | tr '\n' ' ')
@@ -1190,7 +1203,7 @@ restore_run() {
     LIFECYCLE=$(rows_of "$READ_OUT" | head -1)
   fi
   if [ -n "$bad" ]; then
-    fact restore FAIL "these would not go:$bad — finish by hand: gcloud run jobs delete <each> --region=$REGION --project=$P, gcloud storage rm -r gs://fugaro-runs-$P, and gcloud projects delete $P --quiet"
+    fact restore FAIL "these would not go:$bad — finish by hand: gcloud run jobs delete <each> --region=$REGION --project=$P, gcloud storage rm -r gs://fugaro-runs-$P and gs://fugaro-tfstate-$P, and gcloud projects delete $P --quiet"
     return 0
   fi
   if [ -n "$unknown" ]; then
@@ -1220,10 +1233,10 @@ print_plan() {
   say "  [network+local, reads] fugaro setup --gcp-project $OTHER --name $N --yes with stdin at /dev/null, over a config root of its own: it must be REFUSED (project creation is typed, and --yes never covers it), and gcloud projects describe $OTHER must still answer not-found"
   say "and its Restore (also from the exit trap) would run:"
   say "  [network, reads+deletes] gcloud run jobs list --project=$P --region=$REGION, then gcloud run jobs delete <each> --project=$P --region=$REGION --quiet, then the list again (it must be empty)"
-  say "  [network, deletes] gcloud storage rm --recursive gs://fugaro-runs-$P and gs://fugaro-state-$P, then gcloud storage buckets list (neither may be named; the Firebase default bucket and Artifact Registry's are the project's own)"
+  say "  [network, deletes] gcloud storage rm --recursive gs://fugaro-runs-$P and gs://fugaro-tfstate-$P, then gcloud storage buckets list (neither may be named; the Firebase default bucket and Artifact Registry's are the project's own)"
   say "  [network, reads] gcloud secrets list --project=$P --format='value(name)' — LISTED as evidence and never counted: they are the installation's own containers and the project's delete takes them"
   say "  [network, deletes] gcloud projects delete $P --quiet, then gcloud projects describe $P --format='value(lifecycleState)' (DELETE_REQUESTED; the record stays for 30 days and the ID is never free again)"
-  say "  [local, leaves in place] the config root $C stays on purpose: the section's steps 5 to 22 run against that installation, and removing it is one line this script prints"
+  say "  [local, leaves in place] the config root $C stays on purpose: the section's own block reads C=… back from its vars.env, and a run that ended before its create has nothing else to start from. It is not an installation left behind — the Restore above deletes the project — so the steps printed for you are run on a throwaway project of your own; removing the root is one line this script prints"
   say "Nothing was created, granted, written or deleted: this dry run made no gcloud call and no fugaro call at all."
 }
 

@@ -1512,7 +1512,7 @@ gcloud run jobs list --project="${P:?}" --region=us-east5 --format='value(name)'
 # ... delete each one it printed, then the Restore's own final assertion below.
 # 2. the bucket (and the state bucket, if the run made one)
 gcloud storage rm --recursive "gs://fugaro-runs-${P:?}"
-gcloud storage rm --recursive "gs://fugaro-state-${P:?}" 2>/dev/null || true
+gcloud storage rm --recursive "gs://fugaro-tfstate-${P:?}" 2>/dev/null || true
 # 3. the Restore's FINAL ASSERTION: every line must read 0. It runs BEFORE the
 #    project's own delete, so a 0 means the check's artifacts are gone rather
 #    than that the project became unreachable.

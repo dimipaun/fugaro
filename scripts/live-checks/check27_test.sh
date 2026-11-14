@@ -236,7 +236,7 @@ installation_of() { # id
   if [ -z "${FAKE27_NO_BUCKET:-}" ]; then
     printf 'fugaro-runs-%s\n' "$1" >>"$state/buckets"
   fi
-  printf 'fugaro-state-%s\n' "$1" >>"$state/buckets"
+  printf 'fugaro-tfstate-%s\n' "$1" >>"$state/buckets"
   if [ -z "${FAKE27_NO_JOB:-}" ]; then
     printf 'fugarohist\n' >"$state/jobs"
   fi
@@ -327,6 +327,16 @@ update)
   n=$(wc -l <"$state/updates" | tr -d ' ')
   if [ "$n" -ge 2 ] && [ -n "${FAKE27_UPDATE2_WORK:-}" ]; then
     stage_list 'will do'
+    exit 0
+  fi
+  # A second update that applied something prints initflow's own `changed` word
+  # for that stage and `No changes` for the rest (loop.go's stateLabel): the one
+  # shape a "no work named" grep passes while the stage list is not converged.
+  if [ "$n" -ge 2 ] && [ -n "${FAKE27_UPDATE2_CHANGED:-}" ]; then
+    printf '  %s  %-16s %s\n' changed installation 'creates the runs bucket'
+    for s in firebase images installation-2 secrets plugin; do
+      printf '  %s  %-16s\n' 'No changes' "$s"
+    done
     exit 0
   fi
   stage_list 'No changes'
@@ -771,6 +781,16 @@ test_an_update_that_still_has_work_is_a_fail() {
   expect_contains "$(fact_line update)" "No changes" "the row names step 4's assertion"
 }
 
+test_an_update_that_changed_a_stage_is_a_fail() {
+  setup_case update-changed
+  RUN27_ENV=(FAKE27_UPDATE2_CHANGED=1)
+  run27_default
+  expect_status "$status" 2 "a second update that applied a stage"
+  expect_contains "$(fact_line update)" "FAIL" "the update row"
+  expect_contains "$(fact_line update)" "installation" "the row names the stage that is not converged"
+  expect_contains "$(fact_line update)" "No changes" "the row names step 4's assertion"
+}
+
 test_an_update_that_fails_is_a_fail() {
   setup_case update-fails
   RUN27_ENV=(FAKE27_UPDATE_FAILS=1)
@@ -786,7 +806,7 @@ test_the_restore_deletes_the_jobs_the_buckets_and_the_project() {
   expect_status "$status" 0 "a full run"
   expect_contains "$(calls_gcloud)" "run jobs delete fugarohist" "the job is deleted"
   expect_contains "$(calls_gcloud)" "storage rm --recursive gs://fugaro-runs-$PROJECT" "the runs bucket is deleted"
-  expect_contains "$(calls_gcloud)" "storage rm --recursive gs://fugaro-state-$PROJECT" "the state bucket is deleted"
+  expect_contains "$(calls_gcloud)" "storage rm --recursive gs://fugaro-tfstate-$PROJECT" "the state bucket is deleted"
   expect_contains "$(calls_gcloud)" "projects delete $PROJECT --quiet" "the project's own delete"
   expect_contains "$(calls_gcloud)" "secrets list --project=$PROJECT" "the secrets are listed"
   # The order that matters: the secrets are read BEFORE the project's delete, so
@@ -998,6 +1018,7 @@ t test_a_missing_image_is_a_fail
 t test_doctor_that_does_not_name_the_project_is_a_fail
 t test_doctor_that_reports_a_finding_is_recorded_and_not_failed
 t test_an_update_that_still_has_work_is_a_fail
+t test_an_update_that_changed_a_stage_is_a_fail
 t test_an_update_that_fails_is_a_fail
 t test_the_restore_deletes_the_jobs_the_buckets_and_the_project
 t test_a_job_the_restore_cannot_delete_is_a_fail
