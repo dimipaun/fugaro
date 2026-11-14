@@ -10,7 +10,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 )
 
 // testToken is the token the check is handed. It is plain words and not a
@@ -19,6 +18,15 @@ import (
 // distinctive enough to find if it ever appeared.
 const testToken = "plain-words-not-a-token"
 
+// aDayComesLater and aDayHasPassed are the two expiries the records here carry.
+// They are days and not offsets from now, because the record's expiry is the
+// local config's own 2006-01-02 spelling (R6) and a test that computed one
+// would be testing its own arithmetic.
+const (
+	aDayComesLater = "2099-01-01"
+	aDayHasPassed  = "2020-01-01"
+)
+
 // fakeAnswer is one answer the fake bitbucket.org gives.
 type fakeAnswer struct {
 	status int
@@ -26,39 +34,43 @@ type fakeAnswer struct {
 	header map[string]string
 }
 
-// seenRequest is one request the check made, as the fake saw it.
+// seenRequest is one call the check made, as the fake saw it before the hop was
+// rewritten: where it was addressed, and what it carried.
 type seenRequest struct {
 	method string
+	scheme string
+	host   string
 	path   string
 	query  string
 	auth   string
 }
 
-// fakeBitbucket is the hermetic bitbucket.org these tests call. It answers by
-// method and path, and it fails the test on a request it has no answer for, so
-// a call the check should not make is a failure rather than an assertion nobody
-// wrote.
+// fakeBitbucket stands in for api.bitbucket.org. Every call the check makes
+// arrives through the transport below, which records it as it was addressed —
+// scheme, host, path, query and credential — and then serves it from the
+// fixture; a call to a host that is not Bitbucket's own API root is refused and
+// failed. That pins F22 at once: a check that addressed anywhere else is seen
+// here, and so is the token it carried there. It answers by method and path,
+// and it fails the test on a request it has no answer for, so a call the check
+// should not make is a failure rather than an assertion nobody wrote.
 type fakeBitbucket struct {
 	t       *testing.T
-	baseURL string
+	srv     *httptest.Server
 	answers map[string]fakeAnswer
-	mu      sync.Mutex
-	seen    []seenRequest
+
+	mu   sync.Mutex
+	seen []seenRequest
 }
 
 func newFakeBitbucket(t *testing.T, answers map[string]fakeAnswer) *fakeBitbucket {
 	t.Helper()
 	f := &fakeBitbucket{t: t, answers: answers}
-	srv := httptest.NewServer(http.HandlerFunc(f.serve))
-	t.Cleanup(srv.Close)
-	f.baseURL = srv.URL
+	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
+	t.Cleanup(f.srv.Close)
 	return f
 }
 
 func (f *fakeBitbucket) serve(w http.ResponseWriter, r *http.Request) {
-	f.mu.Lock()
-	f.seen = append(f.seen, seenRequest{method: r.Method, path: r.URL.Path, query: r.URL.RawQuery, auth: r.Header.Get("Authorization")})
-	f.mu.Unlock()
 	a, ok := f.answers[r.Method+" "+r.URL.Path]
 	if !ok {
 		f.t.Errorf("unexpected request %s %s", r.Method, r.URL.RequestURI())
@@ -75,6 +87,12 @@ func (f *fakeBitbucket) serve(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(a.body))
 }
 
+func (f *fakeBitbucket) record(s seenRequest) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.seen = append(f.seen, s)
+}
+
 func (f *fakeBitbucket) requests() []seenRequest {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -89,28 +107,66 @@ func (f *fakeBitbucket) paths() []string {
 	return out
 }
 
-func (f *fakeBitbucket) verifier() *Verifier { return &Verifier{BaseURL: f.baseURL} }
+// verifier is the check under test, reading the constant root through this
+// fake: the verifier has no base URL to set, which is the rule F22 asks for.
+func (f *fakeBitbucket) verifier() *Verifier { return &Verifier{Client: f.client()} }
+
+func (f *fakeBitbucket) client() *http.Client {
+	base, err := url.Parse(f.srv.URL)
+	if err != nil {
+		f.t.Fatalf("the fixture's URL is not a URL: %v", err)
+	}
+	return &http.Client{Transport: &fakeTransport{base: base, fake: f}}
+}
+
+// fakeTransport serves a call addressed at Bitbucket's own API root from the
+// fixture, and refuses any other host, so no test in this package can reach a
+// network and no build can present the operator's token to a host the adapter's
+// constant does not name.
+type fakeTransport struct {
+	base *url.URL
+	fake *fakeBitbucket
+}
+
+func (h *fakeTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	h.fake.record(seenRequest{
+		method: r.Method,
+		scheme: r.URL.Scheme,
+		host:   r.URL.Host,
+		path:   r.URL.Path,
+		query:  r.URL.RawQuery,
+		auth:   r.Header.Get("Authorization"),
+	})
+	if r.URL.Scheme != "https" || r.URL.Host != "api.bitbucket.org" {
+		return nil, fmt.Errorf("the check addressed %s://%s, and Bitbucket's API root is https://api.bitbucket.org alone", r.URL.Scheme, r.URL.Host)
+	}
+	c := r.Clone(r.Context())
+	c.URL.Scheme = h.base.Scheme
+	c.URL.Host = h.base.Host
+	c.Host = h.base.Host
+	return http.DefaultTransport.RoundTrip(c)
+}
 
 // repoAnswers is a repository token's whole check: the repository read, the
 // pull-request read within it, and the identity.
 func repoAnswers() map[string]fakeAnswer {
 	return map[string]fakeAnswer{
-		"GET /repositories/acme/fugaro":              {status: 200, body: `{"full_name":"acme/fugaro","project":{"uuid":"{proj-1}"}}`},
-		"GET /repositories/acme/fugaro/pullrequests": {status: 200, body: `{"values":[]}`},
-		"GET /user": {status: 200, body: `{"uuid":"{aaaa-2222}","kind":"repository_access_token"}`},
+		"GET /2.0/repositories/acme/fugaro":              {status: 200, body: `{"full_name":"acme/fugaro","project":{"uuid":"{proj-1}"}}`},
+		"GET /2.0/repositories/acme/fugaro/pullrequests": {status: 200, body: `{"values":[]}`},
+		"GET /2.0/user": {status: 200, body: `{"uuid":"{aaaa-2222}","kind":"repository_access_token"}`},
 	}
 }
 
 func repoRecord() Record {
-	return Record{Name: "bitbucket-token--ci", Type: "repo", Coverage: []string{"acme/fugaro"}, Expires: time.Now().Add(24 * time.Hour)}
+	return Record{Name: "bitbucket-token--ci", Type: TypeRepo, Coverage: []string{"acme/fugaro"}, Expires: aDayComesLater}
 }
 
 func workspaceRecord() Record {
-	return Record{Name: "bitbucket-token--ws", Type: "workspace", Coverage: []string{"acme/*"}, Expires: time.Now().Add(24 * time.Hour)}
+	return Record{Name: "bitbucket-token--ws", Type: TypeWorkspace, Coverage: []string{"acme/*"}, Expires: aDayComesLater}
 }
 
 func projectRecord() Record {
-	return Record{Name: "bitbucket-token--proj", Type: "project", Coverage: []string{"acme"}, ProjectKey: "FUG", Expires: time.Now().Add(24 * time.Hour)}
+	return Record{Name: "bitbucket-token--proj", Type: TypeProject, Coverage: []string{"acme/*"}, ProjectKey: "FUG", Expires: aDayComesLater}
 }
 
 func TestVerifyRepoWorkspaceAndProjectCoverage(t *testing.T) {
@@ -134,10 +190,29 @@ func TestVerifyRepoWorkspaceAndProjectCoverage(t *testing.T) {
 		}
 	})
 
+	t.Run("a repository token covering two repositories", func(t *testing.T) {
+		f := newFakeBitbucket(t, map[string]fakeAnswer{
+			"GET /2.0/repositories/acme/one":              {status: 200, body: `{"full_name":"acme/one"}`},
+			"GET /2.0/repositories/acme/one/pullrequests": {status: 200, body: `{"values":[]}`},
+			"GET /2.0/repositories/acme/two":              {status: 200, body: `{"full_name":"acme/two"}`},
+			"GET /2.0/repositories/acme/two/pullrequests": {status: 200, body: `{"values":[]}`},
+			"GET /2.0/user": {status: 200, body: `{"uuid":"{aaaa-2222}","kind":"repository_access_token"}`},
+		})
+		rec := repoRecord()
+		rec.Coverage = []string{"acme/one", "acme/two"}
+		res := f.verifier().Verify(context.Background(), testToken, rec)
+		if !res.OK {
+			t.Fatalf("OK = false, message %q", res.Message)
+		}
+		if want := []string{"repository:read", "pullrequest:read"}; !slices.Equal(res.ReadScopes, want) {
+			t.Errorf("read scopes = %v, want each proven once, %v", res.ReadScopes, want)
+		}
+	})
+
 	t.Run("a workspace token", func(t *testing.T) {
 		f := newFakeBitbucket(t, map[string]fakeAnswer{
-			"GET /repositories/acme": {status: 200, body: `{"values":[{"full_name":"acme/one"}]}`},
-			"GET /user":              {status: 200, body: `{"uuid":"{bbbb-3333}","kind":"workspace_access_token"}`},
+			"GET /2.0/repositories/acme": {status: 200, body: `{"values":[{"full_name":"acme/one"}]}`},
+			"GET /2.0/user":              {status: 200, body: `{"uuid":"{bbbb-3333}","kind":"workspace_access_token"}`},
 		})
 		res := f.verifier().Verify(context.Background(), testToken, workspaceRecord())
 		if !res.OK {
@@ -153,9 +228,9 @@ func TestVerifyRepoWorkspaceAndProjectCoverage(t *testing.T) {
 
 	t.Run("a project token whose record names a key", func(t *testing.T) {
 		f := newFakeBitbucket(t, map[string]fakeAnswer{
-			"GET /workspaces/acme/projects/FUG": {status: 200, body: `{"uuid":"{proj-1}","key":"FUG"}`},
-			"GET /repositories/acme":            {status: 200, body: `{"values":[{"project":{"uuid":"{proj-1}"}}]}`},
-			"GET /user":                         {status: 200, body: `{"uuid":"{cccc-4444}","kind":"project_access_token"}`},
+			"GET /2.0/workspaces/acme/projects/FUG": {status: 200, body: `{"uuid":"{proj-1}","key":"FUG"}`},
+			"GET /2.0/repositories/acme":            {status: 200, body: `{"values":[{"project":{"uuid":"{proj-1}"}}]}`},
+			"GET /2.0/user":                         {status: 200, body: `{"uuid":"{cccc-4444}","kind":"project_access_token"}`},
 		})
 		res := f.verifier().Verify(context.Background(), testToken, projectRecord())
 		if !res.OK {
@@ -172,7 +247,7 @@ func TestVerifyRepoWorkspaceAndProjectCoverage(t *testing.T) {
 		}
 		var listing *seenRequest
 		for _, r := range f.requests() {
-			if r.path == "/repositories/acme" {
+			if r.path == "/2.0/repositories/acme" {
 				listing = &r
 			}
 		}
@@ -186,8 +261,8 @@ func TestVerifyRepoWorkspaceAndProjectCoverage(t *testing.T) {
 
 	t.Run("a project token whose record already names the UUID", func(t *testing.T) {
 		f := newFakeBitbucket(t, map[string]fakeAnswer{
-			"GET /repositories/acme": {status: 200, body: `{"values":[{"project":{"uuid":"{proj-1}"}}]}`},
-			"GET /user":              {status: 200, body: `{"uuid":"{cccc-4444}","kind":"project_access_token"}`},
+			"GET /2.0/repositories/acme": {status: 200, body: `{"values":[{"project":{"uuid":"{proj-1}"}}]}`},
+			"GET /2.0/user":              {status: 200, body: `{"uuid":"{cccc-4444}","kind":"project_access_token"}`},
 		})
 		rec := projectRecord()
 		rec.ProjectKey, rec.ProjectUUID = "", "{proj-1}"
@@ -219,13 +294,26 @@ func TestVerifyNamesWhatIsMissing(t *testing.T) {
 	t.Run("an expired token", func(t *testing.T) {
 		f := newFakeBitbucket(t, nil)
 		rec := repoRecord()
-		rec.Expires = time.Now().Add(-time.Hour)
+		rec.Expires = aDayHasPassed
 		res := refused(t, f, rec, testToken)
 		if res.Message != msgExpired {
 			t.Errorf("message = %q, want %q", res.Message, msgExpired)
 		}
 		if got := f.requests(); len(got) != 0 {
 			t.Errorf("an expired token was checked with %v, want no call at all", got)
+		}
+	})
+
+	t.Run("an expiry that is not a day", func(t *testing.T) {
+		f := newFakeBitbucket(t, nil)
+		rec := repoRecord()
+		rec.Expires = "next month"
+		res := refused(t, f, rec, testToken)
+		if res.Message != msgRecord {
+			t.Errorf("message = %q, want %q", res.Message, msgRecord)
+		}
+		if got := f.requests(); len(got) != 0 {
+			t.Errorf("a record this check cannot read was checked with %v, want no call", got)
 		}
 	})
 
@@ -239,16 +327,30 @@ func TestVerifyNamesWhatIsMissing(t *testing.T) {
 
 	t.Run("a repository the token does not cover", func(t *testing.T) {
 		answers := repoAnswers()
-		answers["GET /repositories/acme/fugaro"] = fakeAnswer{status: 404, body: `{"error":{"message":"Not found"}}`}
+		answers["GET /2.0/repositories/acme/fugaro"] = fakeAnswer{status: 404, body: `{"error":{"message":"Not found"}}`}
 		res := refused(t, newFakeBitbucket(t, answers), repoRecord(), testToken)
 		if want := "the token does not cover repository acme/fugaro"; res.Message != want {
 			t.Errorf("message = %q, want %q", res.Message, want)
 		}
 	})
 
+	t.Run("a second repository the token does not cover", func(t *testing.T) {
+		f := newFakeBitbucket(t, map[string]fakeAnswer{
+			"GET /2.0/repositories/acme/one":              {status: 200, body: `{"full_name":"acme/one"}`},
+			"GET /2.0/repositories/acme/one/pullrequests": {status: 200, body: `{"values":[]}`},
+			"GET /2.0/repositories/acme/two":              {status: 404, body: `{"error":{"message":"Not found"}}`},
+		})
+		rec := repoRecord()
+		rec.Coverage = []string{"acme/one", "acme/two"}
+		res := refused(t, f, rec, testToken)
+		if want := "the token does not cover repository acme/two"; res.Message != want {
+			t.Errorf("message = %q, want %q", res.Message, want)
+		}
+	})
+
 	t.Run("a workspace the token does not cover", func(t *testing.T) {
 		res := refused(t, newFakeBitbucket(t, map[string]fakeAnswer{
-			"GET /repositories/acme": {status: 404, body: `{"error":{"message":"Not found"}}`},
+			"GET /2.0/repositories/acme": {status: 404, body: `{"error":{"message":"Not found"}}`},
 		}), workspaceRecord(), testToken)
 		if want := "the token does not cover workspace acme"; res.Message != want {
 			t.Errorf("message = %q, want %q", res.Message, want)
@@ -257,8 +359,8 @@ func TestVerifyNamesWhatIsMissing(t *testing.T) {
 
 	t.Run("a project the token does not cover", func(t *testing.T) {
 		res := refused(t, newFakeBitbucket(t, map[string]fakeAnswer{
-			"GET /workspaces/acme/projects/FUG": {status: 200, body: `{"uuid":"{proj-1}","key":"FUG"}`},
-			"GET /repositories/acme":            {status: 200, body: `{"values":[]}`},
+			"GET /2.0/workspaces/acme/projects/FUG": {status: 200, body: `{"uuid":"{proj-1}","key":"FUG"}`},
+			"GET /2.0/repositories/acme":            {status: 200, body: `{"values":[]}`},
 		}), projectRecord(), testToken)
 		if want := "the token does not cover project FUG in workspace acme"; res.Message != want {
 			t.Errorf("message = %q, want %q", res.Message, want)
@@ -267,7 +369,7 @@ func TestVerifyNamesWhatIsMissing(t *testing.T) {
 
 	t.Run("a listing that answers another project", func(t *testing.T) {
 		res := refused(t, newFakeBitbucket(t, map[string]fakeAnswer{
-			"GET /repositories/acme": {status: 200, body: `{"values":[{"project":{"uuid":"{other-project}"}}]}`},
+			"GET /2.0/repositories/acme": {status: 200, body: `{"values":[{"project":{"uuid":"{other-project}"}}]}`},
 		}), func() Record {
 			rec := projectRecord()
 			rec.ProjectKey, rec.ProjectUUID = "", "{proj-1}"
@@ -280,7 +382,7 @@ func TestVerifyNamesWhatIsMissing(t *testing.T) {
 
 	t.Run("a read the token lacks", func(t *testing.T) {
 		answers := repoAnswers()
-		answers["GET /repositories/acme/fugaro"] = fakeAnswer{status: 403, body: `{"error":{"message":"Forbidden"}}`}
+		answers["GET /2.0/repositories/acme/fugaro"] = fakeAnswer{status: 403, body: `{"error":{"message":"Forbidden"}}`}
 		res := refused(t, newFakeBitbucket(t, answers), repoRecord(), testToken)
 		if res.Message != msgMissingRepoRead {
 			t.Errorf("message = %q, want %q", res.Message, msgMissingRepoRead)
@@ -289,7 +391,7 @@ func TestVerifyNamesWhatIsMissing(t *testing.T) {
 
 	t.Run("a pull-request read the token lacks", func(t *testing.T) {
 		answers := repoAnswers()
-		answers["GET /repositories/acme/fugaro/pullrequests"] = fakeAnswer{status: 403, body: `{"error":{"message":"Forbidden"}}`}
+		answers["GET /2.0/repositories/acme/fugaro/pullrequests"] = fakeAnswer{status: 403, body: `{"error":{"message":"Forbidden"}}`}
 		res := refused(t, newFakeBitbucket(t, answers), repoRecord(), testToken)
 		if res.Message != msgMissingPullRequestRead {
 			t.Errorf("message = %q, want %q", res.Message, msgMissingPullRequestRead)
@@ -298,7 +400,7 @@ func TestVerifyNamesWhatIsMissing(t *testing.T) {
 
 	t.Run("a token bitbucket.org refuses", func(t *testing.T) {
 		answers := repoAnswers()
-		answers["GET /repositories/acme/fugaro"] = fakeAnswer{status: 401, body: `{"error":{"message":"Unauthorized"}}`}
+		answers["GET /2.0/repositories/acme/fugaro"] = fakeAnswer{status: 401, body: `{"error":{"message":"Unauthorized"}}`}
 		res := refused(t, newFakeBitbucket(t, answers), repoRecord(), testToken)
 		if res.Message != msgRefused {
 			t.Errorf("message = %q, want %q", res.Message, msgRefused)
@@ -308,7 +410,7 @@ func TestVerifyNamesWhatIsMissing(t *testing.T) {
 	t.Run("a record whose type and coverage disagree", func(t *testing.T) {
 		f := newFakeBitbucket(t, nil)
 		rec := repoRecord()
-		rec.Type = "workspace"
+		rec.Type = TypeWorkspace
 		res := refused(t, f, rec, testToken)
 		if res.Message != msgRecord {
 			t.Errorf("message = %q, want %q", res.Message, msgRecord)
@@ -318,9 +420,36 @@ func TestVerifyNamesWhatIsMissing(t *testing.T) {
 		}
 	})
 
+	t.Run("a repository record covering a whole workspace", func(t *testing.T) {
+		rec := repoRecord()
+		rec.Coverage = []string{"acme/*"}
+		res := refused(t, newFakeBitbucket(t, nil), rec, testToken)
+		if res.Message != msgRecord {
+			t.Errorf("message = %q, want %q", res.Message, msgRecord)
+		}
+	})
+
+	t.Run("a repository record covering nothing", func(t *testing.T) {
+		rec := repoRecord()
+		rec.Coverage = nil
+		res := refused(t, newFakeBitbucket(t, nil), rec, testToken)
+		if res.Message != msgRecord {
+			t.Errorf("message = %q, want %q", res.Message, msgRecord)
+		}
+	})
+
 	t.Run("a record of no type", func(t *testing.T) {
 		rec := repoRecord()
-		rec.Type = ""
+		rec.Type = TypeUntyped
+		res := refused(t, newFakeBitbucket(t, nil), rec, testToken)
+		if res.Message != msgRecord {
+			t.Errorf("message = %q, want %q", res.Message, msgRecord)
+		}
+	})
+
+	t.Run("a type R1 does not name", func(t *testing.T) {
+		rec := repoRecord()
+		rec.Type = Type("vault")
 		res := refused(t, newFakeBitbucket(t, nil), rec, testToken)
 		if res.Message != msgRecord {
 			t.Errorf("message = %q, want %q", res.Message, msgRecord)
@@ -335,6 +464,15 @@ func TestVerifyNamesWhatIsMissing(t *testing.T) {
 			t.Errorf("message = %q, want %q", res.Message, msgRecord)
 		}
 	})
+
+	t.Run("a project record covering two workspaces", func(t *testing.T) {
+		rec := projectRecord()
+		rec.Coverage = []string{"acme/*", "other/*"}
+		res := refused(t, newFakeBitbucket(t, nil), rec, testToken)
+		if res.Message != msgRecord {
+			t.Errorf("message = %q, want %q", res.Message, msgRecord)
+		}
+	})
 }
 
 func TestVerifyMakesOnlyReadCalls(t *testing.T) {
@@ -344,9 +482,9 @@ func TestVerifyMakesOnlyReadCalls(t *testing.T) {
 			t.Fatalf("OK = false, message %q", res.Message)
 		}
 		want := []string{
-			"GET /repositories/acme/fugaro",
-			"GET /repositories/acme/fugaro/pullrequests",
-			"GET /user",
+			"GET /2.0/repositories/acme/fugaro",
+			"GET /2.0/repositories/acme/fugaro/pullrequests",
+			"GET /2.0/user",
 		}
 		if got := f.paths(); !slices.Equal(got, want) {
 			t.Errorf("calls = %v, want %v", got, want)
@@ -357,45 +495,28 @@ func TestVerifyMakesOnlyReadCalls(t *testing.T) {
 			}
 		}
 		for _, r := range f.requests() {
-			if r.path == "/repositories/acme/fugaro/pullrequests" && r.query != "pagelen=1" {
+			if r.path == "/2.0/repositories/acme/fugaro/pullrequests" && r.query != "pagelen=1" {
 				t.Errorf("the pull-request read's query = %q, want one page", r.query)
 			}
 		}
 	})
 
-	t.Run("an empty BaseURL addresses Bitbucket's own root", func(t *testing.T) {
-		var called []string
-		v := &Verifier{Client: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-			called = append(called, r.URL.String())
-			return nil, fmt.Errorf("a hermetic test reaches no host")
-		})}}
-		res := v.Verify(context.Background(), testToken, repoRecord())
-		if res.OK {
-			t.Fatal("OK = true, want a refusal")
+	t.Run("every call addresses Bitbucket's own root", func(t *testing.T) {
+		f := newFakeBitbucket(t, repoAnswers())
+		if res := f.verifier().Verify(context.Background(), testToken, repoRecord()); !res.OK {
+			t.Fatalf("OK = false, message %q", res.Message)
 		}
-		if res.Message != msgRefused {
-			t.Errorf("message = %q, want %q", res.Message, msgRefused)
-		}
-		if len(called) == 0 {
-			t.Fatal("the check made no call")
-		}
-		for _, u := range called {
-			if !strings.HasPrefix(u, "https://api.bitbucket.org/2.0/") {
-				t.Errorf("the check called %s, want Bitbucket's own root", u)
+		for _, r := range f.requests() {
+			if r.scheme != "https" || r.host != "api.bitbucket.org" {
+				t.Errorf("the check addressed %s://%s, want Bitbucket's own API root alone", r.scheme, r.host)
 			}
 		}
 	})
 }
 
-// roundTripFunc is the transport of the test above: it records the call and
-// answers nothing, so no test in this package can reach a network.
-type roundTripFunc func(*http.Request) (*http.Response, error)
-
-func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
-
 func TestVerifyReportsWriteNotVerified(t *testing.T) {
 	answers := repoAnswers()
-	answers["GET /repositories/acme/fugaro"] = fakeAnswer{
+	answers["GET /2.0/repositories/acme/fugaro"] = fakeAnswer{
 		status: 200,
 		body:   `{"full_name":"acme/fugaro"}`,
 		header: map[string]string{"X-OAuth-Scopes": "repository:write pullrequest:write"},
@@ -434,7 +555,7 @@ func TestVerifyNeverReturnsTheToken(t *testing.T) {
 		t.Fatalf("the check presented %q, want the token it was handed", got)
 	}
 	answers := repoAnswers()
-	answers["GET /repositories/acme/fugaro"] = fakeAnswer{status: 404, body: `{"error":{"message":"Not found"}}`}
+	answers["GET /2.0/repositories/acme/fugaro"] = fakeAnswer{status: 404, body: `{"error":{"message":"Not found"}}`}
 	bad := newFakeBitbucket(t, answers).verifier().Verify(context.Background(), testToken, repoRecord())
 	if bad.OK {
 		t.Fatal("OK = true, want a refusal")
@@ -456,12 +577,12 @@ func TestVerifyRefusesANonAccessTokenKind(t *testing.T) {
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
 			answers := repoAnswers()
-			answers["GET /user"] = fakeAnswer{status: 200, body: body}
+			answers["GET /2.0/user"] = fakeAnswer{status: 200, body: body}
 			res := newFakeBitbucket(t, answers).verifier().Verify(context.Background(), testToken, repoRecord())
 			if res.OK {
 				t.Fatal("OK = true, want a refusal")
 			}
-			if want := msgNotAccessToken("repo"); res.Message != want {
+			if want := msgNotAccessToken(TypeRepo); res.Message != want {
 				t.Errorf("message = %q, want %q", res.Message, want)
 			}
 			if res.Identity != "" {
@@ -473,7 +594,7 @@ func TestVerifyRefusesANonAccessTokenKind(t *testing.T) {
 
 func TestVerifyAccepts403FromUserAsARepositoryToken(t *testing.T) {
 	answers := repoAnswers()
-	answers["GET /user"] = fakeAnswer{status: 403, body: `{"type":"error","error":{"message":"This API is not accessible by this authentication mechanism"}}`}
+	answers["GET /2.0/user"] = fakeAnswer{status: 403, body: `{"type":"error","error":{"message":"This API is not accessible by this authentication mechanism"}}`}
 	res := newFakeBitbucket(t, answers).verifier().Verify(context.Background(), testToken, repoRecord())
 	if !res.OK {
 		t.Fatalf("OK = false, message %q", res.Message)
