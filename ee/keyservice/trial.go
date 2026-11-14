@@ -115,31 +115,65 @@ func trialInstallation(organisation, installation string) string {
 // a sentence a person reads, and no sentence says anything about the service's
 // inside (§7.2's rule, api.go's refusal shape).
 const (
-	trialRateRefusal     = "Too many requests from this address just now. Try again shortly."
-	trialSignInRefusal   = "This request's sign-in could not be verified, so no trial was issued for it. Sign in to the licence project and ask again."
-	trialBodyRefusal     = "This request is not the ask this route reads: it carries the workspace's Firebase project id and nothing else. A trial of more than one seat is asked for through the request form."
-	trialClaimedRefusal  = "This account or this workspace has already had its trial, and §14's trial is one per installation and account."
-	trialWorkspaceEmpty  = "A trial names the workspace it is for, and this request names none."
-	trialFreeMailRefusal = "A trial is granted to an organisation, and this account's address is at a free mail provider, where anyone can hold an address and the domain is not one organisation's. Ask again with an address at your organisation's own domain."
+	trialRateRefusal      = "Too many requests from this address just now. Try again shortly."
+	trialSignInRefusal    = "This request's sign-in could not be verified, so no trial was issued for it. Sign in to the licence project and ask again."
+	trialBodyRefusal      = "This request is not the ask this route reads: it carries the workspace's Firebase project id and nothing else. A trial of more than one seat is asked for through the request form."
+	trialClaimedRefusal   = "This account or this workspace has already had its trial, and §14's trial is one per installation and account."
+	trialWorkspaceEmpty   = "A trial names the workspace it is for, and this request names none."
+	trialFreeMailRefusal  = "A trial is granted to an organisation, and this account's address is at a free mail provider, where anyone can hold an address and the domain is not one organisation's. Ask again with an address at your organisation's own domain."
+	trialAccountRefusal   = "A trial is counted against the account the sign-in proved, and this address is not one a trial can be filed under. Ask again from another account."
+	trialWorkspaceRefusal = "A trial is filed under the workspace id this request names, and this one is not one a trial can be filed under: name the workspace's own Firebase project id, and nothing longer."
 )
+
+// trialNameBytes is the length the deploy's document store admits for the id of
+// one of its documents (docstore's `fileable`).
+const trialNameBytes = 1500
+
+// trialFileable answers whether the store can file a document under name, which
+// this route has to ask **before** it mints: the two names an ask is filed under
+// are made from strings the ask brought (the account the sign-in proved, and the
+// installation name the project id goes into), and the store answers a name its
+// backend cannot hold only when it is writing one — which is after the mint, so
+// an unfilable name would be answered by withdrawing the key the mint had
+// already signed: a §8 entry per ask, into a list that only grows, and a key
+// signed for nobody.
+//
+// The rule is the store's own, and it is written out here rather than imported
+// because the predicate behind it is unexported and the store's file is another
+// task's. What makes that safe is that the two have to answer alike: a name this
+// admits and the store refuses is exactly the failure this exists to close, so
+// the two move together — a slash is a path separator there, "." and ".." are
+// path traversal, `__…__` is the database's reserved form, and 1500 bytes is
+// the length it admits.
+func trialFileable(name string) bool {
+	if len(name) > trialNameBytes || name == "." || name == ".." ||
+		(len(name) >= 4 && strings.HasPrefix(name, "__") && strings.HasSuffix(name, "__")) {
+		return false
+	}
+	return !strings.ContainsFunc(name, func(r rune) bool { return r < 0x20 || r == 0x7f || r == '/' })
+}
 
 // trial is §14's trial route: a signed-in account asks for a trial for one
 // installation and is mailed its key.
 //
 // The order is the address's allowance, then the body, then the sign-in, then
-// the free mail refusal, then the cheap half of §14's rule, then the account's
-// domain's allowance, then the mint, then the claim, and then the mail and the
-// two records. The address's allowance is spent first for the reason renew.go's
-// is (a body this service never parses is as cheap to serve as a good one); the
-// sign-in is read before the rule and before the mint because the account is
-// half of what both count; the free mail refusal follows the sign-in because it
-// is the organisation the sign-in proved that it reads (D453); the rule is read
-// before the mint because minting for an ask that is going to be refused spends
-// the key ring's authority on a key nobody is given; and the domain's allowance
-// comes after everything that can refuse the ask without a key, because a domain
-// is shared — an ask that is refused mints nothing and must not spend an
-// allowance other accounts on that domain still need (the throttle is documented
-// per domain: docs/licensing/licence-key.md, "Limits, accepted").
+// the free mail refusal, then the two names the ask is filed under, then the
+// cheap half of §14's rule, then the account's domain's allowance, then the
+// mint, then the claim, and then the mail and the two records. The address's
+// allowance is spent first for the reason renew.go's is (a body this service
+// never parses is as cheap to serve as a good one); the sign-in is read before
+// the rule and before the mint because the account is half of what both count;
+// the free mail refusal follows the sign-in because it is the organisation the
+// sign-in proved that it reads (D453); the names are checked where both their
+// halves are known and before anything they would be written into, because the
+// store refuses a name it cannot file only when it writes one and every such
+// write comes after the mint (`trialFileable`); the rule is read before the mint
+// because minting for an ask that is going to be refused spends the key ring's
+// authority on a key nobody is given; and the domain's allowance comes after
+// everything that can refuse the ask without a key, because a domain is shared —
+// an ask that is refused mints nothing and must not spend an allowance other
+// accounts on that domain still need (the throttle is documented per domain:
+// docs/licensing/licence-key.md, "Limits, accepted").
 //
 // The mint stands before the claim and not after it, and that order costs
 // something either way: the claim is the store's check-and-write and it needs
@@ -187,7 +221,23 @@ func (s *Service) trial(w http.ResponseWriter, r *http.Request) {
 		refuseAPI(w, http.StatusForbidden, "free_mail_organisation", trialFreeMailRefusal)
 		return
 	}
+	// Two names this ask is filed under are made from strings the ask brought,
+	// and both are refused here when the store cannot hold them — before the
+	// allowance below, because a refusal spends nothing, and before the mint,
+	// because the store's own refusal would arrive after it (`trialFileable`).
+	// The account is the address the sign-in proved, read through §4.1's own
+	// rule, which admits a slash in a local part and so admits an address the
+	// account collection cannot file; the installation is the pair D2201 counts,
+	// whose workspace half the ask names and nothing bounds.
+	if !trialFileable(caller.Email) {
+		refuseAPI(w, http.StatusBadRequest, "unfileable_account", trialAccountRefusal)
+		return
+	}
 	installation := trialInstallation(organisation, call.WorkspaceID)
+	if !trialFileable(installation) {
+		refuseAPI(w, http.StatusBadRequest, "unfileable_workspace", trialWorkspaceRefusal)
+		return
+	}
 	if !s.trialFree(w, r, installation, caller.Email) {
 		return
 	}
@@ -352,7 +402,9 @@ func (s *Service) trialLanded(ctx context.Context, keyID string) (bool, error) {
 // give (§10.3, B6, §17). What the id says is not this route's to judge beyond
 // that: a project id that is not one mints a key that verifies and binds to
 // nothing anybody owns, which is the asker's own loss (wire.go's split,
-// `decodeWire`).
+// `decodeWire`). The one thing judged is the name the id makes, and that check
+// is `trial`'s own: it needs the organisation the id is counted with (D2201) and
+// it has to come before the mint (`trialFileable`).
 func (s *Service) trialCall(w http.ResponseWriter, r *http.Request) (TrialCall, bool) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {

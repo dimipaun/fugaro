@@ -27,6 +27,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/ee/keyservice/docstore"
 	"github.com/dimipaun/fugaro/ee/licence"
 )
 
@@ -528,6 +529,97 @@ func TestTrialIsThrottledPerDomain(t *testing.T) {
 	}
 	if minted := f.mintedKeys(); len(minted) != 2 {
 		t.Errorf("the asks minted %d key(s), want the two that were served", len(minted))
+	}
+}
+
+// trialOnTheDocstore is the fixture answering out of the deploy's own store
+// (firestore_store.go over docstore's memory store) rather than the memory store
+// a handler test usually drives. The rule the cases below hold is the store's:
+// it is the durable store that refuses a document id its backend cannot file,
+// and store.go's Memory files whatever it is handed — the pair the conformance
+// suite exists for, and the reason the rule has to be refused here rather than
+// read off the memory store's answer.
+func trialOnTheDocstore(t *testing.T) *fixture {
+	t.Helper()
+	return newFixtureWith(t, Production, func(f *fixture) {
+		f.deps.Store = NewDocStore(docstore.NewMemory())
+		f.signIn.caller = Caller{UID: "uid-trial", Email: trialAccount, Provider: "google.com", AuthTime: f.now}
+	})
+}
+
+// TestTrialIsRefusedForANameTheStoreCannotFile: the two names a trial is filed
+// under are made from strings the ask brought — the account the sign-in proved,
+// and the installation name the workspace id goes into — and the store refuses a
+// name its backend cannot hold at the moment it writes one, which is after the
+// mint. An ask that reached the mint and then could not be claimed would leave a
+// key signed for nobody, withdrawn into §8's list, which only grows, once per
+// request a signed-in caller makes. So both names are refused before anything is
+// minted: an account carrying a slash in its local part (§4.1's atext admits
+// one, so the sign-in proves an address the account collection cannot file) and
+// a workspace id longer than a document id may be. What the last ask of the case
+// reads is that the two refusals were the names' and not the store's: the same
+// account and the same store are served an ask naming what both halves can hold.
+func TestTrialIsRefusedForANameTheStoreCannotFile(t *testing.T) {
+	f := trialOnTheDocstore(t)
+	for _, tc := range []struct {
+		name    string
+		account string
+		body    string
+		code    string
+	}{
+		{
+			name:    "an account the account collection cannot hold",
+			account: "founder/other@acme.example",
+			body:    trialBody(workspaceID),
+			code:    "unfileable_account",
+		},
+		{
+			name:    "a workspace id longer than a document id may be",
+			account: trialAccount,
+			body:    trialBody(strings.Repeat("w", 2000)),
+			code:    "unfileable_workspace",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f.signsInAs("uid-refused", tc.account)
+			rec := f.ask(tc.body)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("the ask answered %d (%s), want 400: the store cannot file the name it makes", rec.Code, rec.Body.String())
+			}
+			if code := trialFaultCode(t, rec); code != tc.code {
+				t.Errorf("the refusal carries the code %q, want %q", code, tc.code)
+			}
+		})
+	}
+
+	if minted := f.mintedKeys(); len(minted) != 0 {
+		t.Errorf("the refused asks minted %d key(s) (%v), want none: a key signed for a name the store cannot file is one nobody holds", len(minted), minted)
+	}
+	withdrawn, err := f.deps.Store.Revocations(t.Context())
+	if err != nil {
+		t.Fatalf("reading the revocations: %v", err)
+	}
+	if len(withdrawn) != 0 {
+		t.Errorf("the refused asks wrote %d key(s) into §8's revocation list, want none: the store's refusal used to arrive after the mint, so every such ask minted and revoked a key (%+v)", len(withdrawn), withdrawn)
+	}
+	trials, err := f.deps.Store.Trials(t.Context())
+	if err != nil {
+		t.Fatalf("reading the trials: %v", err)
+	}
+	if len(trials) != 0 {
+		t.Errorf("the refused asks claimed %+v, want no trial: neither was refused by §14's rule", trials)
+	}
+
+	f.signsInAs("uid-trial", trialAccount)
+	served := f.ask(trialBody(workspaceID))
+	if served.Code != http.StatusOK {
+		t.Fatalf("the ask naming what the store holds answered %d (%s), want 200: the refusals are the names' and not the store's", served.Code, served.Body.String())
+	}
+	if minted := f.mintedKeys(); len(minted) != 1 {
+		t.Errorf("the served ask minted %d key(s), want the one it was served", len(minted))
+	}
+	if trials, err := f.deps.Store.Trials(t.Context()); err != nil || len(trials) != 1 {
+		t.Errorf("the store holds %+v (err=%v), want the one trial the served ask claimed", trials, err)
 	}
 }
 
