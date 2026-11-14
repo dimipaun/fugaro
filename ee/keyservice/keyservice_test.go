@@ -380,15 +380,20 @@ func (d *docsSpy) Update(ctx context.Context, fn func(context.Context, Tx) error
 }
 
 // signInSpy is the portal's sign-in verifier in a test: the caller it answers
-// and every token it was handed, so a test reads what an area did with one.
+// and every token it was handed, so a test reads what an area did with one. The
+// tokens are taken under a lock because a case may put a burst of requests
+// through the handler at once (orgs_test.go's concurrent sign-ups).
 type signInSpy struct {
+	mu     sync.Mutex
 	caller Caller
 	err    error
 	tokens []string
 }
 
 func (s *signInSpy) Verify(_ context.Context, idToken string) (Caller, error) {
+	s.mu.Lock()
 	s.tokens = append(s.tokens, idToken)
+	s.mu.Unlock()
 	if s.err != nil {
 		return Caller{}, s.err
 	}

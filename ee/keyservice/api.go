@@ -360,6 +360,17 @@ func refuseAPI(w http.ResponseWriter, status int, code, message string) {
 // It is a seam here and an implementation there because the API's areas ask
 // about records — organisations, workspaces, entitlements, keys, sales events —
 // and never about Firestore, which is the deploy's choice and P1.2's to make.
+//
+// An id an area reads is the request's, and a store has names it cannot file a
+// document under at all (docstore's ErrUnstorableName: one carrying a slash or a
+// control character, "." or "..", the database's reserved __…__ form). A Get of
+// one is answered as a document that is not there — ErrNoDocument, which is what
+// an id that was minted and never written answers — and never as a failure: a
+// store's refusal read as this service's failure is a 500 that tells a stranger
+// the name they guessed reached the store, where every route here answers one
+// refusal for everything the caller may not have. The deploy's store keeps the
+// mapping itself (firestore_store.go's one), and getRecord answers it as well so
+// that the reading side does not depend on an implementation remembering to.
 type Docs interface {
 	Get(ctx context.Context, collection, id string) (Doc, error)
 	Put(ctx context.Context, collection, id string, doc Doc) error

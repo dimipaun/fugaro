@@ -45,6 +45,8 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"github.com/dimipaun/fugaro/ee/keyservice/docstore"
 )
 
 // The collections the tenancy's records live in. They are this area's own names
@@ -245,10 +247,18 @@ func readDoc(doc Doc, record any) error {
 // getRecord reads one record of one collection. found is false for a document
 // the store does not hold, which is an answer — an organisation nobody created, a
 // membership nobody holds — and not a failure.
+//
+// A name the store cannot file under is that same answer: the ids this area reads
+// are the request's (api_orgs.go's {id}), so a name no organisation could have
+// been created with is one the caller must not be able to tell from a name that
+// was minted and never written, and answering the store's refusal as this
+// service's failure is a 500 that says the document is there to be argued with
+// (api.go's Docs has the contract, and firestore_store.go's one is the deploy's
+// own half of it).
 func getRecord[T any](ctx context.Context, from recordGetter, collection, id string) (T, bool, error) {
 	var record T
 	doc, err := from.Get(ctx, collection, id)
-	if errors.Is(err, ErrNoDocument) {
+	if errors.Is(err, ErrNoDocument) || errors.Is(err, docstore.ErrUnstorableName) {
 		return record, false, nil
 	}
 	if err != nil {

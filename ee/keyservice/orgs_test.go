@@ -26,8 +26,11 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/dimipaun/fugaro/ee/keyservice/docstore"
 )
 
 // The accounts these cases are about. None of them is a real address and none is
@@ -106,6 +109,77 @@ func (d refusingAuditDocs) Put(ctx context.Context, collection, id string, doc D
 		return errAuditRefused
 	}
 	return d.Docs.Put(ctx, collection, id, doc)
+}
+
+// unstorableDocs is the fixture's store with the deploy's name rule in front of
+// it, which is how a case reads what a request-supplied id does when it names
+// something no store can file a document under: the fixture's own store files
+// whatever it is handed, and the rule is the seam's own (docstore.ErrUnstorableName)
+// rather than a second copy of it — the probe collection is one nothing writes,
+// so the store answers "not there" for every name it CAN file and the sentinel
+// for the ones it cannot.
+type unstorableDocs struct {
+	Docs
+	rule docstore.Store
+}
+
+func (d unstorableDocs) Get(ctx context.Context, collection, id string) (Doc, error) {
+	if _, err := d.rule.Get(ctx, "the probe", id, nil); errors.Is(err, docstore.ErrUnstorableName) {
+		return nil, err
+	}
+	return d.Docs.Get(ctx, collection, id)
+}
+
+// burstCountDocs is the fixture's store with the day's count widened, the shape
+// burstMints has for the mint: the memberships read a sign-up takes before its
+// write waits for the burst it is part of, and a read that arrives alone waits
+// the window out. That window — a count taken, then a record written — is the
+// whole of what signUpMu closes, and a burst that ran one sign-up after another
+// would never read it: each of two sign-ups counted inside the gate counts what
+// was written before the gate opened and neither sees the other's.
+type burstCountDocs struct {
+	Docs
+	want int
+	gate time.Duration
+	mu   sync.Mutex
+	seen int
+	open chan struct{}
+	// waited is set once the window has closed on an arrival, so that a burst
+	// the lock serialises pays the gate once and not once per sign-up.
+	waited bool
+}
+
+func newBurstCountDocs(inner Docs, want int) *burstCountDocs {
+	return &burstCountDocs{Docs: inner, want: want, gate: burstGate, open: make(chan struct{})}
+}
+
+func (d *burstCountDocs) Query(ctx context.Context, collection string, where Where) ([]Doc, error) {
+	if collection == membershipsCollection {
+		d.waitForTheBurst()
+	}
+	return d.Docs.Query(ctx, collection, where)
+}
+
+func (d *burstCountDocs) waitForTheBurst() {
+	d.mu.Lock()
+	d.seen++
+	if d.seen == d.want {
+		close(d.open)
+		d.mu.Unlock()
+		return
+	}
+	waited := d.waited
+	d.mu.Unlock()
+	if waited {
+		return
+	}
+	select {
+	case <-d.open:
+	case <-time.After(d.gate):
+		d.mu.Lock()
+		d.waited = true
+		d.mu.Unlock()
+	}
 }
 
 // actsAs makes the fixture's verifier answer this account, signed in the way
@@ -396,6 +470,40 @@ func TestOrgCreatedHooksRun(t *testing.T) {
 	testOrgHook.refuse, testOrgHook.err = "", nil
 	if created := f.signedUp(danaUID, danaEmail, "Third Ltd"); created.Name != "Third Ltd" {
 		t.Errorf("the sign-up after a failed one answered %+v, want the organisation it asked for", created)
+	}
+}
+
+// TestRegisterOrgCreatedRefusesWhatCannotRun: the hook table's own invariants, at
+// the same door the API's route table has (api_test.go's table). An init has
+// nobody to return an error to, and every one of these is a hook the sign-up
+// would run: a hook with no name is one whose failure cannot be reported, a nil
+// hook is one that would panic inside a transaction and take a stranger's sign-up
+// with it, and two hooks under one name are one failure read as the other's. The
+// name that is already taken is the fixture's own, so the refusal is read without
+// leaving a hook behind for the cases after this one.
+func TestRegisterOrgCreatedRefusesWhatCannotRun(t *testing.T) {
+	runnable := func(context.Context, Tx, WireOrganisation) error { return nil }
+	held := func() int {
+		orgCreatedHooks.mu.Lock()
+		defer orgCreatedHooks.mu.Unlock()
+		return len(orgCreatedHooks.hooks)
+	}
+	before := held()
+	for _, tc := range []struct {
+		name string
+		take func()
+	}{
+		{"a hook with no name", func() { registerOrgCreated("", runnable) }},
+		{"a hook whose name is whitespace", func() { registerOrgCreated("   ", runnable) }},
+		{"a hook with nothing to run", func() { registerOrgCreated("a hook that runs nothing", nil) }},
+		{"a name two hooks share", func() { registerOrgCreated("the test's own", runnable) }},
+	} {
+		if !panics(t, tc.take) {
+			t.Errorf("%s was registered, want the table to refuse it: a sign-up runs every hook in it", tc.name)
+		}
+	}
+	if got := held(); got != before {
+		t.Errorf("the refused registrations left %d hook(s) in the table, want the %d it held: every hook in it runs for every sign-up", got, before)
 	}
 }
 
@@ -768,6 +876,37 @@ func TestOrgCreationIsRateLimited(t *testing.T) {
 	}
 }
 
+// TestConcurrentSignUpsRespectTheDailyLimit: F35's limit under the one thing that
+// can break it — one account signing up from many places at once. The day's count
+// is a read of the account's memberships and a write of one more, and api.go's Tx
+// reads by id alone, so the count is taken outside the transaction and signUpMu is
+// what makes the two atomic; without it every sign-up of a burst counts the
+// records written before the burst and each writes one more, which is an account
+// holding as many organisations as it sent requests. The burst is widened at the
+// count itself (burstCountDocs), so the window this closes is the one the case
+// reads rather than the one the scheduler happened to leave open.
+func TestConcurrentSignUpsRespectTheDailyLimit(t *testing.T) {
+	const burst = 8
+	f := newFixture(t)
+	f.deps.Docs = newBurstCountDocs(f.docs, burst)
+	f.start()
+	f.actsAs(danaUID, danaEmail, signInGoogle)
+
+	codes := together(burst, func(i int) *httptest.ResponseRecorder {
+		return f.apiAs(http.MethodPost, apiOrgsPath, fmt.Sprintf(`{"name":"Tenant %d"}`, i))
+	})
+
+	if got := answered(codes, http.StatusCreated); got != orgDailyLimit {
+		t.Errorf("%d of %d concurrent sign-ups were answered 201, want the day's %d: %v", got, burst, orgDailyLimit, codes)
+	}
+	if got := len(f.organisations()); got > orgDailyLimit {
+		t.Errorf("a burst of %d sign-ups left the account holding %d organisations, want no more than the %d a day allows", burst, got, orgDailyLimit)
+	}
+	if got := len(f.organisations()); got != orgDailyLimit {
+		t.Errorf("the burst created %d organisation(s), want the %d the limit allows: the refusals must be refused and not lost", got, orgDailyLimit)
+	}
+}
+
 // TestAnotherOrgsMembersAreRefused: an organisation's records are its own
 // members' and nobody else's, unless the caller is operations. One organisation's
 // owner reading another's is refused the organisation, its members and the
@@ -931,6 +1070,53 @@ func TestTheSignInDoorRefusesWhatItCannotAdmit(t *testing.T) {
 	}
 	if got := f.signIn.tokens; len(got) != 1 || got[0] != portalIDToken {
 		t.Errorf("the verifier was handed %q, want the token the request carried", got)
+	}
+}
+
+// TestAnIDTheStoreCannotFileIsNotThere: the id these routes read is the request's,
+// and the store has names it cannot file a document under at all — a slash, a
+// control character, "..", the database's reserved __…__ form (docstore's
+// ErrUnstorableName). A name no organisation could have been created with is
+// answered as the organisation that is not there, the same 404 with the same body
+// as an id that was minted and never written, on every route that takes one: the
+// store's refusal answered as this service's own is a 500 that says a document is
+// there to be argued with, and any second answer is an oracle telling a stranger
+// which names the service read.
+func TestAnIDTheStoreCannotFileIsNotThere(t *testing.T) {
+	f := newFixture(t)
+	f.deps.Docs = unstorableDocs{Docs: f.docs, rule: docstore.NewMemory()}
+	f.start()
+	f.actsAs(danaUID, danaEmail, signInGoogle)
+
+	absent := f.apiAs(http.MethodGet, apiOrgPathOf("org_nobody"), "")
+	if absent.Code != http.StatusNotFound {
+		t.Fatalf("a read of an organisation that is not there answered %d (%s), want the not-found refusal", absent.Code, absent.Body)
+	}
+
+	// The names are the ones the store cannot file, spelled the way a request
+	// spells them: the router hands the route the path's own value, so a slash
+	// arrives as a slash and not as a segment of its own. A "." segment is left
+	// out because the mux answers it with its own redirect before any route is
+	// reached, and the ".."-shaped probe is the escaped one that does arrive.
+	for _, name := range []string{"a%2Fb", "%2e%2e", "a%00b", "__x__", strings.Repeat("x", 1501)} {
+		for _, route := range []struct {
+			name   string
+			method string
+			path   string
+			body   string
+		}{
+			{name: "read", method: http.MethodGet, path: apiOrgPathOf(name)},
+			{name: "members read", method: http.MethodGet, path: apiOrgMembersPathOf(name)},
+			{name: "selection", method: http.MethodPost, path: apiOrgSelectPathOf(name), body: "{}"},
+		} {
+			rec := f.apiAs(route.method, route.path, route.body)
+			switch {
+			case rec.Code != http.StatusNotFound:
+				t.Errorf("the %s of %q answered %d (%s), want the not-found refusal: a name no organisation could be created with is not one to argue with", route.name, name, rec.Code, rec.Body)
+			case rec.Body.String() != absent.Body.String():
+				t.Errorf("the %s of %q answered %s, want the same refusal as an absent organisation (%s): any other answer tells a stranger which names the service read", route.name, name, rec.Body, absent.Body)
+			}
+		}
 	}
 }
 
