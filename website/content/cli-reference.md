@@ -4002,7 +4002,8 @@ behaviour: nothing is deleted and a new key restores everything.
 --json prints {project, state, tier, seats, paid_through, kind, renewal_mode,
 source, revoked, last_check, warning}, with paid_through null where no key is
 installed, last_check the last revocation check's own record and warning the
-roles the key's own policy reaches now (null while no window is open).
+windows the key's own policy has open now, each with the roles it reaches and
+the instant it opened (null while none is open).
 
 This is a read: it is not refused inside a coding agent's session.
 

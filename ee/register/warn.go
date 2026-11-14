@@ -73,11 +73,21 @@ func licenceWarningTermsOfView(view project.View) licenceWarningTerms {
 	}
 }
 
-// licenceWarnGraceDaysBound is the longest grace a warning's arithmetic
-// carries. The verifier clamps its own the same way (ee/licence's
-// graceDuration): a claim set carrying an absurd `grace_days` must not wrap the
-// sum into a grace that ends before the term does.
-const licenceWarnGraceDaysBound = 1 << 20
+// licenceWarnSpan is a count of days as a duration, clamped at the verifier's
+// own longest span (ee/licence's MaxIntervalDays, which its graceDuration
+// clamps at too). A duration in nanoseconds runs out at about 106,751 days, and
+// a claim set carrying an absurd `grace_days` must not be multiplied past that:
+// the sum would wrap into a grace that ends years before the term it is counted
+// from, and the sentence would name a date in the past as the one to act on.
+func licenceWarnSpan(days int) time.Duration {
+	if days <= 0 {
+		return 0
+	}
+	if int64(days) > licence.MaxIntervalDays {
+		return time.Duration(licence.MaxIntervalDays) * 24 * time.Hour
+	}
+	return time.Duration(days) * 24 * time.Hour
+}
 
 // licenceWarnRole answers the role a tagged CLI's own commands speak for.
 //
@@ -138,7 +148,9 @@ func licenceWarnings(terms licenceWarningTerms, now time.Time) []licenceWarning 
 // key's grace (`grace_start`, the end of its paid term) or a whole number of
 // days after it (`grace_start+7d`). Anything else is a form this build does not
 // know and answers false: the claim is the key's own text, and only the two
-// forms the key policy is written in are windows here.
+// forms the key policy is written in are windows here. A count past the longest
+// span a duration holds is one of those: the sum would wrap, and a window that
+// opened decades ago is worse than one this build declines to place.
 func licenceWarningOpens(paidThrough time.Time, from string) (time.Time, bool) {
 	rest, ok := strings.CutPrefix(from, "grace_start")
 	if !ok {
@@ -159,24 +171,20 @@ func licenceWarningOpens(paidThrough time.Time, from string) (time.Time, bool) {
 	if err != nil || n < 0 {
 		return time.Time{}, false
 	}
-	if n > licenceWarnGraceDaysBound {
+	if int64(n) > licence.MaxIntervalDays {
 		return time.Time{}, false
 	}
 	return paidThrough.Add(time.Duration(n) * 24 * time.Hour), true
 }
 
-// licenceWarnGraceEnd is when the key's grace runs out, bounded like the
-// verifier's own arithmetic so that a claim set carrying an absurd grace_days
-// cannot put the end of the grace before the end of the paid term.
+// licenceWarnGraceEnd is when the key's grace runs out, counted with the same
+// clamp the verifier's own grace arithmetic stops at, so an absurd `grace_days`
+// names the longest grace this build can place rather than one wrapped into the
+// past. It lands at or before the verifier's own end, which is the safe side: a
+// warning never says the grace has ended while the verifier still calls the key
+// in grace.
 func licenceWarnGraceEnd(terms licenceWarningTerms) time.Time {
-	days := terms.GraceDays
-	if days < 0 {
-		days = 0
-	}
-	if days > licenceWarnGraceDaysBound {
-		days = licenceWarnGraceDaysBound
-	}
-	return terms.PaidThrough.Add(time.Duration(days) * 24 * time.Hour)
+	return terms.PaidThrough.Add(licenceWarnSpan(terms.GraceDays))
 }
 
 // licenceWarningFor answers the newest window that reaches one role at one
@@ -223,43 +231,46 @@ func licenceWarnLine(w io.Writer, terms licenceWarningTerms, now time.Time) bool
 	return true
 }
 
-// licenceWarningJSON is `licence status --json`'s `warning`: the window a
+// licenceWarningJSON is `licence status --json`'s `warning`: the windows a
 // reader outside this process weighs against its own reader's role, and null
-// while no window is open.
+// while none is open.
 //
-// Roles are the roles every open window reaches together, in the key's own
-// order, and Opens is when the first of those windows opened — so a reader that
-// is shown one banner knows who it is for and since when warnings have been on
-// at all. Message is the sentence above, which is the same one the CLI writes,
-// so a reader that shows it shows what the CLI shows.
+// The windows are listed rather than merged, because they do not all reach the
+// same roles at the same instant: the default policy reaches admins from the
+// first moment of the grace and every role a week in, so one reader is warned
+// from the start of the grace and another from that week. A reader answers its
+// own question the way this build does — the newest window whose Roles contain
+// the reader's role — instead of reading one instant that is only true of some
+// of the roles beside it. The order is the key's own, window by window, and a
+// reader that shows one banner shows Message, which is the sentence the CLI
+// writes and is the same to everyone.
 type licenceWarningJSON struct {
-	Opens   time.Time `json:"opens"`
-	Roles   []string  `json:"roles"`
-	Message string    `json:"message"`
+	Windows []licenceWarningWindowJSON `json:"windows"`
+	Message string                     `json:"message"`
 }
 
-// licenceStatusWarning is the field: the roles every open window reaches
-// together, the earliest instant a warning began, and the sentence above. One
-// object rather than the windows themselves, because a reader has one banner
-// and asks one question of it — is my role in this list — and the union answers
-// it exactly where a reader picking among windows would have to restate the
-// windows' own arithmetic. The order is the key's own, window by window.
+// licenceWarningWindowJSON is one open window as a reader outside this process
+// sees it: the roles it reaches and the instant it opened.
+type licenceWarningWindowJSON struct {
+	Opens time.Time `json:"opens"`
+	Roles []string  `json:"roles"`
+}
+
+// licenceStatusWarning is the field: every window open at this instant, each
+// with the roles it reaches and when it opened, and the sentence above. The
+// roles are in the key's own order and the windows in the order they open.
 func licenceStatusWarning(terms licenceWarningTerms, now time.Time) *licenceWarningJSON {
 	windows := licenceWarnings(terms, now)
 	if len(windows) == 0 {
 		return nil
 	}
-	roles := []string{}
+	out := make([]licenceWarningWindowJSON, 0, len(windows))
 	for _, window := range windows {
+		roles := make([]string, 0, len(window.Roles))
 		for _, role := range window.Roles {
-			if !slices.Contains(roles, string(role)) {
-				roles = append(roles, string(role))
-			}
+			roles = append(roles, string(role))
 		}
+		out = append(out, licenceWarningWindowJSON{Opens: window.Opens.UTC(), Roles: roles})
 	}
-	return &licenceWarningJSON{
-		Opens:   windows[0].Opens.UTC(),
-		Roles:   roles,
-		Message: licenceWarningMessage(terms),
-	}
+	return &licenceWarningJSON{Windows: out, Message: licenceWarningMessage(terms)}
 }

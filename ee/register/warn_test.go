@@ -17,6 +17,7 @@ package register
 // term reaches nobody.
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -73,6 +74,33 @@ func warningField(t *testing.T, status map[string]any) (map[string]any, bool) {
 	return warning, true
 }
 
+// warningWindow is one window of that field as a reader outside this process
+// decodes it, and answers the roles it reaches and whether it reaches one.
+func warningWindow(t *testing.T, warning map[string]any, i int) (opens string, roles []string) {
+	t.Helper()
+	windows, ok := warning["windows"].([]any)
+	if !ok {
+		t.Fatalf("licence status --json's warning carries no windows list: %#v", warning)
+	}
+	if i >= len(windows) {
+		t.Fatalf("the warning carries %d windows, and this test reads window %d: %#v", len(windows), i, windows)
+	}
+	window, ok := windows[i].(map[string]any)
+	if !ok {
+		t.Fatalf("window %d of the warning is %#v, want an object", i, windows[i])
+	}
+	opens, _ = window["opens"].(string)
+	list, _ := window["roles"].([]any)
+	for _, role := range list {
+		name, _ := role.(string)
+		roles = append(roles, name)
+	}
+	if opens == "" || len(roles) == 0 {
+		t.Fatalf("window %d of the warning is %#v, want an instant and the roles it reaches", i, window)
+	}
+	return opens, roles
+}
+
 // assertTheLineNames is what a test holds the warning a command writes to: one
 // line of the command's standard error that names the instant the grace runs
 // out, which is the fact the whole warning is for. It is one line among the
@@ -97,16 +125,20 @@ func TestAdminsOnlyInTheFirstWeekOfGrace(t *testing.T) {
 	if !open {
 		t.Fatal("a key in the first week of its grace warns nobody: licence status --json's warning is null")
 	}
-	if got := warning["roles"]; !reflect.DeepEqual(got, []any{"admin"}) {
-		t.Errorf("the first window reaches %#v, want admins alone", got)
+	opens, roles := warningWindow(t, warning, 0)
+	if !reflect.DeepEqual(roles, []string{"admin"}) {
+		t.Errorf("the first window reaches %#v, want admins alone", roles)
 	}
-	if got := warning["opens"]; got != claims.PaidThrough.UTC().Format(time.RFC3339) {
-		t.Errorf("the first window opens at %#v, want the start of the grace (%s)", got, claims.PaidThrough.UTC().Format(time.RFC3339))
+	if opens != claims.PaidThrough.UTC().Format(time.RFC3339) {
+		t.Errorf("the first window opens at %q, want the start of the grace (%s)", opens, claims.PaidThrough.UTC().Format(time.RFC3339))
 	}
 	// One window and not two: the second opens a week in, and a field that
 	// named every window the key carries would warn everyone from day one.
 	if windows := licenceWarnings(terms(claims, licence.Grace), f.now); len(windows) != 1 {
 		t.Errorf("the windows open three days into the grace are %+v, and only the first of the key's is", windows)
+	}
+	if windows, _ := warning["windows"].([]any); len(windows) != 1 {
+		t.Errorf("licence status --json carries %d windows three days into the grace, and the key's second one opens a week in", len(windows))
 	}
 	message, _ := warning["message"].(string)
 	if message == "" || strings.Contains(message, "\n") {
@@ -137,9 +169,6 @@ func TestEveryoneInTheLast(t *testing.T) {
 	if !open {
 		t.Fatal("a key in the last week of its grace warns nobody: licence status --json's warning is null")
 	}
-	if got := warning["roles"]; !reflect.DeepEqual(got, []any{"admin", "operator", "viewer"}) {
-		t.Errorf("the last window reaches %#v, want every role", got)
-	}
 	// Both of the key's windows are open, and the second is the one that has
 	// just done it: it opened a week into the grace, which is the instant the
 	// developers were reached.
@@ -147,8 +176,23 @@ func TestEveryoneInTheLast(t *testing.T) {
 	if len(windows) != 2 || !windows[1].Opens.Equal(claims.PaidThrough.Add(7*24*time.Hour)) {
 		t.Fatalf("the windows open twenty days into the grace are %+v, want both of the key's with the second a week in", windows)
 	}
-	if got := warning["opens"]; got != claims.PaidThrough.UTC().Format(time.RFC3339) {
-		t.Errorf("the field's opens is %#v, want the instant warnings began at all (%s)", got, claims.PaidThrough.UTC().Format(time.RFC3339))
+	// The field carries them apart, each with its own opening instant: a reader
+	// whose role the first window does not reach must not be told warnings have
+	// been on since the start of the grace.
+	firstOpens, firstRoles := warningWindow(t, warning, 0)
+	if !reflect.DeepEqual(firstRoles, []string{"admin"}) || firstOpens != claims.PaidThrough.UTC().Format(time.RFC3339) {
+		t.Errorf("the field's first window is %q for %#v, want the start of the grace (%s) for admins alone", firstOpens, firstRoles, claims.PaidThrough.UTC().Format(time.RFC3339))
+	}
+	secondOpens, secondRoles := warningWindow(t, warning, 1)
+	if !reflect.DeepEqual(secondRoles, []string{"admin", "operator", "viewer"}) {
+		t.Errorf("the field's second window reaches %#v, want every role", secondRoles)
+	}
+	week := claims.PaidThrough.Add(7 * 24 * time.Hour).UTC().Format(time.RFC3339)
+	if secondOpens != week {
+		t.Errorf("the field's second window opens at %q, want a week into the grace (%s): a viewer is reached then and not at its start", secondOpens, week)
+	}
+	if windows, _ := warning["windows"].([]any); len(windows) != 2 {
+		t.Errorf("licence status --json carries %d windows twenty days into the grace, want both of the key's", len(windows))
 	}
 
 	for _, role := range access.Roles() {
@@ -184,5 +228,64 @@ func TestNoWarningWhenActive(t *testing.T) {
 	}
 	if strings.Contains(out+errOut, "grace") {
 		t.Errorf("licence status warns about a key inside its paid term:\nstdout: %s\nstderr: %s", out, errOut)
+	}
+}
+
+// TestAnAbsurdGraceOrWindowIsNotAShorterOne pins the bound the window
+// arithmetic shares with the verifier's own (ee/licence's MaxIntervalDays):
+// a claim set carrying a count of days neither a duration nor this build can
+// hold must name the longest span there is, never one wrapped into the past —
+// a grace said to have ended before the paid term did, or a window reported
+// open decades ago.
+func TestAnAbsurdGraceOrWindowIsNotAShorterOne(t *testing.T) {
+	f := newLicenceFixture(t)
+	// The count is past the ~106,751 days a duration holds, so multiplying it by
+	// a day wraps: the grace the key carries has to be clamped rather than
+	// wrapped, and a window written that far after the grace start cannot be
+	// placed at all.
+	absurd := 1 << 20
+	claims := f.claims(func(c *licence.Claims) {
+		c.PaidThrough = f.now
+		c.GraceDays = absurd
+		c.Warnings = []licence.WarningV1{
+			{Roles: []string{"admin"}, From: "grace_start"},
+			{Roles: []string{"admin", "operator", "viewer"}, From: fmt.Sprintf("grace_start+%dd", absurd)},
+		}
+	})
+	install(t, f, f.issuer.mint(t, claims))
+	f.now = claims.PaidThrough.Add(24 * time.Hour)
+
+	// The verifier clamps the same claim set instead of wrapping it, which is
+	// the state every window below is read against.
+	if got := f.status(t)["state"]; got != string(licence.Grace) {
+		t.Fatalf("a key with %d days of grace the day after its paid term reads %v, want %s", absurd, got, licence.Grace)
+	}
+
+	held := terms(claims, licence.Grace)
+	end := licenceWarnGraceEnd(held)
+	want := claims.PaidThrough.Add(time.Duration(licence.MaxIntervalDays) * 24 * time.Hour)
+	if !end.Equal(want) {
+		t.Errorf("the grace of a key with %d days ends at %s, want the longest span this build can say (%s)", absurd, end, want)
+	}
+
+	if _, ok := licenceWarningOpens(claims.PaidThrough, fmt.Sprintf("grace_start+%dd", absurd)); ok {
+		t.Errorf("a window opening %d days into the grace is placed, and a count past the longest duration there is cannot be", absurd)
+	}
+	windows := licenceWarnings(held, f.now)
+	if len(windows) != 1 || !windows[0].Opens.Equal(claims.PaidThrough) {
+		t.Errorf("the windows of a key carrying an unplaceable one are %+v, want the one that opens at the start of the grace (%s)", windows, claims.PaidThrough)
+	}
+
+	// The sentence a person acts on names an instant the grace has not reached
+	// yet, rather than one in the past.
+	_, errOut, err := f.exec(t, "", "licence", "status")
+	if err != nil {
+		t.Fatalf("licence status = %v", err)
+	}
+	if end.Before(f.now) {
+		t.Errorf("the warning names %s as the end of a grace that is still running, and the key reads %s", end, f.status(t)["state"])
+	}
+	if !strings.Contains(errOut, end.UTC().Format(time.RFC3339)) {
+		t.Errorf("no line of the command names the end of the grace (%s):\n%s", end.UTC().Format(time.RFC3339), errOut)
 	}
 }

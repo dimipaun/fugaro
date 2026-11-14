@@ -771,7 +771,8 @@ behaviour: nothing is deleted and a new key restores everything.
 --json prints {project, state, tier, seats, paid_through, kind, renewal_mode,
 source, revoked, last_check, warning}, with paid_through null where no key is
 installed, last_check the last revocation check's own record and warning the
-roles the key's own policy reaches now (null while no window is open).
+windows the key's own policy has open now, each with the roles it reaches and
+the instant it opened (null while none is open).
 
 This is a read: it is not refused inside a coding agent's session.`,
 		Args: func(_ *cobra.Command, args []string) error {
@@ -812,12 +813,13 @@ type licenceStatusJSON struct {
 	// LastCheck is the last revocation check the installation ran, in the
 	// store's own record shape, and null where it never ran one.
 	LastCheck *project.Check `json:"last_check"`
-	// Warning is who the key's own warning policy reaches now, since when, and
-	// the sentence it is shown as (K3.5), and null while no window is open. A
-	// reader outside this process weighs its own reader's role against Roles
-	// rather than assuming the caller of the CLI: the console and the app know
-	// who is looking, and the last window of the default policy is written to
-	// reach every role (spec section 7.1).
+	// Warning is the windows of the key's own warning policy that are open now,
+	// each with the roles it reaches and since when, and the sentence it is
+	// shown as (K3.5); it is null while none is open. A reader outside this
+	// process picks the newest window that reaches its own reader's role rather
+	// than assuming the caller of the CLI: the console and the app know who is
+	// looking, and the windows of the default policy reach different roles at
+	// different instants (spec section 7.1).
 	Warning *licenceWarningJSON `json:"warning"`
 }
 
