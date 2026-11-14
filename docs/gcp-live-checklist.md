@@ -10656,6 +10656,21 @@ reconciliation's **U4** — that `x-claude-code-agent-id` distinguishes every su
 session reliably — and it **gates task T7.2**: the plan makes T7.2's fan-out stop wait for this
 check's answer, so T7.2 does not merge until this check has run and its answer is on the record.
 
+**RUN 2026-11-14 — U4 ANSWERED YES ON `agent_id` ONLY (the answer T7.2 rests on).** The owner ran the
+guard below read-only, on the sandbox installation (`fugaro`, project `fugaro-dev`), over run `9b01` of
+2026-11-14 — one gateway run with a sub-agent — and its counts answer the question this check gates:
+every `model call` entry with an empty `agent_id` was its stage's main session, **one** distinct
+non-empty `agent_id` was the stage's sub-agent, and **no** agent id was carried by refused entries
+alone (step 4's count read **0**). So **a distinct-agent count is a sub-agent count** and T7.2's
+fan-out stop counts **distinct non-empty agent IDs, never a session** — the run also says why the
+session cannot be what is counted, because step 2's *"differs"* FACT read **otherwise** on it: the
+sub-agent's `session_id` **was** its stage's main session's, so a session tells a sub-agent from the
+main session in no run at all. Step 3 — the background model's calls — **was not measured** on this
+run and stands as written below, for the next run of this check to read.
+`TestFanoutCountsAgentIDsNotSessions` (`ee/governance/gateway_test.go`) pins the same reading
+hermetically: a sub-agent whose calls share the main session's ID is counted, and an empty `agent_id`
+never is.
+
 **Why the check exists.** The gateway's stage report counts a stage's **distinct agent IDs**
 (`internal/gateway/ledger.go`: `r.Agents = len(st.agents)`), and T7.2's fan-out stop spends that
 count. The gateway's own comment states the premise this check verifies in the live logs: Claude Code

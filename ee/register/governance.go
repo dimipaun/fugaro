@@ -30,6 +30,16 @@ func init() {
 	}); err != nil {
 		panic("ee/register: " + err.Error())
 	}
+	// The gateway's own half of the same governance (T7.2): the per-stage
+	// budgets, the review ratio and the fan-out stop a run's gateway enforces
+	// as its calls are made. It is registered here with the pair above because
+	// it is the same policy read at a second place — the stage hook bounds a
+	// stage by time, the gateway bounds it by spend, and a tagged binary that
+	// carried one and not the other would enforce half the block a repository
+	// wrote.
+	if err := runner.SetGatewayStageLimit(governance.StageLimit); err != nil {
+		panic("ee/register: " + err.Error())
+	}
 	// The tier calibration's way into the report (T8.3, design §5.4). It is
 	// not a half of the pair above: the digest's section slot is a report's
 	// own, and an untagged build printing a report without a calibration

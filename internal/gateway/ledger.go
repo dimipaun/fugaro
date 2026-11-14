@@ -32,6 +32,35 @@ func (s *Server) haltedMessage() (string, bool) {
 	return s.haltMsg, s.halt != nil
 }
 
+// refusalNow is the sentence this call is refused with before anything of it
+// is read, and whether there is one: the run's own halt, which refuses every
+// call of every stage, or a stage limit's stop, which refuses the stage it
+// stopped and nothing else (T7.2). The two are read in that order because a
+// run-wide halt is the wider one: after a cap halt even the checkpoint stage
+// is refused, and after a stage stop only the stopped stage is.
+//
+// A call that arrives with no stage running is refused by the stage it has no
+// stage to belong to (handleMessages' own "no stage is running"), so the stop
+// reads the name of the stage that is there.
+func (s *Server) refusalNow() (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.halt != nil {
+		return s.haltMsg, true
+	}
+	return s.stoppedStageLocked()
+}
+
+// stoppedStageLocked is refusalNow's stage half: the sentence a stopped
+// stage's calls are refused with, and whether the running stage is the
+// stopped one. The caller holds s.mu.
+func (s *Server) stoppedStageLocked() (string, bool) {
+	if s.stoppedStage == "" || s.stage == nil || s.stage.st.Name != s.stoppedStage {
+		return "", false
+	}
+	return s.stageStopMsg, true
+}
+
 // reserve holds w for a call, and returns 0. In enforce mode a call whose
 // worst case can't fit under the cap even with nothing else in flight
 // (used + w > cap) is refused with 403 and halts the run: it and every
@@ -40,7 +69,17 @@ func (s *Server) haltedMessage() (string, bool) {
 // refused with a retryable 429 and no halt: the cap may well hold once
 // they settle. In observe mode a call is counted and logged instead,
 // never refused.
+//
+// A stage limit decides first (T7.2): it is the tighter bound, its stage
+// budget being a fraction of the cap this reserve enforces, and the stop it
+// leaves is the stopped stage's own, never a run-wide halt (stageLimitLocked).
 func (s *Server) reserve(ctx context.Context, st *stageState, w pricing.Micros) (refusal string, status int) {
+	s.mu.Lock()
+	msg, status := s.stageLimitLocked(st, w)
+	s.mu.Unlock()
+	if status != 0 {
+		return msg, status
+	}
 	if s.o.Lease != nil {
 		return s.reserveLease(ctx, st, w)
 	}
@@ -80,6 +119,50 @@ func (s *Server) reserve(ctx context.Context, st *stageState, w pricing.Micros) 
 	s.reserved = satAdd(s.reserved, w)
 	s.checkLocked()
 	return "", 0
+}
+
+// stageLimitLocked is the stage limit's decision on a call about to reserve w,
+// and it is asked before the cap's own arithmetic (T7.2). A stage limit is
+// tighter than the cap by construction -- a stage budget is a fraction of it --
+// so the call the limit refuses is a call the cap would have admitted, and the
+// reason the run records has to be the stage's.
+//
+// A limit that stops is a stop of the stage the call belongs to, and nothing
+// wider: s.halt stays nil, so the runner's next stage -- the checkpoint call
+// T7.2 leaves admissible -- is served as any stage is. The stop is delivered on
+// Halted() exactly once, as a halt is, because the runner's halt watcher is
+// what records it and stops the agent (T7.3 turns it into a checkpoint); a
+// second delivery, from a later run-wide halt, would panic on the closed
+// channel (deliverLocked).
+//
+// The caller holds s.mu.
+func (s *Server) stageLimitLocked(st *stageState, w pricing.Micros) (string, int) {
+	l := s.o.StageLimit
+	if l == nil {
+		return "", 0
+	}
+	if msg, stopped := s.stoppedStageLocked(); stopped {
+		// The backstop: a call that read no refusal of its own -- one that
+		// passed ServeHTTP before the stage was stopped -- is refused by the
+		// stop like every other call of the stopped stage.
+		return msg, http.StatusForbidden
+	}
+	dec := l.Stop(StageLimitView{
+		Stage:  st.st,
+		Report: st.rep,
+		Ended:  s.ended,
+		Ledger: s.ledgerLocked(),
+		Needed: w,
+	})
+	if dec.Reason == "" {
+		return "", 0
+	}
+	h := Halt{Reason: dec.Reason, Scope: "run", Detail: dec.Detail, At: time.Now().UTC()}
+	msg := "fugaro: budget halted: " + haltText(h)
+	s.stoppedStage, s.stageStopMsg = st.st.Name, msg
+	s.deliverLocked(h)
+	s.log.Warn("budget: stage stopped", "stage", st.st.Name, "reason", logValue(dec.Reason), "detail", logValue(dec.Detail))
+	return msg, http.StatusForbidden
 }
 
 // charge is how a call settles.
