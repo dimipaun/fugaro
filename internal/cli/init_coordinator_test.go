@@ -26,6 +26,7 @@ const coordinatorAccount = "fugaro-coordinator@proj-1234.iam.gserviceaccount.com
 func TestTheCoordinatorIsOffByDefault(t *testing.T) {
 	r := newFBRig(t)
 	r.historyImage()
+	fakeTerminal(t)
 	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID); err != nil {
 		t.Fatal(err)
 	}

@@ -47,6 +47,11 @@ func credentialsRig(t *testing.T) *imagesRig { return credentialsRigAt(t, "1.2.3
 // BETWEEN two releases is tested with.
 func credentialsRigAt(t *testing.T, version string) *imagesRig {
 	t.Helper()
+	// The owner's own terminal, which is what confirms the steps these runs ask
+	// about (T11 of docs/no-prompt-policy: the flag that stood in for it is
+	// gone). A rig with no terminal would stop at the first confirmation, which
+	// is what the refusals' own tests are for.
+	fakeTerminal(t)
 	r := newImagesRig(t, version)
 	publishCredentialsImage(t, r, version)
 	// The database the marker is read from: a project config with a budget
