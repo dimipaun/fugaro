@@ -13,10 +13,10 @@ account its launch resolved.
 | File | Role |
 | --- | --- |
 | [spec.md](spec.md) | The ruling, quoted verbatim, made concrete: where an alias lives, its names and targets, which keys may name it, resolution, the command, the reads, the security reading |
-| [reconciliation.md](reconciliation.md) | Findings F1–F16 against `d51ada6d5`, decisions D2090–D2102 (**all answered as recommended by the owner, 2026-11-10**), open items, UNVERIFIED. **Where it disagrees with `spec.md`, it wins** |
+| [reconciliation.md](reconciliation.md) | Findings F1–F16 against `d51ada6d5`, decisions D2090–D2103 (D2090–D2102 **answered as recommended by the owner, 2026-11-10**; D2103 written by AL1 and not put to the owner), open items, UNVERIFIED. **Where it disagrees with `spec.md`, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Tasks AL0–AL4, Check 550 (owner-run), levels, critical path, shared-files table, serialization against open pull requests. **AL0–AL4 approved by the owner, 2026-11-10**, still sequenced after the open pull requests it names |
 
-**Numbers:** D2090–D2109 (D2090–D2102 written; renumbered from D2070–D2082 on 2026-11-10, a block #2294
+**Numbers:** D2090–D2109 (D2090–D2103 written; renumbered from D2070–D2082 on 2026-11-10, a block #2294
 also claimed), Checks 550–554 (550 written). Neighbours:
 [accounts-add](../accounts-add/README.md) (the choice keys, D873–D876),
 [model-crafts](../model-crafts/README.md) (credentials, pools and crafts; MC4 #2252 and MC5 #2274 move the
