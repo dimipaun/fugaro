@@ -86,6 +86,10 @@ write_fakes() { # dir
 #     than a claim.
 # Every call is recorded on $FAKE440_DIR/logs/fugaro.calls, with the directory it
 # was made in, so a case can say what the check read and what it did not.
+#
+# Each error line it prints carries the "fugaro: " prefix main's cli.PrintFailure
+# puts in front of a command's message, on that message's first line alone: a
+# refusal the check greps is read off a real binary's stderr, prefix and all.
 set -u
 D=${FAKE440_DIR:?}
 SLUG=${FAKE440_SLUG:-acme-web}
@@ -193,7 +197,7 @@ resolve_pick() {
   CHOSEN=""
   if [ "${#ref}" -lt 4 ]; then
     if [ "$MODE" = too-short-ok ]; then CHOSEN=$ref; return 0; fi
-    printf '"%s" is %d characters; an ending needs at least 4, the shortest form a run is shown in\n' \
+    printf 'fugaro: "%s" is %d characters; an ending needs at least 4, the shortest form a run is shown in\n' \
       "$ref" "${#ref}" >&2
     return 1
   fi
@@ -205,7 +209,7 @@ resolve_pick() {
   fi
   n=$(wc -l <"$D/.matches" | tr -d ' ')
   if [ "$n" -eq 0 ]; then
-    printf 'no run ending "%s" among the active runs or the runs the bucket still holds; pass the full ID\n' "$ref" >&2
+    printf 'fugaro: no run ending "%s" among the active runs or the runs the bucket still holds; pass the full ID\n' "$ref" >&2
     return 1
   fi
   if [ "$n" -eq 1 ]; then
@@ -226,7 +230,7 @@ resolve_pick() {
     IFS= read -r answer || answer=""
     chosen=$(sed -n "${answer}p" "$D/.matches")
     if [ -z "$chosen" ]; then
-      printf '"%s" is not one of the %d runs listed; pass a longer ending or the full run ID\n' "$answer" "$n" >&2
+      printf 'fugaro: "%s" is not one of the %d runs listed; pass a longer ending or the full run ID\n' "$answer" "$n" >&2
       return 1
     fi
     if [ "$MODE" = wrong-answer ]; then
@@ -235,7 +239,7 @@ resolve_pick() {
     CHOSEN=$chosen
     return 0
   fi
-  printf '"%s" names %d runs:\n' "$ref" "$n" >&2
+  printf 'fugaro: "%s" names %d runs:\n' "$ref" "$n" >&2
   ending_rows "$D/.matches" >&2
   if [ "$MODE" = piped-no-way-out ]; then
     printf 'that ending names more than one run\n' >&2
@@ -260,7 +264,7 @@ cmd_run() { # --run-id ID --json TASK
   done
   case "$MODE" in
   launch-fail)
-    printf 'run: the launch was refused: the sandbox repository is not configured\n' >&2
+    printf 'fugaro: run: the launch was refused: the sandbox repository is not configured\n' >&2
     return 1
     ;;
   launch-sleep)
@@ -297,7 +301,7 @@ cmd_runs_ls() { # --json --since W
   esac
   case "$MODE" in
   list-fails)
-    printf 'runs ls: the bucket could not be listed\n' >&2
+    printf 'fugaro: runs ls: the bucket could not be listed\n' >&2
     return 1
     ;;
   list-bad-json)
@@ -337,7 +341,7 @@ cmd_cancel() { # REF [--now] [--json]
     match_in "$ref" "$D/.cands" >"$D/.matches"
     n=$(wc -l <"$D/.matches" | tr -d ' ')
     if [ "$n" -eq 0 ]; then
-      printf 'no active run ending "%s"; pass the full run ID\n' "$ref" >&2
+      printf 'fugaro: no active run ending "%s"; pass the full run ID\n' "$ref" >&2
       return 1
     fi
     if [ "$MODE" = cancel-acts ]; then
@@ -346,13 +350,13 @@ cmd_cancel() { # REF [--now] [--json]
       printf '{"run":"%s/%s","status":"cancelled","marker":true}\n' "$SLUG" "$id"
       return 0
     fi
-    printf '"%s" names %d active runs:\n' "$ref" "$n" >&2
+    printf 'fugaro: "%s" names %d active runs:\n' "$ref" "$n" >&2
     full_rows "$D/.matches" >&2
     printf 'pass one of the full run IDs above\n' >&2
     return 1
   fi
   if [ "$MODE" = cancel-fails ]; then
-    printf 'cancel: the backend refused the cancel of %s\n' "$ref" >&2
+    printf 'fugaro: cancel: the backend refused the cancel of %s\n' "$ref" >&2
     return 1
   fi
   if [ "$MODE" = cancel-slow ] && [ "$now" = no ]; then
@@ -395,7 +399,7 @@ main() {
     resolve_pick "$2" || exit 1
     case "$MODE" in
     logs-no-url)
-      printf 'no console link was recorded for this run'"'"'s execution\n' >&2
+      printf 'fugaro: no console link was recorded for this run'"'"'s execution\n' >&2
       exit 1
       ;;
     logs-wrong-url)

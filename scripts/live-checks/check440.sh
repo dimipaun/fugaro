@@ -1113,7 +1113,10 @@ step_cancel_finished() {
     fact cancel-finished-refuses FAIL "fugaro cancel $OLD_ENDING exited $BOUNDED_STATUS (want 1): $(printf '%s' "$out" | tr '\n' ' ' | cut -c1-400)"
     return 0
   fi
-  if ! grep -q "^no active run ending \"$OLD_ENDING\"; pass the full run ID\$" <<<"$out"; then
+  # The refusal is the command's error, so main's cli.PrintFailure writes it as
+  # "fugaro: <message>": the sentence is the whole message, and the prefix is
+  # main's, not the resolver's, so both readings are the same refusal.
+  if ! grep -qE "^(fugaro: )?no active run ending \"$OLD_ENDING\"; pass the full run ID\$" <<<"$out"; then
     fact cancel-finished-refuses FAIL "fugaro cancel $OLD_ENDING was refused, but not with the finished run's own sentence: $(printf '%s' "$out" | tr '\n' ' ' | cut -c1-400)"
     return 0
   fi
