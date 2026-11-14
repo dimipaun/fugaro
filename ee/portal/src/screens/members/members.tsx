@@ -24,7 +24,11 @@
 // shows the address it is bound to and the state it has reached, and
 // withdrawing one re-reads the list rather than removing the row. A revoked
 // invitation is a state and not a deletion -- a person asking what happened to
-// the invitation they sent is asking about a row that is still there.
+// the invitation they sent is asking about a row that is still there. The
+// invitation routes are P2.2's and unwritten, so the shape read for them is a
+// claim this screen makes and its suite pins (`InvitesAnswer`) rather than one
+// read out of an API, which is what keeps the two tasks from disagreeing
+// silently.
 //
 // **The organisation is the URL's, and a person with none is sent to choose
 // one.** `?org=` is what the switcher put there (P2.3's `switcher.tsx`), so a
@@ -68,6 +72,18 @@ interface MembersAnswer {
   members: Membership[]
 }
 
+/**
+ * One organisation's invitations, as `GET /orgs/{id}/invites` will answer them.
+ * The route is P2.2's and unwritten, so the shape is a claim this screen makes
+ * and its suite pins: an object with the list under its own name, which is what
+ * this API answers everywhere else (P2.1's `WireOrgList`, `WireOrgMembers`).
+ * A bare array read here and an object answered there would be a screen that
+ * throws during render, which no error boundary above it would catch.
+ */
+interface InvitesAnswer {
+  invites: Invite[]
+}
+
 type Load =
   | { status: 'loading' }
   | { status: 'failed'; message: string }
@@ -103,14 +119,14 @@ export function MembersScreen() {
     let live = true
     void (async () => {
       try {
-        const [answer, invites] = await Promise.all([
+        const [answer, invitations] = await Promise.all([
           api
             .request<MembersAnswer>(`/orgs/${encodeURIComponent(organisationId)}/members`)
             .catch((error: unknown) => (isNotPermitted(error) ? null : Promise.reject(error))),
-          api.request<Invite[]>(`/orgs/${encodeURIComponent(organisationId)}/invites`),
+          api.request<InvitesAnswer>(`/orgs/${encodeURIComponent(organisationId)}/invites`),
         ])
         if (live) {
-          setLoad({ status: 'ready', members: answer?.members ?? null, invites })
+          setLoad({ status: 'ready', members: answer?.members ?? null, invites: invitations.invites })
         }
       } catch (error) {
         if (live) {
@@ -153,8 +169,12 @@ export function MembersScreen() {
       await api.request<void>(`/orgs/${encodeURIComponent(id)}/invites/${inviteId}`, {
         method: 'DELETE',
       })
-      const invites = await api.request<Invite[]>(`/orgs/${encodeURIComponent(id)}/invites`)
-      setLoad((current) => (current.status === 'ready' ? { ...current, invites } : current))
+      const invitations = await api.request<InvitesAnswer>(
+        `/orgs/${encodeURIComponent(id)}/invites`,
+      )
+      setLoad((current) =>
+        current.status === 'ready' ? { ...current, invites: invitations.invites } : current,
+      )
     } catch (error) {
       setFailure(sentence(error))
     } finally {

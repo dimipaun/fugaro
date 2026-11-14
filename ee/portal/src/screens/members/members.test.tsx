@@ -22,6 +22,15 @@
 // organisation is a person who never chose one, and nobody signed in is sent to
 // the sign-in screen rather than to an API that would refuse them.
 //
+// **The invitations are answered here in a shape, not in whatever P2.2 sends.**
+// That task owns the route and is unwritten, so this suite is half of the
+// contract: it answers the list under its own name — which is how this API
+// answers a list everywhere else (P2.1's `WireOrgList`, `WireOrgMembers`) — and
+// every case that reads invitations goes through the one helper that writes it.
+// A P2.2 that answered a bare array would fail here, and it should: the screen
+// reads the list out of that field, so on a bare array it would read `undefined`
+// and throw during render, which no error boundary above it would catch.
+//
 // Hermetic: the port is a fake and `fetch` is a queue of answers.
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
@@ -113,6 +122,17 @@ function notPermitted(): Response {
   })
 }
 
+/**
+ * The invitations answer, in the shape this suite pins for it: the list under
+ * its own name, which is how this API answers a list everywhere else (P2.1's
+ * `WireOrgList`, `WireOrgMembers`). P2.2 owns the route and is unwritten, so
+ * this is the shape it has to answer for this screen to draw — a bare array
+ * answered there throws here, during render, with no error boundary above.
+ */
+function invitations(list: Invite[]): Response {
+  return json(200, { invites: list })
+}
+
 /** A `fetch` that answers each request from the queue, and records what it was asked. */
 function transport(answers: Response[]): ReturnType<typeof vi.fn> {
   const fetch = vi.fn(() => {
@@ -151,7 +171,7 @@ function mount(path: string, auth: AuthPort = port()): void {
 
 describe('the members screen', () => {
   it('lists the members, and the invitations the API answered', async () => {
-    transport([json(200, { members: [OWNER, COLLEAGUE] }), json(200, [PENDING])])
+    transport([json(200, { members: [OWNER, COLLEAGUE] }), invitations([PENDING])])
     mount(`/members?org=${ORGANISATION_ID}`)
 
     expect(await screen.findByText(COLLEAGUE.email)).toBeDefined()
@@ -163,7 +183,7 @@ describe('the members screen', () => {
   it('invites an address with the role chosen, and shows it waiting', async () => {
     const fetch = transport([
       json(200, { members: [OWNER] }),
-      json(200, []),
+      invitations([]),
       json(200, PENDING),
     ])
     mount(`/members?org=${ORGANISATION_ID}`)
@@ -187,9 +207,9 @@ describe('the members screen', () => {
   it('withdraws a pending invitation, and reads the list the API answers now', async () => {
     const fetch = transport([
       json(200, { members: [OWNER] }),
-      json(200, [PENDING]),
+      invitations([PENDING]),
       json(204),
-      json(200, [REVOKED]),
+      invitations([REVOKED]),
     ])
     mount(`/members?org=${ORGANISATION_ID}`)
 
@@ -207,7 +227,7 @@ describe('the members screen', () => {
   })
 
   it('draws a member the invitations and no member list, rather than an error', async () => {
-    transport([notPermitted(), json(200, [PENDING])])
+    transport([notPermitted(), invitations([PENDING])])
     mount(
       `/members?org=${ORGANISATION_ID}`,
       port({ ...PERSON, uid: COLLEAGUE.uid, email: COLLEAGUE.email }),
@@ -224,7 +244,7 @@ describe('the members screen', () => {
   })
 
   it('reads the member list once, and not again for a member the API refused', async () => {
-    const fetch = transport([notPermitted(), json(200, [])])
+    const fetch = transport([notPermitted(), invitations([])])
     mount(`/members?org=${ORGANISATION_ID}`)
 
     expect(await screen.findByText('Nobody has been invited to this organisation yet.')).toBeDefined()
@@ -247,7 +267,7 @@ describe('the members screen', () => {
   })
 
   it('keeps a URL’s own value in one path segment', async () => {
-    const fetch = transport([json(200, { members: [OWNER] }), json(200, [])])
+    const fetch = transport([json(200, { members: [OWNER] }), invitations([])])
     mount('/members?org=../..%2Fx')
 
     expect(await screen.findByText(OWNER.email)).toBeDefined()
