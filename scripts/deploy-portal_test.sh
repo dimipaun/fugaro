@@ -34,11 +34,20 @@ readonly CLEAR_MARKERS=(-u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_R
 
 # A fresh fake repository: the script, the portal's directory with the files the
 # build reads, and one stub per tool the script calls.
+#
+# The portal's own configuration and the infrastructure's variables are COPIED
+# rather than written here, so the tree the cases drive the script in holds the
+# files the repository ships: a hand-written configuration would be a second one,
+# free to drift from the file that is deployed, and the region and the service
+# names below are read out of that copy rather than out of the checkout.
 setup() {
   rm -rf "${work:?}/repo" "${work:?}/bin" "${work:?}/calls"
-  mkdir -p "$work/repo/scripts" "$work/repo/ee/portal" "$work/repo/ee/keyservice" "$work/bin"
+  mkdir -p "$work/repo/scripts" "$work/repo/ee/portal" "$work/repo/ee/keyservice" \
+    "$work/repo/ee/keyservice/terraform/services" "$work/bin"
   cp "$here/deploy-portal.sh" "$work/repo/scripts/"
-  echo '{"hosting":{"site":"fugaro-portal","public":"dist","rewrites":[{"source":"/api/**","run":{"serviceId":"fugaro-portal-api","region":"us-east5"}}]}}' >"$work/repo/ee/portal/firebase.json"
+  cp "$root/ee/portal/firebase.json" "$work/repo/ee/portal/firebase.json"
+  cp "$root/ee/keyservice/terraform/services/variables.tf" \
+    "$work/repo/ee/keyservice/terraform/services/variables.tf"
   # A second configuration, naming another region: --region is only accepted
   # where the --config it is given points, so the cases that deploy elsewhere
   # need a configuration that says so.
@@ -298,20 +307,35 @@ STUB_EMPTY_DIST=1 run --project my-portal-1
 called "gcloud" && fail "gcloud was called without a build: $(cat "$work/calls")"
 
 # 10. The services and the region are the infrastructure's, not the script's: the
-#     two names are ee/keyservice/terraform/services' own defaults, and the region
-#     is the one ee/portal/firebase.json's /api/** rewrite names, so a deploy
-#     cannot put a service where the hosting configuration is not looking.
-tf=$root/ee/keyservice/terraform/services/variables.tf
+#     two names are the defaults ee/keyservice/terraform/services' variables give
+#     them, and the region is the one ee/portal/firebase.json's /api/** rewrite
+#     names, so a deploy cannot put a service where the hosting configuration is
+#     not looking.
+#
+#     Both are read from the tree this suite built -- setup copies the two shipped
+#     files into it -- and the deploy's own dry run is what is asked to name them:
+#     a line the script no longer runs cannot satisfy this case.
+setup
+tf=$work/repo/ee/keyservice/terraform/services/variables.tf
+config=$work/repo/ee/portal/firebase.json
+services=()
 for pair in "api_service fugaro-portal-api" "minter_service fugaro-key-minter"; do
   # shellcheck disable=SC2086 # word splitting is the point
   set -- $pair
   want=$(grep -A 3 "variable \"$1\"" "$tf" | sed -n 's/.*default *= *"\(.*\)".*/\1/p' | head -1)
   [[ -n $want ]] || fail "$tf no longer gives $1 a default: this check reads it to keep the deploy and the infrastructure together"
-  grep -q "run deploy $want" "$root/scripts/deploy-portal.sh" ||
-    fail "scripts/deploy-portal.sh does not deploy $want, which $tf names as $1's default"
+  services+=("$want")
 done
-rewrite_region=$(jq -r '.hosting.rewrites[] | select(.run) | .run.region' "$root/ee/portal/firebase.json" 2>/dev/null || true)
-script_region=$(sed -n 's/^DEFAULT_REGION=\(.*\)$/\1/p' "$root/scripts/deploy-portal.sh")
+run --dry-run
+[[ $status -eq 0 ]] || fail "the dry run over the tree's own configuration exited $status: $out"
+for want in "${services[@]}"; do
+  [[ $out == *"would run: gcloud run deploy $want "* ]] ||
+    fail "the deploy does not run $want, which $tf names as a default: $out"
+done
+# The region is read as text, the way the script reads it, so this case needs no
+# tool the suite does not put on PATH.
+rewrite_region=$(sed -n 's/.*"region"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$config" | head -1)
+script_region=$(sed -n 's/^DEFAULT_REGION=\(.*\)$/\1/p' "$work/repo/scripts/deploy-portal.sh")
 [[ -n $rewrite_region && $script_region == "$rewrite_region" ]] ||
   fail "scripts/deploy-portal.sh's default region ($script_region) is not the region ee/portal/firebase.json's /api/** rewrite names ($rewrite_region): a deploy in one region and a rewrite in another is an API the SPA cannot reach"
 

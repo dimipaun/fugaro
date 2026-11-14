@@ -77,7 +77,9 @@ jobs:
   # The key service and the script that deploys it. The Terraform-tagged suite
   # is NOT run here: `ee/keyservice/terraform/infra_test.go` needs the tag, and
   # the job that hands it to the go tool is the change docs/pending-workflows/
-  # README.md's `## ci.yml` section stages for the owner.
+  # README.md's `## ci.yml` section writes down for the owner to apply by hand --
+  # that section is a record, not a staged copy, and no `ci.yml` waits in that
+  # directory to be copied in.
   keyservice:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -142,8 +144,9 @@ jobs:
       - name: pin npm to the version that wrote the lockfile
         run: npm install --global npm@11.19.0
       # internal/budget/rules/emulator's own tree, which is what pins the
-      # firebase-tools the emulator is: installing it from there rather than by
-      # version keeps ONE firebase-tools in the tree. The cache key below is this
+      # firebase-tools the emulator is: installing it from there, as ci.yml's
+      # rules job does, runs the version that tree pins rather than a second
+      # version named here. The cache key below is this
       # job's own, not ci.yml's: the two jobs run DIFFERENT emulators (ci.yml's
       # rules job the Realtime Database one, this job Firestore), so one key for
       # both would be saved by whichever ran first and, on an exact key hit, never

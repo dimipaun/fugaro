@@ -187,19 +187,27 @@ Three jobs, none of which holds a secret or authenticates to anything:
   suite. `ee/portal/test/hosting.test.ts` is the file that makes the portal's
   hosting configuration load-bearing: it reads `ee/portal/firebase.json`
   directive by directive and holds its rewrite to the service P1.7's Terraform
-  deploys and to the region `scripts/deploy-portal.sh` deploys it to, and
-  nothing else in the tree reads that file at all.
+  deploys and to the region `scripts/deploy-portal.sh` deploys it to. The
+  script reads that configuration too — it is the file it deploys — so what
+  this suite is alone in holding is the file's own shape, directive by
+  directive, rather than the agreement between it and the two files it has to
+  match.
 - **`keyservice`** — `go test ./ee/keyservice/...`, and
   `bash scripts/deploy-portal_test.sh`, which runs the owner-run deploy script
   with node, npm, gcloud, firebase, git and go stubbed on PATH: it builds
   nothing, deploys nothing and reaches no network. **The Terraform-tagged suite
   is deliberately not run here** — it needs the `terraform` tag, and the job
-  that hands the go tool that tag is the change `## ci.yml` below stages.
+  that hands the go tool that tag is the change the `## ci.yml` section below
+  writes down for the owner to apply by hand; no `ci.yml` is staged in this
+  directory.
 - **`firestore`** — Java 21, the `firebase-tools` pinned in
   `internal/budget/rules/emulator/package.json`, installed **from that tree**
   rather than by version, exactly as `ci.yml`'s rules job installs it: the
-  version is the rules tests' own, and the repository holds one firebase-tools
-  rather than two. The emulator jar is cached under this job's **own** key,
+  emulator runs the version that tree pins — the rules tests' own — rather than
+  a second one named in this job. (The website's two workflows do install
+  `firebase-tools@15.19.0` by version, so the tree does hold a second one; this
+  job is not the place to unify them.) The emulator jar is cached under this
+  job's **own** key,
   `firebase-emulators-firestore-${{ hashFiles('internal/budget/rules/emulator/package-lock.json') }}`
   — not `ci.yml`'s, which caches the Realtime Database emulator's jar: a
   different jar under the same key would be a key one job saves and the other
