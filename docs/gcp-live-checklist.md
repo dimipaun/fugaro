@@ -870,6 +870,8 @@ probe account carries predefined grants only).
 | 412 | A log carrying an instruction and a token, read as data ([`docs/diagnose-agent/`](diagnose-agent/implementation-plan.md), its **Check 412** and task **T-DG10**; **D1602**, **F5** and **F20**, on T-DG2's redaction and T-DG7's read-only child): two lines are planted in a real failed run's own log — an instruction to run a command that would create a file in the check's scratch directory, and a token generated at run time that the check never prints — and the log the agent was handed holds the instruction and `[REDACTED]` and not the token, the child was started with `--tools Read,Grep,Glob` and `--restricted`, every tool it used is one of the three (read from the client's own stream, through a wrapper the check puts first on PATH), the file the instruction named was never created, and the token is in neither the answer, the evidence folder nor the report | See "Check 412" below; **you** run it, on your own machine and your own installation, against the same made-up project as 410 — **never `belong`** — and **no agent runs any step of it** | Nothing is created, and the plant is two lines in one log inside a scratch directory removed at the end. **One model call** on your own credential over a log built to make it misbehave, bounded as 410's is. **OWNER-RUN, NOT RUN.** |
 | 500 | The image setup skill end to end ([`docs/image-setup-skill/`](image-setup-skill/implementation-plan.md), its **Check 500** and task **IS13**; **D1903** for the cap the skill keeps and **D1900** for the warning a repository with a stale `image:` block gets): the owner runs the `fugaro:images` skill in their own session, and the check then reads the proposal back with `fugaro image ls --json` and `fugaro image survey --json` — at most four entries, which nothing in the CLI enforces — builds each entry it covers with `fugaro image build` through **Cloud Build**, launches one run from the checkout of a repository the catalog covers and reaches that run's own `result.json`, so the run started on a baked image and the record's `baked_commit` names the build it started on; and reads the warning a second repository whose own `image:` block is ignored gets | See "Check 500" below; `bash scripts/live-checks/check-500.sh --sandbox <a sandbox repository checkout>` is the whole of it, its sibling test `scripts/live-checks/check-500_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** (`fugaro-dev`) and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call); **no agent runs any step of it** | At most four Cloud Builds — one per catalog entry the check covers — one sandbox run and what its task costs: **billable**, plus the skill's own session, which is yours to run. The check creates nothing in the cloud of its own choosing (the entries it builds are the ones the catalog already lists) and the run's pull request and branch are left open for you to close. **OWNER-RUN, NOT RUN.** |
 | 501 | The slim base, reached by the one command that is the whole upgrade ([`docs/image-setup-skill/`](image-setup-skill/implementation-plan.md), its **Check 501** and task **IS13**; **IS4**'s base, and the rule that `fugaro update` is the whole upgrade): the installation's base pin, read before and after `fugaro update` — run by the owner at their own terminal with no `--yes`, so the rebuild of the checkout's workflow images is answered by them in its own confirmation — and then one run on the sandbox that reaches its `result.json`, with the record's `image.built_at` at or after the moment the update started — the start, not the end, because the update waits for its own rebuilds before it returns: a pin the update moved says nothing about a run until a job starts on an image the upgrade built, and one whose image predates the update is the reading that the rebuild was declined | See "Check 501" below; `bash scripts/live-checks/check-501.sh --sandbox <a sandbox repository checkout>` is the whole of it, its sibling test `scripts/live-checks/check-501_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** (`fugaro-dev`) and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call, and the update is refused in such a checkout); **no agent runs any step of it** | What `fugaro update` costs on your installation — among its steps, the rebuild of the checkout's workflow images, billable and asked for on its own — plus one sandbox run and what its task costs. The check writes no pin, no config and no policy of its own: the only write is the update, whose steps you answer. **OWNER-RUN, NOT RUN.** |
+| 520 | A text-only coder reads a screenshot, on the vision model ([`docs/vision-model/`](vision-model/implementation-plan.md), its **Check 520** and task **V8**; **V1**'s `agent.models.vision`, **V2**'s `model_prices.*.image_tokens`, **V7**'s rewrite of the coder role, and **D2016** — which is why the state this measures is the coder priced **without** an image rate and not the plan's "with"): the sandbox repository's coder is priced without an image rate and `agent.models.vision` names a model that can read one, and one run whose task names a console `__screenshots__` PNG (the issue's own case, run `20261107-104613-b2af`) passes `implement` — and `fix`, where the recipe runs one — reaches its own `result.json`, and there every coder-role stage timing names the **vision** model's ID while `cost.model_by` carries that same model, so the split the issue is about is read from the record and not from the configuration; `fugaro diagnose <run> --json` prints the same split through the command an owner reads a run with | See "Check 520" below; `bash scripts/live-checks/check520.sh --sandbox <a sandbox repository checkout> --yes` is the whole of it, its sibling test `scripts/live-checks/check520_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call, and so is a coding agent's session); **no agent runs any step of it** | ONE sandbox run and what its task costs — the model spend of its coder-role stages, on the sandbox's own budget — plus the pull request that run opens: **billable, and `--yes` is required** before anything is launched. Every other call is a read (doctor, `models ls`, the run record, `diagnose`), and `CHECK520_MAX_MODEL_USD` turns the run's own figure into a criterion when you set it. The run's pull request and branch are left open for you to close. **OWNER-RUN, NOT RUN.** |
+| 521 | The early refusal, and the sentence an owner acts on ([`docs/vision-model/`](vision-model/implementation-plan.md), its **Check 521** and task **V8**; **V5**'s bootstrap refusal — "the coder can't read an image the task names" — and **D2005**, **D2006** and **D2001**): a repository whose coder is priced without an image rate and with **no** `agent.models.vision`, and a task whose text names a `.png`: the run is refused at **bootstrap**, before its first stage, so no stage's work is paid for and thrown away — the failure the refusal exists to remove; its record's `failure_class` is `config_invalid`, its `reason` names the slot to set and the price member that gives that slot's model an image rate, its stage list is **empty** and its cost is **zero** | See "Check 521" below; `bash scripts/live-checks/check521.sh --sandbox <a sandbox repository checkout>` is the whole of it, its sibling test `scripts/live-checks/check521_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call, and so is a coding agent's session); **no agent runs any step of it** | **NOTHING billable and no model call**: the run is refused at bootstrap, before its first stage, so no stage's work is paid for and the budget is not touched — which is why this check needs no `--yes`. It does start one Cloud Run job execution, and **nothing it launches outlives it**: a run that has not ended within `CHECK521_RUN_TIMEOUT_SECONDS` is cancelled with `fugaro cancel --now`, from the step that gives up on it and from the script's own exit trap. **OWNER-RUN, NOT RUN.** |
 | 292 | A catalog entry whose source names a build `context:` is built with the repository's files in it ([`docs/catalog-build-context/`](catalog-build-context/implementation-plan.md) §6, its **Check 292** and task **CB5**; that folder's **F22**, **F29**, **F30**, **F32** and **F33**, and **D1402**, **D1403**, **D1408** and **D1409**; the amendment it folds into is [`docs/project-image-catalog/context-design.md`](project-image-catalog/context-design.md), its §A5, §A6, §C3, §C4, §C5 and the fold-in at §11): one entry built from a repository's Dockerfile in a **subdirectory**, whose `COPY` reaches a file of the repository — the build the catalog could not run before this work — read back four ways: the built image **contains the copied file**, the record names **one** commit (`source_commit` and `context_commit` the same, and the image's `org.opencontainers.image.revision` that commit), the staged context **fires** the nightly decision with the `catalog-context` reason and the rebuild it submits is pinned to the staged commit, and after that rebuild the same entry decides **without** that reason. **What the plan's own step 4 cannot be run as written is the point of the section below:** the trigger's subject is the digest the operator's own copy **staged**, not the branch, so a pushed commit fires nothing by itself — the check is written against the code and says so | See "Check 292" below; **you** run it, on the **sandbox installation and the sandbox repository only, never `belong`**, from the sandbox repository's checkout, and **no agent runs any step of it** (there is **no script**: the check is the steps below) | One Cloud Build that runs (`fugaro image build <entry>`), one submitted-and-cancelled before its steps run (the staging that leaves the record behind), and the one rebuild the project's catalog check job submits when the entry fires: **all billable, and the rebuild is the point of the step**. Nothing is granted, no run is launched and no model is called, so there is no run spend. Two commits are pushed to the sandbox repository's branch and reverted (a third when step 5 loses its race with the build it cancels), and the entry, its staged objects, its record, its check state and its image are the check's own — the entry and its objects are removed in the Restore, the image is left in the shared registry (`fugaro image rm` never deletes one). **OWNER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
@@ -11924,12 +11926,38 @@ when it holds no version Secret Manager will serve. It
 fails the `proxied` row *before it launches anything* when the repository is not admitted, is admitted
 without the proxy, or is off the switch: the published half alone is **inert**, since a repository off the
 switch holds its own Bitbucket token and is served by nothing, so the check stops rather than launch three
-runs at a path the proxy is not on. The remedy is to set `agent.auth: cascade` for that repository (with a
-model credential in the service's bundle), run `fugaro update --repo` for it and run the check again; a
-switch the reading cannot settle — and a service doctor reports as not there or as having nothing to
-serve a run's model credential out of, where every model call of a run is refused — is recorded as
-**unmeasured** (exit `2`, nothing launched) rather than as a pass. Three **sandbox** Bitbucket
-repositories — the proxied one the runs work
+runs at a path the proxy is not on; its remedy is to set `agent.auth: cascade` for that repository (with
+a model credential in the service's bundle), run `fugaro update --repo` for it and run the check again.
+The same published node must also **admit the repository to a Claude account** — an `accounts` entry
+whose own `allow_repos` names it, since the service offers a run only a credential of an account that
+admits its repository. That admission (`internal/credsvc`'s `admittedAccounts`) is the intersection of
+**three** published facts: the node's own top-level `allow_repos` (the project's allow-list, the leg
+`fugaro project repos rm` takes away), the account's own list, and the repository child node's
+`credentials.accounts`. This preflight reads the account's list alone — the other two live in other
+objects, and a repository the project's allow-list has stopped admitting is caught at the run-launch
+row below rather than here — and a node whose block names none fails `account-admitted` *before it
+launches anything*, since no shared Claude credential can ever serve a run of it. The block is keyed by
+account-axis value rather than by Claude account: the publisher keys the project's own paid key into it
+as `anthropic-api-key--project` and `provider-key--project` (`internal/config`'s `AxisNonAccountValue`
+names the two), so an entry naming one of those admits a run to that tier-B credential and settles
+nothing here; the gate reads an entry, and the row says what such an entry does and does not settle.
+What the working run and the review-only run then meet turns on the node's own `credentials.fallback`:
+where it does not spend, the working run's first model call is refused (the `state_unavailable` halt of
+0.23.1, or the fallback-forbidden refusal when the service's bundle holds the paid key and the policy
+will not spend it), and where it spends (`auto`) that run is served by the project's paid key instead —
+a tier-B credential, which needs no admission — as far as the service's bundle holds that key, which is
+not a read this check makes. The review-only run is refused in either arm: a review caller's identity is
+paired against this same admission, which the fallback never enters (`internal/credsvc`'s `pairReview`).
+The ended-identity probe is not part of this reading at all: its first call is the bootstrap git
+traffic, refused as an identity before any route — and so before this admission — is reached. The
+row's remedy is to add the repository to the account's own list in the
+local config (`claude_accounts.<name>.allow_data_to`, or `project_secrets.claude-oauth-token.allow_data_to`
+for the default account), name that account in the profile the repository's workflow uses
+(`profiles.<profile>.claude_accounts` — `fugaro accounts add <name> --repos owner/name` writes both),
+and have the owner run `fugaro project policy publish`. A switch the reading cannot settle — and a
+service doctor reports as not there or as having nothing to serve a run's model credential out of,
+where every model call of a run is refused — is recorded as **unmeasured** (exit `2`, nothing
+launched) rather than as a pass. Three **sandbox** Bitbucket repositories — the proxied one the runs work
 in, a second one for the other-repository refusal, and (with `--after-flip`) one the policy does not proxy
 — plus the number of an **open** pull request **in the proxied repository itself** (`CHECK191_OTHER_PR`):
 the run's own repository, and a pull request that is not the run's own. It has to be that repository's,
@@ -11964,7 +11992,15 @@ day is also the day the service looks a run's outcome up under — an id of anot
 ended-run probe where the service never reads. A base outside that shape is refused **before anything is
 launched**.
 
-**What the block reads.** `proxied`; `run-launch` and `run-outcome` (the working run reached a final
+**What the block reads.** `proxied` (the published `bitbucket_token` block admits the repository with
+`proxy: true`, and the service's own IAM policy puts it on the credentials-service switch);
+`account-admitted` (the same node's `accounts` block admits it too — the account leg of the admission
+above, so a node whose block names none can never have a shared credential offered to a run there, and
+the check stops before any run is launched, naming the fallback in force and, under it, whether the
+working run would be refused or served by the project's paid key, and the review-only run's pairing
+refusal in either arm, plus the account's `allow_data_to`, the profile that must name it and the
+owner-run `fugaro project policy publish` that carries it to the node); `run-launch` and `run-outcome`
+(the working run reached a final
 status, pushed its branch and opened its pull request); the seven refusal rows
 (`refusal-other-repository`, `refusal-other-ref`, `refusal-tag-ref`, `refusal-ref-delete`,
 `refusal-other-pull-request`, `refusal-merge`, `refusal-workspaces`), each failing on the run's own line,
@@ -13242,6 +13278,167 @@ reached`. The knobs are `CHECK501_DRY_RUN`, `CHECK501_KEEP_SCRATCH`, `CHECK501_S
 **What waits on it.** Nothing gates on it: it is the outside reading of the release's own upgrade path, and
 the one to take again whenever `fugaro update` changes what it pins or what it rebuilds — the rebuild the
 check dates the run's image against is the step an installation notices by hand.
+
+## Check 520: a text-only coder reads a screenshot on the vision model — the stage timings and the cost split (sandbox project and sandbox repository only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **V8** of
+[docs/vision-model/implementation-plan.md](vision-model/implementation-plan.md) — its "Checks 520–521" —
+and **run by you**: nothing below is a claim that a stage reads a picture. What it measures is a real run of
+the sandbox repository, on a real model, over a task whose own text names a console `__screenshots__` PNG —
+the issue's own case, run `20261107-104613-b2af`. The check is `scripts/live-checks/check520.sh` (its
+sibling test `scripts/live-checks/check520_test.sh` drives it against fake `gcloud` and `fugaro` only, and
+launches nothing), what it starts is **one sandbox run, which is billable**, and **no agent runs any step of
+it**: a project or region naming `belong` is refused by name, and so is a coding agent's session.
+
+**The state it measures, and the plan's slip.** The plan's sentence for 520 reads "a repository whose
+`agent.models.coder` is a provider model with an image rate and `agent.models.vision` set". Those are two
+different states, and only one of them is this work's: **D2016** means a coder whose own price row carries an
+image rate reads the picture itself and keeps its own model, so V7's rewrite never reaches the slot. The
+state V7 rewrites — and the one doctor's own `vision-coder` sentence names, "the coder model X is priced
+without an image rate, and Y, which a stage that reads a picture runs instead" — is the coder priced
+**without** an image rate with the slot set. That is what this check reads, and its `premise` row says so in
+as many words when the sandbox is configured the other way: a coder with an image rate of its own, or a slot
+that is unset (which is Check 521's state), is a reading of a different repository than this check is about,
+and the check stops before it launches anything.
+
+**What it settles.** The issue's own case, at the places it can be read:
+
+- **The release.** `fugaro version` and the usage line `fugaro models use --help` prints: the work ships in
+  **0.24.0**, so a build that predates it, or one whose `models use` does not name the `vision` slot, stops
+  with the release named rather than measuring a run that cannot carry the feature. A build that reports no
+  release number at all (a dev build or a commit) is decided by the feature probe, not by a guess at how
+  `dev` sorts.
+- **The premise, from `doctor`.** `fugaro doctor --json`, read in the sandbox checkout: its `vision-coder`
+  check's own sentence has the coder priced without an image rate and `agent.models.vision` set. The two
+  model IDs come from `fugaro models ls --json` — the project configuration's row for the sandbox
+  repository — and the vision model's ID is what every row below looks for in the run's own record. Two IDs
+  that name the same model are a finding here: a stage timing naming it then says nothing about the rewrite.
+- **The run.** One sandbox run whose task names a `.png`, launched with `fugaro run --json` from the
+  checkout and followed with `fugaro runs ls --json --limit 1` until it is terminal — a record read while a
+  run is still working is whatever was there before. Its `result.json` is read from the runs bucket at the
+  key that listing's own row gives (`runs/<the repository's slug>/<run>/result.json`, where the slug is
+  **one path segment** and not the `owner/name` the launch names) and checked against the run id this check
+  launched, because a record read by listing alone could be another run's.
+- **The reading the issue is about.** The run ended `succeeded`; every coder-role stage it ran —
+  `implement`, and `fix` where the recipe ran one — names the **vision** model's ID in its stage timing, so
+  the picture was read on the slot's model rather than by the coder; and `cost.model_by` carries that model,
+  so the spend is split the way the record says rather than the way the configuration suggests. A record
+  whose coder-role stages ran on the coder's own model is the failure the issue reports, and the row names
+  the stages that did it.
+- **The same split, through the command an owner reads a run with.** `fugaro diagnose <run> --json`, read
+  for the vision model's ID in its own split. The two readings are separate rows: the record is what the run
+  wrote, and the diagnosis is what the command an owner reaches for makes of it.
+
+**What a run costs.** ONE sandbox run and what its task costs — the model spend of its coder-role stages,
+on the sandbox's own budget — plus the pull request that run opens. **Billable, and the check requires
+`--yes`**: without it the check prints the plan, changes nothing and exits. Every other call is a read (a
+`doctor`, a `models ls`, the run record, a `diagnose`), and `CHECK520_MAX_MODEL_USD` turns the run's own
+figure into a criterion when you set it. On disk it is one scratch directory, removed at the end. The run's
+pull request and its branch are **not** closed by the check: the `restore` row names them, because a pull
+request is the owner's to close.
+
+**Run it:**
+
+```sh
+bash scripts/live-checks/check520.sh --sandbox <a sandbox repository checkout> --dry-run
+bash scripts/live-checks/check520.sh --sandbox <a sandbox repository checkout> --yes
+```
+
+Progress goes to stderr and one `CHECK 520 RESULT` block goes to stdout at the end: paste that whole block
+here and nothing else. **Exit `0`** is every criterion that was measured holding; **`1`** is a measured
+criterion that did not hold, or a guard that stopped the run — among them a build older than the release
+the work ships in, a coder that reads images itself, and a slot that is unset; **`2`** is the check not
+being able to measure (a tool missing, the checkout not being one, a `--json` document that could not be
+read, or a run that never ended). A key the run never reached reads `FAIL — not reached`. The knobs are
+`CHECK520_DRY_RUN`, `CHECK520_YES`, `CHECK520_KEEP_SCRATCH`, `CHECK520_SANDBOX`, `CHECK520_REPO` (the
+project configuration's key for the repository: the checkout directory's name by default),
+`CHECK520_TASK` and `CHECK520_RECIPE` (what the run is launched with), `CHECK520_RELEASE` (0.24.0),
+`CHECK520_MAX_MODEL_USD` (unset: the run's figure is read and not graded), `CHECK520_REGION` (us-east5),
+`CHECK520_RUN_TIMEOUT_SECONDS` (3600), `CHECK520_POLL_SECONDS` (15), `CHECK520_CLI_TIMEOUT_SECONDS` (180),
+`CHECK520_LAUNCH_TIMEOUT_SECONDS` (600) and `CHECK520_DOCTOR_TIMEOUT_SECONDS` (300).
+
+**What waits on it.** The release that ships V1 through V3: a failed 520 is the vision slot not doing what
+V7 made it for — a stage that reads a picture still running on the coder — and it returns to the owner as a
+decision rather than as a task, because the alternative **D2002** names (the gateway substituting a model
+on a request that carries an image) is a different design, not a fix.
+
+## Check 521: the early refusal — a task naming a `.png`, no vision slot, and a run that never reaches a stage (sandbox project and sandbox repository only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **V8** of
+[docs/vision-model/implementation-plan.md](vision-model/implementation-plan.md) — its "Checks 520–521" —
+and **run by you**: nothing below is a claim that the refusal happens. What it measures is a real run of the
+sandbox repository, refused by its own bootstrap, over a task whose text names a `.png`. The check is
+`scripts/live-checks/check521.sh` (its sibling test `scripts/live-checks/check521_test.sh` drives it against
+fake `gcloud` and `fugaro` only, and launches nothing), and **no agent runs any step of it**: a project or
+region naming `belong` is refused by name, and so is a coding agent's session.
+
+**What it settles.** **V5**'s early check and the two decisions that write its sentence — **D2005** (the
+refusal is at bootstrap, not mid-run) and **D2006** (the sentence names the price member, or an owner who
+sets the slot meets the same refusal on the gateway). The failure it removes is the issue's own: without the
+refusal the run reaches `implement`, reads the picture, and dies on the gateway's image refusal with the
+stage's work already paid for.
+
+- **The release.** `fugaro version` and the usage line `fugaro models use --help` prints, the same gate
+  Check 520 carries: a build without `agent.models.vision` has no bootstrap refusal to measure, and it stops
+  with **0.24.0** named.
+- **The premise, from `doctor`.** `fugaro doctor --json` in the sandbox checkout: its `vision-coder`
+  sentence has the coder priced without an image rate and `agent.models.vision` **unset**. The slot set is
+  Check 520's state and the check says so rather than launching: a run with the slot set would run the
+  picture on that model instead of being refused, and this check's cost is nothing only because the refusal
+  comes first. A coder that reads images itself (**D2016**) is the same kind of finding. The task must name
+  an image file, by name or by the kind's own word — the two spellings the run's own check matches — and a
+  `--task` that names neither is refused before anything is launched, because the refusal this measures is
+  the one the task's text triggers.
+- **The run.** One sandbox run launched with `fugaro run --json` from the checkout and followed with
+  `fugaro runs ls --json` until it is terminal. It ends in seconds: the refusal is at bootstrap and no stage
+  starts. **Nothing it launches outlives it** — a run that has not ended within `CHECK521_RUN_TIMEOUT_SECONDS`
+  is cancelled with `fugaro cancel <run> --now` from the step that gives up on it **and** from the script's
+  exit trap, so a Ctrl-C in the middle cancels it too, and the `cancelled` row (or its `FAIL`, with the
+  command to run by hand) is in the block rather than only in the log.
+- **The refusal, from the record.** `result.json`, read from the runs bucket at the key the listing's row
+  gives and checked against the run id this check launched: the run did not succeed, its `failure_class` is
+  `config_invalid` — the class a bootstrap refusal of the resolved configuration is recorded under, so
+  another class is a different ending and is reported as such — and its `reason` is the refusal's own
+  sentence.
+- **The sentence an owner acts on.** The `reason` has to name the refusal's own opening ("the coder can't
+  read an image the task names"), the slot to set (`agent.models.vision`), the file the task names, and the
+  price member that gives the slot's model an image rate (`model_prices`' `image_tokens`). A sentence missing
+  any of the four is the finding: an owner who meets this needs the model that cannot read, the file that
+  made the check refuse, the slot to set and the member to price — **D2006** and **D2001** — and a sentence
+  naming the slot alone sends them to a key whose model the gateway then refuses for the same reason.
+- **Early, and free.** The record holds **no stage at all** and its `cost.model_usd` is **zero** with an
+  empty `cost.model_by`. A stage in the record is a stage whose work was paid for, which is the failure V5
+  exists to remove; money spent is the owner paying to be told no.
+
+**What a run costs.** **NOTHING billable and no model call.** The run is refused at bootstrap, before its
+first stage, so no stage's work is paid for and the budget is not touched — which is why this check passes
+no `--yes` and asks for nothing but a terminal and a few minutes. It does start one Cloud Run job execution,
+which the check cancels if it has not ended. It creates nothing else: no job of its own, no build, no
+binding, no account and no pull request. On disk it is one scratch directory, removed at the end.
+
+**Run it:**
+
+```sh
+bash scripts/live-checks/check521.sh --sandbox <a sandbox repository checkout> --dry-run
+bash scripts/live-checks/check521.sh --sandbox <a sandbox repository checkout>
+```
+
+Progress goes to stderr and one `CHECK 521 RESULT` block goes to stdout at the end: paste that whole block
+here and nothing else. **Exit `0`** is every criterion that was measured holding; **`1`** is a measured
+criterion that did not hold, or a guard that stopped the run — among them a build older than the release,
+a premise that is not the state this measures, a run that succeeded, and a refusal under another failure
+class; **`2`** is the check not being able to measure (a tool missing, the checkout not being one, a record
+that could not be read, or a run that never ended and had to be cancelled). A key the run never reached
+reads `FAIL — not reached`. The knobs are `CHECK521_DRY_RUN`, `CHECK521_KEEP_SCRATCH`, `CHECK521_SANDBOX`,
+`CHECK521_TASK` (what the run is launched with; it must name an image file) and `CHECK521_RECIPE`,
+`CHECK521_RELEASE` (0.24.0), `CHECK521_REGION` (us-east5), `CHECK521_RUN_TIMEOUT_SECONDS` (900),
+`CHECK521_POLL_SECONDS` (10), `CHECK521_CLI_TIMEOUT_SECONDS` (180), `CHECK521_LAUNCH_TIMEOUT_SECONDS` (600),
+`CHECK521_CANCEL_TIMEOUT_SECONDS` (300) and `CHECK521_DOCTOR_TIMEOUT_SECONDS` (300).
+
+**What waits on it.** Every installation that runs a task naming a picture: 521 is the outside reading
+that the refusal D2005 puts at bootstrap really happens there and really costs nothing. A failed 521 stops
+the release it belongs to, because the alternative is a repository whose run pays for a stage and then dies
+on the gateway — the state the issue reports.
 
 ## Check 410: the failure line, and a diagnosis with no setup (your own machine, your own installation; never `belong`; run by you; NOT RUN)
 

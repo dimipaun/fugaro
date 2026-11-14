@@ -8,6 +8,7 @@ require (
 	github.com/bmatcuk/doublestar/v4 v4.10.4
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/creack/pty v1.1.24 // tests only: the hidden-prompt test needs a pseudo-terminal
+	github.com/getsentry/sentry-go v0.50.0
 	github.com/klauspost/compress v1.20.1
 	github.com/mattn/go-runewidth v0.0.16
 	github.com/muesli/termenv v0.16.0 // the reporter's steps, with the colour profile forced (D1355)

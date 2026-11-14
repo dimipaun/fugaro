@@ -188,6 +188,9 @@ logging)
     ;;
   esac
   ;;
+config)
+  printf '%s\n' "${FAKE96_ACCOUNT:-owner@example.test}"
+  ;;
 auth)
   case "${2:-}" in
   print-identity-token)
@@ -195,6 +198,10 @@ auth)
     # own account from one that is no job account.
     sa=""
     for a in "$@"; do case "$a" in --impersonate-service-account=*) sa=${a#*=} ;; esac; done
+    if [ -n "${FAKE96_REQUIRE_GRANT:-}" ] && ! grep -qx "$sa" "$FAKE96_DIR/bound" 2>/dev/null; then
+      printf 'ERROR: PERMISSION_DENIED: iam.serviceAccounts.getAccessToken denied\n' >&2
+      exit 1
+    fi
     printf 'IDTOKEN-CALLER-%s\n' "${sa##*@}"
     ;;
   print-access-token)
@@ -219,6 +226,27 @@ auth)
 iam)
   case "${2:-}" in
   service-accounts)
+    case "${3:-}" in
+    get-iam-policy)
+      if [ -n "${FAKE96_ALREADY_HELD:-}" ]; then
+        printf '{"bindings":[{"role":"roles/iam.serviceAccountTokenCreator","members":["user:%s"]}]}\n' "${FAKE96_ACCOUNT:-owner@example.test}"
+      else
+        printf '{"etag":"x"}\n'
+      fi
+      exit 0
+      ;;
+    add-iam-policy-binding)
+      if [ -n "${FAKE96_GRANT_REFUSED:-}" ]; then printf 'ERROR: PERMISSION_DENIED: setIamPolicy\n' >&2; exit 1; fi
+      printf '%s\n' "$4" >>"$FAKE96_DIR/bound"
+      exit 0
+      ;;
+    remove-iam-policy-binding)
+      if [ -n "${FAKE96_REVOKE_FAIL:-}" ]; then printf 'ERROR: revoke refused\n' >&2; exit 1; fi
+      grep -vx "$4" "$FAKE96_DIR/bound" >"$FAKE96_DIR/bound.new" || true
+      mv "$FAKE96_DIR/bound.new" "$FAKE96_DIR/bound"
+      exit 0
+      ;;
+    esac
     # sign-jwt --iam-account=... --project=... IN OUT. The signed token carries
     # the uid of the claims it was given, so the fake service can tell which
     # repository's run identity it is being shown.
@@ -540,18 +568,18 @@ if os.environ["JOB_PROFILE"] == "yes":
     labels = {"fugaro_profile": "shared", "fugaro_role": "project"}
 spec["containers"] = [container]
 job = {"metadata": {"name": os.environ["JOB_NAME"], "labels": labels},
-       "spec": {"template": {"spec": spec}}}
+       "spec": {"template": {"spec": {"template": {"spec": spec}}}}}
 check = {"metadata": {"name": os.environ["JOB_NAME"] + "-check",
                       "labels": {"fugaro_repo": os.environ["FAKE96_LABEL"], "fugaro_role": "check"}},
-         "spec": {"template": {"spec": {"serviceAccountName": os.environ["JOB_SA"],
-                                        "containers": [{"env": []}]}}}}
+         "spec": {"template": {"spec": {"template": {"spec": {"serviceAccountName": os.environ["JOB_SA"],
+                                        "containers": [{"env": []}]}}}}}}
 jobs = [job, check]
 describes = {os.environ["JOB_NAME"]: job}
 if os.environ.get("JOB_SECOND") == "yes":
     second = json.loads(json.dumps(job))
     second["metadata"]["name"] = os.environ["JOB_NAME"] + "-second"
     second["metadata"]["labels"]["fugaro_workflow"] = "second"
-    second["spec"]["template"]["spec"]["serviceAccountName"] = os.environ["JOB_SECOND_SA"]
+    second["spec"]["template"]["spec"]["template"]["spec"]["serviceAccountName"] = os.environ["JOB_SECOND_SA"]
     jobs.insert(0, second)
     describes[second["metadata"]["name"]] = second
 open(sys.argv[1], "w", encoding="utf-8").write(json.dumps(job))
@@ -642,7 +670,7 @@ setup_case() {
   # The interval between the check's re-reads of the service's log is not what
   # any case measures, and the one case whose line never arrives would sit out the
   # whole 90-second bound at the script's own 5 seconds. Nothing here sleeps.
-  export CHECK96_LOG_POLL=0
+  export CHECK96_LOG_POLL=0 CHECK96_GRANT_POLL=0 CHECK96_GRANT_TRIES=2
   export FAKE96_OTHER_SLUG="$OTHER_SLUG"
   export FAKE96_OUTSIDER_DOMAIN="${SIGNER##*@}"
   export FAKE96_MINT_URL="$SERVICE_URL/v1/github/installation-token"
@@ -1310,6 +1338,45 @@ test_a_scratch_directory_that_cannot_be_removed_is_a_fail() {
   return 0
 }
 
+test_the_token_creator_binding_is_made_and_removed_by_the_run() {
+  setup_case grantmade
+  RUN96_ENV=(FAKE96_REQUIRE_GRANT=yes)
+  run96
+  expect_status "$status" 0 "own grant"
+  expect_contains "$(cat "$dir/state/calls")" "add-iam-policy-binding $JOBSA" "own grant: bound on the job account"
+  expect_contains "$(cat "$dir/state/calls")" "add-iam-policy-binding $SIGNER" "own grant: bound on the signer"
+  expect_contains "$(cat "$dir/state/calls")" "remove-iam-policy-binding $JOBSA" "own grant: removed from the job account"
+  expect_contains "$(cat "$dir/state/calls")" "remove-iam-policy-binding $SIGNER" "own grant: removed from the signer"
+  expect_contains "$out" "FACT restore: PASS — " "own grant: the restore row passes"
+  if [ -s "$dir/state/bound" ]; then fail "own grant: a binding is still on the accounts"; fi
+}
+
+test_a_binding_the_operator_already_held_is_left_alone() {
+  setup_case grantheld
+  RUN96_ENV=(FAKE96_REQUIRE_GRANT=yes FAKE96_ALREADY_HELD=yes)
+  run96
+  expect_absent "$(cat "$dir/state/calls")" "add-iam-policy-binding" "held grant: nothing added"
+  expect_absent "$(cat "$dir/state/calls")" "remove-iam-policy-binding" "held grant: nothing removed"
+}
+
+test_a_refused_grant_stops_and_removes_nothing_it_did_not_add() {
+  setup_case grantrefused
+  RUN96_ENV=(FAKE96_GRANT_REFUSED=yes)
+  run96
+  expect_status "$status" 2 "refused grant"
+  expect_contains "$out" "was refused, so this check cannot speak as it" "refused grant: the reason"
+  expect_absent "$(cat "$dir/state/calls")" "FAKEJWT" "refused grant: no identity was minted"
+}
+
+test_a_binding_that_cannot_be_removed_fails_the_restore_row_with_its_command() {
+  setup_case revokefail
+  RUN96_ENV=(FAKE96_REQUIRE_GRANT=yes FAKE96_REVOKE_FAIL=yes)
+  run96
+  expect_contains "$out" "FACT restore: FAIL — " "revoke failed: the restore row fails"
+  expect_contains "$out" "is STILL ON " "revoke failed: and says where"
+  expect_contains "$out" "remove-iam-policy-binding <account>" "revoke failed: and carries the command"
+}
+
 test_a_mint_that_answers_other_than_200_is_a_fail() {
   setup_case mintrefused
   # The bundle has no document yet, or the service cannot read it: a refusal with
@@ -1616,6 +1683,10 @@ t test_a_mint_whose_answer_is_a_longer_name_ending_in_the_run_repository_is_a_fa
 t test_a_mint_whose_expiry_is_outside_the_hour_is_a_fail
 t test_a_service_reachable_without_iam_is_a_fail
 t test_a_log_that_cannot_be_counted_is_not_a_passing_front_end_row
+t test_the_token_creator_binding_is_made_and_removed_by_the_run
+t test_a_binding_the_operator_already_held_is_left_alone
+t test_a_refused_grant_stops_and_removes_nothing_it_did_not_add
+t test_a_binding_that_cannot_be_removed_fails_the_restore_row_with_its_command
 t test_a_mint_that_answers_other_than_200_is_a_fail
 t test_a_mint_that_answers_200_with_no_token_stops
 t test_a_pairing_that_is_answered_is_the_finding
