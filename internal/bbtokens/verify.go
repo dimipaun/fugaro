@@ -295,18 +295,20 @@ func (v *Verifier) readRepos(ctx context.Context, res *Result, token string, rec
 	return "", false
 }
 
-// readWorkspaces proves a workspace record's coverage: the workspace's own
+// readWorkspaces proves a workspace record's coverage: each workspace's own
 // repository listing, held to one page, which is the widest read the check
 // makes and the only one a workspace token has to prove with.
 func (v *Verifier) readWorkspaces(ctx context.Context, res *Result, token string, rec Record) (string, bool) {
-	workspace, ok := workspaceCoverage(rec)
+	workspaces, ok := workspacesCovered(rec)
 	if !ok {
 		return msgRecord, true
 	}
-	if _, msg, refused := v.prove(ctx, res, token, repositoriesURL(workspace, ""), "workspace "+workspace, msgMissingRepoRead); refused {
-		return msg, true
+	for _, workspace := range workspaces {
+		if _, msg, refused := v.prove(ctx, res, token, repositoriesURL(workspace, ""), "workspace "+workspace, msgMissingRepoRead); refused {
+			return msg, true
+		}
+		res.proveRead(scopeRepositoryRead)
 	}
-	res.proveRead(scopeRepositoryRead)
 	return "", false
 }
 
@@ -321,7 +323,7 @@ func (v *Verifier) readWorkspaces(ctx context.Context, res *Result, token string
 // workspace the record names, so the resolution is a read of the operator's own
 // coverage and not a wider one.
 func (v *Verifier) readProject(ctx context.Context, res *Result, token string, rec Record) (string, bool) {
-	workspace, ok := workspaceCoverage(rec)
+	workspace, ok := oneWorkspaceCovered(rec)
 	if !ok {
 		return msgRecord, true
 	}
@@ -468,28 +470,46 @@ func repoCoverage(rec Record) ([]coveredRepo, bool) {
 	return repos, true
 }
 
-// workspaceCoverage answers the one workspace a project and a workspace
-// record's coverage names: R1's `ws/*` form, once or repeated, and never two
-// different workspaces — a project is in one workspace, and a token that
-// claimed two would be a record whose reach this check cannot read as one. A
-// workspace token that covered two workspaces would need two records, which is
-// what the family's names are for.
-func workspaceCoverage(rec Record) (string, bool) {
-	workspace := ""
+// workspacesCovered answers the workspaces a workspace record's coverage names,
+// each of them R1's `ws/*` form, in the record's own order and without a
+// repeat.
+func workspacesCovered(rec Record) ([]string, bool) {
+	var workspaces []string
 	for _, entry := range rec.Coverage {
-		owner, rest, found := strings.Cut(entry, "/")
-		if !found || owner == "" || owner == "*" || rest != "*" {
-			return "", false
+		workspace, ok := wholeWorkspace(entry)
+		if !ok {
+			return nil, false
 		}
-		if workspace != "" && workspace != owner {
-			return "", false
+		if !slices.Contains(workspaces, workspace) {
+			workspaces = append(workspaces, workspace)
 		}
-		workspace = owner
 	}
-	if workspace == "" {
+	if len(workspaces) == 0 {
+		return nil, false
+	}
+	return workspaces, true
+}
+
+// oneWorkspaceCovered answers the single workspace a project record's coverage
+// names. A project is in one workspace and its UUID is its identity, so a
+// record naming two is one whose coverage this check cannot read as the one
+// reach it would be reading about.
+func oneWorkspaceCovered(rec Record) (string, bool) {
+	workspaces, ok := workspacesCovered(rec)
+	if !ok || len(workspaces) != 1 {
 		return "", false
 	}
-	return workspace, true
+	return workspaces[0], true
+}
+
+// wholeWorkspace reads one coverage entry of R1's `ws/*` form: a literal owner
+// and a bare `*` segment.
+func wholeWorkspace(entry string) (string, bool) {
+	owner, rest, found := strings.Cut(entry, "/")
+	if !found || owner == "" || owner == "*" || rest != "*" {
+		return "", false
+	}
+	return owner, true
 }
 
 // projectWhat names the project a refusal is about: the key the operator knows

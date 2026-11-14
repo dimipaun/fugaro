@@ -226,6 +226,26 @@ func TestVerifyRepoWorkspaceAndProjectCoverage(t *testing.T) {
 		}
 	})
 
+	t.Run("a workspace token covering two workspaces", func(t *testing.T) {
+		f := newFakeBitbucket(t, map[string]fakeAnswer{
+			"GET /2.0/repositories/acme":  {status: 200, body: `{"values":[{"full_name":"acme/one"}]}`},
+			"GET /2.0/repositories/other": {status: 200, body: `{"values":[{"full_name":"other/one"}]}`},
+			"GET /2.0/user":               {status: 200, body: `{"uuid":"{bbbb-3333}","kind":"workspace_access_token"}`},
+		})
+		rec := workspaceRecord()
+		rec.Coverage = []string{"acme/*", "other/*"}
+		res := f.verifier().Verify(context.Background(), testToken, rec)
+		if !res.OK {
+			t.Fatalf("OK = false, message %q", res.Message)
+		}
+		if got := len(f.requests()); got != 3 {
+			t.Errorf("the check made %d calls (%v), want both listings and the identity", got, f.paths())
+		}
+		if want := []string{"repository:read"}; !slices.Equal(res.ReadScopes, want) {
+			t.Errorf("read scopes = %v, want %v", res.ReadScopes, want)
+		}
+	})
+
 	t.Run("a project token whose record names a key", func(t *testing.T) {
 		f := newFakeBitbucket(t, map[string]fakeAnswer{
 			"GET /2.0/workspaces/acme/projects/FUG": {status: 200, body: `{"uuid":"{proj-1}","key":"FUG"}`},
