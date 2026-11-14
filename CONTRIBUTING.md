@@ -42,7 +42,7 @@ CI gives that package the same bound, on test-shard runners of its own. `.github
 
 ## Skills
 
-The plugin's skills are in `plugin/skills` (`setup`, `working`, `routing`, `parallelism`, `upgrade`, `orchestrator`). Try a change with `claude --plugin-dir plugin`. A CLI change that touches a documented command changes the skill that names it in the same PR: the tests in `plugin/` check every command and flag a skill gives against the CLI.
+The plugin's skills are in `plugin/skills` (`setup`, `working`, `routing`, `parallelism`, `update`, `orchestrator`, `images`, `spec-to-pr`). Try a change with `claude --plugin-dir plugin`. A CLI change that touches a documented command changes the skill that names it in the same PR: the tests in `plugin/` check every command and flag a skill gives against the CLI.
 
 ## Conventions
 

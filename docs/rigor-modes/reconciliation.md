@@ -883,7 +883,14 @@ than launched with it), added one more image-skew `Since` constant and left the
 image-skew row at 38, so it moves to 39; a recount on 2026-11-12 found 40 before this constant and 41 with it, so the row reads 41.
 Amended 2026-11-13: `internal/cli/docs_portal_test.go`, the portal folder's pin
 over its plan's number blocks, its decision rows and its level table (P9.5),
-moved the table's row from 132 to 133.) They
+moved the table's row from 132 to 133.
+Amended 2026-11-13: `internal/cli/docs_checks_520_521_test.go`, the vision-model
+folder's pin over its two owner-run checks in the register — 520, the coder
+priced without an image rate with `agent.models.vision` set, and 521, the same
+repository with no slot, refused at bootstrap — moved the table's row from 134 to
+135. Amended 2026-11-13: `internal/cli/docs_checks_303_305_test.go`, the pin over the
+owner-run Checks 303, 304 and 305 in the register, moved the table's row from 135 to
+136.) They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.
@@ -900,9 +907,9 @@ stale has found a merge that did not.
 | Fields of `task.Spec` or `recipe.Step` whose name is a path | 0 | `{ sed -n '/^type Spec struct {/,/^}/p' internal/task/task.go; sed -n '/^type Step struct {/,/^}/p' internal/recipe/recipe.go; } \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Path\|Glob\|Dir)'` |
 | Sites that compare a finding's severity to a value | 0 | `git grep -n 'Severity ==' -- internal/runner ':!*_test.go' \| wc -l` |
 | Files in `internal/runner` that mention `Severity` at all | 4 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
-| Image-skew `Since` constants | 44 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
+| Image-skew `Since` constants | 45 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
-| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 134 | `ls internal/cli/docs_*_test.go \| wc -l` |
+| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 136 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
 | Published project-policy version | 7 | `sed -n 's/^const Version = //p' internal/projectpolicy/version.go` |
 | Blocks the project layer's `defaults:` may set whose value names a repository | 0 | `sed -n '/^type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Repo\|Repos\|Repository)'` |
