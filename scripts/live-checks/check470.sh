@@ -15,12 +15,14 @@
 #   --mode 470 (the default) — the shared lookup across machines and people.
 #     What it measures: whether this machine's `fugaro issue mine` really reads
 #     the project's store end to end (the run's own `source: shared`), and
-#     whether the signed-in login may list the two prefixes the store's own
-#     reader lists — `issues/reporters/` and `issues/occurrences/` — and read a
-#     record under `issues/records/` (the reconciliation's U1, F7). The store
-#     lives in the project's runs bucket and is written by every launcher, so a
-#     launcher's login that cannot list those prefixes is a `mine` that silently
-#     shows local rows only.
+#     whether the signed-in login may list `issues/reporters/` and
+#     `issues/occurrences/` — the PARENTS of the two prefixes the store's own
+#     reader lists, `issues/reporters/<digest>/` and
+#     `issues/occurrences/<NNNN>/<digest>/` — and read a record under
+#     `issues/records/` (the reconciliation's U1, F7). The store lives in the
+#     project's runs bucket and is written by every launcher, so a launcher's
+#     login that cannot list those parents is a `mine` that silently shows local
+#     rows only.
 #     What it does NOT measure, because no one machine can: the second machine
 #     and the second person. Those stay numbered steps in the register's Check
 #     470 section, the script prints them as a prompt and says it does not run
@@ -484,11 +486,11 @@ store_probe() { # KEY PREFIX
   out=$(gcloud storage ls --project="$P" "gs://$B/$prefix" 2>&1) || st=$?
   if [ "$st" -eq 0 ]; then
     entries=$(printf '%s' "$out" | grep -c . || true)
-    fact "$key" PASS "the signed-in login may list gs://$B/$prefix (${entries:-0} name(s) came back), which is what \`mine\`'s own reader lists to find this user's issues"
+    fact "$key" PASS "the signed-in login may list gs://$B/$prefix (${entries:-0} name(s) came back) — the PARENT of the prefix \`mine\`'s own reader lists, issues/reporters/<digest>/ and issues/occurrences/<NNNN>/<digest>/, so this listing is one path segment above the reader's own and asks GCS for the same storage.objects.list on the bucket"
     return 0
   fi
   if denial_is_permission "$out"; then
-    fact "$key" FAIL "the signed-in login may NOT list gs://$B/$prefix: gcloud refused it (gcloud's own words: $(bounded "$out" 400)). \`fugaro issue mine\` lists that prefix to find this user's issues, so a login refused here is a \`mine\` that shows local rows only — and the launcher grant the reconciliation reads (F17, troubleshoot-issue T-IS17) is what has to carry the listing"
+    fact "$key" FAIL "the signed-in login may NOT list gs://$B/$prefix: gcloud refused it (gcloud's own words: $(bounded "$out" 400)). That is the PARENT of the prefix \`mine\`'s own reader lists (issues/reporters/<digest>/ and issues/occurrences/<NNNN>/<digest>/, one path segment below it), and GCS asks for the same storage.objects.list on the bucket for both, so a login refused here is a \`mine\` that shows local rows only — and the launcher grant the reconciliation reads (F17, troubleshoot-issue T-IS17) is what has to carry the listing"
     return 0
   fi
   if empty_listing "$out"; then
@@ -520,26 +522,45 @@ empty_listing() {
 # all there is nothing to read and the row says so instead of failing a project
 # that simply has no issues yet.
 record_read() { # KEY
-  local key=$1 number out st=0 names
+  local key=$1 number object out st=0 names
   number=$(first_number "$SCRATCH/mine.json")
+  # The object's name is not the row's number as a decimal string: the store
+  # prints it as a file name, `fmt.Sprintf("%04d")` (internal/issues/shared.go's
+  # recordKey), from a counter that starts at 1. A number below 1000 therefore
+  # has leading zeros here, and `issues/records/1` is an object no store ever
+  # wrote — gcloud would answer "matched no objects", which is a 404 and not a
+  # refusal, and the run would stop with nothing measured.
+  #
+  # Zero is the second half of the same thing: a row built from this machine's
+  # own files alone carries number 0 (internal/cli/issue_mine.go), because a
+  # local issue has no store number yet, and 0 is no number at all, just as
+  # anything that is not a run of digits is no number either. Every such case
+  # falls through to the listing below rather than naming an object that cannot
+  # be there.
+  if [ -n "$number" ]; then
+    number=$(printf '%s' "$number" | sed 's/^0*//')
+    case "$number" in '' | *[!0-9]*) number="";; esac
+    if [ -n "$number" ] && [ "$number" -eq 0 ]; then number=""; fi
+  fi
   if [ -z "$number" ]; then
     names=$(gcloud storage ls --project="$P" "gs://$B/issues/records/" 2>&1) || names=""
-    number=$(printf '%s' "$names" | sed -n 's|.*/records/\([0-9][0-9]*\)$|\1|p' | head -n 1)
+    number=$(printf '%s' "$names" | sed -n 's|.*/records/0*\([0-9][0-9]*\)$|\1|p' | head -n 1)
   fi
   if [ -z "$number" ]; then
     fact "$key" INFO "the store holds no record under issues/records/, so U1's read half was not measured: this project has no issue yet. Save one on a machine (\`fugaro issue sync\` uploads it) and run this mode again"
     return 0
   fi
-  out=$(gcloud storage cat --project="$P" "gs://$B/issues/records/$number" 2>&1) || st=$?
+  object=$(printf '%04d' "$number")
+  out=$(gcloud storage cat --project="$P" "gs://$B/issues/records/$object" 2>&1) || st=$?
   if [ "$st" -eq 0 ] && [ -n "$out" ]; then
-    fact "$key" PASS "the signed-in login read gs://$B/issues/records/$number ($(printf '%s' "$out" | wc -c | tr -d ' ') byte(s)), which is what \`mine\` reads to build a row"
+    fact "$key" PASS "the signed-in login read gs://$B/issues/records/$object ($(printf '%s' "$out" | wc -c | tr -d ' ') byte(s)), which is the key the store writes (issues/records/%04d) and what \`mine\` reads to build a row"
     return 0
   fi
   if [ "$st" -ne 0 ] && denial_is_permission "$out"; then
-    fact "$key" FAIL "the signed-in login may NOT read gs://$B/issues/records/$number: gcloud refused it (gcloud's own words: $(bounded "$out" 400)). \`mine\` reads the record of every issue it lists, so a login refused the read shows rows it cannot fill"
+    fact "$key" FAIL "the signed-in login may NOT read gs://$B/issues/records/$object: gcloud refused it (gcloud's own words: $(bounded "$out" 400)). \`mine\` reads the record of every issue it lists, so a login refused the read shows rows it cannot fill"
     return 0
   fi
-  stop "the read of gs://$B/issues/records/$number did not answer, so nothing was read about the permission: $(bounded "$out" 300)"
+  stop "the read of gs://$B/issues/records/$object did not answer, so nothing was read about the permission: $(bounded "$out" 300)"
 }
 
 # step_human_470: the half no one machine can measure, printed and never faked.
@@ -673,7 +694,7 @@ print_plan() {
   case "$MODE" in
   470)
     say "  [network, reads] (cd $CO && fugaro issue mine --json) — the shared lookup itself: the run's own 'source: shared' is the one member that says the store was read end to end"
-    say "  [network, reads] gcloud storage ls --project=$P gs://$B/issues/reporters/ — the prefix \`mine\`'s reader lists to find this user's issues, read with YOUR signed-in identity (U1: whether a launcher's login may list it; a denial is the reading, a call that does not answer stops the run)"
+    say "  [network, reads] gcloud storage ls --project=$P gs://$B/issues/reporters/ — the parent of the prefix \`mine\`'s own reader lists (issues/reporters/<digest>/), read with YOUR signed-in identity (U1: whether a launcher's login may list it; a denial is the reading, a call that does not answer stops the run)"
     say "  [network, reads] gcloud storage ls --project=$P gs://$B/issues/occurrences/ — the same question about the prefix the hit times and the other-reporter counts come from"
     say "  [network, reads] gcloud storage cat --project=$P gs://$B/issues/records/<NNNN> — one record, read with your identity (the number is the first row's own, else the first name under issues/records/; a store with no record at all records INFO and gates nothing)"
     say "  [nothing] the second machine and the second person: printed as a prompt, never run and never faked"

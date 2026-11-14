@@ -118,6 +118,10 @@ hidden=$(knob hidden 0)
 truncated=$(knob truncated false)
 format=$(knob format 1)
 exit_status=$(knob exit 0)
+# The first row's own issue number, which the real store hands out from 1: a
+# case that needs a number below 1000 — or 0, which is what a row built from
+# this machine's files alone carries — sets this.
+base=$(knob number-base 1000)
 
 if [ -n "${FAKE470_SLEEP:-}" ]; then sleep "$FAKE470_SLEEP"; fi
 if [ "$exit_status" != 0 ]; then
@@ -149,7 +153,7 @@ rows_out() {
   local i=1 first=yes
   while [ "$i" -le "$rows" ]; do
     if [ "$first" = yes ]; then first=no; else printf ',\n'; fi
-    printf '    {\n      "number": %d,\n      "summary": "row %d"\n    }' "$((1000 + i))" "$i"
+    printf '    {\n      "number": %d,\n      "summary": "row %d"\n    }' "$((base + i))" "$i"
     i=$((i + 1))
   done
 }
@@ -164,7 +168,7 @@ else
   if [ -n "$note" ]; then echo "$note"; fi
   i=1
   while [ "$i" -le "$rows" ]; do
-    printf '#%04d row %d\n' "$((1000 + i))" "$i"
+    printf '#%04d row %d\n' "$((base + i))" "$i"
     i=$((i + 1))
   done
   if [ "$truncated" = true ]; then echo "the project's listing was cut short, so some issues may be missing."; fi
@@ -426,6 +430,38 @@ test_a_store_whose_prefix_holds_nothing_is_not_a_refusal() {
   expect_contains "$(fact_line listing-reporters)" "it is not a refusal" "a store whose prefixes hold nothing: said out loud, because an empty store is not a login that cannot list"
   expect_contains "$(fact_line record-read)" "FACT record-read: INFO" "a store whose prefixes hold nothing: the record row is a diagnostic"
   expect_contains "$(fact_line record-read)" "holds no record" "a store whose prefixes hold nothing: and says why"
+}
+
+test_a_row_number_below_a_thousand_reads_the_padded_key() {
+  # The store writes issues/records/%04d from a counter that starts at 1, so an
+  # issue numbered 1 lives at issues/records/0001 — and a check that asked for
+  # issues/records/1 would get "matched no objects", which is not a refusal, and
+  # would stop the whole run instead of taking the reading.
+  setup_case record_key_padded
+  printf '1\n' >"$dir/state/rows"
+  printf '0\n' >"$dir/state/number-base"
+  printf 'issues/reporters/aaaa/0001\nissues/occurrences/0001/aaaa/2026-11-01T00:00:00Z\nissues/records/0001\n' >"$dir/state/objects"
+  run470_default --mode 470
+  expect_status "$status" 0 "a row numbered below a thousand"
+  expect_contains "$(fact_line record-read)" "FACT record-read: PASS" "a row numbered below a thousand: the record is read"
+  expect_contains "$(fact_line record-read)" "gs://$BUCKET/issues/records/0001" "a row numbered below a thousand: at the key the store writes"
+  expect_contains "$(calls)" "gcloud storage cat --project=$PROJECT gs://$BUCKET/issues/records/0001" "a row numbered below a thousand: the call itself is the padded one"
+  expect_absent "$out" "FACT aborted:" "a row numbered below a thousand: no abort"
+}
+
+test_a_row_numbered_zero_falls_through_to_the_listing() {
+  # A row built from this machine's own files alone carries number 0 (a local
+  # issue has no store number yet): 0 is no number, so the check has to find one
+  # by listing rather than asking for issues/records/0.
+  setup_case record_number_zero
+  printf '1\n' >"$dir/state/rows"
+  printf '%s\n' '-1' >"$dir/state/number-base"
+  run470_default --mode 470
+  expect_status "$status" 0 "a row numbered zero"
+  expect_contains "$(fact_line record-read)" "FACT record-read: PASS" "a row numbered zero: a record is still read"
+  expect_contains "$(fact_line record-read)" "gs://$BUCKET/issues/records/1001" "a row numbered zero: the number comes from the listing"
+  expect_absent "$(calls)" "gs://$BUCKET/issues/records/0" "a row numbered zero: no object named after number 0 is asked for"
+  expect_absent "$out" "FACT aborted:" "a row numbered zero: no abort"
 }
 
 test_the_human_half_is_printed_and_never_faked() {
@@ -741,6 +777,8 @@ t test_a_refused_occurrence_listing_is_the_reading
 t test_a_refused_record_read_is_the_reading
 t test_a_listing_that_did_not_answer_stops_the_run
 t test_a_store_whose_prefix_holds_nothing_is_not_a_refusal
+t test_a_row_number_below_a_thousand_reads_the_padded_key
+t test_a_row_numbered_zero_falls_through_to_the_listing
 t test_the_human_half_is_printed_and_never_faked
 t test_the_three_refused_names_are_refused_in_both_places
 t test_a_checkout_without_a_fugaro_yaml_is_refused
