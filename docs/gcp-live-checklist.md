@@ -873,6 +873,7 @@ probe account carries predefined grants only).
 | 520 | A text-only coder reads a screenshot, on the vision model ([`docs/vision-model/`](vision-model/implementation-plan.md), its **Check 520** and task **V8**; **V1**'s `agent.models.vision`, **V2**'s `model_prices.*.image_tokens`, **V7**'s rewrite of the coder role, and **D2016** — which is why the state this measures is the coder priced **without** an image rate and not the plan's "with"): the sandbox repository's coder is priced without an image rate and `agent.models.vision` names a model that can read one, and one run whose task names a console `__screenshots__` PNG (the issue's own case, run `20261107-104613-b2af`) passes `implement` — and `fix`, where the recipe runs one — reaches its own `result.json`, and there every coder-role stage timing names the **vision** model's ID while `cost.model_by` carries that same model, so the split the issue is about is read from the record and not from the configuration; `fugaro diagnose <run> --json` prints the same split through the command an owner reads a run with | See "Check 520" below; `bash scripts/live-checks/check520.sh --sandbox <a sandbox repository checkout> --yes` is the whole of it, its sibling test `scripts/live-checks/check520_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call, and so is a coding agent's session); **no agent runs any step of it** | ONE sandbox run and what its task costs — the model spend of its coder-role stages, on the sandbox's own budget — plus the pull request that run opens: **billable, and `--yes` is required** before anything is launched. Every other call is a read (doctor, `models ls`, the run record, `diagnose`), and `CHECK520_MAX_MODEL_USD` turns the run's own figure into a criterion when you set it. The run's pull request and branch are left open for you to close. **OWNER-RUN, NOT RUN.** |
 | 521 | The early refusal, and the sentence an owner acts on ([`docs/vision-model/`](vision-model/implementation-plan.md), its **Check 521** and task **V8**; **V5**'s bootstrap refusal — "the coder can't read an image the task names" — and **D2005**, **D2006** and **D2001**): a repository whose coder is priced without an image rate and with **no** `agent.models.vision`, and a task whose text names a `.png`: the run is refused at **bootstrap**, before its first stage, so no stage's work is paid for and thrown away — the failure the refusal exists to remove; its record's `failure_class` is `config_invalid`, its `reason` names the slot to set and the price member that gives that slot's model an image rate, its stage list is **empty** and its cost is **zero** | See "Check 521" below; `bash scripts/live-checks/check521.sh --sandbox <a sandbox repository checkout>` is the whole of it, its sibling test `scripts/live-checks/check521_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call, and so is a coding agent's session); **no agent runs any step of it** | **NOTHING billable and no model call**: the run is refused at bootstrap, before its first stage, so no stage's work is paid for and the budget is not touched — which is why this check needs no `--yes`. It does start one Cloud Run job execution, and **nothing it launches outlives it**: a run that has not ended within `CHECK521_RUN_TIMEOUT_SECONDS` is cancelled with `fugaro cancel --now`, from the step that gives up on it and from the script's own exit trap. **OWNER-RUN, NOT RUN.** |
 | 292 | A catalog entry whose source names a build `context:` is built with the repository's files in it ([`docs/catalog-build-context/`](catalog-build-context/implementation-plan.md) §6, its **Check 292** and task **CB5**; that folder's **F22**, **F29**, **F30**, **F32** and **F33**, and **D1402**, **D1403**, **D1408** and **D1409**; the amendment it folds into is [`docs/project-image-catalog/context-design.md`](project-image-catalog/context-design.md), its §A5, §A6, §C3, §C4, §C5 and the fold-in at §11): one entry built from a repository's Dockerfile in a **subdirectory**, whose `COPY` reaches a file of the repository — the build the catalog could not run before this work — read back four ways: the built image **contains the copied file**, the record names **one** commit (`source_commit` and `context_commit` the same, and the image's `org.opencontainers.image.revision` that commit), the staged context **fires** the nightly decision with the `catalog-context` reason and the rebuild it submits is pinned to the staged commit, and after that rebuild the same entry decides **without** that reason. **What the plan's own step 4 cannot be run as written is the point of the section below:** the trigger's subject is the digest the operator's own copy **staged**, not the branch, so a pushed commit fires nothing by itself — the check is written against the code and says so | See "Check 292" below; **you** run it, on the **sandbox installation and the sandbox repository only, never `belong`**, from the sandbox repository's checkout, and **no agent runs any step of it** (there is **no script**: the check is the steps below) | One Cloud Build that runs (`fugaro image build <entry>`), one submitted-and-cancelled before its steps run (the staging that leaves the record behind), and the one rebuild the project's catalog check job submits when the entry fires: **all billable, and the rebuild is the point of the step**. Nothing is granted, no run is launched and no model is called, so there is no run spend. Two commits are pushed to the sandbox repository's branch and reverted (a third when step 5 loses its race with the build it cancels), and the entry, its staged objects, its record, its check state and its image are the check's own — the entry and its objects are removed in the Restore, the image is left in the shared registry (`fugaro image rm` never deletes one). **OWNER-RUN, NOT RUN.** |
+| C0 | The console-coordinator page's reads, timed and sized ([`docs/console-coordinator-v2/`](console-coordinator-v2/implementation-plan.md) §C0, and its [`spec.md`](console-coordinator-v2/spec.md) §2.2, whose `(unmeasured)` cells are what this produces; **C0 is a plan task and not a register number — it claims none and reserves none**): `fugaro runs ls --json --since 24h`, `--since 7d`, `--since 0`, `--since 24h --limit 50` and `--since 24h --limit 20` (both limits, because the plan's own row names 50 while the spec's halted-or-failed-job cell reads 20), `coordinator status --from-store --all --json` **once per installation named** — that document's size is a function of the repository count, so two installations give two points on the curve the spec's `~724 KB` is one of — `plan status --json --all` once per checkout named, and `budget show --json`: each run the way the console spawns it, each timed with bash's own `TIMEFORMAT` and sized by the document's own length on stdout | See "Check C0" below; `bash scripts/live-checks/check-c0.sh --project <name> [--project <name>...] [--checkout <path>...]` is the whole of it — a FACT row per read, a table of bytes and seconds, and one `CELL` line per read in the wording the spec's cells need — and **you** run it, on an installation you name, never `belong` (a project or a checkout naming that installation is refused before any read is made); **no agent runs any step of it** | Nothing billable and no model call. **Every command it runs is a read** — the runs listing, the stored view, the plan walk and the budget document — so there is nothing to tear down and the `restore` row says so; the only thing it removes is its own scratch directory, from its exit trap even on a failed read or a Ctrl-C. `plan status` is the one read that is not a single call: it walks the checkout and asks the forge about the pull requests its tasks carry, one `gh` per joined pull request, at most 32 (`planMaxLookups`). **USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -14109,3 +14110,73 @@ repositories and carries `pull_requests: write` alone.
 **What waits on it.** D4 (the advisory merge order) and the change-set half of the spec's promise
 that a set is ready or not ready as a whole: this run is the only reading of it, and a set that
 flips one pull request and leaves the other draft is a finding for this plan's owner.
+
+## Check C0: the console-coordinator page's reads, timed and sized — one script you run (an installation you name, never `belong`; run by you; NOT RUN)
+
+**NOT RUN, and it takes no check number.** C0 is a task of
+[docs/console-coordinator-v2/implementation-plan.md](console-coordinator-v2/implementation-plan.md) rather
+than a check, so this section carries the task's own name: the register's numbering paragraph above is
+untouched, no number is spent on it, and the census sentence that reads the register's highest written
+`## Check` section is unaffected — this heading carries no number for it to find. What it produces is the
+readings [docs/console-coordinator-v2/spec.md](console-coordinator-v2/spec.md) §2.2's cells are waiting for,
+the ones that say **`(unmeasured)`**, and **you** paste them: the script edits no document and never
+decides a number, and filling the table is the plan's C0 itself.
+
+**The one command.**
+
+```sh
+bash scripts/live-checks/check-c0.sh --project <name> [--project <name>...] [--checkout <path>...]
+```
+
+`--project` names the installation the reads are made against, and it is required and repeatable: the
+`coordinator status` read is made **once per name**, which is how the spec's `~724 KB` — read on a
+four-repository installation — gets a second point on the size-versus-repository-count curve. `--checkout`
+names a checkout whose `plan status` is timed; without it the current directory is used when it is a
+checkout (it has a `docs/`), and when it is not, that row says so and the run ends `2`. `--dry-run` prints
+every command a real run would make and runs none of them: no fugaro command, no read, no verdict. A name
+carrying `belong` — in `--project` or in `--checkout` — is refused before any read is made.
+
+**What it measures, and how.** `fugaro runs ls --json` at `--since 24h`, `--since 7d` and `--since 0`, and
+the same window with `--limit 50` and with `--limit 20`; `fugaro coordinator status --from-store --all
+--json` once per installation named; `fugaro plan status --json --all` once per checkout named, run from
+that checkout (the read walks `docs/` there); and `fugaro budget show --json`. The installation travels in
+the read's own environment (`FUGARO_PROJECT=<name>`), so the argv stays the console's own words, and the
+reads that do not need a checkout are made from the check's scratch directory — outside every checkout, the
+way the console's own working directory is the app's — so no checkout's `fugaro.yaml` decides which
+installation answers. The bytes are the document's own length on stdout and the seconds are the whole
+spawn's wall clock, taken with bash's own `TIMEFORMAT` so no GNU `date` is needed. Each document is counted
+by one `python3` reader that prints counts and never a document, and scanned for credential-shaped text
+before any of its own words is echoed.
+
+**Both page sizes, because the plan and the spec disagree.** The plan's C0 row names
+`fugaro runs ls --json --since 24h --limit 50` (D818's first page, spec §2.6), while the `(unmeasured)`
+size cell in spec §2.2 — the halted-or-failed-job item — reads `--limit 20` (D810's bounded read). The
+check measures both and settles neither: a number for a flag combination the spec does not use, and none
+for the one it does, would send you back for a second run. **Which limit the queue uses is a product
+decision, and the reading does not make it.**
+
+**What it prints.** Progress on stderr and ONE block on stdout: a `FACT` row per read, `PASS` when it
+answered with the shape the check reads and `FAIL` when it did not, plus a `C0 READINGS` table — read,
+bytes, human size, seconds, and what the document held — and a `CELLS` section with one line per read in
+the wording the spec's cells need (`size about 1.1 KB, time about 5.8 s`). Exit `0` when every read
+answered, `1` when every read answered and one came back a document this check does not read, and `2` when
+a read did not answer or a guard stopped the run: a run that could not measure a read ends `2` even if
+another read also came back the wrong shape, because the table has a hole in it.
+
+**Why nothing has to be undone.** Every command it runs is a read — a listing of the runs bucket, the
+stored view out of the project's database, the plan walk over a checkout, and the budget document — so the
+check creates nothing, writes nothing, launches no run, mints no credential and changes no cloud state.
+There is therefore nothing for a teardown to put back, and the block's `restore` row says exactly that;
+the only thing removed is the check's own scratch directory, mode 0700, taken from its exit trap even on a
+failed read or a Ctrl-C. The one read that is not a single call is `plan status`: it walks the checkout and
+asks the forge about the pull requests its tasks carry, one `gh` per joined pull request, at most 32.
+
+**What it costs.** Nothing billable and no model call. It is `USER-RUN, NOT RUN`: **no agent runs any step
+of it**, and its own test (`scripts/live-checks/check-c0_test.sh`, wired into `scripts/live_checks_test.go`)
+drives it against a fake `fugaro` on `PATH` alone — no network, no project, no bucket and no credential.
+
+**What waits on it.** The page's own work (C1 to C4 and the console release) reads these numbers: the
+action queue's page size, the decision between the stored view as it stands and one narrowed per
+repository, and whether `plan status` may be one of four reads started together or has to be asked for on
+demand. Nothing is blocked on the reading itself — the tasks are droppable and independent — but a figure
+in that table which the reading contradicts is corrected by C0, and the spec's own sentence says so.

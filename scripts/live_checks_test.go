@@ -79,6 +79,12 @@ import (
 // (a pty its helper types the phase's one confirmation into), and it rewrites
 // a copy of its own script to prove the case that expects a quiet daemon log
 // to be a finding is not vacuous.
+// Check C0's fake is a fake `fugaro` alone, serving each read out of a document
+// the test writes -- so a case knows the document's exact length and can hold
+// the byte count in the readings table against the file -- and recording every
+// call with the directory it was made in and the FUGARO_PROJECT it carried, so
+// a case says both where each read ran and that a dry run or a refused name
+// makes no call at all.
 var liveCheckScripts = []struct {
 	name string
 	test string
@@ -110,6 +116,7 @@ var liveCheckScripts = []struct {
 	{"check-501.sh", "check-501_test.sh"},
 	{"check-411.sh", "check-411_test.sh"},
 	{"check-412.sh", "check-412_test.sh"},
+	{"check-c0.sh", "check-c0_test.sh"},
 	{"check510.sh", "check510_test.sh"},
 	{"check511.sh", "check511_test.sh"},
 	{"check520.sh", "check520_test.sh"},
