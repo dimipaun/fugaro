@@ -252,7 +252,7 @@ func TestManagedAskPropertyCatchesADecisionWithNoRefusal(t *testing.T) {
 	}
 	for _, s := range []string{
 		"a coding agent's session at a terminal", "a coding agent's session with no terminal",
-		"a pipe", "--json at a terminal", "--non-interactive at a terminal",
+		"a pipe", "--json at a terminal", "a run that never prompts at a terminal",
 	} {
 		if !askMentionsSession(bad, s) {
 			t.Errorf("dropping the refusal is not caught in %s:\n%s", s, firstFew(bad))

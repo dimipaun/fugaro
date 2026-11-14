@@ -486,7 +486,10 @@ func TestProjectRemoveRepoStopsAdmittingTheRepo(t *testing.T) {
 	if allow := allowReposOf(t, f.db); !projectpolicy.AdmitRepo(allow, "github/acme/app") {
 		t.Fatalf("allow_repos = %v: the fixture does not start with the repository admitted", allow)
 	}
-	out, _, err := execute(t, "project", "repos", "rm", "github/acme/app")
+	// The removal is confirmed by a person at a real terminal, typing the
+	// project's name (nothing else stands in for it: T11 removed --yes).
+	fakeTerminal(t)
+	out, _, err := executeStdin(t, initProjectName+"\n", "project", "repos", "rm", "github/acme/app")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}

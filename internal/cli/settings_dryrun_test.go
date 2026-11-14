@@ -655,22 +655,27 @@ func TestSettingsSetDryRunDoesNotClassifyANoOpAsAWidening(t *testing.T) {
 	}
 }
 
-// TestSettingsDryRunTakesNeitherYesNorABareJSON: --dry-run and --yes answer
-// different questions, and the pair is refused rather than resolved; --json is
-// the dry run's own shape, so it is refused without it (the two flags the
-// console's argv carries, and the two ways a caller could mistake what it got).
-func TestSettingsDryRunTakesNeitherYesNorABareJSON(t *testing.T) {
+// TestSettingsSetRefusesAnUnknownYesAndABareJSON: --yes is gone from the
+// product (T11, docs/no-prompt-policy): nothing is typed at a step and no flag
+// stands in for the person at the terminal, so the flag is refused as an
+// unknown one before anything is read. --json is the dry run's own shape, so it
+// is refused without it (the two flags the console's argv carries, and the two
+// ways a caller could mistake what it got).
+func TestSettingsSetRefusesAnUnknownYesAndABareJSON(t *testing.T) {
 	settingsWriteHome(t)
 	settingsWriteCheckout(t, settingsRepoYAML("budget:\n  per_run_usd: 10\n"))
+	if f := newSettingsSetCmd().Flags().Lookup("yes"); f != nil {
+		t.Fatalf("fugaro settings set still declares --yes: the flag is gone (T11)")
+	}
 
-	out, _, err := execute(t, "settings", "set", "budget.per_run_usd", "50", "--layer", "repo", "--dry-run")
+	out, _, err := execute(t, "settings", "set", "budget.per_run_usd", "50", "--layer", "repo", "--dry-run", "--yes")
 	if err == nil {
-		t.Fatalf("--dry-run with --yes was accepted:\n%s", out)
+		t.Fatalf("--yes was accepted:\n%s", out)
 	}
 	if ExitCode(err) != ExitUserError {
 		t.Errorf("exit %d, want a user error: %v", ExitCode(err), err)
 	}
-	for _, want := range []string{"--dry-run"} {
+	for _, want := range []string{"unknown flag: --yes"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not name %s: %v", want, err)
 		}

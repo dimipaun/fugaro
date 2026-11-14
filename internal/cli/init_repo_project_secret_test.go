@@ -39,18 +39,20 @@ func TestInitRepoProjectWideProviderKeyIsReady(t *testing.T) {
 	assertNoProjectKeyMissing(t, out.String(), e.r.res.Missing)
 }
 
-// The same repository under --yes, with its image already built (a build
-// record): no terminal, no typed input, and the run is ready -- exit 0, and
-// nothing for the name in the output.
-func TestInitRepoProjectWideProviderKeyIsReadyUnderYes(t *testing.T) {
+// The same repository at a real terminal, with its image already built (a
+// build record): the person there is the confirmation the run now takes (T11
+// removed --yes), and the run is ready -- exit 0, and nothing for the name in
+// the output.
+func TestInitRepoProjectWideProviderKeyIsReadyAtATerminal(t *testing.T) {
 	r := newProjectKeyRig(t, `["*"]`)
 	r.seedRepoSecret(t, "bitbucket-token", []byte("tok"))
 	r.seedRepoSecret(t, "probe2-api-key", nil)
 	r.seedProjectKey(t, "probe2-api-key")
 	r.seedBuildRecord(t, "app")
-	out, errOut, err := executeStdin(t, "", "setup", "--repo")
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, strings.Repeat(initProjectName+"\n", 3), "setup", "--repo")
 	if err != nil {
-		t.Fatalf("the project-covered key left the --yes run unfinished: %v\n%s\n%s", err, out, errOut)
+		t.Fatalf("the project-covered key left the run unfinished: %v\n%s\n%s", err, out, errOut)
 	}
 	assertNoProjectKeyMissing(t, out+errOut, nil)
 }
@@ -63,7 +65,8 @@ func TestInitRepoRepoCopyStillWinsAndIsReady(t *testing.T) {
 	r.seedRepoSecret(t, "probe2-api-key", []byte("repo-value"))
 	r.seedProjectKey(t, "probe2-api-key")
 	r.seedBuildRecord(t, "app")
-	out, errOut, err := executeStdin(t, "", "setup", "--repo")
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, strings.Repeat(initProjectName+"\n", 3), "setup", "--repo")
 	if err != nil {
 		t.Fatalf("%v\n%s\n%s", err, out, errOut)
 	}

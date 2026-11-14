@@ -311,7 +311,7 @@ installation that has never had one.
   to seed from and nothing to publish, said in a sentence),
   `TestUpdateLayerStageRefusesAFileThatDoesNotParse`,
   `TestUpdateLayerStageRefusesExecutableChangesWithoutTheFlag` (the same banner and refusal
-  `config publish` gives), `TestUpdateLayerStageAppliesNothingInAnAgentSessionEvenWithYes`,
+  `config publish` gives), `TestUpdateLayerStageAppliesNothingInAnAgentSession`,
   `TestUpdateLayerStageRefusesWhenTheGenerationMovedSinceTheSeed` (the unconditional within-run
   guard above: a publish that landed between the seed and the write is a refusal, and the owner's
   file is left as it is — the write carries the generation the read returned, so no record is

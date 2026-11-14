@@ -281,18 +281,22 @@ func TestSecretsRmDryRunNamesBothHalves(t *testing.T) {
 	}
 }
 
-// TestSecretsRmRefusesDryRunWithYes: --dry-run and --yes answer different
-// questions — a dry run says what the removal would do and writes nothing,
-// --yes answers a write — and the family refuses the pair rather than reading
-// --yes as a confirmation the person gave for a run that removes nothing.
-func TestSecretsRmRefusesDryRunWithYes(t *testing.T) {
+// TestSecretsRmRefusesTheUnknownYesFlag: --yes is not a flag of this family
+// any more (T11, docs/no-prompt-policy). Nothing is typed at a step and no
+// flag stands in for the person at the terminal, so a run that passes it is
+// refused as an unknown flag before anything is read or removed. --dry-run
+// answers "what would this do" and writes nothing either way.
+func TestSecretsRmRefusesTheUnknownYesFlag(t *testing.T) {
 	secretsRmFugaro(t)
+	if f := newSecretsRmCmd().Flags().Lookup("yes"); f != nil {
+		t.Fatalf("fugaro secrets rm still declares --yes: the flag is gone (T11)")
+	}
 	sm, id, path := secretsRmFixture(t)
 	before := readFileString(t, path)
 
-	_, _, err := execute(t, "secrets", "rm", "bitbucket-token", "--dry-run")
-	if err == nil || !strings.Contains(err.Error(), "--dry-run and --yes") {
-		t.Fatalf("err = %v, want the dry-run/--yes refusal", err)
+	_, _, err := execute(t, "secrets", "rm", "bitbucket-token", "--dry-run", "--yes")
+	if err == nil || !strings.Contains(err.Error(), "unknown flag: --yes") {
+		t.Fatalf("err = %v, want the unknown --yes refusal", err)
 	}
 	if got := sm.Deleted(); len(got) != 0 {
 		t.Fatalf("deleted %v", got)
