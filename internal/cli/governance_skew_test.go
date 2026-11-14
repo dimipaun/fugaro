@@ -278,7 +278,7 @@ func TestRunRefusesGovernanceOnAnOlderBaseImage(t *testing.T) {
 				"fugaro.yaml's governance: block of acme/other",
 				"fugaro " + governanceSince + " or later",
 				"ghcr.io/dimipaun/fugaro-base:" + c.rel + ", release " + c.rel,
-				"fugaro image refresh --repo acme/other --workflow svc",
+				imageGateRemedy,
 				"; or remove the governance: block from fugaro.yaml",
 			} {
 				if !strings.Contains(err.Error(), want) {
@@ -327,7 +327,7 @@ func TestRunRefusesTheLayersGovernanceOnAnOlderBaseImage(t *testing.T) {
 	for _, want := range []string{
 		"the project layer's governance: block (read for acme/other)",
 		"knows the project layer's governance: block",
-		"fugaro image refresh --repo acme/other --workflow " + config.ImplicitWorkflow,
+		imageGateRemedy,
 		"remove the governance: block from the project layer",
 	} {
 		if !strings.Contains(err.Error(), want) {
@@ -363,7 +363,7 @@ func TestRunRefusesBothGovernanceKeysOnAnOlderBaseImage(t *testing.T) {
 	for _, want := range []string{
 		"fugaro.yaml's governance: block and the project layer's governance: block of acme/other",
 		"knows the governance: block and the project layer's governance: block",
-		"fugaro image refresh --repo acme/other --workflow " + config.ImplicitWorkflow,
+		imageGateRemedy,
 		"; or remove the governance: block from fugaro.yaml",
 		"remove the governance: block from the project layer",
 	} {
@@ -420,7 +420,7 @@ func TestGovernanceOnACoreImageWarns(t *testing.T) {
 	for _, want := range []string{
 		"the job image of acme/other workflow svc is a core build of fugaro",
 		"reads the governance: block and ignores it",
-		"fugaro image refresh --repo acme/other --workflow svc",
+		imageGateRemedy,
 	} {
 		if !strings.Contains(errOut, want) {
 			t.Errorf("stderr %q lacks %q", errOut, want)
