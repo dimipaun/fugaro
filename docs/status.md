@@ -26,7 +26,7 @@ As of 2026-11-14, read from `main`, the open pull requests and each plan's task 
 | go-to-market | 9/12 | owner G2.5, and two more |
 | issues-resolved-on-update | 7/8 | T-RU7 (live, draft #2604) |
 | licensing | 21/23 | owner-run only: L0.2's allow-list and status, the Terms publication's L4.3, L5.1 T3(c) |
-| mobile | about 43/52 | P5.1a to P5.1h (approved 2026-11-14; only P5.1f and P5.1g wait on anything — P4.1's T5–T7), P5.2, P5.3, P5.4, P7.5; owner P2.3 and P4.4 |
+| mobile | about 43/52 | P5.1a to P5.1h (approved 2026-11-14; only P5.1f and P5.1g wait on anything — P4.1), P5.2, P5.3, P5.4, P7.5; owner P2.3 and P4.4 |
 | model-ab-testing | 16/18 | owner Checks 210 to 212 |
 | model-crafts | 9/10 | owner MC10 |
 | no-prompt-policy | 13/17 | T11 to T13; owner T14 |
