@@ -72,6 +72,15 @@ import (
 // older than the release, a coder that reads images itself, a slot that is set,
 // a run that never ends, a record that is another run's, and a refusal whose
 // sentence has lost one of the parts an owner needs.
+// Check 530's fakes are a fake `gcloud` that serves a job's own describe (with
+// and without a mounted secret), a project's IAM policy, the review run's
+// signature and record as files the test writes, and the credentials service's
+// own audit lines; a fake `fugaro` whose `doctor --json` carries the census
+// sentence the review job is read from; and a fake `curl` that mints a token
+// sentinel per account, records the account and the authorization header of the
+// `--config` file it was handed, and answers each route as a mode says -- so a
+// case can say which class a refusal was about, and that the token travelled
+// through a 0600 file and never into the check's output.
 // Check 301's fakes are a fake `fugaro`, a fake launchd and a fake systemd
 // whose boot id and unit files the test writes, so a reboot, a second
 // instance's refusal and T7's re-render are all readings of files the test
@@ -114,6 +123,7 @@ var liveCheckScripts = []struct {
 	{"check511.sh", "check511_test.sh"},
 	{"check520.sh", "check520_test.sh"},
 	{"check521.sh", "check521_test.sh"},
+	{"check-c39.sh", "check-c39_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent

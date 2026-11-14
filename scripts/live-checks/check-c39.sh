@@ -69,7 +69,9 @@
 #
 # Knobs (all CHECK530_*): DRY_RUN, KEEP_SCRATCH, SANDBOX, RUN, PR, CODING_JOB,
 # BUCKET, SERVICE_URL, TIMEOUT_SECONDS (120), TOKEN_TIMEOUT_SECONDS (60),
-# LOG_FRESHNESS (30d).
+# LOG_FRESHNESS (30d). The project and the region are not knobs: the checkout's
+# own doctor is the only thing that names the installation, so a run cannot be
+# pointed at one the checkout does not belong to.
 set -Eeuo pipefail
 
 XTRACE_AT_START=no
@@ -1187,8 +1189,8 @@ RUN=${RUN:-${CHECK530_RUN:-}}
 PR=${PR:-${CHECK530_PR:-}}
 CODING_JOB=${CODING_JOB:-${CHECK530_CODING_JOB:-}}
 BUCKET=${BUCKET:-${CHECK530_BUCKET:-}}
-PROJECT=${CHECK530_PROJECT:-}
-REGION=${CHECK530_REGION:-}
+PROJECT=""
+REGION=""
 SERVICE_URL=${SERVICE_URL:-${CHECK530_SERVICE_URL:-}}
 DRY_RUN=${CHECK530_DRY_RUN:-$DRY_RUN_CLI}
 KEEP_SCRATCH=${CHECK530_KEEP_SCRATCH:-}

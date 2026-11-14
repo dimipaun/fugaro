@@ -873,6 +873,7 @@ probe account carries predefined grants only).
 | 520 | A text-only coder reads a screenshot, on the vision model ([`docs/vision-model/`](vision-model/implementation-plan.md), its **Check 520** and task **V8**; **V1**'s `agent.models.vision`, **V2**'s `model_prices.*.image_tokens`, **V7**'s rewrite of the coder role, and **D2016** — which is why the state this measures is the coder priced **without** an image rate and not the plan's "with"): the sandbox repository's coder is priced without an image rate and `agent.models.vision` names a model that can read one, and one run whose task names a console `__screenshots__` PNG (the issue's own case, run `20261107-104613-b2af`) passes `implement` — and `fix`, where the recipe runs one — reaches its own `result.json`, and there every coder-role stage timing names the **vision** model's ID while `cost.model_by` carries that same model, so the split the issue is about is read from the record and not from the configuration; `fugaro diagnose <run> --json` prints the same split through the command an owner reads a run with | See "Check 520" below; `bash scripts/live-checks/check520.sh --sandbox <a sandbox repository checkout> --yes` is the whole of it, its sibling test `scripts/live-checks/check520_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call, and so is a coding agent's session); **no agent runs any step of it** | ONE sandbox run and what its task costs — the model spend of its coder-role stages, on the sandbox's own budget — plus the pull request that run opens: **billable, and `--yes` is required** before anything is launched. Every other call is a read (doctor, `models ls`, the run record, `diagnose`), and `CHECK520_MAX_MODEL_USD` turns the run's own figure into a criterion when you set it. The run's pull request and branch are left open for you to close. **OWNER-RUN, NOT RUN.** |
 | 521 | The early refusal, and the sentence an owner acts on ([`docs/vision-model/`](vision-model/implementation-plan.md), its **Check 521** and task **V8**; **V5**'s bootstrap refusal — "the coder can't read an image the task names" — and **D2005**, **D2006** and **D2001**): a repository whose coder is priced without an image rate and with **no** `agent.models.vision`, and a task whose text names a `.png`: the run is refused at **bootstrap**, before its first stage, so no stage's work is paid for and thrown away — the failure the refusal exists to remove; its record's `failure_class` is `config_invalid`, its `reason` names the slot to set and the price member that gives that slot's model an image rate, its stage list is **empty** and its cost is **zero** | See "Check 521" below; `bash scripts/live-checks/check521.sh --sandbox <a sandbox repository checkout>` is the whole of it, its sibling test `scripts/live-checks/check521_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call, and so is a coding agent's session); **no agent runs any step of it** | **NOTHING billable and no model call**: the run is refused at bootstrap, before its first stage, so no stage's work is paid for and the budget is not touched — which is why this check needs no `--yes`. It does start one Cloud Run job execution, and **nothing it launches outlives it**: a run that has not ended within `CHECK521_RUN_TIMEOUT_SECONDS` is cancelled with `fugaro cancel --now`, from the step that gives up on it and from the script's own exit trap. **OWNER-RUN, NOT RUN.** |
 | 292 | A catalog entry whose source names a build `context:` is built with the repository's files in it ([`docs/catalog-build-context/`](catalog-build-context/implementation-plan.md) §6, its **Check 292** and task **CB5**; that folder's **F22**, **F29**, **F30**, **F32** and **F33**, and **D1402**, **D1403**, **D1408** and **D1409**; the amendment it folds into is [`docs/project-image-catalog/context-design.md`](project-image-catalog/context-design.md), its §A5, §A6, §C3, §C4, §C5 and the fold-in at §11): one entry built from a repository's Dockerfile in a **subdirectory**, whose `COPY` reaches a file of the repository — the build the catalog could not run before this work — read back four ways: the built image **contains the copied file**, the record names **one** commit (`source_commit` and `context_commit` the same, and the image's `org.opencontainers.image.revision` that commit), the staged context **fires** the nightly decision with the `catalog-context` reason and the rebuild it submits is pinned to the staged commit, and after that rebuild the same entry decides **without** that reason. **What the plan's own step 4 cannot be run as written is the point of the section below:** the trigger's subject is the digest the operator's own copy **staged**, not the branch, so a pushed commit fires nothing by itself — the check is written against the code and says so | See "Check 292" below; **you** run it, on the **sandbox installation and the sandbox repository only, never `belong`**, from the sandbox repository's checkout, and **no agent runs any step of it** (there is **no script**: the check is the steps below) | One Cloud Build that runs (`fugaro image build <entry>`), one submitted-and-cancelled before its steps run (the staging that leaves the record behind), and the one rebuild the project's catalog check job submits when the entry fires: **all billable, and the rebuild is the point of the step**. Nothing is granted, no run is launched and no model is called, so there is no run spend. Two commits are pushed to the sandbox repository's branch and reverted (a third when step 5 loses its race with the build it cancels), and the entry, its staged objects, its record, its check state and its image are the check's own — the entry and its objects are removed in the Restore, the image is left in the shared registry (`fugaro image rm` never deletes one). **OWNER-RUN, NOT RUN.** |
+| 530 | The review class reads one repository, signs one verdict, and reaches nothing else ([`docs/c39-review-identity/`](c39-review-identity/implementation-plan.md), its task **C3.9g2** whose check is **§8** of [`docs/c39-review-identity/spec.md`](c39-review-identity/spec.md) — the review work's own reading; **CSR6**'s two `doctor` lines and its keyless shape, ruling **O1**, **CSR1**'s read-only one-repository token, **CSR7** and **CSR2**'s review variant, **D1074** and **U7**; **Open item 5**, still open, is what the step 8 row waits on): one **review** run of the sandbox repository read from the outside — `fugaro doctor`'s credentials-service row and its census naming a review job that **mounts no secret**, that job's own `describe` and its account's IAM policy holding **no `secretAccessor`**, the verdict the run signed at `runs/<slug>/<review-run>/artifacts/review.json.sig` (**one line of 64 lowercase hex**), the service's own **`review_sign`** audit line for that run (the run, the repository, the job, the calling account and the signing key, and **no pull request**), and the caller class the routes hold — **a call with no token is a refused answer** and **the review account is refused the verify route** — with a coding shared project job's account refused on both routes when `--coding-job` names it | See "Check 530" below; `bash scripts/live-checks/check-c39.sh --sandbox <a sandbox repository checkout> --run <the review run id>` is the whole of it, its sibling test `scripts/live-checks/check-c39_test.sh` drives it against fake `gcloud`, fake `fugaro` and a fake `curl` only, and **you** run it, on the **sandbox installation and its sandbox repository only, never `belong`** (a checkout, project, region, bucket or job naming `belong`, `edge-devel-dimi` or `edgeappinc` is refused before a single call, and so is a coding agent's session or a traced shell); **no agent runs any step of it** | **NOTHING billable and no model call**: every call is a read of the installation it is run in, of the runs bucket the review run's artifact and record live in and of the credentials service's own log, plus two POSTs to the verify route that the service **refuses before any work** — so the only spend it carries is the review run the owner already paid for, whose figure and artifact the block reports. It creates nothing and deletes nothing, and leaves one audit line per refusal in the service's log. About ten minutes at the terminal. **OWNER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -13787,6 +13788,126 @@ built from, and the one a person can take over the log that actually failed on t
 6. **Restore.** Push the sandbox branch back — the commits this check made go with it — remove the entry (`fugaro image rm <name>`; it refuses while a job still runs the entry, which is why step 2 keeps it off every `needs:`) and publish with `fugaro update`, then `fugaro update --repo <the sandbox repository>` so its jobs are back on the config step 1 recorded. The entry's staged objects, its record and its check state are the check's own and live under `builds/`: `gcloud storage rm "gs://<runs bucket>/builds/catalog/<entry>/*"` and `gcloud storage rm "gs://<runs bucket>/builds/<slug>/catalog/<entry>/*"` remove them — the second is the record and the `check.json` beside it, which is where the check's own back-off lives — so the next nightly run has nothing of this entry to decide and no back-off of the check's to read. **Do not remove `builds/image-lock.json`**: that lock is the project's, shared with every other entry, and it is not this check's to delete. The **image** stays in the installation's shared registry: `fugaro image rm` never deletes one, and deleting it is not this check's to do. **FACT:** `fugaro image ls` reads the catalog as step 1 recorded it, and `fugaro doctor` is quiet.
 
 **Paste back:** every `FACT` line above — the entry's `fugaro image ls` line, the built image's reference and digest, the record's `source_commit`, `context_commit`, `context_sha256` and `template_salt`, the image's `org.opencontainers.image.revision`, the check job's two lines for the entry with their `decision` and `reasons`, and the copied file's bytes as the image holds them — and **never a secret and never a token value**: this check prints none, and the one file it reads out of the image is one it wrote. Until this check runs, the feature is built and **unverified live**: the two things no hermetic test can hold are a real provider's tree read at a real commit (the tree read and the digest it produces) and a real Cloud Build carrying a context through the clone step and `docker build --file` — which is exactly what steps 3 to 5 measure. **Never run any step against `belong`**: this is the sandbox installation and the sandbox repository only, and no agent runs any step of it.
+
+## Check 530: the review class reads one repository, signs one verdict, and reaches nothing else (the `fugaro` installation and its sandbox repository only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **C3.9g2** of
+[c39-review-identity/implementation-plan.md](c39-review-identity/implementation-plan.md), whose check is
+**§8** of [c39-review-identity/spec.md](c39-review-identity/spec.md), and **run by the owner**; the eleven
+steps are [c39-review-identity/live-check.md](c39-review-identity/live-check.md) — **this section carries no
+steps of its own**. The script is `scripts/live-checks/check-c39.sh`, with the test that drives it against
+fake `gcloud`, fake `fugaro` and a fake `curl` only (`scripts/live-checks/check-c39_test.sh`), and that test
+is the only form of the check an agent runs: **no agent runs any step of it**, and none has — every row is a
+live project's, a real review run's own artifact and the credentials service's own log. The script measures
+steps **1, 2, 6 and 11** and prints a prompt for each of **3, 4, 5, 7, 8, 9 and 10** rather than faking it,
+because each of those needs something a script cannot be: a real `fugaro review` run whose log an owner reads
+by eye, a throwaway execution of the variant, the gateway's log, a tampered copy of the artifact, a
+published verifier account, a mutant subprocess inside the container and a second sign with the run's own
+identity. It is red until this slice and the review work's **CSR7** and **CSR2** are on `main`. Steps 1, 4
+and 9 read other work streams' facts — CSR6's two `doctor` lines, CSR1's read-only set and **U7**'s egress
+observation — and whoever runs it re-reads each against the tree and the shipped image being measured; and
+**Open item 5 is open**, so which account belongs in `credentials_service.verifier_accounts` is unsettled
+and the row for step 8 cannot pass as it stands.
+
+**The number this section takes.** The register's own rule — a claim above the highest written section is
+settled at its merge, and whichever of two open claims merges second renumbers itself — and the claims
+standing at this merge: the highest written `## Check` section on `main` is **521**, 522–529 are
+[vision-model/](vision-model/README.md)'s reserved-and-unused block, and 540–599 are held by six other works
+(outer-loop-escalation 540–549, account-aliases 550–559, licence-key-v2 560–569, portal 570–579,
+shared-jobs-default 580–589 and bitbucket-token-types 590–599), so the number free above them is **530**. It
+is a claim and never a reservation: a work that takes a number below 540 and merges after this one renumbers
+itself rather than reusing it.
+
+**What the check settles.** The review half of the credentials service, read from the outside — what §8 of
+[c39-review-identity/spec.md](c39-review-identity/spec.md) says the review class must be, measured against a
+live installation, a real review run and the service's own records rather than against the module that
+deploys them:
+
+- **The variant holds no credential at all, and `doctor` says which job it is** (ruling **O1**, **CSR6**).
+  `fugaro doctor`'s credentials-service row is not the `warning` line that stops the check, and its census
+  names each account's **review job** and the review-only variant beside it as the job that **mounts no
+  secret**; read back from the platform, that job's own `describe` shows **no secret at all** — no
+  environment reference, no volume, not the account's Claude token and never the App key — and its service
+  account holds **no** `secretAccessor` in the project's IAM policy. A secret on the variant, or a
+  secret-reading role on its account, is the finding this row exists for: the class is keyless by
+  construction, and a job that still carries a credential is the one place the review class could read a
+  repository it was not given.
+- **The verdict is signed, at the path §8 names** (**CSR7**'s signing half). The run leaves
+  `runs/<slug>/<review-run>/artifacts/review.json.sig`, and it is **one line of 64 lowercase hex
+  characters** — the service's own signature, and nothing else. A run whose artifacts are there without the
+  sidecar is the finding: unsigned is not a verdict to act on.
+- **The signing is the service's, and its own line says so.** The `review_sign` audit line for **that run**
+  names the run, the repository (the slug the signature sits under), the job, the account that called and
+  the signing key as its credential, with its tier and its status — and **carries no pull request and no
+  field §8 does not name**. Every act of the service that touches a credential writes exactly one line, so a
+  signing with no line is the one thing that rule forbids, and a line for another run is what an owner reads
+  when the run in front of them is not the one they think it is.
+- **The verify route's caller class.** A `POST /v1/review/verify` **with no token** is a typed refusal
+  rather than an answer: the class that route admits is the caller's own token, so a call without one is
+  refused before the key is ever reached. This is the half of step 8 that does **not** wait on Open item 5,
+  and the row says so.
+- **The gate holds where it was written** (step 11's second half). With an ID token minted by impersonating
+  **the review job's own account**, the verify route is refused: a verifier is not a run, and a review
+  account that can verify its own verdict is the widening this row exists to catch.
+- **The coding class, when `--coding-job` names one** (step 11's first half). With the installation's coding
+  shared project job given, that job's account is refused on **both** routes — verify and sign — and both
+  refusals' own sentences are what the row carries. Without the flag the check makes no claim about the
+  coding class, and its row says that instead of passing quietly.
+- **The cost, from the run's own record.** The review run's record names the repository, its status, its
+  outcome and `cost.model_usd`: that spend is what this check costs — a run the owner had already paid for —
+  and the signature above is the artifact it kept, so the block reports both rather than asking an owner to
+  work either out.
+
+**What the check does not settle.** Steps 3, 4, 5, 7, 8, 9 and 10, which the script prints as prompts with
+one `INFO` row each: a review that launches and runs with no token value in its log (3), a minted token
+whose push GitHub refuses and a call for another repository that the service refuses (4), the gateway's log
+naming the service with the service's line naming the account's own tier A credential and no other (5), a
+tampered copy of the artifact and a signature pasted under another run (7), the verify route's caller class
+with a **published verifier account** (8 — **Open item 5**, which is what makes it unrunnable as it stands),
+a mutant subprocess inside the container reaching neither the sign route nor the metadata server (9,
+**U7**'s own observation after the route exists) and a second sign refused with the run's own identity (10).
+
+**Prerequisites.** Installation `fugaro` and its own sandbox repository checkout, with a **review run of
+that repository already behind it** (`fugaro review --pr <N>`): the check reads that run's artifact, its
+record and the service's line about it, and it launches nothing itself. The project and the region are read
+from `fugaro doctor --json` in that checkout rather than typed, so every row is about the installation the
+checkout belongs to and the check cannot be pointed at another one. `bash`, `mktemp`, `date`, `python3`,
+`gcloud` (authenticated as you, with `gcloud auth print-identity-token` available), `fugaro` (the installed
+build: the review class has to be in it) and `curl` on PATH. **Never `belong`, never `edge-devel-dimi`, never
+`edgeappinc`** — a checkout, project, region, bucket or job naming one of them is refused before the first
+call — and a coding agent's session, or a shell started with tracing on, is refused too, because the check
+mints ID tokens. About **ten minutes** at the terminal.
+
+**What you type** (the eleven steps, and what each prompt asks for, are in
+[c39-review-identity/live-check.md](c39-review-identity/live-check.md)):
+
+1. `bash scripts/live-checks/check-c39.sh --sandbox <a sandbox repository checkout> --dry-run`
+2. `bash scripts/live-checks/check-c39.sh --sandbox <a sandbox repository checkout> --run <the review run id>`
+3. paste the `CHECK 530 RESULT` block back here, and nothing else
+
+`--dry-run` prints the guards and the plan and calls nothing at all — no `gcloud`, no token, no POST, no
+model call — and it prints no block and no verdict. Every other run is idempotent and reads only. Progress
+goes to stderr and one `CHECK 530 RESULT` block to stdout at the end. **Exit `0`** is every criterion that
+was measured holding; **`1`** is a measured criterion that did not hold, or a guard that stopped the run —
+among them a secret on the review job, a `secretAccessor` on its account, a signature that is not one line of
+hex, an audit line for another run or one carrying a pull request, a route that admits a call with no token,
+and the review account admitted on the verify route; **`2`** is the check not being able to measure — a tool
+missing, a checkout that is not one, a `doctor` without a project or without the census line, an ID token or
+the service's URL that could not be had. A key the run never reached reads `FAIL — not reached`. The knobs
+are `CHECK530_DRY_RUN`, `CHECK530_KEEP_SCRATCH`, `CHECK530_SANDBOX`, `CHECK530_RUN`, `CHECK530_PR`,
+`CHECK530_CODING_JOB`, `CHECK530_BUCKET`, `CHECK530_SERVICE_URL`, `CHECK530_TIMEOUT_SECONDS` (120),
+`CHECK530_TOKEN_TIMEOUT_SECONDS` (60) and `CHECK530_LOG_FRESHNESS` (30d), and `--sandbox`, `--run`, `--pr`,
+`--coding-job`, `--bucket` and `--service-url` are the same settings as flags.
+
+**Restore.** Nothing to restore: the check creates nothing, writes nothing into the project and deletes
+nothing. Every row is a read of the installation, of the runs bucket the review run's artifact and record
+live in, and of the credentials service's own log, plus two POSTs to the verify route that the service
+**refuses before any work** — the one audit line each refusal writes is the service's own record of it and is
+not the check's to delete — and the block's `restore` row says exactly that. What an owner's own review run
+left — the artifact, the record, the spend — is left where it is, and the ID tokens this check minted die
+with the scratch directory that held them: one directory at mode `0700`, removed from the exit trap even on
+a failed assertion or a Ctrl-C, and kept with a message saying where it is when `CHECK530_KEEP_SCRATCH` is
+set. **No agent runs any step of it.**
 
 ## Check 230: the author, the committer and the trailers, on GitHub and on Bitbucket (two sandbox repositories carrying `git.author: launcher`, a third with no such key, and their forges; never `belong`; run by you; NOT RUN)
 
