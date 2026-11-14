@@ -611,11 +611,11 @@ func TestGraceUsesTheKeysOwnDays(t *testing.T) {
 // past what a duration holds answers a window far shorter than the one it
 // states -- expired, for a grace a licence server meant to outlast the term.
 func TestGraceDaysPastADurationIsTheLongestGrace(t *testing.T) {
-	longest := graceDuration(maxIntervalDays + 1)
+	longest := graceDuration(MaxIntervalDays + 1)
 	if longest < 36500*24*time.Hour {
 		t.Fatalf("a grace past what a duration holds is %v, want the longest grace there is: the arithmetic wrapped instead of stopping at the bound", longest)
 	}
-	for _, days := range []int{maxIntervalDays + 1, 1 << 40, (1 << 62) - 1} {
+	for _, days := range []int{MaxIntervalDays + 1, 1 << 40, (1 << 62) - 1} {
 		if got := graceDuration(days); got != longest {
 			t.Fatalf("graceDuration(%d) is %v, want %v: every grace past the bound is the same grace", days, got, longest)
 		}
@@ -639,24 +639,24 @@ func TestGraceDaysPastADurationIsTheLongestGrace(t *testing.T) {
 
 // TestParseISODurationRefusesWhatItCannotHold pins the bound on the two forms
 // F16 admits. A duration in nanoseconds runs out at about 106,751 days, so the
-// parser stops at maxIntervalDays and refuses a longer text rather than letting
+// parser stops at MaxIntervalDays and refuses a longer text rather than letting
 // the multiply wrap it into a window far shorter than the key says; `P<n>W`
 // multiplies by seven, so its bound is the same span counted in weeks.
 //
 // Nothing else holds either guard: with the bound deleted the whole package is
 // green, and `P99999999999999999999D` answers a wrapped duration and no error.
 func TestParseISODurationRefusesWhatItCannotHold(t *testing.T) {
-	longest := time.Duration(maxIntervalDays) * 24 * time.Hour
+	longest := time.Duration(MaxIntervalDays) * 24 * time.Hour
 	for _, tt := range []struct {
 		name string
 		text string
 		want time.Duration
 		ok   bool
 	}{
-		{"the longest count of days there is", fmt.Sprintf("P%dD", maxIntervalDays), longest, true},
-		{"one day past it", fmt.Sprintf("P%dD", maxIntervalDays+1), 0, false},
-		{"the longest count of weeks there is", fmt.Sprintf("P%dW", maxIntervalDays/7), longest, true},
-		{"one week past it", fmt.Sprintf("P%dW", maxIntervalDays/7+1), 0, false},
+		{"the longest count of days there is", fmt.Sprintf("P%dD", MaxIntervalDays), longest, true},
+		{"one day past it", fmt.Sprintf("P%dD", MaxIntervalDays+1), 0, false},
+		{"the longest count of weeks there is", fmt.Sprintf("P%dW", MaxIntervalDays/7), longest, true},
+		{"one week past it", fmt.Sprintf("P%dW", MaxIntervalDays/7+1), 0, false},
 		{"a run of digits nobody meant", "P99999999999999999999D", 0, false},
 		{"the same run in weeks", "P99999999999999999999W", 0, false},
 		{"the largest number an int64 holds", "P9223372036854775807D", 0, false},

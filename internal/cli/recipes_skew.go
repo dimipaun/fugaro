@@ -1269,6 +1269,9 @@ func checkImageSinceDev(ctx context.Context, env *cloudEnv, slug string, spec *t
 	if err != nil {
 		return remote(err)
 	}
+	if entry, ok := launchCatalogEntry(ctx, env, slug, spec); ok {
+		return checkCatalogEntrySince(ctx, env, b, slug, spec, entry, since, subject, knows, warn)
+	}
 	data, _, err := b.Read(ctx, imagecheck.RecordKey(slug, spec.Workflow))
 	switch {
 	case errors.Is(err, blobx.ErrNotExist):
@@ -1303,6 +1306,57 @@ func checkImageSinceDev(ctx context.Context, env *cloudEnv, slug string, spec *t
 			}
 		}
 		fmt.Fprintf(warn, "warning: the job image of %s workflow %s was built from %s, which is not a release base image; whether its runner knows %s is not checked%s\n", spec.Repo, spec.Workflow, ref, knows, note)
+	case imagePredates(rel, since):
+		return refuse(fmt.Sprintf("was built from base image %s, release %s", ref, rel))
+	}
+	return nil
+}
+
+// launchCatalogEntry is the project image catalog entry the job this launch
+// starts runs, and whether it runs one at all. A repository whose image is the
+// project's catalog entry has no build record of its own to judge: its
+// per-workflow record is one `fugaro image build --workflow` and `image
+// refresh` refuse to write while repo-level images are disabled, so it stays
+// at whatever base it had when the catalog took over, and judging it would
+// refuse a launch on an image nothing runs. A failed resolution is not an
+// answer, so the repository's own record is judged as before.
+func launchCatalogEntry(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec) (config.Entry, bool) {
+	entry, ok, err := deployedCatalogEntry(ctx, env, slug, spec)
+	if err != nil || !ok {
+		return config.Entry{}, false
+	}
+	return entry, true
+}
+
+// checkCatalogEntrySince is checkImageSinceDev's judge for a job that runs a
+// catalog entry: the entry's own build record, under the key a catalog build
+// writes it (gcp.CatalogRecordKey), whose base_ref says the base the image was
+// built FROM. The cure it names is the entry's build, which no
+// `fugaro update` of this checkout does.
+func checkCatalogEntrySince(ctx context.Context, env *cloudEnv, b *blobx.Bucket, slug string, spec *task.Spec, entry config.Entry, since, subject, knows string, warn io.Writer) error {
+	name := pluginwire.Printable(entry.Name)
+	where := "in the checkout of the entry's own repository"
+	if entry.Source.Repo != "" {
+		where = "in the checkout of " + pluginwire.Printable(entry.Source.Repo)
+	}
+	refuse := func(why string) error {
+		return userErr("%s needs a job image whose runner knows %s (fugaro %s or later), but the job image of %s workflow %s is the project's catalog entry %s, which %s. "+
+			"Run fugaro image build %s %s, in your own terminal window (never in a coding agent's session): it rebuilds the entry from this release's base image and writes the record this launch reads",
+			subject, knows, since, spec.Repo, spec.Workflow, name, why, name, where)
+	}
+	rec, err := catalogEntryRecord(ctx, b, catalogEntrySlugs(ctx, env, slug, entry), entry.Name)
+	switch {
+	case err != nil:
+		return remote(fmt.Errorf("reading the build record of the catalog entry %s: %w", name, err))
+	case rec == nil:
+		return refuse("has no build record")
+	case rec.BaseRef == "":
+		return refuse("has a build record that does not say which base image it was built from")
+	}
+	ref := pluginwire.Printable(rec.BaseRef)
+	switch rel, ok := releaseOf(rec.BaseRef); {
+	case !ok:
+		fmt.Fprintf(warn, "warning: the catalog entry %s, the job image of %s workflow %s, was built from %s, which is not a release base image; whether its runner knows %s is not checked\n", name, spec.Repo, spec.Workflow, ref, knows)
 	case imagePredates(rel, since):
 		return refuse(fmt.Sprintf("was built from base image %s, release %s", ref, rel))
 	}
