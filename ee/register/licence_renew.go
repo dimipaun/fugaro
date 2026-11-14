@@ -216,6 +216,16 @@ func licenceRenew(cmd *cobra.Command, o *licenceRenewOptions) error {
 			licenceRenewalWindow(claims).UTC().Format(time.RFC3339), licenceLastCheck(view))
 		return nil
 	}
+	// The container is opened only for work that needs it: the check's proof
+	// when the check is due, and the renewal's proof when the key renews
+	// itself. A manual key with nothing due needs neither, so a run like that
+	// reads no container at all — otherwise a container that cannot prove the
+	// key, or a grant that refuses to list its versions, would fail the job
+	// every night of a window it is never going to act in.
+	if !due && claims.RenewalMode != licence.RenewalAuto {
+		licenceManualRenewal(out, claims)
+		return nil
+	}
 	secrets, err := openLicenceSecrets(ctx, lc)
 	if err != nil {
 		return err
@@ -279,8 +289,7 @@ func licenceRenew(cmd *cobra.Command, o *licenceRenewOptions) error {
 	// record is still the job's to write, and the next term is a person's call
 	// to `fugaro licence refresh`.
 	if renewWanted && claims.RenewalMode != licence.RenewalAuto {
-		fmt.Fprintf(out, "key %s renews manually (renewal_mode: %s), so the job checks it and never renews it: `fugaro licence refresh` fetches the next key when a person asks for it\n",
-			safetext.Field(claims.KeyID), safetext.Field(claims.RenewalMode))
+		licenceManualRenewal(out, claims)
 		return nil
 	}
 	if !renewWanted {
@@ -344,17 +353,24 @@ func licenceRenew(cmd *cobra.Command, o *licenceRenewOptions) error {
 			safetext.Field(next.KeyID), next.PaidThrough.UTC().Format(time.RFC3339))
 		return nil
 	}
-	if would, err := store.WouldApply(ctx, now, licenceRing, licenceFirebaseProject(lc), []byte(answer.Key)); err == nil {
-		// The project keeps the later term (T26), so an answer that would not
-		// be the key the installation applies would be written beside the key
-		// it does not replace — and the renewal secret written with it would
-		// leave the applied key unable to renew. The store is the judge and not
-		// this command's arithmetic: `set` refuses the same shape.
-		if would.Claims.KeyID != next.KeyID || next.PaidThrough.Before(would.Claims.PaidThrough) {
-			return fcli.RemoteErr(fmt.Errorf("the licence server answered key %s (paid through %s) and this installation applies key %s (paid through %s): nothing was written, because the project keeps the later term and the answer would not be the key this installation runs on",
-				safetext.Field(next.KeyID), next.PaidThrough.UTC().Format(time.RFC3339),
-				safetext.Field(would.Claims.KeyID), would.Claims.PaidThrough.UTC().Format(time.RFC3339)))
-		}
+	would, err := store.WouldApply(ctx, now, licenceRing, licenceFirebaseProject(lc), []byte(answer.Key))
+	if err != nil {
+		// A store this read cannot use is answered before either write rather
+		// than after them: `set` may fall back on Install's own refusal, but the
+		// job writes the renewal secret first, and a question it could not ask
+		// is not an answer that lets a secret version be written for a key that
+		// is not going to land.
+		return licenceObjectErr(err, answer.Key)
+	}
+	// The project keeps the later term (T26), so an answer that would not be the
+	// key the installation applies would be written beside the key it does not
+	// replace — and the renewal secret written with it would leave the applied
+	// key unable to renew. The store is the judge and not this command's
+	// arithmetic: `set` refuses the same shape.
+	if would.Claims.KeyID != next.KeyID || next.PaidThrough.Before(would.Claims.PaidThrough) {
+		return fcli.RemoteErr(fmt.Errorf("the licence server answered key %s (paid through %s) and this installation applies key %s (paid through %s): nothing was written, because the project keeps the later term and the answer would not be the key this installation runs on",
+			safetext.Field(next.KeyID), next.PaidThrough.UTC().Format(time.RFC3339),
+			safetext.Field(would.Claims.KeyID), would.Claims.PaidThrough.UTC().Format(time.RFC3339)))
 	}
 	added := answer.RenewalSecret != "" && !bytes.Equal([]byte(answer.RenewalSecret), newest)
 	if added {
@@ -381,6 +397,16 @@ func licenceRenew(cmd *cobra.Command, o *licenceRenewOptions) error {
 		fmt.Fprintln(errOut, "note: the licence server answered the key without a new renewal secret, so this installation keeps the one it holds, and the key names that secret's digest (D2200)")
 	}
 	return nil
+}
+
+// licenceManualRenewal is what the job says where it would have renewed: a
+// manual key's next term is a person's command and not the job's act (spec
+// section 7). It is one function because the run reaches it from two places —
+// a check that is due and a check that is not — and the two have to say the
+// same thing.
+func licenceManualRenewal(w io.Writer, claims licence.Claims) {
+	fmt.Fprintf(w, "key %s renews manually (renewal_mode: %s), so the job checks it and never renews it: `fugaro licence refresh` fetches the next key when a person asks for it\n",
+		safetext.Field(claims.KeyID), safetext.Field(claims.RenewalMode))
 }
 
 // licenceCheckFailed records a check that did not answer about the key, warns

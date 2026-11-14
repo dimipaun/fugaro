@@ -32,6 +32,10 @@ package register
 //     (TestRevokedKeyIsRecordedNotDeleted);
 //   - a manual key is checked and never renewed, and the job says which command
 //     renews it (TestAManualKeyIsCheckedAndNeverRenewed);
+//   - nothing of the renewal is written before the answer is one the project
+//     will apply, neither a key that names a secret this installation does not
+//     hold nor one the project's later term beats
+//     (TestARenewalThatIsNotThePairWritesNothing);
 //   - an offline key contacts nothing at all, not even the secret container
 //     (TestOfflineKeyNeverContactsTheServer).
 
@@ -709,6 +713,42 @@ func TestAManualKeyIsCheckedAndNeverRenewed(t *testing.T) {
 			t.Errorf("the check record is %+v, want the check this run made", obj.Check)
 		}
 	})
+
+	t.Run("a manual key in its window with a fresh check reads no container", func(t *testing.T) {
+		// A run with neither a check nor a renewal to make needs no proof of
+		// anything, and the container this installation holds may belong to a
+		// key that was replaced, or be a container its own account may not list.
+		// Reading it here would fail the job every night of a window in which
+		// it is never going to renew, over a proof it never uses.
+		f := newLicenceFixture(t)
+		key, secret, claims := f.bundle(t, shortTerm(f), manual)
+		install(t, f, key)
+		if err := f.store(t).RecordCheck(context.Background(), f.now, project.CheckOK, claims.KeyID); err != nil {
+			t.Fatal(err)
+		}
+		server := f.serveJobServer(t, func(route string, call keyservice.RenewalCall) (int, string) {
+			t.Errorf("the job called %s, want none: the check is fresh and the job renews no manual key", route)
+			return http.StatusOK, `{"status":"ok"}`
+		})
+
+		out, _, err := f.renewJob(t)
+		if err != nil {
+			t.Fatalf("licence renew --job of a manual key whose check is not due = %v", err)
+		}
+		if server.count() != 0 {
+			t.Errorf("the job called the licence server %d times, want none", server.count())
+		}
+		if got := f.secrets.Requests(); len(got) != 0 {
+			t.Errorf("the job made %d calls to Secret Manager, want none: nothing this run does needs the renewal secret", len(got))
+		}
+		if obj := f.object(t); len(obj.Keys) != 1 || obj.Keys[0] != key {
+			t.Errorf("the project holds %d keys, want the one it had", len(obj.Keys))
+		}
+		if !strings.Contains(out, "renews manually") {
+			t.Errorf("the job's answer %q does not say the key renews by hand", out)
+		}
+		assertNoKeyMaterial(t, "the job's answer", out, key, secret)
+	})
 }
 
 // TestOfflineKeyNeverContactsTheServer holds spec section 7 for the job: an
@@ -914,6 +954,98 @@ func TestTheJobCompletesAPairACrashLeftOpen(t *testing.T) {
 	}
 	assertNoKeyMaterial(t, "the job's answer", out, key, secret)
 	assertNoKeyMaterial(t, "the job's answer", out, next, nextSecret)
+}
+
+// TestARenewalThatIsNotThePairWritesNothing holds the two guards between the
+// answer and the writes. Both are refusals of an answer the server may send and
+// this installation may not act on, and both are answered before either write:
+// the renewal secret written beside a key the installation does not run on
+// takes the renewal away from the key it does.
+func TestARenewalThatIsNotThePairWritesNothing(t *testing.T) {
+	t.Run("a key whose digest names another secret", func(t *testing.T) {
+		// D2135: the key carries the digest of the secret it renews with, and a
+		// key naming a secret this installation does not hold would be
+		// installed beside the version that proves the key it replaces.
+		f := newLicenceFixture(t)
+		key, secret, claims := f.installed(t, shortTerm(f))
+		next, _, _ := f.successor(t, claims)
+		stranger := licenceTestSecret(t)
+		server := f.serveJobServer(t, func(route string, call keyservice.RenewalCall) (int, string) {
+			if route == keyservice.RouteStatus {
+				return licenceAnswerJSON(t, keyservice.Answer{Status: keyservice.StatusOK})
+			}
+			return licenceAnswerJSON(t, keyservice.Answer{Status: keyservice.StatusOK, Key: next, RenewalSecret: stranger})
+		})
+		wrote := secretWrites(f)
+
+		out, errOut, err := f.renewJob(t)
+		if err == nil {
+			t.Fatal("a renewal whose key names a secret this installation does not hold was written")
+		}
+		if code := fcli.ExitCode(err); code != fcli.ExitRemoteError {
+			t.Errorf("the refusal exited %d, want %d: %v", code, fcli.ExitRemoteError, err)
+		}
+		if got := len(server.callsTo(keyservice.RouteRenew)); got != 1 {
+			t.Errorf("the job asked /renew %d times, want once: the answer is what the guard refused", got)
+		}
+		if got := secretWrites(f); got != wrote {
+			t.Errorf("the container was given %d further versions, want none: the key they would renew with names a secret the installation does not hold", got-wrote)
+		}
+		obj := f.object(t)
+		if len(obj.Keys) != 1 || obj.Keys[0] != key {
+			t.Errorf("the project holds %d keys after an answer that is not the pair, want the one it had", len(obj.Keys))
+		}
+		if got := string(f.secrets.Latest(f.secretContainer())); got != secret {
+			t.Error("the container's newest version is not the secret the installed key renews with")
+		}
+		if !strings.Contains(err.Error(), "digest of another secret") {
+			t.Errorf("the refusal %q does not say what is wrong with the pair", err.Error())
+		}
+		msg := out + errOut + err.Error()
+		assertNoKeyMaterial(t, "the job's refusal", msg, key, secret)
+		assertNoKeyMaterial(t, "the job's refusal", msg, next, stranger)
+	})
+
+	t.Run("a key the project would not apply", func(t *testing.T) {
+		// T26: the project keeps the later term, so an answer whose term ends
+		// before the applied key's is written to the object and never used —
+		// and it would carry the renewal secret with it.
+		f := newLicenceFixture(t)
+		key, _, _ := f.installed(t, shortTerm(f))
+		stale, staleSecret, _ := f.bundle(t, func(c *licence.Claims) {
+			c.KeyID = "lk_test_k41_0003"
+			c.PaidThrough = f.now.Add(5 * 24 * time.Hour)
+		})
+		server := f.serveJobServer(t, func(route string, call keyservice.RenewalCall) (int, string) {
+			if route == keyservice.RouteStatus {
+				return licenceAnswerJSON(t, keyservice.Answer{Status: keyservice.StatusOK})
+			}
+			return licenceAnswerJSON(t, keyservice.Answer{Status: keyservice.StatusOK, Key: stale, RenewalSecret: staleSecret})
+		})
+		wrote := secretWrites(f)
+
+		out, errOut, err := f.renewJob(t)
+		if err == nil {
+			t.Fatal("a renewal the project would not apply was written")
+		}
+		if code := fcli.ExitCode(err); code != fcli.ExitRemoteError {
+			t.Errorf("the refusal exited %d, want %d: %v", code, fcli.ExitRemoteError, err)
+		}
+		if got := len(server.callsTo(keyservice.RouteRenew)); got != 1 {
+			t.Errorf("the job asked /renew %d times, want once: the answer is what the guard refused", got)
+		}
+		if got := secretWrites(f); got != wrote {
+			t.Errorf("the container was given %d further versions, want none: the key they would renew with is not the key this installation runs on", got-wrote)
+		}
+		obj := f.object(t)
+		if len(obj.Keys) != 1 || obj.Keys[0] != key {
+			t.Errorf("the project holds %d keys after an answer it would not apply, want the one it had", len(obj.Keys))
+		}
+		if !strings.Contains(err.Error(), "keeps the later term") {
+			t.Errorf("the refusal %q does not say why the answer was refused", err.Error())
+		}
+		assertNoKeyMaterial(t, "the job's refusal", out+errOut+err.Error(), key, staleSecret)
+	})
 }
 
 // TestAFailedSecretWriteRenewsNothing holds the order of the two writes: the
