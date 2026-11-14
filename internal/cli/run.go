@@ -3038,12 +3038,17 @@ func claudeAccountFor(ctx context.Context, env *cloudEnv, repo, flag, stage, ref
 // exactly as it does for those (D2091, D2092). A name a *record* carries — a
 // stored task's OAuthToken, the account a follow-up inherits from the run it
 // continues — is the account's own name: a launch resolved it before it was
-// written down and the format holds no alias at all (F4). Reading it through
-// the alias block again would judge one account while the job mounts another,
-// because the job variant is still the recorded name (JobName(slug,
-// WorkflowVariant(workflow, spec.OAuthToken))): the allow-list would be asked
-// about the alias' target and the run would start on the recorded name's
-// credential.
+// written down, the format holds no alias at all (F4), and a name the alias
+// block answers to is a name this file has no account for any more (D2103).
+//
+// Reading such a name through the block again is wrong in both shapes that
+// carry one, and neither is a missing check: a task launched as it stands — a
+// repeat, a --retry — is placed in the job of its own variant
+// (JobName(slug, WorkflowVariant(workflow, spec.OAuthToken))), so the checks
+// would be asked about the alias' target while the credential mounted is the
+// recorded name's, and a follow-up would be moved onto that target, off the
+// account its previous run resolved, which is exactly what a follow-up may not
+// do on its own (D2098).
 type nameOrigin int
 
 const (
@@ -3184,11 +3189,10 @@ func claudeAccountChoice(ctx context.Context, env *cloudEnv, repo, flag, stage, 
 	// the alias block may answer it (nameOrigin): --token is a name a person
 	// wrote, so it resolves before every check below, which is the same step and
 	// the same order the keys take above. A name a record carries is the account
-	// itself and stands as written — and a name the alias block answers to is
-	// then not an account of this file at all: the launch is refused here, where
-	// the record's own name is still the one being judged, rather than resolved
-	// and checked as the alias' target while the job it starts mounts the
-	// recorded name's token.
+	// itself and stands as written (D2103), and a name the alias block answers
+	// to is then not an account of this file at all: the launch is refused here,
+	// where the record's own name is still the one being judged, rather than
+	// resolved into an account the record does not name.
 	//
 	// alias is the alias the walk answers with, and it is set exactly where a
 	// name of the owner's local config decides the account — a written --token
@@ -3199,7 +3203,7 @@ func claudeAccountChoice(ctx context.Context, env *cloudEnv, repo, flag, stage, 
 	if origin == nameWritten {
 		name, alias = env.lc.ResolveAccount(flag)
 	} else if target, viaAlias := env.lc.ResolveAccount(flag); viaAlias != "" {
-		return "", "", userErr("the Claude account %s this launch carries is an alias of this machine's config now, and a name a launch wrote down is the account itself and never an alias: the alias stands for %s, while the job this launch starts still mounts %s's token — the checks below would be asked about one account and the run would go out on the other. Nothing was launched: no claim was taken, no budget token was minted and Cloud Run was not called. Launch a new run, or name the account with --token, which may name an alias and resolves it to the account it stands for",
+		return "", "", userErr("the Claude account %s this launch carries is an alias of this machine's config now, and a name a record carries is the account itself and never an alias: resolving it again would hold this launch to %s while the record still names %s — a task launched as it stands keeps the job that mounts the recorded account's token, and a follow-up would be moved off the account its previous run resolved, which is what a follow-up must not do on its own (D2098). Nothing was launched: no claim was taken, no budget token was minted and Cloud Run was not called. Launch a new run, or name the account with --token, which may name an alias and resolves it to the account it stands for",
 			pluginwire.Printable(flag), pluginwire.Printable(target), pluginwire.Printable(flag))
 	}
 	if name == "" && stage != "" {

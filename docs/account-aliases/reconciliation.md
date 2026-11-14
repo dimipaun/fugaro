@@ -6,7 +6,7 @@
 **The owner answered every decision, D2090–D2102, as recommended on 2026-11-10**, and approved tasks AL0–AL4 the same day ("approve all tasks"); they stay sequenced
 after the open pull requests the plan names.
 
-**Numbers:** this work holds **D2090–D2109** (D2090–D2102 written, D2103–D2109 reserved) and
+**Numbers:** this work holds **D2090–D2109** (D2090–D2103 written, D2104–D2109 reserved) and
 **Checks 550–554** (550 written, 551–554 reserved). First written as D2070–D2082
 (D2070–D2089 reserved) and renumbered on 2026-11-10, because #2294 (secrets-brokering) claimed the
 same block; #2293 holds D2020–D2029 and #2285 D2030–D2069 and Checks 540–549. Re-checked that day: no
@@ -133,7 +133,7 @@ per call (update-in-flight, the policy row), but a stage account is refused unde
 (`config.CheckStageAccountMix`, `internal/config/stage_accounts.go:192`) and rung 4 never applies there
 (`run.go:2404`). *Consequence:* no alias reaches a cascade run; nothing to design.
 
-## 3. Decisions D2090–D2102 (answered 2026-11-10)
+## 3. Decisions D2090–D2103 (D2090–D2102 answered 2026-11-10, D2103 written by AL1)
 
 | # | Question | Recommendation (reason) | Alternatives and their cost | Owner's answer |
 | --- | --- | --- | --- | --- |
@@ -151,7 +151,9 @@ per call (update-in-flight, the policy row), but a stage account is refused unde
 | **D2101** | `accounts rm` of an alias's target. | **Refused, naming `accounts alias set` (or `alias rm`)** (F11). | (b) Remove the alias with it: every key naming the alias then refuses at the next launch, discovered late. | Owner, 2026-11-10: as recommended |
 | **D2102** | Ordering against model-crafts (F15). | **Build aliases on today's keys after #2252 (MC4) and #2274 (MC5) merge**, and teach MC4's migration to resolve an alias before it derives a craft key (AL1 carries that one function if MC4 has merged; otherwise it is a note to #2252). | (b) Wait until crafts replace the stage keys and define the alias only as a craft access name: the ruling waits for MC5–MC9. | Owner, 2026-11-10: as recommended |
 
-D2103–D2109 are reserved and unused.
+| **D2103** | What does a name a *record* carries mean — a task's `OAuthToken`, the account a follow-up inherits (F4, F12)? | **The account itself, read as written and never through the alias block** (AL1): a launch resolved it before it was written down, so the format holds no alias, and the block answering to such a name means this file has no account of that name any more. Resolving it again would hold the launch to the alias' target while a task launched as it stands keeps the job that mounts the recorded account's token (`JobName(slug, WorkflowVariant(workflow, spec.OAuthToken))`) — the checks judging one account and the credential being another — and would move a follow-up off the account its previous run resolved, which is what a follow-up may not do on its own (D2098). Such a launch is refused, and `--token` is where a person names an alias: it is the one way to move a follow-up. | (b) Resolve it through the block as a choice key is: a repeat or a `--retry` after a rename launches on the allow-list's answer for the alias' target, in the recorded name's job variant — the shape AL1's review found, and the reason the alias may not answer a recorded name. (c) Refuse only where the alias' target fails the allow-list: the same refusal for the shapes that happen to be caught, and none at all where the target is admitted. | **Not put to the owner**: AL1's implementation ruling, 2026-11-14, recorded here at code review's request (see §4) |
+
+D2104–D2109 are reserved and unused.
 
 ## 4. Open tensions and open items for the owner
 
@@ -162,6 +164,11 @@ D2103–D2109 are reserved and unused.
    planned at opus with an in-run level 3 review.
 3. **Independent review has not run on this package** (the author is a subagent that does not spawn
    reviewers).
+4. **D2103 is written, not answered.** AL1 settles what a name a record carries means because its
+   implementation cannot leave the question open (a repeat after a rename refuses rather than launches,
+   where `origin/main` launched), and it is written up here rather than left in the code: the owner may
+   prefer the other reading (b), which costs the repeat its idempotence after a rename but never refuses a
+   launch the operator asked for.
 
 ## 5. UNVERIFIED
 

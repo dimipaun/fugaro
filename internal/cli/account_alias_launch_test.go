@@ -441,6 +441,87 @@ func TestFollowUpRefusesAnInheritedNameThatIsAnAliasNow(t *testing.T) {
 	}
 }
 
+// TestRepeatNamesTheAliasAndIsStillTheSameLaunch is the repeat the plugin
+// documents as idempotent, read through an alias: `--token ALIAS` names the
+// account the stored task mounts, so the second launch is the one the run ID
+// already holds and the answer is "already launched", not "already holds a
+// different task". What a repeat is held to is the account the flag resolves to
+// (D2091, D2103) — the account this launch would go out on — and not the name it
+// was written with.
+func TestRepeatNamesTheAliasAndIsStillTheSameLaunch(t *testing.T) {
+	f := aliasChainFixture(t)
+	args := []string{"run", "--repo", limitsRepo, "--continues", chainRun, "--run-id", chainFu, "--token", "reviewer", "A task"}
+	out, _, err := execute(t, args...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "launch " + task.ShortRun(chainFu) + " (account reviewer -> acme-overflow)"; !strings.Contains(out, want) {
+		t.Fatalf("the launch does not carry %q:\n%s", want, out)
+	}
+
+	out, _, err = execute(t, args...)
+	if err != nil {
+		t.Fatalf("the repeat of the launch this run ID holds was refused: %v", err)
+	}
+	if !strings.Contains(out, "already launched") {
+		t.Fatalf("the repeat is not answered as the launch it repeats:\n%s", out)
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("%d executions, want the one the first launch started", n)
+	}
+}
+
+// TestFollowUpSwitchNoteIsAboutTheAccountNotTheAlias: the note a --token prints
+// is about the account the follow-up goes out on, not about the name the flag
+// was written with (D2091, F4). A flag whose alias stands for the account the
+// previous run resolved switches nothing and prints nothing, and a flag that
+// really moves the follow-up names the account it lands on — a job mounts an
+// account and never an alias.
+func TestFollowUpSwitchNoteIsAboutTheAccountNotTheAlias(t *testing.T) {
+	t.Run("the alias stands for the account in hand", func(t *testing.T) {
+		_, errOut := followUpOnAliasedPR(t, "reviewer", fuID)
+		if strings.Contains(errOut, "switches this follow-up") {
+			t.Errorf("--token reviewer stands for acme-overflow, the account the previous run resolved, and the note reports a switch that did not happen:\n%s", errOut)
+		}
+	})
+	t.Run("the alias stands for another account", func(t *testing.T) {
+		_, errOut := followUpOnAliasedPR(t, "reviewer-other", chainFu)
+		if want := "to acme-personal"; !strings.Contains(errOut, want) {
+			t.Errorf("the note does not name the account the follow-up moves to (%q):\n%s", want, errOut)
+		}
+		if strings.Contains(errOut, "to reviewer-other") {
+			t.Errorf("the note names the alias as the account the follow-up moves to:\n%s", errOut)
+		}
+	})
+}
+
+// followUpOnAliasedPR is a follow-up on PR #7 whose previous run went out on
+// acme-overflow, launched with --token naming the account the caller writes.
+// Two accounts of the repository and two aliases, so one flag stands for the
+// account in hand and the other for the account beside it.
+func followUpOnAliasedPR(t *testing.T, token, id string) (*cloudFixture, string) {
+	t.Helper()
+	f := newCloudFixture(t)
+	f.appendConfig(t, "claude_accounts:\n  acme-overflow: { allow_data_to: [\"acme/app\"] }\n  acme-personal: { allow_data_to: [\"acme/app\"] }\n"+
+		"claude_account_aliases:\n  reviewer: acme-overflow\n  reviewer-other: acme-personal\n")
+	baseBranchCheckout(t, "acme/app", aliasChainYAML, "main")
+	writeBuildRecord(t, f, appSlug, "web", release065)
+	f.run.AddJob(gcp.JobName(appSlug, gcp.WorkflowVariant("web", "acme-overflow")), "2", "4Gi")
+	f.run.AddJob(gcp.JobName(appSlug, gcp.WorkflowVariant("web", "acme-personal")), "2", "4Gi")
+	spec := firstRunSpec(rootID)
+	spec.OAuthToken = "acme-overflow"
+	seedSpec(t, f, spec, false)
+	rec := prRecord(rootID, "", 7, 1)
+	rec.StartedAt = time.Now().Add(-time.Hour)
+	writeRecord(t, f, rootID, rec)
+
+	_, errOut, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", id, "--token", token, "A follow-up")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return f, errOut
+}
+
 // aliasChainFixture is the installation a repeat after a repoint is measured
 // on: acme/app checked out with agent.auth oauth and a chain to continue, two
 // accounts of the repository, and the project default naming the alias. A
