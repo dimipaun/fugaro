@@ -282,7 +282,7 @@ guard_checkout() {
   *"$REPO" | *"$REPO".git) : ;;
   *) stop "Check 124 stopped: this checkout's origin ('${ORIGIN}') is not the sandbox (${REPO}), which is the only repository Check 124 runs against" ;;
   esac
-  CHECKOUT_SHA=$(git -C "$CHECKOUT" rev-parse HEAD 2>/dev/null | head -n 1)
+  CHECKOUT_SHA=$(git -C "$CHECKOUT" rev-parse HEAD 2>/dev/null | head -n 1 || true)
   [ -n "$CHECKOUT_SHA" ] || CHECKOUT_SHA=unknown
   fact checkout PASS "run from the sandbox checkout ${CHECKOUT} (origin ${ORIGIN}, commit ${CHECKOUT_SHA}): the installation every fugaro command resolves is the sandbox's own, and no command in this check names another repository"
 }
@@ -351,6 +351,18 @@ run_capture() { # OUT ERR CMD...
 # wait that never ends is a check nobody runs, so every wait here is bounded and
 # says so in the row when it gives up.
 sleep_for() { sleep "$1" 2>/dev/null || true; }
+
+# poll_step is the interval a bounded wait advances by, floored at one second: a
+# caller that set CHK124_POLL_SECONDS=0 to make a wait fast would otherwise
+# advance by zero and never reach its bound, which is a wait that never ends --
+# the one thing the bound exists to prevent. The suite's own cases set it to 0.
+poll_step() {
+  local p=${CHK124_POLL_SECONDS:-30}
+  case "$p" in
+  '' | 0 | *[!0-9]*) p=1 ;;
+  esac
+  printf '%s\n' "$p"
+}
 
 runs_json() { # the sandbox installation's runs, as JSON
   fugaro runs ls --project "$INSTALL" --json >"$1" 2>"$2"
@@ -511,8 +523,6 @@ step_validate() {
 }
 
 part_a() {
-  BLOCK_TITLE="CHECK 124A RESULT"
-  BLOCK_KEYS=(owner installation checkout belong workdir xtrace before plan-only apply doctor validate restore)
   if [ -n "$DRY_RUN" ]; then
     print_plan_a
     mark_not_taken before plan-only apply doctor validate
@@ -616,7 +626,7 @@ print(d.get("log_url") or "")' "$SCRATCH/launch.json" 2>/dev/null || true)
 }
 
 step_job_spec() {
-  [ -n "$RUN_ID" ] || {
+  [ -n "${RUN_ID:-}" ] || {
     fact job PASS "not reached: nothing was launched, so there is no job to read — the launch row above says why"
     return 0
   }
@@ -678,7 +688,7 @@ PY
 # request as a draft at its first checkpoint push and flips it at finalize, so
 # the draft is a reading taken in flight and the end is a reading taken after.
 step_run_b() {
-  [ -n "$RUN_ID" ] || {
+  [ -n "${RUN_ID:-}" ] || {
     fact run FAIL "not taken: nothing was launched (the launch row above says why), so there is no run to follow"
     return 0
   }
@@ -720,8 +730,10 @@ step_run_b() {
       fact run FAIL "the run was still going after ${bound}s (status '${status}', stage '$(run_field "$SCRATCH/runs.json" "check 124b:" "stage")'), so this sitting could not read its end: '$(printf '%s' "$text" | oneline)'. Re-run --part b later with CHK124_RUN_WAIT_SECONDS raised (a first Batch run on a fresh installation pays the preload and the checkout), or read the row yourself and paste it — nothing below it was measured"
       return 0
     fi
-    sleep_for "${CHK124_POLL_SECONDS:-30}"
-    waited=$((waited + ${CHK124_POLL_SECONDS:-30}))
+    local step
+    step=$(poll_step)
+    sleep_for "$step"
+    waited=$((waited + step))
   done
 }
 
@@ -780,8 +792,6 @@ print(d.get("state") or "")' "$SCRATCH/decline.json" 2>/dev/null || true)
 }
 
 part_b() {
-  BLOCK_TITLE="CHECK 124B RESULT"
-  BLOCK_KEYS=(owner installation checkout belong workdir xtrace backend repo-yaml launch job draft run decline restore)
   if [ -n "$DRY_RUN" ]; then
     print_plan_b
     mark_not_taken backend repo-yaml launch job draft run decline
@@ -815,6 +825,11 @@ step_exit_code() {
   # The number is read, never remembered: it is a fact about the tree this
   # checkout is at, and the register refuses to name it for exactly that reason.
   local tree=$CHECKOUT file hits
+  # Unset when the read fails: every reference below is guarded by a test, but
+  # `set -u` reads an unset name as an error before the guard can.
+  PREEMPT_EXIT_CODE=""
+  EXIT_CODE_SOURCE=""
+  EXIT_CODE_SHA=""
   file="$CHECKOUT/internal/backend/batch/run.go"
   if [ ! -f "$file" ]; then
     # The sandbox is this check's own checkout, but a sandbox without the Fugaro
@@ -827,7 +842,7 @@ step_exit_code() {
       return 0
     }
     EXIT_CODE_SOURCE="${tree} (the tree this script lives in; the checkout does not carry the Fugaro tree)"
-    EXIT_CODE_SHA=$(git -C "$tree" rev-parse HEAD 2>/dev/null | head -n 1)
+    EXIT_CODE_SHA=$(git -C "$tree" rev-parse HEAD 2>/dev/null | head -n 1 || true)
     [ -n "$EXIT_CODE_SHA" ] || EXIT_CODE_SHA=unknown
   else
     EXIT_CODE_SOURCE="${CHECKOUT}"
@@ -854,7 +869,7 @@ step_launch_c() {
 print((json.load(open(sys.argv[1])) or {}).get("run_id") or "")' "$SCRATCH/launch.json" 2>/dev/null || true)
   RUN_BRANCH=$(python3 -c 'import json,sys
 print((json.load(open(sys.argv[1])) or {}).get("branch") or "")' "$SCRATCH/launch.json" 2>/dev/null || true)
-  [ -n "$RUN_ID" ] || {
+  [ -n "${RUN_ID:-}" ] || {
     fact launch FAIL "the launch printed no run_id: $(oneline <"$SCRATCH/launch.json")"
     return 0
   }
@@ -865,7 +880,7 @@ print((json.load(open(sys.argv[1])) or {}).get("branch") or "")' "$SCRATCH/launc
 # below needs. Both are reads, and both are bounded: a job that never leaves
 # QUEUED is a reading (and the reaper's business), not something to wait out.
 step_in_flight() {
-  [ -n "$RUN_ID" ] || {
+  [ -n "${RUN_ID:-}" ] || {
     fact in-flight FAIL "not taken: nothing was launched, so there is no job and no VM to catch (the launch row above says why)"
     return 0
   }
@@ -884,6 +899,7 @@ step_in_flight() {
         local n
         n=$(grep -c . "$SCRATCH/vms.txt" || true)
         if [ "$n" = 1 ]; then
+          IN_FLIGHT_OK=yes
           fact in-flight PASS "the run is on a VM of its own: job ${JOB} (whose own fugaro_run label value is ${JOB_LABEL_VALUE}) reads ${JOB_STATE}, and exactly one VM carries that value beside the installation's marker — '$(oneline <"$SCRATCH/vms.txt")' — after ${waited}s. This is the VM 124c-2's delete is scoped to, and the count is the reason it is scoped: a second one would mean the selection is not the check's job's"
           return 0
         fi
@@ -897,8 +913,10 @@ step_in_flight() {
       fact in-flight FAIL "the job of run ${RUN_ID} did not reach RUNNING with a VM of its own within ${bound}s (the job is '${JOB:-<not found by its label>}', its state '${JOB_STATE:-<none>}'). Nothing was deleted: a job that never leaves QUEUED is the reaper's business, not a preemption to stage, and this sitting cannot take a VM that does not exist. Re-run --part c with CHK124_INFLIGHT_WAIT_SECONDS raised if the queue was simply slow"
       return 0
     fi
-    sleep_for "${CHK124_POLL_SECONDS:-30}"
-    waited=$((waited + ${CHK124_POLL_SECONDS:-30}))
+    local step
+    step=$(poll_step)
+    sleep_for "$step"
+    waited=$((waited + step))
   done
 }
 
@@ -906,8 +924,8 @@ step_in_flight() {
 # label value the JOB records, read back off the job, never by a name typed into
 # this check, and the guard refuses anything but exactly one such VM.
 step_reclaim() {
-  if [ -z "${JOB:-}" ] || [ -z "${JOB_LABEL_VALUE:-}" ]; then
-    fact reclaim FAIL "not taken: no job of this run's was caught in flight, so which VM is the run's own is unknown and NOTHING was deleted"
+  if [ -z "${JOB:-}" ] || [ -z "${JOB_LABEL_VALUE:-}" ] || [ "${IN_FLIGHT_OK:-}" != yes ]; then
+    fact reclaim FAIL "not taken: this run was never confirmed RUNNING on a VM of its own — the in-flight row above says what was seen, and a job that has not run has no VM to take away — so NOTHING was deleted. Naming that run's label value is not a reason to delete a VM: the delete is the preemption itself, and there is no preemption to stage yet"
     return 0
   fi
   run_capture "$SCRATCH/vms.txt" "$SCRATCH/err" gcloud compute instances list --project="${P:?}" \
@@ -948,8 +966,10 @@ step_terminal() {
       fact terminal FAIL "the job ${JOB} had not reached a terminal state within ${bound}s of its VM being taken away (it reads '${state}'). Nothing below was measured: record the state and the job's own description"
       return 0
     fi
-    sleep_for "${CHK124_POLL_SECONDS:-30}"
-    waited=$((waited + ${CHK124_POLL_SECONDS:-30}))
+    local step
+    step=$(poll_step)
+    sleep_for "$step"
+    waited=$((waited + step))
   done
   run_capture "$SCRATCH/job.json" "$SCRATCH/err" gcloud batch jobs describe "$JOB" --project="${P:?}" --location="${L:?}" --format=json
   python3 - "$SCRATCH/job.json" >"$SCRATCH/terminal.fields" <<'PY'
@@ -1026,17 +1046,18 @@ step_reaper() {
   fi
   local refused named
   refused=$(printf '%s\n' "$both" | grep -E '^refused ' || true)
-  named=$(printf '%s\n' "$both" | grep -F "$VM" || true)
+  named=""
+  if [ -n "${VM:-}" ]; then
+    named=$(printf '%s\n' "$both" | grep -F "$VM" || true)
+  fi
   if [ -n "$named" ]; then
     fact reaper FAIL "the pass names the preempted run's VM (${VM}) in its report — '$(printf '%s' "$named" | oneline)' — and it is already gone: the delete above was the check's own step, so a report that still has it is the reaper reading a stale list, or a second VM that is not this check's. Record both reports whole"
     return 0
   fi
-  fact reaper PASS "the sweeper's business is the VM and the job and not the record, read both ways: '${dry}' dry, and '${real}' as the real pass, then one line per action and one refusal per refusal — the preempted run's VM (${VM}) is in NEITHER report (it is already gone), nothing in either names the run's record, and the refusals are $(if [ -n "$refused" ]; then printf '%s' "$refused" | oneline; else printf 'none'; fi). A VM whose job is still running is refused, and that is a second, still-flying run of this backend rather than this check's to delete. The two reports whole: $(printf '%s' "$both" | oneline)"
+  fact reaper PASS "the sweeper's business is the VM and the job and not the record, read both ways: '${dry}' dry, and '${real}' as the real pass, then one line per action and one refusal per refusal — the preempted run's VM (${VM:-<none: this run was never on a VM, so there was nothing to take away>}) is in NEITHER report (it is already gone), nothing in either names the run's record, and the refusals are $(if [ -n "$refused" ]; then printf '%s' "$refused" | oneline; else printf 'none'; fi). A VM whose job is still running is refused, and that is a second, still-flying run of this backend rather than this check's to delete. The two reports whole: $(printf '%s' "$both" | oneline)"
 }
 
 part_c() {
-  BLOCK_TITLE="CHECK 124C RESULT"
-  BLOCK_KEYS=(owner installation checkout belong workdir xtrace exit-code launch in-flight reclaim terminal reaper restore)
   if [ -n "$DRY_RUN" ]; then
     # The exit code is a local read of the tree, so a dry run makes it too: it
     # is the one fact of this part that no cloud read could change.
@@ -1171,8 +1192,6 @@ step_whole() {
 }
 
 part_d() {
-  BLOCK_TITLE="CHECK 124D RESULT"
-  BLOCK_KEYS=(owner installation checkout belong workdir xtrace spend diff whole restore)
   if [ -n "$DRY_RUN" ]; then
     print_plan_d
     mark_not_taken spend diff whole
@@ -1198,7 +1217,33 @@ print_plan_d() {
 }
 
 # ------------------------------------------------------------------- reporting
+# Every fact key a run's block carries, whatever it measured -- including the
+# rows a guard stopped before: a stopped run prints the whole block, so an owner
+# pasting it says which facts were never measured rather than leaving them out.
 BLOCK_KEYS=()
+BLOCK_TITLE="CHECK 124 RESULT"
+
+part_plan() {
+  case "$PART" in
+  a)
+    BLOCK_TITLE="CHECK 124A RESULT"
+    BLOCK_KEYS=(owner installation checkout belong workdir xtrace before plan-only apply doctor validate restore)
+    ;;
+  b)
+    BLOCK_TITLE="CHECK 124B RESULT"
+    BLOCK_KEYS=(owner installation checkout belong workdir xtrace backend repo-yaml launch job draft run decline restore)
+    ;;
+  c)
+    BLOCK_TITLE="CHECK 124C RESULT"
+    BLOCK_KEYS=(owner installation checkout belong workdir xtrace exit-code launch in-flight reclaim terminal reaper restore)
+    ;;
+  d)
+    BLOCK_TITLE="CHECK 124D RESULT"
+    BLOCK_KEYS=(owner installation checkout belong workdir xtrace spend diff whole restore)
+    ;;
+  esac
+}
+
 verdict_of() {
   if printf '%s\n' "$1" | grep -qE '^[a-z0-9-]+\|FAIL\|'; then
     printf 'FAIL\n'
@@ -1302,6 +1347,7 @@ main() {
     usage
     return 0
   fi
+  part_plan
   need_tools
   scratch_up
   guard_xtrace
