@@ -33,10 +33,11 @@ refused rather than defaulted, the block is local-only, so neither a launcher of
 a run's own session can declare an admin, and every other writer of the device node adds or deletes
 one child — with **one gap left open, reported rather than fixed**: the rule that a publish never
 re-adds an entry an operator removed holds only while the node exists, because revoking the **last**
-device empties the node it was on and an emptied node and an absent one are one read (`pairWaitForKey`
-in `internal/cli/pair.go` says of this same node that an absent one and an empty one are the same
-wait), so the next publish re-seeds every declared entry, the person just revoked among them whenever
-the declaration still names them. Closing that needs a record that a seed has happened, which P5 does
+device empties the node it was on, the database prunes a node its last child has left (which
+`internal/gcpfake/rtdb.go` models as the real database does), and the read the seed's gate rests on —
+`GetETag` in `internal/rtdb/client.go` — reports a node the database answers with a null body as one
+that is not there; so the next publish re-seeds every declared entry, the person just revoked among
+them whenever the declaration still names them. Closing that needs a record that a seed has happened, which P5 does
 not have: it is a decision, not a repair. The review found the folder's own text wider than the tree
 on a second point, and this note is where that is said: P5's scope sentence and **D231** put the
 declared list in the **checkout's** `fugaro.yaml`, validated by `schemas/fugaro.schema.json`, while
