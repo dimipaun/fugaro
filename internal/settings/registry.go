@@ -913,19 +913,15 @@ var localRows = []Row{
 	// own — a launcher who could write an alias into the shared file could name
 	// an account the file never admitted, one indirection in.
 	//
-	// The owner is `config local` and not a family, because no command writes
-	// the block yet: D2096 gives the write to `fugaro accounts alias set/rm`,
-	// whose whole point is converging the node and the job set on the repoint,
-	// and that command is a later task than the block and its rules. A row
-	// naming the `accounts` family before the command exists would print an
-	// owner for a key no subcommand of that family takes and refuse the write
-	// in its name, which is the pair the owner column exists not to print
-	// (D1178) — so the row says
-	// what is true of it here: the key is stated in the machine's own config,
-	// and `fugaro update` is what writes that file. The row moves to the
-	// `accounts` family the day the command lands, and D2096 is the entry that
-	// remembers it.
-	locLocal("claude_account_aliases", "none: no alias is defined, and every choice key names an account of claude_accounts directly", "config local", docModels),
+	// The owner is the `accounts` family, which D2096 gives the write to:
+	// `fugaro accounts alias set ALIAS ACCOUNT` and `accounts alias rm ALIAS`
+	// are the two doors, and their whole point is converging the node and the
+	// job set on the repoint, so the generic path carries neither row. The bare
+	// row is the block the file holds and the wildcard is one entry of it: a
+	// reader that asks about `claude_account_aliases.<name>` is asking about the
+	// key the same command writes.
+	locLocal("claude_account_aliases", "none: no alias is defined, and every choice key names an account of claude_accounts directly", "accounts", docModels),
+	locLocal("claude_account_aliases.*", "required: the one account the alias stands for, an account of claude_accounts or default", "accounts", docModels),
 	// The installation's credentials, pools and crafts (docs/model-crafts/
 	// spec.md §1–3). They are local-only for claude_accounts' reason, and the
 	// one key here that names a credential rather than holding one is why: a
