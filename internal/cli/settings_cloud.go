@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"strconv"
 	"strings"
@@ -65,16 +66,28 @@ func readCloudLayers(ctx context.Context, r *settingsRead, _ settingsOptions) er
 	if err := refuseHTTP2Debug(os.Getenv); err != nil {
 		return err
 	}
-	// The two are read in parallel and under one deadline: they are independent
-	// sources, and a database that stops answering one of them must not eat the
-	// other's whole budget (spec §2.7).
+	// The three are read in parallel and under one deadline: they are
+	// independent sources, and a database that stops answering one of them must
+	// not eat the others' whole budget (spec §2.7). The third is the layer side
+	// (settings_layer.go): the published object this machine's layer file is
+	// compared with, which is the one read here a bucket answers.
 	ctx, cancel := context.WithTimeout(ctx, settingsCloudBudget)
 	defer cancel()
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(3)
 	go func() { defer wg.Done(); r.readPolicyLayer(ctx) }()
 	go func() { defer wg.Done(); r.readCapsLayer(ctx) }()
+	go func() { defer wg.Done(); r.readLayerSide(ctx) }()
 	wg.Wait()
+	// The layer's own drift is merged after the wait rather than inside its
+	// reader: r.drift is assigned whole by the policy layer's reader, and two
+	// goroutines writing one map is a race whatever the keys.
+	if len(r.layerSide.values) > 0 {
+		if r.drift == nil {
+			r.drift = map[string]bool{}
+		}
+		maps.Copy(r.drift, r.layerSide.values)
+	}
 	return nil
 }
 

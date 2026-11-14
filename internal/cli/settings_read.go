@@ -132,6 +132,15 @@ type settingsRead struct {
 	layerAge time.Duration
 	layerMS  int64
 
+	// layerSide is the layer half of the cloud read (settings_layer.go): this
+	// machine's own layer file and the published object it is compared with.
+	// The layer's rows read the file (spec §2.2), the comparison is what claims
+	// `unpublished`, and the project source prints what it found. The zero
+	// value is a layer side that did not run, which is --offline or an
+	// installation with no backend, and the read then answers for those rows
+	// with the cached layer above.
+	layerSide layerSide
+
 	repos []repoRead
 
 	// policy and caps are the two cloud layers, each carrying its own state:
@@ -498,11 +507,17 @@ func (r *settingsRead) projectRow(row settings.Row) setting {
 	}
 	switch {
 	case strings.HasPrefix(row.Key, "layer."):
-		if r.layer != nil {
-			if v, ok := valueAt(r.layer, strings.TrimPrefix(row.Key, "layer.")); ok {
+		// The layer's own keys read this machine's layer file, which is the
+		// layer's one writer and the store of every one of them (spec §2.2),
+		// and the published object when there is no file to read; a value read
+		// from a cache instead keeps that copy's age, which is what `stale
+		// <age>` is about (settings_layer.go).
+		l, age := r.layers()
+		if l != nil {
+			if v, ok := valueAt(l, strings.TrimPrefix(row.Key, "layer.")); ok {
 				s.Value, s.Wins = v, settings.LayerProject
-				if r.layerAge > 0 {
-					s.State = staleState(r.layerAge)
+				if age > 0 {
+					s.State = staleState(age)
 				}
 			}
 		}
