@@ -24,6 +24,14 @@
 // `https:`, because an answer that named `javascript:` would be script this
 // screen would otherwise put in an `href` and run.
 //
+// **Nothing is asked for until the session has been answered.** The provider
+// starts at "not answered yet" and the SDK answers late -- the stored session is
+// read before it does -- so a request made at mount would carry no token at all
+// (`src/auth/firebase.ts`'s `idToken` reads the current user, which is nobody
+// until then) and the API's refusal would be what a signed-in customer saw, for
+// good, since nothing here asks again. So the load waits for an answer, and the
+// token is asked for per request as the client intends.
+//
 // **Who may change the seats is not this screen's check.** Roles live in the
 // memberships the API reads (P2.1), so a member who is refused is refused by the
 // API, and the refusal is what a person is shown. Nothing about a failure is
@@ -60,6 +68,7 @@ const GENERIC_FAILURE = 'The portal could not read your billing. Try again.'
 const PORTAL_FAILURE = 'The portal could not open Paddle’s customer portal. Try again.'
 const BAD_QUANTITY = 'Enter a whole number of seats, one or more.'
 const NO_WORKSPACE = 'The portal opened billing without a workspace.'
+const SIGN_IN_NEEDED = 'Sign in to see this workspace’s billing.'
 
 // The renewal day is UTC because Paddle's instant is: a customer in Auckland
 // reading a day this browser had shifted would be shown a renewal on a date
@@ -93,9 +102,10 @@ function httpsUrl(url: string): string | null {
 }
 
 export function BillingScreen() {
-  const { auth } = useSession()
+  const { state, auth } = useSession()
   const workspaceId = useParams<{ workspaceId: string }>().workspaceId
   const api = useMemo(() => createApiClient({ token: () => auth.idToken() }), [auth])
+  const signedIn = state.status === 'signed-in'
 
   const [subscription, setSubscription] = useState<Subscription | null>(null)
   const [failure, setFailure] = useState<string | null>(null)
@@ -105,7 +115,7 @@ export function BillingScreen() {
   const [waiting, setWaiting] = useState(workspaceId !== undefined)
 
   useEffect(() => {
-    if (workspaceId === undefined) {
+    if (workspaceId === undefined || !signedIn) {
       return
     }
     let live = true
@@ -131,7 +141,7 @@ export function BillingScreen() {
     return () => {
       live = false
     }
-  }, [api, workspaceId])
+  }, [api, workspaceId, signedIn])
 
   function buy(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault()
@@ -188,8 +198,13 @@ export function BillingScreen() {
   return (
     <main>
       <h1>Billing</h1>
-      {workspaceId === undefined ? <p role="alert">{NO_WORKSPACE}</p> : null}
-      {waiting ? <p role="status">Loading…</p> : null}
+      {workspaceId === undefined ? (
+        <p role="alert">{NO_WORKSPACE}</p>
+      ) : state.status === 'signed-out' ? (
+        <p>{SIGN_IN_NEEDED}</p>
+      ) : waiting ? (
+        <p role="status">Loading…</p>
+      ) : null}
       {failure === null ? null : <p role="alert">{failure}</p>}
 
       {subscription === null ? null : (

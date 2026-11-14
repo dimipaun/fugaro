@@ -18,11 +18,11 @@
 // built them from the screen's own constants would agree with whatever the
 // screen happened to do.
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Subscription } from '../../api/types/billing'
-import type { AuthPort } from '../../auth/session'
+import type { AuthPort, SignedInUser } from '../../auth/session'
 import { SessionProvider } from '../../auth/session'
 import { BillingScreen } from './billing'
 import { route } from './route'
@@ -69,14 +69,22 @@ function header(call: Call, name: string): string | undefined {
   return (call.init.headers as Record<string, string>)[name]
 }
 
-/** A port for a signed-in person whose token the API's requests carry. */
-function port(): AuthPort {
+/** The person the fake session answers as, with the token the requests carry. */
+const PERSON: SignedInUser = {
+  uid: 'uid_example',
+  email: 'ada@example.com',
+  provider: 'google.com',
+  authTime: 1770800000000,
+}
+
+/** A port for a person -- signed in by default, whose token the requests carry. */
+function port(who: SignedInUser | null = PERSON): AuthPort {
   return {
     watch: (onUser) => {
-      onUser(null)
+      onUser(who)
       return () => {}
     },
-    idToken: () => Promise.resolve('token-one'),
+    idToken: () => Promise.resolve(who === null ? null : 'token-one'),
     signIn: () => Promise.resolve(),
     sendSignInLink: () => Promise.resolve(),
     isSignInLink: () => false,
@@ -85,9 +93,42 @@ function port(): AuthPort {
   }
 }
 
-function show(path = '/billing/ws_example', pattern = '/billing/:workspaceId'): void {
+/**
+ * A port that answers nothing until the test says so, the way the SDK's does:
+ * the stored session is read before `onAuthStateChanged` fires, and until then
+ * `idToken` has nobody to mint for. Until `answer()` the screen is mounted with
+ * the session unanswered, which is the moment this screen must not ask in.
+ */
+function pendingPort(): { auth: AuthPort; answer: () => void } {
+  let answered: SignedInUser | null = null
+  let notify: ((user: SignedInUser | null) => void) | null = null
+  return {
+    auth: {
+      watch: (onUser) => {
+        notify = onUser
+        return () => {}
+      },
+      idToken: () => Promise.resolve(answered === null ? null : 'token-one'),
+      signIn: () => Promise.resolve(),
+      sendSignInLink: () => Promise.resolve(),
+      isSignInLink: () => false,
+      completeSignInLink: () => Promise.resolve(),
+      signOut: () => Promise.resolve(),
+    },
+    answer: () => {
+      answered = PERSON
+      notify?.(PERSON)
+    },
+  }
+}
+
+function show(
+  path = '/billing/ws_example',
+  pattern = '/billing/:workspaceId',
+  auth: AuthPort = port(),
+): void {
   render(
-    <SessionProvider port={port()}>
+    <SessionProvider port={auth}>
       <MemoryRouter initialEntries={[path]}>
         <Routes>
           <Route path={pattern} element={<BillingScreen />} />
@@ -124,6 +165,7 @@ const SEATS = 'New seat count'
 const PORTAL_BUTTON = 'Invoices and payment methods'
 const GENERIC = 'The portal could not read your billing. Try again.'
 const PORTAL_FAILURE = 'The portal could not open Paddle’s customer portal. Try again.'
+const SIGN_IN = 'Sign in to see this workspace’s billing.'
 
 describe('the billing screen', () => {
   it('shows the seats, the state and the renewal date Paddle reported', async () => {
@@ -266,6 +308,45 @@ describe('the billing screen', () => {
 
     expect(screen.getByRole('status').textContent).toBe('Loading…')
     expect(screen.queryByText('Seats')).toBeNull()
+  })
+
+  it('asks nothing until the session has been answered, and then asks with the token', async () => {
+    const calls = stubFetch([() => answer(200, SUBSCRIPTION)])
+    const { auth, answer: answerSession } = pendingPort()
+    show('/billing/ws_example', '/billing/:workspaceId', auth)
+
+    // The session is still being read, so there is no token to send yet: a
+    // request made here would go out bare, and the API's refusal to it would be
+    // what a signed-in customer was shown, with nothing on this screen to ask
+    // again. So the screen waits, and says it is waiting.
+    expect(calls).toHaveLength(0)
+    expect(screen.getByRole('status').textContent).toBe('Loading…')
+    expect(screen.queryByRole('alert')).toBeNull()
+
+    // A request the screen had already started would have been made by now:
+    // the token is asked for first, and that answer is a promise.
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(calls).toHaveLength(0)
+
+    act(() => {
+      answerSession()
+    })
+
+    await screen.findByText('Seats')
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.url).toBe('/api/workspaces/ws_example/subscription')
+    expect(header(calls[0]!, 'Authorization')).toBe('Bearer token-one')
+  })
+
+  it('tells somebody signed out to sign in, rather than asking without a token', () => {
+    const calls = stubFetch([])
+    show('/billing/ws_example', '/billing/:workspaceId', port(null))
+
+    expect(screen.getByText(SIGN_IN).textContent).toBe(SIGN_IN)
+    expect(calls).toHaveLength(0)
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 
   it('answers the path and the workspace its own route declares', async () => {
