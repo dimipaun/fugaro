@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -784,7 +785,15 @@ func Run(ctx context.Context, req Request) (Diagnosis, error) {
 	case !found:
 		return Diagnosis{}, fmt.Errorf("the diagnosis agent exited with code %d without a result event, so it answered nothing", code)
 	case res.IsError:
-		return Diagnosis{}, fmt.Errorf("the diagnosis agent reported an error (%s) and answered nothing", safetext.OneLine(res.Subtype))
+		// claude reports a failed API call (no login, no credit, an
+		// unreachable model) as subtype "success", so the reason is only in
+		// the result text, which can echo account detail and is redacted
+		// like the transcript.
+		msg := fmt.Sprintf("the diagnosis agent reported an error (%s) and answered nothing", safetext.OneLine(res.Subtype))
+		if why := errorText(res.Text, secrets); why != "" {
+			msg += ": " + why
+		}
+		return Diagnosis{}, errors.New(msg)
 	}
 	// The client's own accounting, checked rather than trusted (F14): the
 	// client prices a run against its own estimate of the model, and a run
@@ -967,4 +976,12 @@ func answerField(line, name string) (string, bool) {
 // second look rather than the only one (F20).
 func redactOutput(s string, secrets []string) string {
 	return redact.Report(redact.Text(safetext.Text(s, true), secrets))
+}
+
+func errorText(s string, secrets []string) string {
+	s = safetext.OneLine(redactOutput(s, secrets))
+	if r := []rune(s); len(r) > 300 {
+		s = string(r[:300]) + "..."
+	}
+	return s
 }
