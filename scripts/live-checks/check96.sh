@@ -188,6 +188,15 @@ PRINTED=""
 # BY the exchange, so a lost answer is a user that exists and that no uid
 # recorded after the answer would ever name.
 UIDS_CREATED=()
+# The service accounts this run bound the operator to as token creator, so the
+# exit trap removes exactly those and no binding the operator already held. A
+# removal that failed is kept with its command, because a standing grant on a job
+# account is the one thing this check must not leave behind.
+GRANTS_ADDED=()
+GRANTS_HELD=()
+GRANTS_LEFT=()
+OPERATOR_MEMBER=""
+GRANT_ROLE=roles/iam.serviceAccountTokenCreator
 # The read-back's count, set only by a read-back that happened: empty says the
 # user list was never read, which is not the same fact as a list read and found
 # to hold none of them, and the `restore` line says which of the two it is.
@@ -212,7 +221,82 @@ scratch_up() {
 # answer away with the subshell.
 cleanup() {
   FACTS_CAPTURED=$(cat "$FACTS_FILE" 2>/dev/null || true)
+  revoke_impersonation
   remove_scratch
+}
+
+# operator_member: the principal gcloud acts as, written the way an IAM binding
+# names it.
+operator_member() {
+  local acct
+  acct=$(gcloud config get-value account 2>/dev/null) || acct=""
+  [ -n "$acct" ] || return 1
+  case "$acct" in
+  *.gserviceaccount.com) printf 'serviceAccount:%s' "$acct" ;;
+  *) printf 'user:%s' "$acct" ;;
+  esac
+}
+
+# grant_impersonation SA...: the installation gives operators actAs on a job
+# account and never getOpenIdToken, so this check binds the operator to token
+# creator on each account it must speak as and the exit trap removes it again.
+# A binding the operator already holds is left alone, in both directions.
+grant_impersonation() {
+  local sa member policy
+  member=$(operator_member) || stop "gcloud names no active account, so there is no operator to bind as token creator on the accounts this check speaks as"
+  OPERATOR_MEMBER=$member
+  for sa in "$@"; do
+    policy=$(gcloud iam service-accounts get-iam-policy "$sa" --project "$P" --format=json 2>"$SCRATCH/policy.err") ||
+      stop "the policy of $sa could not be read, so the grant this check needs on it cannot be made ($(sed -n '1,2p' "$SCRATCH/policy.err" | tr '\n' ' '))"
+    if printf '%s' "$policy" | python3 -c '
+import json, sys
+member, role = sys.argv[1], sys.argv[2]
+doc = json.load(sys.stdin)
+sys.exit(0 if any(b.get("role") == role and member in (b.get("members") or []) and not b.get("condition") for b in doc.get("bindings") or []) else 1)
+' "$member" "$GRANT_ROLE"; then
+      GRANTS_HELD+=("$sa")
+      say "$member already holds $GRANT_ROLE on $sa: left as it is"
+      continue
+    fi
+    # Recorded before the call: an interrupt between the call and the record
+    # would leave a binding nobody removes, and a removal of one never added only
+    # answers that it is not there.
+    GRANTS_ADDED+=("$sa")
+    gcloud iam service-accounts add-iam-policy-binding "$sa" --project "$P" \
+      --member="$member" --role="$GRANT_ROLE" >/dev/null 2>"$SCRATCH/grant.err" ||
+      stop "the binding of $member as $GRANT_ROLE on $sa was refused, so this check cannot speak as it ($(sed -n '1,2p' "$SCRATCH/grant.err" | tr '\n' ' '))"
+    say "bound $member as $GRANT_ROLE on $sa for this run; removed at the end"
+  done
+}
+
+revoke_impersonation() {
+  local sa
+  [ "${#GRANTS_ADDED[@]}" -gt 0 ] || return 0
+  for sa in "${GRANTS_ADDED[@]}"; do
+    if gcloud iam service-accounts remove-iam-policy-binding "$sa" --project "$P" \
+      --member="$OPERATOR_MEMBER" --role="$GRANT_ROLE" >/dev/null 2>&1; then
+      say "removed $OPERATOR_MEMBER as $GRANT_ROLE on $sa"
+    else
+      GRANTS_LEFT+=("$sa")
+    fi
+  done
+  GRANTS_ADDED=()
+}
+
+# impersonated_token SA ERRFILE: the grant takes a few seconds to reach the
+# token endpoint, and a refusal in that window reads like a missing permission.
+impersonated_token() {
+  local sa=$1 err=$2 n=0 tries=${CHECK96_GRANT_TRIES:-12} tok
+  while :; do
+    if tok=$(gcloud auth print-identity-token --impersonate-service-account="$sa" \
+      --audiences="$SVCURL" --include-email 2>"$err") && [ -n "$tok" ]; then
+      printf '%s' "$tok"
+      return 0
+    fi
+    n=$((n + 1))
+    [ "$n" -lt "$tries" ] || return 1
+    sleep "${CHECK96_GRANT_POLL:-5}"
+  done
 }
 
 remove_scratch() {
@@ -266,7 +350,15 @@ restore_detail() {
     left=${UIDS_CREATED[*]}
     users="the project's own user list was read back and still holds $SURVIVORS_READ of the uids this check may have created ($left): this is the call that deletes each of them — $delete_call"
   fi
-  printf '%s; %s; the one thing it cannot take back is the installation token the mint answered: GitHub expires it inside the hour, this check never wrote it anywhere, and a second run mints a second one' "$dir" "$users"
+  local grants
+  if [ "${#GRANTS_LEFT[@]}" -gt 0 ]; then
+    grants="the token creator binding of $OPERATOR_MEMBER is STILL ON ${GRANTS_LEFT[*]} — remove it yourself: gcloud iam service-accounts remove-iam-policy-binding <account> --project=$P --member=$OPERATOR_MEMBER --role=$GRANT_ROLE"
+  elif [ "${#GRANTS_HELD[@]}" -gt 0 ]; then
+    grants="the token creator binding this check added is gone (the one on ${GRANTS_HELD[*]} was already yours and is untouched)"
+  else
+    grants="the token creator binding this check added is gone, or none was needed"
+  fi
+  printf '%s; %s; %s; the one thing it cannot take back is the installation token the mint answered: GitHub expires it inside the hour, this check never wrote it anywhere, and a second run mints a second one' "$dir" "$users" "$grants"
 }
 
 finish() {
@@ -290,6 +382,7 @@ finish() {
   fi
   local restore=PASS
   if [ "$SCRATCH_REMOVED" != yes ] && [ -n "$SCRATCH" ]; then restore=FAIL; fi
+  if [ "${#GRANTS_LEFT[@]}" -gt 0 ]; then restore=FAIL; fi
   facts="${facts}"$'\n'"restore|$restore|$(restore_detail)"
   # The verdict is taken from the facts, not from the exit path: a scratch
   # directory this check could not remove is a FAIL, and a block that printed
@@ -915,9 +1008,9 @@ mint() { # mint CALLER RUNTOK — sets ANSWER and MINT_STATUS in THIS shell
 # grants deliberately do not give operators), the run identity is the sandbox
 # repository's own, and the answer has to be the service's.
 step_mint() {
-  JOBTOK=$(gcloud auth print-identity-token --impersonate-service-account="$JOBSA" \
-    --audiences="$SVCURL" --include-email 2>"$SCRATCH/impersonate.err") || {
-    stop "no Google ID token for the job's own account $JOBSA — this step needs iam.serviceAccounts.getOpenIdToken on it (the installation's own grants give operators actAs only, and hold no such permission: modules/workflow/sa.tf). $(sed -n '1,3p' "$SCRATCH/impersonate.err" | tr '\n' ' ')"
+  grant_impersonation "$JOBSA" "$SIGNER"
+  JOBTOK=$(impersonated_token "$JOBSA" "$SCRATCH/impersonate.err") || {
+    stop "no Google ID token for the job's own account $JOBSA even with $GRANT_ROLE bound to $OPERATOR_MEMBER on it ($(sed -n '1,3p' "$SCRATCH/impersonate.err" | tr '\n' ' '))"
   }
   [ -n "$JOBTOK" ] || stop "the impersonation of $JOBSA answered no token"
   RUN="$(date -u +%Y%m%d-%H%M%S)-c96a"
@@ -1062,9 +1155,8 @@ step_pairing() {
 # the container runs — the same fact the front-end row read — while one that has
 # been granted an invoker reaches the container and is refused there.
 step_outsider() {
-  NONJOBTOK=$(gcloud auth print-identity-token --impersonate-service-account="$SIGNER" \
-    --audiences="$SVCURL" --include-email 2>"$SCRATCH/nonjob.err") || {
-    stop "no Google ID token for $SIGNER — this step needs iam.serviceAccounts.getOpenIdToken on an account that is no job account of this installation (the installation's own grants give operators actAs only, and hold no such permission: modules/workflow/sa.tf). $(sed -n '1,3p' "$SCRATCH/nonjob.err" | tr '\n' ' ')"
+  NONJOBTOK=$(impersonated_token "$SIGNER" "$SCRATCH/nonjob.err") || {
+    stop "no Google ID token for $SIGNER, an account that is no job account of this installation, even with $GRANT_ROLE bound to $OPERATOR_MEMBER on it ($(sed -n '1,3p' "$SCRATCH/nonjob.err" | tr '\n' ' '))"
   }
   [ -n "$NONJOBTOK" ] || stop "the impersonation of $SIGNER answered no token"
   local status ans
@@ -1338,6 +1430,7 @@ parse_args() {
 print_plan() {
   say "dry run: NOTHING below was run. A real run would, in this order:"
   say "  [network] a POST to $SVCURL$MINT with no identity at all, expecting the front end's 403 (step 2 of the register's check: the outer fence), and two reads of the service's own log around it"
+  say "  [network, WRITES IAM] binds the account gcloud acts as to roles/iam.serviceAccountTokenCreator on $JOBSA and $SIGNER (the installation gives operators actAs only), unless it already holds it"
   say "  [network] gcloud auth print-identity-token --impersonate-service-account=$JOBSA --audiences=$SVCURL --include-email (the caller's ID token)"
   say "  [network] gcloud iam service-accounts sign-jwt as $SIGNER, and the custom token traded at accounts:signInWithCustomToken with $FB's restricted web API key (the run identity)"
   say "  [network, WRITES] the mint: POST $SVCURL$MINT with both identities, which MINTS a real GitHub installation token for $REPO and creates a Firebase Auth user (uid r~$SLUG~<run>)"
@@ -1345,6 +1438,7 @@ print_plan() {
   say "  [network] two more run identities and two more calls: the pairing refusal ($OTHER_SLUG's run identity with $JOB's own account) and a caller that is no job account ($SIGNER)"
   say "  [network] the service's own log, read for the two runs' audit lines and re-read while a line is still being ingested (up to ${CHECK96_LOG_TRIES:-18} reads ${CHECK96_LOG_POLL:-5}s apart per row: a just-written line is often not readable at once, and an empty read is what the audit and pairing rows report as a call left unrecorded)"
   say "and its Cleanup (from the exit trap, and the last step) would run:"
+  say "  [network, DELETES] the token creator bindings this run added, from the exit trap, so a stop or an interrupt removes them too"
   say "  [network, DELETES] the two Firebase Auth users this run created, at Identity Toolkit's accounts:delete, then the project's user list read back"
   say "  [local] rm -rf of the scratch directory $SCRATCH, which holds the log dumps and the one credential that touches the disk (the custom token gcloud signs, 0600 and removed the moment it is read)"
   say "The one thing it cannot take back: the installation token the mint answers with is real at GitHub, this check never writes it anywhere, and GitHub expires it inside the hour."
