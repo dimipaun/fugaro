@@ -18,7 +18,15 @@
 // back, no copy kept beside the request. A key that a screen could redraw is a
 // key the app has stored, which is the thing D2182 refuses. An air-gapped
 // entitlement is the opposite case and the same rule: it has no secret at all
-// (D2206), so it is offered as a file to download instead of a reveal.
+// (D2206), so it is offered as a file to download instead of a reveal -- and it
+// is offered no rebind either, because its key is never revoked and a rebind
+// would mint a second copy of it for good.
+//
+// **What a card offers is read off the entitlement and never off the project.**
+// A workspace keeps its Firebase project after its licence lapses, which is the
+// ordinary shape of a lapsed licence and not an error, so a card that offered a
+// reveal whenever a project was named would offer a key for a licence that is
+// no longer there -- a button whose only answer is the API's refusal.
 //
 // **Nothing about a failure is invented here.** A refusal the API wrote is
 // shown as the API wrote it -- its one error shape is a sentence for a person
@@ -373,9 +381,9 @@ function Card({
         </p>
       )}
 
-      {workspace.project_id === null ? null : (
+      {entitlement === null ? null : workspace.project_id === null ? null : (
         <>
-          {entitlement?.air_gapped === true ? (
+          {entitlement.air_gapped ? (
             licence === null ? (
               <button type="button" onClick={() => void onDownload(workspace.id)}>
                 Get the licence file
@@ -397,7 +405,7 @@ function Card({
             </button>
           )}
 
-          {entitlement === null ? null : (
+          {entitlement.air_gapped ? null : (
             <form
               onSubmit={(event) => {
                 event.preventDefault()

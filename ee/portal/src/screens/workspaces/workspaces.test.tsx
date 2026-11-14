@@ -332,12 +332,34 @@ describe('the workspace screen', () => {
 
     const workspace = await screen.findByRole('region', { name: 'Example portal' })
     expect(within(workspace).queryByRole('button', { name: 'Reveal the key' })).toBeNull()
+    // An air-gapped key is never revoked, so D2206 refuses the rebind as well:
+    // a second binding would mint a second copy of it for good.
+    expect(within(workspace).queryByRole('button', { name: 'Rebind' })).toBeNull()
+    expect(within(workspace).queryByLabelText('Firebase project id')).toBeNull()
 
     fireEvent.click(within(workspace).getByRole('button', { name: 'Get the licence file' }))
 
     const link = await screen.findByRole('link', { name: 'Download the licence file' })
     expect(link.getAttribute('download')).toBe('fugaro-licence.txt')
     expect(decodeURIComponent(link.getAttribute('href') ?? '')).toContain(LICENCE)
+  })
+
+  it('offers no key for a workspace whose licence has lapsed', async () => {
+    // A workspace keeps its project after its licence goes, so the card still
+    // names it -- and offers nothing that only a licence could answer with.
+    const { client, calls } = portal({
+      workspaces: [{ ...bound(), entitlement_id: null }],
+      entitlements: [],
+    })
+    show(client)
+
+    const workspace = await screen.findByRole('region', { name: 'Example portal' })
+    expect(within(workspace).getByText('example-portal')).toBeDefined()
+    expect(within(workspace).queryByRole('button', { name: 'Reveal the key' })).toBeNull()
+    expect(within(workspace).queryByRole('button', { name: 'Get the licence file' })).toBeNull()
+    expect(within(workspace).queryByRole('button', { name: 'Rebind' })).toBeNull()
+    expect(within(workspace).getByRole('button', { name: 'Start a trial' })).toBeDefined()
+    expect(calls.filter((call) => call.path === '/api/keys/reveal')).toHaveLength(0)
   })
 
   it('shows the refresh line after a licence changed, and spends the marker', async () => {
