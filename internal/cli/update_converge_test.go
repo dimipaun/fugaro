@@ -468,6 +468,7 @@ func TestUpdateFailsTheCredentialsResolveBeforeItMigratesTheNode(t *testing.T) {
 	r.save(t)
 	recorded := credentialsServiceEntry(t, r.imagesRig)["image"]
 
+	fakeTerminal(t)
 	out, errOut, err := executeStdin(t, "", "update")
 	s := out + errOut
 	if err == nil {
@@ -1037,6 +1038,7 @@ func TestUpdateRefusesToRewindTheOrchestratorMarker(t *testing.T) {
 	r.db.Set(rules.PathOrchestratorRulesMarker(), ahead)
 	puts := r.db.RulePuts()
 
+	fakeTerminal(t)
 	out, errOut, err := executeStdin(t, "", "update")
 	if err == nil {
 		t.Fatalf("fugaro update deployed this binary's rules over a newer orchestrator generation:\n%s", out)
@@ -1140,6 +1142,7 @@ func TestUpdateEndsTheSpinnerLineBeforeTheProjectHeader(t *testing.T) {
 	isolateState(t)
 	_ = r
 
+	fakeTerminal(t)
 	out, err := executeConsole(t, "update")
 	if err != nil {
 		t.Fatalf("fugaro update failed (exit %d): %v\n%s", ExitCode(err), err, out)
@@ -1200,6 +1203,7 @@ func TestUpdateNeverSendsThePersonToUpdateFromInsideIt(t *testing.T) {
 			if tc.noClaude {
 				noClaudeOnPath(t)
 			}
+			fakeTerminal(t)
 
 			out, errOut, err := executeStdin(t, "", "update")
 			if err != nil {

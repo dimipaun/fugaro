@@ -49,14 +49,21 @@ const (
 // updateInProcess is one `fugaro update`: the command the test's own
 // process runs, and the one the child process runs. It takes no *testing.T,
 // because the first converge is still inside terraform while the second one is
-// refused and neither may call t.Fatal from there.
-func updateInProcess() (string, string, error) {
+// refused and neither may call t.Fatal from there. asJSON is passed rather than
+// fixed: the first run applies at this terminal, and --json confirms no step
+// (T11), so only the refused run — which reaches no stage to confirm — reads
+// its answer as one object.
+func updateInProcess(asJSON bool) (string, string, error) {
 	cmd := NewRootCmd()
 	var out, errOut bytes.Buffer
 	cmd.SetIn(strings.NewReader(""))
 	cmd.SetOut(&out)
 	cmd.SetErr(&errOut)
-	cmd.SetArgs(NormalizeArgs([]string{"update", "--json"}))
+	args := []string{"update"}
+	if asJSON {
+		args = append(args, "--json")
+	}
+	cmd.SetArgs(NormalizeArgs(args))
 	err := cmd.Execute()
 	return out.String(), errOut.String(), err
 }
@@ -72,7 +79,7 @@ func runConvergeChild() int {
 			os.Setenv(k, v)
 		}
 	}
-	out, errOut, err := updateInProcess()
+	out, errOut, err := updateInProcess(true)
 	fmt.Fprint(os.Stdout, out)
 	fmt.Fprint(os.Stderr, errOut)
 	if err != nil {
@@ -192,7 +199,7 @@ func TestTwoUpdatesOnOneInstallationDoNotClobberEachOther(t *testing.T) {
 	}
 	first := make(chan ended, 1)
 	go func() {
-		out, errOut, err := updateInProcess()
+		out, errOut, err := updateInProcess(false)
 		first <- ended{out, errOut, err}
 	}()
 	waitForPath(t, started, "the first update to be inside terraform plan")

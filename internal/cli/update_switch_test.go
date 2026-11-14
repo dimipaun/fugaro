@@ -1216,6 +1216,11 @@ func TestTheBundleIsNeverOpenedInAnAgentsSessionOrARunsProcess(t *testing.T) {
 	for _, marker := range markers {
 		t.Run(marker, func(t *testing.T) {
 			r := credentialsRig(t)
+			// The IDE marker (CLAUDE_CODE_SSE_PORT) is an agent's session only
+			// where the run has no terminal of its own: with one, the run is a
+			// person's own IDE terminal and the fence does not fire, so the
+			// terminal the rig installs is taken back here.
+			noTerminal(t)
 			r.repoReady(t)
 			r.appendConfig(t, "credentials_service: { url: "+credentialsServiceURL+" }\n")
 			credentialsOutputs(t, r)

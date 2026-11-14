@@ -440,7 +440,7 @@ func TestUpdateLocalStepsRunInAgentSession(t *testing.T) {
 	root := filepath.Dir(filepath.Dir(settings))
 	if len(res.Left) != 2 || res.ExitCode() != 1 ||
 		!leftCommand(res, initflow.Plugin, selfCommand()+" update") ||
-		!leftCommand(res, checkoutStageName, selfCommand()+" update --yes --repo "+root) {
+		!leftCommand(res, checkoutStageName, selfCommand()+" update --repo "+root) {
 		t.Fatalf("an agent's session reported the checkout done with the images untouched: left %+v, exit %d\n%s", res.Left, res.ExitCode(), out)
 	}
 }
@@ -466,7 +466,7 @@ func TestUpdateCloudWritesRefusedInAgentSessionEvenWithYes(t *testing.T) {
 	root := filepath.Dir(filepath.Dir(settings))
 	if len(res.Left) != 2 || res.ExitCode() != 1 ||
 		!leftCommand(res, initflow.Plugin, selfCommand()+" update") ||
-		!leftCommand(res, checkoutStageName, selfCommand()+" update --yes --repo "+root) {
+		!leftCommand(res, checkoutStageName, selfCommand()+" update --repo "+root) {
 		t.Fatalf("the cloud half was not left for the user: left %+v, exit %d\n%s", res.Left, res.ExitCode(), out)
 	}
 	// The local half really ran, so this is not a run that refused everything
@@ -627,10 +627,9 @@ func TestUpdateAgentSessionLeavesTheCloudStepForTheUser(t *testing.T) {
 		t.Errorf("the left-for-you does not say where the step can be run: %q", l.Text)
 	}
 	if want := []string{
-		selfCommand() + " update --yes --repo " + root,
 		selfCommand() + " update --repo " + root,
 	}; !slices.Equal(l.Commands, want) {
-		t.Errorf("the left-for-you names %q, want %q (the parked step's own two commands, as its refusal words them)", l.Commands, want)
+		t.Errorf("the left-for-you names %q, want %q (the parked step's own command, as its refusal words it)", l.Commands, want)
 	}
 
 	// The second run of the session: this checkout's own plan holds no local
@@ -667,7 +666,7 @@ func TestUpdateAgentSessionLeavesTheCloudStepForTheUser(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(b), `"left_for_you"`) || !strings.Contains(string(b), selfCommand()+" update --yes --repo "+root) {
+	if !strings.Contains(string(b), `"left_for_you"`) || !strings.Contains(string(b), selfCommand()+" update --repo "+root) {
 		t.Errorf("the JSON does not carry the step left for the user:\n%s", b)
 	}
 }
@@ -709,7 +708,7 @@ func TestUpdateLocalStepsRunInAgentSessionWithoutAYes(t *testing.T) {
 	root := filepath.Dir(filepath.Dir(settings))
 	if len(res.Left) != 2 || res.ExitCode() != 1 ||
 		!leftCommand(res, initflow.Plugin, selfCommand()+" update") ||
-		!leftCommand(res, checkoutStageName, selfCommand()+" update --yes --repo "+root) {
+		!leftCommand(res, checkoutStageName, selfCommand()+" update --repo "+root) {
 		t.Fatalf("the cloud half was not left for the user: left %+v, exit %d\n%s", res.Left, res.ExitCode(), out)
 	}
 }
@@ -1244,7 +1243,7 @@ func TestUpdateFailedBuildNamesTheRunThatRetries(t *testing.T) {
 	if !strings.Contains(res.Failed.Error, "the build of acme/app/app was refused") {
 		t.Errorf("the failure is not the step's own sentence: %+v", res.Failed)
 	}
-	if want := selfCommand() + " update --yes --repo " + root; !strings.Contains(res.Failed.Fix, want) {
+	if want := selfCommand() + " update --repo " + root; !strings.Contains(res.Failed.Fix, want) {
 		t.Errorf("the fix does not name the run that offers the build again (%q): %q", want, res.Failed.Fix)
 	}
 	if strings.Contains(res.Failed.Fix, "resumes at "+checkoutStageName) {

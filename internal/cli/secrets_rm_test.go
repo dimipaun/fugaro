@@ -284,8 +284,12 @@ func TestSecretsRmDryRunNamesBothHalves(t *testing.T) {
 // TestSecretsRmRefusesTheUnknownYesFlag: --yes is not a flag of this family
 // any more (T11, docs/no-prompt-policy). Nothing is typed at a step and no
 // flag stands in for the person at the terminal, so a run that passes it is
-// refused as an unknown flag before anything is read or removed. --dry-run
-// answers "what would this do" and writes nothing either way.
+// refused before anything is read or removed. The family refuses a bad flag
+// with its own fixed sentence and never cobra's "unknown flag: --yes": pflag
+// would quote the word, and a value pasted in the flag's place is exactly what
+// that sentence is written to keep off the screen (secrets.go's
+// SetFlagErrorFunc). --dry-run answers "what would this do" and writes nothing
+// either way.
 func TestSecretsRmRefusesTheUnknownYesFlag(t *testing.T) {
 	secretsRmFugaro(t)
 	if f := newSecretsRmCmd().Flags().Lookup("yes"); f != nil {
@@ -295,8 +299,9 @@ func TestSecretsRmRefusesTheUnknownYesFlag(t *testing.T) {
 	before := readFileString(t, path)
 
 	_, _, err := execute(t, "secrets", "rm", "bitbucket-token", "--dry-run", "--yes")
-	if err == nil || !strings.Contains(err.Error(), "unknown flag: --yes") {
-		t.Fatalf("err = %v, want the unknown --yes refusal", err)
+	want := "unknown or malformed flag; secrets commands take --repo, --project-wide, --json, --config, --project, --gcp-project, --region, --allow-data-to, --proxy and --dry-run, and never the value"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("err = %v, want the family's own refusal %q", err, want)
 	}
 	if got := sm.Deleted(); len(got) != 0 {
 		t.Fatalf("deleted %v", got)
