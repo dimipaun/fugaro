@@ -856,8 +856,10 @@ func TestUpgradeInAnAgentSessionNeverTouchesTheCloud(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
+	// One line and not two: the refusal named the same command twice while
+	// --yes was the difference between them (T11).
 	for _, want := range []string{"cloud: skipped: a coding agent's session (CLAUDECODE is set) never applies cloud changes",
-		"in your own terminal window, not through the agent, run fugaro update --repo " + root, "or fugaro update --repo " + root + " to be asked at each step"} {
+		"in your own terminal window, not through the agent, run fugaro update --repo " + root + " (that terminal is what confirms every step, each billable build included)"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}

@@ -456,8 +456,8 @@ func (s *checkoutStage) stepFailure(r stepResult, u *stepCtx, step checkStep) er
 
 // leftBehind is what this apply leaves the user, or nil: the parked cloud half,
 // as a step of this run that only the user can run. The commands are the ones
-// the parked step's own refusal names — this run's flags for this checkout,
-// with and without --yes (cloudLine) — rather than this stage's one line,
+// the parked step's own refusal names — this run's flags for this checkout
+// (cloudLine) — rather than this stage's one line,
 // because the refusal is what knows the flags this run carries. The why is the
 // plan's line, in the step's own words (cloudAgentRefusal).
 func (s *checkoutStage) leftBehind(u *stepCtx, steps []plannedStep) *initflow.Left {
@@ -467,7 +467,7 @@ func (s *checkoutStage) leftBehind(u *stepCtx, steps []plannedStep) *initflow.Le
 		}
 		return &initflow.Left{Stage: initflow.Checkout, Kind: initflow.LeftCommand,
 			Text:     "in your own terminal window, not through a coding agent or a pipe, run the checkout's cloud half — the base image, the daily check job's config and the billable job-image builds, each confirmed as it is — by running",
-			Commands: []string{u.o.cloudLine(u.loc.Root, true), u.o.cloudLine(u.loc.Root, false)}}
+			Commands: []string{u.o.cloudLine(u.loc.Root)}}
 	}
 	return nil
 }
