@@ -5608,15 +5608,15 @@ func credentialsServiceLaunchEnv(lc *localcfg.Config, job, repo, auth string, de
 	return []string{envCredentialsServiceURL + "=" + lc.CredentialsService.URL}
 }
 
-// envSlip is the variable a run reads its slip's id from. It is the launcher's
-// half of the name the runner claims the slip by (DS1.5, which reads its own
-// environment), and it is spelled here because passing the id to the job is
-// this task's (DS1.4). It is plain environment and never SecretEnv: the
-// backend that matters refuses SecretEnv outright
-// (backend.LaunchSpec.SecretEnv), and the slip's protection is its binding to
-// the run and to a claim secret rather than its secrecy — the run's own agent
-// can read the runner's environment anyway (F22, reconciliation).
-const envSlip = "FUGARO_SLIP"
+// envSlip is the variable a run reads its slip's id from, and this is an alias
+// of the name the runner claims the slip by (runner.SlipEnv, DS1.5): the
+// launcher writes it and the runner reads it, so it is one name and neither
+// side owns it. It is plain environment and never SecretEnv: the backend that
+// matters refuses SecretEnv outright (backend.LaunchSpec.SecretEnv), and the
+// slip's protection is its binding to the run and to a claim secret rather
+// than its secrecy — the run's own agent can read the runner's environment
+// anyway (F22, reconciliation).
+const envSlip = runner.SlipEnv
 
 // The grant call's own bounds. slipGrantTimeout bounds the whole of it — the
 // launcher's own mint and the call — so a service that hangs cannot eat the
