@@ -178,6 +178,9 @@ func adminListStepEngine(t *testing.T, mutate func(*localcfg.Config)) (e *initEn
 func TestSetupWritesNoAdminList(t *testing.T) {
 	r := newConvergeRig(t, v6Node())
 	setRoster(t, r, rosterGrant("owner@example.com", "admin", "project"))
+	// The owner's own terminal, which is what confirms the steps the run asks
+	// about now the flag that stood in for it is gone (T11).
+	fakeTerminal(t)
 
 	out, _, err := executeStdin(t, "", "setup")
 	if err != nil {

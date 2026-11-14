@@ -1337,6 +1337,7 @@ func TestUpdateManagedLeavesAnOwnersRunAlone(t *testing.T) {
 	const additive = "module.installation.google_service_account.scheduler"
 	r := updateRig(t)
 	r.markedRuns(t, "", "") // the runs bucket, and no mark of any kind in it
+	fakeTerminal(t)
 	updating(t, r)
 	r.setPlan(t, change(additive, "create"))
 
@@ -1345,7 +1346,7 @@ func TestUpdateManagedLeavesAnOwnersRunAlone(t *testing.T) {
 		t.Fatalf("an owner's run on an unmanaged project failed: %v\n%s", err, got)
 	}
 	if n := len(r.ran(t, "apply")); n == 0 {
-		t.Errorf("--yes stopped covering the installation step:\n%s", got)
+		t.Errorf("the owner's own terminal stopped covering the installation step:\n%s", got)
 	}
 	if n := markReads(r); n != 2 {
 		t.Errorf("an owner's run read the managed marker %d time(s), want two: the installation's own fact read, and the one the gate makes to know whether to ask at all", n)
@@ -1733,7 +1734,7 @@ func TestUpdateManagedGatesTheCredentialsServiceStage(t *testing.T) {
 	}
 }
 
-// credentialsStageRun is one `fugaro update --yes` at the owner's own terminal
+// credentialsStageRun is one `fugaro update` at the owner's own terminal
 // on a managed project, with the plan the gate refuses in front of the
 // credentials-service stage. The installation root's saved plan is shown more
 // than once in a run — every stage that judges that root reads it again — and

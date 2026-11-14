@@ -60,6 +60,9 @@ func TestUpdatePinsTheCatalogBaseAndDeploysTheCheckJob(t *testing.T) {
 	}
 	r.script["show@installation"] = map[string]any{"stdout": planJSON(t, change("module.installation.google_cloud_run_v2_job.catalog_check", "create"))}
 	r.save(t)
+	// The owner's own terminal, which is what confirms the steps the run asks
+	// about now the flag that stood in for it is gone (T11).
+	fakeTerminal(t)
 
 	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
@@ -135,6 +138,7 @@ func TestUpdatePinsTheCatalogBaseAndDeploysTheCheckJob(t *testing.T) {
 // catalog's.
 func TestUpdatePinsTheCatalogBaseForAPlainRunWithNoCheckout(t *testing.T) {
 	r := catalogUpdateRig(t)
+	fakeTerminal(t)
 	if _, _, err := executeStdin(t, "", "update"); err != nil {
 		t.Fatalf("fugaro update refused a catalog whose base image it is about to pin: %v", err)
 	}
@@ -152,6 +156,7 @@ func TestUpdateLeavesAnInstallationWithACurrentCatalogBaseAlone(t *testing.T) {
 	r := catalogUpdateRig(t)
 	r.appendConfig(t, "image_source: ghcr.io/dimipaun\nbase_images: {base: "+r.pinnedBase(config.BaseKind, convergeRelease)+"}\n")
 	r.save(t)
+	fakeTerminal(t)
 	if _, _, err := executeStdin(t, "", "update"); err != nil {
 		t.Fatalf("fugaro update refused an installation whose catalog base image is current: %v", err)
 	}
@@ -275,6 +280,7 @@ func TestUpdateDeploysTheCatalogCheckJobFromAFlaggedBase(t *testing.T) {
 // about the base image would be an update that exits 0 in the issue's state.
 func TestUpdateSaysWhenItCannotPinTheCatalogBase(t *testing.T) {
 	r := catalogUpdateRigAt(t, "dev")
+	fakeTerminal(t)
 	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
 		t.Fatalf("a development build's run: %v\n%s\n%s", err, out, errOut)

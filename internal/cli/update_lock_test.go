@@ -46,7 +46,7 @@ const (
 	convergeChildHome = "FUGARO_TEST_CONVERGE_CHILD_XDG_"
 )
 
-// updateInProcess is one `fugaro update --yes`: the command the test's own
+// updateInProcess is one `fugaro update`: the command the test's own
 // process runs, and the one the child process runs. It takes no *testing.T,
 // because the first converge is still inside terraform while the second one is
 // refused and neither may call t.Fatal from there.
@@ -180,6 +180,10 @@ func changedObjects(reqs []gcpfake.Request) int {
 // sees the stage's name where the cause was a second converge on this machine.
 func TestTwoUpdatesOnOneInstallationDoNotClobberEachOther(t *testing.T) {
 	r := updateRig(t)
+	// The owner's own terminal, which is what confirms the first converge's steps
+	// now that the flag which stood in for it is gone (T11). The second run is
+	// refused by the lock before it asks anything.
+	fakeTerminal(t)
 	started, release := blockTheFirstPlan(t, r)
 
 	type ended struct {

@@ -196,9 +196,10 @@ func TestUpdateConvergesAProxiedV4NodeInOneRun(t *testing.T) {
 	}
 	dir := repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", checkoutYAML("bitbucket", "oauth", "aurora", ""))
 	t.Chdir(dir)
+	fakeTerminal(t)
 	out, errOut, err := executeStdin(t, "", "update")
 	if err != nil {
-		t.Fatalf("one fugaro update --yes did not converge a version-%d node that proxies this repository: %v\nstdout:\n%s\nstderr:\n%s", projectpolicy.Version-1, err, out, errOut)
+		t.Fatalf("one fugaro update did not converge a version-%d node that proxies this repository: %v\nstdout:\n%s\nstderr:\n%s", projectpolicy.Version-1, err, out, errOut)
 	}
 	if got := nodeVersionOn(t, db); got != projectpolicy.Version {
 		t.Errorf("the published policy is version %d after one run, want %d: the policy stage migrates the node in place, and the run the repository stage is in is that run\n%s", got, projectpolicy.Version, out)

@@ -854,7 +854,7 @@ func TestGrantRefusesOnUnmigratedLists(t *testing.T) {
 // while it was not.
 func TestRevokeIsNotUndoneByTheNextUpdate(t *testing.T) {
 	noAgentSession(t)
-	noTerminal(t)
+	fakeTerminal(t)
 	const ops, revoked = "user:ops@example.com", "user:revoked@example.com"
 	r, db := accessRig(t, []string{ops, revoked}, nil, []string{ops, revoked}, nil)
 	db.Set(accesslib.PathNode, accessNodeDoc(
