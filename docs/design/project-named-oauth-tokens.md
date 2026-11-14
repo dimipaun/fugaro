@@ -203,7 +203,7 @@ top-level key, which an older reader tolerates and lists in `UnknownKeys` (`poli
 183-187`); the bump is what keeps an older runner from running past a gate it does not know, the
 reason version 2 exists (`version.go:15-23`). The cost is the one the 1→2 bump had, and the
 existing skew messages already name the remedies (`version.go:123-172`): a version-2 runner image
-meeting a version-3 node refuses with `RunnerSkew` ("refresh the runner image (fugaro upgrade)"),
+meeting a version-3 node refuses with `RunnerSkew` ("refresh the runner image (fugaro update)"),
 and a version-3 reader meeting a version-2 node refuses with `CLISkewNewer`/`RunnerSkewNewer`
 (remove the node with `fugaro project policy publish --delete` and publish again). The rollout is
 therefore: upgrade the CLI, `publish --delete` and republish, refresh the runner images — written

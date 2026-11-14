@@ -342,7 +342,7 @@ refused in a coding-agent session as every cloud write of `update` already is (S
    `unpublished`.
 3. **Provider re-converge.** `fugaro update` re-converges each recorded repository whose job's
    provider copy or ceiling copy differs from what the local config would write now, behind the same
-   confirmation (D787, already answered). `fugaro upgrade`'s drift note already computes it.
+   confirmation (D787, already answered). `fugaro update`'s drift note already computes it.
 
 And one migration, in the same command (SD5, D842, D844):
 
