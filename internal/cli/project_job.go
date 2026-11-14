@@ -1483,10 +1483,11 @@ var errNoConfigAtRef = errors.New("no fugaro.yaml at it")
 //
 // The fix named is the two ways out an operator has: repair the document the
 // message names (a fugaro.yaml that does not resolve, a layer that no longer
-// parses), or take the workflow off the shared-job path — a workflow that is
-// not `checkout: clone` keeps the per-repository job it has always had
-// (design §4.4).
+// parses), or take the repository off the shared-job path — the published
+// policy serving no profile for the repository's provider keeps it on the
+// per-repository job it has always had, and the checkout mode does not decide
+// that (D2304).
 func checkProjectJobAuthUnknown(repo, why string) error {
-	return userErr("cannot tell which Claude credential a run of %s would use on the shared project job its workflow selects, so nothing was launched: %s. A run resolves agent.auth from the fugaro.yaml at the ref it checks out, over the project layer its own task carries (project_layer in task.json), and this launch is judged on that same layer with that same fugaro.yaml — read at that ref out of your checkout's git objects, never out of the working tree — rather than on a guess: a shared job holds the credential its profile was deployed with — the account segment of its own name — so a launch whose credential cannot be resolved is refused instead of started on a job that may not be able to serve it. Fix what the message names, or keep this repository on its own per-repository job (a workflow that is not `checkout: clone` keeps the job it has always had). Nothing was launched: no claim was taken, no budget token was minted and Cloud Run was not called",
+	return userErr("cannot tell which Claude credential a run of %s would use on the shared project job its workflow selects, so nothing was launched: %s. A run resolves agent.auth from the fugaro.yaml at the ref it checks out, over the project layer its own task carries (project_layer in task.json), and this launch is judged on that same layer with that same fugaro.yaml — read at that ref out of your checkout's git objects, never out of the working tree — rather than on a guess: a shared job holds the credential its profile was deployed with — the account segment of its own name — so a launch whose credential cannot be resolved is refused instead of started on a job that may not be able to serve it. Fix what the message names, or keep this repository on its own per-repository job: a repository the published policy serves no profile for keeps the job it has always had, whatever its workflow's checkout says. Nothing was launched: no claim was taken, no budget token was minted and Cloud Run was not called",
 		repo, why)
 }

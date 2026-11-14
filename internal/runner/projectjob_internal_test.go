@@ -610,6 +610,64 @@ func TestCheckJobProfileHoldsTheRunToTheJobItIsIn(t *testing.T) {
 	}
 }
 
+// TestCheckJobProfileResolvesAnUnnamedWorkflowByItsProvidersDefault is D2310
+// and R8 at run start: a workflow that names no job profile runs on the default
+// profile of its repository's provider — `standard` for the project's first
+// provider and `standard-<provider>` for another — so a run the launcher placed
+// on the second provider's own default job is not halted by a comparison with
+// `standard`, which serves the other provider. Before this the two sides
+// answered the same question differently — internal/cli's launchProjectJobFor
+// resolved the provider's default (ProjectJobDefaultProfile) while this check
+// read the omission as `standard` — and a repository of the second provider
+// stopped at its first decision, in the job it had just been launched onto.
+//
+// Mutation (run, restored): read the omission as wf.JobProfileOrDefault()
+// again — the first row's run halts in the job the launcher placed it in.
+func TestCheckJobProfileResolvesAnUnnamedWorkflowByItsProvidersDefault(t *testing.T) {
+	// The project's first provider is Bitbucket — `standard` serves it — and
+	// GitHub, enrolled second, has standard-github for its own repositories.
+	policy := policyOf(map[string]config.JobProfile{
+		"standard":        profileOf("bitbucket"),
+		"standard-github": profileOf("github"),
+	})
+	for _, tc := range []struct {
+		name     string
+		provider string
+		repo     string
+		profile  string
+		wf       config.Workflow
+		wantErr  bool
+	}{
+		{"the second provider's repository, which names no profile", "github", "acme/app", "standard-github", config.Workflow{}, false},
+		{"the first provider's repository, which names no profile", "bitbucket", "acme/bb", "standard", config.Workflow{}, false},
+		{"a workflow that names the other provider's default", "github", "acme/app", "standard-github", config.Workflow{JobProfile: "standard"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			slug := identitySlug(t, tc.provider, tc.repo)
+			job := gcp.ProjectJobName(tc.profile, tc.provider, "")
+			r := identityRun(t, job, slug, nil, policy, true)
+			if _, _, _, err := r.jobIdentity(context.Background()); err != nil {
+				t.Fatalf("jobIdentity(%s) = %v", job, err)
+			}
+			err := r.checkJobProfile(context.Background(), identityWorkflow, tc.wf)
+			if !tc.wantErr {
+				if err != nil {
+					t.Fatalf("a workflow that names no job profile ran in the job of its own provider's default: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("a workflow selecting %q ran in the job %s", tc.wf.JobProfile, job)
+			}
+			for _, want := range []string{job, tc.wf.JobProfile} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal %q lacks %q", err, want)
+				}
+			}
+		})
+	}
+}
+
 // accountsOf is a policy's accounts block as a value: each account with the
 // repositories its token may be used by (projectpolicy.Account). Built rather
 // than decoded for the reason policyOf is: what the node's own decoder accepts
