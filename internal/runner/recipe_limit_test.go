@@ -19,7 +19,8 @@ import (
 // its review, and the pin that reaches Claude Code — and so the max_tokens of
 // the call it makes, which is what the gateway reserves — carries the recipe's
 // bound rather than the model's own maximum. A repository that reserves less
-// for its reviewer keeps its own figure: the recipe only ever tightens.
+// for its reviewer keeps its own figure and one that reserves more is capped:
+// the recipe only ever tightens.
 //
 // The call at the bound is made through the gateway, so the bound is not below
 // what a review of this run sends. That the gateway refuses one token above the
@@ -27,16 +28,17 @@ import (
 func TestDigestReviewStagePinnedToTheOutputBound(t *testing.T) {
 	const own = "20261020-101500-aaaa"
 	for _, tc := range []struct {
-		name string
-		cfg  string
-		want int64
+		name    string
+		written int64
+		want    int64
 	}{
-		{"no bound of its own", noOutputLimits(t), 32000},
-		{"a smaller one", gwConfig(t, ""), 4096},
+		{"no bound of its own", 0, 32000},
+		{"a smaller one", 16000, 16000},
+		{"a larger one", 64000, 32000},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			pin := strconv.FormatInt(tc.want, 10)
-			g := newGW(t, tc.cfg, "observe", "", anthropicfake.MessageOK(sonnet, pricing.Usage{Output: 10}))
+			g := newGW(t, reviewerBound(t, tc.written), "observe", "", anthropicfake.MessageOK(sonnet, pricing.Usage{Output: 10}))
 			g.setSpec(t, digestSpec(own))
 			clk := digestClock(g.harness)
 			digestRecord(t, g.bucket, repoSlug, own, clk.Now().AddDate(0, 0, -1), 1.5, nil)
@@ -62,15 +64,21 @@ func TestDigestReviewStagePinnedToTheOutputBound(t *testing.T) {
 	}
 }
 
-// noOutputLimits is gwConfig with agent.max_output_tokens removed: the shape of
-// the repository whose report run halted with run_cap, which set no per-call
-// output bound of its own.
-func noOutputLimits(t *testing.T) string {
+// reviewerBound is gwConfig with the repository's own reviewer output bound
+// written as written, or with the whole max_output_tokens line removed when it
+// is 0: the shape of the repository whose report run halted with run_cap, which
+// set no per-call output bound of its own.
+func reviewerBound(t *testing.T, written int64) string {
 	t.Helper()
+	const line = "  max_output_tokens: { coder: 4096, reviewer: 4096 }\n"
 	cfg := gwConfig(t, "")
-	out := strings.Replace(cfg, "  max_output_tokens: { coder: 4096, reviewer: 4096 }\n", "", 1)
-	if out == cfg {
-		t.Fatal("the fixture has no max_output_tokens line")
+	from, to := line, ""
+	if written > 0 {
+		from, to = "reviewer: 4096", "reviewer: "+strconv.FormatInt(written, 10)
 	}
-	return out
+	if out := strings.Replace(cfg, from, to, 1); out != cfg {
+		return out
+	}
+	t.Fatal("the fixture has no reviewer output bound to write")
+	return ""
 }
