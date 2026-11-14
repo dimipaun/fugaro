@@ -9401,10 +9401,13 @@ is the machine those specs cannot reach.
    name, size, SHA-256 and `installer-arch=x64`, and refuses anything that is not a 64-bit PE image.
 3. **One distribution with a Linux `fugaro` in it**, installed by
    [docs/windows-cli/wsl.md](windows-cli/wsl.md)'s procedure — the release's **linux** archive,
-   verified against `checksums.txt`, on the distribution's `PATH`. Steps 5 to 8 need a machine or a
-   state that has *no* distribution and *no* `fugaro` as well, and step 7 needs a **second**
-   distribution; the cleanest way to have all of them in one sitting is to do the empty cases first
-   and install afterwards.
+   verified against `checksums.txt`, on the distribution's `PATH`. Steps 4 to 7 need a machine or a
+   state that is *missing* something — 4 needs **no WSL at all**, 5 needs WSL with **no
+   distribution**, 6 a distribution with **no `fugaro`** — and 7 needs a **second** distribution
+   beside the one that has it. The other steps are the other way round: 1 and 2 are the console's
+   install-and-launch pair, and 3 and 8 to 16 need the `fugaro` this step installs. So the order that
+   works is **1 to 3**, then **4 to 7** in their own states (or on a second machine, which is the
+   cleaner way to have all of them at once), then **8 to 16**.
 4. **A checkout of this repository inside the distribution** (`~/src/fugaro`, not `/mnt/c/...` — the
    mode-bit trap [docs/windows-cli/wsl.md](windows-cli/wsl.md) §1 records), and **no signing
    certificate**: this check buys no Authenticode identity and the installer it installs is unsigned.
