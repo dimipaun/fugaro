@@ -378,7 +378,11 @@ run_bounded() { # run_bounded SECONDS KEY DIR CMD...
   local secs=$1 key=$2 dir=$3
   shift 3
   BOUNDED_TIMED_OUT=no
-  ( trap - ERR; cd "$dir" || exit 1; exec "$@" ) >>"$SCRATCH/$key.out" 2>>"$SCRATCH/$key.err" &
+  # Truncated, not appended: the tags a poll loop reuses (`rows` in Check 490,
+  # `debt` here) are read again after every call, and a second document appended
+  # to the first is one the reader cannot read — the row would report a listing
+  # it never failed to get.
+  ( trap - ERR; cd "$dir" || exit 1; exec "$@" ) >"$SCRATCH/$key.out" 2>"$SCRATCH/$key.err" &
   # The poll is a tenth of a second and the bound is counted in tenths: a read
   # that answers at once — every one of them, when the installation is healthy —
   # would otherwise cost this check a whole second each, and the owner watches
