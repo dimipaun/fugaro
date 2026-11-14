@@ -97,7 +97,11 @@
 # launched with), MAX_LAUNCHES (30), RELEASE (0.24.0: the release the pair
 # launch ships in), SINCE (1d: the window `fugaro ab` is read over), REGION
 # (us-east5), RUN_TIMEOUT_SECONDS (3600), POLL_SECONDS (15), CLI_TIMEOUT_SECONDS
-# (180), LAUNCH_TIMEOUT_SECONDS (600), DOCTOR_TIMEOUT_SECONDS (300).
+# (180), LAUNCH_TIMEOUT_SECONDS (600), DOCTOR_TIMEOUT_SECONDS (300). --sandbox,
+# --task and --max-launches are the same three values as flags, and a value you
+# type as a flag beats the same value in the environment: the environment is how
+# a script sets a knob, and a run that quietly used the other one would spend
+# the sandbox's money at a bound you did not choose.
 set -Eeuo pipefail
 
 # No xtrace, whatever the shell it was started from had: this check drives a
@@ -1102,7 +1106,7 @@ step_report() {
   local line pairs="" seen=""
   while IFS= read -r line; do
     case "$line" in ab_row*) ;; *) continue ;; esac
-    seen="${seen}${seen:+, }$(printf '%s' "$line" | awk -F'\t' '{ print $5 "x" $4 }')"
+    seen="${seen}${seen:+, }$(printf '%s' "$line" | awk -F'\t' '{ printf "%s in mode %s (%s pair(s))", $5, $4, $6 }')"
     if [ "$(printf '%s' "$line" | awk -F'\t' '{ print $5 }')" = "$CHALLENGER_MODEL" ] &&
       [ "$(printf '%s' "$line" | awk -F'\t' '{ print $6 }')" -ge 1 ]; then
       pairs="$line"
