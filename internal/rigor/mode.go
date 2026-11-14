@@ -86,12 +86,29 @@ func (m Mode) Rank() int {
 	return 0
 }
 
+// PerRun reports whether m is a mode a run's own request takes a run to
+// outright, rather than by outranking what the layers resolved.
+//
+// Hotfix is the one such mode, and the owner's ruling of 2026-11-13 is why
+// (docs/rigor-command/implementation-plan.md R7): it is off the axis and
+// ranks below every on-axis mode, so a rank comparison would always discard
+// a request for it — while an operator who types `fugaro run --mode hotfix`
+// is saying production is on fire, and there is no way to predict when that
+// will be. The gate D12 named is dropped rather than built, and this method
+// is that decision in one place: the raise-only rule D6 states is unchanged
+// for every other mode, which is still compared by Rank.
+func (m Mode) PerRun() bool { return m == Hotfix }
+
 // Strictest is the strictest of ms: the highest Rank wins, and a tie keeps
 // the first, so Strictest is stable and commutative over the order it is
 // given. This is the only-tightens rule the modes share with the floors
 // (D6, D23) — a run that touches two areas resolves by the strictest of
 // them, and a floor no layer may go under is the same comparison one step
 // further out.
+//
+// It is not the rule a run's own request is held to for Hotfix, which
+// PerRun takes whole: Strictest would drop it, as it drops any mode whose
+// rank is below the one it is compared against.
 //
 // The zero Mode contributes nothing — a layer that sets no mode is not a
 // value to compare — and is never the answer; a call with no mode at all, or

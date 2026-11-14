@@ -165,8 +165,10 @@ becomes `<mode>`. In order:
 2. **Refuse `hotfix`.** `hotfix` is not a default in any layer (D834, D12): it is off the axis,
    ranks below every on-axis mode, and is reached by an operator's own `fugaro run --mode hotfix`.
    The refusal names that command and never offers a flag that would write it. This refusal is owed
-   on its own terms: D12's base-branch opt-in does not exist today (F13), and nothing here closes
-   that gate or may be read as evidence that it exists.
+   on its own terms and is unchanged by the owner's ruling of 2026-11-13: the base-branch opt-in D12
+   named (F13) is **dropped rather than built**, so `fugaro run --mode hotfix` takes effect with no
+   opt-in — the *request* is opened, and the *writer* stays closed. Nothing here may be read as
+   evidence of a gate.
 3. **Write nothing in a coding agent's session.** The target file is outside every repository, in
    the owner's own config home, so `set` and `unset` of the project layer are refused where
    `fugaro config publish` is refused (`agentenv.Marker`, F15), and in the same words the `models`
@@ -399,11 +401,13 @@ name it:
   written below one changes nothing at the floor. When `show` can see a floor it prints it, and both
   `show` and `set` name **`fugaro rigor floor`** as the command that changes one (SD10); this
   command family's `set` never grows a floor flag.
-- **`hotfix` is never a default** in any layer (D834), in any of the four forms. What `hotfix` is
-  today is a **mode value and nothing more**: it resolves like `pro`, no layer defaults to it, and no
-  form here writes it. The gate D12 names does not exist (F13), **this design does not build it**,
-  and nothing in this folder may be read as evidence that it does: it stays its own future design
-  task, with its own independent review, and nothing lands before the owner's answer.
+- **`hotfix` is never a default** in any layer (D834), in any of the four forms. It is a **mode
+  value** that resolves like `pro`, no layer defaults to it, and no form here writes it. The gate
+  D12 names does not exist (F13) and **is not built**: the owner's ruling of 2026-11-13 is that
+  `fugaro run --mode hotfix` needs no opt-in, because there is no way to predict when a hotfix will
+  be needed, so the gate is dropped and the request itself is the door — it takes the run to
+  `hotfix` whatever the layers below resolved. This design still writes nothing for it, and nothing
+  in this folder may be read as evidence of a gate.
 - **A project layer that changes executable keys is still gated.** `update`'s layer stage publishes
   through the same `publishLayer` the explicit door uses, so a change to `commands.*` or
   `image.*` still needs `--executable-changes`; the command that writes rigor never touches those

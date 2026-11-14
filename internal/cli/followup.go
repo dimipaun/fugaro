@@ -76,7 +76,7 @@ type prChain struct {
 	// when it recorded a readable one: a follow-up keeps it and may only raise
 	// it (T5.2, D6, F14). Empty — no record, a block no reader may trust, or a
 	// readable block whose mode is hotfix, which is off the axis and so not a
-	// mode a follow-up keeps (D12, resolvePR) — imposes nothing, which is what
+	// mode a follow-up inherits (resolvePR) — imposes nothing, which is what
 	// the record of an older run says.
 	Rigor rigor.Mode
 	// Tier is the tier the previous run recorded (runstore.TierRecord.Tier),
@@ -240,12 +240,12 @@ func resolvePR(ctx context.Context, env *cloudEnv, repo, slug string, pr int, ex
 		}
 		// A bounded block that recorded hotfix imposes nothing either: hotfix
 		// is off the axis (it ranks below every on-axis mode), so a follow-up
-		// never keeps it. It is D12's own mode — reached by an operator's run
-		// under the base branch's opt-in, and refused outright as a request —
-		// and a follow-up that inherited it would be a second route to it, one
-		// no configuration asked for and one a stored task could then be
-		// refused for on --retry. The record still says hotfix; that is what
-		// the run it describes resolved.
+		// never inherits it. Hotfix is a mode an operator asks for on the run
+		// that needs it, and a follow-up that inherited it would reach it
+		// through a launch that asked for nothing — which is not the explicit
+		// per-run choice the mode is (rigor.Mode.PerRun). A follow-up that
+		// wants it says so: --mode hotfix is accepted on one. The record still
+		// says hotfix; that is what the run it describes resolved.
 		if bounded := rec.Rigor.Bounded(); bounded != nil && bounded.Mode != rigor.Hotfix {
 			c.Rigor = bounded.Mode
 		}
@@ -933,6 +933,12 @@ func followUpRigor(o *runOptions, c *prChain) (rigor.Mode, error) {
 	if err := refuseFollowUpRigor(req, c.Rigor, task.ShortRun(oneLine(c.Previous.Run)), o.pr[0], "--mode", ""); err != nil {
 		return "", err
 	}
+	if req.PerRun() {
+		// The operator's own choice, kept whole: Strictest would drop it, as
+		// it drops any mode ranking below the one it is compared against, and
+		// the recorded mode of the PR is almost always an on-axis one.
+		return req, nil
+	}
 	return rigor.Strictest(req, c.Rigor), nil
 }
 
@@ -946,11 +952,16 @@ func followUpRigor(o *runOptions, c *prChain) (rigor.Mode, error) {
 // nobody looked at — a run on the PR that pushed nothing is skipped by
 // resolvePR, and the mode it recorded is not part of this rule.
 //
-// Two requests are refused instead of resolved. One below the recorded mode,
-// naming what the PR carries: a follow-up is the comment-sourced surface (F13),
-// so its own flag would otherwise be the way down. And hotfix, which is off the
-// axis and ranks below every on-axis mode, and which an operator reaches with
-// their own run under the base branch's opt-in, never through --pr (D12).
+// One request is refused instead of resolved: one below the recorded mode,
+// naming what the PR carries, since a follow-up is the comment-sourced surface
+// (F13) and its own flag would otherwise be the way down.
+//
+// Hotfix is not refused and not resolved: it is the mode a request takes whole
+// (rigor.Mode.PerRun), so it is neither below nor above the recorded mode and
+// the operator who asks for it on a follow-up means it exactly as they mean it
+// on a first run — the owner's ruling of 2026-11-13 dropped the base branch's
+// opt-in rather than building it (docs/rigor-command/implementation-plan.md
+// R7). followUpRigor is what returns it, since Strictest would drop it.
 //
 // A zero req asks for nothing, and is never below a mode the PR recorded:
 // resolving one is the caller's (Strictest, in followUpRigor), and only a
@@ -959,9 +970,8 @@ func followUpRigor(o *runOptions, c *prChain) (rigor.Mode, error) {
 // request in the refusal's sentence, and cure what the launcher does instead.
 func refuseFollowUpRigor(req, recorded rigor.Mode, recordedBy string, pr int, subject, cure string) error {
 	switch {
-	case req == rigor.Hotfix:
-		return userErr("%s asks for hotfix, which is an operator's own run and not a follow-up's: it is reached by fugaro run --mode hotfix under the base branch's opt-in (D12), never through --pr %d%s",
-			subject, pr, cure)
+	case req.PerRun():
+		return nil
 	case req != "" && req.Rank() < recorded.Rank():
 		return userErr("%s asks for %s, lower than %s, the mode run %s, the last to update PR #%d, recorded; a follow-up may raise a pull request's mode and never lower it%s",
 			subject, req, recorded, recordedBy, pr, cure)

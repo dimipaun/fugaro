@@ -398,10 +398,12 @@ func newRunCmd() *cobra.Command {
 			"It may raise the mode the run resolves from its own configuration\n" +
 			"(rigor.default and rigor.areas in fugaro.yaml, the project layer's defaults)\n" +
 			"and never lower it, so a launch that asks for less cannot outvote a repository\n" +
-			"that asked for more. A follow-up (--pr) keeps the mode the PR's runs recorded\n" +
-			"and may only raise it: asking for less is refused, and so is hotfix, which\n" +
-			"only an operator's own run reaches. --path PATH declares a path this run will\n" +
-			"touch, repeatable, matched against those area rules before the run starts;\n" +
+			"that asked for more. hotfix is the one exception: it is off the rigor axis and\n" +
+			"ranks below every other mode, so it is taken whole rather than compared, needs\n" +
+			"no opt-in, and takes effect on a first run and on a follow-up alike. A\n" +
+			"follow-up (--pr) keeps the mode the PR's runs recorded and may only raise it,\n" +
+			"and asking for less than that is refused. --path PATH declares a path this run\n" +
+			"will touch, repeatable, matched against those area rules before the run starts;\n" +
 			"without either flag a first run resolves from its configuration alone, and a\n" +
 			"follow-up from that and the mode it keeps. Both are\n" +
 			"recorded in the run's record and named in the pull request's status line.",
@@ -428,7 +430,7 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&o.recipe, "recipe", "", "the recipe (task loop) to run: .fugaro/recipes/NAME.yaml, the project's, or the catalog's ("+strings.Join(recipe.CatalogNames(), ", ")+"); default: agent.recipe in fugaro.yaml, else default; a follow-up (--pr) keeps its previous run's")
 	f.StringVar(&o.token, "token", "", "named Claude account (claude_accounts in the local config) this run uses, for a workflow whose agent.auth is oauth; default: agent.oauth_token in fugaro.yaml, else the repository's default account; a follow-up (--pr) keeps its previous run's account unless this is given explicitly, which overrides it (checked the same way as a first run's)")
 	f.StringArrayVar(&o.attach, "attach", nil, "attach a file to the run: repeatable, uploaded to the run's own inputs/ and downloaded by a mode: artifact run into the checkout's inputs/ (needs a mode: artifact recipe; refused on a run ID that already has a task)")
-	f.StringVar(&o.rigor, "mode", "", "the rigor mode to ask for: "+rigor.ModeList()+"; it may raise the mode the run resolves from its configuration (rigor.default, rigor.areas, the project layer) and never lower it; a follow-up (--pr) keeps the mode the PR's runs recorded and may only raise it, and takes no hotfix; without it a first run resolves from those layers alone, and a follow-up from those and the mode it keeps")
+	f.StringVar(&o.rigor, "mode", "", "the rigor mode to ask for: "+rigor.ModeList()+"; it may raise the mode the run resolves from its configuration (rigor.default, rigor.areas, the project layer) and never lower it, except hotfix, which this run takes whole and which needs no opt-in; a follow-up (--pr) keeps the mode the PR's runs recorded and may only raise it; without it a first run resolves from those layers alone, and a follow-up from those and the mode it keeps")
 	f.StringArrayVar(&o.paths, "path", nil, "declare a path this run will touch, matched against the rigor.areas rules in effect (the repository's, and the project layer's beside them): repeatable; a run that declares none matches no area rule")
 	f.StringVar(&o.tier, "tier", "", "the expectation tier to dispatch this run at: "+tier.List()+". It is what the run is expected to cost and take (governance.tiers in fugaro.yaml and the project layer), and never a cap: the run's own budget cap stays the ceiling. A --pr follow-up keeps the tier its PR's runs recorded; without this flag a run carries no expectation at all")
 	f.StringVar(&o.reviewLevelsPath, "review-levels", "", "read the run's own review levels from this YAML file, or - for stdin: the block the task stores as review_levels (l1, l2, l3, each of model, effort, none and focus), decoded strictly, with no key on no level meaning the configuration decides it. Asking for levels needs a job image whose runner acts on them, so a launch on an older one is refused and names fugaro image refresh; without the flag the run resolves its levels from its configuration and its mode alone")
@@ -2471,14 +2473,16 @@ func tierFlag(o *runOptions) error {
 	return nil
 }
 
-// noteRigorRequest says, once per launch, when --mode asks for a mode the
-// layers already meet: the request may raise and never lower (D6), so such a
-// request is recorded as asked and changes nothing, and a launcher that typed
-// it — `--mode hotfix` above all, which ranks below every on-axis mode —
-// would otherwise believe it took effect. It reads the checkout's fugaro.yaml
-// with the project layer, the closest thing to the base branch the launcher
-// has; without a checkout of repo it cannot tell, and says nothing. Never an
-// error: the runner, reading the base branch, is the one that decides.
+// noteRigorRequest says, once per launch, when --mode asks for an on-axis mode
+// the layers already meet: the request may raise and never lower (D6), so such
+// a request is recorded as asked and changes nothing, and a launcher that typed
+// it would otherwise believe it took effect. Hotfix is not one of those cases:
+// it is the mode a request takes whole (rigor.Mode.PerRun), so a resolution
+// that names the request as the layer that decided it — which is what this
+// reads — is the request that did take effect. It reads the checkout's
+// fugaro.yaml with the project layer, the closest thing to the base branch the
+// launcher has; without a checkout of repo it cannot tell, and says nothing.
+// Never an error: the runner, reading the base branch, is the one that decides.
 func noteRigorRequest(ctx context.Context, o *runOptions, repo string, warn io.Writer) {
 	if o.rigor == "" {
 		return

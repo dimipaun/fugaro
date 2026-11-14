@@ -1,6 +1,6 @@
 # `fugaro rigor`: implementation plan
 
-**Status as of 2026-11-10: 3/10 merged, and R2–R5 closed as duplicates of the two winning plans; see [docs/status.md](../status.md) for the current table.** Every decision in this design's block is answered
+**Status as of 2026-11-13: R0, R1, R7 and R8 merged, and R2–R5 closed as duplicates of the two winning plans; see [docs/status.md](../status.md) for the current table.** Every decision in this design's block is answered
 ([reconciliation.md](reconciliation.md) §3): **D830 and D831** by the owner's SD4 ruling of
 2026-10-31, **D832–D839 on 2026-10-31, all as recommended**. The one decision the plan **cites** and
 does not own — **D854**, the settings design's, whether the `Layer` stage records the generation it
@@ -19,8 +19,10 @@ config-management **G0–G2** with **G4**, **R3** (`fugaro rigor show`) is the s
 (**S0–S2, S4**), and **R4** and **R5** (`fugaro rigor set`, `unset`, `--repo R`) are config-management
 **G6**. Each closed task carries the marker, keeps its section as the record of what was designed —
 G6's own interface says its first step is re-reading that record against the tree — and keeps its
-number, which is never reused. **R0, R1 and R8 are merged and stay as they are**: R0 and R1 landed on
-`main`, and R8's refusal landed with **#1478** on 2026-10-31. **R6, R7 and W stay open**, and the
+number, which is never reused. **R0, R1, R7 and R8 are merged and stay as they are**: R0 and R1 landed on
+`main`, R8's refusal landed with **#1478** on 2026-10-31, and **R7 was answered by the owner on
+2026-11-13** — `fugaro run --mode hotfix` takes effect with no opt-in, so the gate D12 named is
+**dropped, not built** — and its behaviour is on `main` with it. **R6 and W stay open**, and the
 behaviour the winners do not carry is listed under *behaviour not covered by the winners* in the pull
 request that carries this ruling rather than dropped here.
 
@@ -81,16 +83,17 @@ this plan designed and the owner closed as duplicates on 2026-11-10 — and each
 | 0 | R0 (merged) | nothing |
 | 1 | R1 (merged) | R0 |
 | 2 | R6 | R1, and the winners' commands it documents (config-management's G6 and G7) |
-| 3 | R7, R8 (merged) | nothing (R7 lands nothing before the owner answers) |
+| 3 | R7, R8 (merged) | nothing (R7 landed nothing before the owner answered; the answer is the ruling below) |
 | 4 | W | R0, R1, S5, and config-management's G6 (its write path, and D834's `hotfix` refusal with the sentence it uses) |
 
 **The closed tasks are off the table, and the numbers stay spent.** R2–R5 are gone from the levels
 above and from the order: the commands they designed are the winners', and their numbers are never
 reused — a later task here takes **R9**, and it re-reads this plan's `Needs` column rather than this
 sentence. Nothing else about the plan's order moves: R0 and R1 are the foundation the two winning
-plans also stand on, and R6, R7 and W keep the order they had among themselves — R6's documentation
-after the commands it documents, R7's question before W's wizard — at the levels the table above now
-gives them, which is higher than before only because the four closed tasks left the table.
+plans also stand on, and R6 and W keep the order they had among themselves — R6's documentation
+after the commands it documents — at the levels the table above now gives them, which is higher than
+before only because the four closed tasks left the table. **R7's question was answered on
+2026-11-13 and the task is merged**, so it holds no level and gates nothing.
 
 **R4 and R5 needed R1 among their code needs — and that one is what makes the HARD RULE hold
 mechanically rather than by promise.** The argument does not leave with them: the `set` they
@@ -114,11 +117,10 @@ publishes it has landed, and the table says so in the same column it says everyt
 
 **R7 and R8 are follow-ups this design found and does not fix** (reconciliation §4): the missing
 hotfix gate (F13) and the loader that accepts two area rules with one glob (F14). Neither blocks
-R0, R1 or R6; both target 0.15.0 with them. R7's first step is a question to the owner and it lands
-nothing before the answer, so its row is not a gate on anything.
-**R8's refusal has since landed** (2026-10-31, **#1478**), so of the two only **R7** is still open.
-Whichever of R7 and R8 lands in the same release as R0, R1 and R6 has its user-visible half written
-into that release's notes by R6; a release that carries neither notes neither.
+R0, R1 or R6; both target 0.15.0 with them. **Both have since landed**: R8's refusal with **#1478**
+on 2026-10-31, and R7 on **2026-11-13**, when the owner answered its question by **dropping the gate
+rather than building it** — see the task's own section below for the ruling and what it changed.
+Both are merged, so R6's release notes carry both user-visible halves rather than one.
 
 **W is not a follow-up: it is D900's task, and it is the one task here that is not a `rigor`
 subcommand.** The owner's ruling of 2026-10-31 is that the setup wizard asks the project's rigor mode
@@ -592,6 +594,55 @@ no layer and nothing in the cloud.
 
 ## R7. The hotfix gate D12 names, which does not exist (F13). **SEC**
 
+**MERGED 2026-11-13, and the answer is that there is no gate.** The owner answered the question this
+section ends on — *"we have to allow `fugaro run --mode hotfix` without opt-in, no way to predict
+when you'll need it"* (2026-11-13) — so the gate D12 names is **dropped, not built**: no base-branch
+opt-in key, no `rigor.hotfix`, no `internal/rigor/hotfix.go`. The two doors that disagreed are made
+consistent by **opening the closed one**: `fugaro run --mode hotfix` takes effect for that run with
+no opt-in, in `fugaro run` and on the follow-up path alike.
+
+- **What landed.** `rigor.Mode.PerRun()` (`internal/rigor/mode.go`) is the one mode a run's own
+  request takes whole rather than by outranking what the layers resolved, and `rigor.Resolve` reads
+  it in the request block; `--mode` for every other mode keeps D6's raise-only rule unchanged. The
+  refusal that repeated D12's sentence about a key that does not exist is gone from
+  `internal/cli/followup.go`, and the sentence with it: a follow-up asking for hotfix is accepted
+  exactly as a first run is, and a stored follow-up task that asks for it launches as it is. The
+  launcher's "has no effect" note and `budget preview`'s follow the resolution, so neither claims a
+  request was ignored when it was the mode the run is held to.
+- **The owner's floor moves with it.** `review_floor` is a mode→levels map (`policy.Effective`), and
+  a run reads the row of the mode it is at, so a request that moved the run off the axis would have
+  read hotfix's row — usually empty — and left the row the layers resolved behind: one flag dropping
+  a floor the owner set, silently (D8, LF5, D18, Item 3 of
+  `docs/rigor-modes/levels-reconciliation.md`). Both readers of a floor union the two rows:
+  `rigor.LayersMode` answers the mode the layers alone resolved, kept beside the record's own mode as
+  the runner's moments run, and `policy.Effective.ReviewFloorFor` — the launcher's `policy.FloorFor`,
+  off the published node — holds that row and hotfix's. An owner floor of `pro l2,l3` therefore still
+  turns the adversarial step on for a `fugaro run --mode hotfix` run, and the owner's lever for
+  flooring such a run harder is `fugaro rigor floor set hotfix l2,l3`.
+- **What did not move.** `fugaro rigor set` still refuses to **write** `hotfix` in any form it
+  writes (D834, below): the ruling opens the *request*, not the writer. The four forms D834 names
+  are the project default, an area rule, a repository's own block and a `--json`-silent value; only
+  the first two are writable today, since R4's `--repo` form is closed as a duplicate of
+  config-management's G6 and is not built. A hand-written `rigor.default: hotfix` in a layer or a
+  `fugaro.yaml` stays reachable too — the ruling did not close that door either, and it is reported
+  rather than changed.
+- **Tests.** `TestResolveTakesAHotfixRequestWhole`, `TestLayersModeAnswersOnlyBesideARequestThatTakesTheRunWhole`
+  (`internal/rigor`); `TestReviewFloorForHoldsBothRowsOfAnOffAxisRequest` (`internal/policy`);
+  `TestResolveLevelsFloorHoldsForAHotfixRequest` (`internal/config`); `TestRunTakesHotfixWithNoOptIn`,
+  `TestFollowUpTakesHotfix`, `TestStoredFollowUpKeepsAHotfixRequest`, `TestBudgetPreviewTakesHotfix`,
+  `TestLaunchReviewLevelsAskHoldsTheFloorOfTheModeTheLayersResolved` and
+  `TestDocsRigorModesProductStatesTheHotfixDoor` (`internal/cli`); and
+  `TestBootstrapRigorTakesTheRunsOwnRequestOnlyUpward`'s hotfix row,
+  `TestRigorFloorHoldsWhenTheRequestTakesTheRunToHotfix` and
+  `TestLayersRigorIsKeptOnlyForARequestThatTakesTheRunWhole` (`internal/runner`). The writer
+  refusal that does exist is `TestRigorSetRefusesHotfix` (`internal/cli/rigor_test.go`), unchanged by
+  this task: it covers the two forms the command can write, and the `--repo` form it does not name is
+  G6's to build. hotfix's levels, its 1/1 rounds and its security-only row keep the rigor table tests
+  unchanged.
+- **The record below is what was designed**, kept as R8's is: the F13 finding, what `hotfix` was
+  before the answer, and the shape the gate *would* have taken had the owner wanted one. Read its
+  present tense as the state at 2026-10-31, not as the state on `main`.
+
 A follow-up this design found and does not fix. D12 requires `fugaro run --mode hotfix` to be gated
 on the base branch's configuration (`rigor.hotfix`), and `internal/cli/followup.go` repeats that
 sentence when it refuses a follow-up's hotfix — but no such key exists: `schemas/fugaro.schema.json`'s
@@ -631,7 +682,9 @@ neither is it, and no code reads one.
 - **When it is answered**, the shape is small: the key in `schemas/fugaro.schema.json` and in
   `internal/config/scope.go`, the read in the resolution path, one refusal sentence that names
   `fugaro run --mode hotfix`'s own door, and tests that a first run without the opt-in is refused and
-  that a hand-written `rigor.default: hotfix` with no opt-in is refused too.
+  that a hand-written `rigor.default: hotfix` with no opt-in is refused too. **It was answered the
+  other way** (2026-11-13): the shape above is the one the ruling *refused*, and what landed is the
+  merge note at the top of this section.
 - **Owner of the answer:** the owner (D12 is theirs). **Not a blocker** of R0, R1 or R6.
 
 ## R8. Two area rules with one glob are refused where the layer is validated (F14)
@@ -722,11 +775,11 @@ closed as its duplicate, as above), and **R4**'s refusal of `hotfix` (D834) and 
   whose refusal names `rigor.ModeList()`), so a near miss is refused in the wizard's words exactly as
   `fugaro run --mode` refuses it (F8). A default nobody typed is the state this task exists to end: on
   every other question the wizard takes Enter as the answer, and here it must not.
-- **`hotfix` is not offered and not writable — D834 stands.** It is a per-run mode (D12's own door,
-  `fugaro run --mode hotfix`), the prompt does not list it, and `--rigor hotfix` is refused with the
-  sentence `fugaro rigor set` refuses it with: R4's refusal (D834), which names that operator door and
-  is owed on its own terms. W does not fork the sentence and does not close F13's missing gate, which
-  stays where R7 leaves it.
+- **`hotfix` is not offered and not writable — D834 stands.** It is a per-run mode (`fugaro run
+  --mode hotfix`, which R7 has since opened with no opt-in), the prompt does not list it, and
+  `--rigor hotfix` is refused with the sentence `fugaro rigor set` refuses it with: R4's refusal
+  (D834), which names that operator door and is owed on its own terms. W does not fork the sentence,
+  and it neither builds nor needs a gate: R7's answer was to drop the one D12 named.
 - **The write is the R-chain's, and the run that asks publishes it (HARD RULE).** The answer never
   edits a file from the question phase, which applies nothing: it is carried on the run's options into
   **R1's `Layer` stage** (`internal/cli/init_layer_stage.go`), the one stage that writes and publishes
@@ -834,14 +887,14 @@ closed as its duplicate, as above), and **R4**'s refusal of `hotfix` (D834) and 
   answer is the second command the HARD RULE forbids), the settings design's **S5** (the shared write
   helper) and config-management's **G6** (the rigor write path, the summary line's wording, and the
   sentence the refusal of `hotfix` uses, D834 — R2, R3 and R4 designed those three and the owner
-  closed them as duplicates of G0–G4 and G6 on 2026-11-10). Not on R6, R7 or R8; R7's missing gate is
-  untouched by it.
+  closed them as duplicates of G0–G4 and G6 on 2026-11-10). Not on R6, R7 or R8: R7 has landed and
+  left no gate behind for W to carry.
 
 ## Live checks
 
 None. Every behaviour above is a local file edit, a local read or an offline resolution, and each is
 tested hermetically. R1's cloud write goes through the publish path the installation's existing
-update checks already exercise; no new check number is taken. R7 lands no behaviour until the owner
-answers, so it takes none either. **W** takes none of its own and adds none to `fugaro update`: the
+update checks already exercise; no new check number is taken. R7's landed behaviour is a resolution
+and a refusal that is no longer made, so it takes no check either. **W** takes none of its own and adds none to `fugaro update`: the
 question is local, its write is R1's, and the one cloud write it causes is the same run's publish,
 which the existing update checks already cover.

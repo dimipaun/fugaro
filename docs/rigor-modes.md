@@ -39,7 +39,7 @@ because the run it names is the one with the least room to spend.
 | `startup` | "Good foundation. Happy path plus common error paths. Rare, expensive corner cases go to the backlog." | 2 / 2 | A finding whose likelihood × impact reaches 8, plus the catastrophic override above. | 0.70 |
 | `pro` | "Established-company quality. Aim for bug-free patches, but balance cost against likelihood; extremely rare, high-effort issues may stay unfixed." | 3 / 3 | A finding whose likelihood × impact reaches 4, plus the override — except the case the sentence names: a likelihood of 1 with a fix cost of 4 or more is tolerated. | 0.85 |
 | `critical` | "Maximum care about everything." | 3 / 5 | Every finding. It is the strictest mode: no threshold stands between a finding and the block, and nothing is tolerated at the stop. | 1.00 |
-| `hotfix` | "Production is on fire. Time is the dominant constraint." Reached only by a layer written by hand, never by a flag (§[What is not settled](#what-is-not-settled-the-hotfix-gate)). | 1 / 1 | A finding of class `security` alone, plus an unscored one. A `data_loss` finding and an impact of 5 are tolerated. | 0.40 |
+| `hotfix` | "Production is on fire. Time is the dominant constraint." Reached by an operator asking for it — `fugaro run --mode hotfix`, which needs no opt-in (§[The hotfix mode](#the-hotfix-mode)). | 1 / 1 | A finding of class `security` alone, plus an unscored one. A `data_loss` finding and an impact of 5 are tolerated. | 0.40 |
 
 The rounds column is the mode's **default**, not a cap (§[Review
 rounds](#review-rounds)), and the last column is the mode's share of the
@@ -144,10 +144,9 @@ shipped or left nothing the mode blocks on. No person is in that path, in any
 mode. A pull request that stays a draft carries the reason in its body — the mode,
 the round and what it left — and the same reason is in the run's record.
 
-`hotfix` is not a second readiness rule today. What a run of it does with its
-findings is the table's row and nothing else, and the gate that is meant to
-authorize reaching it does not exist yet
-(§[What is not settled](#what-is-not-settled-the-hotfix-gate)).
+`hotfix` is not a second readiness rule. What a run of it does with its findings
+is the table's row and nothing else, and the gate the spec named for reaching it
+was dropped rather than built (§[The hotfix mode](#the-hotfix-mode)).
 
 ### Cost
 
@@ -176,10 +175,12 @@ fugaro run --mode critical "add a unique index on payments.idempotency_key"
 
 `--mode` asks for a mode for this run, and it **may raise the mode the run
 resolves from its configuration and never lower it**: a request below what the
-configuration already says has no effect, and the launcher says so. `--path`
-declares a path the run will touch, which is what lets `rigor.areas` rules be
-matched from the first moment rather than from the run's diff. Repeat it for each
-path.
+configuration already says has no effect, and the launcher says so. `hotfix` is
+the one exception, and the flag is its door: it is off the axis and ranks below
+every other mode, so it is taken whole rather than compared and needs no opt-in
+(§[The hotfix mode](#the-hotfix-mode)). `--path` declares a path the run will
+touch, which is what lets `rigor.areas` rules be matched from the first moment
+rather than from the run's diff. Repeat it for each path.
 
 **Per repository**, in its `fugaro.yaml`:
 
@@ -205,8 +206,8 @@ repository in the project. `fugaro rigor set MODE` writes the project layer's
 default, and `fugaro rigor set MODE --area GLOB --name NAME` writes one rule;
 both write this machine's own project layer file, end with `next: fugaro update`,
 and refuse `hotfix` in either form — a mode a command writes is a mode every run
-of the project takes, and `hotfix` is meant to be an operator's own run
-(§[What is not settled](#what-is-not-settled-the-hotfix-gate)). A mode below what
+of the project takes, and `hotfix` is a choice about one run
+(§[The hotfix mode](#the-hotfix-mode)). A mode below what
 the project resolves to today is refused in a coding agent's session, with the
 command to run at the owner's own terminal.
 
@@ -228,7 +229,9 @@ default and not a floor. Two differences worth knowing:
 recorded, and may only raise it — with `--mode` or without. A follow-up is a
 continuation of the same work, so it may not review less than the run it follows.
 A recorded `hotfix` is the one mode it does not keep: the follow-up re-resolves
-from its layers, and `--mode hotfix` on a follow-up is refused outright.
+from its layers rather than reaching the mode through a launch that asked for
+nothing. Asking for it on a follow-up works exactly as it does on a first run:
+`--mode hotfix` is accepted, and it takes that run whole.
 
 ## The floor
 
@@ -261,6 +264,13 @@ reviewing less: it prints what it widens, and it asks nothing either, as
 `critical` and `hotfix` are all under it: a floor of `l2` on `poc` runs the senior
 review in a mode whose own level set is the first-line review alone.
 
+**A request that moves the mode moves no floor.** The floor is read per mode, and
+a run whose own `--mode` took it to `hotfix` — the one mode a request takes whole
+(§[The hotfix mode](#the-hotfix-mode)) — is held to hotfix's row **and** to the
+row of the mode the layers resolved for it: a floor of `l2,l3` on `pro` holds a
+`fugaro run --mode hotfix` run of that repository too, so no flag drops the
+owner's minimum.
+
 ## Reading a run's mode back
 
 - **`fugaro diagnose RUN`** prints the run's `Rigor:` line — the mode, the layer
@@ -278,23 +288,24 @@ review in a mode whose own level set is the first-line review alone.
   apart a file that says nothing about the key from one that has taken the
   published floor away.
 
-## What is not settled: the hotfix gate
+## The hotfix mode
 
-`hotfix` is a mode value today, and that is all it is. It resolves like the
-others and its levels are `pro`'s set. What reaches it is a layer written by hand
-— `rigor: { default: hotfix }` in a `fugaro.yaml`, or an `areas` rule whose
-`mode` is `hotfix`, in either layer; the configuration accepts both and the
-resolver honours them. `fugaro rigor set` refuses it in either form, and
-`fugaro run --mode hotfix` does **not** reach it: a request may only raise a run's
-mode, and `hotfix` ranks below every on-axis mode, so the launcher says the flag
-has no effect. What does **not** exist is the gate the spec names: an
-authorization read from the base branch before a run may be a hotfix at all.
+`hotfix` is the mode an operator reaches by asking for it: `fugaro run --mode
+hotfix`. It needs **no opt-in and no authorization read from the base branch** —
+the gate the spec named was *dropped rather than built* by the owner's ruling of
+2026-11-13, because there is no way to predict when a hotfix will be needed (task
+R7 of `docs/rigor-command/implementation-plan.md`). The request is the whole door:
+it takes the run to `hotfix` whatever the layers below resolved, and it is the one
+request that is not compared against them — every other mode keeps the raise-only
+rule, so a launcher may raise a run's mode and never lower it.
 
-That gate is an open question for the owner and is designed and reviewed on its
-own, as task R7 of `docs/rigor-command/implementation-plan.md` — whose first step
-is the question rather than code. Until it is answered, this page describes what
-the code does and promises nothing about who may reach `hotfix`. Treat a hotfix
-run as a mode with almost no gates and no gate of its own: `hotfix` tolerates
-everything but an exploitable weakness, spends one round, takes the smallest share
-of the cap of the five, and reaches a ready pull request on the same readiness
-rule as every other mode.
+`hotfix` also resolves like any other mode value: `rigor: { default: hotfix }` in
+a `fugaro.yaml`, or an `areas` rule whose `mode` is `hotfix`, in either layer, is
+honoured, and both stay reachable by hand. `fugaro rigor set` still refuses to
+**write** it in any form (D834): a mode a command writes is a mode every run of
+the project takes, and `hotfix` is a choice about one run.
+
+Treat a hotfix run as a mode with almost no gates: `hotfix` tolerates everything
+but an exploitable weakness, spends one round, takes the smallest share of the cap
+of the five, and reaches a ready pull request on the same readiness rule as every
+other mode.

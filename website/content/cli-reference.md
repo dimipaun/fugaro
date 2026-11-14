@@ -1214,8 +1214,10 @@ for one for a run, and takes the same vocabulary. It may raise the mode
 the repository resolves (its rigor: block, the project layer) and never
 lower it, so a request below the resolved mode changes nothing and the
 preview says so rather than quoting a cheaper ceiling than the run would
-be held to. The mode is an input to the two terms the tool can compute
-and to nothing else: the recipe's stage bound, through the rounds the
+be held to. hotfix is the one exception, exactly as it is for a run: it is
+taken whole and needs no opt-in, so the figures are its own. The mode is an
+input to the two terms the tool can compute and to nothing else: the
+recipe's stage bound, through the rounds the
 mode's own row gives the knobs the checkout leaves unset, and the per-run
 cap, through the fraction of the deployed ceiling the mode carries.
 That is not the mode budget set --mode takes, which is the accounting
@@ -1277,7 +1279,7 @@ Flags:
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for preview |
 | `--json` | bool | `false` | no | print machine-readable output |
-| `--mode` | string | "" | no | the rigor mode to preview: poc, startup, pro, critical, hotfix; it may raise the mode the repository resolves (its rigor: block, the project layer) and never lower it, so a mode below the resolved one changes nothing. This is the rigor mode, not the accounting mode budget set --mode takes (observe or enforce) |
+| `--mode` | string | "" | no | the rigor mode to preview: poc, startup, pro, critical, hotfix; it may raise the mode the repository resolves (its rigor: block, the project layer) and never lower it, so a mode below the resolved one changes nothing — except hotfix, which is taken whole and needs no opt-in, as it is for a run. This is the rigor mode, not the accounting mode budget set --mode takes (observe or enforce) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--recipe` | string | "" | yes | the recipe to preview (ab-judge, default, escalate, lint-fix, pick, premium, rebase, review-only, run-digest, solo, standard, test-and-fix) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
@@ -6573,10 +6575,12 @@ and --retry takes none (the stored task keeps its own).
 It may raise the mode the run resolves from its own configuration
 (rigor.default and rigor.areas in fugaro.yaml, the project layer's defaults)
 and never lower it, so a launch that asks for less cannot outvote a repository
-that asked for more. A follow-up (--pr) keeps the mode the PR's runs recorded
-and may only raise it: asking for less is refused, and so is hotfix, which
-only an operator's own run reaches. --path PATH declares a path this run will
-touch, repeatable, matched against those area rules before the run starts;
+that asked for more. hotfix is the one exception: it is off the rigor axis and
+ranks below every other mode, so it is taken whole rather than compared, needs
+no opt-in, and takes effect on a first run and on a follow-up alike. A
+follow-up (--pr) keeps the mode the PR's runs recorded and may only raise it,
+and asking for less than that is refused. --path PATH declares a path this run
+will touch, repeatable, matched against those area rules before the run starts;
 without either flag a first run resolves from its configuration alone, and a
 follow-up from that and the mode it keeps. Both are
 recorded in the run's record and named in the pull request's status line.
@@ -6599,7 +6603,7 @@ Flags:
 | `--max-time` | string | "" | no | cap this chain's elapsed run time, as a duration such as 45m or 2h: --total-timeout keeps its own meaning and may raise this run's clock, and the two compose as the smaller of the two (the run's clock is min(--total-timeout, this)) |
 | `--max-tokens` | string | "" | no | cap this chain's token total at N tokens, such as 900000: tighten-only, like --max-usd, and recorded in the task's overrides |
 | `--max-usd` | string | "" | no | cap this chain's model spend at X dollars, such as 5 or 12.5: it may only tighten the ceiling this launch resolves (fugaro refuses a looser value and names the layer that set the lower one), and it is recorded in the task's overrides, beside the total_timeout that is there today. A chain is the run that sets it and the runs that continue it; a launch that names no such limit gets today's per-run caps and no chain at all |
-| `--mode` | string | "" | no | the rigor mode to ask for: poc, startup, pro, critical, hotfix; it may raise the mode the run resolves from its configuration (rigor.default, rigor.areas, the project layer) and never lower it; a follow-up (--pr) keeps the mode the PR's runs recorded and may only raise it, and takes no hotfix; without it a first run resolves from those layers alone, and a follow-up from those and the mode it keeps |
+| `--mode` | string | "" | no | the rigor mode to ask for: poc, startup, pro, critical, hotfix; it may raise the mode the run resolves from its configuration (rigor.default, rigor.areas, the project layer) and never lower it, except hotfix, which this run takes whole and which needs no opt-in; a follow-up (--pr) keeps the mode the PR's runs recorded and may only raise it; without it a first run resolves from those layers alone, and a follow-up from those and the mode it keeps |
 | `--no-budget-check` | bool | `false` | no | skip the launch pre-check of the budget (kill switches, missing caps, no headroom); the run is held to the same limits when it starts |
 | `--no-compression` | bool | `false` | no | turn agent.compression off for this run only, overriding fugaro.yaml; there is no flag to turn it on, which is a reviewed fugaro.yaml change |
 | `--owner-ruled` | string | "" | no | the repository owner's ruling on the findings a run on this PR left for them (OD1): either the text itself, a file, or - for stdin. A follow-up on a pull request whose last run stopped waiting on owner decisions is refused without it, and one whose last run left no such decisions is refused with it: the ruling answers what that run left, and nothing else; it is appended to this run's brief verbatim and recorded in the run |

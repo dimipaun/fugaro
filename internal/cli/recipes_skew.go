@@ -1748,10 +1748,16 @@ func levelsBlockAsk(name string, l *config.ReviewLevels) string {
 // `run --pr --recipe review-only` and for a recipe picked by --recipe pick.
 // A request that costs a launch is worse than one a launch cannot honour.
 func launchReviewLevelsAsk(ctx context.Context, env *cloudEnv, spec *task.Spec, cfg *config.Config, rcp *recipe.Recipe, recipeUnknown bool, warn io.Writer) (string, error) {
-	mode := rigor.Resolve(cfg.RigorConfig(), rigor.Request{Mode: rigor.Mode(spec.Rigor), Paths: spec.Paths}).Mode
+	rigorCfg := cfg.RigorConfig()
+	req := rigor.Request{Mode: rigor.Mode(spec.Rigor), Paths: spec.Paths}
+	mode := rigor.Resolve(rigorCfg, req).Mode
 	var floor []policy.Level
 	if p, found, err := env.policy.read(ctx, env.lc); err == nil && found && p != nil {
-		floor = p.ReviewFloor[mode]
+		// The same two rows the run's own resolution reads: a request that
+		// takes the run off the axis leaves the floor of the mode the layers
+		// resolved in force beside hotfix's (D8, LF5), and a note resolved
+		// against one row would say the launch's levels differ from the run's.
+		floor = policy.FloorFor(p.ReviewFloor, mode, rigor.LayersMode(rigorCfg, req, ""))
 	}
 	fromTask, fromSwitch := securityRequestSources(spec, cfg)
 	if (fromTask || fromSwitch) && rcp != nil && rcp.Mode == recipe.ModeReview {
