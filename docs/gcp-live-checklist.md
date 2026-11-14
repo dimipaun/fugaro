@@ -873,6 +873,9 @@ probe account carries predefined grants only).
 | 520 | A text-only coder reads a screenshot, on the vision model ([`docs/vision-model/`](vision-model/implementation-plan.md), its **Check 520** and task **V8**; **V1**'s `agent.models.vision`, **V2**'s `model_prices.*.image_tokens`, **V7**'s rewrite of the coder role, and **D2016** — which is why the state this measures is the coder priced **without** an image rate and not the plan's "with"): the sandbox repository's coder is priced without an image rate and `agent.models.vision` names a model that can read one, and one run whose task names a console `__screenshots__` PNG (the issue's own case, run `20261107-104613-b2af`) passes `implement` — and `fix`, where the recipe runs one — reaches its own `result.json`, and there every coder-role stage timing names the **vision** model's ID while `cost.model_by` carries that same model, so the split the issue is about is read from the record and not from the configuration; `fugaro diagnose <run> --json` prints the same split through the command an owner reads a run with | See "Check 520" below; `bash scripts/live-checks/check520.sh --sandbox <a sandbox repository checkout> --yes` is the whole of it, its sibling test `scripts/live-checks/check520_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call, and so is a coding agent's session); **no agent runs any step of it** | ONE sandbox run and what its task costs — the model spend of its coder-role stages, on the sandbox's own budget — plus the pull request that run opens: **billable, and `--yes` is required** before anything is launched. Every other call is a read (doctor, `models ls`, the run record, `diagnose`), and `CHECK520_MAX_MODEL_USD` turns the run's own figure into a criterion when you set it. The run's pull request and branch are left open for you to close. **OWNER-RUN, NOT RUN.** |
 | 521 | The early refusal, and the sentence an owner acts on ([`docs/vision-model/`](vision-model/implementation-plan.md), its **Check 521** and task **V8**; **V5**'s bootstrap refusal — "the coder can't read an image the task names" — and **D2005**, **D2006** and **D2001**): a repository whose coder is priced without an image rate and with **no** `agent.models.vision`, and a task whose text names a `.png`: the run is refused at **bootstrap**, before its first stage, so no stage's work is paid for and thrown away — the failure the refusal exists to remove; its record's `failure_class` is `config_invalid`, its `reason` names the slot to set and the price member that gives that slot's model an image rate, its stage list is **empty** and its cost is **zero** | See "Check 521" below; `bash scripts/live-checks/check521.sh --sandbox <a sandbox repository checkout>` is the whole of it, its sibling test `scripts/live-checks/check521_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call, and so is a coding agent's session); **no agent runs any step of it** | **NOTHING billable and no model call**: the run is refused at bootstrap, before its first stage, so no stage's work is paid for and the budget is not touched — which is why this check needs no `--yes`. It does start one Cloud Run job execution, and **nothing it launches outlives it**: a run that has not ended within `CHECK521_RUN_TIMEOUT_SECONDS` is cancelled with `fugaro cancel --now`, from the step that gives up on it and from the script's own exit trap. **OWNER-RUN, NOT RUN.** |
 | 292 | A catalog entry whose source names a build `context:` is built with the repository's files in it ([`docs/catalog-build-context/`](catalog-build-context/implementation-plan.md) §6, its **Check 292** and task **CB5**; that folder's **F22**, **F29**, **F30**, **F32** and **F33**, and **D1402**, **D1403**, **D1408** and **D1409**; the amendment it folds into is [`docs/project-image-catalog/context-design.md`](project-image-catalog/context-design.md), its §A5, §A6, §C3, §C4, §C5 and the fold-in at §11): one entry built from a repository's Dockerfile in a **subdirectory**, whose `COPY` reaches a file of the repository — the build the catalog could not run before this work — read back four ways: the built image **contains the copied file**, the record names **one** commit (`source_commit` and `context_commit` the same, and the image's `org.opencontainers.image.revision` that commit), the staged context **fires** the nightly decision with the `catalog-context` reason and the rebuild it submits is pinned to the staged commit, and after that rebuild the same entry decides **without** that reason. **What the plan's own step 4 cannot be run as written is the point of the section below:** the trigger's subject is the digest the operator's own copy **staged**, not the branch, so a pushed commit fires nothing by itself — the check is written against the code and says so | See "Check 292" below; **you** run it, on the **sandbox installation and the sandbox repository only, never `belong`**, from the sandbox repository's checkout, and **no agent runs any step of it** (there is **no script**: the check is the steps below) | One Cloud Build that runs (`fugaro image build <entry>`), one submitted-and-cancelled before its steps run (the staging that leaves the record behind), and the one rebuild the project's catalog check job submits when the entry fires: **all billable, and the rebuild is the point of the step**. Nothing is granted, no run is launched and no model is called, so there is no run spend. Two commits are pushed to the sandbox repository's branch and reverted (a third when step 5 loses its race with the build it cancels), and the entry, its staged objects, its record, its check state and its image are the check's own — the entry and its objects are removed in the Restore, the image is left in the shared registry (`fugaro image rm` never deletes one). **OWNER-RUN, NOT RUN.** |
+| 470 | The shared lookup across machines and people ([`docs/issue-mine/`](issue-mine/implementation-plan.md), its **Check 470** and task **T-IM7**; that folder's **F7** and **U1**, and **F17** — whether a non-operator launcher's login can list `issues/reporters/` and `issues/occurrences/` at all, which is UNVERIFIED until this runs): `fugaro issue mine` in a sandbox checkout reads the project's store end to end — its own document says `source: shared` — and the signed-in login may list the two prefixes `mine`'s own reader lists and read a record under `issues/records/`. The second machine and the second person, which no one machine can measure, are the numbered steps of the section below and are never faked into a row | See "Check 470" below; `bash scripts/live-checks/check470.sh --mode 470 --checkout <a sandbox repository checkout> --project <project> --bucket <bucket>` is the whole of the one-machine half, its sibling test `scripts/live-checks/check470_test.sh` drives it against fake `fugaro` and `gcloud` only, and **you** run it, on the sandbox installation and a sandbox project's issue store only, **never `belong`** (a project or bucket naming that installation, `edge-devel-dimi` or `edgeappinc` is refused before a single call); **no agent runs any step of it** | One `fugaro issue mine --json` — which uploads this machine's own pending issues, the write the command makes whenever you run it — two listings and one record read: **nothing billable, no model call and no run**, and the check creates nothing in the cloud. Its Restore puts back the two local cache files the command writes (the identity cache and the offline snapshot) and reads both back; an upload is not undone, because the store has no delete. **OWNER-RUN, NOT RUN.** |
+| 471 | Offline: the snapshot stands in, then this machine's own rows alone ([`docs/issue-mine/`](issue-mine/implementation-plan.md), its **Check 471** and task **T-IM7**; that folder's **F9** and **U3** — how long the credential lookup takes with no network, which T-IM4 bounds at 5s): after one online `fugaro issue mine`, the network is turned off and the run prints `offline: shared state as of <time>` within a few seconds; with the snapshot cleared — which the check does itself, because it is a local file and not a network step — the run prints `no snapshot of the project's issues is cached` and the local rows only | See "Check 471" below; `bash scripts/live-checks/check470.sh --mode 471 --checkout <a sandbox repository checkout> --project <project> --bucket <bucket>` is the whole of it, its sibling test `scripts/live-checks/check470_test.sh` drives it against fake `fugaro` and `gcloud` only (the network never goes off in a test: the fake's own switch stands in), and **you** run it, on the sandbox installation and a sandbox project's issue store only, **never `belong`**; **no agent runs any step of it** | One `fugaro issue mine --json` and two more `fugaro issue mine` runs with no network, and no cloud call at all (this mode never reads the bucket directly): **nothing billable, no model call and no run**. Turning the network off and back on is yours — the check prints the prompt and waits, and `--no-prompt` says you have already done it — and **the check never fakes the step**. Its Restore puts the two local cache files back and reads them back. **OWNER-RUN, NOT RUN.** |
+| 472 | The listing at size: the count, the seconds and `truncated` ([`docs/issue-mine/`](issue-mine/implementation-plan.md), its **Check 472** and task **T-IM7**; that folder's **U2** — how long listing a few thousand names takes — and whether the 500-issue and 1000-name caps are right): on the project with the most issues, `fugaro issue mine --json` is timed end to end and the row count, the seconds and the `truncated` member are the readings, printed as one line above the block for you to copy back | See "Check 472" below; `bash scripts/live-checks/check470.sh --mode 472 --checkout <a sandbox repository checkout> --project <project> --bucket <bucket>` is the whole of it, its sibling test `scripts/live-checks/check470_test.sh` drives it against fake `fugaro` and `gcloud` only, and **you** run it, on the sandbox installation and a sandbox project's issue store only, **never `belong`**; **no agent runs any step of it** | One `fugaro issue mine --json`, and **the project with the most issues is the one to point it at**: nothing billable, no model call and no run, and no cloud call of the check's own. Its Restore puts the two local cache files back and reads them back. **OWNER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -13788,6 +13791,158 @@ built from, and the one a person can take over the log that actually failed on t
 
 **Paste back:** every `FACT` line above — the entry's `fugaro image ls` line, the built image's reference and digest, the record's `source_commit`, `context_commit`, `context_sha256` and `template_salt`, the image's `org.opencontainers.image.revision`, the check job's two lines for the entry with their `decision` and `reasons`, and the copied file's bytes as the image holds them — and **never a secret and never a token value**: this check prints none, and the one file it reads out of the image is one it wrote. Until this check runs, the feature is built and **unverified live**: the two things no hermetic test can hold are a real provider's tree read at a real commit (the tree read and the digest it produces) and a real Cloud Build carrying a context through the clone step and `docker build --file` — which is exactly what steps 3 to 5 measure. **Never run any step against `belong`**: this is the sandbox installation and the sandbox repository only, and no agent runs any step of it.
 
+## Check 470: the shared lookup across machines and people — the half one machine can read, and the two steps it cannot (a sandbox project's issue store only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **T-IM7** of
+[docs/issue-mine/implementation-plan.md](issue-mine/implementation-plan.md) — its "Checks (reserved
+Checks 470–479)" — and **run by you**: nothing below is a claim that two machines agree. The plan
+writes this check as one thing, and only half of it is one machine's work: the other half needs a
+second machine and a second person. So the script measures the half it can and **prints the other
+two steps and says it does not run them** — never faked into a row, because a row is a reading and
+this check has no reading for them.
+
+**The half `scripts/live-checks/check470.sh --mode 470` measures.** `fugaro issue mine --json`, run
+in the checkout you name — so the project and the store are the checkout's own — and then the store
+read directly with **your own signed-in identity**:
+
+- **The lookup itself.** The run's own document says `source: shared`, which is the one member that
+  says the project's store was read end to end. A run that answers `snapshot` or `local` is a
+  `mine` that showed this machine's rows and said why, and the row quotes the note the command
+  printed rather than inferring one.
+- **The two listings (U1, F17).** `gcloud storage ls` over `issues/reporters/` and
+  `issues/occurrences/` — the two prefixes `mine`'s own reader lists to find this user's issues —
+  as the login the launcher actually runs with. F17 leaves it UNVERIFIED whether a non-operator
+  launcher's login can list them at all, and a **refusal here is the reading this check exists
+  for**: `mine` that cannot list is `mine` that silently shows local rows only. A call that did not
+  answer — a 5xx, an expired session — says nothing about the permission, so the run stops rather
+  than recording it as one, and a prefix that holds nothing is gcloud reporting an empty list and
+  **not** a refusal.
+- **One record read.** `gcloud storage cat` over one object under `issues/records/`, the number
+  taken from the first row the listing returned (or the first name the store lists). A store with
+  no record at all records that as a diagnostic and gates nothing: a project with no issue yet has
+  no record to read.
+
+**The two steps this script does not run.** They are the plan's own readings, and they stay yours:
+
+1. **Machine 2, the same Google login.** In a checkout of the same repository, `fugaro issue mine`
+   must list the issue machine 1 saved and uploaded (`fugaro issue sync`), with **the same number**.
+   An issue missing there, or carrying a different number, is F7 not holding.
+2. **A second person.** They hit the same failure, upload it with `fugaro issue sync`, and run
+   `fugaro issue mine`: both listings must show the same number and `also hit by 1 other` on the
+   row. Names are never printed — the count is the reading (**F15**) — so the count is what you
+   look for.
+
+The script prompts for neither: it prints them as the numbered steps above, says in as many words
+that neither is measured and neither is faked, and records one `human-steps` row that is `INFO` and
+never a criterion.
+
+**Run it:**
+
+```sh
+bash scripts/live-checks/check470.sh --checkout <a sandbox repository checkout> --project <project> --bucket <bucket> --mode 470 --dry-run
+bash scripts/live-checks/check470.sh --checkout <a sandbox repository checkout> --project <project> --bucket <bucket> --mode 470
+```
+
+`--dry-run` prints every command a real run would make, runs nothing at all — **no `fugaro` call
+and no `gcloud` call** — and prints no verdict. Progress goes to stderr and one `CHECK 470 RESULT`
+block goes to stdout at the end: paste that whole block here and nothing else. **Exit `0`** is
+every criterion holding; **`1`** is one that did not; **`2`** is the check not being able to
+measure (a guard stopped it, a tool is missing, a call that did not answer, an internal error). A
+key the run never reached reads `FAIL — not reached`. There is no knob for this mode.
+
+**What it costs, and what it writes.** One `fugaro issue mine --json`, two listings and one record
+read: **nothing billable, no model call and no run**, and the check creates nothing in the cloud.
+`fugaro issue mine` is not read-only, and the check does not pretend it is: it uploads this
+machine's own pending issues (the write the command makes whenever you run it) and it files two
+local cache files. The Restore puts both back the way it found them and reads them back with `cmp`
+and `diff`; **an upload is not undone**, because the store has no delete, and the `restore` row
+says so in as many words.
+
+## Check 471: offline — the snapshot stands in, then this machine's own rows alone (a sandbox project's issue store only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **T-IM7** of
+[docs/issue-mine/implementation-plan.md](issue-mine/implementation-plan.md) — its "Checks (reserved
+Checks 470–479)" — and **run by you**: nothing below is a claim that an offline machine answers
+fast, or that it says what it is showing.
+
+**What it settles.** After one online `fugaro issue mine` — the run that writes the snapshot the
+offline one stands on — the network goes off, and two readings follow:
+
+- **The snapshot stands in.** `fugaro issue mine` prints `offline: shared state as of <time>`, and
+  the row requires that line rather than the absence of an error: a run that read the store and
+  printed its rows as current is the failure this reading is about, and the row says which of the
+  two it was. The run is also timed, and **U3**'s question — how long the credential lookup takes
+  with no network — is the seconds in the row: T-IM4 bounds that lookup at 5s, so a run that spends
+  the whole network timeout is a finding and the row fails past `CHECK470_OFFLINE_MAX_SECONDS`.
+- **The local rows alone, said out loud.** With the snapshot cleared the run prints `no snapshot of
+  the project's issues is cached, so these are this machine's own local issues only`. **The check
+  clears the cache itself** — the snapshot directory is moved aside — because a cleared cache
+  directory is a local file and not a network step, and the Restore puts the original back whatever
+  happens next.
+
+**The one step this script does not run, and never fakes.** Turning the network off and back on is
+yours: the check prints the prompt, waits for Enter, and with `--no-prompt` says out loud that it is
+assuming you have already done it. Nothing in the test does it either — the fake's own switch stands
+in — so no agent ever turns a machine's network off, and no row of a real run is a claim about a
+network that stayed up.
+
+**Run it:**
+
+```sh
+bash scripts/live-checks/check470.sh --checkout <a sandbox repository checkout> --project <project> --bucket <bucket> --mode 471 --dry-run
+bash scripts/live-checks/check470.sh --checkout <a sandbox repository checkout> --project <project> --bucket <bucket> --mode 471
+```
+
+`--dry-run` prints the plan, including the two network steps, runs nothing and prints no verdict.
+Progress goes to stderr and one `CHECK 471 RESULT` block goes to stdout at the end: paste that whole
+block here and nothing else, and with it the exit code — **`0`** every criterion holding, **`1`** one
+that did not, **`2`** the check not being able to measure. `CHECK470_OFFLINE_MAX_SECONDS` (30) is the
+only knob: the bound the offline run's own seconds are read against.
+
+**What it costs, and what it writes.** Three `fugaro issue mine` runs — one with the network and two
+without — and **no cloud call at all**: this mode never reads the bucket directly. **Nothing
+billable, no model call and no run.** The two local cache files the command writes are put back by
+the Restore and read back; the upload a `mine` run makes is not undone, because the store has no
+delete.
+
+## Check 472: the listing at size — the count, the seconds and `truncated` (a sandbox project's issue store only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **T-IM7** of
+[docs/issue-mine/implementation-plan.md](issue-mine/implementation-plan.md) — its "Checks (reserved
+Checks 470–479)" — and **run by you**: nothing below is a claim that a listing at size is fast
+enough. Point it at **the project with the most issues** available to you, because that is the state
+U2 asks about.
+
+**What it settles.** `fugaro issue mine --json`, timed end to end in the checkout you name, and the
+three numbers the plan asks for: the **issue count** the document carries, the **seconds** the whole
+command took (U2: how long listing a few thousand names takes against the real bucket), and whether
+**`truncated`** is true — the store's own listing was cut short at the 500-issue index cap, which is
+the one cap the plan has to answer for. The check prints those numbers as one `THE LISTING AT SIZE:`
+line above the block so you can copy them back without reading the rows; the hidden count (the
+30-day rule, which `--all` turns off) is on it too. A `truncated: false` is a reading and not a
+pass: it says this project is under the cap, so the cap's own value is still untested here.
+
+**Run it:**
+
+```sh
+bash scripts/live-checks/check470.sh --checkout <a sandbox repository checkout> --project <project> --bucket <bucket> --mode 472 --dry-run
+bash scripts/live-checks/check470.sh --checkout <a sandbox repository checkout> --project <project> --bucket <bucket> --mode 472
+```
+
+`--dry-run` prints the plan, runs nothing and prints no verdict. Progress goes to stderr, the
+`THE LISTING AT SIZE:` line and one `CHECK 472 RESULT` block go to stdout at the end: paste both
+here and nothing else. **Exit `0`** is every criterion holding, **`1`** is one that did not, **`2`**
+is the check not being able to measure. There is no knob for this mode.
+
+**What it costs, and what it writes.** One `fugaro issue mine --json` and no cloud call of the
+check's own: **nothing billable, no model call and no run.** The two local cache files the command
+writes are put back by the Restore and read back; the upload a `mine` run makes is not undone,
+because the store has no delete.
+
+**What waits on it.** The plan's reserved Checks 473 to 479 are the rest of this work's readings, and
+the 500-issue cap is the one this check can move: a project past it is what turns `truncated: true`
+from a possibility into a reading.
+
 ## Check 230: the author, the committer and the trailers, on GitHub and on Bitbucket (two sandbox repositories carrying `git.author: launcher`, a third with no such key, and their forges; never `belong`; run by you; NOT RUN)
 
 **NOT RUN.** Written by task **X1** of
@@ -14109,3 +14264,4 @@ repositories and carries `pull_requests: write` alone.
 **What waits on it.** D4 (the advisory merge order) and the change-set half of the spec's promise
 that a set is ready or not ready as a whole: this run is the only reading of it, and a set that
 flips one pull request and leaves the other draft is a finding for this plan's owner.
+
