@@ -41,6 +41,7 @@ import type { KeyMetadata } from '../../api/types/keys'
 import type { ResellerCustomer } from '../../api/types/resellers'
 import type { Statement } from '../../api/types/statements'
 import { SIGN_IN_PATH, routes } from '../../routes'
+import { customerKeysPath } from './api'
 import type { ResellerApi } from './api'
 import { ResellerScreen } from './reseller'
 import { route } from './route'
@@ -133,6 +134,22 @@ function api(overrides: Partial<ResellerApi> = {}): ResellerApi {
     ...overrides,
   }
 }
+
+describe('the path one customer’s keys are read at', () => {
+  it('keeps the organisation id inside its own segment, whatever the id carries', () => {
+    // The id is data -- it comes from the customers list, and nothing about a
+    // customer's own account should decide which route of the API this
+    // reseller's bearer token is sent to. Left raw, a `/` or a `..` in it would
+    // address another path of the same API (the client's own check refuses a
+    // path that *leaves* the origin, and one built here never does), so the
+    // encoding is the guard and this is what holds it.
+    expect(customerKeysPath('a/../b')).toBe('/resellers/customers/a%2F..%2Fb/keys')
+    expect(customerKeysPath('a/b')).toBe('/resellers/customers/a%2Fb/keys')
+    // The ordinary id is unchanged: an encoding that mangled one a customer
+    // really has would be a screen that cannot read its own customers.
+    expect(customerKeysPath('org_acme')).toBe('/resellers/customers/org_acme/keys')
+  })
+})
 
 describe('the reseller screen', () => {
   it('is the screen the app collects for its own path', () => {
