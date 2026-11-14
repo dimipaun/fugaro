@@ -17,6 +17,14 @@
 // lists as they are, empty ones included, and never overrides one that is empty
 // with a default.
 //
+// **A refused read is an answer, and it carries its own way to ask again.** The
+// lists are read once when the section mounts, and the fields are drawn from
+// that answer -- so a refusal that stopped at the sentence would leave an
+// operator with no lists to edit and no way to ask for them but a reload, which
+// is what loses the form they were in. The sentence is drawn with a button that
+// reads again, and it is drawn instead of "Loading…", because a read that came
+// back refused has finished.
+//
 // **The text being edited is the text, and the list is read off it only on
 // save.** A field that turned its own contents into a list after each keystroke
 // would eat the newline that starts the next entry, so an operator could never
@@ -47,10 +55,14 @@ export function ListsSection({ api, actions }: { api: OpsApi; actions: OpsAction
   const [domains, setDomains] = useState<string | null>(null)
   const [directories, setDirectories] = useState('')
   const [readFailure, setReadFailure] = useState<string | null>(null)
+  const [attempt, setAttempt] = useState(0)
   const { busy, failure: refused, submit } = useSubmission(actions)
 
   useEffect(() => {
     let live = true
+    // A load that starts clears the last refusal, so the retry is drawn as a
+    // load and not under the sentence it is answering.
+    setReadFailure(null)
     api.lists().then(
       (lists: OpsLists) => {
         if (live) {
@@ -67,7 +79,7 @@ export function ListsSection({ api, actions }: { api: OpsApi; actions: OpsAction
     return () => {
       live = false
     }
-  }, [api])
+  }, [api, attempt])
 
   function save(): void {
     void submit(async () => {
@@ -88,12 +100,23 @@ export function ListsSection({ api, actions }: { api: OpsApi; actions: OpsAction
         Microsoft directories a reseller's sign-in is accepted from. An empty list admits nobody.
       </p>
 
-      {readFailure === null ? null : <p role="alert">{readFailure}</p>}
+      {readFailure === null ? null : (
+        <div role="alert">
+          <p>{readFailure}</p>
+          <button
+            type="button"
+            onClick={() => {
+              setAttempt((tried) => tried + 1)
+            }}
+          >
+            Try again
+          </button>
+        </div>
+      )}
       {refused === null ? null : <p role="alert">{refused}</p>}
 
-      {domains === null ? (
-        <p role="status">Loading…</p>
-      ) : (
+      {readFailure === null && domains === null ? <p role="status">Loading…</p> : null}
+      {domains === null ? null : (
         <>
           <label htmlFor="ops-lists-domains">Email domains</label>
           <textarea

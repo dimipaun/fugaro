@@ -586,6 +586,12 @@ describe('the operations screens', () => {
     show(person(0), replies)
     await screen.findByText('The reports are not answering right now.')
 
+    // The refusal is the load's end: nothing is still loading under it, and the
+    // month form is how the report is asked for again.
+    expect(
+      within(screen.getByRole('region', { name: 'Reports' })).queryByText('Loading…'),
+    ).toBeNull()
+
     replies['GET /api/ops/reports'] = { body: MONTH }
     send('Show the report')
 
@@ -628,6 +634,30 @@ describe('the operations screens', () => {
     expect(await screen.findByText(/entitlement.revoke/)).toBeDefined()
     expect(screen.queryByText('The audit log is not answering right now.')).toBeNull()
     expect(shown.sent('GET', '/api/ops/audit')).toHaveLength(2)
+  })
+
+  it('reads the lists again when the lists are refused', async () => {
+    const replies = routes({
+      'GET /api/ops/lists': refusal(503, 'unavailable', 'The lists are not answering right now.'),
+    })
+    const shown = show(person(0), replies)
+    await screen.findByText('The lists are not answering right now.')
+
+    // The fields are drawn from the read, so a refused read leaves no lists to
+    // edit and no Save to press: without a way to read again, a reload would be
+    // the only recovery, and a reload loses the form the operator was in.
+    expect(screen.queryByLabelText('Email domains')).toBeNull()
+    expect(
+      within(screen.getByRole('region', { name: 'The lists' })).queryByText('Loading…'),
+    ).toBeNull()
+
+    replies['GET /api/ops/lists'] = { body: LISTS }
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+
+    expect(await screen.findByLabelText('Email domains')).toBeDefined()
+    expect(screen.getByDisplayValue('example.com')).toBeDefined()
+    expect(screen.queryByText('The lists are not answering right now.')).toBeNull()
+    expect(shown.sent('GET', '/api/ops/lists')).toHaveLength(2)
   })
 
   it('reads a customer’s records, and every id an action would name', async () => {

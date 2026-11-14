@@ -11,6 +11,13 @@
 // **A month is UTC here too.** The API keys a report on UTC (P5.2), and the
 // screen sends the month it opens on in that spelling, for the reason the
 // ledger's comment gives.
+//
+// **A refused read is an answer, and the section stops at it.** The load has
+// finished, so nothing is still loading under the API's own sentence, and the
+// month form above is how the report is asked for again -- pressing Show
+// re-runs the load, which is what the attempt counter is for. A section left
+// saying "Loading…" beside the refusal would be telling an operator to wait for
+// a month that is never coming.
 
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
@@ -77,9 +84,8 @@ export function ReportsSection({ api }: { api: OpsApi }) {
       </form>
 
       {failure === null ? null : <p role="alert">{failure}</p>}
-      {report === null ? (
-        <p role="status">Loading…</p>
-      ) : (
+      {failure === null && report === null ? <p role="status">Loading…</p> : null}
+      {report === null ? null : (
         <>
           <p>
             {report.month}: {money(report.direct_micros)} direct,{' '}
