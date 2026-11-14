@@ -356,12 +356,15 @@ func hasViewer(bs []gcpfake.Binding) bool {
 	return false
 }
 
-// Without a terminal and without --yes nothing is applied.
+// Without a terminal nothing is applied: a person at their own terminal is
+// the whole of a step's confirmation, and no flag stands in for one (T7,
+// docs/no-prompt-policy).
 func TestInitRefusesWithoutConfirmation(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
+	noTerminal(t)
 	out, _, err := executeStdin(t, "", "setup")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--yes") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "needs a real terminal") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
 	if len(r.ran(t, "plan")) != 1 || len(r.ran(t, "apply")) != 0 {
@@ -396,6 +399,7 @@ func TestLegacyBaseKindRefusalsNameTheMigrationDoc(t *testing.T) {
 func TestInitAppliesSavedPlan(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
+	fakeTerminal(t)
 	if _, _, err := executeStdin(t, "", "setup"); err != nil {
 		t.Fatal(err)
 	}
@@ -432,11 +436,12 @@ func TestInitAppliesSavedPlan(t *testing.T) {
 	}
 }
 
-// A plan that replaces the runs bucket is refused by the guard, even with
-// --yes: nothing is applied.
+// A plan that replaces the runs bucket is refused by the guard, even at a
+// terminal where the confirmation would go through: nothing is applied.
 func TestInitRefusesDeletePlan(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
+	fakeTerminal(t)
 	r.setPlan(t, change("module.installation.google_storage_bucket.runs", "delete", "create"))
 	_, _, err := executeStdin(t, "", "setup")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "module.installation.google_storage_bucket.runs") {
@@ -462,10 +467,11 @@ func TestInitRefusesDeletePlan(t *testing.T) {
 	}
 }
 
-// The state bucket is created only after its own confirmation, and project
-// Viewers can't read it.
+// The state bucket is created only where a person at the terminal is there to
+// confirm it, and project Viewers can't read it.
 func TestInitCreatesStateBucketAfterConfirm(t *testing.T) {
 	r := newInitRig(t)
+	noTerminal(t)
 	out, _, err := executeStdin(t, "", "setup")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
@@ -476,6 +482,7 @@ func TestInitCreatesStateBucketAfterConfirm(t *testing.T) {
 	if r.gcs.Inserted(initStateBucket) != nil || len(r.ran(t, "init")) != 0 {
 		t.Fatal("the state bucket was created, or terraform ran, without a confirmation")
 	}
+	fakeTerminal(t)
 	if _, _, err := executeStdin(t, "", "setup"); err != nil {
 		t.Fatal(err)
 	}
@@ -501,6 +508,7 @@ func TestInitRemovesRunsBucketViewers(t *testing.T) {
 	conv := gcpfake.ConvenienceBindings(initProject)
 	r.gcs.SetBucketPolicy(initRunsBucket, append(slices.Clone(conv), job))
 	etag := r.gcs.BucketPolicyEtag(initRunsBucket)
+	fakeTerminal(t)
 	out, _, err := executeStdin(t, "", "setup")
 	if err != nil {
 		t.Fatal(err)
@@ -666,6 +674,7 @@ func TestInitRefusesOtherProjectEnv(t *testing.T) {
 		t.Run(k, func(t *testing.T) {
 			r := newInitRig(t)
 			r.stateBucket()
+			fakeTerminal(t)
 			t.Setenv(k, "other-project")
 			_, _, err := executeStdin(t, "", "setup")
 			if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), k) {
@@ -731,6 +740,7 @@ func TestInitRefusesUnsupportedTerraform(t *testing.T) {
 func TestInitWritesLocalConfigAndBackup(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
+	fakeTerminal(t)
 	before, err := os.ReadFile(r.cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -830,6 +840,7 @@ func TestInitRetriesStateBucketViewers(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
 	r.gcs.SetBucketPolicy(initStateBucket, gcpfake.ConvenienceBindings(initProject))
+	noTerminal(t)
 	out, _, err := executeStdin(t, "", "setup")
 	if ExitCode(err) != ExitUserError || len(policySets(r.gcs, initStateBucket)) != 0 || len(r.ran(t, "init")) != 0 {
 		t.Fatalf("unconfirmed: exit %d, err %v, calls %q", ExitCode(err), err, r.calls(t))
@@ -837,6 +848,7 @@ func TestInitRetriesStateBucketViewers(t *testing.T) {
 	if !strings.Contains(out, "⚠ CONFIRM (project aurora, GCP project proj-1234): removes project Viewers' read access to gs://"+initStateBucket) {
 		t.Errorf("no banner:\n%s", out)
 	}
+	fakeTerminal(t)
 	if _, _, err := executeStdin(t, "", "setup"); err != nil {
 		t.Fatal(err)
 	}
@@ -849,6 +861,7 @@ func TestInitRetriesStateBucketViewers(t *testing.T) {
 func TestInitWritesThroughSymlink(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
+	fakeTerminal(t)
 	target := filepath.Join(r.dir, "dotfiles", "fugaro.yaml")
 	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
 		t.Fatal(err)
@@ -903,6 +916,7 @@ func TestInitPrintVarsNoCalls(t *testing.T) {
 func TestInitConfigOnly(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
+	fakeTerminal(t)
 	if _, _, err := executeStdin(t, "", "setup", "--config-only"); err != nil {
 		t.Fatal(err)
 	}
@@ -971,6 +985,7 @@ func forgetPlan() []planChange {
 func TestInitForgetUndoesExclusionThenStateRm(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
+	fakeTerminal(t)
 	r.setPlan(t, forgetPlan()...)
 	out, _, err := executeStdin(t, "", "update", "--forget")
 	if err != nil {
@@ -1031,6 +1046,7 @@ func TestInitForgetUndoesExclusionThenStateRm(t *testing.T) {
 func TestInitForgetCarriesTheVerifierListAsFound(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
+	fakeTerminal(t)
 	r.setPlan(t, forgetPlan()...)
 	if err := os.MkdirAll(r.root(), 0o700); err != nil {
 		t.Fatal(err)
@@ -1057,6 +1073,7 @@ func TestInitForgetCarriesTheVerifierListAsFound(t *testing.T) {
 func TestInitForgetKeepsAdoptedLegacyRegistry(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
+	fakeTerminal(t)
 	r.setPlan(t, forgetPlan()...)
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"legacy_registry": infra.LegacyRegistry})}
 	r.save(t)
@@ -1128,6 +1145,7 @@ func (r *initRig) runInitTfvars(t *testing.T) map[string]any {
 func TestInitForgetIgnoresStaleRepoLock(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
+	fakeTerminal(t)
 	r.setPlan(t, forgetPlan()...)
 	b := r.gcs.Bucket(t, initStateBucket)
 	if err := b.WriteAll(t.Context(), infra.StatePrefixRepos+"bitbucket-acme-sandbox/default.tflock", []byte("{}"), nil); err != nil {
@@ -1144,6 +1162,7 @@ func TestInitForgetIgnoresStaleRepoLock(t *testing.T) {
 func TestInitForgetWarnsLogBucketUndelete(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
+	fakeTerminal(t)
 	r.setPlan(t, forgetPlan()...)
 	out, _, err := executeStdin(t, "", "update", "--forget")
 	if err != nil {
@@ -1154,26 +1173,28 @@ func TestInitForgetWarnsLogBucketUndelete(t *testing.T) {
 	}
 }
 
-// --json prints one result document on stdout.
+// --json confirms no step, at a terminal or not (initflow.CanConfirmRun reads
+// it out), so the run is left at the confirmation; it still prints its one
+// result document on stdout, with the changes it planned and the reason it
+// stopped (T7, docs/no-prompt-policy).
 func TestInitJSON(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
 	out, _, err := executeStdin(t, "", "setup", "--json")
-	if err != nil {
-		t.Fatal(err)
+	if err == nil || !strings.Contains(err.Error(), "--json") {
+		t.Fatalf("err = %v, want the --json refusal", err)
 	}
 	var res struct {
 		Project    string           `json:"project"`
 		GCPProject string           `json:"gcp_project"`
 		Applied    bool             `json:"applied"`
 		Changes    infra.PlanCounts `json:"changes"`
-		Outputs    map[string]any   `json:"outputs"`
-		Config     string           `json:"config"`
+		Error      string           `json:"error"`
 	}
-	if err := json.Unmarshal([]byte(out), &res); err != nil {
-		t.Fatalf("%v:\n%s", err, out)
+	if jerr := json.Unmarshal([]byte(out), &res); jerr != nil {
+		t.Fatalf("%v:\n%s", jerr, out)
 	}
-	if res.Project != initProjectName || res.GCPProject != initProject || !res.Applied || res.Changes.Creates != 1 || res.Outputs["log_view"] != initLogView || res.Config != r.cfg {
+	if res.Project != initProjectName || res.GCPProject != initProject || res.Applied || res.Changes.Creates != 1 || res.Error != err.Error() {
 		t.Fatalf("result = %+v", res)
 	}
 }
@@ -1263,6 +1284,7 @@ func TestInitRemovesViewersOfCreatedRunsBucket(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
 	r.createOnApply(t)
+	fakeTerminal(t)
 	out, _, err := executeStdin(t, "", "setup")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
@@ -1346,6 +1368,7 @@ func TestInitNameRequiredWhenUnnamed(t *testing.T) {
 		t.Fatalf("an unnamed installation was planned: %q", r.calls(t))
 	}
 	// With --name the apply goes ahead, and it carries the name.
+	fakeTerminal(t)
 	if _, _, err := executeStdin(t, "", "setup", "--name", "aurora"); err != nil {
 		t.Fatal(err)
 	}
@@ -1865,6 +1888,7 @@ func TestInitRepoDoesNotClampGovernanceInAnUntaggedBuild(t *testing.T) {
 func TestInitBaseImagePerKind(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
+	fakeTerminal(t)
 	base := "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-0123abc"
 	if _, _, err := executeStdin(t, "", "setup", "--base-image", base); err != nil {
 		t.Fatal(err)

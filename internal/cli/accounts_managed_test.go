@@ -614,12 +614,15 @@ func TestAccountsAddManagedRefusesARunThatAnswersNothing(t *testing.T) {
 	}
 }
 
-// The one door this step has on a managed project, and the four terms that make
-// it the owner's own: a coding agent's marker, --yes, a terminal on the run's
-// input, and a terminal on its output. Each case below is one term dropped —
-// the mutation each catches is named with it — and each asserts the two lines
-// and the state the run left behind, so a build that admitted the case fails on
-// the file rather than on the wording alone.
+// The one door this step has on a managed project, and the three terms a run's
+// own argv can drop to fall outside it: a coding agent's marker, a terminal on
+// the run's input, and a terminal on its output. Each case below is one term
+// dropped — the mutation each catches is named with it — and each asserts the
+// two lines and the state the run left behind, so a build that admitted the
+// case fails on the file rather than on the wording alone. The fourth term the
+// gate reads, --yes, is no longer a flag a run can carry (T11,
+// docs/no-prompt-policy): a flag is not the owner's terminal, so there is no
+// case left to drive for it.
 //
 // The marker case is the one that ends differently, and deliberately: a session
 // is not refused the declaration (D1012 admits a bounded one), so what it reads
@@ -642,12 +645,6 @@ func TestAccountsAddManagedAdmitsOnlyTheOwnerAtTheirOwnTerminal(t *testing.T) {
 			setup:    func(t *testing.T) { ownerAtTheTerminal(t); t.Setenv(accountsAddAgent, "1") },
 			want:     accountsAddRefusalToken,
 			declared: true,
-		},
-		{
-			what:   "--yes at a real terminal",
-			mutate: "accountsAddOwnTerminal without its --yes term",
-			setup:  ownerAtTheTerminal,
-			want:   accountsAddRefusalRun,
 		},
 		{
 			what:   "a terminal on the run's input only",
@@ -675,8 +672,6 @@ func TestAccountsAddManagedAdmitsOnlyTheOwnerAtTheirOwnTerminal(t *testing.T) {
 			tc.setup(t)
 
 			args := []string{"accounts", "add", "team-a", "--repos", "owner/repo-a"}
-			if strings.Contains(tc.what, "--yes") {
-			}
 			// The owner's answer is on stdin for every case: the run that is
 			// admitted is admitted because of the terminal and not because a
 			// line happened to be there, and the run that is refused is refused

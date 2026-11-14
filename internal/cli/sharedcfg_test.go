@@ -94,6 +94,7 @@ func sharedRuns(t *testing.T) string {
 func TestInitConfigOnlyPublishesTheSharedConfig(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
+	fakeTerminal(t)
 	dir := sharedRuns(t)
 	if _, _, err := executeStdin(t, "", "setup", "--config-only"); err != nil {
 		t.Fatal(err)

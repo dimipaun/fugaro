@@ -76,16 +76,17 @@ func TestInitResourceManagerEnabledAsksNothing(t *testing.T) {
 	}
 }
 
-// Without a terminal and without --yes, nothing is enabled: exit 1 with
-// the command to run by hand. At a terminal the person there is the
-// confirmation, and nothing is read for it (T7).
+// Without a terminal nothing is enabled: exit 1 naming the terminal the
+// confirmation needs and the command to run by hand. At a terminal the person
+// there is the confirmation, and nothing is read for it (T7).
 func TestInitResourceManagerDisabledNeedsConfirmation(t *testing.T) {
 	noEnableWait(t, 1)
 	r := newInitRig(t)
 	r.stateBucket()
 	r.su.Disable(infra.ServiceResourceManager, r.crm.Server)
+	noTerminal(t)
 	_, _, err := executeStdin(t, "", "setup", "--plan-only")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), enableCommand) || !strings.Contains(err.Error(), "--yes") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), enableCommand) || !strings.Contains(err.Error(), "needs a real terminal") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
 	if len(r.su.Enables()) != 0 || len(r.calls(t)) > 1 { // terraform version only
