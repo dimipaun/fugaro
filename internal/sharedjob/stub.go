@@ -3,6 +3,7 @@ package sharedjob
 import (
 	"slices"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
@@ -37,16 +38,22 @@ func StubJobChoice(repo, workflow string) (JobChoice, error) {
 
 // StubBitbucketProfile is the shape of a Bitbucket profile and nothing else:
 // it projects the name the caller holds the profile under and the published
-// profile's own three facts, and judges none of them.
+// profile's own facts, and judges none of them. The account axis is the one
+// derivation it makes, through config.ProjectJobAccounts, because carrying that
+// axis is what the projection declares and not a rule of the stub's own.
 // A profile the deployer must refuse (one mounting the Bitbucket token, say) is
 // projected like any other — the stub applies no rule and reads no policy
 // document, and the two lists are copies, so a side that edited the shape it
 // was handed would not be editing the policy's.
 func StubBitbucketProfile(name string, pr projectpolicy.Profile) BitbucketProfile {
 	return BitbucketProfile{
-		Name:       name,
-		Provider:   pr.Provider,
-		AllowRepos: slices.Clone(pr.AllowRepos),
-		Secrets:    slices.Clone(pr.Secrets),
+		Name:         name,
+		Provider:     pr.Provider,
+		Accounts:     config.ProjectJobAccounts(pr.JobProfile),
+		AllowRepos:   slices.Clone(pr.AllowRepos),
+		Secrets:      slices.Clone(pr.Secrets),
+		CPU:          pr.CPU,
+		Memory:       pr.Memory,
+		TimeoutClass: pr.TimeoutClass,
 	}
 }

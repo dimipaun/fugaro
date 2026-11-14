@@ -8,8 +8,9 @@
 // The four sides, and the shape each one owes or reads:
 //
 //   - the deployer (S1, internal/infra's ProjectJobs) deploys one project job
-//     for a valid Bitbucket profile: no Bitbucket secret mounted, the
-//     credential proxy required. It reads BitbucketProfile.
+//     per (profile, provider, account) for a valid Bitbucket profile: no
+//     Bitbucket secret mounted, the credential proxy required. It reads
+//     BitbucketProfile.
 //   - the credentials service (S2, internal/credsvc's Bitbucket route) pairs a
 //     call a shared job made, and refuses a repository the policy or the
 //     published bitbucket_token block does not admit. It produces Pairing, and
@@ -38,6 +39,12 @@
 // anything by being empty: the zero value of every shape here is the
 // fail-closed one, because the sides are written in parallel and a shape that
 // is not yet a decision must never read as one.
+//
+// One hazard is named here rather than left to be discovered: the predicate
+// that answers "is this profile a Bitbucket shared job?" elsewhere in the tree
+// says the opposite of what the sides here need, and it is the name a side is
+// likeliest to reach for. BitbucketProfile's own comment says what it is and
+// what becomes of it.
 package sharedjob
 
 // RunIdentity is the run identity the credentials service verified for a call
@@ -130,15 +137,29 @@ type JobChoice struct {
 // BitbucketProfile is a Bitbucket profile as the sides of this contract read
 // it: the fields of the published profile (projectpolicy.Profile) a shared
 // Bitbucket job is built from, named once here so the deployer and the
-// launcher cannot drift about which ones they are.
+// launcher cannot drift about which ones they are — including the account axis
+// of the job's own name, which neither of them may compute for itself.
 //
 // It is a projection and not the published profile itself, deliberately. C1 is
 // the shape the sides are written against, so a field a side needs is a change
-// to this file that the review sees (the plan anticipates exactly that: CR1
-// amends C1 if S2's review finds the pairing needs the workflow name) — where
-// embedding the published document would let each side quietly read whichever
-// field it liked. A side that needs a field the projection does not carry
-// amends this file; it does not read around it.
+// to this file that the review sees: the plan anticipates exactly that (CR1
+// amends C1 if S2's review finds the pairing needs the workflow name), and
+// C1's first review did exactly that when the job's name showed the projection
+// was short of the account axis and the resources — where embedding the
+// published document would have let each side quietly read whichever field it
+// liked. A side that needs a field the projection does not carry amends this
+// file; it does not read around it.
+//
+// It is not projectpolicy.SharedBitbucketProfile, and the two rules point
+// opposite ways. That predicate is the per-repository Bitbucket job's — the
+// bitbucket provider AND a mount of the Bitbucket token (D473, pinned by
+// TestSharedBitbucketProfileNeedsTheTokenMount) — while a profile a shared job
+// is deployed for is the provider the job serves and no Bitbucket token mount
+// at all (D2302). So the name that is easiest to reach for is the wrong test in
+// the most expensive direction: a side that used it as the shared-job test
+// would deploy a tokenless shared job for exactly the profiles this contract
+// refuses one, which is why the hazard is named here and in contract.md. What
+// becomes of the predicate is S1's call, not this package's.
 type BitbucketProfile struct {
 	// Name is the name the policy holds the profile under (the key of its
 	// profiles block). It is an axis of the job's name and what JobChoice
@@ -151,6 +172,18 @@ type BitbucketProfile struct {
 	// than assumed from this type's name, because a caller reads the fact it
 	// acts on.
 	Provider string
+	// Accounts is the account axis of the profile's jobs, one entry per job:
+	// the "" no-account job and one entry per account the profile lists, with
+	// "default" spelled "" — exactly config.ProjectJobAccounts' answer over the
+	// published profile, which is the one function that derives it. It is
+	// carried and not left to each side because a profile's jobs are one per
+	// (profile, provider, account): the deployer names each job
+	// gcp.ProjectJobName(Name, Provider, account) and the launcher computes the
+	// name it launches the same way, so a side that derived this axis for
+	// itself could launch an account's run at a job nobody deployed. A profile
+	// that lists no claude_accounts still has its one no-account job, and that
+	// is the "" entry: for a profile that exists this list is never empty.
+	Accounts []string
 	// AllowRepos is the profile's own allow_repos, and empty means the profile
 	// names none, so the project's list is what applies. It is a fact for a
 	// message or a listing — the repositories this profile names — and it is
@@ -167,4 +200,13 @@ type BitbucketProfile struct {
 	// (the deployer refuses it, S1), and the field is here because refusing it
 	// means reading it.
 	Secrets []string
+	// CPU, Memory and TimeoutClass are the profile's own resources and timeout
+	// class, the fields of those names on config.JobProfile: the deployer builds
+	// the job's cpu, its memory and — through config.ParseDuration — its
+	// timeout from them. The launcher sizes nothing, but it decides which job a
+	// run lands on, and a decision taken about a profile whose job the deployer
+	// builds differently is a decision about a job that does not exist.
+	CPU          int
+	Memory       string
+	TimeoutClass string
 }

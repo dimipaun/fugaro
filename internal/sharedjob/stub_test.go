@@ -61,9 +61,13 @@ func TestStubsReturnTheContractShape(t *testing.T) {
 	}
 
 	published := projectpolicy.Profile{JobProfile: config.JobProfile{
-		Provider:   "bitbucket",
-		AllowRepos: []string{"acme/sandbox"},
-		Secrets:    []string{config.BitbucketSecret},
+		Provider:       "bitbucket",
+		CPU:            4,
+		Memory:         "8Gi",
+		TimeoutClass:   "long",
+		AllowRepos:     []string{"acme/sandbox"},
+		Secrets:        []string{config.BitbucketSecret},
+		ClaudeAccounts: []string{config.DefaultClaudeAccount, "second"},
 	}}
 	bp := StubBitbucketProfile("standard-bitbucket", published)
 	if bp.Name != "standard-bitbucket" || bp.Provider != "bitbucket" {
@@ -73,12 +77,27 @@ func TestStubsReturnTheContractShape(t *testing.T) {
 		t.Errorf("the stub profile carries allow_repos %v and secrets %v, want the published profile's own (%v, %v)",
 			bp.AllowRepos, bp.Secrets, published.AllowRepos, published.Secrets)
 	}
+	// The account axis is the projection's one derivation, and it is the axis
+	// of a job's name: the no-account job is the empty account, and the
+	// published profile's "default" is that same job rather than a second one.
+	if want := []string{"", "second"}; !slices.Equal(bp.Accounts, want) {
+		t.Errorf("the stub profile carries the account axis %v, want %v: a job is one per (profile, provider, account), so the launcher and the deployer name the same jobs only from this list", bp.Accounts, want)
+	}
+	if bp.CPU != 4 || bp.Memory != "8Gi" || bp.TimeoutClass != "long" {
+		t.Errorf("the stub profile carries cpu %d, memory %q and timeout_class %q, want the published profile's own (4, \"8Gi\", \"long\")", bp.CPU, bp.Memory, bp.TimeoutClass)
+	}
 	// A shape a side may edit is a shape that lets it edit the policy: the two
-	// lists are the published profile's, and the projection is a copy.
+	// lists are the published profile's, and the projection is a copy — the
+	// account axis included, which a caller must not be able to rewrite under
+	// another side's feet.
 	published.AllowRepos[0] = "acme/other"
 	published.Secrets[0] = "another-secret"
+	published.ClaudeAccounts[0] = "third"
 	if !slices.Equal(bp.AllowRepos, []string{"acme/sandbox"}) || !slices.Equal(bp.Secrets, []string{config.BitbucketSecret}) {
 		t.Errorf("the projected profile shares the published profile's own lists: it now carries allow_repos %v and secrets %v, and a side that edited the shape it was handed would have edited the policy",
 			bp.AllowRepos, bp.Secrets)
+	}
+	if want := []string{"", "second"}; !slices.Equal(bp.Accounts, want) {
+		t.Errorf("the projected profile's account axis moved with an edit to the published profile: it now carries %v, want %v", bp.Accounts, want)
 	}
 }
