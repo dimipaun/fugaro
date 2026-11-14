@@ -72,15 +72,20 @@ import (
 // older than the release, a coder that reads images itself, a slot that is set,
 // a run that never ends, a record that is another run's, and a refusal whose
 // sentence has lost one of the parts an owner needs.
-// Check 530's fakes are a fake `gcloud` that serves a job's own describe (with
-// and without a mounted secret), a project's IAM policy, the review run's
-// signature and record as files the test writes, and the credentials service's
-// own audit lines; a fake `fugaro` whose `doctor --json` carries the census
-// sentence the review job is read from; and a fake `curl` that mints a token
-// sentinel per account, records the account and the authorization header of the
-// `--config` file it was handed, and answers each route as a mode says -- so a
-// case can say which class a refusal was about, and that the token travelled
-// through a 0600 file and never into the check's output.
+// Check 530's fakes are a fake `gcloud` that serves a job's own describe in the
+// v1 shape a job really has -- spec.template.spec.template.spec, a secret as
+// valueSource.secretKeyRef, a volume's as secret.secretName -- with and without
+// a mounted secret and, for the case that pins it, in an execution's own shape
+// instead; a project's IAM policy; the review run's signature and record as
+// files the test writes; and the credentials service's own audit lines. A fake
+// `fugaro` whose `doctor --json` carries the census entry the review job and its
+// Claude account are read from, and a fake `curl` that mints a token sentinel
+// per account, records the account, the route and the body it was handed and the
+// authorization header of the `--config` file, and answers each route as a mode
+// says -- with the type that route's own refusal carries, so a case can say
+// which class a refusal was about (and that a body refusal, or a state the
+// service could not read, is not one), and that the token travelled through a
+// 0600 file and never into the check's output.
 // Check 301's fakes are a fake `fugaro`, a fake launchd and a fake systemd
 // whose boot id and unit files the test writes, so a reboot, a second
 // instance's refusal and T7's re-render are all readings of files the test

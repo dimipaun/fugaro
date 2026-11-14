@@ -5,15 +5,22 @@
 # was given so a case can assert what the check did — and did not — do.
 #
 # The fakes are a small model of one sandbox installation: `fugaro doctor`
-# reports a credentials service and a census line naming a review-only job,
-# `gcloud` answers the review job's describe (RUN_… with no secret at all), the
-# project's IAM policy (nothing that reads a secret), the signature the review
-# run left and that run's record, the service's audit line for the signing and
-# the service's URL, and the fake `curl` refuses the two calls the check makes.
-# The cases that matter are the ones where that model is bent: a job that mounts
-# a secret, an account that holds a secretAccessor, a signature that is not the
-# service's own, an audit line that names a pull request, a route that admits a
-# caller it must refuse.
+# reports a credentials service and a census line naming a review-only job with
+# the Claude account that job's variant belongs to, `gcloud` answers the review
+# job's describe in the v1 shape a JOB really has (spec.template.spec.template.
+# spec, its secrets as valueSource.secretKeyRef and a volume's secret.secretName)
+# — RUN_… with no secret at all — the project's IAM policy (nothing that reads a
+# secret), the signature the review run left and that run's record, the service's
+# audit line for the signing and the service's URL, and the fake `curl` refuses
+# each call the check makes with the TYPE that route's own refusal carries
+# (unverified_job_identity on the verify route, unverified_run_identity on the
+# sign route), recording the account, the route and the body it was handed. The
+# cases that matter are the ones where that model is bent: a job that mounts a
+# secret, a job described in an execution's shape, an account that holds a
+# secretAccessor, a signature that is not the service's own, an audit line that
+# names a pull request, a route that admits a caller it must refuse, a route that
+# refuses a body it read only after admitting the caller, and a service that
+# cannot read the state it is asked about.
 #
 # The fake `gcloud` mints its ID tokens as `sentinel-for-<account>` — a value
 # that is obviously not a credential and is still distinctive enough to be
@@ -48,6 +55,9 @@ expect_absent() {
   *"$2"*) fail "$3: found '$2' where it must never appear" ;;
   esac
 }
+expect_matches() { # haystack regex what
+  printf '%s\n' "$1" | grep -Eq "$2" || fail "$3: expected to match /$2/; got: $(printf '%s' "$1" | head -c "${CHECK530_TEST_HEAD:-900}")"
+}
 expect_status() { # status want what
   [ "$1" = "$2" ] || fail "$3: expected exit $2, got $1"
 }
@@ -62,6 +72,9 @@ coding_sa=fugaro-run@$project.iam.gserviceaccount.com
 run_id=20261110-120000-b3f1
 slug=edge-demo
 sentinel_prefix=sentinel-for-
+# The Claude account doctor's census pairs with the review job's variant: the
+# name a verify call has to carry, and never the review job's own account email.
+claude_account=claude-work
 
 # --------------------------------------------------------------------- fakes
 write_fake_gcloud() { # dir
@@ -84,9 +97,11 @@ run)
     [ "${3:-}" = describe ] || exit 1
     job=${4:-}
     secrets='[]'
+    volumes='[]'
     case "$mode" in
     job-mounts-a-secret)
-      secrets='[{"name":"ANTHROPIC_API_KEY","valueFrom":{"secretKeyRef":{"name":"fugaro-anthropic-token","key":"latest"}}}]'
+      secrets='[{"name":"ANTHROPIC_API_KEY","valueSource":{"secretKeyRef":{"secret":"fugaro-anthropic-token","version":"latest"}}}]'
+      volumes='[{"name":"app-key","secret":{"secretName":"fugaro-github-app-key"}}]'
       ;;
     esac
     case "$job" in
@@ -102,7 +117,16 @@ run)
     if [ "$mode" = job-describe-hangs ]; then
       sleep 300
     fi
-    printf '{"spec":{"template":{"spec":{"serviceAccountName":"%s","containers":[{"env":%s}]}}}}\n' "$sa" "$secrets"
+    # The real v1 shape of a JOB: the revision sits one level below an
+    # execution's spec.template.spec (docs/gcp-live-checklist.md's own statement
+    # of it, and what modules/workflow/job.tf deploys). The other shape below is
+    # an EXECUTION's, and a reader that took one for the other would answer
+    # 'mounts nothing' to every job.
+    if [ "$mode" = job-describe-flat-shape ]; then
+      printf '{"spec":{"template":{"spec":{"serviceAccountName":"%s","containers":[{"env":[]}]}}}}\n' "$sa"
+      exit 0
+    fi
+    printf '{"spec":{"template":{"spec":{"template":{"spec":{"serviceAccountName":"%s","containers":[{"env":%s}],"volumes":%s}}}}}}\n' "$sa" "$secrets" "$volumes"
     ;;
   services)
     [ "${3:-}" = describe ] || exit 1
@@ -212,10 +236,18 @@ doctor)
   case "$mode" in
   doctor-fails) echo "fugaro: there is no installation here" >&2; exit 2 ;;
   esac
-  census="the review job ${FAKE_REVIEW_JOB} mounts no secret"
+  # One entry of doctor's census as projectAccountReach writes it: the job, its
+  # profile, its Claude ACCOUNT, its token and the repositories that token may be
+  # used by, with the review-only variant beside them. The account is the one a
+  # verify call has to name, and the review job's VARIANT is the job §8's step 2
+  # describes.
+  census="fugaro-run (profile work, account claude-work, token claude-oauth-token, repositories edge-demo/demo in the project's local config, review job ${FAKE_REVIEW_JOB} mounts no secret)"
   case "$mode" in
   no-review-job) census="every shared project job holds its credential" ;;
   no-census-row) census="" ;;
+  census-without-account)
+    census="fugaro-run (profile work, token claude-oauth-token, repositories edge-demo/demo in the project's local config, review job ${FAKE_REVIEW_JOB} mounts no secret)"
+    ;;
   esac
   service='{"id":"credentials-service-deployed","ok":true,"severity":"info","problem":"the credentials service is deployed and answering","fix":""}'
   case "$mode" in
@@ -283,20 +315,43 @@ if [ -n "$config" ]; then
   esac
 fi
 printf 'curl %s %s\n' "$account" "$url" >>"$FAKE_LOG_DIR/curl.calls"
-printf '%s\n' "$(cat "$data" 2>/dev/null || true)" >>"$FAKE_LOG_DIR/curl.bodies"
 route=other
 case "$url" in
 */v1/review/verify) route=verify ;;
 */v1/review/sign) route=sign ;;
 esac
-body='{"error":"the caller is refused this route"}'
+printf '%s\t%s\n' "$route" "$(cat "$data" 2>/dev/null || true)" >>"$FAKE_LOG_DIR/curl.bodies"
+# The refusal each route answers a caller it will not verify, typed as the wire
+# types it: the verify route refuses a caller that is not one of the
+# installation's verifiers, and the sign route refuses a call that carries no run
+# identity at all — an ID token is not one, and only a launcher mints what is.
+body='{"error":"unverified_job_identity","message":"the caller is not one of this installation verifiers"}'
 code=403
+if [ "$route" = sign ]; then
+  body='{"error":"unverified_run_identity","message":"the call names no run identity this service can verify"}'
+fi
 case "$mode:$route:$account" in
-ok:*:none) ;;
 admit-no-token:verify:none) body='{"valid":false}'; code=200 ;;
 admit-review:verify:"$FAKE_REVIEW_SA") body='{"valid":true}'; code=200 ;;
 admit-coding-verify:verify:"$FAKE_CODING_SA") body='{"valid":false}'; code=200 ;;
-admit-coding-sign:sign:"$FAKE_CODING_SA") body='{"valid":false}'; code=200 ;;
+admit-coding-sign:sign:"$FAKE_CODING_SA")
+  body="{\"alg\":\"hmac-sha256\",\"signature\":\"$FAKE_SIGNATURE\"}"
+  code=200
+  ;;
+# The two answers a route gives AFTER admitting a caller, which is why a row
+# that accepted any refusal reads them as the gate holding. Neither is one.
+state-unavailable-review:verify:"$FAKE_REVIEW_SA")
+  body='{"error":"state_unavailable","message":"the signing key set could not be read"}'
+  code=503
+  ;;
+body-refused-review:verify:"$FAKE_REVIEW_SA")
+  body='{"error":"request_refused","message":"the account field is not a credential name"}'
+  code=400
+  ;;
+body-refused-coding:verify:"$FAKE_CODING_SA")
+  body='{"error":"request_refused","message":"the account field is not a credential name"}'
+  code=400
+  ;;
 esac
 if [ -n "$outfile" ]; then printf '%s\n' "$body" >"$outfile"; fi
 printf '%s' "$code"
@@ -486,6 +541,15 @@ test_happy_path() {
   expect_contains "$curl_calls" "curl $review_sa https://fugaro-credentials-chk530-uc.a.run.app/v1/review/verify" "happy path: the review account's call"
   expect_contains "$(cat "$dir/logs/curl.configs")" "600 " "happy path: the config holding the token is mode 0600"
   expect_contains "$(cat "$dir/logs/curl.tokens")" "${sentinel_prefix}${review_sa}" "happy path: the token travelled in the config file"
+  # The two calls carry bodies the contract READS, and the verify one names the
+  # account the census pairs with the review job: a call whose body the route
+  # would refuse anyway answers the same whether or not the route admitted its
+  # caller, so a row measured with one would say nothing.
+  local bodies
+  bodies=$(cat "$dir/logs/curl.bodies")
+  expect_contains "$bodies" "verify	{\"account\":\"$claude_account\"" "happy path: the verify body names the census's account"
+  expect_matches "$bodies" '"digest":"[0-9a-f]{64}"' "happy path: the verify body carries the artifact's own digest"
+  expect_absent "$bodies" "$review_sa" "happy path: no body names a service account's email where the account belongs"
   assert_no_token_in_output "happy path"
   assert_nothing_written "$dir" "happy path"
   assert_scratch_removed "happy path"
@@ -588,8 +652,24 @@ test_a_review_job_that_mounts_a_secret_is_a_finding() {
   run_ok "$dir" FAKE_MODE=job-mounts-a-secret
   expect_status "$status" 1 "a review job that mounts a secret"
   expect_contains "$out" "FACT job-no-secret: FAIL" "a review job that mounts a secret: the row"
-  expect_contains "$out" "ANTHROPIC_API_KEY -> fugaro-anthropic-token" "a review job that mounts a secret: which secret"
+  expect_contains "$out" "ANTHROPIC_API_KEY -> fugaro-anthropic-token" "a review job that mounts a secret: the env reference"
+  expect_contains "$out" "app-key -> fugaro-github-app-key" "a review job that mounts a secret: the volume's App key"
   expect_contains "$out" "holds NO credential at all" "a review job that mounts a secret: ruling O1"
+}
+
+test_a_job_described_in_another_shape_is_a_finding() {
+  # The reviewer's first finding, pinned: a JOB nests its revision at
+  # spec.template.spec.template.spec and an EXECUTION at spec.template.spec. A
+  # reader that took a job for an execution's shape would count zero secrets on
+  # every job there is, which is this row passing unconditionally — so the shape
+  # this check does not know has to be a finding and not a job that mounts
+  # nothing.
+  local dir=$work/flat-shape
+  prepare "$dir"
+  run_ok "$dir" FAKE_MODE=job-describe-flat-shape
+  expect_status "$status" 1 "a job described in an execution's shape"
+  expect_contains "$out" "FACT job-no-secret: FAIL" "a job described in an execution's shape: the row"
+  expect_contains "$out" "carries no container at spec.template.spec.template.spec" "a job described in an execution's shape: what it refused to read"
 }
 
 test_a_review_account_that_reads_secrets_is_a_finding() {
@@ -682,12 +762,19 @@ test_the_coding_gate_is_measured_only_when_asked_for() {
   run_ok "$dir" -- --coding-job "$coding_job"
   expect_status "$status" 0 "the coding gate"
   expect_contains "$out" "FACT gate-coding: PASS" "the coding gate: the row"
-  expect_contains "$out" "refused the verify route" "the coding gate: both refusals are carried"
-  expect_contains "$out" "and the sign route" "the coding gate: the sign route's own sentence"
+  expect_contains "$out" "refused the verify route (unverified_job_identity, HTTP 403" "the coding gate: the verify refusal is the class's own"
+  expect_contains "$out" "and the sign route (unverified_run_identity, HTTP 403" "the coding gate: the sign route's own refusal, typed"
   local curl_calls
   curl_calls=$(cat "$dir/logs/curl.calls")
   expect_contains "$curl_calls" "curl $coding_sa https://fugaro-credentials-chk530-uc.a.run.app/v1/review/verify" "the coding gate: the verify call"
   expect_contains "$curl_calls" "curl $coding_sa https://fugaro-credentials-chk530-uc.a.run.app/v1/review/sign" "the coding gate: the sign call"
+  # A sign call's body is one field, the digest, and it is held to the shape the
+  # route reads: a body that route would refuse for itself answers the same
+  # whether or not the gate let this caller through.
+  local bodies
+  bodies=$(cat "$dir/logs/curl.bodies")
+  expect_matches "$bodies" '^sign	\{"digest":"[0-9a-f]{64}"\}$' "the coding gate: the sign body is a sign call's own"
+  expect_contains "$bodies" "verify	{\"account\":\"$claude_account\"" "the coding gate: the verify body names the census's account"
   assert_no_token_in_output "the coding gate"
 }
 
@@ -697,7 +784,63 @@ test_a_coding_account_admitted_on_one_route_is_a_finding() {
   run_ok "$dir" FAKE_MODE=admit-coding-sign -- --coding-job "$coding_job"
   expect_status "$status" 1 "a coding account admitted on the sign route"
   expect_contains "$out" "FACT gate-coding: FAIL" "a coding account admitted on the sign route: the row"
+  expect_contains "$out" "SIGNED it" "a coding account admitted on the sign route: the signature is the admission"
   expect_contains "$out" "refused on EVERY route" "a coding account admitted on the sign route: the gate"
+}
+
+test_a_state_the_service_could_not_read_is_a_finding() {
+  # The reviewer's second finding, pinned: `state_unavailable` on the review call
+  # is a refusal, and a row that accepted ANY refusal read it as the gate
+  # holding. It is not one — the class's own refusal is a 403 that names the
+  # caller's identity — so this row may not pass on it. A service that could not
+  # read the key set is answered both before a caller is admitted and after, so
+  # the row is unmeasured rather than a finding; the point is that it is not a
+  # PASS.
+  local dir=$work/state
+  prepare "$dir"
+  run_ok "$dir" FAKE_MODE=state-unavailable-review
+  expect_status "$status" 2 "a service that could not read the state"
+  expect_contains "$out" "FACT verify-review-refused: FAIL" "a service that could not read the state: the row"
+  expect_contains "$out" "state_unavailable" "a service that could not read the state: what the route answered"
+  expect_contains "$err" "could NOT measure verify-review-refused" "a service that could not read the state: the exit names it"
+  expect_absent "$out" "FACT verify-review-refused: PASS" "a service that could not read the state: the row does not pass"
+}
+
+test_a_refusal_of_the_body_is_a_finding() {
+  # A body refusal is the answer a route gives AFTER it has admitted a caller, so
+  # it says the gate let this one through — the opposite of what the row claims
+  # when it reads every refusal as a refusal of the caller.
+  local dir=$work/body-refused
+  prepare "$dir"
+  run_ok "$dir" FAKE_MODE=body-refused-review
+  expect_status "$status" 1 "a review account refused its own body"
+  expect_contains "$out" "FACT verify-review-refused: FAIL" "a review account refused its own body: the row"
+  expect_contains "$out" "request_refused" "a review account refused its own body: the type it read"
+  expect_contains "$out" "only after it has admitted its caller" "a review account refused its own body: why it is a finding"
+
+  dir=$work/body-refused-coding
+  prepare "$dir"
+  run_ok "$dir" FAKE_MODE=body-refused-coding -- --coding-job "$coding_job"
+  expect_status "$status" 1 "a coding account refused its own body"
+  expect_contains "$out" "FACT gate-coding: FAIL" "a coding account refused its own body: the row"
+  expect_contains "$out" "only after admitting its caller" "a coding account refused its own body: why it is a finding"
+}
+
+test_a_census_without_an_account_is_not_measured() {
+  # VerifyRequest.Account selects WHICH account's signing key the answer is
+  # recomputed under, and the review job's own account email is not one. A census
+  # line that names no account leaves the body with nothing to carry, and a body
+  # the route would refuse for itself cannot say whether this caller was let
+  # through: the row is unmeasured, never a PASS.
+  local dir=$work/noaccount
+  prepare "$dir"
+  run_ok "$dir" FAKE_MODE=census-without-account
+  expect_status "$status" 2 "a census naming no account"
+  expect_contains "$out" "FACT review-jobs: PASS" "a census naming no account: the review job itself is there"
+  expect_contains "$out" "FACT verify-review-refused: FAIL" "a census naming no account: the row"
+  expect_contains "$out" "names no account for the review job" "a census naming no account: why"
+  expect_contains "$out" "FACT verify-unauthenticated: PASS" "a census naming no account: the row that needs no account still measures"
+  expect_absent "$(cat "$dir/logs/curl.calls")" "$review_sa" "a census naming no account: no call is made as the review account"
 }
 
 test_an_unreadable_service_url_is_not_measured() {
@@ -784,6 +927,7 @@ t test_a_doctor_without_the_census_row_is_not_measured
 t test_a_census_naming_no_review_job_is_a_finding
 t test_a_job_that_never_answers_is_not_measured
 t test_a_review_job_that_mounts_a_secret_is_a_finding
+t test_a_job_described_in_another_shape_is_a_finding
 t test_a_review_account_that_reads_secrets_is_a_finding
 t test_a_missing_signature_is_not_measured
 t test_a_signature_that_is_not_hex_is_a_finding
@@ -792,6 +936,9 @@ t test_no_audit_line_is_a_finding
 t test_a_line_for_another_run_is_a_finding
 t test_a_route_that_admits_a_call_with_no_token_is_a_finding
 t test_a_route_that_admits_the_review_account_is_a_finding
+t test_a_state_the_service_could_not_read_is_a_finding
+t test_a_refusal_of_the_body_is_a_finding
+t test_a_census_without_an_account_is_not_measured
 t test_the_coding_gate_is_measured_only_when_asked_for
 t test_a_coding_account_admitted_on_one_route_is_a_finding
 t test_an_unreadable_service_url_is_not_measured

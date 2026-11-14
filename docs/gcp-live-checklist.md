@@ -13845,13 +13845,21 @@ deploys them:
 - **The verify route's caller class.** A `POST /v1/review/verify` **with no token** is a typed refusal
   rather than an answer: the class that route admits is the caller's own token, so a call without one is
   refused before the key is ever reached. This is the half of step 8 that does **not** wait on Open item 5,
-  and the row says so.
+  and the row says so. What the row reads is that refusal's own **type** — `unverified_job_identity`,
+  `HTTP 403` — and not merely "a refusal": a refusal of the body sent or of a state the service could not
+  read is answered **after** a caller has been admitted and means the opposite, so it is not read as this
+  row holding.
 - **The gate holds where it was written** (step 11's second half). With an ID token minted by impersonating
   **the review job's own account**, the verify route is refused: a verifier is not a run, and a review
-  account that can verify its own verdict is the widening this row exists to catch.
+  account that can verify its own verdict is the widening this row exists to catch. The call is framed
+  with a body the route **reads** — the run, the artifact's digest and its signature, and the **Claude
+  account** `doctor`'s census pairs with the review job, which is what `VerifyRequest.Account` selects a
+  signing key by — because a body the route would refuse for itself answers the same whether or not the
+  gate let this caller through.
 - **The coding class, when `--coding-job` names one** (step 11's first half). With the installation's coding
   shared project job given, that job's account is refused on **both** routes — verify and sign — and both
-  refusals' own sentences are what the row carries. Without the flag the check makes no claim about the
+  refusals' own sentences are what the row carries; the sign call's body is a sign call's own (the digest),
+  so its refusal is the gate's and not the body's. Without the flag the check makes no claim about the
   coding class, and its row says that instead of passing quietly.
 - **The cost, from the run's own record.** The review run's record names the repository, its status, its
   outcome and `cost.model_usd`: that spend is what this check costs — a run the owner had already paid for —
@@ -13889,11 +13897,13 @@ mints ID tokens. About **ten minutes** at the terminal.
 model call — and it prints no block and no verdict. Every other run is idempotent and reads only. Progress
 goes to stderr and one `CHECK 530 RESULT` block to stdout at the end. **Exit `0`** is every criterion that
 was measured holding; **`1`** is a measured criterion that did not hold, or a guard that stopped the run —
-among them a secret on the review job, a `secretAccessor` on its account, a signature that is not one line of
-hex, an audit line for another run or one carrying a pull request, a route that admits a call with no token,
-and the review account admitted on the verify route; **`2`** is the check not being able to measure — a tool
-missing, a checkout that is not one, a `doctor` without a project or without the census line, an ID token or
-the service's URL that could not be had. A key the run never reached reads `FAIL — not reached`. The knobs
+among them a secret on the review job, a review job whose `describe` is a document of another shape than a
+job's own, a `secretAccessor` on its account, a signature that is not one line of hex, an audit line for
+another run or one carrying a pull request, a route that admits a call with no token or refuses the review
+account its own body, and the review account admitted on the verify route; **`2`** is the check not being
+able to measure — a tool missing, a checkout that is not one, a `doctor` without a project or without the
+census line, a census line that names no Claude account for the review job, an ID token or the service's URL
+that could not be had. A key the run never reached reads `FAIL — not reached`. The knobs
 are `CHECK530_DRY_RUN`, `CHECK530_KEEP_SCRATCH`, `CHECK530_SANDBOX`, `CHECK530_RUN`, `CHECK530_PR`,
 `CHECK530_CODING_JOB`, `CHECK530_BUCKET`, `CHECK530_SERVICE_URL`, `CHECK530_TIMEOUT_SECONDS` (120),
 `CHECK530_TOKEN_TIMEOUT_SECONDS` (60) and `CHECK530_LOG_FRESHNESS` (30d), and `--sandbox`, `--run`, `--pr`,
@@ -13901,9 +13911,12 @@ are `CHECK530_DRY_RUN`, `CHECK530_KEEP_SCRATCH`, `CHECK530_SANDBOX`, `CHECK530_R
 
 **Restore.** Nothing to restore: the check creates nothing, writes nothing into the project and deletes
 nothing. Every row is a read of the installation, of the runs bucket the review run's artifact and record
-live in, and of the credentials service's own log, plus two POSTs to the verify route that the service
-**refuses before any work** — the one audit line each refusal writes is the service's own record of it and is
-not the check's to delete — and the block's `restore` row says exactly that. What an owner's own review run
+live in, and of the credentials service's own log, plus the POSTs the refusal rows make — two on the verify
+route, and with `--coding-job` that job's account on the sign route as well — every one of them asking for a
+refusal of an identity the service **will not verify**, which it answers before there is an identity, a run
+or a job for an audit line to name. A refusal of that kind writes **no** audit line (the service's rule is
+that every refusal from the identity on writes exactly one), so these calls leave nothing at all and the
+service's log is exactly as the check found it — and the block's `restore` row says exactly that. What an owner's own review run
 left — the artifact, the record, the spend — is left where it is, and the ID tokens this check minted die
 with the scratch directory that held them: one directory at mode `0700`, removed from the exit trap even on
 a failed assertion or a Ctrl-C, and kept with a message saying where it is when `CHECK530_KEEP_SCRATCH` is

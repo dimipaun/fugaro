@@ -30,17 +30,20 @@
 #     block carries one INFO row per step saying it is not this script's.
 #
 # It creates NOTHING and deletes NOTHING: every call is a read of the project,
-# the runs bucket, the run's own record and the service's log, plus two POSTs to
-# the verify route that the service refuses — a refusal is the answer those rows
-# measure, and the one line each writes in the service's log is the service's
-# own record of it.
+# the runs bucket, the run's own record and the service's log, plus POSTs the
+# service refuses — two on the verify route (one with no token at all, one as the
+# review job's own account) and, when --coding-job names one, that job's account
+# on the verify route and on the sign route as well. Every refusal row reads the
+# refusal's own TYPE: the class's own refusal is a 403 naming the caller's
+# identity, and a refusal of the body sent or of a state the service could not
+# read is a different answer, given only after a caller has been admitted.
 #
 # Usage:      bash scripts/live-checks/check-c39.sh --sandbox <checkout> --run <the review run id>
 #             bash scripts/live-checks/check-c39.sh --sandbox <checkout> --dry-run
 #             bash scripts/live-checks/check-c39.sh --help
 # Needs:      bash, mktemp, date, python3, gcloud (authenticated as YOU),
 #             fugaro (the installed release: the review class has to be in it)
-#             and curl (the two refusal rows).
+#             and curl (the refusal rows).
 # Where:      a sandbox checkout of a repository of the sandbox project, with
 #             the sandbox's own review run behind it. `--sandbox` defaults to
 #             $PWD, and it must carry a fugaro.yaml. Never `belong`, never
@@ -50,7 +53,9 @@
 #             removed from the exit trap even on a failed assertion or Ctrl-C,
 #             holding the ID tokens this check mints while it is running.
 # Costs:      nothing billable and no model call. It reads the review run the
-#             owner already paid for; the POSTs are refused before any work.
+#             owner already paid for; every POST asks for a refusal of an
+#             identity the service will not verify, which it answers before any
+#             work.
 # Runs:       by YOU. No agent runs any step of it, and its own test
 #             (check-c39_test.sh) drives it against fake tools only.
 # Cleanup:    the scratch directory and nothing else.
@@ -163,11 +168,14 @@ remove_scratch() {
 }
 
 # restore: what this check changed, said rather than assumed. It is a reading of
-# the owner's own sandbox run, and the only thing it leaves behind is the one
-# audit line the service writes for each of the two refusals it asked for.
+# the owner's own sandbox run, and it leaves the service's log exactly as it
+# found it: each row below asks for a refusal of an identity the service will
+# not verify, and those are answered before there is an identity, a run or a job
+# to name, so they carry no audit line (server.go's "the refusals BEFORE that
+# point are not [recorded]").
 restore() {
   RESTORE_VERDICT=PASS
-  RESTORE_NOTE="nothing was created, changed or deleted: every row reads the project, the review job's own describe, its account's IAM, the artifact the review run signed, that run's record and the service's audit lines. The two refusal rows POST to the verify route and the service refuses both before any work, so the only thing they leave is one audit line each in the service's log — the service's own record of a refusal, and not this check's to delete. The review run's own spend was already paid, and its artifact is kept in the bucket; the ID tokens this check minted died with the run and never left the scratch directory"
+  RESTORE_NOTE="nothing was created, changed or deleted: every row reads the project, the review job's own describe, its account's IAM, the artifact the review run signed, that run's record and the service's audit lines. The refusal rows POST to the routes and each asks for a refusal of an identity the service will not verify, which is answered before there is an identity, a run or a job for an audit line to name — so the calls leave nothing at all, and the service's log is exactly as this check found it. The review run's own spend was already paid, and its artifact is kept in the bucket; the ID tokens this check minted died with the run and never left the scratch directory"
 }
 
 cleanup() {
@@ -301,17 +309,48 @@ if what == "doctor":
             flat(check.get("fix")),
         ))
         if cid == "project-account-stored":
-            for name in re.findall(r"review job (\S+) mounts no secret", flat(check.get("problem"))):
-                print("review_job\t%s" % name)
+            # The census is one entry per account job joined by "; ": the job,
+            # its profile, its ACCOUNT, its token and the repositories that token
+            # may be used by, with the review-only variant beside them. The
+            # account is read out of the same entry because it is the name a
+            # verify call has to carry: VerifyRequest.Account selects which
+            # account's signing key the answer is recomputed under, and the
+            # review job's own account EMAIL is not one -- the route answers
+            # state_unavailable for a name no entry holds, which is the same
+            # answer a caller it admitted would get.
+            for entry in re.split(r";\s*", flat(check.get("problem"))):
+                variant = re.search(r"review job (\S+) mounts no secret", entry)
+                if not variant:
+                    continue
+                account = re.search(r"account ([^,]+),", entry)
+                print("review_job\t%s\t%s" % (
+                    variant.group(1),
+                    flat(account.group(1)) if account else "",
+                ))
 elif what == "job":
-    spec = ((doc.get("spec") or {}).get("template") or {}).get("spec") or {}
+    # A Cloud Run JOB nests its revision one level below an execution's: the v1
+    # paths are spec.template.spec.template.spec for a job and
+    # spec.template.spec for an execution (docs/gcp-live-checklist.md states it
+    # with the gcloud version it was read from). Reading a job at the
+    # execution's depth finds no container at all, so the count is printed and
+    # the shell reads a zero as a document it does not know rather than as a job
+    # that mounts nothing -- which is the one wrong answer this row cannot give.
+    #
+    # A secret is mounted the v1 way too: an env entry's valueSource.secretKeyRef
+    # (secret, version), which is the shape the job module writes and doctor
+    # reads back (modules/workflow/job.tf, internal/infra/checkjob.go) and never
+    # the Kubernetes valueFrom.secretKeyRef (name, key).
+    execution = ((doc.get("spec") or {}).get("template") or {}).get("spec") or {}
+    spec = (execution.get("template") or {}).get("spec") or {}
+    containers = spec.get("containers") or []
     print("service_account=%s" % flat(spec.get("serviceAccountName")))
+    print("containers=%d" % len(containers))
     found = []
-    for container in spec.get("containers") or []:
+    for container in containers:
         for env in container.get("env") or []:
-            ref = (env.get("valueFrom") or {}).get("secretKeyRef") or {}
+            ref = (env.get("valueSource") or {}).get("secretKeyRef") or {}
             if ref:
-                found.append("%s -> %s" % (flat(env.get("name")), flat(ref.get("name"))))
+                found.append("%s -> %s" % (flat(env.get("name")), flat(ref.get("secret"))))
     for volume in spec.get("volumes") or []:
         secret = volume.get("secret") or {}
         if secret:
@@ -374,6 +413,9 @@ elif what == "answer":
     print("has_valid=%s" % yes("valid" in doc))
     print("valid=%s" % yes(valid))
     print("error=%s" % flat(doc.get("error") or doc.get("error_class") or doc.get("code")))
+    print("message=%s" % flat(doc.get("message") or doc.get("msg")))
+    print("signature=%s" % flat(doc.get("signature")))
+    print("alg=%s" % flat(doc.get("alg")))
     print("keys=%s" % ",".join(sorted(doc.keys())))
 PY
 }
@@ -399,6 +441,10 @@ row() { # row FILE PREFIX — every tab-separated row with that prefix, fields a
 
 check_row() { # check_row FILE ID — the doctor `check` row for that id, tab-separated from its id
   awk -F'\t' -v id="$2" '$1 == "check" && $2 == id { print; exit }' "$1" 2>/dev/null || true
+}
+
+review_job_rows() { # review_job_rows FILE — one `job|account` per review-only variant the census names
+  awk -F'\t' '$1 == "review_job" { print $2 "|" $3 }' "$1" 2>/dev/null || true
 }
 
 # ---------------------------------------------------------------- the guards
@@ -466,14 +512,14 @@ plan() {
   say "  [network, read] gcloud storage cat gs://…/result.json — the run's own record: its repository and its spend"
   say "  [network, read] gcloud logging read (purpose=review_sign) — the service's audit line for that signing: the account, the slug, the run, and no pull requests"
   say "  [network, read] gcloud run services describe ${SERVICE_NAME} --format=value(status.url) — the URL both routes answer on"
-  say "  [network] POST ${SERVICE_URL:-<the service URL>}/v1/review/verify with NO token — a typed refusal is the answer this row measures"
-  say "  [network] the same call with an ID token minted by impersonating the review job's own account — refused too, because a verifier is not a run"
+  say "  [network] POST ${SERVICE_URL:-<the service URL>}/v1/review/verify with NO token — the class's own refusal (403, an identity this service will not verify) is the answer the row measures, and any other answer fails it"
+  say "  [network] the same call, framed as the census's own account for the review job, with an ID token minted by impersonating that job's own service account — refused the same way, because a verifier is not a run"
   if [ -n "$CODING_JOB" ]; then
-    say "  [network] the same two calls with the coding job's account (${CODING_JOB}) — refused on every route"
+    say "  [network] the coding job's account (${CODING_JOB}) on the verify route and on the sign route — refused the same way on both, the sign route's refusal being its own identity gate's"
   else
     say "  [not asked for] the coding job's account: pass --coding-job <name> to measure that arm; without it the row says so"
   fi
-  say "  [nothing created] no job, no build, no container, no binding, no account and no model call: every call is a read, and the two POSTs are refused before any work"
+  say "  [nothing created] no job, no build, no container, no binding, no account and no model call: every call is a read, and every POST asks for a refusal of an identity the service will not verify, which it answers before there is anything to write"
   say "  [yours, printed and not run] steps 3, 4, 5, 7, 8, 9 and 10 of the check — a real review run, a throwaway mint whose push GitHub refuses, the gateway's log and a hand-made model call, a tampered copy, the verifier class, a mutant subprocess, and the second sign"
   say "the block a real run prints carries one row per fact: $(printf '%s ' "${BLOCK_KEYS[@]}")"
   say "A dry run measured none of them, so its block carries only what it did settle — the guards and this row."
@@ -617,7 +663,8 @@ step_doctor() {
     unmeasured review-jobs "fugaro doctor carries no project-account-stored row, which is the census line that names the installation's review-only job: without it this check cannot say which job §8's step 2 describes. Run 'fugaro doctor --all' yourself and name the job with --coding-job-style reads, or run this check on a build whose doctor carries the row"
     return 0
   fi
-  REVIEW_JOBS=$(row "$SCRATCH/doctor.txt" review_job | tr '\n' ' ')
+  review_job_rows "$SCRATCH/doctor.txt" >"$SCRATCH/review-jobs"
+  REVIEW_JOBS=$(cut -d'|' -f1 "$SCRATCH/review-jobs" | tr '\n' ' ')
   if [ -z "${REVIEW_JOBS// /}" ]; then
     fact review-jobs FAIL "doctor's census line names no review job: it reads '$(printf '%s' "$census" | cut -f5)'. The census names each account's job and its review-only variant beside it ('review job <name> mounts no secret'), so an installation whose deployed job set has no variant is the finding §8's step 2 rests on — the variant is the job that holds no credential. Check the installation's profiles and its credential bundle, then run this check again"
     return 0
@@ -647,6 +694,16 @@ step_job() {
     described=$((described + 1))
     if ! read_json job "$SCRATCH/job-${job}.out" "$SCRATCH/job-${job}.txt"; then
       offenders="${offenders:+$offenders; }${job}'s describe is not a document this check could read"
+      continue
+    fi
+    # A job's containers sit at spec.template.spec.template.spec and an
+    # execution's at spec.template.spec, so a document of the other shape answers
+    # 'mounts nothing' to every job. The reader says which it is, and a shape
+    # this check does not know is refused rather than read as an empty job.
+    local containers
+    containers=$(field "$SCRATCH/job-${job}.txt" containers)
+    if [ "${containers:-0}" = 0 ]; then
+      offenders="${offenders:+$offenders; }${job}'s describe carries no container at spec.template.spec.template.spec, which is where a Cloud Run job's revision sits: this check will not read a job out of a document of another shape (an execution's, a service's), because every one of them would answer that the job mounts nothing"
       continue
     fi
     sa=$(field "$SCRATCH/job-${job}.txt" service_account)
@@ -807,6 +864,9 @@ step_sign_line() {
   local repo job caller credential tier status extra text bad=""
   repo=$(field "$SCRATCH/audit.txt" audit_repository)
   job=$(field "$SCRATCH/audit.txt" audit_job)
+  # The job that signed is the one whose account the verify call below has to
+  # name, and it is read here rather than looked up again there.
+  SIGNED_JOB=$job
   caller=$(field "$SCRATCH/audit.txt" audit_caller)
   credential=$(field "$SCRATCH/audit.txt" audit_credential)
   tier=$(field "$SCRATCH/audit.txt" audit_tier)
@@ -856,7 +916,7 @@ step_service_url() {
     --project="$PROJECT" --region="$REGION" --format='value(status.url)'
   SERVICE_URL=$(head -n 1 "$SCRATCH/service.out" 2>/dev/null | tr -d '\r' || true)
   if [ -z "$SERVICE_URL" ]; then
-    unmeasured service-url "gcloud could not read ${SERVICE_NAME}'s URL in ${PROJECT}/${REGION} (exit ${BOUNDED_STATUS}): the two refusal rows below POST to it, and without it this check cannot ask the question they measure. What gcloud printed is in $SCRATCH/service.err"
+    unmeasured service-url "gcloud could not read ${SERVICE_NAME}'s URL in ${PROJECT}/${REGION} (exit ${BOUNDED_STATUS}): the refusal rows below POST to it, and without it this check cannot ask the question they measure. What gcloud printed is in $SCRATCH/service.err"
     return 0
   fi
   fact service-url PASS "${SERVICE_URL} — the service's own URL, read from Cloud Run rather than from a config"
@@ -885,11 +945,6 @@ mint_token() { # mint_token ACCOUNT KEY
   return 0
 }
 
-# post_verify KEY CONFIG: POST the framed pair's own fields to the verify route,
-# with CONFIG's Authorization header (or none when CONFIG is empty). Prints the
-# body to $SCRATCH/KEY.out and sets POST_STATUS. The body names the real run and
-# the real digest of what was signed, so a service that ADMITS the call answers
-# with a verdict about this run rather than about a made-up one.
 # post_call KEY CURL-ARGS...: one POST, with the body in $SCRATCH/KEY.body and
 # curl's own `%{http_code}` in $SCRATCH/KEY.out. The two are separate files on
 # purpose: curl's `-o` and this shell's own append are two writers on one path,
@@ -901,6 +956,14 @@ post_call() { # post_call KEY CURL-ARGS...
   chmod 600 "$SCRATCH/$key.body" "$SCRATCH/$key.out" 2>/dev/null || true
 }
 
+# post_verify KEY [CONFIG]: POST the framed pair's own fields to the verify route,
+# with CONFIG's Authorization header (or none when CONFIG is empty). The body
+# names the real run and the real digest of what was signed — and the ACCOUNT
+# whose signing key the answer is recomputed under, which is the account the
+# census pairs with the review job and never the job's own account email. That
+# is what makes a route which ADMITS the call answer a verdict about this run
+# rather than refuse the body: a body that route would refuse for what it sent
+# cannot say whether the caller was let through.
 post_verify() { # post_verify KEY [CONFIG]
   local key=$1 config=${2:-}
   local body="$SCRATCH/post-${key}.json"
@@ -916,17 +979,37 @@ JSON
   fi
 }
 
+# post_sign KEY CONFIG: POST a sign call's body as CONFIG's caller. The sign
+# route's body is one field — the digest of the artifact the run signed — and it
+# is sent as the contract reads it, for post_verify's reason: a body the route
+# refuses for its shape is a refusal this check cannot tell from the refusal of a
+# caller that was let through.
+post_sign() { # post_sign KEY CONFIG
+  local key=$1 config=$2
+  local body="$SCRATCH/post-${key}.json"
+  printf '{"digest":"%s"}\n' "$VERIFY_DIGEST" >"$body"
+  post_call "$key" --config "$config" -X POST -H 'Content-Type: application/json' \
+    --data @"$body" "${SERVICE_URL}${SIGN_PATH}"
+}
+
 # read_answer KEY: read one POST's answer. Sets ANSWER_KIND to `verdict` (the
-# service answered whether the pair is valid), `refusal` (it refused the call)
-# or `unreadable`, ANSWER_TEXT to the sentence it printed and ANSWER_STATUS to
-# the status line curl wrote.
+# verify route answered whether the pair is valid), `refusal` (the service
+# refused the call, with ANSWER_ERROR named first), `signature` (the sign route
+# answered a signature, which is the one answer that only an ADMITTED sign
+# caller gets), `answer` (a document that is none of those three) or
+# `unreadable` (this check cannot read it at all). ANSWER_TEXT is what the row
+# below quotes and ANSWER_STATUS is the status line curl wrote. Every row reads
+# the TYPE and the status together: the two classes this check asks about share
+# the refusal vocabulary with a body the route read only after admitting a
+# caller, and only the type says which it was.
 read_answer() { # read_answer KEY
   local key=$1
   ANSWER_KIND=unreadable
+  ANSWER_ERROR=""
   ANSWER_STATUS=$(tr -d '\r\n' <"$SCRATCH/$key.out" 2>/dev/null | head -c 20 || true)
   ANSWER_TEXT=$(tr -d '\r\n' <"$SCRATCH/$key.body" 2>/dev/null | head -c 400 || true)
   if [ ! -s "$SCRATCH/$key.body" ]; then
-    ANSWER_TEXT="nothing at all (curl exited ${BOUNDED_STATUS}, status ${ANSWER_STATUS:-none})"
+    ANSWER_TEXT="nothing this check could read (curl exited ${BOUNDED_STATUS}, HTTP ${ANSWER_STATUS:-none})"
     return 0
   fi
   if ! read_json answer "$SCRATCH/$key.body" "$SCRATCH/$key.txt"; then
@@ -935,11 +1018,47 @@ read_answer() { # read_answer KEY
   if [ "$(field "$SCRATCH/$key.txt" has_valid)" = true ]; then
     ANSWER_KIND=verdict
     ANSWER_TEXT="valid=$(field "$SCRATCH/$key.txt" valid) (HTTP ${ANSWER_STATUS:-?})"
-  else
-    ANSWER_KIND=refusal
-    ANSWER_TEXT=$(field "$SCRATCH/$key.txt" error)
-    [ -n "$ANSWER_TEXT" ] || ANSWER_TEXT="a body with no valid field and no error: $(printf '%s' "$ANSWER_TEXT")"
+    return 0
   fi
+  ANSWER_ERROR=$(field "$SCRATCH/$key.txt" error)
+  if [ -n "$ANSWER_ERROR" ]; then
+    ANSWER_KIND=refusal
+    local message
+    message=$(field "$SCRATCH/$key.txt" message)
+    [ -n "$message" ] || message="a refusal with no sentence"
+    ANSWER_TEXT="${ANSWER_ERROR}: ${message} (HTTP ${ANSWER_STATUS:-?})"
+    return 0
+  fi
+  if [ -n "$(field "$SCRATCH/$key.txt" signature)" ]; then
+    ANSWER_KIND=signature
+    ANSWER_TEXT="a signature (alg=$(field "$SCRATCH/$key.txt" alg), HTTP ${ANSWER_STATUS:-?})"
+    return 0
+  fi
+  ANSWER_KIND=answer
+  ANSWER_TEXT="a document that is none of the contract's own answers: keys $(field "$SCRATCH/$key.txt" keys) (HTTP ${ANSWER_STATUS:-?})"
+}
+
+# answer_is_class_refusal: the answer §8's route rows are made of — the service
+# refused the CALLER, which is the one refusal these routes answer before they
+# look at anything the call sent. The status and the type are read together: the
+# class refusal is 403 with one of the two unverified types, and a refusal of the
+# body or of a state the service could not read is a different reading with its
+# own type and status, answered only once a caller has been admitted.
+answer_is_class_refusal() {
+  [ "$ANSWER_KIND" = refusal ] || return 1
+  [ "${ANSWER_STATUS:-}" = 403 ] || return 1
+  case "$ANSWER_ERROR" in
+  unverified_job_identity | unverified_run_identity) return 0 ;;
+  esac
+  return 1
+}
+
+# answer_is_body_refusal: a refusal of what the call SENT (request_refused),
+# which every route answers only after it has admitted its caller — so it is the
+# reading that says the gate did not refuse this caller.
+answer_is_body_refusal() {
+  [ "$ANSWER_KIND" = refusal ] || return 1
+  [ "$ANSWER_ERROR" = request_refused ] || return 1
 }
 
 # step_verify_class: §8's step 11, the half a script can ask — the verify route
@@ -966,20 +1085,25 @@ step_verify_class() {
   say "asking the verify route with no token at all: POST ${SERVICE_URL}${VERIFY_PATH}"
   post_verify no-token
   read_answer no-token
-  case "$ANSWER_KIND" in
-  refusal)
-    fact verify-unauthenticated PASS "the route refused a call with no token, and the sentence it printed is: ${ANSWER_TEXT}. §8's step 8 reads the same thing from the other end: the class is the token's, so a call without one is refused before the key is ever reached"
-    ;;
-  verdict)
+  if answer_is_class_refusal; then
+    fact verify-unauthenticated PASS "the route refused a call with no token, with the class's own refusal (${ANSWER_ERROR}, HTTP ${ANSWER_STATUS}): ${ANSWER_TEXT}. §8's step 8 reads the same thing from the other end: the class is the token's, so a call without one is refused before the key is ever reached"
+  elif [ "$ANSWER_KIND" = verdict ]; then
     fact verify-unauthenticated FAIL "the verify route answered ${ANSWER_TEXT} to a call that carried NO token: the class that route admits is the caller's token, and a call without one is refused rather than answered. This is a finding about the route itself, and it is the one row of §8's step 8 that does not wait on Open item 5"
-    ;;
-  *)
+  elif [ "$ANSWER_KIND" = refusal ]; then
+    fact verify-unauthenticated FAIL "the verify route refused a call that carried NO token with ${ANSWER_TEXT}, and that is not the refusal a call without a token gets (a class refusal, 403): a route answers anything else about a call it did not refuse for the token only after it has admitted a caller, and no caller was admitted here. This is a finding about the route itself. What it answered is in $SCRATCH/no-token.body"
+  elif [ "$ANSWER_KIND" = unreadable ]; then
     unmeasured verify-unauthenticated "the verify route's answer could not be read (curl exit ${BOUNDED_STATUS}): it printed ${ANSWER_TEXT}, which is neither a refusal this check knows nor a verdict. What it printed is in $SCRATCH/no-token.body"
-    ;;
-  esac
+  else
+    fact verify-unauthenticated FAIL "the verify route answered a call that carried NO token with ${ANSWER_TEXT}: that is neither the refusal a call without a token gets (a class refusal, 403) nor anything §8's step 8 admits, and this route has one answer only for a call it refuses for the token. This is a finding about the route itself, and it is the one row of §8's step 8 that does not wait on Open item 5. What it answered is in $SCRATCH/no-token.body"
+  fi
 
   if [ -z "$REVIEW_SA" ]; then
     unmeasured verify-review-refused "no review job's account was read, so this check cannot call the route as the review class: the rows above say why"
+    return 0
+  fi
+  VERIFY_ACCOUNT=$(census_account)
+  if [ -z "$VERIFY_ACCOUNT" ]; then
+    unmeasured verify-review-refused "doctor's census names no account for the review job ($REVIEW_JOBS), and a verify call carries the account whose signing key its answer is recomputed under: without that name a call this route ADMITS would be refused for the body it sent rather than answered, and this row could not tell that answer from a refusal of the caller. 'fugaro doctor' prints the account on the census line"
     return 0
   fi
   say "minting an ID token for the review job's own account: gcloud auth print-identity-token --impersonate-service-account=${REVIEW_SA}"
@@ -991,17 +1115,35 @@ step_verify_class() {
   post_verify review "$SCRATCH/token-review.curl"
   read_answer review
   rm -f "$SCRATCH/token-review.curl"
-  case "$ANSWER_KIND" in
-  refusal)
-    fact verify-review-refused PASS "the verify route refused ${REVIEW_SA} — the account the review job itself runs as — and its sentence reads: ${ANSWER_TEXT}. A verifier is not a run, so the review class is refused the verify route, which is §8's step 11 read from the route's own answer"
-    ;;
-  verdict)
-    fact verify-review-refused FAIL "the verify route answered ${ANSWER_TEXT} to a call made as ${REVIEW_SA}, the account the review job runs as: §8's step 11 is that the review class is refused the verify route, and a review account that can verify its own verdict is the widening this row exists to catch. The answer is in $SCRATCH/review.body"
-    ;;
-  *)
+  if answer_is_class_refusal; then
+    fact verify-review-refused PASS "the verify route refused ${REVIEW_SA} — the account the review job itself runs as — with the class's own refusal (${ANSWER_ERROR}, HTTP ${ANSWER_STATUS}): ${ANSWER_TEXT}. A verifier is not a run, so the review class is refused the verify route, which is §8's step 11 read from the route's own answer. The call named the account ${VERIFY_ACCOUNT} — the one the census pairs with the review job, whose signing key the answer would have been recomputed under — so a route that admitted this caller would have answered a verdict here instead of refusing it"
+  elif [ "$ANSWER_KIND" = verdict ]; then
+    fact verify-review-refused FAIL "the verify route answered ${ANSWER_TEXT} to a call made as ${REVIEW_SA}, the account the review job runs as: §8's step 11 is that the review class is refused the verify route, and a review account that can verify a verdict is the widening this row exists to catch. The answer is in $SCRATCH/review.body"
+  elif answer_is_body_refusal; then
+    fact verify-review-refused FAIL "the verify route refused ${REVIEW_SA} for what the call SENT (${ANSWER_TEXT}), and this route reads a call's body only after it has admitted its caller: a review account refused its own body is a review account the route let through, which is the widening §8's step 11 exists to catch. The refusal has to be the caller's own (a class refusal, 403), and it was not. What it answered is in $SCRATCH/review.body"
+  elif [ "$ANSWER_KIND" = refusal ]; then
+    unmeasured verify-review-refused "the verify route refused ${REVIEW_SA} with ${ANSWER_TEXT}, which is neither the class's own refusal (unverified_job_identity, HTTP 403) nor a verdict: a state the service could not read is answered both before a caller is admitted and after, so this check cannot tell from it whether this caller was let through. What it answered is in $SCRATCH/review.body"
+  elif [ "$ANSWER_KIND" = unreadable ]; then
     unmeasured verify-review-refused "the verify route's answer could not be read (curl exit ${BOUNDED_STATUS}): it printed ${ANSWER_TEXT}, which is neither a refusal this check knows nor a verdict. What it printed is in $SCRATCH/review.body"
-    ;;
-  esac
+  else
+    fact verify-review-refused FAIL "the verify route answered ${REVIEW_SA} — the account the review job itself runs as — with ${ANSWER_TEXT}, which is neither a refusal nor a verdict this check knows: §8's step 11 is that the review class is refused the verify route, and this answer is not that refusal. What it answered is in $SCRATCH/review.body"
+  fi
+}
+
+# census_account: the account doctor's census pairs with a review job — the name
+# a verify call has to carry, because VerifyRequest.Account selects WHICH
+# account's signing key the answer is recomputed under. The review job the run
+# signed under is the one to name when the sign line named it, and the first
+# review job otherwise: either account holds a signing key, so a route that
+# admitted the caller answers a verdict about the account it named rather than
+# refusing the body the call sent.
+census_account() {
+  local account=""
+  if [ -n "$SIGNED_JOB" ]; then
+    account=$(awk -F'|' -v j="$SIGNED_JOB" '$1 == j { print $2; exit }' "$SCRATCH/review-jobs" 2>/dev/null || true)
+  fi
+  [ -n "$account" ] || account=$(awk -F'|' 'NR == 1 { print $2 }' "$SCRATCH/review-jobs" 2>/dev/null || true)
+  printf '%s' "$account"
 }
 
 # step_gate_coding: §8's step 11, first half — a CODING shared project job's
@@ -1015,6 +1157,14 @@ step_gate_coding() {
   fi
   if [ -z "$SERVICE_URL" ]; then
     unmeasured gate-coding "there is no service URL to call: the row above says why"
+    return 0
+  fi
+  # The row above sets this when it could call the route; a census that named no
+  # account leaves it empty, and a call carrying an empty account would be
+  # refused for its own body rather than for its caller.
+  VERIFY_ACCOUNT=${VERIFY_ACCOUNT:-$(census_account)}
+  if [ -z "$VERIFY_ACCOUNT" ]; then
+    unmeasured gate-coding "doctor's census names no account for the review job ($REVIEW_JOBS), and both calls below carry it: a verify call names the account whose signing key its answer is recomputed under, and a body the route would refuse for itself says nothing about the caller it came from. 'fugaro doctor' prints that account on the census line"
     return 0
   fi
   say "describing the coding job: gcloud run jobs describe ${CODING_JOB} --region ${REGION}"
@@ -1039,33 +1189,55 @@ step_gate_coding() {
     unmeasured gate-coding "an ID token for ${coding_sa} could not be minted (exit ${BOUNDED_STATUS}): minting one by impersonation is your own IAM's business, not the code's. What gcloud printed is in $SCRATCH/token-coding.err"
     return 0
   fi
+  # Both arms send a body the contract reads, so the only thing either route can
+  # refuse this caller for is the caller: a body the route would refuse anyway
+  # answers the same whether or not the class gate let it through.
   say "asking the verify route as the coding job: POST ${SERVICE_URL}${VERIFY_PATH}"
   post_verify coding "$SCRATCH/token-coding.curl"
   read_answer coding
-  local verify_said="$ANSWER_TEXT" refused=""
-  case "$ANSWER_KIND" in
-  refusal) refused="verify" ;;
-  verdict)
-    rm -f "$SCRATCH/token-coding.curl"
-    fact gate-coding FAIL "the verify route answered ${ANSWER_TEXT} to ${coding_sa}, the coding job's own account: §8's step 11 is that a coding shared project job is refused on every route, and a coding account that can verify a verdict is the gate failing where it was written. The answer is in $SCRATCH/coding.body"
-    return 0
-    ;;
-  *)
-    rm -f "$SCRATCH/token-coding.curl"
-    unmeasured gate-coding "the verify route's answer to ${coding_sa} could not be read (curl exit ${BOUNDED_STATUS}): it printed ${ANSWER_TEXT}. What it printed is in $SCRATCH/coding.body"
-    return 0
-    ;;
-  esac
+  local verify_note="" verify_bad="" unread=""
+  if answer_is_class_refusal; then
+    verify_note="${ANSWER_ERROR}, HTTP ${ANSWER_STATUS}"
+  elif [ "$ANSWER_KIND" = verdict ]; then
+    verify_bad="the verify route ANSWERED ${coding_sa} ${ANSWER_TEXT}"
+  elif answer_is_body_refusal; then
+    verify_bad="the verify route refused ${coding_sa} for what the call SENT (${ANSWER_TEXT}), which that route reads only after admitting its caller"
+  elif [ "$ANSWER_KIND" = refusal ]; then
+    unread="the verify route refused ${coding_sa} with ${ANSWER_TEXT}, which is neither the class's own refusal (403) nor a verdict: a state the service could not read is answered both before a caller is admitted and after, so this check cannot tell from it whether this account was let through"
+  elif [ "$ANSWER_KIND" = unreadable ]; then
+    unread="the verify route's answer to ${coding_sa} could not be read (curl exit ${BOUNDED_STATUS}): ${ANSWER_TEXT}"
+  else
+    verify_bad="the verify route ANSWERED ${coding_sa} ${ANSWER_TEXT}, which is neither a refusal nor a verdict this check knows"
+  fi
   say "asking the sign route as the coding job: POST ${SERVICE_URL}${SIGN_PATH}"
-  post_call coding-sign --config "$SCRATCH/token-coding.curl" -X POST -H 'Content-Type: application/json' \
-    --data-binary '{"account":"","digest":"","signature":"","run":"","repository":""}' "${SERVICE_URL}${SIGN_PATH}"
+  post_sign coding-sign "$SCRATCH/token-coding.curl"
   read_answer coding-sign
   rm -f "$SCRATCH/token-coding.curl"
-  if [ "$ANSWER_KIND" = refusal ]; then
-    fact gate-coding PASS "${coding_sa} — the coding shared project job's own account — is refused the verify route ('${verify_said}') and the sign route ('$(field "$SCRATCH/coding-sign.txt" error)') alike: the gate still holds where it was written, and both refusals' own sentences are what this row carries"
+  local sign_note="" sign_bad=""
+  if answer_is_class_refusal; then
+    sign_note="${ANSWER_ERROR}, HTTP ${ANSWER_STATUS}"
+  elif [ "$ANSWER_KIND" = signature ]; then
+    sign_bad="the sign route SIGNED it ${ANSWER_TEXT}, and a signature is the one answer this route gives a caller it has verified"
+  elif [ "$ANSWER_KIND" = verdict ]; then
+    sign_bad="the sign route ANSWERED it ${ANSWER_TEXT}"
+  elif answer_is_body_refusal; then
+    sign_bad="the sign route refused it for what the call SENT (${ANSWER_TEXT}), which that route reads only after it has verified the caller"
+  elif [ "$ANSWER_KIND" = refusal ]; then
+    [ -n "$unread" ] || unread="the sign route refused ${coding_sa} with ${ANSWER_TEXT}, which is neither the class's own refusal nor a verdict this check knows"
+  elif [ "$ANSWER_KIND" = unreadable ]; then
+    [ -n "$unread" ] || unread="the sign route's answer to ${coding_sa} could not be read (curl exit ${BOUNDED_STATUS}): ${ANSWER_TEXT}"
   else
-    fact gate-coding FAIL "the verify route refused ${coding_sa} ('${verify_said}'), and the sign route answered ${ANSWER_TEXT} to it: §8's step 11 is that a coding shared project job is refused on EVERY route, and this one was not. What it printed is in $SCRATCH/coding-sign.body"
+    sign_bad="the sign route ANSWERED it ${ANSWER_TEXT}"
   fi
+  if [ -n "$verify_bad" ] || [ -n "$sign_bad" ]; then
+    fact gate-coding FAIL "${verify_bad:+${verify_bad}; }${sign_bad:+${sign_bad}; }§8's step 11 is that a coding shared project job is refused on EVERY route, and this account was not refused on this one: the gate is failing where it was written. What it answered is in $SCRATCH/coding.body and $SCRATCH/coding-sign.body"
+    return 0
+  fi
+  if [ -n "$unread" ]; then
+    unmeasured gate-coding "${unread}. A route this check cannot read is one it will not claim the gate holds on: what it printed is in $SCRATCH/coding.body and $SCRATCH/coding-sign.body"
+    return 0
+  fi
+  fact gate-coding PASS "${coding_sa} — the coding shared project job's own account — is refused the verify route (${verify_note}: $(field "$SCRATCH/coding.txt" message)) and the sign route (${sign_note}: $(field "$SCRATCH/coding-sign.txt" message)) alike: the gate still holds where it was written, and both refusals' own sentences are what this row carries. The sign route's refusal is its identity gate's — the account holds no run identity of this installation's, which is a Firebase custom token only a launcher mints — and what the class check behind that gate does with a coding account is §8's step 9 and step 10, read with a run's own identity"
 }
 
 # ------------------------------------------------------- the steps that are yours
@@ -1220,6 +1392,7 @@ SIGN_PATH=/v1/review/sign
 VERIFY_PATH=/v1/review/verify
 SIG_NAME=review.json.sig
 REVIEW_JOBS=""
+SIGNED_JOB=""
 REVIEW_SA=""
 RUN_REF=""
 RECORDED_REPO=""
@@ -1251,7 +1424,6 @@ step_verify_fields() {
   VERIFY_SIGNATURE=$(tr -d '\r\n' <"$SCRATCH/sig.out" | head -c 200)
   VERIFY_REPO=$(printf '%s' "$RUN_REF" | sed -n 's#^runs/\(.*\)/'"$RUN"'$#\1#p')
   [ -n "$VERIFY_REPO" ] || VERIFY_REPO=${RECORDED_REPO:-}
-  VERIFY_ACCOUNT=${REVIEW_SA:-}
   rm -f "$SCRATCH/artifact.out"
 }
 
