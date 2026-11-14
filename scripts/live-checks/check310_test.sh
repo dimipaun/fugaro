@@ -126,7 +126,12 @@ RETENTION = 14 * 24 * 3600
 KEEP_PER_COMMAND = 50
 
 with open(CALLS, "a") as fh:
-    fh.write(" ".join(sys.argv[1:]) + "\n")
+    line = " ".join(sys.argv[1:])
+    # The project the check selected for its one read, so a case can pin that
+    # the installation it names is the one doctor is asked about.
+    if sys.argv[1:2] == ["doctor"] and os.environ.get("FUGARO_PROJECT"):
+        line += " [FUGARO_PROJECT=%s]" % os.environ["FUGARO_PROJECT"]
+    fh.write(line + "\n")
 
 
 def state_dir():
@@ -264,8 +269,16 @@ def doctor():
         _, _, log = open_log("doctor")
         log.write("the doctor read\n")
         log.close()
+    name, gcp = INSTALLATION, GCP
+    if MODE == "doctor-other-project":
+        # A checkout whose fugaro.yaml names another project: the read is the
+        # one the check asked for (FUGARO_PROJECT) and answers with another name.
+        name = "check310other"
+    if MODE == "gcp-refused":
+        # A named installation whose GCP project is one the register refuses.
+        gcp = "edge-devel-dimi"
     sys.stdout.write(json.dumps({
-        "project": {"name": INSTALLATION, "gcp_project": GCP, "region": REGION},
+        "project": {"name": name, "gcp_project": gcp, "region": REGION},
     }) + "\n")
     return 0
 
@@ -444,8 +457,12 @@ setup_case() { # name mode
 
 run310() {
   set +e
+  # FUGARO_PROJECT is cleared with the agent markers: which installation the
+  # check selects is what the cases below assert, so the developer's own
+  # selection must not reach the run.
   env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_REMOTE -u CURSOR_AGENT \
     -u AI_AGENT -u CLAUDE_CODE_SSE_PORT -u NO_COLOR -u CLICOLOR_FORCE -u FORCE_COLOR \
+    -u FUGARO_PROJECT \
     ${CASE_ENV[@]+"${CASE_ENV[@]}"} \
     PATH="$work/bin:$PATH" \
     HOME="$case_dir/home" \
@@ -489,6 +506,18 @@ owner_logs_kept() {
 
 THE_CALLS='version
 doctor --json
+update
+setup --plan-only
+update
+update
+update --json
+update'
+
+# The same calls where you name the installation: the one read the check makes
+# about it is made under FUGARO_PROJECT, so the project and the region it reads
+# are the named installation's own rather than whatever is selected by default.
+THE_CALLS_NAMED='version
+doctor --json [FUGARO_PROJECT=check310demo]
 update
 setup --plan-only
 update
@@ -779,6 +808,54 @@ case_other_refused_names() {
   done
 }
 
+# An installation you name, whose GCP project is one the register refuses: the
+# project is not known before the first read, so the guard has to run again once
+# doctor has answered. A guard that ran only once would let the four converges
+# below touch the owner's own GCP project while the block read PASS.
+case_gcp_refused() {
+  setup_case gcp_refused gcp-refused
+  CASE_ARGS=(--installation check310demo)
+  run310
+  local out
+  out=$(block)
+  expect_status "$status" 2 "an installation whose GCP project is refused"
+  expect_fact "$out" belong FAIL "an installation whose GCP project is refused"
+  expect_contains "$(errout)" "names an installation this check must never touch" "the refusal on the terminal"
+  expect_calls "$case_dir/calls" 'version
+doctor --json [FUGARO_PROJECT=check310demo]'
+}
+
+# An installation you name, where the read answers with another project: the
+# readings below would be the named one's and the converges another's, so the
+# check stops instead of converging a project it did not read.
+case_project_mismatch() {
+  setup_case project_mismatch doctor-other-project
+  CASE_ARGS=(--installation check310demo)
+  run310
+  local out
+  out=$(block)
+  expect_status "$status" 2 "an installation the read disagrees with"
+  expect_fact "$out" installation FAIL "an installation the read disagrees with"
+  expect_contains "$(errout)" "nothing was converged" "the stop on the terminal"
+  expect_calls "$case_dir/calls" 'version
+doctor --json [FUGARO_PROJECT=check310demo]'
+}
+
+# The same installation, read and driven to the end: the one read the check
+# makes about it is the named installation's own.
+case_named_installation() {
+  setup_case named_installation happy
+  CASE_ARGS=(--installation check310demo)
+  run310
+  local out
+  out=$(block)
+  expect_status "$status" 0 "an installation you name"
+  expect_fact "$out" installation PASS "an installation you name"
+  expect_fact "$out" belong PASS "an installation you name"
+  expect_no_fail "$out" "an installation you name"
+  expect_calls "$case_dir/calls" "$THE_CALLS_NAMED"
+}
+
 case_agent() {
   setup_case agent happy
   CASE_ENV=(CLAUDECODE=1)
@@ -798,9 +875,21 @@ case_dry_run() {
   out=$(block)
   expect_status "$status" 0 "a dry run"
   expect_fact "$out" dry-run PASS "a dry run"
+  expect_fact "$out" belong INFO "a dry run"
   expect_contains "$(errout)" "NOTHING below was run" "a dry run"
   [ -z "$(calls)" ] || fail "a dry run made a fugaro call: $(calls)"
   expect_absent "$out" "FACT update-tty: PASS" "a dry run"
+  # A dry run of an installation you name: the guard reads the name it is given
+  # and the row is written for it, with no project to name — a dry run reads
+  # none.
+  setup_case dry_run_named happy
+  CASE_ARGS=(--dry-run --installation check310demo)
+  run310
+  local named
+  named=$(block)
+  expect_status "$status" 0 "a dry run of a named installation"
+  expect_fact "$named" belong PASS "a dry run of a named installation"
+  [ -z "$(calls)" ] || fail "a dry run of a named installation made a fugaro call: $(calls)"
 }
 
 case_help() {
@@ -848,6 +937,9 @@ tests=(
   owner_logs_removed_early
   belong
   other_refused_names
+  gcp_refused
+  project_mismatch
+  named_installation
   agent
   dry_run
   help

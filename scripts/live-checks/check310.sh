@@ -364,11 +364,12 @@ guard_agent() {
 # own (edge-devel-dimi) and `fugaro-dev` is the sandbox its rows run on. This
 # check re-converges whatever is selected four times and reads the log directory
 # it writes. The terminal readings do not depend on which installation it is, so
-# any other one will do. GCP may be empty: the name alone is checked before the
-# first `fugaro update` — and before any call at all where you name the
-# installation yourself — and the GCP project is added once doctor has read it.
+# any other one will do. It runs twice: once before the first `fugaro` call,
+# where the name you typed is all there is to check — and before any call at all
+# where you name the installation yourself — and again after doctor has read the
+# installation's GCP project, so the project is refused too. It records no row
+# of its own: record_belong writes that one, after the read.
 guard_belong() {
-  if grep -q '^belong|' "$FACTS_FILE" 2>/dev/null; then return 0; fi
   case "$INSTALLATION" in
   belong | belong-* | Belong | BELONG | fugaro-dev | fugaro-belong | edge-devel-dimi)
     fact belong FAIL "the installation is $INSTALLATION, which the register refuses by name (belong on edge-devel-dimi, fugaro-dev): Check 310 re-converges it four times and reads the log directory it writes, and it is never pointed at one of them. Name another installation (--installation <name>): the terminal readings do not depend on which one it is"
@@ -381,8 +382,16 @@ guard_belong() {
     stop "the GCP project '$GCP' names an installation this check must never touch"
     ;;
   esac
+}
+
+# record_belong: the belong row itself, written where the run has something to
+# say about the project: after doctor has read it, or in a dry run, where
+# nothing is read and the row says so. The block prints the first row it finds
+# for a key, so a row written before the project is known would be the one a
+# reader sees.
+record_belong() {
   if [ -n "$INSTALLATION" ]; then
-    fact belong PASS "the installation ($INSTALLATION${GCP:+, GCP project $GCP}) is not one of the installations the register refuses by name — belong, fugaro-dev, edge-devel-dimi — and its GCP project names none of them"
+    fact belong PASS "the installation ($INSTALLATION${GCP:+, GCP project $GCP}) is not one of the installations the register refuses by name — belong, fugaro-dev, edge-devel-dimi${GCP:+ — and its GCP project names none of them}"
   else
     fact belong INFO "not read: no installation is named yet (a real run reads it from fugaro doctor --json, after the version and doctor reads the name itself needs, and refuses it here when it is belong, fugaro-dev or edge-devel-dimi)"
   fi
@@ -991,8 +1000,11 @@ step_environment() {
   # exemptListings table of internal/cli/report_exempt.go). The directory is
   # listed before and after, and a file that appeared is the finding.
   python3 "$READER" ls "$LOGDIR" >"$SCRATCH/doctor.before" 2>/dev/null || true
+  # Under the project you named, where you named one: the GCP project and the
+  # region below are then the named installation's own, and every converge after
+  # this reads the same one (the ENVV the runs below carry).
   local dstatus=0
-  bounded fugaro doctor --json >"$SCRATCH/doctor.json" 2>"$SCRATCH/doctor.err" || dstatus=$?
+  bounded env ${ENVV[@]+"${ENVV[@]}"} fugaro doctor --json >"$SCRATCH/doctor.json" 2>"$SCRATCH/doctor.err" || dstatus=$?
   python3 "$READER" ls "$LOGDIR" >"$SCRATCH/doctor.after" 2>/dev/null || true
   read_cmd doc "$SCRATCH/doctor.json"
   local ok why project
@@ -1007,6 +1019,9 @@ step_environment() {
   filed=$(field new)
   if [ "$ok" != 1 ]; then
     fact doctor FAIL "fugaro doctor --json did not print one JSON document ($why), so neither the installation in force nor the read's own log rule was read. Its exit status was $dstatus: $(first_line "$SCRATCH/doctor.err")"
+    if [ -n "$INSTALLATION" ]; then
+      stop "fugaro doctor --json did not print a document with FUGARO_PROJECT=$INSTALLATION (the reader's own line is in the row above), so the installation you named could not be read: name one that exists and run again"
+    fi
     stop "fugaro doctor --json did not print a document (the reader's own line is in the row above), so the installation in force could not be read: name one with --installation <name> and run again"
   fi
   if [ -n "$filed" ]; then
@@ -1017,7 +1032,8 @@ step_environment() {
 
   if [ -n "$INSTALLATION" ]; then
     if [ -n "$project" ] && [ "$project" != "$INSTALLATION" ]; then
-      fact installation FAIL "--installation names $INSTALLATION and fugaro doctor --json reports the project $project: the two disagree, which is what a checkout whose fugaro.yaml names another project does to a named installation (FUGARO_PROJECT). Run this check from outside that checkout, or name the project it names"
+      fact installation FAIL "--installation names $INSTALLATION and fugaro doctor --json, run with FUGARO_PROJECT=$INSTALLATION, reports the project $project: the two disagree, which is what a checkout whose fugaro.yaml names another project does to a named installation. Nothing below was run against it"
+      stop "fugaro doctor --json reports the project $project, not the installation you named ($INSTALLATION), so the readings below would be one installation's and the converges another's: nothing was converged. Run this check from outside that checkout, or name the project it names"
     fi
   elif [ -z "$project" ]; then
     stop "no installation is selected: --installation was not given and fugaro doctor --json names no project. Name one: --installation <name>"
@@ -1840,6 +1856,7 @@ main() {
     if [ -n "$INSTALLATION" ]; then
       fact installation PASS "$INSTALLATION (typed by you; a real run would drive its fugaro update four times)"
       guard_belong
+      record_belong
     else
       fact installation INFO "not read: a dry run makes no fugaro call, so the installation in force is not asked for (a real run reads it from fugaro doctor --json, or takes --installation)"
       fact belong INFO "not read: no installation was named and a dry run reads none"
@@ -1874,6 +1891,7 @@ main() {
 
   step_environment
   guard_belong
+  record_belong
   fact installation PASS "$INSTALLATION${GCP:+ (GCP $GCP)}${REGION:+, $REGION}: the installation this run drives, and never belong, fugaro-dev or edge-devel-dimi"
   fact logdir PASS "the CLI's logs are kept in $LOGDIR (XDG_STATE_HOME where it is set, else ~/.local/state, then fugaro/logs — the one directory rule the CLI has, F5)"
 
