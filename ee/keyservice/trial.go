@@ -106,13 +106,14 @@ const trialSeatFloor = 1
 // installation and is mailed its key.
 //
 // The order is the address's allowance, then the body, then the sign-in, then
-// the cheap half of §14's rule, then the mint, then the claim, and then the mail
-// and the two records. The allowance is spent first for the reason renew.go's is
-// (a body this service never parses is as cheap to serve as a good one), the
-// sign-in is read before the rule because the account is half of what the rule
-// counts, and the rule is read before the mint because minting for an ask that
-// is going to be refused spends the key ring's authority on a key nobody is
-// given.
+// the account's domain's allowance, then the cheap half of §14's rule, then the
+// mint, then the claim, and then the mail and the two records. The address's
+// allowance is spent first for the reason renew.go's is (a body this service
+// never parses is as cheap to serve as a good one), the sign-in is read before
+// the domain's allowance and before the rule because the account is half of what
+// the rule counts, and the rule is read before the mint because minting for an
+// ask that is going to be refused spends the key ring's authority on a key
+// nobody is given.
 //
 // The mint stands before the claim and not after it, and that order costs
 // something either way: the claim is the store's check-and-write and it needs
@@ -135,6 +136,18 @@ func (s *Service) trial(w http.ResponseWriter, r *http.Request) {
 	}
 	caller, ok := s.trialCaller(w, r)
 	if !ok {
+		return
+	}
+	// The account's own **domain's** allowance is spent here, and it is the
+	// throttle §14's trial is documented with: "the trial path is throttled per
+	// domain" (docs/licensing/licence-key.md, "Limits, accepted"), because the
+	// account a caller asks from is one they may open another of and the
+	// organisation behind it is not. It is spent after the sign-in and not with
+	// the address, for the reason a renewal's key allowance is (renew.go's
+	// `charged`): only a request that proved who asks is counted against that
+	// domain, so no caller can spend another domain's allowance.
+	if !s.limiter.allow("domain:" + domainOf(caller.Email)) {
+		refuseAPI(w, http.StatusTooManyRequests, "rate_limited", trialRateRefusal)
 		return
 	}
 	if !s.trialFree(w, r, call, caller) {
@@ -174,16 +187,19 @@ func (s *Service) trial(w http.ResponseWriter, r *http.Request) {
 		KeyID:        answer.Record.KeyID,
 		At:           s.now(),
 	}); err != nil {
-		if !errors.Is(err, ErrTrialAlreadyClaimed) {
-			s.trialFailed(w, err)
-			return
-		}
-		// The ask lost the race that `trialFree` cannot see, and the key it
-		// minted is one the store holds no trial for: it is withdrawn rather
-		// than left live, because a key nobody was given is not a licence and
-		// §8's list is where the licensor can see it (K2.2).
+		// A claim that did not land leaves the key that was minted for it
+		// recorded nowhere: the store holds no trial naming it, the mail below
+		// never went out, and nothing will write its issuance — so it is
+		// withdrawn whatever the store's answer was. The lost race is the
+		// expected one (`trialFree` cannot see it) and a store that could not be
+		// written is the other; both are a live key nobody holds, which §8's
+		// list is where the licensor can see (K2.2).
 		if withdrawErr := s.withdrawUnrecorded(r.Context(), answer.Record.KeyID); withdrawErr != nil {
 			s.trialFailed(w, errors.Join(err, withdrawErr))
+			return
+		}
+		if !errors.Is(err, ErrTrialAlreadyClaimed) {
+			s.trialFailed(w, err)
 			return
 		}
 		refuseAPI(w, http.StatusConflict, "trial_already_claimed", trialClaimedRefusal)

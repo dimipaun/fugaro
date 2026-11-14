@@ -17,10 +17,12 @@ package keyservice
 // set.
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -47,24 +49,49 @@ const trialTicket = "fake-id-token-0123456789"
 func trialAs(t *testing.T) *fixture {
 	t.Helper()
 	return newFixtureWith(t, Production, func(f *fixture) {
-		f.deps.SignIn = &signInSpy{caller: Caller{
-			UID: "uid-trial", Email: trialAccount, Provider: "google.com", AuthTime: f.now,
-		}}
+		f.signIn.caller = Caller{UID: "uid-trial", Email: trialAccount, Provider: "google.com", AuthTime: f.now}
 	})
 }
 
-// ask is one trial request: the route's own body, carrying the token the
-// sign-in rides in.
+// ask is one trial request, from the applicant's own address: the route's own
+// body, carrying the token the sign-in rides in.
 func (f *fixture) ask(body string) *httptest.ResponseRecorder {
+	f.t.Helper()
+	return f.askFrom(applicantIP, body)
+}
+
+// askFrom is the same ask from an address the test names, which is what tells a
+// per-domain bucket from a per-address one.
+func (f *fixture) askFrom(ip, body string) *httptest.ResponseRecorder {
 	f.t.Helper()
 	req := httptest.NewRequest(http.MethodPost, intakeOrigin+RouteTrial, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+trialTicket)
-	req.RemoteAddr = applicantIP
+	req.RemoteAddr = ip
 	rec := httptest.NewRecorder()
 	f.handler.ServeHTTP(rec, req)
 	return rec
 }
+
+// signsInAs turns the fixture's sign-in seam to another account, and it is the
+// spy the running service already holds: a test that asks twice as two accounts
+// is asking the same intake — the same limiter, the same store, the same key ring
+// — rather than a service rebuilt for the second ask, which is what a per-domain
+// bucket has to be read on.
+func (f *fixture) signsInAs(uid, email string) {
+	f.t.Helper()
+	f.signIn.caller = Caller{UID: uid, Email: email, Provider: "google.com", AuthTime: f.now}
+}
+
+// claimRefuser is the store with a claim that cannot be written: every other
+// method is the fixture's own, so what a test reads after such an ask is what
+// the route really wrote and not what a stub remembers.
+type claimRefuser struct {
+	Store
+	err error
+}
+
+func (c claimRefuser) ClaimTrial(context.Context, Trial) error { return c.err }
 
 // trialBody is the request one test sends: the workspace's project id and the
 // seats the trial is asked for.
@@ -174,8 +201,7 @@ func TestSecondTrialIsRefused(t *testing.T) {
 	}
 	// Another account, the installation the first trial was minted for: the
 	// installation has had its trial.
-	f.deps.SignIn = &signInSpy{caller: Caller{UID: "uid-other", Email: "other@acme.example", Provider: "google.com", AuthTime: f.now}}
-	f.start()
+	f.signsInAs("uid-other", "other@acme.example")
 	sameInstallation := f.ask(trialBody(workspaceID, trialSeats))
 	if sameInstallation.Code != http.StatusConflict {
 		t.Errorf("a second ask for the same installation answered %d (%s), want 409", sameInstallation.Code, sameInstallation.Body.String())
@@ -254,5 +280,98 @@ func TestTrialIsRefusedForABodyItCannotRead(t *testing.T) {
 	}
 	if minted := f.mintedKeys(); len(minted) != 0 {
 		t.Errorf("a body the route cannot read minted %d key(s), want none", len(minted))
+	}
+}
+
+// TestTrialIsMountedOnlyWithASignInVerifier: the route reads the sign-in
+// verifier to learn the account half of §14's rule, and it declares that seam
+// where it is registered. It is the declaration and not the handler that keeps
+// the service honest: a deployment that mounts this door without a verifier is
+// refused when it starts (api.go's `reaching`, `missing`), rather than answering
+// every ask with a failure of its own or, with the declaration gone, serving the
+// ask with a nil verifier.
+func TestTrialIsMountedOnlyWithASignInVerifier(t *testing.T) {
+	route, known := apiRoutes.lookup(http.MethodPost, RouteTrial)
+	if !known {
+		t.Fatalf("no route is mounted at %s %s, so nothing serves a trial ask", http.MethodPost, RouteTrial)
+	}
+	if !slices.Contains(route.needs, needSignIn) {
+		t.Errorf("the route %s %s does not declare the sign-in verifier it reads, so a deployment holding none mounts it and answers every ask with a failure of its own",
+			route.method, route.path)
+	}
+	only := &apiRegistry{routes: []apiRoute{route}, byPath: map[string][]int{}}
+	if err := only.missing(Deps{}); err == nil {
+		t.Error("a deployment holding no sign-in verifier is not refused the route, want the start refused (P1.0)")
+	}
+}
+
+// TestTrialIsThrottledPerDomain: §14's trial is a speed bump and the throttle it
+// is documented with is the **domain's** and not the address's — "the trial path
+// is throttled per domain" (docs/licensing/licence-key.md, Limits, accepted) —
+// because the account a caller asks from is one they may open another of while
+// the organisation behind it is not. The fixture's rate is one ask per window, so
+// the second account at the first account's domain meets the bucket from a
+// different address (which a per-address rule would have let through), and an
+// account at another domain still asks.
+func TestTrialIsThrottledPerDomain(t *testing.T) {
+	f := newFixtureWith(t, Production, func(f *fixture) {
+		f.cfg.Throttle = Limits{Requests: 1, Window: time.Hour}
+		f.signIn.caller = Caller{UID: "uid-trial", Email: trialAccount, Provider: "google.com", AuthTime: f.now}
+	})
+	if rec := f.askFrom(applicantIP, trialBody(workspaceID, trialSeats)); rec.Code != http.StatusOK {
+		t.Fatalf("the first ask answered %d (%s), want 200", rec.Code, rec.Body.String())
+	}
+	// The same organisation, another account, another address: this is the ask a
+	// per-address bucket would have served.
+	f.signsInAs("uid-two", "colleague@acme.example")
+	second := f.askFrom("198.51.100.44:4040", trialBody("acme-other", trialSeats))
+	if second.Code != http.StatusTooManyRequests {
+		t.Errorf("a second account at the same domain answered %d (%s), want 429: §14's trial is throttled per domain and not per address", second.Code, second.Body.String())
+	}
+	// Another organisation asks and is served: what the bucket counts is the
+	// domain and not the trial route as a whole.
+	f.signsInAs("uid-three", "founder@widgets.example")
+	third := f.askFrom("198.51.100.45:4040", trialBody("widgets-workspace", trialSeats))
+	if third.Code != http.StatusOK {
+		t.Errorf("an ask from another domain answered %d (%s), want 200: the bucket is the domain's and not the route's", third.Code, third.Body.String())
+	}
+	if minted := f.mintedKeys(); len(minted) != 2 {
+		t.Errorf("the asks minted %d key(s), want the two that were served", len(minted))
+	}
+}
+
+// TestTrialIsWithdrawnWhenTheClaimCannotBeWritten: §14 counts a trial in the
+// store's check-and-write, and a mint stands before it. A claim that comes back
+// with anything other than "already claimed" — a store that could not be written,
+// which is the failure a deployment meets and the lost race is not — leaves the
+// key the mint answered recorded nowhere: no trial names it, it was never mailed,
+// and the write that failed is the one that would have. It is withdrawn rather
+// than left live, which is what puts a key nobody holds into §8's list where the
+// licensor can see it (K2.2).
+func TestTrialIsWithdrawnWhenTheClaimCannotBeWritten(t *testing.T) {
+	f := trialAs(t)
+	f.deps.Store = claimRefuser{Store: f.store, err: errors.New("the store could not be written")}
+	f.start()
+	rec := f.ask(trialBody(workspaceID, trialSeats))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("the ask answered %d (%s), want 500: the claim could not be written", rec.Code, rec.Body.String())
+	}
+	minted := f.mintedKeys()
+	if len(minted) != 1 {
+		t.Fatalf("the ask minted %d key(s), want the one it then had to withdraw", len(minted))
+	}
+	claims, _, err := licence.Verify([]byte(minted[0]), f.now, f.ring, workspaceID)
+	if err != nil {
+		t.Fatalf("the minted key does not verify: %v", err)
+	}
+	withdrawn := f.revocations()
+	if len(withdrawn) != 1 {
+		t.Fatalf("the store holds %d revocation(s), want the one key this ask minted and could not record: %+v", len(withdrawn), withdrawn)
+	}
+	if withdrawn[0].KeyID != claims.KeyID {
+		t.Errorf("the withdrawn key is %s, want the key this ask minted (%s)", withdrawn[0].KeyID, claims.KeyID)
+	}
+	if withdrawn[0].Reason != ReasonUnrecorded {
+		t.Errorf("the key was withdrawn as %q, want %q: nothing holds it and nothing recorded it", withdrawn[0].Reason, ReasonUnrecorded)
 	}
 }
