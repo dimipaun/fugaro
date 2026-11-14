@@ -180,7 +180,6 @@ PAIR_OK=no
 # ARMS_OK is the same for the pair's two rows: the records below are read at the
 # refs those rows carry, so without them there is no key to read.
 ARMS_OK=no
-CHAMPION_MODEL=""
 CHALLENGER_MODEL=""
 REASONS_FILE=""
 LAUNCHES_FILE=""
@@ -395,6 +394,17 @@ def ab_block(doc):
     return False, {}
 
 
+def top_keys(doc):
+    """The layer's own top-level keys: what a project that publishes no `ab:`
+    block DOES carry, which is what tells its owner where the block goes."""
+    keys = []
+    for line in doc.split("\n"):
+        m = re.match(r"^([A-Za-z_][A-Za-z0-9_.-]*)\s*:", line)
+        if m and m.group(1) not in keys:
+            keys.append(m.group(1))
+    return keys
+
+
 def listed(value):
     if isinstance(value, list):
         return ",".join(str(v) for v in value)
@@ -428,6 +438,7 @@ elif what == "layer":
     print("sha256=%s" % flat(doc.get("sha256")))
     present, mapping = ab_block(doc.get("yaml") or "")
     print("has_ab=%s" % yes(present))
+    print("top_keys=%s" % ",".join(top_keys(doc.get("yaml") or "")))
     for line in ab_lines(mapping):
         print(line)
 elif what == "abfile":
@@ -525,6 +536,13 @@ rcol() { # rcol ROW N — one column of a tab row, "" when there is none
   printf '%s\n' "$1" | awk -F'\t' -v n="$2" '{ print $n }'
 }
 
+# The two facts run_bounded reports are declared here, before any step: a step
+# that names them in a message after a read that never started (a ref that is
+# not this check's, an argument that did not match) would otherwise abort under
+# `set -u` instead of reporting what it found.
+BOUNDED_STATUS=0
+BOUNDED_TIMED_OUT=no
+
 # run_bounded SECONDS KEY DIR CMD...: run one command from the directory it has
 # to be run in and under a bound. Every command here names the project through
 # the checkout it is run in, and the record and patch reads are the exception.
@@ -540,7 +558,10 @@ run_bounded() { # run_bounded SECONDS KEY DIR CMD...
   local secs=$1 key=$2 dir=$3
   shift 3
   BOUNDED_TIMED_OUT=no
-  ( trap - ERR; cd "$dir" || exit 1; exec "$@" ) >>"$SCRATCH/$key.out" 2>>"$SCRATCH/$key.err" &
+  # Truncated, not appended: the launch loop and the arms poll call the same key
+  # again and again, and a `--json` read takes the call's own document — two
+  # documents in one file is a parse error, not a second reading.
+  ( trap - ERR; cd "$dir" || exit 1; exec "$@" ) >"$SCRATCH/$key.out" 2>"$SCRATCH/$key.err" &
   # The poll is a tenth of a second and the bound is counted in tenths: a read
   # that answers at once — every one of them, when the installation is healthy —
   # would otherwise cost this check a whole second each, and the owner watches
@@ -715,9 +736,9 @@ step_layer() {
   rate=$(field "$SCRATCH/layer.txt" rate)
   challengers=$(field "$SCRATCH/layer.txt" challengers)
   count=$(field "$SCRATCH/layer.txt" challenger_count)
-  keys=$(field "$SCRATCH/layer.txt" keys)
+  keys=$(field "$SCRATCH/layer.txt" top_keys)
   if [ "$(field "$SCRATCH/layer.txt" has_ab)" != true ]; then
-    fact layer FAIL "the published project layer carries no top-level ab: block (its where is ${where:-unknown}); this check read the layer's keys as ${keys:-none}. A project with no ab: block samples nothing at all (D550, D557), so no launch below could ever be the pair this check measures. Add the block to the project's layer file — ab.rate: ${RATE_WANTED} and the challengers you allow, which is the shape docs/releases/v0.24.0.md's For operators paragraph gives — and publish it with 'fugaro config publish'"
+    fact layer FAIL "the published project layer carries no top-level ab: block (its where is ${where:-unknown}); its top-level keys are ${keys:-none}, and this check read the whole block out of the layer's own text. A project with no ab: block samples nothing at all (D550, D557), so no launch below could ever be the pair this check measures. Add the block to the project's layer file — ab.rate: ${RATE_WANTED} and the challengers you allow, which is the shape docs/releases/v0.24.0.md's For operators paragraph gives — and publish it with 'fugaro config publish'"
     return 0
   fi
   if ! awk -v r="${rate:-}" 'BEGIN { exit (r + 0 > 0) ? 0 : 1 }'; then
@@ -921,7 +942,6 @@ step_champion() {
     fact champion FAIL "the champion's record carries ab.pair_id '${pair_id:-absent}' and this check's pair is ${PAIR_ID}: the pair id is the one value both arms carry and the only way the two records are joined. The record is in $SCRATCH/champion.out"
     return 0
   fi
-  CHAMPION_MODEL=$(field "$SCRATCH/champion.txt" ab_challenger)
   fact champion PASS "the champion's record at runs/${CHAMPION_REF}/result.json carries ab.arm champion and the pair's id ${PAIR_ID} (status=$(field "$SCRATCH/champion.txt" status), outcome=$(field "$SCRATCH/champion.txt" outcome), branch=$(field "$SCRATCH/champion.txt" branch), pr=$(field "$SCRATCH/champion.txt" pr)): it is the arm that publishes, and the rows below read what it left"
 }
 
@@ -1323,7 +1343,11 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-SANDBOX=${CHECK210_SANDBOX:-${SANDBOX_CLI:-}}
+# A value given as a flag wins over the same value in the environment: the
+# environment is how a script or a case sets a knob, and the flag is what the
+# owner typed, so a run that quietly used the other one would be spending the
+# sandbox's money at a bound its owner did not choose.
+SANDBOX=${SANDBOX_CLI:-${CHECK210_SANDBOX:-}}
 if [ -z "$SANDBOX" ]; then
   die "Check 210 needs --sandbox: the checkout of a repository of the sandbox project. It is what the runs are launched from and what its configuration is read through. Usage: bash scripts/live-checks/check210.sh --sandbox <a sandbox repository checkout> --yes"
 fi
@@ -1333,8 +1357,8 @@ case "$SANDBOX" in
 /*) ;;
 *) SANDBOX="$PWD/$SANDBOX" ;;
 esac
-TASK=${CHECK210_TASK:-${TASK_CLI:-"Add a line reading 'check 210' to CHECK210.md, and change nothing else."}}
-MAX_LAUNCHES=${CHECK210_MAX_LAUNCHES:-${MAX_CLI:-30}}
+TASK=${TASK_CLI:-${CHECK210_TASK:-"Add a line reading 'check 210' to CHECK210.md, and change nothing else."}}
+MAX_LAUNCHES=${MAX_CLI:-${CHECK210_MAX_LAUNCHES:-30}}
 case "$MAX_LAUNCHES" in
 "" | *[!0-9]*) die "--max-launches needs a whole number, not '${MAX_LAUNCHES}'" ;;
 esac
