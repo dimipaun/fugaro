@@ -28,7 +28,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { PAYLOAD_CODES, PAYLOAD_VERSION, PAYLOAD_MAX_LENGTH, databaseHostsFor, readScannedPayload } from './payload.js';
+import { PAYLOAD_CODES, PAYLOAD_FIELDS, PAYLOAD_VERSION, PAYLOAD_MAX_LENGTH, databaseHostsFor, readScannedPayload } from './payload.js';
 
 /** A pairing uid in the one canonical spelling: `p~`, then 32 bytes of
  * unpadded base64url whose last character carries the two bits this encoding
@@ -278,6 +278,53 @@ test('the project’s own name is bounded text, and it is what the host is deriv
     codeOf(scanned({ gcp_project: 'fp-1234/../evil', database_url: 'https://fp-1234/../evil-default-rtdb.firebaseio.com' })),
     PAYLOAD_CODES.BAD_TEXT,
   );
+});
+
+// **D233 and D234: an identity, and a credential, are refused by the field
+// set.** The QR carries the project's configuration and the one-shot pairing
+// token -- "never an identity" is D233's own sentence -- and the app holds two
+// credentials of its own (D111) that reach it through a delivery, never
+// through a scan. The refusal is not a rule of its own: a field this build does
+// not name is refused whole (`UNKNOWN_FIELD`), which is the same rule any other
+// key meets, and this test is what holds the two claims to it. **Extending the
+// validator is extending this test, not the field list**: a payload that grew
+// an `email` is a payload `internal/cli/pair.go`'s `pairQR` did not write, and
+// a reader that accepted it would be storing what the CLI never minted.
+test('a payload carrying an identity or a credential is refused, by the field set', () => {
+  for (const field of [
+    'email',
+    'sub',
+    'identity',
+    'id_token',
+    'idToken',
+    'access_token',
+    'refresh_token',
+    'credential',
+    'password',
+    'mac_key',
+  ]) {
+    assert.equal(codeOf(scanned({ [field]: 'x' })), PAYLOAD_CODES.UNKNOWN_FIELD, field);
+  }
+  // ... and the refusal is whole: no record, and the address is not echoed back
+  // into a refusal the app would then hold (`a@b.example` is not a secret, but
+  // the rule that a refusal carries nothing is what makes the next value safe).
+  const withEmail = readScannedPayload(scanned({ email: 'a@b.example' }));
+  assert.equal(withEmail.ok, false);
+  assert.equal('payload' in withEmail, false);
+  assert.equal(JSON.stringify(withEmail).includes('@'), false);
+
+  // ... and the field set itself is the contract's, in the CLI's own order
+  // (`pairQR`): the eight fields the QR is, and no ninth. Mutation: add a name
+  // to `PAYLOAD_FIELDS` and this fails; the payload that would then be accepted
+  // is the one the loop above refuses.
+  assert.deepEqual(
+    [...PAYLOAD_FIELDS],
+    ['v', 'project', 'gcp_project', 'database_url', 'api_key', 'token', 'uid', 'expires_at'],
+  );
+  // The one field that IS a credential-like string is the token, and it is the
+  // pairing's own: one-shot, dead by the time the pairing is over (`session.js`
+  // says why the phone exchanges it before it writes anything).
+  assert.equal(readScannedPayload(scanned()).ok, true);
 });
 
 test('the token and the web key are bounded text and are never coerced', () => {

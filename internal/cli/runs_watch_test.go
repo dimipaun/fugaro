@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"maps"
+	"net/http"
 	"slices"
 	"strings"
 	"testing"
@@ -14,6 +15,8 @@ import (
 	"github.com/spf13/pflag"
 	"gocloud.dev/blob"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
@@ -252,6 +255,139 @@ func watchRowLine(t *testing.T, out, slug, runID string) string {
 	}
 	t.Fatalf("the print has no row for %s/%s:\n%s", slug, runID, out)
 	return ""
+}
+
+// watchCalls splits a fake's request log into what it read and what it wrote:
+// a read of an object, a listing and a metadata get are all GETs, so the
+// writes are everything else. It is the instrument the seams below are watched
+// with, and it is taken from the fakes themselves rather than from a snapshot
+// of their state, so a write that was refused or swallowed is still seen.
+func watchCalls(reqs []gcpfake.Request) (reads, writes []string) {
+	for _, r := range reqs {
+		if r.Method == http.MethodGet || r.Method == http.MethodHead {
+			reads = append(reads, r.Method+" "+r.Path)
+			continue
+		}
+		writes = append(writes, r.Method+" "+r.Path)
+	}
+	return reads, writes
+}
+
+// watchNoNewWrites fails when a seam was asked to write since the snapshot
+// taken before, which is what a print leaves untouched.
+func watchNoNewWrites(t *testing.T, seam string, before, after []string) {
+	t.Helper()
+	if len(after) != len(before) {
+		t.Errorf("runs watch made %s write %v, and a print changes nothing anywhere", seam, after[len(before):])
+	}
+}
+
+// TestRunsWatchTriageReachesNoWriteSeam: every seam a run's triage could write
+// through is instrumented — the runs bucket, the project's database, the
+// backend that starts and stops runs, and the code host — and the print
+// touches none of them.
+//
+// The instruments are the fakes' own request logs, and the ones the print
+// reads through are proved live in the same test: the bucket is the GCS fake,
+// so a write is a request it records rather than a change a snapshot has to
+// notice, and the host is asked about the run's own repository, which is what
+// the row's outcome is taken from. The backend the print only reads (the
+// listing joins each run's execution) and the database it never reaches at all
+// are instrumented so that a change which makes it start or cancel a run, or
+// write a record, an audit line or a cancel marker, fails here rather than
+// beside a running daemon.
+//
+// The reading is driven with the environment handed in — watchRead and
+// writeRunsWatch, which is the whole of what runRunsWatch does with them —
+// because the bucket has to be the GCS fake for a write to be a request
+// (gcsEnv's own construction: a bucket a command opens itself is a directory
+// or a real bucket, and watching one of those is watching the filesystem).
+//
+// Mutation (run, restore): in watchRead, write the reading back —
+// `runstore.Open(env.bucket.Bucket, ref.Slug, ref.RunID).PutFile(ctx,
+// "triage.json", …)` after the outcome is taken — and this fails naming the
+// object the fake was asked to store.
+func TestRunsWatchTriageReachesNoWriteSeam(t *testing.T) {
+	f := newWatchFixture(t, green())
+	// A reading that is whole: the artifact the runner finalized with, and the
+	// execution its launch record names, so the print reads the host and the
+	// backend for real and the instruments are watching seams it reaches.
+	f.findings(t)
+	job := gcp.JobName(appSlug, "web")
+	exec := startRunExecution(f.cloudFixture, job, appSlug, triageRunID)
+	if err := f.store(t).WriteLaunch(context.Background(), &runstore.Launch{
+		Version: 1, RunID: triageRunID, Backend: "cloud-run", Job: job,
+		Execution: exec, LaunchedAt: orchestratorTestNow,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	asked := installWatchProviderAsking(t, f.prov)
+
+	// The runs bucket, as the GCS fake: every read of the run's record, task
+	// and findings goes through its log, and so would a write.
+	gcs := gcpfake.NewGCS(t)
+	for name, body := range watchObjects(t, f.bucket) {
+		gcs.Put("runs", name, []byte(body))
+	}
+	env := envOn(t, f.cloudFixture, gcs.Bucket(t, "runs"))
+
+	// Every seam as it stands before the print. The database's log is not empty
+	// already — the fixture's own daemon took its lease through it — so an
+	// empty difference after the print is a fact about the print.
+	_, gcsWrote := watchCalls(gcs.Requests())
+	_, runWrote := watchCalls(f.run.Requests())
+	_, dbWrote := watchCalls(f.db.Requests())
+	hostWrote := len(f.prov.Snapshot().Calls)
+
+	doc, err := watchRead(context.Background(), env, &runsWatchOptions{}, 0, lsNow())
+	if err != nil {
+		t.Fatalf("runs watch: %v", err)
+	}
+	var out strings.Builder
+	if err := writeRunsWatch(&out, doc, false); err != nil {
+		t.Fatalf("printing the triage: %v", err)
+	}
+
+	// The print itself: the window's one run, judged the way its own host's
+	// green checks and its clear findings give it, and nothing warned about —
+	// a reading that was whole.
+	if len(doc.Runs) != 1 {
+		t.Fatalf("the print judged %d runs, want the window's one: %+v", len(doc.Runs), doc.Runs)
+	}
+	row := doc.Runs[0]
+	if row.Outcome != string(orchestrator.MergeAsIs) || !slices.Contains(row.Reasons, string(orchestrator.ReasonCIGreen)) {
+		t.Errorf("the print judged the run %q %v, want the merge the run's own host's green checks and its clear findings give it", row.Outcome, row.Reasons)
+	}
+	if len(*asked) != 1 || (*asked)[0] != "acme/app" {
+		t.Errorf("the print asked a host about %v, want the run's own repository alone", *asked)
+	}
+	if len(doc.Warnings) != 0 {
+		t.Errorf("the print warned about %v, and a reading that is whole warns about nothing", doc.Warnings)
+	}
+
+	// And not one seam was asked to write.
+	gcsRead, gcsWroteAfter := watchCalls(gcs.Requests())
+	runRead, runWroteAfter := watchCalls(f.run.Requests())
+	_, dbWroteAfter := watchCalls(f.db.Requests())
+	watchNoNewWrites(t, "the runs bucket", gcsWrote, gcsWroteAfter)
+	watchNoNewWrites(t, "the backend", runWrote, runWroteAfter)
+	watchNoNewWrites(t, "the project's database", dbWrote, dbWroteAfter)
+	if got := len(f.prov.Snapshot().Calls); got != hostWrote {
+		t.Errorf("the code host was asked to write %v, and a print changes nothing on it", f.prov.Snapshot().Calls[hostWrote:])
+	}
+
+	// The guard on the guard: the bucket and the backend are read through in
+	// this test, and the database's log already holds the fixture's own writes,
+	// so none of the three is an instrument watching a seam nothing reaches.
+	if len(gcsRead) == 0 {
+		t.Error("no read of the runs bucket reached the GCS fake, so its empty write log is a fact about this test and not about the print")
+	}
+	if len(runRead) == 0 {
+		t.Error("no read of the executions reached the backend fake, so its empty write log is a fact about this test and not about the print")
+	}
+	if len(dbWrote) == 0 {
+		t.Error("the database's write log is empty before the print, so nothing there shows a write through it would be caught")
+	}
 }
 
 // TestRunsWatchPrintsTheSameOutcomeAsTheDaemon: the print is the daemon's own

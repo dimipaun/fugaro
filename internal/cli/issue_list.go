@@ -24,10 +24,13 @@ func newIssueListCmd() *cobra.Command {
 			"named by their local ID, and every issue of the project's store, named\n" +
 			"by its number. A row names the issue the way `show`, `dismiss` and\n" +
 			"`submit` take it, with the class the diagnosis gave it, where it stands,\n" +
-			"and its one-line summary. Where the project's copy and this machine's\n" +
-			"file disagree, the project's is printed: the store is the truth once an\n" +
-			"issue is uploaded (F13), and a number is what `show` and `dismiss` read\n" +
-			"from the store when this machine has no file of the issue.\n\n" +
+			"and its one-line summary. An issue a release fixed, and one that closed\n" +
+			"without a fix, carry one more column: the release that fixed it with the\n" +
+			"GitHub issue it was filed as, or the reason it closed (F27, D1752).\n" +
+			"Where the project's copy and this machine's file disagree, the project's\n" +
+			"is printed: the store is the truth once an issue is uploaded (F13), and a\n" +
+			"number is what `show` and `dismiss` read from the store when this machine\n" +
+			"has no file of the issue.\n\n" +
 			"A record this machine's folder holds for another project is not a row:\n" +
 			"the folder is one for the whole machine, and another project's issue is\n" +
 			"not this project's, nor is its number this listing's to print (F8b).\n\n" +
@@ -113,15 +116,17 @@ func runIssueList(cmd *cobra.Command, asJSON bool) error {
 		return nil
 	}
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "ISSUE\tCLASS\tSTATUS\tSUMMARY")
+	fmt.Fprintln(tw, "ISSUE\tCLASS\tSTATUS\tSUMMARY\tDETAIL")
 	for _, i := range rows {
 		// Every cell comes from a file this machine's store holds or from the
 		// project's store, and the summary is the diagnosis' own words about log
 		// text the user does not control, so each one goes through the terminal
-		// pass (F6).
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n",
+		// pass (F6). The last cell is written on every row and left empty where
+		// the status has nothing to add, so the table has one shape and the
+		// summary column is not widened by a URL only some rows carry.
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
 			cellOneLine(issueRef(i)), cellOneLine(string(i.Class)),
-			cellOneLine(string(i.Status)), cellOneLine(i.Summary))
+			cellOneLine(string(i.Status)), cellOneLine(i.Summary), cellOneLine(issueDetail(i)))
 	}
 	return tw.Flush()
 }

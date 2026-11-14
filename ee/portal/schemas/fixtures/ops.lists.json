@@ -1,0 +1,8 @@
+{
+  "email_domains": [
+    "example.com"
+  ],
+  "microsoft_directories": [
+    "a-fixture-value-that-is-not-a-directory-id"
+  ]
+}

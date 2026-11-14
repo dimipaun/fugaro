@@ -52,7 +52,7 @@ plan's D2130–D2146.
 | --- | --- |
 | A key is verified over its raw bytes before any claim is read; no claim from an unverified payload reaches a refusal or a log | K1.1 `TestNoClaimIsReadBeforeTheSignatureVerifies` |
 | A higher `v` is refused with the upgrade message and never falls back to Free | K1.1 `TestHigherPolicyVersionIsRefusedNotFree` |
-| Unknown fields are ignored for signed keys only (D2146) | K1.1 `TestUnknownFieldsInASignedKeyAreIgnored`, `TestUnsignedFormatsStayStrict` |
+| Unknown fields are ignored for signed keys only (D2146) | K1.1 `TestUnknownFieldsInASignedKeyAreIgnored`, `TestUnknownFieldsNeedAVerifiedSignature` |
 | `fugaro licence set` never takes a key in argv (F5) | K3.2 `TestLicenceSetRefusesAKeyInArgv` |
 | The core never imports a licence package and an untagged build has no `licence` command | K3.2 `TestUntaggedBuildHasNoLicenceCommand`, `internal/eeboundary` |
 | An outage or an unreachable server never revokes (D2140) | K4.1 `TestAnUnreachableServerNeverRevokes` |
@@ -86,7 +86,7 @@ Reviewer tier is **standard** unless a task says `SECURITY`.
 
 ### Slice K1: the key and its verifiers (inert until a key exists)
 
-- **K1.1 The v1 verifier. SECURITY.** Files: `ee/licence/keyv1.go` (new), `ee/licence/keyv1_test.go` (new), `ee/licence/testdata/vectors_v1.json` (new). **Additive: the old `key.go`, `store.go` and their tests stay untouched so `-tags ee` keeps compiling on `main` until K7.3 removes them.** Interfaces: produces `ClaimsV1`
+- **K1.1 The v1 verifier. SECURITY.** Files: `ee/licence/keyv1.go` (new; K7.3 renames it to `key.go`), `ee/licence/keyv1_test.go` (new; `key_test.go` after K7.3), `ee/licence/testdata/vectors_v1.json` (new). **Additive: the old `key.go`, `store.go` and their tests stay untouched so `-tags ee` keeps compiling on `main` until K7.3 removes them.** Interfaces: produces `ClaimsV1`
   (`v`, `kid`, `key_id`, `workspace_id` (required: the workspace's Firebase project id), `organisation`, `tier` (`community|team|enterprise`),
   `seats`, `issued_at`, `paid_through`, `grace_days`, `renewal_mode`, `renew_before_days`,
   `check_interval`, `renewal_secret_hash`, `warnings`, `kind`, `note`), the text `fgk_<payload>.<sig>`,
@@ -94,7 +94,7 @@ Reviewer tier is **standard** unless a task says `SECURITY`.
   (F16), and the tier's maximum lifetime kept as `paid_through - issued_at`. Consumed by every later task.
   Schema change: the key format (a new name, `v: 1`). Tests: `TestVerifyFgkKey`,
   `TestNoClaimIsReadBeforeTheSignatureVerifies`, `TestHigherPolicyVersionIsRefusedNotFree`,
-  `TestUnknownFieldsInASignedKeyAreIgnored`, `TestUnsignedFormatsStayStrict`,
+  `TestUnknownFieldsInASignedKeyAreIgnored`, `TestUnknownFieldsNeedAVerifiedSignature`,
   `TestStagingKeyIDIsRefused`, `TestKeyBeyondTheTierLifetimeIsRefused`, `TestGraceUsesTheKeysOwnDays`,
   `TestKeyWithoutWorkspaceIDIsRefused`, `TestWorkspaceIDMustMatchTheFirebaseProject` (the verifier takes a `FirebaseProjectID` the caller passes in, read by K3.1 and the console from the project's own config in the same read as the key). Command: `go test ./ee/licence/... -tags ee -run 'Test(VerifyFgk|NoClaim|Higher|Unknown|Unsigned|Staging|KeyBeyond|Grace|KeyWithout|Workspace)' -count=1`.
   Depends on: none. Commit: `ee: the v1 licence key (fgk_) and its verifier (D2130)`. Red step:
@@ -278,7 +278,7 @@ Reviewer tier is **standard** unless a task says `SECURITY`.
   `docs/design/key-signing-service.md` (a dated "superseded by licence-key-v2" note where S2.1, S2.3, S2.4,
   S3.1–S3.4 name the old claims). Depends on: none. Commit: `docs: licence key v2 supersedes the old key's claims`.
 
-- **K7.3 Remove the old key format.** Files: `ee/licence/key.go`, `store.go`, `key_test.go`, `testdata/vectors.json` (the old format, deleted; `keyv1.go` renamed to the package's `Claims`/`Verify`). Tests: `go test ./ee/... -tags ee -count=1` compiles and passes with no reference to the old format. Depends on: K1.3, K2.1, K2.5, K3.1. Commit: `ee: the old licence key format is removed`. SECURITY.
+- **K7.3 Remove the old key format.** Files: `ee/licence/key.go`, `store.go`, `key_test.go`, `testdata/vectors.json` (the old format: the verifier and its Go readers go, but **the fixture stays** -- the console's verifier of that format and the app's read it at module top level, so it leaves with those two readers and not with the Go verifier; `keyv1.go` renamed to the package's `Claims`/`Verify`). Tests: `go test ./ee/... -tags ee -count=1` compiles and passes with no reference to the old format. Depends on: K1.3, K2.1, K2.5, K3.1. Commit: `ee: the old licence key format is removed`. SECURITY.
 
 ## Parallel execution
 
@@ -304,8 +304,8 @@ runtime is what the Terraform runs.
 
 | File | Writers (level) |
 | --- | --- |
-| `ee/licence/keyv1.go`, `testdata/vectors_v1.json` | K1.1 (0) |
-| `ee/licence/key.go`, `store.go`, `key_test.go`, `testdata/vectors.json` (old format) | K7.3 (3) |
+| `ee/licence/keyv1.go` (K7.3 renames it to `key.go`), `testdata/vectors_v1.json` | K1.1 (0) |
+| `ee/licence/key.go`, `store.go`, `key_test.go`, `testdata/vectors.json` (the old format: K7.3 drops the verifier and keeps the fixture) | K7.3 (3) |
 | `ee/licence/mint/*` | K1.3 (1) |
 | `console/src/main/licence.ts`, `licence-store.ts`, `licence-state.ts` | K1.4 (1), K3.6 (5; only `licence-state.ts`) |
 | `docs/licensing/licence-key.md` | K1.5 (0) |

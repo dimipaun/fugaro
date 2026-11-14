@@ -28,7 +28,7 @@ import (
 // other half is about (TestTheCoordinatorIsInTheOptInGoldensOnly lists those
 // resources).
 func TestNoGoldenPlanCreatesTheFrontDoor(t *testing.T) {
-	goldens := []string{"installation", "installation-accounts", "installation-managed", "installation-credentials",
+	goldens := []string{"installation", "installation-accounts", "installation-managed", "installation-credentials", "installation-review",
 		"installation-adopt", "installation-coordinator", "installation-viewers", "firebase", "firebase-same-project", "firebase-adopt", "firebase-coordinator", "firebase-viewers",
 		"installation-catalog-add-repo"}
 	var sawCoordinator bool

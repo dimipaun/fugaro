@@ -253,6 +253,14 @@ func sharedJobsPolicyDocNoProfiles() string {
 // (credsvc.ReviewServiceAccountID). CSR7 is the task that deploys the variant
 // itself, so the deployer's own triples are what this reads rather than a
 // second job set.
+//
+// It reads the CODING set on purpose — the variants of the profiles' jobs are
+// what the policy side derives, and the two sets agree there — and that is why
+// it is not the whole of what a deployment writes: an installation that has
+// opted into the credentials service and declares no profile at all deploys the
+// ONE implicit default review job as well (internal/infra's
+// implicitReviewVariant), whose triple no published profile states. The callers
+// below say what that difference is and which installation it is about.
 func deployedReviewJobAccounts(t *testing.T, localConfig string) []string {
 	t.Helper()
 	lc, err := localcfg.Parse([]byte(localConfig))
@@ -329,6 +337,20 @@ func TestReviewAccountsAreTheNamesProjectJobsDeploys(t *testing.T) {
 	// An installation with no review job: no profile on either side, and so an
 	// empty set from both (§2.2's fail-closed shape). It is the deployment that
 	// has never asked for a review job, and the class is inert for it.
+	//
+	// "Never asked" is the fixture's own fact and not a property of a
+	// profile-less installation, so it is asserted rather than assumed: the
+	// opt-in is the credentials service (internal/infra's implicitReviewVariant
+	// gates the implicit default job on it), and a local config that turned the
+	// service on here would deploy one review job this test would then report as
+	// a disagreement — the row that IS the deliberate difference between the two
+	// sides (ReviewJobAccountsFor's own doc says which half carries it), not a
+	// profile-less installation's empty set.
+	if noProfile, err := localcfg.Parse([]byte(sharedJobsNoProfileLocalConfig())); err != nil {
+		t.Fatalf("the test's own profile-less local config is not one the deployer parses: %v", err)
+	} else if noProfile.CredentialsService != nil {
+		t.Fatalf("the profile-less fixture opts into the credentials service, so it is the installation that deploys the implicit default review job: use a fixture without the block, or assert the row instead")
+	}
 	none, noneFound, err := projectpolicy.Decode([]byte(sharedJobsPolicyDocNoProfiles()))
 	if err != nil || !noneFound {
 		t.Fatalf("the test's own profile-less policy document is not one Decode accepts: %v", err)

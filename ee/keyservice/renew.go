@@ -524,10 +524,18 @@ func (s *Service) sight(ctx context.Context, keyID string) {
 // minted for — `Record.Source` is the merchant event id that first minted it,
 // `renew:<subscription id>:<expires>` for the merchant's own renewal or
 // `rotation:<key id>` for a successor, and the subscription itself is keyed by
-// an id no record carries. So a subscription cancelled after its purchase still
-// renews here, and the successor is a signed term nobody paid for; the
-// merchant's own renewal refuses a cancelled subscription (merchant.Renew), but
-// that is not the door this endpoint answers at.
+// an id no record carries. So a key whose state names a workspace renews here
+// after the subscription behind it was cancelled, and the successor is a signed
+// term nobody paid for; the merchant's own renewal refuses a cancelled
+// subscription (merchant.Renew), but that is not the door this endpoint answers
+// at. Shutting it by leaving the workspace out of the state a purchase writes
+// (merchant.go's `paid`) is not the trade this service takes either: D2202 makes
+// a connected key thirty days, so that omission leaves an annual purchase dark
+// from the end of its first key until the merchant's own renewal, and the
+// remedy the plan names for it — an installation running `fugaro licence refresh`
+// every month — is this endpoint. P3.6 owns that gate and the plan says so:
+// "`/renew` issues only while the entitlement runs",
+// `TestRenewalStopsWhenTheEntitlementEnds`.
 //
 // Closing it takes a shape this file does not own: the record carries the
 // subscription the key was minted for — written by the merchant's mint sites and
