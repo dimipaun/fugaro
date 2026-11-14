@@ -178,8 +178,18 @@ test_an_agent_session_is_refused() {
   expect_contains "$err" "coding agent" "the refusal says what the session is"
 }
 
+# Sharding, so a Go test could run these side by side: CHECK_TEST_SHARD="i/n"
+# runs every n-th test starting at i (each case works in its own files under
+# $work), CHECK119_TEST_ONLY=name runs that one alone.
+test_index=0
 t() {
-  if [ -n "${CHECK119_TEST_ONLY:-}" ] && [ "$1" != "$CHECK119_TEST_ONLY" ]; then return 0; fi
+  local i=$test_index
+  test_index=$((test_index + 1))
+  if [ -n "${CHECK119_TEST_ONLY:-}" ]; then
+    [ "$1" = "$CHECK119_TEST_ONLY" ] || return 0
+  elif [ -n "${CHECK_TEST_SHARD:-}" ]; then
+    [ $((i % ${CHECK_TEST_SHARD#*/})) -eq "${CHECK_TEST_SHARD%/*}" ] || return 0
+  fi
   "$1"
 }
 
