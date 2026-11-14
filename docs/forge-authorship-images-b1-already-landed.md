@@ -1,17 +1,19 @@
 # B1 — one list of forge kinds — was already on `main`
 
 **Nothing was implemented for this task: its deliverable was already on `main` when this run
-started.** This note is the evidence, and — with the one State line it moves in
-`docs/forge-authorship-images/implementation-plan.md` — the pull request's whole change. No Go file,
-no test and no golden was touched.
+started.** This note is the evidence, and — with the B1 **State** line it moves in
+`docs/forge-authorship-images/implementation-plan.md` and the B1 row and counts it moves in
+`reconciliation-image-setup.md` — the pull request's whole change. No Go file, no test and no golden
+was touched.
 
 ## Where it landed
 
 `9af1fd50`, *gitprov: one list of forge kinds (B1) (#2332)* — merged 2026-11-11, an ancestor of this
-branch's base `2988c2d6`. The first line of its commit message is the plan's **Commit** line
-(`gitprov: one list of forge kinds, and an inventory of every switch on them`) with the pull
-request's number appended, and its diff is the task: the files the plan's **Files** line names, and
-nothing else.
+branch's base `2988c2d6`. Its subject is `gitprov: one list of forge kinds (B1) (#2332)` — the pull
+request's own title — and not the plan's **Commit** line (`gitprov: one list of forge kinds, and an
+inventory of every switch on them`), which the squash kept as the first line of its first bullet, the
+pull request's first commit subject. Its diff is the task: the files the plan's **Files** line names,
+and nothing else.
 
 | the commit's file | what it did |
 |---|---|
@@ -22,15 +24,18 @@ nothing else.
 
 ## Why it was picked up again
 
-The plan's B1 **State** line is the census `reconciliation-image-setup.md` read against `origin/main`
-at the owner's ask of 2026-11-10, where it is "**Kept** — there is no `internal/gitprov/kinds.go`…"
-(line 96). It still read `Kept` when this run was dispatched, because the plan's State block has not
-been edited since that census landed (`6a727d43`, #2258): **every task merged after the census still
-reads `Kept` there**, and B1 is the one this run was handed.
+The census `reconciliation-image-setup.md` — read against `origin/main` at `256106ec` on 2026-11-10,
+and given the last word by its own header where it disagrees with the plan or the folder README about
+a task's *state* — reads B1 **Kept** at its line 96 ("no `internal/gitprov/kinds.go`…"), and the
+plan's B1 **State** line repeated that reading. Neither file has been edited since the census landed
+(`6a727d43`, #2258), so **every task merged after it still reads `Kept` in both of them**, and B1 is
+the one this run was handed. Moving the plan's line alone would not have settled it: under the
+folder's own rule the census would still have won, and B1 would still have read open.
 
 `docs/status.md` is the living table and already counts B1 merged — its `forge-authorship-images` row
-says 12/25. So the tree was of one mind and the plan's snapshot was not, and this run changes the one
-line that made the task look open.
+says 12/25 — so the tree was of one mind and the two snapshots were not. This run moves both B1 rows,
+and the census counts that row feeds (§1: merged 9 → 10, open 15 → 14, B1 out of the open list), so
+the folder stops reading B1 as open.
 
 ## The task, point by point
 
