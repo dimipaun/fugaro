@@ -932,6 +932,109 @@ func TestReviewJobVariantIsPlaced(t *testing.T) {
 	}
 }
 
+// implicitReviewRun is a review the launcher put in the installation's implicit
+// default review-only job: the platform reports an execution of that name, the
+// policy is the caller's, and the run carries the marker its class is decided by
+// (spec.Mode == recipe.ModeReview, the same field the launcher sends a review to
+// the variant on) and is a review for everything else (r.review).
+func implicitReviewRun(t *testing.T, repo string, p *projectpolicy.Policy) *run {
+	t.Helper()
+	spec := &task.Spec{Version: 1, RunID: "20261114-101010-abcd", Repo: repo, Ref: "main",
+		Workflow: identityWorkflow, Task: "Read the pull request", Mode: recipe.ModeReview, ReviewPRs: []int{7}}
+	r := identityRun(t, ImplicitReviewJobName(), identitySlug(t, "github", repo), spec, p, true)
+	r.review = true
+	return r
+}
+
+// TestImplicitReviewJobIsPlaced is the runner's half of the owner's requirement
+// of 2026-11-13 (option C): internal/cli resolves a review of a repository whose
+// workflow resolved no shared project job onto the installation's implicit
+// default review-only job, and the run it starts must place itself in that job.
+// The job is one the project's published policy need not describe at all — a
+// project that declares no profiles defines none — so it is not a name the
+// candidate set computed from the policy's profiles can hold.
+//
+// The three policies are the shapes that decide it: no profiles at all (the
+// case the launcher's implicit resolution exists for), the default profile
+// defined on github (where internal/infra derives this same name for that
+// profile's review variant and deploys no second job of it, so the policy's own
+// candidate is the one the run adopts), and a default profile pinning another
+// provider (a job of another name, and this one is still the installation's).
+//
+// Mutation (run, restored): drop the ImplicitReviewJobName match from
+// matchJobName. Every case halts with cannotPlaceJob — a review that was
+// launched, claimed, minted and billed, and then refused inside the container
+// it had already paid for, which is the failure this half exists to prevent.
+func TestImplicitReviewJobIsPlaced(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name     string
+		policy   *projectpolicy.Policy
+		implicit bool
+	}{
+		{"a project that declares no profiles",
+			&projectpolicy.Policy{Version: projectpolicy.Version, AllowRepos: []string{"github/acme/*"}}, true},
+		{"a project whose default profile is defined on github",
+			policyOf(map[string]config.JobProfile{"standard": profileOf("github")}), false},
+		{"a project whose default profile pins bitbucket",
+			policyOf(map[string]config.JobProfile{"standard": profileOf("bitbucket")}), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := implicitReviewRun(t, "acme/app", tc.policy)
+			profile, provider, account, err := r.jobIdentity(ctx)
+			if err != nil {
+				t.Fatalf("jobIdentity(%s) = %v: the installation's implicit review job is a job a run places itself in", ImplicitReviewJobName(), err)
+			}
+			want := config.DefaultClaudeAccount + config.ReviewVariantSuffix
+			if profile != projectpolicy.DefaultProfileName || provider != "github" || account != want {
+				t.Fatalf("jobIdentity(%s) = %q/%q/%q, want %s/github/%s: the name is computed from the deployment's own triple",
+					ImplicitReviewJobName(), profile, provider, account, projectpolicy.DefaultProfileName, want)
+			}
+			if r.job.Implicit != tc.implicit {
+				t.Errorf("the run adopted %+v: Implicit is %v, and it is what says no profile of this policy describes the job", r.job, tc.implicit)
+			}
+			// The token axis is the profile's and this job holds none of it: a
+			// review job's credential is its class's (O1), so the account check
+			// must decide it without reading a policy that need not define the
+			// profile its name spells.
+			if err := r.checkProjectJobAccount(ctx, "oauth"); err != nil {
+				t.Fatalf("checkProjectJobAccount = %v: a review job holds no token, and its class is what says so", err)
+			}
+		})
+	}
+}
+
+// TestImplicitReviewJobAdmitsByTheProjectsList is the implicit review job's
+// admission: which repositories a review may be about is the project's own
+// allow_repos, read with the same matcher and worded by the same function the
+// launcher's advisory twin uses (internal/cli's allowListRefusal) — a project
+// that admits a repository to its shared jobs and to this one alike, since the
+// list is the enrollment the whole project rests on. A profile's own list is
+// deliberately not part of it: the job is not the job of any profile this
+// policy defines, and a default profile pinning another provider has no list
+// that could admit a github repository at all.
+//
+// Mutation (run, restored): ask p.AdmissionRefusal(job.Profile, canonical) for
+// the implicit job too. Both cases fail — the admitted repository halts with
+// "the policy defines no job profile", and the profile that happens to be named
+// "standard" answers for a job its own name does not name.
+func TestImplicitReviewJobAdmitsByTheProjectsList(t *testing.T) {
+	ctx := context.Background()
+	p := &projectpolicy.Policy{Version: projectpolicy.Version, AllowRepos: []string{"github/acme/*"}}
+	if err := implicitReviewRun(t, "acme/app", p).admissionCheck(ctx); err != nil {
+		t.Fatalf("admissionCheck = %v: a repository on the project's allow_repos is admitted to the implicit review job", err)
+	}
+	err := implicitReviewRun(t, "other/repo", p).admissionCheck(ctx)
+	if err == nil {
+		t.Fatal("a repository this project never enrolled was admitted to the implicit review job")
+	}
+	for _, want := range []string{"github/other/repo", "allow_repos", "The run stops"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %q lacks %q", err, want)
+		}
+	}
+}
+
 // reviewVariantRun is accountRun for a run the launcher marked as a review: the
 // platform reports an execution of the review variant's name (the deployer's
 // own spelling, credsvc.ReviewJobName), the policy is the caller's, and the run
@@ -1301,5 +1404,51 @@ func TestClampTotalToJobBoundsTheRunByItsJob(t *testing.T) {
 					class, b.finalizeAt().Sub(start), class+backend.TaskTimeoutSlack)
 			}
 		})
+	}
+}
+
+// TestImplicitReviewJobIsNotClampedToAProfilesClass: the clamp bounds a run by
+// the class of the shared job it is in, and the installation's implicit default
+// review-only job has no class — no published profile states a timeout_class for
+// it, and the job the deployment sized at the total a repository workflow that
+// names none is given is not the job a policy profile of the same name is. The
+// policy here is the case that would read wrong: a project whose default profile
+// pins another provider, so its list holds a profile named as this job's name
+// spells while the two are different jobs of different providers.
+//
+// Mutation (run, restored): let the implicit job fall through to
+// p.ProfileFor(job.Profile). The case that names a class fails — the run is cut
+// to a class its own job was not deployed with.
+func TestImplicitReviewJobIsNotClampedToAProfilesClass(t *testing.T) {
+	ctx := context.Background()
+	cfg, problems := config.Parse([]byte(clampConfigYAML))
+	if len(problems) > 0 {
+		t.Fatalf("parsing the fixture config: %v", problems)
+	}
+	_, fresh, err := cfg.SelectWorkflow(identityWorkflow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	total := fresh.Timeouts.Total.Duration
+
+	p := policyOf(map[string]config.JobProfile{"standard": profileOf("bitbucket")})
+	pr := p.Profiles["standard"]
+	pr.TimeoutClass = "20m"
+	p.Profiles["standard"] = pr
+	r := implicitReviewRun(t, "acme/app", p)
+	if _, _, _, err := r.jobIdentity(ctx); err != nil {
+		t.Fatalf("jobIdentity(%s) = %v", ImplicitReviewJobName(), err)
+	}
+	wf := fresh
+	if err := r.clampTotalToJob(ctx, &wf); err != nil {
+		t.Fatalf("clampTotalToJob: %v", err)
+	}
+	if got := wf.Timeouts.Total.Duration; got != total {
+		t.Errorf("the run's total is %s, want %s: the implicit review job states no class, and the profile its name happens to spell is another job's",
+			got, total)
+	}
+	if got := wf.Timeouts.Stage.Duration; got != fresh.Timeouts.Stage.Duration {
+		t.Errorf("the run's stage timeout is %s, want %s: nothing is cut on a job the run is not bounded by a class of",
+			got, fresh.Timeouts.Stage.Duration)
 	}
 }

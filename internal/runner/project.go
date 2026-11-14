@@ -1291,6 +1291,25 @@ func (r *run) admissionCheck(ctx context.Context) error {
 		return fmt.Errorf("the repository this run was launched for cannot be named in the project's allow-list: %w", err)
 	}
 	if project {
+		if job.Implicit {
+			// The installation's implicit default review-only job is not a job
+			// of any profile this policy defines: it is the ONE review job a
+			// project has whether or not it declares a profile
+			// (implicitReviewTriple, internal/infra's implicitReviewVariant),
+			// and the repositories it may be about are the project's own
+			// allow_repos — the very gate the launch of such a repository met,
+			// worded by the same function the launcher's advisory twin uses
+			// (internal/cli's allowListRefusal), so a repository this project
+			// never enrolled is refused here too. A profile's admission is
+			// deliberately not asked: the default profile's own list bounds the
+			// repositories of the job it names, and a project whose default
+			// profile pins another provider has no profile that could admit a
+			// github repository at all.
+			if !projectpolicy.AdmitRepo(p.AllowRepos, canonical) {
+				return fmt.Errorf("%s. The run stops before any lease exists", projectpolicy.NotAdmitted(p.AllowRepos, canonical))
+			}
+			return nil
+		}
 		// The profile's admission (plan task 3.3 step 4, design §4.1): the
 		// repository must be admitted for the (profile, provider, account) this
 		// run is actually on, so a repository's own fugaro.yaml cannot widen its

@@ -5240,7 +5240,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	// artifact instead of writing a comment on the pull request it read.
 	reviewJob := spec.Mode == recipe.ModeReview
 	if reviewJob {
-		if job, err = env.reviewJobFor(ctx, job); err != nil {
+		if job, err = env.reviewJobFor(ctx, job, spec); err != nil {
 			return res, err
 		}
 	}
