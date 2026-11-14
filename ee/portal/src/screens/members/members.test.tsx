@@ -3,20 +3,21 @@
 //
 // The members screen (portal plan P2.3; spec §Tenancy, F40).
 //
-// **What this suite pins is who may do what, and that the answer is the API's.**
-// An owner reads the member list and, having it, invites an address with the
-// role they chose and withdraws an invitation through the list. A plain member
-// is refused the member list — 403 `not_permitted`, which P2.1 answers for a
-// read D2186 keeps to owners and admins — and this suite answers that refusal
-// the way the API sends it rather than with the 200 no owner would get: what the
-// member then sees is the invitations and none of the write surfaces, which is
-// the page their refusal entitles them to and not an error.
+// **What this suite pins is who may do what, on the two claims the screen makes
+// about an API that is not written yet.** The screen draws the invite form and
+// the Withdraw buttons for an `owner` or an `admin` of the organisation, read
+// out of the member list by the signed-in person's uid — so this suite answers
+// the list to a plain member and pins that no write surface is drawn, which is
+// the case that would otherwise be a member shown an owner's buttons and refused
+// by the API on every press. The other claim is that the list is refused to a
+// member to begin with: 403 `not_permitted`, which this suite answers the way
+// such a refusal arrives, and which the screen draws as a state rather than as
+// a failure — no member list, no write surface, no error.
 //
-// That refusal is also the whole of how the screen knows who is asking: the
-// list is what an owner or an admin reads, so having it is the same fact as
-// being one. The signed-in person in the member case below is deliberately the
-// one the API would answer a list for if roles came from anywhere but the
-// membership — the screen decides from the refusal and never from the uid.
+// The signed-in person in those cases is the same person the list is about, and
+// that is the whole of what the screen reads them from: uid to find the
+// membership, `role` on it to decide. Neither is checked here against a rule
+// kept somewhere else, because there is nowhere else for it to be kept.
 //
 // The two cases at the end are the screen's own edges: a URL that names no
 // organisation is a person who never chose one, and nobody signed in is sent to
@@ -63,6 +64,18 @@ const COLLEAGUE: Membership = {
   email: 'ravi@example.com',
   role: 'member',
   created_at: '2026-02-12T09:00:00Z',
+  last_used_at: null,
+}
+
+// An admin is the other role that decides (the screen's gate is `owner` or
+// `admin`), and a suite that only ever signed in the owner could not tell the
+// two apart.
+const ADMIN: Membership = {
+  organisation_id: ORGANISATION_ID,
+  uid: 'uid_pia',
+  email: 'pia@example.com',
+  role: 'admin',
+  created_at: '2026-02-11T09:00:00Z',
   last_used_at: null,
 }
 
@@ -241,6 +254,52 @@ describe('the members screen', () => {
     expect(
       screen.queryByRole('button', { name: `Withdraw the invitation to ${PENDING.email}` }),
     ).toBeNull()
+  })
+
+  it('draws a member the list and still no write surface, when the list is answered', async () => {
+    // The half the refusal does not cover: an API that answers the list to a
+    // member — which nothing yet forbids — must not get them an owner's buttons,
+    // since every invitation and withdrawal pressed there is a refusal.
+    transport([json(200, { members: [OWNER, COLLEAGUE] }), invitations([PENDING])])
+    mount(
+      `/members?org=${ORGANISATION_ID}`,
+      port({ ...PERSON, uid: COLLEAGUE.uid, email: COLLEAGUE.email }),
+    )
+
+    expect(await screen.findByText(OWNER.email)).toBeDefined()
+    expect(screen.getByText(PENDING.email)).toBeDefined()
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.queryByLabelText('Email address')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Send invitation' })).toBeNull()
+    expect(
+      screen.queryByRole('button', { name: `Withdraw the invitation to ${PENDING.email}` }),
+    ).toBeNull()
+  })
+
+  it('draws an admin the write surfaces, which is the other half of the gate', async () => {
+    transport([json(200, { members: [OWNER, ADMIN] }), invitations([PENDING])])
+    mount(`/members?org=${ORGANISATION_ID}`, port({ ...PERSON, uid: ADMIN.uid, email: ADMIN.email }))
+
+    expect(await screen.findByRole('button', { name: 'Send invitation' })).toBeDefined()
+    expect(
+      screen.getByRole('button', { name: `Withdraw the invitation to ${PENDING.email}` }),
+    ).toBeDefined()
+  })
+
+  it('draws a refused invitations read as an empty page and not an error', async () => {
+    transport([json(200, { members: [OWNER, COLLEAGUE] }), notPermitted()])
+    mount(
+      `/members?org=${ORGANISATION_ID}`,
+      port({ ...PERSON, uid: COLLEAGUE.uid, email: COLLEAGUE.email }),
+    )
+
+    expect(await screen.findByText(OWNER.email)).toBeDefined()
+    // The list is drawn, and the invitations section is not — not even the
+    // "nobody has been invited" line, which would be a claim about the
+    // organisation made by somebody who was just refused a look at it.
+    expect(screen.queryByText('Nobody has been invited to this organisation yet.')).toBeNull()
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.queryByLabelText('Email address')).toBeNull()
   })
 
   it('reads the member list once, and not again for a member the API refused', async () => {
