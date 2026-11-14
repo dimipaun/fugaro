@@ -47,7 +47,16 @@ type Selection struct {
 	UntrustedAuthors     []string          // sorted, unique, at most 20
 	UntrustedAuthorCount int               // how many distinct untrusted authors were dropped, beyond the 20 named too
 	Omitted              map[string]int
-	MarkersFromAnyone    bool // no comment was SelfKnown: markers honoured from every author
+	// MarkersFromAnyone is set when no comment was SelfKnown: nothing says
+	// which comments are the run's own, so markers are honoured from every
+	// author. SelfKnown is the adapter's answer for the identity the run
+	// writes as, so this is read when the run has none — a Bitbucket
+	// repository access token is refused by GET /user (R14). The node's
+	// identity set (T13, F20) does not close that gap: it is partial by
+	// design, so a comment outside it may be the run's own all the same, and
+	// a fallback wrongly shut would let a stale follow-up push over a newer
+	// run's work.
+	MarkersFromAnyone bool
 }
 
 // Select picks the comments a follow-up acts on: unresolved review threads
