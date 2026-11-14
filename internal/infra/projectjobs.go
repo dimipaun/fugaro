@@ -90,14 +90,16 @@ func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]Pr
 	if err := projectpolicy.CheckProfiles(profiles, accounts); err != nil {
 		return nil, userErr("%v", err)
 	}
-	// Every project job is a github one in this phase (a Bitbucket profile is
-	// skipped below), so the App's ID is resolved once, for all of them: the
-	// project has one App (design §4.5), and a job that carries it must carry
-	// the same one as its neighbours. It is resolved only when some profile
-	// gets a shared job at all: a config whose profiles are all Bitbucket ones
-	// deploys no job, so it needs no App and is not refused for lacking one.
+	// The App's ID is resolved once, for the github jobs, and only when one is
+	// deployed: one App serves the project (design §4.5), so a job that carries
+	// the ID must carry the same one as its neighbours, and a profile of
+	// another provider holds another credential (a Bitbucket job reaches git
+	// through the credentials service instead). It is resolved only when some
+	// github profile gets a shared job at all: a config whose profiles are all
+	// Bitbucket ones deploys no github job, so it needs no App and is not
+	// refused for lacking one (docs/bitbucket-workspace-token's constraint 5).
 	appID := ""
-	if slices.ContainsFunc(slices.Collect(maps.Values(lc.Profiles)), func(pr config.JobProfile) bool { return SharedJobProvider(pr.Provider) }) {
+	if slices.ContainsFunc(slices.Collect(maps.Values(lc.Profiles)), func(pr config.JobProfile) bool { return pr.Provider == githubProvider }) {
 		if appID, err = projectJobGitHubAppID(lc); err != nil {
 			return nil, err
 		}
@@ -105,12 +107,8 @@ func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]Pr
 	out := make(map[string]ProjectJob, len(lc.Profiles))
 	for _, name := range slices.Sorted(maps.Keys(lc.Profiles)) {
 		pr := lc.Profiles[name]
-		// Bitbucket stays on the per-repository path in phase 3: the owner
-		// ruled on 2026-10-15 (probe U1) that a Bitbucket credential cannot
-		// be scoped to one project's repositories, so a job every repository
-		// of a profile shares must never hold one (plan Task 3.0 step 2, D5
-		// amended). A Bitbucket profile is therefore skipped, not refused: the
-		// policy may name one — projectpolicy admits it, a Bitbucket
+		// A profile of a provider no shared job serves is skipped, not
+		// refused: the policy may name one — projectpolicy admits it, a
 		// repository's workflow may select it, and the runner only requires a
 		// selected profile to be defined — and the installation's other
 		// profiles are deployed as they are. No job is deployed for it, which
@@ -118,8 +116,36 @@ func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]Pr
 		// (SharedJobProvider, and internal/cli's launchProjectJobFor): a
 		// repository selecting such a profile keeps its per-repository job
 		// rather than being launched onto a job that does not exist.
+		//
+		// The list is what decides, and every provider it admits is served
+		// the same way below: a Bitbucket profile's job mounts no token and
+		// requires the credential proxy (D2302), and GitHub's carries the
+		// App's ID. It holds github alone until I1 admits Bitbucket, which is
+		// what makes this slice merge with no effect on a Bitbucket project
+		// and a release cut midway break nothing (docs/shared-jobs-default
+		// S1's acceptance).
 		if !SharedJobProvider(pr.Provider) {
 			continue
+		}
+		// A served profile that mounts the Bitbucket credential is refused,
+		// and the job is not deployed with the mount dropped instead: what an
+		// operator wrote is the mount, and a job deployed without it would
+		// hold no credential at all while the document says it holds one. The
+		// job is shared by every repository the profile admits, and the
+		// token's reach is a per-repository list such a job cannot be bounded
+		// by (D2302).
+		//
+		// The rule lives in the policy package
+		// (projectpolicy.CheckSharedJobProfile) so that its wording has one
+		// home, but it is this deployer that asks it, and `fugaro project
+		// policy publish` does not: the same profile is what a per-repository
+		// Bitbucket job is deployed from — mounting the token is how such a
+		// job is named (SharedBitbucketProfile, D473) — so it is a profile a
+		// published node may legitimately carry. What a policy may hold and
+		// what one shared job may hold are two questions, and this is the
+		// second of them.
+		if err := projectpolicy.CheckSharedJobProfile("profiles."+name, profiles[name]); err != nil {
+			return nil, userErr("%v", err)
 		}
 		timeout, err := config.ParseDuration(pr.TimeoutClass)
 		if err != nil {
@@ -136,6 +162,45 @@ func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]Pr
 			// runner's github provider refuses to build without it, so both
 			// halves are needed for a job to start under any run.
 			env[providers.EnvGitHubAppID] = appID
+		} else {
+			// The credential proxy, and the job requires it: it holds no git
+			// credential of its own (D2302), so
+			// providers.EnvCredentialsServiceURL is the only way its runs
+			// reach git at all — internal/runner reads exactly this variable
+			// to decide that a Bitbucket run is proxied, and a run whose job
+			// lacks it halts at its first git command with nothing cloned. It
+			// is set from the installation's own record of the service, the
+			// local config's credentials_service block, which is written from
+			// the installation root's outputs.
+			//
+			// An installation whose config does not carry the block yet is
+			// NOT refused: the run that deploys the service reaches this
+			// function before it writes that block (init.go's writeConfig is
+			// the last step of that run), so a refusal here would stop the
+			// very update that would give the job its address and tell the
+			// operator to run the command they are running. The job is
+			// deployed without the variable instead, and the address lands on
+			// a later apply, once the run that deployed the service has
+			// recorded it — an empty URL is the same case read from the
+			// document side (CredentialsServiceURLOf: the apply that created
+			// the service and cannot know its URL yet).
+			//
+			// What IS refused is the installation that will not deploy the
+			// service at all, because then no apply ever fills the address in:
+			// CredentialsInstallationFacts is the question the deploying stage
+			// asks before it spends a registry read on the service (the first
+			// statement of init_stages.go's deployCredentialsService), and an
+			// installation that fails it — no Firebase database, or no
+			// repository job for the service to admit — has no service to
+			// reach. The sentence below carries that question's own words, so
+			// the operator reads the same remedy the update's own line about
+			// the service names.
+			if lc.CredentialsService != nil && lc.CredentialsService.URL != "" {
+				env[providers.EnvCredentialsServiceURL] = lc.CredentialsService.URL
+			} else if err := CredentialsInstallationFacts(lc); err != nil {
+				return nil, userErr("profiles.%s: a shared %s job holds no git credential of its own and reaches every repository it serves through the installation's credentials service (%s), and this installation cannot deploy one: %v. Deploy the service, or keep this profile's repositories on per-repository jobs",
+					name, pr.Provider, providers.EnvCredentialsServiceURL, err)
+			}
 		}
 		secretEnv, err := projectJobSecrets(lc, name, env, pr)
 		if err != nil {
@@ -558,15 +623,20 @@ func addProjectJob(out map[string]ProjectJob, j ProjectJob) error {
 	return nil
 }
 
-// githubProvider is the provider kind a shared job serves in phase 3
-// (config.Providers' spelling, and the value config.JobProfile.Provider
-// holds). A Bitbucket profile is skipped above, so it is also the only one a project
-// job is ever built for.
+// githubProvider is the provider kind whose jobs carry the project's GitHub
+// App ID (config.Providers' spelling, and the value config.JobProfile.Provider
+// holds). It is one provider a shared job serves and not the only one: a
+// Bitbucket job is built by the same loop and is told apart from this one here,
+// because what a job carries differs by the provider it serves — the App's ID
+// for github, the credential proxy for one whose git credential the
+// installation does not hold.
 const githubProvider = "github"
 
-// projectJobGitHubAppID is the GitHub App ID every project job carries in its
-// environment, resolved from the installation's own configuration (owner
-// ruling of 2026-10-17, plan task 3.5 step 4).
+// projectJobGitHubAppID is the GitHub App ID every github project job carries
+// in its environment, resolved from the installation's own configuration
+// (owner ruling of 2026-10-17, plan task 3.5 step 4). It is asked for the
+// github jobs alone — a job of another provider holds no App key and reaches
+// git another way — and it is asked for them only when one is deployed.
 //
 // It is the field each GitHub repository records (localcfg.Repo.GitHubAppID),
 // which `fugaro update --repo --github-app-id` writes and the per-repository
@@ -583,19 +653,20 @@ const githubProvider = "github"
 // run on — and the failure would be at run time, in the credential, not here.
 //
 // Nothing recorded at all is refused too, and it is the state a project that
-// declares profiles before it has onboarded a GitHub repository is in: a
-// shared job runs on the github provider, and providers.EnvGitHubAppID is
-// what the runner's github provider is built from, so a job deployed without
-// it would halt every run it started. The fix is the one the per-repository
-// path asks for at the repository stage ("is on GitHub and has no GitHub App
-// ID: pass --github-app-id"): record it, in the local config, once.
+// declares a github profile before it has onboarded a GitHub repository is in:
+// a github shared job runs on the github provider, and
+// providers.EnvGitHubAppID is what the runner's github provider is built from,
+// so a job deployed without it would halt every run it started. The fix is the
+// one the per-repository path asks for at the repository stage ("is on GitHub
+// and has no GitHub App ID: pass --github-app-id"): record it, in the local
+// config, once.
 func projectJobGitHubAppID(lc *localcfg.Config) (string, error) {
 	id, err := recordedGitHubAppID(lc)
 	if err != nil {
 		return "", err
 	}
 	if id == "" {
-		return "", userErr("this project's local config declares job profiles and records no GitHub App ID: a shared project job therefore cannot be deployed. A project job runs on the github provider, and the runner builds that provider from %s (the App's ID, which is not a secret), refusing to start without it — so a job deployed without it would halt every run it started. Record the App's ID by onboarding the repository the App serves (fugaro update --repo <owner/name> --github-app-id <id>), which writes it to the local config, then run fugaro update again",
+		return "", userErr("this project's local config declares a github job profile and records no GitHub App ID: its shared project job therefore cannot be deployed. That job runs on the github provider, and the runner builds that provider from %s (the App's ID, which is not a secret), refusing to start without it — so a job deployed without it would halt every run it started. Record the App's ID by onboarding the repository the App serves (fugaro update --repo <owner/name> --github-app-id <id>), which writes it to the local config, then run fugaro update again",
 			providers.EnvGitHubAppID)
 	}
 	return id, nil
@@ -629,21 +700,24 @@ func recordedGitHubAppID(lc *localcfg.Config) (string, error) {
 }
 
 // SharedJobProvider reports whether a shared project job serves that git
-// provider kind in phase 3, and it is the one place the answer lives: the
-// deployer (ProjectJobs, which skips a profile of a provider it does not
-// serve) and the launcher (internal/cli's launchProjectJobFor, which keeps
-// such a repository on its per-repository job) both ask it, so the job a
-// launch computes is always a job this package deployed.
+// provider kind, and it is the one place the answer lives: the deployer
+// (ProjectJobs, which skips a profile of a provider it does not serve) and the
+// launcher (internal/cli's launchProjectJobFor, which keeps such a repository
+// on its per-repository job) both ask it, so the job a launch computes is
+// always a job this package deployed.
 //
-// It is github alone, and that is the owner's ruling of 2026-10-15 on probe
-// U1 rather than a gap: a Bitbucket credential cannot be scoped to one
-// project's repositories, and a shared job holds one credential for every
-// repository it serves, so Bitbucket stays on the per-repository path (plan
-// Task 3.0 step 2, D5 as amended, and docs/project-layer.md's "Bitbucket
-// repositories never reach one"). Nothing about a Bitbucket profile is
-// refused: the profile is a document the policy carries, and skipping it here
-// is what makes "no job is deployed for it" true rather than an installation
-// `fugaro update` refuses whole.
+// A skipped profile is not a refused one: the profile is a document the policy
+// carries, and skipping it here is what makes "no job is deployed for it" true
+// rather than an installation `fugaro update` refuses whole.
+//
+// It is github alone until I1 admits Bitbucket (docs/shared-jobs-default), and
+// that is a state of this list rather than of the code below: the Bitbucket
+// path is built and tested (a job that mounts no token and requires the
+// credential proxy, D2302), and the tasks of the slice it belongs to merge
+// behind this list so that a release cut midway changes nothing for a Bitbucket
+// project. I1 is the one-line change — a provider admitted here is served by
+// that path, and this predicate is what tells the launcher the job it computed
+// exists.
 //
 // Every kind of config.Providers is answered — the list is the kinds a
 // repository may use — and the test beside this file pins that the two agree,
@@ -655,7 +729,10 @@ func SharedJobProvider(provider string) bool {
 
 // sharedJobProviders are the provider kinds a shared project job serves
 // (SharedJobProvider). It is a list rather than a comparison so that the test
-// can walk it, and it holds kinds of config.Providers.
+// can walk it, and it holds kinds of config.Providers. Bitbucket joins it in
+// I1, when the credentials service pairs a shared job (S2), the runner runs
+// one (S3) and the launcher chooses one (S4) — a provider admitted before
+// those land would deploy jobs nothing could run on.
 var sharedJobProviders = []string{"github"}
 
 // profilesAsPolicy is the local config's profiles as the policy carries them
@@ -743,13 +820,15 @@ func projectJobEnv(lc *localcfg.Config, bucket string, vertex bool) map[string]s
 // (an earlier revision repeated the refusal below, where it could never be
 // reached).
 //
-// The Bitbucket token is the one this function refuses itself, because
-// Bitbucket stays per-repository in phase 3 (see ProjectJobs) and that is not
-// a rule about profiles a policy would have an opinion on. It is reached on a
-// profile of a provider a shared job serves — a GitHub profile mounting it,
-// which would hand a job every repository of a Bitbucket workspace the token
-// reaches. A Bitbucket profile mounting it never gets here: ProjectJobs skips
-// such a profile before this call, and no job of it exists to hold anything.
+// The Bitbucket token is judged before this function is reached, and not here.
+// Both halves of it are rules about the profile and not about its mounts: a
+// profile that mounts it and serves another provider is refused by
+// validBitbucketProfile, which CheckProfiles applies to every profile before a
+// job is built, and a profile a shared job serves that mounts it is refused by
+// projectpolicy.CheckSharedJobProfile, which ProjectJobs asks of every profile
+// the shared-job list admits. A third copy here could never be reached — the
+// two rules above name every profile that carries the entry — and an earlier
+// revision's was exactly that: dead, and read as live by anyone who found it.
 //
 // What a shared job does not honour for the secrets it does mount is the
 // project_secrets entry's allow_data_to: the entry decides that the container
@@ -760,9 +839,6 @@ func projectJobSecrets(lc *localcfg.Config, profile string, env map[string]strin
 	containers := projectSecretContainers(lc)
 	secretEnv := map[string]string{}
 	for i, name := range pr.Secrets {
-		if name == "bitbucket-token" {
-			return nil, userErr("profiles.%s.secrets[%d]: %q is the Bitbucket credential, and a shared job never holds one in phase 3: it cannot be scoped to one project's repositories (the owner's ruling of 2026-10-15)", profile, i, name)
-		}
 		if _, ok := containers[name]; !ok {
 			return nil, userErr("profiles.%s.secrets[%d]: %q is not stored project-wide, so a shared job cannot mount it: a profile is shared by every repository it admits, and only a project-wide secret has one copy. Store it with project_secrets in the local config", profile, i, name)
 		}

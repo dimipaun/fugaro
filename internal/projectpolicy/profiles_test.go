@@ -855,3 +855,47 @@ func TestValidProfilesRefuseBitbucketTokenOnAGitHubProfile(t *testing.T) {
 		t.Errorf("CheckProfiles refused a bitbucket profile mounting the token with its own list: %v", err)
 	}
 }
+
+// TestBitbucketProfileMountsNoToken: D2302 — a profile a shared project job is
+// deployed for mounts no Bitbucket credential, because the job it names holds
+// no token at all and reaches git through the installation's credentials
+// service instead. The mount is not a smaller claim about the same job: it is a
+// per-repository list the shared job cannot honour, and the job that serves the
+// profile is shared by every repository its list admits.
+//
+// The two rules this test holds apart are the point of it. SharedBitbucketProfile
+// (D473) is the PER-REPOSITORY Bitbucket job's — the provider AND the mount —
+// so it answers true for exactly the profiles a shared job is refused for, and
+// it is the name a side writing this decision is likeliest to reach for
+// (docs/shared-jobs-default/contract.md's hazard). The mutation is a
+// CheckSharedJobProfile that reads that predicate for the shared-job rule: it
+// would admit the profile that mounts the token and refuse the one that mounts
+// nothing — the pair exactly backwards.
+func TestBitbucketProfileMountsNoToken(t *testing.T) {
+	mounting := Profile{JobProfile: bitbucketProfile()}
+	err := CheckSharedJobProfile("profiles."+DefaultProfileName, mounting)
+	if err == nil {
+		t.Fatal("a bitbucket profile mounting the token was admitted to a shared job")
+	}
+	for _, want := range []string{"profiles.standard.secrets[0]", config.BitbucketSecret, "credentials service"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %v, want one naming %q", err, want)
+		}
+	}
+	// The same profile with no mount is what a shared job is deployed for, and
+	// its own allow_repos — empty, or any list — is not what makes it one.
+	tokenless := Profile{JobProfile: bitbucketProfile()}
+	tokenless.Secrets = []string{"github-app-key"}
+	if err := CheckSharedJobProfile("profiles."+DefaultProfileName, tokenless); err != nil {
+		t.Errorf("a bitbucket profile that mounts no Bitbucket credential was refused: %v", err)
+	}
+	// And the per-repository predicate is unchanged, and points the other way:
+	// it is true for the profile this rule refuses and false for the one it
+	// admits.
+	if !SharedBitbucketProfile(mounting.JobProfile) {
+		t.Error("SharedBitbucketProfile is false for a bitbucket profile mounting the token")
+	}
+	if SharedBitbucketProfile(tokenless.JobProfile) {
+		t.Error("SharedBitbucketProfile is true for a bitbucket profile that mounts no token: the per-repository predicate is the provider AND the mount, so it answers true for the profile this rule refuses and false for the one it admits")
+	}
+}
