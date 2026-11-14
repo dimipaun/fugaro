@@ -60,7 +60,7 @@ the owner has not ruled on is an **open decision** with a recommendation, never 
   GitHub. Its brief forbids touching `internal/cli/project_job.go` and `launch_budget.go`.
 - **F6 (Gap).** The implicit job is GitHub only: `implicitReviewVariant` sets `providers.EnvGitHubAppID` and returns
   false without a recorded GitHub App ID, and `ProjectJobs` returns nil with no profile. Bitbucket's service and runner
-  halves are merged (F-class table above), but a Bitbucket project with no profile deploys no review job, so
+  halves are merged (the table above), but a Bitbucket project with no profile deploys no review job, so
   `fugaro review --pr N` on Bitbucket still refuses. The Bitbucket piece is therefore the implicit job for provider
   bitbucket (and its launcher resolution), not the service.
 - **F7 (Rule).** The owner's suspicion that Bitbucket needs workspace-level tokens is already answered upstream, in a
@@ -70,7 +70,7 @@ the owner has not ruled on is an **open decision** with a recommendation, never 
   identity. So a shared review job needs no workspace token **in particular**: it needs the proxy to hold some token
   covering the repository, which is that plan's selection (its T4 and T8). The two plans must not each invent a token
   rule; the review plan only depends on that plan's selector (RJ7's dependency).
-- **F8 (Rule, open tension).** `docs/shared-jobs-default` (merged `a2e77dc3a` lineage, round-4 fixes #2580) makes
+- **F8 (Rule, open tension).** `docs/shared-jobs-default` (plan merged, round-4 review fixes #2580) makes
   every project run on shared project jobs through a default profile (its F11: today "no code writes a default
   profile"). Once that lands, every project has a coding job whose review variant IS the implicit job's name
   (`ImplicitReviewProfile` is `DefaultProfileName`). `implicitReviewVariant` is built to absorb that (its collision
