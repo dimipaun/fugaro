@@ -26,10 +26,11 @@ import (
 // item, the launches it was asked for, the comments it was handed and the lines
 // it was given. A launch is recorded and nothing is started.
 //
-// running is what makes a crash watchable without one: while it is set, a run
-// the stub was asked to start and that has not finished comes back as the
-// reading's Running, which is exactly the state a cycle that died between the
-// start and the ledger write leaves behind.
+// running is what makes a run under way watchable without one: while it is set,
+// a run the stub was asked to start and that has not finished comes back as the
+// reading's Running. That is the healthy case — the ledger usually already
+// names the rung the run is spending — and the same reading is what a cycle that
+// died between asking for the run and writing the rung leaves behind.
 type ladderStub struct {
 	t          *testing.T
 	reads      map[string]orchestrator.LadderReading
@@ -288,10 +289,13 @@ func TestTickCriticalPathHalvesAndUsesStrongest(t *testing.T) {
 	}
 }
 
-// TestTickCrashMidRungIsIdempotent is G4 across a crash: the run a rung started
-// is what the reading names, and a cycle that died between the start and the
-// ledger write leaves exactly that — so the cycle after it leaves the item
-// alone rather than starting the same rung a second time.
+// TestTickCrashMidRungIsIdempotent is G4 across a crash: a cycle that asked its
+// launcher for a run and died before the write that would have recorded it
+// leaves an item whose ledger reads untouched, and the reading is all the cycle
+// after it has to go on — so that cycle leaves the item alone rather than
+// starting the same rebase a second time. The healthy half of the same reading,
+// a recorded rung with its run still going, is
+// TestTickInFlightRungIsNotAnsweredOver.
 //
 // Mutation: decide from the node alone and ignore a ladder run that has not
 // reported, and the cycle below starts a second rebase for one head.
@@ -732,23 +736,24 @@ func TestTickDoesNotStartBesideTheLoop(t *testing.T) {
 	})
 }
 
-// TestTickRecordsTheRungBeforeTheRun: the ledger is written before the run is
-// asked for, so a state that refuses the write — a rung the item has already
-// passed is the one this can still be — refuses it while there is nothing to
-// orphan, rather than leaving a run nobody recorded under way.
+// TestTickRecordsTheRungAfterTheRun: the run is asked for before the ledger is
+// written, because the transition is evidence and not only a spend — the head a
+// rebase moved, the review a rung 2 run read — and evidence of a run that never
+// started is a rung spent on nothing. The other direction, a run left under way
+// with the write that records it not landed, is the reading's Running and is
+// what TestTickCrashMidRungIsIdempotent pins.
 //
-// Mutation: start the run first and the ledger read at the launcher is the one
-// the cycle has not written yet.
-func TestTickRecordsTheRungBeforeTheRun(t *testing.T) {
+// Mutation: write the rung first and the ledger read at the launcher already
+// names a rung nothing has run, which is what TestTickFailedLaunchSpendsNothing
+// then finds left behind.
+func TestTickRecordsTheRungAfterTheRun(t *testing.T) {
 	now := o6Now()
 	w, its := spentOn(t, "wi-1", now, nil)
 	h, l := ladderTick(t, stack(t, now, []orchestrator.WorkItem{w}, its), now, "20261107-120000-c0de")
 	l.reads["wi-1"] = reading(rigor.Pro, time.Hour, headA)
 	var atLaunch *orchestrator.Escalation
 	l.onLaunch = func(req orchestrator.LadderRequest) {
-		if e := itemAt(t, h.state(), req.Item.ID).Escalation; e != nil {
-			atLaunch = e
-		}
+		atLaunch = itemAt(t, h.state(), req.Item.ID).Escalation
 	}
 
 	h.step()
@@ -756,8 +761,119 @@ func TestTickRecordsTheRungBeforeTheRun(t *testing.T) {
 	if len(l.launched) != 1 {
 		t.Fatalf("the ladder launched %+v for an item its approval covers", l.launched)
 	}
-	if atLaunch == nil || atLaunch.Rung != escalation.R0 || len(atLaunch.Transitions) != 1 {
-		t.Fatalf("the ledger read while the launcher was asked is %+v, and the rung is written first", atLaunch)
+	if atLaunch != nil {
+		t.Fatalf("the ledger read while the launcher was asked is %+v, and the rung is written once the run has started", atLaunch)
+	}
+	e := itemAt(t, h.state(), "wi-1").Escalation
+	if e == nil || e.Rung != escalation.R0 || len(e.Transitions) != 1 {
+		t.Fatalf("the ledger reads %+v after the launch, and the rung a started run spends is recorded", e)
+	}
+}
+
+// TestTickFailedLaunchSpendsNothing is the state the order above is chosen for:
+// a launcher that refuses — and a mint that fails before it — leaves the item
+// exactly where it was. The transition is evidence, so writing it first would
+// retire the head the transition names (decide.go's rebaseAvailable refuses a
+// head a rebase has run at, for good) and, at rung 2, put a run that never
+// happened into the count the cycle after it reads rung 3 from: the reason it
+// then writes to the ledger and posts on the pull request says the review came
+// back, and rung 3's merge gate takes it.
+//
+// Mutation: write the rung before asking the launcher and every case below
+// leaves a transition, and an outer attempt, for a run nothing started.
+func TestTickFailedLaunchSpendsNothing(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		led  *orchestrator.Escalation
+		read orchestrator.LadderReading
+		want []string
+	}{
+		{name: "rung 0", read: reading(rigor.Pro, time.Hour, headA)},
+		{name: "rung 2", led: rebased(o6Now(), headA, 1), read: reading(rigor.POC, 4*time.Hour, headA), want: []string{"R0"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			now := o6Now()
+			w, its := spentOn(t, "wi-1", now, tc.led)
+			h, l := ladderTick(t, stack(t, now, []orchestrator.WorkItem{w}, its), now, "20261107-120000-c0de")
+			l.reads["wi-1"] = tc.read
+			l.launchErr = errors.New("the launcher refused")
+			before := h.rev()
+
+			if _, err := h.tick.Step(context.Background()); err == nil {
+				t.Fatalf("the cycle ended as if the run had started, and a launcher that refuses ends it")
+			}
+
+			if got := h.rev(); got != before {
+				t.Fatalf("the node moved from revision %d to %d, and a launch that did not start writes nothing", before, got)
+			}
+			got := rungs(itemAt(t, h.state(), "wi-1").Escalation)
+			if len(got) != len(tc.want) {
+				t.Fatalf("the ledger reads %v, and a refused launch leaves it exactly as this cycle found it", got)
+			}
+			if len(l.comments) != 0 || len(l.lines) != 0 {
+				t.Fatalf("the ladder posted %v and logged %+v for a run that never started", l.comments, l.lines)
+			}
+		})
+	}
+}
+
+// TestTickInFlightRungIsNotAnsweredOver is the ordinary state the reading's
+// Running exists for, and not a crash: a ladder run is not an attempt, so no
+// intent is declared for it and an item with one under way reads exactly like
+// an idle one — the planner and the ladder's own open-intent guard both see
+// nothing — while the ledger already names the rung that run is spending. The
+// cycle after the launch must therefore leave the item alone: without the
+// reading, rung 2's run still going is answered over with rung 3 and a reason
+// that says its review came back, and rung 0's is asked for again at the head
+// the run's own rebase has just pushed.
+//
+// Mutation: drop the reading's Running and both second steps below move an item
+// whose run is still going.
+func TestTickInFlightRungIsNotAnsweredOver(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		led  *orchestrator.Escalation
+		read orchestrator.LadderReading
+		next orchestrator.LadderReading
+		rung escalation.Rung
+		want []string
+	}{
+		{
+			name: "rung 0", read: reading(rigor.Pro, time.Hour, headA),
+			next: reading(rigor.Pro, time.Hour, headB), rung: escalation.R0, want: []string{"R0"},
+		},
+		{
+			name: "rung 2", led: rebased(o6Now(), headA, 1), read: reading(rigor.POC, 4*time.Hour, headA),
+			next: reading(rigor.POC, 4*time.Hour, headA), rung: escalation.R2, want: []string{"R0", "R2"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			now := o6Now()
+			w, its := spentOn(t, "wi-1", now, tc.led)
+			h, l := ladderTick(t, stack(t, now, []orchestrator.WorkItem{w}, its), now, "20261107-120000-c0de")
+			l.reads["wi-1"] = tc.read
+
+			h.step()
+			if len(l.launched) != 1 || l.launched[0].Rung != tc.rung {
+				t.Fatalf("the ladder launched %+v, and the item is %s's to move", l.launched, tc.rung)
+			}
+			before, mints := h.rev(), h.mint.calls
+
+			// The run is going and has not reported. Rung 0's own rebase has
+			// already pushed by now, which is what the reading's head names.
+			l.running, l.reads["wi-1"] = true, tc.next
+			h.step()
+
+			if len(l.launched) != 1 || h.mint.calls != mints {
+				t.Fatalf("the ladder launched %+v and minted %d more ids, and the run under way is the rung", l.launched[1:], h.mint.calls-mints)
+			}
+			if got := h.rev(); got != before {
+				t.Fatalf("the node moved from revision %d to %d, and a run that has not reported is not answered over", before, got)
+			}
+			if got := rungs(itemAt(t, h.state(), "wi-1").Escalation); len(got) != len(tc.want) {
+				t.Fatalf("the ledger reads %v, and what the item is spending is the rung its run carries", got)
+			}
+		})
 	}
 }
 
@@ -767,9 +883,9 @@ func TestTickRecordsTheRungBeforeTheRun(t *testing.T) {
 // its size cap acts on a record that may no longer be the whole one, and one
 // while the breaker's question stands lifts a pause a restart may not lift. The
 // ladder asks its launcher directly rather than through a plan (E10a), so this
-// guard is the executor's and nothing else's, and the rung is written before the
-// run is asked for: a cycle that got past it would spend the ledger of an item
-// it must not start at all.
+// guard is the executor's and nothing else's, and it is asked before anything
+// is minted or launched: a cycle that got past it would start a run for an item
+// the node forbids and spend an outer attempt on it.
 //
 // Mutation: drop the guard, or any one of its three terms, and each of the three
 // cases below launches a run the fourth says this node otherwise spends.

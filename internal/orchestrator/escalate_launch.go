@@ -93,9 +93,15 @@ type LadderReading struct {
 	LastReviewBlocking bool
 	// Running is the run id of a ladder run of this item that has started and
 	// not reported, or "". It is the half of the idempotence a ledger cannot
-	// carry: a cycle that died between starting a run and recording the rung
-	// leaves the item where it was, and this is what stops the next cycle from
-	// starting the same rung a second time (G4).
+	// carry, and the ordinary half: a ladder run is not an attempt, so nothing
+	// declares an intent for it and the item reads as an idle one for as long as
+	// it goes, while the rung it is spending is already the rung the ledger
+	// names. A cycle told nothing here would answer over that run — rung 3 with
+	// a reason asserting a rung 2 review that has not come back, or rung 0 again
+	// for the head the run's own push has just moved. A cycle that died between
+	// asking for the run and writing the rung leaves an item that reads idle in
+	// the same way, and is read back the same way (G4). A reader that reports
+	// this only for the second case will not report a healthy ladder run.
 	Running string
 }
 
@@ -124,11 +130,16 @@ type LadderRequest struct {
 	HeadSHA string
 }
 
-// LadderLauncher starts one ladder run: the intent-first launch D1231 states,
-// under the run id the request carries and no other. An error ends the cycle,
-// and the rung the item moved to before the launcher was asked stays spent: a
-// run that did not start is a rung the item holds without a run, which is the
-// direction that spends less (D4) and not a second launch of the same rung.
+// LadderLauncher starts one ladder run under the run id the request carries and
+// no other. An error ends the cycle with the item exactly where it was: the
+// launcher is asked before the transition is written, so a run that did not
+// start spends nothing and the cycle after this one decides the same rung from
+// the same facts.
+//
+// It is not the intent-first launch D1231 states, and cannot be: a ladder run is
+// not an attempt, so no intent is declared for it and there is nothing to commit
+// ahead of the launch. What covers the one state that ordering would have — a run
+// under way with the write that records it not landed — is the reading's Running.
 type LadderLauncher interface {
 	LaunchLadder(ctx context.Context, req LadderRequest) error
 }
@@ -169,8 +180,8 @@ type LadderBeyond func(ctx context.Context, item WorkItem, step escalation.Step,
 // asks before it launches anything are asked here too — a ladder run is a run,
 // so a cycle that spends nothing while the budget switch holds starts nothing
 // while it holds either. The guard is also what keeps a held cycle off the
-// ladder's ledger: the rung is written before the run is asked for, and a
-// transition nothing launched is a rung spent with no run under it.
+// ladder's ledger and off the item's outer attempts: a cycle that returns here
+// mints no run id, writes no transition and asks no launcher.
 func (c *cycle) escalate(ctx context.Context) error {
 	if !c.tick.Ladder.Set() || !c.fresh {
 		return nil
@@ -219,8 +230,10 @@ func (c *cycle) ladderItem(ctx context.Context, id string, blocked map[string]bo
 	if read.Running != "" {
 		// A ladder run of the item's has started and not reported: the rung it
 		// carries is the rung the item is spending, and what it answers with is
-		// the next cycle's — including the cycle that follows a daemon whose
-		// crash left the launch and not the ledger behind (G4).
+		// the next cycle's. The ledger alone cannot say this — no intent is
+		// declared for a run that is not an attempt, so an item with one under
+		// way reads exactly like an idle one — and the same reading covers the
+		// cycle a daemon's crash left with the launch and not the write (G4).
 		return nil
 	}
 	step, reason := escalation.Decide(ladderFacts(c.state, w, read, blocked[w.ID]), c.tick.Ladder.Thresholds)
@@ -271,16 +284,21 @@ func (c *cycle) ladderAct(ctx context.Context, w WorkItem, step escalation.Step,
 		if step.Rung == escalation.R0 {
 			head = read.HeadSHA
 		}
-		// The rung is written before the run is asked for. A state that refuses
-		// the write — a rung already reached is the one this can still be —
-		// refuses it while there is nothing to orphan, and a launch that then
-		// fails leaves a rung spent with no run, which is the direction that
-		// spends less (D4).
-		if err := c.ladderRecord(ctx, w, step, reason, head, true); err != nil {
-			return err
-		}
+		// The run is asked for before the rung is written, because the
+		// transition is evidence and not only a spend: the head it names is one
+		// a rebase has moved, which decide.go's rebaseAvailable then refuses for
+		// good, and the rung it names is one a review has read, which the cycle
+		// after it answers rung 3 from with a reason that says the review came
+		// back. A launch that fails — a launcher that refuses, a mint that does
+		// — therefore leaves the item exactly where it was, rather than a rung
+		// spent on a run that never happened. The other direction is the
+		// reading's Running: a run that started with the write recording it not
+		// landed.
 		runID, err := c.ladderStart(ctx, req)
 		if err != nil {
+			return err
+		}
+		if err := c.ladderRecord(ctx, w, step, reason, head, true); err != nil {
 			return err
 		}
 		return c.ladderSay(ctx, w, step, reason, runID)
