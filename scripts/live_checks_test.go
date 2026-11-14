@@ -78,6 +78,16 @@ import (
 // older than the release, a coder that reads images itself, a slot that is set,
 // a run that never ends, a record that is another run's, and a refusal whose
 // sentence has lost one of the parts an owner needs.
+// Check 470's fakes are a fake `fugaro` that holds the three sources `issue
+// mine` answers from (`shared`, `snapshot`, `local`), the snapshot file the real
+// CLI writes on a successful read and the two cache files the check's Restore is
+// about, and a fake `gcloud` holding the issue store's three prefixes, refusing
+// them on a knob in the two shapes a case has to tell apart -- a permission
+// denial, which is the reading U1 asks for, and a call that did not answer,
+// which stops the run -- so a case says what the check read, in which directory
+// it read it, and that a dry run made no call at all; the network the offline
+// mode turns off is the fake's own switch, because no test and no agent turns a
+// machine's network off.
 // Check LC4's fakes are a fake `gcloud` and a fake `fugaro`: the fake `fugaro`
 // answers `doctor --json` from the case's own directory, and the fake `gcloud`
 // serves the job list (applying the label filter, so a check that filtered on
@@ -152,6 +162,7 @@ var liveCheckScripts = []struct {
 	{"check511.sh", "check511_test.sh"},
 	{"check520.sh", "check520_test.sh"},
 	{"check521.sh", "check521_test.sh"},
+	{"check470.sh", "check470_test.sh"},
 	{"check-lc4.sh", "check-lc4_test.sh"},
 	{"check119.sh", "check119_test.sh"},
 	{"check57b.sh", "check57b_test.sh"},
