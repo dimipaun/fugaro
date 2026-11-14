@@ -260,6 +260,60 @@ func TestSelectProjectMatchesByUUID(t *testing.T) {
 	})
 }
 
+// TestSelectLooksUpNoProjectBehindARepositoryToken is R2's other half: a
+// narrower token is chosen before a project token is CONSIDERED, so a usable
+// repository token means the resolver is asked nothing. The lookup is an
+// upstream call made with the candidate's own credential, so one made behind a
+// token that already serves spends a credential this request does not use — and
+// a project token the store holds has no rate limit to spare for it.
+//
+// A workspace token does NOT suppress the lookup, and must not: a project token
+// is the narrower of the two, so the answer still turns on what its lookup says.
+func TestSelectLooksUpNoProjectBehindARepositoryToken(t *testing.T) {
+	ctx := context.Background()
+	const canonical = "bitbucket/acme/app"
+
+	repo := Record{Name: "bitbucket-token--repo", Type: TypeRepo, Coverage: []string{"bitbucket/acme/app"}}
+	project := Record{
+		Name: "bitbucket-token--proj", Type: TypeProject,
+		Coverage: []string{"bitbucket/acme/*"}, ProjectUUID: "proj-uuid", ProjectKey: "PROJ",
+	}
+	workspace := Record{Name: "bitbucket-token--ws", Type: TypeWorkspace, Coverage: []string{"bitbucket/acme/*"}}
+	snap := Snapshot{Bundle: bundleOf(repo.Name, project.Name, workspace.Name)}
+
+	t.Run("a usable repository token serves without a lookup", func(t *testing.T) {
+		resolver := &fakeResolver{uuids: map[Name]string{project.Name: "proj-uuid"}}
+		sel := selectionOf(t, []Record{workspace, project, repo}, resolver, fakeStatus{})
+
+		choice, err := sel.Select(ctx, snap, canonical, false)
+		if err != nil {
+			t.Fatalf("Select = %v, want the repository token", err)
+		}
+		if choice.Name != repo.Name {
+			t.Errorf("Select = %q, want %q", choice.Name, repo.Name)
+		}
+		if len(resolver.asked) != 0 {
+			t.Errorf("the lookup was asked %v behind a repository token that already serves, want no question", resolver.asked)
+		}
+	})
+
+	t.Run("a workspace token does not suppress the lookup", func(t *testing.T) {
+		resolver := &fakeResolver{uuids: map[Name]string{project.Name: "proj-uuid"}}
+		sel := selectionOf(t, []Record{workspace, project}, resolver, fakeStatus{})
+
+		choice, err := sel.Select(ctx, snap, canonical, false)
+		if err != nil {
+			t.Fatalf("Select = %v, want the project token", err)
+		}
+		if choice.Name != project.Name {
+			t.Errorf("Select = %q, want %q: a project token is narrower than a workspace token", choice.Name, project.Name)
+		}
+		if len(resolver.asked) != 1 || resolver.asked[0] != project.Name {
+			t.Errorf("the lookup was asked %v, want the candidate project token %q alone", resolver.asked, project.Name)
+		}
+	})
+}
+
 // TestSelectNamesUncoveredRepository is the refusal the plan pins for T4: a
 // repository no token covers is refused naming the repository, and never a
 // token — a caller told which token exists learns about an installation it has
@@ -426,6 +480,59 @@ func TestSelectSkipsThrottledAndBroken(t *testing.T) {
 			t.Errorf("Select refused with %q, want %q", ref.Class, ClassBroken)
 		}
 	})
+}
+
+// TestSelectReadsTheStatusBeforeTheProjectLookup is the ordering the class rests
+// on: a project token the store holds is skipped without asking the resolver
+// about it. A lookup made for such a token is exactly the upstream call its mark
+// came from — an exhausted token's 429, a broken token's 401 — so on a cache
+// miss the lookup fails, and read the other way round that failure is what the
+// walk sees: neither the throttle nor the break is set, the repository is
+// refused as uncovered, no Retry-After reaches the caller, and the operator
+// never reads the token that has to be cleared (R14, and T4's acceptance).
+func TestSelectReadsTheStatusBeforeTheProjectLookup(t *testing.T) {
+	ctx := context.Background()
+	const canonical = "bitbucket/acme/app"
+
+	project := Record{
+		Name: "bitbucket-token--proj", Type: TypeProject,
+		Coverage: []string{"bitbucket/acme/*"}, ProjectUUID: "proj-uuid", ProjectKey: "PROJ",
+	}
+	snap := Snapshot{Bundle: bundleOf(project.Name)}
+
+	for _, tc := range []struct {
+		why   string
+		marks map[Name]Status
+		want  RefusalClass
+	}{
+		{
+			why:   "a throttled project token whose lookup fails",
+			marks: map[Name]Status{project.Name: {State: StateExhausted, Until: time.Now().Add(time.Minute)}},
+			want:  ClassThrottled,
+		},
+		{
+			why:   "a broken project token whose lookup fails",
+			marks: map[Name]Status{project.Name: {State: StateBroken}},
+			want:  ClassBroken,
+		},
+	} {
+		t.Run(tc.why, func(t *testing.T) {
+			resolver := &fakeResolver{err: errors.New("the lookup is down")}
+			sel := selectionOf(t, []Record{project}, resolver, fakeStatus{marks: tc.marks})
+
+			_, err := sel.Select(ctx, snap, canonical, false)
+			ref := refusalClass(t, err)
+			if ref.Class != tc.want {
+				t.Errorf("Select refused with %q, want %q", ref.Class, tc.want)
+			}
+			if ref.Repo != canonical {
+				t.Errorf("the refusal names %q, want the repository %q", ref.Repo, canonical)
+			}
+			if len(resolver.asked) != 0 {
+				t.Errorf("the lookup was asked %v about a token the store holds, want no question", resolver.asked)
+			}
+		})
+	}
 }
 
 // TestSelectSkipsAKeyWithNoRecordAndARecordWithNoKey is R14's fail-closed half:

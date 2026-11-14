@@ -52,6 +52,14 @@ func NewSelector(records []Record, resolver ProjectResolver, status StatusStore)
 // narrowest USABLE token serves, which can be a wider one: that is the stated
 // price of the swap (R12).
 //
+// Two orderings of the walk are part of the answer rather than of its cost. A
+// record's status is read before its project lookup, so a token the store holds
+// is skipped without asking the resolver about it. And the resolver is asked
+// only when no usable repository token already serves, so a narrower token
+// being chosen (R2) means no wider one is asked about at all: the lookup costs
+// an upstream call with the candidate's own credential, and a credential that
+// is not serving this request must not be spent on it.
+//
 // write is not consulted. Which token may write is D2353's: a write scope is
 // proven on first use and refused by the proxy's own reaction to Bitbucket's
 // 403, never decided here from a record or a status that states nothing about
@@ -68,7 +76,9 @@ func (s selector) Select(ctx context.Context, snap Snapshot, canonical string, w
 	}
 
 	var (
-		usable    []candidate
+		repos     []candidate
+		projects  []Record
+		wider     []candidate
 		throttled bool
 		broken    bool
 	)
@@ -83,20 +93,48 @@ func (s selector) Select(ctx context.Context, snap Snapshot, canonical string, w
 		if _, held := snap.Bundle.Value(rec.Name); !held {
 			continue
 		}
-		if rec.Type == TypeProject && !s.projectCovers(ctx, canonical, rec) {
-			continue
-		}
+		// The status is read BEFORE any lookup: a token the store holds is not a
+		// candidate whatever the lookup would have answered, and a lookup made
+		// on its behalf is an upstream call with a credential that cannot serve
+		// it — which is exactly the 429 or 401 an exhausted token is in, so the
+		// class it earns would be lost to the lookup's own failure.
 		st, err := s.status.Read(ctx, rec.Name)
 		if err != nil {
 			continue
 		}
 		switch {
 		case st.Available() || lapsed(st, now):
-			usable = append(usable, candidate{rec: rec, rank: rankOf(rec)})
 		case st.State == StateBroken:
 			broken = true
+			continue
 		default:
 			throttled = true
+			continue
+		}
+		switch rec.Type {
+		case TypeRepo:
+			repos = append(repos, candidate{rec: rec, rank: rankOf(rec)})
+		case TypeProject:
+			projects = append(projects, rec)
+		default:
+			wider = append(wider, candidate{rec: rec, rank: rankOf(rec)})
+		}
+	}
+
+	usable := make([]candidate, 0, len(repos)+len(projects)+len(wider))
+	usable = append(usable, repos...)
+	usable = append(usable, wider...)
+	// The lookup is made only when it can change the answer: a usable repository
+	// token is narrower than every project token and already serves this
+	// request, so R2's "a narrower token is chosen before a project token is
+	// considered" is precisely that no project token is asked about. A usable
+	// WORKSPACE token does not suppress it, because a project token is the
+	// narrower of the two and its lookup is what says whether it reaches.
+	if len(repos) == 0 {
+		for _, rec := range projects {
+			if s.projectCovers(ctx, canonical, rec) {
+				usable = append(usable, candidate{rec: rec, rank: rankOf(rec)})
+			}
 		}
 	}
 
@@ -155,9 +193,10 @@ func (s selector) candidates(snap Snapshot) []Record {
 // which is the whole of project matching: the lookup is made with the candidate
 // token itself and never with a wider or a narrower one (R2), and it is made
 // only for a project record whose workspace coverage already admitted the
-// repository — so a token in another workspace is never asked about, and a
-// token in this one is asked nothing a repository token would have answered
-// first.
+// repository, and whose status is usable, and only when no usable repository
+// token already serves — so a token in another workspace is never asked about,
+// a token the store holds is never asked about, and a token in this one is
+// asked nothing a repository token would have answered first.
 //
 // A lookup that fails is not an answer, so the token is not a candidate: the
 // contract forbids a bare error here, and a token whose reach could not be
