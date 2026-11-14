@@ -133,9 +133,17 @@ func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]Pr
 		// hold no credential at all while the document says it holds one. The
 		// job is shared by every repository the profile admits, and the
 		// token's reach is a per-repository list such a job cannot be bounded
-		// by (D2302). The rule is the policy's own, so `fugaro project policy
-		// publish` and this deployer refuse the same profile with the same
-		// sentence.
+		// by (D2302).
+		//
+		// The rule lives in the policy package
+		// (projectpolicy.CheckSharedJobProfile) so that its wording has one
+		// home, but it is this deployer that asks it, and `fugaro project
+		// policy publish` does not: the same profile is what a per-repository
+		// Bitbucket job is deployed from — mounting the token is how such a
+		// job is named (SharedBitbucketProfile, D473) — so it is a profile a
+		// published node may legitimately carry. What a policy may hold and
+		// what one shared job may hold are two questions, and this is the
+		// second of them.
 		if err := projectpolicy.CheckSharedJobProfile("profiles."+name, profiles[name]); err != nil {
 			return nil, userErr("%v", err)
 		}

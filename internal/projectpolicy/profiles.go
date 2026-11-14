@@ -611,6 +611,12 @@ func CheckBitbucketProfileRepos(profiles map[string]Profile, token *BitbucketTok
 // github profile mounting the token is refused by validBitbucketProfile, which
 // owns the "only a bitbucket profile mounts it" half, and a bitbucket profile
 // mounting it is refused here.
+//
+// Publish does not ask it, and must not be assumed to: a profile that mounts
+// the token with its own allow_repos is the per-repository Bitbucket job's
+// document (D473) and a published node carries it legitimately — what a policy
+// may hold is one question, and what one shared job may hold is this one. The
+// caller is whatever builds a shared job, today internal/infra's ProjectJobs.
 func CheckSharedJobProfile(at string, pr Profile) error {
 	i := slices.Index(pr.Secrets, config.BitbucketSecret)
 	if i < 0 {
