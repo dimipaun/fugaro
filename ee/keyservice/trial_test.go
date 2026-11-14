@@ -531,6 +531,43 @@ func TestTrialIsThrottledPerDomain(t *testing.T) {
 	}
 }
 
+// TestTrialInstallationIsANameTheStoreCanFile: the pair D2201 counts goes into
+// the one installation field the store's Trial carries (K2.2, store.go), and the
+// id a document is filed under is one the deploy's backend can hold. Both halves
+// are strings this route does not choose: a project id is the ask's own and
+// nothing here checks its shape, and a local part may carry a slash, a percent
+// or a pipe (§4.1's `isAtext`). A join that let either half through unchanged
+// would file a trial as a path into another collection — a write the store's own
+// query of that collection never returns, and a read that answers about another
+// document (docstore's `ErrUnstorableName`) — and a join that let the separator
+// through would let one pair's name be another pair's, so one organisation's ask
+// would spend the trial of the organisation whose name it spelled.
+func TestTrialInstallationIsANameTheStoreCanFile(t *testing.T) {
+	pairs := [][2]string{
+		{"acme.example", workspaceID},
+		{"acme.example", "a/b"},
+		{"acme.example", "../../other"},
+		{"acme.example", ".."},
+		{"acme.example", "a|b"},
+		{"a|b.example", "acme-widgets"},
+		{"a/b.example", "widgets-workspace"},
+	}
+	seen := map[string][2]string{}
+	for _, pair := range pairs {
+		name := trialInstallation(pair[0], pair[1])
+		if name == "." || name == ".." || len(name) > 1500 ||
+			strings.ContainsFunc(name, func(r rune) bool { return r < 0x20 || r == 0x7f || r == '/' }) {
+			t.Errorf("the trial for %q and %q is counted as %q, which is not a name the deploy's store can file a document under",
+				pair[0], pair[1], name)
+		}
+		if other, collided := seen[name]; collided {
+			t.Errorf("%q/%q and %q/%q are one installation name (%q), so one organisation's ask would spend the other's trial (D2201)",
+				other[0], other[1], pair[0], pair[1], name)
+		}
+		seen[name] = pair
+	}
+}
+
 // TestTrialIsServedWhenItsOwnClaimWentUnanswered: an error is not a claim that
 // did not land, and the store's answer alone cannot tell the two apart — the
 // deployed store re-runs its transaction when its result is lost and then reads
