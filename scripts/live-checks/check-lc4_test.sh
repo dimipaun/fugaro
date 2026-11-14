@@ -192,9 +192,11 @@ FUGARO_EOF
 # are the v1 Job shape `gcloud run jobs list` and `describe --format=json` answer
 # with, where the container and the job's account sit at
 # spec.template.spec.template.spec — one level below a service's
-# (check191_test.sh's own fixtures): a fake that nested them the way a service
-# does would agree with a check that read the wrong path and would pass while a
-# real run stopped on an empty account.
+# (check191_test.sh's own fixtures) — and a secret-backed entry names its secret
+# the v1 way too, `valueFrom.secretKeyRef.name` (run/v1's EnvVarSource): a fake
+# that nested the containers the way a service does, or spelled the entry the way
+# the v2 API does, would agree with a check that read the wrong path and would
+# pass while a real run stopped on a job it could not read.
 write_default_case() { # dir [account]
   local dir=$1 acct=${2:-work} label secret variant_label
   case "$acct" in "" | default)
@@ -223,8 +225,8 @@ JSON
   "spec":{"template":{"spec":{"template":{"spec":{
     "serviceAccountName":"$sa",
     "containers":[{"env":[
-      {"name":"CLAUDE_CODE_OAUTH_TOKEN","valueSource":{"secretKeyRef":{"secret":"$token_secret"}}},
-      {"name":"FUGARO_GITHUB_APP_PRIVATE_KEY","valueSource":{"secretKeyRef":{"secret":"$appkey_secret"}}}
+      {"name":"CLAUDE_CODE_OAUTH_TOKEN","valueFrom":{"secretKeyRef":{"name":"$token_secret","key":"latest"}}},
+      {"name":"FUGARO_GITHUB_APP_PRIVATE_KEY","valueFrom":{"secretKeyRef":{"name":"$appkey_secret","key":"latest"}}}
     ]}]}}}}}},
  {"metadata":{"name":"$variant_job","labels":{"fugaro":"managed","fugaro_profile":"standard",
   "fugaro_provider":"github","fugaro_account":"$variant_label"}},
@@ -240,8 +242,8 @@ JSON
    "serviceAccountName":"$sa",
    "containers":[{"env":[
      {"name":"FUGARO_PROJECT","value":"sandbox"},
-     {"name":"CLAUDE_CODE_OAUTH_TOKEN","valueSource":{"secretKeyRef":{"secret":"$token_secret","version":"latest"}}},
-     {"name":"FUGARO_GITHUB_APP_PRIVATE_KEY","valueSource":{"secretKeyRef":{"secret":"$appkey_secret","version":"latest"}}}
+     {"name":"CLAUDE_CODE_OAUTH_TOKEN","valueFrom":{"secretKeyRef":{"name":"$token_secret","key":"latest"}}},
+     {"name":"FUGARO_GITHUB_APP_PRIVATE_KEY","valueFrom":{"secretKeyRef":{"name":"$appkey_secret","key":"latest"}}}
    ]}]}}}}}}
 JSON
   cat >"$dir/json/secrets.json" <<JSON
@@ -548,10 +550,10 @@ test_two_jobs_for_one_account_stop() {
   cat >"$dir/json/jobs.json" <<JSON
 [{"metadata":{"name":"$job","labels":{"fugaro":"managed","fugaro_profile":"standard","fugaro_account":"work"}},
   "spec":{"template":{"spec":{"template":{"spec":{"containers":[{"env":[
-    {"name":"CLAUDE_CODE_OAUTH_TOKEN","valueSource":{"secretKeyRef":{"secret":"$token_secret"}}}]}]}}}}}},
+    {"name":"CLAUDE_CODE_OAUTH_TOKEN","valueFrom":{"secretKeyRef":{"name":"$token_secret","key":"latest"}}}]}]}}}}}},
  {"metadata":{"name":"fugaro-standard-github-work-999999999999","labels":{"fugaro":"managed","fugaro_profile":"standard","fugaro_account":"work"}},
   "spec":{"template":{"spec":{"template":{"spec":{"containers":[{"env":[
-    {"name":"CLAUDE_CODE_OAUTH_TOKEN","valueSource":{"secretKeyRef":{"secret":"$token_secret"}}}]}]}}}}}}]
+    {"name":"CLAUDE_CODE_OAUTH_TOKEN","valueFrom":{"secretKeyRef":{"name":"$token_secret","key":"latest"}}}]}]}}}}}}]
 JSON
   run_default "$dir"
   expect_status "$status" 2 "two jobs wearing one account's labels"
@@ -586,7 +588,7 @@ test_two_mountless_jobs_beside_the_job_stop() {
   cat >"$dir/json/jobs.json" <<JSON
 [{"metadata":{"name":"$job","labels":{"fugaro":"managed","fugaro_profile":"standard","fugaro_account":"work"}},
   "spec":{"template":{"spec":{"template":{"spec":{"containers":[{"env":[
-    {"name":"CLAUDE_CODE_OAUTH_TOKEN","valueSource":{"secretKeyRef":{"secret":"$token_secret"}}}]}]}}}}}},
+    {"name":"CLAUDE_CODE_OAUTH_TOKEN","valueFrom":{"secretKeyRef":{"name":"$token_secret","key":"latest"}}}]}]}}}}}},
  {"metadata":{"name":"$variant_job","labels":{"fugaro":"managed","fugaro_profile":"standard","fugaro_account":"work"}},
   "spec":{"template":{"spec":{"template":{"spec":{"containers":[{"env":[]}]}}}}}},
  {"metadata":{"name":"fugaro-standard-github-work-review-111111111111","labels":{"fugaro":"managed","fugaro_profile":"standard","fugaro_account":"work"}},
@@ -620,6 +622,50 @@ JSON
   expect_contains "$out" "FACT token-mount: FAIL" "and the mount it lost is the finding"
 }
 
+test_the_other_entry_spelling_gcloud_has_printed_is_read_too() {
+  local dir
+  dir=$(mktemp -d "$work/v2entry.XXXX")
+  prepare "$dir"
+  # A mounted secret is the one field this check reads in two spellings: the v1
+  # Job shape the other fixtures are in names it valueFrom.secretKeyRef.name, and
+  # a gcloud that answered the v2 API names it valueSource.secretKeyRef.secret
+  # (run/v2's GoogleCloudRunV2EnvVar). A reader that knew one spelling would read
+  # a job mounting its token as a job mounting nothing — which is exactly how the
+  # review-only variant beside it looks — so both the list and the describe
+  # documents are handed over in the v2 one here.
+  cat >"$dir/json/jobs.json" <<JSON
+[{"metadata":{"name":"$job","labels":{"fugaro":"managed","fugaro_profile":"standard",
+  "fugaro_provider":"github","fugaro_account":"work"}},
+  "spec":{"template":{"spec":{"template":{"spec":{
+    "serviceAccountName":"$sa",
+    "containers":[{"env":[
+      {"name":"CLAUDE_CODE_OAUTH_TOKEN","valueSource":{"secretKeyRef":{"secret":"$token_secret","version":"latest"}}},
+      {"name":"FUGARO_GITHUB_APP_PRIVATE_KEY","valueSource":{"secretKeyRef":{"secret":"$appkey_secret","version":"latest"}}}
+    ]}]}}}}}},
+ {"metadata":{"name":"$variant_job","labels":{"fugaro":"managed","fugaro_profile":"standard",
+  "fugaro_provider":"github","fugaro_account":"work"}},
+  "spec":{"template":{"spec":{"template":{"spec":{
+    "serviceAccountName":"$variant_sa",
+    "containers":[{"env":[
+      {"name":"FUGARO_CREDENTIALS_SERVICE_URL","value":"https://credentials.example.invalid"}
+    ]}]}}}}}}]
+JSON
+  cat >"$dir/json/job.json" <<JSON
+{"spec":{"template":{"spec":{"template":{"spec":{
+  "serviceAccountName":"$sa",
+  "containers":[{"env":[
+    {"name":"CLAUDE_CODE_OAUTH_TOKEN","valueSource":{"secretKeyRef":{"secret":"$token_secret","version":"latest"}}},
+    {"name":"FUGARO_GITHUB_APP_PRIVATE_KEY","valueSource":{"secretKeyRef":{"secret":"$appkey_secret","version":"latest"}}}
+  ]}]}}}}}}
+JSON
+  run_default "$dir"
+  expect_status "$status" 0 "documents in the v2 entry spelling"
+  expect_contains "$out" "FACT job: PASS — $job" "the listing is resolved to the job that mounts a secret"
+  expect_contains "$out" "FACT token-mount: PASS" "and its token mount is read"
+  expect_contains "$out" "exactly one secret as CLAUDE_CODE_OAUTH_TOKEN: $token_secret" "as the account's own secret"
+  expect_contains "$out" "read beside $variant_job" "the mountless variant is still named beside it"
+}
+
 test_a_job_list_that_is_denied_stops() {
   local dir
   dir=$(mktemp -d "$work/joblistdenied.XXXX")
@@ -638,7 +684,7 @@ test_no_token_mount_is_a_finding() {
   cat >"$dir/json/job.json" <<JSON
 {"spec":{"template":{"spec":{"template":{"spec":{
   "serviceAccountName":"$sa",
-  "containers":[{"env":[{"name":"FUGARO_GITHUB_APP_PRIVATE_KEY","valueSource":{"secretKeyRef":{"secret":"$appkey_secret"}}}]}]}}}}}}
+  "containers":[{"env":[{"name":"FUGARO_GITHUB_APP_PRIVATE_KEY","valueFrom":{"secretKeyRef":{"name":"$appkey_secret","key":"latest"}}}]}]}}}}}}
 JSON
   run_default "$dir"
   expect_status "$status" 1 "a job with no account-token mount"
@@ -657,8 +703,8 @@ test_two_token_mounts_are_a_finding() {
 {"spec":{"template":{"spec":{"template":{"spec":{
   "serviceAccountName":"$sa",
   "containers":[{"env":[
-    {"name":"CLAUDE_CODE_OAUTH_TOKEN","valueSource":{"secretKeyRef":{"secret":"$token_secret"}}},
-    {"name":"CLAUDE_CODE_OAUTH_TOKEN","valueSource":{"secretKeyRef":{"secret":"$other_secret"}}}
+    {"name":"CLAUDE_CODE_OAUTH_TOKEN","valueFrom":{"secretKeyRef":{"name":"$token_secret","key":"latest"}}},
+    {"name":"CLAUDE_CODE_OAUTH_TOKEN","valueFrom":{"secretKeyRef":{"name":"$other_secret","key":"latest"}}}
   ]}]}}}}}}
 JSON
   run_default "$dir"
@@ -677,8 +723,8 @@ test_a_token_mounted_out_of_another_accounts_secret_is_a_finding() {
 {"spec":{"template":{"spec":{"template":{"spec":{
   "serviceAccountName":"$sa",
   "containers":[{"env":[
-    {"name":"CLAUDE_CODE_OAUTH_TOKEN","valueSource":{"secretKeyRef":{"secret":"$other_secret"}}},
-    {"name":"FUGARO_GITHUB_APP_PRIVATE_KEY","valueSource":{"secretKeyRef":{"secret":"$appkey_secret"}}}
+    {"name":"CLAUDE_CODE_OAUTH_TOKEN","valueFrom":{"secretKeyRef":{"name":"$other_secret","key":"latest"}}},
+    {"name":"FUGARO_GITHUB_APP_PRIVATE_KEY","valueFrom":{"secretKeyRef":{"name":"$appkey_secret","key":"latest"}}}
   ]}]}}}}}}
 JSON
   run_default "$dir"
@@ -697,7 +743,7 @@ test_a_job_that_lost_the_profile_mount_is_a_finding() {
 {"spec":{"template":{"spec":{"template":{"spec":{
   "serviceAccountName":"$sa",
   "containers":[{"env":[
-    {"name":"CLAUDE_CODE_OAUTH_TOKEN","valueSource":{"secretKeyRef":{"secret":"$token_secret"}}}
+    {"name":"CLAUDE_CODE_OAUTH_TOKEN","valueFrom":{"secretKeyRef":{"name":"$token_secret","key":"latest"}}}
   ]}]}}}}}}
 JSON
   run_default "$dir"
@@ -714,8 +760,8 @@ test_an_app_key_mounted_out_of_the_wrong_secret_is_a_finding() {
 {"spec":{"template":{"spec":{"template":{"spec":{
   "serviceAccountName":"$sa",
   "containers":[{"env":[
-    {"name":"CLAUDE_CODE_OAUTH_TOKEN","valueSource":{"secretKeyRef":{"secret":"$token_secret"}}},
-    {"name":"FUGARO_GITHUB_APP_PRIVATE_KEY","valueSource":{"secretKeyRef":{"secret":"$other_secret"}}}
+    {"name":"CLAUDE_CODE_OAUTH_TOKEN","valueFrom":{"secretKeyRef":{"name":"$token_secret","key":"latest"}}},
+    {"name":"FUGARO_GITHUB_APP_PRIVATE_KEY","valueFrom":{"secretKeyRef":{"name":"$other_secret","key":"latest"}}}
   ]}]}}}}}}
 JSON
   run_default "$dir"
@@ -732,9 +778,9 @@ test_another_accounts_token_mounted_beside_its_own_is_a_finding() {
 {"spec":{"template":{"spec":{"template":{"spec":{
   "serviceAccountName":"$sa",
   "containers":[{"env":[
-    {"name":"CLAUDE_CODE_OAUTH_TOKEN","valueSource":{"secretKeyRef":{"secret":"$token_secret"}}},
-    {"name":"FUGARO_GITHUB_APP_PRIVATE_KEY","valueSource":{"secretKeyRef":{"secret":"$appkey_secret"}}},
-    {"name":"OTHER_TOKEN","valueSource":{"secretKeyRef":{"secret":"$other_secret"}}}
+    {"name":"CLAUDE_CODE_OAUTH_TOKEN","valueFrom":{"secretKeyRef":{"name":"$token_secret","key":"latest"}}},
+    {"name":"FUGARO_GITHUB_APP_PRIVATE_KEY","valueFrom":{"secretKeyRef":{"name":"$appkey_secret","key":"latest"}}},
+    {"name":"OTHER_TOKEN","valueFrom":{"secretKeyRef":{"name":"$other_secret","key":"latest"}}}
   ]}]}}}}}}
 JSON
   run_default "$dir"
@@ -868,6 +914,7 @@ t test_two_jobs_for_one_account_stop
 t test_the_review_variant_beside_the_job_is_not_a_second_job
 t test_two_mountless_jobs_beside_the_job_stop
 t test_a_lone_job_that_mounts_nothing_is_still_read
+t test_the_other_entry_spelling_gcloud_has_printed_is_read_too
 t test_a_job_list_that_is_denied_stops
 t test_no_token_mount_is_a_finding
 t test_two_token_mounts_are_a_finding

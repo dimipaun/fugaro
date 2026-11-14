@@ -669,6 +669,30 @@ def job_spec(doc):
     return (spec.get("template") or {}).get("spec") or {}
 
 
+def secret_of(entry):
+    """The Secret Manager secret an environment entry mounts, or "" for a plain
+    one. The reference is read in both spellings the APIs carry it in, so that
+    whichever one gcloud answers with is read: run/v1's EnvVar names it
+    valueFrom.secretKeyRef.name (google.golang.org/api's run/v1 EnvVarSource),
+    and run/v2's GoogleCloudRunV2EnvVar names the same secret
+    valueSource.secretKeyRef.secret. A reader that knew one spelling only would
+    see every entry of a real job as plain: the account's coding job would look
+    exactly like the review-only variant beside it, and this check would stop on
+    a listing it cannot resolve instead of reading the account's own job."""
+    ref = (entry.get("valueFrom") or {}).get("secretKeyRef") or {}
+    secret = ref.get("name") or ""
+    if not secret:
+        ref = (entry.get("valueSource") or {}).get("secretKeyRef") or {}
+        secret = ref.get("secret") or ""
+    return secret
+    ref = (entry.get("valueFrom") or {}).get("secretKeyRef") or {}
+    secret = ref.get("name") or ""
+    if not secret:
+        ref = (entry.get("valueSource") or {}).get("secretKeyRef") or {}
+        secret = ref.get("secret") or ""
+    return secret
+
+
 def secret_mounts(doc):
     """How many secret-backed environment entries a job document mounts. It is
     what tells the account's coding job from the review-only variant deployed
@@ -679,8 +703,7 @@ def secret_mounts(doc):
     mounted = 0
     for container in job_spec(doc).get("containers") or []:
         for entry in container.get("env") or []:
-            ref = (entry.get("valueSource") or {}).get("secretKeyRef") or {}
-            if ref.get("secret"):
+            if secret_of(entry):
                 mounted += 1
     return mounted
 
@@ -722,9 +745,9 @@ def cmd_job():
     for container in spec.get("containers") or []:
         for entry in container.get("env") or []:
             name = entry.get("name") or ""
-            ref = (entry.get("valueSource") or {}).get("secretKeyRef") or {}
-            if ref.get("secret"):
-                print("mount=%s %s" % (name, last_segment(ref.get("secret"))))
+            secret = secret_of(entry)
+            if secret:
+                print("mount=%s %s" % (name, last_segment(secret)))
             else:
                 print("plain=%s" % name)
 
