@@ -152,7 +152,7 @@ func TestInitAnchorOldRecordFails(t *testing.T) {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
 	want := wantFail("app", "base", r.cfg, false, reasonRecordVersionOld("0.3.1"))
-	for _, s := range []string{"fugaro 0.3.1", "In order: (1) fugaro image refresh --repo acme/app --workflow app in the checkout, in your own terminal window, or with --yes from CI or a script (never in a coding agent's session; it verifies this release's base base image and pins it by digest through the installation's remote repository, points the daily image check job at it and rebuilds the image), (2) fugaro update --anchor"} {
+	for _, s := range []string{"fugaro 0.3.1", "In order: (1) fugaro image refresh --repo acme/app --workflow app in the checkout, in your own terminal window (never in a coding agent's session; it verifies this release's base base image and pins it by digest through the installation's remote repository, points the daily image check job at it and rebuilds the image), (2) fugaro update --anchor"} {
 		if !strings.Contains(want, s) {
 			t.Errorf("message lacks %q: %s", s, want)
 		}
@@ -241,6 +241,9 @@ func TestInitAnchorRecordBuiltFromAReleaseBasePasses(t *testing.T) {
 	for _, from := range []string{"us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:0.4.0", "ghcr.io/acme/fugaro-base:v0.5.1", releaseBase} {
 		r := newAnchorModeRig(t, anchorModeYAML(), true)
 		putWorkflowRecordFrom("app", "0.4.0", from)
+		// A person at the terminal is what confirms the write (T7): --yes,
+		// which the sweep dropped from the argv, is no longer a route to it.
+		fakeTerminal(t)
 		if out, _, err := anchorExec(t, "", "setup", "--anchor"); err != nil {
 			t.Fatalf("%s: %v\n%s", from, err, out)
 		}
@@ -263,7 +266,7 @@ func TestInitAnchorCustomBaseFails(t *testing.T) {
 	}
 	want := wantFail("app", "base", r.cfg, true, reasonConfigBaseCustom(ref, "base"))
 	for _, s := range []string{"the local config's base image " + ref + " for kind base is not a release >= 0.4.0", "is never replaced by fugaro update --base or fugaro image refresh",
-		"(1) remove base_images.base from " + quoteWord(r.cfg) + " (keep a backup), (2) fugaro image refresh --repo acme/app --workflow app in the checkout, in your own terminal window, or with --yes from CI or a script (never in a coding agent's session; it verifies this release's base base image and pins it by digest through the installation's remote repository, points the daily image check job at it and rebuilds the image), (3) fugaro update --anchor"} {
+		"(1) remove base_images.base from " + quoteWord(r.cfg) + " (keep a backup), (2) fugaro image refresh --repo acme/app --workflow app in the checkout, in your own terminal window (never in a coding agent's session; it verifies this release's base base image and pins it by digest through the installation's remote repository, points the daily image check job at it and rebuilds the image), (3) fugaro update --anchor"} {
 		if !strings.Contains(want, s) {
 			t.Errorf("message lacks %q: %s", s, want)
 		}
@@ -297,6 +300,8 @@ func TestInitAnchorOldManagedBaseFails(t *testing.T) {
 	r = newAnchorModeRig(t, anchorModeYAML(), true)
 	r.appendConfig(t, "base_images:\n  base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:0.4.0\n")
 	putWorkflowRecord("app", "0.4.0")
+	// The write is the terminal's to confirm (T7).
+	fakeTerminal(t)
 	if out, _, err := anchorExec(t, "", "setup", "--anchor"); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -458,21 +463,15 @@ func TestTheAnchorAndRepoRefusalNamesTheReadersDoor(t *testing.T) {
 	}
 }
 
-// (k) The confirmation matrix: --yes writes without asking; no terminal and
-// no --yes prints the line and exits 1; a terminal writes it too, reading
-// nothing (T7).
+// (k) The confirmation matrix: no terminal prints the line and exits 1; a
+// terminal writes it too, reading nothing (T7). The row that said "--yes
+// writes without asking" went with the flag: nothing in argv writes the line
+// now, and the run that is not at a terminal is the row below.
 func TestInitAnchorConfirmation(t *testing.T) {
+	noTerminal(t)
 	r := newAnchorModeRig(t, anchorModeYAML(), true)
 	putWorkflowRecord("app", "0.4.0")
 	out, _, err := anchorExec(t, "", "setup", "--anchor")
-	if err != nil || out != rigDiff(r.path)+"  confirmed by --yes\n"+rigUpdated(r.path) {
-		t.Fatalf("--yes: err %v\n%s", err, out)
-	}
-	r.check(t, withRigAnchor(r.yaml))
-
-	r = newAnchorModeRig(t, anchorModeYAML(), true)
-	putWorkflowRecord("app", "0.4.0")
-	out, _, err = anchorExec(t, "", "setup", "--anchor")
 	if ExitCode(err) != ExitUserError || out != rigDiff(r.path)+rigAddLine(r.path) {
 		t.Fatalf("no terminal: exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
@@ -513,19 +512,24 @@ func TestInitAnchorExcludesTheOtherModes(t *testing.T) {
 	}
 }
 
-// (m) --json prints one object, on success and on a failed precondition.
+// (m) --json prints one object, on a run that confirms no step and on a
+// failed precondition.
 func TestInitAnchorJSON(t *testing.T) {
 	r := newAnchorModeRig(t, anchorModeYAML(), true)
 	putWorkflowRecord("app", "0.4.0")
 	out, _, err := anchorExec(t, "", "setup", "--anchor", "--json")
-	if err != nil {
-		t.Fatal(err)
+	// The row this one replaces was --yes --json, and --yes is gone: a --json
+	// run confirms no step at all (unconfirmedWhy), so the object carries the
+	// line it did not write rather than the one it did.
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d, %v\n%s", ExitCode(err), err, out)
 	}
 	var res initResult
-	if err := json.Unmarshal([]byte(out), &res); err != nil || res.Anchor == nil || res.Anchor.State != "written" || res.Anchor.Path != r.path || res.Anchor.Line != anchorRigLine || res.Project != "aurora" {
+	if err := json.Unmarshal([]byte(out), &res); err != nil || res.Anchor == nil || res.Anchor.State != "not_written" ||
+		len(res.Anchor.Problems) != 0 || res.Anchor.Path != r.path || res.Anchor.Line != anchorRigLine || res.Project != "aurora" || res.Error == "" {
 		t.Fatalf("%v %+v\n%s", err, res.Anchor, out)
 	}
-	r.check(t, withRigAnchor(r.yaml))
+	r.check(t, r.yaml)
 
 	r = newAnchorModeRig(t, anchorModeYAML(), true)
 	putWorkflowRecord("app", "0.3.1")
@@ -695,23 +699,31 @@ func (r *initRig) repoReady(t *testing.T) {
 }
 
 // End to end through the init rig: update --repo in the checkout of a listed
-// repository without the line ends with the note, once, on stderr under
-// --json; never with --plan-only.
+// repository without the line ends with the note, once; never with
+// --plan-only.
+//
+// The first row was --yes --no-build --json, and neither --yes nor --json is a
+// route to it any more: a --json run confirms no step, so it stops at the
+// local config's own write before the note, and the surviving run is the same
+// one at a terminal, with the note on the run's own stream.
 func TestInitRepoEndToEndNotesTheAnchor(t *testing.T) {
 	for _, c := range []struct {
 		args []string
 		want int
-	}{{[]string{"--no-build", "--json"}, 1}, {[]string{"--plan-only", "--no-build"}, 0}} {
+	}{{[]string{"--no-build"}, 1}, {[]string{"--plan-only", "--no-build"}, 0}} {
 		r := newInitRig(t)
 		r.repoReady(t)
 		dir := repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", checkoutYAML("bitbucket", "oauth", "aurora", ""))
 		t.Chdir(dir)
+		// The run reaches its end — and the note — only where a person is at
+		// the terminal (T7): --plan-only is the row that writes nothing.
+		fakeTerminal(t)
 		out, errOut, err := executeStdin(t, "", append([]string{"setup", "--repo"}, c.args...)...)
 		if err != nil {
 			t.Fatalf("%v: %v\n%s\n%s", c.args, err, out, errOut)
 		}
 		note := "note: " + anchorHintText + "\n"
-		if n := strings.Count(errOut+out, note); n != c.want || strings.Contains(out, note) {
+		if n := strings.Count(out+errOut, note); n != c.want {
 			t.Errorf("%v: %d notes\nstdout:\n%s\nstderr:\n%s", c.args, n, out, errOut)
 		}
 	}
