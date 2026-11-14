@@ -283,10 +283,10 @@ revoke_impersonation() {
   GRANTS_ADDED=()
 }
 
-# impersonated_token SA ERRFILE: the grant takes a few seconds to reach the
+# impersonated_token SA ERRFILE: the grant took about a minute to reach the
 # token endpoint, and a refusal in that window reads like a missing permission.
 impersonated_token() {
-  local sa=$1 err=$2 n=0 tries=${CHECK96_GRANT_TRIES:-12} tok
+  local sa=$1 err=$2 n=0 tries=${CHECK96_GRANT_TRIES:-48} tok
   while :; do
     if tok=$(gcloud auth print-identity-token --impersonate-service-account="$sa" \
       --audiences="$SVCURL" --include-email 2>"$err") && [ -n "$tok" ]; then
