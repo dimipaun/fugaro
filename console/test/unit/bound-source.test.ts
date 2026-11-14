@@ -645,26 +645,30 @@ describe('the graph read, whose scope a previous answer taught', () => {
     } as unknown as CliSource
   }
 
-  it('drops the floor when a move applied, so the re-read after it is a real read', async () => {
-    // **The one event that makes a held document wrong.** The floor is a claim
-    // that the document has not changed, and §6.24's `applied` is the record
-    // changed: the screen re-reads the document the move changed before it
-    // offers the undo (design section 5.1 rule 14), and that re-read is what
-    // re-teaches the source the release the record holds **now** -- the
-    // `--expect` the inverse is built with. Served from the floor, it would
-    // answer the document from before the move, and the CLI's compare-and-set
-    // would refuse the undo and every further move of that task.
+  it('drops the floor on the two answers that say the record moved under it', async () => {
+    // **The events that make a held document wrong.** The floor is a claim that
+    // the document has not changed: §6.24's `applied` is the record changed, and
+    // a `refused` outcome carrying `current` is GV3.1's compare-and-set saying
+    // the record holds something else than the document this source drew from.
+    // Either way the screen re-reads before it offers the undo or the next move
+    // (design section 5.1 rule 14), and that re-read is what re-teaches the
+    // source the release the record holds **now** -- the `--expect` the inverse
+    // and every further move are built with. Served from the floor, it would
+    // answer the document from before, and the CLI's compare-and-set would refuse
+    // the undo and every retry of that move. A refusal that names no `current`
+    // changed nothing: the document the floor holds is still what the record says.
     const before = { sources: [{ source: 'coordinator' }], read: 'before' }
     const after = { sources: [{ source: 'coordinator' }], read: 'after' }
+    const applied = { sources: [{ source: 'coordinator' }], read: 'after-the-apply' }
     const spawned: unknown[] = []
     const at = Date.parse('2026-11-07T12:00:00Z')
     let outcome: RoadmapMoveOutcome | null = null
     const source = createBoundSource({
       installation: () => FIRST,
       // The clock does not move: the minute the floor holds never runs out, so
-      // a spawn after the move can only be the drop.
+      // a spawn after a move can only be the drop.
       clock: () => new Date(at),
-      create: async () => aMoveSource([before, after], spawned, () => outcome),
+      create: async () => aMoveSource([before, after, applied], spawned, () => outcome),
     })
 
     await source.graphRead({})
@@ -672,26 +676,34 @@ describe('the graph read, whose scope a previous answer taught', () => {
     expect((await source.graphRead({})).document).toEqual(before)
     expect(spawned).toHaveLength(1)
 
-    // A refusal changed nothing, so the document the floor holds is still what
-    // the record says and the floor stays.
-    outcome = { status: 'refused', request: 'r1', reason: 'stale expect', current: 'rel-b' }
+    // A refusal with nothing to say about what the record holds changed nothing,
+    // so the document the floor holds is still the record's and the floor stays.
+    outcome = { status: 'refused', request: 'r1', reason: 'no such release', current: null }
     await source.roadmapMove({ node: 'k1', toRelease: 'rel-a', confirmed: true })
     await source.graphRead({})
-    expect(spawned, 'a refused move dropped the graph read’s floor').toHaveLength(1)
+    expect(spawned, 'a refusal that named no current dropped the graph read’s floor').toHaveLength(1)
 
-    outcome = { status: 'applied', request: 'r2', reason: null, current: null }
+    // The stale `expect` is the other half: someone else moved the task, the
+    // record says which release it holds now, and the document in hand is the one
+    // from before that move.
+    outcome = { status: 'refused', request: 'r2', reason: 'stale expect', current: 'rel-b' }
     await source.roadmapMove({ node: 'k1', toRelease: 'rel-a', confirmed: true })
-    const fresh = await source.graphRead({})
-    expect(spawned, 'the re-read after an applied move was served from the floor').toHaveLength(2)
+    const moved = await source.graphRead({})
+    expect(spawned, 'a stale-expect refusal was served from the floor').toHaveLength(2)
     expect(
-      fresh.document,
-      'the re-read answered the document from before the move',
+      moved.document,
+      'the re-read after the refusal answered the document from before the move it refused',
     ).toEqual(after)
-
-    // And the new answer is the one the floor now holds, on the same terms as
-    // any other read.
+    // And the new answer is the one the floor now holds, on the same terms as any
+    // other read.
     expect((await source.graphRead({})).document).toEqual(after)
     expect(spawned).toHaveLength(2)
+
+    outcome = { status: 'applied', request: 'r3', reason: null, current: null }
+    await source.roadmapMove({ node: 'k1', toRelease: 'rel-b', confirmed: true })
+    const fresh = await source.graphRead({})
+    expect(spawned, 'the re-read after an applied move was served from the floor').toHaveLength(3)
+    expect(fresh.document, 'the re-read answered the document from before the move').toEqual(applied)
   })
 })
 

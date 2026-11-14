@@ -8420,6 +8420,35 @@ function moveBridge(
   return { ...base, sent }
 }
 
+/** heldMoveBridge is the same bridge with the answers in the case's own hands:
+ * every `moveRoadmapTask` is recorded as it is made and left unanswered until
+ * `answerWith` hands it one. **That is how a preview that lands after the next
+ * gesture is written at all** -- a child's answer arrives when the record says,
+ * and the operators of this screen are perfectly capable of dragging a second
+ * task, choosing another box, or pressing Escape while it is out. */
+function heldMoveBridge(): {
+  readonly bridge: Record<string, unknown>
+  readonly sent: readonly Record<string, unknown>[]
+  readonly answerWith: (index: number, reply: unknown) => void
+} {
+  const { bridge } = moveBridge([])
+  const sent: Record<string, unknown>[] = []
+  const waiting: ((reply: unknown) => void)[] = []
+  bridge['moveRoadmapTask'] = (args: unknown): unknown => {
+    sent.push(args as Record<string, unknown>)
+    return new Promise((resolve) => waiting.push(resolve))
+  }
+  return {
+    bridge,
+    sent,
+    answerWith: (index, reply) => {
+      const resolve = waiting[index]
+      if (resolve === undefined) throw new Error(`no move has been called ${index + 1} times`)
+      resolve(reply)
+    },
+  }
+}
+
 /** scopeRow is one row of the coordinator drawing by the key it carries. */
 function scopeRow(document: FakeDocument, key: string): FakeNode {
   const row = classed(panelOf(document), 'graph-scope-node').find((each) => each.attributes.get('data-key') === key)
@@ -8437,6 +8466,12 @@ function moveButton(document: FakeDocument, key: string): FakeNode {
 /** movedSheet is the sheet on the drawing, and its phase. */
 function movedSheet(document: FakeDocument): FakeNode | undefined {
   return classed(panelOf(document), 'graph-move')[0]
+}
+
+/** sheetWords is the command line the sheet shows, word by word -- the whole of
+ * what a confirmation of it would spawn, as the drawing spells it. */
+function sheetWords(document: FakeDocument): readonly string[] {
+  return classed(panelOf(document), 'graph-move-word').map((each) => each.textContent ?? '')
 }
 
 /** theSelect is the sheet's own select of boxes. */
@@ -8711,5 +8746,105 @@ describe('the move the Graph screen wires', () => {
     confirm?.click()
     await flush()
     expect(sent, 'a preview made against the old installation was confirmed after the switch').toHaveLength(1)
+  })
+
+  it('never draws a preview that landed after the next gesture, and confirms the move the sheet shows', async () => {
+    // **The defect a late answer is.** A preview is a child, so its answer lands
+    // when the record answers rather than when the operator stopped; two gestures
+    // can therefore be in flight at once, and the earlier one's answer drawn over
+    // the later one's sheet is a confirmation that runs a move nobody saw. The
+    // two here are the two the sheet is reachable by: a drag onto no release, and
+    // the row's own button with the other box chosen from the list.
+    const { bridge, sent, answerWith } = heldMoveBridge()
+    const document = await openMoveGraph(bridge)
+    const loose = classed(panelOf(document), 'graph-scope-unassigned')[0]
+    if (loose === undefined) throw new Error('the drawing holds no unassigned group')
+    fireDrag(scopeRow(document, MOVE_NODE), 'dragstart')
+    fireDrag(loose, 'drop')
+    await flush()
+    moveButton(document, MOVE_NODE).click()
+    await flush()
+    await chooseBox(document, MOVE_OTHER)
+    expect(sent).toEqual([
+      { node: MOVE_NODE, toRelease: '', confirmed: false },
+      { node: MOVE_NODE, toRelease: MOVE_OTHER, confirmed: false },
+    ])
+
+    // The gesture in hand answers first: the sheet is the move onto the other
+    // box, drawn from the main process's own answer.
+    const shown = moveAnswer()
+    answerWith(1, { ok: true, data: shown })
+    await flush()
+    expect(movedSheet(document)?.attributes.get('data-phase')).toBe('preview')
+    expect(sheetWords(document)).toEqual(shown['argv'])
+
+    // The drag's own answer lands after it -- the unassign, a move onto no
+    // release at all. Drawn, the sheet would show `--to ''` while the flow held
+    // the request the second preview drew, which is exactly the reported case:
+    // the sheet showed one box and the click sent the other.
+    answerWith(0, { ok: true, data: moveAnswer({ to: '' }) })
+    await flush()
+    expect(sheetWords(document), 'the sheet was redrawn from the answer to the gesture before it').toEqual(
+      shown['argv'],
+    )
+
+    // And the confirmation is what the sheet draws, on the same two ids.
+    classed(panelOf(document), 'graph-move-confirm')[0]?.click()
+    await flush()
+    expect(sent.at(-1), 'the confirmation sent a move the sheet did not draw').toEqual({
+      node: MOVE_NODE,
+      toRelease: MOVE_OTHER,
+      confirmed: true,
+    })
+  })
+
+  it('never puts the sheet back up after an Escape that was answered while the record was being asked', async () => {
+    // The same drop from the other side, and the second half of the report: the
+    // Escape drops the request, so the sheet that a late answer would put back up
+    // is one offering a confirming button for a request the flow no longer holds
+    // -- an inert "Move it" over a row the keyboard has already gone back to.
+    const { bridge, sent, answerWith } = heldMoveBridge()
+    const document = await openMoveGraph(bridge)
+    moveButton(document, MOVE_NODE).click()
+    await flush()
+    await chooseBox(document, MOVE_BOX)
+    expect(movedSheet(document)?.attributes.get('data-phase')).toBe('reading')
+
+    movedSheet(document)?.press('Escape')
+    await flush()
+    expect(movedSheet(document)).toBeUndefined()
+
+    answerWith(0, { ok: true, data: moveAnswer() })
+    await flush()
+    expect(movedSheet(document), 'the sheet came back after the Escape that closed it').toBeUndefined()
+    expect(sent).toEqual([{ node: MOVE_NODE, toRelease: MOVE_BOX, confirmed: false }])
+  })
+
+  it('re-reads the drawing after a move the record refused, as well as after one it applied', async () => {
+    // **A refusal is not a reason to keep the picture.** The refusal this screen
+    // shows is the record saying the release it holds is not the one the document
+    // in hand names, so the drawing behind the sheet, the sheet's own `in` field
+    // and the `--expect` of the next move are all about a record that has moved.
+    // The source drops its floor for that answer, and this is the read that makes
+    // the drop count.
+    const { bridge, calls } = moveBridge([
+      { ok: true, data: moveAnswer() },
+      { ok: true, data: moveAnswer({ status: 'refused' }) },
+    ])
+    const document = await openMoveGraph(bridge)
+    const before = calls.filter((call) => call.name === 'graphRead').length
+    moveButton(document, MOVE_NODE).click()
+    await flush()
+    await chooseBox(document, MOVE_BOX)
+    classed(panelOf(document), 'graph-move-confirm')[0]?.click()
+    await flush()
+
+    expect(movedSheet(document)?.attributes.get('data-phase')).toBe('answered')
+    expect(calls.filter((call) => call.name === 'graphRead').length, 'the refused move drew no fresh graph').toBe(
+      before + 1,
+    )
+    // A refused move is no move to undo: the way back is offered for what the
+    // record applied and nothing else.
+    expect(classed(panelOf(document), 'graph-move-undo')).toHaveLength(0)
   })
 })

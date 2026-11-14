@@ -3939,6 +3939,23 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    */
   let dragging: string | null = null
   let choosing: string | null = null
+  /**
+   * **moveTurn is which gesture the sheet on screen is the answer to**, and it
+   * lives out here with the two above for the same reason.
+   *
+   * A preview is a child, so its answer lands after whatever the operator did
+   * next: a second drop, another choice from the list, Escape, or the
+   * confirmation of the sheet already up. A drawing made from an answer to a
+   * gesture that is over is the defect this number exists for -- a sheet showing
+   * one release while the flow holds the request for another is a confirmation
+   * that runs what is not drawn -- so every gesture takes a new turn, and a
+   * continuation draws only while its own turn is still the one in hand.
+   */
+  let moveTurn = 0
+  const takeMoveTurn = (): number => {
+    moveTurn += 1
+    return moveTurn
+  }
   const moveFlowNow = (): MoveFlow => {
     moveFlow ??= new MoveFlow({
       move: async (args) => {
@@ -4919,21 +4936,31 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
 
     /** openMove previews one move and draws the answer: the reading sheet while
      * the record is being asked, then the command line it answered with, or the
-     * sentence a refusal came with. */
+     * sentence a refusal came with. **The answer is drawn only while this gesture
+     * is still the current one**: a drop on another box, the list's own choice or
+     * an Escape replaces the sheet, and the reading this call started is then an
+     * answer to a question nobody is asking -- drawn anyway, it is a sheet
+     * showing one move over the request of another, and the confirming click
+     * would run the move the flow holds rather than the one on screen. */
     const openMove = (node: string, toRelease: string): void => {
+      const mine = takeMoveTurn()
       choosing = null
       drawMove({ request: { node, toRelease }, answer: null, sentence: null }, CANCEL_BUTTON)
       void moveFlowNow()
         .preview({ node, toRelease })
         .then((sheet) => {
+          if (mine !== moveTurn || sheet === null) return
           drawMove(sheet, sheet.answer === null ? CANCEL_BUTTON : CONFIRM_BUTTON)
         })
     }
 
     /** closeMove is Cancel, and the Escape that stands for it: the request is
      * dropped by the flow, so nothing is sent, and the keyboard goes back to the
-     * row the move was about. */
+     * row the move was about. A preview still reading is dropped with the request
+     * it was made for -- the answer would otherwise put the sheet back up over
+     * the row a person has just gone back to. */
     const closeMove = (): void => {
+      takeMoveTurn()
       const flow = moveFlowNow()
       const key = choosing ?? flow.pending?.node ?? null
       flow.decline()
@@ -4942,32 +4969,40 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     }
 
     /** confirmMove runs the move the sheet drew -- the flow answers `null` for a
-     * second press, a stale key or a declined sheet, and sends nothing -- and a
-     * move the record applied is followed by a re-read: the document in hand is
-     * now the one from before it, and the way back would be refused as stale. */
+     * second press, a stale key or a declined sheet, and sends nothing -- and is
+     * followed by a re-read of the drawing, whatever the record answered. A move
+     * it applied leaves the document in hand the one from before it, so the way
+     * back would be refused as stale; a **refused** one is the record saying the
+     * release it holds is not the one this console drew, which leaves the sheet's
+     * own `in` field, the drawing behind it and the `--expect` of every next
+     * move about a record that is no longer there. */
     const confirmMove = (): void => {
+      const mine = takeMoveTurn()
       void moveFlowNow()
         .confirm()
         .then(async (sheet) => {
-          if (sheet === null) return
+          if (sheet === null || mine !== moveTurn) return
           const applied = sheet.answer?.outcome?.status === 'applied'
           drawMove(sheet, applied ? UNDO_BUTTON : CANCEL_BUTTON)
-          if (!applied) return
           await readScope(claim(), graphRead.start())
-          // The way back is drawn again over the fresh document, and the keyboard
-          // goes there: a reader who confirmed with the keyboard is left on the
-          // button that undoes it rather than nowhere.
-          drawMove(sheet, UNDO_BUTTON)
+          // The sheet is drawn again over the fresh document, and the keyboard
+          // goes to the button that answers it in the light of what the record
+          // said: a reader who confirmed with the keyboard is left on the way
+          // back rather than nowhere.
+          if (mine !== moveTurn) return
+          drawMove(sheet, applied ? UNDO_BUTTON : CANCEL_BUTTON)
         })
     }
 
     /** undoMove is the inverse move, previewed like any other: it does not run
-     * anything, it puts a sheet up. */
+     * anything, it puts a sheet up. Its answer is dropped while a newer gesture
+     * is in hand, exactly as `openMove`'s is. */
     const undoMove = (): void => {
+      const mine = takeMoveTurn()
       void moveFlowNow()
         .undo()
         .then((sheet) => {
-          if (sheet === null) return
+          if (mine !== moveTurn || sheet === null) return
           drawMove(sheet, sheet.answer === null ? CANCEL_BUTTON : CONFIRM_BUTTON)
         })
     }
@@ -5016,7 +5051,10 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       const key = button.getAttribute('data-key') ?? ''
       surface.nodeOf(button).addEventListener('click', () => {
         // The keyboard's way into a move: the sheet opens on the list of boxes
-        // and nothing is asked of the record until one is chosen.
+        // and nothing is asked of the record until one is chosen. It is a gesture
+        // like any other, so it takes the turn: a preview still reading for the
+        // sheet that was up must not draw itself over this one.
+        takeMoveTurn()
         choosing = key
         drawMove({ request: null, answer: null, sentence: null }, TARGET_SELECT)
       })
@@ -8674,8 +8712,11 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     // And the move in hand is that installation's too: the request a confirm
     // would send, the answer an undo inverts and the two gestures in flight are
     // all about the record the console just left -- a drag whose `dragend` never
-    // came would otherwise make the next drop move this installation's key.
+    // came would otherwise make the next drop move this installation's key. The
+    // turn is taken as well, so a preview still reading for the old record draws
+    // nothing over the drawing that replaces it.
     moveFlow = null
+    takeMoveTurn()
     dragging = null
     choosing = null
     graph.readAt = 0

@@ -189,6 +189,34 @@ function recording(read: (args: MoveRequest & { confirmed: boolean }) => MoveRea
   }
 }
 
+/** aHeldPort is a port whose answers the case hands over itself: each call is
+ * recorded when it is made and its read stays unanswered until `answerWith` is
+ * given one. **That is how a read that lands after the gesture which replaced it
+ * is written at all** -- a preview the operator has since dragged past, chosen
+ * again over, or escaped out of. */
+function aHeldPort(): {
+  readonly port: MovePort
+  readonly calls: readonly (MoveRequest & { confirmed: boolean })[]
+  readonly answerWith: (index: number, read: MoveRead) => void
+} {
+  const calls: (MoveRequest & { confirmed: boolean })[] = []
+  const waiting: ((read: MoveRead) => void)[] = []
+  return {
+    port: {
+      move: (args) => {
+        calls.push({ ...args })
+        return new Promise<MoveRead>((resolve) => waiting.push(resolve))
+      },
+    },
+    calls,
+    answerWith: (index, read) => {
+      const resolve = waiting[index]
+      if (resolve === undefined) throw new Error(`no move has been called ${index + 1} times`)
+      resolve(read)
+    },
+  }
+}
+
 /** answer is one `roadmap.move` answer as the surface writes one, for the cases
  * that are about the sheet and not about the child. */
 function answer(over: Partial<RoadmapMoveAnswer> = {}): RoadmapMoveAnswer {
@@ -229,6 +257,15 @@ function ofClass(node: FakeNode, name: string): readonly FakeNode[] {
 /** words is every argv word the sheet draws, in document order. */
 function words(sheet: MoveSheet): readonly string[] {
   return ofClass(drawn(sheet), 'graph-move-word').map((each) => each.textContent ?? '')
+}
+
+/** aSheet is the sheet one preview answered, and a failed case where it answered
+ * none: `preview` hands back `null` for a read a newer gesture took the flow
+ * away from, which is what the stale-answer cases below assert on purpose and no
+ * other case here may do by accident. */
+function aSheet(sheet: MoveSheet | null): MoveSheet {
+  if (sheet === null) throw new Error('the preview answered no sheet')
+  return sheet
 }
 
 // ---------------------------------------------------------------------------
@@ -443,7 +480,7 @@ describe('preview, confirm and decline', () => {
   it('asks for the preview with `confirmed` false, and for nothing else', async () => {
     const { port, calls } = recording(() => ({ ok: true, answer: answer() }))
     const flow = new MoveFlow(port)
-    const sheet = await flow.preview({ node: NODE, toRelease: OTHER })
+    const sheet = aSheet(await flow.preview({ node: NODE, toRelease: OTHER }))
 
     expect(calls).toEqual([{ node: NODE, toRelease: OTHER, confirmed: false }])
     expect(sheet.answer?.outcome).toBeNull()
@@ -476,11 +513,94 @@ describe('preview, confirm and decline', () => {
   it('keeps a refused call as a sentence, and spawns nothing on it', async () => {
     const { port, calls } = recording(() => ({ ok: false, sentence: 'no such task' }))
     const flow = new MoveFlow(port)
-    const sheet = await flow.preview({ node: NODE, toRelease: OTHER })
+    const sheet = aSheet(await flow.preview({ node: NODE, toRelease: OTHER }))
     expect(sheet.answer).toBeNull()
     expect(sheet.sentence).toBe('no such task')
     await expect(flow.confirm()).resolves.toBeNull()
     expect(calls).toHaveLength(1)
+  })
+
+  it('drops a preview the next one replaced, and keeps the request the sheet in hand drew', async () => {
+    // **The defect this drop exists for.** A preview is a child, so its answer
+    // can land after the operator has asked for another move: drawn, the sheet
+    // would show one command line while the flow holds the request for another,
+    // and the confirming click would run the second -- the move on screen would
+    // not be the move that ran.
+    const { port, calls, answerWith } = aHeldPort()
+    const flow = new MoveFlow(port)
+    const first = flow.preview({ node: NODE, toRelease: '' })
+    const second = flow.preview({ node: NODE, toRelease: OTHER })
+    expect(calls).toEqual([
+      { node: NODE, toRelease: '', confirmed: false },
+      { node: NODE, toRelease: OTHER, confirmed: false },
+    ])
+
+    answerWith(1, { ok: true, answer: answer() })
+    const sheet = aSheet(await second)
+    expect(sheet.request).toEqual({ node: NODE, toRelease: OTHER })
+    expect(flow.pending).toEqual({ node: NODE, toRelease: OTHER })
+
+    // The first answer lands after it, and it is the **refusal** a task the
+    // record no longer holds is answered with: the worst of the two, because it
+    // is also the shape that would clear the request in hand if it were read as
+    // the flow's own state rather than as the answer to a gesture that is over.
+    answerWith(0, { ok: false, sentence: 'no such task' })
+    await expect(first).resolves.toBeNull()
+    expect(flow.pending, 'a stale answer dropped the request the sheet shows').toEqual({
+      node: NODE,
+      toRelease: OTHER,
+    })
+
+    // So the confirmation is the sheet on screen, and nothing else.
+    const confirming = flow.confirm()
+    answerWith(2, { ok: true, answer: answer({ outcome: { status: 'applied', request: 'r1', reason: null, current: null } }) })
+    const confirmed = await confirming
+    expect(calls.at(-1)).toEqual({ node: NODE, toRelease: OTHER, confirmed: true })
+    expect(confirmed?.answer?.outcome?.status).toBe('applied')
+  })
+
+  it('drops a preview the sheet was escaped out of, so no sheet comes back', async () => {
+    // The same drop from the other side: the request is gone the moment the
+    // person answers with Escape, so the answer that arrives after it is about a
+    // sheet that is no longer up -- and a sheet put back over the row the
+    // keyboard has just gone back to offers a confirming button for a request
+    // the flow has already dropped.
+    const { port, answerWith } = aHeldPort()
+    const flow = new MoveFlow(port)
+    const reading = flow.preview({ node: NODE, toRelease: OTHER })
+    expect(flow.pending).toEqual({ node: NODE, toRelease: OTHER })
+    expect(flow.decline()).toBeNull()
+
+    answerWith(0, { ok: true, answer: answer() })
+    await expect(reading).resolves.toBeNull()
+    expect(flow.pending).toBeNull()
+  })
+
+  it('never drops a confirmation’s own answer, whichever gesture follows it', async () => {
+    // **What a newer gesture makes stale is the sheet, not the record's answer.**
+    // A confirmation's request has left this flow and a child ran it, so its
+    // answer is a fact about the record rather than a drawing, and the caller
+    // (which is what knows the drawing has moved on) is the one that skips it. A
+    // flow that dropped it would lose the `applied` the way back is built from.
+    const { port, answerWith } = aHeldPort()
+    const flow = new MoveFlow(port)
+    const previewing = flow.preview({ node: NODE, toRelease: OTHER })
+    answerWith(0, { ok: true, answer: answer() })
+    await previewing
+
+    const confirming = flow.confirm()
+    // The operator asks for another move while the write is in flight.
+    const after = flow.preview({ node: NODE, toRelease: '' })
+    answerWith(1, { ok: true, answer: answer({ outcome: { status: 'applied', request: 'r1', reason: null, current: null } }) })
+    const confirmed = await confirming
+    expect(confirmed?.answer?.outcome?.status).toBe('applied')
+    expect(confirmed?.request).toEqual({ node: NODE, toRelease: OTHER })
+
+    // And the newer preview's own answer is the sheet in hand: the gesture that
+    // asked last is what a confirmation then sends.
+    answerWith(2, { ok: true, answer: answer({ to: null }) })
+    expect((await after)?.request).toEqual({ node: NODE, toRelease: '' })
+    expect(flow.pending).toEqual({ node: NODE, toRelease: '' })
   })
 })
 
@@ -498,7 +618,7 @@ describe('undo is the inverse move', () => {
     const source = await aSource(stub)
     const flow = new MoveFlow(aPort(source))
 
-    const moved = await flow.preview({ node: NODE, toRelease: OTHER })
+    const moved = aSheet(await flow.preview({ node: NODE, toRelease: OTHER }))
     expect(moved.answer?.outcome, 'the record did not apply the move').toBeNull()
     const applied = await flow.confirm()
     expect(applied?.answer?.outcome?.status).toBe('applied')

@@ -1931,20 +1931,36 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
      * state the record has moved past since (`--expect`) is the CLI's, whose
      * refusal is the sentence the screen shows.
      *
-     * **It is the one call that empties the graph read's floor.** An `applied`
-     * outcome is the record changed (§6.24), so every `graph.read` answer held
-     * here was read before the move: served from that floor, the screen's own
-     * re-read of the document the move changed would be the pre-move document,
-     * the source would not be re-taught what the record holds now, and the undo
-     * the sheet offers next -- `--expect` is the release the record holds **now**
-     * (design section 5.1 rule 14) -- would be built with the release from before
-     * the move and refused as stale by the CLI's compare-and-set, as would any
-     * further move of that task, for up to a minute. `refused`, `failed` and
-     * `pending` change nothing and leave the floor where it is.
+     * **It is the one call that empties the graph read's floor, and it does so
+     * on the two answers that say the record moved under the document.** An
+     * `applied` outcome is the record changed (§6.24), so every `graph.read`
+     * answer held here was read before the move: served from that floor, the
+     * screen's own re-read of the document the move changed would be the pre-move
+     * document, the source would not be re-taught what the record holds now, and
+     * the undo the sheet offers next -- `--expect` is the release the record
+     * holds **now** (design section 5.1 rule 14) -- would be built with the
+     * release from before the move and refused as stale by the CLI's
+     * compare-and-set, as would any further move of that task, for up to a
+     * minute.
+     *
+     * **A `refused` outcome carrying `current` is the same defect and not a
+     * hypothetical one** (GV3.1's compare-and-set): the writer checks `expect`
+     * again when the apply job runs, and the refusal it answers with carries the
+     * release the record holds now -- so the record is precisely *not* where this
+     * source's document left it, and the drawing, the preview's `in` field and
+     * every `--expect` built from it are all about a record that is gone. Left
+     * cached, the screen's own re-read is the pre-move document for the rest of
+     * the floor and each retry is refused the same way, which is what makes a
+     * string of confirmations after someone else's move look like a console that
+     * refuses everything. `failed` and `pending` change nothing and leave the
+     * floor where it is: neither says what the record now holds.
      */
     roadmapMove: async (args) => {
       const answer = await read('roadmap.move', (source) => source.roadmapMove(args))
-      if (answer.outcome?.status === 'applied') graphReads.clear()
+      const outcome = answer.outcome
+      if (outcome?.status === 'applied' || (outcome?.status === 'refused' && outcome.current !== null)) {
+        graphReads.clear()
+      }
       return answer
     },
     /** managedStatus has no precondition and no cadence, for

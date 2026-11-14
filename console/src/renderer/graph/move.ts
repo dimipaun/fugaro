@@ -414,19 +414,38 @@ export function movePhaseOf(sheet: MoveSheet, reading: boolean): MovePhase {
  * finds nothing to confirm and sends nothing. `undo` is `preview` of
  * `inverseOf` the last applied answer, which is why nothing else about undo is
  * here: it is the same request, the same confirmation and the same fence.
+ *
+ * **A read that comes back after a newer gesture is dropped, and that is what
+ * keeps the sheet and the request one thing.** The port's answer arrives a turn
+ * or a child later, and by then the operator may have dropped the task on
+ * another box, chosen another one from the list, or closed the sheet with
+ * Escape -- so an answer is handed back only while the gesture that asked for it
+ * is still the one in hand. Drawn anyway it would be a sheet saying one thing
+ * over a request saying another (the reproduced defect: a sheet drawn for a move
+ * onto no release, confirmed into the move the operator had asked for after it),
+ * and a request kept past a stale answer is the same defect from the other side.
  */
 export class MoveFlow {
   private request: MoveRequest | null = null
   private applied: RoadmapMoveAnswer | null = null
+  /** gesture is which gesture the flow is on. Every one of the three takes a new
+   * number, so an answer can be held against the gesture that asked for it
+   * rather than against the state it finds. */
+  private gesture = 0
 
   constructor(private readonly port: MovePort) {}
 
   /** preview asks the record for this move's own command line. Nothing is
    * spawned: the call carries `confirmed: false`, which is the one argument of
-   * `roadmap.move` that reaches no word of any argv. */
-  async preview(request: MoveRequest): Promise<MoveSheet> {
+   * `roadmap.move` that reaches no word of any argv. It answers `null` where a
+   * newer gesture -- another preview, a decline, a confirmation -- took the flow
+   * over while this one was reading: the answer is not the sheet in hand, and
+   * the caller draws nothing for it. */
+  async preview(request: MoveRequest): Promise<MoveSheet | null> {
+    const mine = (this.gesture += 1)
     this.request = { ...request }
     const read = await this.port.move({ ...request, confirmed: false })
+    if (mine !== this.gesture) return null
     const sheet = this.sheetOf(request, read)
     // **A preview with no command line in hand leaves nothing to confirm.** A
     // call the console refused (a task no read listed) and an answer that is
@@ -439,19 +458,28 @@ export class MoveFlow {
 
   /** confirm runs the move the **preview drew**, and nothing else: a confirm
    * with no request in hand (a declined sheet, a second click, a stale key)
-   * answers `null` and sends nothing at all. */
+   * answers `null` and sends nothing at all.
+   *
+   * Its own answer is never dropped, whatever has happened since: the request
+   * left this flow and a child ran it, so `applied` is a fact about the record
+   * rather than a drawing -- what a newer gesture makes stale is the sheet, and
+   * that is the caller's to skip. */
   async confirm(): Promise<MoveSheet | null> {
     const request = this.request
     if (request === null) return null
     this.request = null
+    this.gesture += 1
     const read = await this.port.move({ ...request, confirmed: true })
     return this.sheetOf(request, read)
   }
 
   /** decline is the sheet's other button: the request is dropped and nothing is
-   * sent. It answers `null`, which is the closed sheet. */
+   * sent. It answers `null`, which is the closed sheet. A preview still reading
+   * is dropped with it: the answer would otherwise put a sheet back up that a
+   * person has already answered with Escape. */
   decline(): null {
     this.request = null
+    this.gesture += 1
     return null
   }
 
