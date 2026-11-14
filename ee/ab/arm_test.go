@@ -6,6 +6,7 @@ package ab
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -161,14 +162,22 @@ func (f *armFixture) arm(slot task.ABSlot) (*task.Spec, string, error) {
 }
 
 // championRecord is the champion's record as its job leaves one: finished, cut
-// from armStartSHA, with the patch object it uploaded.
-func championRecord(store *runstore.Store) runstore.Record {
+// from armStartSHA, with the patch object it uploaded, and carrying the slot
+// its pair varies — the launcher writes it on both arms (B1.1), and the empty
+// slot is the coder pair A3.3 launches.
+func championRecord(store *runstore.Store, slot task.ABSlot) runstore.Record {
 	return runstore.Record{
 		Version: 1, RunID: armChampion, Repo: armRepo,
 		Status: runstore.StatusSucceeded, StartSHA: armStartSHA,
-		AB:          &task.AB{PairID: armPairID, Arm: task.ABArmChampion},
+		AB:          &task.AB{PairID: armPairID, Arm: task.ABArmChampion, Slot: slot},
 		PatchObject: runstore.PatchKey(store.Prefix()),
 	}
+}
+
+// otherPatchKey is the patch key of a run that is not the champion: the key a
+// record would name if it had been written against another run's prefix.
+func (f *armFixture) otherPatchKey(runID string) string {
+	return runstore.PatchKey(runstore.Open(f.bucket.Bucket, f.slug, runID).Prefix())
 }
 
 // armChampionTask is the task the champion ran, pair block and all: the arm is
@@ -190,7 +199,7 @@ func armChampionTask() *task.Spec {
 // the layer's challenger, publishing nothing.
 func TestABReviewerArmLaunchesAfterChampionPatch(t *testing.T) {
 	f := newArmFixture(t)
-	rec := championRecord(f.store())
+	rec := championRecord(f.store(), task.ABSlotL2)
 
 	t.Run("the champion is still running", func(t *testing.T) {
 		running := rec
@@ -218,6 +227,25 @@ func TestABReviewerArmLaunchesAfterChampionPatch(t *testing.T) {
 		arm, why, err := f.arm(task.ABSlotL2)
 		if err != nil || why != ReasonNoChampionPatch || arm != nil {
 			t.Fatalf("the arm of a champion whose patch object is absent: spec = %v, why = %q, err = %v, want %q and no task", arm, why, err, ReasonNoChampionPatch)
+		}
+	})
+
+	// The arm's read is pinned to the champion's own key, which is the key the
+	// record has to name (runstore.PatchKey): the champion's patch object is
+	// written here as well, so this case is the record's spelling and not a
+	// missing object, and a guard that let it through would replay a diff
+	// another run's prefix holds.
+	t.Run("the champion names another run's patch key", func(t *testing.T) {
+		foreign := rec
+		foreign.PatchObject = f.otherPatchKey("20261109-090000-bbbb")
+		f.seed(foreign)
+		f.putPatch(armDiff)
+		arm, why, err := f.arm(task.ABSlotL2)
+		if err == nil || arm != nil || why != "" {
+			t.Fatalf("the arm of a champion whose record names %q: spec = %v, why = %q, err = %v, want a refusal", foreign.PatchObject, arm, why, err)
+		}
+		if !strings.Contains(err.Error(), armChampion) {
+			t.Errorf("the refusal %q does not name the champion whose record it judged", err)
 		}
 	})
 
@@ -277,6 +305,49 @@ func TestABReviewerArmLaunchesAfterChampionPatch(t *testing.T) {
 	})
 }
 
+// TestABReviewerArmRefusesAnotherLevelsChampion: the arm joins the champion's
+// pair, and a pair varies one slot (B1.1). A champion whose own block names
+// another level, and one whose block names none — the coder pair A3.3
+// launches — are refused rather than joined, because two levels' arms under one
+// pair id are what B1.3 would read as a single pair and score together; the
+// same champion answers an arm at the level it does vary, which is what makes
+// this a mismatch and not a refusal of review slots.
+func TestABReviewerArmRefusesAnotherLevelsChampion(t *testing.T) {
+	f := newArmFixture(t)
+	f.putPatch(armDiff)
+	for _, tc := range []struct {
+		name      string
+		varied    task.ABSlot
+		asked     task.ABSlot
+		championN string
+	}{
+		{"the champion's pair varies another level", task.ABSlotL1, task.ABSlotL2, "l1"},
+		{"the champion's pair varies no slot", "", task.ABSlotL2, "coder"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f.seed(championRecord(f.store(), tc.varied))
+			arm, why, err := f.arm(tc.asked)
+			if err == nil || arm != nil || why != "" {
+				t.Fatalf("an arm at %s over a champion that varies %q: spec = %v, why = %q, err = %v, want a refusal", tc.asked, tc.varied, arm, why, err)
+			}
+			if !strings.Contains(err.Error(), tc.championN) {
+				t.Errorf("the refusal %q does not name the %s slot the champion's own block carries", err, tc.championN)
+			}
+		})
+	}
+
+	t.Run("the same champion answers its own level", func(t *testing.T) {
+		f.seed(championRecord(f.store(), task.ABSlotL1))
+		arm, why, err := f.arm(task.ABSlotL1)
+		if err != nil || why != "" || arm == nil {
+			t.Fatalf("an arm at l1 over a champion that varies l1: spec = %v, why = %q, err = %v", arm, why, err)
+		}
+		if arm.AB.Slot != task.ABSlotL1 {
+			t.Errorf("the arm's slot is %q, want %q", arm.AB.Slot, task.ABSlotL1)
+		}
+	})
+}
+
 // TestABReviewerArmUsesChampionStartSHA: the arm is the champion's own task cut
 // at the commit the champion's record says it started from, not at the ref that
 // task names — the champion's branch may have moved on in the hours between the
@@ -284,7 +355,7 @@ func TestABReviewerArmLaunchesAfterChampionPatch(t *testing.T) {
 // it (D555, D571's one-commit rule).
 func TestABReviewerArmUsesChampionStartSHA(t *testing.T) {
 	f := newArmFixture(t)
-	f.seed(championRecord(f.store()))
+	f.seed(championRecord(f.store(), task.ABSlotL3))
 	f.putPatch(armDiff)
 	arm, why, err := f.arm(task.ABSlotL3)
 	if err != nil || why != "" || arm == nil {

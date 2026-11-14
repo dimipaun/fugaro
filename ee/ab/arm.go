@@ -27,17 +27,23 @@ import (
 // then, cut at the commit the champion's record says the champion started
 // from rather than at a ref that resolves today.
 //
-// What the launcher does with the answer — writing the task under the arm's
-// run id and starting it, and asking the pair's own image gate before it
-// writes a slot at all — is the core's, exactly as it is for a coder pair's
-// challenger (launchChallenger, pairImageWhy). This file answers the arm's
-// task, or the one closed word why there is none to launch, and every read
-// behind that answer is a read of the champion's own objects in the runs
-// bucket.
+// Nothing in this tree asks for the arm yet. What a launcher would do with the
+// answer — writing the task under the arm's run id, asking the job image's
+// slot gate (checkSlotImage, the gate slotSince declares and docs/release.md
+// names this arm as the caller of) and starting the run — are `fugaro run`'s
+// own steps (freshLaunchGates, createTask, launchRun) and no seam this package
+// can reach exports them: launchRun is unexported, fcli.Cloud reads the runs
+// bucket and writes nothing, a Pair is always two runs written and started at
+// one moment, and the runner's step seam hands a step no launcher. So the
+// deferred launch is core work that does not exist yet, and until it does
+// nothing reads a finished champion's patch, writes a slot or asks that gate:
+// what this file carries is the decision the launch asks for, and every read
+// behind it is a read of the champion's own objects in the runs bucket.
 //
 // The slot is asked for here and never drawn: Plan writes no slot on any task,
-// so no launch of A3.3's can put a reviewer slot on the wire, and this is the
-// only launch that writes ab.slot and ab.champion_run (B1.1).
+// so no launch of A3.3's can put a reviewer slot on the wire, and the launch
+// that asks this one is the only one that writes ab.slot and ab.champion_run
+// (B1.1).
 
 // The closed reasons ReviewerArm answers with: one word per way a champion
 // that is not ready to be replayed produces no arm, in Admit's and Plan's own
@@ -74,14 +80,17 @@ const (
 // champion is the champion's record as every other reader of a run reads one
 // (fcli.RunRecord): the arm's pair, run id and start commit are the record's
 // own, so a launch cannot replay a patch of a run other than the one it names.
-// slot is the level the pair varies. The arm's model is deliberately not an
-// argument: the owner names the challengers (D556) and Admit picks one exactly
+// slot is the level the pair varies, and it is judged against the champion's
+// own block (B1.1: the launcher writes the pair's slot on both arms, and an
+// absent one means coder), so an arm is never cut at a level the champion's
+// pair does not vary. The arm's model is deliberately not an argument: the
+// owner names the challengers (D556) and Admit picks one exactly
 // as it picks a coder pair's, judged for this repository by the same rules.
 //
 // An error is for a caller that asked for an arm no champion can carry (a
-// coder slot, a run that is not a pair's champion, a patch recorded under a key
-// that is not the run's own) or for a read whose absence leaves the decision
-// unfounded. A reason is a champion that is simply not ready yet: the
+// coder slot, a run that is not a pair's champion, a slot the champion's own
+// block does not name, a patch recorded under a key that is not the run's own)
+// or for a read whose absence leaves the decision unfounded. A reason is a champion that is simply not ready yet: the
 // launcher prints it, and nothing about the champion's own run is affected,
 // just as a coder pair's skip never is (D554).
 func ReviewerArm(ctx context.Context, run fcli.PlannedRun, champion fcli.RunRecord, slot task.ABSlot) (*task.Spec, string, error) {
@@ -107,6 +116,14 @@ func ReviewerArm(ctx context.Context, run fcli.PlannedRun, champion fcli.RunReco
 	}
 	if rec.AB == nil || rec.AB.Arm != task.ABArmChampion {
 		return nil, "", fmt.Errorf("run %s is not the champion of a pair (its record names no champion arm), and a reviewer arm replays its own champion's patch", champion.ID())
+	}
+	// A pair varies one slot and the launcher writes it on both arms (B1.1,
+	// TestABSlotVocabulary): a champion whose own block names another level — or
+	// none, which is the coder pair A3.3 launches — cannot carry this arm, and
+	// joining it anyway would file two levels' arms under one pair id for B1.3
+	// to read as a single pair.
+	if varied := rec.AB.EffectiveSlot(); varied != slot {
+		return nil, "", fmt.Errorf("the champion %s is the champion of a pair that varies the %s slot, and a reviewer arm at %s cannot join it", champion.ID(), varied, slot)
 	}
 	switch {
 	case rec.Status == runstore.StatusRunning:
