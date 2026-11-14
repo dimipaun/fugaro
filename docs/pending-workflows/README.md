@@ -195,8 +195,14 @@ Three jobs, none of which holds a secret or authenticates to anything:
   nothing, deploys nothing and reaches no network. **The Terraform-tagged suite
   is deliberately not run here** — it needs the `terraform` tag, and the job
   that hands the go tool that tag is the change `## ci.yml` below stages.
-- **`firestore`** — Java 21, the pinned `firebase-tools@15.19.0`, the emulator
-  jar cache `ci.yml`'s rules job uses, and
+- **`firestore`** — Java 21, the `firebase-tools` pinned in
+  `internal/budget/rules/emulator/package.json`, installed **from that tree**
+  rather than by version, exactly as `ci.yml`'s rules job installs it: the
+  version is the rules tests' own, and the repository holds one firebase-tools
+  rather than two. The emulator-jar cache key is `ci.yml`'s character for
+  character
+  (`firebase-emulators-${{ hashFiles('internal/budget/rules/emulator/package-lock.json') }}`,
+  so a bump to that lockfile fetches one new jar for both jobs), and
   `firebase emulators:exec --only firestore --project fugaro-portal-test
   --config ee/portal/firebase.json`, which exports `FIRESTORE_EMULATOR_HOST` to
   the child and runs `go test -tags firestore ./ee/keyservice/docstore/...`
@@ -217,9 +223,10 @@ git commit -m "ci: the portal's own tests (P9.2)"
 
 **The two sentences that same commit writes**, which say what the directory is
 left holding once this file is applied — `website-preview.yml` alone, unless it
-has been applied first, in which case the pair in `## website-preview.yml` below
-is the one to write. The first goes in this file's opening line, in place of the
-one naming `portal-tests.yml`; the second replaces the sentence at the end of
+has been applied first, in which case **that** copy-in's pair is the one to
+write, and it is printed in `## website-preview.yml and website-promote.yml`
+below. The first goes in this file's opening line, in place of the one naming
+`portal-tests.yml`; the second replaces the sentence at the end of
 `website/README.md` that counts the same files:
 
 ```text
@@ -2514,6 +2521,21 @@ deliberately **not** byte-identical — the staged one is the change. So the
 copy-in's `git rm` is what makes the real file the file under test, and a
 copy-in that left the staged copy behind would leave the checks reading a file
 that is no longer the one that runs.
+
+**The two sentences that copy-in writes**, for the order in which this file is
+applied first and `portal-tests.yml` is still staged: the first goes in this
+document's opening line, in place of the one naming `website-preview.yml`, and
+the second replaces the sentence at the end of `website/README.md` that counts
+the same files. `## portal-tests.yml` above carries the pair for the other
+order.
+
+```text
+**One file is pending: `portal-tests.yml` (the portal's own tests: the SPA's vitest suite, the key service's Go suite with the deploy script's own test, and the document store's Firestore suite against the emulator).**
+```
+
+```text
+`docs/pending-workflows/` now holds one pending workflow, `docs/pending-workflows/portal-tests.yml`.
+```
 
 Two **new** workflows, both `workflow_dispatch`-only, staged by the run that
 wrote the website's deploy path (website plan Task W2.1, D91, D109, F14). They

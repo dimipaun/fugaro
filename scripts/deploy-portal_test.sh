@@ -38,7 +38,11 @@ setup() {
   rm -rf "${work:?}/repo" "${work:?}/bin" "${work:?}/calls"
   mkdir -p "$work/repo/scripts" "$work/repo/ee/portal" "$work/repo/ee/keyservice" "$work/bin"
   cp "$here/deploy-portal.sh" "$work/repo/scripts/"
-  echo '{"hosting":{"site":"fugaro-portal","public":"dist"}}' >"$work/repo/ee/portal/firebase.json"
+  echo '{"hosting":{"site":"fugaro-portal","public":"dist","rewrites":[{"source":"/api/**","run":{"serviceId":"fugaro-portal-api","region":"us-east5"}}]}}' >"$work/repo/ee/portal/firebase.json"
+  # A second configuration, naming another region: --region is only accepted
+  # where the --config it is given points, so the cases that deploy elsewhere
+  # need a configuration that says so.
+  echo '{"hosting":{"site":"fugaro-portal","public":"dist","rewrites":[{"source":"/api/**","run":{"serviceId":"fugaro-portal-api","region":"europe-west1"}}]}}' >"$work/repo/ee/portal/firebase-staging.json"
   echo '{"name":"fugaro-portal","scripts":{"build":"vite build"}}' >"$work/repo/ee/portal/package.json"
   : >"$work/repo/ee/keyservice/cloudbuild.yaml"
   : >"$work/calls"
@@ -85,13 +89,24 @@ called "go " && fail "dry run called go: $(cat "$work/calls")"
 # 2. The dry run prints every command it would run, the hosting one included and
 #    with the portal's own configuration.
 setup
-run --dry-run --project my-portal-1 --region europe-west1
+run --dry-run --project my-portal-1
 [[ $status -eq 0 ]] || fail "dry run exited $status: $out"
 [[ $out == *"would run: gcloud builds submit"* ]] || fail "dry run does not print the Cloud Build: $out"
 [[ $out == *"would run: gcloud run deploy fugaro-portal-api"* ]] || fail "dry run does not print the API's deploy: $out"
 [[ $out == *"would run: gcloud run deploy fugaro-key-minter"* ]] || fail "dry run does not print the minter's deploy: $out"
 [[ $out == *"would run: firebase deploy --only hosting,firestore:rules --project my-portal-1 --config ee/portal/firebase.json"* ]] ||
   fail "dry run does not print the hosting and rules deploy with the portal's config: $out"
+
+# 2b. --config and --region are honoured together where they agree: the staging
+#     installation's configuration names another region, and the deploy runs
+#     both the build and the two services there.
+setup
+run --dry-run --project my-portal-1 --config ee/portal/firebase-staging.json --region europe-west1
+[[ $status -eq 0 ]] || fail "the staging dry run exited $status: $out"
+[[ $out == *"would run: gcloud builds submit --config ee/keyservice/cloudbuild.yaml --project my-portal-1 --region europe-west1 ."* ]] ||
+  fail "the dry run did not build in the region it was given: $out"
+[[ $out == *"would run: firebase deploy --only hosting,firestore:rules --project my-portal-1 --config ee/portal/firebase-staging.json"* ]] ||
+  fail "the dry run did not deploy the configuration it was given: $out"
 
 # 3. A real run (stubbed) runs exactly those commands, in the deploy's order: the
 #    build, then the two services, then the hosting site and its rules.
@@ -182,6 +197,34 @@ for args in \
   [[ $status -ne 0 ]] || fail "'$args' was accepted"
   [[ ! -s $work/calls ]] || fail "'$args' ran tools before refusing: $(cat "$work/calls")"
 done
+
+# 7b. A region the configuration does not name is refused before anything runs:
+#     the SPA reaches the API through the /api/** rewrite it uploads, so a
+#     deploy to another region would put the service where that rewrite is not
+#     looking, and no command line would say so.
+for args in \
+  "--region us-central1 --dry-run" \
+  "--config ee/portal/firebase-staging.json --region us-east5 --dry-run"; do
+  setup
+  # shellcheck disable=SC2086 # word splitting is the point
+  run $args
+  [[ $status -ne 0 ]] || fail "'$args' was accepted: a region the configuration does not name is a service the SPA cannot reach"
+  [[ $out == *"not the region"* ]] || fail "'$args' was refused without naming the mismatch: $out"
+  [[ ! -s $work/calls ]] || fail "'$args' ran tools before refusing: $(cat "$work/calls")"
+done
+
+# 7c. A configuration that names no region, or more than one, is refused too:
+#     the check has to have one region to hold the flag to.
+setup
+echo '{"hosting":{"site":"fugaro-portal","public":"dist"}}' >"$work/repo/ee/portal/firebase.json"
+run --dry-run
+[[ $status -ne 0 && $out == *"exactly one region"* ]] || fail "a configuration with no region was accepted: $out"
+[[ ! -s $work/calls ]] || fail "a configuration with no region ran tools first: $(cat "$work/calls")"
+setup
+echo '{"hosting":{"public":"dist","rewrites":[{"source":"/api/**","run":{"region":"us-east5"}},{"source":"/**","run":{"region":"us-east5"}}]}}' >"$work/repo/ee/portal/firebase.json"
+run --dry-run
+[[ $status -ne 0 && $out == *"exactly one region"* ]] || fail "a configuration naming two regions was accepted: $out"
+[[ ! -s $work/calls ]] || fail "a configuration naming two regions ran tools first: $(cat "$work/calls")"
 
 # 8. A missing tool is refused before anything runs.
 for tool in gcloud firebase; do

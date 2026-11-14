@@ -94,8 +94,9 @@ jobs:
         run: go test -count=1 -timeout 25m ./ee/keyservice/...
       # The deploy script's own test, with node, npm, gcloud, firebase, git and
       # go stubbed on PATH: it builds nothing, deploys nothing and reaches no
-      # network. It is the only thing that runs the script at all, which is why
-      # it runs here rather than in a job of its own.
+      # network. `go test ./scripts/` runs it too, through
+      # scripts/deploy-portal_test.go; here it runs beside the key service's
+      # suite because the two are the two halves of the same deployment.
       - name: the portal deploy script's test
         run: bash scripts/deploy-portal_test.sh
 
@@ -124,18 +125,23 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
-      # The same firebase-tools version the repository pins for the rules tests
-      # (internal/budget/rules/emulator), so there is one version in the tree
-      # rather than two.
-      - name: install the pinned firebase CLI
-        run: npm install --global --no-audit --no-fund firebase-tools@15.19.0
+      # The lockfile is written by npm 11.19.0; the npm that ships with Node 22
+      # resolves the optional picomatch peer differently and refuses it -- the
+      # same reason ci.yml's rules job pins it.
+      - name: pin npm to the version that wrote the lockfile
+        run: npm install --global npm@11.19.0
+      # internal/budget/rules/emulator's own tree, which is what pins the
+      # firebase-tools the emulator is: installing it from there rather than by
+      # version keeps ONE firebase-tools in the tree, and the cache key below is
+      # literally ci.yml's so the two jobs share one emulator jar.
+      - name: install the pinned firebase-tools
+        working-directory: internal/budget/rules/emulator
+        run: npm ci --ignore-scripts --no-audit --no-fund
       - name: cache the emulator jar
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/firebase/emulators
-          # Keyed on the firebase-tools version this job installs, which is what
-          # decides which emulator jar is downloaded; bump it with the version.
-          key: firebase-emulators-firebase-tools-15.19.0
+          key: firebase-emulators-${{ hashFiles('internal/budget/rules/emulator/package-lock.json') }}
       # `emulators:exec` starts the emulator from the portal's own configuration
       # -- ee/portal/firebase.json's `emulators` block, and the firestore block
       # whose rules the deploy uploads -- exports FIRESTORE_EMULATOR_HOST to the
@@ -143,6 +149,7 @@ jobs:
       - name: the document store's Firestore suite
         run: |
           set -euo pipefail
-          firebase emulators:exec --only firestore --project fugaro-portal-test \
+          firebase_cli="$PWD/internal/budget/rules/emulator/node_modules/.bin/firebase"
+          "$firebase_cli" emulators:exec --only firestore --project fugaro-portal-test \
             --config ee/portal/firebase.json \
             'go test -tags firestore -count=1 -timeout 15m ./ee/keyservice/docstore/...'

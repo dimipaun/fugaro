@@ -12,7 +12,9 @@
 #                        The staging installation is fugaro-staging.
 #   --region <region>    the region the two Cloud Run services and the build run in
 #                        (default: us-east5, the region ee/portal/firebase.json's
-#                        /api/** rewrite names).
+#                        /api/** rewrite names). The rewrite is where the SPA
+#                        sends every call, so a value the --config does not name
+#                        is refused rather than deployed to.
 #   --config <path>      the Firebase configuration -- the Hosting site and the
 #                        Firestore rules -- relative to the repository root
 #                        (default: ee/portal/firebase.json). The portal has its own:
@@ -127,6 +129,19 @@ done
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$root"
 [[ -f $config ]] || die "the Firebase configuration is missing: $config"
+
+# The region is not the operator's to pick freely: the SPA reaches the API
+# through the /api/** rewrite in the configuration above, so a service deployed
+# anywhere else is one that rewrite cannot reach. The configuration names
+# exactly one region -- the run rewrite's -- and the flag has to agree with it.
+# It is read as text rather than parsed, so this needs no tool beyond the five
+# the rest of the script requires.
+config_regions=$(grep -o '"region"[[:space:]]*:[[:space:]]*"[^"]*"' "$config" | sed 's/.*"\([^"]*\)"$/\1/' || true)
+if [[ -z $config_regions || $config_regions == *$'\n'* ]]; then
+  die "$config does not name exactly one region: its /api/** rewrite's is the one the SPA reaches the API through, and this deploy has to run where it points"
+fi
+[[ $region == "$config_regions" ]] ||
+  die "--region $region is not the region $config's /api/** rewrite names ($config_regions): the SPA reaches the API through that rewrite, so a service deployed elsewhere is one it cannot reach"
 
 for tool in node npm gcloud firebase git; do
   command -v "$tool" >/dev/null 2>&1 || die "$tool is not installed or not on PATH"
