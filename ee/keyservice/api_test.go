@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -213,9 +214,10 @@ func TestNewRefusesASeamOnlyAMountedRouteReaches(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		miss func(*Deps)
+		need apiNeed
 	}{
-		{name: "no document store", miss: func(d *Deps) { d.Docs = nil }},
-		{name: "no sign-in verifier", miss: func(d *Deps) { d.SignIn = nil }},
+		{name: "no document store", miss: func(d *Deps) { d.Docs = nil }, need: needDocs},
+		{name: "no sign-in verifier", miss: func(d *Deps) { d.SignIn = nil }, need: needSignIn},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			deps := *f.deps
@@ -224,8 +226,13 @@ func TestNewRefusesASeamOnlyAMountedRouteReaches(t *testing.T) {
 			if err == nil {
 				t.Fatalf("the service started with %s, want a refusal: a mounted route would answer every request with a failure of its own", tc.name)
 			}
-			if !strings.Contains(err.Error(), apiProbePath) {
-				t.Errorf("the refusal is %q, want it to name the route that reaches the seam", err)
+			// The route the refusal names is the first mounted one that reaches
+			// the seam, and it is read off the table rather than named here: an
+			// area registers its own routes from its own file's init, so the
+			// probe is one route that reaches a seam and not the only one —
+			// K2.7's trial reaches the sign-in verifier too.
+			if want := firstRouteReaching(tc.need); want != "" && !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal is %q, want it to name %s, the route that reaches the seam", err, want)
 			}
 		})
 	}
@@ -237,6 +244,20 @@ func TestNewRefusesASeamOnlyAMountedRouteReaches(t *testing.T) {
 	if _, err := New(base, deps); err != nil {
 		t.Errorf("a deployment holding no seam a mounted route reaches did not start: %v", err)
 	}
+}
+
+// firstRouteReaching is the path of the first route in the table that declares
+// the seam, which is the one New's refusal names: the refusals are walked in the
+// order the areas registered them.
+func firstRouteReaching(need apiNeed) string {
+	apiRoutes.mu.Lock()
+	defer apiRoutes.mu.Unlock()
+	for _, route := range apiRoutes.routes {
+		if slices.Contains(route.needs, need) {
+			return route.path
+		}
+	}
+	return ""
 }
 
 // TestClientAddressBehindHostingIsTheCallers: F34 — the address a route counts a
