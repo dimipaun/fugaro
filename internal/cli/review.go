@@ -90,12 +90,11 @@ func newReviewCmd() *cobra.Command {
 			"the review-only variant of the repository's shared project job, or, where the\n" +
 			"repository's workflow resolves no shared project job, the installation's\n" +
 			"implicit default review-only job. No App key, no Claude token and no signing\n" +
-			"key are mounted in it, and its git\n" +
-			"credential is a read-only one it fetches from the installation's credentials\n" +
-			"service. It reads a fresh clone of the pull request's head, writes its verdict\n" +
-			"as an artifact (fugaro review show RUN prints it) and posts no comment and no\n" +
-			"review on the pull request: what reaches the pull request is the owner's and\n" +
-			"the coordinator's to decide.\n\n" +
+			"key are mounted in it, and its git credential is a read-only one it fetches\n" +
+			"from the installation's credentials service. It reads a fresh clone of the\n" +
+			"pull request's head, writes its verdict as an artifact (fugaro review show\n" +
+			"RUN prints it) and posts no comment and no review on the pull request: what\n" +
+			"reaches the pull request is the owner's and the coordinator's to decide.\n\n" +
 			"The account is picked as everywhere else: --token, else agent.oauth_token in\n" +
 			"fugaro.yaml at the run's ref, else the project's default_claude_account.\n\n" +
 			"--mutate FILE:TEST asks for one mutation check: the reviewer flips a boolean\n" +
