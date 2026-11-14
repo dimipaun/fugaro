@@ -188,10 +188,10 @@ var yamlMeta = map[string]Row{
 	// one. The models family owns it as it owns the three rows above — the
 	// slot's checks are that command's (D2013: priced, a route opens it to this
 	// repository, no whitespace), which a generic scalar write does not make —
-	// and the fourth role name reaches `models use` in V6 of docs/vision-model.
-	// Until it does, this row's refusal names the family that will write the
-	// key, and the key is written by hand — in fugaro.yaml, or in the project
-	// layer's own file for every repository of it.
+	// and V6 of docs/vision-model gave the family the fourth role name, so this
+	// row's refusal names the command that writes the key. A hand edit is the
+	// other way in — in fugaro.yaml, or in the project layer's own file for
+	// every repository of it.
 	"agent.models.vision": {
 		Owner:   "models",
 		Default: unset("none: a stage whose own model cannot read an image keeps it"),
@@ -221,6 +221,19 @@ var yamlMeta = map[string]Row{
 	"agent.crafts.senior-review.access":   {Owner: "accounts", Default: unset("required: the senior review's calls go out on a credential or a pool"), Doc: docCrafts},
 	"agent.crafts.security-review.model":  {Owner: "models", Default: unset("the senior review's model"), Doc: docCrafts},
 	"agent.crafts.security-review.access": {Owner: "accounts", Default: unset("the senior review's access"), Doc: docCrafts},
+
+	// The escalation ladder's two model grades (docs/outer-loop-escalation E2,
+	// D2039): the model each rung runs and the credential or pool its calls go
+	// out on, the pair a craft carries. The MERGE column reads replace and the
+	// rule is stricter than that word: a grade is the project's own model
+	// choice, so a repository's entry never decides the value a run gets —
+	// internal/policy records it in the run's ignored list (tightenGrades) and
+	// the project's stands. What a repository's entry says is which model it
+	// would have run, and the record is where that is kept.
+	"model_grades.strong.model":     {Owner: "models", Default: unset("none: a rung whose grade the project sets nowhere refuses and asks"), Doc: docEscalation},
+	"model_grades.strong.access":    {Owner: "accounts", Default: unset("the project's default credential"), Doc: docEscalation},
+	"model_grades.strongest.model":  {Owner: "models", Default: unset("none: a rung whose grade the project sets nowhere refuses and asks"), Doc: docEscalation},
+	"model_grades.strongest.access": {Owner: "accounts", Default: unset("the project's default credential"), Doc: docEscalation},
 
 	"agent.review_rounds": {Default: unset("the run's rigor mode decides (rigor.DefaultRounds)")},
 	"agent.max_budget_usd": {
@@ -440,7 +453,13 @@ const (
 	docModels = "docs/multi-model.md"
 	docRigor  = "docs/rigor-modes/spec.md"
 	docCrafts = "docs/model-crafts/spec.md"
-	docImages = "docs/project-image-catalog/spec.md"
+	// docEscalation is the escalation ladder's own document. The two model
+	// grades are stated in the plan rather than in the spec — the spec is the
+	// ladder's design and the plan is where each key it adds is defined (E2,
+	// D2039) — so the rows point at the plan, as docOrchestrator does for the
+	// daemon's guardrails.
+	docEscalation = "docs/outer-loop-escalation/implementation-plan.md"
+	docImages     = "docs/project-image-catalog/spec.md"
 	// docDiagnose is the troubleshooting guide's document: it is written for
 	// the model `fugaro troubleshoot` starts, so it is where the key that
 	// chooses that model is stated (D1607).
@@ -484,6 +503,9 @@ const (
 	// of the stage's own would take the row over.
 	docTriage    = "docs/post-review-triage/implementation-plan.md"
 	docCloneURLs = "docs/project-claude-accounts.md"
+	// docAccounts is the account document, which states the repository-level
+	// source beside the block and the profiles' lists it unions with.
+	docAccounts = "docs/project-claude-accounts.md"
 )
 
 // layerRow is a row of the project layer's file. The layer is its only store,
@@ -602,6 +624,14 @@ var layerRows = []Row{
 	layerRow("defaults.agent.crafts.senior-review.access", "none: only the local config and the policy node name a credential", "accounts", docCrafts),
 	layerRow("defaults.agent.crafts.security-review.model", "the senior review's model", "models", docCrafts),
 	layerRow("defaults.agent.crafts.security-review.access", "none: only the local config and the policy node name a credential", "accounts", docCrafts),
+	// The grades' layer rows (E2, D2039): the project layer sets both halves
+	// for every repository of it, and a repository's own entry is recorded
+	// rather than applied (internal/policy's tightenGrades). A grade nobody set
+	// is not a model Fugaro chooses for the rung — it refuses and asks.
+	layerRow("defaults.model_grades.strong.model", "none: a rung whose grade the project sets nowhere refuses and asks", "models", docEscalation),
+	layerRow("defaults.model_grades.strong.access", "the project's default credential", "accounts", docEscalation),
+	layerRow("defaults.model_grades.strongest.model", "none: a rung whose grade the project sets nowhere refuses and asks", "models", docEscalation),
+	layerRow("defaults.model_grades.strongest.access", "the project's default credential", "accounts", docEscalation),
 	layerRow("defaults.agent.review_rounds", "the run's rigor mode decides (rigor.DefaultRounds)", "settings set", docLayer),
 	layerRow("defaults.agent.max_budget_usd", "25", "settings set", docLayer),
 	layerRow("defaults.agent.first_line_review", "auto", "settings set", docLayer),
@@ -856,6 +886,25 @@ var localRows = []Row{
 		Doc:      docModels,
 		TypedWhy: "this lets Fugaro choose an account for the owner: a run then spreads one project across several accounts, which is the owner's own decision about the terms the subscriptions are held under",
 	},
+	// The choice keys' own vocabulary (docs/account-aliases, D2090–D2093): one
+	// name the owner points at one account, so moving every stage that names it
+	// is one edit. Local-only for `claude_account_auto`'s reason and one of its
+	// own — a launcher who could write an alias into the shared file could name
+	// an account the file never admitted, one indirection in.
+	//
+	// The owner is `config local` and not a family, because no command writes
+	// the block yet: D2096 gives the write to `fugaro accounts alias set/rm`,
+	// whose whole point is converging the node and the job set on the repoint,
+	// and that command is a later task than the block and its rules. A row
+	// naming the `accounts` family before the command exists would print an
+	// owner for a key no subcommand of that family takes and refuse the write
+	// in its name, which is the pair the owner column exists not to print
+	// (D1178) — so the row says
+	// what is true of it here: the key is stated in the machine's own config,
+	// and `fugaro update` is what writes that file. The row moves to the
+	// `accounts` family the day the command lands, and D2096 is the entry that
+	// remembers it.
+	locLocal("claude_account_aliases", "none: no alias is defined, and every choice key names an account of claude_accounts directly", "config local", docModels),
 	// The installation's credentials, pools and crafts (docs/model-crafts/
 	// spec.md §1–3). They are local-only for claude_accounts' reason, and the
 	// one key here that names a credential rather than holding one is why: a
@@ -1089,6 +1138,18 @@ var localRows = []Row{
 	// are NOT in that allowlist: they are not a person's settings at all — a
 	// run records what it read and applied (this file's row comments) — so the
 	// generic path's refusal is the right answer for them.
+	// The repository's own account list, beside the keys of the entry it sits
+	// in but not of their kind: it is the half of an account's admission that
+	// keeps a repository whose runs are not on a profile job served
+	// (docs/project-claude-accounts.md §3), so it is local-only, and it is
+	// stripped from the published copy of this map besides
+	// (localcfg.withoutRepoLocalKeys, internal/cli/sharedcfg.go's refusal on
+	// the key). The owner is the accounts family, whose `accounts rm` is what
+	// edits the list: it clears a name with the declaration it names, and this
+	// release gives no command a write that ADDS one — the list is written by
+	// hand, and `repos.*.claude_accounts` is not a `settings set` path, which
+	// is what the read's owner column may say rather than a bare command.
+	locLocal("repos.*.claude_accounts", "nobody: the repository's runs are served by the accounts the profiles of its jobs name", "accounts", docAccounts),
 	loc("repos.*.provider", "none", "settings set", docSetup),
 	loc("repos.*.base_branch", "the project's base_branch", "settings set", docSetup),
 	loc("repos.*.workflows", "every workflow the repository defines", "settings set", docSetup),
@@ -1142,6 +1203,49 @@ var localRows = []Row{
 	// whose own target_layer is `local`.
 	{Key: "issues.nudge_after_days", Layers: []string{LayerLocal}, Merge: Replace, Owner: "config local", Doc: docTroubleshoot},
 	{Key: "issues.nudge_recurrence", Layers: []string{LayerLocal}, Merge: Replace, Owner: "config local", Doc: docTroubleshoot},
+
+	// The outer loop's ladder (E3, D2032). Every row here is local-only and
+	// every one is `settings set`'s: a threshold, a grade the ladder's rungs
+	// run at and the switch that decides whether the daemon acts at all are the
+	// machine owner's own, and the one door they are written through is this
+	// CLI's generic path — which is what makes the agent-session fence and the
+	// typed form reach them at all. A row naming the file instead would be
+	// refused by the write and print "not by the generic path" beside a key the
+	// generic path does write.
+	//
+	// The four scalars are what every mode reads, and the `modes.*` rows are
+	// the override one mode reads instead; both take their default from the
+	// shipped table (escalation.DefaultThresholds, E1), so the sentence names
+	// that table rather than a figure this table would then have to keep in
+	// step with the code. critical_path_factor and ready_drafts are the two
+	// with a value of their own, and they come from defaultValues below.
+	//
+	// ready_drafts is the one row here whose widening direction is its truth:
+	// the daemon readying a stalled draft is new authority over work a person
+	// left alone (D2041, D2046), so the row carries TypedWhy and the write of
+	// `true` is the typed form.
+	locLocal("escalation.r2_after_hours", "the shipped table's own, one row per mode (escalation.DefaultThresholds)", "settings set", docEscalation),
+	locLocal("escalation.r2_after_attempts", "the shipped table's own, one row per mode (escalation.DefaultThresholds)", "settings set", docEscalation),
+	locLocal("escalation.r3_after_hours", "the shipped table's own, one row per mode (escalation.DefaultThresholds)", "settings set", docEscalation),
+	locLocal("escalation.r2_coder", "the shipped table's own, one row per mode (escalation.DefaultThresholds)", "settings set", docEscalation),
+	locLocal("escalation.cost_ceiling", "none: a file that states no ceiling gets no cost trigger", "settings set", docEscalation),
+	// A literal rather than a locLocal call, as max_parallel is: its default is
+	// a value the loader leaves in place, so it comes from defaultValues below
+	// rather than from an "unset means" sentence.
+	{Key: "escalation.critical_path_factor", Layers: []string{LayerLocal}, Merge: Replace, Owner: "settings set", Doc: docEscalation},
+	locLocal("escalation.merge_judge", "none: a judge nobody named is a question for the owner (escalation.Grades)", "settings set", docEscalation),
+	locLocal("escalation.modes.*.r2_after_hours", "the block's own, or the shipped table's when it states none", "settings set", docEscalation),
+	locLocal("escalation.modes.*.r2_after_attempts", "the block's own, or the shipped table's when it states none", "settings set", docEscalation),
+	locLocal("escalation.modes.*.r3_after_hours", "the block's own, or the shipped table's when it states none", "settings set", docEscalation),
+	locLocal("escalation.modes.*.r2_coder", "the block's own, or the shipped table's when it states none", "settings set", docEscalation),
+	{
+		Key:      "escalation.ready_drafts",
+		Layers:   []string{LayerLocal},
+		Merge:    Replace,
+		Owner:    "settings set",
+		Doc:      docEscalation,
+		TypedWhy: "this lets the orchestrator ready a stalled draft on its own: it then acts on work a person left alone, which is the owner's own decision",
+	},
 }
 
 // cloudRows are the Realtime Database's own keys (spec §2.1, §2.2): the mode a
@@ -1216,6 +1320,11 @@ var defaultValues = map[string]Default{
 	// default" are one reading here.
 	"issues.nudge_after_days": value("7", "localcfg.DefaultIssuesNudgeAfterDays"),
 	"issues.nudge_recurrence": value("3", "localcfg.DefaultIssuesNudgeRecurrence"),
+	// The ladder's own two (E3): the scale a critical-path item's times are
+	// multiplied by, and the switch that decides whether the orchestrator may
+	// ready a stalled draft itself (off, D2046).
+	"escalation.critical_path_factor": value("0.5", "localcfg.DefaultEscalationCriticalPathFactor"),
+	"escalation.ready_drafts":         value("false", "localcfg.DefaultEscalationReadyDrafts"),
 }
 
 // sensitiveKeys are the keys whose value is never printed (spec §2.3): the

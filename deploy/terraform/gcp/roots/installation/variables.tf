@@ -80,6 +80,18 @@ variable "operators" {
   nullable = false
 }
 
+variable "launcher_accounts" {
+  type     = list(string)
+  default  = []
+  nullable = false
+}
+
+variable "viewers" {
+  type     = list(string)
+  default  = []
+  nullable = false
+}
+
 variable "launcher_bucket_condition" {
   type = object({
     title      = string
@@ -171,6 +183,7 @@ variable "catalog_check" {
     scheduler_region = string
     schedule         = optional(string, "17 4 * * *")
     paused           = optional(bool, true)
+    firebase_project = optional(string)
     env              = map(string)
     definitions_condition = object({
       title      = string
@@ -224,6 +237,16 @@ variable "mcp_server" {
   # door; all three are computed by internal/infra.MCPServer (the module's type
   # is the same object, and its validations are the ones that hold them to
   # their shape).
+  default = null
+}
+
+variable "intake" {
+  type = object({
+    account_id = string
+    service    = string
+    image      = string
+    url        = optional(string)
+  })
   default = null
 }
 

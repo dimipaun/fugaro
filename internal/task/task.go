@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/escalation"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/safetext"
@@ -207,9 +208,9 @@ type Spec struct {
 	// judged on the field for that reason rather than on the flag.
 	CompressionOff bool `json:"compression_off,omitempty"`
 	// Mode is the recipe's mode, written by the launcher from the recipe it
-	// resolved ("artifact" today; implement and review write nothing, so
-	// every existing spec is byte-identical to what the previous release
-	// wrote). The runner cannot read the recipe before it reads the
+	// resolved ("artifact" and "evaluate" today; implement and review write
+	// nothing, so every existing spec is byte-identical to what the previous
+	// release wrote). The runner cannot read the recipe before it reads the
 	// configuration, so the spec is what selects the shape at bootstrap —
 	// exactly as ReviewPRs does for mode: review — and the resolved recipe
 	// is cross-checked against it afterwards, both ways.
@@ -437,6 +438,52 @@ type Spec struct {
 	// task that is not one, and every spec written before the field, so a
 	// spec carrying no mark is byte-identical to the previous release's.
 	Debt bool `json:"debt,omitempty"`
+	// Security is the launch's own request that this run's review be the
+	// strongest one it can be (docs/security-classification, D1517): a task
+	// that says `security: true`, or a launch that passes `--security`,
+	// which is the same request written by the flag instead of by hand.
+	//
+	// It is raise-only: true turns review level 3 on for the run whatever
+	// the paths hold, and false changes nothing — it is not an exemption,
+	// so a run that says false is a run that said nothing, including one
+	// whose diff then matches a row of the list in force (D1517: the field
+	// is a bool that only turns on, so a false is the floor's answer and
+	// not a way to ask for less). There is no fence and no allow-list, for
+	// the same reason `--mode`'s raise needs neither: nothing here can
+	// lower a level.
+	//
+	// False is every task that did not ask, and every spec written before
+	// the field, so a spec carrying false is byte-identical to the previous
+	// release's. A runner before the release that reads `security: true`
+	// refuses the whole spec (Parse decodes with DisallowUnknownFields), so
+	// the launcher gates a launch that would set it (securityRequestSince,
+	// internal/cli/recipes_skew.go) rather than let the run fail at
+	// bootstrap after the task was written.
+	Security bool `json:"security,omitempty"`
+	// ModelGrade is the model grade this run runs at
+	// (docs/outer-loop-escalation, D2039's E4, G11): which of the project
+	// layer's two grades the run's coder — and its judge, which runs the
+	// coder's model — runs on, and whose credential or pool their calls go
+	// out on.
+	//
+	// It names a grade and never a model or a credential: the vocabulary is
+	// escalation.Grades' two names, a value outside it is refused by Validate
+	// below, and what a grade resolves to is the project layer's answer
+	// (config.ModelGrades), read by the runner at bootstrap
+	// (internal/runner's applyGrade). A grade the project sets nothing for
+	// refuses the run there rather than falling back to a model the owner
+	// never chose, which is D2039's point: the plan ships no default for
+	// either grade.
+	//
+	// "" is every task that names no grade — every spec written before this
+	// field, and every launch the ladder did not escalate, since the daemon's
+	// ladder (E10a) is what writes one — so a spec carrying none is
+	// byte-identical to what the release before this field wrote. A runner
+	// before the release that reads it refuses the whole spec (Parse decodes
+	// with DisallowUnknownFields), so the launcher gates a launch that would
+	// set it (taskGradeSince, internal/cli/recipes_skew.go) rather than let
+	// the run fail at bootstrap after the task was written.
+	ModelGrade escalation.Grade `json:"model_grade,omitempty"`
 }
 
 // FollowUpOf is the parent a triage follow-up came from: the run whose
@@ -455,6 +502,67 @@ type FollowUpOf struct {
 	// the one prompt it is written into fences it as data (Spec.FollowUpOf's
 	// own comment), so one key alone is read by nobody.
 	Keys []string `json:"keys,omitempty"`
+	// Importance is how much this follow-up matters (D2040): important, or
+	// minor. The launcher orders the important ones ahead of new work and
+	// notifies about them; it never approves one on their say-so (G6, F21),
+	// which is the whole of what the field decides.
+	//
+	// It is written from the merge judge's classification when a judge ran
+	// and from a deterministic rule when none did (a security or data-loss
+	// class, or impact 5, is important), so a value outside the two names is
+	// not a third opinion about a finding but a launcher's bug: Validate
+	// below refuses it. "" is every follow-up filed before this field —
+	// including every one filed by hand — and it is not minor: it is no
+	// answer, and a reader that has to sort one asks its own rule rather than
+	// reading a mark nobody wrote.
+	Importance Importance `json:"importance,omitempty"`
+}
+
+// Importance is how much a follow-up a run left behind matters (D2040): the
+// two values a task's follow-up block may carry. It is a mark about ordering
+// and notification and nothing else — an important follow-up is not an
+// approved one (G6, D1226, F21), and nothing in this package or in a run
+// reads it as consent to work.
+type Importance string
+
+const (
+	// ImportanceImportant is a finding the judge (or the deterministic rule
+	// that stands in for it) held to matter: security, data loss, or impact
+	// 5.
+	ImportanceImportant Importance = "important"
+	// ImportanceMinor is every other finding, which is the common case.
+	ImportanceMinor Importance = "minor"
+)
+
+// Importances is the whole vocabulary, in the order a message names it: the
+// one that sorts first, then the rest.
+var Importances = []Importance{ImportanceImportant, ImportanceMinor}
+
+// KnownImportance reports whether i is one of Importances. The zero
+// Importance — a follow-up nobody classified — is not: it is the field left
+// out, which Validate accepts and a reader answers with its own rule.
+func KnownImportance(i Importance) bool { return slices.Contains(Importances, i) }
+
+// ImportanceList is Importances as a message names the vocabulary, the way
+// rigor.ModeList and tier.List are read by a refusal.
+func ImportanceList() string {
+	names := make([]string, len(Importances))
+	for i, im := range Importances {
+		names[i] = string(im)
+	}
+	return strings.Join(names, ", ")
+}
+
+// GradeList is escalation.Grades as a message names the vocabulary
+// (Spec.ModelGrade's refusal). The list is that package's — the ladder's own
+// names, which the project layer and the policy node are held to as well — and
+// this only spells it the way a task spec's message does.
+func GradeList() string {
+	names := make([]string, len(escalation.Grades))
+	for i, g := range escalation.Grades {
+		names[i] = string(g)
+	}
+	return strings.Join(names, ", ")
 }
 
 // MaxOwnerRuledBytes bounds a task's owner ruling (Spec.OwnerRuled, fugaro
@@ -1255,6 +1363,14 @@ func (s *Spec) Validate() error {
 	if s.FollowUpOf != nil && !runIDRE.MatchString(s.FollowUpOf.Run) {
 		bad("task spec: follow_up_of.run %q is not a run ID", s.FollowUpOf.Run)
 	}
+	// The mark the launcher sorts and notifies by (D2040), and nothing else:
+	// the vocabulary is closed for rigor's and tier's reason — a near miss is a
+	// launcher's bug rather than a run's opinion about a finding — and the
+	// field being absent is legal, since a follow-up filed by hand or by a
+	// release before this field carries no mark at all.
+	if s.FollowUpOf != nil && s.FollowUpOf.Importance != "" && !KnownImportance(s.FollowUpOf.Importance) {
+		bad("task spec: follow_up_of.importance %q must be one of %s or empty", s.FollowUpOf.Importance, ImportanceList())
+	}
 	if s.Branch != "" && !BranchRE.MatchString(s.Branch) {
 		bad("task spec: branch %q must be fugaro/<run-id>", s.Branch)
 	}
@@ -1350,6 +1466,16 @@ func (s *Spec) Validate() error {
 	if s.Tier != "" && !tier.Known(s.Tier) {
 		bad("task spec: tier %q must be one of %s or empty", s.Tier, tier.List())
 	}
+	// The grade a run runs at (E4, G11). The vocabulary is escalation's two
+	// names and not a model ID: a task names the grade, the project layer
+	// answers what it resolves to, and a spec carrying a model or a credential
+	// here is refused where it is written rather than resolved into a call the
+	// owner never chose. That refusal is this field's own half of G11; the
+	// other half — a grade the project sets nothing for — is the runner's,
+	// because only a run can read the project's answer (applyGrade).
+	if s.ModelGrade != "" && !escalation.KnownGrade(s.ModelGrade) {
+		bad("task spec: model_grade %q must be one of %s or empty: a task names a grade, and the project layer says which model and credential that grade runs (G11)", s.ModelGrade, GradeList())
+	}
 	if len(s.ExpectedScope) > MaxDeclaredPaths {
 		bad("task spec: expected_scope must name at most %d paths", MaxDeclaredPaths)
 	}
@@ -1377,9 +1503,9 @@ func (s *Spec) Validate() error {
 	// recipe is implement or review) is legal and means "the runner reads
 	// it from the resolved recipe".
 	switch s.Mode {
-	case "", recipe.ModeImplement, recipe.ModeReview, recipe.ModeArtifact:
+	case "", recipe.ModeImplement, recipe.ModeReview, recipe.ModeArtifact, recipe.ModeEvaluate:
 	default:
-		bad("task spec: mode %q must be %s, %s, %s or empty", s.Mode, recipe.ModeImplement, recipe.ModeReview, recipe.ModeArtifact)
+		bad("task spec: mode %q must be %s, %s, %s, %s or empty", s.Mode, recipe.ModeImplement, recipe.ModeReview, recipe.ModeArtifact, recipe.ModeEvaluate)
 	}
 	// The entries' own shapes only. What an input NAME may be — no absolute
 	// path, no ".." element, no NUL or newline, a length limit, no duplicate

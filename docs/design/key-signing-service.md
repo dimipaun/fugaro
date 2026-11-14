@@ -3,15 +3,16 @@
 **Status: design and threat model. The infrastructure and the issuing service are written; neither
 has been applied and no key has been minted.**
 `ee/keyservice/terraform/` holds the service's two Terraform roots and their `terraform`-tagged
-suite (S3.5, written 2026-11-09), and `ee/keyservice/` holds the service itself — the intake, the
+suite (S3.5, written 2026-11-09), and `ee/keyservice/` holds the service itself — the API, the
 minter, the checks and the record, one Go package (S3.2, written 2026-11-10). Neither root has been
 applied: S3.8 applies the key ring and S3.7 the services, both OWNER-RUN, so no key and no running
 service exists yet, and nothing in S3.2 has run outside a test. **The package is not a program yet**:
-the two roots' `intake_image` and `minter_image` are built from it, and what builds one — a `main`
-per half and, behind it, the durable store, the code host's client, the mail provider, D452's proof
-check and the key ring's signing client — is S3.7's deploy, so this tree holds no entry point and no
-Dockerfile and there is nothing here to run. The admin page and the manual queue (§6) are written
-too — `admin.go` and `queue.go` (S3.4, written 2026-11-11) — and what they leave to the owner is
+`api_image` and `minter_image` — the API's and the minter's, the two the services root declares —
+are built from it, and what builds them — a `main` per half and, behind it, the durable store, the
+code host's client, the mail provider, D452's proof check and the key ring's signing client — is
+S3.7's deploy, so this tree holds no entry point and no Dockerfile and there is nothing here to run.
+The admin page and the manual queue (§6) are written too — `admin.go` and `queue.go` (S3.4, written
+2026-11-11) — and what they leave to the owner is
 what §6 already names: **D454**'s caps are configuration New refuses to start without, and
 **D455**'s factor and **D456**'s destination are seams, so a deployment that names no factor renders
 the page read-only and mints nothing from it.
@@ -24,6 +25,16 @@ about the running service is a design rather than a description.
 [reconciliation.md](../licence-key-v2/reconciliation.md)): the format and claim set this design
 restates (§2) are the v2 `fgk_` keys', and the service's "no revocation, by design" gives way to a
 revocation list the customer's own job checks (D2130, D2131).**
+
+**Amended 2026-11-13 by the portal (P9.1, [portal/implementation-plan.md](../portal/implementation-plan.md),
+[portal/reconciliation.md](../portal/reconciliation.md) §"What this changes in licence key v2"): the
+service is not deployed as this design's own dedicated project.** D2194 puts the API, the minter and the
+key ring in `fugaro-prod` beside the website's console, so §1's project, §3.4's, §9.1's row 5 and §6's
+page-and-queue ownership, and §11's first step, are the portal's to settle and are noted below; §5.2's
+deliberate refusal to read the merchant's timestamp is reversed by the portal's P4.2, and only if P4.2
+first confirms that Paddle signs every retry with a fresh `ts` — if it does not, no window is added and
+§5.2 stands as written; and three of the questions §12 leaves open — D454, D455 and D459 — are recorded
+there as decided by D2187 and D2194, while the other seven stay open. Everything else here stands.
 
 This is subscriptions **S3.1**, the first task of slice S3: the design the tasks after it are written
 against — the issuing service (S3.2), the admin page and the manual queue (S3.4), the dedicated
@@ -61,9 +72,15 @@ names the merchant and its fee rates and the tax plan are private (D430), so no 
 **Ruled, 2026-10-27 (T13,
 [reconciliation.md](../subscriptions/reconciliation.md) §"Resolutions"):** the key service is
 **owner-operated in a dedicated Fugaro GCP project** — Cloud Run, a **non-exportable** KMS signing
-key, and the internet-facing intake (the forms, the merchant's events and the admin page) **split
+key, and the internet-facing API (the forms, the merchant's events and the admin page) **split
 from a non-public minter that alone holds the signer role**. It is built **after the entity exists**
 (the service issues keys as the Licensor, item 7 of T13), and hand minting is the interim.
+
+**Amended 2026-11-13:** the project is not the service's own. D2194 puts the service in
+`fugaro-prod`, the project the website already deploys to, so the sentence above is read as
+"owner-operated in one project with the website" and what the ruling is worth keeping is the split —
+the internet-facing API from a non-public minter that alone holds the signer role (§3.3, §9.1
+row 1).
 
 | The service is | The service is not |
 | --- | --- |
@@ -116,11 +133,11 @@ Two more of S2.1's rules the minter obeys and nothing else in the slice states:
 
 ## 3. The shape: two surfaces, one signer
 
-The split T13 rules is an **identity** boundary and not a code boundary: the intake is reachable from
+The split T13 rules is an **identity** boundary and not a code boundary: the API is reachable from
 the internet and cannot sign; the minter can sign and is not reachable from the internet. Everything
-below assumes a reader who has the intake's code fully in hand.
+below assumes a reader who has the API's code fully in hand.
 
-### 3.1 The intake
+### 3.1 The API
 
 One Cloud Run service, publicly invokable, that terminates TLS, serves the forms' endpoints, receives
 the merchant's events, serves the admin page, and answers with a uniform page (§7.1).
@@ -141,18 +158,18 @@ the origin from the domain rather than typing it). It holds:
 - the issuance record (§7.3).
 
 It **cannot sign**: its service account holds no `cloudkms.signerVerifier` (nor any KMS role) on the
-key, and it reaches the minter only by an authenticated call. Check 174's "the intake's … identity
-[is] refused" is that refusal, measured once the service runs.
+key, and it reaches the minter only by an authenticated call. Check 174 is where that refusal is
+measured, once the service runs.
 
 ### 3.2 The minter
 
-A second Cloud Run service with **no public invoker**: only the intake's service account holds
+A second Cloud Run service with **no public invoker**: only the API's service account holds
 `roles/run.invoker` on it, and the call carries an ID token the platform verifies. It takes a claim
 set, computes `issued` and `expires` itself (§2), refuses a claim beyond the tier's maximum, calls
 the KMS signing API, and returns the three-part key. It holds nothing else: no mail path, no
 merchant secret, no store of applicants' fields beyond the mint request it just served.
 
-Whether that second service is a **service** or a **job** the intake triggers, and whether the mint
+Whether that second service is a **service** or a **job** the API triggers, and whether the mint
 is synchronous (the form's answer) or drained from a queue (the admin's approval), is **D450** — the
 split is ruled and its mechanism is not. The design's recommendation is a service, for the reason
 Check 174 is written the way it is: two Cloud Run services give two identities the platform enforces,
@@ -162,7 +179,7 @@ which is the smallest thing an auditor can hold an IAM policy to.
 
 | Identity | Holds | Holds nothing |
 | --- | --- | --- |
-| the intake's service account | `roles/run.invoker` on the minter; the mail path's credentials; read/write on the event and issuance stores; the admin session's own secret | any KMS role; any way to call the signer except through the minter |
+| the API's service account | `roles/run.invoker` on the minter; the mail path's credentials; read/write on the event and issuance stores; the admin session's own secret | any KMS role; any way to call the signer except through the minter |
 | the minter's service account | `roles/cloudkms.signer` **on the one key ring**, `roles/run.invoker` on nothing, and read access to nothing an applicant typed | mail, the merchant's secret, the stores |
 | a person's browser | nothing in the project | — |
 | the owner, at the admin page | the admin session, after step-up (§6) | — |
@@ -192,7 +209,7 @@ lists are written as paths, so the plan's spelling costs no later task an edit a
 **One Go module and one Go package.** The plan's own note says that if S3.1 puts S3.2 and S3.5 in one
 Go package, S3.5 and S3.8 move one level later
 ([implementation-plan.md](../subscriptions/implementation-plan.md) §"Shared files"). They stay in one
-package — the intake, the minter, the checks, the admin page and the queue are one program's parts,
+package — the API, the minter, the checks, the admin page and the queue are one program's parts,
 they share the claim set and the record, and the split T13 rules is an identity boundary rather than
 a compilation one (§3.3) — and the level move is worth it, because two Go packages would exist only
 to satisfy a dependency graph. Every file there carries the two-line SPDX notice, and
@@ -214,6 +231,78 @@ holds, how the open-source check reads a repository, and what the throttle is �
 private repository — would hide the checks and put the product's own licence code out of the tree
 that builds the binary, which is a decision the owner has not taken.
 
+**Amended 2026-11-13**: the directory, the one package and the "never in `deploy/terraform`" rule
+above all stand, but the sentence that governs where the resources are applied no longer does. D2194
+puts the key-signing service in `fugaro-prod`, the project the website already deploys to, rather than
+in a project of the service's own: `ee/keyservice/terraform/` stays where it is, its roots set the
+project per apply (they carry no default), and the portal's P1.5 writes those roots while its P0.4 —
+owner-run, the way this document's own §11 is — is the step that applies them there, with the minter's
+ingress internal, the API's account its only invoker, and the ring still the only
+thing that signs. The owner re-asked after round 1, once Firebase Hosting's project-wide IAM showed
+that the website's deployer reaches signing, and kept one project
+([portal/reconciliation.md](../portal/reconciliation.md) F18).
+
+### The API-to-minter route and its cost
+
+**(a) Keep it.** Added 2026-11-13 (owner ruling, "Look for a cheaper route"); this note changes no
+tree and no test, and it is unnumbered because `ee/keyservice/startup_test.go:7` already cites a
+"§3.5" of this design for the refusals `New` makes. Four new resources carry the route —
+`google_compute_network.portal`, `google_compute_subnetwork.portal`,
+`google_compute_router.portal` and `google_compute_router_nat.portal` — plus the API template's
+`vpc_access { egress = "ALL_TRAFFIC" }` (`ee/keyservice/terraform/services/main.tf`). The network,
+the subnet and the Cloud Router carry no charge of their own; the NAT bills an hourly charge per
+gateway in the region plus a per-GiB processing charge on the bytes it translates. **The repository
+holds GCP prices, not this pair's:** `internal/backend/batch/prices.go`'s Compute Engine list table
+(read 2026-10-15, pinned by `TestCheckMachineTypePrices`) and
+[compute-backend.md](compute-backend.md) §1.7's external-IP rate ($0.005/h in use, $0.0025/h spot) —
+but its reading of the NAT is a structure only ("hourly + per-GB processed … plus a router and
+subnet"), with no rate for either and no page this run could open. So the pair cannot be priced
+offline: a fixed charge that runs whether or not a key is minted, tens of US dollars a month as this
+run recalls and has not verified, beside cents of data charge for mail and webhooks.
+`TestMinterIngressIsInternal` holds the shape: the two ingresses, the `vpc_access` mode and its
+interfaces, the subnet's `private_ip_google_access`, the NAT's coverage, no `vpc_access` on the
+minter, and two services.
+
+**(b) Move the fence to IAM.** `ingress = "INGRESS_TRAFFIC_ALL"` on the minter, the invoker grant
+unchanged (`api_invokes_minter`: `roles/run.invoker` to the API's account, and no `allUsers` binding
+anywhere near it), and the API's `vpc_access` block deleted — the network, subnet, router, NAT and
+the five variables they alone use (`network`, `subnetwork`, `subnet_cidr`, `router`, `nat`) go with
+them. That is the whole saving: no fixed charge, and Paddle and Resend return to Cloud Run's ordinary
+egress, which the API already pays for. `TestMinterIngressIsInternal` is the pin that moves — its
+internal-ingress, `vpc_access`, subnet and NAT assertions are what this deletes — and the fence left
+standing is `TestTheMinterHasNoPublicInvoker` and `TestOnlyTheAPIInvokesTheMinter`, in the
+`//go:build terraform` file this document's status line covers: the one lock left is a test, and
+what a test is worth is that line's answer rather than this note's.
+
+**The security difference.** Internal ingress refuses an outside caller at the network layer, before
+IAM and before any container. All ingress lets the request reach the platform's front end, which
+refuses it with a **403 before any code runs**: no instance is allocated, nothing an applicant typed
+is read and nothing is signed, so an outsider's happy case gains a 403 and the service's existence.
+What matters is the other fence failing: internal ingress is a second lock, so a later
+`invoker_iam_disabled = true` or a stray `allUsers` binding still leaves an outsider outside, while
+under all ingress that same mistake is the signer open to the internet. **Logs:** each refusal is
+recorded, so probes are visible and a flood of them bills as log ingestion. **DoS:** a request
+refused before an instance exists costs no vCPU or memory, so the minter stays at zero and a flood
+spends no compute budget; what it consumes is the project's log ingestion.
+
+**(c) Split the egress.** Cloud Run's Direct VPC egress has two modes per revision — all traffic, or
+the private ranges — and no per-destination or host-based routing (a Serverless VPC Access connector
+is no different). "The minter leg private, Paddle and Resend on the default egress" is not one
+`vpc_access` block: the private ranges would not carry the minter's `run.app` host, so the call would
+arrive as an outsider — why P1.5 took `ALL_TRAFFIC`. It becomes expressible only by making the
+minter's address private — an **internal Application Load Balancer** with a serverless NEG, whose
+reserved address the API calls, or **Private Service Connect** (that plus a service attachment and a
+consumer endpoint). Each keeps the network and subnet and drops the NAT, adding a forwarding rule
+and, for PSC, an endpoint: the fixed figure lands in the same order, not at zero, and the pins move
+with it — the NAT half of `TestMinterIngressIsInternal` goes, and the load balancer, its NEG and
+their grants become things to pin. **UNVERIFIED without a live project:** the forwarded request's
+acceptance, the caller identity across it, and every rate above.
+
+**Recommendation.** Take (b), unless the owner prices the load balancer below the NAT *and* wants a
+second front door on the signer: the fence is the IAM check in every shape, and internal ingress
+buys defence in depth at a fixed monthly charge for a service that mints a handful of keys a month.
+(The same charge goes when the minter gains no inbound path at all — D450's Cloud Run job route.)
+
 ## 4. The checks
 
 Each check ends in one of three outcomes: **mint** (the key is issued now), **queue** (a person
@@ -223,7 +312,7 @@ this section adds is why, and what each check is worth.
 ### 4.1 Email verification and the free-mail list
 
 The free seat is applied for with an email address, and **nothing is minted before that address is
-verified**: the intake sends a single-use, expiring token to it and mints only when the token comes
+verified**: the API sends a single-use, expiring token to it and mints only when the token comes
 back (`TestUnverifiedEmailMintsNothing`, `TestVerificationTokenSingleUse`). The address the token was
 sent to is the one the key binds to, so a token cannot be transplanted to another address.
 
@@ -340,6 +429,16 @@ cancellation followed by a replayed purchase does not resurrect a key.
 The admin page's approval is the same idempotency in a person's hands (`TestApprovalMintsOnce`), and
 the auto-renewal path is the same in a scheduler's: one mint per (subscription, term, seats).
 
+**Amended 2026-11-13**: this section reads the merchant's signature but not its timestamp, and portal
+P4.2 adds a **5-minute timestamp window** — an event whose `ts` is older than five minutes is refused —
+only if it first confirms, from the merchant's documentation and a recorded sandbox retry, that every
+delivery is signed with a **fresh `ts`**; if it does not, no window is added and this section stands as
+written, with idempotency alone against a replay
+([portal/reconciliation.md](../portal/reconciliation.md) F16,
+[portal/implementation-plan.md](../portal/implementation-plan.md) P4.2). What stays either way is the
+order of the two steps: the signature is verified first, and the verified body is stored before it is
+processed.
+
 ### 5.3 Renewal, seat change, cancellation
 
 The next key issues **30 days before expiry** (T26, [reconciliation.md](../subscriptions/reconciliation.md)
@@ -361,8 +460,10 @@ the service's record says what happened.
 A merchant event in **test mode** mints a **staging key and nothing else**
 (`TestTestModeEventsMintStagingKeysOnly`), against the staging key id of §2's second rule: every
 production verifier holds production ids only, so a test-mode key cannot license a customer, and the
-staging installation is the only place it is accepted. Where the staging key and its intake live —
-one project and one key ring, or a second project — is **D459**; what is not open is that the two key
+staging installation is the only place it is accepted. Where the staging key and its API live —
+one project and one key ring, or a second project — is **D459**, decided by D2194 on 2026-11-12 (one
+key id per environment: the production ring in `fugaro-prod` and staging's in `fugaro-staging`, §12);
+what is not open is that the two key
 ids stay apart, because that is the whole of Check 179.
 
 ### 5.5 Enterprise keys
@@ -382,6 +483,17 @@ nothing (`TestAnOrderFormMintCanBeIssuedAgain`, `TestAdminOrderFormMintsOncePerL
 the order form and the seats alone would refuse a re-issue and answer it as a success.
 
 ## 6. The admin page and the manual queue
+
+**Replaced 2026-11-13 (portal P5.1, P5.3).** The defences below are still what the surface owes — the
+page mints **any** key for **any** tier (T13 item 8), which the portal's operations API inherits
+unchanged — but the surface itself is no longer this design's. `ee/keyservice/`'s `admin.go` and
+`queue.go` become the portal's operations API and its screens, the store they read and the cells they
+write move with them, and D2187 answers the two questions this section leaves to the owner: who may
+act (operations **owners and admins** act, a member only reads; each action needs a sign-in no older
+than 5 minutes with Google) and what the factor is (the identity provider's own, not a second factor
+of the page's). **D455's "the owner's own account only" therefore no longer describes the surface**;
+the note is here rather than in the table because every row below is still the defence the API must
+carry, and the rows naming D455 and D454 are read against D2187.
 
 The page is a second authenticated surface that can mint **any** key for **any** tier (T13 item 8),
 so it is the service's highest-value target and its defences are the design's, not an
@@ -405,7 +517,7 @@ The store the page reads holds applicants' free text, which is why escaping is a
 not a template's business (§9.1's row 8).
 
 D455 owes the factor's **rate** as well as its kind. The step-up is asked for on every minting action
-and nothing throttles the asking, while the intake's own forms are rate-limited: a session an attacker
+and nothing throttles the asking, while the API's own forms are rate-limited: a session an attacker
 holds can submit codes as fast as it can open connections, and every wrong one costs it nothing but a
 403, so what the factor is worth rests on how hard the code is to guess rather than on how few tries
 it gets. Whether the gate is the factor's own (a TOTP implementation's lockout) or a throttle of the
@@ -427,30 +539,30 @@ Three rules, and each answers a threat rather than a best practice:
 
 - **single-use, expiring tokens** for verification links (and for anything else mailed), so a leaked
   link is not a key forever (§4.1, `TestVerificationTokenSingleUse`);
-- **throttling on the intake** (`TestRequestsAreThrottled`): per-address and per-IP, so the service
+- **throttling on the API** (`TestRequestsAreThrottled`): per-address and per-IP, so the service
   cannot be used to mail-bomb a third party's address or to enumerate (§7.1);
 - **applicant fields are never interpolated into mail headers** (`TestApplicantFieldsCannotInjectMailHeaders`):
-  the address the intake mails to is the one it verified, and any name or subject an applicant typed
+  the address the API mails to is the one it verified, and any name or subject an applicant typed
   is data in the body, never a header value — which is the same rule as §6's escaping, on the other
   wire.
 
 **All of it has to work inside the site's CSP.** The website serves one Content-Security-Policy
 (`website/test/origins.mjs:712`): `script-src 'self'` plus named hosts, `connect-src 'self'` plus
-named hosts, and **`form-action 'self'`** — widened, since S3.3, to the intake's one exact host,
+named hosts, and **`form-action 'self'`** — widened, since S3.3, to the API's one exact host,
 which is D451's answer below. Two consequences the forms' task inherits:
 
 - a **third-party challenge widget** (a captcha vendor) is not admissible without the owner widening
   `script-src`, `connect-src` and probably `frame-src` — an owner decision (`.claude/rules/website.md`),
   and one the site's privacy page's own promise ("nothing the Fugaro project operates") argues
   against. A **same-origin** challenge is admissible (`'self'` is a script the site serves itself),
-  and so is the intake's own throttle;
-- a form **posting to the intake's own origin** is blocked by `form-action 'self'` unless the owner
-  widens that directive to the intake's exact host. The plan expected that widening (S3.3's Files
+  and so is the API's own throttle;
+- a form **posting to the API's own origin** is blocked by `form-action 'self'` unless the owner
+  widens that directive to the API's exact host. The plan expected that widening (S3.3's Files
   name "the CSP tests the owner approves changing"), and the alternative — a same-origin path that
-  forwards to the intake — is **D451**, which **the owner settled on 2026-11-07** as option (a).
-  S3.3 carried it: `firebase.json`'s `form-action` carries the intake origin, `website/test/origins.mjs`
-  admits a form action for this site or that one host and for no other, and the intake is admitted
-  in no other directive. The visitor's personal data still reaches the intake, so §7.3's notice has
+  forwards to the API — is **D451**, which **the owner settled on 2026-11-07** as option (a).
+  S3.3 carried it: `firebase.json`'s `form-action` carries the API origin, `website/test/origins.mjs`
+  admits a form action for this site or that one host and for no other, and the API is admitted
+  in no other directive. The visitor's personal data still reaches the API, so §7.3's notice has
   to say so — that half is S7.3's and is not written.
 
 ### 7.3 The issuance record, retention and the privacy notice
@@ -465,7 +577,7 @@ and the private halves never leave the key ring (§3.3).
 
 **What is personal data.** The applicant's email address, the organisation's domain, the repository
 URLs, and the merchant's buyer data arriving in an event (T13 item 3). The design's rule is the
-minimum and the stated period: the intake collects what a check needs and nothing else, the
+minimum and the stated period: the API collects what a check needs and nothing else, the
 verification token's address is dropped once the token is spent or expires, and the record's own
 retention — for how long an address and a domain stay after the key expires, and what happens to a
 deletion request — is **D457**, with counsel's own read (PIPEDA and GDPR) in S8.4's round.
@@ -491,7 +603,7 @@ The **uptime target** the plan asks for here is the owner's number and it is not
 document: what a target states is a commercial commitment, and the Terms carry none for the Free
 Plans (§10.5: "no warranty, indemnity, service-level commitment or support"). So the design states
 the **behaviour** it can be held to — the 60-day absorption, the renewal window, and what a form
-submission gets while the intake is down (an honest failure page, and whether the request is queued
+submission gets while the API is down (an honest failure page, and whether the request is queued
 for retry) — and leaves the figure and the paid-customer promise to **D458**.
 
 Two consequences of a stopped service worth naming: **the record is the only memory** (§7.3), so the
@@ -510,13 +622,13 @@ T13's own list (item numbers below are its, [reconciliation.md](../subscriptions
 | --- | --- | --- | --- |
 | 1 | Reach the signing key | A non-exportable key in a managed store, one identity that may sign, no agent identity with any access, and a key id for rotation (§3.3, §2, §3.4; **Check 174**) | No revocation (S2.1): a leaked **signing** key's horizon is short key lives and rotation, not a recall. And `issued` is the minter's to choose, so a future-dated key outlives its tier's maximum (§2, §9.2) |
 | 2 | Cheap abuse of the free checks | The free-mail list, one per domain, proof of control, the queue, and the record (§4; **Checks 171–172**) | Second domains, subdomains and a private repository beside the named ones are outside every check (§4.6, U11) |
-| 3 | Harvest personal data through a bare mailbox | The minimum collected, a stated retention, and the notice (§7.3, S7.3; D457) | The intake must be able to mail, so one address per verified application is kept until D457's period ends |
+| 3 | Harvest personal data through a bare mailbox | The minimum collected, a stated retention, and the notice (§7.3, S7.3; D457) | The API must be able to mail, so one address per verified application is kept until D457's period ends |
 | 4 | Use an outage to drop paying customers to read-only | The 30-day lead and the two-key overlap: an outage bites only past 60 days (§8, T26; **Check 175**) | The interruption is absorbed, not removed: a 60-day outage reaches customers |
-| 5 | Break into the project the service runs in | A **dedicated** project rather than an installation's, two identities, and least privilege (§3.3) | One operator, one boundary: an owner's account is the whole of the administrative surface (§6, D455) |
+| 5 | Break into the project the service runs in | One project rather than a project per surface, two identities, and least privilege (§3.3); **D2194** puts the API, the minter and the ring in `fugaro-prod` beside the website's deployer, whose project-wide Hosting IAM reaches signing | One project is one boundary: the website's deployer, a project-level `datastore.user`, `run.services.update` on the minter or `iam.serviceAccounts.actAs` on its account all reach signing, and the owner kept `fugaro-prod` knowing it (Check 571 lists every such grant) |
 | 6 | Impersonate a customer at the free seat | Email verification, the free-mail list, one per domain, the paid-domain lookup, the queue (§4) | The key binds to an organisation and nothing compares it with the installation (S2.1): a key can be shared |
 | 7 | Mint keys as the Licensor before there is a seller | The service waits for the entity (T13); until then the owner mints by hand (§11) | Hand-minted keys carry the `issued` hole (§2) |
-| 8 | Get at the admin page | Owner-only authentication, per-action step-up, CSRF defence, escaping, an audit line, per-tier limits (§6; **Check 173**) | The page is a second surface that can mint anything: D454's caps and D455's factor are the owner's answers, and the page reads them from the deploy rather than holding them — the caps it refuses to start without, and the factor that, unnamed, leaves it read-only |
-| 9 | Forge or replay a purchase | Signature verification before the body is read, idempotency by event id, ordering (§5.2; **Check 179**) | A merchant secret leaked to the intake mints Team keys until it is rotated — a rotation path owned by the deploy (§11) |
+| 8 | Get at the admin page | Owner-only authentication, per-action step-up, CSRF defence, escaping, an audit line, per-tier limits (§6; **Check 173**) | The page is a second surface that can mint anything: D454's caps and D455's factor are the owner's answers (**D2187**, 2026-11-12, settled both), and the page reads them from the deploy rather than holding them — the caps it refuses to start without, and the factor that, unnamed, leaves it read-only |
+| 9 | Forge or replay a purchase | Signature verification before the body is read, idempotency by event id, ordering (§5.2; **Check 179**) | A merchant secret leaked to the API mints Team keys until it is rotated — a rotation path owned by the deploy (§11) |
 | 10 | Learn whether a domain holds a key | Uniform answers (§7.1), throttling (§7.2) | Timing still leaks in principle; the design's answer is the same sentence and the same work per request |
 | 11 | Read the checks and walk around them | Nothing — the code is published under `ee/` (§3.4) | Deliberate: the checks are visible and the Terms are the enforcement (§4.6) |
 | 12 | Use the hosted service as a runtime dependency | The product never calls it (R2, §1); the verifier makes no network call | The privacy notice is the only place the exception is stated to a reader (S7.3) |
@@ -548,7 +660,7 @@ The plan's register for this slice, with what each measures against this design.
 | **171** | A free-mail domain, a second free key for one organisation, and a domain with a paid subscription get no free key — §4.1–§4.3 |
 | **172** | The open-source check needs proof of control; it refuses a private or non-OSI repository and accepts an all-public OSI one — §4.4 (and D452 is what "proof" means) |
 | **173** | The admin page refuses an unauthenticated visitor and any account but the owner's; a queued request notifies the owner; approval mints one key — §6 |
-| **174** | The signing key cannot be exported; only the minter's identity signs; the intake's and an agent's identities are refused — §3.3, the slice's one security boundary |
+| **174** | The signing key cannot be exported; only the minter's identity signs; the API's and an agent's identities are refused — §3.3, the slice's one security boundary |
 | **175** | With the service stopped, installed keys keep working, and the next key, issued 30 days before expiry, overlaps the current one — §8 |
 | **179** | A purchase in the merchant's test mode mints a staging-key Team key that production verifiers refuse; a renewal reissues it; a cancellation stops the reissue — §5 |
 
@@ -572,7 +684,12 @@ project the owner operates" — and that is why S2.10 mints by hand from S3.8 un
 1. **Create the project and the keys (S3.8).** Create the dedicated project, apply the key-ring part
    of `ee/keyservice/terraform`, create the **production** and **staging** signing keys in it, and
    **publish both public halves**. Hand minting can start here, and S2.9's production public half
-   comes from this step.
+   comes from this step. **Amended 2026-11-13:** there is no project to create — `fugaro-prod` exists
+   and hosts the website — so the step is the two applies and the two keys: the key-ring part of
+   `ee/keyservice/terraform` applied to `fugaro-prod` with the production key id, and to
+   `fugaro-staging` with the staging one, one key id per ring (D2194, D459; the portal's P1.5 writes
+   the roots, and its P0.4 — owner-run, like this step — applies them). Hand
+   minting starts here all the same, which is what the step is for.
 2. **Mint by hand while the service does not exist (S2.10).** The owner mints one key at a time
    through the KMS signing API with their own credentials — never a local private key file — against
    S2.1's claim set, so the interim's keys and the service's are the same format. This is what
@@ -599,8 +716,11 @@ path — an old key works until it expires — which is S2.1's accepted limit an
 Restated with its source, so that nothing below is read as open that is not.
 
 - **T13 (2026-10-27)** — owner-operated, a dedicated Fugaro GCP project, Cloud Run, a non-exportable
-  KMS signing key, intake split from signing, built after the entity exists; hand minting until then.
-  ([reconciliation.md](../subscriptions/reconciliation.md) §"Rulings")
+  KMS signing key, the API split from signing, built after the entity exists; hand minting until then.
+  ([reconciliation.md](../subscriptions/reconciliation.md) §"Rulings"). **Amended 2026-11-13: the
+  dedicated project is not; D2194 puts the API, the minter and the ring in `fugaro-prod` (§3.4, §9.1
+  row 5). The API split from signing, the managed non-exportable key and hand minting until the entity
+  exists all stand.**
 - **T15 (2026-10-27)** — an individual is an organisation of one for the free seat and the public-OSI
   rule. (Same section; §4.1's queue is where it lands.)
 - **T26 (2026-10-27)** — the next key issues 30 days before expiry, two keys may be installed, and an
@@ -612,8 +732,8 @@ Restated with its source, so that nothing below is read as open that is not.
 - **D432, D439, D440, D442** — one free seat per organisation (an individual being one); seats are
   compared and never enforced; the evaluation key is three months and the open-source key a year;
   Paddle is the merchant of record for Team and Enterprise is invoiced directly.
-- **D451 (2026-11-07)** — the site's forms reach the intake the owner's way: option (a), the policy's
-  `form-action 'self'` widened to the intake's one exact host, and no page loads from it. The
+- **D451 (2026-11-07)** — the site's forms reach the API the owner's way: option (a), the policy's
+  `form-action 'self'` widened to the API's one exact host, and no page loads from it. The
   approval is recorded in
   [reconciliation.md](../subscriptions/reconciliation.md)'s §"Rulings" (S3.3 is the task that
   carries it). (§7.2; the notice it obliges §7.3 to say is S7.3's, still unwritten.)
@@ -632,15 +752,15 @@ Restated with its source, so that nothing below is read as open that is not.
 | # | Question | Options | Recommendation | Cost of each | Status |
 | --- | --- | --- | --- | --- | --- |
 | D449 | Which `tier`, `features` and `seats` does a Free Plan key carry, and does the key record the plan it was issued under? | (a) all three free keys carry the Team plan's features, with the seats the plan allows and the plan's own name in the record only; (b) a `community` tier for the evaluation seat and the Team features for the open-source and academic keys; (c) a fourth tier for free keys | (a) | (a) §10.2(b) and (c) grant "the Team plan's features" and §10.3 makes the free seat a single-seat trial, so the key states what the customer gets, and the plan's name stays out of a format S2.1 fixed; (b) makes the console show a different tier for two keys that turn on the same features; (c) a new tier in three verifiers and a format change, decided in a design that does not own the format | open |
-| D450 | What shape is the minter? | (a) a second Cloud Run **service** with no public invoker, called by the intake with an ID token; (b) a Cloud Run **job** the intake triggers, drained from a queue; (c) one service, two credentials inside it | (a) | (a) two identities the platform enforces and the smallest thing an IAM audit can hold — but a second deployed service to keep alive; (b) a queue drain is right for the admin's approvals and wrong for a form's answer, which then has to poll; (c) one process's identity is one, so the signer role would sit on the internet-facing service, which is what T13 splits | open |
+| D450 | What shape is the minter? | (a) a second Cloud Run **service** with no public invoker, called by the API with an ID token; (b) a Cloud Run **job** the API triggers, drained from a queue; (c) one service, two credentials inside it | (a) | (a) two identities the platform enforces and the smallest thing an IAM audit can hold — but a second deployed service to keep alive; (b) a queue drain is right for the admin's approvals and wrong for a form's answer, which then has to poll; (c) one process's identity is one, so the signer role would sit on the internet-facing service, which is what T13 splits | open |
 | D452 | What counts as **proof of control** of a repository for the open-source check? | (a) a token the applicant commits to a repository the check can read; (b) an application installation that shows control of the organisation; (c) a commit signed by a key the applicant publishes | (a) | (a) one file in one of the repositories already named, readable through the same API, and it works for an individual with no organisation; (b) proves the organisation and asks an individual maintainer to install an app on their own account; (c) proves a key, not the project, and asks the applicant to hold one | open |
 | D453 | Where does the free-mail list come from and who keeps it? | (a) a pinned list of domains committed under `ee/keyservice/`, updated by a task of its own; (b) a public list fetched at build time; (c) a hand-kept list in the service's configuration | (a) | (a) the check is hermetic, testable and reviewable in the public repository, and it is stale until someone updates it — which is why the update is a task rather than a habit; (b) a network fetch at build and a licence question about the list's own terms; (c) a change to the running service that nothing in the tree records | open |
-| D454 | What are the per-tier mint limits, and what does a limit do? | (a) a cap per tier per window that **queues** the excess; (b) a hard refusal; (c) no cap until abuse is seen | (a) | (a) an honest burst (a batch of renewals) is seen and answered and a drain is stopped; (b) one mistyped renewal becomes a refusal for a paying customer; (c) the caps are what Check 173 measures, and "no cap" is not a limit to measure | open |
-| D455 | Who may reach the admin page, and what is the step-up? | (a) the owner's own account only, with a hardware key or TOTP **per minting action**; (b) a second owner account as well, with the same factor; (c) a password and a session cookie | (a) | (a) one account and one factor, and a stolen session alone mints nothing; (b) a second person who can mint every tier is a second licensor in fact, which the Terms' Licensor wording has not been written for; (c) a session that mints a year-and-30-day key per click | open |
+| D454 | What are the per-tier mint limits, and what does a limit do? | (a) a cap per tier per window that **queues** the excess; (b) a hard refusal; (c) no cap until abuse is seen | (a) | (a) an honest burst (a batch of renewals) is seen and answered and a drain is stopped; (b) one mistyped renewal becomes a refusal for a paying customer; (c) the caps are what Check 173 measures, and "no cap" is not a limit to measure | **D2187, 2026-11-12** (recorded here 2026-11-13): a rate per tier per window that queues the excess, carried by the portal's P5.1 as `admin.go`'s `MintCaps` — a rate and not a claim cap, so no key's `seats` is what it limits |
+| D455 | Who may reach the admin page, and what is the step-up? | (a) the owner's own account only, with a hardware key or TOTP **per minting action**; (b) a second owner account as well, with the same factor; (c) a password and a session cookie | (a) | (a) one account and one factor, and a stolen session alone mints nothing; (b) a second person who can mint every tier is a second licensor in fact, which the Terms' Licensor wording has not been written for; (c) a session that mints a year-and-30-day key per click | **D2187, 2026-11-12** (recorded here 2026-11-13): not the owner's own account and not a second factor of Fugaro's — operations **owners and admins** act and a member only reads, each action needs a sign-in no older than 5 minutes with Google, and the factor is the identity provider's |
 | D456 | Where does the audit log go, and who reads it? | (a) the project's own log sink, read by the owner, with the mint line repeated in the issuance record (§7.3); (b) the record only; (c) the record and an off-project sink | (a) | (a) one place to look and no new dependency, and the log's retention is the project's; (b) a log that a redeploy or a store bug can take with it, in the surface Check 173's audit is about; (c) an off-project copy is D457's personal data in a second place before D457 is answered | open |
 | D457 | What does the issuance record hold, and for how long? | (a) the fields §7.3 lists, with the applicant's address and domain dropped once the key has expired, and the mints themselves kept; (b) everything kept indefinitely; (c) the minimum: the key id and the tier only | (a) | (a) the record answers §4.3's lookup and §4.2's question while it is needed and stops being a store of personal data after; (b) a perpetual store of scraped addresses, which no notice in this tree yet covers; (c) a paid-domain lookup that cannot answer, so §4.3 stops working | open |
-| D458 | What uptime target, and what does a form submission get while the intake is down? | (a) no external target for the Free Plans (the Terms carry none, §10.5), the 60-day absorption stated, and an honest failure page; (b) a stated target for paying customers only; (c) a target for everyone | (a), or (b) with (a) | (a) matches the Terms as counsel wrote them and promises nothing Check 175 does not already measure; (b) a commitment that the merchant's and the Terms' own documents then have to carry; (c) a promise about a service whose interruption is already absorbed for 60 days | open |
-| D459 | Where does the staging pair live? | (a) the same project and key ring, with the staging key id and a staging intake that is not publicly invokable; (b) a second project; (c) no staging service, a staging key minted by hand only | (a) | (a) one project to operate and the two ids Check 179 needs, with the staging intake's exposure as the thing to watch; (b) a second project's IAM, quotas and cost for a test-only path; (c) Check 179's "a purchase in the merchant's test mode" needs an event path, which (c) does not have | open |
+| D458 | What uptime target, and what does a form submission get while the API is down? | (a) no external target for the Free Plans (the Terms carry none, §10.5), the 60-day absorption stated, and an honest failure page; (b) a stated target for paying customers only; (c) a target for everyone | (a), or (b) with (a) | (a) matches the Terms as counsel wrote them and promises nothing Check 175 does not already measure; (b) a commitment that the merchant's and the Terms' own documents then have to carry; (c) a promise about a service whose interruption is already absorbed for 60 days | open |
+| D459 | Where does the staging pair live? | (a) the same project and key ring, with the staging key id and a staging API that is not publicly invokable; (b) a second project; (c) no staging service, a staging key minted by hand only | (a) | (a) one project to operate and the two ids Check 179 needs, with the staging API's exposure as the thing to watch; (b) a second project's IAM, quotas and cost for a test-only path; (c) Check 179's "a purchase in the merchant's test mode" needs an event path, which (c) does not have | **D2194, 2026-11-12** (recorded here 2026-11-13): the **second project of (b)**, one per environment, and one key id per ring rather than (a)'s one ring for both — production's ring in `fugaro-prod` holds only the production key and staging's in `fugaro-staging` only the staging key, applied by the portal's P0.4, which is owner-run (§9.1 row 5) |
 
 ## 13. Out of scope
 

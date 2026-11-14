@@ -181,6 +181,29 @@ const COORDINATOR_SWEEP_SOURCE = readFileSync(
   'utf8',
 )
 
+/**
+ * MEMBERS_SOURCE is `internal/cli/user_ls.go`, read the same way and for the
+ * same reason (the roles-and-scopes plan's RS7): it is the one file the Members
+ * view's document is written in, and `test/fixtures/members.json` stands for
+ * one `fugaro user ls --json` answer.
+ */
+const MEMBERS_SOURCE = readFileSync(
+  fileURLToPath(new URL('../../../internal/cli/user_ls.go', import.meta.url)),
+  'utf8',
+)
+
+/**
+ * MEMBERS is `test/fixtures/members.json`: one `user ls --json` document,
+ * invented from the structs above rather than recorded (no recording carries a
+ * grant whose scope matches a repository and one whose scope matches none).
+ * Its keys are pinned against the structs at the end of this file; there is no
+ * decoder beside that pin, because RS7 lands the read and its fixture and the
+ * Members view itself is a later task's.
+ */
+const MEMBERS: JSONDoc = JSON.parse(
+  readFileSync(join('test', 'fixtures', 'members.json'), 'utf8'),
+) as JSONDoc
+
 /** structTag is one field's `json:` tag: the key it writes, and whether the tag
  * carries `omitempty`. */
 interface StructTag {
@@ -439,6 +462,13 @@ const FULL_ROW: JSONDoc = Object.freeze({
   task_pr: 411,
   record_pr: 412,
   pr: 412,
+  // The state of the pull request above, in the owner's four words of
+  // 2026-11-12 (CLI 0.24.0, contract section 5), between `pr` and `pushed` in
+  // the struct: `runs ls` writes it on every row that carries a pull request,
+  // and `diagnose --json`'s one-run row drops it. Accepted and not read -- no
+  // screen draws it yet -- and it is a word of the CLI's own table rather than
+  // text a job wrote, so it is in `NON_TEXT_STRING_KEYS`.
+  pr_state: 'ready',
   pushed: true,
   pushed_head: 'c'.repeat(40),
   started_at: '2026-10-15T10:20:00Z',
@@ -2265,5 +2295,101 @@ describe('the declared intents document (coordinator v2 C4)', () => {
     // they lack: the three shapes share no top-level key but `repos`, and the
     // stored view's `repos` members carry `stored`/`view` rather than `intents`.
     expect(decodeCoordinatorIntents({ repo: 'owner/repo-a', stored: true }).ok).toBe(false)
+  })
+})
+
+describe('the Members view’s document (roles-and-scopes RS7)', () => {
+  it('lists every key of the document and of each object in it, read off the structs', () => {
+    // The read this fixture stands for is `fugaro user ls --json`, and
+    // `internal/cli/user_ls.go` is the one file its shape is written in, so a
+    // key the CLI gains without the fixture gaining it is a column a Members
+    // view would silently draw nothing for -- and a key the fixture carries
+    // that no struct writes is a value no read could ever print. Both
+    // directions, as in the plan document's own pin above, and in the structs'
+    // declaration order: the fixture is written in it, so `Object.keys` of the
+    // parsed document is comparable to the tags rather than merely sortable.
+    const pairs: readonly (readonly [readonly StructTag[], readonly string[], string])[] = [
+      [structTags(MEMBERS_SOURCE, 'userLsDoc', 'internal/cli/user_ls.go'), Object.keys(MEMBERS), 'the document'],
+      [
+        structTags(MEMBERS_SOURCE, 'userLsGrant', 'internal/cli/user_ls.go'),
+        Object.keys((MEMBERS.grants as JSONDoc[])[0] ?? {}),
+        'grants[]',
+      ],
+      [
+        structTags(MEMBERS_SOURCE, 'userLsEffective', 'internal/cli/user_ls.go'),
+        Object.keys((MEMBERS.effective as JSONDoc[])[0] ?? {}),
+        'effective[]',
+      ],
+      [
+        structTags(MEMBERS_SOURCE, 'userLsLegacyMember', 'internal/cli/user_ls.go'),
+        Object.keys((MEMBERS.legacy as JSONDoc[])[0] ?? {}),
+        'legacy[]',
+      ],
+    ]
+    for (const [tags, keys, what] of pairs) {
+      expect(tags.map((tag) => tag.key), what).toEqual([...keys])
+    }
+  })
+
+  it('holds only values the read can print, in the spellings the CLI gives them', () => {
+    // The keys above are one half of a stand-in for a real `user ls --json`;
+    // the values are the other half, and a value the CLI cannot print would
+    // prove the Members view's decoder against a shape no installation can hand
+    // it -- a scope `ParseScope` refuses, a repository that is not canonical, a
+    // legacy member on no list of this machine's. The grammar below is the one
+    // those writers implement: a grant's person is `access.Member`'s
+    // (`internal/access/store.go`, the `user:` prefix, one fold), a scope is
+    // `ParseScope`'s canonical patterns (`internal/access/scope.go`), and a
+    // repository is `projectpolicy.Canonical`'s `provider/owner/name`
+    // (`internal/projectpolicy/match.go`).
+    const patternsOf = (scope: string): readonly string[] =>
+      scope === 'project' || scope === 'all-repos' ? [] : scope.split(',')
+    for (const grant of MEMBERS.grants as readonly JSONDoc[]) {
+      const user = grant.user as string
+      const role = grant.role as string
+      expect(user, 'grants[].user').toMatch(/^user:[^@\s]+@[^@\s]+$/)
+      expect(user, 'grants[].user').toBe(user.toLowerCase())
+      expect(['viewer', 'operator', 'admin'], 'grants[].role').toContain(role)
+      const patterns = patternsOf(grant.scope as string)
+      // A list of patterns is what `Scope.String` writes: sorted, comma-joined,
+      // and never a lone `*` — that is `all-repos` — nor a wildcard provider,
+      // which `ParseScope` refuses so a pattern cannot widen past its own
+      // provider.
+      expect(patterns, 'grants[].scope').toEqual([...patterns].sort())
+      for (const pattern of patterns) {
+        expect(pattern.split('/').length, pattern).toBeGreaterThanOrEqual(3)
+        expect(pattern.split('/')[0], pattern).not.toContain('*')
+        expect(pattern, pattern).not.toContain('**')
+        expect(pattern, pattern).not.toContain('.git')
+      }
+      for (const known of grant.known as readonly string[]) {
+        expect(known.split('/').length, known).toBeGreaterThanOrEqual(3)
+        expect(known, known).not.toContain('*')
+      }
+    }
+    for (const row of MEMBERS.effective as readonly JSONDoc[]) {
+      const repo = row.repo as string
+      expect(repo.split('/').length, repo).toBeGreaterThanOrEqual(3)
+      expect(repo, repo).not.toContain('*')
+    }
+    // A legacy member is one of this machine's own IAM lists rather than a
+    // grant, so it is spelled with its IAM prefix and it is on the list its own
+    // role names (`userLsLegacy`, `internal/cli/user_ls.go`).
+    const lists: readonly (readonly [string, readonly string[]])[] = [
+      ['operator', MEMBERS.run_operators as readonly string[]],
+      ['admin', MEMBERS.admins as readonly string[]],
+    ]
+    for (const [, list] of lists) {
+      for (const entry of list) {
+        expect(entry, 'the config lists').toMatch(/^(user|group|domain|serviceAccount):/)
+      }
+    }
+    for (const row of MEMBERS.legacy as readonly JSONDoc[]) {
+      const member = row.member as string
+      const role = row.role as string
+      expect(member, 'legacy[].member').toMatch(/^(group|domain|serviceAccount):/)
+      const on = lists.find(([name]) => name === role)?.[1] ?? []
+      expect(on, `${member} is on no ${role} list`).toContain(member)
+    }
   })
 })

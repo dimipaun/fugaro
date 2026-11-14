@@ -182,9 +182,31 @@ const (
 // between an entry's canonical name and its URL, which is the node's own rule
 // (projectpolicy.ValidCloneURLs) -- so it is a row the registry carries and this
 // list does not.
+//
+// Outer-loop escalation's E2 moved it by eight the same way and in the same
+// direction: the escalation ladder's two model grades are four rows for a
+// repository's own `model_grades.*` key and four for the project layer's
+// `defaults.model_grades.*`, and not one of them is in the allowlist -- the
+// block is the project's own model choice (G3), and a repository's entry is
+// dropped and recorded by the merge rather than written by it.
+//
+// The account aliases moved it once more, by one row and not the
+// allowlist's, for the clone URLs' reason: the block is local-only (D2090). Its
+// row is owned by `config local` and not by the `accounts` family the write
+// belongs to (D2096), because `fugaro accounts alias set/rm` -- the write that
+// converges the node and the job set on a repoint -- is a task later than the
+// block, and a row may not name a family command that does not take it (D1178);
+// the row and the reconcile paragraph move together when that command lands.
+//
+// The repository-level account list is the last mover, by one row and not the
+// allowlist's: repos.*.claude_accounts is what admits a repository whose runs
+// are not on a profile job (docs/project-claude-accounts.md §3), so it is
+// local-only and stripped from the shared copy of the map, and its owner is the
+// accounts family, whose `accounts rm` clears a name with the declaration it
+// names -- the generic path writes neither half.
 const (
-	cfmRegistryRows   = 415
-	cfmAllowlistNamed = 101
+	cfmRegistryRows   = 437
+	cfmAllowlistNamed = 105
 )
 
 func TestDocsConfigManagementIsWritten(t *testing.T) {
@@ -438,6 +460,15 @@ func TestDocsConfigManagementRelativeCitationsResolve(t *testing.T) {
 // internal/settings/registry.go:301, and its layer row for defaults.planning at
 // :542.
 //
+// E3 of docs/outer-loop-escalation/ is the last mover, by twelve rows and by
+// twelve: the local ladder's `escalation.*` block is the machine's own — a
+// threshold is authority, so no shared layer holds one — and the generic path is
+// its door, which is what puts the owner's own hand and the coding agent's fence
+// in front of it. Four of the twelve are the per-mode override rows the named
+// list carries, and the eight scalars beside them (the four a mode reads, the
+// cost ceiling, the critical-path factor, the judge's grade and the readiness
+// switch) are reached by the block's own prefix.
+//
 // It counts through the same predicate the write path uses, so the test and the
 // command cannot disagree about what "the allowlist carries" means: the three
 // refusals settingsWriteRowHinted makes before the allowlist is asked are
@@ -649,7 +680,7 @@ var cfmGateRows = []cfmGateRow{
 
 // cfmGateFamilies ties a row's first cell to the family command the tree
 // already names for it: `settingsFamilyCommands` is what refuses a write and
-// points its key at that family (`internal/cli/settings_set.go:523`), so a row
+// points its key at that family (`internal/cli/settings_set.go:537`), so a row
 // spelled some other way would be a table whose command no refusal answers
 // with. A row extends its family's own spelling -- `fugaro rigor set` is the
 // spelling itself, `fugaro secrets rm` adds a subcommand to `fugaro secrets` --

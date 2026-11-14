@@ -83,7 +83,7 @@ func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]Pr
 	// refused at init with the sentence publish would print — and never
 	// deployed as a job whose token is bounded by a list no node states.
 	profiles := profilesAsPolicy(lc.Profiles)
-	accounts, err := projectpolicy.DeriveAccounts(profiles, lc.ClaudeAccounts, lc.ProjectSecrets)
+	accounts, err := projectpolicy.DeriveAccounts(profiles, lc.ClaudeAccounts, lc.ProjectSecrets, lc.PolicyRepoAccounts())
 	if err != nil {
 		return nil, userErr("%v", err)
 	}
@@ -271,45 +271,70 @@ func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]Pr
 // credentials service, so roles/aiplatform.user on this account would be a
 // reach no task of the design names. reviewVariant says what stays in its
 // environment.
+//
+// Beside the variants the coding set derives, the set holds the ONE implicit
+// default review job an installation with the credentials service on has
+// whether or not it declares a profile (implicitReviewVariant, the owner's
+// requirement of 2026-11-13): a project that publishes no profiles deploys no
+// shared coding job, so no variant above covers it, and `fugaro review --pr N`
+// would have nothing to run a review on for any of its repositories. It is a
+// job of the project rather than of a profile — the credentials service pairs
+// a review by the repository and the policy's admissions
+// (credsvc.ReviewJobAccountsFor), not by the job it ran on — so one job
+// serves every repository the service admits.
 func ProjectReviewJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]ProjectJob, error) {
 	coding, err := ProjectJobs(lc, bucket, vertex)
 	if err != nil {
 		return nil, err
 	}
-	if len(coding) == 0 {
-		return nil, nil
-	}
-	out := make(map[string]ProjectJob, len(coding))
+	out := make(map[string]ProjectJob, len(coding)+1)
 	for _, j := range coding {
-		v := reviewVariant(lc, j)
-		// The variant's name and service account are derived over the same
-		// axis as the coding set, so an account whose own name ends in the
-		// review suffix collides with the variant of the account it names: a
-		// profile listing acme-review gets a coding job named exactly as the
-		// review variant of acme, and the two derive ONE service account — so
-		// the variant would run as a job account that mounts the App key,
-		// which is the whole of what it exists not to be. addProjectJob's
-		// check is within a set; this is the same check across the two, and it
-		// fails closed rather than deploying the variant onto an account that
-		// may read a secret.
-		//
-		// The name rule (config.ValidClaudeAccountRef, over the accounts a
-		// policy admits) now refuses such an account before this is reached,
-		// and this stays the last line: it is the only place the two sets are
-		// compared, so a config that arrives by another road is refused here
-		// too.
-		for name, c := range coding {
-			if c.Job != v.Job && c.ServiceAccount.AccountID != v.ServiceAccount.AccountID {
-				continue
-			}
-			return nil, userErr("profiles.%s: the review variant of the account %q derives the job name %s and the service account %s, and the shared job %s of the account %q already holds them: a Claude account whose name ends in %q is the review variant of the account it names, and the review job would run as an account that mounts the App key. Rename that account (claude_accounts) and run fugaro update again",
-				j.Profile, v.Account, v.Job, v.ServiceAccount.AccountID, name, c.Account, credsvc.ReviewVariantSuffix)
-		}
-		if err := addProjectJob(out, v); err != nil {
+		if err := addReviewVariant(out, coding, reviewVariant(lc, j)); err != nil {
 			return nil, err
 		}
 	}
+	if v, ok := implicitReviewVariant(lc, coding, bucket, vertex); ok {
+		if err := addReviewVariant(out, coding, v); err != nil {
+			return nil, err
+		}
+	}
+	// A set nothing is in is not a set: an installation that deploys neither a
+	// coding job nor a variant (no profiles and no credentials service, the
+	// shape every installation had before phase 3) leaves the key out of the
+	// tfvars and its plan unchanged, which is what the nil map says.
+	if len(out) == 0 {
+		return nil, nil
+	}
 	return out, nil
+}
+
+// addReviewVariant adds one review variant to the variant set, refusing a
+// variant whose job name or service account a coding job of the same
+// installation already holds.
+//
+// The variant's name and service account are derived over the same axis as the
+// coding set, so an account whose own name ends in the review suffix collides
+// with the variant of the account it names: a profile listing acme-review gets
+// a coding job named exactly as the review variant of acme, and the two derive
+// ONE service account — so the variant would run as a job account that mounts
+// the App key, which is the whole of what it exists not to be. addProjectJob's
+// check is within a set; this is the same check across the two, and it fails
+// closed rather than deploying the variant onto an account that may read a
+// secret.
+//
+// The name rule (config.ValidClaudeAccountRef, over the accounts a policy
+// admits) now refuses such an account before this is reached, and this stays
+// the last line: it is the only place the two sets are compared, so a config
+// that arrives by another road is refused here too.
+func addReviewVariant(out map[string]ProjectJob, coding map[string]ProjectJob, v ProjectJob) error {
+	for name, c := range coding {
+		if c.Job != v.Job && c.ServiceAccount.AccountID != v.ServiceAccount.AccountID {
+			continue
+		}
+		return userErr("profiles.%s: the review variant of the account %q derives the job name %s and the service account %s, and the shared job %s of the account %q already holds them: a Claude account whose name ends in %q is the review variant of the account it names, and the review job would run as an account that mounts the App key. Rename that account (claude_accounts) and run fugaro update again",
+			v.Profile, v.Account, v.Job, v.ServiceAccount.AccountID, name, c.Account, credsvc.ReviewVariantSuffix)
+	}
+	return addProjectJob(out, v)
 }
 
 // ReviewVariantAccount is config.ReviewVariantAccount, the mapping the
@@ -375,6 +400,144 @@ func reviewVariant(lc *localcfg.Config, j ProjectJob) ProjectJob {
 		// narrower variant.
 		Vertex: false,
 	}
+}
+
+// ImplicitReviewProfile is the profile segment of the installation's implicit
+// default review-only job (implicitReviewVariant): the ONE review job a project
+// has whether or not it declares a profile, deployed for the default Claude
+// account on the github provider. (profile, provider, account) is what the
+// credentials service admits a review caller by, so the three segments are the
+// row this deployer writes into the service's own table and the one piece 2 of
+// C1 derives the service's admitted set from, and they are named here rather
+// than spelled twice: the provider is githubProvider and the account is
+// config.DefaultClaudeAccount, the account a review variant's own name spells
+// "default" for (config.ReviewVariantAccount).
+//
+// It is projectpolicy.DefaultProfileName, the profile a workflow that names
+// none runs on: the job serves the repositories of a project that declares no
+// profile at all, so it can stand under no other name — and a project whose
+// profiles are all Bitbucket ones has no profile that could name it either.
+const ImplicitReviewProfile = projectpolicy.DefaultProfileName
+
+// ImplicitReviewJobName is that job's name: the variant of the no-account job of
+// ImplicitReviewProfile on the github provider, which is the name
+// implicitReviewVariant deploys the job under — reviewVariant over the twin it
+// builds there, whose account is the axis's empty one, which
+// config.ReviewVariantAccount spells "default".
+//
+// It is named for the reader that has the installation's own record in hand and
+// not the config: CarriedProjectReviewJobs finds the job by this name in the
+// tfvars a run deployed it into, and it is the same name the deployment derives
+// rather than a second spelling of it.
+func ImplicitReviewJobName() string {
+	return credsvc.ReviewJobName(ImplicitReviewProfile, githubProvider, config.ReviewVariantAccount(""))
+}
+
+// implicitReviewJobTimeout is the task timeout of the implicit default review
+// job, and it is the total a repository workflow that names none is given
+// (internal/config's own default, 3h, which spec.go's per-repository path adds
+// backend.TaskTimeoutSlack to and turns into TaskTimeoutS): the job serves a
+// profile no config declares, so nothing states a timeout_class for it, and a
+// review on it is bounded exactly as a review of a repository left at the
+// default is.
+const implicitReviewJobTimeout = 3 * time.Hour
+
+// implicitReviewVariant is the installation's implicit default review-only job:
+// the review job a project has with no profile of its own, so that
+// `fugaro review --pr N` can run on any GitHub project with no profile to
+// declare and no policy to publish first (the owner's requirement of
+// 2026-11-13). ok is false when the installation deploys none, which is the
+// ordinary answer for every installation that is not the case above.
+//
+// This is the DEPLOYMENT half of that requirement, and the half C1 lands first:
+// the job, its own service account and the row the credentials service admits a
+// review caller by are all written here. The half that resolves a review onto it
+// is the launcher's, and it follows (C1's piece 3): internal/cli's reviewJobFor
+// refuses a launch whose repository resolved no shared project job even with
+// this job deployed, and its own sentence for that case names a project that has
+// published no profiles. Nothing has to change for this job to be deployed, and
+// no launch reaches it until that half lands.
+//
+// It exists because a review runs on a review-only variant and on nothing else:
+// a project that publishes no profiles deploys no shared coding job, so there
+// is no coding job to derive a variant from (ProjectReviewJobs' own loop) and no
+// variant for a review to run on, whatever a repository's workflow is built
+// from. The variant mounts no secret and clones the pull request head itself, so
+// it holds nothing per-repository and nothing per-profile: one job per
+// (provider, account) serves every repository the credentials service admits.
+//
+// Three things gate it, and each one is a fact rather than a preference:
+//
+//   - The credentials service (lc.CredentialsService, the block's presence being
+//     the opt-in): a variant mounts nothing at all, so its read-only installation
+//     token and its reviewer's model calls both come from the service, and a
+//     project without one has nothing for the job to fetch anything from —
+//     checkReviewService refuses that launch before it looks for a job.
+//   - No coding job whose review variant IS this job. The gate is the collision
+//     itself (the name and the service account addReviewVariant refuses a
+//     deployment on), and it is the same predicate for the same reason: every
+//     profile's accounts carry config.ProjectJobAccounts' empty segment, so a
+//     github coding job holds an entry whose variant is this job's own triple
+//     (ImplicitReviewProfile, github, config.ReviewVariantAccount's "default")
+//     when — and only when — the profile it belongs to is ImplicitReviewProfile.
+//     A github profile under any other name does NOT suppress the job, and that
+//     is deliberate rather than an oversight: suppressing it there would take
+//     the job out of the set for an installation that already deploys it, and
+//     the plan of the next update would carry its delete — which
+//     RefuseProjectJobDeletes stops the whole update on, with "restore the
+//     profile as it was" as the only way out. Adding a profile is an ordinary
+//     act, so the job stays and the profile's own variants are added beside it.
+//   - A single Github App ID recorded (recordedGitHubAppID): a github job runs
+//     on providers.EnvGitHubAppID and the module refuses a job without it, so an
+//     installation that records none — or two, which recordedGitHubAppID reports
+//     as an error — gets no implicit job rather than a refusal: this job is
+//     deployed for nobody who asked for it, and it must never be the reason an
+//     update that converges today stops converging.
+func implicitReviewVariant(lc *localcfg.Config, coding map[string]ProjectJob, bucket string, vertex bool) (ProjectJob, bool) {
+	if lc.CredentialsService == nil {
+		return ProjectJob{}, false
+	}
+	appID, err := recordedGitHubAppID(lc)
+	if err != nil || appID == "" {
+		return ProjectJob{}, false
+	}
+	env := projectJobEnv(lc, bucket, vertex)
+	env[providers.EnvGitHubAppID] = appID
+	// The variant of the no-account job the default profile would have if the
+	// project declared one, and a coding job is not deployed for it: reviewVariant
+	// is what turns this into the review job, so the four things that make a
+	// review-only job one (the suffix's names, the empty mounts, the service's
+	// address and no Vertex grant) are stated in one place and not twice. Its
+	// bucket and token conditions are the installation's own, which is what the
+	// retitling in reviewVariant derives the variant's from.
+	saID := gcp.ProjectServiceAccountID(ImplicitReviewProfile, githubProvider, "")
+	twin := ProjectJob{
+		Profile:        ImplicitReviewProfile,
+		Provider:       githubProvider,
+		Job:            gcp.ProjectJobName(ImplicitReviewProfile, githubProvider, ""),
+		ServiceAccount: ServiceAccount{AccountID: saID, DisplayName: gcp.ProjectSADisplayName(ImplicitReviewProfile, githubProvider, "")},
+		Image:          lc.BaseImage(config.BaseKind),
+		CPU:            strconv.Itoa(config.DefaultCPU),
+		Memory:         config.DefaultMemory,
+		TaskTimeoutS:   int((implicitReviewJobTimeout + backend.TaskTimeoutSlack) / time.Second),
+		Env:            env,
+		BucketCondition: Condition{
+			Title:      gcp.BucketConditionTitle(saID),
+			Expression: gcp.ProjectBucketCondition(bucket, gcp.JobBucketPrefixes),
+		},
+		TokenCondition: Condition{
+			Title:      gcp.ProjectTokenBucketConditionTitle(saID),
+			Expression: gcp.ProjectTokenBucketCondition(bucket),
+		},
+		Vertex: vertex,
+	}
+	v := reviewVariant(lc, twin)
+	for _, c := range coding {
+		if t := reviewVariant(lc, c); t.Job == v.Job || t.ServiceAccount.AccountID == v.ServiceAccount.AccountID {
+			return ProjectJob{}, false
+		}
+	}
+	return v, true
 }
 
 // addProjectJob adds j to the job set, refusing a job whose name or service

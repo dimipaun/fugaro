@@ -39,7 +39,7 @@ const convergeLegacyYAML = "version: 1\nproject: aurora\ngit: { provider: github
 // blocked, the pin and the plugin never move, and the local plugin stays on
 // the previous release.
 func TestUpdateConvergesPastAnInvalidCheckoutFugaroYAML(t *testing.T) {
-	r := newConvergeRigYAML(t, v5Node(), convergeLegacyYAML)
+	r := newConvergeRigYAML(t, v6Node(), convergeLegacyYAML)
 	currentRelease(t)
 	// The line is once per process and this test is about the process's only
 	// one: an earlier test's run may have spent it.
@@ -120,10 +120,10 @@ func TestUpdateConvergesPastAnInvalidCheckoutFugaroYAML(t *testing.T) {
 //
 // Mutation (run, restore): drop the cloud skip from planFor
 // (init_checkout_upgrade.go) and this test fails — the checkout stage's own
-// line reads "ran fugaro upgrade's pin, plugin, cloud for this checkout" and
-// the change that edit asked for reaches Cloud Build.
+// line reads "ran cloud for this checkout" and the change that edit asked for
+// reaches Cloud Build.
 func TestUpdateDoesNotBuildFromACheckoutFileTheRunDidNotOnboard(t *testing.T) {
-	r := newConvergeRigYAML(t, v5Node(), refreshYAML)
+	r := newConvergeRigYAML(t, v6Node(), refreshYAML)
 	currentRelease(t)
 	skillWarned.Store(false)
 	t.Cleanup(func() { skillWarned.Store(false) })
@@ -167,8 +167,8 @@ func TestUpdateDoesNotBuildFromACheckoutFileTheRunDidNotOnboard(t *testing.T) {
 // step builds the job images from what those stages publish: run past a stop
 // like that it would build out of order, from a repository this run never
 // onboarded, and the build it submits fails at the job's own third step —
-// leaving the user a line pointing at `fugaro upgrade`, the second command the
-// HARD RULE forbids.
+// leaving the user a line the HARD RULE forbids: a second command beside the
+// one command the whole upgrade is.
 //
 // The fixture is the converge rig with the repository's recorded GitHub App ID
 // removed: the repository stage's own Check is Todo (nothing about the file is
@@ -180,7 +180,7 @@ func TestUpdateDoesNotBuildFromACheckoutFileTheRunDidNotOnboard(t *testing.T) {
 // (initflow/loop.go) — and this test fails: the checkout runs its cloud step,
 // submits the job image builds and fails on them.
 func TestUpdateDoesNotBuildPastARepositoryStopThatIsNotAboutTheFile(t *testing.T) {
-	r := newConvergeRig(t, v5Node())
+	r := newConvergeRig(t, v6Node())
 	currentRelease(t)
 	skillWarned.Store(false)
 	t.Cleanup(func() { skillWarned.Store(false) })
@@ -216,11 +216,10 @@ func TestUpdateDoesNotBuildPastARepositoryStopThatIsNotAboutTheFile(t *testing.T
 		t.Errorf("Claude Code lists the plugin as %q after the run, want %q: the pin and the plugin are what the tolerance is for\n%s", got, convergeRelease, out)
 	}
 	// And nothing this stage did sends the user to a second command: the fix a
-	// failed cloud step carries names `fugaro upgrade`, because the step is
-	// upgrade's own, and that is the second command the HARD RULE forbids. The
-	// stage's "ran fugaro upgrade's plugin" is its account of which steps ran,
-	// never a command to run.
-	if i := strings.Index(out, "rerun "+selfCommand()+" upgrade"); i >= 0 {
+	// failed cloud step carries names the one door, never a command beside it,
+	// which is what the HARD RULE forbids. The stage's "ran cloud" is its
+	// account of which steps ran, never a command to run.
+	if i := strings.Index(out, "fugaro upgrade"); i >= 0 {
 		t.Errorf("the run sends the user to a second command for the checkout:\n%s", out[i:])
 	}
 }
@@ -259,7 +258,7 @@ func dropAppID(t *testing.T, r *convergeRig) {
 // one that installs it — the step the line used to point at was the checkout
 // stage's and is this stage's own.
 func TestUpdatePluginLineDoesNotReadCurrentWhileTheInstallIsBehind(t *testing.T) {
-	r := newConvergeRigYAML(t, v5Node(), convergeLegacyYAML)
+	r := newConvergeRigYAML(t, v6Node(), convergeLegacyYAML)
 	currentRelease(t)
 	skillWarned.Store(false)
 	t.Cleanup(func() { skillWarned.Store(false) })

@@ -250,13 +250,36 @@ var consoleBoundaryAllowList = []string{
 // tidy` made at the same time are the module graph the new require brings, not
 // decisions of their own. The console contributes nothing to any of them
 // either.
+//
+// The fifth is the portal's, and it is also a new dependency rather than a
+// promotion. `cloud.google.com/go/firestore` is the storage the portal's plan
+// names for the portal's own records (docs/portal/implementation-plan.md F24,
+// task P1.2): ee/keyservice/docstore's backend for it imports the client, and
+// nothing outside `ee/` imports any of it — hence a require line where there
+// was none. `google.golang.org/grpc` moves from the indirect block to the
+// direct one with it, at the version recorded here, because that same file
+// reads a lookup that found nothing as `codes.NotFound` rather than as a
+// failure; `cloud.google.com/go/longrunning` is the graph the two bring. Both
+// modules were already in this module's graph at these versions, and none of
+// the three is here for the console's sake: the console contributes nothing to
+// this module.
+//
+// The sixth is the portal's too, and the second of F24's three to land. The
+// plan names `github.com/getsentry/sentry-go` as what the portal's API reports a
+// panic or a 5xx answer with (task P1.6): ee/keyservice/errreport.go is its
+// only importer, the API mount is the only thing that builds a client, and
+// nothing outside `ee/` imports any of it. At this version it brings no
+// indirect entry with it, so the require line below is the whole of what the
+// module graph gained, and it is not here for the console's sake either.
 var consoleGoModRequireBaseline = []string{
 	"cel.dev/expr v0.25.2 // indirect",
 	"cloud.google.com/go v0.123.0 // indirect",
 	"cloud.google.com/go/auth v0.23.3 // indirect",
 	"cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect",
 	"cloud.google.com/go/compute/metadata v0.9.1 // indirect",
+	"cloud.google.com/go/firestore v1.24.0",
 	"cloud.google.com/go/iam v1.12.0 // indirect",
+	"cloud.google.com/go/longrunning v1.2.0 // indirect",
 	"cloud.google.com/go/monitoring v1.30.0 // indirect",
 	"cloud.google.com/go/storage v1.68.0",
 	"github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp v1.34.0 // indirect",
@@ -277,6 +300,7 @@ var consoleGoModRequireBaseline = []string{
 	"github.com/envoyproxy/protoc-gen-validate v1.3.3 // indirect",
 	"github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect",
 	"github.com/felixge/httpsnoop v1.1.0 // indirect",
+	"github.com/getsentry/sentry-go v0.50.0",
 	"github.com/go-jose/go-jose/v4 v4.1.6 // indirect",
 	"github.com/go-logr/logr v1.4.4 // indirect",
 	"github.com/go-logr/stdr v1.2.2 // indirect",
@@ -328,7 +352,7 @@ var consoleGoModRequireBaseline = []string{
 	"google.golang.org/genproto v0.0.0-20260715232425-e75dac1f907d // indirect",
 	"google.golang.org/genproto/googleapis/api v0.0.0-20260715232425-e75dac1f907d // indirect",
 	"google.golang.org/genproto/googleapis/rpc v0.0.0-20260921155816-b14227669459 // indirect",
-	"google.golang.org/grpc v1.84.0 // indirect",
+	"google.golang.org/grpc v1.84.0",
 	"google.golang.org/protobuf v1.36.12 // indirect",
 	"gopkg.in/yaml.v3 v3.0.1",
 	"rsc.io/qr v0.2.0",

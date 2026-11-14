@@ -610,6 +610,7 @@ reads:
 | `terminal`, `settled` | bool | no | |
 | `branch`, `outcome` | string | **yes** | |
 | `task_pr`, `record_pr`, `pr` | int | **yes** | **`pr` is the run's PR number on this shape** (design gap 6's second spelling) |
+| `pr_state` | string | **yes** | the state of the pull request the row carries, in the owner's four words of 2026-11-12 (**CLI 0.24.0**): `live` (a run is going on it), `ready` (no run is going and it waits only on a merge) or `stalled` (it had a run, no run is going and it is not ready). It is read from the run records alone, with no call to the forge: a listing groups the rows it read by the pull request they carry, takes the newest run of each that says what the pull request is and reads the state from it — a run going makes the pull request `live` whatever the runs that ended left behind, and otherwise the newest run whose `outcome` is `ready` or `draft` decides (`ready` is `ready`, `draft` is `stalled`; a run that said neither, a rebase or a review among them, does not decide, and a pull request whose runs in the window all said neither is `stalled`). It is the last state a run recorded of the pull request and not the pull request's state now: nothing in the read calls the forge, so a pull request merged or closed after the run that left it `ready` keeps `ready`, and one closed after a draft keeps `stalled`. **A review run is on the pull request its task reviews**, which its record names only at the artifact stage that ends the review, so such a row carries `pr_state` while its `pr` is still absent. **Absent for a row that carries no pull request** — a run that opened none, an artifact run — and on a document whose read is not a window: `diagnose --json`'s `row` holds the one run it diagnoses, which cannot say what that pull request is doing, and drops the state rather than guess. The fourth word, `orphan` (a pull request no run ever produced or follows), is one no listing of runs can write, because such a pull request has no row. It is an enum the CLI writes from its own table and never text a job wrote, and `fugaro runs ls --state live\|ready\|stalled` is the same three words |
 | `pushed` bool, `pushed_head`° | | | |
 | `started_at` | `*time.Time` | **yes** | null = not started |
 | `base_branch`, `previous_run` | string | **yes** | |
@@ -2038,6 +2039,50 @@ the answer those fields come back as.
 `project_layer` is `launchProjectLayer`: `sha256`, `generation`° (**int64** —
 which one layer the stored task actually carries, and never its text).
 
+**The chain a launch joined is added by D1056, and it is the same block
+`fugaro runs show --json` prints** (`docs/run-limit-carry-over`, L7): `chain`
+(the root run id), `run_count` (**int**), `enforced` (**bool**),
+`limits_read` (**bool**) and `limits[]`, whose rows are `dimension`, `limit`,
+`used`, `remaining` and `source`. The five are inlined from the one
+`ChainLimits` block both documents are written from
+(`internal/cli/runs_show.go`), so a member or a figure the one carries and the
+other lacks is not a state this pair can be in, and the amounts are in the
+dimension's own unit (micro-dollars for the money, whole tokens, seconds and a
+count). `run_count` is the same count on both sides: **the run the launch
+started is one of the chain's runs**, and the reply counts it, which is what
+`runs show` of that `run_id` reads once the run's own record links it into the
+chain — one more than the same read of the run the launch continued.
+`enforced` false means the figures are the run records' rather than the budget
+database's, which is what a chain is when the installation's budget is off
+(D1046).
+
+**The two documents name the chain the run they are about is bounded by.**
+`runs show` reads the chain a run's **record** links it into
+(`follow_up.previous_run`, written as a follow-up's run starts), and the reply
+reads the chain the launch **joined**; for a pull request follow-up those are
+one chain and one read. A chain a caller continued by naming a run of it has no
+record link to write — a stored task carries `previous_run` only with a branch
+and a pull request (`task.Spec.Validate`) — so `runs show` of the run that
+launch started answers a chain of one, that run, while the reply names the
+chain the caller continued, which is the chain the run is limited by (D1045,
+D1052).
+
+**The block is absent for a launch that begins a chain, and for one whose chain
+read failed.** The first is a first run, an attempt of a batch, a retry of a
+task that is its own chain: that launch joins none, its chain is the run the
+reply's own `run_id` names, and a block naming it would read as a chain of one.
+The second is a read that failed outright while the launch went on — the link
+was resolved and the chain gated before the run started, and no later read
+unlaunches it, so a record deleted in between leaves the block out. **A chain
+the bucket can no longer follow is neither of those**: the run that began it
+sits behind a link the bucket holds nothing under, so the reply carries the
+block with an empty `chain` (empty and never absent, as in `runs show`),
+`limits_read` false, and `run_count` the runs the read reached, the run the
+launch started among them. A consumer
+that has to tell the two reasons for an absence apart has the launch it is
+reading the reply of — which link it named is in the text reply and in the
+arguments that produced it — and `runs show` of `run_id` afterwards.
+
 **Four of the fields are the launch's own identity, and the fifth is a version
 of it the console built.** `project` is the Fugaro project the launch was cut
 for. `run` and `run_id` are the same run id under the CLI's two keys, and it is
@@ -2069,16 +2114,23 @@ inside the CLI, not on this surface: a batch launch prints a batch document once
 per attempt (`printBatch`), and the console never asks for one — the batch flag
 is on rule 11's excluded-flag list — so that shape is not this operation's.
 
-**The decoder is closed, and it is the contract's enforcer.** The main process
-reads this document with `decodeLaunchResult`
-(`console/src/main/launchrules.ts`): the keys must be exactly the ones above, the
-types are the ones the CLI writes, `status` must be one of the two words, and
-**an unknown key or a wrong type refuses the whole reply** rather than being
-ignored (rule 11). Every string is kept as text and bounded — nothing here is
+**The decoder names the keys it draws, and a key it does not know is ignored.**
+The main process reads this document with `decodeLaunchResult`
+(`console/src/main/launchrules.ts`): the types of the keys it names are the ones
+the CLI writes, `status` must be one of the two words, and **an unknown key is
+ignored** rather than refusing the reply, while a key it names carrying a value
+of the wrong type is still refused. The reply arrives *after* the spend, and the
+CLI's JSON only grows and never re-means a member, so refusing it over a member
+a newer CLI added would tell the operator that a launch which happened did not
+(the owner's ruling of 2026-10-30, which replaced rule 11's "refuses the whole
+reply" — the chain members above are the kind of addition it was made for). The
+value is built from the named keys alone, so a key this console does not name
+reaches no screen. Every string is kept as text and bounded — nothing here is
 read as a sentence, a path or a link — and the renderer mirrors that decoder
-(`console/src/renderer/screens/launch.ts`'s `launchOutcomeOf`), so a reply with
-a key of its own draws the console's one "unreadable reply" sentence and never a
-partial set of facts. A replayed answer — a second click on the window's own
+(`console/src/renderer/screens/launch.ts`'s `launchOutcomeOf`), so a reply
+carrying a key this console does not know is drawn from the keys it does and
+never as a partial set of facts, and a key of the document's own never becomes
+a figure of its own. A replayed answer — a second click on the window's own
 button, or a re-sent call — is the app's own in-memory record of the first
 `launchResult` and reaches no child at all (design §5.1 rule 11).
 
@@ -2512,6 +2564,7 @@ provenance reads both:
 | `reviewer` | string | **yes** | never | the senior review's model, resolved |
 | `background` | string | **yes** | never | the file's own `agent.models.background` |
 | `background_effective` | string | **yes** | never | the model Claude Code's background requests actually reach (`config.EffectiveBackground`). **Present only when it differs from `background`**, so a consumer draws `background_effective` when it has one and `background` otherwise |
+| `vision` | string | **yes** | never | the file's own `agent.models.vision`: the model a stage runs instead when its own model cannot read an image. **It is the one pin with no fallback**, so an absent key is the slot unset and never an inherited model — a consumer draws an empty cell rather than the coder's model |
 | `problems` | array of string | **yes** | never | what a launch would refuse this repository on, one line each (`config.CheckProviderPolicy`, the same check a run makes): a pin no route serves, a model the project's `allowed_models` leaves out. `omitempty`, so a repository with nothing wrong carries no key at all |
 
 **Version skew.** Every field is additive within `version: 1` (D784), and the
@@ -3375,6 +3428,148 @@ earlier layer's row already spends is not in force either, and it is said on
 stderr the same way (`config.SecurityIgnoredRow`, D1506): the row is what its
 author believes and the list in force is not.
 
+### 6.24 `fugaro coordinator roadmap … --json` — what became of a roadmap write
+
+**Command:** `ee/coordinator/cli/roadmap.go` `newCoordinatorRoadmapCmd`, with
+the document built as `coordinatorOutcomeDoc`. Cited by symbol, not by line, for
+§6.11's reason. It documents the coordinator's roadmap group (D2110, D2122):
+`need`, `unneed`, `releases set` and §6.25's `move` queue one change to the
+project's roadmap record, and `roadmap request <id>` reads one back. The four
+writes are the six tools of the coordinator's front door over `roadmap:write`,
+and the front door holds **no database write**: it queues, and an apply job that
+this command never reaches changes the record as the coordinator's own account
+(D2118, D922/H3).
+
+**The document is one object, and it is the same one in both directions.**
+`need`, `unneed` and `releases set` print their request's outcome — after
+waiting up to 60 seconds for the record to answer — and `roadmap request <id>`
+prints it without waiting. There is no second shape for the later read, so a
+console that stored one of these documents can compare it with the one it reads
+next. The group's fourth write, `roadmap move`, prints this same document with
+`kind` `move`, and §6.25 is where its argv and its refusals are written down.
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `version` | integer | never | never | the document's own version, `1`. It is the front door's `mcpauth.RoadmapAnswerVersion`, the one constant both ends read, so a shape change moves both together, and a document this build does not know is refused by its number rather than read field by field: the command exits **1** and names `fugaro update`, which is the one command that brings the CLI and the installation to the same release |
+| `request` | string | never | never | the request's id, minted by the front door when it queued the write. It is the only handle on the request and the value `roadmap request` takes. Without `--json` the command prints it as soon as the door has queued the write and **before** it waits, so a person who stops the command still holds it; with `--json` nothing reaches standard output until the outcome is in, because the document is what was asked for, and the id is a field of it |
+| `kind` | string | never | never | what the request asked for: `publish_plan`, `unpublish_plan`, `move`, `need`, `unneed` or `release_set`. It is the request's own discriminator and not the tool's name, because two tools are the same act with opposite arguments |
+| `status` | string | never | never | one of `applied`, `refused`, `failed`, `pending` |
+| `reason` | string | **yes** | never | why a `refused` or a `failed` request did not happen, in the record's own words. Absent rather than empty for the two statuses that carry none |
+| `current` | string | **yes** | never | the value the record holds now, beside a refusal that is a stale `expect`: the version, the release, or the release key. Absent when the refusal is not one of those |
+
+**What the four statuses mean to a caller.** `applied` is the record changed.
+`refused` is the record not changed and is the caller's to fix — a stale
+`expect`, a plan that names a stream the record does not hold — and the command
+exits **1**. `failed` is the installation's: the apply job could not reach the
+record, and the command exits **2**. `pending` is neither a success nor a
+failure: the queue holds the request and the job has not reached it, the command
+exits **0**, and the document is the answer to "what happened" — nothing yet,
+and the same document read again later is how a caller sees it move. A `pending`
+document is the reason `roadmap request` exists as a command of its own: a write
+that runs out its 60 seconds prints this document and the id that reads it
+later.
+
+**A call the door refuses before it queues anything has no document at all.**
+A tool's own refusal travels the way MCP carries one — HTTP 200, a successful
+result, and the sentence in the content with `isError` set — and it is an
+answer about a call rather than a request that exists, so there is nothing to
+print: the command writes nothing to standard output, with or without `--json`,
+the door's sentence is the error, and the exit code is **1**. That is the shape
+of `releases set` built on a version the record has moved past, and of an
+argument the tool's schema does not hold. The version the record holds arrives
+inside that sentence rather than in a `current` field, because no request was
+queued to carry one: a console that showed a `current` beside such a refusal
+would be showing the answer to a different call. (A refusal from the protocol
+layer rather than from the tool — a name the catalogue does not hold, a store
+the door could not read or write, a method it does not serve — is a JSON-RPC
+error instead: it is the installation's and not the call's, the command exits
+**2**, and it is not this document either.)
+
+**The wait.** A write asks for its outcome immediately after queueing, and asks
+again every two seconds until the status is not `pending` or 60 seconds have
+passed. A caller that wants no wait at all calls `roadmap request` with the id
+it already holds; the read is one call and never loops.
+
+**What is not in the document.** No database path, no node, no subtree: the
+record's layout is the installation's own, and where the door or the job failed
+the sentence says the record was not read and nothing about where it lives
+(spec.md §9). No token, no code and no verifier: the credential is the
+keychain's, and the one value that reaches a terminal is the issuer.
+
+**Two more documents, and no rule of their own to state.** `fugaro coordinator
+login --json` prints `coordinatorLoginDoc` — `version`, `project`, `issuer`,
+`scopes` — which is what the person is now signed in as, and `coordinator
+logout --json` prints `coordinatorLogoutDoc` — `version`, `project`,
+`removed` — which is what the keychain no longer holds. Neither carries the
+refresh token, the access token or the client's registration: a document a
+console reads is a document a console logs, and the one credential of this flow
+that lives longer than a command is in the operating system's keychain and
+nowhere else (D2122).
+
+### 6.25 `fugaro coordinator roadmap move <plan>/<task> --to <release-id> --json`
+
+**Command:** `ee/coordinator/cli/roadmap_move.go` `newCoordinatorRoadmapMoveCmd`,
+over the same queue-and-wait path as the group's other writes
+(`runCoordinatorRoadmapWrite`, `ee/coordinator/cli/roadmap.go`). Cited by
+symbol, not by line, for §6.11's reason. **Document:** `coordinatorOutcomeDoc` —
+**§6.24's document, unchanged**, with `kind` `move`, so a console that decodes
+one of the group's writes decodes this one. The section is a section of its own
+because the argv is the console's — GV3.2's drag spawns exactly this command —
+and not because the answer has a shape of its own.
+
+**The task is the command's one positional argument**, `<plan>/<task>`, and the
+release is a flag:
+
+- `--to` (**required**) is where the task goes: a release key the record holds —
+  not a `<stream>/<version>` read from a checkout's release catalogue (D2113) —
+  or the word `none`, which is the unassign. It is a value the caller read out
+  of the record, so a key no release of the record carries is refused by the
+  door rather than resolved here.
+- `--expect` (**required**) is the release the record held for this task when
+  the caller read it, or `none` for a task the record holds no assignment for
+  (D2114). **Nothing defaults it**, and an omitted or empty one is refused by
+  the command itself with a sentence naming `none`: `none` is a reading a caller
+  states after reading the record, and a default would be this client claiming a
+  reading nobody made — the blind write the flag exists to stop. The command
+  exits **1** and reaches neither the front door nor the record.
+- `--json` is §6.24's document, and the two cloud flags `--project` and
+  `--config` (with `--gcp-project` and `--region`) are the installation pair
+  every command that resolves one carries.
+
+**The compare-and-set is checked twice, and the two refusals arrive
+differently.** The door reads the record before it queues anything
+(`roadmap_move`, P9d): a request whose `expect` is not what the assignment holds
+is refused there, and — §6.24's rule — **a call refused before it queues has no
+document at all**: nothing reaches standard output with or without `--json`, the
+door's sentence (with the release the record holds now) is the error, and the
+exit code is **1**. The writer checks `expect` again when the apply job runs
+(P9b), because a move can lose the race between the two reads: that refusal
+arrives as a **`refused` outcome**, with the reason and the release the record
+holds now in `current`, and it is the caller's (exit **1**) — the move that won
+is not written over, and the caller re-reads and asks again. A release the
+record's own state calls `finished` is refused the same way and at the same
+place (D2113): the record knows its releases' states, and no version of a
+catalogue decides it here.
+
+**What the command does not decide.** A move that makes an edge point backwards
+— a task put in an earlier release than something it needs — is **applied and
+reported like any other move**: the order of the edges is the graph's to flag
+(design §5.1's dependency-aware warning, V2.6.2), the record refuses it no more
+than it refuses any other assignment, and this command reads no edge at all. A
+refusal invented here would be a rule the record does not have and a state the
+console could never explain.
+
+**The inverse move is the same argv back**, and it is how a mistake is undone
+(GV3.2's undo issues it): the same task `--to` the release the caller read, with
+`--expect` the release it was moved into. What the record writes for it — the
+`prev` a second move inverts, and the `by` and `at` that say who moved it and
+when — is the writer's and is in no field here: the command sends the tool's
+three arguments and nothing that stands in for them.
+
+**What is not in the document.** As §6.24: no database path, no node, no
+subtree, no token and no code. The move adds nothing to that list and nothing to
+the document — the request's `kind` is the only trace of which write it was.
+
 ## 7. The CLI gaps, settled against the code
 
 The console ships **without any of these** and must work, visibly degraded
@@ -3473,7 +3668,7 @@ table against the live constructors.
    `link.openPullRequest` took it to twenty-five and writes nothing, and C4c's
    `coordinator.intents` took it to twenty-six and writes nothing — **the
    counts in this parenthesis are the history up to that commit, and rule 5's
-   thirty-eight is today's**), and no other argv that writes is reachable
+   thirty-nine is today's**), and no other argv that writes is reachable
    from a renderer. Two further commands this file
    describes are writes, and **neither is in the console's set**: `fugaro cancel
    RUN --json` (§6.3), which is on the design's "never" table and which no v1

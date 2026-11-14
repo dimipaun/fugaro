@@ -161,6 +161,37 @@ variable "operators" {
   }
 }
 
+variable "launcher_accounts" {
+  description = "The launcher class (D1938, F25): the bare email addresses a Google ID token's email claim carries, one per person who may ask the secrets intake or the credentials service for something. `fugaro update` derives it from the same roster list the invoker grants are made from (internal/infra/launchers.go), so the class and the grant name the same people (F31, F36). Empty by default, and the two services render the environment entry only when it is non-empty: an installation whose roster names no launcher starts with a class that admits nobody (fail closed) rather than refusing to bind a port. It never holds a member spelling: a group or a domain is not an address an ID token carries, and the class check refuses one."
+  type        = list(string)
+  default     = []
+  nullable    = false
+
+  validation {
+    condition     = alltrue([for a in var.launcher_accounts : can(regex("^[^@: ]+@[^@ ]+$", a))])
+    error_message = "launcher_accounts is the bare email addresses an ID token's email claim carries (someone@example.com), never the member spelling the launchers variable takes (user:someone@example.com): the process compares the claim against these values, and a prefixed one matches nobody."
+  }
+}
+
+# The viewer list (RS4 of docs/roles-scopes/implementation-plan.md, roles.md
+# §4): members who read and do nothing else. The grammar is the Firebase
+# module's rather than the two lists above: the same list is handed to the
+# Firebase root, where a domain member is refused, so accepting one here would
+# be a list the two roots disagree about — an installation with a Firebase
+# project could not apply it. A viewer list is a read of every run and every
+# run's logs, which is not a grant a whole domain gets by one line.
+variable "viewers" {
+  description = "Members who read and nothing else: the runs bucket, the project's jobs and runs, the isolated log view, the database and the spend history. No launch, no cancel, no write."
+  type        = list(string)
+  default     = []
+  nullable    = false
+
+  validation {
+    condition     = alltrue([for m in var.viewers : can(regex("^(user|group|serviceAccount):[^ *]+$", m))])
+    error_message = "viewers must be IAM members: user:, group: or serviceAccount: followed by one address (no domain: and no wildcard: the same list is handed to the Firebase root, where a broader member is refused)."
+  }
+}
+
 variable "launcher_bucket_condition" {
   description = "The condition of the launchers' objectUser grant on the runs bucket: runs/, tokens/ and issues/ of that bucket only (gcp.LauncherBucketCondition). Passed byte for byte, so every launcher shares one binding."
   type = object({
@@ -285,7 +316,7 @@ variable "history" {
 }
 
 variable "catalog_check" {
-  description = "The project's catalog check job (PIC4, D1148 task (ii)), or null on an installation whose project publishes no catalog: the one scheduled Cloud Run job that runs `fugaro image check --job --catalog` over every entry of the project's image catalog and submits at most one build per entry that fires, each build running as the build account of the repository the entry belongs to (modules/repo/catalogcheck.tf grants the actAs). Its job name must start with fugarochk-: fugaro runs ls and max_parallel count the fugaro- jobs, and the alert policies match ^fugarochk- (alert.tf). env is internal/infra's, and carries FUGARO_CATALOG_CHECK_SPEC — the whole run's assignment as JSON, which the job refuses to start without — beside the platform variables every job has. The two IAM conditions are the input's (the definitions read under builds/catalog/, internal/backend/gcp's gcp.CatalogReadCondition, and one records condition per repository, gcp.CatalogRecordsCondition): what makes a grant narrow here is its condition, and it is the bytes the plan review reads. paused is the schedule's own state and defaults to true, so a project that publishes a catalog deploys the schedule stopped and the installation that wants the nightly run writes a false."
+  description = "The project's catalog check job (PIC4, D1148 task (ii)), or null on an installation whose project publishes no catalog: the one scheduled Cloud Run job that runs `fugaro image check --job --catalog` over every entry of the project's image catalog and submits at most one build per entry that fires, each build running as the build account of the repository the entry belongs to (modules/repo/catalogcheck.tf grants the actAs). Its job name must start with fugarochk-: fugaro runs ls and max_parallel count the fugaro- jobs, and the alert policies match ^fugarochk- (alert.tf). env is internal/infra's, and carries FUGARO_CATALOG_CHECK_SPEC — the whole run's assignment as JSON, which the job refuses to start without — beside the platform variables every job has. The two IAM conditions are the input's (the definitions read under builds/catalog/, internal/backend/gcp's gcp.CatalogReadCondition, and one records condition per repository, gcp.CatalogRecordsCondition): what makes a grant narrow here is its condition, and it is the bytes the plan review reads. paused is the schedule's own state and defaults to true, so a project that publishes a catalog deploys the schedule stopped and the installation that wants the nightly run writes a false. firebase_project is the installation's Firebase project and not this one on a two-project installation: it is where the job's build leases are written and where its own database role is created and bound (catalogcheck.tf, D1554), and it is unset on an installation with no Firebase backend, where the job submits its builds unleased."
   type = object({
     account_id       = string
     job              = string
@@ -294,6 +325,7 @@ variable "catalog_check" {
     scheduler_region = string
     schedule         = optional(string, "17 4 * * *")
     paused           = optional(bool, true)
+    firebase_project = optional(string)
     env              = map(string)
     definitions_condition = object({
       title      = string
@@ -335,6 +367,18 @@ variable "catalog_check" {
       length(var.catalog_check.definitions_condition.expression) > 0
     )
     error_message = "catalog_check needs the service account ID fugaro-catalog-check — the one internal/infra/tf reads as this job's own kind of principal, so a job-account-shaped ID would be covered by the rows that accept those — an image, a job name that starts with fugarochk- (ls counts the fugaro- ones as workflow jobs, and the alert policies match ^fugarochk-), a Scheduler job name and region, and at least one repository with a slug and the two IAM conditions."
+  }
+
+  # firebase_project names a project the job's lease role is created in and
+  # bound on (catalogcheck.tf), so it has to be a project ID and not something
+  # that only reads like one. Unset is an installation with no Firebase
+  # backend, where the job takes no lease and neither resource is planned; ""
+  # is refused rather than read as unset, because a hand-edited tfvars that
+  # wrote it would otherwise silently drop the grant an installation with a
+  # database needs.
+  validation {
+    condition     = var.catalog_check == null ? true : (try(var.catalog_check.firebase_project, null) == null || can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", var.catalog_check.firebase_project)))
+    error_message = "catalog_check.firebase_project must be a GCP project ID, or absent on an installation with no Firebase backend: it is the project the job's build leases are written into and where its own database role is created (catalogcheck.tf, D1554)."
   }
 
   # The job's whole assignment arrives in its environment: internal/cli's mode
@@ -514,6 +558,30 @@ variable "credentials_service" {
       (try(var.credentials_service.url, null) == null || can(regex("^https://[a-z0-9.-]+$", var.credentials_service.url)))
     )
     error_message = "credentials_service needs the Firebase project a run's identity is verified against (the shape of a project ID), the installation's realtime database URL (https://<database>.firebasedatabase.app or .firebaseio.com, without a path — the same rule history.rtdb_url is held to), at least one job as {provider, repo, workflow} with all three set (the service binds a run to a repository through them, and an empty table refuses every caller), every review job as {profile, provider, account} with all three set (the service derives the review job's account from them and serves a review call by the account the row names), and, once it is known, its own URL in the same https://<host> form."
+  }
+}
+
+variable "intake" {
+  description = "The secrets intake (D1931, DS2.2): the installation's own Cloud Run service that alone creates, versions and deletes the dynamic per-secret containers — fugaro_u_<sub>_<name> and fugaro_p_<name>, the internal/secretname grammar — and the identity the credentials service reads them back through a prefix-conditioned accessor for. OFF by default (null): with it off this module creates no account, no role and no service, and no container of the dynamic class is ever written. It is on for an installation whose owner has the feature, and turning it off again removes a service and an account and touches no container (nothing here reads a value, so nothing here carries a prevent_destroy). account_id and service are the account's ID and the Cloud Run service's name; image is the released image, pinned BY DIGEST and never by a tag — the same rule and the same reason as credentials_service.image, because this process runs as the account that writes an installation's credentials and the repository grants roles/artifactregistry.writer to every operator (iam.tf); url is the service's OWN URL, the audience a caller's Google ID token is minted for, and it is optional because Cloud Run assigns it — no expression can read google_cloud_run_v2_service.intake[0].uri from inside that resource, so the first apply creates the revision with intake.tf's unassigned placeholder (an .invalid host no ID token is ever minted for: the revision starts, is healthy and admits nobody) until the apply that carries the URL this module's output publishes."
+  type = object({
+    account_id = string
+    service    = string
+    image      = string
+    url        = optional(string)
+  })
+  default = null
+
+  # The image is a DIGEST and never a tag, held to credentials.tf's own rule
+  # and for its reason: an operator can push a tag, and the code this account
+  # runs is the code that writes an installation's dynamic credentials.
+  validation {
+    condition = var.intake == null ? true : (
+      can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", var.intake.account_id)) &&
+      can(regex("^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$", var.intake.service)) &&
+      can(regex("^[A-Za-z0-9][A-Za-z0-9._/@:-]*@sha256:[0-9a-f]{64}$", var.intake.image)) &&
+      (var.intake.url == null || can(regex("^https://[a-z0-9.-]+$", var.intake.url)))
+    )
+    error_message = "intake needs a service account ID (6-30 characters of a-z, 0-9 and -, starting with a letter), a Cloud Run service name, an image pinned by digest (an image reference ending in @sha256: and 64 lower-case hex digits — never a tag: an operator can push a tag), and, once the URL is known, its own URL in the https://<host> form (no path)."
   }
 }
 

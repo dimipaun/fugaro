@@ -341,6 +341,76 @@ func TestAccountsRmClearsTheCraftThatNamedTheCredential(t *testing.T) {
 	}
 }
 
+// TestAccountsRmClearsTheRepositoryEntryThatNamedTheAccount: the second source
+// of an account's admission is a repository's own claude_accounts
+// (docs/project-claude-accounts.md §3), and the removal that drops the
+// declaration has to clear it too. Nothing of this release edits that list —
+// `repos.*.claude_accounts` is not a `settings set` path — so a refusal would
+// name a remedy that does not exist, and an entry left behind is a repository
+// naming an account this file no longer defines, which the publish that derives
+// the admission refuses: the repository's own runs would be left with no
+// account and the owner with a command that no longer publishes.
+func TestAccountsRmClearsTheRepositoryEntryThatNamedTheAccount(t *testing.T) {
+	r := newAddRigWith(t, accountsRmRepoLocal)
+	r.add(t, "team-a", "--repos", "owner/repo-a", "--profile", "standard")
+
+	out := r.rm(t, "team-a", "--profile", "standard")
+
+	if _, err := localcfg.Load(r.cfg); err != nil {
+		t.Fatalf("the config this command wrote does not load: %v", err)
+	}
+	lc := r.addLocal(t)
+	if got := lc.Repos["owner/repo-a"].ClaudeAccounts; len(got) != 0 {
+		t.Errorf("repos.owner/repo-a.claude_accounts = %v, want the name cleared with the declaration", got)
+	}
+	// The control the entry's own keys are read against: the rest of the entry
+	// is the entry, and a write that cleared it wholesale would be the same
+	// complaint with a different cause.
+	if got := lc.Repos["owner/repo-a"].Provider; got != "github" {
+		t.Errorf("repos.owner/repo-a.provider = %q, want the entry's own fields left where they were", got)
+	}
+	if !strings.Contains(out, "clear repos.owner/repo-a.claude_accounts, which admitted that repository's own runs") {
+		t.Errorf("the sentence does not name the entry it cleared:\n%s", out)
+	}
+	// The whole point of clearing rather than leaving it: what the owner
+	// publishes next still derives an account for the repository, and no
+	// account is admitted that the file does not define.
+	if _, ok := lc.ClaudeAccounts["team-a"]; ok {
+		t.Errorf("claude_accounts.team-a is still declared: %v", slices.Sorted(maps.Keys(lc.ClaudeAccounts)))
+	}
+}
+
+// accountsRmRepoLocal is a repository whose own entry names the account, the
+// state `accounts rm` has to leave consistent: the account is declared with the
+// repository in its allow_data_to, the profile serves it, and the entry is what
+// admits the repository's own runs.
+const accountsRmRepoLocal = `version: 1
+name: aurora
+gcp_project: proj-1234
+region: us-east5
+runs_bucket: fugaro-runs-proj-1234
+registry: us-east5-docker.pkg.dev/proj-1234/fugaro
+build: { service_account: fugaro-build@proj-1234.iam.gserviceaccount.com }
+user: test@example.com
+base_images: { base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc }
+claude_accounts:
+  team-a:
+    allow_data_to:
+      - owner/repo-a
+profiles:
+  standard:
+    provider: github
+    cpu: 2
+    memory: 8Gi
+    timeout_class: 6h
+    allow_repos:
+      - github/owner/repo-a
+    claude_accounts:
+      - team-a
+repos:
+  owner/repo-a: { provider: github, github_app_id: "12345", workflows: [web], claude_accounts: [team-a] }
+`
+
 // assertPoolMemberAdmitted is whether a pool naming this credential is the
 // config's own rule's business: ValidatePools is what a load of this file
 // applies to its pools block, so a member it does not complain about is one a
@@ -2001,9 +2071,9 @@ func accountsRmPolicyBaseBranch(t *testing.T, r *addRig, branch string) {
 // unresolved rather than the default, which is the value a verdict about a file
 // may not resolve (basebranch.go's projectBaseBranchErr).
 //
-// The version is the one that is refused (two steps back: the step immediately
-// below this binary's is shape-free and this reader reads it, so a node there
-// would answer the read) and no stage of the same run repairs in the other
+// The version is the one that is refused (refusedOlderVersion: every version
+// between it and this binary's is shape-free and this reader reads those, so a
+// node there would answer the read) and no stage of the same run repairs in the other
 // direction: a node of an OLDER version is the state the update's own
 // instrumentation stage tolerates (init.go's effectiveVerifiers answers a node
 // older than this binary with the config's own list, and the policy stage
@@ -2014,7 +2084,7 @@ func accountsRmPolicyBaseBranch(t *testing.T, r *addRig, branch string) {
 func accountsRmBreakPolicyBaseBranch(t *testing.T, r *addRig, branch string) {
 	t.Helper()
 	node := addPolicyNode()
-	node["version"] = projectpolicy.Version - 2
+	node["version"] = refusedOlderVersion(t)
 	node["base_branch"] = branch
 	accountsRmPublishPolicyNode(t, r, node)
 }

@@ -635,6 +635,52 @@ func TestInitPublishFromACodingAgentSession(t *testing.T) {
 	}
 }
 
+// TestSharedConfigRefusesAliases: an alias is a name the account-choice keys
+// may hold in place of an account's own name, so it is local-only for their
+// reason and one indirection in (docs/account-aliases, D2090) — a published
+// alias would let whoever can write the runs bucket's shared file name an
+// account that file never admitted. The publish writes the resolved account
+// into the policy node instead, and localcfg.Config.Shared nils the block, so
+// the reader refuses the key by name before the file is parsed and again on the
+// decoded value, the way review_floor and the catalog are refused.
+func TestSharedConfigRefusesAliases(t *testing.T) {
+	if !slices.Contains(sharedForbidden, "claude_account_aliases") {
+		t.Fatal("sharedForbidden does not name claude_account_aliases, so a published alias would be read")
+	}
+	block := "claude_account_aliases:\n    reviewer: team-a\n"
+	_, err := ParseShared([]byte(validShared()+block), sharedAnchor)
+	if err == nil {
+		t.Fatal("a published shared config carrying claude_account_aliases: was accepted")
+	}
+	for _, want := range []string{"claude_account_aliases", "never published", "fugaro update"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	// The decoded half, which no document reaches (the key is refused before
+	// Parse): a config built another way must not publish a block the converge
+	// never writes. The alias's own target is defined here, so what the parse
+	// complains about, if anything, is the block and not the fixture.
+	c, err := localcfg.Parse([]byte(validShared() + "claude_accounts:\n    team-a:\n        allow_data_to:\n            - belong/edgeweb\n" + block))
+	if err != nil {
+		t.Fatalf("the fixture does not read back: %v", err)
+	}
+	if !sharedNeverPublished(c) {
+		t.Error("a decoded config carrying claude_account_aliases: is called publishable, so a shared file could carry an alias")
+	}
+	// That fixture is publishable by three of the predicate's arms at once
+	// (registry, claude_accounts and the alias block), so it cannot say which
+	// one answered. This pair does: the alias block alone is refused, and a
+	// config that carries nothing is the control that keeps the arm from being
+	// replaced by a predicate that refuses everything.
+	if !sharedNeverPublished(&localcfg.Config{ClaudeAccountAliases: map[string]string{"reviewer": "team-a"}}) {
+		t.Error("only the alias block is set, and the config is called publishable")
+	}
+	if sharedNeverPublished(&localcfg.Config{}) {
+		t.Error("a config carrying no section at all is called unpublishable, so the check is not the sections it names")
+	}
+}
+
 // TestSharedConfigRefusesImageCatalog: the image catalog is the owner's policy
 // and is published through the policy node — which the runner reads and fails
 // closed on — precisely because the shared config is the file any launcher with
@@ -734,6 +780,60 @@ func TestSharedConfigRefusesCloneURLs(t *testing.T) {
 			t.Errorf("the refusal does not name %q: %v", want, err)
 		}
 	}
+}
+
+// TestSharedConfigRefusesARepositoryAccountList: a repos entry's own
+// claude_accounts is the repository-level half of the trust anchor T1 keeps in
+// the operator-only local config — it is what admits a repository whose runs
+// are not on a profile job to an account (docs/project-claude-accounts.md §3) —
+// so it is refused in the shared file exactly as the top-level block is, and
+// localcfg.Config.Shared clears it for the same reason. A launcher with
+// objectAdmin on the runs bucket who could publish one would be adding a
+// repository to an account's admission, and the machine whose next publish
+// derives the admission would be deriving what that launcher wrote. The key is
+// nested, so it is refused on the decoded value rather than by key before the
+// parse; the refusal names the entry, the key and the block to edit.
+func TestSharedConfigRefusesARepositoryAccountList(t *testing.T) {
+	data := strings.Replace(validShared(),
+		"        workflows:\n            - web\n",
+		"        workflows:\n            - web\n        claude_accounts:\n            - team-a\n", 1)
+	if data == validShared() {
+		t.Fatal("the fixture did not gain the entry: the check below would pass on a file carrying no claude_accounts")
+	}
+	_, err := ParseShared([]byte(data), sharedAnchor)
+	if err == nil {
+		t.Fatal("a published shared config carrying repos.<r>.claude_accounts: was accepted")
+	}
+	for _, want := range []string{"repos.belong/edgeweb.claude_accounts", "never published", "fugaro update"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	// The publish half: the converge's own copy of the repos map carries
+	// neither local key, so a config that has one is never the file that
+	// reaches the bucket. The control beside it is the same config without the
+	// key, so the check is the entry's own keys and not the entry.
+	c, err := localcfg.Parse([]byte(data))
+	if err != nil {
+		t.Fatalf("the fixture does not read back: %v", err)
+	}
+	if got := c.Shared().Repos["belong/edgeweb"]; len(got.ClaudeAccounts) > 0 || got.BaseBranch != "" {
+		t.Errorf("the published copy of belong/edgeweb carries %v/%q, so a repository's own account list would travel to the runs bucket", got.ClaudeAccounts, got.BaseBranch)
+	}
+	if got := validSharedPublished(t); len(got.Repos["belong/edgeweb"].ClaudeAccounts) > 0 {
+		t.Error("the control entry carries an account list, so the check above proves nothing")
+	}
+}
+
+// validSharedPublished is the shared copy of the valid fixture, for the tests
+// that need the config the converge publishes beside the config it reads.
+func validSharedPublished(t *testing.T) *localcfg.Config {
+	t.Helper()
+	c, err := localcfg.Parse([]byte(validShared()))
+	if err != nil {
+		t.Fatalf("the fixture does not read back: %v", err)
+	}
+	return c.Shared()
 }
 
 // TestSharedConfigRefusesEveryForbiddenSection: the list is the fence, and a

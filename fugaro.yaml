@@ -22,9 +22,9 @@ agent:
   # model ID: this pair is why the refusal does not fire here.
   # The independent review can now run INSIDE the cloud loop on a Claude account: the per-stage
   # account setting exists (mixed credentials, the tasks B1-B6, docs/design/mixed-credentials.md
-  # §11), so an api-key run may name ONE stage-scoped account for its `review` and `adversarial`
-  # stages — `stages.<stage>.claude_account`, or the project's `default_claude_account` where that
-  # stage's own model is an Anthropic one — and those two stages go direct to Anthropic on an Opus
+  # §11), so an api-key run may name ONE stage-scoped account for its `review`, `adversarial` and
+  # `triage` stages — `stages.<stage>.claude_account`, or the project's `default_claude_account`
+  # where that stage's own model is an Anthropic one — and those three stages go direct to Anthropic on an Opus
   # model, which the gateway's ledger does not price at all (their dollars are the agent's own
   # figure, recorded as notional) and which no gateway caps. Both keys are the machine's and not
   # this file's: they live in the local project config, and the account reaches a run only once
@@ -76,6 +76,13 @@ workflows:
         go vet ./...
         test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       test: |
-        go test -timeout 15m $(go list ./... | grep -v -e /internal/runner -e /internal/e2e -e /internal/image -e /fugaro/images)
+        rc=0
+        go test -timeout 15m $(go list ./... | grep -v -e /internal/runner -e /internal/e2e -e /internal/image -e /fugaro/images) || rc=$?
+        # The container's high-water memory since it started, the agent and the build cache
+        # included (Cloud Run keeps the disk in memory): the number to size resources.memory by.
+        for f in /sys/fs/cgroup/memory.peak /sys/fs/cgroup/memory/memory.max_usage_in_bytes; do
+          if [ -r "$f" ]; then echo "peak memory: $(( $(cat "$f") / 1048576 )) MiB ($f)"; break; fi
+        done
+        exit $rc
     resources: { cpu: 4, memory: 8Gi }
     timeouts: { total: 3h, stage: 150m, verify: 25m, finalize_reserve: 5m }

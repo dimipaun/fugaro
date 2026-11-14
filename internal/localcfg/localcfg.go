@@ -33,6 +33,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -198,6 +199,23 @@ type Config struct {
 	// choose among by name (design docs/design/named-oauth-tokens.md).
 	// Only the owner sets them, here, never in fugaro.yaml.
 	ClaudeAccounts map[string]config.ClaudeAccount `yaml:"claude_accounts,omitempty"`
+	// ClaudeAccountAliases are the names the choice keys may hold instead of an
+	// account's own name, each pointing at one account of claude_accounts (or
+	// at "default" for the unsuffixed account), so moving every key that names
+	// the alias to another account is one edit (docs/account-aliases/spec.md
+	// §1, D2090, D2092, D2093). Only the owner sets them, here, never in
+	// fugaro.yaml, the project layer or the shared config, for claude_accounts'
+	// own reason: an alias is resolved by whoever writes the name out or holds
+	// one to a rule, and a key a launcher could write would be a way around
+	// that account's allow_data_to. The alias never reaches the node, the task,
+	// the run record or a job by its own name — the publish resolves the members
+	// it copies there (internal/cli's configAccountValues and project_cmd), the
+	// launch resolves the flag, the stage keys and the project default before
+	// the allow-list is asked (claudeAccountFor), and the job set resolves the
+	// variant it builds (internal/infra's mixedStageAccounts and
+	// mixedDefaultAccount) — so this block is local config and nothing else
+	// moves with it.
+	ClaudeAccountAliases map[string]string `yaml:"claude_account_aliases,omitempty"`
 	// Credentials are the installation's named credentials (design
 	// docs/model-crafts/spec.md §1): a name a craft's access speaks and the
 	// type of the provider that serves it, whose secret value this file never
@@ -445,6 +463,15 @@ type Config struct {
 	// committed report carries no part of it, so a published threshold is a
 	// figure no other machine acts on.
 	Issues *Issues `yaml:"issues,omitempty"`
+	// Escalation is the outer loop's ladder as this machine states it: the
+	// thresholds, the model grades its rungs run at and the switches that
+	// decide whether the daemon acts on a stalled item at all
+	// (docs/outer-loop-escalation, E3). It is local-only for Issues' reason
+	// and one of its own: a threshold is authority rather than preference, so
+	// the block is refused by name in a repository's file and in the project
+	// layer, and Shared drops it — a launcher who could write the shared file
+	// would be choosing when every teammate's runs merge (D2032, G3).
+	Escalation *Escalation `yaml:"escalation,omitempty"`
 	// CredentialsService is the installation's credentials service
 	// (docs/credentials-service, D146/D147), or nil on an installation whose
 	// `fugaro update` could not deploy one — no Firebase backend for the
@@ -739,11 +766,33 @@ func (c *Config) choiceRefProblem(name string) string {
 	if config.AxisNonAccountValue(name) {
 		return config.NonAccountChoiceMessage(name)
 	}
+	// An alias is the other name these keys may hold (docs/account-aliases,
+	// D2091, D2092): the key keeps the alias as written, and whoever reads it
+	// resolves it through ResolveAccount before asking anything else — the
+	// allow-list included — so the lookup below would refuse a name this file
+	// does define. The alias's own name and target rules are
+	// ValidateAccountAliases', applied where the block is loaded; asking them
+	// again here would be a second copy of them.
+	if _, ok := c.ClaudeAccountAliases[name]; ok {
+		return ""
+	}
 	if _, ok := c.ClaudeAccounts[name]; ok {
 		return ""
 	}
 	return fmt.Sprintf("the account %q is not defined here: this key names an account of this file's claude_accounts block, where the account's own allow_data_to decides which repositories may use its token, or %q for the unsuffixed default account — define it as claude_accounts: {%s: {allow_data_to: [owner/name]}}, or drop the key",
 		pluginwire.Printable(name), config.DefaultClaudeAccount, pluginwire.Printable(name))
+}
+
+// ResolveAccount is name resolved through this file's aliases: the account a
+// reader has to work with, and the alias the name came through ("" when it was
+// no alias at all). It is the one step every reader of a choice key takes —
+// the launch, the publish and the job set — and it is taken BEFORE the result
+// is held to the account's own allow_data_to, so the allow-list is always asked
+// about the account the run will hold and never about the alias (F6). A reader
+// that holds an alias back rather than resolving it, or resolves it after the
+// allow-list, is the shape this method exists to keep out of the tree.
+func (c *Config) ResolveAccount(name string) (account, alias string) {
+	return config.ResolveAccountAlias(c.ClaudeAccountAliases, name)
 }
 
 // Mailbox is the mailbox block: what the mailbox consumer needs from the
@@ -1501,6 +1550,30 @@ type Repo struct {
 	// where the spec is built, and the repository's agent.auth is read there
 	// too, live from the fugaro.yaml the runs read.
 	CredentialsServiceReady *bool `yaml:"credentials_service_ready,omitempty"`
+	// ClaudeAccounts are the accounts this repository's OWN runs may be served
+	// by, and they are the repository's own statement because a profile is not
+	// the only kind of job its runs land on: a per-repository job — every
+	// Bitbucket repository, and every repository no workflow sends to a shared
+	// one — has no profile to name its accounts in, and while the published
+	// accounts block was derived from the profiles alone such a repository
+	// could be admitted to no account at all (the credentials service's
+	// intersection came out empty and its runs were answered 503
+	// state_unavailable).
+	//
+	// An entry here adds this repository's canonical name to each account it
+	// names (projectpolicy.DeriveAccounts), which is the same admission a
+	// profile naming the account gives the repositories of ITS allow_repos:
+	// the account's own list is the bound, and this entry is refused at publish
+	// when it does not cover the repository. A profile and this key may both
+	// name one account; the union applies, and nothing already admitted is
+	// narrowed.
+	//
+	// It is operator-only local config, like claude_accounts and
+	// project_secrets themselves: never fugaro.yaml, never the project layer,
+	// never published as written. Provider must be set on an entry that names
+	// accounts, because the published entry is provider-qualified and this
+	// entry is the only place a per-repository job's provider is stated.
+	ClaudeAccounts []string `yaml:"claude_accounts,omitempty"`
 }
 
 // CredentialsServiceOn is the record as every reader of the switch judges it:
@@ -1518,6 +1591,31 @@ func (r Repo) CredentialsServiceOn() bool {
 // to its own copy of on, so two entries never share one record — the field is a
 // pointer only so that "no record at all" is a document a config can hold.
 func RecordSwitch(on bool) *bool { return &on }
+
+// PolicyRepoAccounts is the repositories whose own entries name Claude
+// accounts, as the published accounts block's derivation reads them
+// (projectpolicy.DeriveAccounts): keyed by the repository as this file spells
+// it (owner/name), each with the provider that qualifies it and the accounts it
+// names, in file order.
+//
+// The entry's provider is the one the repository was onboarded with, and it is
+// what turns owner/name into the canonical provider/owner/name an allow_repos
+// entry is written in. A repository entry naming accounts without one is
+// refused by validate (and again by the derivation), so the empty provider here
+// reaches no publish.
+func (c *Config) PolicyRepoAccounts() map[string]projectpolicy.RepoAccount {
+	if len(c.Repos) == 0 {
+		return nil
+	}
+	out := map[string]projectpolicy.RepoAccount{}
+	for repo, r := range c.Repos {
+		if len(r.ClaudeAccounts) == 0 {
+			continue
+		}
+		out[repo] = projectpolicy.RepoAccount{Provider: r.Provider, Accounts: r.ClaudeAccounts}
+	}
+	return out
+}
 
 // UsesVertex reports whether any repository the config records uses
 // Vertex AI.
@@ -2287,6 +2385,7 @@ func (c *Config) validate() error {
 		}
 	}
 	c.validateBudget(bad)
+	c.validateEscalation(bad)
 	for _, p := range config.ValidateModelProviders(c.Providers) {
 		bad("%s: %s", p.Path, p.Message)
 	}
@@ -2322,6 +2421,16 @@ func (c *Config) validate() error {
 		if msg := config.ModelIDProblem(c.Crafts.Of(name).Model); msg != "" {
 			bad("crafts.%s.model: %s", name, msg)
 		}
+	}
+	// The aliases the account-choice keys may hold (docs/account-aliases, D2090,
+	// D2092, D2093): their names are held to credentialNameProblem's rule and
+	// share one namespace with the accounts, the credentials and the pools, and
+	// their targets are one account of claude_accounts or "default". It is
+	// checked here, above the keys that name them, because both rules are about
+	// the names those blocks hold and this is the one place all four are in
+	// hand.
+	for _, p := range config.ValidateAccountAliases(c.ClaudeAccountAliases, c.ClaudeAccounts, c.Credentials, c.Pools) {
+		bad("%s: %s", p.Path, p.Message)
 	}
 	// The account-choice keys are checked against the REFERENCE rule and not
 	// the definition's: each one names an account a run may use, and "default"
@@ -2561,6 +2670,14 @@ func (c *Config) validate() error {
 			if !config.WorkflowNameRE.MatchString(w) {
 				bad("repos.%s: workflow %q is not a workflow name", repo, w)
 			}
+		}
+		for _, name := range r.ClaudeAccounts {
+			if msg := config.ValidClaudeAccountRef(name); msg != "" {
+				bad("repos.%s.claude_accounts: %s", repo, msg)
+			}
+		}
+		if len(r.ClaudeAccounts) > 0 && r.Provider == "" {
+			bad("repos.%s.claude_accounts: this repository names accounts and no provider, and a published account entry is provider-qualified (owner/name is published as provider/owner/name): write the repository's provider here, which is the only place a per-repository job's provider is stated", repo)
 		}
 	}
 	validateWorkspace(c, bad)

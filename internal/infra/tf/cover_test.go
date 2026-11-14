@@ -747,7 +747,7 @@ func TestRolePinsAreTheModules(t *testing.T) {
 	strRE := regexp.MustCompile(`"([^"]+)"`)
 	// resource name -> the role ID the modules give it (names.role_ids and the
 	// literals in history.tf and the Firebase module's names.minter_role_id).
-	ids := map[string]string{"launcher": "fugaroLauncher", "job_runner": "fugaroJobRunner", "build_submitter": "fugaroBuildSubmitter", "tag_mover": "fugaroTagMover", "cloud_asset_reader": CloudAssetRole, "token_minter": "fugaroTokenMinter", "history": "fugaroHistory", "reaper": "fugaroReaper", "preload_builder": "fugaroPreloadBuilder", "fugaro_deployer": DeployerRole, "credentials_database": CredentialsDatabaseRole, "workspace_read": WorkspaceReadRole}
+	ids := map[string]string{"launcher": "fugaroLauncher", "fugaro_viewer": ViewerRole, "job_runner": "fugaroJobRunner", "build_submitter": "fugaroBuildSubmitter", "tag_mover": "fugaroTagMover", "cloud_asset_reader": CloudAssetRole, "token_minter": "fugaroTokenMinter", "history": "fugaroHistory", "reaper": "fugaroReaper", "preload_builder": "fugaroPreloadBuilder", "fugaro_deployer": DeployerRole, "credentials_database": CredentialsDatabaseRole, "workspace_read": WorkspaceReadRole, "intake_secrets": IntakeSecretsRole, "secret_lister": SecretListerRole, "catalog_lease": CatalogLeaseRole, "state_read": MCPStateReadRole}
 	for role, label := range deployerRoleLabel {
 		ids[label] = role
 	}
@@ -1406,6 +1406,194 @@ func TestCoverRefusesACredentialsServiceThatIsNotTheModules(t *testing.T) {
 		p := &Plan{ResourceChanges: []ResourceChange{svc(), credentialsAccount("no-op")}}
 		if got := testCover.NotCovered(p, nil); len(got) != 0 {
 			t.Fatalf("NotCovered = %q, want covered: the account is the plan's own, unchanged", got)
+		}
+	})
+}
+
+// --- The secrets intake's own service (DS2.2, DS4.1) ----------------------
+
+const intakeAccountEmail = IntakeAccountID + "@proj-1.iam.gserviceaccount.com"
+
+// intakeAccount is the account intake.tf creates for the intake, the sibling of
+// credentialsAccount and named the same way.
+func intakeAccount(acts ...string) ResourceChange {
+	r := rc("google_service_account", map[string]any{"account_id": IntakeAccountID}, map[string]any{}, acts...)
+	r.Address = "module.m.google_service_account.intake[0]"
+	return r
+}
+
+// intakeService is the secrets intake as modules/installation/intake.tf writes
+// it: one container at template[0].containers[0] running the CREDENTIALS
+// image, with the module's own args, its four environment variables and the
+// account the module creates for it. The address is what tells the two services
+// apart in the cover (cloudRunServiceName), so it carries the module's own
+// resource name.
+//
+// The args are the whole reason this service has a cover case of its own: the
+// image's entrypoint is the released binary and its default command is
+// `credentials serve`, so a plan whose args are not exactly ["intake", "serve"]
+// either serves the credentials service's routes from the intake's URL — as the
+// account that writes this installation's dynamic secrets — or runs code
+// intake.tf does not write.
+func intakeService(image string) ResourceChange {
+	c := map[string]any{"image": image, "command": []any{}, "args": []any{"intake", "serve"}, "env": []any{
+		map[string]any{"name": "FUGARO_GCP_PROJECT", "value": "proj-1", "value_source": []any{}},
+		map[string]any{"name": "FUGARO_INTAKE_URL", "value": "https://fugaro-intake-123456789012.us-east5.run.app", "value_source": []any{}},
+		map[string]any{"name": "FUGARO_RUNS_BUCKET", "value": "fugaro-runs-proj-1", "value_source": []any{}},
+		map[string]any{"name": "FUGARO_LAUNCHER_ACCOUNTS", "value": `["me@example.com"]`, "value_source": []any{}},
+	}}
+	r := rc("google_cloud_run_v2_service", map[string]any{"invoker_iam_disabled": false,
+		"template": []any{map[string]any{"service_account": intakeAccountEmail, "containers": []any{c}}}}, map[string]any{}, "create")
+	r.Address = "module.m.google_cloud_run_v2_service.intake"
+	return r
+}
+
+// intakeServicePlan is the plan the module's own intake is covered in: the
+// service and the account it runs as, which the same module creates.
+func intakeServicePlan(r ResourceChange) *Plan {
+	return &Plan{ResourceChanges: []ResourceChange{r, intakeAccount("create")}}
+}
+
+// The intake is the installation's second Cloud Run service and the same
+// image's other subcommand, and it is held to the credentials service's rules
+// plus the two that tell the two apart: its args, and the account it runs as.
+//
+// The account rule is the pair's own: the two services must not be able to swap
+// identities, so a change at either address naming the other's account is
+// refused — the intake running as the credentials account would hold the
+// read of every model credential in the bundle (R3, F30), and the credentials
+// service running as the intake's would lose it.
+//
+// The image is held by the same credentialsImageOK the credentials service's is
+// (the intake runs the same pin, and an image of its own is one no release
+// builds), the environment by the four names intake.tf sets with literal values
+// and no value_source, and invoker_iam_disabled must be false, all for the
+// reasons that case's comment gives.
+//
+// Mutation (run, restore): delete the intakeServiceChange branch from
+// Cover.attributes — the module's own plan becomes REFUSED, which is the row
+// that pins the branch: every change at this address then falls to the
+// credentials service's case, which refuses any args and any account that is
+// not its own resource, and the intake's container carries both. A test that
+// only listed refused rows would miss it.
+func TestCoverRefusesAnIntakeServiceThatIsNotTheModules(t *testing.T) {
+	img := "us-east5-docker.pkg.dev/proj-1/fugaro-ghcr/dimipaun/fugaro-credentials:1.2.3@sha256:" + strings.Repeat("a", 64)
+	svc := func() ResourceChange { return intakeService(img) }
+	container := func(r ResourceChange) map[string]any {
+		return r.Change.After["template"].([]any)[0].(map[string]any)["containers"].([]any)[0].(map[string]any)
+	}
+	for name, tc := range map[string]struct {
+		change  func() ResourceChange
+		covered bool
+	}{
+		"as the module writes it": {svc, true},
+		// The two services' swap, both directions of the same pair: the intake's
+		// account on the credentials service is refused by the credentials case
+		// (a row of its own table), and the credentials account here by this one.
+		"the credentials service's own account": {func() ResourceChange {
+			r := svc()
+			r.Change.After["template"].([]any)[0].(map[string]any)["service_account"] = credentialsAccountEmail
+			return r
+		}, false},
+		// The args, which are what makes this service the intake: without them
+		// the container serves `credentials serve` — the other service's routes,
+		// from this service's URL, as the account that writes the containers.
+		"no args at all, as the credentials service's container": {func() ResourceChange {
+			r := svc()
+			delete(container(r), "args")
+			return r
+		}, false},
+		"the credentials service's own command": {func() ResourceChange {
+			r := svc()
+			container(r)["args"] = []any{"credentials", "serve"}
+			return r
+		}, false},
+		"a command the module does not set": {func() ResourceChange {
+			r := svc()
+			container(r)["command"] = []any{"/bin/sh", "-c"}
+			return r
+		}, false},
+		"args that are not known": {func() ResourceChange {
+			r := svc()
+			delete(container(r), "args")
+			r.Change.AfterUnknown = map[string]any{"template": []any{map[string]any{"containers": []any{map[string]any{"args": true}}}}}
+			return r
+		}, false},
+		// An environment is the one path a value could reach this process
+		// without a Secret Manager read, and this process writes containers it
+		// never reads back.
+		"an environment the module does not set": {func() ResourceChange {
+			r := svc()
+			c := container(r)
+			c["env"] = append(c["env"].([]any), map[string]any{"name": "FUGARO_SECRET_ID", "value": "fugaro-project-aurora-creds-bundle"})
+			return r
+		}, false},
+		"an environment whose value comes from a source": {func() ResourceChange {
+			r := svc()
+			container(r)["env"] = []any{map[string]any{"name": "FUGARO_GCP_PROJECT",
+				"value_source": []any{map[string]any{"secret_key_ref": []any{map[string]any{"secret": "creds-bundle"}}}}}}
+			return r
+		}, false},
+		"an environment list that is not known": {func() ResourceChange {
+			r := svc()
+			r.Change.AfterUnknown = map[string]any{"template": []any{map[string]any{"containers": []any{map[string]any{"env": true}}}}}
+			return r
+		}, false},
+		// The image: the intake runs the credentials service's own pin, because
+		// it is a subcommand of that binary and no release builds an intake
+		// image (images/ has no such kind).
+		"an image outside the pin": {func() ResourceChange {
+			r := svc()
+			container(r)["image"] = "us-east5-docker.pkg.dev/proj-1/fugaro-base/fugaro-credentials:latest"
+			return r
+		}, false},
+		"an image that is not known": {func() ResourceChange {
+			r := svc()
+			delete(container(r), "image")
+			r.Change.AfterUnknown = map[string]any{"template": []any{map[string]any{"containers": []any{map[string]any{"image": true}}}}}
+			return r
+		}, false},
+		"no container": {func() ResourceChange {
+			r := svc()
+			r.Change.After["template"] = []any{map[string]any{}}
+			return r
+		}, false},
+		"IAM turned off": {func() ResourceChange {
+			r := svc()
+			r.Change.After["invoker_iam_disabled"] = true
+			return r
+		}, false},
+		"IAM not stated": {func() ResourceChange {
+			r := svc()
+			delete(r.Change.After, "invoker_iam_disabled")
+			return r
+		}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := intakeServicePlan(tc.change())
+			if got := testCover.NotCovered(p, nil); (len(got) == 0) != tc.covered {
+				t.Fatalf("NotCovered = %q, covered want %v", got, tc.covered)
+			}
+		})
+	}
+	// The plan the module writes after the one that created the intake: the
+	// account is a no-op and the service keeps naming it, which is every later
+	// plan and must stay covered.
+	t.Run("the account unchanged and the service still naming it", func(t *testing.T) {
+		p := &Plan{ResourceChanges: []ResourceChange{svc(), intakeAccount("no-op")}}
+		if got := testCover.NotCovered(p, nil); len(got) != 0 {
+			t.Fatalf("NotCovered = %q, want covered: the account is the plan's own, unchanged", got)
+		}
+	})
+	// The credentials service may not name the intake's account either: the
+	// swap is refused at both addresses, which is what keeps the two identities
+	// apart whichever way a hand edit writes it.
+	t.Run("the credentials service running as the intake's account", func(t *testing.T) {
+		r := service(img)
+		r.Change.After["template"].([]any)[0].(map[string]any)["service_account"] = intakeAccountEmail
+		p := &Plan{ResourceChanges: []ResourceChange{r, credentialsAccount("create"), intakeAccount("create")}}
+		if got := testCover.NotCovered(p, nil); len(got) == 0 {
+			t.Fatal("the credentials service running as the intake's account is covered")
 		}
 	})
 }

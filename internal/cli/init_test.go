@@ -110,9 +110,9 @@ func labelled(f *gcpfake.CRM, project string) {
 
 func newInitRig(t *testing.T) *initRig {
 	t.Helper()
-	// The converge runs the checkout stage, which runs fugaro upgrade's
-	// plugin step: without this, a rig would install the plugin into the
-	// developer's own Claude Code through whatever claude is on PATH.
+	// The converge runs the plugin step: without this, a rig would install
+	// the plugin into the developer's own Claude Code through whatever claude
+	// is on PATH.
 	noClaudeOnPath(t)
 	r := &initRig{
 		dir: t.TempDir(), gcs: gcpfake.NewGCS(t), ar: gcpfake.NewArtifactRegistry(t), iam: gcpfake.NewIAM(t),
@@ -254,6 +254,14 @@ func outputsJSONWith(t *testing.T, over map[string]any) string {
 		"operators":                []string{},
 		"log_view":                 initLogView,
 		"registry_cleanup_dry_run": true,
+		// The installation's two Cloud Run services are NOT here by default:
+		// an installation whose outputs name one is one whose root publishes it,
+		// and a rig that seeds a block into the tfvars says so itself
+		// (credentialsOutputs, or the member written into this document by the
+		// tests with a bigger answer to give — update_converge_test.go). A
+		// default would tell every other rig the installation has services it
+		// does not, which the readers of this document act on (the switch's own
+		// bundle read, the audience fill).
 	}
 	maps.Copy(vals, over)
 	out := map[string]any{}
@@ -1191,6 +1199,62 @@ func (r *initRig) createOnApply(t *testing.T) {
 	if err := os.WriteFile(path, []byte(lines[0]+"\n"+create+lines[1]), 0o755); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// captureApplies makes the fake terraform copy the root's own tfvars aside on
+// every apply, and returns the directory it collects them in: one file per
+// apply, "<n>.<root>.json", numbered in the order the applies of the run run
+// and named for the working directory each ran in.
+//
+// It is how a test reads what an apply RAN WITH, which the run's own end state
+// is not: the root's tfvars are a later stage's write as much as this one's, so
+// a fact the creating apply has to be right about — the image a revision is
+// created from — is gone from the file by the time the run reports converged
+// (createOnApply is the same shape of injection, for the apply's cloud effect
+// rather than for its input).
+func (r *initRig) captureApplies(t *testing.T) string {
+	t.Helper()
+	dir := filepath.Join(r.dir, "applies")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(r.dir, "bin", "terraform")
+	old, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The count is a file because every invocation is its own process
+	// (faketerraform's own sequences are kept the same way).
+	capture := `if [ "$1" = apply ] && [ -f ` + infra.VarsFile + ` ]; then n=$(cat '` + dir + `/count' 2>/dev/null || echo 0); ` +
+		`echo $((n+1)) > '` + dir + `/count'; cp ` + infra.VarsFile + ` "` + dir + `/$n.$(basename "$(pwd)").json"; fi` + "\n"
+	lines := strings.SplitN(string(old), "\n", 2)
+	if err := os.WriteFile(path, []byte(lines[0]+"\n"+capture+lines[1]), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// capturedApplies is the tfvars every apply of one root ran with, in no
+// particular order (the files are named by a count and the root they ran in).
+func capturedApplies(t *testing.T, dir, root string) []map[string]any {
+	t.Helper()
+	paths, err := filepath.Glob(filepath.Join(dir, "*."+root+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []map[string]any
+	for _, p := range paths {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc map[string]any
+		if err := json.Unmarshal(b, &doc); err != nil {
+			t.Fatalf("%s is not the tfvars document it should be: %v", p, err)
+		}
+		out = append(out, doc)
+	}
+	return out
 }
 
 // On a fresh project the apply creates the runs bucket, with project

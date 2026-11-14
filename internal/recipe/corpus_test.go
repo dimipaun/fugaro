@@ -31,7 +31,7 @@ var invalidWhy = map[string]string{
 	"first-line-4.yaml":            "between 1 and 3",
 	"first-line-bounce.yaml":       "is not a recipe key",
 	"first-line-twice.yaml":        "first_line may appear at most once",
-	"mode-bad.yaml":                "must be implement, review or artifact",
+	"mode-bad.yaml":                "must be implement, review, artifact or evaluate",
 	"mode-review-extra.yaml":       "mode: review allows exactly one review step and nothing else",
 	"mode-review-rounds.yaml":      "mode: review reviews once: max_rounds must be 1",
 	"model-key.yaml":               "a recipe never names a model",

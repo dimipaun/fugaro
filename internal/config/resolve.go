@@ -117,6 +117,8 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 		repo.RepoPlanningSet = setsPlanning(tree)
 		repo.RepoStopFractionSet = setsStopFraction(tree)
 		repo.RepoTriageSet = setsTriage(tree)
+		repo.RepoModelGradesSet = setsModelGrades(tree)
+		repo.RepoVisionSet = setsVision(tree)
 		res := &Resolution{Sources: map[string]string{}}
 		markLeaves(tree, "", SourceRepo, res.Sources)
 		res.ConfigSHA256 = repo.SHA256()
@@ -168,6 +170,8 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 	c.RepoPlanningSet = setsPlanning(tree)
 	c.RepoStopFractionSet = setsStopFraction(tree)
 	c.RepoTriageSet = setsTriage(tree)
+	c.RepoModelGradesSet = setsModelGrades(tree)
+	c.RepoVisionSet = setsVision(tree)
 	applyDefaults(&c)
 	if ps := Validate(&c); len(ps) > 0 {
 		return nil, nil, annotate(ps, res, profileOf)
@@ -567,6 +571,43 @@ func levelsNoneModel(agent any) bool {
 // answer becomes Config.RepoPlanningSet.
 func setsPlanning(tree map[string]any) bool {
 	_, ok := tree["planning"]
+	return ok
+}
+
+// setsModelGrades is ProjectLayer.SetsModelGrades for a repository file's own
+// tree: whether the text writes the model_grades key, at any value, which is
+// the same question setsPlanning answers for planning:, for the same reason.
+// Its answer becomes Config.RepoModelGradesSet.
+func setsModelGrades(tree map[string]any) bool {
+	_, ok := tree["model_grades"]
+	return ok
+}
+
+// setsVision is ProjectLayer.SetsVision for a repository file's own tree:
+// whether the text writes agent.models.vision, at any value, which is the same
+// walk both trees take for the key — agent.models.vision is InProject | InRepo
+// (config.Scopes), so either file may write it and either may be the one the
+// older runner's decoder refuses. Its answer becomes Config.RepoVisionSet.
+func setsVision(tree map[string]any) bool {
+	return visionKey(tree["agent"])
+}
+
+// visionKey reports whether an agent block writes models.vision, the walk both
+// trees read the same way: the key's own presence in the mapping, whatever it
+// holds, and false when the block or the models mapping is written as something
+// other than a mapping (which the block's own decode refuses anyway). A null
+// leaf counts, which is why this is not a value read: `models: { vision: }` is
+// the same line to a runner older than visionSince as a model ID.
+func visionKey(agent any) bool {
+	a, ok := agent.(map[string]any)
+	if !ok {
+		return false
+	}
+	m, ok := a["models"].(map[string]any)
+	if !ok {
+		return false
+	}
+	_, ok = m["vision"]
 	return ok
 }
 

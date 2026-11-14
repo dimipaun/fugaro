@@ -13,7 +13,8 @@ import (
 )
 
 // TestRefreshPreflightUsesDir: the checkout is o.dir's, not the working
-// directory's, so fugaro upgrade refreshes several checkouts in one process.
+// directory's, so a caller refreshes the checkout it means rather than the one
+// the process was started in.
 func TestRefreshPreflightUsesDir(t *testing.T) {
 	useVersion(t, "0.5.1")
 	useSelf(t)
@@ -43,9 +44,9 @@ func TestRefreshRerunLineAndOnPlan(t *testing.T) {
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
 	cmd.SetContext(t.Context())
-	err := runImageRefresh(cmd, refreshOptions{dir: r.dir, yes: true, rerun: "fugaro upgrade --yes " + quoteWord(r.root), onPlan: func(p *refreshPlan) { seen = p }})
+	err := runImageRefresh(cmd, refreshOptions{dir: r.dir, yes: true, rerun: "fugaro update --yes --repo " + quoteWord(r.root), onPlan: func(p *refreshPlan) { seen = p }})
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "stopped at step 2 (base)") ||
-		!strings.HasSuffix(err.Error(), "rerun fugaro upgrade --yes "+quoteWord(r.root)+": finished steps say No changes") {
+		!strings.HasSuffix(err.Error(), "rerun fugaro update --yes --repo "+quoteWord(r.root)+": finished steps say No changes") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
 	if seen == nil || seen.repo != "acme/app" || strings.Join(*ran, ",") != "base" {
@@ -86,7 +87,7 @@ func inProcessCmd(t *testing.T) (*cobra.Command, *bytes.Buffer) {
 }
 
 // The agent refusal holds on the in-process path too (dir, rerun, onPlan:
-// fugaro upgrade's), --yes included: nothing is read, no hook fires, no
+// a caller's), --yes included: nothing is read, no hook fires, no
 // step runs and nothing is written.
 // Mutation (run, restore): skip refuseRefreshHere when o.dir or o.rerun is
 // set, and every row fails (the hook fires).
@@ -102,7 +103,7 @@ func TestRefreshInProcessRefusedInAgentSession(t *testing.T) {
 			noRecordReads(t)
 			cmd, out := inProcessCmd(t)
 			hooked := false
-			err := runImageRefresh(cmd, refreshOptions{dir: r.dir, yes: true, rerun: "fugaro upgrade --yes " + quoteWord(r.root), onPlan: func(*refreshPlan) { hooked = true }})
+			err := runImageRefresh(cmd, refreshOptions{dir: r.dir, yes: true, rerun: "fugaro update --yes --repo " + quoteWord(r.root), onPlan: func(*refreshPlan) { hooked = true }})
 			if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "fugaro image refresh applies cloud changes: "+initflow.AgentRefusal(marker)) {
 				t.Fatalf("exit %d, err %v", ExitCode(err), err)
 			}
@@ -123,7 +124,7 @@ func TestRefreshInProcessNeedsATerminal(t *testing.T) {
 	ran := fakeSteps(t, "", nil)
 	cmd, _ := inProcessCmd(t)
 	hooked := false
-	err := runImageRefresh(cmd, refreshOptions{dir: r.dir, rerun: "fugaro upgrade " + quoteWord(r.root), onPlan: func(*refreshPlan) { hooked = true }})
+	err := runImageRefresh(cmd, refreshOptions{dir: r.dir, rerun: "fugaro update --repo " + quoteWord(r.root), onPlan: func(*refreshPlan) { hooked = true }})
 	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), initflow.NoTerminalAdvice) {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -141,7 +142,7 @@ func TestRefreshCustomBaseRefusalRerunLine(t *testing.T) {
 	useSelf(t)
 	r := newAnchorModeRig(t, refreshYAML, true)
 	r.appendConfig(t, "base_images: {base: "+refreshHost+"/fugaro-base/fugaro-base:dev-abc}\n")
-	rerun := "fugaro upgrade --yes " + quoteWord("/work/my checkout")
+	rerun := "fugaro update --yes --repo " + quoteWord("/work/my checkout")
 	_, err := refreshPreflight(t.Context(), refreshOptions{workflows: []string{"api"}, rerun: rerun}, &initOptions{})
 	if err == nil || !strings.Contains(err.Error(), "then rerun "+rerun+". To keep your own base image, rebuild from it with fugaro image build instead") {
 		t.Fatalf("override: %v", err)

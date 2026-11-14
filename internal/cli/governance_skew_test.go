@@ -420,10 +420,7 @@ func TestGovernanceOnACoreImageWarns(t *testing.T) {
 	for _, want := range []string{
 		"the job image of acme/other workflow svc is a core build of fugaro",
 		"reads the governance: block and ignores it",
-		// The warning this branch's tree writes still names the repository-level
-		// image command rather than update's images stage, so this one
-		// assertion is left as it was: it reads the warning, not a refusal.
-		"fugaro image refresh --repo acme/other --workflow svc",
+		imageGateRemedy,
 	} {
 		if !strings.Contains(errOut, want) {
 			t.Errorf("stderr %q lacks %q", errOut, want)

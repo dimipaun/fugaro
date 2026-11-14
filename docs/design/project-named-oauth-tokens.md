@@ -1,6 +1,6 @@
 # Project-level named Claude OAuth tokens
 
-Status: **built, release 0.9.0 (released; the released CLI is 0.23.0)**, 2026-10-19. Was: design,
+Status: **built, release 0.9.0 (released; the released CLI is 0.23.1)**, 2026-10-19. Was: design,
 2026-10-18, **RULED** (release 0.9.0). The three implementation tasks are merged — the policy's
 `accounts` block and the profile field (policy version 3), the account jobs and their static mount,
 and the two gates with doctor and SECURITY.md — and the operator guide is
@@ -168,12 +168,22 @@ profiles:
   `--token`), refusing a selection the profile does not list — as the individual level does
   (row 2).
 - **Derived, never hand-written** (D3). `accounts.<name>.allow_repos` is derived at publish time
-  from the local config's `claude_accounts.<name>.allow_data_to` — one anchor, one edit. The
-  translation is explicit: `allow_data_to` holds `owner/name` slugs
-  (`claude_accounts.go:173-176`); a policy `allow_repos` entry is a provider-qualified pattern that
-  may carry `*` (`internal/projectpolicy/match.go:105-120`, `ValidPattern`). Publish qualifies each
-  slug with the provider of the profile(s) naming the account and never writes a wildcard into an
-  account's list. Only accounts some profile names are published.
+  from the local config — one anchor, one edit. It has **two sources**, and the published list is
+  their union: the profiles that list the account, each contributing its own `allow_repos` kept
+  where `claude_accounts.<name>.allow_data_to` (or, for `default`, the `project_secrets` entry)
+  reaches it; and the repositories whose own entry names it,
+  `repos.<owner/name>.claude_accounts`, each contributing the one canonical name of the repository
+  it is written on. The repository-level source exists because a profile is not the only kind of job
+  a repository's runs land on: a per-repository job — every Bitbucket repository, and every
+  repository no workflow sends to a shared job — has no profile to be named in, and while the block
+  was derived from the profiles alone such a repository could be admitted to no account at all (its
+  runs were answered 503 state_unavailable by the credentials service). The translation is explicit:
+  `allow_data_to` holds `owner/name` slugs (`claude_accounts.go:173-176`); a policy `allow_repos`
+  entry is a provider-qualified pattern that may carry `*`
+  (`internal/projectpolicy/match.go:105-120`, `ValidPattern`). Publish qualifies each slug with the
+  provider of the profile(s) naming the account — a repository entry's own `provider` is what
+  qualifies it, and is required — and never writes a wildcard into an account's list. An account
+  neither source names is not published.
 - **The subset rule** (D3). Publish and `fugaro init` **fail closed** on a profile that names an
   account whose `allow_repos` does not cover every repository the profile admits, naming both
   lists and the repository in one and not the other. A profile that names an account must write its
@@ -203,7 +213,7 @@ top-level key, which an older reader tolerates and lists in `UnknownKeys` (`poli
 183-187`); the bump is what keeps an older runner from running past a gate it does not know, the
 reason version 2 exists (`version.go:15-23`). The cost is the one the 1→2 bump had, and the
 existing skew messages already name the remedies (`version.go:123-172`): a version-2 runner image
-meeting a version-3 node refuses with `RunnerSkew` ("refresh the runner image (fugaro upgrade)"),
+meeting a version-3 node refuses with `RunnerSkew` ("refresh the runner image (fugaro update)"),
 and a version-3 reader meeting a version-2 node refuses with `CLISkewNewer`/`RunnerSkewNewer`
 (remove the node with `fugaro project policy publish --delete` and publish again). The rollout is
 therefore: upgrade the CLI, `publish --delete` and republish, refresh the runner images — written
@@ -386,7 +396,12 @@ documented"), which every reference here calls *project-centric.md's D10*. No de
 - **D3. The policy's gate — RULED as recommended:** `accounts.<name>.allow_repos` derived at publish
   from `claude_accounts.<name>.allow_data_to` (provider-qualified, never a wildcard), and the subset
   rule: a profile that lists accounts writes its own exact `allow_repos`, covered by every listed
-  account's list.
+  account's list. **Amended 2026-11-14:** the derivation has a second source, so this gate is no
+  longer "what the profiles and the accounts' own lists say" alone — a repository's own
+  `repos.<owner/name>.claude_accounts` adds its canonical name to each account it names, the two
+  sources' lists are published as one union, and an account no profile names is published when a
+  repository entry names it (§4.1). The subset rule is unchanged and is asked of a repository entry
+  too, against the account's own list.
 - **D4. The profile field — RULED as recommended:** `profiles.<p>.claude_accounts: [<name>, ...]`,
   one job per (profile, provider, account), the run choosing with `agent.oauth_token` / `--token`;
   the `secrets:` refusal stays; no Anthropic API-key mount beside accounts.

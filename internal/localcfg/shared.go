@@ -139,6 +139,14 @@ func (c *Config) Shared() *Config {
 	// ParseShared from refusing a shared file whole over keys it does not
 	// know.
 	s.Issues = nil
+	// Escalation is local-only and sharpest of all: the ladder's thresholds
+	// decide when a stalled item is taken off its recipe, what it runs on then
+	// and at what cost it is merged under the gate, so a launcher who could
+	// write the block into the runs bucket's shared file would be choosing how
+	// every teammate's runs merge (D2032, G3). ParseShared refuses the key
+	// besides, because a shared config carrying it was not written by the
+	// converge.
+	s.Escalation = nil
 	// The operator's rotation record is local-only for update_check's reason,
 	// one credential at a time: secret_rotation_days is how often the person
 	// who holds the provider accounts means to rotate them, and secret_expires
@@ -225,6 +233,14 @@ func (c *Config) Shared() *Config {
 	s.DefaultClaudeAccount = ""
 	s.ClaudeAccountStages = nil
 	s.ClaudeAccountAuto = false
+	// The aliases the choice keys may hold are dropped with them and for their
+	// reason, one step nearer the credential: a published alias would name an
+	// account in a file any launcher can write, which is the way around the
+	// account's own allow_data_to these keys are local-only to close
+	// (docs/account-aliases, D2090). A launcher on another machine reads no
+	// alias, exactly as it reads no default_claude_account today, and
+	// ParseShared refuses the key besides.
+	s.ClaudeAccountAliases = nil
 	// The subscription switch goes with them, for their reason and one of its
 	// own: it is the owner's own act about the terms his subscriptions are held
 	// under (D1622), and a launcher who could write it into the shared file
@@ -243,18 +259,32 @@ func (c *Config) Shared() *Config {
 	s.WorkspacePin = WorkspacePin{}
 	s.WorkspaceMembers = nil
 	s.WorkspaceCap = nil
-	s.Repos = withoutBaseBranches(c.Repos)
+	s.Repos = withoutRepoLocalKeys(c.Repos)
 	return &s
 }
 
-// withoutBaseBranches is a copy of repos with every base_branch cleared.
-func withoutBaseBranches(repos map[string]Repo) map[string]Repo {
+// withoutRepoLocalKeys is a copy of repos with the two keys of an entry that
+// are never published cleared: base_branch, which comes from the checkout's
+// reviewed fugaro.yaml, and claude_accounts, which is the operator's own
+// admission statement — the repository-level half of the trust anchor T1 keeps
+// in the operator-only local config (see Shared's own note on claude_accounts,
+// and named-oauth-tokens.md §3).
+//
+// claude_accounts is stripped for the reason the top-level block is: the file
+// is written into the runs bucket, which any launcher of the project can write,
+// so an entry published here would let one add a repository to an account's
+// admission by editing that file — and the machine that then published the
+// policy would derive an admission the owner never made. ParseShared refuses
+// the key besides, because a shared config carrying one was not written by the
+// converge.
+func withoutRepoLocalKeys(repos map[string]Repo) map[string]Repo {
 	if repos == nil {
 		return nil
 	}
 	out := make(map[string]Repo, len(repos))
 	for k, r := range repos {
 		r.BaseBranch = ""
+		r.ClaudeAccounts = nil
 		out[k] = r
 	}
 	return out
@@ -284,7 +314,7 @@ func MergeShared(published, local *Config) *Config {
 	if !SameInstallation(published, local) {
 		return out
 	}
-	out.Repos = withoutBaseBranches(mergeRepoRecords(published.Repos, out.Repos))
+	out.Repos = withoutRepoLocalKeys(mergeRepoRecords(published.Repos, out.Repos))
 	out.BaseImages = unionMaps(published.BaseImages, local.BaseImages)
 	out.ModelPrices = unionMaps(published.ModelPrices, local.ModelPrices)
 	out.ComputePrices = unionMaps(published.ComputePrices, local.ComputePrices)

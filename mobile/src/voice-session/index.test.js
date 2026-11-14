@@ -54,6 +54,7 @@ import test from 'node:test';
 import * as events from './events.js';
 import * as session from './index.js';
 import * as machine from './machine.js';
+import * as controller from './session.js';
 
 const DIR = import.meta.dirname;
 /** `mobile/`, which is what a relative import of this module must stay inside. */
@@ -133,16 +134,19 @@ test('the module is exactly these files, at every depth', () => {
   assert.deepEqual(FILES, [
     'events.js',
     'events.test.js',
+    'fake.js',
     'index.js',
     'index.test.js',
     'machine.js',
     'machine.test.js',
+    'port.js',
+    'port.test.js',
     'session.js',
     'session.test.js',
   ]);
 });
 
-test('the door exports exactly this, and every name is the machine or the contract', () => {
+test('the door exports exactly this, and every name is the machine, the controller or the contract', () => {
   assert.deepEqual(Object.keys(session).sort(), [
     'AUDIO_ROUTES',
     'END_REASONS',
@@ -153,15 +157,19 @@ test('the door exports exactly this, and every name is the machine or the contra
     'PAUSE_REASONS',
     'REMOTE_ACTIONS',
     'SERVICE_STOP_REASONS',
+    'SESSION_CODES',
     'SESSION_EVENTS',
     'SESSION_EVENT_FIELDS',
     'SESSION_STATES',
+    'createVoiceSession',
     'isVoiceSessionEvent',
     'reduce',
   ]);
   // There is no class on this door, and that is the check for "is this a
   // native module?": a port would be a thing to construct, and P3.4's three
-  // fakes are the only constructible objects the app has.
+  // fakes are the only constructible objects the app has. The controller is a
+  // function and not a class, and the fake port VS1.3 wires stays out of here
+  // for exactly this reason (`port.js` says which file decides it instead).
   const classes = Object.entries(session)
     .filter(([, value]) => typeof value === 'function' && /^class\b/.test(Function.prototype.toString.call(value)))
     .map(([name]) => name);
@@ -173,11 +181,12 @@ test('the door exports exactly this, and every name is the machine or the contra
   }
 });
 
-test('the door carries every export of the two files, unchanged, and nothing of its own', () => {
+test('the door carries every export of the three files, unchanged, and nothing of its own', () => {
   // The other direction of the pin above: a constant added to `events.js` and
   // not re-exported is invisible to the app, which then imports the file
-  // directly -- the second door this module exists to not have.
-  const inner = { ...events, ...machine };
+  // directly -- the second door this module exists to not have. `session.js`
+  // joined the two in VS1.3, in the same commit as its export.
+  const inner = { ...events, ...machine, ...controller };
   assert.deepEqual(Object.keys(session).sort(), Object.keys(inner).sort());
   for (const [name, value] of Object.entries(inner)) assert.equal(session[name], value, name);
 });
@@ -310,7 +319,14 @@ function scanned(dir = DIR) {
 
 test('the scan reads the module, and not an empty list', () => {
   const files = production();
-  assert.deepEqual(files.map(([file]) => file), ['events.js', 'index.js', 'machine.js', 'session.js']);
+  assert.deepEqual(files.map(([file]) => file), [
+    'events.js',
+    'fake.js',
+    'index.js',
+    'machine.js',
+    'port.js',
+    'session.js',
+  ]);
   for (const [file, text] of files) {
     assert.ok(text.includes('export'), `${file} is real code, not a comment`);
   }
@@ -319,9 +335,12 @@ test('the scan reads the module, and not an empty list', () => {
   assert.deepEqual(scanned().map(([file]) => file), [
     'events.js',
     'events.test.js',
+    'fake.js',
     'index.js',
     'machine.js',
     'machine.test.js',
+    'port.js',
+    'port.test.js',
     'session.js',
     'session.test.js',
   ]);

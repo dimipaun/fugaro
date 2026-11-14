@@ -110,14 +110,30 @@ import (
 // forward is shape-free (internal/projectpolicy/migrate.go): the node keeps its
 // bytes and only the number moves, because a node with no `binaries` block
 // admits nothing, which is what a project that never set one means.
-const Version = 6
+//
+// Version 7 (outer-loop-escalation, plan task E2; decision D2039, rules F8 and
+// G3) is the node that carries the project's two model grades, `model_grades`
+// with `strong` and `strongest` in it: the model each grade of the escalation
+// ladder runs and the credential or pool its calls go out on, the pair a craft
+// carries. What a version-7 runner resolves and a version-6 one does not is
+// that pair: without the bump a version-6 reader lists `model_grades` in
+// UnknownKeys and decodes past it, so it would run every rung on whatever its
+// own configuration said while the owner believed the grades were published —
+// the same silence the binaries block above turned into a documented refusal
+// (RunnerSkew on the job side, CLISkew on the operator's). The bump is also
+// what makes the migration run: `fugaro update` carries a version-6 node
+// forward. That step is shape-free like version 6's — a node with no
+// `model_grades` member sets no grade, which is what the ladder's rungs read as
+// "leave this rung to the owner" (D2039) and what a project that never set one
+// means.
+const Version = 7
 
 // VersionSince names, for each policy version, the fugaro release that
 // introduced it: 1 is the model itself (0.8.0, internal/cli's policySince), 2
 // is the profile gate above (0.8.5), 3 the account axis (0.9.0), 4 the
-// Bitbucket token block (0.14.0), 5 the pools' owner and roster (0.23.0), 6 the binaries block (0.24.0). It
-// sits beside Version because a bump of
-// Version adds its row in the same change
+// Bitbucket token block (0.14.0), 5 the pools' owner and roster (0.23.0), 6 the
+// binaries block (0.24.0) and 7 the two model grades (0.24.0). It sits beside
+// Version because a bump of Version adds its row in the same change
 // (TestVersionSinceCoversEveryVersion fails until it does), and it is
 // read by every message about a node *ahead* of its reader (SkewSentence, so
 // the launch gate, the CLI's other reads, `fugaro project policy`, doctor and
@@ -136,6 +152,7 @@ var VersionSince = map[int]string{
 	4: "0.14.0",
 	5: "0.23.0",
 	6: "0.24.0",
+	7: "0.24.0",
 }
 
 // VersionRelease is the release that introduced policy version v, and false
@@ -350,7 +367,7 @@ const (
 //   - CLISkew and RunnerSkew: the node is newer than the reader, so nothing
 //     here can read it and the release that wrote the node is newer than the
 //     one calling this. For the CLI the remedy is the binary the package
-//     manager installs, then the update behind it — `fugaro upgrade` moves a
+//     manager installs, then the update behind it — `fugaro update` moves a
 //     checkout onto the installed release and never replaces the binary it
 //     runs; for the image it is "refresh the runner image", which is not the
 //     CLI's binary. And neither of the other moves is one: `fugaro update
@@ -370,7 +387,7 @@ const (
 //     policy-newer-than-binary with the upgrade as its fix.
 //   - CLISkewCarried and RunnerSkewCarried: the node is older than the reader
 //     and the migration chain carries it forward (Migratable). Nothing is
-//     upgraded — the reader is the newer side, so `fugaro upgrade` would be
+//     upgraded — the reader is the newer side, so naming an upgrade would be
 //     advice that changes nothing — and nothing is deleted either: `fugaro
 //     update`'s policy stage rewrites the node in place at this reader's
 //     version, keeping the members it carries. This is the move `fugaro doctor`
@@ -406,7 +423,7 @@ const (
 	CLISkew           = Skew + "; upgrade Fugaro (brew upgrade dimipaun/tap/fugaro), then fugaro update"
 	CLISkewCarried    = Skew + "; the node is older than this Fugaro: run 'fugaro update', whose policy stage rewrites the node in place at this Fugaro's version, keeping the members it carries"
 	CLISkewNewer      = Skew + "; the node is older than this Fugaro: publishing refuses to overwrite a node written in another version, so remove it with 'fugaro project policy publish --delete' and publish it again from this release"
-	RunnerSkew        = Skew + "; refresh the runner image (fugaro upgrade)"
+	RunnerSkew        = Skew + "; refresh the runner image (fugaro update)"
 	RunnerSkewCarried = Skew + "; the node is older than this runner image: the project's owner runs 'fugaro update', whose policy stage rewrites the node in place at this Fugaro's version, keeping the members it carries — and the run cannot do it mid-run"
 	RunnerSkewNewer   = Skew + "; the node is older than this runner image: publishing refuses to overwrite a node written in another version, so the project's owner removes it with 'fugaro project policy publish --delete' and publishes one this image understands — and the run cannot do either mid-run"
 )

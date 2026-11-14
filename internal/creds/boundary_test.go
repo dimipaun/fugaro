@@ -39,6 +39,7 @@ package creds
 // widening it is an edit a reviewer sees rather than a new import that slips in.
 
 import (
+	"encoding/json"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -105,6 +106,81 @@ func TestCredsIsNotReachableFromARun(t *testing.T) {
 			t.Fatalf("the allow-list is %v; want exactly %v", credsImporters, want)
 		}
 	}
+}
+
+// TestBoundaryDeniesRunsTheWorkflowSecretsRecord: the node the workflow
+// secrets record lives at is denied to a run identity by the deployed rules —
+// not by a prefix this file assumes, but by the document the rules generator
+// produces, read here from the golden that pins it
+// (internal/budget/rules/testdata/rules.golden.json, which
+// TestCredsIsDeniedByAnExplicitNode holds the generated document to).
+//
+// The record is the one node under creds/ whose path is built from a name the
+// CLI and the service share rather than from a run's own identity, so it is the
+// one where "the rules deny creds/" could quietly stop being true of the node
+// the code writes: a later move of the family out of creds/ — to the runs
+// bucket, under runs/, anywhere a run token reads — would leave every other
+// test in this repository green and hand a run's process the list of containers
+// its repository may fetch. What this pins is the pair: the path the CODE
+// builds, and the grants the DOCUMENT carries over it.
+func TestBoundaryDeniesRunsTheWorkflowSecretsRecord(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "budget", "rules", "testdata", "rules.golden.json"))
+	if err != nil {
+		t.Fatalf("reading the rules document the generator produces: %v", err)
+	}
+	var doc struct {
+		Rules map[string]any `json:"rules"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("decoding the rules document: %v", err)
+	}
+	if len(doc.Rules) == 0 {
+		t.Fatal("the rules document carries no rules object, so this test would read every path as denied by an empty walk")
+	}
+	for _, slug := range []string{"gh-acme-app-1a2b", "bb-acme-web-9f8e"} {
+		node := doc.Rules
+		for _, segment := range strings.Split(PathWorkflowSecrets(slug), "/") {
+			assertNoGrant(t, node, PathWorkflowSecrets(slug))
+			next, ok := rulesChildAt(node, segment)
+			if !ok {
+				// Nothing below this node: the rules that reach it are the
+				// ones already read, and they cascade down to the record.
+				break
+			}
+			node = next
+		}
+		assertNoGrant(t, node, PathWorkflowSecrets(slug))
+	}
+}
+
+// assertNoGrant fails if node grants a read or a write to anything: a record
+// under a node that admits a client is a record that client reads.
+func assertNoGrant(t *testing.T, node map[string]any, path string) {
+	t.Helper()
+	for _, attr := range []string{".read", ".write"} {
+		if v, ok := node[attr]; ok && v != false {
+			t.Errorf("/%s inherits %s = %#v from the rules document: the record names the containers a repository's job may fetch, and no run identity may read it (O1, D136)", path, attr, v)
+		}
+	}
+}
+
+// rulesChildAt is the child of one rules node that a path segment reaches: the
+// node named for it, or a `$`-key, which is the document's wildcard and matches
+// any segment. Neither is there when the document says nothing about the
+// segment, and then the grants above it are the ones that apply.
+func rulesChildAt(node map[string]any, segment string) (map[string]any, bool) {
+	if child, ok := node[segment].(map[string]any); ok {
+		return child, true
+	}
+	for key, v := range node {
+		if !strings.HasPrefix(key, "$") {
+			continue
+		}
+		if child, ok := v.(map[string]any); ok {
+			return child, true
+		}
+	}
+	return nil, false
 }
 
 // allowlisted reports whether a module-relative file is one of the allowed

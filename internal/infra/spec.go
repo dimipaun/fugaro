@@ -115,7 +115,7 @@ const (
 	VertexProjectEnv = "ANTHROPIC_VERTEX_PROJECT_ID"
 )
 
-// PlatformEnv is every key above, together: fugaro upgrade's job-config-copy
+// PlatformEnv is every key above, together: fugaro update's job-config-copy
 // check (internal/cli/upgrade_cloud.go) excludes exactly this set, named
 // here from the same constants platformEnv and the vertex branch use, so it
 // never has to guess it or drift from them.
@@ -212,6 +212,14 @@ type InstallationOutputs struct {
 	// stage. The repository roots read the same object from the tfvars'
 	// installation.credentials_service (RepoInstallation).
 	CredentialsService *CredentialsService `json:"credentials_service"`
+	// Intake is the installation's secrets intake (DS2.2, D1931): the Cloud Run
+	// service the dynamic-delivery class writes its per-user and project
+	// containers through, or null while the installation has not opted in.
+	// Nothing reads it yet — the stage that deploys the intake is DS4.1's — and
+	// it is here because DecodeOutputs reads the root's outputs by name (the
+	// field is the contract that test pins), so an output with no field is an
+	// output this binary cannot report.
+	Intake *IntakeService `json:"intake"`
 	// CatalogCheckServiceAccount is the project's catalog check job's account
 	// (D1148), its email, or "" on an installation whose project publishes no
 	// catalog: the value every repository root reads from its own tfvars
@@ -243,6 +251,19 @@ type CredentialsService struct {
 	// first two fields and nothing else, so the object it writes into its own
 	// tfvars is built without it (repoCredentialsService).
 	URL string `json:"url,omitempty"`
+}
+
+// IntakeService is the installation root's `intake` output (DS2.2, D1931): the
+// service's name, its region and its own URL, in the same shape
+// CredentialsService carries. Null means the installation has not opted in, and
+// the URL is what the update stage writes back into var.intake on the apply
+// after the one that created the service — Cloud Run assigns the URL, and
+// nothing inside the resource can read its own uri. A caller cannot mint an ID
+// token for the intake without it.
+type IntakeService struct {
+	Name   string `json:"name"`
+	Region string `json:"region"`
+	URL    string `json:"url,omitempty"`
 }
 
 // CredentialsServiceServes is the switch: whether a repository's runs may go
@@ -2100,6 +2121,16 @@ func Schedule(slug string) string {
 // code where that token is. An account the list does not carry is not an entry
 // here — `fugaro validate` and the launch refuse the key — so the operator
 // hears about it rather than a job quietly appearing without the token.
+//
+// A stage key may hold an alias (docs/account-aliases, D2091), and the name
+// read here is the account it resolves to: the job set is one of the readers
+// that decide which jobs exist, and both the node the runner reads it off and
+// the task carry the account (the publish resolves, `configAccountValues`), so
+// a key read by its own alias would leave the account with no job at all while
+// the node still sends runs to it — `fugaro update` would retire the variant,
+// the executions on it included. The resolution is the one step every reader
+// takes and never a walk (config.ResolveAccountAlias); a name that is no alias
+// is read unchanged.
 func mixedStageAccounts(cfg *config.Config, lc *localcfg.Config, repo string) []string {
 	if lc == nil {
 		return nil
@@ -2107,7 +2138,7 @@ func mixedStageAccounts(cfg *config.Config, lc *localcfg.Config, repo string) []
 	allowed := config.AllowedClaudeAccounts(lc.ClaudeAccounts, repo)
 	var out []string
 	for _, stage := range config.MixedAccountStages {
-		name := lc.ClaudeAccountStages[stage].ClaudeAccount
+		name, _ := lc.ResolveAccount(lc.ClaudeAccountStages[stage].ClaudeAccount)
 		if name == "" || !slices.Contains(allowed, name) || slices.Contains(out, name) {
 			continue
 		}
@@ -2154,16 +2185,20 @@ func mixedStageAccounts(cfg *config.Config, lc *localcfg.Config, repo string) []
 // Reading them here would refuse a job for a configuration the next commit
 // makes admissible, and build one the current branch cannot use; the run
 // refuses it where it resolves (r.mixedDefaultAccount) with the reason.
+//
+// The key is resolved through the file's aliases first, for mixedStageAccounts'
+// reason: the default may be written as an alias (D2091), and the account the
+// node and the task carry is the one it stands for.
 func mixedDefaultAccount(cfg *config.Config, lc *localcfg.Config, allowed []string) string {
 	if cfg == nil {
 		return ""
 	}
-	def := lc.DefaultClaudeAccount
+	def, _ := lc.ResolveAccount(lc.DefaultClaudeAccount)
 	if def == "" || def == config.DefaultClaudeAccount || !slices.Contains(allowed, def) {
 		return ""
 	}
 	for _, stage := range config.MixedAccountStages {
-		if name := lc.ClaudeAccountStages[stage].ClaudeAccount; name != "" && name != def {
+		if name, _ := lc.ResolveAccount(lc.ClaudeAccountStages[stage].ClaudeAccount); name != "" && name != def {
 			return ""
 		}
 	}

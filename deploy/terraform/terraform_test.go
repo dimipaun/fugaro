@@ -17,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
+	"github.com/dimipaun/fugaro/internal/secretname"
 )
 
 // TestProjectJobTftestTitlesAreTheOnesInternalInfraWrites: the project job's
@@ -241,12 +242,31 @@ func TestNoAuthoritativeIAM(t *testing.T) {
 
 // Secret access is granted per secret, never on the whole project. A plan
 // assertion can't enumerate every resource, so this is a text check.
+//
+// ONE grant of this tree is a project-level secretAccessor, and it is a
+// decision rather than an oversight: the dynamic class's prefix accessor
+// (D1931, DS2.2, credentials.tf). Its containers are named by the callers' own
+// subjects (fugaro_u_<sub>_<name>), so an installation cannot name them when it
+// plans and there is no per-secret grant to write; what bounds the read is the
+// class's one name-prefix condition, which the module takes from the local that
+// the intake's own write binding takes it from (TestServicePrefixAccessorIsConditioned
+// resolves both and holds them byte for byte). The member is the credentials
+// service's own account and the reader is listed (secret_readers_test.go, E23).
+// It is admitted here BY ADDRESS and not by shape: a second project-level
+// secretAccessor, this one renamed, or the same grant moved to another file is
+// refused, and so is this one once it stops carrying the class's condition.
 func TestNoProjectLevelSecretAccessor(t *testing.T) {
+	const allowedPath = "gcp/modules/installation/credentials.tf"
+	const allowedName = "google_project_iam_member.credentials_prefix_accessor"
 	walk(t, func(path string, b []byte) {
 		for _, blk := range resourceBlocks(t, path, b, "google_project_iam_member") {
-			if strings.Contains(blk.body, "secretmanager.secretAccessor") {
-				t.Errorf("%s: %s grants secretmanager.secretAccessor on the project", path, blk.name)
+			if !strings.Contains(blk.body, "secretmanager.secretAccessor") {
+				continue
 			}
+			if path == allowedPath && blk.name == allowedName && strings.Contains(blk.body, "local.dynamic_secret_names_condition.expression") {
+				continue
+			}
+			t.Errorf("%s: %s grants secretmanager.secretAccessor on the project, which only the dynamic class's conditioned prefix accessor may do (%s's %s)", path, blk.name, allowedPath, allowedName)
 		}
 	})
 }
@@ -1033,12 +1053,13 @@ func TestLogSinkRoutesBothPlatforms(t *testing.T) {
 			t.Errorf("%s mixes AND with OR in one group: %s\nCloud Logging binds AND loosest, so this does not group the way it reads", c.what, c.filter)
 		}
 	}
-	// Both the sink and the exclusion carry both arms; the view's IAM
-	// member still names only the launchers and operators.
+	// Both the sink and the exclusion carry both arms; the view's IAM member
+	// names the launchers, the operators and the viewers — the viewer list is
+	// RS4's, and a viewer reads a run's own output (D684).
 	for _, want := range []string{
 		"filter                 = local.fugaro_logs",
 		"filter  = \"${local.fugaro_logs} AND NOT",
-		"for_each = var.log_isolation ? toset(concat(var.launchers, var.operators)) : toset([])",
+		"for_each = var.log_isolation ? toset(concat(var.launchers, var.operators, var.viewers)) : toset([])",
 		"role     = \"roles/logging.viewAccessor\"",
 	} {
 		if !strings.Contains(src, want) {
@@ -1291,9 +1312,12 @@ func TestHistoryRunsBucketIsReadOnly(t *testing.T) {
 }
 
 // M9d: serviceusage.services.use (serviceUsageConsumer) is granted on the
-// Firebase project only, in the firebase module, to the people set (like
-// datastore.viewer) and the history account; never to job accounts, never
-// with a domain or wildcard member.
+// Firebase project only, in the firebase module, to the readers set (the
+// people and the viewer list, exactly as datastore.viewer is: the spend
+// history is one of the reads a viewer is for, and a datastore.viewer
+// without the quota project is a Firestore call that is refused) and the
+// history account; never to job accounts, never with a domain or wildcard
+// member.
 func TestUsageConsumerOnlyInFirebaseModule(t *testing.T) {
 	seen := map[string]bool{}
 	walk(t, func(path string, b []byte) {
@@ -1312,8 +1336,8 @@ func TestUsageConsumerOnlyInFirebaseModule(t *testing.T) {
 				if !strings.Contains(blk.body, "var.history_account") {
 					t.Errorf("%s: history_usage does not name the history account", path)
 				}
-			} else if blk.name != "google_project_iam_member.usage_consumer" || !strings.Contains(blk.body, "setunion(local.people, local.admins)") {
-				t.Errorf("%s: %s: only usage_consumer (people and admins) and history_usage may grant it", path, blk.name)
+			} else if blk.name != "google_project_iam_member.usage_consumer" || !strings.Contains(blk.body, "setunion(local.readers, local.admins)") {
+				t.Errorf("%s: %s: only usage_consumer (the readers and the admins, as datastore_viewer grants it) and history_usage may grant it", path, blk.name)
 			}
 		}
 	})
@@ -1638,6 +1662,12 @@ var (
 	// expression here is the plan-shaped half of the suite and
 	// internal/infra/tf/workspace_test.go, which reads main.tf's own grant,
 	// rather than a `terraform validate` of this root.
+	// google_service_account.intake[0] is the secrets intake's own account
+	// (D1931, DS2.2): the account intake.tf creates and the service runs as,
+	// whose own grant list is three rows — the class's conditioned write role,
+	// the shared lister and objectViewer on the derived admin list's one object
+	// — and which holds no secretAccessor, no accessor of any kind and no
+	// secrets.get, so it cannot read a value back (R3).
 	// google_service_account.fugaro_verifier[0] is the installation's verifier
 	// (CSR14, D1068): the one account the credentials service's verify route
 	// admits, and the only grant that names it is roles/run.invoker on that
@@ -1666,7 +1696,7 @@ var (
 	// The narrowing is not what makes the plan covered either:
 	// internal/infra/tf's grant rules do NOT accept an allUsers member, so the
 	// update whose plan carries this grant asks its own typed confirmation.
-	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials|coordinator|mcp_server|fugaro_verifier)\[0\]\.member|google_service_account\.catalog_check\[0\]\.member|google_service_account\.workspace\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|coordinator_account|workspace_service_account|installation\.scheduler_service_account|installation\.catalog_check_service_account)\}")$`)
+	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials|coordinator|mcp_server|fugaro_verifier|intake)\[0\]\.member|google_service_account\.catalog_check\[0\]\.member|google_service_account\.workspace\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|coordinator_account|workspace_service_account|installation\.scheduler_service_account|installation\.catalog_check_service_account)\}")$`)
 
 	// workspaceRolePath and workspaceRoleType name the ONE custom role in this
 	// tree no module creates: the workspace root's own (W3 of the workspaces
@@ -1688,13 +1718,14 @@ var (
 	// cannot be told from a conditioned one, whose IAM condition is the whole
 	// fence around the account — so the project grants planned by that same
 	// apply (the deployer's eight, the launchers', the build submitters' and
-	// the history account's) name their role literally instead. Both project
-	// variables are accepted because the credentials service's database role
-	// lives in the Firebase project (credentials.tf, and the reason is the same
-	// one: an unknown role is a grant the cover cannot read). Both are known at
-	// plan time, and the ID must be one the modules create (tf.FugaroRoles),
-	// checked below.
-	projectRoleLiteralRE = regexp.MustCompile(`^"projects/\$\{var\.(project|credentials_service\.firebase_project)\}/roles/([A-Za-z0-9_.]+)"$`)
+	// the history account's) name their role literally instead. All four
+	// project variables are accepted because the Firebase project is where three
+	// of the installation's own roles live: the credentials service's database
+	// role (credentials.tf), the catalog check job's (catalogcheck.tf, D1554)
+	// and the front door's state read (state_read.tf), each for the same reason — an unknown role is a grant the cover
+	// cannot read. All four are known at plan time, and the ID must be one the
+	// modules create (tf.FugaroRoles), checked below.
+	projectRoleLiteralRE = regexp.MustCompile(`^"projects/\$\{var\.(project|credentials_service\.firebase_project|catalog_check\.firebase_project|coordinator\.firebase_project)\}/roles/([A-Za-z0-9_.]+)"$`)
 
 	// Roles that reach the budget backend (RTDB, Firestore, Identity
 	// Platform, API keys, the token signer, IAM or project policy), or that
@@ -2201,6 +2232,32 @@ func TestCustomRolesNeverReachTheBackend(t *testing.T) {
 				}
 				continue
 			}
+			// The catalog check job's database role (installation/
+			// catalogcheck.tf, D1554): the second knowing exception that holds
+			// a firebasedatabase permission, and the same two the credentials
+			// service's role holds. The job reserves each build's estimated
+			// cost before Cloud Build is asked for it, and that reservation is
+			// a lease under buildleases/<slug>/<id> in the installation's
+			// Firebase database (internal/budget/lease_build.go) — a family the
+			// rules deny whole to every client token, so the writer is an IAM
+			// identity and this role is what that identity is. Nothing else is
+			// allowed here: no lifecycle permission (create, delete, disable,
+			// reenable, undelete) and no list, so the unattended nightly job
+			// cannot delete the installation's database or lift the caps it is
+			// held to. The exact list is pinned by
+			// TestCatalogCheckLeaseRoleIsTheTwoDataPermissions below, and the
+			// binding to the job's own account alone by the same test.
+			if blk.name == "google_project_iam_custom_role.catalog_lease" {
+				if path != catalogCheckPath {
+					t.Errorf("%s: %s is not the catalog check job's own file (%s): this role is that job's reach and belongs beside its account", path, blk.name, catalogCheckPath)
+				}
+				for _, p := range quotedPerm.FindAllStringSubmatch(m[1], -1) {
+					if !slices.Contains(catalogLeasePermissions, p[1]) {
+						t.Errorf("%s: %s holds %s: the job's database role is the two data permissions and nothing else (no lifecycle, no list)", path, blk.name, p[1])
+					}
+				}
+				continue
+			}
 			// The member's workspace read role (modules/firebase/
 			// workspace_access.tf, W7): the one knowing exception that holds a
 			// firebasedatabase permission in the Firebase module, and it holds
@@ -2210,6 +2267,31 @@ func TestCustomRolesNeverReachTheBackend(t *testing.T) {
 			// whole-database write) is not bound to the workspace's account at
 			// all. TestMemberUpdateBindsNoWriteOnTheMembersDatabase is the
 			// exact pin.
+			// The front door's read of the installation's database
+			// (installation/state_read.tf, O16b, D2020 (a)): the third knowing
+			// exception, and the narrowest of the three — the instance's read
+			// and no write at all. The state group's two tools answer
+			// get_state and get_events as the front door's own account, and
+			// apply_patch is served by nothing (D2021), so the write
+			// (instances.update, the only one RTDB has) is withheld by its
+			// absence from this list rather than by a handler: a later
+			// revision of the front door has none to reach for. The exact list
+			// is pinned by tf.RolePermissions and by the module's own
+			// TestFrontDoorStateRoleHoldsNoDatabaseWrite; this ban continues
+			// past it because the role reaches further than "read one node" —
+			// no path-level scope exists — and it is bound to the front door's
+			// account alone.
+			if blk.name == "google_project_iam_custom_role.state_read" {
+				if !strings.HasPrefix(path, "gcp/modules/installation/state_read") {
+					t.Errorf("%s: %s is not in the installation module's state_read.tf", path, blk.name)
+				}
+				for _, p := range quotedPerm.FindAllStringSubmatch(m[1], -1) {
+					if !slices.Contains(tf.MCPStateReadPermissions, p[1]) {
+						t.Errorf("%s: %s holds %s: the front door's database role is the instance's read and nothing else", path, blk.name, p[1])
+					}
+				}
+				continue
+			}
 			if blk.name == "google_project_iam_custom_role.workspace_read" {
 				if !strings.HasPrefix(path, "gcp/modules/firebase/") {
 					t.Errorf("%s: %s is not in the Firebase module", path, blk.name)
@@ -4436,6 +4518,15 @@ func squash(s string) string { return strings.Join(strings.Fields(s), " ") }
 // permissions, project and member. What this test still refuses is every
 // SECOND way to reach the project: an authoritative binding or policy, an
 // audit config, a key.
+//
+// D1931 (DS2.2) adds the dynamic class's half of the fence to this file and
+// NOT to the bundle's: a project-level prefix-conditioned secretAccessor on the
+// service's account (credentials_prefix_accessor) and the lister that cannot
+// ride that condition (credentials_lister). Q6 is untouched by it — the bundle
+// keeps its one container and its one unconditioned grant — so the sweep below
+// is now "exactly one condition block, and it is the prefix accessor's": a
+// condition on the bundle's grant, or a third one anywhere in the file, is
+// still a finding.
 func TestCredentialsServiceGrantsAreTheOneBundle(t *testing.T) {
 	const path = "gcp/modules/installation/credentials.tf"
 	b, err := os.ReadFile(path)
@@ -4497,19 +4588,35 @@ func TestCredentialsServiceGrantsAreTheOneBundle(t *testing.T) {
 		}
 	}
 
-	// The account's lifecycle precondition is the one `condition` this file
-	// is allowed to carry, and it is taken out before the sweep below so the
-	// sweep is an assertion about conditions rather than a search that
-	// happens to pass: any other one — on the service, on the container, on
-	// the grant — is a finding.
+	// The account's lifecycle precondition is the one `precondition` this file
+	// carries, and it stays that way.
 	const precondition = "condition     = var.credentials_service != null"
 	if strings.Count(code, "precondition") != 1 || !strings.Contains(code, precondition) {
 		t.Fatalf("%s: the account's lifecycle precondition is the only `precondition` in this file, and it must stay that way:\n%s", path, code)
 	}
-	// A `condition` attribute or block, wherever it stands: "precondition"
-	// does not match, and neither does a comment (the code is stripped).
-	if rest := strings.Replace(code, precondition, "", 1); regexp.MustCompile(`(?m)^\s*condition\s*[={]`).MatchString(rest) {
-		t.Errorf("%s: a condition outside the account's precondition. Q6 replaced the name-prefix fence and the secretId filter with one unconditioned grant on one container:\n%s", path, rest)
+
+	// The conditions, both forms, in two assertions that together say "exactly
+	// the prefix accessor's". The attribute form first, with the precondition
+	// taken out so the sweep is about conditions and not about a search that
+	// happens to pass: "precondition" does not match, and neither does a
+	// comment (the code is stripped).
+	if rest := strings.Replace(code, precondition, "", 1); regexp.MustCompile(`(?m)^\s*condition\s*=`).MatchString(rest) {
+		t.Errorf("%s: a `condition` attribute outside the account's precondition. The one IAM condition this file may carry is the dynamic class's prefix accessor, and it is written as a block (D1931); a condition attribute anywhere else — on the bundle's grant above all — is the fence Q6 replaced:\n%s", path, rest)
+	}
+	// ... and then the block form, read per resource so the finding names the
+	// resource that carries it: exactly one, and it is the prefix accessor.
+	conditioned := 0
+	for _, blk := range allResourceBlocks(t, path, b) {
+		if !regexp.MustCompile(`(?m)^\s*condition\s*\{`).MatchString(blk.body) {
+			continue
+		}
+		conditioned++
+		if blk.name != "google_project_iam_member.credentials_prefix_accessor" {
+			t.Errorf("%s: %s carries a condition block. The one this file is allowed is the dynamic class's prefix accessor (D1931); Q6's bundle grant holds one unconditioned accessor on one container, and the account's precondition is a lifecycle block rather than an IAM condition:\n%s", path, blk.name, squash(blk.body))
+		}
+	}
+	if conditioned != 1 {
+		t.Errorf("%s: %d resources carry a condition block, want exactly one — credentials_prefix_accessor, the fence's reader half (D1931)", path, conditioned)
 	}
 
 	// Every resource in the file is gated on the one boolean, which is what the
@@ -4703,12 +4810,28 @@ func TestCredentialsDatabaseRoleIsTheTwoDataPermissions(t *testing.T) {
 	}
 
 	// The one binding: on that role, in that project, to the service's own
-	// account, with no condition and no second member.
-	grants := resourceBlocks(t, path, b, "google_project_iam_member")
-	if len(grants) != 1 {
-		t.Fatalf("%s declares %d project grants, want exactly one — the database role, to the service's own account", path, len(grants))
+	// account, with no condition and no second member. The file's project
+	// grants are split rather than counted: this test's subject is the database
+	// role's, selected by its role, and the OTHER two are D1931's (the prefix
+	// accessor and the lister, TestServicePrefixAccessorIsConditioned), named
+	// here so a third one in this file still fails this test.
+	var database []block
+	var others []string
+	for _, g := range resourceBlocks(t, path, b, "google_project_iam_member") {
+		if strings.Contains(firstAttr(g.body, "role"), tf.CredentialsDatabaseRole) {
+			database = append(database, g)
+			continue
+		}
+		others = append(others, g.name)
 	}
-	grant := squash(grants[0].body)
+	if len(database) != 1 {
+		t.Fatalf("%s declares %d grants of %s, want exactly one — to the service's own account", path, len(database), tf.CredentialsDatabaseRole)
+	}
+	slices.Sort(others)
+	if want := []string{"google_project_iam_member.credentials_lister", "google_project_iam_member.credentials_prefix_accessor"}; !slices.Equal(others, want) {
+		t.Errorf("%s: the file's project grants are %v and %v, want the database role's and exactly %v (D1931's two halves)", path, database[0].name, others, want)
+	}
+	grant := squash(database[0].body)
 	for _, want := range []string{
 		"project = var.credentials_service.firebase_project",
 		`role = "projects/${var.credentials_service.firebase_project}/roles/` + tf.CredentialsDatabaseRole + `"`,
@@ -4726,7 +4849,7 @@ func TestCredentialsDatabaseRoleIsTheTwoDataPermissions(t *testing.T) {
 	// google_project_iam_custom_role's name is computed, so the reference
 	// reaches a plan as an unknown role and the cover could no longer say which
 	// role the grant is (tf's checkGrant, the unknown-role arm).
-	if roleAttr := firstAttr(grants[0].body, "role"); strings.Contains(roleAttr, "google_project_iam_custom_role.") {
+	if roleAttr := firstAttr(database[0].body, "role"); strings.Contains(roleAttr, "google_project_iam_custom_role.") {
 		t.Errorf("%s: the database grant reads its role from the role resource (%s), which a plan sees as unknown:\n%s", path, roleAttr, grant)
 	}
 
@@ -4754,6 +4877,168 @@ func TestCredentialsDatabaseRoleIsTheTwoDataPermissions(t *testing.T) {
 	})
 	if n == 0 {
 		t.Errorf("no project grant naming the credentials service was found: this test is not reading the tree")
+	}
+}
+
+// catalogCheckPath is the installation module's catalog check file: the ONE
+// file the job's own account, job and database role live in (D1148, D1554).
+// Resources that belong to this job are named here rather than accepted
+// anywhere, so a copy of the role or the binding under another name — where the
+// account it is meant for could not be read beside it — fails the tests that
+// name this path.
+const catalogCheckPath = "gcp/modules/installation/catalogcheck.tf"
+
+// catalogLeasePermissions are the ONLY permissions the catalog check job's
+// database role may hold (installation/catalogcheck.tf): the instance's two
+// data permissions. See TestCatalogCheckLeaseRoleIsTheTwoDataPermissions for
+// what each one is for and why both predefined roles are wrong. It is a second
+// list and not a shared one with credentialsDatabasePermissions although the
+// two hold the same two permissions today: a permission one of the two
+// accounts' work grows into must not land on the other by that alone.
+var catalogLeasePermissions = []string{"firebasedatabase.instances.get", "firebasedatabase.instances.update"}
+
+// The catalog check job's database role: the two DATA permissions of the
+// instance, in the FIREBASE project, named as the literal path a plan can read,
+// and bound to the job's own account alone (D1554).
+//
+// Why the job needs one at all. Each build it submits reserves its estimated
+// cost before Cloud Build is asked for it, and the reservation is a lease under
+// buildleases/<slug>/<id> in the installation's Firebase database
+// (internal/budget/lease_build.go). That family is denied whole to every client
+// token by the installation's rules — no token in the installation writes a
+// lease — so its writer can only be an IAM identity: the account's access token
+// carries the permissions its principals hold, and this role is what those are
+// for this account. Without it the job's every build would be refused a lease
+// at run time, which is the state this release's own subtests found.
+//
+// Why these two and not roles/firebasedatabase.admin, which is what the
+// installation's coordinator and history accounts hold: Realtime Database IAM
+// has no path-level scope, so a binding reaches the whole database and the only
+// question a role answers is which OPERATIONS the account may make.
+// firebasedatabase.instances.get is the only read there is (the reclaim of a
+// lease a dead CLI left, the day's counters and the database's own mark) and
+// firebasedatabase.instances.update the only write (a realtime-database node
+// has no separate create or delete). admin adds list and the instance LIFECYCLE
+// — create, delete, disable, reenable, undelete — which would let a scheduled
+// job nobody is watching delete the installation's database, or lift the caps
+// it is held to. The two predefined roles are wrong in opposite directions:
+// viewer is get+list and cannot write a lease at all.
+//
+// The project matters as much as the permissions: the role is declared and
+// bound in the FIREBASE project, because that is where the database is (D6),
+// while the account is created in the installation's project. A grant in one
+// project to a member of another is ordinary cross-project IAM, and it is the
+// shape the credentials service's database role has. A second role rather than
+// a second binding of that one keeps the two accounts' reach from growing by
+// each other's needs (tf.RolePermissions pins both lists).
+func TestCatalogCheckLeaseRoleIsTheTwoDataPermissions(t *testing.T) {
+	b, err := os.ReadFile(catalogCheckPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roles := resourceBlocks(t, catalogCheckPath, b, "google_project_iam_custom_role")
+	if len(roles) != 1 {
+		t.Fatalf("%s declares %d custom roles, want the one database role", catalogCheckPath, len(roles))
+	}
+	role := squash(roles[0].body)
+	for _, want := range []string{
+		"project = var.catalog_check.firebase_project", // the database's project, not the installation's
+		`role_id = "` + tf.CatalogLeaseRole + `"`,
+		"count = local.catalog_lease_on ? 1 : 0",
+	} {
+		if !strings.Contains(role, want) {
+			t.Errorf("%s: the database role does not hold %q:\n%s", catalogCheckPath, want, role)
+		}
+	}
+	list := regexp.MustCompile(`(?s)permissions\s*=\s*\[([^\]]*)\]`).FindStringSubmatch(roles[0].body)
+	if list == nil {
+		t.Fatalf("%s: the database role has no permissions list:\n%s", catalogCheckPath, role)
+	}
+	var got []string
+	for _, p := range quotedPerm.FindAllStringSubmatch(list[1], -1) {
+		got = append(got, p[1])
+	}
+	want := slices.Clone(catalogLeasePermissions)
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("%s: the database role holds %v, want exactly %v: get is the only read and update the only write, and every other firebasedatabase permission is instance lifecycle a nightly check never uses", catalogCheckPath, got, want)
+	}
+	// The same two on the Go side, so a cover that accepted a third permission
+	// and a module that granted one cannot drift apart: the pin
+	// internal/infra/tf keeps (RolePermissions) is the one the confirmation
+	// reads.
+	if pin := tf.RolePermissions[tf.CatalogLeaseRole]; !slices.Equal(pin, want) {
+		t.Errorf("tf.RolePermissions[%s] = %v, want exactly %v", tf.CatalogLeaseRole, pin, want)
+	}
+	if !slices.Contains(tf.FugaroRoles, tf.CatalogLeaseRole) {
+		t.Errorf("tf.FugaroRoles does not name %s, so a grant of this role is refused", tf.CatalogLeaseRole)
+	}
+	// The role is created only where the installation has a database to write
+	// leases into: with no Firebase project, the job submits its builds unleased
+	// and says so, and a role granted on a project nobody named would be a grant
+	// on a guess.
+	if !strings.Contains(role, "var.catalog_check.firebase_project") {
+		t.Errorf("%s: the database role's project is not the installation's Firebase project:\n%s", catalogCheckPath, role)
+	}
+
+	// The one binding: on that role, in that project, to the job's own account,
+	// with no condition and no second member.
+	grants := resourceBlocks(t, catalogCheckPath, b, "google_project_iam_member")
+	var lease *block
+	for i := range grants {
+		if grants[i].name == "google_project_iam_member.catalog_lease" {
+			lease = &grants[i]
+		}
+	}
+	if lease == nil {
+		t.Fatalf("%s declares no google_project_iam_member.catalog_lease: the job's database role is bound to nothing", catalogCheckPath)
+	}
+	grant := squash(lease.body)
+	for _, want := range []string{
+		"project = var.catalog_check.firebase_project",
+		`role = "projects/${var.catalog_check.firebase_project}/roles/` + tf.CatalogLeaseRole + `"`,
+		"member = google_service_account.catalog_check[0].member",
+		"count = local.catalog_lease_on ? 1 : 0",
+	} {
+		if !strings.Contains(grant, want) {
+			t.Errorf("%s: the database grant does not hold %q:\n%s", catalogCheckPath, want, grant)
+		}
+	}
+	if strings.Contains(grant, "condition") {
+		t.Errorf("%s: the database grant carries a condition: Realtime Database IAM has no path-level scope, so a condition here would be a fence that looks like one and is not:\n%s", catalogCheckPath, grant)
+	}
+	// The role is named literally rather than read from the role resource:
+	// google_project_iam_custom_role's name is computed, so the reference
+	// reaches a plan as an unknown role and the cover could no longer say which
+	// role the grant is (tf's checkGrant, the unknown-role arm).
+	if roleAttr := firstAttr(lease.body, "role"); strings.Contains(roleAttr, "google_project_iam_custom_role.") {
+		t.Errorf("%s: the database grant reads its role from the role resource (%s), which a plan sees as unknown:\n%s", catalogCheckPath, roleAttr, grant)
+	}
+
+	// No predefined database role anywhere in the tree is granted to this job's
+	// account: the whole point of the custom role is that admin would hand an
+	// unattended job the instance lifecycle, and a plan that granted it would be
+	// refused by tf's cover and not by this test alone.
+	n := 0
+	walk(t, func(p string, fb []byte) {
+		if !strings.HasSuffix(p, ".tf") {
+			return
+		}
+		for _, blk := range allResourceBlocks(t, p, fb) {
+			if !strings.HasPrefix(blk.typ, "google_project_iam_") || !strings.Contains(blk.body, "catalog_check") {
+				continue
+			}
+			for _, r := range quotedRoleRE.FindAllStringSubmatch(blk.body, -1) {
+				if strings.HasPrefix(r[1], "roles/firebasedatabase.") {
+					t.Errorf("%s: %s grants the predefined %s to the catalog check job: its database reach is %s in %s and nothing else", p, blk.name, r[1], tf.CatalogLeaseRole, catalogCheckPath)
+				}
+			}
+			n++
+		}
+	})
+	if n == 0 {
+		t.Errorf("no project grant naming the catalog check job was found: this test is not reading the tree")
 	}
 }
 
@@ -5293,5 +5578,571 @@ func TestCredentialsServiceImageMustBeADigest(t *testing.T) {
 	}
 	if n < 2 {
 		t.Errorf("%s: %d runs expect var.credentials_service to fail; the tag form and the truncated-digest form must each be planned and refused (M1)", tftest, n)
+	}
+}
+
+// --- DS2.2: the intake, its account and the service's prefix accessor ------
+//
+// The fence these four tests read is ONE CEL expression, and it is a measured
+// fact rather than a preference: the owner ran Check 510 on 2026-11-12
+// (0.23.0, exit 0) and saw `secretmanager.secrets.create` ADMITTED for a
+// `fugaro_u_` name under a conditioned grant and `create-conditioned-outside`
+// REFUSED (403) for a name outside both prefixes, so a name-prefix condition
+// fences create the same way it fences version-add and delete (F30's create
+// half is contradicted by that run; the owner's ruling of 2026-11-12 is what
+// these tests hold). `secretmanager.secrets.list` is the ONE thing it cannot
+// fence — Check 510 refused it under the same condition — so the list is a
+// grant of its own, unconditioned, to a role that carries nothing else.
+
+// intakeConditionTitle and intakeConditionExpr are the fence's own words: the
+// title every grant carries it under, and the expression itself, written once
+// in the module (gcp/modules/installation/intake.tf's
+// dynamic_secret_names_condition local) and read here rather than repeated.
+// A test that spelled the expression out would pin itself.
+const (
+	intakeConditionTitle = "fugaro-intake-secret-names"
+	intakeConditionExpr  = `resource.name.extract("/secrets/{secret}").startsWith("fugaro_u_") || resource.name.extract("/secrets/{secret}").startsWith("fugaro_p_")`
+)
+
+// intakeValuePermissions are the permissions that read a version's payload —
+// what D1931 gives the credentials service through its prefix accessor and
+// what the intake's own account must never hold. `secrets.list` is
+// deliberately NOT here: it answers names and metadata, which is what the
+// intake's own list call and the service's per-secret resolution need, and
+// never a value (F30).
+var intakeValuePermissions = []string{"secretmanager.versions.access", "secretmanager.secrets.get"}
+
+// moduleGrant is one IAM grant of the installation module: the role and member
+// expressions as the block writes them, the IAM condition's expression with
+// the Terraform string unquoted ("" when the block carries no condition), and
+// the block's own body for the gate every resource must carry.
+type moduleGrant struct {
+	path, name, role, member, expression, body string
+}
+
+// installationGrants returns every IAM grant of the installation module, from
+// every .tf file of it: the resource type is what says a block is a grant
+// (anyIAMRE), and the block's own file is what says which of the module's
+// files it stands in.
+func installationGrants(t *testing.T) []moduleGrant {
+	t.Helper()
+	const dir = "gcp/modules/installation"
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []moduleGrant
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".tf") {
+			continue
+		}
+		path := dir + "/" + e.Name()
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, blk := range allResourceBlocks(t, path, b) {
+			if !anyIAMRE.MatchString(blk.typ) {
+				continue
+			}
+			out = append(out, moduleGrant{
+				path:       path,
+				name:       blk.name,
+				role:       firstAttr(blk.body, "role"),
+				member:     firstAttr(blk.body, "member"),
+				expression: conditionExpression(t, path, blk.name, blk.body),
+				body:       blk.body,
+			})
+		}
+	}
+	return out
+}
+
+// conditionExpression reads the expression of a block's IAM condition, with
+// the Terraform string unquoted so that two spellings of one expression can be
+// compared. A block with no condition is "".
+//
+// An expression that is not a plain string — a variable's field, a coalesce —
+// is returned as written and not resolved: every test below compares against
+// the fence's own text, so a condition that hides behind a reference fails the
+// comparison rather than slipping through, and one assertion reads the
+// reference on purpose (a condition titled from a variable). The one reference
+// that IS followed is `local.<name>.expression`, the form both halves of
+// D1931's fence carry: "the condition is written once" is a promise about the
+// source, and resolveLocal is what keeps it one — two bindings of one local
+// compare equal on the fence's text, and a local holding something else fails.
+func conditionExpression(t *testing.T, path, name, body string) string {
+	t.Helper()
+	m := regexp.MustCompile(`(?s)(?:^|\n)\s*condition\s*\{`).FindStringIndex(body)
+	if m == nil {
+		return ""
+	}
+	open := m[1] - 1
+	end := matchBrace(body, open)
+	if end < 0 {
+		t.Fatalf("%s: unbalanced braces in %s's condition", path, name)
+	}
+	return resolveLocal(t, path, firstAttr(body[open+1:end], "expression"))
+}
+
+// localExpressionRE matches a local's field as an expression writes it.
+var localExpressionRE = regexp.MustCompile(`^local\.([A-Za-z0-9_]+)\.expression$`)
+
+// resolveLocal follows a `local.<name>.expression` reference to the literal the
+// local's own block holds, reading the locals of the referring file's own
+// directory (a module's locals are its own). A reference the directory does not
+// define, and a local whose field is itself a reference or a quoted template,
+// are returned as written — the caller's comparison against the fence's text
+// then fails, which is the point: the fence has one home and one spelling.
+func resolveLocal(t *testing.T, path, raw string) string {
+	t.Helper()
+	m := localExpressionRE.FindStringSubmatch(raw)
+	if m == nil {
+		return raw
+	}
+	dir := filepath.Dir(path)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block := regexp.MustCompile(`(?m)^\s*` + regexp.QuoteMeta(m[1]) + `\s*=\s*\{`)
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".tf") {
+			continue
+		}
+		p := dir + "/" + e.Name()
+		b, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		code := stripComments(string(b))
+		idx := block.FindStringIndex(code)
+		if idx == nil {
+			continue
+		}
+		body := code[idx[1]:matchBrace(code, idx[1]-1)]
+		inner := firstAttr(body, "expression")
+		if expr, err := strconv.Unquote(inner); err == nil {
+			return expr
+		}
+		return inner
+	}
+	return raw
+}
+
+// findGrant returns the grant of one block name ("<type>.<id>").
+func findGrant(t *testing.T, grants []moduleGrant, name string) moduleGrant {
+	t.Helper()
+	for _, g := range grants {
+		if g.name == name {
+			return g
+		}
+	}
+	t.Fatalf("the installation module declares no %s: DS2.2's fence is not in the module at all", name)
+	return moduleGrant{}
+}
+
+// customRoleID is the role ID of a grant's role expression when it names a
+// custom role of one of this run's projects ("projects/${var.project}/roles/x"
+// and its Firebase-project twin), and "" otherwise. The modules spell these
+// LITERALLY (credentials.tf's reason: a role read from the role resource's own
+// name attribute reaches the plan as unknown, and internal/infra/tf's cover
+// cannot then say which role a grant is).
+func customRoleID(role string) string {
+	m := projectRoleLiteralRE.FindStringSubmatch(role)
+	if m == nil {
+		return ""
+	}
+	return m[2]
+}
+
+// customRolePermissions returns every custom role the installation module
+// declares, by role ID, with the permissions it lists. A role whose role_id is
+// not a plain string literal (the launcher's, the reaper's: they take theirs
+// from var.installation.role_ids) is not keyed here — no grant can name it by
+// ID either.
+func customRolePermissions(t *testing.T) map[string][]string {
+	t.Helper()
+	const dir = "gcp/modules/installation"
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string][]string{}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".tf") {
+			continue
+		}
+		path := dir + "/" + e.Name()
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, blk := range resourceBlocks(t, path, b, "google_project_iam_custom_role") {
+			raw := firstAttr(blk.body, "role_id")
+			if !strings.HasPrefix(raw, `"`) {
+				continue
+			}
+			id, err := strconv.Unquote(raw)
+			if err != nil {
+				t.Fatalf("%s: %s's role_id %s is not a plain string: %v", path, blk.name, raw, err)
+			}
+			out[id] = permissionsOf(t, path, blk)
+		}
+	}
+	return out
+}
+
+// sortedStrings is a copy of want, sorted, for a set-shaped comparison.
+func sortedStrings(in []string) []string {
+	out := slices.Clone(in)
+	slices.Sort(out)
+	return out
+}
+
+// TestIntakeAccountHasNoAccessor is R3 and F30 as a property of the account:
+// the intake writes containers, reads names and metadata and the one document
+// `fugaro update` publishes, and it holds no way to read a version's payload.
+//
+// The account's whole reach is pinned, not just the absence: three grants and
+// no fourth, because "no accessor" alone would be satisfied by an account with
+// no grants at all, or by one that reached Secret Manager some other way — the
+// straightest of which is a predefined role, which is why `roles/secretmanager.*`
+// is refused outright rather than checked permission by permission. The one
+// unconditioned grant is the lister's, and it is the reason the list is a
+// grant of its own: Check 510 refused `secrets.list` under the fence, so an
+// account that must list holds it unconditioned, in a role that carries
+// nothing else.
+//
+// Mutation (run, restore): add
+// `role = "roles/secretmanager.secretAccessor"` to a grant naming the intake's
+// account and both assertions fail — the predefined-role one, and the set.
+func TestIntakeAccountHasNoAccessor(t *testing.T) {
+	const (
+		intakeAccount = "google_service_account.intake"
+		writerRole    = "custom:fugaroIntakeSecrets"
+		listerRole    = "custom:fugaroSecretLister"
+	)
+	grants := installationGrants(t)
+	roles := customRolePermissions(t)
+
+	var held []string
+	for _, g := range grants {
+		if !strings.Contains(g.member, intakeAccount) {
+			continue
+		}
+		if strings.HasPrefix(g.role, `"roles/secretmanager.`) {
+			t.Errorf("%s: %s grants the predefined role %s to the intake's account: the intake holds exactly its own two roles, and no predefined Secret Manager role is free of a read it must not have (R3, F30)", g.path, g.name, g.role)
+			continue
+		}
+		id := customRoleID(g.role)
+		switch {
+		case id != "":
+			perms, known := roles[id]
+			if !known {
+				t.Errorf("%s: %s grants %s to the intake's account, and no role block of the module declares that role ID", g.path, g.name, g.role)
+				continue
+			}
+			for _, p := range perms {
+				if slices.Contains(intakeValuePermissions, p) {
+					t.Errorf("%s: the intake's role %s holds %s, which reads a version's payload: the account holds no accessor and no secrets.get (R3, F30)", g.path, id, p)
+				}
+			}
+			held = append(held, "custom:"+id)
+		case strings.HasPrefix(g.role, `"`):
+			held = append(held, strings.Trim(g.role, `"`))
+		default:
+			t.Errorf("%s: %s grants the role expression %s to the intake's account, which this scan cannot read: it must be a literal role or a literal custom-role path (the modules' own rule, credentials.tf)", g.path, g.name, g.role)
+		}
+		// Every grant to this account is narrowed except the lister's, and
+		// the lister is the exception because it CANNOT be: list is refused
+		// under the name condition (F30, Check 510), so it is a role of its
+		// own holding nothing but secrets.list.
+		if g.expression == "" && id != "fugaroSecretLister" {
+			t.Errorf("%s: %s grants %s to the intake's account with no IAM condition: every one of its grants is fenced by name, and %s is the only one that cannot be (F30)", g.path, g.name, g.role, listerRole)
+		}
+	}
+	want := sortedStrings([]string{writerRole, listerRole, "roles/storage.objectViewer"})
+	if got := sortedStrings(held); !slices.Equal(got, want) {
+		t.Errorf("the intake's account holds %v, want exactly %v: the conditioned writer, the unconditioned lister and the read of the derived admin list — a fourth grant is a decision (D1931, F30)", got, want)
+	}
+
+	// The intake's own service mounts no secret and reads no bundle: a volume
+	// or a secret_key_ref would be a reach the account's two roles do not
+	// carry, and it is the one way this service could hold a value without a
+	// Secret Manager grant at all.
+	const path = "gcp/modules/installation/intake.tf"
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, blk := range allResourceBlocks(t, path, b) {
+		if holdsSecretValue(blk.body) {
+			t.Errorf("%s: %s mounts or reads a secret value, and the intake holds no accessor for one: the intake writes containers and never reads a version (R3)", path, blk.name)
+		}
+	}
+}
+
+// TestIntakeRolesAreConditioned is the ruling of 2026-11-12 as a property of
+// the two roles and their two bindings: create, version-add and delete are ONE
+// conditioned role in ONE binding, and the list is a second, unconditioned one.
+//
+// Why two roles and not one. An IAM binding's condition cannot be switched off
+// per permission, and list is refused under this very condition (Check 510),
+// so a single role carrying create/version-add/delete/list would have to be
+// either unconditioned — which would lose the fence around the three writes —
+// or conditioned, which would lose the list the intake's own routes are built
+// on (internal/intake/gcp.go describes every call it makes). The split is the
+// narrowest shape that holds both facts.
+//
+// Mutation (run, restore): add "secretmanager.secrets.list" to the writer
+// role's permissions, or move the create permission onto the lister, and the
+// permission-set assertions fail; drop the condition block from the writer's
+// binding and the fence assertion fails.
+func TestIntakeRolesAreConditioned(t *testing.T) {
+	grants := installationGrants(t)
+	roles := customRolePermissions(t)
+
+	wantWriter := []string{"secretmanager.secrets.create", "secretmanager.secrets.delete", "secretmanager.versions.add"}
+	gotWriter, ok := roles["fugaroIntakeSecrets"]
+	if !ok {
+		t.Fatalf("the installation module declares no fugaroIntakeSecrets role: create, version-add and delete are the intake's conditioned half and nothing carries them")
+	}
+	if !slices.Equal(sortedStrings(gotWriter), wantWriter) {
+		t.Errorf("fugaroIntakeSecrets holds %v, want exactly %v: create, version-add and delete are the three calls the intake makes under the fence, and list is the lister's (it cannot be conditioned)", gotWriter, wantWriter)
+	}
+	wantLister := []string{"secretmanager.secrets.list"}
+	gotLister, ok := roles["fugaroSecretLister"]
+	if !ok {
+		t.Fatalf("the installation module declares no fugaroSecretLister role: list is refused under the name condition (F30), so it must be a role of its own")
+	}
+	if !slices.Equal(sortedStrings(gotLister), wantLister) {
+		t.Errorf("fugaroSecretLister holds %v, want exactly %v, and nothing else: the list reaches names and metadata, and a second permission here is a read nobody asked for", gotLister, wantLister)
+	}
+
+	writer := findGrant(t, grants, "google_project_iam_member.intake_secrets")
+	for _, want := range []string{
+		"google_service_account.intake[0].member",
+		`"projects/${var.project}/roles/fugaroIntakeSecrets"`,
+		"count = local.intake_on ? 1 : 0",
+	} {
+		if !strings.Contains(squash(writer.body), want) {
+			t.Errorf("%s: the intake's writer grant does not hold %q:\n%s", writer.path, want, squash(writer.body))
+		}
+	}
+	if writer.expression != intakeConditionExpr {
+		t.Errorf("%s: the intake's writer grant carries the condition %q, want the module's one fence %q: create, version-add and delete are conditioned by name in both directions (the owner's ruling of 2026-11-12, Check 510)", writer.path, writer.expression, intakeConditionExpr)
+	}
+	if !strings.Contains(writer.body, intakeConditionTitle) && !strings.Contains(writer.body, "condition.title") {
+		t.Errorf("%s: the intake's writer grant carries no condition title: a condition without one is unreadable in the audit log and unsafe to widen later", writer.path)
+	}
+
+	lister := findGrant(t, grants, "google_project_iam_member.intake_lister")
+	if lister.expression != "" {
+		t.Errorf("%s: the intake's lister grant carries the condition %q: list is refused under a name condition (Check 510), so a conditioned list grant is one that answers nothing (F30)", lister.path, lister.expression)
+	}
+	for _, want := range []string{
+		"google_service_account.intake[0].member",
+		`"projects/${var.project}/roles/fugaroSecretLister"`,
+		"count = local.intake_on ? 1 : 0",
+	} {
+		if !strings.Contains(squash(lister.body), want) {
+			t.Errorf("%s: the intake's lister grant does not hold %q:\n%s", lister.path, want, squash(lister.body))
+		}
+	}
+}
+
+// TestServicePrefixAccessorIsConditioned is the other half of the same fence:
+// the credentials service reads the per-secret credentials D1931 moved out of
+// the bundle, and it reads them through a project-level accessor conditioned by
+// name — the ONE way to reach a container whose name the installation does not
+// know when the root is planned.
+//
+// Q6 is NOT reversed for the class it was decided about: the bundle's own
+// container keeps its single unconditioned grant, which is what
+// TestCredentialsServiceGrantsAreTheOneBundle still holds. What D1931 adds is
+// the per-secret class beside it, and this test holds the two apart as well as
+// the new shape: both halves carry the SAME expression, byte for byte, because
+// a reader fenced by one and a writer by another would leave the names the
+// intake writes unreadable, or readable by a shape nobody granted.
+//
+// Mutation (run, restore): drop the condition block from the accessor grant
+// and the equality assertion fails (the grant then reaches every secret of the
+// project, the bundle included); widen the expression to one prefix and the
+// equality fails too.
+func TestServicePrefixAccessorIsConditioned(t *testing.T) {
+	grants := installationGrants(t)
+	roles := customRolePermissions(t)
+
+	accessor := findGrant(t, grants, "google_project_iam_member.credentials_prefix_accessor")
+	for _, want := range []string{
+		`"roles/secretmanager.secretAccessor"`,
+		"google_service_account.credentials[0].member",
+		"project = var.project",
+	} {
+		if !strings.Contains(squash(accessor.body), want) {
+			t.Errorf("%s: the service's prefix accessor does not hold %q:\n%s", accessor.path, want, squash(accessor.body))
+		}
+	}
+	if accessor.expression != intakeConditionExpr {
+		t.Errorf("%s: the service's prefix accessor carries the condition %q, want the module's one fence %q: the reader and the writer are fenced by the same expression (D1931, F30)", accessor.path, accessor.expression, intakeConditionExpr)
+	}
+
+	// The service's list, beside the accessor: the annotation the intake
+	// writes is how a prefix is resolved (R10), and F30 grants the metadata
+	// read unconditioned for it — in the same role the intake's lister is,
+	// so one permission has one home.
+	lister := findGrant(t, grants, "google_project_iam_member.credentials_lister")
+	if lister.expression != "" {
+		t.Errorf("%s: the service's lister grant carries the condition %q: list answers nothing under a name condition (Check 510)", lister.path, lister.expression)
+	}
+	if id := customRoleID(lister.role); id != "fugaroSecretLister" {
+		t.Errorf("%s: the service's lister grant names %s, want the module's fugaroSecretLister: one list permission, one role, shared with the intake", lister.path, lister.role)
+	}
+	if !slices.Contains(sortedStrings(roles["fugaroSecretLister"]), "secretmanager.secrets.list") {
+		t.Errorf("the fugaroSecretLister role does not carry secretmanager.secrets.list, so the grant above grants nothing")
+	}
+
+	// Q6's half, unchanged: the bundle keeps ONE unconditioned grant on ONE
+	// container, and the accessor above is deliberately not a condition on it.
+	bundle := findGrant(t, grants, "google_secret_manager_secret_iam_member.credentials_bundle")
+	if bundle.expression != "" {
+		t.Errorf("%s: the bundle's grant carries the condition %q: Q6's one container is read through one unconditioned grant, and D1931's fence is the per-secret class's alone", bundle.path, bundle.expression)
+	}
+}
+
+// TestIntakeRefusesAContainerOfAnotherShape is R12's Terraform half. R12's
+// first half is the routes' (internal/intake refuses a container whose shape
+// is not the intake's own before any write, held by that package's own tests);
+// this is the half the PROJECT holds: the fence is a name-prefix condition, so
+// a container outside the intake's grammar is refused by IAM itself, whatever
+// the process does.
+//
+// The names are rendered by internal/secretname rather than spelled here, and
+// the prefixes are read out of the module's own expression: a test that
+// hardcoded both would pass while the two drifted, which is exactly the F6/
+// D1931 failure mode (a platform container whose name merely LOOKS like the
+// intake's).
+//
+// Mutation (run, restore): widen the expression in intake.tf to
+// startsWith("fugaro") and the refusals below fail — the platform's own
+// containers are named fugaro-<slug>-<logical>-<hash>.
+func TestIntakeRefusesAContainerOfAnotherShape(t *testing.T) {
+	path := "gcp/modules/installation/intake.tf"
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripComments(string(b))
+	local := regexp.MustCompile(`(?s)dynamic_secret_names_condition\s*=\s*\{(.*?)\n\s*\}`).FindStringSubmatch(code)
+	if local == nil {
+		t.Fatalf("%s declares no dynamic_secret_names_condition local: the fence's one expression is what both halves carry it from", path)
+	}
+	raw := firstAttr(local[1], "expression")
+	expr, err := strconv.Unquote(raw)
+	if err != nil {
+		t.Fatalf("%s: the fence's expression %s is not a plain string: %v", path, raw, err)
+	}
+	if expr != intakeConditionExpr {
+		t.Fatalf("%s: the fence is %q, want %q (the owner's ruling of 2026-11-12, measured by Check 510: conditioned create admitted for a fugaro_u_ name, refused outside both prefixes)", path, expr, intakeConditionExpr)
+	}
+	if title := firstAttr(local[1], "title"); strings.Trim(title, `"`) != intakeConditionTitle {
+		t.Fatalf("%s: the fence is titled %s, want %q", path, title, intakeConditionTitle)
+	}
+
+	var prefixes []string
+	for _, m := range regexp.MustCompile(`startsWith\("([^"]*)"\)`).FindAllStringSubmatch(expr, -1) {
+		prefixes = append(prefixes, m[1])
+	}
+	admitted := func(id string) bool {
+		for _, p := range prefixes {
+			if strings.HasPrefix(id, p) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// What the intake writes is admitted: one name per scope, rendered by the
+	// package that owns the grammar (R10's sub, R12's name).
+	user, err := secretname.User("118234567890123456789", "github-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shared, err := secretname.Project("openrouter")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{user, shared} {
+		if !admitted(id) {
+			t.Errorf("the fence admits neither %s: the intake's own grammar is what it must admit (prefixes %v)", id, prefixes)
+		}
+	}
+
+	// And a container of another shape is refused by the project itself: the
+	// platform's own containers are fugaro-<slug>-<logical>-<hash> (the golden
+	// tfvars carry one), the bundle is whichever name the installation gave it,
+	// and a name that only borrows the intake's letters is not the intake's.
+	for _, id := range []string{
+		"fugaro-acme-webapp-github-app-key-35b331db19bcc682",
+		"fugaro-secrets-bundle",
+		"fugaro_platform",
+		"platform-token",
+		"user-118234567890123456789-github-token",
+	} {
+		if admitted(id) {
+			t.Errorf("the fence admits %s: IAM then lets the intake write a container of another shape, and the shapes it may write are the ones internal/secretname renders (%v)", id, prefixes)
+		}
+	}
+}
+
+// TestLauncherAccountsReachTheServices pins the class list to the deployment
+// rather than to a literal: FUGARO_LAUNCHER_ACCOUNTS is the launcher class
+// (D1938, F25) — the bare addresses a Google ID token's email claim carries —
+// and the two services that admit a launcher read it from var.launcher_accounts,
+// which internal/infra derives from the same roster list the invoker grants are
+// made from (internal/infra/launchers.go; F31, F36).
+//
+// It is rendered the way every optional class list here is (credentials.tf's
+// FUGARO_PERSON_ACCOUNTS): a dynamic block, so an installation whose roster
+// names no launcher starts with a class that admits nobody rather than
+// refusing to bind a port, and no address is written into the module.
+func TestLauncherAccountsReachTheServices(t *testing.T) {
+	for _, path := range []string{
+		"gcp/modules/installation/credentials.tf",
+		"gcp/modules/installation/intake.tf",
+	} {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		code := stripComments(string(b))
+		if !strings.Contains(code, "FUGARO_LAUNCHER_ACCOUNTS") {
+			t.Errorf("%s does not render FUGARO_LAUNCHER_ACCOUNTS: the process reads it as its launcher class, and one that is never set admits nobody", path)
+			continue
+		}
+		m := regexp.MustCompile(`(?s)dynamic "env" \{(.*?)name\s*=\s*"FUGARO_LAUNCHER_ACCOUNTS"`).FindStringSubmatch(code)
+		if m == nil {
+			t.Errorf("%s: FUGARO_LAUNCHER_ACCOUNTS is not rendered by a dynamic env block, so an installation whose roster names no launcher gets an empty value rather than no entry (credentialsServiceLaunchers reads an absent entry as an empty class, and an empty string is refused)", path)
+			continue
+		}
+		if !strings.Contains(squash(m[1]), "jsonencode(var.launcher_accounts)") {
+			t.Errorf("%s: the launcher class is not jsonencode(var.launcher_accounts): the value is a JSON array of bare addresses and it is derived from the roster, never written here:\n%s", path, squash(m[1]))
+		}
+	}
+	// The variable is the roster's own people, so the module must not carry a
+	// second, hand-written list of them.
+	b, err := os.ReadFile("gcp/modules/installation/variables.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripComments(string(b))
+	m := regexp.MustCompile(`(?m)^\s*variable\s+"launcher_accounts"\s*\{`).FindStringIndex(code)
+	if m == nil {
+		t.Fatal("the installation module declares no launcher_accounts variable, so the two services' class list has nowhere to come from")
+	}
+	body := code[m[1]:matchBrace(code, m[1]-1)]
+	if !hasAttr(body, "default", "[]") {
+		t.Errorf("launcher_accounts must default to the empty list: an installation whose roster names no launcher renders no entry at all, and a module that refused to plan without the variable would break every tfvars written before this release:\n%s", squash(body))
 	}
 }

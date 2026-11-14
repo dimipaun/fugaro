@@ -1,0 +1,16 @@
+{
+  "id": "stm_1",
+  "reseller_organisation_id": "org_reseller",
+  "month": "2026-02",
+  "accrued_micros": 24000000,
+  "paid_micros": 0,
+  "state": "open",
+  "lines": [
+    {
+      "organisation_id": "org_example",
+      "amount_micros": 24000000
+    }
+  ],
+  "issued_at": "2026-03-01T00:05:00Z",
+  "paid_at": null
+}

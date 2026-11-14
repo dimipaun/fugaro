@@ -187,7 +187,7 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 		// The check is ONE command now: the register tells the owner to run the
 		// script rather than to paste five guard-block steps by hand, and the
 		// script is named as the artifact the block comes from.
-		"**Run it:** `bash scripts/live-checks/check96.sh`",
+		"**Run it:** `bash scripts/live-checks/check96.sh [--dry-run] [--workflow <name>] [<owner/name>]`",
 		"scripts/live-checks/check96.sh",
 		// The wiring, which the check has to state per job: the launch sets the
 		// variable on a switched-on repository's per-repository job and on no
@@ -287,8 +287,26 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 	if !strings.Contains(cascade, "func (s *Server) refuseCall(ctx context.Context, w http.ResponseWriter") {
 		t.Errorf("internal/credsvc/cascade.go no longer has `refuseCall`: Check 96's step 4 is written on its behaviour — it writes the refusal's one audit line and then the typed refusal")
 	}
-	if body := check96FuncBody(t, cascade, "func (s *Server) refuseCall(ctx context.Context, w http.ResponseWriter"); !strings.Contains(body, "auditCall") || !strings.Contains(body, "s.refuse(") {
-		t.Errorf("internal/credsvc/cascade.go's `refuseCall` no longer writes the audit line before the answer (%q): Check 96's step 4 expects exactly one line for the pairing refusal, written before the answer goes out", strings.TrimSpace(body))
+	// The three calls are one path and the check's expectation is about the
+	// path: refuseCall delegates to refuseCallCause, which writes the audit line
+	// through `auditCall` and only then the typed refusal through `s.refuse`. A
+	// reading held to `refuseCall`'s own body alone would be a reading of where
+	// the code happens to sit, and it went red when the cause-carrying half
+	// moved one level down (the refusal's own server-side line, refusallog.go) —
+	// so both halves are pinned: the entry point that every refusal after the
+	// pairing takes, and the body that audits before it answers.
+	//
+	// What is pinned of the entry point is the DELEGATION CALL and its whole
+	// argument list, never the name of the function it reaches:
+	// check96FuncBody runs to the next top-level `func `, so that name is also
+	// in refuseCallCause's own doc comment underneath, and a reading of the name
+	// stays green with the delegation inlined away — the one edit this half
+	// exists to catch.
+	if body := check96FuncBody(t, cascade, "func (s *Server) refuseCall(ctx context.Context, w http.ResponseWriter"); !strings.Contains(body, "s.refuseCallCause(ctx, w, id, purpose, credential, tier") {
+		t.Errorf("internal/credsvc/cascade.go's `refuseCall` no longer delegates the refusal to the audited path `refuseCallCause` (%q): Check 96's step 4 expects exactly one line for the pairing refusal, and the delegation is what keeps the audit and the answer one act", strings.TrimSpace(body))
+	}
+	if body := check96FuncBody(t, cascade, "func (s *Server) refuseCallCause(ctx context.Context, w http.ResponseWriter"); !strings.Contains(body, "auditCall") || !strings.Contains(body, "s.refuse(") {
+		t.Errorf("internal/credsvc/cascade.go's `refuseCallCause` no longer writes the audit line before the answer (%q): Check 96's step 4 expects exactly one line for the pairing refusal, written before the answer goes out", strings.TrimSpace(body))
 	}
 	if !strings.Contains(server, "func (s *Server) refuse(w http.ResponseWriter") {
 		t.Errorf("internal/credsvc/server.go no longer has `refuse`: Check 96's step 4 is written on its behaviour — it is the wire writer the refusals answered before an identity is verified take, and it writes no audit line")
@@ -432,8 +450,42 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 	if body := check96ShellFunc(t, readRepoFile(t, check96Script), "step_job() {"); !strings.Contains(body, `0)`) || !strings.Contains(body, `answer=$(reader projectjob`) || !strings.Contains(body, `stop "the sandbox repository $REPO has $found jobs of its own in $P/$REGION`) {
 		t.Errorf("scripts/live-checks/check96.sh's `step_job` no longer tells no job of the repository's own from several (%q): the fallback to the installation's shared project job is for none, and a repository with several jobs has one per workflow, so falling back there reads the wrong account, the wrong environment and the wrong mint", strings.TrimSpace(body))
 	}
-	if body := check96PythonFunc(t, readRepoFile(t, check96Script), "def cmd_jobs():"); !strings.Contains(body, `print("found=%d" % len(found))`) {
+	if body := check96PythonFunc(t, readRepoFile(t, check96Script), "def cmd_jobs("); !strings.Contains(body, `print("found=%d" % len(found))`) {
 		t.Errorf("scripts/live-checks/check96.sh's `cmd_jobs` no longer reports how many jobs of its own the repository has (%q): without the count the shell cannot tell a repository with none from one with several, and the two are the fallback and the stop", strings.TrimSpace(body))
+	}
+
+	// The word that answers the several-jobs case is `--workflow`, the same one a
+	// run is told, and the check has to reach it the same way: the job is the one
+	// wearing the name as its `fugaro_workflow` label, the refusal ends with the
+	// fix rather than with the stop, and the one workflow this check must never
+	// read — the owner's own `belong` account, whose variant key is the workflow
+	// joined to the account (gcp.WorkflowVariant) — is refused by name before a
+	// single call, as is a job whose own service account is one. The section and
+	// the register's own command line say both.
+	// Mutation (run and restored): `WORKFLOW_ARG=$2` in `parse_args` replaced by a
+	// no-op → CHECK_TEST_ONLY=test_the_workflow_flag_selects_that_workflows_job
+	// FAILs, the flag being ignored: the script stops with the several-jobs
+	// refusal (exit 2 where the test asked for 0) instead of reading `second`, and
+	// the pins below cover the sentences that leaves.
+	if body := check96ShellFunc(t, readRepoFile(t, check96Script), "step_job() {"); !strings.Contains(body, `Re-run with --workflow <one of: $wfs>`) {
+		t.Errorf("scripts/live-checks/check96.sh's `step_job` no longer ends its several-jobs refusal with the fix (%q): the owner runs one command, and a stop that does not name the word to add leaves them with a finding they cannot act on", strings.TrimSpace(body))
+	}
+	if body := check96ShellFunc(t, readRepoFile(t, check96Script), "guard_workflow() {"); !strings.Contains(body, "the owner's own 'belong' account") {
+		t.Errorf("scripts/live-checks/check96.sh no longer refuses a `--workflow` of the owner's own `belong` account by name (%q): Check 96 mints a real GitHub installation token as the job's own account and creates Firebase users, and the key of a named OAuth account's workflow is that account's (gcp.WorkflowVariant), so the check would spend a belong installation's token where the register promises the sandbox only", strings.TrimSpace(body))
+	}
+	for _, want := range []string{
+		"`--workflow <name>` reads the job that wears that name as its `fugaro_workflow` label",
+		"Re-run with --workflow <one of:",
+		"a workflow of the owner's own `belong` account is refused by name",
+		"bash scripts/live-checks/check96.sh acme/sandbox --workflow go",
+		"`bash scripts/live-checks/check96.sh [--dry-run] [--workflow <name>] [<owner/name>]`",
+	} {
+		if !strings.Contains(check, want) {
+			t.Errorf("docs/gcp-live-checklist.md's Check 96 does not say %q: the word that answers the several-jobs case is the one a run is told, and a section that stops on several without naming it is a stop the owner cannot clear", want)
+		}
+	}
+	if !strings.Contains(readDoc(t, "docs/gcp-live-checklist.md"), "`bash scripts/live-checks/check96.sh [--dry-run] [--workflow <name>] [<owner/name>]`") {
+		t.Errorf("docs/gcp-live-checklist.md's register row 96 no longer carries the check's own usage line with `--workflow` in it: the row is where the owner reads the one command to run, and a repository with several workflows is one they cannot run it on without that word")
 	}
 
 	// The URL gate is held in BOTH directions, which is what the section's

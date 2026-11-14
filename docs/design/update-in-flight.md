@@ -62,8 +62,9 @@ release could observe or lose.
 | credentials-service | Moves the installation's recorded credentials image onto this release's, then applies the installation root with it | The service reads the published node once per cascade and Bitbucket-proxied call and refuses a node its own binary does not understand, so this apply may not run before the policy stage's migration; it follows it in the stage immediately after, with nothing between the two, and it is an apply of tfvars alone — every image it needs was published by the images stage. What the order cannot reach is the release behind's own service, which refuses the migrated node until this apply lands: the window is that one apply, and the binary that reads it was released. A run that replaces no service raises no node either: the policy stage holds its write at the version it found — a coding agent's session and a development build both replace nothing, and the image the move would pin is resolved **before** that write, so a resolve this run cannot make fails with the node exactly where it was | Safe by intent, named in the line: the policy clause names the cascade read, and this row's window is named when the same run raises the node's version and moves the service | `newCredentialsStage`, `moveCredentialsImage`, `credentialsMoveHeld`, `credentialsResolveBeforeRaise`, `internal/cli/init_stages.go`; `credentialsWindowOpens`, `internal/cli/update_in_flight.go` |
 | workspace | Migrates and/or publishes the workspace record `workspaces/<name>` in the workspace's own database | No run reads the workspace record: it is the workspace owner's document (`docs/workspaces/spec.md`). A member's run makes no request for it at all | Safe | `newWorkspaceStage`, `internal/cli/update_workspace.go` |
 | layer | Publishes the project layer object and seeds/re-seeds the local file | A run's layer travels with its task and is parsed at bootstrap (`resolveConfig`, `internal/runner/runner.go`); there is no mid-run re-read | Safe | `newLayerStage`, `internal/cli/init_layer_stage.go` |
-| checkout | The plugin pin, the Claude Code plugin and the repository's job images (`fugaro upgrade`'s three steps) | The job image is the execution's own. `fugaro image refresh` patches a job's container image in place and never starts an execution — the patch body drops the execution tokens (`TestApplyCheckJobDropsExecutionTokens`, `internal/infra/checkjob_test.go`) | Safe | `newCheckoutStage`, `internal/cli/init_checkout_upgrade.go`; `infra.PlanCheckJob`/`ApplyCheckJob`, `internal/infra/checkjob.go` |
+| checkout | The plugin pin an older release left, the Claude Code plugin and the repository's job images (`fugaro update`'s checkout steps) | The job image is the execution's own. `fugaro image refresh` patches a job's container image in place and never starts an execution — the patch body drops the execution tokens (`TestApplyCheckJobDropsExecutionTokens`, `internal/infra/checkjob_test.go`) | Safe | `newCheckoutStage`, `internal/cli/init_checkout_upgrade.go`; `infra.PlanCheckJob`/`ApplyCheckJob`, `internal/infra/checkjob.go` |
 | budget mode | Raises `config/mode` to `enforce` on a managed project, and records `config/modeSet = update` | The mode is re-read live (`Session.readConfig`), so a run that bootstrapped under `observe` is bounded by the caps from its next lease, and a lease the caps refuse halts it. The step already refuses to raise without the caps that would halt every run, and it says what it did | **The one step that can bound or halt a run in flight.** Recorded, not fixed: it is the operator's own caps taking effect | `raiseBudgetMode`, `internal/cli/update_budget_mode.go` |
+| creation fact | Rewrites `fugaro/managed.json` in the runs bucket from version 3 to the version this release writes, which records the budget amount and no image build count (D1543) | A run in flight re-reads the fact per command, and the run is the release behind, whose reader refuses a version it does not know: its own apply keeps the typed confirmation instead of applying under the gate. Nothing of the run is rewritten, and no record, ledger or counter of it is touched | Safe, named in the line | `convergeMarkerVersion`, `internal/cli/update_marker_version.go`; `markerConverges`, `internal/cli/update_in_flight.go` |
 | retire (`--retire`, `--allow-delete`, or a managed project's own retirement) | Removes addresses from Terraform's state and deletes orphaned resources, an orphaned job included | A job delete takes its executions with it. `--retire` is behind `--allow-delete`, the job's labels and `deletion_protection`; a **managed** project reaches the same flow with no flag at all (`retireManaged`, issue #1794), behind the managed gate's admission rather than a typed confirmation, and its API delete at the run's last step is the same one | Needs care, named in the line | `readRetirements`, `deleteOrphanedJob`, `retireManaged`, `internal/cli/init_retire.go` |
 
 ## The surfaces, one at a time
@@ -191,8 +192,7 @@ and rewrites nothing a run holds — and never the flat "the runs are unaffected
 which the budget-mode raise below makes false; what it can still reach is named
 instead. It is absent when nothing runs, under `--json` and `--print-vars`
 (whose stdout is a document), and under `--plan-only` (which applies nothing).
-The refusal stays where it is not the update door's: `fugaro upgrade`'s own
-policy step, and `fugaro project policy publish --delete` /
+The refusal stays where it is not the update door's: `fugaro project policy publish --delete` /
 `fugaro project repos rm`, which are not the whole upgrade and are their own
 commands. The other two doors that reach this stage through `initStages` —
 `fugaro setup`, and `fugaro accounts add` / `accounts rm` — are not the update
@@ -226,9 +226,9 @@ land under the new rules and the migrated policy.
 `TestUpdateInFlightLineNamesEveryStepThatCanReachARun` turns each of the three
 steps on alone and asserts the clause is there and the others are not, so a step
 that can reach a run and is not named fails the suite.
-`TestUpgradePolicyStepRefusesTheWriteWhileARunIsInFlight` and
+`TestTheRefusingInflightAnswerStopsTheWrite` and
 `TestSetupPolicyStepKeepsTheRunsInFlightAnswer`
-(`internal/cli/init_policy_migrate_test.go`) pin the refusal on the doors that
-keep it — `fugaro upgrade`'s own policy step, and `fugaro setup`, once refused
-and once written-with-the-note on a managed project — so the update door's quiet
+(`internal/cli/init_policy_migrate_test.go`) pin the refusal where it is kept —
+the answer no door passes any more, and `fugaro setup`, once refused and once
+written-with-the-note on a managed project — so the update door's quiet
 answer reaching a door that is not it fails the suite.

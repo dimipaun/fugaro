@@ -15,6 +15,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -121,6 +122,46 @@ func TestUpdateLeavesARunInFlightRunning(t *testing.T) {
 	}
 	if !found || p.Version != projectpolicy.Version {
 		t.Errorf("the policy reads as found=%v version=%d after the update, want version %d", found, p.Version, projectpolicy.Version)
+	}
+
+	run.laterWrites(t, r)
+}
+
+// TestRunInFlightSurvivesPolicyBump is CLAUDE.md's HARD RULE read against this
+// release's own bump: the installation is one policy version behind (v6Node,
+// the node 0.24.0 leaves), a run of its repository has bootstrapped under that
+// release, and `fugaro update` raises the node to version 7 while the run keeps
+// running. The node's version moves — the policy stage is what carries a
+// version-6 node forward, and the migration is the shape-free step the banner
+// above the policy stage promises — and every write the run makes afterwards
+// still lands, because the bump asks no run to finish first and rewrites
+// nothing a run holds.
+//
+// The difference from TestUpdateLeavesARunInFlightRunning is the version, and
+// it is the whole point: that fixture's node is so old the update refuses the
+// node as older than the chain's first step in one place and republishes it in
+// another, while this one is the ordinary state of an installation the release
+// before this one left behind — the window the bump's own migration exists for,
+// and the one a person meets on the day they upgrade.
+func TestRunInFlightSurvivesPolicyBump(t *testing.T) {
+	r := newConvergeRig(t, v6Node())
+	run := startRunInFlight(t, r)
+
+	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+	if got := convergeNode(t, r).Version; got != projectpolicy.Version {
+		t.Errorf("after the update the published node is version %d, want this binary's %d: the policy stage did not carry a version-6 node forward, and a run that re-reads the policy mid-run meets a node the release that left it cannot explain", got, projectpolicy.Version)
+	}
+
+	// What the run holds is what it held before the update: its record is the
+	// one it bootstrapped with, not one the update rewrote or removed.
+	ctx := context.Background()
+	rec, err := run.store.ReadRecord(ctx)
+	if err != nil {
+		t.Fatalf("the run's record could not be read after the update: %v", err)
+	}
+	if rec.Status != runstore.StatusRunning || rec.Stage != "implement" {
+		t.Errorf("the run's record reads status %q stage %q after the update, want the running/implement it bootstrapped with: the update rewrote a record a run holds", rec.Status, rec.Stage)
 	}
 
 	run.laterWrites(t, r)
@@ -299,13 +340,14 @@ func TestUpdateInFlightLineNamesTheCredentialsServiceWindow(t *testing.T) {
 		r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
 		r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
 			"credentials_service": credentialsServiceOutput(),
+			"intake":              intakeServiceOutput(),
 		})}
 		r.save(t)
 		startRunInFlight(t, r)
 		return inFlightLine(t, convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"}))
 	}
 	t.Run("the node's version rises and the service moves", func(t *testing.T) {
-		got := line(t, v5Node())
+		got := line(t, v6Node())
 		for _, want := range []string{"the credentials service this update replaces", "does not understand"} {
 			if !strings.Contains(got, want) {
 				t.Errorf("the line does not say %q over a run whose node is raised before the service that reads it is replaced:\n%s", want, got)
@@ -316,12 +358,77 @@ func TestUpdateInFlightLineNamesTheCredentialsServiceWindow(t *testing.T) {
 		}
 	})
 	t.Run("the service moves over a node that does not", func(t *testing.T) {
-		got := line(t, v6Node())
+		got := line(t, v7Node())
 		if strings.Contains(got, "credentials service") {
 			t.Errorf("the line names the credentials service over a run that raises no node, so no call can meet a service that cannot read it:\n%s", got)
 		}
 		if !strings.Contains(got, "no step of it can reach them") {
 			t.Errorf("the line names no step at all over a run this update leaves where it is:\n%s", got)
+		}
+	})
+}
+
+// TestUpdateInFlightLineNamesTheMarkerConvergence is the fifth step the line
+// names, and the one D1543 adds: this update rewrites the installation's
+// creation fact out of version 3 (update_marker_version.go, T10), and the run
+// in flight is the release behind, whose reader REFUSES the version it is
+// rewritten to rather than reading it as the shape it resembles. So the step is
+// one that changes what a run in flight makes of the marks — a command of that
+// run re-reads them per command (D1015) and will answer "not managed", keeping
+// the typed confirmation it would have applied without — and a person who sees
+// a run stop taking the gate is owed the step that did it.
+//
+// The second case is the negative half: the same run over a fact this build
+// already writes, where the step leaves the object exactly where it is and the
+// line names no such thing. The third is the other gate: a version-3 object on a
+// project nothing has labelled is not a fact the read believes, so the step has
+// nothing to converge and says nothing.
+//
+// All three are read off the line the door really printed, over a run really in
+// flight and over the real marker read — the bucket's project number, the
+// bucket's own label and the project's label — rather than off the question the
+// clause is gated on.
+func TestUpdateInFlightLineNamesTheMarkerConvergence(t *testing.T) {
+	line := func(t *testing.T, fact string, isManaged bool) string {
+		t.Helper()
+		// The rig is the marker's own (convergeRigWithMarker), so this test reads
+		// the line the door prints over the very installation
+		// TestPreviousMarkerVersionConvergesOnUpdate converges.
+		var r *convergeRig
+		if isManaged {
+			r = convergeRigWithMarker(t, fact)
+		} else {
+			r = newConvergeRig(t, v3Node(nil))
+			r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
+			r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(fact))
+		}
+		startRunInFlight(t, r)
+		return inFlightLine(t, convergeOn(t, r, []string{"policy-rules-skew", "policy-older-than-binary", "plugin-pin"}))
+	}
+	t.Run("a version-3 fact is rewritten", func(t *testing.T) {
+		got := line(t, markerBuildsFact, true)
+		for _, want := range []string{"the creation fact this update rewrites", "refuses a version it does not know", "keeps the typed confirmation"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("the line does not say %q over a run whose installation still carries a version-3 creation fact:\n%s", want, got)
+			}
+		}
+		if strings.Contains(got, "no step of it can reach them") {
+			t.Errorf("the line claims no step can reach a run in flight, over the fact this update rewrites:\n%s", got)
+		}
+	})
+	t.Run("a fact this build already writes is left alone", func(t *testing.T) {
+		got := line(t, markerNowFact, true)
+		if strings.Contains(got, "the creation fact this update rewrites") {
+			t.Errorf("the line names the marker's convergence over a fact that is already this build's:\n%s", got)
+		}
+	})
+	t.Run("a version-3 object the read does not believe", func(t *testing.T) {
+		got := line(t, markerBuildsFact, false)
+		if strings.Contains(got, "the creation fact this update rewrites") {
+			t.Errorf("the line names the marker's convergence over an object the managed read does not believe, so the step has nothing to converge:\n%s", got)
+		}
+		if !strings.Contains(got, "no step of it can reach them") {
+			t.Errorf("the line names a step over a run this update leaves where it is:\n%s", got)
 		}
 	})
 }

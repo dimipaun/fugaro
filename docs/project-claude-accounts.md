@@ -1,6 +1,6 @@
 # Project Claude accounts: one OAuth token per (profile, account)
 
-Status: **0.9.0, released.** The released Fugaro is 0.23.0, and 0.9.0 is the first release any of this page works on:
+Status: **0.9.0, released.** The released Fugaro is 0.23.1, and 0.9.0 is the first release any of this page works on:
 the `claude_accounts` field inside a profile, the `accounts` block in the published policy and the
 jobs they name all ship in 0.9.0 (policy version 3,
 [`internal/projectpolicy/version.go`](../internal/projectpolicy/version.go)), and a 0.8.x binary
@@ -21,6 +21,12 @@ machines with different files:
 
 Neither is the agent's: `fugaro secrets set` reads a value only from stdin or a hidden prompt, and
 never from an argument, a flag or the environment.
+
+**§12 to §14 are the vocabulary built on top of this page.** An account is one type of a
+**credential** (§12), credentials group into ordered **pools** (§13), and the four **crafts** of a
+run — coder, first-line review, senior review, security review — choose the model and the credential
+or pool their calls go out on (§14). §1 to §11 describe the account itself, and every rule in them
+still holds.
 
 ## 1. What a named account is
 
@@ -146,7 +152,10 @@ prompt, never from an argument, a flag or the environment.
 - **Removing an account.** `fugaro accounts rm <name>` is the inverse and converges the same way: it
   refuses while a profile still lists the account — `fugaro accounts rm <name> --profile PROFILE`
   takes the name out of one profile's list alone — and once no profile lists it, the declaration,
-  the secret and the job go together. A committed `fugaro.yaml` that still names the account in
+  the secret and the job go together. A `repos.<owner/name>.claude_accounts` that names the account
+  is cleared with the declaration (§2, §3): the entry is what admits that repository's own runs, and
+  left behind it would name an account the file no longer defines, which the next
+  `fugaro project policy publish` refuses. A committed `fugaro.yaml` that still names the account in
   `agent.oauth_token` is warned about rather than edited — that file belongs to the repository, not
   to this installation.
 
@@ -207,9 +216,48 @@ profile mounts a token. The profile's `allow_repos` is the repositories that pro
 both `default` and `acme-team` carry both repositories, and a profile that admits a repository one
 of its accounts does not carry is refused at publish rather than deployed.
 
+**The repository's own entry**, which is how a repository whose runs are *not* on a profile job is
+admitted to an account:
+
+```yaml
+# per installation: the project's local config
+repos:
+  acme/tools:
+    provider: bitbucket
+    workflows:
+      - implement
+    claude_accounts:
+      - acme-team
+```
+
+`repos.<owner/name>.claude_accounts` is a list of account names inside the repository's own entry —
+the entry `fugaro update --repo .` already writes for an onboarded repository. It exists because a
+profile is not the only kind of job a repository's runs land on: a **per-repository job** — every
+Bitbucket repository, which never reaches a shared job, and every repository no workflow sends to
+one — has no profile to name its accounts in. Before this key the published `accounts` block was
+derived from the profiles alone, so such a repository had no way to be admitted to an account at
+all: the block carried no entry for its account, the credentials service's intersection with its
+admission (`config/policy/repos/$slug.credentials.accounts`) came out empty, the cascade offered no
+candidate and every model call of its runs was answered `503 state_unavailable` ("creds: no
+candidate credentials were offered").
+
+The entry adds **the repository's own canonical name** — `bitbucket/acme/tools` above — to each
+account it names, and the `provider` on the entry is what qualifies it (the same provider a profile
+carries for its `allow_repos`); an entry that names accounts and no provider is refused rather than
+guessed at. A profile and a repository entry may both name one account: the published
+`accounts.<name>.allow_repos` is the **union** of what the profiles name and what the repository
+entries add, so nothing already admitted is narrowed. Each account a repository entry names must
+**cover that repository** (§4, the same subset rule a profile meets), and the same `publish` writes
+the repository's child admission under `config/policy/repos/$slug` from the account list it
+published. The list lives in this entry alone — it is in no `fugaro.yaml` and in no Terraform input
+— so the `fugaro update --repo .` that rebuilds the entry from those two **carries it over**:
+writing the key once and updating the repository afterwards keeps the admission, and only `fugaro
+accounts rm` (§2) or an edit of the file takes it away.
+
 ## 4. The rules `publish` and `fugaro setup` enforce
 
-Neither the `accounts` block nor the profile field is written by hand into the policy: both are
+Neither the `accounts` block nor the profile field nor a repository's own entry is written by hand
+into the policy: all three are
 derived and checked by `fugaro project policy publish` (per installation) and by `fugaro setup`
 (per installation, and `fugaro update --repo .` per repository checkout), which validate the profiles
 they are about to deploy against the same block. The rules, and what a refusal says:
@@ -224,6 +272,13 @@ they are about to deploy against the same block. The rules, and what a refusal s
   credential, and a repository the account does not cover is one whose run the token must never
   reach. An absent list means "the project's", which no account is required to cover, so it cannot
   be decided and is refused.
+- **A repository's own entry obeys the subset rule too.** `repos.<owner/name>.claude_accounts`
+  naming an account that does not carry the repository — a named account whose `allow_data_to`, or
+  the `default` account's `project_secrets` entry, does not list it — is refused at publish
+  (`projectpolicy`'s `repoAccountCovers`), with the same repair: add the repository to the account's
+  own list and publish again, or take the account off the repository's entry. The provider is
+  required on such an entry, because the repository's canonical name is what the account's
+  `allow_repos` gains, and this entry is the only place a per-repository job's provider is stated.
 - **No Anthropic API key beside the accounts (D4).** A profile that lists `claude_accounts` may not
   also mount `anthropic-api-key` (in either spelling): an account job holds its account's token, and
   a key beside it is a credential no OAuth run of that job can use — and which credential the job
@@ -265,6 +320,12 @@ repository in one and not the other: the repair is the account's `allow_data_to`
 repository there and publish again) or the profile's `allow_repos`, and the operator meets that
 decision where they make it rather than at a run.
 
+**A repository entry and a profile are one answer about one credential, and their published lists
+are unioned**: a repository admitted by a profile keeps that admission and gains the repository
+entry's, and neither narrows the other. What the entry may never do is widen the *account*: the
+account's own list is still the bound, and the entry is refused when the account does not cover the
+repository (§3, and the subset-rule bullet above).
+
 ## 5. What `fugaro setup` deploys, and the version-3 rollout
 
 **Per installation** (and per repository checkout for `fugaro update --repo .`), `fugaro setup` deploys
@@ -281,7 +342,7 @@ read, so **0.9.0's accounts need all four of these**, in this order:
 1. **Upgrade the CLI, per installation machine:**
 
    ```bash
-   brew upgrade dimipaun/tap/fugaro && fugaro upgrade
+   brew upgrade dimipaun/tap/fugaro && fugaro update
    ```
 
 2. **Republish the policy, per installation.** A publish refuses to overwrite a node written in
@@ -347,9 +408,11 @@ Read it back per installation:
 fugaro project policy show
 ```
 
-It prints the profiles and, for each account some profile names, the repositories its token may be
-used by. Only accounts a profile names are published: an account nothing lists is one no job
-mounts, and a block entry for it would publish a list on a node every run of the project can read.
+It prints the profiles and, for each account the config names, the repositories its token may be
+used by. Both sources fill that block (§3): the profiles that list the account, and a repository's
+own `repos.<owner/name>.claude_accounts`. An account neither source names is not published: it is
+one no job mounts, and a block entry for it would publish a list on a node every run of the project
+can read.
 
 ## 6. Launch a run as a named account
 
@@ -479,7 +542,7 @@ version, which is the state a disabled-last-version leaves.
 **Changing which account a stage runs on** is a setting, not an edit of the local config by hand.
 The local config keys one account per stage — `stages.<stage>.claude_account`, one key for each
 stage name a run spends a model call on (`plan`, `implement`, `review_first`, `review`,
-`adversarial`, `fix`) — and `fugaro settings` reads it with the layer that decided it (per
+`adversarial`, `triage`, `fix`) — and `fugaro settings` reads it with the layer that decided it (per
 installation):
 
 ```bash
@@ -591,12 +654,151 @@ radius (§1), and `accounts.<name>.allow_repos` plus the two gates are what boun
 - **Minting a second token on a machine that already holds one** is Claude Code's behaviour, not
   Fugaro's, and is unverified here (§2, U2).
 
+## 12. Credentials: the account names, typed
+
+The account above is one type of a more general thing: a **credential** — a name and a type, in the
+same local config, in a `credentials:` block. The types the engine reads are:
+
+| Type | What it authenticates with | Served by |
+| --- | --- | --- |
+| `claude-oauth` | a Claude subscription's OAuth token, which is what every account of this page is | the credentials service |
+| `anthropic` | an Anthropic API key | the credentials service |
+| `openrouter` | an OpenRouter key; the credential's name **is** the provider entry's name ([multi-model.md](multi-model.md) §2) | the run's own gateway |
+| `vertex` | nothing — it is built in, and it is never defined | the run's own gateway |
+
+`fugaro accounts add <name> --type claude-oauth` writes the entry beside the account block it has
+always written (§3), and that is what makes the name one a pool (§13) may list. Without the flag the
+command writes exactly what it always wrote — `claude_accounts` and the profile — so nothing on this
+page changes for an installation that wants the account alone. A name the config already defines
+with another type is **refused** rather than retyped: a type decides which tier serves the name, and
+the file is where a type is changed.
+
+A credential carries a **name and a type and no grant of its own**. `allow_data_to` (§2, §4) stays
+the account's, and every reader that scopes the token's reach still reads it there: a credential a
+pool lists is bounded by the account entry the same name holds, not by the pool.
+
+Only `claude-oauth` is declarable by this command, because its token step is the one that stores a
+secret. `--type anthropic` or `--type openrouter` is **refused in words that say so** rather than
+half-declared — an entry whose key no command stores would be a name a pool could list and no run
+could authenticate with. The owner defines one by hand in this prefix's `credentials:` block, and
+the project's own key path is unchanged: `fugaro secrets set` stores a key the project holds (§5).
+
+**The older keys keep their meaning, and a write converges them.** Every write of this local config
+converges the craft vocabulary first
+([`internal/cli/init.go`](../internal/cli/init.go)'s `writeLocalConfig`): each `claude_accounts`
+entry gains a `credentials` entry of the type every one of them is, and the crafts below (§14) gain
+the accesses its stage keys named. It **adds and removes nothing** — `claude_accounts`,
+`default_claude_account` and `stages.<stage>.claude_account` (§8) are read exactly as before — so an
+installation that never writes a `credentials:` block itself is served by the same names it always
+was. `fugaro update` is the command that runs it, and no second command is one.
+
+## 13. Pools: an ordered list of credentials
+
+A **pool** is a name, a strategy and an ordered list of members, where each member is a credential
+the same file defines or the built-in `vertex`. Pools and credentials **share one namespace**: a pool
+may not take a credential's name.
+
+```yaml
+# per installation: the project's local config
+credentials:
+  - name: acme-main
+    type: claude-oauth
+  - name: acme-spare
+    type: claude-oauth
+pools:
+  - name: acme-claude
+    strategy: failover
+    members: [acme-main, acme-spare]
+```
+
+`fugaro accounts pool add <name> <member>...` declares the **whole list**, in the order given, so a
+second run of the command replaces the members rather than adding to them;
+`--strategy failover|round-robin` says how the list is walked, and a new pool with no strategy is
+`failover`. `fugaro accounts pool rm <name>` removes the pool and **clears the crafts whose access
+named it**, on the same bytes, rather than leave an access pointing at nothing.
+`fugaro accounts pool ls` prints each pool's strategy, its members in order and which half of a run
+serves them.
+
+All three are **offline** — they read and write this config file and reach no bucket, no database
+and no host — and the two writes are the **owner's**: a pool decides where a project's calls may be
+spent, so a coding agent's session is refused, `--yes` included (§7's rule, and the same one
+`fugaro accounts add` states for the token).
+
+**A pool's members are served by two halves, and one pool cannot cross them.** An `openrouter` or
+`vertex` member is served by the run's own gateway; a `claude-oauth` or `anthropic` member is served
+by the credentials service, which **selects by tier within a run — a subscription before an API
+key** (D154). A pool that mixes the two is therefore one that can fail over only where the
+credential is chosen again, which is a **stage boundary** and not mid-call, and `fugaro accounts
+pool ls` says which half serves each member for exactly that reading.
+
+**A pool of two or more Claude OAuth credentials serves nothing until the owner says otherwise.**
+Fugaro spreads one run across subscriptions only once the project's `subscription_spread` switch is
+on — `fugaro settings set subscription_spread true`, off by default — and while it is off a craft
+whose access names such a pool is **inert**: `fugaro craft ls` marks the row — it is offline, so it
+reads the switch from this machine's own config, the value `fugaro update` publishes into the node —
+and a call that would have been served by it is refused with the switch named. That is the switch §1's terms question is
+about, kept explicit for the reason the accounts' own agreement gives.
+
+## 14. Crafts: which model, and whose credential
+
+A run has four **crafts**: `coder`, `review` (the first-line review), `senior-review` and
+`security-review`. Each craft has **two halves** — the model it runs, and the **access**: the
+credential or pool its calls go out on — and the two halves **inherit separately**, so a craft that
+sets one half keeps the other half it follows:
+
+| Craft | Follows |
+| --- | --- |
+| `review` | `coder` |
+| `security-review` | `senior-review` |
+
+A craft no layer sets an access for resolves to the project's **default credential**, which is the
+built-in `vertex` at the floor of the layers.
+
+**Where each half may be written:**
+
+- a craft's **access** is the repository's own act: `agent.crafts.<craft>.access` in `fugaro.yaml`
+  (§6's file), and only there. A project layer may set a craft's **model** for every repository of
+  it and never its access, because an access names a credential or pool the owner's own config
+  holds, and a file anyone who can write the runs bucket can write is not where that choice lives
+  ([project-layer.md](project-layer.md)).
+- the name must be one the installation **holds** — a credential or a pool of §12 and §13, or
+  `vertex`. A name no layer holds is reported by `fugaro craft ls` and by `fugaro validate`, and it
+  is refused at the launch, before the run's first call.
+
+`fugaro craft ls` is the read that answers the question the three documents answer only by hand:
+
+Its columns are `CRAFT`, `MODEL`, `MODEL FROM`, `ACCESS`, `ACCESS FROM` and `SERVES`, one row per
+craft: the **model** and where it came from (the layer that wrote it — `repo`, `local` or `project`
+— the craft it was inherited from, or `default`), the **access** and where that came from, and
+whether it **serves** anything yet, which is `yes` or `no: the subscription-spread switch is off`
+for the inert pool of §13. It is **offline**: it reads this checkout's
+`fugaro.yaml`, this installation's own config and the project layer file the last cloud read cached,
+and reaches no bucket, no database and no host. `--json` prints the versioned document the console
+reads.
+
+**Two limits of this release**, and both are stated where the vocabulary is:
+
+- **A craft's model half is not yet what a run runs.** The model is written, validated and shown by
+  `fugaro craft ls`, and a run still takes its models from `agent.models` and `agent.levels`
+  ([multi-model.md](multi-model.md), [models-commands/spec.md](models-commands/spec.md)). The
+  **access** is the half a run resolves today.
+- **What a run is served from is the published node's own craft members.** The credentials service
+  reads the project's crafts, credentials and pools from the published policy, and `fugaro project
+  policy publish` **keeps** those members as they are — no command of this release writes them from
+  your config — so a pool declared here changes what `fugaro craft ls` and a launch read, and which
+  member serves a call is a later release's work.
+
 ## See also
 
 - [design/project-named-oauth-tokens.md](design/project-named-oauth-tokens.md) — the design, its
   decisions (D1 to D10) and its threat model.
 - [design/named-oauth-tokens.md](design/named-oauth-tokens.md) — the repository-level feature this
   one carries to the project job.
-- [project-layer.md](project-layer.md) — profiles, `job_profile` and the project layer.
+- [project-layer.md](project-layer.md) — profiles, `job_profile` and the project layer, and which
+  layer may write each craft key.
+- [multi-model.md](multi-model.md) — the provider route a craft's access may name, and the gateway
+  that serves it.
+- [models-commands/spec.md](models-commands/spec.md) — `fugaro models` and the model keys a run
+  reads today.
 - [gcp-setup.md](gcp-setup.md) — the page that creates the GCP project a shared job runs in.
 - [SECURITY.md](../SECURITY.md) — what a project job holds, stated as this feature's cost.

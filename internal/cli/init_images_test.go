@@ -812,6 +812,7 @@ func TestInitBaseRepublishesSharedConfig(t *testing.T) {
 	open := sharedBucketOpener
 	publishes := 0
 	sharedBucketOpener = func(ctx context.Context, u string) (*blobx.Bucket, error) { publishes++; return open(ctx, u) }
+	t.Cleanup(func() { sharedBucketOpener = open })
 	if _, _, err := executeStdin(t, "", "setup", "--yes", "--plan-only", "--base", "base"); err != nil {
 		t.Fatal(err)
 	}
@@ -1066,7 +1067,7 @@ func TestImagesPreviewDoesNotListBaseAsUnpinned(t *testing.T) {
 // never the way a base kind is trusted.
 func TestNoMessageOffersARemovedBaseCommand(t *testing.T) {
 	var all []string
-	for _, args := range [][]string{{"setup", "--help"}, {"image", "refresh", "--help"}, {"upgrade", "--help"}} {
+	for _, args := range [][]string{{"setup", "--help"}, {"image", "refresh", "--help"}, {"update", "--help"}} {
 		out, _, _ := executeStdin(t, "", args...)
 		all = append(all, out)
 	}

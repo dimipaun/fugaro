@@ -583,7 +583,16 @@ var jsonCellRE = regexp.MustCompile("`([A-Za-z_][A-Za-z0-9_]*)`")
 // coordinator v2 C3's `coordinator show`, whose document and command are both
 // under ee/ — and it is a heading of its own rather than a part of §6.13 because
 // the two document different reads of different shapes. §6.16 is coordinator v2
-// C4's `coordinator intents`, under ee/ for the same reason.
+// C4's `coordinator intents`, under ee/ for the same reason. §6.24 is the
+// coordinator's roadmap group (P9f): `ee/coordinator/cli/roadmap.go` and its
+// login file are where the document and the commands are, and the fields it
+// names are the ones the front door's own outcome document carries, so this
+// build can no more name them than it can the JSON of the five sections above.
+// It has no ee-side counterpart yet, for §6.22's reason: P9f writes no
+// contract test, and the checks the console's own read will want are the ones
+// the task that lands that read writes. §6.25 is that group's `move` (GV3.1),
+// under ee/ for the same reason and with the same document; its own test is the
+// ee-side check that holds the section's heading and flags to the command.
 //
 // Every entry names its command as well as its number. A number alone exempts
 // whatever section is later written at that number: the graph's own section
@@ -597,6 +606,14 @@ var consoleMovedSections = []string{
 	"### 6.15 `fugaro coordinator show",
 	"### 6.16 `fugaro coordinator intents",
 	"### 6.22 `fugaro graph",
+	"### 6.24 `fugaro coordinator roadmap",
+	// §6.25 is the same group's `move` (GV3.1): `ee/coordinator/cli/roadmap_move.go`
+	// is where the command and its three arguments are, and its document is
+	// §6.24's own outcome document, so this build can name neither. The
+	// ee-side check that holds the section to the command is the move's own test
+	// (`TestRoadmapMoveIsDocumentedAsTheConsoleReadsIt`), as §6.24's fields are
+	// held by the door's own tests.
+	"### 6.25 `fugaro coordinator roadmap move",
 	"## 4. `fugaro report --json`",
 }
 
@@ -1491,6 +1508,17 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		// argument an operation's schema fills -- the window is the command's
 		// own and no word of it reaches a renderer.
 		"seats --json --project <name> [--config <path>]",
+		// The Members view's read (the roles-and-scopes plan's RS7, the
+		// `members.list` operation, roles.md D691(b)): the installation's
+		// grants as `fugaro user ls --json` prints them, and — with `--repo R`
+		// — the role each person holds in one repository. Read-only in the
+		// strongest sense this table can state: every other word of the group
+		// that changes a roster, `user grant`, `user revoke`, `user add`,
+		// `user rm` and `user offboard`, is on the never table below.
+		// `--repo` is the operation's one argument and it is optional, so the
+		// row spells the command's own argv with the argument the schema fills
+		// and the two project flags every cloud read carries (rule 3).
+		"user ls --json --repo R --project <name> [--config <path>]",
 		// The launch (console v2 plan V2.5.1a, the `run.launch` operation):
 		// the console's first write and the one thing this table is a fence
 		// against, spelled as rule 11's exact argv and nothing else.
@@ -1629,7 +1657,7 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 			t.Errorf("%s allows the console to spawn %q, but %q is not in consoleReadPaths (internal/cli/project.go): a command on the allow-list is a read, and a read must not write the remembered checkouts", path, argv, cmdPath)
 		}
 	}
-	// Twenty-six commands: the thirteen dashboard reads (logs has two argvs), the
+	// Twenty-seven commands: the thirteen dashboard reads (logs has two argvs), the
 	// rail's `config list --json` (D13's amendment of 2026-10-20), the graph
 	// screen's `plan status --json` (GV2.1), the dependency graph read
 	// `graph --json` (the graph plan's CG9a), the project view's
@@ -1646,9 +1674,13 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 	// screens' CM3: the marks with their trail, and the policy node), the
 	// effective-craft read `craft ls --json` (the model-crafts plan's MC8), the
 	// seat estimate `seats --json` (the subscriptions plan's S4.2, D439) and
-	// the launch `fugaro run` (V2.5.1a).
-	if len(allowed) != 26 {
-		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 26 (logs has two argvs)", path, argvs, len(allowed))
+	// the launch `fugaro run` (V2.5.1a), and the members read
+	// `user ls --json --repo R` (the roles-and-scopes plan's RS7, roles.md
+	// D691(b)), whose one argument is optional and whose five writing relatives
+	// -- `user grant`, `user revoke`, `user add`, `user rm` and `user offboard`
+	// -- the never table below keeps off this list.
+	if len(allowed) != 27 {
+		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 27 (logs has two argvs)", path, argvs, len(allowed))
 	}
 	// The other direction: the list carries §5.1's commands and nothing else,
 	// except the read the design names for the console and §5.1 has not grown
@@ -1816,8 +1848,11 @@ func consoleSpelledNumber(t *testing.T, spelled string) int {
 //     `graph.watch`, the surface's one long-lived child -- to the thirty-seven
 //     it carried from 2026-11-09, and the subscriptions plan's S4.2 -- the
 //     Project tab's seat estimate, `seats.read`, the surface's one read whose
-//     child walks the runs bucket -- to the thirty-eight rule 5 carries
-//     today.
+//     child walks the runs bucket -- to thirty-eight, and the roles-and-scopes
+//     plan's RS7 -- the Members view's read of the installation's grants,
+//     `members.list`, the second row whose command is a word of a group the
+//     console otherwise may not touch (`models.list` was the first) -- to the
+//     thirty-nine rule 5 carries today.
 //   - **every row of spawn.ts's `SPAWN_COMMANDS` is admitted by rule 6's table**:
 //     the row's own words lead some row of the design's table **and what that row
 //     carries after them is flags, nothing else**. The second half is the whole

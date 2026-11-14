@@ -1451,3 +1451,180 @@ func TestReviewRunIsNeverServedByAnAPIKeyOfItsOwn(t *testing.T) {
 		}
 	}
 }
+
+// The vision tests' models: an ID no table here prices (a provider route's,
+// which is the model a coder is on and cannot read an image with), a Claude ID
+// the embedded table prices with an image rate (V2, D2000), and a Claude ID of
+// the reviewer's own.
+const (
+	blindModel  = "deepseek/deepseek-v4-flash"
+	seerModel   = "claude-sonnet-5-5"
+	seniorModel = "claude-opus-5"
+)
+
+// visionRun is the minimal run applyVision rewrites: the pins it reads, the
+// vision slot, and the price table the image question is asked of — the
+// embedded one unless a test hands in its own.
+func visionRun(models config.ModelRoles, prices *pricing.Table) *run {
+	return &run{
+		cfg:   &config.Config{Agent: config.Agent{Auth: "api-key", Models: models}},
+		spend: Spend{Mode: "enforce", Prices: prices},
+	}
+}
+
+// applyVisionOn is applyVision with the run's own table, the way resolvePolicy
+// calls it, with the failure reported here rather than at the caller.
+func applyVisionOn(t *testing.T, r *run) {
+	t.Helper()
+	if err := r.applyVision(r.spend.Prices); err != nil {
+		t.Fatalf("applyVision: %v", err)
+	}
+}
+
+// TestACoderWithAnImageRateKeepsItsModel (V7, D2000, D2016): a coder whose own
+// price row carries an image rate reads the picture itself, so the rewrite
+// leaves it where it is — and what makes it a model that can read one is the
+// row, not the family: a provider's model the owner priced with image_tokens is
+// left alone exactly as a Claude row is.
+func TestACoderWithAnImageRateKeepsItsModel(t *testing.T) {
+	r := visionRun(config.ModelRoles{Coder: seerModel, Reviewer: seniorModel, Vision: seniorModel}, nil)
+	applyVisionOn(t, r)
+	if got := r.cfg.Agent.ModelFor(config.RoleCoder); got != seerModel {
+		t.Errorf("the coder = %q, want %q: a model the table prices for images is left alone (D2016)", got, seerModel)
+	}
+	images := int64(1500)
+	table, err := pricing.Embedded().With(pricing.Overrides{
+		blindModel: {Rates: pricing.Rates{InputPerM: 1, OutputPerM: 2}, ImageTokens: &images},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r = visionRun(config.ModelRoles{Coder: blindModel, Reviewer: seniorModel, Vision: seerModel}, table)
+	applyVisionOn(t, r)
+	if got := r.cfg.Agent.ModelFor(config.RoleCoder); got != blindModel {
+		t.Errorf("the coder = %q, want %q: the owner's image_tokens row is what makes a provider model one that can read an image", got, blindModel)
+	}
+}
+
+// TestTheReviewerIsNeverRewritten (V7, D2004): the model that judges the run's
+// work is the owner's choice, not a fact about images, so a reviewer that cannot
+// read one keeps it while the coder beside it moves. Level 2's own model moves
+// with the reviewer and not with the coder, and the background model — which no
+// coder-role stage runs for the task's picture — is not a slot of the rewrite at
+// all.
+func TestTheReviewerIsNeverRewritten(t *testing.T) {
+	r := visionRun(config.ModelRoles{Coder: blindModel, Reviewer: blindModel, Background: blindModel, Vision: seerModel}, nil)
+	r.setLevelModel(policy.LevelL1, blindModel)
+	r.setLevelModel(policy.LevelL2, blindModel)
+	applyVisionOn(t, r)
+	if got := r.cfg.Agent.ModelFor(config.RoleCoder); got != seerModel {
+		t.Errorf("the coder = %q, want the vision model %q", got, seerModel)
+	}
+	if got := r.cfg.Agent.ModelFor(config.RoleReviewer); got != blindModel {
+		t.Errorf("the reviewer = %q, want %q: the reviewer is never rewritten (D2004)", got, blindModel)
+	}
+	if got := r.cfg.Agent.Models.Background; got != blindModel {
+		t.Errorf("the background model = %q, want %q: no stage runs it for the task's picture", got, blindModel)
+	}
+	// Level 1 runs in the coder's slot and level 2 in the reviewer's
+	// (reviewStages, config.StageRole): a level's own model moves with the role
+	// its stage runs.
+	if got := r.levelModel(policy.LevelL1); got != seerModel {
+		t.Errorf("level 1's own model = %q, want the vision model %q: review_first is the coder's stage", got, seerModel)
+	}
+	if got := r.levelModel(policy.LevelL2); got != blindModel {
+		t.Errorf("level 2's own model = %q, want %q: the senior review is never rewritten", got, blindModel)
+	}
+}
+
+// TestAShadowArmsChampionCoderMovesWithTheArm (V7, D555): a challenger arm's
+// level resolution and plan are derived from the champion's coder (plan.go), so
+// an arm that moved its own coder onto the vision model and left the champion's
+// would answer FirstLineOn about a model its own coder no longer runs, and the
+// two arms would stop being comparable.
+func TestAShadowArmsChampionCoderMovesWithTheArm(t *testing.T) {
+	r := visionRun(config.ModelRoles{Coder: blindModel, Reviewer: seniorModel, Vision: seerModel}, nil)
+	r.shadow, r.championCoder = true, blindModel
+	applyVisionOn(t, r)
+	if got := r.cfg.Agent.ModelFor(config.RoleCoder); got != seerModel {
+		t.Errorf("the arm's coder = %q, want the vision model %q", got, seerModel)
+	}
+	if r.championCoder != seerModel {
+		t.Errorf("the champion's coder = %q, want the vision model %q: the two arms' plans are derived from it", r.championCoder, seerModel)
+	}
+}
+
+// TestTheVisionRewriteMovesNoFallback (V7, D2004): a file that names only
+// agent.model answers for all three roles (config.Agent.ModelFor,
+// config.EffectiveBackground), so a rewrite that wrote the coder's new model
+// back into agent.model would move the reviewer's model with it — the model
+// that judges the run's work, on a run that named no reviewer — and would take
+// the haiku role's model away from the provider coder it fell back to.
+//
+// Mutation (move the coder through the switch's own roleSlot): the reviewer
+// runs the vision model and the background answers nothing, which is Claude
+// Code's built-in Anthropic model — the hidden call no pin allows.
+func TestTheVisionRewriteMovesNoFallback(t *testing.T) {
+	r := &run{
+		cfg: &config.Config{Agent: config.Agent{
+			Auth:   "api-key",
+			Model:  blindModel,
+			Models: config.ModelRoles{Vision: seerModel},
+		}},
+		spend: Spend{Mode: "enforce"},
+		d: Deps{
+			Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+			Providers: map[string]config.ModelProvider{
+				"openrouter": {Kind: config.ModelProviderKind, BaseURL: "https://openrouter.ai/api", Auth: "bearer",
+					Secret: "openrouter-api-key", Models: []string{"deepseek/*"}, AllowDataTo: []string{"acme/site"}},
+			},
+		},
+	}
+	if got := r.backgroundModel(); got != blindModel {
+		t.Fatalf("the fixture's background = %q, want the coder it falls back to %q (config.EffectiveBackground)", got, blindModel)
+	}
+	applyVisionOn(t, r)
+	if got := r.cfg.Agent.ModelFor(config.RoleCoder); got != seerModel {
+		t.Errorf("the coder = %q, want the vision model %q", got, seerModel)
+	}
+	if got := r.cfg.Agent.ModelFor(config.RoleReviewer); got != blindModel {
+		t.Errorf("the reviewer = %q, want %q: agent.model still answers for it (D2004)", got, blindModel)
+	}
+	if got := r.backgroundModel(); got != blindModel {
+		t.Errorf("the background = %q, want the model the haiku role had before the rewrite %q", got, blindModel)
+	}
+}
+
+// TestTheVisionSlotIsRoutedWithTheOtherPins (V7, D2007, D2008): the vision slot
+// is a pin, so the routing switch a project publishes rewrites it like the
+// other three — and the stage the rewrite moves onto it then runs the route's
+// own ID, on the provider's key and the route's price row. Without the slot in
+// pinSlots the switch never sees it, and a project that routes Claude to a
+// provider gets a Claude ID on a stage whose run has no Anthropic credential:
+// the call goes direct to Anthropic, where the router said it must not go
+// (D1b), or is refused for a key the run deliberately does not carry.
+func TestTheVisionSlotIsRoutedWithTheOtherPins(t *testing.T) {
+	const canonical, routed = "claude-sonnet-5-5", "anthropic/claude-sonnet-5.5"
+	r := routedRun(t, &config.RoutingClaude{Via: config.RouteOpenRouter, Models: []string{canonical}}, blindModel, seniorModel)
+	r.cfg.Agent.Models.Vision = canonical
+	if err := r.applyRouting(r.projPolicy.policy, true); err != nil {
+		t.Fatalf("applyRouting: %v", err)
+	}
+	if got := r.cfg.Agent.VisionModel(); got != routed {
+		t.Fatalf("the vision slot = %q, want the route's own ID %q: the switch rewrites it with the other pins (D2007)", got, routed)
+	}
+	applyVisionOn(t, r)
+	if got := r.cfg.Agent.ModelFor(config.RoleCoder); got != routed {
+		t.Errorf("the coder = %q, want the routed vision model %q", got, routed)
+	}
+	if got := r.stagePins("implement")["CLAUDE_CODE_SUBAGENT_MODEL"]; got != routed {
+		t.Errorf("the implement stage pins = %q, want the route's own ID %q: the stage runs it", got, routed)
+	}
+	routes, err := r.gatewayRoutes()
+	if err != nil {
+		t.Fatalf("gatewayRoutes: %v", err)
+	}
+	if len(routes) != 1 || routes[0].Name != "openrouter" {
+		t.Errorf("gatewayRoutes() = %+v, want the route the stage's model is charged on", routes)
+	}
+}

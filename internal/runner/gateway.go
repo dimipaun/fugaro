@@ -701,9 +701,12 @@ func (r *run) beginGatewayStage(name string) {
 // stage's, L4.5), the background model, the run's vision slot and the stage's
 // output limit per call. A set that named the role slot where the pins name a
 // level's own model would refuse every call of the stage as not pinned for it.
-// The vision slot is carried and not pinned: an image the stage's own model
-// cannot reserve is refused either way, and what the slot changes is the
-// sentence the owner reads (the gateway's image refusal, V4, D2009).
+// The vision slot is carried for the stages a coder-role pin does not cover —
+// the reviewer's, whose model is never moved (D2004) — where an image the
+// stage's own model cannot reserve is still refused, and what the slot changes
+// is the sentence the owner reads (the gateway's image refusal, V4, D2009). A
+// coder-role stage runs the vision model outright (applyVision, V7), so its
+// slot is the answer to a question the stage no longer asks.
 func (r *run) stageSpec(name string) gateway.Stage {
 	return gateway.Stage{
 		Name:            name,

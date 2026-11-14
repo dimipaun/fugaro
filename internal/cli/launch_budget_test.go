@@ -14,6 +14,7 @@ import (
 
 	"gocloud.dev/blob"
 
+	accesslib "github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
@@ -94,6 +95,25 @@ func readToken(t *testing.T, f *cloudFixture, run string) string {
 }
 
 const budgetRun = "20261002-100000-abcd"
+
+// launchReadIsNotTheBudget reports whether one of a launch's database calls is
+// a read it makes whatever the budget's mode is, and is therefore not a budget
+// read: the project policy's node, which the launch's own admission and skew
+// gates read (plan task 1.5 step 4), and the roles node, which its role check
+// reads (plan task RS6a). Two tests below pin that a launch whose budget is off
+// — or whose pre-check was skipped — makes no other call: no cap, no kill
+// switch, no lease, no token.
+func launchReadIsNotTheBudget(r gcpfake.Request) bool {
+	if r.Method != "GET" {
+		return false
+	}
+	for _, part := range []string{"config/policy/", "policyRules", accesslib.PathNode} {
+		if strings.Contains(r.Path, part) {
+			return true
+		}
+	}
+	return false
+}
 
 func runBudget(t *testing.T, extra ...string) (string, string, error) {
 	t.Helper()
@@ -1030,13 +1050,14 @@ func TestNoBudgetCheckSkipsOnlyPrecheck(t *testing.T) {
 	}
 	// The mint still happens, and the pre-check's own reads did not: the only
 	// calls left are the policy read the launch makes for itself (its
-	// admission and skew gates, plan task 1.5 step 4), never a cap, a kill
-	// switch or a lease.
+	// admission and skew gates, plan task 1.5 step 4) and the roles node the
+	// launch's role check reads (plan task RS6a), never a cap, a kill switch
+	// or a lease.
 	if len(f.iam.SignCalls()) != 1 || readToken(t, f.cloudFixture, budgetRun) == "" || !launchedAny(f) {
 		t.Fatal("the skip must still mint and launch")
 	}
 	for _, r := range f.db.Requests() {
-		if r.Method != "GET" || !strings.Contains(r.Path, "config/policy/") && !strings.Contains(r.Path, "policyRules") {
+		if !launchReadIsNotTheBudget(r) {
 			t.Fatalf("--no-budget-check skipped the pre-check, but the launch made a budget read: %s %s", r.Method, r.Path)
 		}
 	}
@@ -1069,9 +1090,11 @@ func TestBudgetOffSkipsEverything(t *testing.T) {
 			// kill switch, no registry, no token. It does read whether the
 			// project has published a policy, with the operator's own
 			// credentials, because a published policy means the run needs an
-			// identity whatever the mode is (task 1.3 step 2).
+			// identity whatever the mode is (task 1.3 step 2), and the roles
+			// node, because the launch's role check reads it whatever the mode
+			// is too (plan task RS6a).
 			for _, r := range db.Requests() {
-				if r.Method != "GET" || !strings.Contains(r.Path, "config/policy/") && !strings.Contains(r.Path, "policyRules") {
+				if !launchReadIsNotTheBudget(r) {
 					t.Fatalf("a budget-off launch made a database call it should not: %s %s", r.Method, r.Path)
 				}
 			}
@@ -1393,10 +1416,20 @@ func proxiedLaunchSpec() (string, *task.Spec) {
 // after the one the work was first slotted for and not the plan's spent 0.15.0
 // number).
 //
+// The gate is called directly rather than through `fugaro run`, the way the
+// Batch half below is and for a reason of the same kind: the pair of node and
+// image a row's refusal needs — an image older than proxySince, and a node
+// this reader reads — is one no launch has. policyImageGate (run_allowlist.go)
+// judges every readable node's version against the release its image carries,
+// and the oldest version this reader reads is version 5, whose release is
+// 0.23.0: a launch on an image older than proxySince is refused there first,
+// with its own sentence. The lockstep this test exists for is unchanged, and
+// it is asserted here where it lives.
+//
 // The cases beside it are what makes the refusal proxiedness' and not the
-// image's: a repository the published node does not proxy is launched on the
+// image's: a repository the published node does not proxy is admitted on the
 // very same image (G9), and a proxied repository on an image at proxySince or
-// later is launched too. The rows between them take each half of proxiedness
+// later is admitted too. The rows between them take each half of proxiedness
 // away on its own — a node that brokers Bitbucket access but does not admit
 // this repository, an installation that carries no service, and a repository
 // whose own switch is off — because a launch that is not proxied is judged by
@@ -1454,9 +1487,6 @@ func TestLaunchRefusesProxiedRunOnOldImage(t *testing.T) {
 				return
 			case !tc.refused && err != nil:
 				t.Fatalf("a launch that is not proxied (or is on a current image) was refused: %v", err)
-			}
-			if !tc.refused && !launchedAny(f) {
-				t.Error("an admitted launch started no execution")
 			}
 		})
 	}

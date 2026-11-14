@@ -234,7 +234,10 @@ func TestRunRefusesAJobImageThatCannotReadThePolicyNode(t *testing.T) {
 // a lockstep and not a blanket refusal of shared launches.
 func TestLaunchPolicyGatesRefusesASharedImageThatCannotReadThePolicyNode(t *testing.T) {
 	f := newLaunchBudget(t, "off")
-	publishPolicy(t, f, `{"version":6,"allow_repos":["github/acme/*"]}`)
+	// The node this binary writes: the lockstep below is VersionSince[Version],
+	// so a node one step back would only move the release the image is judged
+	// against.
+	publishPolicy(t, f, fmt.Sprintf(`{"version":%d,"allow_repos":["github/acme/*"]}`, projectpolicy.Version))
 	// fileEnv: the lock and the policy alike live in the fixture's bucket.
 	env := fileEnv(t, f.cloudFixture)
 	spec := &task.Spec{Version: 1, RunID: budgetRun, Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x"}
@@ -415,7 +418,7 @@ func TestRunRefusesAPolicyNewerThanTheBinary(t *testing.T) {
 // fine and is not the legacy path, that is the marker's job) is refused by the same gate, and the remedy printed
 // is the operator's delete-then-publish — the same remedy internal/cli's
 // publishedPolicyOf refuses an older node with, because this release's publish
-// will not overwrite one — and never `fugaro upgrade`, which is this
+// will not overwrite one — and never the binary upgrade, which is this
 // binary's own remedy for the opposite direction and does nothing here. The two
 // directions shared one sentence until this test: the binary looked newer than
 // the node in both, so an operator whose node was simply behind was told to
@@ -454,9 +457,10 @@ func TestRunRefusesAPolicyOlderThanTheBinary(t *testing.T) {
 }
 
 // The same gate, one version higher: a node the migration chain carries forward
-// — version 4 is the one 0.14.0 through 0.21 wrote, so it is the node every
-// installation holds between the binary upgrade and `fugaro update` — must not
-// be answered with the delete. `fugaro project policy publish --delete` loses
+// and this reader refuses (refusedOlderVersion — the version above it is
+// shape-free, so this reader answers that one with its own node and there is no
+// skew to report) is the node every installation holds between the binary
+// upgrade and `fugaro update`, and it must not be answered with the delete. `fugaro project policy publish --delete` loses
 // what only the node holds (the clone_urls, credentials, craft_credentials,
 // craft_pools and crafts blocks a publish rebuilds from the operator's own
 // config and not from the node), which is the state the update's policy stage

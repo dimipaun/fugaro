@@ -580,7 +580,10 @@ var (
 var ownerCommands = []string{"fugaro budget set", "fugaro budget kill", "fugaro budget resume", "fugaro secrets set", "fugaro project policy publish", "fugaro allow-delete", "fugaro managed flag", "fugaro creds set", "fugaro creds ls"}
 
 // userRunsAllowed is every command a user-runs block may hold.
-var userRunsAllowed = []string{"fugaro budget set", "fugaro budget kill", "fugaro budget resume", "fugaro secrets set", "fugaro project policy publish", "fugaro allow-delete", "fugaro managed flag", "fugaro creds set", "fugaro creds ls", "fugaro setup", "fugaro update", "fugaro update-skills", "fugaro upgrade"}
+// `fugaro upgrade` left this list with the command (U4 of
+// docs/plugin-user-scope/implementation-plan.md): the converge's door is
+// `fugaro update` now, which was already here.
+var userRunsAllowed = []string{"fugaro budget set", "fugaro budget kill", "fugaro budget resume", "fugaro secrets set", "fugaro project policy publish", "fugaro allow-delete", "fugaro managed flag", "fugaro creds set", "fugaro creds ls", "fugaro setup", "fugaro update", "fugaro update-skills"}
 
 // userLeadRE is the sentence before a user-runs block: it says the user (or
 // the owner) runs it.
@@ -693,11 +696,23 @@ func unsafeText(text string) string {
 
 // ownerViolation says why a command may not appear outside a user-runs
 // block, or "".
+//
+// The read-only forms of the two converge doors are the exception, and each
+// was added with the flag that made it read-only: --plan-only and
+// --print-vars stop `setup` and `update` before the first cloud call, and
+// --check is `fugaro update`'s own since U4 of
+// docs/plugin-user-scope/implementation-plan.md moved the retired
+// `fugaro upgrade --check` onto it (D948): it writes nothing, runs no claude
+// call and makes no cloud call, which is the mode the skills need to read a
+// checkout's four steps. What stays refused is the applying run: a skill
+// hands that to the user in a user-runs block and nowhere else.
 func ownerViolation(c fugaroCmd) string {
 	switch {
 	case slices.Contains(ownerCommands, c.path):
 		return "an owner's command (" + c.path + ") outside a user-runs block"
-	case (c.path == "fugaro setup" || c.path == "fugaro update") && !slices.ContainsFunc(c.args, func(x string) bool { return x == "--plan-only" || x == "--print-vars" || x == "--help" }):
+	case (c.path == "fugaro setup" || c.path == "fugaro update") && !slices.ContainsFunc(c.args, func(x string) bool {
+		return x == "--plan-only" || x == "--print-vars" || x == "--check" || x == "--help"
+	}):
 		return "an applying " + c.path + " outside a user-runs block"
 	}
 	return ""
@@ -724,7 +739,7 @@ func lintUserRunsLine(ci *commandIndex, text string, add func(string)) {
 		if !slices.Contains(userRunsAllowed, c.path) {
 			add("a user-runs block may not run " + c.path)
 		}
-		if hasForbiddenFlag(c.args) && !upgradeYesOnly(c) {
+		if hasForbiddenFlag(c.args) && !updateYesOnly(c) {
 			add("a flag no one should pass for the user")
 		}
 		if inlineSecretValue(c) {
@@ -742,12 +757,15 @@ func hasForbiddenFlag(args []string) bool {
 	})
 }
 
-// upgradeYesOnly: the one forbidden flag a user-runs block may carry is --yes
-// on fugaro upgrade, the cloud half of an upgrade handed to the user for their
+// updateYesOnly: the one forbidden flag a user-runs block may carry is --yes
+// on the converge, the cloud half of an upgrade handed to the user for their
 // own terminal (owner's ruling 2026-10-08, docs/design/upgrade.md). Any other
-// forbidden flag beside it, or --yes on another command, is still refused.
-func upgradeYesOnly(c fugaroCmd) bool {
-	if c.path != "fugaro upgrade" {
+// forbidden flag beside it, or --yes on another command, is still refused. The
+// command it names is `fugaro update` since U4 of
+// docs/plugin-user-scope/implementation-plan.md retired `fugaro upgrade`; the
+// ruling is about the handed-over converge, and that is the door it has now.
+func updateYesOnly(c fugaroCmd) bool {
+	if c.path != "fugaro update" {
 		return false
 	}
 	return !slices.ContainsFunc(c.args, func(x string) bool {
@@ -1756,11 +1774,13 @@ func TestLintDangerousCommandsVariants(t *testing.T) {
 	}
 }
 
-// TestLintUserRunsYesOnlyOnUpgrade (decision U14): a user-runs block may give
-// --yes to fugaro upgrade and to nothing else, and an agent may never pass it.
-func TestLintUserRunsYesOnlyOnUpgrade(t *testing.T) {
-	expectClean(t, demoTree(t, userRuns("fugaro upgrade --yes")))
-	expectViolation(t, demoTree(t, userRuns("fugaro upgrade --yes --allow-fork")), "a flag no one should pass for the user")
+// TestLintUserRunsYesOnlyOnUpdate (decision U14): a user-runs block may give
+// --yes to the converge and to nothing else, and an agent may never pass it.
+// The command the ruling names is `fugaro update` since U4 of
+// docs/plugin-user-scope/implementation-plan.md retired `fugaro upgrade`.
+func TestLintUserRunsYesOnlyOnUpdate(t *testing.T) {
+	expectClean(t, demoTree(t, userRuns("fugaro update --yes")))
+	expectViolation(t, demoTree(t, userRuns("fugaro update --yes --allow-fork")), "a flag no one should pass for the user")
 	expectViolation(t, demoTree(t, userRuns("fugaro setup --yes")), "a flag no one should pass for the user")
-	expectViolation(t, demoTree(t, "Run this:\n\n```bash\nfugaro upgrade --yes\n```\n"), "a flag the agent must never pass")
+	expectViolation(t, demoTree(t, "Run this:\n\n```bash\nfugaro update --yes\n```\n"), "a flag the agent must never pass")
 }

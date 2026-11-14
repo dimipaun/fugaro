@@ -2,13 +2,17 @@
 // See ee/LICENSE for the terms.
 
 // Package ab scores the A/B pairs a sampled launch produces, from the two
-// runs' own records and nothing else (docs/model-ab-testing, D559, D561): no
-// model call, no bucket listing, no figure a second read of the same records
-// could answer differently (D563).
+// runs' own records and from the verdicts the repository's judge runs wrote
+// under their own prefixes (docs/model-ab-testing, D559, D561): no model call
+// in scoring, no bucket listing, no figure a second read of the same records
+// and verdicts could answer differently (D563).
 //
 // It is the paid half of the work (D550): the sampler, the challenger
 // admission and the pair launch sit beside it, and everything this package
-// reads was written by the runner before it.
+// reads was written by the runner before it. The judge's answer is the one
+// input a pair's own two records do not carry — a run of its own writes it,
+// after them (A5.2) — which is why a pair at Critical counts only once it is
+// there (A5.4).
 package ab
 
 import (
@@ -35,6 +39,31 @@ const (
 // fixStage is the stage that fixes what a review asked for, as the runner
 // dispatches it; it is one of D561's iterations.
 const fixStage = "fix"
+
+// ImplementStage is the stage the coder runs, as the runner dispatches it: the
+// stage whose pinned model says which coder model an arm actually ran.
+const ImplementStage = "implement"
+
+// ArmModel is the coder model one arm ran: the model its implement stage was
+// pinned to. An arm that reached no implement stage — its job died before the
+// first one — falls back to the model its own task named, which only a
+// challenger's task carries (AB.Challenger); a champion's task names none, so a
+// champion that never implemented answers "" rather than a guess.
+//
+// It is exported because two readers need it and must agree: the report groups
+// a pair by the models its arms ran (A4.3), and the judge's bundle redacts the
+// arm's own model from its diff (A5.1), which is the model this answers.
+func ArmModel(rec runstore.Record) string {
+	for _, s := range rec.Stages {
+		if s.Name == ImplementStage && s.Model != "" {
+			return s.Model
+		}
+	}
+	if rec.AB != nil {
+		return rec.AB.Challenger
+	}
+	return ""
+}
 
 // Winner is which arm of a pair took it. A tie is a pair that decided
 // nothing, never half a win for either arm: the report counts the three apart
@@ -284,9 +313,41 @@ type Signals struct {
 	Iterations int
 }
 
-// Result is one pair scored at one mode: the arm that took it and both arms'
-// signals, so a report can show why. D561 is a ranking and not a number, so
-// the signals are what a reader checks the ranking against.
+// Verdict is what a judge run decided about one pair, as A5.2 stores it: the
+// arm the judge took, the one word it gave for its answer, and the model that
+// answered (D553's "recorded on the verdict"), joined to the pair by its ID
+// (D559). Nothing here is inferred: every field is one the verdicts object
+// (runstore.VerdictsName) carries.
+//
+// The zero Verdict is a pair no judge has decided, and a pair a judge run
+// skipped — its diffs named an arm, or a patch was cut short (A5.1, A5.2's own
+// skip words) — is one it did not decide either. The two are one fact here
+// because they are one fact about the pair: no judge has read it. Neither is
+// read as a tie, which would count a pair nobody judged as one the arms drew.
+type Verdict struct {
+	// Winner is the arm the judge took, WinTie for a pair it could not tell
+	// apart — an answer of "tie", and two passes that disagreed. Empty for a
+	// pair no judge decided, which is also what a skipped verdict carries.
+	Winner Winner
+	// Reason is the word the judge gave beside its answer, from A5.2's closed
+	// list; empty for a tie and for a pair no judge decided.
+	Reason string
+	// Skipped is why the judge run left the pair unjudged, from A5.2's closed
+	// list; empty for a pair the judge decided.
+	Skipped string
+	// JudgeModel is the model that judged the pair, the one the judge run's
+	// manifest was admitted with (D553, O2); empty for a pair no judge decided.
+	JudgeModel string
+}
+
+// Judged reports whether a judge decided anything about the pair: a verdict
+// with a winner, whether that winner is a tie. A pair no judge run has reached,
+// and one a judge run skipped, both answer false.
+func (v Verdict) Judged() bool { return v.Winner != "" }
+
+// Result is one pair scored at one mode: the arm that took it, both arms'
+// signals and the judge's verdict, so a report can show why. D561 is a ranking
+// and not a number, so the signals are what a reader checks the ranking against.
 type Result struct {
 	// PairID is the pair this result belongs to (Pair.ID).
 	PairID string
@@ -294,13 +355,27 @@ type Result struct {
 	// having refused a pair whose arms resolved different ones, and the mode
 	// the report groups by.
 	Mode rigor.Mode
-	// Winner is the arm that took the pair on the signals this mode reads.
+	// Winner is the arm that took the pair on the signals this mode reads, and
+	// empty for a pair that does not count at all (Counted).
 	Winner Winner
 	// Champion and Challenger are the two arms' signals, whether or not the
 	// arm won: the halt rate is counted per arm, and a reader asking why the
 	// shadow lost reads them here.
 	Champion   Signals
 	Challenger Signals
+	// Verdict is the judge's answer for the pair, the zero Verdict for a pair
+	// no judge decided. It sits beside the signals and never among them: D561
+	// ranks the hard signals and requires the judge rather than weighing it, so
+	// where the two disagree both are shown and neither is folded into the
+	// other by a weight nobody chose.
+	Verdict Verdict
+	// Counted reports whether the pair enters the figures a report draws from
+	// it. R2 is not asked here — Pairs made the pair — so this is D561's own
+	// line: at Critical a pair counts only once a judge has decided it, and in
+	// every other mode it counts whether or not a judge has reached it. A pair
+	// that does not count has no winner and is in no figure at all, as a pair
+	// R2 refuses is.
+	Counted bool
 }
 
 // Score reads one pair at one mode (D561).
@@ -314,17 +389,30 @@ type Result struct {
 // pair nobody should have launched is decided on everything rather than on the
 // least.
 //
+// v is the judge's answer for the pair, the zero Verdict for one no judge has
+// decided, and Critical asks it before anything else: D561 requires the judge
+// there because the hard signals miss design quality on work that passes its
+// tests, so a Critical pair no judge has decided does not count — it has no
+// winner, it enters no figure, and the report counts it as unjudged beside the
+// row. Every other mode is decided on the signals whether or not a judge has
+// reached the pair, and shows the verdict beside them.
+//
 // The pair's validity is not re-asked here: Pairs is where R2 is read, and a
 // Pair that reached this function is one it made. The kept arm's follow-up
 // count is context and decides nothing (D562), as is everything else the
 // records hold; there is no weight to argue about and no model to call (D561).
-func Score(p Pair, mode rigor.Mode) Result {
+func Score(p Pair, mode rigor.Mode, v Verdict) Result {
 	res := Result{
 		PairID:     p.ID,
 		Mode:       mode,
 		Champion:   armSignals(p.Champion, mode),
 		Challenger: armSignals(p.Challenger, mode),
+		Verdict:    v,
 	}
+	if mode == rigor.Critical && !v.Judged() {
+		return res
+	}
+	res.Counted = true
 	switch compareVectors(signalVector(res.Champion, mode), signalVector(res.Challenger, mode)) {
 	case -1:
 		res.Winner = WinChampion

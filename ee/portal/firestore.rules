@@ -1,0 +1,28 @@
+rules_version = '2';
+
+// The portal's documents are reached through the API and through nothing else
+// (D2188, Check 570). The SPA runs in a person's browser and the client SDK is
+// the shortest path from there to the store, so this file is where that path is
+// closed: every read and every write a client could make is denied, and the API
+// reaches the same documents through its own service account, which the rules
+// below do not touch.
+//
+// A rule that admitted a signed-in person would hand over more than it looks
+// like: one Firestore database holds every organisation's records, every sealed
+// reveal bundle and the audit trail, and what separates one reseller's documents
+// from another's is a check the API makes and records, not one these rules can
+// see. So there is nothing here to open selectively — the denial is the whole
+// file, and the API is the whole of the data path.
+//
+// The deploy uploads it with the database (P9.2), and TestFirestoreRulesDenyClients
+// reads it: a file that denied by being empty would deploy the same way and be
+// indistinguishable from a truncation, which is why the skeleton and the denial
+// are both written out.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

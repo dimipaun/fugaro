@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"time"
 
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
@@ -109,57 +108,6 @@ func (s *Store) Keys() ([][]byte, error) {
 		return [][]byte{append([]byte(nil), s.handed...)}, nil
 	}
 	return readKeyFile(s.path)
-}
-
-// Active answers the key that applies now and the state it is in: among the
-// installed keys that verify, the one with the later expiry (T26). A renewal
-// that lands early changes nothing for the user, and the key it follows keeps
-// working until its own grace runs out.
-//
-// A key that does not verify is skipped rather than fatal -- a store holding a
-// good key and a corrupt one still works -- and a store whose every key is
-// refused answers the first refusal, because that is the one a person has to
-// act on.
-func (s *Store) Active(now time.Time) (Claims, State, error) {
-	keys, err := s.Keys()
-	if err != nil {
-		return Claims{}, "", err
-	}
-	return active(productionKeyring, keys, now)
-}
-
-// active is the choice among installed keys against a keyring of the caller's.
-//
-// Ordering by expiry alone is the whole rule and not an approximation of one: a
-// key past its grace and a key inside its term cannot be ordered the other way,
-// because the later expiry of the two is the one that is still inside its
-// term whenever one of them is.
-func active(ring Keyring, keys [][]byte, now time.Time) (Claims, State, error) {
-	if len(keys) == 0 {
-		return Claims{}, "", ErrNoKey
-	}
-	var (
-		applied Claims
-		state   State
-		found   bool
-		refusal error
-	)
-	for _, raw := range keys {
-		claims, st, err := verify(raw, now, ring)
-		if err != nil {
-			if refusal == nil {
-				refusal = err
-			}
-			continue
-		}
-		if !found || claims.Expires > applied.Expires {
-			applied, state, found = claims, st, true
-		}
-	}
-	if !found {
-		return Claims{}, "", refusal
-	}
-	return applied, state, nil
 }
 
 // readKeyFile answers the keys one file holds: one per line, blank lines

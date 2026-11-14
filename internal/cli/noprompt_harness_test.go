@@ -190,6 +190,13 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 			f.db.Set(budget.PathKillGlobal, map[string]any{"on": true, "by": "boss@example.com", "at": int64(1)})
 		},
 	},
+	// The raise is the fourth writing leaf of the budget family: a run
+	// reference, one figure and the reason are the whole of what stands
+	// between a bare run and its body. This world's bucket holds no such run,
+	// so what the body answers here is its own refusal rather than the write —
+	// which is still the body, reached with the stdin closed and asking
+	// nothing, and the whole of what a bare run cannot get to.
+	"fugaro budget chain raise": {args: []string{"run-1", "--max-usd", "6", "--reason", "one more round"}},
 	// The write used to ask before it rewrote the project's claude_accounts
 	// block; it asks nothing now (D1540) and the diff of that block is the proof
 	// this fixture reaches it.
@@ -368,11 +375,19 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	// in the world for them to take one out of. Neither may print a question
 	// here: no command waits on stdin any more (D1540, D1552, D1555), and the
 	// sentence naming the change is the proof this fixture reaches the write.
-	"fugaro rigor floor set":      {args: []string{"pro", "l2"}, reaches: "set review_floor.pro from l2, l3 to l2 in", seed: closedStdinRigorFloorSeed},
-	"fugaro rigor floor unset":    {args: []string{"pro"}, reaches: "remove review_floor.pro (l2, l3) in", seed: closedStdinRigorFloorSeed},
-	"fugaro settings get":         {args: []string{"a.b"}},
-	"fugaro stats runs":           {args: []string{"--project", "proj-1234"}},
-	"fugaro user add":             {args: []string{"someone@example.com"}},
+	"fugaro rigor floor set":   {args: []string{"pro", "l2"}, reaches: "set review_floor.pro from l2, l3 to l2 in", seed: closedStdinRigorFloorSeed},
+	"fugaro rigor floor unset": {args: []string{"pro"}, reaches: "remove review_floor.pro (l2, l3) in", seed: closedStdinRigorFloorSeed},
+	"fugaro settings get":      {args: []string{"a.b"}},
+	"fugaro stats runs":        {args: []string{"--project", "proj-1234"}},
+	"fugaro user add":          {args: []string{"someone@example.com"}},
+	"fugaro user grant":        {args: []string{"someone@example.com", "--role", "operator", "--scope", "project"}},
+	"fugaro user revoke":       {args: []string{"someone@example.com", "--role", "operator", "--scope", "project"}},
+	// Offboarding takes the member's address as its argument, and the body it
+	// then reaches refuses here: this world selects no project, so there is no
+	// roster to read and no intake to call. The write and the sweep are driven
+	// by offboard_test.go's own installation rather than by this world, which
+	// holds no roster.
+	"fugaro user offboard":        {args: []string{"someone@example.com"}},
 	"fugaro user rm":              {args: []string{"someone@example.com"}},
 	"fugaro verify":               {args: []string{"build"}},
 	"fugaro workspace add":        {args: []string{"ws"}},
@@ -491,6 +506,7 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro runs ls":                "prints the no-project-config refusal",
 	"fugaro runs stats":             "prints the no-project-config refusal",
 	"fugaro runs summary":           "prints the no-project-config refusal",
+	"fugaro runs watch":             "prints the no-project-config refusal",
 	"fugaro secrets":                "is a name for set, ls and rm: a bare run prints its own usage and returns",
 	"fugaro secrets ls":             "prints the no-project-config refusal",
 	"fugaro secrets shared":         "is a name for set, ls and rm: a bare run prints its own usage and returns",
@@ -511,7 +527,6 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro troubleshoot":  "refuses from inside its body: this world's machine has logged no failed command, and a bare run takes the newest one",
 	"fugaro update":        "refuses on this world's runs bucket name before its first stage",
 	"fugaro update-skills": "reports that a development build has no release to pin the plugin to",
-	"fugaro upgrade":       "skips every step: a development build has no release to pin or install",
 	"fugaro user ls":       "prints the no-project-config refusal",
 	"fugaro validate":      "refuses with no fugaro.yaml in the world",
 	"fugaro version":       "prints the version",

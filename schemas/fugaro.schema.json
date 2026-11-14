@@ -66,7 +66,7 @@
             "coder": { "$ref": "#/$defs/modelName", "description": "implement and fix" },
             "reviewer": { "$ref": "#/$defs/modelName", "description": "review" },
             "background": { "$ref": "#/$defs/modelName", "description": "Claude Code's small background requests" },
-            "vision": { "$ref": "#/$defs/modelName", "description": "the model a stage runs when its own model cannot read an image" },
+            "vision": { "$ref": "#/$defs/modelName", "description": "the model a stage runs when its own model cannot read an image (D2003). It never falls back to agent.model: the slot is read exactly when a stage's own model cannot read an image, and the model that cannot is the one the fallback would answer with. Fugaro before 0.23.0 refuses the key. The file is decoded strictly, so a job image older than the release that reads it fails at bootstrap on a key its runner does not know: `fugaro run` refuses the launch, naming the key and the image to move (internal/cli's visionSince)." },
             "diagnose": { "$ref": "#/$defs/modelName", "description": "the model fugaro troubleshoot runs on" }
           }
         },
@@ -238,7 +238,7 @@
     "security": {
       "type": "object",
       "additionalProperties": false,
-      "description": "What this repository itself calls security-sensitive (docs/security-classification, D1500): the list a run matches the paths it changed against to decide whether the change reaches the adversarial review level. Additive, never a replacement: the list in force is the engine's own floor, then the project layer's rows, then these, so a repository can only ever say more is sensitive and never less (D1506). The project layer's block carries this list and, beside it, always_level_3 (D1517). Fugaro 0.22.0 decodes and validates this block, in this file and in the project layer's, and the readers are what resolve them into the one list in force: a run matches the paths it changed against it, `fugaro security paths` prints it and `fugaro doctor` counts it, each row carrying the layer it came from. always_level_3's forced level arrives with a later release. What the key still costs is the image gate: a job image older than 0.22.0 refuses the key whole at bootstrap, so writing it needs that repository's job image on 0.22.0.",
+      "description": "What this repository itself calls security-sensitive (docs/security-classification, D1500): the list a run matches the paths it changed against to decide whether the change reaches the adversarial review level. Additive, never a replacement: the list in force is the engine's own floor, then the project layer's rows, then these, so a repository can only ever say more is sensitive and never less (D1506). The project layer's block carries this list and, beside it, always_level_3 (D1517). Fugaro 0.22.0 decodes and validates this block, in this file and in the project layer's, and the readers are what resolve them into the one list in force: a run matches the paths it changed against it, `fugaro security paths` prints it and `fugaro doctor` counts it, each row carrying the layer it came from. always_level_3 is read too, from 0.23.0 on: the layer's switch turns review level 3 on for every run of every repository of the project, and the per-run request `fugaro run --security` — the task's own `security: true` — is the same statement for one run. What the key still costs is the image gate: a job image older than 0.22.0 refuses the key whole at bootstrap, so writing it needs that repository's job image on 0.22.0, and the layer's switch needs every job image of the project on 0.23.0, the release whose runner acts on it.",
       "properties": {
         "patterns": {
           "type": ["array", "null"],
@@ -254,6 +254,15 @@
       "description": "What the planning pass does before a run starts writing (docs/contract-first-decoupling). A preference and not a bound: the project layer's defaults.planning may set the same key, and the narrowest layer that sets it wins, so a repository may turn the pass back on where its project turned it off. There is no per-area and no per-task value, because a per-task value could only raise what the mode already decided. Fugaro before 0.22.0 refuses the key. The file is decoded strictly, so a job image older than the release that reads it fails at bootstrap on a key its runner does not know: `fugaro update --repo` refuses to deploy such a job before any cloud effect, and `fugaro run` refuses the launch from a checkout of the repository.",
       "properties": {
         "decoupling": { "type": "boolean", "description": "The dependency-breaking pass: the planner asks of every edge whether the dependent needs the other side's interface or its behaviour, and breaks the ones that need only the interface behind a contract task. Absent or true: the pass runs, as it does when nothing sets it. false: the plan is drawn with the task's own work and no pass." }
+      }
+    },
+    "model_grades": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The escalation ladder's two model grades as THIS repository would set them (docs/outer-loop-escalation, E2, D2039). A grade is a model choice the project owns (G3): the project layer's defaults.model_grades states the grade every repository of the project runs, and an entry written here never decides it — the merge drops it and records it as ignored (internal/policy's tightenGrades, which `fugaro validate` and a run print), so this block says which model the repository would have run, not what a run uses. Writing it is not an error and changes no run. Fugaro before 0.24.0 refuses the key. The file is decoded strictly, so a job image older than the release that reads it fails at bootstrap on a key its runner does not know: `fugaro update --repo` refuses to deploy such a job before any cloud effect, and `fugaro run` refuses the launch from a checkout of the repository.",
+      "properties": {
+        "strong": { "$ref": "#/$defs/craft", "description": "the ladder's rung above the run's own model: what its coder becomes and what the merge judge runs. The project's value wins; this entry is recorded as ignored." },
+        "strongest": { "$ref": "#/$defs/craft", "description": "the model a critical-path pull request, Critical rigor or Hotfix runs. The project's value wins; this entry is recorded as ignored." }
       }
     },
     "workflows": {

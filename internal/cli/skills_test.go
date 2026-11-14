@@ -89,7 +89,10 @@ func init() {
 		"runs[].run", "runs[].repo", "runs[].status", "runs[].stage", "runs[].reason", "runs[].halt", "runs[].pr_url",
 		"runs[].branch", "runs[].outcome", "runs[].created", "runs[].cost", "runs[].cost.route_by", "runs[].cost.reported_usd",
 		"runs[].terminal", "runs[].settled", "runs[].base_branch", "runs[].stale_draft", "runs[].draft_fallback", "runs[].pr_status_at",
-		"runs[].launched_by", "runs[].failure_class")
+		"runs[].launched_by", "runs[].failure_class",
+		// The state of the pull request a row carries, which the working
+		// skill's status reference reads to say which runs wait on a merge.
+		"runs[].pr_state")
 	// The working skill's status reference sends a reader to --group-by and
 	// names the block it adds, so the block's own key is held to lsDoc's --
 	// beside the rows, never instead of them, and only when a grouping was
@@ -196,7 +199,11 @@ var notFields = []string{
 	"tool_error",        // a value of a log entry's event
 	"claude_accounts",   // a local-config key (never in --json output: it is operator-only and never published)
 	"agent.oauth_token", // a fugaro.yaml key, not a JSON output field
-	"base_rev",          // a key of the patch document a session sends, not a field of any --json output
+	// The two IAM lists a machine's own project config holds: `fugaro user
+	// ls --json` names its own copies run_operators and admins, and the
+	// working skill names the config keys to say what `user add` writes.
+	"terraform.operators", "terraform.admins",
+	"base_rev", // a key of the patch document a session sends, not a field of any --json output
 }
 
 var fieldTokenRE = regexp.MustCompile("`([a-z][a-z0-9]*(?:(?:_[a-z0-9]+)+|(?:\\.[a-z][a-z0-9_]*(?:\\[\\])?)+)(?:\\.[a-z][a-z0-9_]*)*)`")

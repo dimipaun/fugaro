@@ -5,9 +5,12 @@ import (
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/escalation"
 	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // applyRouting rewrites the run's Claude pins through the project's routing
@@ -167,6 +170,148 @@ func (r *run) applyRouting(pp *projectpolicy.Policy, found bool) error {
 			return fmt.Errorf("routing.claude names %s, and this run cannot resolve its route: the switch routes nothing rather than sending the call direct (D1b)", model)
 		}
 		p.set(sent)
+	}
+	return nil
+}
+
+// applyGrade moves the run onto the model grade its task named
+// (task.Spec.ModelGrade, E4; G11).
+//
+// A task names a grade and nothing else: the model and the credential that
+// grade runs are the project layer's to say, and the merge's first layer — the
+// ceiling, which is the owner's published policy node or the copy of his
+// project layer this job carries (policyCeiling, and policy.tightenGrades,
+// which records every later layer's attempt instead of taking it) — is the
+// only layer that fills r.policy.Grades. So a repository's file and the task
+// itself cannot reach a model or a credential through this field even by
+// writing one: the value is looked up in the project's own table or the run
+// refuses, which is what makes the two halves of a grade one choice rather
+// than a model the ladder chose and a credential the caller chose.
+//
+// A grade the project sets nothing for halts the run here, in bootstrap,
+// before a credential is built and before a pin moves. The ladder ships no
+// default for either name (D2039): a rung that reached for one nobody set has
+// to ask the owner to set it, never run on a model he did not choose.
+//
+// The write lands in the coder's *own* slot (agent.models.coder) rather than
+// in agent.model, the one place a pin is set by hand instead of through
+// pinSlots. That slot is what the judge stage pins — stageRole gives the judge
+// the coder's role, since a registered step's calls are charged to a stage
+// with no role of its own — so a single write moves the coder's passes and the
+// judge's, which is the whole of "one stronger single pass"
+// (TestRoutingGradeAppliesToCoderAndJudge). The reviewer and the background
+// model fall back to agent.model, and a grade is a model the ladder reserved
+// for one pass, not for every stage that named none.
+//
+// A grade that names no credential writes none: policy.Grade.Access is "" for
+// the project's default credential (D1624), and the run's own coder craft — a
+// repository may send one craft out on one of the owner's credentials (D1628)
+// — is a choice the grade is silent about, not one it revokes.
+//
+// It runs before the switch and before the levels (resolvePolicy). A grade
+// written after the switch would be a model the switch never judged: an owner
+// who routes the model a grade names would find the run sending it direct. A
+// grade written after the levels would leave level 1, which runs the coder's
+// model, on the model the grade replaced.
+func (r *run) applyGrade() error {
+	g := string(r.spec.ModelGrade)
+	if g == "" {
+		return nil
+	}
+	if !escalation.KnownGrade(r.spec.ModelGrade) {
+		return fmt.Errorf("this task's model_grade is %q: a task names a grade rather than a model or a credential (G11), and the project layer is what resolves one to a model and a credential. Name one of %s, or leave it empty for the model the run's own configuration gives this repository (agent.models.coder)", g, task.GradeList())
+	}
+	grade, ok := r.policy.Grades[g]
+	if !ok || grade.Model == "" {
+		return fmt.Errorf("this task runs at the model grade %q and this project sets no such grade: a grade is the project layer's to name and no default ships for either (D2039), so the run refuses here rather than pick a model the owner never chose. Set defaults.model_grades.%s in the project layer and publish it (fugaro project policy publish), or launch the task without a model_grade", g, g)
+	}
+	a := &r.cfg.Agent
+	a.Models.Coder = grade.Model
+	// What the write lands beside: a recipe may map one role onto the other
+	// (roles:, ApplyRoles, which bootstrap has applied already). The grade is
+	// the task's own model for one rung and the mapping is the repository's
+	// standing default, so the grade stands — the precedence a challenger arm's
+	// coder model already has over the mapping (shadow.go, D555). The mapping
+	// roles: {reviewer: coder} copies the coder's model, so it is applied again
+	// here and the reviewer follows the coder onto the grade; roles: {coder:
+	// reviewer} — premium's "coder on the reviewer's model" — names the coder's
+	// model itself and cannot hold beside a grade, so the mapping is the half
+	// that gives way and the run says so in its log, the way it says a model the
+	// mapping overrides (runner.go, ApplyRoles).
+	if r.rcp != nil && r.rcp.CoderIsReviewer {
+		r.d.Log.Info("the task's model grade replaces the coder model the recipe's roles mapping set",
+			"recipe", r.rcp.Name, "grade", g, "coder", grade.Model)
+	} else if r.rcp != nil && r.rcp.ReviewerIsCoder {
+		ApplyRoles(a, r.rcp)
+	}
+	if grade.Access != "" {
+		a.Crafts.Coder.Access = grade.Access
+	}
+	return nil
+}
+
+// applyVision rewrites the run's coder-role pins onto the model the
+// configuration names for images (agent.models.vision), for the pins whose own
+// model cannot read an image (V7, D2000, D2002).
+//
+// Whether a model can read an image is one fact about it — its price row's
+// image rate — and the rewrite is what makes that fact reach the stage. Claude
+// Code reads the picture the task names, puts it into its next request as an
+// image block, and the gateway refuses the whole call (forward.go's image
+// rule), which fails the stage and throws away what the owner paid for it; a
+// stage pinned to the vision model makes that call one the gateway admits and
+// prices. That is the issue's own failure, and why the slot is a pin rather
+// than a hint (D2007).
+//
+// It writes the model into the run's own configuration, exactly as applyRouting
+// does and for the same reason: the run then reads one answer everywhere — the
+// pins the agent is given, the levels resolved just after this, the gateway's
+// routes (gatewayRoutes), the table its calls are priced by, the stage's own
+// report (StageTiming.Model) and the plan built from those levels. A consumer
+// that resolved on its own would leave some of them naming a model the run does
+// not run, and a stage whose pins named one model and whose gateway set named
+// another would have every call of it refused as not pinned.
+//
+// prices is the table the run was resolved against (resolvePolicy's own
+// Spend.Prices, assigned before it calls this), which is the table the image
+// question is asked of: modelTakesImages, the run's one answer to it, reads
+// that table off the run, so the rewrite and the gateway's own rule (V4, F15)
+// cannot disagree about which models can read an image.
+//
+// Two pins are deliberately out of reach. A coder whose own price row carries
+// an image rate is left alone (D2016): it reads the picture itself, and a
+// rewrite would move the run's calls to a second model for nothing. The
+// reviewer is never rewritten (D2004): its stage reads the run's own work
+// rather than the picture the task is about, and the model that judges the work
+// is the owner's choice, not one to be made by a fact about images.
+func (r *run) applyVision(prices *pricing.Table) error {
+	vision := r.cfg.Agent.VisionModel()
+	if vision == "" {
+		// No model to move a stage onto (V1). V5's check is what refuses the
+		// run such a pin would save, before any stage spends.
+		return nil
+	}
+	// A provider coder's haiku role is served by the coder's own model, not by
+	// Claude Code's built-in Anthropic one (config.EffectiveBackground), so the
+	// model that fallback answered with is read before the coder moves: a coder
+	// moved onto a model no route claims would otherwise leave the haiku role
+	// with nothing — the hidden Anthropic call no pin allows, which is the
+	// reason the fallback is there. The background is no slot of this rewrite,
+	// and where it keeps a model of its own it is left alone entirely.
+	background := r.backgroundModel()
+	for _, s := range r.visionSlots() {
+		model := s.get()
+		// A slot pinned to nothing runs Claude Code's own default, an Anthropic
+		// model with an image rate in every configuration this program ships
+		// (denyBinaryReads' own rule): it stays unpinned rather than gaining a
+		// pin the owner did not write.
+		if model == "" || r.modelTakesImages(model) {
+			continue
+		}
+		s.set(vision)
+	}
+	if a := &r.cfg.Agent; a.Models.Background == "" && background != "" && r.backgroundModel() == "" {
+		a.Models.Background = background
 	}
 	return nil
 }
@@ -405,8 +550,8 @@ func (r *run) routingSwitch() *config.Routing {
 	return r.projPolicy.policy.Routing
 }
 
-// pinSlot is one of the run's three pins: the model the configuration answers
-// for it, and where that answer is written. A pin is set through the field its
+// pinSlot is one of the run's pins: the model the configuration answers for
+// it, and where that answer is written. A pin is set through the field its
 // effective model came from, so an agent that names only agent.model keeps its
 // coder pin there rather than gaining an explicit one (config.Agent.ModelFor).
 type pinSlot struct {
@@ -415,51 +560,122 @@ type pinSlot struct {
 }
 
 // pinSlots are the run's pins: what the agent is given as the coder, the
-// reviewer and the background model — the three of PinnedModels' order, which
-// every rule that judges a pin reads — followed by each review level's own
-// model, which is a pin of the level's stage and of nothing else (L4.5).
+// reviewer and the background model, and the vision slot — PinnedModels'
+// order, which every rule that judges a pin reads (V1) — followed by each
+// review level's own model, which is a pin of the level's stage and of
+// nothing else (L4.5).
 func (r *run) pinSlots() []pinSlot {
 	a := &r.cfg.Agent
 	// A role reads models.<role>, else agent.model: the rewrite goes back to
 	// whichever of the two answered, so the effective model moves and nothing
 	// else about the configuration does.
-	slot := func(role *string, roleModel config.Role) pinSlot {
-		return pinSlot{
-			get: func() string { return a.ModelFor(roleModel) },
-			set: func(m string) {
-				if *role == "" {
-					a.Model = m
-					return
-				}
-				*role = m
-			},
-		}
-	}
 	bg := pinSlot{get: func() string { return a.Models.Background }, set: func(m string) { a.Models.Background = m }}
-	slots := []pinSlot{slot(&a.Models.Coder, config.RoleCoder), slot(&a.Models.Reviewer, config.RoleReviewer), bg}
+	slots := []pinSlot{r.roleSlot(&a.Models.Coder, config.RoleCoder), r.roleSlot(&a.Models.Reviewer, config.RoleReviewer), bg, r.visionSlot()}
 	for _, s := range reviewStages {
 		// A review level's own model is a pin of its own (L4.5): it is the
 		// model the level's stage runs, and a switch naming it has to move it
 		// exactly as it moves the slot the level sits in.
-		block := r.levelBlockFor(s.level)
-		slots = append(slots, pinSlot{
-			get: func() string {
-				if *block == nil {
-					return ""
-				}
-				return (*block).Model
-			},
-			set: func(m string) { r.setLevelModel(s.level, m) },
-		})
+		slots = append(slots, r.levelSlot(s.level))
 	}
 	if r.shadow {
 		// The champion's coder is pinned nowhere in a challenger arm, but the
 		// plan is derived from it (bootstrap): the switch rewrites it as it
 		// would have rewritten the champion's own pin, so both arms' plans
 		// answer FirstLineOn from the same routed ID.
-		slots = append(slots, pinSlot{get: func() string { return r.championCoder }, set: func(m string) { r.championCoder = m }})
+		slots = append(slots, r.championSlot())
 	}
 	return slots
+}
+
+// roleSlot is the pin slot of one of the run's roles: it reads models.<role>,
+// else agent.model, and writes back to whichever of the two answered, so a
+// rewritten pin moves the effective model and nothing else about the
+// configuration does (config.Agent.ModelFor).
+func (r *run) roleSlot(role *string, roleModel config.Role) pinSlot {
+	a := &r.cfg.Agent
+	return pinSlot{
+		get: func() string { return a.ModelFor(roleModel) },
+		set: func(m string) {
+			if *role == "" {
+				a.Model = m
+				return
+			}
+			*role = m
+		},
+	}
+}
+
+// visionSlot is the run's vision slot as a pin (V1, D2007): it reads the
+// model the configuration names for images and writes it back to the same key,
+// so the routing switch rewrites it exactly as it rewrites the other pins. The
+// slot has to be here and not only in applyVision: the rewrite moves a stage
+// onto the model this key names (V7), and a model the switch would have routed
+// but never saw — a Claude ID on a project that routes Claude to a provider —
+// would send the stage's call to Anthropic instead of the route, on an ID no
+// route claims and a credential that cannot serve it (D2008).
+func (r *run) visionSlot() pinSlot {
+	a := &r.cfg.Agent
+	return pinSlot{get: func() string { return a.Models.Vision }, set: func(m string) { a.Models.Vision = m }}
+}
+
+// levelSlot is the pin slot of a review level's own model (L4.5): the model the
+// level's stage runs when a layer named it one, written into the level's own
+// block so every reader of it — stageModel, the routes, the priced call — sees
+// the resolved model.
+func (r *run) levelSlot(level policy.Level) pinSlot {
+	block := r.levelBlockFor(level)
+	return pinSlot{
+		get: func() string {
+			if *block == nil {
+				return ""
+			}
+			return (*block).Model
+		},
+		set: func(m string) { r.setLevelModel(level, m) },
+	}
+}
+
+// championSlot is the champion's coder in a challenger arm (pinSlots).
+func (r *run) championSlot() pinSlot {
+	return pinSlot{get: func() string { return r.championCoder }, set: func(m string) { r.championCoder = m }}
+}
+
+// visionSlots are the run's coder-role pins, which are the pins applyVision
+// moves onto the vision model: the coder's own slot, and the level whose stage
+// runs in it — review_first is the one review stage whose role is the coder's
+// (reviewStages, config.StageRole). In a challenger arm the champion's coder is
+// one of them too: the two arms' plans are derived from it (plan.go), so an arm
+// that moved its own pin and left the champion's would have the arm's plan
+// answer FirstLineOn about a model its own coder no longer runs, and the two
+// arms would stop being comparable (D555).
+//
+// The reviewer's slot and levels 2 and 3 are never here (D2004), and neither
+// is the background model: no review stage runs them for the task's picture.
+func (r *run) visionSlots() []pinSlot {
+	slots := []pinSlot{r.coderSlot()}
+	for _, s := range reviewStages {
+		if s.role == config.RoleCoder {
+			slots = append(slots, r.levelSlot(s.level))
+		}
+	}
+	if r.shadow {
+		slots = append(slots, r.championSlot())
+	}
+	return slots
+}
+
+// coderSlot is the coder's own pin as applyVision moves it: it reads the
+// coder's effective model (models.coder, else agent.model) and writes
+// models.coder, where the routing switch's roleSlot writes agent.model back
+// when the file named no coder of its own. That difference is D2004's:
+// agent.model is the reviewer's and the background's fallback too
+// (config.Agent.ModelFor, config.EffectiveBackground), so a rewrite written
+// through it would move the reviewer — the model that judges the run's work —
+// on a run that named no reviewer, which is the one thing this rewrite is not
+// allowed to do. agent.model itself is left exactly as the file wrote it.
+func (r *run) coderSlot() pinSlot {
+	a := &r.cfg.Agent
+	return pinSlot{get: func() string { return a.ModelFor(config.RoleCoder) }, set: func(m string) { a.Models.Coder = m }}
 }
 
 // The review levels' own models (L4.5). A stage pins one of the run's role

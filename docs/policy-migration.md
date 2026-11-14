@@ -15,7 +15,7 @@ the owner had edited into the node by hand (`allow_repos`, `clone_urls`,
 
 ## What `fugaro update` does to an older node
 
-`fugaro update` (and `fugaro upgrade`) migrates the node **in place**, never
+`fugaro update` migrates the node **in place**, never
 deleting it:
 
 1. it reads the node and the ETag it was read at;
@@ -154,16 +154,16 @@ this rule exists to prevent.
 A project policy is read under a deployed security rules generation, so the
 migration's write is gated on it (`requirePolicyRules`): the same run deploys
 the generation this Fugaro carries **before** the write — `fugaro update`'s
-rules stage, and `fugaro upgrade`'s rules step, both of them one deploy of one
-document — so an installation whose deployed rules predate the policy model
+rules stage, one deploy of one document — so an installation whose deployed
+rules predate the policy model
 reaches the node with the one command, instead of meeting the gate and being
 sent to a second one. A node already at this version is left alone whatever the
 deployed rules are.
 
-`fugaro upgrade --check` does not read the node at all: the node lives in the
+`fugaro update --check` does not read the node at all: the node lives in the
 project's Realtime Database and reading it needs credentials, and `--check`'s
 own promise is that it makes no cloud call. It says the policy step cannot tell
-instead, and the upgrade without `--check` is what migrates it.
+instead, and the update without `--check` is what migrates it.
 
 The write is a writer's write, so it holds the same posture a publish does: a
 node carrying top-level keys this Fugaro does not model is refused, untouched,
@@ -173,8 +173,8 @@ does the migration.
 
 Two refusals stay put on purpose. A coding agent's session never writes the
 policy (every cloud write of this CLI is the operator's, in their own terminal):
-`fugaro update` there exits 1 with the checkout left for the user, and
-`fugaro upgrade`'s rules and policy steps are skipped, each naming the command
+`fugaro update` there exits 1 with the checkout left for the user, and its
+rules and policy steps are skipped, each naming the command
 to run in their own terminal — an expected exit, not a failure. The same holds
 for every command that writes the node by hand: `fugaro project policy publish`
 (including `--delete`, which takes the policy away), and `fugaro project repos

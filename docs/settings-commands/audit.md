@@ -239,7 +239,7 @@ Agent-refusal inconsistencies:
    - **Migration:** the first `update` on an installation whose layer is published and has no local file *seeds* the local file from the published bytes, shows it, and confirms. Without this, the first `rigor set` or `settings set --layer project` would fail with "no local file", which would be a manual step the HARD RULE forbids.
    - `config publish` defaults its FILE argument to that path.
    - `config layer` stops requiring a checkout when `--project` is given.
-3. **`fugaro update` re-converges each recorded repository** whose job's provider or ceiling copy differs (D787, answered). `fugaro upgrade` already computes this drift (upgrade_cloud.go:322-428).
+3. **`fugaro update` re-converges each recorded repository** whose job's provider or ceiling copy differs (D787, answered). `fugaro update` already computes this drift (upgrade_cloud.go:322-428).
 4. **The node-only blocks get a local source (SD5).** Add local config blocks `credentials:` and `clone_urls:`, published by stage 1. The first `update` imports the node's current values into the local file (diff plus confirm), so nothing is lost and no console edit is needed again.
 
 ### 4B. One unified read: `fugaro settings`

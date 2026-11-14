@@ -166,8 +166,8 @@ func accountMembersOn(t *testing.T, db *gcpfake.RTDB) (string, map[string]string
 	return account, stages
 }
 
-// ceilingOn is nodeCeiling for a database held without a fixture — the upgrade
-// door's tests hold the fake itself. The database hands numbers back as
+// ceilingOn is nodeCeiling for a database held without a fixture — the tests
+// that hold the fake itself. The database hands numbers back as
 // json.Number when the write came over HTTP and as float64 when the fake was
 // seeded directly, and both shapes are read here.
 func ceilingOn(t *testing.T, db *gcpfake.RTDB) float64 {
@@ -1197,6 +1197,45 @@ func accountChoiceFixture(t *testing.T) *projectFixture {
 	return f
 }
 
+// accountAliasConfigYAML is accountChoiceConfigYAML with both choice keys naming
+// an alias of the account instead of the account itself, which is the shape
+// D2091 admits and a repoint moves in one edit.
+const accountAliasConfigYAML = "claude_accounts:\n  team-b:\n    allow_data_to: [acme/app]\n" +
+	"claude_account_aliases:\n  reviewer: team-b\n" +
+	"default_claude_account: reviewer\n" +
+	"stages:\n  review:\n    claude_account: reviewer\n"
+
+// TestUpdateReportsNoDriftForAnAlias is the update stage's own comparison — the
+// one behind the `will-do` line and the publish it decides — on a file whose
+// choice keys name an alias. The comparison states the value that reaches the
+// node, which is the account and never the alias (docs/account-aliases, F4,
+// D2090), so the node the publish wrote and the file agree and the stage has
+// nothing to do.
+//
+// Red on the comparison alone: the node carries team-b because the publisher
+// resolves, while the comparison would read reviewer out of the file, and every
+// run of `fugaro update` would report a drift that is permanent and false,
+// rewriting the node to no effect (HARD RULE, CLAUDE.md).
+func TestUpdateReportsNoDriftForAnAlias(t *testing.T) {
+	f := accountChoiceFixture(t)
+	rewriteProjectConfig(t, f, accountAliasConfigYAML)
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	if account, stages := accountMembersOn(t, f.db); account != "team-b" || stages["review"] != "team-b" {
+		t.Fatalf("the publish wrote %q / %v, want the account the alias stands for", account, stages)
+	}
+
+	h := newMigrationRig(t, f, &initOptions{})
+	st, err := h.s.Check(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != initflow.Done {
+		t.Fatalf("a node carrying the account the file's alias stands for is %s %q, want nothing to do: the comparison reads the alias, not the account it resolves to", st.State, st.Detail)
+	}
+}
+
 // TestUpdateConvergesANodeThatLacksTheAccountChoiceKeys is B7's own test and
 // the owner's rule of 2026-10-30 (HARD RULE, CLAUDE.md) at this state: the node
 // at the shared path carries no account member, this machine's file sets both
@@ -1661,55 +1700,6 @@ func TestUpdatePublishUnchangedNodeAsksNothingNew(t *testing.T) {
 	}
 	if got := nodeCeiling(t, f); got != 5 {
 		t.Errorf("the node's ceiling is %v, want the untouched 5", got)
-	}
-}
-
-// TestUpgradePublishLooserNodeRefusesYesAlone: the other door that writes a
-// ceiling is `fugaro upgrade`'s policy step, and it runs the same confirmation.
-// --yes is the flag the whole upgrade is run with, so this is where a loosening
-// publish would be confirmed by it and nowhere else — the step refuses, names
-// the member that loosens and the command that reaches the same publish at a
-// terminal, and leaves the node where it was.
-func TestUpgradePublishLooserNodeRefusesYesAlone(t *testing.T) {
-	noTerminal(t)
-	old := selfCommand
-	selfCommand = func() string { return "fugaro" }
-	t.Cleanup(func() { selfCommand = old })
-
-	r := upgradeRigWithGitHubAppID(t)
-	db := gcpfake.NewRTDB(t)
-	db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "project": initProjectName, "gcp_project": initProject, "version": 1})
-	db.Set(budget.PathProject, initProjectName)
-	db.Set(budget.PathMode, budget.ModeEnforce)
-	db.Set(budget.PathLimits, map[string]any{"maxReserveMicros": 5_000_000})
-	// The local project config states a per-run ceiling above the published
-	// one, and the node is already at this version under deployed rules: the
-	// whole of this run's write would be the loosening publish.
-	r.appendConfig(t, "budget: { mode: enforce, per_run_usd: 7, rtdb_url: "+db.URL+", firebase_project: \""+initProject+"\" }\n")
-	db.SetRules([]byte(`{"rules":{".read":false}}`))
-	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
-	db.Set(projectpolicy.PathShared(), v3Node(map[string]any{
-		"version": projectpolicy.Version,
-		"budget":  map[string]any{"mode": "enforce", "per_run_usd": 5},
-	}))
-
-	got, out := runUpgradePolicyStep(t, r.root)
-	if got.state != stepFailed || got.code != ExitUserError {
-		t.Fatalf("--yes alone on the upgrade door is %s (exit %d): %s\n%s", got.state, got.code, got.reason, out)
-	}
-	for _, want := range []string{"budget.per_run_usd", "5", "7", "fugaro update", "needs a real terminal"} {
-		if !strings.Contains(got.reason, want) {
-			t.Errorf("the refusal does not say %q: %s", want, got.reason)
-		}
-	}
-	// The sentence is said once: what the step printed and the reason the
-	// command reports are one block to the person reading them, and a block
-	// that repeats the sentence reads as two findings.
-	if n := strings.Count(out+got.reason, "does not stand in"); n != 1 {
-		t.Errorf("the loosening sentence appears %d times in what the upgrade prints, want once:\n%s%s", n, out, got.reason)
-	}
-	if got := ceilingOn(t, db); got != 5 {
-		t.Errorf("the node's ceiling is %v, want the published 5: the upgrade step wrote the loosening", got)
 	}
 }
 
@@ -2701,5 +2691,105 @@ func TestUpdateTakesThePublishedBlockAwayWhenTheConfigWritesAnEmptyOne(t *testin
 	// rewrite it (D790, §9).
 	if block := localCloneURLBlock(t, f); block == nil || len(block) != 0 {
 		t.Errorf("the file reads back as %v, want the written block with no entry", block)
+	}
+}
+
+// imageTokensPrices is the local config's model_prices block with one entry
+// carrying the per-image token ceiling V2 added (D2001): the member
+// policyImageTokensRefusal is about. The model is one the built-in table
+// knows, so the block is the shape a publish accepts everywhere else.
+const imageTokensPrices = "model_prices:\n  claude-sonnet-5-5: { input_per_m: 2, output_per_m: 10, image_tokens: 2000 }\n"
+
+// imageTokensPolicy is that block as a node: the member is judged on the node
+// about to be published and not on the config that states it, so a test has to
+// be able to hand one in directly — that is the state a machine whose config
+// says nothing about model_prices meets when the published node carries it.
+func imageTokensPolicy() *projectpolicy.Policy {
+	rate, tokens := 2.0, int64(2000)
+	return &projectpolicy.Policy{Prices: projectpolicy.Prices{
+		"claude-sonnet-5-5": {InputPerM: &rate, OutputPerM: &rate, ImageTokens: &tokens},
+	}}
+}
+
+// TestImageTokensInAPolicyIsRefusedForAnOlderImage asks the guard directly and
+// through the door both publish paths take. While the installation's base image
+// predates visionSince the member is refused, naming the models that carry it,
+// the release and the image to move — an older runner decodes the published
+// node strictly and refuses the whole node, so every run of the project would
+// fail until someone removed the member. The release itself, one above it, an
+// installation with no base image and one whose base image is not a release all
+// publish: the gate is the member's and the release's, not model_prices.
+//
+// The door's own half is the second fixture: without the call
+// policyNodeForPublish makes, the publish builds the node and returns it, and
+// nothing else in the package asks about the member.
+func TestImageTokensInAPolicyIsRefusedForAnOlderImage(t *testing.T) {
+	below, above := shiftRelease(t, visionSince, -1), shiftRelease(t, visionSince, 1)
+	older := "ghcr.io/dimipaun/fugaro-base:" + below
+	rate := 2.0
+	priced := imageTokensPolicy()
+	unpriced := &projectpolicy.Policy{Prices: projectpolicy.Prices{
+		"claude-sonnet-5-5": {InputPerM: &rate, OutputPerM: &rate},
+	}}
+	for _, tc := range []struct {
+		name    string
+		policy  *projectpolicy.Policy
+		ref     string
+		refused bool
+	}{
+		{"an older release", priced, older, true},
+		{"the release itself", priced, "ghcr.io/dimipaun/fugaro-base:" + visionSince, false},
+		{"one above", priced, "ghcr.io/dimipaun/fugaro-base:" + above, false},
+		{"no base image at all", priced, "", false},
+		{"a base image that is not a release", priced, "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c", false},
+		{"a node that prices no images", unpriced, older, false},
+		{"no node at all", nil, older, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := policyImageTokensRefusal(tc.policy, tc.ref)
+			if !tc.refused {
+				if err != nil {
+					t.Fatalf("err = %v, want no refusal", err)
+				}
+				return
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v, want refused", err)
+			}
+			for _, want := range []string{"claude-sonnet-5-5", "image_tokens", "fugaro " + visionSince + " or later", older + " is release " + below, "Run fugaro update in your own terminal window"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("%v lacks %q", err, want)
+				}
+			}
+		})
+	}
+	// The door: the same member reaching the node from the config the operator
+	// states, in an installation whose base image is older than the release.
+	f := newProjectFixture(t, imageTokensPrices+"base_images: {base: "+older+"}\n")
+	lc, err := localcfg.Load(f.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _, _, err := policyNodeForPublish(t.Context(), lc, &projectpolicy.Policy{}, nil, false, false, false)
+	if err == nil {
+		t.Fatalf("the publish built the node from a config pricing images: %s", body)
+	}
+	for _, want := range []string{"image_tokens", "fugaro " + visionSince + " or later"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if f.db.Value(projectpolicy.PathShared()) != nil {
+		t.Error("the refused publish wrote the node anyway")
+	}
+	// The same publish, in an installation whose base image is this release's:
+	// the member is what the gate is about, and it goes in.
+	g := newProjectFixture(t, imageTokensPrices+"base_images: {base: ghcr.io/dimipaun/fugaro-base:"+visionSince+"}\n")
+	lc, err = localcfg.Load(g.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := policyNodeForPublish(t.Context(), lc, &projectpolicy.Policy{}, nil, false, false, false); err != nil {
+		t.Fatalf("the publish of a current installation was refused: %v", err)
 	}
 }

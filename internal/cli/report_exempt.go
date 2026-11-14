@@ -25,9 +25,9 @@ package cli
 //   - exemptAnswers: everything else, and each reason says which of two things
 //     it is. Most print one answer — a code, a path, a preview, a help screen,
 //     a live screen — and there is no run to give an account of. Some print an
-//     account of their own, by hand: `upgrade` prints a block per checkout and
-//     a summary under it, `project sync` and `workspace add` print what they
-//     wrote. Those are the migration's remaining work rather than a design
+//     account of their own, by hand: `project sync` and `workspace add` print
+//     what they wrote. Those are the migration's remaining work rather than a
+//     design
 //     decision, and they are listed here with the reason saying so rather than
 //     called listings, which they are not.
 //
@@ -52,24 +52,28 @@ var reporterCommands = map[string]string{
 	"allow-delete":   "allow-delete",
 	"backlog add":    "backlog-add",
 	"backlog index":  "backlog-index",
-	"budget kill":    "budget-kill",
-	"budget resume":  "budget-resume",
-	"budget set":     "budget-set",
-	"cancel":         "cancel",
-	"config publish": "config-publish",
-	"creds set":      "creds-set",
-	"image build":    "image-build",
-	"image refresh":  "image-refresh",
-	"managed apply":  "managed-apply",
-	"managed flag":   "managed-flag",
-	"managed unflag": "managed-unflag",
-	"reaper":         "reaper",
-	"restore":        "restore",
-	"run":            "run",
-	"secrets rm":     "secrets-rm",
-	"secrets set":    "secrets-set",
-	"setup":          "setup",
-	"update":         "update",
+	// One entry per mutating command, and the raise is one: it rewrites a
+	// run's stored task and records the raise beside it, so its account is a
+	// step like the three below it rather than a listing (D1352).
+	"budget chain raise": "budget-chain-raise",
+	"budget kill":        "budget-kill",
+	"budget resume":      "budget-resume",
+	"budget set":         "budget-set",
+	"cancel":             "cancel",
+	"config publish":     "config-publish",
+	"creds set":          "creds-set",
+	"image build":        "image-build",
+	"image refresh":      "image-refresh",
+	"managed apply":      "managed-apply",
+	"managed flag":       "managed-flag",
+	"managed unflag":     "managed-unflag",
+	"reaper":             "reaper",
+	"restore":            "restore",
+	"run":                "run",
+	"secrets rm":         "secrets-rm",
+	"secrets set":        "secrets-set",
+	"setup":              "setup",
+	"update":             "update",
 }
 
 // builtLogName is one reporter command whose log name is not a literal at the
@@ -170,6 +174,7 @@ var exemptListings = map[string]exemptListing{
 	"runs show":            {"a listing: one run's chain and what is left of its limits, table or document", true},
 	"runs stats":           {"a listing: run records aggregated by the person who started each run", true},
 	"runs summary":         {"a listing: the window's run count and spend, without reading a run object", true},
+	"runs watch":           {"a listing: the triage the daemon would decide about the window's long runs", true},
 	"seats":                {"a listing: the estimate a subscription's seat rule would count, table or document", true},
 	"secrets ls":           {"a listing: the secrets' names, scope and versions, never a value", true},
 	"secrets shared ls":    {"a listing: the project-shared secrets' names and dates, never a value", true},
@@ -177,7 +182,7 @@ var exemptListings = map[string]exemptListing{
 	"security paths":       {"a listing: the pattern list in force, and a path's answer against it", true},
 	"settings":             {"a listing: every setting, what decides it and its default, table or document", true},
 	"settings get":         {"a listing: one setting, what decides it and its default, table or document", true},
-	"user ls":              {"a listing: the installation's launchers and operators, as a table or a document", true},
+	"user ls":              {"a listing: the installation's grants, and the role held in a repository, table or document", true},
 	"workspace login":      {"a listing: the sign-in this project's pin asks for, which is one answer", true},
 	"workspace ls":         {"a listing: the workspaces this machine's project configs name, table or document", true},
 	"workspace show":       {"a listing: one workspace from this machine's own files, as a table or a document", true},
@@ -257,8 +262,10 @@ var exemptAnswers = map[string]string{
 	"settings unset":         "removes one setting from one of the three documents, and prints the row it dropped",
 	"stats runs":             "publishes per-recipe percentiles over a window, and prints the numbers it published",
 	"update-skills":          "pins the Fugaro plugin in the checkout's .claude/settings.json, and prints the pin",
-	"upgrade":                "brings checkouts up, printing its own account of each by hand rather than through the reporter",
 	"user add":               "adds one person to the installation's launchers or operators, and prints the entry",
+	"user offboard":          "takes one member off the installation — their roster grants and the secrets they stored — and prints what it dropped",
+	"user grant":             "grants one person a role at a scope in the installation's grants node, and prints the pair it stored",
+	"user revoke":            "takes one role and scope pair away from one person, and prints the pair it dropped",
 	"user rm":                "removes one person from the installation's launchers or operators, and prints what it dropped",
 	"validate":               "checks a fugaro.yaml against the schema and the repository, and prints what it found",
 	"verify":                 "runs and records the repository's build, test or lint command, which is the record itself",

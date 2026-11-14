@@ -35,7 +35,38 @@ func withCondFor(after map[string]any, typ, role string, person bool) {
 	case typ == "google_project_iam_member" && role == "roles/batch.jobsEditor":
 		after["project"] = "proj-1"
 		after["condition"] = []any{map[string]any{"title": gcp.LauncherJobsConditionTitle, "expression": gcp.LauncherJobsCondition("proj-1", testCover.Region), "description": gcp.LauncherJobsConditionDescription}}
+	case typ == "google_project_iam_member" && role == dynamicSecretsRole(IntakeSecretsRole):
+		after["project"] = "proj-1"
+		after["condition"] = dynamicSecretsCondition()
+	case typ == "google_project_iam_member" && role == "roles/secretmanager.secretAccessor":
+		// The service's prefix accessor (D1931, DS2.2): the same fence, and it
+		// is a PROJECT grant, so dynamicSecretsGrant is what checks it.
+		after["project"] = "proj-1"
+		after["condition"] = dynamicSecretsCondition()
+	case typ == "google_storage_bucket_iam_member" && role == "roles/storage.objectViewer" && strings.HasPrefix(str(after["member"]), "serviceAccount:"+IntakeAccountID+"@"):
+		// The intake's one bucket read: objectViewer on the derived admin
+		// list's single object, under DS2.0's condition — the object, byte for
+		// byte, from the builder the check reads (intakeAdminListGrant).
+		after["condition"] = []any{map[string]any{"title": gcp.IntakeAdminListConditionTitle, "expression": IntakeAdminListCondition("fugaro-runs-proj-1"), "description": nil}}
+	case typ == "google_project_iam_member" && role == dynamicSecretsRole(SecretListerRole):
+		// ... and the lister, which must carry NO condition: Check 510 refused
+		// secretmanager.secrets.list under the fence, which is why the
+		// permission is a role of its own (dynamicSecretsGrant requires the
+		// empty condition list).
+		after["project"] = "proj-1"
 	}
+}
+
+// dynamicSecretsRole is the full name of one of the dynamic class's custom
+// roles, and dynamicSecretsCondition the class's fence as a plan writes it —
+// the one condition the intake's writes and the service's prefix accessor are
+// both bound under.
+func dynamicSecretsRole(id string) string {
+	return "projects/proj-1/roles/" + id
+}
+
+func dynamicSecretsCondition() []any {
+	return []any{map[string]any{"title": gcp.DynamicSecretNamesConditionTitle, "expression": gcp.DynamicSecretNamesCondition(), "description": nil}}
 }
 
 // deployerCondFor is the condition a project grant of one of the deployer's
@@ -194,7 +225,7 @@ func TestGrantRulesNameOnlyKnownTypesAndRoles(t *testing.T) {
 			t.Errorf("%s has no roles", typ)
 		}
 		for key, w := range row {
-			if w == 0 || w&^(toPeople|toAccounts|toDeployer|toCredentials|toCoordinator|toVerifier|toCatalogCheck|toMCP) != 0 {
+			if w == 0 || w&^(toPeople|toAccounts|toDeployer|toCredentials|toCoordinator|toVerifier|toCatalogCheck|toMCP|toIntake) != 0 {
 				t.Errorf("%s %s: bad principal kinds %d", typ, key, w)
 			}
 			if id, ok := strings.CutPrefix(key, customKey); ok {
@@ -321,6 +352,11 @@ func TestGrantRulesPinnedCells(t *testing.T) {
 	}{
 		// What the modules grant.
 		{project, "projects/proj-1/roles/fugaroLauncher", person, true},
+		// The viewer's read-only job role (RS4, roles.md §4): a person the
+		// review screen lists, and no account of Fugaro's own — the row's
+		// kinds are the whole of its condition, and
+		// TestViewerRoleIsGrantedToListedPeopleAlone reads every one of them.
+		{project, "projects/proj-1/roles/" + ViewerRole, person, true},
 		{project, "roles/datastore.viewer", person, true},
 		// The whole-project inventory's read role, on the operator who runs
 		// the managed apply that makes the read: the installation's own custom
@@ -368,6 +404,7 @@ func TestGrantRulesPinnedCells(t *testing.T) {
 		{project, "roles/iam.serviceAccountUser", person, false},
 		{project, "projects/proj-1/roles/fugaroTokenMinter", person, false},
 		{project, "projects/proj-1/roles/fugaroLauncher", account, false},
+		{project, "projects/proj-1/roles/" + ViewerRole, account, false},
 		{project, "projects/proj-1/roles/fugaroJobRunner", person, false},
 		{project, "roles/datastore.user", person, false},
 		{project, "roles/cloudasset.viewer", account, false},
@@ -608,12 +645,21 @@ func TestCredentialsAccountIsItsOwnPrincipalKind(t *testing.T) {
 	// this test makes deliberate.
 	allowed := map[string]map[string]bool{
 		"google_secret_manager_secret_iam_member": {"roles/secretmanager.secretAccessor": true},
-		"google_project_iam_member":               {customKey + CredentialsDatabaseRole: true},
+		"google_project_iam_member": {
+			customKey + CredentialsDatabaseRole: true,
+			// The dynamic-delivery pair (D1931, DS2.2): the prefix accessor,
+			// which is the class's READ — a project-wide one, under the
+			// name-prefix fence — and the lister it shares with the intake.
+			// Neither is a wider reach than the bundle's accessor: the fence
+			// is what makes it exactly the grammar's containers.
+			"roles/secretmanager.secretAccessor": true,
+			customKey + SecretListerRole:         true,
+		},
 	}
 	for typ, row := range grantRules {
 		for key, w := range row {
 			if (w&toCredentials != 0) != allowed[typ][key] {
-				t.Errorf("%s %s: toCredentials is %v, want %v — the service's account holds the bundle's accessor and its database role, and no other role of the installation", typ, key, w&toCredentials != 0, allowed[typ][key])
+				t.Errorf("%s %s: toCredentials is %v, want %v — the service's account holds the bundle's accessor, its database role and the dynamic class's reader half, and no other role of the installation", typ, key, w&toCredentials != 0, allowed[typ][key])
 			}
 		}
 	}
@@ -770,6 +816,367 @@ func TestCoordinatorAccountIsItsOwnPrincipalKind(t *testing.T) {
 		ch := rc("google_project_iam_member", map[string]any{"member": coordinator, "role": tc.role, "bucket": "fugaro-runs-proj-1"}, map[string]any{}, "create")
 		if got := listed.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); (len(got) == 0) != tc.covered {
 			t.Errorf("listed on the review screen: %s to the coordinator's writer: NotCovered = %q, covered want %v", tc.role, got, tc.covered)
+		}
+	}
+}
+
+// The secrets intake's own account (D1931, DS2.2) is its own kind of principal
+// for the credentials account's reason: as one of FugaroAccounts every
+// toAccounts row would have accepted it, and this is the ONE account of an
+// installation that may create, add a version to and delete its dynamic secret
+// containers — a write reach no job account has, which no `fugaro update`
+// confirmation announced on its behalf. Its rows are the class's three, each of
+// which the cover narrows further (dynamicSecretsGrant reads the fence,
+// intakeAdminListGrant the one object): anything else — a secret's VALUE above
+// all, which is roles/secretmanager.secretAccessor on a container, and the
+// bundle's own accessor with it — is refused and the update that carries one
+// asks its owner. This is DS2.2's red step as a test: the summary's
+// TestIntakeAccountHasNoAccessor reads the module's source for the same fact.
+func TestIntakeAccountIsItsOwnPrincipalKind(t *testing.T) {
+	const intake = "serviceAccount:" + IntakeAccountID + "@proj-1.iam.gserviceaccount.com"
+
+	if slices.Contains(FugaroAccounts, IntakeAccountID) {
+		t.Errorf("the intake is one of FugaroAccounts, so every toAccounts row accepts it: one confirmation would then cover granting the account that writes the project's dynamic secret containers a build account's registry role or a job's vertex role")
+	}
+	// The three rows it may hold, and nothing else.
+	allowed := map[string]map[string]bool{
+		"google_project_iam_member": {
+			customKey + IntakeSecretsRole: true,
+			customKey + SecretListerRole:  true,
+		},
+		"google_storage_bucket_iam_member": {"roles/storage.objectViewer": true},
+	}
+	for typ, row := range grantRules {
+		for key, w := range row {
+			if (w&toIntake != 0) != allowed[typ][key] {
+				t.Errorf("%s %s: toIntake is %v, want %v — the intake holds the class's write role, the shared lister and one object read, and no other role of the installation", typ, key, w&toIntake != 0, allowed[typ][key])
+			}
+		}
+	}
+	for typ, row := range allowed {
+		for key := range row {
+			if grantRules[typ][key]&toIntake == 0 {
+				t.Errorf("%s %s does not accept the intake's account, so the module's own grant of it is refused and no update can cover the plan that turns the intake on", typ, key)
+			}
+		}
+	}
+
+	// ... and the cover, role by role: the class's three grants are covered
+	// (each under the shape its own check demands), and every other role of
+	// every row — plus roles no row names at all — is refused. The value
+	// reader is the one that matters most and it is in the list below.
+	roles := map[string][]string{}
+	for typ, row := range grantRules {
+		for key := range row {
+			roles[typ] = append(roles[typ], grantRoleString(key))
+		}
+	}
+	roles["google_project_iam_member"] = append(roles["google_project_iam_member"],
+		"roles/owner", "roles/editor", "projects/proj-1/roles/fugaroEverything", "roles/datastore.user")
+	for typ, list := range roles {
+		for _, role := range slices.Sorted(slices.Values(list)) {
+			after := map[string]any{"member": intake, "role": role, "bucket": "fugaro-runs-proj-1"}
+			withCondFor(after, typ, role, false)
+			ch := rc(typ, after, map[string]any{}, "create")
+			got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil)
+			want := allowed[typ][mustRoleKey(t, role)]
+			if (len(got) == 0) != want {
+				t.Errorf("%s: %s to the intake's account: NotCovered = %q, covered want %v", typ, role, got, want)
+			}
+		}
+	}
+
+	// The one READ of a value the installation has: the bundle's accessor. A
+	// container-level accessor to the intake would be a fence it does not need
+	// and an exit from the grammar (the intake derives a name from the verified
+	// sub and writes it; it never reads one back, R3).
+	for _, tc := range []struct {
+		typ, role string
+	}{
+		{"google_secret_manager_secret_iam_member", "roles/secretmanager.secretAccessor"},
+		{"google_secret_manager_secret_iam_member", "roles/secretmanager.secretVersionAdder"},
+		{"google_project_iam_member", "roles/secretmanager.secretAccessor"},
+		{"google_project_iam_member", "roles/secretmanager.viewer"},
+		{"google_project_iam_member", "roles/secretmanager.admin"},
+	} {
+		after := map[string]any{"member": intake, "role": tc.role, "bucket": "fugaro-runs-proj-1", "secret_id": "fugaro_p_x"}
+		withCondFor(after, tc.typ, tc.role, false)
+		ch := rc(tc.typ, after, map[string]any{}, "create")
+		if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); len(got) == 0 {
+			t.Errorf("%s: %s to the intake is covered: the intake writes the class's containers and reads no value of any of them", tc.typ, tc.role)
+		}
+	}
+
+	// The account is the installation's: a lookalike in another project is
+	// nobody Fugaro creates.
+	ch := rc("google_project_iam_member", map[string]any{"member": "serviceAccount:" + IntakeAccountID + "@fp-2.iam.gserviceaccount.com", "role": "projects/proj-1/roles/" + IntakeSecretsRole, "project": "proj-1", "bucket": "fugaro-runs-proj-1", "condition": dynamicSecretsCondition()}, map[string]any{}, "create")
+	if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); len(got) == 0 {
+		t.Errorf("the write role is covered: the intake is %s@proj-1 and nothing else", IntakeAccountID)
+	}
+
+	// Listed on the review screen by mistake, it is still not a person.
+	listed := Cover{Projects: testCover.Projects, Listed: []string{intake}, Region: testCover.Region, Buckets: testCover.Buckets}
+	for _, tc := range []struct {
+		role    string
+		covered bool
+	}{
+		{"projects/proj-1/roles/" + IntakeSecretsRole, false}, // no condition: a row, not the binding
+		{"projects/proj-1/roles/" + SecretListerRole, false},  // the same: a person holds no lister of the installation
+		{"roles/storage.objectViewer", false},
+	} {
+		after := map[string]any{"member": intake, "role": tc.role, "bucket": "fugaro-runs-proj-1"}
+		ch := rc("google_project_iam_member", after, map[string]any{}, "create")
+		if got := listed.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); (len(got) == 0) != tc.covered {
+			t.Errorf("listed on the review screen: %s to the intake: NotCovered = %q, covered want %v", tc.role, got, tc.covered)
+		}
+	}
+}
+
+// The intake's one bucket read is objectViewer on ONE object of the runs
+// bucket — DS2.0's derived admin list — and intakeAdminListGrant is the whole
+// of what narrows it: grantRules' bucket row says only that the intake may hold
+// objectViewer there at all, and grant() sends an intake member to this check
+// INSTEAD of bucketCondition, so a grant that fails it does not fall back to
+// the modules' own shapes. Without the steps below, an unconditioned
+// objectViewer on the runs bucket — every run record, prompt and transcript the
+// installation keeps — would ride the same one confirmation the admin list's
+// read does, and a condition the plan has not decided would read as the
+// modules' own.
+//
+// The rows below say which guard refuses which. Six of them are the narrowing
+// check's own — the missing condition, another object, the whole bucket, the
+// right expression under another title, a description, and a condition the plan
+// has not decided — and the other three are refused before it, each by a guard
+// that has to hold anyway: the bucket has to be one of this run's, and the role
+// has to be the one grantRules' row names for the intake.
+//
+// Mutation (verified, run and restored): intakeAdminListGrant returning "" at
+// its first line leaves those six covered — an unconditioned objectViewer on
+// the whole runs bucket among them — and the test fails on exactly those rows.
+func TestIntakeAdminListGrantIsTheDerivedObjectAlone(t *testing.T) {
+	const intake = "serviceAccount:" + IntakeAccountID + "@proj-1.iam.gserviceaccount.com"
+	const bucket = "fugaro-runs-proj-1"
+	cond := func(title, expression string, description any) []any {
+		c := map[string]any{"title": title, "expression": expression, "description": description}
+		return []any{c}
+	}
+	for _, tc := range []struct {
+		name, role, bucket string
+		condition          []any
+		covered            bool
+		reason             string // for a refusal: the text the stop must carry
+	}{
+		{
+			name: "the derived admin list's one object", role: "roles/storage.objectViewer", bucket: bucket,
+			condition: cond(gcp.IntakeAdminListConditionTitle, IntakeAdminListCondition(bucket), nil), covered: true,
+		},
+		{
+			name: "no condition", role: "roles/storage.objectViewer", bucket: bucket,
+			reason: "no condition",
+		},
+		{
+			name: "a condition on another object of the same bucket", role: "roles/storage.objectViewer", bucket: bucket,
+			condition: cond(gcp.IntakeAdminListConditionTitle, `resource.name == "projects/_/buckets/`+bucket+`/objects/admin/other.json"`, nil),
+			reason:    "not the derived admin list's one object",
+		},
+		{
+			name: "a condition on the whole bucket", role: "roles/storage.objectViewer", bucket: bucket,
+			condition: cond(gcp.IntakeAdminListConditionTitle, `resource.name.startsWith("projects/_/buckets/`+bucket+`/objects/")`, nil),
+			reason:    "not the derived admin list's one object",
+		},
+		{
+			name: "the right expression under another title", role: "roles/storage.objectViewer", bucket: bucket,
+			condition: cond("fugaro-intake-admin-list-2", IntakeAdminListCondition(bucket), nil),
+			reason:    "not the derived admin list's one object",
+		},
+		{
+			name: "a condition with a description", role: "roles/storage.objectViewer", bucket: bucket,
+			condition: cond(gcp.IntakeAdminListConditionTitle, IntakeAdminListCondition(bucket), "the admin list"),
+			reason:    "description",
+		},
+		{
+			name: "a bucket that is not this installation's runs bucket", role: "roles/storage.objectViewer", bucket: "fugaro-runs-fp-2",
+			condition: cond(gcp.IntakeAdminListConditionTitle, IntakeAdminListCondition("fugaro-runs-fp-2"), nil),
+			reason:    "which is not this run's", // an earlier guard, before the intake's own narrowing
+
+		},
+		{
+			name: "another role on the same object", role: "roles/storage.objectUser", bucket: bucket,
+			condition: cond(gcp.IntakeAdminListConditionTitle, IntakeAdminListCondition(bucket), nil),
+			reason:    "a kind of principal the installation's modules do not grant it to", // grantRules' bucket row, before the narrowing
+
+		},
+		{
+			name: "objectAdmin on the same object", role: "roles/storage.objectAdmin", bucket: bucket,
+			condition: cond(gcp.IntakeAdminListConditionTitle, IntakeAdminListCondition(bucket), nil),
+			reason:    "a kind of principal the installation's modules do not grant it to", // grantRules' bucket row, before the narrowing
+
+		},
+		{
+			name: "a condition known only after apply", role: "roles/storage.objectViewer", bucket: bucket,
+			reason: "is not known", // the block is there, its expression is not
+
+		},
+	} {
+		after := map[string]any{"member": intake, "role": tc.role, "bucket": tc.bucket}
+		if tc.condition != nil {
+			after["condition"] = tc.condition
+		}
+		unk := map[string]any{}
+		if tc.name == "a condition known only after apply" {
+			after["condition"] = []any{map[string]any{"title": gcp.IntakeAdminListConditionTitle}}
+			unk["condition"] = []any{map[string]any{"expression": true}}
+		}
+		ch := rc("google_storage_bucket_iam_member", after, unk, "create")
+		got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil)
+		if (len(got) == 0) != tc.covered {
+			t.Errorf("%s: %s to the intake: NotCovered = %q, covered want %v", tc.name, tc.role, got, tc.covered)
+			continue
+		}
+		if !tc.covered && !strings.Contains(strings.Join(got, "\n"), tc.reason) {
+			t.Errorf("%s: %s to the intake stopped for another reason: %q, want %q", tc.name, tc.role, got, tc.reason)
+		}
+	}
+}
+
+// A computed role to either of the dynamic class's two accounts is refused,
+// whatever type carries it: the intake's write role is this module's own custom
+// role, so a plan that bound it as a reference to the role being created would
+// otherwise be covered WITH the name-prefix condition unread --
+// dynamicSecretsGrant reads the condition off a role it can name, and abstains
+// when it cannot -- and that is create, delete and version-add for every
+// container of the project riding the ordinary confirmation. The refusal names
+// the account, so an operator's read of it says which grant to write by name.
+//
+// Mutation (verified, run and restored): with the two branches in the
+// unknown-role case removed, the PROJECT rows cover a computed role to either
+// account -- the hole this test is about, since that is the one type whose row
+// names a custom role for these accounts -- and the other three rows stop for
+// the table's own reason instead of the account's, so all six rows fail.
+func TestDynamicAccountsAreRefusedAComputedRole(t *testing.T) {
+	role := customRole(IntakeSecretsRole, "proj-1", []any{"secretmanager.secrets.create", "secretmanager.secrets.delete", "secretmanager.versions.add"})
+	for _, tc := range []struct{ name, member string }{
+		{"the intake", "serviceAccount:" + IntakeAccountID + "@proj-1.iam.gserviceaccount.com"},
+		{"the credentials service", "serviceAccount:" + CredentialsAccountID + "@proj-1.iam.gserviceaccount.com"},
+	} {
+		for _, typ := range []string{"google_project_iam_member", "google_secret_manager_secret_iam_member", "google_storage_bucket_iam_member", "google_cloud_run_v2_service_iam_member"} {
+			after := map[string]any{"member": tc.member, "bucket": "fugaro-runs-proj-1", "secret_id": "fugaro_p_x"}
+			ch := rc(typ, after, map[string]any{"role": true}, "create")
+			got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{role, ch}}, nil)
+			if len(got) == 0 {
+				t.Errorf("%s: a computed role to %s is covered: a role the plan cannot name cannot be checked against the name-prefix condition it is bound under (DS2.2)", typ, tc.name)
+				continue
+			}
+			if want := "a computed role to " + tc.name; !strings.Contains(strings.Join(got, "\n"), want) {
+				t.Errorf("%s: a computed role to %s stopped for another reason: %q, want %q", typ, tc.name, got, want)
+			}
+		}
+	}
+}
+
+// dynamicSecretsGrant is the whole fence of the dynamic class, and it is the
+// only one: grantRules' project row says which KIND of principal may hold the
+// intake's write role and the service's prefix accessor, and says nothing about
+// a condition, so without these rows a plan could grant the service's account a
+// project-wide secretmanager.secretAccessor with no condition — every secret of
+// the project, the GitHub App key among them — or bind either role under a
+// wider condition, and one fugaro update confirmation would carry it.
+//
+// The rows hold both halves of what the check compares: the condition's
+// presence (none is a refusal, and the list role carries none because Check 510
+// refused secretmanager.secrets.list under the fence) and its exact spelling
+// (the title and the expression byte for byte, so a wider spelling, a single
+// prefix, another title, a description and a condition the plan has not decided
+// are each their own row). The three shapes the modules write are rows too, so
+// a check that refused everything cannot pass this test.
+//
+// Mutation (verified, run and restored): short-circuiting the accessor before
+// its condition checks — its member and project steps left in place — leaves
+// that holder's six negative rows covered, none of them reported; and dropping
+// the title/expression comparison leaves the wider, single-prefix and
+// other-title rows of BOTH holders covered. The description and the unknown
+// condition are separate steps after the comparison, so those rows still hold
+// under the second mutation.
+func TestDynamicSecretsGrantIsTheNameFence(t *testing.T) {
+	const intake = "serviceAccount:" + IntakeAccountID + "@proj-1.iam.gserviceaccount.com"
+	const service = "serviceAccount:" + CredentialsAccountID + "@proj-1.iam.gserviceaccount.com"
+	const accessor = "roles/secretmanager.secretAccessor"
+	write, lister := dynamicSecretsRole(IntakeSecretsRole), dynamicSecretsRole(SecretListerRole)
+	cond := func(title, expression string, description any) []any {
+		return []any{map[string]any{"title": title, "expression": expression, "description": description}}
+	}
+	fence := dynamicSecretsCondition()
+	// What every wrong spelling of the fence is refused for, whichever part of
+	// it is wrong: the comparison is byte for byte and names the fence it
+	// wanted.
+	const notTheFence = "is the fence, byte for byte"
+
+	for _, holder := range []struct{ name, member, role string }{
+		{"the intake's write role", intake, write},
+		{"the service's prefix accessor", service, accessor},
+	} {
+		for _, tc := range []struct {
+			name             string
+			condition        []any
+			unknownCondition bool
+			covered          bool
+			reason           string
+		}{
+			{name: "under the fence", condition: fence, covered: true},
+			{name: "with no condition", reason: "no condition"},
+			{name: "under a wider expression", condition: cond(gcp.DynamicSecretNamesConditionTitle, `resource.name.startsWith("projects/")`, nil), reason: notTheFence},
+			{name: "under one prefix only", condition: cond(gcp.DynamicSecretNamesConditionTitle, `resource.name.extract("/secrets/{secret}").startsWith("fugaro_u_")`, nil), reason: notTheFence},
+			{name: "under another title", condition: cond("fugaro-dynamic-secret-names", gcp.DynamicSecretNamesCondition(), nil), reason: notTheFence},
+			{name: "under the fence's two prefixes and a description", condition: cond(gcp.DynamicSecretNamesConditionTitle, gcp.DynamicSecretNamesCondition(), "the delivery grammar"), reason: "description"},
+			{name: "under a condition known only after apply", unknownCondition: true, reason: "is not known"},
+		} {
+			after := map[string]any{"member": holder.member, "role": holder.role, "project": "proj-1"}
+			unk := map[string]any{}
+			if tc.condition != nil {
+				after["condition"] = tc.condition
+			}
+			if tc.unknownCondition {
+				after["condition"] = []any{map[string]any{"title": gcp.DynamicSecretNamesConditionTitle}}
+				unk["condition"] = []any{map[string]any{"expression": true}}
+			}
+			ch := rc("google_project_iam_member", after, unk, "create")
+			got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil)
+			if (len(got) == 0) != tc.covered {
+				t.Errorf("%s %s to %s: NotCovered = %q, covered want %v", holder.name, tc.name, holder.member, got, tc.covered)
+				continue
+			}
+			if !tc.covered && !strings.Contains(strings.Join(got, "\n"), tc.reason) {
+				t.Errorf("%s %s to %s stopped for another reason: %q, want %q", holder.name, tc.name, holder.member, got, tc.reason)
+			}
+		}
+	}
+
+	// The lister is the other half: it carries NO condition — Check 510
+	// refused secretmanager.secrets.list under the fence, which is what makes
+	// the permission a role of its own — and it is the one row of the three
+	// that a condition makes a refusal rather than a cover.
+	for _, member := range []string{intake, service} {
+		for _, tc := range []struct {
+			name      string
+			condition []any
+			covered   bool
+		}{
+			{"with no condition", nil, true},
+			{"under the fence", fence, false},
+		} {
+			after := map[string]any{"member": member, "role": lister, "project": "proj-1"}
+			if tc.condition != nil {
+				after["condition"] = tc.condition
+			}
+			ch := rc("google_project_iam_member", after, map[string]any{}, "create")
+			got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil)
+			if (len(got) == 0) != tc.covered {
+				t.Errorf("the lister %s to %s: NotCovered = %q, covered want %v", tc.name, member, got, tc.covered)
+				continue
+			}
+			if !tc.covered && !strings.Contains(strings.Join(got, "\n"), "under a condition") {
+				t.Errorf("the lister %s to %s stopped for another reason: %q, want %q", tc.name, member, got, "under a condition")
+			}
 		}
 	}
 }
@@ -1316,20 +1723,31 @@ func TestMCPAccountIsItsOwnPrincipalKind(t *testing.T) {
 	if slices.Contains(FugaroAccounts, MCPServerAccountID) {
 		t.Errorf("the front door's account is one of FugaroAccounts, so every toAccounts row accepts it")
 	}
-	rows := 0
+	// The account's two grants and no third (O16b added the state group's read
+	// to D935's store): the table is where a grant of another role to this
+	// account would have to be written down, and this is the count that makes
+	// writing one a decision. Each of the two is narrowed further by its own
+	// check — the store's by the bucket (mcpauthStoreGrant, below), the state
+	// group's by its role and project (mcpauthStateReadGrant,
+	// TestCoverAdmitsTheStateReadGrantOnPurpose).
+	wantRows := map[string]string{
+		rowType:                     rowRole,
+		"google_project_iam_member": customKey + MCPStateReadRole,
+	}
+	got := map[string]string{}
 	for typ, row := range grantRules {
 		for key, w := range row {
 			if w&toMCP == 0 {
 				continue
 			}
-			rows++
-			if typ != rowType || key != rowRole {
-				t.Errorf("%s %s: the row accepts the front door's account, whose one grant is D935's store", typ, key)
+			if _, twice := got[typ]; twice {
+				t.Errorf("%s carries toMCP on more than one role: the front door's account holds the store's objectAdmin and the database's read, and a third role is a widening this table has not decided", typ)
 			}
+			got[typ] = key
 		}
 	}
-	if rows != 1 {
-		t.Errorf("%d rows carry toMCP, want the one the module writes for this account: %s %s", rows, rowType, rowRole)
+	if !maps.Equal(got, wantRows) {
+		t.Errorf("the rows carrying toMCP are %v, want %v: the front door's account holds D935's store and the orchestrator's node, read-only, and nothing else (D920, D935, O16b)", got, wantRows)
 	}
 
 	// The grant as the module writes it, on the store's own bucket.
@@ -1385,6 +1803,76 @@ func TestMCPAccountIsItsOwnPrincipalKind(t *testing.T) {
 	}
 }
 
+// TestCoverAdmitsTheStateReadGrantOnPurpose is O16b's half of the plan
+// review: the front door's read of the orchestrator's node is covered, and
+// nothing but that one grant is.
+//
+// It has to be covered, because the run's one confirmation is what applies the
+// release that turns the front door on: a plan review that refused the grant
+// would ask the owner for a second confirmation over a step that is meant to
+// be one. And it has to be the ONLY thing covered for this account, because
+// Realtime Database IAM has no path-level scope: a project binding of this
+// role is a read of the WHOLE database of that project — every run's state,
+// the policy, the kill switches and the credentials' own nodes — so the grant
+// is the reach D2020 (a) answered for, and the role's permission list
+// (MCPStateReadPermissions) is where the read/write direction is decided.
+//
+// The mutations this fails on: the state-read row dropped from grantRules (the
+// grant would be refused and the release would ask twice), the row widened to
+// another kind of principal, the role's pin given the write, the role moved to
+// another project than the grant's, and a condition on the binding.
+func TestCoverAdmitsTheStateReadGrantOnPurpose(t *testing.T) {
+	const member = "serviceAccount:" + MCPServerAccountID + "@proj-1.iam.gserviceaccount.com"
+	const role = "projects/proj-1/roles/" + MCPStateReadRole
+	const rowType = "google_project_iam_member"
+
+	// The pin, the module's permission list and the list this file exports are
+	// one list: the role the module creates is the role the review reads, and
+	// neither may gain a second permission.
+	if want := MCPStateReadPermissions; !slices.Equal(RolePermissions[MCPStateReadRole], want) {
+		t.Errorf("RolePermissions[%s] = %v, want exactly %v: a second permission here is a second permission over the whole database", MCPStateReadRole, RolePermissions[MCPStateReadRole], want)
+	}
+	if !slices.Contains(FugaroRoles, MCPStateReadRole) {
+		t.Errorf("FugaroRoles does not name %s, so a grant of this role is refused outright", MCPStateReadRole)
+	}
+	if slices.Contains(MCPStateReadPermissions, "firebasedatabase.instances.update") {
+		t.Errorf("MCPStateReadPermissions holds the write: the state group's writes stay with `fugaro orchestrator patch` and the person's own credential (D1223, D1241), and apply_patch is served by nothing (D2021)")
+	}
+
+	// The grant as the module writes it: the front door's own account, the
+	// role on the project it was declared in, no condition.
+	grant := rc(rowType, map[string]any{"member": member, "role": role, "project": "proj-1"}, map[string]any{}, "create")
+	if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{grant}}, nil); len(got) != 0 {
+		t.Errorf("O16b's state-read grant to the front door's account: NotCovered = %q, want it covered: the grant is what `fugaro update --mcp-server` creates for the state group, and a plan review that refused it would ask the owner for a second confirmation", got)
+	}
+
+	// Everything else that could arrive in its place, one case each: the read
+	// on another project's role, the write role (the credentials service's own,
+	// which is the two data permissions), another member, another role of the
+	// account's, and a condition the module never writes (RTDB cannot express a
+	// path prefix, so the condition would fence nothing).
+	cond := []any{map[string]any{"title": gcp.LauncherBucketConditionTitle, "expression": gcp.LauncherBucketCondition("fugaro-runs-proj-1"), "description": nil}}
+	for _, tc := range []struct {
+		what  string
+		after map[string]any
+	}{
+		{"the read declared in a project the grant is not in", map[string]any{"member": member, "role": "projects/fp-2/roles/" + MCPStateReadRole, "project": "proj-1"}},
+		{"the read on a project this run does not know", map[string]any{"member": member, "role": "projects/fp-3/roles/" + MCPStateReadRole, "project": "fp-3"}},
+		{"the credentials service's database role, which holds the write too", map[string]any{"member": member, "role": "projects/proj-1/roles/" + CredentialsDatabaseRole, "project": "proj-1"}},
+		{"the store's role on the project", map[string]any{"member": member, "role": "roles/storage.objectAdmin", "project": "proj-1"}},
+		{"the read to a person on the review screen", map[string]any{"member": "user:me@example.com", "role": role, "project": "proj-1"}},
+		{"the read to a job account", map[string]any{"member": "serviceAccount:fugaro-history@proj-1.iam.gserviceaccount.com", "role": role, "project": "proj-1"}},
+		{"the read to a lookalike in another project", map[string]any{"member": "serviceAccount:" + MCPServerAccountID + "@fp-2.iam.gserviceaccount.com", "role": role, "project": "proj-1"}},
+		{"the read under a condition", map[string]any{"member": member, "role": role, "project": "proj-1", "condition": cond}},
+		{"the read with a computed role", map[string]any{"member": member, "project": "proj-1"}},
+	} {
+		ch := rc(rowType, tc.after, map[string]any{}, "create")
+		if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); len(got) == 0 {
+			t.Errorf("%s is covered: the front door's account reads the orchestrator's node through one custom role on one project, and every other grant is a widening no `fugaro update` confirmation announced", tc.what)
+		}
+	}
+}
+
 // The front door's names in cover.go are their writers' own: this package
 // cannot import internal/infra or ee/coordinator/mcpauth (both lead back to
 // it), so the account ID is written twice and the store's prefix three times —
@@ -1414,5 +1902,89 @@ func TestCoverMCPNamesAreTheWritersNames(t *testing.T) {
 		if !tc.want.Match(b) {
 			t.Errorf("%s declares no name tf/cover.go holds the front door's account and its store by: update tf/cover.go's literal with it", tc.where)
 		}
+	}
+}
+
+// The row the viewer's project role is granted through — RS4's "cover test
+// that the new row requires its condition". The row's one condition is the
+// KIND of principal: a member the run's review screen lists, which is a person,
+// a group or a service account someone named, and nothing Fugaro creates for
+// itself. That is what keeps it from being the launcher's row, where the same
+// table takes the accounts too (toPeople | toAccounts): an installation's own
+// job, build, history, coordinator, verifier, catalog-check or front-door
+// account holds the grants its work needs, and the read of every run is not one
+// of them.
+//
+// Fails when the row is widened to the accounts or to one kind of Fugaro
+// account alone (a condition function), which is how a plan that handed an
+// agent's account the read of every run and its logs would pass unseen.
+func TestViewerRoleIsGrantedToListedPeopleAlone(t *testing.T) {
+	const (
+		project = "google_project_iam_member"
+		person  = "user:me@example.com"
+		group   = "group:ops@example.com"
+	)
+	role := "projects/proj-1/roles/" + ViewerRole
+	for _, c := range []struct {
+		what   string
+		member string
+		ok     bool
+	}{
+		{"a person the review screen lists", person, true},
+		{"a group the review screen lists", group, true},
+		{"a person the review screen does not list", "user:nobody@example.com", false},
+		{"a group the review screen does not list", "group:nobody@example.com", false},
+		{"the history account", "serviceAccount:fugaro-history@proj-1.iam.gserviceaccount.com", false},
+		{"a repository's job account", "serviceAccount:fugaro-acme-0123456789abcdef@proj-1.iam.gserviceaccount.com", false},
+		{"the deployer account", "serviceAccount:" + DeployerAccount("proj-1"), false},
+		{"the credentials service's account", "serviceAccount:" + CredentialsAccountID + "@proj-1.iam.gserviceaccount.com", false},
+		{"the coordinator's writer account", "serviceAccount:" + CoordinatorAccountID + "@proj-1.iam.gserviceaccount.com", false},
+		{"the verifier account", "serviceAccount:" + VerifierAccountID + "@proj-1.iam.gserviceaccount.com", false},
+		{"the catalog check job's account", "serviceAccount:" + CatalogCheckAccountID + "@proj-1.iam.gserviceaccount.com", false},
+		{"the front door's account", "serviceAccount:" + MCPServerAccountID + "@proj-1.iam.gserviceaccount.com", false},
+		{"a service account outside Fugaro", "serviceAccount:builder@other.iam.gserviceaccount.com", false},
+	} {
+		got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{grant(project, c.member, role)}}, nil)
+		if (len(got) == 0) != c.ok {
+			t.Errorf("%s (%s) granted the viewer's role: NotCovered = %q, covered want %v", c.what, c.member, got, c.ok)
+		}
+	}
+}
+
+// The viewer's read-only job role is the launcher's list minus
+// run.executions.cancel and nothing else (RS4, roles.md §4): every read a
+// launcher makes a viewer makes, and the one thing a viewer cannot do is stop
+// another person's run.
+//
+// Fails when the role narrows anything but the cancel, and — reading the
+// launcher's list too — when the launcher's role loses the cancel, which would
+// leave the viewer and the launcher holding one role and the difference the
+// viewer's role exists for gone with nothing failing.
+func TestViewerRoleHasNoCancelPermission(t *testing.T) {
+	launcher, ok := RolePermissions["fugaroLauncher"]
+	if !ok {
+		t.Fatal("RolePermissions holds no fugaroLauncher entry")
+	}
+	if !slices.Contains(launcher, "run.executions.cancel") {
+		t.Fatal("the launcher's role no longer holds run.executions.cancel: the viewer's role is defined as that list minus it")
+	}
+	var want []string
+	for _, p := range launcher {
+		if p != "run.executions.cancel" {
+			want = append(want, p)
+		}
+	}
+	viewer, ok := RolePermissions[ViewerRole]
+	if !ok {
+		t.Fatalf("RolePermissions holds no %s entry", ViewerRole)
+	}
+	if slices.Contains(viewer, "run.executions.cancel") {
+		t.Error("the viewer's role holds run.executions.cancel: a viewer could cancel another person's run")
+	}
+	if !slices.Equal(slices.Sorted(slices.Values(viewer)), slices.Sorted(slices.Values(want))) {
+		t.Errorf("the viewer's role holds %v, want the launcher's list minus run.executions.cancel: %v", viewer, want)
+	}
+	if !slices.Contains(FugaroRoles, ViewerRole) {
+		t.Errorf("FugaroRoles does not name %s, so a plan that creates it is not covered", ViewerRole)
 	}
 }

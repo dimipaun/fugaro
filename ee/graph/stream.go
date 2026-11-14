@@ -4,6 +4,7 @@
 package graph
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -13,6 +14,8 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/coordpath"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
+	"github.com/dimipaun/fugaro/internal/orchestrator/endpoint"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // The stream's own rules: `graph --watch --json` prints whole documents rather
@@ -24,7 +27,10 @@ import (
 // It is pure, like the rest of this package: it reads nothing, opens nothing
 // and holds no clock of its own — a caller passes the time in and owns the
 // writer — so the whole of the framing can be tested without a database, a
-// terminal or a goroutine.
+// terminal or a goroutine. The one thing here that is not pure is the local
+// scope's live source (CG13c): LocalLive's two methods make requests, every one
+// of them through the client its caller handed it, so a test of the framing
+// below still opens nothing at all.
 //
 // Three of the guarantees the console's contract carries (§6.22, H4, H5) are
 // here rather than in the command, because they are properties of the document
@@ -90,6 +96,68 @@ func ScopeSubtrees(scope Scope) ([]string, error) {
 	default:
 		return []string{coordpath.PathRoot}, nil
 	}
+}
+
+// LocalLive is the live source of a local scope: the endpoint this machine's
+// daemon serves for one orchestrator id, read once or followed (CG13c). It is
+// the one place this package reaches anything but the values it was handed, and
+// it reaches only the loopback address a registry file a live endpoint proved
+// named: a machine whose daemon is not running has no endpoint here, and the
+// node and the cache below are read exactly as CG5 built them (T5(a), amended
+// 2026-11-11).
+type LocalLive struct {
+	// Client is the reader of the endpoint, placed by the environment and the
+	// platform it resolves the run directory from.
+	Client endpoint.Client
+	// ID is the orchestrator id, which is the scope's own id and the daemon's:
+	// the endpoint answers for the id whose file it wrote.
+	ID string
+}
+
+// endpointTimeout bounds the whole of one live read — the lookup, the handshake
+// and the document. It is what keeps a graph drawn without a daemon as quick as
+// one drawn before the endpoint existed: an endpoint on loopback answers at
+// once or not at all, and a scope is never worth a hung read.
+const endpointTimeout = 3 * time.Second
+
+// Read is the endpoint's document when one is live, and false when none is.
+//
+// A false is the ordinary answer of a machine whose daemon is not running, of
+// one whose daemon predates the endpoint, and of one whose endpoint cannot be
+// read at all: the node below it is the same daemon's document, so what this
+// scope falls back to is never older data than the endpoint held, and a schema
+// this build cannot read is refused at the node exactly as it is refused here —
+// one decoder serves both (D1359).
+func (l LocalLive) Read(ctx context.Context) (orchestrator.State, time.Time, bool) {
+	live, ok, err := l.Client.Lookup(ctx, l.ID)
+	if err != nil || !ok {
+		return orchestrator.State{}, time.Time{}, false
+	}
+	state, at, err := l.Client.Get(ctx, live)
+	if err != nil {
+		return orchestrator.State{}, time.Time{}, false
+	}
+	return state, at, true
+}
+
+// Watch follows the endpoint for as long as the caller's context: every tick
+// the daemon serves reaches fn as the daemon's own document and the server time
+// it was ticked at. It is the live half of `graph --watch` on a local scope,
+// and its whole reason is that a scope a person is looking at should move when
+// the orchestrator does rather than when the cache file is rewritten.
+//
+// An endpoint that is not there is an error and not a false, because a caller
+// watching has to choose: it holds the node subscription already (CG7), so what
+// it needs to know is that there is nothing live here to follow (T5(a)).
+func (l LocalLive) Watch(ctx context.Context, fn func(orchestrator.State, time.Time) error) error {
+	live, ok, err := l.Client.Lookup(ctx, l.ID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("graph: no live endpoint serves %s on this machine", safetext.OneLine(l.ID))
+	}
+	return l.Client.Stream(ctx, live, fn)
 }
 
 // Stream is one child's stream: the identity every document it writes carries,

@@ -13,6 +13,7 @@ import (
 	terraform "github.com/dimipaun/fugaro/deploy/terraform"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
@@ -63,7 +64,14 @@ func TestInstallationVarsMatchModule(t *testing.T) {
 	spec.AlertEmail = &email
 	// The default leaves log_isolation out; the rollback's ForgetSpec
 	// writes log_isolation=false, which must be a root variable too.
-	for name, s := range map[string]InstallationSpec{"default": spec, "forget": ForgetSpec(spec)} {
+	//
+	// The third case is the viewer list's (RS4, roles.md §4): an empty list
+	// is left out of the tfvars, so the two cases above write no viewers key
+	// and nothing would check that the key the module's role and grants are
+	// gated on is a variable of the root.
+	withViewers := spec
+	withViewers.Viewers = []string{"user:viewer@example.com"}
+	for name, s := range map[string]InstallationSpec{"default": spec, "viewers": withViewers, "forget": ForgetSpec(spec)} {
 		data, err := InstallationVars(s)
 		if err != nil {
 			t.Fatal(err)
@@ -426,6 +434,62 @@ func TestCredentialsReviewJobAccountsDerivesTheReviewVariants(t *testing.T) {
 	}
 	if !strings.Contains(string(doc), `"review_job_accounts":[{"profile":"apikey"`) {
 		t.Errorf("the opt-in's document does not carry the rows under review_job_accounts:\n%s", doc)
+	}
+}
+
+// TestCredentialsReviewJobAccountsCarryTheImplicitJob is the implicit default
+// review job (the owner's requirement of 2026-11-13) on the OTHER side of the
+// same claim: the rows this deployment writes into the credentials service's
+// review table are the accounts the service admits, and a job whose row is
+// missing is a review the service refuses the moment its reviewer calls — the
+// failure internal/credsvc's own equality test
+// (TestReviewAccountsAreTheNamesProjectJobsDeploys) exists to prevent, one step
+// before it: where that one compares the service's derivation with the
+// deployer's set, this one holds the deployment's own table to the row the
+// derivation has to grow for piece 2 of C1.
+//
+// The row is named once (implicitReviewRow), so the two sides cannot drift
+// apart by a spelling: the test asserts the table this run writes is exactly
+// that row for a project that has nothing else, and that the job the row names
+// is the job ProjectReviewJobs deploys — under the same name the service
+// derives a review's caller account from (credsvc.ReviewServiceAccountID over
+// the (profile, provider, account) triple).
+func TestCredentialsReviewJobAccountsCarryTheImplicitJob(t *testing.T) {
+	lc := parseLC(t, implicitReviewLC())
+	want := []CredentialsReviewJob{implicitReviewRow()}
+	rows, err := CredentialsReviewJobAccounts(lc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(rows, want) {
+		t.Fatalf("CredentialsReviewJobAccounts = %+v, want %+v: the implicit default review job is one variant like any other, and the account the service admits a review caller by is its row", rows, want)
+	}
+	jobs, err := ProjectReviewJobs(lc, "fugaro-runs-proj-1234", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := implicitReviewRow()
+	job, ok := jobs[credsvc.ReviewJobName(row.Profile, row.Provider, row.Account)]
+	if !ok {
+		t.Fatalf("the deployment built %v, and the row %+v names a job nothing created: the service would admit an account no review ever runs as", sortedJobNames(jobs), row)
+	}
+	if got, want := job.ServiceAccount.AccountID, credsvc.ReviewServiceAccountID(row.Profile, row.Provider, row.Account); got != want {
+		t.Errorf("the account %s runs the job the row %+v names, and the service admits %s: a review caller is admitted by the account its job runs as", got, row, want)
+	}
+	// And the spec carries it, under the key the module reads — the builder
+	// filling a field the stage then drops is the failure the test above is
+	// about, and this is the same claim for this row.
+	image := "us-east5-docker.pkg.dev/proj-1234/fugaro-ghcr/dimipaun/fugaro-credentials:1.2.3@sha256:" + strings.Repeat("ab", 32)
+	svc, err := Credentials(lc, image, nil)
+	if err != nil {
+		// Credentials is the stage's own builder and refuses an installation
+		// whose config names no budget block: the fixture is the job's, and
+		// this half needs the service's two Firebase facts (credentialsLC's
+		// budget block) to be read at all.
+		t.Fatal(err)
+	}
+	if !slices.Equal(svc.ReviewJobAccounts, want) {
+		t.Errorf("credentials_service.review_job_accounts = %+v, want the implicit row %+v", svc.ReviewJobAccounts, want)
 	}
 }
 
