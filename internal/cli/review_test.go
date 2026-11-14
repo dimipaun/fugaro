@@ -659,6 +659,27 @@ func TestReviewRefusesAnImplicitJobForBitbucket(t *testing.T) {
 		reviewOnlyRecipe)
 }
 
+// TestImplicitReviewJobNameIsTheDeployment is the one tie between the two
+// spellings of the installation's implicit default review-only job: the
+// deployment's (internal/infra's implicitReviewVariant, which writes the job's
+// name, its service account and the row the credentials service admits a review
+// caller by) and the runner's (internal/runner's ImplicitReviewJobName, which
+// places the run in the job the platform reports it is in). The launcher
+// resolves a review onto the deployment's name and the runner places exactly
+// that name, so the two drifting apart is a review launched, claimed, minted and
+// billed that the container then refuses to place — which is the failure this
+// piece's runner half exists to prevent.
+//
+// The tie is here because neither of the two packages can make it: internal/infra
+// imports internal/runner (the job's own environment names this package's
+// variables), so the derivation cannot live in one of them and be called from the
+// other.
+func TestImplicitReviewJobNameIsTheDeployment(t *testing.T) {
+	if got, want := runner.ImplicitReviewJobName(), infra.ImplicitReviewJobName(); got != want {
+		t.Fatalf("the runner places the implicit review job as %s, and the installation deploys it as %s: a review launched onto the deployment's name halts in the container that name starts", got, want)
+	}
+}
+
 // TestReviewReadsNoAdmissionSwitch is CSR12's expiry date kept: the switch
 // FUGARO_REVIEW_SKIP_ADMISSION_CHECK existed for the owner's own C3.9 live
 // check and for nothing else, and CSR11's commit deletes it, so the variable
