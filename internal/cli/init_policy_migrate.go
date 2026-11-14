@@ -526,7 +526,19 @@ func policyMigrationRefusal(err error) error {
 // below are scoped to is one reading and cannot disagree with itself. `fugaro
 // upgrade`, which has no initRun, passes the same two facts its own agent
 // refusal was made from.
-func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMigration, yes bool, w io.Writer, admitted, managed bool, c initflow.Conditions, inflight inflightAnswer) error {
+//
+// ownerHand is whether the command this run is converging for already IS the
+// owner's hand at their own terminal (initOptions.ownerHand): `fugaro accounts
+// alias set` is refused in a coding agent's session before it reads anything, so
+// the account choice its publish carries was made by the owner typing that
+// command, and the typed name below would be a second confirmation of the same
+// decision — which D2097 does not have (F10, D1540). It waives that confirmation
+// for the account-choice widening and for nothing else
+// (policyMigration.accountChoiceOnly): a ceiling raised in the same publish is
+// the separate decision D846 reserves for the project's own hand. It is a
+// parameter for the reason admitted is: a door is a fact of the command, not of
+// the node.
+func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMigration, yes bool, w io.Writer, admitted, managed, ownerHand bool, c initflow.Conditions, inflight inflightAnswer) error {
 	// The in-flight answer is about the NODE this run rewrites, and it is asked
 	// before the branch below: D854's re-seed carries a pending migration with it
 	// (confirmReseed writes the re-seeded file and then the migrated node), and a
@@ -643,8 +655,16 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 			if stdinIsTerminal(cmd.InOrStdin()) {
 				fmt.Fprintf(w, "%s\n", why)
 			}
-			if err := confirmTypedStrict(cmd, m.lc, why, what); err != nil {
-				return err
+			// The account the owner just chose with the command they typed is
+			// the one widening this run may carry without the typed name: for
+			// that door the sentence above IS the report, and the confirmation
+			// would be a second one for a decision already made at this same
+			// terminal (D2097, F10). Everything else — a ceiling raised, a
+			// removed member, a first node — keeps it.
+			if !(ownerHand && m.accountChoiceOnly(loosening)) {
+				if err := confirmTypedStrict(cmd, m.lc, why, what); err != nil {
+					return err
+				}
 			}
 		} else if err := confirmStageWrite(cmd, m.lc, restoreAsk(c, ask), yes, what); err != nil {
 			return err
@@ -1332,7 +1352,7 @@ func (s *policyMigrateStage) Apply(ctx context.Context, env initflow.Env) (initf
 	// CONFIRM block under it is drawn over (G1).
 	cmd := s.e.r.cmd
 	if err := s.e.r.asking(func() error {
-		return policyMigrationConfirm(ctx, cmd, m, env.Yes, s.e.r.w, admitted, s.e.r.gateUnderway(), s.e.r.conditions(), s.inflightAnswer())
+		return policyMigrationConfirm(ctx, cmd, m, env.Yes, s.e.r.w, admitted, s.e.r.gateUnderway(), s.e.r.o.ownerHand(), s.e.r.conditions(), s.inflightAnswer())
 	}); err != nil {
 		return initflow.Outcome{}, err
 	}

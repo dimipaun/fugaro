@@ -276,6 +276,16 @@ func accountsRmResolve(path string, lc *localcfg.Config, name, want string, old 
 	if _, ok := lc.ClaudeAccounts[name]; !ok {
 		return accountsRmPlan{}, nil, nil, userErr("claude_accounts.%s is not declared in %s, so there is nothing to remove; `fugaro accounts ls` lists the accounts this project's repositories may use", pluginwire.Printable(name), path)
 	}
+	// An alias standing for this account is the reference this command may not
+	// answer for (docs/account-aliases, D2101): the removal takes the
+	// declaration away, and the alias would be left standing for a name this
+	// file no longer defines — the state the loader refuses. It is refused
+	// whatever --profile says, and the remedy is one edit of the alias's own
+	// entry rather than an edit per key, which is what the sentence names.
+	if aliases := accountsAliasTargeting(lc, name); len(aliases) > 0 {
+		return accountsRmPlan{}, nil, nil, userErr("claude_account_aliases.%s stands for %s, so removing the account would leave the alias pointing at a name this config does not define; point it at the account it should choose instead (`fugaro accounts alias set %s ACCOUNT`), or drop it (`fugaro accounts alias rm %s`), and remove the account once nothing stands for it; nothing was written",
+			pluginwire.Printable(aliases[0]), pluginwire.Printable(name), pluginwire.Printable(aliases[0]), pluginwire.Printable(aliases[0]))
+	}
 	if want != "" {
 		// --profile means what it means in add, and a profile this project does
 		// not define is the same refusal (accountsAddProfile): the two commands

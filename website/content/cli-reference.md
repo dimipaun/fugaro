@@ -161,6 +161,7 @@ Flags:
 Subcommands:
 
 - `fugaro accounts add` -- Declare a named Claude account and the repositories its token may be used by
+- `fugaro accounts alias` -- Point a name at one named Claude account, so the keys naming it choose that account
 - `fugaro accounts allow` -- Add repositories to a named Claude account's allow-list (claude_accounts.NAME.allow_data_to)
 - `fugaro accounts clear` -- Clear one account's broken or exhausted credential mark, after replacing its token
 - `fugaro accounts deny` -- Remove repositories from a named Claude account's allow-list
@@ -235,6 +236,106 @@ Flags:
 | `--repos` | string | "" | no | the repositories the token may be used by, as owner/name,owner/name (default: this checkout's origin) |
 | `--type` | string | "" | no | declare the name as a typed credential too, so a craft or a pool may spend it: claude-oauth, the one type this command's token step serves (without it, the name is declared in claude_accounts alone, as it always was) |
 | `--yes` | bool | `false` | no | confirm the run without a prompt: it answers the converge's own questions and never makes a run the owner at their own terminal on a managed project |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro accounts alias`
+
+Point a name at one named Claude account, so the keys naming it choose that account
+
+Manage this machine's claude_account_aliases block: the names the account-choice
+keys may hold instead of an account.
+
+A key that names an alias — default_claude_account, and each
+stages.<stage>.claude_account — keeps the alias as written, and whoever reads it
+resolves the alias before it asks anything else, the account's own
+allow_data_to included. So moving every stage that names one is one edit here,
+and an alias never reaches the policy node, a task, a run record or a job
+image under its own name.
+
+The block is the owner's own and is never published (D2090): it is stated in
+this machine's config, and the read of it is local.
+
+Run these at your own terminal: a repoint decides which credential this
+project's stages spend, so a coding agent's session is refused, --yes
+included.
+
+Usage: `fugaro accounts alias`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for alias |
+
+Subcommands:
+
+- `fugaro accounts alias rm` -- Drop an alias no account-choice key names any more
+- `fugaro accounts alias set` -- Point ALIAS at ACCOUNT, so every key naming the alias chooses it
+
+## `fugaro accounts alias rm`
+
+Drop an alias no account-choice key names any more
+
+Drop one alias from this machine's claude_account_aliases block.
+
+An alias a choice key still names is refused, naming every key: the key would
+resolve to a name this config no longer defines, which is the file the loader
+refuses. Point those keys at the account they should choose instead
+(fugaro accounts alias set ALIAS ACCOUNT), or change them, and remove the alias
+once nothing names it.
+
+Then it converges, as fugaro accounts alias set does: the block is local and
+never published, so the node, the job set and this checkout's repository root
+are converged on the config this wrote and nothing is deleted.
+
+Usage: `fugaro accounts alias rm ALIAS`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for rm |
+| `--yes` | bool | `false` | no | confirm the removal without a prompt |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro accounts alias set`
+
+Point ALIAS at ACCOUNT, so every key naming the alias chooses it
+
+Point an alias at one named Claude account, and converge this installation on
+the repoint.
+
+The alias stands for exactly one account of this config's claude_accounts
+block, or for "default" (the unsuffixed claude-oauth-token secret). It never
+stands for another alias, a pool or a credential: a chain would need a cycle
+check and a reader that prints the path a name came through, and a pool is
+walked inside a run — its members are chosen there, at the stage boundary —
+which is the re-resolution a repoint must not cause.
+
+Then it converges, in the same command and after the write: the policy node
+with the account the keys now resolve to, the job set and this checkout's
+repository root, through the stages fugaro update runs. The new target's job is
+added; the old target's job is never deleted (D2095), because the account may
+still be served by another profile or named by another alias.
+
+A run already in flight keeps the account its launch resolved: nothing here
+rewrites a record, a ledger or a counter (docs/design/update-in-flight.md), and
+a stage already going spends the credential it started with.
+
+Usage: `fugaro accounts alias set ALIAS ACCOUNT`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for set |
+| `--yes` | bool | `false` | no | confirm the repoint without a prompt |
 
 Subcommands:
 

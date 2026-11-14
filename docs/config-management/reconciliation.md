@@ -19,7 +19,7 @@ project config** — a sentence it prints and exits on — so the figures below
 are counted from the registry in this tree through the same predicate the write path uses, which is
 what the guard at the end of this section re-runs.
 
-- **F1 — the registry is 446 rows and the generic writer carries 193 of them.** 105 by name
+- **F1 — the registry is 447 rows and the generic writer carries 193 of them.** 105 by name
   (`internal/cli/settings_set.go:106`), made of the thirteen §4.4 names (the four budget scalars,
   `base_branch`, `max_parallel`, `update_check`, `commit_name`, `commit_email`, `layer.default_profile`,
   and D873's three account keys — `default_claude_account`, `claude_account_auto` and the wildcard
@@ -41,7 +41,7 @@ what the guard at the end of this section re-runs.
   `layer.defaults.`, `layer.governance.`, `credentials.`, `clone_urls.`, `escalation.`):
   13 + 7 + 2 + 1 + 37 + 36 + 1 + 4 + 4 = 105, the last four being the ladder's per-mode override rows
   below.
-  **250 rows have no generic writer**, and the audit's whole subject is which of them are a defect and
+  **254 rows have no generic writer**, and the audit's whole subject is which of them are a defect and
   which are the installation's own plumbing (F13, D1182). The count moved from 390 by the image setup
   skill's two rows: the map (D1906) is the `image map` family's and one row, so it is not carried here,
   and the bake switch above is — and it moved again by the stop rule's two rows,
@@ -67,10 +67,14 @@ what the guard at the end of this section re-runs.
   local-only for `claude_account_auto`'s reason (D2090). Its row is one of the two nudge thresholds'
   shape rather than a family's: D2096 gives the write that repoints one to `fugaro accounts alias
   set/rm`, which converges the node and the job set with it, and no such command exists while the
-  block is landed — so the row's owner is `config local`, the token for a key stated in the machine's
+  block is landed — so the row's owner was `config local`, the token for a key stated in the machine's
   own config that no command edits key by key, and it moves to the `accounts` family with the command
   (D2096 leaves no second door: the generic path refuses the key, so the edit is the file's until
-  then) — the registry is one row wider and the rows without a generic writer are one more again. A key
+  then) — the registry is one row wider and the rows without a generic writer are one more again. AL3
+  of that work moved the registry by one row to 447 and by none, and moved that row's owner the way
+  the paragraph above said it would: `fugaro accounts alias set ALIAS ACCOUNT` and `accounts alias rm
+  ALIAS` are the two doors the block is written through, so **both** of its rows — the map the file
+  holds and the wildcard entry under it — name the `accounts` family and neither is carried here. A key
   the registry carries and this list does not is
   refused by `settings set` whatever it is, and a row claiming a family is pointed at that command
   before this list is asked, so the figures are the allowlist's own and move only when it moves. It moved by three more rows to

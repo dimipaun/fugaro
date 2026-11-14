@@ -46,12 +46,14 @@ package cli
 // every value here is a literal in the source or one of builtLogNames' two
 // builders.
 var reporterCommands = map[string]string{
-	"accounts add":   "accounts-add",
-	"accounts clear": "accounts-clear",
-	"accounts rm":    "accounts-rm",
-	"allow-delete":   "allow-delete",
-	"backlog add":    "backlog-add",
-	"backlog index":  "backlog-index",
+	"accounts add":       "accounts-add",
+	"accounts alias rm":  "accounts-alias-rm",
+	"accounts alias set": "accounts-alias-set",
+	"accounts clear":     "accounts-clear",
+	"accounts rm":        "accounts-rm",
+	"allow-delete":       "allow-delete",
+	"backlog add":        "backlog-add",
+	"backlog index":      "backlog-index",
 	// One entry per mutating command, and the raise is one: it rewrites a
 	// run's stored task and records the raise beside it, so its account is a
 	// step like the three below it rather than a listing (D1352).
@@ -99,10 +101,12 @@ type builtLogName struct {
 // the builder returns or the door spec writes down -- a comment that says
 // "update" is not a name.
 var builtLogNames = map[string]builtLogName{
-	"budget kill":   {builder: "budgetKillLogName"},
-	"budget resume": {builder: "budgetKillLogName"},
-	"setup":         {builder: "doorName", door: "setupDoor"},
-	"update":        {builder: "doorName", door: "updateDoor"},
+	"accounts alias rm":  {builder: "accountsAliasLogName"},
+	"accounts alias set": {builder: "accountsAliasLogName"},
+	"budget kill":        {builder: "budgetKillLogName"},
+	"budget resume":      {builder: "budgetKillLogName"},
+	"setup":              {builder: "doorName", door: "setupDoor"},
+	"update":             {builder: "doorName", door: "updateDoor"},
 }
 
 // exemptListing is one command D1354 keeps off the reporter because its stdout
@@ -198,6 +202,7 @@ var exemptAnswers = map[string]string{
 	"accounts allow":         "adds repositories to a named Claude account's allow-list, and prints the diff it wrote",
 	"accounts deny":          "removes repositories from a named Claude account's allow-list, and prints what it dropped",
 	"accounts":               "prints its own help: the reading is the accounts ls beside it",
+	"accounts alias":         "prints its own help: the work is in the set and rm subcommands beside it",
 	"accounts pool":          "prints its own help: the work is in the ls, add and rm subcommands beside it",
 	"accounts pool add":      "writes one pool into this machine's project config, and prints the entry it wrote",
 	"accounts pool rm":       "removes one pool from this machine's project config, and prints what it dropped",

@@ -879,7 +879,7 @@ func TestTheRefusingInflightAnswerStopsTheWrite(t *testing.T) {
 	// --yes is the flag the in-flight refusal tells the operator to pass
 	// once they have read what the migration does, exactly as --delete
 	// does with it: without it, a run that read the node stops the write.
-	err = policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, false, false, h.s.e.r.conditions(), inflightAsk)
+	err = policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, false, false, false, h.s.e.r.conditions(), inflightAsk)
 	if err == nil {
 		t.Fatalf("a run in flight did not stop the write:\n%s", h.out)
 	}
@@ -1007,7 +1007,7 @@ func TestUpdatePolicyManagedMigrationUnderAMarkerKeepsTheRefusal(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, true, true, h.s.e.r.conditions(), inflightQuiet)
+	err = policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, true, true, false, h.s.e.r.conditions(), inflightQuiet)
 	if err == nil {
 		t.Fatalf("a coding agent's session wrote a managed project's policy with a run in flight:\n%s", h.out)
 	}
@@ -1117,7 +1117,7 @@ func TestUpgradePolicyReseedAsksAboutRunsInFlightBeforeItWritesTheFile(t *testin
 		t.Fatal(err)
 	}
 
-	err = policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, false, false, h.s.e.r.conditions(), inflightAsk)
+	err = policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, false, false, false, h.s.e.r.conditions(), inflightAsk)
 	if err == nil {
 		t.Fatalf("a run in flight did not stop the re-seed:\n%s", h.out)
 	}
@@ -1757,7 +1757,7 @@ func TestPolicyWriteAsksNoTypedNameOfAPersonOnAManagedProject(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return h, f, policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, false, managed, h.s.e.r.conditions(), inflightAsk)
+		return h, f, policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, false, managed, false, h.s.e.r.conditions(), inflightAsk)
 	}
 	// refused is the two sessions that can answer neither by being there nor by
 	// --yes: the run is stopped without a line being read, and the node does
@@ -1870,7 +1870,7 @@ func TestPolicyWriteAsksNoTypedNameOfAPersonOnAManagedProject(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, false, true, h.s.e.r.conditions(), inflightAsk); err != nil {
+		if err := policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, false, true, false, h.s.e.r.conditions(), inflightAsk); err != nil {
 			t.Fatalf("--ask with a y did not confirm the write: %v\n%s", err, h.out)
 		}
 		if got := nodeVersionOn(t, f.db); got == 3 {
@@ -1997,5 +1997,5 @@ func firstPublishRigErr(t *testing.T, extra string, terminal bool, o *initOption
 	if !m.firstPublish {
 		t.Fatalf("the rig planned a publish of a node that is there, so this is not the first node")
 	}
-	return h, f, policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, false, true, h.s.e.r.conditions(), inflightAsk)
+	return h, f, policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, false, true, false, h.s.e.r.conditions(), inflightAsk)
 }
