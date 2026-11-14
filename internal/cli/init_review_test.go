@@ -66,9 +66,11 @@ func TestRunConfirmationMatrix(t *testing.T) {
 						t.Fatalf("agent: %v / %v, read %v, owner %d, screens %d", err1, err2, spy.read, *owner, *screens)
 					}
 				case c.opts.yes:
-					// --yes covers an ordinary step as it always did, with no review.
-					if err1 != nil || err2 != nil || spy.read || *owner != 0 || *screens != 0 || !strings.Contains(out.String(), "confirmed by --yes") {
-						t.Fatalf("--yes: %v / %v, read %v, owner %d, screens %d\n%s", err1, err2, spy.read, *owner, *screens, out)
+					// The run's own answer covers an ordinary step, with no review,
+					// and says so in its own words: the flag that used to give it is
+					// gone, and this case is the conditions a caller may still build.
+					if err1 != nil || err2 != nil || spy.read || *owner != 0 || *screens != 0 || !strings.Contains(out.String(), "confirmed by this run's own answer") {
+						t.Fatalf("yes: %v / %v, read %v, owner %d, screens %d\n%s", err1, err2, spy.read, *owner, *screens, out)
 					}
 				case c.opts.asJSON:
 					// --json confirms no step and names itself: it is not a
@@ -116,10 +118,10 @@ func TestRunConfirmationNeverTakenUnderPlanOnly(t *testing.T) {
 	if *owner != 0 || *screens != 0 || spy.read {
 		t.Fatalf("owner %d, screens %d, read %v: plan-only took the run confirmation", *owner, *screens, spy.read)
 	}
-	c = condition{"plan-only --yes", initOptions{planOnly: true, yes: true}, false, ""}
+	c = condition{"plan-only, a covered run", initOptions{planOnly: true, yes: true}, false, ""}
 	r, spy, _, owner, _ = c.reviewRun(t, "", true)
 	if err := r.confirmOrdinary("applies A", "nothing was applied", ""); err == nil || *owner != 0 || spy.read {
-		t.Fatalf("--plan-only --yes confirmed a step: %v", err)
+		t.Fatalf("--plan-only confirmed a step with the run's own answer: %v", err)
 	}
 }
 
@@ -505,7 +507,7 @@ func TestMarkedProjectConfirmationIsNotATypedName(t *testing.T) {
 // An agent's environment takes no confirmation and applies nothing, marked or
 // not, with a name waiting on stdin.
 func TestMarkedProjectInAnAgentSession(t *testing.T) {
-	for _, args := range [][]string{{"setup"}, {"setup"}} {
+	for _, args := range [][]string{{"setup"}} {
 		r := newInitRig(t)
 		r.markedRuns(t, initProjectName, initProject)
 		fakeTerminal(t)
@@ -520,25 +522,26 @@ func TestMarkedProjectInAnAgentSession(t *testing.T) {
 	}
 }
 
-// --yes covers the ordinary steps as before, with no review and no prompt;
-// the typed-only ones are not reached through it.
-func TestMarkedProjectYesAsBefore(t *testing.T) {
+// The ordinary steps of a marked project are the run's own confirmation at
+// the terminal now, with no prompt of their own (T7, docs/no-prompt-policy):
+// the run that used to pass --yes for them is the same run here, with no flag,
+// and what it reads is the review's question. The sentence that says so is the
+// run's own account of a step nobody is asked about.
+func TestMarkedProjectCoversTheOrdinarySteps(t *testing.T) {
 	r := newInitRig(t)
 	r.markedRuns(t, initProjectName, initProject)
 	fakeTerminal(t)
 	out, _, err := executeStdin(t, initProjectName+"\n", "setup")
-	if err != nil || strings.Contains(out, "Review:") || strings.Contains(out, "covered by the run confirmation") || len(r.ran(t, "apply")) != 1 {
+	if err != nil || !strings.Contains(out, "Review: project aurora") || len(r.ran(t, "apply")) != 1 {
 		t.Fatalf("%v, calls %q\n%s", err, r.calls(t), out)
 	}
-	// The sentence that says what covered the ordinary steps is the run's own
-	// account of a step nobody is asked about: the log keeps it (§9.2).
-	if !strings.Contains(out+newestLog(t, "setup"), "confirmed by --yes") {
+	if !strings.Contains(out+newestLog(t, "setup"), "covered by the run confirmation (the review's own question, at this run's terminal)") {
 		t.Errorf("\n%s", out)
 	}
 }
 
 // --plan-only shows what a real run asks once, applies nothing and never
-// takes --yes.
+// takes the run's own confirmation.
 func TestMarkedProjectPlanOnlyShowsTheReview(t *testing.T) {
 	r := newInitRig(t)
 	r.markedRuns(t, initProjectName, initProject)
@@ -547,7 +550,7 @@ func TestMarkedProjectPlanOnlyShowsTheReview(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	for _, want := range []string{"Review: project aurora", "never takes --yes"} {
+	for _, want := range []string{"Review: project aurora", "never takes it"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("lacks %q:\n%s", want, out)
 		}

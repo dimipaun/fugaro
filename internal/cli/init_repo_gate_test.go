@@ -46,13 +46,13 @@ const hostileOrigin = "https://evil.example/acme/hostile.git"
 
 // setup --repo on its own is the converge's hostile-checkout gate too (gateRepo):
 // a repository the local config does not list, whose origin's identity is not
-// the one it claims, is never onboarded by --yes, in a pipe, with --json, with
-// --non-interactive or by a coding agent's session — each is refused by the gate
-// itself, before any cloud call, with the gate's own sentence. --onboard-repo is
-// the one flag that admits a repository, and only the origin's own name outside
-// an agent session reaches it. A person at their own terminal is the one session
-// the gate admits, and it asks nothing of them (T7, docs/no-prompt-policy): the
-// note and its line saying the host is not a provider's own are the whole of
+// the one it claims, is never onboarded by a pipe, with --json or by a coding
+// agent's session — each is refused by the gate itself, before any cloud call,
+// with the gate's own sentence, and no flag gives it. --onboard-repo is the one
+// explicit opt-in that admits a repository, and only the origin's own name
+// outside an agent session reaches it. A person at their own terminal is the one
+// session the gate admits, and it asks nothing of them (T7, docs/no-prompt-policy):
+// the note and its line saying the host is not a provider's own are the whole of
 // what they read, and the typed owner/name route this test used to pin is gone.
 func TestInitRepoAloneIsBehindTheHostileGate(t *testing.T) {
 	for name, tc := range map[string]struct {
@@ -64,11 +64,9 @@ func TestInitRepoAloneIsBehindTheHostileGate(t *testing.T) {
 		// the gate admits: the person at their own terminal.
 		wants []string
 	}{
-		"--yes":                 {args: []string{}, wants: []string{"needs your own opt-in", "host evil.example is not a provider's own", "--yes does not give it for an origin whose identity is not the one it claims"}},
-		"--yes at a terminal":   {args: []string{}, stdin: "acme/hostile\n", tty: true, wants: []string{"needs your own opt-in", "host evil.example is not a provider's own"}},
-		"--json":                {args: []string{"--json"}, wants: []string{"needs your own opt-in", "host evil.example is not a provider's own"}},
-		"--non-interactive":     {args: []string{}, wants: []string{"needs your own opt-in", "host evil.example is not a provider's own"}},
-		"a coding agent, --yes": {args: []string{}, env: "CLAUDECODE", tty: true, wants: []string{"needs your own opt-in"}},
+		"a pipe, no flag":          {args: []string{}, wants: []string{"needs your own opt-in", "host evil.example is not a provider's own", "no flag gives it for an origin whose identity is not the one it claims"}},
+		"--json":                   {args: []string{"--json"}, wants: []string{"needs your own opt-in", "host evil.example is not a provider's own"}},
+		"a coding agent's session": {args: []string{}, env: "CLAUDECODE", tty: true, wants: []string{"needs your own opt-in"}},
 		"a person at the terminal, nothing typed": {stdin: "yes\n", tty: true},
 		"--onboard-repo, an agent":                {args: []string{"--onboard-repo", "acme/hostile"}, env: "CLAUDECODE", tty: true, wants: []string{"--onboard-repo opts a repository in to cloud changes and is not accepted in a coding agent's session"}},
 		"--onboard-repo, wrong repo":              {args: []string{"--onboard-repo", "acme/else"}, wants: []string{"--onboard-repo acme/else does not name this checkout's origin repository (acme/hostile)"}},
@@ -124,17 +122,22 @@ func TestInitRepoAloneIsBehindTheHostileGate(t *testing.T) {
 	}
 }
 
-// TestSetupOnboardsUnderYesWithoutATypedConfirmation: D12's answer of
-// 2026-10-20 makes onboarding an unlisted repository an ordinary covered row of
-// BOTH front doors' converge, so `setup --yes` onboards one with no typed
-// question and no --onboard-repo. What it does not do is widen the gate: an
-// origin git config rewrites, a host that is not a provider's, and a name the
-// config knows at another host are all still the gate's own question, because
-// none of them says which repository the run is being asked about.
+// TestSetupOnboardsAnUnlistedRepositoryWithNothingTyped: onboarding an
+// unlisted repository is a step of the converge whose whole answer is the
+// reader, and since T7 (docs/no-prompt-policy) that reader is the person at
+// their own terminal: the run that used to be `setup --yes` is this one with no
+// flag at all, with no typed question and no --onboard-repo. An origin git
+// config rewrites, a host that is not a provider's, and a name the config knows
+// at another host stay the gate's own question for a session that cannot
+// confirm, because none of them says which repository the run is being asked
+// about; the person at the terminal is the one session that reads the host in
+// the gate's note and answers for it.
 //
 // The step is taken in the converge (onboardCovered), so it is driven through
-// the stage with the engine stubbed, as the gate's other tests are.
-func TestSetupOnboardsUnderYesWithoutATypedConfirmation(t *testing.T) {
+// the stage with the engine stubbed, as the gate's other tests are: the
+// terminal's run meets the gate's own note first (gateEarly), which is what
+// authorizes the repository for every stage behind it.
+func TestSetupOnboardsAnUnlistedRepositoryWithNothingTyped(t *testing.T) {
 	releaseBuild(t, "0.2.0")
 	rewritten := func(t *testing.T) string {
 		t.Helper()
@@ -153,21 +156,27 @@ func TestSetupOnboardsUnderYesWithoutATypedConfirmation(t *testing.T) {
 		return dir
 	}
 	for _, tc := range []struct {
-		name  string
-		dir   func(t *testing.T) string
-		lc    func(e *initEngine)
+		name string
+		dir  func(t *testing.T) string
+		lc   func(e *initEngine)
+		// cover is the one row the person at their own terminal admits: the
+		// gate's note is read at the terminal, nothing is typed under it, and
+		// the repository is authorized for every stage behind it. Every other
+		// row is a session that cannot confirm, and its want is the clause the
+		// gate's own sentence prints for that origin (convergeOptIn).
 		cover bool
+		want  string
 	}{
 		{name: "an unlisted repository on a provider's host", cover: true,
 			dir: func(t *testing.T) string {
 				return repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", "aurora", ""))
 			}},
-		{name: "a host that is not a provider's",
+		{name: "a host that is not a provider's", want: "no flag gives it for an origin whose identity is not the one it claims",
 			dir: func(t *testing.T) string {
 				return repoCheckout(t, "https://evil.example/acme/app.git", checkoutYAML("github", "oauth", "aurora", ""))
 			}},
-		{name: "an origin git config rewrites", dir: rewritten},
-		{name: "a name the config knows at another host", lc: func(e *initEngine) {
+		{name: "an origin git config rewrites", want: "no flag gives it for an origin whose identity is not the one it claims", dir: rewritten},
+		{name: "a name the config knows at another host", want: "no flag gives it here", lc: func(e *initEngine) {
 			e.lc.Repos = map[string]localcfg.Repo{"acme/app": {Provider: "bitbucket"}}
 		}, dir: func(t *testing.T) string {
 			return repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", "aurora", ""))
@@ -175,15 +184,21 @@ func TestSetupOnboardsUnderYesWithoutATypedConfirmation(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Chdir(tc.dir(t))
-			fakeTerminal(t)
-			// --yes on a pipe: the covered step takes no terminal at all.
-			e, out := stageEngine(t, "acme/app\n", &initOptions{yes: true, githubAppID: "12345"})
+			e, out := stageEngine(t, "", &initOptions{githubAppID: "12345"})
 			unknownRepo(e)
 			if tc.lc != nil {
 				tc.lc(e)
 			}
 			ran := false
 			rs := newRepositoryStage(e)
+			e.repo = rs
+			if tc.cover {
+				fakeTerminal(t)
+				e.gateEarly(t.Context())
+			} else {
+				// A session nobody can answer: the repository is the user's.
+				stdinIsAPipe(t)
+			}
 			rs.engineStage.run = func(context.Context) error { ran = true; return nil }
 			res, err := initflow.Run(t.Context(), []initflow.Stage{rs}, e.options())
 			if err != nil {
@@ -191,18 +206,21 @@ func TestSetupOnboardsUnderYesWithoutATypedConfirmation(t *testing.T) {
 			}
 			if tc.cover {
 				if !ran || stateOf(res, "repository") != initflow.Done {
-					t.Fatalf("--yes did not onboard it: ran %v %+v\n%s", ran, res.Stages, out)
+					t.Fatalf("the person at the terminal did not onboard it: ran %v %+v\n%s", ran, res.Stages, out)
 				}
 				if strings.Contains(out.String(), "Type ") || len(res.Left) != 0 {
-					t.Errorf("--yes asked for a confirmation:\n%s%+v", out, res.Left)
+					t.Errorf("the gate asked something at the terminal:\n%s%+v", out, res.Left)
 				}
 				return
 			}
 			if ran || stateOf(res, "repository") != initflow.NeedsYou || len(res.Left) != 1 {
-				t.Fatalf("--yes onboarded an origin it cannot name: ran %v %+v %v\n%s", ran, res.Stages, res.Left, out)
+				t.Fatalf("a run nobody can answer onboarded an unlisted repository: ran %v %+v %v\n%s", ran, res.Stages, res.Left, out)
+			}
+			if d := stageDetailOf(res, initflow.Repository); !strings.Contains(d, tc.want) {
+				t.Errorf("the gate's sentence lacks %q: %q", tc.want, d)
 			}
 			if strings.Contains(res.Left[0].Text, "Type ") {
-				t.Errorf("the gate's line is a prompt under --yes: %q", res.Left[0].Text)
+				t.Errorf("the gate's line is a prompt: %q", res.Left[0].Text)
 			}
 		})
 	}
@@ -315,53 +333,54 @@ func TestOnboardRepoRefusedInAnAgentSession(t *testing.T) {
 
 // TestUnknownDetailNamesTheRouteTheRunHas: the opt-in clause of the gate's
 // sentence is the caller's, because the way in is not the same in every run
-// (W5.1). --yes covers onboarding an unlisted repository in a converge whose
-// origin's identity is the one it claims (D12), and it does not for a rewritten
-// URL or a host that is not a provider's own; a coding agent's session covers
-// nothing and is handed no flag to paste; and the standalone --repo gate's
-// question IS the identity, so its sentence says --yes cannot give it here. A
-// single sentence for all four would name a route three of them do not have —
-// the clause that used to be printed everywhere said "not covered by --yes"
-// where --yes did cover it.
+// (W5.1). A person at their own terminal covers onboarding an unlisted
+// repository whose origin's identity is the one it claims, and no flag gives it
+// for a rewritten URL or a host that is not a provider's own; a coding agent's
+// session confirms nothing and is handed no flag to paste; and the standalone
+// --repo gate's question IS the identity, so its sentence says no flag gives it
+// there. A single sentence for all four would name a route one of them does not
+// have — the clause that used to be printed everywhere named --yes as the way
+// in.
 func TestUnknownDetailNamesTheRouteTheRunHas(t *testing.T) {
 	plain := originInfo{Repo: "acme/app", Host: "github.com"}
 	rewritten := originInfo{Repo: "acme/app", Host: "github.com", Raw: "https://github.com/acme/app.git", Effective: "https://github.com/acme/other.git", Rewritten: true}
 	other := originInfo{Repo: "acme/app", Host: "gitlab.example"}
 	// The project's config knows this name at another host: onboardCovered
-	// refuses it, so --yes does not cover it either.
+	// refuses it, so the gate's own note at the terminal is the only way in.
 	lc := &localcfg.Config{Repos: map[string]localcfg.Repo{"acme/app": {Provider: "bitbucket"}}}
 	none := &localcfg.Config{}
 
 	t.Setenv("CLAUDECODE", "")
-	if got := convergeOptIn(none, plain); !strings.Contains(got, "--yes covers it") {
-		t.Errorf("an unambiguous origin does not name --yes: %q", got)
+	if got := convergeOptIn(none, plain); !strings.Contains(got, "a person at your own terminal covers it") {
+		t.Errorf("an unambiguous origin does not name the person at the terminal: %q", got)
 	}
 	for _, oi := range []originInfo{rewritten, other} {
 		got := convergeOptIn(none, oi)
-		if !strings.Contains(got, "--yes does not give it") || strings.Contains(got, "--yes covers it") {
-			t.Errorf("an origin whose identity is not the one it claims names --yes as the way in: %q", got)
+		if !strings.Contains(got, "no flag gives it for an origin whose identity is not the one it claims") || strings.Contains(got, "covers it") {
+			t.Errorf("an origin whose identity is not the one it claims names a way in it does not have: %q", got)
 		}
 	}
-	if got := convergeOptIn(lc, plain); !strings.Contains(got, "--yes does not give it here") {
-		t.Errorf("a name the config knows at another host names --yes as the way in: %q", got)
+	if got := convergeOptIn(lc, plain); !strings.Contains(got, "no flag gives it here") {
+		t.Errorf("a name the config knows at another host names a way in it does not have: %q", got)
 	}
 	// A coding agent's session confirms nothing, so the sentence names no flag
 	// for it to paste: the ordinary origin's clause says so rather than
-	// offering --yes, and the other two keep denying it.
+	// offering one, and the other two keep denying it.
 	t.Setenv("CLAUDECODE", "1")
 	if got := convergeOptIn(&localcfg.Config{}, plain); !strings.Contains(got, "confirms nothing") || strings.Contains(got, "covers it") {
-		t.Errorf("an agent session is handed --yes: %q", got)
+		t.Errorf("an agent session is handed a way in: %q", got)
 	}
 	for _, oi := range []originInfo{rewritten, other} {
 		if got := convergeOptIn(none, oi); strings.Contains(got, "covers it") {
-			t.Errorf("an agent session is told --yes covers the step: %q", got)
+			t.Errorf("an agent session is told a flag covers the step: %q", got)
 		}
 	}
 	t.Setenv("CLAUDECODE", "")
-	// And the clause is part of the sentence the reader sees, once.
+	// And the clause is part of the sentence the reader sees, once, naming no
+	// flag at all.
 	d := unknownDetail("aurora", plain, convergeOptIn(none, plain))
-	if strings.Count(d, "--yes") != 1 || !strings.Contains(d, "needs your own opt-in — --yes covers it") {
-		t.Errorf("the detail names the route %d times: %q", strings.Count(d, "--yes"), d)
+	if strings.Contains(d, "--yes") || !strings.Contains(d, "needs your own opt-in — a person at your own terminal covers it") {
+		t.Errorf("the detail names a flag: %q", d)
 	}
 }
 
@@ -492,18 +511,16 @@ func TestSetupOnboardsTheCheckoutsRepositoryAtTheGate(t *testing.T) {
 		t.Errorf("the person at the terminal did not opt the repository in:\n%s", out)
 	}
 
-	// A run that cannot ask the question — --yes, --json, --non-interactive, a
-	// pipe, or the update door — prints nothing about the repository.
+	// A run that cannot ask the question — --json, a pipe, or the update door —
+	// prints nothing about the repository.
 	for name, tc := range map[string]struct {
 		door     string
 		o        *initOptions
 		terminal bool
 	}{
-		"--yes":             {door: setupDoor.name, o: &initOptions{yes: true}, terminal: true},
-		"--json":            {door: setupDoor.name, o: &initOptions{asJSON: true}, terminal: true},
-		"--non-interactive": {door: setupDoor.name, o: &initOptions{nonInteractive: true}, terminal: true},
-		"a pipe":            {door: setupDoor.name, o: &initOptions{}},
-		"the update door":   {door: updateDoor.name, o: &initOptions{}, terminal: true},
+		"--json":          {door: setupDoor.name, o: &initOptions{asJSON: true}, terminal: true},
+		"a pipe":          {door: setupDoor.name, o: &initOptions{}},
+		"the update door": {door: updateDoor.name, o: &initOptions{}, terminal: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, out := gateRig(t, tc.door, gateOrigin(), gateCheckoutYAML(), "\n", tc.o, tc.terminal)
@@ -565,7 +582,7 @@ func TestSetupConvergeOnboardsAtTheGate(t *testing.T) {
 // TestSetupOutsideACheckoutSaysHowToEnrol: outside a checkout there is no
 // repository to ask about, so the question is skipped and the run says in one
 // line how to enrol one later, naming `fugaro setup` (W3.4, D5). A run that
-// cannot ask — --yes, --json, a pipe — prints nothing: it was not asked for a
+// cannot ask — --json, a pipe — prints nothing: it was not asked for a
 // repository, and a line about one is noise in a script's output. The update
 // door is not the wizard and says nothing either.
 func TestSetupOutsideACheckoutSaysHowToEnrol(t *testing.T) {
@@ -578,7 +595,6 @@ func TestSetupOutsideACheckoutSaysHowToEnrol(t *testing.T) {
 		want     bool
 	}{
 		"setup at a terminal": {o: &initOptions{door: setupDoor.name}, terminal: true, want: true},
-		"--yes":               {o: &initOptions{door: setupDoor.name, yes: true}, terminal: true},
 		"--json":              {o: &initOptions{door: setupDoor.name, asJSON: true}, terminal: true},
 		"a pipe":              {o: &initOptions{door: setupDoor.name}},
 		"the update door":     {o: &initOptions{door: updateDoor.name}, terminal: true},
@@ -613,34 +629,37 @@ func TestSetupOutsideACheckoutSaysHowToEnrol(t *testing.T) {
 	}
 }
 
-// TestSetupRepoOnboardsAnUnlistedRepositoryUnderYes is W3.4's row inverted by
-// W5.1, which is the change that flips the call site (D12's answer of
-// 2026-10-20): onboarding a repository the run was not told about was Typed
-// before, and is covered by --yes now — in this mode too, the standalone --repo
-// engine, not only in the converge. The wizard's question does not stand in for
-// it (a run that cannot ask never asks it), and what --yes does not cover is the
-// origin whose identity is not the one it claims, which the next test pins.
-func TestSetupRepoOnboardsAnUnlistedRepositoryUnderYes(t *testing.T) {
+// TestSetupRepoOnboardsAnUnlistedRepositoryAtTheTerminal: onboarding a
+// repository the run was not told about is a step the run's own reader
+// confirms, in the standalone --repo engine as in the converge (W5.1's flip,
+// D12's answer of 2026-10-20) — and since T7 (docs/no-prompt-policy) that
+// reader is the person at the terminal, with nothing typed: the run this test
+// drove with --yes is the same one here, with no flag at all. The wizard's
+// question does not stand in for it (a run that cannot ask never asks it), and
+// what no flag gives is the origin whose identity is not the one it claims,
+// which the next test pins.
+func TestSetupRepoOnboardsAnUnlistedRepositoryAtTheTerminal(t *testing.T) {
 	r, dir := hostileRepoRig(t, "https://github.com/acme/hostile.git")
+	fakeTerminal(t)
 	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--github-app-id", "42", dir)
 	all := out + errOut
 	if strings.Contains(all, "is not one of project") {
-		t.Errorf("--yes was refused at the gate:\n%s", all)
+		t.Errorf("the person at the terminal was refused at the gate:\n%s", all)
 	}
 	if strings.Contains(all, "type "+gateRepo+" at the prompt") {
-		t.Errorf("--yes still asked for the owner/name to be typed:\n%s", all)
+		t.Errorf("the gate still asked for the owner/name to be typed:\n%s", all)
 	}
 	if strings.Contains(all, "Onboard "+gateRepo) {
-		t.Errorf("--yes asked the wizard's question, which a run that cannot ask never does:\n%s", all)
+		t.Errorf("the gate asked the wizard's question, which a run in a checkout does not:\n%s", all)
 	}
 	if strings.Contains(all, "--onboard-repo") {
-		t.Errorf("--yes offered the opt-in flag for a step it already covered:\n%s", all)
+		t.Errorf("the gate offered the opt-in flag for a step its own note covered:\n%s", all)
 	}
 	// Past the gate the engine runs as it always did (this rig's local config
 	// has no base image, which it refuses before any cloud call) — that is what
 	// says the repository was let through.
 	pastGate(t, err)
-	noCloudTouched(t, r, "an unlisted repository under --yes")
+	noCloudTouched(t, r, "an unlisted repository at the terminal")
 }
 
 // TestSetupOnboardingIsASeparateAnswerFromTheProjectQuestion: the wizard asks

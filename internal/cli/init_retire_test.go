@@ -534,17 +534,17 @@ func TestInitRepoRetireConfirmationNamesEveryKeptSecret(t *testing.T) {
 	}
 }
 
-// --yes, --non-interactive, --json, a coding agent's session and a stdin
-// that is a pipe rather than a terminal cover neither confirmation: each
-// refuses, and nothing leaves the state and nothing is deleted.
+// --json, a coding agent's session and a stdin that is a pipe rather than a
+// terminal cover neither confirmation: each refuses, and nothing leaves the
+// state and nothing is deleted.
 //
 // The refusal's words are pinned per case (review round 4). The retirement's
 // confirmation is not the ordinary one and cannot be answered the ordinary
 // way: nothing is typed at a confirmation any more (T7), so what answers for
-// one is the person at the terminal, and --yes is the flag design §4.2
-// forbids for a retirement. The generic notConfirmed would send such a run to
-// --yes anyway, the one flag that confirms none of this, so the message has
-// to name the real terminal that is missing, and never offer --yes.
+// one is the person at the terminal, and no flag covers a retirement (design
+// §4.2). The generic notConfirmed would send such a run to a flag anyway, one
+// that confirms none of this, so the message has to name the real terminal
+// that is missing, and never offer one.
 func TestInitRepoRetireConfirmationsAreNotCoveredByAnythingElse(t *testing.T) {
 	for name, tc := range map[string]struct {
 		args    []string
@@ -553,23 +553,9 @@ func TestInitRepoRetireConfirmationsAreNotCoveredByAnythingElse(t *testing.T) {
 		want    []string
 		notWant []string
 	}{
-		"--yes": {
-			args: []string{},
-			want: []string{
-				"the confirmation of a retirement needs a real terminal",
-				"(--yes never confirms a retirement)",
-				"nothing was removed from Terraform's state and nothing was deleted",
-			},
-			notWant: []string{"was not typed", "pass --yes once you have read what it does"},
-		},
-		"--non-interactive": {
-			args:    []string{},
-			want:    []string{"needs a real terminal", "(--yes and --non-interactive never confirm a retirement)"},
-			notWant: []string{"was not typed", "pass --yes once you have read what it does"},
-		},
 		"--json": {
 			args:    []string{"--json"},
-			want:    []string{"needs a real terminal", "(--yes and --json never confirm a retirement)"},
+			want:    []string{"needs a real terminal", "(--json never confirms a retirement)"},
 			notWant: []string{"was not typed", "pass --yes once you have read what it does"},
 		},
 		"a coding agent": {
@@ -1942,8 +1928,8 @@ func TestInitRepoJSONCarriesRetirements(t *testing.T) {
 	r := newRetireRig(t, retireOpts{protection: true})
 	out, errOut, err := executeStdin(t, "", "setup", "--repo", "--no-build", "--json")
 	if ExitCode(err) != ExitUserError || err == nil {
-		// --yes cannot run a retirement, so the documented outcome is the
-		// refusal -- and the result document is printed either way.
+		// A --json run cannot confirm a retirement, so the documented outcome
+		// is the refusal -- and the result document is printed either way.
 		t.Logf("exit %d, err %v\n%s", ExitCode(err), err, errOut)
 	}
 	var res struct {
@@ -2647,6 +2633,9 @@ func TestAnUpdateThatStoppedAfterTheReadKeepsTheRecordsRows(t *testing.T) {
 		// confirmed, one that is confirmed, one whose plan never gets that far.
 		args  []string
 		stdin string
+		// noTTY is the run nobody can answer: the rig's own terminal would
+		// otherwise be the confirmation itself (T7).
+		noTTY bool
 		stop  func(r *retireRig)
 	}{
 		{
@@ -2661,7 +2650,8 @@ func TestAnUpdateThatStoppedAfterTheReadKeepsTheRecordsRows(t *testing.T) {
 			// A run with no terminal cannot confirm the apply at all (T7: a
 			// person at one is the whole answer, with nothing typed), so it
 			// stops there.
-			args: []string{"update", "--repo", "--no-build", "--allow-delete", retireSvcAddr},
+			args:  []string{"update", "--repo", "--no-build", "--allow-delete", retireSvcAddr},
+			noTTY: true,
 		},
 		{
 			name: "the apply failed",
@@ -2677,6 +2667,9 @@ func TestAnUpdateThatStoppedAfterTheReadKeepsTheRecordsRows(t *testing.T) {
 			// reads an empty retirement set the labels answered for: this is
 			// about where that set may be written, not about reading it.
 			r := newRetireRig(t, retireOpts{protection: true, stateEmpty: true, keptAsNote: true, noOrphanJob: true})
+			if tc.noTTY {
+				noTerminal(t)
+			}
 			previous := recordPreviousUpdate(t)
 			if tc.stop != nil {
 				tc.stop(r)

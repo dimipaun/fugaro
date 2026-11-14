@@ -44,13 +44,13 @@ func neverRun(t *testing.T) func(context.Context) error {
 // it. The wire the old wording was about is the checkout's own, and this
 // checkout carries no pin for the stage to take out.
 //
-// --yes is not one of these modes any more: D12's answer of 2026-10-20 makes
-// onboarding an unlisted repository an ordinary covered row in BOTH front
-// doors, so --yes onboards it with no typed question
-// (TestSetupOnboardsUnderYesWithoutATypedConfirmation, and update's own
-// TestUpdateLeavesAnUnenrolledRepositoryAloneAndExitsOne for the door that
-// never enrols). A coding agent's session gives nothing either, and is pinned
-// by the refusal matrix (setup_refusals_test.go).
+// An unlisted repository is not one of these modes any more: D12's answer of
+// 2026-10-20 makes onboarding it an ordinary covered row in BOTH front doors,
+// so the person at the terminal onboards it
+// with nothing typed (TestSetupOnboardsAnUnlistedRepositoryWithNothingTyped,
+// and update's own TestUpdateLeavesAnUnenrolledRepositoryAloneAndExitsOne for
+// the door that never enrols). A coding agent's session gives nothing either,
+// and is pinned by the refusal matrix (setup_refusals_test.go).
 func TestHostileCloneNeedsOwnConfirmation(t *testing.T) {
 	releaseBuild(t, "0.2.0")
 	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir()) // the machine's plugin is this test's, not the developer's
