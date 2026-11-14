@@ -2053,7 +2053,7 @@ func TestUpdateManagedPolicyStageRefusesTheTypedLoosening(t *testing.T) {
 	if !strings.Contains(line, managedmode.NotConverged) {
 		t.Errorf("the policy step is the user's in a sentence that is not the gate's: %s", line)
 	}
-	if !strings.Contains(line, "the step's confirmation class is Typed, which no plan gate admits (D1026)") {
+	if !strings.Contains(line, "the step is one no plan gate judges, whatever the document says (D1026)") {
 		t.Errorf("the refusal does not name the class rule that refused the node: %s", line)
 	}
 	if strings.Contains(line, initflow.AgentRefusal("CLAUDECODE")) {
@@ -2123,7 +2123,7 @@ func TestUpdateManagedPolicyStageRefusesTheAccountChoiceKeys(t *testing.T) {
 	if !strings.Contains(line, managedmode.NotConverged) {
 		t.Errorf("the policy step is the user's in a sentence that is not the gate's: %s", line)
 	}
-	if !strings.Contains(line, "the step's confirmation class is Typed, which no plan gate admits (D1026)") {
+	if !strings.Contains(line, "the step is one no plan gate judges, whatever the document says (D1026)") {
 		t.Errorf("the refusal does not name the class rule that refused the node: %s", line)
 	}
 	account, stages := accountMembersOn(t, db)
@@ -2375,7 +2375,7 @@ func TestUpdateManagedWorkspaceStageRefusesTheTypedWidening(t *testing.T) {
 	if !strings.Contains(line, managedmode.NotConverged) {
 		t.Errorf("the workspace step is the user's in a sentence that is not the gate's: %s", line)
 	}
-	if !strings.Contains(line, "the step's confirmation class is Typed, which no plan gate admits (D1026)") {
+	if !strings.Contains(line, "the step is one no plan gate judges, whatever the document says (D1026)") {
 		t.Errorf("the refusal does not name the class rule that refused the node: %s", line)
 	}
 	if strings.Contains(line, initflow.AgentRefusal("CLAUDECODE")) {
@@ -2431,7 +2431,7 @@ func TestUpdateManagedRefusesTheFirstWorkspacePublish(t *testing.T) {
 		t.Fatalf("the run did not reach the workspace stage, so nothing here was judged:\n%s", got)
 	}
 	line := stepLineInLog(t, got, head)
-	if !strings.Contains(line, "the step's confirmation class is Typed, which no plan gate admits (D1026)") {
+	if !strings.Contains(line, "the step is one no plan gate judges, whatever the document says (D1026)") {
 		t.Errorf("the refusal does not name the class rule that refused the first record: %s", line)
 	}
 	if v := db.Value(projectpolicy.PathWorkspace(initProjectName)); v != nil {
