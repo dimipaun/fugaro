@@ -224,7 +224,7 @@ func ValidAuthAccount(s string) bool {
 }
 
 // The error types of the refusal body. The runner switches on these, not on
-// a status: two of them share one status.
+// a status: three of them share one status.
 const (
 	// ErrorExhaustedUntil is the typed answer of C1.11: no credential is
 	// usable now, and the earliest reset is ResetAt. The runner waits for it
@@ -248,6 +248,21 @@ const (
 	// The message is the gateway's own sentence and it says that nothing was
 	// read; no credential value is in it, because none was touched.
 	ErrorRequestRefused = "request_refused"
+	// ErrorNoCandidateCredentials is a call the cascade was asked for and could
+	// hand no credential to: the narrowing the policy applies — the crafts, the
+	// tier-A admission and the repository's recorded auth — left the list the
+	// selector is given empty, so there was nothing to select from, nothing to
+	// wait for and no other tier to reach. The state WAS read: it is what the
+	// service read that admits this repository no credential, and the tried list
+	// beside this type names every credential that was considered and the one
+	// reason each was dropped. It is deliberately not ErrorStateUnavailable,
+	// whose name sends the operator to the database: this is a policy and
+	// bundle question, and the answer says which (a bundle that holds no model
+	// credential, an account the repository's own admission does not cover, a
+	// credential the selector was left with none of). Like every refusal but
+	// ErrorExhaustedUntil it halts the run (D143), and no credential value is
+	// in it, because none was used.
+	ErrorNoCandidateCredentials = "no_candidate_credentials"
 )
 
 // The statuses. An unverified caller is 403; everything the service cannot
@@ -320,6 +335,19 @@ func ValidReason(reason string) bool {
 		return true
 	}
 	return false
+}
+
+// triedLine renders a tried list as one line: name (reason), name (reason), in
+// the order the list holds. It is the rendering a refusal's own sentence and
+// the operator's refusal line both use, so the run and the operator read one
+// list and not two — and it names credentials and never a value, since a name
+// is one of the bundle's keys and a reason is one of the four constants below.
+func triedLine(tried []Tried) string {
+	parts := make([]string, 0, len(tried))
+	for _, tr := range tried {
+		parts = append(parts, tr.Name+" ("+tr.Reason+")")
+	}
+	return strings.Join(parts, ", ")
 }
 
 // ValidCredentialName reports whether name may be a credential's name: one
