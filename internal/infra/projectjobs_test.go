@@ -2143,29 +2143,56 @@ func implicitReviewLC() string { return implicitReviewBaseLC() + credentialsServ
 // named on both sides rather than spelled twice, which is what makes the two
 // equal by construction and what its own test (internal/credsvc) reads this for.
 func implicitReviewRow() CredentialsReviewJob {
-	return CredentialsReviewJob{Profile: ImplicitReviewProfile, Provider: githubProvider, Account: config.DefaultClaudeAccount}
+	return implicitReviewRowOf(githubProvider)
+}
+
+// implicitReviewRowOf is that row for one provider, which is the axis the set
+// of them varies on (ImplicitReviewProviders).
+func implicitReviewRowOf(provider string) CredentialsReviewJob {
+	return CredentialsReviewJob{Profile: ImplicitReviewProfile, Provider: provider, Account: config.DefaultClaudeAccount}
+}
+
+// implicitReviewRows is one row per implicit default review job an installation
+// deploys, in ImplicitReviewProviders' order: the whole review table of an
+// installation that declares no profile.
+func implicitReviewRows() []CredentialsReviewJob {
+	out := make([]CredentialsReviewJob, 0, len(ImplicitReviewProviders))
+	for _, provider := range ImplicitReviewProviders {
+		out = append(out, implicitReviewRowOf(provider))
+	}
+	return out
 }
 
 // TestImplicitReviewJobIsDeployedWithoutProfiles is the deployment half of the
-// owner's requirement of 2026-11-13: `fugaro review --pr N` must run on any
-// GitHub project with no profile to declare and no policy to publish first. A
-// review runs on a review-only variant and never on a shared coding job, and a
-// project with no profiles has no coding job to derive a variant from — so the
-// variant has to be a job of the project itself: ONE review-only job for the
-// default account on the github provider, beside nothing.
+// owner's requirement of 2026-11-13: `fugaro review --pr N` must run on a
+// project with no profile to declare and no policy to publish first. A review
+// runs on a review-only variant and never on a shared coding job, and a project
+// with no profiles has no coding job to derive a variant from — so the variant
+// has to be a job of the project itself: ONE review-only job for the default
+// account on each provider the installation deploys one for
+// (ImplicitReviewProviders), beside no coding job at all.
 //
-// What this test asserts is the deployment: the job, its own service account
+// Both providers are here for the same reason and one of them is a finding of
+// plan task RJ8's (F6): no shared job ever serves Bitbucket (design §4.5, D5 as
+// amended), so a Bitbucket repository's review has no variant to resolve
+// without this job, and a Bitbucket repository with no profile is the case that
+// has nothing else to reach. The config below records one repository of each
+// provider (m4LocalConfig's acme/sandbox is the Bitbucket entry), so one
+// fixture answers for both.
+//
+// What this test asserts is the deployment: each job, its own service account
 // and the row the credentials service admits a review caller by. The half that
-// resolves a review onto it follows (C1's piece 3, the launcher):
-// internal/cli's reviewJobFor refuses a launch whose repository resolved no
-// shared project job, this one included, so no review reaches this container
-// until that half lands.
+// resolves a review onto one follows (C1's piece 3 for GitHub, plan task RJ8
+// for Bitbucket): internal/cli's reviewJobFor resolves the implicit job of the
+// repository's own provider, and refuses when the config composes none.
 //
 // Mutations (each run and restored): drop the credentials-service gate and an
 // installation that has not opted in deploys a review job whose every call
 // fails; give it a mount (or the coding job's redaction list) and an
 // installation with no profile mounts a secret in the container that runs the
-// code under review.
+// code under review; drop the provider's own gate (recordedGitHubAppID,
+// recordedBitbucketRepo) and this fixture's providers are deployed for
+// installations that carry neither the App nor a repository of them.
 func TestImplicitReviewJobIsDeployedWithoutProfiles(t *testing.T) {
 	if got := projectJobsFor(t, implicitReviewLC()); got != nil {
 		t.Fatalf("a project with no profiles deployed the coding jobs %v, want none: the implicit job is what its repositories are reviewed on, and a coding job here would be a second answer", sortedJobNames(got))
@@ -2178,69 +2205,81 @@ func TestImplicitReviewJobIsDeployedWithoutProfiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	row := implicitReviewRow()
-	want := credsvc.ReviewJobName(row.Profile, row.Provider, row.Account)
-	if len(jobs) != 1 {
-		t.Fatalf("review jobs = %v, want the one implicit default job %s", sortedJobNames(jobs), want)
-	}
-	j, ok := jobs[want]
-	if !ok {
-		t.Fatalf("the review set %v has no job named %s", sortedJobNames(jobs), want)
-	}
-	if j.Profile != row.Profile || j.Provider != row.Provider || j.Account != row.Account {
-		t.Errorf("the implicit review job is (%s, %s, account %q), want %v: the credentials service admits a review caller by that triple", j.Profile, j.Provider, j.Account, row)
-	}
-	if got, want := j.ServiceAccount.AccountID, credsvc.ReviewServiceAccountID(row.Profile, row.Provider, row.Account); got != want {
-		t.Errorf("the implicit review job runs as %s, want %s: the variant's own service account is what makes it a job that mounts nothing", got, want)
-	}
-	// It mounts nothing at all, and it names no redaction list either: the
-	// environment it runs the code under review in carries the credentials
-	// service's address and no credential of the installation's.
-	if len(j.SecretEnv) != 0 {
-		t.Errorf("the implicit review job mounts %v, want no secret: a variant runs untrusted code as the job's service account, so every credential in its environment is one that code can read", j.SecretEnv)
-	}
-	if _, ok := j.Env[runner.SecretEnvsVar]; ok {
-		t.Errorf("the implicit review job carries %s, want no redaction list: there are no mounts for it to name", runner.SecretEnvsVar)
-	}
-	if got, want := j.Env[providers.EnvCredentialsServiceURL], lc.CredentialsService.URL; got != want {
-		t.Errorf("the implicit review job carries %s = %q, want %q: the service is where its read-only token and its model calls come from", providers.EnvCredentialsServiceURL, got, want)
-	}
-	if got := j.Env[providers.EnvGitHubAppID]; got != "123456789" {
-		t.Errorf("the implicit review job carries %s = %q, want the App ID the config records: its provider refuses to start without it", providers.EnvGitHubAppID, got)
-	}
-	// The runner's own image, and the resources a repository workflow that
-	// names none is given: the job serves a profile no config declares, so
-	// nothing states a profile's cpu, memory or timeout_class for it.
-	if got, want := j.Image, lc.BaseImage(config.BaseKind); got != want {
-		t.Errorf("the implicit review job runs the image %s, want the installation's base image %s", got, want)
+	if len(jobs) != len(ImplicitReviewProviders) {
+		t.Fatalf("review jobs = %v, want one implicit default job per provider %v", sortedJobNames(jobs), ImplicitReviewProviders)
 	}
 	w := defaultWorkflow(t)
-	if got, want := j.CPU, strconv.Itoa(w.Resources.CPU); got != want {
-		t.Errorf("the implicit review job's cpu is %s, want the default workflow's %s", got, want)
-	}
-	if got, want := j.Memory, w.Resources.Memory; got != want {
-		t.Errorf("the implicit review job's memory is %s, want the default workflow's %s", got, want)
-	}
-	// Its task timeout is the default workflow's total plus the backend's
-	// slack, which is how a per-repository job's is computed (spec.go's
-	// TaskTimeoutS): a deployer that carried its own copy of the number would
-	// put this job on a clock the default repository job no longer runs on.
-	if got, want := j.TaskTimeoutS, int((w.Timeouts.Total.Duration+backend.TaskTimeoutSlack)/time.Second); got != want {
-		t.Errorf("the implicit review job's task timeout is %ds, want the default workflow's total plus the slack, %ds", got, want)
-	}
-	if j.Vertex {
-		t.Error("the implicit review job carries a Vertex grant: under O1 the reviewer's model calls go through the credentials service, and no task of the design names roles/aiplatform.user for it")
-	}
-	// Its name is the project stem's, which is what keeps it from ever being a
-	// per-repository job's: the jobs beside it are fugaro-<slug>-<workflow>
-	// (gcp.JobName), one per repository, and no repository's job can hold a
-	// service account a review runs on.
-	slug, err := task.Slug("github", "acme/webapp")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if j.Job == gcp.JobName(slug, "web") || j.ServiceAccount.AccountID == gcp.ServiceAccountID(slug, "web") {
-		t.Errorf("the implicit review job (%s, %s) is the job or the service account of acme/webapp's per-repository job: a review would run in a container built for the repository's own workflow", j.Job, j.ServiceAccount.AccountID)
+	for _, row := range implicitReviewRows() {
+		want := credsvc.ReviewJobName(row.Profile, row.Provider, row.Account)
+		j, ok := jobs[want]
+		if !ok {
+			t.Errorf("the review set %v has no job named %s", sortedJobNames(jobs), want)
+			continue
+		}
+		if j.Profile != row.Profile || j.Provider != row.Provider || j.Account != row.Account {
+			t.Errorf("the implicit review job is (%s, %s, account %q), want %v: the credentials service admits a review caller by that triple", j.Profile, j.Provider, j.Account, row)
+		}
+		if got, want := j.ServiceAccount.AccountID, credsvc.ReviewServiceAccountID(row.Profile, row.Provider, row.Account); got != want {
+			t.Errorf("the %s implicit review job runs as %s, want %s: the variant's own service account is what makes it a job that mounts nothing", row.Provider, got, want)
+		}
+		// It mounts nothing at all, and it names no redaction list either: the
+		// environment it runs the code under review in carries the credentials
+		// service's address and no credential of the installation's.
+		if len(j.SecretEnv) != 0 {
+			t.Errorf("the %s implicit review job mounts %v, want no secret: a variant runs untrusted code as the job's service account, so every credential in its environment is one that code can read", row.Provider, j.SecretEnv)
+		}
+		if _, ok := j.Env[runner.SecretEnvsVar]; ok {
+			t.Errorf("the %s implicit review job carries %s, want no redaction list: there are no mounts for it to name", row.Provider, runner.SecretEnvsVar)
+		}
+		if got, want := j.Env[providers.EnvCredentialsServiceURL], lc.CredentialsService.URL; got != want {
+			t.Errorf("the %s implicit review job carries %s = %q, want %q: the service is where its read-only token and its model calls come from", row.Provider, providers.EnvCredentialsServiceURL, got, want)
+		}
+		// The App ID belongs to the github job and to no other: the module
+		// refuses a github job without it (its own precondition), and a
+		// Bitbucket job that carried one would hand a container that clones
+		// through the proxy a key it has no use for.
+		appID := j.Env[providers.EnvGitHubAppID]
+		if row.Provider == githubProvider && appID != "123456789" {
+			t.Errorf("the implicit review job carries %s = %q, want the App ID the config records: its provider refuses to start without it", providers.EnvGitHubAppID, appID)
+		}
+		if row.Provider != githubProvider && appID != "" {
+			t.Errorf("the %s implicit review job carries %s = %q, want none: only the github job's token is issued for an App", row.Provider, providers.EnvGitHubAppID, appID)
+		}
+		// The runner's own image, and the resources a repository workflow that
+		// names none is given: the job serves a profile no config declares, so
+		// nothing states a profile's cpu, memory or timeout_class for it.
+		if got, want := j.Image, lc.BaseImage(config.BaseKind); got != want {
+			t.Errorf("the %s implicit review job runs the image %s, want the installation's base image %s", row.Provider, got, want)
+		}
+		if got, want := j.CPU, strconv.Itoa(w.Resources.CPU); got != want {
+			t.Errorf("the %s implicit review job's cpu is %s, want the default workflow's %s", row.Provider, got, want)
+		}
+		if got, want := j.Memory, w.Resources.Memory; got != want {
+			t.Errorf("the %s implicit review job's memory is %s, want the default workflow's %s", row.Provider, got, want)
+		}
+		// Its task timeout is the default workflow's total plus the backend's
+		// slack, which is how a per-repository job's is computed (spec.go's
+		// TaskTimeoutS): a deployer that carried its own copy of the number would
+		// put this job on a clock the default repository job no longer runs on.
+		if got, want := j.TaskTimeoutS, int((w.Timeouts.Total.Duration+backend.TaskTimeoutSlack)/time.Second); got != want {
+			t.Errorf("the %s implicit review job's task timeout is %ds, want the default workflow's total plus the slack, %ds", row.Provider, got, want)
+		}
+		if j.Vertex {
+			t.Errorf("the %s implicit review job carries a Vertex grant: under O1 the reviewer's model calls go through the credentials service, and no task of the design names roles/aiplatform.user for it", row.Provider)
+		}
+		// Its name is the project stem's, which is what keeps it from ever being
+		// a per-repository job's: the jobs beside it are fugaro-<slug>-<workflow>
+		// (gcp.JobName), one per repository, and no repository's job can hold a
+		// service account a review runs on.
+		for _, repo := range []string{"acme/webapp", "acme/sandbox"} {
+			slug, err := task.Slug(row.Provider, repo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if j.Job == gcp.JobName(slug, "web") || j.ServiceAccount.AccountID == gcp.ServiceAccountID(slug, "web") {
+				t.Errorf("the %s implicit review job (%s, %s) is the job or the service account of %s's per-repository job: a review would run in a container built for the repository's own workflow", row.Provider, j.Job, j.ServiceAccount.AccountID, repo)
+			}
+		}
 	}
 }
 
@@ -2268,25 +2307,26 @@ workflows: { web: { commands: { build: "true", test: "true" } } }
 	return w
 }
 
-// TestProfilesKeepTheirOwnReviewVariants: this installation's review set is the
-// coding set's own twins both before and after the credentials service, because
-// one of its profiles IS the profile the implicit job is deployed under. Every
-// profile's accounts carry config.ProjectJobAccounts' empty segment, so the
-// standard profile's no-account coding job derives exactly the implicit job's
-// name and service account: the set holds that one variant, derived from the
-// profile, and the implicit emission is suppressed for the reason
-// implicitReviewVariant's own gate gives — the instance is already there, under
-// that key — and not because the installation has a github coding job at all
+// TestProfilesKeepTheirOwnReviewVariants: an installation's review set is its
+// coding set's own twins, and beside them the implicit job of each provider no
+// profile of it derives one for — here the Bitbucket one, which a Bitbucket
+// repository's review has no other source of at all (no shared job serves the
+// provider, so no profile's coding job is ever deployed for it). The github
+// implicit job is the one that does derive: this installation's standard
+// profile IS the profile the implicit job is deployed under, so its no-account
+// coding job derives exactly the implicit job's name and service account, and
+// the implicit emission is suppressed for the reason implicitReviewVariant's
+// own gate gives — the instance is already there, under that key — and not
+// because the installation has a github coding job at all
 // (TestAddingAProfileKeepsTheImplicitReviewJob is about that distinction, and
-// about what getting it wrong costs). The only difference the credentials
-// service makes here is inside the variants' environment: the address a review
-// fetches from.
+// about what getting it wrong costs).
 //
-// Mutation (run, restore): make the implicit emission unconditional — drop the
-// collision check in implicitReviewVariant — and this fails: the project gets a
-// second review job for the standard profile's default account, which the
-// deployer refuses as a collision rather than deploying two jobs that share a
-// name.
+// Mutations (each run and restored): make the implicit emission unconditional —
+// drop the collision check in implicitReviewVariant — and this fails: the
+// project gets a second review job for the standard profile's default account,
+// which the deployer refuses as a collision rather than deploying two jobs that
+// share a name. Drop the credentials-service gate and the Bitbucket job is
+// deployed on an installation that has not opted in.
 func TestProfilesKeepTheirOwnReviewVariants(t *testing.T) {
 	profiles := m4LocalConfig + projectJobRepoLC + m5Additions + projectProfilesLCBlock
 	if coding := projectJobsFor(t, profiles); len(coding) != 2 {
@@ -2294,19 +2334,27 @@ func TestProfilesKeepTheirOwnReviewVariants(t *testing.T) {
 	}
 	before := projectReviewJobsFor(t, profiles)
 	after := projectReviewJobsFor(t, profiles+credentialsServiceLCBlock)
-	if !slices.Equal(sortedJobNames(before), sortedJobNames(after)) {
-		t.Fatalf("the review jobs of an installation with profiles are %v before the credentials service and %v after, want the same set: the standard profile's no-account job derives the implicit job's own name and service account, so it is the job the installation already deploys", sortedJobNames(before), sortedJobNames(after))
+	// The credentials service is what the implicit jobs are gated on, so they
+	// are the whole of the difference it makes to this set — one per provider
+	// the profiles leave underived.
+	added := map[string]bool{}
+	for name := range after {
+		if _, ok := before[name]; !ok {
+			added[name] = true
+		}
 	}
-	if len(after) != 2 {
-		t.Fatalf("the review set is %v, want the two variants of the two profiles", sortedJobNames(after))
+	if want := credsvc.ReviewJobName(ImplicitReviewProfile, bitbucketProvider, config.DefaultClaudeAccount); len(added) != 1 || !added[want] {
+		t.Fatalf("the credentials service added %v to %v, want the Bitbucket implicit job %s alone: the standard profile's no-account job derives the github implicit job's own name and service account, so that one is already deployed", added, sortedJobNames(before), want)
 	}
-	// The only difference the credentials service makes to an installation that
-	// has profiles is inside the variants' environment: the address a review
-	// fetches from, and no new job beside them.
+	if len(after) != 3 {
+		t.Fatalf("the review set is %v, want the two variants of the two profiles and the Bitbucket implicit job", sortedJobNames(after))
+	}
+	// For the jobs this set already had, the only difference the credentials
+	// service makes is inside their environment: the address a review fetches
+	// from.
 	for name, j := range after {
 		b, ok := before[name]
 		if !ok {
-			t.Errorf("the review job %s was added to an installation whose profiles already deploy one: %v", name, sortedJobNames(after))
 			continue
 		}
 		if got, want := j.Env[providers.EnvCredentialsServiceURL], "https://fugaro-credentials-123456789012.us-east5.run.app"; got != want {
@@ -2387,8 +2435,8 @@ func TestAddingAProfileKeepsTheImplicitReviewJob(t *testing.T) {
 }
 
 // TestImplicitReviewJobNeedsARecordedAppID: an installation with the credentials
-// service on that records no single github App ID gets no implicit job, and gets
-// no error either.
+// service on that records no single github App ID gets no implicit GITHUB job,
+// and gets no error either.
 //
 // Both halves are the guard and not a nicety. The module refuses a github job
 // whose FUGARO_GITHUB_APP_ID is not 1 to 20 digits
@@ -2400,6 +2448,11 @@ func TestAddingAProfileKeepsTheImplicitReviewJob(t *testing.T) {
 // reports it as an error for a project that declares profiles, and here it is a
 // skip, because the job is deployed for nobody who asked for it and must not
 // become a refusal of its own.
+//
+// The Bitbucket job is beside it in both fixtures on purpose: the two providers'
+// gates are independent, and an installation of Bitbucket repositories is
+// exactly the one whose github job is skipped (plan task RJ8, finding F6 — that
+// installation still needs a review job, and it is the other one).
 func TestImplicitReviewJobNeedsARecordedAppID(t *testing.T) {
 	one := implicitReviewLC()
 	noApp := strings.Replace(one, `, github_app_id: "123456789"`, "", 1)
@@ -2408,6 +2461,7 @@ func TestImplicitReviewJobNeedsARecordedAppID(t *testing.T) {
 	if noApp == one || twoApps == one {
 		t.Fatal("the two fixtures below did not change: this test would read the installation that records one App ID and deploys the job")
 	}
+	bitbucket := credsvc.ReviewJobName(ImplicitReviewProfile, bitbucketProvider, config.DefaultClaudeAccount)
 	for _, c := range []struct{ what, lc string }{
 		{"an installation that records no App ID", noApp},
 		{"an installation that records two App IDs", twoApps},
@@ -2416,8 +2470,11 @@ func TestImplicitReviewJobNeedsARecordedAppID(t *testing.T) {
 		if err != nil {
 			t.Errorf("%s was refused: %v", c.what, err)
 		}
-		if jobs != nil {
-			t.Errorf("%s deployed the review jobs %v, want none: the module refuses a github job without the App ID, so the job would stop the apply of an installation that converges today", c.what, sortedJobNames(jobs))
+		if _, ok := jobs[ImplicitReviewJobName(githubProvider)]; ok {
+			t.Errorf("%s deployed the github review job %s, want none: the module refuses a github job without the App ID, so the job would stop the apply of an installation that converges today", c.what, ImplicitReviewJobName(githubProvider))
+		}
+		if _, ok := jobs[bitbucket]; !ok {
+			t.Errorf("%s deployed %v, want the Bitbucket review job %s: the two providers' gates are independent, and no shared job serves Bitbucket at all", c.what, sortedJobNames(jobs), bitbucket)
 		}
 	}
 }
@@ -2430,10 +2487,12 @@ const credentialsFixtureImage = "us-east5-docker.pkg.dev/proj-1234/fugaro-ghcr/d
 // TestInstallationReviewTfvarsGolden writes the tfvars
 // internal/infra/testdata/installation-review.tfvars.json and the golden plan
 // scripts/gen-golden-plans.sh makes of it: the installation the implicit
-// default review job is deployed into — the credentials service ON, no
+// default review jobs are deployed into — the credentials service ON, no
 // profiles block at all, so no shared coding job and nothing for
-// `fugaro review --pr N` to have run on — and the one review job it deploys,
-// carrying no mount and its own service account.
+// `fugaro review --pr N` to have run on — and one review job per provider it
+// records a repository of (the fixture's acme/webapp is the github one and
+// acme/sandbox the Bitbucket one), carrying no mount and their own service
+// accounts.
 //
 // It is built the way `fugaro update` builds it and not by hand: the
 // installation stage's own document (InstallationVars over Installation), with
@@ -2454,8 +2513,8 @@ func TestInstallationReviewTfvarsGolden(t *testing.T) {
 	if len(spec.ProjectJobs) != 0 {
 		t.Fatalf("the fixture's installation deploys the coding jobs %v, want none: the whole point of the implicit review job is a project that publishes no profile", sortedJobNames(spec.ProjectJobs))
 	}
-	if len(spec.ProjectReviewJobs) != 1 {
-		t.Fatalf("the fixture's installation deploys the review jobs %v, want the one implicit default job", sortedJobNames(spec.ProjectReviewJobs))
+	if len(spec.ProjectReviewJobs) != len(ImplicitReviewProviders) {
+		t.Fatalf("the fixture's installation deploys the review jobs %v, want the implicit default job of each of %v", sortedJobNames(spec.ProjectReviewJobs), ImplicitReviewProviders)
 	}
 	svc, err := Credentials(lc, credentialsFixtureImage, nil)
 	if err != nil {
