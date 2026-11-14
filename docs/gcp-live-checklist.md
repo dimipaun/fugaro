@@ -674,6 +674,25 @@ on that secret and on no other account's. 600d is the one part a **script** can 
 `fugaro` alone); 600a to 600c are human-terminal procedures and are the steps their sections write.
 It is owner-run — **no agent runs any step of it** — and it is **NOT RUN**.
 
+**Checks 620 to 627 are the mobile-auth work's, and they are the first eight numbers free past every
+claim above them** ([`docs/mobile-auth/`](mobile-auth/implementation-plan.md) §9, allocated
+2026-11-14). The reading is taken the way the paragraphs above take theirs, at the head this
+allocation is written on (`13d2b6b8`): the highest **written** `## Check` section in this file is
+**600** — **600a** to **600d**, the accounts-add work's — and above it **610 to 619** are
+`docs/review-job`'s reserved block (its plan's **RJ9** and **RJ10**; [docs/status.md](status.md)
+names **610** and **611** as that work's owner checks). A claim above the highest written section is
+settled at its merge, and the rule for a work that reserved none is the number free past every
+claim, so **620 is the first free number** and this work takes **620–627**. Its own §9 proposes
+**ten** rows and **eight** are owner-run; the two it marks **runner** — the resolver's rule on the
+real declaration the owner wrote, and the app's own CI job, which that plan says is **not a live
+check at all** — take no number here, which is why this block is eight and not ten. **Nothing above
+was renumbered and nothing was surrendered**: 600 stays the accounts-add work's, 610–619 stay
+`docs/review-job`'s, and **601 to 609** stay free — this work took the numbers past the last claim
+rather than the lowest gap, because that is what the rule above says. The four parts that proposed
+these checks are merged, so each is a section and a row here, written **now** rather than promised:
+**620** to **627** below, each **owner-run** on a real project, **never `belong`**, each **NOT RUN**,
+and **no agent runs any step of any of them**.
+
 **That is the end of the register.** The paragraph below is not another
 reservation: it introduces the check that owns 57, whose row is in the table
 below.
@@ -930,6 +949,15 @@ probe account carries predefined grants only).
 | 210 | A sampled run's shadow publishes nothing ([`docs/model-ab-testing/`](model-ab-testing/implementation-plan.md), its **Check 210** and task **A2.2**; **D550**–**D557**'s sampler — `ab.rate` and its ceiling, the daily cap, the champion's own hash of the run ID — **D554**'s publish mode `none`, and **A2.1**'s tests for the boundary this plan's Global constraints table states, "a challenger never pushes, never opens, updates or comments on a PR"): on the sandbox installation whose published project layer sets `ab.rate: 0.10` with one challenger named and whose repository carries no `ab.rate: 0` opt-out, small sandbox tasks launched until `fugaro runs ls` shows a pair (about ten launches expected at 0.10, the owner stopping at thirty, and **no flag forces a sample**) — and then, of that pair's two arms, exactly one `fugaro/<run-id>` branch on the remote and one pull request, both the champion's: the challenger's own record carries `ab.arm: challenger`, `ab.publish: none`, `ab.challenger` (the model the owner named) with `challenger_source: owner` and `outcome: none`, and **no** branch and **no** pull request, while **both** arms' patch objects are in the bucket — each fact read where it is written rather than from the row that claims it | See "Check 210" below; `bash scripts/live-checks/check210.sh --sandbox <a sandbox repository checkout> --yes` is the whole of it, its sibling test `scripts/live-checks/check210_test.sh` drives it against fake `fugaro`, `gcloud`, `git` and `gh` only and launches nothing, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project, account or region naming that installation is refused by name, and so is a coding agent's session); **no agent runs any step of it** | Up to **THIRTY sandbox runs** and what their tasks cost — each champion's implement stage and its review rounds, on the sandbox's own budget — plus the branches and pull requests those champions leave: **billable, and `--yes` is required** before anything is launched. Everything else is a read (the layer, `doctor`, both records out of the runs bucket, the remote's branch list, both patch objects, `fugaro ab --json`), and the launches stop at the **first** pair, so a sandbox already sampling at 0.10 costs a fraction of the bound. The teardown is part of the check: a launch that has not ended is stopped with `fugaro cancel --now` and read back, then every pull request this check's champions opened is closed and every branch they pushed is deleted, each read back. **OWNER-RUN, NOT RUN.** |
 | 310 | The CLI's default output at a real terminal, on macOS ([`docs/cli-output-console-graph/`](cli-output-console-graph/implementation-plan-output.md), its task **CL12** and the guarantees **G1**–**G8** that plan's **CL5b**, **CL9** and **CL10** were written to, whose own table names the five commands below): `fugaro update` at a real terminal draws the colour and the line in flight and prints one line per step with a closing line and an exit status that agree with it (G1, G3, G4); `fugaro setup --plan-only` prints the plan view, and its log holds the same rows, whole and uncoloured (CL5a); `NO_COLOR=1 fugaro update` and `fugaro update \| cat` print every step with no escape sequence and no carriage return (G1, G4); `fugaro update --json` puts one document on stdout and the account on stderr (G2); a forced failure inside a stage prints the step's name, the last lines of the stage's own output and the log's path, and its log is 0600 inside a 0700 directory and holds what the screen did not (G5, G8); and the retention rule removes the oldest log past 14 days or past the newest 50 per command name and touches nothing else — another command's log, a link, a directory, a name that is not the sink's (G6); `fugaro doctor --json` files no log at all (G7) | See "Check 310" below; `bash scripts/live-checks/check310.sh` is the whole of it — one idempotent script, one `PASS`/`FAIL`/`INFO` line per fact, and `--dry-run` to print what it would run without running any of it — and its sibling test `scripts/live-checks/check310_test.sh` drives it against a fake `fugaro` and a fake `terraform` only; **you** run it, on your own machine and your own terminal, against an installation the check reads from `fugaro doctor --json` or you name with `--installation`, and an installation the register refuses by name — `belong`, `belong-*`, `fugaro-dev`, `fugaro-belong` or `edge-devel-dimi` — or a project naming `belong`, `fugaro-dev` or `edge-devel-dimi`, is refused before the first `fugaro update` and before any call at all when you name it yourself (otherwise `fugaro doctor --json` is the read that names it); **no agent runs any step of it** (a coding agent's session is refused outright) | Four `fugaro update` runs and one `fugaro setup --plan-only`, every one of them a re-converge of an installation that already exists: on a converged one each applies nothing and costs nothing billable, and **no model call is made by any step of this check**. The forced-failure run writes nothing at all — its `terraform` is a fake that answers the version question, refuses the rest, and leaves one marker in the check's own scratch directory and nothing anywhere else. Nothing is created and nothing is granted; the only writes are the log directory and the check's own scratch directory, whose 54 seeded logs are removed again, and any of your own logs the retention rule removes while the check runs are copied aside before its first `fugaro` call and put back byte for byte. **USER-RUN, NOT RUN.** |
 | 311 | The same default output on Windows — Windows Terminal and the legacy console ([`docs/cli-output-console-graph/`](cli-output-console-graph/implementation-plan-output.md), its task **CL12** and its own 311 row; the reconciliation's **T4** and **T4(a)**, **D1355**, and the sentence `internal/report/style.go` carries — the ANSI sixteen are what every terminal draws and what the legacy Windows console draws "once virtual terminal processing is on (Check 311)"): whether both consoles draw the colour and the line in flight the reporter draws at a real terminal, whether `NO_COLOR` set to anything and a pipe turn both off there too with every step still printed, whether `--json`'s stdout is one document a Windows shell parses, and — the reading this check exists for — whether the legacy console draws the escapes or prints them, since **nothing in this tree calls `termenv`'s `EnableVirtualTerminalProcessing`** | See "Check 311" below; the steps are the same commands typed in each console, by **you**, on a Windows machine with the CLI installed, and **no agent runs any step of it** — there is **no script** for this one: it is the procedure below, because the subject is a console on a machine no test in this repository can reach | One installation's own `fugaro update` runs in each console, on an installation that is already converged: each applies nothing and **no model call is made**. Nothing is created, granted or deleted, and the log directory is the only thing written. A legacy console that prints the escape sequences is the finding this check exists to make — and it is a **code** decision (the virtual-terminal call), not a reason to edit this row. **USER-RUN, NOT RUN.** |
+
+| 620 | The pairing that refuses an address it cannot attribute ([`docs/mobile-auth/`](mobile-auth/implementation-plan.md), its §9 and the number it allocated on 2026-11-14; part **P3** and **D226**): `fugaro pair` may administer **one** address — the pairing operator's own verified one, read by the check `internal/cli/init_members.go`'s `userEmail` already makes for the CLI — and nothing is written until it has proved it. Three arms, each of them one refusal: `--email` naming an address that is **not** the operator's own is refused by name; credentials that are **a service account's** are refused rather than administered (`authenticatedUser`'s `errServiceAccount`); and an identity whose address the endpoint reports as **not verified** is refused with `the email <address> is not verified`. Every one of them lands **before a token is minted and before a byte is written**, which is what makes the refusal a refusal and not an undone write | See "Check 620" below; **you** run it, in the sandbox installation `fugaro` and on the sandbox project `fugaro-dev`, **never `belong`**, and **no agent runs any step of it** | Three `fugaro pair` runs that every one of them ends in a refusal, plus one `fugaro pair ls`: **no device node, no delivery node, no session spent, no model call and no run** — nothing billable. The check reads the device node back with your own credential (which bypasses the rules) before and after, so what it settles is that the two readings are the same. Its third arm is **NOT MEASURED** where you hold no identity the endpoint calls unverified, and the check says so in one line rather than passing it. **OWNER-RUN, NOT RUN.** |
+| 621 | The paired phone cannot read its own entry ([`docs/mobile-auth/`](mobile-auth/implementation-plan.md), its §9 and the number it allocated on 2026-11-14; parts **P2** and **P3**, **D222** and **D223**): the device node `config/admin/devices/<uid>` is the allowlist, and the **deployed** rules carry it as `.read: false, .write: false` — so nothing on the phone reads or writes an entry, and the node's **existence** is the whole of what the rules' `userClaim` USER macro asks. What a paired phone holds is a read of its own subtree and no read of its own entry; `fugaro pair ls` on the laptop, which reads with a credential that bypasses the rules, is the only place an entry is visible | See "Check 621" below; **you** run it, on the sandbox installation and project, with a **real phone** carrying the app the app's own CI job built, **never `belong`**, and **no agent runs any step of it** | One pairing (`fugaro pair`), one `fugaro pair ls --json` and one read the phone makes with the **device token it holds**: no model call, no run, nothing billable. The reading that matters is the **denial** — an authenticated GET of the entry returning `permission denied` on the deployed rules and not on a rules file in this repository. Its restore revokes the device it paired. **OWNER-RUN, NOT RUN.** |
+| 622 | A revoked pairing stops on the next request ([`docs/mobile-auth/`](mobile-auth/implementation-plan.md), its §9 and the number it allocated on 2026-11-14; part **P3**, **D166** and **D229**): revocation is the **deletion of the device node**, and the rules read that the node exists — so the request the phone could make a moment before is refused from the revoke on, without waiting for an ID token to expire. `fugaro pair revoke (--uid UID \| --name NAME)` deletes the node first and the OS keychain item for that pairing's MAC key second; it deletes no Auth user (the node's deletion is what makes the orphan the history sweep's) and it does not delete the pairing session's own `p~` node | See "Check 622" below; **you** run it, on the sandbox installation and project, with the same **real phone**, **never `belong`**, and **no agent runs any step of it** | One pairing, one request the phone makes that must succeed, one `fugaro pair revoke`, and the same request again that must be refused: no model call, no run, nothing billable, and the revoke is two deletions. The check records the two readings with their timestamps, and a request that still succeeds after the revoke is the finding it exists for. **OWNER-RUN, NOT RUN.** |
+| 623 | A publish never re-adds a revoked entry ([`docs/mobile-auth/`](mobile-auth/implementation-plan.md), its §9 and the number it allocated on 2026-11-14; part **P5**, its **D231** and **D229**): `fugaro project policy publish` seeds the node from the **declared** allowlist (the machine's own config, `internal/localcfg`'s declared block), and the seed's gate is the node's **absence** (`seedDeclaredDevices`, `internal/cli/project_cmd.go`): a node that is there is never written again, because one revocation is one **deleted child** and an entry a node does not hold cannot be told apart from one an operator removed. **The gap this check must report rather than assume**: revoking the **last** device empties the node, the database prunes a node its last child has left, and the read the gate rests on (`GetETag`, `internal/rtdb/client.go`) reports a null body as an absent node — so the next publish re-seeds **every declared entry, the person just revoked among them** ([`docs/mobile-auth/README.md`](mobile-auth/README.md), amended 2026-11-14). Closing it needs a record that a seed has happened, which P5 does not have: it is a decision and not a repair | See "Check 623" below; **you** run it, on the sandbox installation and project, with the **declared allowlist** written on that machine, **never `belong`**, and **no agent runs any step of it** | One `fugaro project policy publish` and the device-node read before and after it, per arm: **nothing billable, no model call and no run** — the publish writes the policy and the shared node on the sandbox project and costs nothing, and the declared block is **local-only** (a checkout's `fugaro.yaml` never declares an admin). Arm 1 (a node that still carries another device) must show the revoked entry **not** returning; arm 2 (the revoked entry was the last child) is where the gap above is read, and it is reported as a **finding** with the node's own bytes, not as a check that passed. **OWNER-RUN, NOT RUN.** |
+| 624 | A declared entry that is not on the node admits nobody ([`docs/mobile-auth/`](mobile-auth/implementation-plan.md), its §9 and the number it allocated on 2026-11-14; part **P5** and **D222**): the **node** is the authority and the declaration is not — a person the local config declares but the node does not carry is admitted by **nothing**, because the rules read the node's existence and no reader consults the file. Pairing is what admits a person declared after the first seed | See "Check 624" below; **you** run it, on the sandbox installation and project, **never `belong`**, and **no agent runs any step of it** | One write of your own (the deletion of one child under `config/admin/devices`, in the Firebase console or with your own credential) and the phone's request that follows: no model call, no run, nothing billable. The read is the **refusal** of a request from a phone whose entry was removed while the file still declares the address; the check records the node's bytes on both sides. **OWNER-RUN, NOT RUN.** |
+| 625 | The QR carries no identity ([`docs/mobile-auth/`](mobile-auth/implementation-plan.md), its §9 and the number it allocated on 2026-11-14; part **P4**): what `fugaro pair` draws is **discovery and not identity** — the project, its database URL and Identity Toolkit API key, and the one-shot pairing token, which is all the phone needs to know *where* to connect and grants it nothing by itself. It carries **no** address, no uid, no role and no key, and the credentials the phone ends up holding go to it encrypted to the key it generated | See "Check 625" below; **you** run it, on the sandbox installation and project, with a **real phone** and its camera, **never `belong`**, and **no agent runs any step of it** | One `fugaro pair` (which waits for the phone's key and the typed code) or one `fugaro pair --json`, read as **text**: no model call, no run, nothing billable — the payload's own bytes are the whole subject, and the reading is a scan of a real QR rather than of the string the command printed. The check records the payload with the token's **value** redacted and says what each member is; a member the prompt cannot explain is the finding. **OWNER-RUN, NOT RUN.** |
+| 626 | The first screen with no account ([`docs/mobile-auth/`](mobile-auth/implementation-plan.md), its §9 and the number it allocated on 2026-11-14; part **P4**, the spec's step and `mobile/src/app/first-screen.js`): on a device carrying the app the app's own CI job built, the first screen is reachable with **no sign-in at all** — the demo is the front door for somebody who cannot pair — and the "ask your admin" sentence stands beside it rather than in front of it, and never as a substitute for it | See "Check 626" below; **you** run it, on a device with the built app, paired with **nothing**, **never `belong`**, and **no agent runs any step of it** | One app launch on a device with no account: **no run, no cloud call and nothing billable** — the screen is drawn from the app's own bundle, and the demo behind it talks to no project of yours. The reading is a **fresh install** of the artifact the app's CI job published, reached with the network on and no sign-in made. **OWNER-RUN, NOT RUN.** |
+| 627 | The refusal of a public sign-up still holds with a provider on ([`docs/mobile-auth/`](mobile-auth/implementation-plan.md), its §9 and the number it allocated on 2026-11-14; part **P6**, **D221** and `internal/cli/init_firebase.go`'s `refusePublicSignUp`): on the **installation's own** project the Identity Platform step refuses an existing configuration that enables **any** public sign-up path — the web API key is public, so only custom tokens signed by Fugaro's own signer may work — naming the paths it found, saying that the converge never changes an existing configuration, and writing **nothing**. A **workspace's own** project is the one exception and is not this check: there the pinned entries pass and an off-pin path is refused (Check 361) | See "Check 627" below; **you** run it, in the sandbox installation `fugaro`, on the sandbox project `fugaro-dev`, where you have enabled one provider **by hand** in the Firebase console first, **never `belong`**, and **no agent runs any step of it** | Two converges of an installation that already exists (`fugaro setup`, which keeps it — *"this installation is already set up"* — and converges as `update` does rather than offering to create a second one) and one read of the project's Identity Toolkit configuration: **no model call and no run**, and nothing billable on a converged installation. The read happens **before** the step's own confirmation, so a configuration that carries a provider is refused without a write on any stage. The check restores the configuration it changed by disabling the provider again, and reads it back. **OWNER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -15725,3 +15753,346 @@ repositories and carries `pull_requests: write` alone.
 that a set is ready or not ready as a whole: this run is the only reading of it, and a set that
 flips one pull request and leaves the other draft is a finding for this plan's owner.
 
+
+## Check 620: the pairing that refuses an address it cannot attribute (the sandbox installation `fugaro` and project `fugaro-dev`, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written for the **mobile-auth work** ([mobile-auth/implementation-plan.md](mobile-auth/implementation-plan.md)
+§9, part **P3**) and **run by you**; its number is one of the eight that work's §9 allocated on
+2026-11-14, and **no agent runs any step of it**. Its subject is **D226**: a paired device's entry
+carries the **administered email** and the **role the allowlist resolves** for it, and the one
+address `fugaro pair` may administer is the pairing operator's own **verified** one — read by the
+same check `internal/cli/init_members.go`'s `userEmail` already makes for the CLI (`authenticatedUser`),
+and canonicalised by the same rule P1 reads entries with (`pairAdministeredEmail`, `internal/cli/pair.go`).
+
+**What it settles.** That the refusal fires on a **real** project and that **nothing is written**:
+the node's existence is the whole of what the rules read (D222, Check 621 below), so a pairing that
+wrote an address nobody proved they hold would put a device on D166's allowlist under it. Three arms:
+
+- `--email` naming an address that is **not** the operator's own. This is the arm to run first: it
+  needs nothing but the sandbox installation, and it is the whole of D226 in one sentence.
+- Credentials that are **a service account's**. `authenticatedUser` refuses them rather than
+  administering an address no person holds.
+- An identity whose address the userinfo endpoint reports as **not verified** — `the email <address>
+  is not verified`. Where you hold no such identity this arm is **NOT MEASURED**, said in one line;
+  it is the one arm a Google account cannot be turned into on demand.
+
+Every arm is refused **before the pairing token is minted and before a byte is written**, which is
+what makes it a refusal rather than an undone write: the read of the device node before and after is
+the same bytes.
+
+**What has to exist before it runs.** A release build carrying `fugaro pair` and `fugaro pair ls`
+(P6.6's command, whose surface is in the tree); a sandbox installation converged on `fugaro-dev`
+(**never `belong`** — this check reads and writes the device node of the installation it runs in);
+your own Google credential as the operator, for the arms that need one; and, for the second arm, a
+service account key you are willing to point `GOOGLE_APPLICATION_CREDENTIALS` at — a **credential**,
+which no line of this check prints.
+
+**The commands.**
+
+```sh
+fugaro pair --name <a name> --email <an address that is not yours>   # arm 1: refused by name
+GOOGLE_APPLICATION_CREDENTIALS=<a service account key> fugaro pair --name <a name>   # arm 2
+fugaro pair --name <a name>                                        # arm 3, on an unverified identity
+fugaro pair ls --json                                             # the node is unchanged
+```
+
+Record the three refusals and the `pair ls` reading (with the entry list, not a token) under Check
+620 here.
+
+**What a run costs.** Three `fugaro pair` runs that each end in a refusal and one `pair ls`: **no
+device node, no delivery node, no session spent, no model call and no run — nothing billable.**
+Nothing is created, granted or deleted; the check writes nothing, so it has no restore to make.
+
+**What waits on it.** P3's red step and D226: a pairing that could write an address it has not
+proved is the one silent grant this whole allowlist exists to prevent, and this is its only live
+reading.
+
+## Check 621: the paired phone cannot read its own entry (a real phone against the sandbox project `fugaro-dev`, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written for the **mobile-auth work** ([mobile-auth/implementation-plan.md](mobile-auth/implementation-plan.md)
+§9, parts **P2** and **P3**) and **run by you**; its number is one of the eight that work's §9
+allocated on 2026-11-14, and **no agent runs any step of it**. Its subject is **D222** and **D223**:
+the allowlist is a **device node** — `config/admin/devices/<uid>` — and the **deployed** rules carry
+it as `.read: false, .write: false`.
+
+**What it settles.** That no phone reads or writes any entry, and that the node's **existence** is
+the whole of what the rules ask. The rules' device claim is a USER macro on the node's path
+(`userClaim`, `internal/budget/rules`), which is a question about **existence** and not about
+content: a paired phone holds a read of its own subtree (`config/mobile/<uid>` and the delivery
+node) and **no read of its own entry**, so `fugaro pair ls` on the laptop — which reads with a
+credential that bypasses the rules — is the only place an entry is visible at all. A rules file in
+this repository is not what this reads: the reading is the denial the **deployed** rules give.
+
+**What has to exist before it runs.** A converged sandbox installation on `fugaro-dev`, its rules
+deployed by `fugaro update`; a **real phone** carrying the app the app's own CI job built, paired by
+`fugaro pair`; and a way to make one authenticated request **with the device token the phone holds**
+(the app does it itself, or you take the token out of the phone's own storage).
+
+**The commands.**
+
+```sh
+fugaro pair ls --json                    # the entry, read with your own credential
+# on the phone, with its device token:
+#   GET  <database>/config/admin/devices/<uid>.json   -> permission denied
+```
+
+Record both readings under Check 621 here: the entry `pair ls` shows, and the denial with its body.
+The **denial** is the finding; a 200 from the phone's own token is a rules deploy that did not take.
+
+**What a run costs.** One pairing, one `pair ls` and one request the phone makes: **no model call,
+no run, nothing billable.** The pairing writes the device node, the delivery node and the keychain
+item; its restore is `fugaro pair revoke --uid <uid>`, which deletes the first two.
+
+**What waits on it.** D222's whole shape and P2's field set: this is the check that says the entry is
+unreadable from the device that is on it.
+
+## Check 622: a revoked pairing stops on the next request (the same phone, against the sandbox project `fugaro-dev`, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written for the **mobile-auth work** ([mobile-auth/implementation-plan.md](mobile-auth/implementation-plan.md)
+§9, part **P3**) and **run by you**; its number is one of the eight that work's §9 allocated on
+2026-11-14, and **no agent runs any step of it**. Its subject is **D166** and **D229**: revocation is
+the **deletion of the device node**, and the node's existence is what the rules read — so the next
+request the phone makes is refused, without waiting for an ID token to expire. `fugaro pair revoke
+(--uid UID | --name NAME)` deletes the node first and the OS keychain item for that pairing's MAC key
+second, deletes **no** Auth user (the node's deletion is what makes the orphan the history sweep's to
+remove) and does not delete the pairing session's own `p~` node — it names that sweep instead.
+
+**What it settles.** That a request the phone could make a moment before the revoke is refused from
+it on, on the deployed rules and on a real project. It is the live half of P3's revocation test,
+which drives a fake database; the fake cannot answer for a database that prunes and a credential that
+caches.
+
+**What has to exist before it runs.** Check 621's own setup — the sandbox installation, the deployed
+rules and a **paired phone** — plus the uid or the name `fugaro pair ls` printed for it, and a
+request the phone can make **before** the revoke that succeeds (its own subtree read is the natural
+one).
+
+**The commands.**
+
+```sh
+fugaro pair ls --json                     # the uid and the name to revoke
+# on the phone: a request that SUCCEEDS, with the time it was made
+fugaro pair revoke --uid <uid>
+# on the phone, the same request: refused, with the time it was made
+```
+
+Record the two requests with their timestamps and the revoke's own output under Check 622 here. A
+request that still succeeds after the revoke is the finding this check exists for.
+
+**What a run costs.** One pairing, one revoke and two requests from the phone: **no model call, no
+run, nothing billable**, and the revoke is two deletions. Nothing else is written, so the check's own
+restore is the revoke it already made.
+
+**What waits on it.** D166's property, which the whole allowlist promises: that a revoke is
+immediate.
+
+## Check 623: a publish never re-adds a revoked entry (the sandbox installation and project, with the declared allowlist on that machine, never `belong`; run by you; NOT RUN)
+
+**NOT RUN, and the one check of this block whose outcome is already known in part.** Written for the
+**mobile-auth work** ([mobile-auth/implementation-plan.md](mobile-auth/implementation-plan.md) §9,
+part **P5**) and **run by you**; its number is one of the eight that work's §9 allocated on
+2026-11-14, and **no agent runs any step of it**. Its subject is **D231** and **D229**:
+`fugaro project policy publish` seeds the device node from the **declared** allowlist — the machine's
+own config (`internal/localcfg`), never a checkout's `fugaro.yaml`, because a declaration that
+travelled with a checkout would be a way for a pull request to add an admin — and the seed's gate is
+the node's **absence** (`seedDeclaredDevices`, `internal/cli/project_cmd.go`). A node that is there
+is never written again, because one revocation is one **deleted child** and an entry a node does not
+hold cannot be told apart from one an operator removed.
+
+**The gap this check reads rather than assumes.** The rule holds only while the node exists.
+Revoking the **last** device empties the node it was on, the database prunes a node its last child
+has left, and the read the gate rests on — `GetETag` in `internal/rtdb/client.go` — reports a node
+the database answers with a null body as one that is **not there**: so the next publish re-seeds
+**every declared entry, the person just revoked among them** whenever the declaration still names
+them. It was reported by the review of P5 (`ce24f96f`, PR #2614) and is recorded in
+[mobile-auth/README.md](mobile-auth/README.md)'s amendment of 2026-11-14; closing it needs a record
+that a seed has happened, which is a **decision and not a repair** and is P5's to take.
+**The two arms are therefore not the same reading**, and this section says so:
+
+- **Arm 1, a node that still carries another device.** The revoked entry does **not** come back, and
+  a publish leaves the node's other children as they are. This arm is what D231 claims.
+- **Arm 2, the revoked entry was the last child.** The next publish re-seeds it, and the person is
+  admitted again from a declaration nobody edited. This arm is a **findings run**, not a check that
+  passed: record the node's bytes on both sides and the publish's own output, and report it against
+  D231 rather than treating the check as failed by the agent that reads it.
+
+**What has to exist before it runs.** A converged sandbox installation on `fugaro-dev`, its rules
+deployed; a declared allowlist written in that machine's own config, naming at least **two** entries
+(so arm 1 has a second device to leave standing); at least one paired device per declared entry (or
+the seed is what creates them, which is P5's own first case); and your own credential for the
+credential-bypassing read of the node.
+
+**The commands.**
+
+```sh
+fugaro pair revoke --uid <uid used by arm 1>          # arm 1: one child removed, the node remains
+fugaro project policy publish                        # the publish whose seed must not fire
+# read config/admin/devices with your own credential, before and after
+fugaro pair revoke --uid <uid used by arm 2>         # arm 2: the LAST child, so the node goes
+fugaro project policy publish                        # the publish whose seed DOES fire -- the gap
+```
+
+Record both arms' node reads, both publishes' output (including the seed's own line, which the
+publish prints when it writes the node) and the entry list under Check 623 here.
+
+**What a run costs.** Two publishes and two revokes on the sandbox project: **nothing billable, no
+model call and no run.** The publish writes the policy and the shared node; the declared block is
+local-only. Nothing is created or granted by the seeding half beyond the entries the declaration
+names, and the check's restore is a revoke plus a hand-deletion of any entry arm 2 re-seeded.
+
+**What waits on it.** D231's decision about the record a seed needs, and the sentence
+[mobile-auth/README.md](mobile-auth/README.md) carries about this gap.
+
+## Check 624: a declared entry that is not on the node admits nobody (the sandbox project `fugaro-dev`, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written for the **mobile-auth work** ([mobile-auth/implementation-plan.md](mobile-auth/implementation-plan.md)
+§9, part **P5**) and **run by you**; its number is one of the eight that work's §9 allocated on
+2026-11-14, and **no agent runs any step of it**. Its subject is **D222**: the **node** is the
+authority and the declaration is not.
+
+**What it settles.** That a person the machine's own config declares but the node does not carry is
+admitted by **nothing**: no reader consults the file, and the rules ask whether the node exists. It
+is the other half of Check 623 — that one reads what a publish does not re-add, this one reads that
+the file alone adds nothing — and together they are the pair P5's review upheld.
+
+**What has to exist before it runs.** A converged sandbox installation on `fugaro-dev` with a
+declared allowlist naming at least one address, a **paired phone** whose uid is that person's entry,
+and your own credential for the write and the read of the node.
+
+**The commands.**
+
+```sh
+fugaro pair ls --json                                  # the entry, and the image of it before
+# delete config/admin/devices/<uid> with your own credential (the console, or the REST API),
+# while the machine's own config still declares that address
+# on the phone: the request it could make a moment ago -> refused
+```
+
+Record the node's bytes on both sides, the declaration that still names the address, and the refusal
+under Check 624 here.
+
+**What a run costs.** One hand-deletion and one request from the phone: **no model call, no run,
+nothing billable.** Nothing is created or granted; the check's restore is a pairing for the address
+it removed (or the re-pairing of the phone).
+
+**What waits on it.** D222 and P5's scope sentence: that the node is the authority, which is the
+reason a declaration is a **seed** and never a second allowlist.
+
+## Check 625: the QR carries no identity (the sandbox installation, a real phone's camera, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written for the **mobile-auth work** ([mobile-auth/implementation-plan.md](mobile-auth/implementation-plan.md)
+§9, part **P4**) and **run by you**; its number is one of the eight that work's §9 allocated on
+2026-11-14, and **no agent runs any step of it**.
+
+**What it settles.** What the code `fugaro pair` draws actually carries, read as **text**: the
+project, its database URL and Identity Toolkit API key, and the one-shot pairing token — the
+**discovery** the phone needs in order to know where to connect, which grants it nothing by itself.
+It carries **no** address, **no** uid, **no** role and **no** key, and the credentials the phone
+ends up holding go to it encrypted to the key **it** generated (`internal/cli/pair.go`'s `pairQR`
+and the delivery payload; the MAC key never leaves the laptop's OS keychain in clear and is not in
+the code). The pairing token is a value: this check reads the payload's **members**, and the token is
+redacted wherever the reading is recorded.
+
+**What has to exist before it runs.** A sandbox installation converged on `fugaro-dev` with a
+signer account (`fugaro pair` mints the pairing token and the device token with its
+`fugaroTokenMinter` role, and needs `roles/firebasedatabase.admin` to write the nodes); a **real
+phone** with a camera and the app, so the QR is scanned rather than typed; and a terminal wide enough
+for the drawing, or `--json` for the payload as text.
+
+**The commands.**
+
+```sh
+fugaro pair --name <a name>        # scan the drawing with the phone's camera
+fugaro pair --json                 # the same payload as one JSON event per line
+```
+
+Record the payload's **member names and their shapes** — with the token redacted — and what the
+phone's own scan made of it, under Check 625 here. A member that is a person's address, a uid or a
+role is the finding; so is a key that arrives in the clear.
+
+**What a run costs.** One `fugaro pair`, which waits for the phone's key and the typed code: **no
+model call, no run, nothing billable.** A pairing that is completed writes the device node, the
+delivery node and the keychain item (revoke it after, as Check 621's restore does); a pairing you
+abandon before the typed code leaves the project exactly as it was.
+
+**What waits on it.** P4 and the spec's step 2: that pairing is discovery and not identity.
+
+## Check 626: the first screen with no account (a device carrying the app's built artifact; run by you; NOT RUN)
+
+**NOT RUN.** Written for the **mobile-auth work** ([mobile-auth/implementation-plan.md](mobile-auth/implementation-plan.md)
+§9, part **P4**) and **run by you**; its number is one of the eight that work's §9 allocated on
+2026-11-14, and **no agent runs any step of it**. Its subject is the owner's ruling of 2026-10-19
+that the app's first screen is the demo's front door and `mobile/src/app/first-screen.js`.
+
+**What it settles.** That on a **fresh install** of the artifact the app's own CI job built, the
+first screen is reached with **no sign-in at all**: everything the app shows is reachable without an
+account, the way in is the demo, and the "ask your admin" sentence stands **beside** that control
+rather than in front of it or instead of it. This is a promise made to a store listing's reviewer and
+to a person who cannot pair, and no test in this repository can read it: the app's unit tests read
+the file, not a device.
+
+**What has to exist before it runs.** The app's CI job's own artifact for this revision (the
+`mobile/` workflow's build — **no Node is installed in the container these checks are written in**,
+and the artifact is what a device installs); a device or an emulator with no account, no profile and
+no previous install; and the network on, so that the demo's own path can be read as it really is.
+
+**The commands.** None: this is a **procedure**, not a script — the subject is a screen on a device
+this repository's tests cannot reach. Install the artifact, launch it, read the first screen, tap the
+demo, and record:
+
+- the sentence the first screen carries about the demo and the one about the admin, quoted;
+- that the demo is reachable with no sign-in and no pairing;
+- which control is above the other, since the report of 2026-10-19 is explicit that the pairing
+  control arrives **above** the demo and never instead of it;
+- that nothing on the way in asked for an account, an address or a code.
+
+**What a run costs.** One install and one launch on a device with no account: **no run, no cloud call
+and nothing billable** — the screen is drawn from the app's own bundle, and the demo behind it talks
+to no project of yours. Nothing is created, granted or deleted.
+
+**What waits on it.** P4's own acceptance, and the store-listing answer the owner's ruling is about.
+
+## Check 627: the refusal of a public sign-up still holds with a provider on (the sandbox project `fugaro-dev`, one provider enabled by hand, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written for the **mobile-auth work** ([mobile-auth/implementation-plan.md](mobile-auth/implementation-plan.md)
+§9, part **P6**) and **run by you**; its number is one of the eight that work's §9 allocated on
+2026-11-14, and **no agent runs any step of it**. Its subject is **D221** and
+`internal/cli/init_firebase.go`'s `refusePublicSignUp`, reached from the Identity Platform step of
+`fugaro setup` (`idpStep`, read **before** the confirmation and run after it; `setup` keeps an installation that already exists and converges it as `update` does, so this is the door that reaches the step on a project that is already set up).
+
+**What it settles.** That on the **installation's own** project the refusal fires against a
+configuration that really enables a public sign-up path — the web API key is public, so only custom
+tokens signed by Fugaro's own signer may work — naming the paths it found, saying that the converge
+never changes an existing configuration, and writing **nothing**. It is the live half of a step whose
+unit tests answer a fake endpoint: what this reads is the shape the real Identity Toolkit API returns
+for a provider a person turned on in the console. **A workspace's own project is not this check**: it
+is the one exception, where the pinned entries pass and an off-pin path is refused by name
+(Check 361), and a config naming it is what makes that exception apply. Read this on the installation's
+own project alone, and never on a project a workspace is named after.
+
+**What has to exist before it runs.** A converged sandbox installation on `fugaro-dev` (**never
+`belong`**: this check changes the sandbox project's Identity Platform configuration and must not go
+near the owner's); one provider enabled **by hand** in the Firebase console (Authentication, Sign-in
+method) — email/password or Google, either one is a public sign-up path — with its value noted so the
+check's restore can turn it off again; and your own Google credential for the converge.
+
+**The commands.**
+
+```sh
+fugaro setup                          # the Identity Platform step refuses, by name, and writes nothing
+# then disable the provider you enabled, and:
+fugaro setup                          # converges: the step passes and nothing is applied
+```
+
+Record the refusal's whole sentence (it names the paths it found), the paths it named, and that the
+second converge is quiet — under Check 627 here. The restore is yours and is part of the check:
+disable the provider you enabled, and read the configuration back.
+
+**What a run costs.** Two converges of an installation that already exists: **nothing billable and no
+model call** — a converged one applies nothing, and the Identity Platform read happens before its own
+confirmation. The refusal writes nothing at all; the only change on any path is the one you made by
+hand and undid.
+
+**What waits on it.** D221's answer (the provider half is refused, and the path not taken is written
+out in [mobile-auth/provider-sign-in.md](mobile-auth/provider-sign-in.md)) and the sentence that this
+repository refuses every public sign-up path on a project of its own.

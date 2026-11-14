@@ -93,7 +93,7 @@ As of 2026-11-14, read from `main`, the open pull requests and each plan's task 
 | issue-mine | owner Checks 470 to 472 |
 | managed-agent-converge | none |
 | mcp-server | M9 parked (D936, the fence declined, no release schedules it); M11 declined (2026-11-09) |
-| mobile-auth | owner live checks, proposed by name and not numbered; P5's D231 gap is a follow-up awaiting the owner's decision — revoking the last device empties the node, so the next publish re-seeds the revoked entry |
+| mobile-auth | owner Checks 620 to 627 (written in the register 2026-11-14, NOT RUN; the two runner rows of its plan's §9 hold no number); P5's D231 gap is a follow-up awaiting the owner's decision and Check 623's last-child arm reports it rather than assuming it — revoking the last device empties the node, so the next publish re-seeds the revoked entry |
 | models-commands | none |
 | plugin-user-scope | E1, the release itself (rides the next CLI release; no operator step) |
 | post-review-triage | owner TR13 (Checks 490 to 492; the scripts are in a run) |
