@@ -35,7 +35,13 @@ import (
 // step of any of them is run by an agent. Check 130's fake is a fake `curl`
 // alone, answering the three anonymous GETs the check makes about a
 // repository; its fake `gcloud` and `fugaro` log any call and fail, so the
-// test can say the check never reaches a cloud tool. Check 300's fakes are a
+// test can say the check never reaches a cloud tool. Check 69's fakes are a
+// fake `curl` (the origin probe, the four pages and one status per HEAD, all
+// out of the case's own files), a fake `openssl` for the certificate's subject
+// and its names, and a fake `npm` that writes the artifact `check69.sh` then
+// compares the deployed page against -- with fake `gcloud`, `fugaro` and
+// `belong` that log any call and fail, since the check names no cloud project
+// and runs no `fugaro` command. Check 300's fakes are a
 // fake `gcloud`, a fake `fugaro` and a fake RTDB behind a fake `curl`, and
 // Checks 303 and 304's fake is a fake `fugaro` alone -- 303's answers `doctor`,
 // `version`, the daemon's `run`, the node's `state` and `events` and the
@@ -88,6 +94,7 @@ var liveCheckScripts = []struct {
 	name string
 	test string
 }{
+	{"check69.sh", "check69_test.sh"},
 	{"check90.sh", "check90_test.sh"},
 	{"check91.sh", "check91_test.sh"},
 	{"check111.sh", "check111_test.sh"},
