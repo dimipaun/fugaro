@@ -752,13 +752,67 @@ func TestProjectJobsDeployABitbucketProfile(t *testing.T) {
 	if want := int((timeout + backend.TaskTimeoutSlack) / time.Second); j.TaskTimeoutS != want {
 		t.Errorf("task timeout = %ds, want %ds", j.TaskTimeoutS, want)
 	}
-	// An installation that records no credentials service cannot give the job
-	// the proxy it needs, and the profile is refused rather than deployed as a
-	// job whose every run stops at its first git command.
+	// An installation that will not deploy a credentials service cannot give
+	// the job the proxy it needs and has no later apply to fill one in, and
+	// the profile is refused rather than deployed as a job whose every run
+	// stops at its first git command. This config names no Firebase backend,
+	// which is what CredentialsInstallationFacts refuses, so the sentence the
+	// operator reads carries that stage's own remedy.
 	if _, err := ProjectJobs(parseLC(t, m4LocalConfig+m5Additions+bitbucketProjectLC), "fugaro-runs-proj-1234", false); err == nil {
-		t.Error("a shared Bitbucket job was deployed on an installation with no credentials service")
-	} else if !strings.Contains(err.Error(), providers.EnvCredentialsServiceURL) {
-		t.Errorf("err = %v, want one naming %s", err, providers.EnvCredentialsServiceURL)
+		t.Error("a shared Bitbucket job was deployed on an installation that will not deploy a credentials service")
+	} else {
+		for _, want := range []string{providers.EnvCredentialsServiceURL, "firebase_project", "fugaro update --firebase-project"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("err = %v, want one naming %q", err, want)
+			}
+		}
+	}
+}
+
+// TestProjectJobsBitbucketJobConvergesOnTheServiceURL is the second half of
+// D2302's rule about the proxy: the job requires the credentials service's
+// address, and an installation that does not record it yet is still deployed a
+// job — the run that deploys the service is the one whose config cannot carry
+// the block yet (init.go's writeConfig, that run's last step), and a refusal
+// here would stop the very update that gives the job its address, under a
+// sentence telling the operator to run the command they are running.
+//
+// What converges is the pair, which is what this test walks: the run that
+// creates the service deploys the job without the variable, records the block,
+// and the next apply reads that record and puts the address on the job.
+func TestProjectJobsBitbucketJobConvergesOnTheServiceURL(t *testing.T) {
+	const before = m4LocalConfig + m5Additions + credentialsBudgetLC + bitbucketProjectLC
+	admitSharedJobProviders(t, "github", "bitbucket")
+	name := gcp.ProjectJobName("standard", "bitbucket", "")
+	jobs, err := ProjectJobs(parseLC(t, before), "fugaro-runs-proj-1234", false)
+	if err != nil {
+		t.Fatalf("the run that deploys the credentials service was refused: %v", err)
+	}
+	if !slices.Equal(sortedJobNames(jobs), []string{name}) {
+		t.Fatalf("jobs = %v, want the profile's one job %s", sortedJobNames(jobs), name)
+	}
+	if got, ok := jobs[name].Env[providers.EnvCredentialsServiceURL]; ok {
+		t.Errorf("%s = %q, want it absent: this installation records no credentials service yet, and the address is what the apply after this one adds", providers.EnvCredentialsServiceURL, got)
+	}
+	// The same config as the deploy run's own stages read it:
+	// credentialsServiceOptedIn's presence-only block, whose empty url is the
+	// state of every reader between the apply that created the service and the
+	// one that recorded its URL.
+	optedIn := *parseLC(t, before)
+	optedIn.CredentialsService = &localcfg.CredentialsService{}
+	if jobs, err = ProjectJobs(&optedIn, "fugaro-runs-proj-1234", false); err != nil {
+		t.Fatalf("the deploy run's own presence-only block was refused: %v", err)
+	}
+	if got, ok := jobs[name].Env[providers.EnvCredentialsServiceURL]; ok {
+		t.Errorf("%s = %q, want it absent: an empty url is a service whose address the apply has not recorded yet", providers.EnvCredentialsServiceURL, got)
+	}
+	after := parseLC(t, before+credentialsServiceLCBlock)
+	jobs, err = ProjectJobs(after, "fugaro-runs-proj-1234", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := jobs[name].Env[providers.EnvCredentialsServiceURL]; got != after.CredentialsService.URL {
+		t.Errorf("%s = %q, want %q: the address the run that deployed the service recorded reaches the job on the next apply", providers.EnvCredentialsServiceURL, got, after.CredentialsService.URL)
 	}
 }
 

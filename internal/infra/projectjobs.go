@@ -163,23 +163,44 @@ func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]Pr
 			// halves are needed for a job to start under any run.
 			env[providers.EnvGitHubAppID] = appID
 		} else {
-			// The credential proxy, and it is required rather than offered:
-			// the job holds no git credential of its own (D2302), so
+			// The credential proxy, and the job requires it: it holds no git
+			// credential of its own (D2302), so
 			// providers.EnvCredentialsServiceURL is the only way its runs
 			// reach git at all — internal/runner reads exactly this variable
 			// to decide that a Bitbucket run is proxied, and a run whose job
-			// lacks it halts at its first git command with nothing cloned.
-			// The launch path hands the same variable to a repository's own
-			// job from the same local-config field and omits it on an
-			// installation that has opted into no service
-			// (credentialsServiceLaunchEnv's rule is the opt-in); here the
-			// absence is a refusal, because this job is being deployed and a
-			// job deployed without it is one that cannot run.
-			if lc.CredentialsService == nil || lc.CredentialsService.URL == "" {
-				return nil, userErr("profiles.%s: this installation records no credentials service (%s), and a shared %s job holds no git credential of its own: it reaches every repository it serves through that service, so a job deployed without it halts every run it starts. Turn the credentials service on (fugaro update), or keep this profile's repositories on per-repository jobs",
-					name, providers.EnvCredentialsServiceURL, pr.Provider)
+			// lacks it halts at its first git command with nothing cloned. It
+			// is set from the installation's own record of the service, the
+			// local config's credentials_service block, which is written from
+			// the installation root's outputs.
+			//
+			// An installation whose config does not carry the block yet is
+			// NOT refused: the run that deploys the service reaches this
+			// function before it writes that block (init.go's writeConfig is
+			// the last step of that run), so a refusal here would stop the
+			// very update that would give the job its address and tell the
+			// operator to run the command they are running. The job is
+			// deployed without the variable instead, and the address lands on
+			// a later apply, once the run that deployed the service has
+			// recorded it — an empty URL is the same case read from the
+			// document side (CredentialsServiceURLOf: the apply that created
+			// the service and cannot know its URL yet).
+			//
+			// What IS refused is the installation that will not deploy the
+			// service at all, because then no apply ever fills the address in:
+			// CredentialsInstallationFacts is the question the deploying stage
+			// asks before it spends a registry read on the service (the first
+			// statement of init_stages.go's deployCredentialsService), and an
+			// installation that fails it — no Firebase database, or no
+			// repository job for the service to admit — has no service to
+			// reach. The sentence below carries that question's own words, so
+			// the operator reads the same remedy the update's own line about
+			// the service names.
+			if lc.CredentialsService != nil && lc.CredentialsService.URL != "" {
+				env[providers.EnvCredentialsServiceURL] = lc.CredentialsService.URL
+			} else if err := CredentialsInstallationFacts(lc); err != nil {
+				return nil, userErr("profiles.%s: a shared %s job holds no git credential of its own and reaches every repository it serves through the installation's credentials service (%s), and this installation cannot deploy one: %v. Deploy the service, or keep this profile's repositories on per-repository jobs",
+					name, pr.Provider, providers.EnvCredentialsServiceURL, err)
 			}
-			env[providers.EnvCredentialsServiceURL] = lc.CredentialsService.URL
 		}
 		secretEnv, err := projectJobSecrets(lc, name, env, pr)
 		if err != nil {
