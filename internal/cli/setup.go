@@ -204,10 +204,9 @@ widened role) is not covered by the run's confirmation: it is shown and then
 applied, and left for you where nobody is at the terminal. The confirmation is
 per run and never stored. Any other project
 (one an earlier run created and this one resumed, unmarked, or a mark that
-fails to read) keeps its own confirmation at each step;
-the ordinary steps are confirmed by that run's own confirmation as ever;
---json, a pipe and a coding agent never take it; --plan-only shows the review
-and applies nothing.
+fails to read) keeps its own confirmation at each step, taken at your own
+terminal; --json, a pipe and a coding agent never give one; --plan-only shows
+the review and applies nothing.
 
 What that confirmation covers: the ordinary steps, which are the installation's and the
 Firebase root's Terraform applies, the images' copy, the local config's
@@ -221,10 +220,9 @@ the run was given. What
 it still never covers: creating a project or linking billing, a secret, and
 the Firestore database's permanent location, this door's first-time question.
 With no terminal, or with --json, each of those is left for you, with the
-one line to run. A first run that does ask the billing question — a pipe for
-standard input, neither given — stops there instead: with no
-terminal the question is refused at once, in the sentence naming --link-billing,
-before any account of yours is read. In a coding agent's environment (CLAUDECODE, CLAUDE_CODE_ENTRYPOINT,
+one line to run: a first run that reaches the billing question is refused at
+once, in the sentence naming --link-billing, before any account of yours is
+read. In a coding agent's environment (CLAUDECODE, CLAUDE_CODE_ENTRYPOINT,
 CLAUDE_CODE_REMOTE, CURSOR_AGENT or AI_AGENT is set) setup
 applies nothing and says to run it in your own terminal
 window; --plan-only and the read-only checks still work, and so does setup

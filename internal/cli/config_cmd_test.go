@@ -581,9 +581,8 @@ func TestConfigInitRefusesWithoutALayer(t *testing.T) {
 // os.OpenFile in writeMinimalFugaroYAML (config_init.go) to 0o600, and
 // this test fails: the written file is rw------- instead of rw-r--r--.
 // TestConfigInitAsksNothing: the command is non-interactive by design, so it
-// writes with no terminal and asks nothing — the run without --yes is a refusal
-// that names the flag (exit 1, the file printed), which is not a question a
-// person answers (D1540).
+// writes with no terminal and asks nothing, and no flag stands in for a
+// question nobody is asked (D1540).
 func TestConfigInitAsksNothing(t *testing.T) {
 	f := newCloudFixture(t)
 	isolateCache(t)
@@ -781,7 +780,7 @@ func TestConfigInitHandlesATOCTOURaceAgainstADifferentFile(t *testing.T) {
 
 // Item 4, the other race outcome: the file that won the race happens to
 // be byte-identical to what this command would have written itself (two
-// concurrent `config init --yes` runs) — that must still exit 0, not
+// concurrent `config init` runs) — that must still exit 0, not
 // refuse.
 func TestConfigInitHandlesATOCTOURaceAgainstTheSameFile(t *testing.T) {
 	f := newCloudFixture(t)
@@ -805,13 +804,14 @@ func TestConfigInitHandlesATOCTOURaceAgainstTheSameFile(t *testing.T) {
 	}
 }
 
-// Item 8: config init's Long text documents the dry-run exit code and the
+// Item 8: config init's Long text documents that the write takes no flag
+// (the dry run the flag used to be the other half of is gone with it) and the
 // orchestrator's ruling that, unlike config publish, it never refuses in
 // a coding-agent session.
-func TestConfigInitLongDocumentsDryRunAndAgentSessions(t *testing.T) {
+func TestConfigInitLongDocumentsNoFlagAndAgentSessions(t *testing.T) {
 	cmd := newConfigInitCmd()
-	if !strings.Contains(cmd.Long, "exits 1") {
-		t.Errorf("Long does not document the dry-run exit code: %q", cmd.Long)
+	if !strings.Contains(cmd.Long, "takes no flag for the write") {
+		t.Errorf("Long does not document that the write takes no flag: %q", cmd.Long)
 	}
 	if !strings.Contains(cmd.Long, "coding-agent session") {
 		t.Errorf("Long does not document the agent-session ruling: %q", cmd.Long)

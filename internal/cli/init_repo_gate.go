@@ -364,7 +364,7 @@ func convergeOptIn(lc *localcfg.Config, o originInfo) string {
 	case repoNameListed(lc, o):
 		return ", and no flag gives it here: the project's config knows this name at another host, so the origin is this gate's own step, confirmed at your terminal"
 	case agentMarker(os.Getenv, processTerminal()) != "":
-		return " (a coding agent's session confirms nothing, whatever the flags): your own terminal window is where it is confirmed"
+		return " (a coding agent's session confirms nothing): your own terminal window is where it is confirmed"
 	}
 	return " — a person at your own terminal covers it, with nothing typed"
 }

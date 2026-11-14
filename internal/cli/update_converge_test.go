@@ -594,6 +594,11 @@ func converge(t *testing.T, node map[string]any, stale []string) {
 func convergeOn(t *testing.T, r *convergeRig, stale []string) string {
 	t.Helper()
 	currentRelease(t)
+	// The owner's own terminal, which is what confirms the steps a converge
+	// asks about (T11 of docs/no-prompt-policy: the flag that used to stand in
+	// for it is gone). A rig with no terminal would stop at the first of them,
+	// which is what the refusals' own tests are for.
+	fakeTerminal(t)
 
 	before := doctorChecks(t, r.root)
 	for _, id := range stale {

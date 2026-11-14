@@ -116,8 +116,8 @@ func newProjectReposRmCmd() *cobra.Command {
 			"admits it, which is the case a pattern makes (github/acme/app stays admitted\n" +
 			"while github/acme/* is there); the confirmation says which of the two it is.\n" +
 			"Removing * refuses every repository the rest of the list does not admit.\n" +
-			"So it asks you to type the project's name, and while a run is in flight nothing\n" +
-			"confirms it.",
+			"So it asks you to type the project's name, and while a run is in flight only\n" +
+			"that typing confirms it.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error { return runProjectReposEdit(cmd, &o, args[0], true) },
 	}

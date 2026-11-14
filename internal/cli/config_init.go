@@ -92,8 +92,9 @@ func newConfigInitCmd() *cobra.Command {
 		Long: "Write the minimal fugaro.yaml (version, project, gcp_project) into this checkout, for a project that\n" +
 			"publishes a project layer. It asks nothing and takes no flag for the write: the file it writes is a\n" +
 			"repository file, reviewed and committed like any other. It never overwrites a fugaro.yaml, and writes\n" +
-			"nothing that does not resolve against the project layer. Unlike fugaro config publish, it never refuses in a coding-agent session: it writes\n" +
-			"a repository file, which still goes through a reviewed pull request, not a published, trusted object.",
+			"nothing that does not resolve against the project layer. Unlike fugaro config publish, it never refuses\n" +
+			"in a coding-agent session: it writes a repository file, which still goes through a reviewed pull\n" +
+			"request, not a published, trusted object.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()

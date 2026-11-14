@@ -2802,7 +2802,7 @@ func runsInFlight(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) (in
 // policy until it finishes. A flag typed in advance must not be what stops a
 // run that is already running, so this asks for the name itself.
 func confirmRemovalStrict(cmd *cobra.Command, lc *localcfg.Config, what string) error {
-	return confirmTypedStrict(cmd, lc, "this one is not confirmed while a run is in flight; wait for it (fugaro runs ls), or type the project's name at a terminal", what)
+	return confirmTypedStrict(cmd, lc, "typing the project's name is the only thing that confirms this one while a run is in flight; wait for it (fugaro runs ls), then confirm it at your own terminal", what)
 }
 
 // confirmRemoval is confirmRemovalStrict where --yes may stand in for the

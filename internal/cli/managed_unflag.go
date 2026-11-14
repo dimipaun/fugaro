@@ -88,8 +88,9 @@ IAM call at all; undoing the fence is not revocation and is not offered here
 
 Run it in your own terminal, as an operator, with your own credentials. The
 permission you give is the PROJECT_ID argument itself: it names the one project
-whose marks come off, and nothing stands in for naming it — not a flag, not a pipe. A coding agent's session is refused, and a
-Fugaro run's own process is refused.
+whose marks come off, and nothing stands in for naming it — not a flag, not a
+pipe. A coding agent's session is refused, and a Fugaro run's own process is
+refused.
 
 PROJECT_ID must be the exact GCP project ID of the installation selected by
 --project, --config or the checkout: one invocation names one project, and
