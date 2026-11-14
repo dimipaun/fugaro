@@ -17,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
@@ -394,6 +395,61 @@ func policyContextRefusal(p *projectpolicy.Policy, shipped bool) error {
 	return nil
 }
 
+// policyImageTokensRefusal refuses the node about to be published when it
+// prices a model's images (model_prices' image_tokens, V2, D2001) and the
+// installation's base image predates visionSince. The member is not optional
+// the way the price overrides around it are: every runner of the project
+// decodes the published node strictly, so a node carrying a member they do not
+// know is refused whole and every run of the project fails until someone
+// removes it — the same failure policyContextRefusal keeps out of a node, and
+// the reason this is a refusal rather than the warning warnOldImages prints
+// about a workflow whose build record is older than layeredSince.
+//
+// The node is judged and not the local config, for policyContextRefusal's
+// reason: the node is what the older runner reads, and a config silent about
+// model_prices keeps the published node's, so the member can reach these bytes
+// from either side. Both doors build the node through policyNodeForPublish,
+// which is why the check is here.
+//
+// ref is the installation's base image (localcfg.Config.BaseImage) and is
+// passed rather than read so a test can ask both halves of the gate, the way
+// the skew gates' callers do. Its states are read as the skew gates read them,
+// with one difference: a base image that cannot be dated (a dev build, a
+// hand-pushed one, an --image-source mirror) passes in silence rather than
+// warning, because there is no writer here to warn on — the publish door is
+// inside the engine's own stage as often as it is a command's.
+//
+// The judge is the base image and not each workflow's build record, which is
+// what warnOldImages can walk: the policy node is read by every job of the
+// project, and the base image is the one image this door can date without a
+// read per workflow. What it dates is the installation that publishes, which is
+// not every reader of the node: a repository of the project whose job image was
+// built from an older base has no launch gate on this member either — the
+// vision slot's gates fire on agent.models.vision being written, and a
+// repository can price images without ever naming a slot — so that launch runs
+// and its runner refuses the node whole at bootstrap, and fugaro image refresh
+// in that checkout is what closes it.
+func policyImageTokensRefusal(p *projectpolicy.Policy, ref string) error {
+	if p == nil {
+		return nil
+	}
+	var priced []string
+	for _, id := range slices.Sorted(maps.Keys(p.Prices)) {
+		if pr := p.Prices[id]; pr.ImageTokens != nil {
+			priced = append(priced, id)
+		}
+	}
+	if len(priced) == 0 {
+		return nil
+	}
+	rel, ok := releaseOf(ref)
+	if !ok || !imagePredates(rel, visionSince) {
+		return nil
+	}
+	return userErr("the node about to be published prices model %s's images (model_prices' image_tokens), and this installation's base image predates the release whose runners read that member: fugaro %s or later is what decodes it, and %s is release %s. Every runner of the project decodes the node strictly, so a node carrying the member is refused whole and every run of the project fails on it until someone removes it. Run fugaro update in your own terminal window to move the installation's base image to a current release, then publish the node again",
+		strings.Join(priced, ", "), visionSince, pluginwire.Printable(ref), rel)
+}
+
 // policyNodeForPublish is the one build both doors take: the node the operator's
 // config states, on top of the node it replaces, with the allow-list seeded or
 // kept as the writer's rule has it. `fugaro project policy publish` and the
@@ -409,6 +465,9 @@ func policyNodeForPublish(ctx context.Context, lc *localcfg.Config, old *project
 		return nil, nil, nil, err
 	}
 	if err := policyContextRefusal(pol, imageContextShipped); err != nil {
+		return nil, nil, nil, err
+	}
+	if err := policyImageTokensRefusal(pol, lc.BaseImage(config.BaseKind)); err != nil {
 		return nil, nil, nil, err
 	}
 	body, err := policyNodeBytes(pol, base, exists, keepRouting, lc.CloneURLs == nil)

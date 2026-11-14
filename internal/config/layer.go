@@ -314,6 +314,22 @@ func (l *ProjectLayer) SetsLevelsNoneModel() bool {
 	return levelsNoneModel(d["agent"])
 }
 
+// SetsVision reports whether the layer's text writes
+// defaults.agent.models.vision, at any value: a runner older than visionSince
+// (internal/cli) decodes the layer with KnownFields, so the key alone is what
+// it refuses, and LayerAgent's own value cannot tell a blank pin from none. It
+// reads the tree and not the parsed defaults for SetsRigor's reason, and it
+// answers true for the key written as a null leaf, which SetsDefault would
+// not: an older decoder refuses `models: { vision: }` exactly as it refuses a
+// model ID.
+func (l *ProjectLayer) SetsVision() bool {
+	if l == nil {
+		return false
+	}
+	d, _ := l.tree["defaults"].(map[string]any)
+	return visionKey(d["agent"])
+}
+
 // SetsGovernance reports whether the layer's text writes governance:, at any
 // value: a runner before governanceSince decodes the layer with KnownFields,
 // so the key alone is what it refuses, and Governance's zero value cannot
