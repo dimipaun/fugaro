@@ -582,9 +582,8 @@ func TestReplaceImageIsCoveredByATerminal(t *testing.T) {
 			if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID); err != nil {
 				t.Fatal(err)
 			}
-			puts := r.dst.puts                    // the converged run's own copy, not this one's
-			canConfirmTyped = initflow.CanConfirm // the real rule
-			noTerminal(t)                         // the session this row is about
+			puts := r.dst.puts // the converged run's own copy, not this one's
+			noTerminal(t)      // the session this row is about
 			other := cdg([]byte("hand pushed"))
 			r.dst.mans[other], r.dst.types[other] = []byte("x"), "application/vnd.oci.image.manifest.v1+json"
 			r.dst.tags[history] = other
@@ -614,7 +613,6 @@ func TestReplaceImageIsCoveredByATerminal(t *testing.T) {
 	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID); err != nil {
 		t.Fatal(err)
 	}
-	canConfirmTyped = initflow.CanConfirm
 	other := cdg([]byte("hand pushed"))
 	r.dst.mans[other], r.dst.types[other] = []byte("x"), "application/vnd.oci.image.manifest.v1+json"
 	r.dst.tags[history] = other

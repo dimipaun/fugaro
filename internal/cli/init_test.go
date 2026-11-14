@@ -26,7 +26,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
-	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -631,18 +630,6 @@ func TestProcessTerminalFollowsTheReplacedStdinIsTerminal(t *testing.T) {
 	if !processTerminal() {
 		t.Error("processTerminal reads no terminal where the test said there is one")
 	}
-}
-
-// typedThroughYes lets a test that is about something else answer a typed-only
-// confirmation (the Firestore location, a billable build, replacing a tag) from
-// its stdin while it passes --yes, which the real rule never allows (its own
-// tests, TestTypedOnly..., use the real one). A coding agent's environment
-// still confirms nothing.
-func typedThroughYes(t *testing.T) {
-	t.Helper()
-	old := canConfirmTyped
-	canConfirmTyped = func(_ initflow.ConfirmClass, c initflow.Conditions) bool { return c.Agent == "" }
-	t.Cleanup(func() { canConfirmTyped = old })
 }
 
 // The typed confirmation fugaro setup used to take — the project's name, and

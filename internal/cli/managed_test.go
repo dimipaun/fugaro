@@ -150,28 +150,29 @@ func (s agentEnvState) apply(t *testing.T) {
 	}
 }
 
-// confirmRow is one combination of the flags and the terminal that
-// initRun.conditions reads, with what a project that is NOT managed and has
-// NO agent marker must do, written by hand:
+// confirmRow is one combination of the flags and the terminal a run's
+// confirmation is decided under, with what a project that is NOT managed and
+// has NO agent marker must do, written by hand:
 //
-//   - condYes: initflow.Conditions.Yes as initRun.conditions must build it
-//     (--plan-only never takes --yes);
-//   - ordRight/ordWrong: whether the RULE lets a run of this row take a
-//     YesOrTyped step (initflow.CanConfirm, which
-//     TestManagedConfirmRuleMatchesTheTable reads back out of the row);
-//   - typRight/typWrong: the same for the Typed class.
+//   - person: whether a person is at this run's own real terminal under the
+//     row — initflow.CanConfirmRun's answer, which
+//     TestManagedConfirmRuleMatchesTheTable reads back out of the row;
+//   - own: whether the run's own answer reaches the step — initRun.ask's
+//     answer, which is what the ordinary confirmation of every apply is, and
+//     a money-or-permanent step's where D12's answer of 2026-10-20 covers it
+//     (askCovered);
+//   - typed: the same for a money-or-permanent step the run's own answer does
+//     NOT reach (askTyped): an answer a run carries never confirms one, and
+//     the person at the terminal does.
 //
-// The *Wrong columns are false in every row: the rule asks who is there and
-// never what was typed. They were the run's own expectation while a
-// confirmation was the step's name typed at the terminal — typing something
-// else left the step — and the run's own expectation is runConfirms now, which
-// is not the rule any more (see it) and is what the property drives.
+// The three are read by the property (runConfirms reads the column of the arm
+// it is asked about) and the first by the rule's own test, so a column that
+// drifts from the code it states is a failure rather than a dead field.
 //
 // Under any agent marker every one of them is false.
 type confirmRow struct {
 	yes, planOnly, nonInteractive, json, terminal bool
-	condYes                                       bool
-	ordRight, ordWrong, typRight, typWrong        bool
+	person, own, typed                            bool
 	// ask is --ask. It is written LAST rather than beside the flags it is a
 	// sibling of, so that every column the rows had before it keeps its place
 	// in the literal.
@@ -187,125 +188,75 @@ type confirmRow struct {
 // move something are the managed ones, which are not this table's subject:
 // managed_ask_test.go is theirs.
 var confirmTable = []confirmRow{
-	//  yes    plan   nonInt json   term     condYes    ordR   ordW   typR   typW   ask
-	{false, false, false, false, false /**/, false /**/, false, false, false, false, false /*ask*/},
-	{false, false, false, false, true /* */, false /**/, true, false, true, false, false /*ask*/},
-	{false, false, false, true, false /* */, false /**/, false, false, false, false, false /*ask*/},
-	{false, false, false, true, true /*  */, false /**/, true, false, false, false, false /*ask*/},
-	{false, false, true, false, false /* */, false /**/, false, false, false, false, false /*ask*/},
-	{false, false, true, false, true /*  */, false /**/, false, false, false, false, false /*ask*/},
-	{false, false, true, true, false /*  */, false /**/, false, false, false, false, false /*ask*/},
-	{false, false, true, true, true /*   */, false /**/, false, false, false, false, false /*ask*/},
-	{false, true, false, false, false /* */, false /**/, false, false, false, false, false /*ask*/},
-	{false, true, false, false, true /*  */, false /**/, true, false, true, false, false /*ask*/},
-	{false, true, false, true, false /*  */, false /**/, false, false, false, false, false /*ask*/},
-	{false, true, false, true, true /*   */, false /**/, true, false, false, false, false /*ask*/},
-	{false, true, true, false, false /*  */, false /**/, false, false, false, false, false /*ask*/},
-	{false, true, true, false, true /*   */, false /**/, false, false, false, false, false /*ask*/},
-	{false, true, true, true, false /*   */, false /**/, false, false, false, false, false /*ask*/},
-	{false, true, true, true, true /*    */, false /**/, false, false, false, false, false /*ask*/},
-	{true, false, false, false, false /* */, true /* */, true, true, false, false, false /*ask*/},
-	{true, false, false, false, true /*  */, true /* */, true, true, false, false, false /*ask*/},
-	{true, false, false, true, false /*  */, true /* */, true, true, false, false, false /*ask*/},
-	{true, false, false, true, true /*   */, true /* */, true, true, false, false, false /*ask*/},
-	{true, false, true, false, false /*  */, true /* */, true, true, false, false, false /*ask*/},
-	{true, false, true, false, true /*   */, true /* */, true, true, false, false, false /*ask*/},
-	{true, false, true, true, false /*   */, true /* */, true, true, false, false, false /*ask*/},
-	{true, false, true, true, true /*    */, true /* */, true, true, false, false, false /*ask*/},
-	{true, true, false, false, false /*  */, false /**/, false, false, false, false, false /*ask*/},
-	{true, true, false, false, true /*   */, false /**/, true, false, true, false, false /*ask*/},
-	{true, true, false, true, false /*   */, false /**/, false, false, false, false, false /*ask*/},
-	{true, true, false, true, true /*    */, false /**/, true, false, false, false, false /*ask*/},
-	{true, true, true, false, false /*   */, false /**/, false, false, false, false, false /*ask*/},
-	{true, true, true, false, true /*    */, false /**/, false, false, false, false, false /*ask*/},
-	{true, true, true, true, false /*    */, false /**/, false, false, false, false, false /*ask*/},
-	{true, true, true, true, true /*     */, false /**/, false, false, false, false, false /*ask*/},
-	{false, false, false, false, false /**/, false /**/, false, false, false, false, true /*ask*/},
-	{false, false, false, false, true /* */, false /**/, true, false, true, false, true /*ask*/},
-	{false, false, false, true, false /* */, false /**/, false, false, false, false, true /*ask*/},
-	{false, false, false, true, true /*  */, false /**/, true, false, false, false, true /*ask*/},
-	{false, false, true, false, false /* */, false /**/, false, false, false, false, true /*ask*/},
-	{false, false, true, false, true /*  */, false /**/, false, false, false, false, true /*ask*/},
-	{false, false, true, true, false /*  */, false /**/, false, false, false, false, true /*ask*/},
-	{false, false, true, true, true /*   */, false /**/, false, false, false, false, true /*ask*/},
-	{false, true, false, false, false /* */, false /**/, false, false, false, false, true /*ask*/},
-	{false, true, false, false, true /*  */, false /**/, true, false, true, false, true /*ask*/},
-	{false, true, false, true, false /*  */, false /**/, false, false, false, false, true /*ask*/},
-	{false, true, false, true, true /*   */, false /**/, true, false, false, false, true /*ask*/},
-	{false, true, true, false, false /*  */, false /**/, false, false, false, false, true /*ask*/},
-	{false, true, true, false, true /*   */, false /**/, false, false, false, false, true /*ask*/},
-	{false, true, true, true, false /*   */, false /**/, false, false, false, false, true /*ask*/},
-	{false, true, true, true, true /*    */, false /**/, false, false, false, false, true /*ask*/},
-	{true, false, false, false, false /* */, true /* */, true, true, false, false, true /*ask*/},
-	{true, false, false, false, true /*  */, true /* */, true, true, false, false, true /*ask*/},
-	{true, false, false, true, false /*  */, true /* */, true, true, false, false, true /*ask*/},
-	{true, false, false, true, true /*   */, true /* */, true, true, false, false, true /*ask*/},
-	{true, false, true, false, false /*  */, true /* */, true, true, false, false, true /*ask*/},
-	{true, false, true, false, true /*   */, true /* */, true, true, false, false, true /*ask*/},
-	{true, false, true, true, false /*   */, true /* */, true, true, false, false, true /*ask*/},
-	{true, false, true, true, true /*    */, true /* */, true, true, false, false, true /*ask*/},
-	{true, true, false, false, false /*  */, false /**/, false, false, false, false, true /*ask*/},
-	{true, true, false, false, true /*   */, false /**/, true, false, true, false, true /*ask*/},
-	{true, true, false, true, false /*   */, false /**/, false, false, false, false, true /*ask*/},
-	{true, true, false, true, true /*    */, false /**/, true, false, false, false, true /*ask*/},
-	{true, true, true, false, false /*   */, false /**/, false, false, false, false, true /*ask*/},
-	{true, true, true, false, true /*    */, false /**/, false, false, false, false, true /*ask*/},
-	{true, true, true, true, false /*    */, false /**/, false, false, false, false, true /*ask*/},
-	{true, true, true, true, true /*     */, false /**/, false, false, false, false, true /*ask*/},
+	//  yes    plan   nonInt json   term   person own    typed  ask
+	{false, false, false, false, false, false, false, false, false},
+	{false, false, false, false, true, true, true, true, false},
+	{false, false, false, true, false, false, false, false, false},
+	{false, false, false, true, true, false, false, false, false},
+	{false, false, true, false, false, false, false, false, false},
+	{false, false, true, false, true, true, false, false, false},
+	{false, false, true, true, false, false, false, false, false},
+	{false, false, true, true, true, false, false, false, false},
+	{false, true, false, false, false, false, false, false, false},
+	{false, true, false, false, true, true, true, true, false},
+	{false, true, false, true, false, false, false, false, false},
+	{false, true, false, true, true, false, false, false, false},
+	{false, true, true, false, false, false, false, false, false},
+	{false, true, true, false, true, true, false, false, false},
+	{false, true, true, true, false, false, false, false, false},
+	{false, true, true, true, true, false, false, false, false},
+	{true, false, false, false, false, false, true, false, false},
+	{true, false, false, false, true, true, true, false, false},
+	{true, false, false, true, false, false, true, false, false},
+	{true, false, false, true, true, false, true, false, false},
+	{true, false, true, false, false, false, true, false, false},
+	{true, false, true, false, true, true, true, false, false},
+	{true, false, true, true, false, false, true, false, false},
+	{true, false, true, true, true, false, true, false, false},
+	{true, true, false, false, false, false, false, false, false},
+	{true, true, false, false, true, true, true, true, false},
+	{true, true, false, true, false, false, false, false, false},
+	{true, true, false, true, true, false, false, false, false},
+	{true, true, true, false, false, false, false, false, false},
+	{true, true, true, false, true, true, false, false, false},
+	{true, true, true, true, false, false, false, false, false},
+	{true, true, true, true, true, false, false, false, false},
+	{false, false, false, false, false, false, false, false, true},
+	{false, false, false, false, true, true, true, true, true},
+	{false, false, false, true, false, false, false, false, true},
+	{false, false, false, true, true, false, false, false, true},
+	{false, false, true, false, false, false, false, false, true},
+	{false, false, true, false, true, true, false, false, true},
+	{false, false, true, true, false, false, false, false, true},
+	{false, false, true, true, true, false, false, false, true},
+	{false, true, false, false, false, false, false, false, true},
+	{false, true, false, false, true, true, true, true, true},
+	{false, true, false, true, false, false, false, false, true},
+	{false, true, false, true, true, false, false, false, true},
+	{false, true, true, false, false, false, false, false, true},
+	{false, true, true, false, true, true, false, false, true},
+	{false, true, true, true, false, false, false, false, true},
+	{false, true, true, true, true, false, false, false, true},
+	{true, false, false, false, false, false, true, false, true},
+	{true, false, false, false, true, true, true, false, true},
+	{true, false, false, true, false, false, true, false, true},
+	{true, false, false, true, true, false, true, false, true},
+	{true, false, true, false, false, false, true, false, true},
+	{true, false, true, false, true, true, true, false, true},
+	{true, false, true, true, false, false, true, false, true},
+	{true, false, true, true, true, false, true, false, true},
+	{true, true, false, false, false, false, false, false, true},
+	{true, true, false, false, true, true, true, true, true},
+	{true, true, false, true, false, false, false, false, true},
+	{true, true, false, true, true, false, false, false, true},
+	{true, true, true, false, false, false, false, false, true},
+	{true, true, true, false, true, true, false, false, true},
+	{true, true, true, true, false, false, false, false, true},
+	{true, true, true, true, true, false, false, false, true},
 }
 
 func (c confirmRow) String() string {
 	return fmt.Sprintf("--yes=%v --plan-only=%v --non-interactive=%v --json=%v terminal=%v --ask=%v", c.yes, c.planOnly, c.nonInteractive, c.json, c.terminal, c.ask)
-}
-
-// confirmClasses is every confirmation class the product runs over, by the
-// name internal/initflow/stage.go declares it under.
-var confirmClasses = []struct {
-	name  string
-	class initflow.ConfirmClass
-}{
-	{"Typed", initflow.Typed},
-	{"YesOrTyped", initflow.YesOrTyped},
-}
-
-// declaredConfirmClasses reads the ConfirmClass constants out of
-// internal/initflow/stage.go, in declaration order: Go cannot enumerate a
-// constant set at run time, and a class with no case here is a class whose
-// confirmations the property stops covering.
-func declaredConfirmClasses(t *testing.T) []string {
-	t.Helper()
-	const src = "../initflow/stage.go"
-	f, err := parser.ParseFile(token.NewFileSet(), src, nil, 0)
-	if err != nil {
-		t.Fatalf("parsing %s: %v", src, err)
-	}
-	var names []string
-	for _, decl := range f.Decls {
-		gd, ok := decl.(*ast.GenDecl)
-		if !ok || gd.Tok != token.CONST {
-			continue
-		}
-		// A const spec with neither a type nor a value repeats the one before
-		// it (`YesOrTyped` after `Typed ConfirmClass = iota`), so the block is
-		// tracked rather than each spec.
-		var class bool
-		for _, spec := range gd.Specs {
-			vs, ok := spec.(*ast.ValueSpec)
-			if !ok {
-				continue
-			}
-			if vs.Type != nil {
-				id, ok := vs.Type.(*ast.Ident)
-				class = ok && id.Name == "ConfirmClass"
-			}
-			if class {
-				for _, n := range vs.Names {
-					names = append(names, n.Name)
-				}
-			}
-		}
-	}
-	return names
 }
 
 // managedRead is one answer the marker read gave, with the verdict the world
@@ -587,66 +538,83 @@ func withTerminal(t *testing.T, on bool) {
 	t.Cleanup(func() { stdinIsTerminal = old })
 }
 
-// managedDecision is the decision an applying step of class makes in a
-// project whose read gave rd, under the run r: the confirmation is replaced
-// only when mode says managed, and otherwise it is the program's own
-// confirmation path — initRun.ask for YesOrTyped, initRun.askTyped (which
-// reads initRun.conditions and canConfirmTyped) for Typed.
-func managedDecision(mode func(bool, string, error) bool, rd managedRead, r *initRun, class initflow.ConfirmClass) (bool, error) {
+// confirmPath is one of the three ways a step of this table is confirmed, with
+// the hand-written answer it must give in a project nothing recorded: the run's
+// ordinary confirmation, which every applying step of the converge goes through
+// (initRun.ask), and a money-or-permanent step, which the run's own answer
+// reaches (askCovered) or does not (askTyped).
+type confirmPath struct {
+	name string
+	// covered is whether the run's own answer reaches a step confirmed this
+	// way, and it is the arm of the table's columns this path is read against.
+	covered bool
+	// ordinary marks the run's one confirmation, which answers a coding
+	// agent's marker with the marker's own refusal. A money step leaves such a
+	// session's step instead — reachable false, no error — because what the
+	// caller prints there is its own warning and the route the user takes.
+	ordinary bool
+	confirm  func(r *initRun) (bool, error)
+}
+
+var confirmPaths = []confirmPath{
+	{"the run's own confirmation", true, true, func(r *initRun) (bool, error) {
+		return r.ask("an applying step")
+	}},
+	{"a step the run's own answer reaches", true, false, func(r *initRun) (bool, error) {
+		ok, reachable, err := r.askCovered("an applying step")
+		return ok && reachable && err == nil, err
+	}},
+	{"a step the run's own answer does not reach", false, false, func(r *initRun) (bool, error) {
+		ok, reachable, err := r.askTyped("an applying step")
+		return ok && reachable && err == nil, err
+	}},
+}
+
+// managedDecision is the decision an applying step makes in a project whose
+// read gave rd, under the run r: the confirmation is replaced only when mode
+// says managed, and otherwise it is the program's own path for the step
+// (confirmPath).
+func managedDecision(mode func(bool, string, error) bool, rd managedRead, r *initRun, path confirmPath) (bool, error) {
 	if mode(rd.ok, rd.reason, rd.err) {
 		return true, nil
 	}
-	if class == initflow.Typed {
-		ok, reachable, err := r.askTyped("an applying step")
-		return ok && reachable && err == nil, err
-	}
-	return r.ask("an applying step")
+	return path.confirm(r)
 }
 
-// runConfirms is what the run itself does at a step of the class in a row, for
-// a project nothing recorded (so the mode never answers) and under marker (the
-// environment's, "" for a person's own session), written by hand beside the
-// property that drives it. It is the run's own path and not the rule: the two
-// were one predicate while a confirmation was the step's name typed at a
-// terminal, and since T7 they are not, which is why both are written out.
+// runConfirms is what the run itself does at a step confirmed the path's way in
+// a row, for a project nothing recorded (so the mode never answers) and under
+// marker (the environment's, "" for a person's own session), written by hand
+// beside the property that drives it: the column of the arm, which is the
+// table's own statement of the same rule (confirmRow).
 //
 // Every row this property runs is a project the oracle says is NOT managed, and
 // --ask moves nothing in one of those: the flag restores the question a managed
 // project's gate would have replaced, and there is no such question here
 // (initflow.AskDecision's own rule, and the line its help prints for the same
-// project). What is left is confirmNow's last arm — a real terminal, with no
-// --json and no --non-interactive — and --yes, and the ask column of the table
-// changes neither, which is what this function says by not reading it.
-//
-// That arm is narrower than the rule for a YesOrTyped step by the --json arm
-// alone (initflow.CanConfirm asks only whether a person may type, and under
-// --json a name could still be typed) — and a run that reads no name at all has
-// nothing to do with the flag, so --json at a terminal leaves the step. A Typed
-// step — creating the project, linking the billing account, the Firestore
-// location in setup — is --yes's in neither door, and its column already says
-// so.
-func runConfirms(row confirmRow, class initflow.ConfirmClass, marker string) bool {
+// project), which is what this function says by not reading that column. What
+// is left is what the session carries — an answer a run was opened on, and a
+// person at the run's own real terminal, with no --json and no
+// --non-interactive — and a step the run's own answer does not reach has only
+// the second of the two.
+func runConfirms(row confirmRow, covered bool, marker string) bool {
 	if marker != "" {
 		return false
 	}
-	if class == initflow.Typed {
-		return row.typRight
+	if covered {
+		return row.own
 	}
-	return row.condYes || (row.terminal && !row.json && !row.nonInteractive)
+	return row.typed
 }
 
 // managedViolations runs the decision over the whole product — every read,
-// every agent environment state, every row of the table, both classes, and both
-// lines a terminal could carry (the step's name, which nothing reads any more,
-// and the y and the n, which nothing reads at all in a project that is not
-// managed) — and returns every combination in which a project the oracle says
-// is NOT managed does other than runConfirms says (and, in a coding agent's
-// session, anything but refuse).
+// every agent environment state, every row of the table, all three paths a
+// step is confirmed by, and both lines a terminal could carry (the name a
+// confirmation was once typed on, and the y and the n, which nothing reads at
+// all in a project that is not managed) — and returns every combination in
+// which a project the oracle says is NOT managed does other than runConfirms
+// says (and, in a coding agent's session, anything but refuse).
 func managedViolations(t *testing.T, mode func(bool, string, error) bool, reads []managedRead) (bad []string, n int) {
 	t.Helper()
-	old := canConfirmTyped
-	canConfirmTyped = initflow.CanConfirm
-	t.Cleanup(func() { canConfirmTyped = old })
 	for _, env := range agentEnvStates() {
 		env.apply(t)
 		for _, row := range confirmTable {
@@ -656,7 +624,7 @@ func managedViolations(t *testing.T, mode func(bool, string, error) bool, reads 
 				if rd.managed {
 					continue // the managed direction is Task 3.1's
 				}
-				for _, class := range confirmClasses {
+				for _, path := range confirmPaths {
 					for _, right := range []bool{true, false} {
 						n++
 						// The line the terminal carries. No confirmation reads a
@@ -677,10 +645,10 @@ func managedViolations(t *testing.T, mode func(bool, string, error) bool, reads 
 								feed = "y"
 							}
 						}
-						want := runConfirms(row, class.class, marker)
+						want := runConfirms(row, path.covered, marker)
 						r, spy := confirmRig(t, row, feed)
-						got, err := managedDecision(mode, rd, r, class.class)
-						where := fmt.Sprintf("%s, %s, %s, stdin %q, %s", class.name, row, env.name, feed, rd.state)
+						got, err := managedDecision(mode, rd, r, path)
+						where := fmt.Sprintf("%s, %s, %s, stdin %q, %s", path.name, row, env.name, feed, rd.state)
 						if got != want {
 							bad = append(bad, fmt.Sprintf("%s: proceeds=%v, want %v (err %v)", where, got, want, err))
 						}
@@ -689,7 +657,7 @@ func managedViolations(t *testing.T, mode func(bool, string, error) bool, reads 
 								bad = append(bad, where+": stdin was read in a coding agent's session")
 							}
 							var ae *initflow.AgentError
-							if class.class == initflow.YesOrTyped && (!errors.As(err, &ae) || ae.Marker != marker) {
+							if path.ordinary && (!errors.As(err, &ae) || ae.Marker != marker) {
 								bad = append(bad, fmt.Sprintf("%s: ask's refusal is %v, want the agent refusal naming %s", where, err, marker))
 							}
 						}
@@ -708,8 +676,8 @@ func TestManagedNonManagedProjectNeverSkipsAConfirmation(t *testing.T) {
 		t.Fatalf("the table has %d rows, want 64", len(confirmTable))
 	}
 	bad, n := managedViolations(t, managedMode, reads)
-	// 13 environment states x 64 rows x 14 non-managed reads x 2 classes x 2 answers.
-	if want := len(agentEnvStates()) * len(confirmTable) * (len(reads) - 1) * len(confirmClasses) * 2; n != want || n == 0 {
+	// 13 environment states x 64 rows x 14 non-managed reads x 3 paths x 2 answers.
+	if want := len(agentEnvStates()) * len(confirmTable) * (len(reads) - 1) * len(confirmPaths) * 2; n != want || n == 0 {
 		t.Fatalf("the property ran %d combinations, want %d", n, want)
 	}
 	if len(bad) != 0 {
@@ -737,11 +705,11 @@ func TestManagedPropertyCatchesAWrongPredicate(t *testing.T) {
 	}
 }
 
-// The rule and the run's conditions, against the same hand-written table:
-// initflow.CanConfirm for each class, CanConfirmRun, and canConfirmTyped (the
-// seam askTyped asks) say what the table's "typed right" columns say for
-// conditions without --plan-only (plan-only is folded into Yes by
-// initRun.conditions, checked here too), and nothing under any marker.
+// The run's conditions, against the same hand-written table: initRun.conditions
+// builds the row's own facts, the stage loop's options carry the same marker,
+// and initflow.CanConfirmRun says what the table's "person" column says for
+// conditions without --plan-only (the run's own answer is folded into o.yes by
+// askCovered, checked by the property above), and nothing under any marker.
 func TestManagedConfirmRuleMatchesTheTable(t *testing.T) {
 	for _, env := range agentEnvStates() {
 		env.apply(t)
@@ -749,7 +717,7 @@ func TestManagedConfirmRuleMatchesTheTable(t *testing.T) {
 			withTerminal(t, row.terminal)
 			marker := env.agentFor(row.terminal)
 			r, _ := confirmRig(t, row, "")
-			want := initflow.Conditions{Yes: row.condYes, NonInteractive: row.nonInteractive, JSON: row.json, Terminal: row.terminal, Agent: marker, Ask: row.ask}
+			want := initflow.Conditions{JSON: row.json, Terminal: row.terminal, Agent: marker, Ask: row.ask}
 			if got := r.conditions(); got != want {
 				t.Errorf("%s, %s: initRun.conditions() = %+v, want %+v", row, env.name, got, want)
 			}
@@ -762,27 +730,9 @@ func TestManagedConfirmRuleMatchesTheTable(t *testing.T) {
 				t.Errorf("%s, %s: initEngine.options() has Agent=%q Yes=%v PlanOnly=%v NonInteractive=%v JSON=%v Terminal=%v, want Agent=%q and the row's flags",
 					row, env.name, o.Agent, o.Yes, o.PlanOnly, o.NonInteractive, o.JSON, o.Terminal, marker)
 			}
-			if row.planOnly {
-				continue
-			}
-			for _, rule := range []struct {
-				name string
-				fn   func(initflow.ConfirmClass, initflow.Conditions) bool
-			}{{"initflow.CanConfirm", initflow.CanConfirm}, {"canConfirmTyped", canConfirmTyped}} {
-				ord, typ := row.ordRight, row.typRight
-				if marker != "" {
-					ord, typ = false, false
-				}
-				if got := rule.fn(initflow.YesOrTyped, want); got != ord {
-					t.Errorf("%s(YesOrTyped) under %s, %s = %v, want %v", rule.name, row, env.name, got, ord)
-				}
-				if got := rule.fn(initflow.Typed, want); got != typ {
-					t.Errorf("%s(Typed) under %s, %s = %v, want %v", rule.name, row, env.name, got, typ)
-				}
-			}
-			typ := row.typRight && marker == ""
-			if got := initflow.CanConfirmRun(want); got != typ {
-				t.Errorf("initflow.CanConfirmRun under %s, %s = %v, want %v", row, env.name, got, typ)
+			person := row.person && marker == ""
+			if got := initflow.CanConfirmRun(want); got != person {
+				t.Errorf("initflow.CanConfirmRun under %s, %s = %v, want %v", row, env.name, got, person)
 			}
 		}
 	}
@@ -968,9 +918,6 @@ func TestManagedEveryInlineAgentDecisionRefusesUnderEachMarker(t *testing.T) {
 	oldW := writerIsTerminal
 	writerIsTerminal = func(io.Writer) bool { return true }
 	t.Cleanup(func() { writerIsTerminal = oldW })
-	old := canConfirmTyped
-	canConfirmTyped = initflow.CanConfirm
-	t.Cleanup(func() { canConfirmTyped = old })
 	for _, site := range inlineAgentSites {
 		for _, env := range agentEnvStates() {
 			t.Run(site.where+"/"+env.name, func(t *testing.T) {
@@ -1137,26 +1084,8 @@ func TestManagedConditionEnumerationIsComplete(t *testing.T) {
 	for i := 0; i < typ.NumField(); i++ {
 		declared = append(declared, typ.Field(i).Name)
 	}
-	if want := []string{"Yes", "NonInteractive", "JSON", "Terminal", "Agent", "Ask"}; !slices.Equal(declared, want) {
+	if want := []string{"JSON", "Terminal", "Agent", "Ask"}; !slices.Equal(declared, want) {
 		t.Fatalf("initflow.Conditions is %v and the table covers %v (%s)", declared, want, conditionsString(initflow.Conditions{}))
-	}
-}
-
-// The confirmation classes against the declaration in
-// internal/initflow/stage.go, in its iota order.
-func TestManagedConfirmClassEnumerationIsComplete(t *testing.T) {
-	declared := declaredConfirmClasses(t)
-	got := make([]string, 0, len(confirmClasses))
-	for _, c := range confirmClasses {
-		got = append(got, c.name)
-	}
-	if !slices.Equal(declared, got) {
-		t.Fatalf("initflow declares the confirmation classes %v and the product enumerates %v", declared, got)
-	}
-	for i, c := range confirmClasses {
-		if int(c.class) != i {
-			t.Errorf("the product's %s is value %d, want %d", c.name, int(c.class), i)
-		}
 	}
 }
 

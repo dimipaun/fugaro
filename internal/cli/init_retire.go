@@ -499,13 +499,14 @@ func (r *initRun) retireManaged(ctx context.Context, c *infra.Clients, t *tf.TF,
 		r.warn(retireManagedStops(stopped))
 		return false, nil
 	}
-	// D55's one rule, asked with this run's conditions exactly as a gate step
-	// asks it (update_managed.go's gateStep): the verdict a managed project's
-	// gate would stand in for a confirmation here is the one this run's
-	// session can be given it in. It is asked BEFORE the state removal, so a
-	// session that cannot have it is refused with a state that is still whole
-	// -- the same refusal it reads today, and no residue to clean up.
-	if !initflow.GateStandsIn(r.conditions(), initflow.Managed{Managed: true, Admitted: true}) {
+	// The owner's own terminal and nobody else's: the automatic path removes
+	// state on this run's own reading of the marks, and a coding agent's
+	// session is never the session that reading is made for (initflow's
+	// PersonAtTheTerminal, the condition half every gate step here is asked
+	// with). It is asked BEFORE the state removal, so a session that is not
+	// this one is refused with a state that is still whole -- the same
+	// refusal it reads today, and no residue to clean up.
+	if !initflow.PersonAtTheTerminal(r.conditions()) {
 		return false, nil
 	}
 	r.retireAuto = true

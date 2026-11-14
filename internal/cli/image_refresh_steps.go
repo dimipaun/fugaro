@@ -243,7 +243,7 @@ func (r *initRun) announceBuild(what string, g initflow.Managed) error {
 		return nil
 	}
 	fmt.Fprintf(r.stageDetail(), "fugaro: %s\n", what)
-	if initflow.GateStandsIn(r.conditions(), g) {
+	if initflow.PersonAtTheTerminal(r.conditions()) && g.Removes() {
 		fmt.Fprintf(r.stageDetail(), "  %s\n", initflow.GateProceeded())
 	}
 	return nil

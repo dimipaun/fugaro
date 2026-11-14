@@ -881,11 +881,13 @@ func (r Request) advice(v Verdict) string {
 	return ""
 }
 
-// confirm is D55's rule, and this is the caller that reaches its managed case:
-// initflow.GateStandsIn is the one predicate, its zero Managed is today's rule
-// word for word, and the value asked with here is this apply's own three facts
-// — the creation fact the marker read answered, the verdict that admitted the
-// plan, and whether the whole-project inventory fell back (D59, Task 4.5).
+// confirm is D55's rule, in the two halves initflow decides it in: the gate's
+// verdict stands in for this step's confirmation (initflow.GateStandsIn, whose
+// zero Managed is today's rule word for word), or a person at a real terminal
+// is there to give it (initflow.CanConfirmRun). The value asked with here is
+// this apply's own three facts — the creation fact the marker read answered,
+// the verdict that admitted the plan, and whether the whole-project inventory
+// fell back (D59, Task 4.5).
 //
 // The step is one a plan gate judges: the gate judged a saved plan, and money
 // or permanent — a project, billing, a secret — is not something this command
@@ -926,7 +928,7 @@ func (r Request) confirm(v Verdict, hash string) error {
 	if fallback && r.Out != nil {
 		fmt.Fprintln(r.Out, safetext.MultiLine(r.Inventory.Why()))
 	}
-	if !initflow.GateStandsIn(r.Conditions, initflow.Managed{Managed: r.Fact.Managed, Admitted: v.OK, Fallback: fallback}) {
+	if !initflow.GateStandsIn(r.Conditions, initflow.Managed{Managed: r.Fact.Managed, Admitted: v.OK, Fallback: fallback}) && !initflow.CanConfirmRun(r.Conditions) {
 		if marker := r.Conditions.Agent; marker != "" {
 			// The reason is initflow's own sentence, which is where D55's
 			// rule is decided; the fallback's own sentence is appended rather

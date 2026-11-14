@@ -303,7 +303,7 @@ func (m *buildManaged) admitEntry(ctx context.Context, cmd *cobra.Command, c ini
 	// unadmitted plan, and a session that has no admission to proceed on
 	// proceeds on nothing. refreshBuilds' announceBuild gives its own
 	// per-build admission the same two answers.
-	if initflow.GateStandsIn(c, adm) {
+	if initflow.PersonAtTheTerminal(c) && adm.Removes() {
 		fmt.Fprintf(cmd.ErrOrStderr(), "  %s\n", initflow.GateProceeded())
 	} else if c.Agent != "" {
 		if !adm.Removes() {

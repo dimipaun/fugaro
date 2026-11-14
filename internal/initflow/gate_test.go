@@ -233,7 +233,6 @@ func TestPersonAtTheTerminalIsTheOwnerAndNothingElse(t *testing.T) {
 	}
 }
 
-
 // TestGateSentencesNameNoWayPast: the two sentences a run prints when the gate
 // stood in for a confirmation are read by the person the prompt would have
 // asked, and by nobody else — but a coding agent's session can read them too

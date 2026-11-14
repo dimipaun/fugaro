@@ -183,7 +183,6 @@ func subcommands(calls [][]string) []string {
 // project's name plans the root, shows the summary, applies it in the root's
 // own workdir and state prefix, and starts the preload rebuild at once.
 func TestComputeStageProvisionsAfterATypedConfirmation(t *testing.T) {
-	typedThroughYes(t) // about the provisioning, not about who may confirm it
 	r := computeRig(t)
 	fakeTerminal(t)
 	out, _, err := executeStdin(t, initProjectName+"\n", "setup", "--provision-batch")
@@ -340,7 +339,6 @@ func TestComputeRootTakesTheLaunchersTheModuleGrants(t *testing.T) {
 // of the config's field, and it is what lets an installation keep every
 // schedule in one place it chose.
 func TestComputeStageTakesTheConfigsSchedulerRegion(t *testing.T) {
-	typedThroughYes(t)
 	r := computeRig(t)
 	r.appendConfig(t, "scheduler_region: us-central1\n")
 	// The rebuild the stage starts lives where the config says, not where the
@@ -367,7 +365,6 @@ func TestComputeStageTakesTheConfigsSchedulerRegion(t *testing.T) {
 // symlink to /private/var -- so an unresolved comparison finds none of this
 // root's calls and the stage's own calls read as the installation's.
 func TestComputeStageFindsItsWorkdirThroughASymlink(t *testing.T) {
-	typedThroughYes(t)
 	r := computeRig(t)
 	// The same case on any platform: the rig's own state home, reached
 	// through a link. mkdir through it creates the real directory, and the
@@ -733,7 +730,6 @@ func TestComputeStageHoldsItsGrantsToTheCover(t *testing.T) {
 		{"the apply", []string{"setup", "--provision-batch"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			typedThroughYes(t)
 			r := computeRig(t)
 			r.setPlanAt(t, "installation")
 			r.setPlanAt(t, "compute", jobsEditorChange("serviceAccount:"+infra.ReaperAccountID+"@"+initProject+".iam.gserviceaccount.com", []any{}))
@@ -777,7 +773,6 @@ func reaperGapPlan(t *testing.T, r *initRig) {
 // was confirmed.
 func TestComputeStageRetriesIAMPropagation(t *testing.T) {
 	noPropagationWaits(t)
-	typedThroughYes(t)
 	r := computeRig(t)
 	reaperGapPlan(t, r)
 	r.script["apply@compute"] = []any{map[string]any{"exit": 1, "stderr": propagationStderr}, map[string]any{"exit": 0}}
@@ -803,7 +798,6 @@ func TestComputeStageRetriesIAMPropagation(t *testing.T) {
 func TestComputeStageRetriesOnlyPropagation(t *testing.T) {
 	t.Run("another failure", func(t *testing.T) {
 		noPropagationWaits(t)
-		typedThroughYes(t)
 		r := computeRig(t)
 		reaperGapPlan(t, r)
 		r.script["apply@compute"] = map[string]any{"exit": 1, "stderr": "Error: quota exceeded"}
@@ -819,7 +813,6 @@ func TestComputeStageRetriesOnlyPropagation(t *testing.T) {
 	})
 	t.Run("a gap that never closes", func(t *testing.T) {
 		noPropagationWaits(t)
-		typedThroughYes(t)
 		r := computeRig(t)
 		reaperGapPlan(t, r)
 		r.script["apply@compute"] = map[string]any{"exit": 1, "stderr": propagationStderr}
@@ -835,7 +828,6 @@ func TestComputeStageRetriesOnlyPropagation(t *testing.T) {
 	})
 	t.Run("a re-plan with a grant member outside the cover", func(t *testing.T) {
 		noPropagationWaits(t)
-		typedThroughYes(t)
 		r := computeRig(t)
 		// The first plan is the gap's own AND one of the module's grants to a
 		// run account the stage read, which the compute cover accepts. The
@@ -869,7 +861,6 @@ func TestComputeStageRetriesOnlyPropagation(t *testing.T) {
 	})
 	t.Run("a re-plan with something new", func(t *testing.T) {
 		noPropagationWaits(t)
-		typedThroughYes(t)
 		r := computeRig(t)
 		first := planJSON(t, created("module.compute.google_service_account.reaper", "google_service_account",
 			map[string]any{"account_id": infra.ReaperAccountID}))
