@@ -694,8 +694,13 @@ run_loud() {
   return "$st"
 }
 
-# last_line PATTERN: the last line of the last loud command matching PATTERN.
-last_line() { sed -n "s/^$1//p" "$SCRATCH/last.out" 2>/dev/null | tail -1; }
+# step_line NAME PREFIX: the message the last loud command ended step NAME with,
+# past PREFIX. A step's result line is the reporter's `<mark> <step name>
+# <message>` (internal/report), so the message never opens the line: `fugaro
+# image build <entry>` ends its own step as `✔ <entry> built <image>@<digest>
+# (Cloud Build build <id>)`, and a reader that took the line for the message
+# would find nothing on a real run.
+step_line() { sed -n "s/^.*[[:space:]]$1[[:space:]]$2//p" "$SCRATCH/last.out" 2>/dev/null | tail -1; }
 
 # yaml_scalar FILE KEY: one scalar out of a flat yaml file, for the project
 # config's own fields (region, runs_bucket) — those are read, never guessed.
@@ -843,6 +848,7 @@ step_installation() {
   INSTALLATION=$(field name "$SCRATCH/doctor.vocab")
   GCP_PROJECT=$(field project "$SCRATCH/doctor.vocab")
   [ -n "$INSTALLATION" ] || stop "fugaro doctor --json named no project, so this check cannot tell which installation it is looking at"
+  [ -n "$GCP_PROJECT" ] || stop "fugaro doctor --json named no GCP project for $INSTALLATION: the reserved name of step 3 is set on the job with 'gcloud run jobs update --project <project>', and with no project read here that command would edit whichever project gcloud is configured for. Set the project in the local config (fugaro doctor --project $INSTALLATION names the file) and run again; nothing has been created or spent"
   guard_belong "$INSTALLATION" "installation" installation
   CFG="${XDG_CONFIG_HOME:-$HOME/.config}/fugaro/projects/$INSTALLATION.yaml"
   [ -r "$CFG" ] || stop "no project config at $CFG: this check reads the installation's own runs bucket and region out of that file (run 'fugaro doctor --project $INSTALLATION' and read its project line for the path)"
@@ -984,7 +990,7 @@ EOF
     fact entry FAIL "fugaro image build $ENTRY did not exit 0"
     stop "fugaro image build $ENTRY failed (its last lines are above). The entry is in the project's configuration and the Restore removes it again, so nothing is left behind: fix what it reported and run again"
   fi
-  BUILT_ENTRY=$(last_line 'built ')
+  BUILT_ENTRY=$(step_line "$ENTRY" 'built ')
   owner "next: fugaro update publishes the catalog. Answer its own confirmations at this terminal yourself; this script never answers one."
   if ! run_loud fugaro update; then
     fact entry FAIL "fugaro update did not exit 0, so the catalog entry was not published"
@@ -1071,10 +1077,10 @@ read_doctor() {
 # image's own ENV is in the image and no read of a job can list it, so the
 # reservation shows up in the line only where a reserved name sits on the job.
 step_reserved() {
-  if ! run_loud gcloud run jobs update "$JOB" --region "$REGION" \
+  if ! run_loud gcloud run jobs update "$JOB" --project "$GCP_PROJECT" --region "$REGION" \
     --update-env-vars "$RESERVED_NAME=$RESERVED_VALUE"; then
     fact reserved FAIL "gcloud run jobs update $JOB did not exit 0, so the reserved name was not set on the job"
-    stop "gcloud run jobs update $JOB --region $REGION --update-env-vars $RESERVED_NAME=$RESERVED_VALUE failed (its last lines are above). The step exists to read the reservation out of doctor's line with a reserved name in the job's own environment"
+    stop "gcloud run jobs update $JOB --project $GCP_PROJECT --region $REGION --update-env-vars $RESERVED_NAME=$RESERVED_VALUE failed (its last lines are above). The step exists to read the reservation out of doctor's line with a reserved name in the job's own environment"
   fi
   HELD_ON_JOB=yes
   read_doctor
@@ -1103,14 +1109,14 @@ step_reserved() {
 step_converged() {
   if ! run_loud fugaro update --repo "$REPO"; then
     fact converged FAIL "the second fugaro update --repo $REPO did not exit 0"
-    stop "the second fugaro update --repo $REPO failed (its last lines are above), so the reserved name set on $JOB by hand was not converged away. Take it off yourself with 'gcloud run jobs update $JOB --region $REGION --remove-env-vars $RESERVED_NAME'"
+    stop "the second fugaro update --repo $REPO failed (its last lines are above), so the reserved name set on $JOB by hand was not converged away. Take it off yourself with 'gcloud run jobs update $JOB --project $GCP_PROJECT --region $REGION --remove-env-vars $RESERVED_NAME'"
   fi
   read_doctor
   local drops
   drops=$(jfield drops "$JOB" "$SCRATCH/doctor.vocab")
   if [ "${drops#*$RESERVED_NAME}" != "$drops" ]; then
     fact converged FAIL "the line for $JOB still names $RESERVED_NAME among the names a run drops after the converge: $drops"
-    fail_stop "the converge did not take $RESERVED_NAME off job $JOB: take it off yourself with 'gcloud run jobs update $JOB --region $REGION --remove-env-vars $RESERVED_NAME'"
+    fail_stop "the converge did not take $RESERVED_NAME off job $JOB: take it off yourself with 'gcloud run jobs update $JOB --project $GCP_PROJECT --region $REGION --remove-env-vars $RESERVED_NAME'"
   fi
   HELD_ON_JOB=no
   fact converged PASS "the converge redeployed job $JOB from the deployment's own environment and the hand-set $RESERVED_NAME is gone from its line: drops $drops"
@@ -1278,7 +1284,7 @@ restore_run() {
         case "$drops" in
         *"$RESERVED_NAME"*)
           if [ "$HELD_ON_JOB" = yes ]; then
-            still="$still $RESERVED_NAME is still set on job $job — take it off with 'gcloud run jobs update $job --region $REGION --remove-env-vars $RESERVED_NAME';"
+            still="$still $RESERVED_NAME is still set on job $job — take it off with 'gcloud run jobs update $job --project $GCP_PROJECT --region $REGION --remove-env-vars $RESERVED_NAME';"
           fi
           ;;
         esac
@@ -1320,7 +1326,7 @@ print_plan() {
   printf '     git commit + git push origin %s\n' "${BRANCH:-<branch>}" >&$out
   printf '     fugaro update --repo %s             # writes the stamp on the workflow job\n' "$REPO" >&$out
   printf '     fugaro doctor --all                      # the job line must name %s, drops none, no value\n' "$ENTRY" >&$out
-  printf '     gcloud run jobs update <job> --region %s --update-env-vars %s=%s\n' "$REGION" "$RESERVED_NAME" "$RESERVED_VALUE" >&$out
+  printf '     gcloud run jobs update <job> --project %s --region %s --update-env-vars %s=%s\n' "${GCP_PROJECT:-<the GCP project fugaro doctor --json names>}" "$REGION" "$RESERVED_NAME" "$RESERVED_VALUE" >&$out
   printf '     fugaro doctor --all                      # the line must name %s among the dropped names\n' "$RESERVED_NAME" >&$out
   printf '     fugaro update --repo %s             # converges the hand-set name away again\n' "$REPO" >&$out
   printf '  4. edit %s/fugaro.yaml: %s gets a commands.test printing presence and never a value\n' "$CHECKOUT" "$WORKFLOW" >&$out

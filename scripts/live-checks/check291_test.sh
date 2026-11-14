@@ -211,7 +211,10 @@ image)
     ;;
   build)
     [ -e "$state/knobs/build_fails" ] && { echo "fake: build failed" >&2; exit 1; }
-    echo "built us-east5-docker.pkg.dev/chk291-proj/fugaro/catalog-$3@sha256:1111"
+    # The real line: the reporter prints one result line per step as
+    # `<mark> <step name> <message>`, and this command's message is
+    # `built <image>@<digest> (Cloud Build build <id>)`.
+    echo "✔ $3 built us-east5-docker.pkg.dev/chk291-proj/fugaro/catalog-$3@sha256:1111 (Cloud Build build 4f1c0e6a-2b71-4a4f-9a0d-8d0c1b2a3f40)"
     ;;
   rm)
     rm -f "$state/entry-added"
@@ -459,6 +462,7 @@ test_happy_path() {
   # What it read: the entry's own line, the stamp, the reservation and the run's
   # own transcript.
   expect_contains "$CASE/out" "catalog entry fugaro-check291 is published and built" "the entry's own catalog line"
+  expect_contains "$CASE/out" "catalog-fugaro-check291@sha256:1111" "the build's own result line is read past the reporter's mark and step name"
   expect_contains "$CASE/out" "a run drops none of the names the job sets itself" "the stamp's drops"
   expect_contains "$CASE/out" "GOOGLE_APPLICATION_CREDENTIALS" "the reservation's name"
   expect_contains "$CASE/out" "marker: present" "the run's marker"
@@ -479,7 +483,7 @@ test_happy_path() {
   expect_absent "$LOG" "runs show --repo $ORIGIN 00000000 " "the short name a launch prints to a person is never read as the run's id"
   [ "$(grep -c 'runs ls --repo' "$LOG")" -ge 2 ] ||
     fail "the check made $(grep -c 'runs ls --repo' "$LOG") listing read(s) for one run, fewer than the two that waiting for a run to end costs"
-  expect_contains "$GLOG" "--update-env-vars GOOGLE_APPLICATION_CREDENTIALS=/dev/null" "the reserved name is set on the job by hand"
+  expect_contains "$GLOG" "run jobs update chk291-sandbox-test --project chk291-proj --region us-east5 --update-env-vars GOOGLE_APPLICATION_CREDENTIALS=/dev/null" "the reserved name is set on the job by hand, in the installation's own project"
   expect_contains "$HLOG" "gh pr close fugaro/" "the Restore closes the run's pull request"
   [ "$(grep -c 'gh pr close' "$HLOG")" = 1 ] || fail "the Restore closed $(grep -c 'gh pr close' "$HLOG") pull request(s), wanted 1"
 
