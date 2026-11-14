@@ -30,10 +30,10 @@ const layerKeyPrefix = "layer."
 // spec §2.5) — the same comparison, and the same sentence, doctor and
 // `fugaro config layer` decide that word by (localLayerState).
 type layerSide struct {
-	// ran is whether this half ran at all. --offline and an installation with
-	// no backend leave the zero value, and the read then answers for the
-	// layer's rows exactly as it did before this task: the cached copy, with
-	// the age its state is the cache's for.
+	// ran is whether this half ran at all. --offline and a read with no project
+	// config leave the zero value, and the read then answers for the layer's rows
+	// exactly as it did before this task: the cached copy, with the age its state
+	// is the cache's for.
 	ran bool
 	// file is the local layer file's path, "" when this machine cannot name
 	// one, and local its parsed bytes: nil for a file that is not there and for

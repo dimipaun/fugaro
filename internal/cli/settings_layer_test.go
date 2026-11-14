@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -620,11 +621,19 @@ func settingsLayerPublished(t *testing.T, object string) *budgetFixture {
 // rather than the comparison.
 func settingsLayerOwnLayerFile(t *testing.T, body string) string {
 	t.Helper()
+	return settingsLayerFileText(t, layerPreamble+body)
+}
+
+// settingsLayerFileText writes text as this machine's own layer file and
+// returns its path, header and all: the door for a file the readers do not
+// accept, which settingsLayerOwnLayerFile's header would repair.
+func settingsLayerFileText(t *testing.T, text string) string {
+	t.Helper()
 	path, err := localcfg.LayerFile(os.Getenv, "aurora")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte(layerPreamble+body), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return path
@@ -791,5 +800,107 @@ func TestSettingsWithNoLocalLayerFileReadsThePublishedOneAndSaysSo(t *testing.T)
 		if !strings.Contains(src.Note, want) {
 			t.Errorf("the project source's note does not say %q: %s", want, src.Note)
 		}
+	}
+}
+
+// TestSettingsReadsTheLayerSideWithoutABudgetBackend: the layer side is one
+// bucket read, and a bucket needs no Firebase backend — cloudRefusal's own
+// comment calls the project without one the ordinary shape of an installation
+// that never turned the budget on. Only the two database layers have nothing to
+// dial there, and a read that skipped the layer side with them would answer a
+// `layer.` row with its default and `ok` where a run gets the published value:
+// a wrong answer about every repository of the project, which is the one thing
+// this read may not give (SD4).
+func TestSettingsReadsTheLayerSideWithoutABudgetBackend(t *testing.T) {
+	// A budget block with no rtdb_url: the project has no backend, so there is
+	// no database to dial and the two database layers say why.
+	f := newBudgetFixture(t, "budget: { firebase_project: proj-1234 }\n")
+	settingsLayerPublish(t, f, settingsLayerObject)
+	settingsLayerOwnLayerFile(t, settingsLayerOwnFileBody)
+
+	doc := readSettingsJSON(t, "layer.default_profile")
+	row := rowOf(t, doc, "layer.default_profile", "project")
+	if deref(row.Value) != "web" || row.Wins != settings.LayerProject {
+		t.Errorf("value/wins = %q/%q, want the file's web decided by project: the file is what these rows read, and reading it needs no backend", deref(row.Value), row.Wins)
+	}
+	if row.State != stateUnpublished {
+		t.Errorf("state = %q, want unpublished: the file and the object this bucket holds differ", row.State)
+	}
+	for _, layer := range []string{"policy", "caps"} {
+		src := settingsSourceOf(t, doc, layer)
+		if !strings.Contains(src.Status, "budget.rtdb_url") {
+			t.Errorf("the %s source is %q, want the reason naming the key that is not set", layer, src.Status)
+		}
+	}
+}
+
+// TestSettingsWithALayerFileThatDoesNotParseSaysSo: a file that is there and is
+// not a layer this Fugaro reads states no value the read can print, so the rows
+// fall back to the published object — the value a run gets — and no key is
+// `unpublished`: that word is decided between two parsed layers (spec §2.5), and
+// one of the two was never parsed. The parse's own sentence is what its owner
+// needs, and the STATE column has no room for it: it is the source's note.
+func TestSettingsWithALayerFileThatDoesNotParseSaysSo(t *testing.T) {
+	settingsLayerPublished(t, settingsLayerObject)
+	// A layer file without its header, which every reader of one refuses: the
+	// problems name the three keys the anchor needs.
+	path := settingsLayerFileText(t, "default_profile: web\n")
+
+	doc := readSettingsJSON(t, "layer.default_profile")
+	row := rowOf(t, doc, "layer.default_profile", "project")
+	if deref(row.Value) != "svc" || row.Wins != settings.LayerProject {
+		t.Errorf("value/wins = %q/%q, want the published object's svc: a file no reader parses states no value to print", deref(row.Value), row.Wins)
+	}
+	if row.State != stateOK {
+		t.Errorf("state = %q, want ok: a file that did not parse is no value to differ from, and `unpublished` is decided between two parsed layers", row.State)
+	}
+	if src := settingsSourceOf(t, doc, "policy"); src.Status != stateOK {
+		t.Errorf("the policy source is %q, and only the layer is malformed here", src.Status)
+	}
+	src := settingsSourceOf(t, doc, "project")
+	if src.Status != unreadState("the local layer file is not a layer this Fugaro reads") {
+		t.Errorf("the project source is %q, want the read's own reason for a file it does not read", src.Status)
+	}
+	for _, want := range []string{path, "version: must be 1"} {
+		if !strings.Contains(src.Note, want) {
+			t.Errorf("the project source's note does not carry %q: %s", want, src.Note)
+		}
+	}
+}
+
+// TestSettingsWithNoLocalLayerFileAndAnUnreadableObjectSaysWhich: with neither
+// side read the rows keep the shape a key no layer decided has — the default,
+// with WINS default — and the source names the side that could not be reached:
+// the object and its URL, not the file this machine does not have. Nothing is
+// `unpublished`: the comparison is what claims it, and nothing was compared
+// (spec §2.5).
+func TestSettingsWithNoLocalLayerFileAndAnUnreadableObjectSaysWhich(t *testing.T) {
+	f := settingsCloudFixture(t)
+	settingsLayerBucketUnreachable(t)
+
+	doc := readSettingsJSON(t, "layer.default_profile")
+	// The row is what this project printed before the read looked at all: the
+	// default, with WINS default. `unpublished` is not claimed — nothing was
+	// compared — and the reason the comparison could not be made is on the
+	// layer's own source rather than on each of its rows: one sentence beside
+	// the layer, which is the shape the two cloud sources already have.
+	row := rowOf(t, doc, "layer.default_profile", "project")
+	if row.Wins != "default" || row.State != stateOK {
+		t.Errorf("wins/state = %q/%q, want default/ok: no layer decided this key, and the reason is the source's", row.Wins, row.State)
+	}
+	want := row.Default.Value
+	if want == "" {
+		want = row.Default.Unset
+	}
+	if deref(row.Value) != want {
+		t.Errorf("value = %q, want the default (%q): a row nobody read is not guessed", deref(row.Value), want)
+	}
+	src := settingsSourceOf(t, doc, "project")
+	if !strings.HasPrefix(src.Status, "unread: ") {
+		t.Errorf("the project source is %q, want a reason", src.Status)
+	}
+	where := "file://" + filepath.Join(f.runsDir(), filepath.FromSlash(config.LayerKey))
+	if !strings.Contains(src.Note, where) {
+		t.Errorf("the project source's note does not name the object the read could not reach (%s): %s", where, src.Note)
 	}
 }

@@ -135,10 +135,12 @@ type settingsRead struct {
 	// layerSide is the layer half of the cloud read (settings_layer.go): this
 	// machine's own layer file and the published object it is compared with.
 	// The layer's rows read the file (spec §2.2), the comparison is what claims
-	// `unpublished`, and the project source prints what it found. The zero
-	// value is a layer side that did not run, which is --offline or an
-	// installation with no backend, and the read then answers for those rows
-	// with the cached layer above.
+	// `unpublished`, and the project source prints what it found. The zero value
+	// is a layer side that did not run, which is --offline — the flag reads no
+	// published value, so it can neither compare nor claim — and a read that
+	// names no project config at all, which has no installation to read a layer
+	// from. An installation that has no budget backend still reads it: the
+	// object is in a bucket, and a bucket needs no Firebase.
 	layerSide layerSide
 
 	repos []repoRead

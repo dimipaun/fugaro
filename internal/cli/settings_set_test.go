@@ -2651,6 +2651,7 @@ func TestSettingsSetWritingZeroThatRemovesACapIsAWidening(t *testing.T) {
 // so these commands must read it.
 func TestSettingsSelectionReadsTheCheckoutsProject(t *testing.T) {
 	isolateProjects(t, t.TempDir())
+	settingsBucketAt(t)
 	writeProject(t, "aurora", "proj-1")
 	writeProject(t, "borealis", "proj-2")
 	t.Chdir(gitCheckout(t, filepath.Join(t.TempDir(), "app"), "version: 1\nproject: borealis\n"))

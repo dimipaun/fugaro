@@ -54,30 +54,46 @@ type cloudLayer struct {
 //
 // Both layers keep the shape of every other answer here: a source that cannot
 // be read is `unread: <reason>` on the rows it owns, never an error that takes
-// the offline table down with it. The two exceptions are the project that has no
-// backend at all — nothing to dial, so nothing is dialled — and
-// refuseHTTP2Debug, which is the repository's rule for every command that opens
-// the cloud and aborts this one before it does.
+// the offline table down with it. The two exceptions are refuseHTTP2Debug, which
+// is the repository's rule for every command that opens the cloud and aborts
+// this one before it does, and the project that has no budget backend: nothing
+// is dialled for the two database layers there, while the layer side — one
+// bucket read, which needs no backend — is read as it is everywhere else (SD4).
 func readCloudLayers(ctx context.Context, r *settingsRead, _ settingsOptions) error {
-	if reason := r.cloudRefusal(); reason != "" {
-		r.unreadCloud(reason)
-		return nil
-	}
 	if err := refuseHTTP2Debug(os.Getenv); err != nil {
 		return err
 	}
+	ctx, cancel := context.WithTimeout(ctx, settingsCloudBudget)
+	defer cancel()
 	// The three are read in parallel and under one deadline: they are
 	// independent sources, and a database that stops answering one of them must
 	// not eat the others' whole budget (spec §2.7). The third is the layer side
 	// (settings_layer.go): the published object this machine's layer file is
 	// compared with, which is the one read here a bucket answers.
-	ctx, cancel := context.WithTimeout(ctx, settingsCloudBudget)
-	defer cancel()
+	//
+	// The layer side is the one of the three an installation with no budget
+	// backend still has: its object is in that installation's own runs bucket,
+	// and cloudRefusal's own comment calls the no-backend project the ordinary
+	// shape of one that never turned the budget on. Skipping it there would print
+	// the default with `ok` for a key this machine's file sets — a wrong answer
+	// about every repository of the project rather than a missing one. A read
+	// with no project config at all has no installation to read a layer from, so
+	// that one the layer side does not run for either.
+	reason := r.cloudRefusal()
 	var wg sync.WaitGroup
-	wg.Add(3)
-	go func() { defer wg.Done(); r.readPolicyLayer(ctx) }()
-	go func() { defer wg.Done(); r.readCapsLayer(ctx) }()
-	go func() { defer wg.Done(); r.readLayerSide(ctx) }()
+	if r.local != nil {
+		wg.Add(1)
+		go func() { defer wg.Done(); r.readLayerSide(ctx) }()
+	}
+	if reason != "" {
+		// The two database layers have nothing to dial: they are marked unread
+		// with the one reason that answers for both.
+		r.unreadCloud(reason)
+	} else {
+		wg.Add(2)
+		go func() { defer wg.Done(); r.readPolicyLayer(ctx) }()
+		go func() { defer wg.Done(); r.readCapsLayer(ctx) }()
+	}
 	wg.Wait()
 	// The layer's own drift is merged after the wait rather than inside its
 	// reader: r.drift is assigned whole by the policy layer's reader, and two
