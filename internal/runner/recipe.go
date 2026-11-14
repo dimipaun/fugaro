@@ -123,3 +123,38 @@ func ApplyRoles(a *config.Agent, rcp *recipe.Recipe) {
 		a.MaxOutputTokens.Coder = a.MaxOutputTokens.Reviewer
 	}
 }
+
+// runDigestRecipe is the catalog recipe of a report run (digest.go, T3.2). It
+// is the one recipe whose stage limits the runner sets rather than the
+// repository: a report run is launched on a schedule by a routine, with nobody
+// watching what one costs.
+const runDigestRecipe = "run-digest"
+
+// runDigestReviewerMaxOutput is the per-call output bound a report run's review
+// carries (0.24.1): about $0.64 of reserved output at Opus's $20/M, which is
+// what the recipe is after rather than the number itself. A review reserves its
+// whole output allowance at the gateway before it spends anything, and a
+// review with no bound set reserves the reviewer model's own maximum — 128k on
+// claude-opus-5-5, $2.56 plus the input — which is more than a small
+// repository's per-run cap holds, so its report run halted with run_cap having
+// spent nothing (Check 136's run 20261114-135057-7d42).
+const runDigestReviewerMaxOutput int64 = 32000
+
+// applyRecipeOutputLimit tightens the per-call output bound a recipe's review
+// buys, and reports whether it dropped a larger bound the run had asked for. It
+// only ever tightens, so a repository or a project that reserves less for its
+// reviewer than the recipe does keeps its own figure. It runs beside ApplyRoles
+// and before the policy merge, so the bound is the one the file layer carries
+// into it: the merge reads the limits off the configuration as it stands, the
+// way it reads the role mapping's aliased value.
+func applyRecipeOutputLimit(a *config.Agent, rcp *recipe.Recipe) (capped bool) {
+	if rcp.Name != runDigestRecipe {
+		return false
+	}
+	if n := a.MaxOutputTokens.Reviewer; n > 0 && n <= runDigestReviewerMaxOutput {
+		return false
+	}
+	capped = a.MaxOutputTokens.Reviewer > runDigestReviewerMaxOutput
+	a.MaxOutputTokens.Reviewer = runDigestReviewerMaxOutput
+	return capped
+}
