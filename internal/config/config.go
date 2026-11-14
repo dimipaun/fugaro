@@ -1098,6 +1098,55 @@ const MissingAnthropicKey = "no Anthropic API key is stored, so this call cannot
 // project token is D461/D464 of 2026-10-27).
 const BitbucketSecret = "bitbucket-token"
 
+// BitbucketTokenSep is the separator of the bundle's Bitbucket token FAMILY
+// (D2350): a DOUBLED dash between the legacy key and the token's name, so that
+// the family's keys are spelling the account-name rule cannot produce (R13).
+// A single dash would spell claude-oauth-token-bitbucket-token-ci, which is a
+// legal account today, and admitting one name in two families is exactly what
+// the loader refuses a document over.
+const BitbucketTokenSep = "--"
+
+// BitbucketTokenPrefix is what every key of the family starts with.
+const BitbucketTokenPrefix = BitbucketSecret + BitbucketTokenSep
+
+// ValidBitbucketTokenName reports whether name is a name a Bitbucket token of
+// the family may have. It is the rule a Claude account's name is held to — the
+// regex AND MaxClaudeAccountNameLen, which the regex alone does not carry — and
+// it is deliberately that rule rather than a second one: one name shape for
+// every name this platform derives, and a whole-key length the published schema
+// can state as a single number.
+func ValidBitbucketTokenName(name string) bool {
+	return len(name) <= MaxClaudeAccountNameLen && ClaudeAccountNameRE.MatchString(name)
+}
+
+// BitbucketTokenKey answers the bundle key of the Bitbucket token named name:
+// config.BitbucketSecret, the doubled dash and the name (D2350, R13). "" is a
+// name the family may not hold, which is a refusal and never a key that falls
+// back to the legacy credential's.
+//
+// The key is the token's NAME everywhere the platform speaks of it (R5), never
+// the bare suffix: the suffix would be a name the model account family could
+// also spell, and one name meaning two credentials is what the audit line
+// cannot survive.
+func BitbucketTokenKey(name string) string {
+	if !ValidBitbucketTokenName(name) {
+		return ""
+	}
+	return BitbucketTokenPrefix + name
+}
+
+// BitbucketTokenAccount reads a name back out of a member of the family's
+// bundle key, which is BitbucketTokenKey's inverse. ok=false is a key that is
+// not one of the family's — the legacy key among them, which is its own
+// credential and not a member with an empty name.
+func BitbucketTokenAccount(key string) (string, bool) {
+	name, found := strings.CutPrefix(key, BitbucketTokenPrefix)
+	if !found || !ValidBitbucketTokenName(name) {
+		return "", false
+	}
+	return name, true
+}
+
 // ReservedSecrets are the logical secret names the platform itself mounts,
 // mapped to the variable each one becomes. A workflow's secrets may not
 // reuse them (design §5.1, §6.1).
