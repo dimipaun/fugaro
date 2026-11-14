@@ -199,15 +199,31 @@ Three jobs, none of which holds a secret or authenticates to anything:
   `internal/budget/rules/emulator/package.json`, installed **from that tree**
   rather than by version, exactly as `ci.yml`'s rules job installs it: the
   version is the rules tests' own, and the repository holds one firebase-tools
-  rather than two. The emulator-jar cache key is `ci.yml`'s character for
-  character
-  (`firebase-emulators-${{ hashFiles('internal/budget/rules/emulator/package-lock.json') }}`,
-  so a bump to that lockfile fetches one new jar for both jobs), and
+  rather than two. The emulator jar is cached under this job's **own** key,
+  `firebase-emulators-firestore-${{ hashFiles('internal/budget/rules/emulator/package-lock.json') }}`
+  — not `ci.yml`'s, which caches the Realtime Database emulator's jar: a
+  different jar under the same key would be a key one job saves and the other
+  then restores or, on an exact hit, never saves at all, so each job downloads
+  its own jar on every run. The job runs
   `firebase emulators:exec --only firestore --project fugaro-portal-test
   --config ee/portal/firebase.json`, which exports `FIRESTORE_EMULATOR_HOST` to
   the child and runs `go test -tags firestore ./ee/keyservice/docstore/...`
-  under it. The emulator's configuration is the portal's own, so the suite runs
-  against the rules the deploy uploads.
+  under it.
+
+  **What that does and does not test.** It tests the **store backend**: the same
+  conformance suite the in-memory store passes, run against Firestore, so the
+  two answers are the same answers. It does **not** test
+  `ee/portal/firestore.rules`. The suite builds its client with
+  `firestore.NewClient` — the server SDK, which reaches the emulator as an owner
+  and is not subject to rules at all — and against the project
+  `fugaro-portal-test`, which is the `(default)` database, while the rules in
+  `ee/portal/firebase.json` belong to the named database `portal`. So the denial
+  the deploy uploads is never evaluated by this job. What holds it today is
+  static: `TestFirestoreRulesDenyClients` (P1.5) reads the file and refuses
+  anything but the denial, and it runs under the `terraform` tag. A test that
+  really exercises the rules — a client SDK, or the emulator's REST API, against
+  the `portal` database — is owed a task of its own; until then the denial's
+  shape is checked and its behaviour is not.
 
 It deploys nothing and runs no Fugaro command: the portal's deploy is
 `scripts/deploy-portal.sh`, which is OWNER-RUN and refuses a coding agent's

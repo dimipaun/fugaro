@@ -104,6 +104,17 @@ jobs:
   # file asks for: it skips without FIRESTORE_EMULATOR_HOST, and this job is what
   # provides one. Nothing here contacts Firebase -- the project id is one the
   # emulator keeps local and there are no credentials to reach a real one with.
+  #
+  # It tests the BACKEND, not the rules. The suite builds its client with
+  # firestore.NewClient, the server SDK, which reaches the emulator as an owner
+  # and is not subject to rules; and it names the project `fugaro-portal-test`,
+  # the `(default)` database, while ee/portal/firebase.json's rules belong to the
+  # named database `portal`. So ee/portal/firestore.rules is deployed by
+  # scripts/deploy-portal.sh and never evaluated here: what holds it in the tree
+  # is TestFirestoreRulesDenyClients, which reads the file rather than exercising
+  # it: the denial's shape is checked, its behaviour this job leaves untested. A
+  # test that really evaluates it needs a client SDK or the emulator's REST API
+  # against the `portal` database, and a task of its own.
   firestore:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -132,8 +143,11 @@ jobs:
         run: npm install --global npm@11.19.0
       # internal/budget/rules/emulator's own tree, which is what pins the
       # firebase-tools the emulator is: installing it from there rather than by
-      # version keeps ONE firebase-tools in the tree, and the cache key below is
-      # literally ci.yml's so the two jobs share one emulator jar.
+      # version keeps ONE firebase-tools in the tree. The cache key below is this
+      # job's own, not ci.yml's: the two jobs run DIFFERENT emulators (ci.yml's
+      # rules job the Realtime Database one, this job Firestore), so one key for
+      # both would be saved by whichever ran first and, on an exact key hit, never
+      # saved by the other -- which then downloads its own jar on every run.
       - name: install the pinned firebase-tools
         working-directory: internal/budget/rules/emulator
         run: npm ci --ignore-scripts --no-audit --no-fund
@@ -141,11 +155,13 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/firebase/emulators
-          key: firebase-emulators-${{ hashFiles('internal/budget/rules/emulator/package-lock.json') }}
+          key: firebase-emulators-firestore-${{ hashFiles('internal/budget/rules/emulator/package-lock.json') }}
       # `emulators:exec` starts the emulator from the portal's own configuration
-      # -- ee/portal/firebase.json's `emulators` block, and the firestore block
-      # whose rules the deploy uploads -- exports FIRESTORE_EMULATOR_HOST to the
-      # command and stops the emulator when the command ends.
+      # -- ee/portal/firebase.json's `emulators` block, whose host and port are
+      # what the suite dials -- exports FIRESTORE_EMULATOR_HOST to the command
+      # and stops the emulator when the command ends. The `firestore` block
+      # beside it is the deploy's, not this job's: nothing here loads those rules
+      # (see the job's comment above).
       - name: the document store's Firestore suite
         run: |
           set -euo pipefail

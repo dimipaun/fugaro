@@ -20,9 +20,12 @@
 // what makes `firebase deploy --only hosting,firestore:rules` upload the denial
 // the portal's documents are held to beside the site that reads them through the
 // API, and the `emulators` block is what the portal workflow's `--only firestore`
-// starts for the store's own suite. A rules path that named nothing, or a deploy
-// that named only hosting, would leave the database the Terraform creates with
-// rules nobody reviewed -- and the database entry is why this one is the array
+// starts for the store's own suite. That suite tests the store BACKEND, not these
+// rules: it uses the server SDK and the `(default)` database, so the denial here
+// is deployed and never evaluated by it — what holds the file is P1.5's
+// TestFirestoreRulesDenyClients, which reads it. A rules path that named nothing,
+// or a deploy that named only hosting, would leave the database the Terraform
+// creates with rules nobody reviewed -- and the database entry is why this one is the array
 // form: the Terraform creates a *named* database, `portal`, while a bare object
 // is the `(default)` database the project has not got, so the object form would
 // deploy the denial somewhere nobody reads it from.
@@ -293,7 +296,9 @@ describe('the portal hosting configuration', () => {
   it('carries the emulator the store\'s own suite is run against', () => {
     // ee/keyservice/docstore's Firestore suite runs under the emulator the
     // staged portal workflow starts from this file (`--only firestore`), and
-    // the host it dials is the one the emulator publishes to the child.
+    // the host it dials is the one the emulator publishes to the child. It is
+    // the backend that suite exercises: the `firestore` entry above is the
+    // deploy's, and the rules it names are not loaded by this block.
     expect(parsed.emulators?.firestore?.host).toBe('127.0.0.1')
     expect(parsed.emulators?.ui?.enabled).toBe(false)
   })
