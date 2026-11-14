@@ -7,14 +7,19 @@ import (
 	"io"
 	"strings"
 
+	accesslib "github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // The launcher's pre-launch read of the project's policy (plan task 1.5
-// step 4). Two things are checked here, both before anything is created:
+// step 4). Three things are checked here, all before anything is created:
 //
+//   - the caller may launch the repository at all: the roles come from the
+//     grants node and the credential's own address (requireAccess, plan task
+//     RS6a), which is not the policy's question and is asked whether or not a
+//     policy is published;
 //   - the repository is admitted: the slug this launch stores its run under
 //     and the repository the task names must agree, and a published policy
 //     must have the repository on its allow_repos;
@@ -104,6 +109,19 @@ func launchPolicyGates(ctx context.Context, env *cloudEnv, slug string, spec *ta
 	if !ok {
 		return userErr("the slug this launch stores its run under (%s) is not the slug of %s under any git provider kind (%s): the run this launch would start refuses it for that reason, so the launch is refused before any execution exists",
 			slug, spec.Repo, strings.Join(runner.ProviderKinds(), ", "))
+	}
+	// The role check (plan task RS6a) sits here rather than beside the allow-list
+	// below because it is not the policy's: an installation that has published
+	// nothing still has roles, and one that publishes a policy admits nobody the
+	// roles do not (F27, where access.Effective reads the allow_repos itself).
+	// It is before the store and the claim, like every refusal in this gate, so
+	// a launch nobody may make leaves no task, no token and no execution behind.
+	canonical, err := launchCanonical(kind, spec.Repo)
+	if err != nil {
+		return err
+	}
+	if err := requireAccess(ctx, env, accesslib.ActionLaunch, canonical, "nothing was launched"); err != nil {
+		return err
 	}
 	if !found {
 		// No policy published here (no marker, or a marker and no node): there

@@ -219,6 +219,74 @@ func TestRecordRoundTripsToleratedFindings(t *testing.T) {
 	}
 }
 
+// TestRecordRoundTripsChainRaises is the raise entry's own round trip
+// (docs/run-limit-carry-over L9, D1061): a raise a launcher made on the chain
+// this run began — who, when, why, and each dimension's figure before and
+// after — survives as the root run's own block, the member is the wire name a
+// reader outside this binary reads, the field is additive (the version does
+// not move, an empty list is omitted, and a record written before it existed
+// decodes unchanged), and the figures are the dimension's own unit on both
+// sides of the write.
+func TestRecordRoundTripsChainRaises(t *testing.T) {
+	s := newStore(t)
+	at := time.Date(2026, 11, 13, 9, 30, 0, 0, time.UTC)
+	raises := []ChainRaise{{
+		By: "someone@example.com", At: at, Reason: "the senior review round needs one more pass",
+		Limits: []ChainRaiseLimit{
+			{Dimension: USD, From: 4_000_000, To: 6_000_000},
+			{Dimension: Time, From: 2700, To: 5400},
+		},
+	}}
+	rec := &Record{Version: 1, RunID: runID, Status: StatusSucceeded, Outcome: OutcomeReady,
+		StartedAt: time.Now().UTC(), ChainRaises: raises}
+	if err := s.WriteRecord(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ReadRecord(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.ChainRaises, raises) {
+		t.Fatalf("ReadRecord chain_raises = %+v, want %+v", got.ChainRaises, raises)
+	}
+	// The units are the dimension's own, which is the unit the chain's reader
+	// prints and the launch reply carries (L6, L7): micro-dollars for the
+	// money, seconds for the wall time.
+	if got.ChainRaises[0].Limits[0].From != 4_000_000 || got.ChainRaises[0].Limits[0].To != 6_000_000 {
+		t.Errorf("the money figures = %+v, want micro-dollars", got.ChainRaises[0].Limits[0])
+	}
+	if got.Version != 1 {
+		t.Errorf("version = %d, want 1: the field is additive", got.Version)
+	}
+	data, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"chain_raises"`) {
+		t.Fatalf("a record with a raise does not encode the member a reader looks for: %s", data)
+	}
+
+	// Empty is omitted, so a chain nobody raised writes the record it always
+	// wrote rather than an empty list.
+	data, err = json.Marshal(&Record{Version: 1, RunID: runID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "chain_raises") {
+		t.Fatalf("a record with no raise encoded the field: %s", data)
+	}
+
+	// A record written before this field existed still parses, without one.
+	old := `{"version":1,"run_id":"` + runID + `","status":"succeeded","stage":"writeback","outcome":"ready","cost_usd":1,"started_at":"2026-09-26T22:15:30Z"}`
+	if err := s.PutFile(ctx, "result.json", []byte(old), "application/json"); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.ReadRecord(ctx)
+	if err != nil || got.ChainRaises != nil {
+		t.Fatalf("old record = %+v, %v, want no raise block", got, err)
+	}
+}
+
 // TestNewToleratedBoundsWhatItStores: the record is a small object every
 // listing reads, so the block is bounded — the list at MaxTolerated, each
 // title at MaxToleratedTitle — and Total says how many the mode really

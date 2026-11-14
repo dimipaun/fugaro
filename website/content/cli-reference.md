@@ -1073,12 +1073,93 @@ Flags:
 
 Subcommands:
 
+- `fugaro budget chain` -- Raise the limit of a chain that has spent it
 - `fugaro budget kill` -- Halt every run of the project, of one repository or of one workspace (budget admins)
 - `fugaro budget preview` -- Estimate a batch's worst-case model spend against today's caps
 - `fugaro budget prices` -- Show the effective model price table, offline
 - `fugaro budget resume` -- Clear a kill switch (budget admins)
 - `fugaro budget set` -- Set a cap, the lease limit or the mode (budget admins)
 - `fugaro budget show` -- Show caps, today's counters, kill switches, headroom and the runs in flight
+
+## `fugaro budget chain`
+
+Raise the limit of a chain that has spent it
+
+Work on one chain's own limit: the figure the launch that began the chain
+set, which bounds that run and every run that continues it (D1041, D1045).
+
+A chain's limit lives in the stored task of the run that began it and in no
+database node, so what this family does is rewrite that stored task with the
+reason recorded; nothing of the project's budget moves for it.
+
+Usage: `fugaro budget chain`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for chain |
+
+Subcommands:
+
+- `fugaro budget chain raise` -- Raise a chain that has spent its limit, recording who, when, why and the figures
+
+## `fugaro budget chain raise`
+
+Raise a chain that has spent its limit, recording who, when, why and the figures
+
+Raise the limit of the chain RUN (a run ID, <repo-slug>/<run-id>, or the last
+four or more characters of a run ID) belongs to, by rewriting the stored task
+of the run that began the chain, which is the one place a chain's limit lives
+(D1041, D1046).
+
+A chain has no database node and no cap of its own, so a chain that has spent
+its figure is not stopped by anything: the launch that would continue it is
+refused for having nothing left to spend, and this is the command that answers
+that refusal. Each --max-* flag names a dimension the chain already limits and
+a figure above the one in force — a raise moves a limit up, and nothing here
+lowers one, since asking for less is what a launch's own --max-* is for. The
+reason is required and is recorded beside the figures, in the record of the
+run that began the chain: a chain limit is a convention this installation
+states rather than a bound the platform enforces, so who raised it, when and
+why is the whole of what tells a raise from a rewritten limit.
+
+The project's own budget is untouched: the per-run cap and the daily and
+project caps are the database's rules, and a raise moves none of them.
+
+A raise is the owner's own step, as every raise form is (D1542): a coding
+agent's session is refused and handed the command to run itself at its own
+terminal, so a session cannot raise a chain's limit.
+
+The run that began the chain has to have finished. A run writes its own
+result.json while it is going, so an entry recorded in one still in flight
+would be lost under the run's next write; a raise is refused while that run
+has not ended, and nothing is written for it.
+
+Only the runs bucket is written, through the access a launcher already has:
+no budget database, no cap and no kill switch is read or written.
+
+Usage: `fugaro budget chain raise RUN (--max-usd N | --max-tokens N | --max-time D | --max-review-rounds N) --reason TEXT`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for raise |
+| `--max-review-rounds` | string | "" | no | the chain's review-round limit, above the one in force, such as 6 |
+| `--max-time` | string | "" | no | the chain's wall-time limit, above the one in force, as a duration such as 90m or 3h |
+| `--max-tokens` | string | "" | no | the chain's token limit, above the one in force, such as 1200000 |
+| `--max-usd` | string | "" | no | the chain's dollar limit, above the one in force, such as 6 or 12.5 |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--reason` | string | "" | no | why the chain is being raised (required; recorded with who, when and the figures) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--repo` | string | "" | no | the repository RUN belongs to (owner/name, or a path inside its checkout; needed only for a bare run ID) |
+
+Subcommands:
+
+This command has no subcommands.
 
 ## `fugaro budget kill`
 
@@ -4672,7 +4753,7 @@ Flags:
 | `--name` | string | "" | no | the device's name, for pair ls and the device node's own field |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
-| `--role` | string | "" | no | the device's role: viewer, operator or admin (default: your own role, inherited; --role may only lower it) |
+| `--role` | string | "" | no | the device's role: viewer, operator or admin (default: the role the allowlist resolves for your address, or your own when it names none; --role may only lower it, and never below the entry an address that already has one resolves to) |
 | `--timeout` | duration | `2m0s` | no | how long to wait for the phone's key and the typed code (refused above 4m30s) |
 
 Subcommands:
@@ -8240,10 +8321,17 @@ and file names, so a command the answer prints is checked against this CLI's
 own command tree before it is shown as runnable, and anything else is marked
 as unchecked.
 
+It runs on your own Claude credential and reads no secret: CLAUDE_CODE_OAUTH_TOKEN
+or ANTHROPIC_API_KEY if either is set in this environment, and otherwise the
+logged-in claude on this machine, which is run as it is and needs no gcloud. It
+never reads the project's account out of Secret Manager.
+
 The command reads no stdin. Typing it is the consent: one line says which
 provider and what class of data the redacted evidence goes to, and then the
-diagnosis runs. With no credential, or with the source at this version out of
-reach, it prints the evidence where it is and exits non-zero instead.
+diagnosis runs. With no credential at all, or with the source at this version
+out of reach, it prints the evidence where it is and exits non-zero instead: a
+machine with no credential is told to log in with the claude CLI, or to set one
+of the two variables, and to run the command again.
 
 Usage: `fugaro troubleshoot [RUN ID]`
 

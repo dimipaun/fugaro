@@ -373,7 +373,11 @@ func TestCredsResolveRefusesACredentialTooShortToRedact(t *testing.T) {
 	if err == nil {
 		t.Fatal("a three-byte credential in the environment was used")
 	}
-	for _, want := range []string{credsOAuthVar, "redact"} {
+	// "placeholder" is the owner's report of 2026-11-13: a value of two or
+	// three bytes in an environment is far likelier to be something left there
+	// than a credential, and the refusal says so rather than leaving the person
+	// to guess what Fugaro thought the value was.
+	for _, want := range []string{credsOAuthVar, "redact", "placeholder"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not name %q: %v", want, err)
 		}
@@ -386,5 +390,66 @@ func TestCredsResolveRefusesACredentialTooShortToRedact(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), config.ClaudeAccountSecret("team-b")) {
 		t.Errorf("the refusal does not name the secret the value came from: %v", err)
+	}
+}
+
+// TestCredsOwnIsTheEnvironmentsAnswerAlone: Own is D1601's first rung by
+// itself, for the caller that reads no secret of the installation's at all
+// (`fugaro troubleshoot`, per the owner's report of 2026-11-13). Neither
+// variable set is "there is none" and not an error; a value set too short to
+// redact is an error and not "there is none", because falling through to
+// another credential would run the diagnosis on something the environment did
+// not name.
+func TestCredsOwnIsTheEnvironmentsAnswerAlone(t *testing.T) {
+	value := credsValue(t, "own")
+	h, ok, err := Own([]string{"PATH=/usr/bin", credsKeyVar + "=" + value})
+	if err != nil || !ok {
+		t.Fatalf("Own with an API key set answered ok=%v, err=%v", ok, err)
+	}
+	if h.Secret() != value || !h.Own() || h.Local() {
+		t.Errorf("Own returned %v, want the environment's own credential and nothing local", h)
+	}
+
+	if h, ok, err := Own([]string{"PATH=/usr/bin"}); ok || err != nil || h.Secret() != "" {
+		t.Errorf("Own with neither variable set answered %v, ok=%v, err=%v, want none of them", h, ok, err)
+	}
+
+	_, ok, err = Own([]string{credsOAuthVar + "=" + credsFrag[:2]})
+	if err == nil || ok {
+		t.Fatalf("a placeholder in the environment answered ok=%v, err=%v: it is a value the person set, not an absent one", ok, err)
+	}
+	if !strings.Contains(err.Error(), "placeholder") {
+		t.Errorf("the refusal does not say what such a value usually is: %v", err)
+	}
+}
+
+// TestCredsLocalHandleCarriesNoValue: the machine's own login is a credential
+// this process never holds. It is the person's own (so the egress line names
+// their login, D1606), it is local, and it carries no value at all — no secret
+// for the redactor and no variable for the child's environment, which is what
+// makes "Fugaro sends no token" true rather than a promise about a value it
+// happens to hold.
+func TestCredsLocalHandleCarriesNoValue(t *testing.T) {
+	h := LocalHandle()
+	if !h.Own() {
+		t.Error("the machine's own login is not reported as the person's own credential")
+	}
+	if !h.Local() {
+		t.Error("the machine's own login is not reported as local")
+	}
+	if h.Secret() != "" {
+		t.Error("the local handle carries a secret value")
+	}
+	if len(h.Env()) != 0 {
+		t.Errorf("Env() = %v, want nothing: the login is in claude's own store, not in the child's environment", h.Env())
+	}
+	if h.Account() != "" {
+		t.Errorf("Account() = %q, want none: no installation's configuration names this login", h.Account())
+	}
+	if !h.carries() {
+		t.Error("Run would refuse the machine's own login as no credential at all")
+	}
+	if (Handle{}).carries() {
+		t.Error("the zero Handle is reported as a credential")
 	}
 }

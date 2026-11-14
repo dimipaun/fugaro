@@ -341,21 +341,32 @@ func TestTheAdmittedIdentityIsTheTokensOwn(t *testing.T) {
 	}
 }
 
-// TestTheIdentityCarriesTheProviderTheSignInTimeAndTheTenant: the three fields
-// a second caller adds its own rules over come out of the token's own claims —
-// `firebase.sign_in_provider`, `auth_time` and `firebase.tenant` — and none of
-// them is required, because this front door's own two lists (D933) never look
-// at one.
+// TestTheIdentityCarriesTheProviderTheSignInTimeTheTenantAndTheDirectory: the
+// four fields a second caller adds its own rules over come out of the token's
+// own claims — `firebase.sign_in_provider`, `auth_time`, `firebase.tenant` and
+// the Microsoft (Entra ID) directory id — and none of them is required, because
+// this front door's own two lists (D933) never look at one.
 //
 // The absent case is the pin: a missing or unreadable value is answered as
-// absent rather than as a default, so a caller whose rule needs a provider or a
-// sign-in time refuses the token instead of reading a filled-in value.
-func TestTheIdentityCarriesTheProviderTheSignInTimeAndTheTenant(t *testing.T) {
+// absent rather than as a default, so a caller whose rule needs a provider, a
+// sign-in time or a directory refuses the token instead of reading a filled-in
+// value.
+//
+// The directory is read from ONE place, `firebase.sign_in_attributes.tid`, where
+// Identity Platform puts a federated provider's own claims — and the token's own
+// top level is not it (TestATopLevelTidIsNotADirectory): the carried token below
+// puts a different value there to pin that the attribute is what is read.
+func TestTheIdentityCarriesTheProviderTheSignInTimeTheTenantAndTheDirectory(t *testing.T) {
 	v := verifierOver(t, staticKeys{testKid: &testKey().PublicKey})
 
 	carried := idTokenClaims(testProject)
 	carried["auth_time"] = testNow.Add(-3 * time.Minute).Unix()
-	carried["firebase"] = map[string]any{"sign_in_provider": "microsoft.com", "tenant": "tenant-1"}
+	carried["tid"] = "a-custom-claim-called-tid"
+	carried["firebase"] = map[string]any{
+		"sign_in_provider":   "microsoft.com",
+		"tenant":             "tenant-1",
+		"sign_in_attributes": map[string]any{"tid": "directory-1"},
+	}
 
 	id, err := v.VerifyIDToken(context.Background(), signJWT(t, testKey(), testKid, "RS256", carried))
 	if err != nil {
@@ -370,6 +381,9 @@ func TestTheIdentityCarriesTheProviderTheSignInTimeAndTheTenant(t *testing.T) {
 	if id.TenantID != "tenant-1" {
 		t.Errorf("the identity's tenant is %q, and the token named tenant-1", id.TenantID)
 	}
+	if id.DirectoryID != "directory-1" {
+		t.Errorf("the identity's directory is %q, and `firebase.sign_in_attributes` names directory-1 while the token's own claim set names a custom claim", id.DirectoryID)
+	}
 
 	absent := map[string]func(claims map[string]any){
 		"no firebase claim at all":               func(c map[string]any) { delete(c, "firebase") },
@@ -383,6 +397,16 @@ func TestTheIdentityCarriesTheProviderTheSignInTimeAndTheTenant(t *testing.T) {
 		},
 		"a provider that is not printable ASCII": func(c map[string]any) { c["firebase"] = map[string]any{"sign_in_provider": "google com"} },
 		"a sign-in time that is not a number":    func(c map[string]any) { c["auth_time"] = "soon" },
+		"an attribute that is not an object":     func(c map[string]any) { c["firebase"] = map[string]any{"sign_in_attributes": testMarker} },
+		"an attribute tid that is not a string": func(c map[string]any) {
+			c["firebase"] = map[string]any{"sign_in_attributes": map[string]any{"tid": []any{testMarker}}}
+		},
+		"an attribute tid past the bound": func(c map[string]any) {
+			c["firebase"] = map[string]any{"sign_in_attributes": map[string]any{"tid": strings.Repeat("d", maxDirectoryBytes+1)}}
+		},
+		"an attribute tid that is not printable ASCII": func(c map[string]any) {
+			c["firebase"] = map[string]any{"sign_in_attributes": map[string]any{"tid": "directory one"}}
+		},
 	}
 	for name, mutate := range absent {
 		claims := idTokenClaims(testProject)
@@ -401,6 +425,38 @@ func TestTheIdentityCarriesTheProviderTheSignInTimeAndTheTenant(t *testing.T) {
 		if id.TenantID != "" {
 			t.Errorf("%s: the identity carries tenant %q, and a value this code cannot read is answered as absent", name, id.TenantID)
 		}
+		if id.DirectoryID != "" {
+			t.Errorf("%s: the identity carries directory %q, and a value this code cannot read is answered as absent", name, id.DirectoryID)
+		}
+	}
+}
+
+// TestATopLevelTidIsNotADirectory: a Firebase ID token's own top level is the
+// CUSTOM-CLAIMS namespace — the `mu`, `fs` and `fr` claims this repository's own
+// project writes live there — so a `tid` beside them is a value any project-side
+// writer of custom claims can mint, and not a directory any Entra provider
+// attested.
+//
+// It is ignored, and that is the pin: a caller's rule over the directory rests on
+// what the identity provider said (`firebase.sign_in_attributes`), so a pin
+// cannot be satisfied by whoever can write the token's custom claims — the same
+// hole D2207's amendment closed for `firebase.tenant`, which the client names.
+func TestATopLevelTidIsNotADirectory(t *testing.T) {
+	v := verifierOver(t, staticKeys{testKid: &testKey().PublicKey})
+
+	claims := idTokenClaims(testProject)
+	claims["tid"] = "directory-1"
+	claims["firebase"] = map[string]any{"sign_in_provider": "microsoft.com", "tenant": "tenant-1"}
+
+	id, err := v.VerifyIDToken(context.Background(), signJWT(t, testKey(), testKid, "RS256", claims))
+	if err != nil {
+		t.Fatalf("VerifyIDToken refused a token this project admits: %v", err)
+	}
+	if id.DirectoryID != "" {
+		t.Errorf("the identity carries directory %q, and a `tid` in the token's own claim set is a custom claim: a rule over it admits whoever can write one", id.DirectoryID)
+	}
+	if id.TenantID != "tenant-1" {
+		t.Errorf("the identity's tenant is %q, and the client-named tenant is still carried beside it", id.TenantID)
 	}
 }
 

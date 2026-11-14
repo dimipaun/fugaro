@@ -59,7 +59,16 @@ import (
 // and the tool log is the child's own. Checks 500 and 501 drive a fake `gcloud`
 // and a fake `fugaro` that logs every call with the directory it was made in, so
 // a case says both what the check measured and that no image was built, no
-// `fugaro update` was answered for the owner and no run was launched.
+// `fugaro update` was answered for the owner and no run was launched. Checks 520
+// and 521 drive the same two fakes over the vision-model work: a fake `fugaro`
+// whose `doctor --json` carries the `vision-coder` sentence the premise is read
+// from, whose `run --json` launches the run the check follows, whose `runs ls
+// --json` says whether it has ended, and whose `cancel` answers the command 521
+// stops a run with -- against a fake `gcloud` that serves the run's record from
+// the case's own directory, with a mode for each state a case bends: a build
+// older than the release, a coder that reads images itself, a slot that is set,
+// a run that never ends, a record that is another run's, and a refusal whose
+// sentence has lost one of the parts an owner needs.
 var liveCheckScripts = []struct {
 	name string
 	test string
@@ -90,6 +99,8 @@ var liveCheckScripts = []struct {
 	{"check-412.sh", "check-412_test.sh"},
 	{"check510.sh", "check510_test.sh"},
 	{"check511.sh", "check511_test.sh"},
+	{"check520.sh", "check520_test.sh"},
+	{"check521.sh", "check521_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent
