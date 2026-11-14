@@ -27,6 +27,7 @@ package keyservice
 // the ask, and the account that holds the trial gets its key at its own address.
 
 import (
+	"context"
 	"errors"
 	"io"
 	"log"
@@ -125,6 +126,11 @@ const trialSeatFloor = 1
 // that a mail failure after the claim leaves the trial claimed and its key
 // unmailed: the store holds a trial naming a key, an operator sees it, and the
 // account is answered a failure rather than a key it never received.
+//
+// A claim that comes back with an error is read against the key before anything
+// is done with it: the store's answer alone cannot say whether the claim landed,
+// because the deployed store re-runs a transaction whose result was lost and
+// then reads its own committed documents (`trialLanded`, firestore_store.go).
 func (s *Service) trial(w http.ResponseWriter, r *http.Request) {
 	if !s.limiter.allow("ip:" + clientIP(r)) {
 		refuseAPI(w, http.StatusTooManyRequests, "rate_limited", trialRateRefusal)
@@ -187,23 +193,48 @@ func (s *Service) trial(w http.ResponseWriter, r *http.Request) {
 		KeyID:        answer.Record.KeyID,
 		At:           s.now(),
 	}); err != nil {
-		// A claim that did not land leaves the key that was minted for it
-		// recorded nowhere: the store holds no trial naming it, the mail below
-		// never went out, and nothing will write its issuance — so it is
-		// withdrawn whatever the store's answer was. The lost race is the
-		// expected one (`trialFree` cannot see it) and a store that could not be
-		// written is the other; both are a live key nobody holds, which §8's
-		// list is where the licensor can see (K2.2).
-		if withdrawErr := s.withdrawUnrecorded(r.Context(), answer.Record.KeyID); withdrawErr != nil {
-			s.trialFailed(w, errors.Join(err, withdrawErr))
+		// An error is not the same as a claim that did not land. The deployed
+		// store is a transaction that is re-run when its result is lost, and the
+		// re-run reads the documents its own first attempt committed
+		// (firestore_store.go's `ClaimTrial`), so it answers "already claimed"
+		// about **this** ask — one that did land, whose trial names the key this
+		// mint answered. The key is what tells the two apart, and it is the only
+		// thing that can: nothing else in the store says which ask a trial holds.
+		landed, readErr := s.trialLanded(r.Context(), answer.Record.KeyID)
+		if readErr != nil {
+			// Nothing can say whether the claim landed, and this is the one case
+			// where withdrawing is the worse of the two harms: a trial that did
+			// land is this ask's own, and it leaves the account and the
+			// installation barred with no way back (no method of the Store
+			// interface repairs one). The key is left where the mint put it —
+			// nobody holds it, because the mail below never went out — and the
+			// ask is answered a failure: the customer asks again, and the ask
+			// that finds the trial claimed is one an operator reads the trial's
+			// key off (§8's list, K2.2).
+			s.trialFailed(w, errors.Join(err, readErr))
 			return
 		}
-		if !errors.Is(err, ErrTrialAlreadyClaimed) {
-			s.trialFailed(w, err)
+		if !landed {
+			// The store answered, and no trial names this key: the claim did not
+			// land — the lost race (`trialFree` cannot see it) or a store that
+			// could not be written — so the key that was minted for it is
+			// recorded nowhere, the mail below never went out and nothing will
+			// write its issuance. It is withdrawn rather than left live: a key
+			// nobody holds is what §8's list is where the licensor can see it.
+			if withdrawErr := s.withdrawUnrecorded(r.Context(), answer.Record.KeyID); withdrawErr != nil {
+				s.trialFailed(w, errors.Join(err, withdrawErr))
+				return
+			}
+			if !errors.Is(err, ErrTrialAlreadyClaimed) {
+				s.trialFailed(w, err)
+				return
+			}
+			refuseAPI(w, http.StatusConflict, "trial_already_claimed", trialClaimedRefusal)
 			return
 		}
-		refuseAPI(w, http.StatusConflict, "trial_already_claimed", trialClaimedRefusal)
-		return
+		// The ask's own claim landed and its answer was lost: the trial is this
+		// ask's, the account never received its key, and serving it below is the
+		// whole of what is left to do.
 	}
 	answer.Record.Source = trialSource(call.WorkspaceID)
 	answer.Record.Email = caller.Email
@@ -235,6 +266,26 @@ func (s *Service) trial(w http.ResponseWriter, r *http.Request) {
 	// account's own address, and an answer the SPA holds is not a place a
 	// credential may be shown.
 	w.WriteHeader(http.StatusOK)
+}
+
+// trialLanded answers whether the store holds the trial this ask claimed, which
+// is what tells a claim whose answer was lost from one that did not land: a key
+// is minted for one ask and minted here, so a trial naming this key is this
+// ask's claim and cannot be another's. The read is a read of the whole list
+// because the store's interface holds no lookup by key (`ClaimTrial` is the one
+// trial method that is not a list), and the list is small — one document per
+// installation that ever had a trial.
+func (s *Service) trialLanded(ctx context.Context, keyID string) (bool, error) {
+	trials, err := s.store.Trials(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, held := range trials {
+		if held.KeyID == keyID {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // trialCall reads the ask's body: the route's own JSON, strictly, with the two

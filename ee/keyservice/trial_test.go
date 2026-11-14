@@ -93,6 +93,42 @@ type claimRefuser struct {
 
 func (c claimRefuser) ClaimTrial(context.Context, Trial) error { return c.err }
 
+// unansweredClaim is the store whose answer to a claim was lost: the claim
+// lands — the fixture's store holds the trial — and the error that reaches the
+// route is the one a re-run of the deployed store's transaction answers when it
+// reads the documents its own first attempt committed (firestore_store.go's
+// `ClaimTrial`, which is re-run when its result is lost).
+type unansweredClaim struct {
+	Store
+}
+
+func (c unansweredClaim) ClaimTrial(ctx context.Context, t Trial) error {
+	if err := c.Store.ClaimTrial(ctx, t); err != nil {
+		return err
+	}
+	return ErrTrialAlreadyClaimed
+}
+
+// blindAfterAClaim is the store that cannot be read once a claim has failed, so
+// what it answers leaves the claim's landing unknowable: the one case in which
+// the route has nothing but a guess to go on.
+type blindAfterAClaim struct {
+	Store
+	blind bool
+}
+
+func (b *blindAfterAClaim) ClaimTrial(context.Context, Trial) error {
+	b.blind = true
+	return errors.New("the store could not be written")
+}
+
+func (b *blindAfterAClaim) Trials(ctx context.Context) ([]Trial, error) {
+	if b.blind {
+		return nil, errors.New("the store could not be read")
+	}
+	return b.Store.Trials(ctx)
+}
+
 // trialBody is the request one test sends: the workspace's project id and the
 // seats the trial is asked for.
 func trialBody(workspace string, seats int) string {
@@ -340,14 +376,88 @@ func TestTrialIsThrottledPerDomain(t *testing.T) {
 	}
 }
 
+// TestTrialIsServedWhenItsOwnClaimWentUnanswered: an error is not a claim that
+// did not land, and the store's answer alone cannot tell the two apart — the
+// deployed store re-runs its transaction when its result is lost and then reads
+// its own committed documents, so it answers "already claimed" about the ask
+// that claimed it. Withdrawing there destroys the ask's own trial: the store
+// holds a trial naming a revoked key, the account is mailed nothing, and the
+// account and the installation are barred for good, because no method of the
+// Store interface repairs one. The key is what tells them apart, and the ask is
+// served: the key is mailed, and the trial, the issuance and the state are the
+// ones the served key reads back as.
+func TestTrialIsServedWhenItsOwnClaimWentUnanswered(t *testing.T) {
+	f := trialAs(t)
+	f.deps.Store = unansweredClaim{Store: f.store}
+	f.start()
+	rec := f.ask(trialBody(workspaceID, trialSeats))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the ask answered %d (%s), want 200: its own claim landed and only its answer was lost", rec.Code, rec.Body.String())
+	}
+	minted := f.mintedKeys()
+	if len(minted) != 1 {
+		t.Fatalf("the ask minted %d key(s), want one", len(minted))
+	}
+	claims, _, err := licence.Verify([]byte(minted[0]), f.now, f.ring, workspaceID)
+	if err != nil {
+		t.Fatalf("the served key does not verify: %v", err)
+	}
+	if len(f.mail.sent) != 1 || !strings.Contains(f.mail.sent[0].Body, minted[0]) {
+		t.Fatalf("the ask mailed %d message(s) and the key is not in them, so the account that claimed the trial was handed nothing: %+v", len(f.mail.sent), f.mail.sent)
+	}
+	trials, err := f.store.Trials(t.Context())
+	if err != nil {
+		t.Fatalf("reading the trials: %v", err)
+	}
+	if len(trials) != 1 || trials[0].KeyID != claims.KeyID {
+		t.Fatalf("the store holds %+v, want the one trial naming the key this ask minted (%s)", trials, claims.KeyID)
+	}
+	if withdrawn := f.revocations(); len(withdrawn) != 0 {
+		t.Errorf("the ask withdrew %d key(s), want none: the trial it landed names one of them, so the revocation would bar the account it was minted for (%+v)", len(withdrawn), withdrawn)
+	}
+	if records := f.records(); len(records) != 1 || records[0].KeyID != claims.KeyID {
+		t.Errorf("the store recorded %+v, want the issuance of the key it served", records)
+	}
+	if held, known, err := f.store.KeyState(t.Context(), claims.KeyID); err != nil || !known {
+		t.Errorf("the served key has no state (known=%v err=%v), so nothing can check it in (§8)", known, err)
+	} else if held.WorkspaceID != workspaceID {
+		t.Errorf("the key's state names workspace %q, want %q", held.WorkspaceID, workspaceID)
+	}
+}
+
+// TestTrialIsNotWithdrawnWhenTheStoreCannotSay: when the claim fails and the
+// store cannot be read either, nothing says whether the claim landed — and the
+// two ways of being wrong are not equal. A key left where the mint put it is
+// held by nobody (the mail never went out) and is what an operator reads off the
+// trial if one landed; a trial withdrawn on a guess is destroyed, and the
+// account and the installation are barred with no way back. Nothing is
+// withdrawn, and the ask is answered a failure.
+func TestTrialIsNotWithdrawnWhenTheStoreCannotSay(t *testing.T) {
+	f := trialAs(t)
+	f.deps.Store = &blindAfterAClaim{Store: f.store}
+	f.start()
+	rec := f.ask(trialBody(workspaceID, trialSeats))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("the ask answered %d (%s), want 500: the claim failed and the trials could not be read", rec.Code, rec.Body.String())
+	}
+	if minted := f.mintedKeys(); len(minted) != 1 {
+		t.Fatalf("the ask minted %d key(s), want the one whose fate the store could not say", len(minted))
+	}
+	if withdrawn := f.revocations(); len(withdrawn) != 0 {
+		t.Errorf("the ask withdrew %d key(s) on a claim it could not read, want none: withdrawing a trial that landed bars the account and the installation for good (%+v)", len(withdrawn), withdrawn)
+	}
+	if trials, err := f.store.Trials(t.Context()); err != nil || len(trials) != 0 {
+		t.Errorf("the store holds %+v (err=%v), want no trial: this claim did not land", trials, err)
+	}
+}
+
 // TestTrialIsWithdrawnWhenTheClaimCannotBeWritten: §14 counts a trial in the
-// store's check-and-write, and a mint stands before it. A claim that comes back
-// with anything other than "already claimed" — a store that could not be written,
-// which is the failure a deployment meets and the lost race is not — leaves the
-// key the mint answered recorded nowhere: no trial names it, it was never mailed,
-// and the write that failed is the one that would have. It is withdrawn rather
-// than left live, which is what puts a key nobody holds into §8's list where the
-// licensor can see it (K2.2).
+// store's check-and-write, and a mint stands before it. A claim the store
+// refuses — the lost race, or a store that could not be written — leaves the key
+// the mint answered recorded nowhere, and the store says so here: the trials
+// read back name no such key, so the claim did not land, and the key is
+// withdrawn rather than left live, which is what puts a key nobody holds into
+// §8's list where the licensor can see it (K2.2).
 func TestTrialIsWithdrawnWhenTheClaimCannotBeWritten(t *testing.T) {
 	f := trialAs(t)
 	f.deps.Store = claimRefuser{Store: f.store, err: errors.New("the store could not be written")}
