@@ -388,12 +388,15 @@ func TestCredsSetRefusesUnknownKeyAndOversizeDoc(t *testing.T) {
 	// for it, so it is a bundle credential like any other and
 	// TestCredsSetAcceptsTheAppKeyAsABundleEntry is where that is asserted.
 	// What stays refused is a name no bundle key can be, whatever it looks
-	// like.
+	// like, and one key of the Bitbucket token family (D2350), which IS a
+	// bundle key and is not written here yet
+	// (TestCredsSetRefusesTheBitbucketTokenFamily).
 	for _, name := range []string{
 		"not-a-credential",
 		// The namespace is reserved but the suffix is not a name any policy
 		// can admit: a key no account can be named.
 		config.ClaudeOAuthTokenPrefix + strings.Repeat("a", config.MaxClaudeAccountNameLen+1),
+		config.BitbucketTokenKey("ci"),
 	} {
 		_, _, err := executeStdin(t, value+"\n", "creds", "set", name)
 		if err == nil || ExitCode(err) != ExitUserError {
@@ -453,6 +456,58 @@ func TestCredsSetRefusesUnknownKeyAndOversizeDoc(t *testing.T) {
 	}
 	if got := f.value(t); got != doc.String() {
 		t.Errorf("the document changed: %q", got)
+	}
+}
+
+// TestCredsSetRefusesTheBitbucketTokenFamily: a member of the family of named
+// Bitbucket tokens (config.BitbucketTokenKey, D2350) is a key the credentials
+// service's loader reads and this command does not write yet. It is refused at
+// the door — the same refusal a name that is no bundle key gets, before the
+// project is opened, with the value unread and the document untouched.
+//
+// What the refusal is about is the RELEASE THE DOCUMENT WOULD LAND ON and not
+// the key's shape, and the last two assertions are what holds that: the loader
+// reads the very key this write refuses. The family's reader is a credentials
+// service newer than the one an installation may have deployed, and a service
+// refuses the WHOLE document for a key it does not know — a service-wide
+// refusal, every caller of it halted, coding runs included — so the write is
+// held back until the guard that judges the release SERVING the bundle lands
+// with the command that writes the family as a whole: the token's type and
+// coverage, its local record and its verified scopes are the same task's (T11),
+// and a bundle entry written here alone would be a token no other half of the
+// feature can see.
+func TestCredsSetRefusesTheBitbucketTokenFamily(t *testing.T) {
+	f := credsFixtureFor(t)
+	f.seed(t, []byte(config.ClaudeOAuthToken+": "+credsValue(t, "existing")+"\n"))
+	before := f.value(t)
+	value := credsValue(t, "ours")
+	for _, name := range []string{config.BitbucketTokenKey("ci"), config.BitbucketTokenKey("workspace")} {
+		out, _, err := executeStdin(t, value+"\n", "creds", "set", name)
+		if err == nil || ExitCode(err) != ExitUserError {
+			t.Fatalf("creds set %q = %v, want a user error", name, err)
+		}
+		if strings.Contains(out, value) || strings.Contains(err.Error(), value) {
+			t.Errorf("the refusal echoed the value: stdout %q, err %q", out, err)
+		}
+		if !strings.Contains(err.Error(), "Nothing was read and nothing was written") {
+			t.Errorf("the refusal does not say nothing happened: %v", err)
+		}
+	}
+	if n := len(f.Requests()); n != 0 {
+		t.Fatalf("%d request(s) were made for a refused name: the refusal is not before the cloud", n)
+	}
+	if n := f.writes(); n != 0 {
+		t.Fatalf("%d version(s) written", n)
+	}
+	if got := f.value(t); got != before {
+		t.Errorf("the document changed: %q", got)
+	}
+	key := config.BitbucketTokenKey("ci")
+	if _, kind, _, ok := credsvc.CredentialKey(key); !ok || kind != credsvc.KindGit {
+		t.Errorf("CredentialKey(%q) = %q, %v; the key this write refuses is one the loader reads", key, kind, ok)
+	}
+	if _, err := credsvc.ParseBundle([]byte(key + ": " + credsValue(t, "token") + "\n")); err != nil {
+		t.Errorf("the loader refuses the key this write refuses: %v", err)
 	}
 }
 
