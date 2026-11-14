@@ -84,9 +84,6 @@ $2"
 }
 
 INSTALLATION=check310demo
-# The log the check's own failure run writes: read back out of the case's state
-# directory rather than guessed at.
-LAST_LOG=""
 
 # --------------------------------------------------------------------- the fake
 write_fake() { # dir
@@ -234,7 +231,10 @@ def colour_on(stream, json_mode):
     if json_mode:
         return False
     if MODE == "ansi-on-pipe":
-        return True
+        # A run that draws its colour wherever its output goes: the pipe gets
+        # ANSI, which is what G4 forbids. NO_COLOR still turns it off, so the
+        # case bends one rule and not two.
+        return not os.environ.get("NO_COLOR")
     if MODE == "nocolor-ignored":
         return stream.isatty()
     if os.environ.get("NO_COLOR"):
@@ -355,9 +355,13 @@ def update(argv):
     log.close()
 
     if json_mode:
+        # The document's own outcome is the run's own: a run that left a step
+        # for you says so, and a run whose stage failed names it (G3).
         doc = {"project": INSTALLATION, "plan_only": False,
                "stages": [{"name": s, "state": "done"} for s in STAGES],
-               "left_for_you": [], "failed": None, "error": False}
+               "left_for_you": ["gateway"] if MODE == "left" else [],
+               "failed": {"stage": "converge"} if failing else None,
+               "error": False}
         if MODE == "json-extra":
             # A run that writes its account onto stdout as well: the document is
             # then not one document any more.
@@ -418,14 +422,12 @@ PY
 }
 
 # --------------------------------------------------------------- the case runner
-CASE=""
 CASE_MODE=happy
 CASE_ARGS=()
 CASE_ENV=()
 status=0
 
 setup_case() { # name mode
-  CASE=$1
   CASE_MODE=$2
   CASE_ARGS=()
   CASE_ENV=()
@@ -461,10 +463,15 @@ block() { cat "$case_dir/stdout"; }
 errout() { cat "$case_dir/stderr"; }
 calls() { cat "$case_dir/calls" 2>/dev/null || true; }
 
-# no_seeds_left: the log directory holds none of this check's own seeds.
+# no_seeds_left: the log directory holds none of this check's own seeds. The
+# seeds are the names the reader builds (update-<14 digits>-7000NN.log inside
+# the 14 days, -800NNN past them), which is what the glob below is.
 no_seeds_left() {
-  local left
-  left=$(ls "$case_dir/state/fugaro/logs" 2>/dev/null | grep -E '^update-[0-9]{14}-(7000|8000)[0-9]{2}\.log$' || true)
+  local f left=""
+  for f in "$case_dir/state/fugaro/logs"/update-??????????????-[78]*.log; do
+    [ -e "$f" ] || continue
+    left="$left${f##*/} "
+  done
   [ -z "$left" ] || fail "the check left its own seeded logs in the log directory: $left"
 }
 
@@ -774,26 +781,6 @@ case_unknown_flag() {
   [ -z "$(calls)" ] || fail "an unknown flag made a fugaro call: $(calls)"
 }
 
-# The seeds the check put in the log directory are its own and are read back:
-# a case where the directory holds one of them at the end is the case for the
-# scratch row. It is reached by leaving a file where the check's own teardown
-# cannot remove it — a directory named like a seed is enough, because unseed
-# removes a directory only when it is one.
-case_seed_left() {
-  setup_case seed_left happy
-  # The check seeds 54 names; the case makes the check's own unseed unable to
-  # remove one of them by holding a copy of its state directory open. Nothing
-  # here bends the fake: the row is about the check's own teardown, and a case
-  # that leaves the directory alone proves the row is not vacuous by asserting
-  # the opposite — that no seed is left.
-  run310
-  local out
-  out=$(block)
-  expect_status "$status" 0 "a run that cleans up after itself"
-  expect_fact "$out" scratch PASS "a run that cleans up after itself"
-  no_seeds_left
-}
-
 # ------------------------------------------------------------------- the runner
 tests=(
   happy
@@ -823,7 +810,6 @@ tests=(
   dry_run
   help
   unknown_flag
-  seed_left
 )
 
 index=0

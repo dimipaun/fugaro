@@ -873,11 +873,13 @@ RUN_TIMEOUT=${CHECK310_RUN_TIMEOUT:-1800}
 # bounded CMD...: every `fugaro` call below goes through this, so the bound is
 # one rule and a converge that hangs is a stop rather than a hang of the check.
 bounded() {
+  local status=0
   if [ "$RUN_TIMEOUT" -gt 0 ] && command -v timeout >/dev/null 2>&1; then
-    timeout "$RUN_TIMEOUT" "$@"
-    return $?
+    timeout "$RUN_TIMEOUT" "$@" || status=$?
+  else
+    "$@" || status=$?
   fi
-  "$@"
+  return "$status"
 }
 
 # run_tty TAG CMD...: the command on a real terminal. Sets TTY_STATUS, TTY_OUT
@@ -908,9 +910,15 @@ run_pipe() {
   PIPE_ERR="$SCRATCH/$tag.err"
   PIPE_STATUS=0
   say "running (stdout a pipe): $*"
+  # A command that exits 1 or 2 here is a reading and not an internal error, and
+  # the ERR trap would otherwise end the run on it: inside a pipeline the left
+  # side is a subshell of its own, so it cannot be kept out of the trap's way
+  # with a `||` the way run_tty does. The trap goes back on straight after.
   set +e
+  trap - ERR
   bounded "$@" </dev/null 2>"$PIPE_ERR" | cat >"$PIPE_OUT"
   PIPE_STATUS=${PIPESTATUS[0]}
+  trap on_error ERR
   set -e
   return 0
 }
