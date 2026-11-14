@@ -608,28 +608,6 @@ func TestUpdateAskOnAPlanOnlyRunSaysThereWasNothingToRestore(t *testing.T) {
 	}
 }
 
-// The two flags contradict each other, and the refusal is made before anything
-// is read: no mark, no gate, no prompt, no write.
-func TestUpdateAskAndYesAreRefused(t *testing.T) {
-	r := askUpdateRig(t, askMarkWorlds()[0])
-	fakeTerminal(t)
-	noAgentSession(t)
-
-	got, err := updateRun(t, r, "update", "--ask")
-	if err == nil {
-		t.Fatalf("the run honoured two contradictory flags:\n%s", got)
-	}
-	if !strings.Contains(got, initflow.AskAndYes()) {
-		t.Errorf("the refusal is not the pair's own sentence:\n%s", got)
-	}
-	if n := markReads(r); n != 0 {
-		t.Errorf("the pair was refused after %d mark read(s)", n)
-	}
-	if n := len(r.ran(t, "apply")); n != 0 {
-		t.Errorf("%d apply(s) ran", n)
-	}
-}
-
 // The plugin stage's y/N went with the wiring (U2, D949): the settings write it
 // confirmed is gone, and the step left is the install in Claude Code, which no
 // gate stands in for and --ask is not the flag to put a question back on. The

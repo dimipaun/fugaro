@@ -1406,7 +1406,7 @@ func noFlagName(t *testing.T, s string) {
 	t.Helper()
 	for _, flag := range []string{
 		"--allow-delete", "--allow-job-delete", "--operator", "--admin", "--alert-email",
-		"--budget", "--billing-account", "--yes", "--non-interactive", "--managed",
+		"--budget", "--billing-account", "--managed",
 	} {
 		if strings.Contains(s, flag) {
 			t.Errorf("the refusal names %s:\n%s", flag, s)

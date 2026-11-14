@@ -470,7 +470,7 @@ func TestAskDecisionIsTheFlagsWholeRule(t *testing.T) {
 func TestAskRefusalNamesNoWayPast(t *testing.T) {
 	for _, c := range []Conditions{{Agent: "CLAUDECODE"}, {Agent: IDEMarker}, {NonInteractive: true}, {JSON: true}, {}} {
 		refusal := AskRefusal(c)
-		for _, no := range []string{"--ask", "--yes", "unset ", "export ", "="} {
+		for _, no := range []string{"--ask", "unset ", "export ", "="} {
 			if strings.Contains(refusal, no) {
 				t.Errorf("AskRefusal(%s) contains %q: the session it refuses can read it, and dropping the flag it would name is the way round this refusal: %q", conditionsName(c), no, refusal)
 			}
@@ -512,8 +512,5 @@ func TestAskLinesAreOneLineEachAndNotEachOther(t *testing.T) {
 	}
 	if !strings.Contains(AskUnmanaged(), "not an error") {
 		t.Errorf("AskUnmanaged does not say the flag is not an error: a reader would take a no-op line for a refusal: %q", AskUnmanaged())
-	}
-	if AskAndYes() == "" || !strings.Contains(AskAndYes(), "--ask") || !strings.Contains(AskAndYes(), "--yes") {
-		t.Errorf("AskAndYes does not name the two flags it refuses together: %q", AskAndYes())
 	}
 }

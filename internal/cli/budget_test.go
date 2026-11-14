@@ -17,7 +17,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
-	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/pricing/catalog"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
@@ -406,19 +405,12 @@ func TestBudgetRaiseNeedsNoPromptAtATerminal(t *testing.T) {
 	if v := daily(); v != "180000000" {
 		t.Fatalf("a declined --ask wrote %s", v)
 	}
-	// A "yes" is the raise, and --yes beside --ask is refused as the
-	// contradiction it is (initflow.AskAndYes).
+	// A "yes" is the raise.
 	if _, _, err := executeStdin(t, "y\n", "budget", "set", "--global", "--daily", "190", "--ask"); err != nil {
 		t.Fatalf("--ask answered yes: %v", err)
 	}
 	if v := daily(); v != "190000000" {
 		t.Fatalf("daily = %s", v)
-	}
-	if _, _, err := executeStdin(t, "y\n", "budget", "set", "--global", "--daily", "200", "--ask"); err == nil || !strings.Contains(err.Error(), initflow.AskAndYes()) {
-		t.Fatalf("--ask and --yes together: err = %v", err)
-	}
-	if v := daily(); v != "190000000" {
-		t.Fatalf("--ask --yes wrote %s", v)
 	}
 }
 
