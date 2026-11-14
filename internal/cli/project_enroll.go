@@ -139,7 +139,7 @@ func newProjectReposAddCmd() *cobra.Command {
 	}
 	addCloudFlags(cmd, &o.cloud)
 	cmd.Flags().BoolVar(&o.allowListOnly, "allow-list-only", false, "Write only the allow-list entry, as this command did before the whole enrolment converged (required for *)")
-	cmd.Flags().BoolVar(&o.yes, "yes", false, "Answer the one confirmation without typing the project's name (it never stands in for a refusal)")
+	cmd.Flags().BoolVar(&o.yes, "yes", false, "Answer the enrolment's one confirmation without typing the project's name; it never stands in for a refusal, and --allow-list-only asks nothing for it to answer")
 	return cmd
 }
 

@@ -633,7 +633,7 @@ func reposEnrolmentWhat(lc *localcfg.Config, plan reposEnrolment) string {
 // than writing the same bytes again.
 func reposEnrolmentApply(ctx context.Context, cmd *cobra.Command, o *projectReposOptions, lc *localcfg.Config, db *rtdb.Client, configPath string, plan reposEnrolment) error {
 	out := cmd.OutOrStdout()
-	cur, err := reposEnrolmentWriteLocal(cmd, out, o, plan)
+	cur, err := reposEnrolmentWriteLocal(out, plan)
 	if err != nil {
 		return err
 	}
@@ -651,7 +651,7 @@ func reposEnrolmentApply(ctx context.Context, cmd *cobra.Command, o *projectRepo
 // It answers the config the file holds when the steps are done, which is what
 // the stages below read: they are `fugaro update`'s, and that command reads
 // the file.
-func reposEnrolmentWriteLocal(cmd *cobra.Command, out io.Writer, o *projectReposOptions, plan reposEnrolment) (*localcfg.Config, error) {
+func reposEnrolmentWriteLocal(out io.Writer, plan reposEnrolment) (*localcfg.Config, error) {
 	cur, old := plan.local, plan.old
 	changed := false
 	if !plan.entryKnown || !reposEntryEqual(plan.entryNow, plan.entry) {
@@ -670,9 +670,12 @@ func reposEnrolmentWriteLocal(cmd *cobra.Command, out io.Writer, o *projectRepos
 	if plan.imageEntry != "" && !maps.Equal(plan.imageNow, plan.imageMap) {
 		next := *cur
 		next.ImageMap = plan.imageMap
-		data, err := cur.Marshal()
+		// The bytes the first write left, re-read rather than re-marshalled:
+		// userSave's old is the file the write replaces, and a marshal of the
+		// parsed value is not the same bytes as the document it was parsed from.
+		data, err := os.ReadFile(plan.path)
 		if err != nil {
-			return nil, err
+			return nil, userErr("reading %s: %v", safetext.Field(plan.path), err)
 		}
 		if err := userSave(out, plan.path, data, &next); err != nil {
 			return nil, err
