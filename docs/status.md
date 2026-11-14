@@ -25,8 +25,6 @@ As of 2026-11-14, read from `main`, the open pull requests and each plan's task 
 | settings-commands | about 10/12 | S10, S11 (held, #2280) |
 | console-dependency-graph | 15/17 | GV3.2 (live, follow-up run on draft #2501) |
 | task-governance | 25/31 | 6 left: T3.4 (docs), and the rest in `ee/governance` |
-| post-review-triage | 13/14 | owner TR13 |
-| plugin-user-scope | 9/10 | E1 |
 | mobile | about 43/45 | P5.x, P7.5; owner P2.3 and P4.4 |
 | stateless-orchestrator | 18/20 | O13, O19 (approved, blocked: a run the workspace refused is not distinguishable in the run record, so it waits on a W-side record change; U12 resolved NO 2026-11-13); owner Checks 301 to 304 and 305 (O16b) |
 | issues-resolved-on-update | 7/8 | T-RU7 (live, draft #2604) |
@@ -55,7 +53,7 @@ As of 2026-11-14, read from `main`, the open pull requests and each plan's task 
 | bitbucket-token-types | 5/19 | a follow-up run on the merged C1 is live (draft #2612); T5 (stalled, draft #2588), T7 (stalled, draft #2593); T3, T4, T8 to T14, T16, I1 not started; CK (Checks 590 and 591) owner-run |
 | subscriptions | about 22/51 | the rest not started or open; 10 owner-run; TN1 seat enforcement is not in 0.24.0 (owner) |
 | portal | 9/42 | owner P0.1 to P0.6; live (batch jm60): P1.8 (draft #2601), P2.3 (#2603), P3.4 (#2605), P4.4 (#2602), P5.3 (#2599), P6.4 (#2598), P9.2 (#2610); P2.1 (live, follow-up run on draft #2569); not started: P1.7, P2.2, P2.4, P3.1 to P3.3, P3.5, P3.6 (the renew entitlement gate), P4.1 to P4.3, P5.1, P5.2, P6.1 to P6.3, P7.1, P9.3, P9.4 |
-| review-job (no spec folder yet) | 3/5 | option C: one review-only job per provider and account so `fugaro review --pr N` works out of the box; C2 to C4 not launched, B-infra and the docs wait |
+| review-job | 3/10 | RJ3 (live, run 20261114-130709-a709); RJ2 and RJ8 approved (owner 2026-11-14); RJ4, RJ5 not started and not approved; owner Checks 610 and 611 |
 | secrets-brokering | 26/65 | B1.13 flip (stalled, draft #2166, held on Check 191, which the owner reruns now that repo-level account admission is on main), B1.15, B1.16; owner Checks 191 and 192; B2.1–B2.9, B3.2–B3.10, B4.2–B4.11, B5.1–B5.9 (B5.1 live, follow-up run on draft #2545; all approved 2026-11-10, each with its own gate; owner Checks 193–197); dynamic-delivery subfolder: owner DS0.3 (Checks 510 and 511) |
 | rigor-command | 3/10 | R6 (docs), R7 (the hotfix gate; stalled, draft #2538), W (`setup` asks the rigor mode; live, follow-up run on draft #2576); R2 to R5 closed 2026-11-10 as duplicates of settings-commands and config-management, so the spec is mostly superseded but not wholly |
 | account-aliases | 3/5 | AL3 (live, draft #2608), AL4, both approved 2026-11-10; D2090–D2102 answered as recommended; owner Check 550 not run |
@@ -108,3 +106,5 @@ As of 2026-11-14, read from `main`, the open pull requests and each plan's task 
 | website-changelog | WC4 lands with the next release |
 | central-orchestrator | superseded by stateless-orchestrator |
 | windows-cli | superseded by console-windows |
+| post-review-triage | owner TR13 (Checks 490 to 492; the scripts are in a run) |
+| plugin-user-scope | E1, the release itself (rides the next CLI release; no operator step) |

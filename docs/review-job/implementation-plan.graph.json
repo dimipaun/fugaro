@@ -1,0 +1,221 @@
+{
+  "schema_version": 3,
+  "plan": "docs/review-job/implementation-plan.md",
+  "stream": "cli",
+  "nodes": [
+    {
+      "id": "RJ1",
+      "title": "piece 1: the implicit review-only job (merged)",
+      "run": "20261113-021818-58aa",
+      "version": null,
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/infra/projectjobs.go",
+          "internal/infra/tfvars.go",
+          "internal/infra/projectjobs_test.go"
+        ]
+      }
+    },
+    {
+      "id": "RJ2",
+      "title": "piece 2: the runner places the implicit job and the policy admits its account",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runner/projectjob.go",
+          "internal/runner/projectjob_internal_test.go",
+          "internal/credsvc/review.go",
+          "internal/credsvc/review_test.go",
+          "internal/credsvc/cascade.go"
+        ]
+      }
+    },
+    {
+      "id": "RJ3",
+      "title": "piece 3: the launcher resolves a review onto the implicit job (live)",
+      "run": "20261114-130709-a709",
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/review.go",
+          "internal/cli/review_test.go"
+        ]
+      }
+    },
+    {
+      "id": "RJ4",
+      "title": "piece 4a: the migration converges with a run in flight",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/update_in_flight_test.go",
+          "internal/cli/update_review_job_test.go",
+          "docs/design/update-in-flight.md"
+        ]
+      }
+    },
+    {
+      "id": "RJ5",
+      "title": "piece 4b: the documents say review works with no profile",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/releases/**",
+          "plugin/skills/working/SKILL.md"
+        ]
+      }
+    },
+    {
+      "id": "RJ6",
+      "title": "Bitbucket review B-adm: the service lets the review class read through the proxy (merged)",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/bitbucketproxy.go",
+          "internal/credsvc/server.go"
+        ]
+      }
+    },
+    {
+      "id": "RJ7",
+      "title": "Bitbucket review B-run: the runner opens Bitbucket through the proxy (merged)",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runner/**"
+        ]
+      }
+    },
+    {
+      "id": "RJ8",
+      "title": "the implicit Bitbucket review-only job and its launcher resolution",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/infra/projectjobs.go",
+          "internal/runner/projectjob.go",
+          "internal/cli/review.go",
+          "internal/infra/projectjobs_test.go",
+          "internal/cli/review_test.go"
+        ]
+      }
+    },
+    {
+      "id": "RJ9",
+      "title": "Check 610: a review on a repository with no profile (owner-run)",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/gcp-live-checklist.md"
+        ]
+      }
+    },
+    {
+      "id": "RJ10",
+      "title": "Check 611: the same on a Bitbucket repository (owner-run)",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/gcp-live-checklist.md"
+        ]
+      }
+    }
+  ],
+  "edges": [
+    {
+      "task": "RJ2",
+      "needs": "RJ1",
+      "reason": "it places and pairs what RJ1 deploys"
+    },
+    {
+      "task": "RJ3",
+      "needs": "RJ1",
+      "reason": "the name and the deployed row it resolves onto"
+    },
+    {
+      "task": "RJ4",
+      "needs": "RJ1",
+      "reason": "it pins the convergence of what RJ1 deploys"
+    },
+    {
+      "task": "RJ5",
+      "needs": "RJ2",
+      "reason": "the documents describe the placement behaviour"
+    },
+    {
+      "task": "RJ5",
+      "needs": "RJ3",
+      "reason": "the documents describe the launcher behaviour"
+    },
+    {
+      "task": "RJ5",
+      "needs": "RJ4",
+      "reason": "the operator sentence is what update does"
+    },
+    {
+      "task": "RJ7",
+      "needs": "RJ6",
+      "reason": "the runner half reads the service half's read-only class"
+    },
+    {
+      "task": "RJ8",
+      "needs": "RJ2",
+      "reason": "same file internal/runner/projectjob.go, and the placement it generalises"
+    },
+    {
+      "task": "RJ8",
+      "needs": "RJ3",
+      "reason": "same file internal/cli/review.go, and the resolution it generalises"
+    },
+    {
+      "task": "RJ9",
+      "needs": "RJ2",
+      "reason": "the live check needs the runner to place the job"
+    },
+    {
+      "task": "RJ9",
+      "needs": "RJ3",
+      "reason": "the live check needs the launcher to resolve it"
+    },
+    {
+      "task": "RJ9",
+      "needs": "RJ4",
+      "reason": "the live check runs after the update that deploys the job"
+    },
+    {
+      "task": "RJ10",
+      "needs": "RJ8",
+      "reason": "the Bitbucket check needs the Bitbucket implicit job"
+    }
+  ],
+  "decoupling": [],
+  "contract_changes": []
+}

@@ -1127,11 +1127,10 @@ func TestCatalogBuildBakesNothingWithoutTheMap(t *testing.T) {
 		// The previous release's installation, and one whose operator never
 		// mapped anything: the build says nothing at all about a bake.
 		"a project with no map": {},
-		// The switch is the operator's own answer, so a build that bakes
-		// nothing because of it says which setting did it.
+		// A switch written false is no ask for a bake, so there is nothing to
+		// explain.
 		"a project with bake off": {
 			yaml: "image_map:\n  acme/app: tools\nbake_repos: false\n",
-			note: "bake_repos",
 		},
 		// This entry is not the image the repository runs: the build of it has
 		// nothing to report, and saying why for every entry of a project would
@@ -1155,7 +1154,7 @@ func TestCatalogBuildBakesNothingWithoutTheMap(t *testing.T) {
 				t.Errorf("_CATALOG_TAG = %v, want the untouched definition's sha256", subs["_CATALOG_TAG"])
 			}
 			switch {
-			case tc.note == "" && strings.Contains(stderr, "bakes no checkout"):
+			case tc.note == "" && strings.Contains(stderr, "no checkout baked"):
 				t.Errorf("stderr = %q, want no bake line for a project that asks for none", stderr)
 			case tc.note != "" && !strings.Contains(stderr, tc.note):
 				t.Errorf("stderr = %q, want the reason the bake did not happen (%s)", stderr, tc.note)
@@ -1189,12 +1188,18 @@ func TestCatalogBuildBakesNothingIntoASharedEntry(t *testing.T) {
 			if got != catalogBuildInline {
 				t.Errorf("the copy is %q, want the entry's own definition %q: nothing is baked into an image another repository runs", got, catalogBuildInline)
 			}
-			if !strings.Contains(stderr, "bakes no checkout") || !strings.Contains(stderr, "acme/other") {
+			if switchLine == "" {
+				if strings.Contains(stderr, "no checkout baked") {
+					t.Errorf("stderr = %q, want no note: the project never asked for a bake", stderr)
+				}
+				return
+			}
+			if !strings.Contains(stderr, "no checkout baked (shared with acme/other)") {
 				t.Errorf("stderr = %q, want the repository that would have read the checkout named", stderr)
 			}
 		})
 	}
-	t.Run("bake_repos false names the switch", func(t *testing.T) {
+	t.Run("bake_repos false is silent", func(t *testing.T) {
 		_, gcs, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
 		f.appendConfig(t, shared+"bake_repos: false\n")
 
@@ -1206,8 +1211,8 @@ func TestCatalogBuildBakesNothingIntoASharedEntry(t *testing.T) {
 		if got != catalogBuildInline {
 			t.Errorf("the copy is %q, want the entry's own definition %q: the operator turned baking off", got, catalogBuildInline)
 		}
-		if !strings.Contains(stderr, "bakes no checkout") || !strings.Contains(stderr, "bake_repos") {
-			t.Errorf("stderr = %q, want the switch named as why nothing was baked", stderr)
+		if strings.Contains(stderr, "no checkout baked") {
+			t.Errorf("stderr = %q, want no note: a build whose switch is off asked for no bake", stderr)
 		}
 	})
 }
@@ -1252,7 +1257,7 @@ func TestCatalogBuildBakesNothingIntoTheDefaultEntry(t *testing.T) {
 	if got != catalogBuildInline {
 		t.Errorf("the copy is %q, want the entry's own definition %q: a checkout in the project's default image is source every repository's jobs can read", got, catalogBuildInline)
 	}
-	if !strings.Contains(stderr, "bakes no checkout") || !strings.Contains(stderr, "default") {
+	if !strings.Contains(stderr, "no checkout baked (default entry, shared by every repo)") {
 		t.Errorf("stderr = %q, want the entry's being the project's default named as why nothing was baked", stderr)
 	}
 }
@@ -1286,7 +1291,7 @@ func TestCatalogBuildBakesNothingWhileARepositoryIsUnmapped(t *testing.T) {
 	if got != catalogBuildInline {
 		t.Errorf("the copy is %q, want the entry's own definition %q: a build cannot say whether the repositories the map leaves out run this entry", got, catalogBuildInline)
 	}
-	if !strings.Contains(stderr, "bakes no checkout") || !strings.Contains(stderr, "acme/other") {
+	if !strings.Contains(stderr, "no checkout baked (unmapped repos: acme/other). Map them: fugaro image map set <repo> <entry>") {
 		t.Errorf("stderr = %q, want the repository the map leaves out named as why nothing was baked", stderr)
 	}
 }
@@ -1304,7 +1309,8 @@ func TestCatalogBuildRefusesABakeTheMapDoesNotConfirm(t *testing.T) {
 	if repo == bitbucketYAML {
 		t.Fatal("the fixture workflow has changed shape")
 	}
-	_, gcs, _ := catalogBuildCheckoutFor(t, repo, catalogBuildYAML, gitprov.KindBitbucket, "")
+	_, gcs, f := catalogBuildCheckoutFor(t, repo, catalogBuildYAML, gitprov.KindBitbucket, "")
+	f.appendConfig(t, "bake_repos: true\n")
 
 	_, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1")
 	if err != nil {
@@ -1314,8 +1320,13 @@ func TestCatalogBuildRefusesABakeTheMapDoesNotConfirm(t *testing.T) {
 	if got != catalogBuildInline {
 		t.Errorf("the copy is %q, want the entry's own definition %q: the map does not put this repository on the entry, so the readers cannot be named", got, catalogBuildInline)
 	}
-	if !strings.Contains(stderr, "bakes no checkout") || !strings.Contains(stderr, "image map set") {
+	if !strings.Contains(stderr, "no checkout baked (the image map doesn't list acme/app). To bake: fugaro image map set acme/app tools") {
 		t.Errorf("stderr = %q, want the refusal and the command that makes the readers knowable", stderr)
+	}
+	for _, line := range strings.Split(stderr, "\n") {
+		if strings.Contains(line, "no checkout baked") && len(line) >= 200 {
+			t.Errorf("the note is %d characters, want under 200: %q", len(line), line)
+		}
 	}
 	// The entry the checkout does not run is nobody's to bake: building it
 	// composes nothing (TestCatalogBuildBakesNothingWithoutTheMap).

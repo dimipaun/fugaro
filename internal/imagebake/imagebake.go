@@ -180,9 +180,17 @@ type Plan struct {
 	// is what the build can say about who else reads the image, and it is why a
 	// non-empty list refuses the bake: see Decide.
 	Cloned []string
-	// Reason is why nothing is baked, as a sentence a build can print. It is
-	// empty when Baked is set.
+	// Reason is why nothing is baked, as a short clause a build prints inside
+	// parentheses. It is empty when Baked is set.
 	Reason string
+	// Fix is the command that would let the bake follow, printed after the
+	// reason; empty when no command of the operator's changes the answer.
+	Fix string
+	// Asked is whether bake_repos was written true in the config the build
+	// reads. The switch itself still treats absent and true as one statement;
+	// Asked only decides whether a build owes the operator an explanation, since
+	// one that never asked for a bake has nothing to explain.
+	Asked bool
 	// Notable is whether a build should say this plan out loud: a bake, and a
 	// project that asked for one and did not get it because its own switch is
 	// off, are both worth a line — and a plan that is quiet because this entry
@@ -259,18 +267,19 @@ func Decide(req Request) Plan {
 			cloned = append(cloned, name)
 		}
 	}
+	asked := req.Bake != nil && *req.Bake
 	// The slug is validated here rather than at the stage: a slug that is not
 	// one is a bug this package's caller cannot fix by deciding differently,
 	// and baking nothing is the direction that cannot write a path a reader
 	// would not look at.
 	if _, err := Path(req.Repo.Slug); err != nil {
-		return Plan{Cloned: cloned, Notable: true, Reason: fmt.Sprintf("this repository's slug %s is not one this engine can bake: %v", req.Repo.Slug, err)}
+		return Plan{Cloned: cloned, Notable: true, Asked: asked, Reason: fmt.Sprintf("slug %s is not bakeable: %v", req.Repo.Slug, err)}
 	}
 	switch {
 	case req.Reference != "" && req.Reference != req.Entry:
-		return Plan{Cloned: cloned, Reason: fmt.Sprintf("the repository names the catalog entry %s in its own workflow, so it runs that image and not this one (a catalog reference beats the map)", req.Reference)}
+		return Plan{Cloned: cloned, Asked: asked, Reason: fmt.Sprintf("this repo runs %s", req.Reference)}
 	case req.Reference == "" && req.Map[req.Repo.Repo] != req.Entry:
-		return Plan{Cloned: cloned, Reason: fmt.Sprintf("the project's image map does not put %s on the catalog entry %s, so its jobs do not run this image", req.Repo.Repo, req.Entry)}
+		return Plan{Cloned: cloned, Asked: asked, Reason: fmt.Sprintf("the image map doesn't put %s on it", req.Repo.Repo)}
 	}
 	// Only a written false turns the bake off: bake_repos absent and true are
 	// one statement everywhere else that reads the switch
@@ -278,7 +287,7 @@ func Decide(req Request) Plan {
 	// build that read the absent case as anything else would be a second
 	// meaning for one field.
 	if req.Bake != nil && !*req.Bake {
-		return Plan{Cloned: cloned, Notable: true, Reason: "the project turned baking off (bake_repos is false in the published policy), so this image carries no checkout and its jobs clone at start"}
+		return Plan{Cloned: cloned, Notable: true, Asked: asked, Reason: "bake_repos is false"}
 	}
 	// The map is the build's only evidence about any repository but its own (O3
 	// (b): one credential, one checkout, no second repository's config read), so
@@ -287,7 +296,7 @@ func Decide(req Request) Plan {
 	// the build cannot name — the reference is a fact about this repository's
 	// jobs and not about the project's.
 	if req.Map[req.Repo.Repo] != req.Entry {
-		return Plan{Cloned: cloned, Notable: true, Reason: fmt.Sprintf("this repository runs the catalog entry %s by its own workflow's reference and the project's image map does not put it there, so a build cannot name the other repositories that run the entry and could read a checkout baked into it: `fugaro image map set %s %s` records it in the map a build reads, and the bake follows", req.Entry, req.Repo.Repo, req.Entry)}
+		return Plan{Cloned: cloned, Notable: true, Asked: asked, Reason: fmt.Sprintf("the image map doesn't list %s", req.Repo.Repo), Fix: fmt.Sprintf("To bake: fugaro image map set %s %s", req.Repo.Repo, req.Entry)}
 	}
 	// The catalog's default is the entry every repository that names nothing
 	// runs, and the deploy resolves that without reading the map (catalog.Choose
@@ -297,7 +306,7 @@ func Decide(req Request) Plan {
 	// every other repository of the project, and the bake would be a checkout in
 	// their jobs (F18).
 	if req.Default != "" && req.Default == req.Entry {
-		return Plan{Cloned: cloned, Notable: true, Reason: fmt.Sprintf("the catalog marks the entry %s as the project's default, so every repository of the project that names no entry of its own runs this image, and their jobs could read whatever is baked into it: the bake follows only where the entry is not the default", req.Entry)}
+		return Plan{Cloned: cloned, Notable: true, Asked: asked, Reason: "default entry, shared by every repo"}
 	}
 	// A repository the map does not name at all is one whose image this build
 	// cannot know: the deploy resolves it by that repository's own reference or
@@ -306,15 +315,15 @@ func Decide(req Request) Plan {
 	// entry, and the map is only whole evidence when it names every repository
 	// the project has.
 	if unknown := unmapped(req.Repos, req.Map, req.Repo.Repo); len(unknown) > 0 {
-		return Plan{Cloned: cloned, Notable: true, Reason: fmt.Sprintf("the project's image map puts none of the project's other repositories (%s) on an entry, so this build cannot say which image their jobs run or whether they could read a checkout baked into this one: `fugaro image map set <repo> <entry>` records each of them, and the bake follows", strings.Join(unknown, ", "))}
+		return Plan{Cloned: cloned, Notable: true, Asked: asked, Reason: fmt.Sprintf("unmapped repos: %s", strings.Join(unknown, ", ")), Fix: "Map them: fugaro image map set <repo> <entry>"}
 	}
 	// A shared image is O3 (b)'s own boundary and not the switch's: bake_repos:
 	// true asks for a bake, and it does not decide who may read the result.
 	if len(cloned) > 0 {
-		return Plan{Cloned: cloned, Notable: true, Reason: fmt.Sprintf("the other repositories the project maps to this entry (%s) run this image too, so their jobs can read whatever is baked into it, and O3's reading (b) bakes nothing there — the bake follows only where an image serves this repository alone", strings.Join(cloned, ", "))}
+		return Plan{Cloned: cloned, Notable: true, Asked: asked, Reason: fmt.Sprintf("shared with %s", strings.Join(cloned, ", "))}
 	}
 	baked := req.Repo
-	return Plan{Baked: &baked, Cloned: cloned, Notable: true}
+	return Plan{Baked: &baked, Cloned: cloned, Notable: true, Asked: asked}
 
 }
 

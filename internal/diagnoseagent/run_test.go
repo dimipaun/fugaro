@@ -206,7 +206,9 @@ if printf '%s\n' "$prompt" | grep -q '^CAP: turns'; then
 fi
 fail=$(printf '%s\n' "$prompt" | sed -n 's/^FAIL: //p' | head -1)
 if [ -n "$fail" ]; then
-  printf '{"type":"result","subtype":"%s","is_error":true,"total_cost_usd":0.02,"session_id":"s1","result":""}\n' "$fail"
+  failtext=$(printf '%s\n' "$prompt" | sed -n 's/^FAILTEXT_JSON: //p' | head -1)
+  [ -n "$failtext" ] || failtext='""'
+  printf '{"type":"result","subtype":"%s","is_error":true,"total_cost_usd":0.02,"session_id":"s1","result":%s}\n' "$fail" "$failtext"
   exit 1
 fi
 if printf '%s\n' "$prompt" | grep -q '^LEAK: stderr'; then
@@ -1337,6 +1339,43 @@ func TestRunRefusesAnErrorThatIsNotACap(t *testing.T) {
 	if !strings.Contains(err.Error(), "error_during_execution") {
 		t.Errorf("the refusal does not name the error the client reported: %v", err)
 	}
+}
+
+// TestRunAnErrorCarriesItsOwnText: claude reports a failed API call (no login,
+// no credit, a model it cannot reach) as subtype "success" with is_error set,
+// and the reason is only in the result text, so the refusal has to carry it.
+func TestRunAnErrorCarriesItsOwnText(t *testing.T) {
+	s := newRunSetup(t)
+	_, err := s.run(t, "FAIL: success", answerJSON(t, "FAILTEXT_JSON: ", "Credit balance is too low"))
+	if err == nil {
+		t.Fatal("a run that reported an error was reported as a diagnosis")
+	}
+	if !strings.Contains(err.Error(), "Credit balance is too low") {
+		t.Errorf("the refusal drops the reason the client gave: %v", err)
+	}
+}
+
+func TestRunAnErrorTextIsRedactedAndShort(t *testing.T) {
+	s := newRunSetup(t)
+	token := "sk-" + "ant-" + strings.Repeat("Qw3Z", 8)
+	text := "Invalid key " + token + " for " + s.value + " " + strings.Repeat("x", 600)
+	_, err := s.run(t, "FAIL: success", answerJSON(t, "FAILTEXT_JSON: ", text))
+	if err == nil {
+		t.Fatal("a run that reported an error was reported as a diagnosis")
+	}
+	for _, leak := range []string{token, s.value} {
+		if strings.Contains(err.Error(), leak) {
+			t.Errorf("the refusal carries %q", leak)
+		}
+	}
+	if len(err.Error()) > 600 {
+		t.Errorf("the refusal is %d bytes: the client's text is cut to a line's worth", len(err.Error()))
+	}
+}
+
+func answerJSON(t *testing.T, key, s string) string {
+	t.Helper()
+	return key + strings.TrimPrefix(answer(t, s), "ANSWER_JSON: ")
 }
 
 // TestRunReadsTheLastBlockThisNonceFences: this diagnosis's nonce fences the
