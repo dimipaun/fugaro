@@ -1,6 +1,12 @@
 # Pending workflow changes
 
-**No files are pending.** `images.yml` (the images workflow with
+**Two files are pending: `portal-tests.yml` (the portal's own tests in CI -- the
+SPA's vitest suite, the key service's Go suite with the deploy script's test, and
+the document store's Firestore suite against the emulator -- staged on
+**2026-11-14** by the portal plan's P9.2) and `website-preview.yml` (the website's
+preview workflow with the F40 gate added: a `firebase.json` naming a
+`.hosting.site` or a `.hosting.target` is refused as well as one naming another
+public dir or a lifecycle hook, staged the same day).** `images.yml` (the images workflow with
 the nightly's republish of an unchanged base skipped, 2026-11-05, issue #1745)
 and `ci.yml` (the Terraform job's root loop with `workspace` added and the
 longer test timeout) were copied in on 2026-11-11 and their staged copies
@@ -156,8 +162,96 @@ on its own, so a copy that dropped `compute` (or a later deletion of it)
 fails that test rather than leaving the root untested.
 `internal/cli/docs_website_deploy_test.go`, the checker for the two website
 files below, is written the same way: it reads a staged copy **while it
-exists**, falls back to the real `.github/workflows/website-*.yml` once it is
-gone, and fails if both copies exist at once.
+exists** and falls back to the real `.github/workflows/website-*.yml` once it is
+gone. (It used to fail when both existed, on the assumption that a copy-in is
+one commit that adds the real file and removes the staged one. The F40 staging
+below is the case where that assumption does not hold: `website-preview.yml`
+already runs, and what is staged is the change to it, so both files are in the
+tree at once and the staged one is the file under review.)
+
+## `portal-tests.yml`
+
+**Status: `portal-tests.yml` is staged and pending (2026-11-14, portal plan P9.2).**
+It is the portal's own tests in CI, and none of the three runs anywhere today:
+`ee/portal/` is an npm package outside the Go module, so no job in `ci.yml`
+reaches the SPA at all, and `ee/keyservice/docstore/firestore_test.go` is a
+`//go:build firestore` file that skips without `FIRESTORE_EMULATOR_HOST`, which
+no workflow provides. Its only trigger is `workflow_dispatch`, like every other
+workflow here that used to run on push (the owner's ruling of 2026-11-07).
+
+Three jobs, none of which holds a secret or authenticates to anything:
+
+- **`portal`** — the SPA: `npm ci` from `ee/portal/package-lock.json`, npm
+  pinned to 11.19.0 (the version that wrote that lockfile, as `ci.yml`'s rules
+  job and `website-preview.yml` pin it), and `npx vitest run` over the whole
+  suite. `ee/portal/test/hosting.test.ts` is the file that makes the portal's
+  hosting configuration load-bearing: it reads `ee/portal/firebase.json`
+  directive by directive and holds its rewrite to the service P1.7's Terraform
+  deploys and to the region `scripts/deploy-portal.sh` deploys it to, and
+  nothing else in the tree reads that file at all.
+- **`keyservice`** — `go test ./ee/keyservice/...`, and
+  `bash scripts/deploy-portal_test.sh`, which runs the owner-run deploy script
+  with node, npm, gcloud, firebase, git and go stubbed on PATH: it builds
+  nothing, deploys nothing and reaches no network. **The Terraform-tagged suite
+  is deliberately not run here** — it needs the `terraform` tag, and the job
+  that hands the go tool that tag is the change `## ci.yml` below stages.
+- **`firestore`** — Java 21, the `firebase-tools` pinned in
+  `internal/budget/rules/emulator/package.json`, installed **from that tree**
+  rather than by version, exactly as `ci.yml`'s rules job installs it: the
+  version is the rules tests' own, and the repository holds one firebase-tools
+  rather than two. The emulator jar is cached under this job's **own** key,
+  `firebase-emulators-firestore-${{ hashFiles('internal/budget/rules/emulator/package-lock.json') }}`
+  — not `ci.yml`'s, which caches the Realtime Database emulator's jar: a
+  different jar under the same key would be a key one job saves and the other
+  then restores or, on an exact hit, never saves at all, so each job downloads
+  its own jar on every run. The job runs
+  `firebase emulators:exec --only firestore --project fugaro-portal-test
+  --config ee/portal/firebase.json`, which exports `FIRESTORE_EMULATOR_HOST` to
+  the child and runs `go test -tags firestore ./ee/keyservice/docstore/...`
+  under it.
+
+  **What that does and does not test.** It tests the **store backend**: the same
+  conformance suite the in-memory store passes, run against Firestore, so the
+  two answers are the same answers. It does **not** test
+  `ee/portal/firestore.rules`. The suite builds its client with
+  `firestore.NewClient` — the server SDK, which reaches the emulator as an owner
+  and is not subject to rules at all — and against the project
+  `fugaro-portal-test`, which is the `(default)` database, while the rules in
+  `ee/portal/firebase.json` belong to the named database `portal`. So the denial
+  the deploy uploads is never evaluated by this job. What holds it today is
+  static: `TestFirestoreRulesDenyClients` (P1.5) reads the file and refuses
+  anything but the denial, and it runs under the `terraform` tag. A test that
+  really exercises the rules — a client SDK, or the emulator's REST API, against
+  the `portal` database — is owed a task of its own; until then the denial's
+  shape is checked and its behaviour is not.
+
+It deploys nothing and runs no Fugaro command: the portal's deploy is
+`scripts/deploy-portal.sh`, which is OWNER-RUN and refuses a coding agent's
+session (R5 as amended by D440).
+
+**The copy-in, from the repository root:**
+
+```sh
+cp docs/pending-workflows/portal-tests.yml .github/workflows/portal-tests.yml
+git rm docs/pending-workflows/portal-tests.yml
+git commit -m "ci: the portal's own tests (P9.2)"
+```
+
+**The two sentences that same commit writes**, which say what the directory is
+left holding once this file is applied — `website-preview.yml` alone, unless it
+has been applied first, in which case **that** copy-in's pair is the one to
+write, and it is printed in `## website-preview.yml and website-promote.yml`
+below. The first goes in this file's opening line, in place of the one naming
+`portal-tests.yml`; the second replaces the sentence at the end of
+`website/README.md` that counts the same files:
+
+```text
+**One file is pending: `website-preview.yml` (the website's preview workflow with the F40 gate).**
+```
+
+```text
+`docs/pending-workflows/` now holds one pending workflow, `docs/pending-workflows/website-preview.yml`.
+```
 
 ## `shared-tests.yml`
 
@@ -2410,6 +2504,54 @@ open. The file is pinned as the text the owner applies, and the acceptance is
 that the service reads it.
 
 ## `website-preview.yml` and `website-promote.yml`
+
+**Status: `website-preview.yml` is staged and pending (2026-11-14, the F40 gate,
+portal plan P9.2); `website-promote.yml` is applied, not pending.** The two were
+staged together by the run that wrote the website's deploy path (website plan
+Task W2.1, D91, D109, F14), the owner copied both into `.github/workflows/`, and
+both run today. `website-preview.yml` is staged again with **one change**: its
+deploy job's `firebase.json` vetting also refuses a Hosting `.hosting.site` or
+`.hosting.target`. The portal has a Firebase configuration and a Hosting site of
+its own (`ee/portal/firebase.json`, `fugaro-portal`, F40), and a site or a
+target is a destination the CLI resolves from the file rather than from the
+command line — so a build carrying the portal's configuration (a copy of it, a
+merge, a ref that moved it to the root) would publish the SPA's bytes onto the
+website's domain, or the website's onto the portal's, with nothing on the
+command line to see it on. The public dir and the lifecycle hooks are checked
+for the same reason and stay checked.
+
+The staged file is the running one plus that change and its own header, so a
+copy-in keeps every other property the checker below holds it to. It carries its
+copy-in in its own header as well, because a reader who opens the file rather
+than this README is the likelier one:
+
+```sh
+cp docs/pending-workflows/website-preview.yml .github/workflows/website-preview.yml
+git rm docs/pending-workflows/website-preview.yml
+git commit -m "ci: the preview workflow refuses a firebase.json naming a site (F40)"
+```
+
+While that staged copy exists it is the file
+`internal/cli/docs_website_deploy_test.go` reads, and the two files are
+deliberately **not** byte-identical — the staged one is the change. So the
+copy-in's `git rm` is what makes the real file the file under test, and a
+copy-in that left the staged copy behind would leave the checks reading a file
+that is no longer the one that runs.
+
+**The two sentences that copy-in writes**, for the order in which this file is
+applied first and `portal-tests.yml` is still staged: the first goes in this
+document's opening line, in place of the one naming `website-preview.yml`, and
+the second replaces the sentence at the end of `website/README.md` that counts
+the same files. `## portal-tests.yml` above carries the pair for the other
+order.
+
+```text
+**One file is pending: `portal-tests.yml` (the portal's own tests: the SPA's vitest suite, the key service's Go suite with the deploy script's own test, and the document store's Firestore suite against the emulator).**
+```
+
+```text
+`docs/pending-workflows/` now holds one pending workflow, `docs/pending-workflows/portal-tests.yml`.
+```
 
 Two **new** workflows, both `workflow_dispatch`-only, staged by the run that
 wrote the website's deploy path (website plan Task W2.1, D91, D109, F14). They

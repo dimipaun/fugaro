@@ -1,0 +1,171 @@
+# portal-tests -- STAGED: copy to .github/workflows/portal-tests.yml
+#
+# The portal's own tests in CI (portal plan P9.2): the SPA's vitest suite, the
+# key service's Go suite with the deploy script's own test, and the document
+# store's Firestore conformance suite against the Firestore emulator. None of
+# the three runs anywhere today -- `ee/portal/` is outside the Go module, so no
+# job in ci.yml reaches the SPA at all, and `ee/keyservice/docstore`'s Firestore
+# file is behind a build tag whose emulator no workflow provides.
+#
+# No agent writes under `.github/workflows/` -- GitHub rejects a Fugaro push that
+# touches it -- so the file waits here for the owner. The copy-in, from the
+# repository root:
+#
+#   cp docs/pending-workflows/portal-tests.yml .github/workflows/portal-tests.yml
+#   git rm docs/pending-workflows/portal-tests.yml
+#
+# docs/pending-workflows/README.md has the copy procedure and the two sentences
+# the same commit writes.
+#
+# Its only trigger is `workflow_dispatch`, like every other workflow here that
+# used to run on push: the owner's ruling of 2026-11-07 moved them to a hand
+# dispatch, which the coordinator runs in batches and before a cut.
+#
+# IT HOLDS NO SECRET OF ANY KIND, and it authenticates to nothing: every step
+# runs on the runner, the emulator's project id is one the emulator keeps local,
+# and no step reads a repository variable or a secret. The portal's own deploy is
+# scripts/deploy-portal.sh, which is OWNER-RUN and refuses a coding agent's
+# session (R5 as amended by D440); this workflow builds and tests the SPA and
+# deploys nothing.
+name: portal-tests
+
+on:
+  # The one and only trigger. No push, no schedule, no pull_request, no
+  # pull_request_target, no repository_dispatch.
+  workflow_dispatch:
+
+# The workflow inherits nothing: `contents: read` is all it needs to check the
+# repository out, and it is declared here and on every job so that neither can
+# gain a permission without an edit a reviewer sees.
+permissions:
+  contents: read
+
+jobs:
+  # The SPA. `ee/portal` is its own npm package, outside the Go module, so this
+  # is the only job in the tree that runs its tests at all.
+  portal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: ee/portal
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The Node version comes from ee/portal/package.json's `engines.node`, so
+      # the pin lives in one place rather than in a file and a workflow.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: ee/portal/package.json
+          cache: npm
+          cache-dependency-path: ee/portal/package-lock.json
+      # The lockfile is written by npm 11.19.0; the npm that ships with Node 22
+      # resolves one optional peer differently, which is the same reason ci.yml's
+      # rules job and website-preview.yml pin it.
+      - name: pin npm to the version that wrote the lockfile
+        run: npm install --global npm@11.19.0
+      - name: install the pinned dependency tree
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      # The whole suite, `test/hosting.test.ts` included: the hosting
+      # configuration's own checks are the ones nothing else in the tree makes.
+      - name: the SPA's suite (vitest)
+        run: npx vitest run
+
+  # The key service and the script that deploys it. The Terraform-tagged suite
+  # is NOT run here: `ee/keyservice/terraform/infra_test.go` needs the tag, and
+  # the job that hands it to the go tool is the change docs/pending-workflows/
+  # README.md's `## ci.yml` section stages for the owner.
+  keyservice:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: the key service's suite
+        run: go test -count=1 -timeout 25m ./ee/keyservice/...
+      # The deploy script's own test, with node, npm, gcloud, firebase, git and
+      # go stubbed on PATH: it builds nothing, deploys nothing and reaches no
+      # network. `go test ./scripts/` runs it too, through
+      # scripts/deploy-portal_test.go; here it runs beside the key service's
+      # suite because the two are the two halves of the same deployment.
+      - name: the portal deploy script's test
+        run: bash scripts/deploy-portal_test.sh
+
+  # The document store's Firestore backend, against the emulator the suite's own
+  # file asks for: it skips without FIRESTORE_EMULATOR_HOST, and this job is what
+  # provides one. Nothing here contacts Firebase -- the project id is one the
+  # emulator keeps local and there are no credentials to reach a real one with.
+  #
+  # It tests the BACKEND, not the rules. The suite builds its client with
+  # firestore.NewClient, the server SDK, which reaches the emulator as an owner
+  # and is not subject to rules; and it names the project `fugaro-portal-test`,
+  # the `(default)` database, while ee/portal/firebase.json's rules belong to the
+  # named database `portal`. So ee/portal/firestore.rules is deployed by
+  # scripts/deploy-portal.sh and never evaluated here: what holds it in the tree
+  # is TestFirestoreRulesDenyClients, which reads the file rather than exercising
+  # it: the denial's shape is checked, its behaviour this job leaves untested. A
+  # test that really evaluates it needs a client SDK or the emulator's REST API
+  # against the `portal` database, and a task of its own.
+  firestore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      # The emulator is a JVM process, so it needs a JRE; Java 21 is the version
+      # ci.yml's rules job runs the Realtime Database emulator with.
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      # The lockfile is written by npm 11.19.0; the npm that ships with Node 22
+      # resolves the optional picomatch peer differently and refuses it -- the
+      # same reason ci.yml's rules job pins it.
+      - name: pin npm to the version that wrote the lockfile
+        run: npm install --global npm@11.19.0
+      # internal/budget/rules/emulator's own tree, which is what pins the
+      # firebase-tools the emulator is: installing it from there rather than by
+      # version keeps ONE firebase-tools in the tree. The cache key below is this
+      # job's own, not ci.yml's: the two jobs run DIFFERENT emulators (ci.yml's
+      # rules job the Realtime Database one, this job Firestore), so one key for
+      # both would be saved by whichever ran first and, on an exact key hit, never
+      # saved by the other -- which then downloads its own jar on every run.
+      - name: install the pinned firebase-tools
+        working-directory: internal/budget/rules/emulator
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: cache the emulator jar
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/firebase/emulators
+          key: firebase-emulators-firestore-${{ hashFiles('internal/budget/rules/emulator/package-lock.json') }}
+      # `emulators:exec` starts the emulator from the portal's own configuration
+      # -- ee/portal/firebase.json's `emulators` block, whose host and port are
+      # what the suite dials -- exports FIRESTORE_EMULATOR_HOST to the command
+      # and stops the emulator when the command ends. The `firestore` block
+      # beside it is the deploy's, not this job's: nothing here loads those rules
+      # (see the job's comment above).
+      - name: the document store's Firestore suite
+        run: |
+          set -euo pipefail
+          firebase_cli="$PWD/internal/budget/rules/emulator/node_modules/.bin/firebase"
+          "$firebase_cli" emulators:exec --only firestore --project fugaro-portal-test \
+            --config ee/portal/firebase.json \
+            'go test -tags firestore -count=1 -timeout 15m ./ee/keyservice/docstore/...'
