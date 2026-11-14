@@ -927,6 +927,23 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 			if pr := lc.Profiles[name]; pr.AllowReposWritten() && len(pr.AllowRepos) == 0 {
 				return nil, false, userErr("this project's config sets profiles.%s.allow_repos to a written list with nothing in it, which is ambiguous: remove the key to fall back to the project's allow_repos, or write the repositories this profile admits (the project's own allow_repos is still required, so a profile's list can only narrow it)", name)
 			}
+			// A profile that mounts the Bitbucket credential is one no shared
+			// project job may be deployed for (D2302): the job is shared by
+			// every repository the profile admits and that token's reach is a
+			// per-repository list it cannot be bounded by. It is refused here,
+			// so the profile is never published at all — the node every run of
+			// the project is admitted by is the document the deployer reads it
+			// out of, and a publish that wrote it would have the operator meet
+			// the refusal at the update, one step from the file that owns the
+			// entry. The rule is projectpolicy.CheckSharedJobProfile, the
+			// function the deployer asks too (internal/infra's ProjectJobs): a
+			// publish and a deploy of the same profile refuse it in one
+			// sentence rather than in two that can drift. The deployer keeps
+			// its own door, which is what holds for a node this release did not
+			// write.
+			if err := projectpolicy.CheckSharedJobProfile("profiles."+name, projectpolicy.Profile{JobProfile: lc.Profiles[name]}); err != nil {
+				return nil, false, userErr("%s would not publish as a policy: %v", lc.Name, err)
+			}
 		}
 	}
 	silent := lc.Routing == nil || lc.Routing.Claude == nil

@@ -612,11 +612,16 @@ func CheckBitbucketProfileRepos(profiles map[string]Profile, token *BitbucketTok
 // owns the "only a bitbucket profile mounts it" half, and a bitbucket profile
 // mounting it is refused here.
 //
-// Publish does not ask it, and must not be assumed to: a profile that mounts
-// the token with its own allow_repos is the per-repository Bitbucket job's
-// document (D473) and a published node carries it legitimately — what a policy
-// may hold is one question, and what one shared job may hold is this one. The
-// caller is whatever builds a shared job, today internal/infra's ProjectJobs.
+// Publish asks it too, and so does every door that builds the node a shared job
+// is deployed from: the owner's ruling of 2026-11-14 is that such a profile is
+// not a policy's to carry, so the entry is refused where it is written rather
+// than at the deploy, one step from the file that owns it — the publisher
+// (internal/cli's buildProjectPolicy) and the deployer (internal/infra's
+// ProjectJobs) ask this one function, so the two refusals are one sentence
+// rather than two that can drift. What this rule does not reach is a node
+// already published: the reader that decodes one (Decode) does not ask it, so a
+// node written before the ruling is still read, and its own profile is refused
+// when the next publish or the deployer reaches it.
 func CheckSharedJobProfile(at string, pr Profile) error {
 	i := slices.Index(pr.Secrets, config.BitbucketSecret)
 	if i < 0 {
