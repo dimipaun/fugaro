@@ -10,9 +10,12 @@
  * statement carries line up as a column of numbers.
  *
  * Mobile-first, as the sheet that imports the tokens is: the phone is the
- * window the portal is read on, and a table of two columns fits one. The single
- * media query widens the statement header, which is the one row with room to
- * spare.
+ * window the portal is read on. On one, a customer and a statement are stacked
+ * cards and the tables inside them are short and set in the small size -- the
+ * columns a key is drawn with are an id, a workspace, a row, a count and two
+ * dates, and a phone wraps them rather than losing one. The single media query
+ * is the heads-up: side by side, a statement's month sits beside its figures
+ * and its lines, which is the one block with room to spare.
  */
 
 .reseller {
@@ -64,6 +67,32 @@
   color: var(--text-muted);
   font-family: var(--font-mono);
   font-size: var(--font-size-xs);
+}
+
+.reseller__customers {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.reseller__customer {
+  padding: var(--space-md);
+  background: var(--panel);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.reseller__customer .reseller__id {
+  margin: var(--space-3xs) 0;
+}
+
+.reseller__linked {
+  margin: 0 0 var(--space-sm);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
 }
 
 .reseller__statements {

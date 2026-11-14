@@ -3,12 +3,13 @@
 //
 // The reseller screen (portal plan P6.4; spec §Resellers, D2189, D2190).
 //
-// **One read, and it is the screen's own.** The two sections below are one
-// request each, made once when the screen mounts: a reseller reads what it sold
-// and what it owes at the same moment, and a screen that drew one section while
-// the other was still failing would be showing a figure from a state nobody
-// asked about. So the two reads are taken together, and a failure of either is
-// the screen's answer.
+// **One load, and it is the screen's own.** The reads are taken together when
+// the screen mounts: a reseller reads what it sold and what it owes at the same
+// moment, and a screen that drew one section while another was still failing
+// would be showing a figure from a state nobody asked about. A customer's keys
+// are read after the customers, because they are asked for by the customer the
+// list just named, and every one of them is part of the same answer -- so a
+// failure of any read is the screen's answer, and half a page is never drawn.
 //
 // **The screen is a function of the port it is handed.** Where the port comes
 // from when a person is looking at the screen -- `resellerApi` over the API
@@ -26,6 +27,7 @@
 
 import { useEffect, useState } from 'react'
 import { ApiError } from '../../api/client'
+import type { KeyMetadata } from '../../api/types/keys'
 import type { ResellerCustomer } from '../../api/types/resellers'
 import type { Statement } from '../../api/types/statements'
 import type { ResellerApi } from './api'
@@ -35,20 +37,30 @@ import './reseller.css'
 
 const GENERIC_FAILURE = 'The portal could not read your reseller account. Try again.'
 
-type ScreenState =
-  | { status: 'loading' }
-  | { status: 'ready'; customers: ResellerCustomer[]; statements: Statement[] }
-  | { status: 'failed'; message: string }
+/** What the screen drew: the customers, their keys by organisation, the statements. */
+interface Overview {
+  customers: ResellerCustomer[]
+  keys: Map<string, KeyMetadata[]>
+  statements: Statement[]
+}
+
+type ScreenState = { status: 'loading' } | ({ status: 'ready' } & Overview) | { status: 'failed'; message: string }
 
 export interface ResellerScreenProps {
-  /** What the screen reads: the customers sold to, and the months owed. */
+  /** The port the screen reads through: the customers, their keys, the months owed. */
   api: ResellerApi
 }
 
-/** The two reads the screen draws: the customers sold to, and the months owed. */
-async function read(api: ResellerApi): Promise<{ customers: ResellerCustomer[]; statements: Statement[] }> {
+/** Everything the screen draws: the customers sold to, their keys, the months owed. */
+async function read(api: ResellerApi): Promise<Overview> {
   const [customers, statements] = await Promise.all([api.customers(), api.statements()])
-  return { customers, statements }
+  const held = await Promise.all(
+    customers.map(async (customer): Promise<[string, KeyMetadata[]]> => [
+      customer.organisation_id,
+      await api.keys(customer.organisation_id),
+    ]),
+  )
+  return { customers, keys: new Map(held), statements }
 }
 
 /** The sentence a person is shown for a failure. */
@@ -101,7 +113,7 @@ export function ResellerScreen({ api }: ResellerScreenProps) {
   return (
     <main className="reseller">
       <h1>Your reseller account</h1>
-      <CustomersSection customers={state.customers} />
+      <CustomersSection customers={state.customers} keys={state.keys} />
       <StatementsSection statements={state.statements} customers={state.customers} />
     </main>
   )

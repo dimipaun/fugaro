@@ -26,6 +26,7 @@
 import { cleanup, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { ApiError } from '../../api/client'
+import type { KeyMetadata } from '../../api/types/keys'
 import type { ResellerCustomer } from '../../api/types/resellers'
 import type { Statement } from '../../api/types/statements'
 import { routes } from '../../routes'
@@ -56,6 +57,40 @@ const CUSTOMERS: ResellerCustomer[] = [
   },
 ]
 
+// Acme holds two keys and Borealis none, so one render carries both the
+// metadata a reseller reads and the customer it sold to that has nothing bound
+// yet. Neither key carries anything a key cannot be shown with: `KeyMetadata`
+// has no room for a secret (`src/api/types/keys.ts`), which is what F5's
+// metadata-only rule leaves a reseller reading.
+const KEYS: Record<string, KeyMetadata[]> = {
+  org_acme: [
+    {
+      key_id: 'key_1',
+      entitlement_id: 'ent_1',
+      workspace_id: 'acme-prod',
+      tier: 'team',
+      kind: 'paid',
+      seats: 5,
+      issued_at: '2026-02-10T11:00:00Z',
+      paid_through: '2026-03-10T11:00:00Z',
+      last_seen: '2026-02-20T07:15:00Z',
+    },
+    {
+      key_id: 'key_2',
+      entitlement_id: 'ent_2',
+      workspace_id: 'acme-staging',
+      tier: 'team',
+      kind: 'trial',
+      seats: 2,
+      issued_at: '2026-02-11T08:00:00Z',
+      paid_through: '2026-03-11T08:00:00Z',
+      // An air-gapped key never asks, which is what a null `last_seen` says.
+      last_seen: null,
+    },
+  ],
+  org_borealis: [],
+}
+
 const STATEMENT: Statement = {
   id: 'stm_1',
   reseller_organisation_id: 'org_reseller',
@@ -78,6 +113,7 @@ const GENERIC_FAILURE = 'The portal could not read your reseller account. Try ag
 function api(overrides: Partial<ResellerApi> = {}): ResellerApi {
   return {
     customers: () => Promise.resolve(CUSTOMERS),
+    keys: (organisationId) => Promise.resolve(KEYS[organisationId] ?? []),
     statements: () => Promise.resolve([STATEMENT]),
     ...overrides,
   }
@@ -93,9 +129,26 @@ describe('the reseller screen', () => {
     render(<ResellerScreen api={api()} />)
 
     const customers = within(await screen.findByRole('region', { name: 'Customers' }))
-    const row = customers.getByRole('row', { name: /Acme Ltd/ })
-    expect(row.textContent).toContain('org_acme')
-    expect(row.textContent).toContain('2026-02-10')
+    expect(customers.getByText('Acme Ltd')).toBeDefined()
+    expect(customers.getByText('org_acme')).toBeDefined()
+    expect(customers.getByText(/Linked 2026-02-10/)).toBeDefined()
+  })
+
+  it('shows each customer’s keys and renewal dates, which is what a reseller may see of them', async () => {
+    render(<ResellerScreen api={api()} />)
+
+    const customers = within(await screen.findByRole('region', { name: 'Customers' }))
+    const key = customers.getByRole('row', { name: /key_1/ })
+    expect(key.textContent).toContain('acme-prod')
+    expect(key.textContent).toContain('team')
+    expect(key.textContent).toContain('5')
+    // The renewal date is the term's end, and the last refresh is what tells a
+    // reseller which of its customers' installations is still running.
+    expect(key.textContent).toContain('2026-03-10')
+    expect(key.textContent).toContain('2026-02-20')
+    // A key that never refreshed says so rather than drawing an empty cell.
+    expect(customers.getByRole('row', { name: /key_2/ }).textContent).toContain('Never')
+    expect(customers.getByText('No keys yet.')).toBeDefined()
   })
 
   it('shows each month’s statement, what accrued, what was paid and which customer moved', async () => {
@@ -112,13 +165,32 @@ describe('the reseller screen', () => {
     expect(statements.getByRole('row', { name: /Borealis Inc/ }).textContent).toContain('$6.00')
   })
 
-  it('offers no reveal, and shows nothing a customer’s key would be', async () => {
+  it('offers no reveal, and shows nothing of a key but its metadata', async () => {
     render(<ResellerScreen api={api()} />)
 
     await screen.findByRole('region', { name: 'Customers' })
+    // A reseller reads metadata only (F5): the screen may draw no credential,
+    // offer no reveal, and hold no field a secret could be pasted into.
     expect(screen.queryByRole('button', { name: /reveal/i })).toBeNull()
-    expect(document.body.textContent ?? '').not.toMatch(/reveal|secret/i)
+    expect(document.body.textContent ?? '').not.toMatch(/reveal|secret|fgk_/i)
     expect(document.querySelector('input')).toBeNull()
+  })
+
+  it('asks for the keys of the customers it read, and of nobody else', async () => {
+    const asked: string[] = []
+    render(
+      <ResellerScreen
+        api={api({
+          keys: (organisationId) => {
+            asked.push(organisationId)
+            return Promise.resolve(KEYS[organisationId] ?? [])
+          },
+        })}
+      />,
+    )
+
+    await screen.findByRole('region', { name: 'Customers' })
+    expect(asked).toEqual(['org_acme', 'org_borealis'])
   })
 
   it('says a reseller has nothing yet rather than drawing empty tables', async () => {
