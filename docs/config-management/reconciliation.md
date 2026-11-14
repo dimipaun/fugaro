@@ -19,7 +19,7 @@ project config** — a sentence it prints and exits on — so the figures below
 are counted from the registry in this tree through the same predicate the write path uses, which is
 what the guard at the end of this section re-runs.
 
-- **F1 — the registry is 436 rows and the generic writer carries 193 of them.** 105 by name
+- **F1 — the registry is 442 rows and the generic writer carries 193 of them.** 105 by name
   (`internal/cli/settings_set.go:106`), made of the thirteen §4.4 names (the four budget scalars,
   `base_branch`, `max_parallel`, `update_check`, `commit_name`, `commit_email`, `layer.default_profile`,
   and D873's three account keys — `default_claude_account`, `claude_account_auto` and the wildcard
@@ -41,7 +41,7 @@ what the guard at the end of this section re-runs.
   `layer.defaults.`, `layer.governance.`, `credentials.`, `clone_urls.`, `escalation.`):
   13 + 7 + 2 + 1 + 37 + 36 + 1 + 4 + 4 = 105, the last four being the ladder's per-mode override rows
   below.
-  **243 rows have no generic writer**, and the audit's whole subject is which of them are a defect and
+  **249 rows have no generic writer**, and the audit's whole subject is which of them are a defect and
   which are the installation's own plumbing (F13, D1182). The count moved from 390 by the image setup
   skill's two rows: the map (D1906) is the `image map` family's and one row, so it is not carried here,
   and the bake switch above is — and it moved again by the stop rule's two rows,
@@ -82,7 +82,11 @@ what the guard at the end of this section re-runs.
   same work moved both once more, by twelve rows to 436 and by twelve to 193: the local ladder's
   `escalation.*` block is the machine's own (`critical_path_factor`, `ready_drafts` and the rest), so
   the generic path is its door and every one of the twelve is carried — the four per-mode override rows
-  by name, and the eight scalars beside them through the block's own prefix.
+  by name, and the eight scalars beside them through the block's own prefix. T2 of
+  docs/bitbucket-token-types/ moved the registry once more, by six rows to 442 and by none: the
+  `bitbucket_tokens.*` block is the machine's own local file (the operator's typed Bitbucket tokens,
+  whose values live in the credentials service's own bundle), so no name and no prefix in this list
+  reaches it, and the rows without a generic writer are six more for it.
 - **F2 — `fugaro rigor` does not exist.** There is no `newRigorCmd` in `internal/cli`, no `rigor` cobra
   command and no `floor` subcommand, while the registry names `rigor` (`internal/settings/registry.go:266`)
   and `rigor floor` (`:682`) as the owners of keys. Two of the registry's owner strings name a command a
