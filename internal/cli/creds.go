@@ -598,6 +598,21 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool) er
 	if !ok {
 		return credsNameRefusal()
 	}
+	// A member of the Bitbucket token family (D2350) is a key the LOADER knows
+	// and this command does not write yet, so it is refused by the same name
+	// refusal above. What holds it is the release the document would land on:
+	// the family's reader is a credentials service newer than the one an
+	// installation may have deployed, the loader refuses the WHOLE document for
+	// a key it does not know — a service-wide refusal rather than a refused
+	// credential — and the guard that judges the release which SERVES the
+	// bundle (refuseAProviderEntryTheServiceCannotRead, pinned for the provider
+	// entry by creds_skew_test.go) lands with the command that writes the
+	// family as a whole: the token's type and coverage, its local record and
+	// its verified scopes are the same task's, and a bundle entry written here
+	// alone would be a token no other half of the feature can see.
+	if _, family := config.BitbucketTokenAccount(name); family {
+		return credsNameRefusal()
+	}
 	// The generated mode writes one family and only one: an HMAC key has no
 	// upstream to paste from, every other credential does. It writes the
 	// CURRENT entry and derives the window's entry from it, so the window's own
