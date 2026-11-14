@@ -1,9 +1,13 @@
 # C1 — the independent review of A0, A1 and A3
 
 **Status:** the plan's C1 gate (D914), answered 2026-11-14. The verdict is at the end; the
-findings are numbered and carry a severity and a `file:line`. This document is the whole
-deliverable: no source file, no other document, no plan and no `docs/status.md` row was
-touched by the review.
+findings are numbered and carry a severity and a `file:line`. **The review changed no source
+file and no `docs/status.md` row**, and this document is the whole of what it produces. What the
+pull request that carries it also moves is the folder's record of the landing, and nothing
+beyond it: this document (new), the status line, the index row and the "What this design does
+not do" bullet in [README.md](README.md), the status line and the §C1 `Files:` and `Commit:`
+lines in [implementation-plan.md](implementation-plan.md), and the index check in
+`internal/cli/docs_run_without_checkout_test.go`.
 
 **What was reviewed.** Three landed commits on `main`, in the state `origin/main` holds now
 and not only in the state their own commits left:

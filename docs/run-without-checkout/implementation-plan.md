@@ -281,7 +281,12 @@ whole `internal/cli` or `internal/runner` run.
 
 ## C1. The independent review (D914)
 
-- **Files:** none — this is the gate, not a change.
+- **Files:** the review's own document (new) and the folder's record of the landing: the status
+  line, the index row and the "What this design does not do" bullet in
+  `docs/run-without-checkout/README.md`, this plan's status line and this section's `Files:` and
+  `Commit:` lines,
+  and the index check in `internal/cli/docs_run_without_checkout_test.go`. No source file, no
+  spec and no `docs/status.md` row: the gate reviews three landed commits and writes the record.
 - **Interfaces:** the review reads A0, A1 and A3 against the threat model in spec.md §12 and answers one
   question per item: the permission set the mint asks with and the two pins it must not move, the person
   the service verifies, the launcher's freedom from the App key and from any environment variable, the
@@ -293,7 +298,7 @@ whole `internal/cli` or `internal/runner` run.
 - **Tests:** the tasks' own suites, run on the reviewed commit.
 - **Command:** `fugaro verify test` on the final commit of the reviewed range.
 - **Red step:** none.
-- **Commit:** none.
+- **Commit:** `docs: the independent review (C1), and the folder's record of it`.
 
 ## D1. What this plan deliberately does not do
 
