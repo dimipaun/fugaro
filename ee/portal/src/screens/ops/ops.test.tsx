@@ -138,11 +138,22 @@ const AUDIT: AuditEntry = {
   detail: 'the customer asked for it',
 }
 
+// The month's one customer is a reseller's, and named apart from the customer
+// the lookup below draws: a report and a lookup are two different records, and
+// a fixture that spelled them the same would make a screen that drew the wrong
+// one of them pass.
 const MONTH: ReportMonth = {
   month: '2026-02',
   direct_micros: 24000000,
-  reseller_micros: 0,
-  customers: [{ organisation_id: 'org_example', name: 'Example Ltd', channel: 'direct', amount_micros: 24000000 }],
+  reseller_micros: 12000000,
+  customers: [
+    {
+      organisation_id: 'org_sold',
+      name: 'Sold By Reseller Ltd',
+      channel: 'reseller',
+      amount_micros: 12000000,
+    },
+  ],
 }
 
 const LISTS: OpsListsWire = { email_domains: ['example.com'], microsoft_directories: [] }
@@ -209,6 +220,11 @@ function answer(status: number, body: unknown): Response {
 function routes(overrides: Record<string, Reply> = {}): Record<string, Reply> {
   return {
     'GET /api/ops/membership': { body: member('owner') },
+    'GET /api/ops/organisations': { body: [CUSTOMER] },
+    'GET /api/ops/workspaces': { body: [WORKSPACE] },
+    'GET /api/ops/entitlements': { body: [ENTITLEMENT] },
+    'GET /api/ops/members': { body: [member('owner')] },
+    'GET /api/ops/keys': { body: [KEY] },
     'GET /api/ops/events': { body: [EVENT] },
     'GET /api/ops/ledger': { body: [ENTRY] },
     'GET /api/ops/audit': { body: [AUDIT] },
@@ -290,6 +306,16 @@ const ACTIONS = [
   'Save the lists',
 ]
 
+/**
+ * Sends the form a named button belongs to. The click on a submit button is a
+ * browser's own step and not jsdom's (the sign-in suite submits the form the
+ * same way), which is why the button's presence is asserted and its form is
+ * sent here.
+ */
+function send(name: string): void {
+  fireEvent.submit(screen.getByRole('button', { name }).closest('form')!)
+}
+
 function fillMint(): void {
   fireEvent.change(screen.getByLabelText('Workspace'), { target: { value: 'ws_example' } })
   fireEvent.change(screen.getByLabelText('Row'), { target: { value: 'team-monthly' } })
@@ -305,8 +331,12 @@ describe('the operations screens', () => {
     expect(screen.getByText(/members read/)).toBeDefined()
     // The reads are drawn, which is what the buttons' absence is measured
     // against: a screen that drew nothing at all would pass the loop below.
-    expect(screen.getByText('Example Ltd')).toBeDefined()
+    expect(await screen.findByText(/Sold By Reseller Ltd/)).toBeDefined()
     expect(screen.getByRole('button', { name: 'Look up' })).toBeDefined()
+    // The two lists are a change, and a member is shown them all the same: a
+    // field that is read out and not written is a read, and the door the
+    // operations team signs in through is something its members may look at.
+    expect((await screen.findByLabelText('Email domains')).getAttribute('readonly')).not.toBeNull()
 
     for (const name of ACTIONS) {
       expect(screen.queryByRole('button', { name })).toBeNull()
@@ -318,7 +348,7 @@ describe('the operations screens', () => {
     await screen.findByRole('heading', { name: 'Terms and keys' })
     fillMint()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Mint' }))
+    send('Mint')
 
     const asked = await screen.findByRole('alert')
     expect(asked.textContent).toMatch(/five minutes/)
@@ -333,7 +363,7 @@ describe('the operations screens', () => {
     await screen.findByRole('heading', { name: 'Terms and keys' })
     fillMint()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Mint' }))
+    send('Mint')
 
     await waitFor(() => {
       expect(shown.sent('POST', '/api/ops/mints')).toHaveLength(1)
@@ -357,7 +387,7 @@ describe('the operations screens', () => {
     await screen.findByRole('heading', { name: 'Terms and keys' })
     fillMint()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Mint' }))
+    send('Mint')
 
     await screen.findByText('This sign-in is older than five minutes, so it cannot mint.')
   })
@@ -365,7 +395,7 @@ describe('the operations screens', () => {
   it('decides a parked event from its own facts, and never draws the body it keeps', async () => {
     const shown = show(person(0), routes({ 'POST /api/ops/events/resolutions': { body: EVENT } }))
     await screen.findByRole('heading', { name: 'The queue' })
-    expect(screen.getByText(/evt_1/)).toBeDefined()
+    expect(await screen.findByText(/evt_1/)).toBeDefined()
     expect(document.body.textContent).not.toContain(BUYER)
 
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
@@ -377,6 +407,93 @@ describe('the operations screens', () => {
       id: 'evt_1',
       decision: 'dismiss',
       entitlement_id: null,
+    })
+  })
+
+  it('reads a customer’s records, and every id an action would name', async () => {
+    const shown = show(person(0), routes())
+    await screen.findByRole('heading', { name: 'Look up a customer' })
+
+    fireEvent.change(screen.getByLabelText('Organisation, workspace or project id'), {
+      target: { value: 'example' },
+    })
+    send('Look up')
+
+    expect(await screen.findByText(/Example Ltd/)).toBeDefined()
+    expect(shown.sent('GET', '/api/ops/organisations')[0]?.query.get('q')).toBe('example')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show the organisation' }))
+
+    // The point of the reads: every id the other sections send is found here,
+    // and a key is drawn as its metadata and never as a secret (F5).
+    expect(await screen.findByText(/ws_example/)).toBeDefined()
+    expect(await screen.findByText(/key_1/)).toBeDefined()
+    expect(shown.sent('GET', '/api/ops/workspaces')[0]?.query.get('organisation_id')).toBe(
+      'org_example',
+    )
+    expect(shown.sent('GET', '/api/ops/keys')[0]?.query.get('workspace_id')).toBe('ws_example')
+    expect(screen.getByRole('heading', { name: 'Members' })).toBeDefined()
+  })
+
+  it('sends a change, a transfer and the lists in the API’s own shapes', async () => {
+    const shown = show(
+      person(0),
+      routes({
+        'POST /api/ops/entitlement-actions': { body: ENTITLEMENT },
+        'POST /api/ops/project-transfers': { body: WORKSPACE },
+        'PUT /api/ops/lists': { body: LISTS },
+      }),
+    )
+    await screen.findByRole('heading', { name: 'Terms and keys' })
+
+    fireEvent.change(screen.getByLabelText('Entitlement'), { target: { value: 'ent_1' } })
+    fireEvent.change(screen.getByLabelText('New seats'), { target: { value: '8' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Change seats' }))
+    await waitFor(() => {
+      expect(shown.sent('POST', '/api/ops/entitlement-actions')).toHaveLength(1)
+    })
+    // An end is read by `extend` alone, so the other three actions carry none:
+    // a body that sent one would be a field the reader ignores.
+    expect(shown.sent('POST', '/api/ops/entitlement-actions')[0]?.body).toEqual({
+      entitlement_id: 'ent_1',
+      action: 'seats',
+      seats: 8,
+      ends_at: null,
+      reason: null,
+    })
+
+    fireEvent.change(screen.getByLabelText('Project id'), {
+      target: { value: 'example-portal' },
+    })
+    fireEvent.change(screen.getByLabelText('Workspace that keeps it'), {
+      target: { value: 'ws_example' },
+    })
+    send('Transfer the project id')
+    await waitFor(() => {
+      expect(shown.sent('POST', '/api/ops/project-transfers')).toHaveLength(1)
+    })
+    expect(shown.sent('POST', '/api/ops/project-transfers')[0]?.body).toEqual({
+      project_id: 'example-portal',
+      workspace_id: 'ws_example',
+      reason: null,
+    })
+
+    // The directories go out under the name the API reads today, which is the
+    // amended D2207's and not the one `src/api/types/ops.ts` still spells: a
+    // body typed by that declaration would send a field the API refuses.
+    fireEvent.change(screen.getByLabelText('Email domains'), {
+      target: { value: 'example.com\nexample.org' },
+    })
+    fireEvent.change(screen.getByLabelText('Microsoft directories'), {
+      target: { value: 'a-directory-id' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Save the lists' }))
+    await waitFor(() => {
+      expect(shown.sent('PUT', '/api/ops/lists')).toHaveLength(1)
+    })
+    expect(shown.sent('PUT', '/api/ops/lists')[0]?.body).toEqual({
+      email_domains: ['example.com', 'example.org'],
+      microsoft_directories: ['a-directory-id'],
     })
   })
 
