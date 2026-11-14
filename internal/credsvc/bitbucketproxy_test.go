@@ -1772,6 +1772,59 @@ func TestProxyLegacySingleTokenUnchanged(t *testing.T) {
 			t.Errorf("the audit line = %v, want the Bitbucket API purpose and the legacy credential", line)
 		}
 	})
+
+	// The unwired store is the one every production run has until I1 wires it
+	// (nothing outside these tests sets Config.Selector), so both of its
+	// branches are held here rather than left to the tests that set a store: an
+	// unwired service that picked a NAMED token would forward every proxied call
+	// with a credential the release behind never chose, and one that refused a
+	// bundle holding no token as anything but the contract's class would answer
+	// a shape no caller and no operator has been told to expect.
+
+	t.Run("a named token beside the legacy one is not picked", func(t *testing.T) {
+		// The bundle holds the family's token as well, and the unwired store
+		// still serves the legacy entry: it ranks nothing and reads nothing, so
+		// a named token is not a candidate for it (R3, D2355).
+		s, up, legacy, named := proxyTokensSvc(t, nil)
+		up.answerWith(http.StatusOK, "001e# service=git-upload-pack\n0000")
+
+		resp, ans := s.proxyCall(t, http.MethodGet, proxyPath(proxyGitPath("info/refs")+"?service=git-upload-pack"), nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("the fetch answered %d, want 200 (%s)", resp.StatusCode, ans)
+		}
+		got := up.only(t)
+		if want := proxyGitAuth(legacy); got.auth != want {
+			t.Errorf("the upstream was shown %q, want the bundle's legacy token: an unwired store serves %s and never the named token it also holds", got.auth, config.BitbucketSecret)
+		}
+		if strings.Contains(got.auth, named) {
+			t.Errorf("the upstream was shown the named token %s, and the unwired store chooses the legacy entry alone", proxyNamedToken)
+		}
+		line := s.onlyAuditLine(t)
+		if line["credential"] != config.BitbucketSecret || line["purpose"] != PurposeGit {
+			t.Errorf("the audit line = %v, want the git purpose and %q", line, config.BitbucketSecret)
+		}
+	})
+
+	t.Run("a bundle holding no Bitbucket token is refused", func(t *testing.T) {
+		// The installation stored no Bitbucket token at all: the unwired store
+		// has nothing to answer, so the request is refused with the contract's
+		// class (C1's no_bitbucket_token) and not one byte reaches
+		// bitbucket.org (D143).
+		s, up, _ := proxySvc(t, func(s *svc, _ *Config) {
+			s.src.docs = [][]byte{testBundleDoc(t)}
+		})
+
+		resp, ans := s.proxyCall(t, http.MethodGet, proxyPath(proxyGitPath("info/refs")+"?service=git-upload-pack"), nil)
+		proxyRefused(t, resp, ans, http.StatusBadRequest, ErrorRequestRefused, string(bbtokens.ClassNoToken))
+
+		if n := up.count(); n != 0 {
+			t.Fatalf("the upstream saw %d calls, and a request with no token to attach forwards none", n)
+		}
+		line := s.onlyAuditLine(t)
+		if line["status"] != ErrorRequestRefused || line["purpose"] != PurposeGit {
+			t.Errorf("the audit line = %v, want the refusal's own type under the git purpose", line)
+		}
+	})
 }
 
 // proxyHostLikeWorkspace is a workspace slug spelled like the API host this
