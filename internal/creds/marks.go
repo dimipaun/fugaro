@@ -508,6 +508,14 @@ func TokenBroken(prev TokenStatus, now time.Time) TokenStatus {
 // of service for an afternoon over a one-minute limit. Everything else is
 // Exhaust's: a 429 arriving while a hold is in force may only extend it, and a
 // token that answered 401 is never put back in rotation by a rate limit.
+//
+// The window is also what a fresh 429 arriving after the previous hold lapsed
+// would be swallowed by, and that is the load-bearing half: a token's hold is
+// read as State and Until, so a lapsed exhaustion holds nothing, and read with
+// the window it would count as still in force (Ready measures it from Since) —
+// the minute Bitbucket just named is earlier than the window's end, Exhaust
+// keeps the lapsed hold, and the token goes back into service on a date in the
+// past.
 func TokenThrottled(prev TokenStatus, now, reset time.Time, set Settings) TokenStatus {
 	set.StopAfterExhaustionPerWindow = ptrTo(false)
 	prev.Mark = Exhaust(prev.Mark, now, reset, set)
@@ -521,6 +529,23 @@ func TokenThrottled(prev TokenStatus, now, reset time.Time, set Settings) TokenS
 func TokenSucceeded(prev TokenStatus, now time.Time, set Settings) TokenStatus {
 	set.StopAfterExhaustionPerWindow = ptrTo(false)
 	prev.Mark = ProbeSucceeded(prev.Mark, now, set)
+	return prev
+}
+
+// TokenUnproven is the status a probe that proved nothing leaves: a 5xx, a
+// connection that never reached Bitbucket, or a 403 for a repository the record
+// claimed. It is the model probe's own answer to the same outcome —
+// ProbeFailed, the wait doubled and Since left where it was — and not Exhaust's
+// backoff branch, which dates the exhaustion now.
+//
+// The difference is Since and it is deliberate: an unproven probe is the
+// exhaustion still being held, and dating it now would make a token backed off
+// for hours read as the most recently exhausted one, which is the ordering
+// D154's selection is built on. So this is ProbeFailed, with the window left
+// out for TokenThrottled's reason.
+func TokenUnproven(prev TokenStatus, now time.Time, set Settings) TokenStatus {
+	set.StopAfterExhaustionPerWindow = ptrTo(false)
+	prev.Mark = ProbeFailed(prev.Mark, now, set)
 	return prev
 }
 

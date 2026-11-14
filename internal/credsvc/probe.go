@@ -803,12 +803,22 @@ const bitbucketCountBudget = 5 * time.Second
 // is one segment and the repository one, and a value with anything else in it
 // is not a repository a probe can read — refusing it is the fail-closed
 // direction, since the alternative is building a path out of a caller's text.
+// A dot segment is refused for that reason and for R14's: PathEscape leaves "."
+// and ".." alone, so `../user` would build .../repositories/../user, which
+// resolves to the GET /2.0/user this probe must never make.
 func bitbucketProbeURL(canonical string) (string, bool) {
 	workspace, repo, ok := strings.Cut(canonical, "/")
-	if !ok || workspace == "" || repo == "" || strings.Contains(repo, "/") {
+	if !ok || !isPathSegment(workspace) || !isPathSegment(repo) {
 		return "", false
 	}
 	return bitbucket.DefaultBaseURL + "/repositories/" + url.PathEscape(workspace) + "/" + url.PathEscape(repo), true
+}
+
+// isPathSegment reports whether one half of a canonical names a single path
+// segment: not empty, nothing that would resolve as a path of its own, and no
+// further separator.
+func isPathSegment(s string) bool {
+	return s != "" && s != "." && s != ".." && !strings.Contains(s, "/")
 }
 
 // bitbucketProbe is one Bitbucket token's probe: which token, its value, and a
@@ -886,7 +896,7 @@ func (s *Server) probeBitbucketToken(ctx context.Context, st creds.TokenStatusSt
 		case probeLimited:
 			return creds.TokenThrottled(prev, now, reset, set), nil
 		default:
-			return creds.TokenThrottled(prev, now, time.Time{}, set), nil
+			return creds.TokenUnproven(prev, now, set), nil
 		}
 	})
 	if werr != nil {

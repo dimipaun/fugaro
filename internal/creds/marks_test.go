@@ -873,6 +873,20 @@ func TestModelCredentialMarksUnchanged(t *testing.T) {
 	if at, ok := throttled.Ready(now, noWindow()); !ok || !at.Equal(now.Add(time.Minute)) {
 		t.Fatalf("the throttled token is ready at %s, %v; want the minute Bitbucket named", at, ok)
 	}
+	// And the same settings are what the write is handed, which is not the same
+	// statement: the hold on this token has lapsed — a State and an Until an
+	// hour in the past, which is the whole of what a reader of a token's hold
+	// reads — so the 429 arriving now is a fresh exhaustion and the minute it
+	// named replaces the date. Handed the window, Exhaust would read that lapsed
+	// hold as still in force (Ready measures it from Since), find the minute
+	// earlier than the window's end, and discard the reset Bitbucket had just
+	// named: the token would come out of a fresh 429 carrying the hour-old Until
+	// and read as usable.
+	lapsed := TokenStatus{Mark: Mark{State: StateExhausted, Until: now.Add(-time.Hour), Since: now.Add(-2 * time.Hour)}}
+	renewed := TokenThrottled(lapsed, now, now.Add(time.Minute), window)
+	if renewed.State != StateExhausted || !renewed.Until.Equal(now.Add(time.Minute)) || !renewed.Since.Equal(now) {
+		t.Fatalf("a 429 on a token whose hold had lapsed left %+v; want it exhausted until the minute Bitbucket named, dated now", renewed)
+	}
 	// A 429 that named no reset is the backed-off case, through the same
 	// doubling wait a failed probe leaves (D153).
 	noReset := TokenThrottled(TokenStatus{}, now, time.Time{}, Settings{BackoffInitial: 15 * time.Minute, BackoffCap: time.Hour})
@@ -893,6 +907,27 @@ func TestModelCredentialMarksUnchanged(t *testing.T) {
 	}
 	if got := TokenSucceeded(noReset, noReset.Until, window); !got.Available() {
 		t.Fatalf("a successful probe of a backed-off Bitbucket token left %+v; want it back in service", got)
+	}
+	// A probe that proved nothing doubles the wait and leaves the exhaustion's
+	// date where it was, which is the model probe's own answer (ProbeFailed): a
+	// 5xx is the same exhaustion still being held rather than a fresh one, so a
+	// token backed off for hours does not come out of it looking like one
+	// exhausted a moment ago — which is what D154's "least recently exhausted"
+	// orders by.
+	held := TokenStatus{Mark: Mark{State: StateBackedOff, Until: now, Backoff: time.Hour, Since: now.Add(-4 * time.Hour)}}
+	unproven := TokenUnproven(held, now, window)
+	if unproven.State != StateBackedOff || unproven.Backoff != 2*time.Hour || !unproven.Since.Equal(now.Add(-4*time.Hour)) {
+		t.Fatalf("a probe that proved nothing left %+v; want the wait doubled with the date of the exhaustion it belongs to", unproven)
+	}
+	// The same write landing on an exhausted hold, which is what a probe in
+	// flight when a 429 arrived produces: with the window in the answer, that
+	// lapsed exhaustion would read as still in force and swallow the probe's
+	// failure, leaving the token on a date in the past — which is the state a
+	// reader of a token reads as usable.
+	raced := TokenStatus{Mark: Mark{State: StateExhausted, Until: now.Add(-time.Hour), Since: now.Add(-2 * time.Hour)}}
+	after := TokenUnproven(raced, now, window)
+	if after.State != StateBackedOff || !after.Until.Equal(now.Add(DefaultBackoffInitial)) || !after.Since.Equal(now.Add(-2*time.Hour)) {
+		t.Fatalf("a probe that proved nothing on an exhausted token left %+v; want the first wait, dated with the exhaustion it belongs to", after)
 	}
 
 	// Nothing above moved a model mark, and the store still writes the marks

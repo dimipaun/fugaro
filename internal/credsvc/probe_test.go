@@ -1670,6 +1670,9 @@ func TestBitbucketTokenProbeIsACoveredRepositoryRead(t *testing.T) {
 	if got.State != creds.StateBackedOff || got.Backoff != 30*time.Minute {
 		t.Errorf("a probe answered 500 left %+v; want the token still held, with its wait doubled", got)
 	}
+	if !got.Since.Equal(backedOff().Since) {
+		t.Errorf("a probe that proved nothing dated the exhaustion %s; want the date it was already holding (%s): the token is the same exhaustion still being held, and D154's \"least recently exhausted\" orders by it", got.Since, backedOff().Since)
+	}
 
 	// Five answers were scripted and five were asked for: no path above made a
 	// second call, and none of them wrote anything to Bitbucket.
@@ -1683,9 +1686,14 @@ func TestBitbucketTokenProbeIsACoveredRepositoryRead(t *testing.T) {
 	}
 
 	// A repository name that is not a workspace and a repository makes no call
-	// at all: the path is never built out of a caller's text.
+	// at all: the path is never built out of a caller's text. The dot segments
+	// are here for R14's reason: url.PathEscape leaves "." and ".." as they are,
+	// so "../user" would build .../repositories/../user, which resolves to the
+	// GET /2.0/user this probe must never make — the endpoint a repository token
+	// answers 403 to, and the one whose 200 would report a token working without
+	// reading a repository it covers.
 	before := len(bb.requests())
-	for _, bad := range []string{"", "acme", "acme/repo/extra", "/repo"} {
+	for _, bad := range []string{"", "acme", "acme/repo/extra", "/repo", "../user", "acme/..", "./repo", "acme/.", "..", "."} {
 		if _, err := s.server.probeBitbucketToken(context.Background(), st, bitbucketProbe{Name: name, Value: value, Repository: bad}, creds.Settings{}); err == nil {
 			t.Errorf("the probe read %q; want it refused rather than built into a path", bad)
 		}
