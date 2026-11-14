@@ -283,6 +283,24 @@ type Config struct {
 	// is what makes the value mountable, and a launcher who could publish one
 	// would be widening the grant.
 	WorkflowSecrets map[string]config.ProjectSecret `yaml:"workflow_secrets,omitempty"`
+	// BitbucketTokens are the typed Bitbucket access tokens the credentials
+	// service's proxy may serve, one record per token (spec §"Token record",
+	// D2350, D2351, R1): the name, type, coverage and expiry the operator
+	// states, with each token's value in the service's bundle and nowhere
+	// else. Only the owner sets them, here, never in fugaro.yaml: coverage is
+	// what decides which requests a token may carry, so a block a reviewed
+	// repository could write would be a reach the operator never gave.
+	// ValidateBitbucketTokens holds type and coverage to R1's agreement, which
+	// is asked at load and therefore by `fugaro validate`, before anything
+	// derives a node or writes a bundle entry from the records.
+	//
+	// Identity and verified_at are deliberately not members (R12): they are
+	// written by `fugaro creds set` into the creds state store, so a
+	// hand-edited config cannot state an identity a run would trust, and
+	// `expires` is the one expiry source a typed token has (R6) — the legacy
+	// bitbucket-token keeps its secret_expires entry, and no secret_expires
+	// entry is read for a record here.
+	BitbucketTokens []config.BitbucketToken `yaml:"bitbucket_tokens,omitempty"`
 	// BitbucketAPIRoots are the Bitbucket API roots the owner allow-lists
 	// (D474), for an installation that sends its Bitbucket token to a root of
 	// its own rather than to Bitbucket's: a cloud run refuses any
@@ -2418,6 +2436,23 @@ func (c *Config) validate() error {
 	}
 	for _, p := range config.ValidateProjectSecrets(c.ProjectSecrets) {
 		bad("%s: %s", p.Path, p.Message)
+	}
+	// bitbucket_tokens' form rules are config.ValidateBitbucketTokens'
+	// (R1's agreement of type and coverage); the date is checked here, beside
+	// secret_expires', because the layout an operator writes is this file's
+	// (SecretExpiryLayout) and config cannot reach it. Both are asked at load
+	// rather than at the first proxied call: a record whose halves disagree
+	// would otherwise be probed as one type and selected as another.
+	for _, p := range config.ValidateBitbucketTokens(c.BitbucketTokens) {
+		bad("%s: %s", p.Path, p.Message)
+	}
+	for i := range c.BitbucketTokens {
+		if c.BitbucketTokens[i].Expires == "" {
+			continue
+		}
+		if _, err := time.Parse(SecretExpiryLayout, c.BitbucketTokens[i].Expires); err != nil {
+			bad("%s.expires %q is not a date (YYYY-MM-DD)", config.BitbucketTokenPath(c.BitbucketTokens, i), c.BitbucketTokens[i].Expires)
+		}
 	}
 	// workflow_secrets' name-only rules are config.ValidateWorkflowSecrets';
 	// the two that read the operator's providers can only be asked here, where
