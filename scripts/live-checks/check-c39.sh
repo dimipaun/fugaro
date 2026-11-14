@@ -216,15 +216,26 @@ finish() {
 }
 
 # ------------------------------------------------------------------- the tools
-# run_bounded SECONDS KEY CMD...: run one command with its output in
-# $SCRATCH/KEY.out and .err, and end it after SECONDS. `timeout` is not used: it
-# is GNU coreutils, and this check runs on the owner's machine, where the tool is
-# absent on macOS. Sets BOUNDED_STATUS and BOUNDED_TIMED_OUT.
-run_bounded() { # run_bounded SECONDS KEY CMD...
-  local secs=$1 key=$2
-  shift 2
+# run_bounded SECONDS KEY DIR CMD...: run one command from the directory it has
+# to be run in, with its output in $SCRATCH/KEY.out and .err, and end it after
+# SECONDS. `timeout` is not used: it is GNU coreutils, and this check runs on the
+# owner's machine, where the tool is absent on macOS. Sets BOUNDED_STATUS and
+# BOUNDED_TIMED_OUT.
+#
+# DIR is not decoration. `fugaro doctor` reads the installation of the checkout
+# it is run in, so a call that inherited the invoker's own directory would
+# report whatever installation the owner happens to be standing in -- and every
+# row below, from the project down to the audit line, would be about that one
+# while the block said it read the sandbox's. The child cd's, and it drops the
+# ERR trap: this check runs commands whose failing exit status is one of its own
+# readings (a document that is not there, a job it is refused), and a trap
+# inherited here would turn each of them into "an internal error" and a status
+# of 2 before the step could report what it read.
+run_bounded() { # run_bounded SECONDS KEY DIR CMD...
+  local secs=$1 key=$2 dir=$3
+  shift 3
   BOUNDED_TIMED_OUT=no
-  "$@" >>"$SCRATCH/$key.out" 2>>"$SCRATCH/$key.err" &
+  ( trap - ERR; cd "$dir" || exit 1; exec "$@" ) >>"$SCRATCH/$key.out" 2>>"$SCRATCH/$key.err" &
   local pid=$!
   # A watchdog rather than a poll: waiting on the child costs nothing when it
   # ends at once, and this check runs a dozen commands before its first row.
@@ -589,7 +600,7 @@ step_sandbox() {
     die "--sandbox carries no fugaro.yaml: $SANDBOX is not a Fugaro repository's checkout, and the project this check reads is the one that checkout belongs to"
   fi
   say "reading the installation: fugaro doctor --json, in ${SANDBOX}"
-  run_bounded "$TIMEOUT" doctor "$FUGARO_BIN" doctor --json
+  run_bounded "$TIMEOUT" doctor "$SANDBOX" "$FUGARO_BIN" doctor --json
   cp "$SCRATCH/doctor.out" "$SCRATCH/doctor.json" 2>/dev/null || true
   if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
     unmeasured sandbox "fugaro doctor --json did not answer in ${SANDBOX} (exit ${BOUNDED_STATUS}): this check cannot read the installation this checkout belongs to, and every row below is about that installation. Its output is in $SCRATCH/doctor.err"
@@ -685,7 +696,7 @@ step_job() {
   local job described=0 offenders="" seen="" sa
   for job in $REVIEW_JOBS; do
     say "describing the review job: gcloud run jobs describe ${job} --region ${REGION}"
-    run_bounded "$TIMEOUT" "job-${job}" gcloud run jobs describe "$job" \
+    run_bounded "$TIMEOUT" "job-${job}" "$SANDBOX" gcloud run jobs describe "$job" \
       --project="$PROJECT" --region="$REGION" --format=json
     if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
       offenders="${offenders:+$offenders; }${job} could not be described (exit ${BOUNDED_STATUS}): $(head -c 200 "$SCRATCH/job-${job}.err" 2>/dev/null | tr '\n' ' ')"
@@ -741,7 +752,7 @@ step_variant_sa() {
     return 0
   fi
   say "reading the project's IAM policy: gcloud projects get-iam-policy ${PROJECT}"
-  run_bounded "$TIMEOUT" policy gcloud projects get-iam-policy "$PROJECT" --format=json
+  run_bounded "$TIMEOUT" policy "$SANDBOX" gcloud projects get-iam-policy "$PROJECT" --format=json
   if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
     unmeasured variant-sa-accessor "gcloud could not read ${PROJECT}'s IAM policy (exit ${BOUNDED_STATUS}): this row is about what the review account holds, and it cannot be answered without it. What gcloud printed is in $SCRATCH/policy.err"
     return 0
@@ -772,12 +783,12 @@ step_artifact() {
     return 0
   fi
   say "looking for the signature: gcloud storage ls gs://${BUCKET}/runs/*/${RUN}/artifacts/${SIG_NAME}"
-  run_bounded "$TIMEOUT" sig-ls gcloud storage ls "gs://${BUCKET}/runs/*/${RUN}/artifacts/${SIG_NAME}" --project="$PROJECT"
+  run_bounded "$TIMEOUT" sig-ls "$SANDBOX" gcloud storage ls "gs://${BUCKET}/runs/*/${RUN}/artifacts/${SIG_NAME}" --project="$PROJECT"
   local object
   object=$(grep -m1 "review.json.sig" "$SCRATCH/sig-ls.out" 2>/dev/null | tr -d '\r' || true)
   if [ -z "$object" ]; then
     local dir
-    run_bounded "$TIMEOUT" sig-dir gcloud storage ls "gs://${BUCKET}/runs/*/${RUN}/artifacts/" --project="$PROJECT"
+    run_bounded "$TIMEOUT" sig-dir "$SANDBOX" gcloud storage ls "gs://${BUCKET}/runs/*/${RUN}/artifacts/" --project="$PROJECT"
     dir=$(head -c 400 "$SCRATCH/sig-dir.out" 2>/dev/null | tr '\n' ' ' || true)
     fact verdict-sig FAIL "no ${SIG_NAME} object is under gs://${BUCKET}/runs/*/${RUN}/artifacts/, and §8's step 6 is that the review run leaves the signature of its verdict there. Under that prefix this check found: ${dir:-nothing at all, so even the prefix itself is absent}. A run that reached neither is not one this check can read a signature from; a run whose artifacts are there without the sidecar is the finding — unsigned is not a verdict to act on"
     unmeasured repo "there is no artifact path, so no record of this run's was read"
@@ -794,7 +805,7 @@ step_artifact() {
   fi
   RUN_REF="runs/${slug}/${RUN}"
   say "reading the signature: gcloud storage cat ${object}"
-  run_bounded "$TIMEOUT" sig gcloud storage cat "$object" --project="$PROJECT"
+  run_bounded "$TIMEOUT" sig "$SANDBOX" gcloud storage cat "$object" --project="$PROJECT"
   if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
     fact verdict-sig FAIL "${object} could not be read (exit ${BOUNDED_STATUS}): the signature is the whole of §8's step 6, and a sidecar nothing can read is not one the coordinator can check either. What gcloud printed is in $SCRATCH/sig.err"
     return 0
@@ -816,7 +827,7 @@ step_artifact() {
   fact repo PASS "${slug} — the slug the signature sits under, and the repository the run's record names below"
 
   say "reading the run's record: gcloud storage cat gs://${BUCKET}/${RUN_REF}/result.json"
-  run_bounded "$TIMEOUT" record gcloud storage cat "gs://${BUCKET}/${RUN_REF}/result.json" --project="$PROJECT"
+  run_bounded "$TIMEOUT" record "$SANDBOX" gcloud storage cat "gs://${BUCKET}/${RUN_REF}/result.json" --project="$PROJECT"
   if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
     fact cost INFO "the run's record could not be read (exit ${BOUNDED_STATUS}), so the spend §8's step 11 reports is not in this block: what gcloud printed is in $SCRATCH/record.err"
     return 0
@@ -839,7 +850,7 @@ step_sign_line() {
     return 0
   fi
   say "reading the service's audit line: gcloud logging read (purpose=review_sign)"
-  run_bounded "$TIMEOUT" audit gcloud logging read \
+  run_bounded "$TIMEOUT" audit "$SANDBOX" gcloud logging read \
     "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"${SERVICE_NAME}\" AND jsonPayload.msg=\"credsvc: audit\" AND jsonPayload.purpose=\"review_sign\"" \
     --project="$PROJECT" --format=json --limit=100 --freshness="$LOG_FRESHNESS" --order=desc
   if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
@@ -912,7 +923,7 @@ step_service_url() {
     return 0
   fi
   say "reading the service's URL: gcloud run services describe ${SERVICE_NAME} --region ${REGION}"
-  run_bounded "$TIMEOUT" service gcloud run services describe "$SERVICE_NAME" \
+  run_bounded "$TIMEOUT" service "$SANDBOX" gcloud run services describe "$SERVICE_NAME" \
     --project="$PROJECT" --region="$REGION" --format='value(status.url)'
   SERVICE_URL=$(head -n 1 "$SCRATCH/service.out" 2>/dev/null | tr -d '\r' || true)
   if [ -z "$SERVICE_URL" ]; then
@@ -927,7 +938,7 @@ step_service_url() {
 # a command line, the block or a log.
 mint_token() { # mint_token ACCOUNT KEY
   local account=$1 key=$2
-  run_bounded "$TOKEN_TIMEOUT" "token-${key}" gcloud auth print-identity-token \
+  run_bounded "$TOKEN_TIMEOUT" "token-${key}" "$SANDBOX" gcloud auth print-identity-token \
     --impersonate-service-account="$account" --audiences="$SERVICE_URL" --include-email
   if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
     return 1
@@ -952,7 +963,7 @@ mint_token() { # mint_token ACCOUNT KEY
 post_call() { # post_call KEY CURL-ARGS...
   local key=$1
   shift
-  run_bounded "$TIMEOUT" "$key" curl -sS -o "$SCRATCH/$key.body" -w '%{http_code}' "$@"
+  run_bounded "$TIMEOUT" "$key" "$SANDBOX" curl -sS -o "$SCRATCH/$key.body" -w '%{http_code}' "$@"
   chmod 600 "$SCRATCH/$key.body" "$SCRATCH/$key.out" 2>/dev/null || true
 }
 
@@ -1168,7 +1179,7 @@ step_gate_coding() {
     return 0
   fi
   say "describing the coding job: gcloud run jobs describe ${CODING_JOB} --region ${REGION}"
-  run_bounded "$TIMEOUT" coding-job gcloud run jobs describe "$CODING_JOB" \
+  run_bounded "$TIMEOUT" coding-job "$SANDBOX" gcloud run jobs describe "$CODING_JOB" \
     --project="$PROJECT" --region="$REGION" --format=json
   if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
     unmeasured gate-coding "${CODING_JOB} could not be described (exit ${BOUNDED_STATUS}): this row is about the account that job runs as, and it cannot name it without the describe. What gcloud printed is in $SCRATCH/coding-job.err"
@@ -1415,7 +1426,7 @@ step_verify_fields() {
     return 0
   fi
   say "hashing the artifact as the runner does: ${RUN_REF}/artifacts/review.json"
-  run_bounded "$TIMEOUT" artifact gcloud storage cat "gs://${BUCKET}/${RUN_REF}/artifacts/review.json" --project="$PROJECT"
+  run_bounded "$TIMEOUT" artifact "$SANDBOX" gcloud storage cat "gs://${BUCKET}/${RUN_REF}/artifacts/review.json" --project="$PROJECT"
   if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
     VERIFY_DIGEST=""
     return 0

@@ -28,6 +28,11 @@
 # header it was handed and NEVER in the check's own output, which is the one
 # property this script is written to keep.
 #
+# Both tool fakes log the DIRECTORY they were run in, and the check is held to
+# it: `fugaro doctor` reports the installation of the checkout it is run in, so
+# a check that inherited the invoker's own directory would read an installation
+# it was never pointed at while its block said the rows were the sandbox's.
+#
 # Usage: bash scripts/live-checks/check-c39_test.sh
 set -euo pipefail
 
@@ -84,8 +89,10 @@ write_fake_gcloud() { # dir
 # A stand-in for `gcloud`, for scripts/live-checks/check-c39.sh's test only. It
 # answers the reads the check makes about one sandbox installation and mints its
 # ID tokens as a value that is not a credential. Nothing here reaches a project.
+# Every call is logged with the directory it was made in, so a case can say the
+# check read the sandbox's installation rather than the one the invoker stood in.
 set -euo pipefail
-printf 'gcloud %s\n' "$*" >>"$FAKE_LOG_DIR/gcloud.calls"
+printf 'gcloud pwd=%s %s\n' "$PWD" "$*" >>"$FAKE_LOG_DIR/gcloud.calls"
 mode=${FAKE_MODE:-ok}
 case "${1:-}" in
 config)
@@ -227,8 +234,11 @@ write_fake_fugaro() { # dir
 #!/usr/bin/env bash
 # A stand-in for `fugaro`, for scripts/live-checks/check-c39.sh's test only: the
 # build's version and the two facts `doctor --json` carries that the check reads.
+# `doctor` reads the installation of the directory it is run in, and every call
+# is logged with that directory, so a case can say which installation the check
+# asked about.
 set -euo pipefail
-printf 'fugaro %s\n' "$*" >>"$FAKE_LOG_DIR/fugaro.calls"
+printf 'fugaro pwd=%s %s\n' "$PWD" "$*" >>"$FAKE_LOG_DIR/fugaro.calls"
 mode=${FAKE_MODE:-ok}
 case "${1:-}" in
 version) printf '0.25.0\n' ;;
@@ -468,6 +478,36 @@ assert_no_token_in_output() {
   expect_absent "$err" "$sentinel_prefix" "$1: the progress output carries an ID token's value"
 }
 
+# calls_outside_the_sandbox DIR: the calls the fakes logged from a directory that
+# is not the sandbox checkout, one per line and empty when there are none.
+# `fugaro version` is left out: it reads no installation and is asked before the
+# sandbox is known to be a checkout at all.
+calls_outside_the_sandbox() { # calls_outside_the_sandbox DIR
+  local dir=$1 line
+  cat "$dir/logs/fugaro.calls" "$dir/logs/gcloud.calls" 2>/dev/null | while IFS= read -r line; do
+    case "$line" in
+    *" version" | *"pwd=$dir/sbx "*) continue ;;
+    esac
+    printf '%s\n' "$line"
+  done
+}
+
+# assert_reads_ran_in_sandbox DIR WHAT: every read the check made was made in the
+# sandbox checkout. This is the premise of the whole check -- `fugaro doctor`
+# reads the installation the checkout belongs to, and the project, the region,
+# the bucket and the jobs every row below is about come from it -- so a call
+# that inherited the invoker's own directory would report an installation this
+# check was never pointed at.
+assert_reads_ran_in_sandbox() { # assert_reads_ran_in_sandbox DIR WHAT
+  local dir=$1 what=$2 outside
+  outside=$(calls_outside_the_sandbox "$dir")
+  if [ -n "$outside" ]; then
+    fail "$what: a call was made outside the sandbox checkout: $(printf '%s' "$outside" | head -n 1)"
+  fi
+  [ -n "$(cat "$dir/logs/fugaro.calls" "$dir/logs/gcloud.calls" 2>/dev/null || true)" ] ||
+    fail "$what: no read of the installation was made, so this case says nothing about where one was made"
+}
+
 # --------------------------------------------------------------- the test cases
 test_help() {
   local dir=$work/help
@@ -533,6 +573,11 @@ test_happy_path() {
   expect_contains "$calls" "logging read" "happy path: the service's log"
   expect_contains "$calls" "jsonPayload.purpose=\"review_sign\"" "happy path: the signing's own line"
   expect_contains "$calls" "run services describe fugaro-credentials" "happy path: the service's URL"
+  # And every one of them was made in the checkout the check was pointed at: the
+  # installation, the project, the region and the bucket the rows report are the
+  # ones doctor read IN the sandbox.
+  assert_reads_ran_in_sandbox "$dir" "happy path"
+  expect_contains "$(cat "$dir/logs/fugaro.calls")" "fugaro pwd=$dir/sbx doctor --json" "happy path: doctor was asked in the sandbox checkout"
   # Both refusal rows asked the route, and the review one did it with a token
   # that travelled through a mode-0600 config file rather than a command line.
   local curl_calls
@@ -900,6 +945,27 @@ test_an_unknown_argument_is_refused() {
   expect_contains "$err" "unknown argument: --wat" "an unknown argument: the message"
 }
 
+test_a_check_that_leaves_the_sandbox_is_caught() {
+  local dir=$work/cwd
+  prepare "$dir"
+  # A copy of the check whose bounded calls no longer enter the directory they
+  # are given. Its own rows cannot tell -- doctor answers whatever installation
+  # it is asked about, which is the point -- so what has to catch it is the
+  # directory the fakes logged, and this case is what says that reading is not
+  # vacuous: the rewrite really changes the script, and the calls after it
+  # really are logged from somewhere else.
+  local copy=$dir/leaves-the-sandbox.sh real=$script
+  sed 's/; cd "\$dir" || exit 1//' "$script" >"$copy"
+  cmp -s "$script" "$copy" && fail "mutation: the rewrite changed nothing, so this case proves nothing"
+  script=$copy
+  run_ok "$dir"
+  script=$real
+  expect_status "$status" 0 "mutation: the check that left the sandbox"
+  expect_contains "$out" "FACT sandbox: PASS" "mutation: its own rows cannot tell"
+  expect_contains "$(calls_outside_the_sandbox "$dir")" "fugaro pwd=" "mutation: a read was logged outside the sandbox checkout"
+  expect_contains "$(calls_outside_the_sandbox "$dir")" "doctor --json" "mutation: and it is the doctor read the rows below rest on"
+}
+
 # Sharding, so the Go test in scripts/live_checks_test.go can run these side by
 # side: CHECK_TEST_SHARD="i/n" runs every n-th test starting at i (each case
 # works in its own directory under $work), CHECK_TEST_ONLY=name runs that one.
@@ -947,6 +1013,7 @@ t test_a_run_id_that_is_not_one_is_refused
 t test_a_sandbox_without_a_config_is_refused
 t test_kept_scratch_is_reported
 t test_an_unknown_argument_is_refused
+t test_a_check_that_leaves_the_sandbox_is_caught
 
 if [ "$failures" -ne 0 ]; then
   echo "check-c39_test.sh: $failures failure(s)" >&2
