@@ -540,7 +540,7 @@ already carries `//go:build !windows`, **C2** — it must be *kept*, not
 replaced, and its reason re-read). Red step: **U9**'s failure list, after
 Slice 3 removes the four known classes. Verification: `go test ./internal/cli -run Init -count=1`,
 `[pins]`, `[cross]`, and the non-interactive paths
-(`--yes`, `--non-interactive`, `--json`) on Windows. Tier B. Depends on: T1.3,
+(`--json`) on Windows. Tier B. Depends on: T1.3,
 T1.4, T3.2, T3.3. Commit: `init: the wizard on Windows, non-interactively first`.
 
 **T4.4 — `run` and the attach path (F41's neighbourhood).** Files: whatever

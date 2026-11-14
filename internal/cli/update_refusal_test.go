@@ -32,7 +32,7 @@ func TestARefusalAfterAFailureStillSaysHowToUnblockIt(t *testing.T) {
 		t.Errorf("the refusal is marked as printed, so main's line drops it:\n%v", err)
 	}
 	line := topLevelLine(err)
-	if !strings.Contains(line, "needs a real terminal") || !strings.Contains(line, "--yes") {
+	if !strings.Contains(line, "needs a real terminal") || !strings.Contains(line, "run it in your own terminal window") {
 		t.Errorf("the top-level line does not carry the refusal's advice on how to unblock the run: %q", line)
 	}
 	if !strings.Contains(newestLog(t, "update"), "needs a real terminal") {

@@ -1320,8 +1320,10 @@ func (s *stubStage) Verify(context.Context) error { return nil }
 func (s *stubStage) Left() initflow.Left          { return initflow.Left{} }
 
 // Through the init command, with the real Secret Manager client against the
-// fake: --yes and --non-interactive leave the commands, read nothing from
-// stdin, and store nothing; with the secrets stored, init finishes.
+// fake: at a terminal the run reaches the secrets stage, which shows no hidden
+// prompt here (the run's output is not a terminal), so it leaves the values as
+// commands, reads nothing from stdin and stores nothing; with the secrets
+// stored, the run finishes.
 func TestInitSecretsStageThroughTheCommand(t *testing.T) {
 	r := newInitRig(t)
 	dir := t.TempDir()
@@ -1329,42 +1331,32 @@ func TestInitSecretsStageThroughTheCommand(t *testing.T) {
 	testutil.Git(t, dir, "init", "-q")
 	testutil.Git(t, dir, "remote", "add", "origin", "https://bitbucket.org/acme/sandbox.git") // the rig's local config knows it
 	t.Chdir(dir)
-	for _, flags := range [][]string{{"--yes"}, {"--non-interactive", "--yes"}, {"--non-interactive"}} {
-		spy := &readerSpy{Reader: strings.NewReader(tokenValue + "\n")}
-		cmd := NewRootCmd()
-		var out, errOut bytes.Buffer
-		cmd.SetIn(spy)
-		cmd.SetOut(&out)
-		cmd.SetErr(&errOut)
-		cmd.SetArgs(append([]string{"setup", "--json"}, flags...))
-		err := cmd.Execute()
-		if ExitCode(err) != ExitUserError {
-			t.Fatalf("%v: exit %d, err %v\n%s", flags, ExitCode(err), err, errOut.String())
-		}
-		var res convergeJSON
-		if jerr := json.Unmarshal(out.Bytes(), &res); jerr != nil {
-			t.Fatalf("%v:\n%s", jerr, out.String())
-		}
-		if spy.read {
-			t.Fatalf("%v: stdin was read", flags)
-		}
-		if res.state("secrets") != "needs-you" && !(len(flags) == 1 && flags[0] == "--non-interactive") {
-			t.Fatalf("%v: stages %+v", flags, res.Stages)
-		}
-		if len(res.Left) > 0 {
-			last := res.Left[len(res.Left)-1]
-			// The whole command (code review, low): `secrets set
-			// bitbucket-token` alone is a prefix of both scopes, and this
-			// name's scope is the repository's own copy.
-			if last["stage"] == "secrets" && !strings.Contains(last["commands"], "secrets set bitbucket-token --repo acme/sandbox") {
-				t.Fatalf("%v: left %v", flags, res.Left)
-			}
-		}
-		noLeak(t, tokenValue, out.String(), errOut.String())
-		for _, rq := range r.sm.Requests() {
-			if rq.Method == "POST" {
-				t.Fatalf("%v: the stage wrote to Secret Manager: %s %s", flags, rq.Method, rq.Path)
-			}
+	fakeTerminal(t)
+	spy := &readerSpy{Reader: strings.NewReader(tokenValue + "\n")}
+	cmd := NewRootCmd()
+	var out, errOut bytes.Buffer
+	cmd.SetIn(spy)
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs([]string{"setup"})
+	err := cmd.Execute()
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, errOut.String())
+	}
+	if spy.read {
+		t.Fatal("stdin was read")
+	}
+	// The whole command (code review, low): `secrets set bitbucket-token`
+	// alone is a prefix of both scopes, and this name's scope is the
+	// repository's own copy.
+	if !strings.Contains(out.String(), "left for you (secrets, command):") ||
+		!strings.Contains(out.String(), "secrets set bitbucket-token --repo acme/sandbox") {
+		t.Fatalf("the secrets stage left no command naming the value:\n%s", out.String())
+	}
+	noLeak(t, tokenValue, out.String(), errOut.String())
+	for _, rq := range r.sm.Requests() {
+		if rq.Method == "POST" {
+			t.Fatalf("the stage wrote to Secret Manager: %s %s", rq.Method, rq.Path)
 		}
 	}
 	// Stored: the stage is done and init finishes.
@@ -1374,13 +1366,8 @@ func TestInitSecretsStageThroughTheCommand(t *testing.T) {
 		return map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: label, gcp.LabelSecret: name}
 	}
 	r.sm.Seed(gcp.SecretID(sandbox, "bitbucket-token"), labels("bitbucket-token"), []byte(tokenValue))
-	out, _, err := executeStdin(t, "", "setup", "--yes", "--json")
-	if err != nil {
+	if _, _, err := executeStdin(t, "", "setup"); err != nil {
 		t.Fatal(err)
-	}
-	var res convergeJSON
-	if jerr := json.Unmarshal([]byte(out), &res); jerr != nil || res.state("secrets") != "done" {
-		t.Fatalf("%v: %+v", jerr, res.Stages)
 	}
 }
 

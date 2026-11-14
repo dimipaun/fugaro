@@ -318,7 +318,7 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
   **`state --brief --offline` prints the daemon's cached brief instead and reaches no network** (D1243: the cache is O8's writer, the print shows its
   freshness stamp, and with no cache yet it says so rather than falling back to the node); `events [--since]` reads the
   audit log; `patch -f file|-` validates with O0; **the actor is `Session`, raised to `Person` only by the Typed confirmation; no flag, environment variable or file selects `Daemon` or `DecisionAgent`, and `Approved` is written only by `work_item_approve`, never an upsert**; **person-only ops (`work_item_approve`, `goal_set`, resolving a person decision) need a Typed confirmation at a real
-  terminal that shows the digested spec** (the approve op carries that digest) (`initflow.CanConfirm(Typed)`) and are refused otherwise, and `--yes` never covers them. The agent-marker check
+  terminal that shows the digested spec** (the approve op carries that digest) (`initflow.CanConfirm(Typed)`) and are refused otherwise, and no flag covers them. The agent-marker check
   (`AgentRefusal`, `internal/initflow/stage.go`) stays as an extra refusal but **is a mitigation, not a barrier** (`env -u CLAUDECODE`, or a direct node
   write, passes it), so it is not what G2 rests on; the residual is D1242, whose paired-device channel is deferred and gates nothing. No `spawn`, no `retry`: launch is the daemon's (T2).
 - **Schema/rules/config change:** the `--json` output schema, additive, `schema_version` 1.
@@ -450,7 +450,7 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
   --binary <stable path>`**, so O8's version check reads the path the unit actually re-runs, not the process's own resolved executable — which on Linux
   is the versioned path the upgrade deletes. **`install` is idempotent and means "install, or re-render from
   the current template and restart"**: it writes the unit when there is none, re-renders it when there is one, then restarts the service; it
-  **never migrates state** — that is the daemon's own start-up (O8, T7) — and `install` is refused under a coding agent's marker while `--yes` never
+  **never migrates state** — that is the daemon's own start-up (O8, T7) — and `install` is refused under a coding agent's marker while no flag
   covers it (a unit runs code at login); **the residual is the same one G2 names — `env -u CLAUDECODE fugaro orchestrator install` — and it escalates
   nothing, because whoever can call that can write a plist into the login directory directly** (the marker is a mitigation, not a barrier).
   **The owner's Q2 answer (2026-11-04 — a different answer from the one this PR first recorded, which is superseded):** the **first install belongs

@@ -298,7 +298,7 @@ func TestAccessAccountsAllReposAdminCannotAddAnAccount(t *testing.T) {
 	f := accessFixture(t, false)
 	accessAs(t, f.db, accessAdminAddr,
 		userStored(t, accessMember(t, accessAdminAddr), accesslib.RoleAdmin, "all-repos"))
-	_, _, err := execute(t, "accounts", "add", "team-a", "--repos", "acme/app", "--yes")
+	_, _, err := execute(t, "accounts", "add", "team-a", "--repos", "acme/app")
 	accessRefused(t, err, "nothing was written", "admin at project scope", "(user:admin@example.com) hold admin at all-repos")
 	if strings.Contains(accessConfigText(t), "team-a") {
 		t.Error("the refused add declared the account in the project config")
@@ -490,7 +490,7 @@ func TestAccessGateRefusesHTTP2DebugBeforeItOpens(t *testing.T) {
 		userStored(t, accessMember(t, accessAdminAddr), accesslib.RoleAdmin, accessRepoCanon))
 	before := accessConfigText(t)
 	t.Setenv("GODEBUG", "http2debug=2")
-	_, _, err := execute(t, "accounts", "add", "team-a", "--repos", "acme/app", "--yes")
+	_, _, err := execute(t, "accounts", "add", "team-a", "--repos", "acme/app")
 	if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "http2debug") {
 		t.Fatalf("accounts add: err = %v, want the GODEBUG refusal", err)
 	}
