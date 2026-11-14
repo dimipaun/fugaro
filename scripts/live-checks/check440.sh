@@ -184,10 +184,11 @@ ENDING_B=""
 OLD_ID=""
 OLD_ENDING=""
 # The run older than the window as `<slug>/<run-id>`, with the run's OWN slug:
-# the listing it is found in is bucket-wide, so that run may belong to another
-# repository in the same bucket, and this checkout's slug beside its ID would be
-# a false reading of D1702. Empty when neither the listing nor `--old-run` names
-# a slug, and then the rows that read it pin the ID alone.
+# the listing it is found in is the bucket's every repository (list_runs passes
+# `--all`), so that run may belong to another repository in the same bucket, and
+# this checkout's slug beside its ID would be a false reading of D1702. Empty
+# when neither the listing nor `--old-run` names a slug, and then the rows that
+# read it pin the ID alone.
 OLD_REF=""
 LOG_URL_A=""
 # Whether the two runs were seen in the live feed at all, which is what makes
@@ -711,12 +712,19 @@ run_pty() {
 }
 
 # ------------------------------------------------------------------ the reads
-# list_runs KEY WINDOW: `fugaro runs ls --json` over a window, as the rows this
-# check reads, and the milliseconds it took.
+# list_runs KEY WINDOW: `fugaro runs ls --json --all` over a window, as the rows
+# this check reads, and the milliseconds it took.
+#
+# `--all` is not decoration: without it `runs ls` lists the local config's
+# repositories alone, while the resolver this check is about lists EVERY slug in
+# the bucket (runstore.ResolveEnding) — so a listing without it would call a run
+# the resolver's own window holds "not in the window", and would find no old run
+# at all in a bucket whose history is another repository's. The two readings
+# that decide D1702 are read off the resolver's window or they are not read.
 list_runs() {
   local key=$1 window=$2 started ended
   started=$(now_ms)
-  fugaro_call "$CLI_TIMEOUT" "$key" "$SCRATCH" runs ls --json --since "$window"
+  fugaro_call "$CLI_TIMEOUT" "$key" "$SCRATCH" runs ls --json --all --since "$window"
   ended=$(now_ms)
   MS_LAST=$((ended - started))
   if [ "$BOUNDED_TIMED_OUT" = yes ]; then
@@ -819,7 +827,7 @@ step_launch() {
   0) ;;
   3) stop "fugaro runs ls did not answer inside ${CLI_TIMEOUT}s: the listing this check reads its two runs from is the one thing it cannot do without" ;;
   4) stop "the runs listing's JSON could not be read: $(one_line "$SCRATCH/listing.pyerr")" ;;
-  *) stop "fugaro runs ls --json --since $WINDOW failed (exit $status): $(one_line "$SCRATCH/listing.err")" ;;
+  *) stop "fugaro runs ls --json --all --since $WINDOW failed (exit $status): $(one_line "$SCRATCH/listing.err")" ;;
   esac
   local row_a row_b
   row_a=$(row_of listing "$ID_A")
@@ -1051,9 +1059,9 @@ step_old_run() {
   list_runs old-listing "$OLD_WINDOW" || status=$?
   case "$status" in
   0) ;;
-  3) stop "fugaro runs ls --since $OLD_WINDOW did not answer inside ${CLI_TIMEOUT}s: the run older than the window is found by listing, and without it the two D1702 rows cannot be read" ;;
+  3) stop "fugaro runs ls --all --since $OLD_WINDOW did not answer inside ${CLI_TIMEOUT}s: the run older than the window is found by listing, and without it the two D1702 rows cannot be read" ;;
   4) stop "the $OLD_WINDOW listing's JSON could not be read: $(one_line "$SCRATCH/old-listing.pyerr")" ;;
-  *) stop "fugaro runs ls --json --since $OLD_WINDOW failed (exit $status): $(one_line "$SCRATCH/old-listing.err")" ;;
+  *) stop "fugaro runs ls --json --all --since $OLD_WINDOW failed (exit $status): $(one_line "$SCRATCH/old-listing.err")" ;;
   esac
   MS_LIST_OLD=$MS_LAST
   cut -d'|' -f1 "$SCRATCH/old-listing.rows" >"$SCRATCH/old-ids"
@@ -1076,8 +1084,8 @@ step_old_run() {
     stop "no run older than ${OLD_DAYS} days is in the last $OLD_WINDOW of this installation's bucket, so there is nothing for the widening to find: pass --old-run <slug>/<run-id> naming a run the bucket holds and that the last $WINDOW does not, or run this check again once a run has aged past ${OLD_DAYS} days"
   fi
   # The old run's own slug, out of that listing's `run` cell, which carries
-  # `<slug>/<run-id>`: the listing holds every repository's runs, so the check
-  # may not assume this one belongs to the checkout it was run from.
+  # `<slug>/<run-id>`: the listing is the bucket's (`--all`), so the check may
+  # not assume this one belongs to the checkout it was run from.
   [ -n "$OLD_REF" ] || OLD_REF=$(cell "$(row_of old-listing "$OLD_ID")" 7)
   [ -n "$OLD_ENDING" ] || OLD_ENDING=$(shortest_ending "$OLD_ID" "$SCRATCH/old-ids")
 
@@ -1088,9 +1096,9 @@ step_old_run() {
   list_runs window-listing "$WINDOW" || wstatus=$?
   case "$wstatus" in
   0) ;;
-  3) stop "fugaro runs ls --since $WINDOW did not answer inside ${CLI_TIMEOUT}s: the window the old run must be outside of could not be listed" ;;
+  3) stop "fugaro runs ls --all --since $WINDOW did not answer inside ${CLI_TIMEOUT}s: the window the old run must be outside of could not be listed" ;;
   4) stop "the $WINDOW listing's JSON could not be read: $(one_line "$SCRATCH/window-listing.pyerr")" ;;
-  *) stop "fugaro runs ls --json --since $WINDOW failed (exit $wstatus): $(one_line "$SCRATCH/window-listing.err")" ;;
+  *) stop "fugaro runs ls --json --all --since $WINDOW failed (exit $wstatus): $(one_line "$SCRATCH/window-listing.err")" ;;
   esac
   MS_LIST_WINDOW=$MS_LAST
   if [ -n "$(row_of window-listing "$OLD_ID")" ]; then
@@ -1292,14 +1300,14 @@ print_plan() {
   say "dry run: NOTHING below was run. A real run would run, in this order:"
   say "  [network, writes, BILLABLE] in $PWD: FUGARO_PROJECT=$INSTALLATION $FUGARO_BIN run --run-id $ID_A --json '$TASK'"
   say "  [network, writes, BILLABLE] the same with --run-id $ID_B — one second later, sharing the ending $SHARED4, which is what makes the collision certain rather than hoped for. Each launch may open a pull request"
-  say "  [network, reads] FUGARO_PROJECT=$INSTALLATION $FUGARO_BIN runs ls --json --since $WINDOW — the two runs, as the listing that every ending below is resolved against"
+  say "  [network, reads] FUGARO_PROJECT=$INSTALLATION $FUGARO_BIN runs ls --json --all --since $WINDOW — the two runs, as the listing that every ending below is resolved against"
   say "  [network, reads] FUGARO_PROJECT=$INSTALLATION $FUGARO_BIN cancel $SHARED4 — polled until the live feed holds both runs (up to ${ACTIVE_TIMEOUT}s), then read for its refusal: it names the active runs and the full IDs to paste, and cancels nothing (D1710)"
   say "  [network, reads] FUGARO_PROJECT=$INSTALLATION $FUGARO_BIN diagnose abc — read for the minimum's own sentence (D1701)"
   say "  [network, reads] FUGARO_PROJECT=$INSTALLATION $FUGARO_BIN diagnose $SHARED4 < /dev/null | cat — read for the refusal that shows the rows and the way out (D1700); its numbered rows are what the two pty runs below are answered with"
   say "  [network, reads, at a REAL TERMINAL] the check's own pty runner around FUGARO_PROJECT=$INSTALLATION $FUGARO_BIN diagnose $SHARED4 — the numbered list and 'which run? [1-2]', answered with the row of $ID_A; the answer is the diagnosis of that run, whose 'Run:' line has to be the full <slug>/<run-id> (D1705)"
   say "  [network, reads, at a REAL TERMINAL] the same pty around FUGARO_PROJECT=$INSTALLATION $FUGARO_BIN logs --url $SHARED4 — the same list, and the link printed has to be the run the answer named (the log lines themselves name no run, so --url is the identity)"
   say "  [network, reads] FUGARO_PROJECT=$INSTALLATION $FUGARO_BIN logs --url <the ending the list gave for $ID_A> — a longer ending, with no list and no question"
-  say "  [network, reads] FUGARO_PROJECT=$INSTALLATION $FUGARO_BIN runs ls --json --since $OLD_WINDOW (timed) and --since $WINDOW, to find a run older than ${OLD_DAYS} days that the last $WINDOW does not hold, and to read that it is NOT in the window"
+  say "  [network, reads] FUGARO_PROJECT=$INSTALLATION $FUGARO_BIN runs ls --json --all --since $OLD_WINDOW (timed) and --all --since $WINDOW, to find a run older than ${OLD_DAYS} days that the last $WINDOW does not hold, and to read that it is NOT in the window"
   say "  [network, reads] FUGARO_PROJECT=$INSTALLATION $FUGARO_BIN cancel <that run's ending> — read for 'no active run ending ...; pass the full run ID'"
   say "  [network, reads] FUGARO_PROJECT=$INSTALLATION $FUGARO_BIN diagnose <that run's ending> (timed) — read for its 'Run:' line: the lookup widened past the window on the miss alone (D1702), and the seconds it took are F5's figure"
   if [ -n "$BUCKET" ]; then

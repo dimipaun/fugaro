@@ -75,7 +75,11 @@ write_fakes() { # dir
 # check makes the way the CLI does:
 #   * `run --run-id ID --json` appends the run it was told to launch;
 #   * `runs ls --json --since W` prints the window (7d) or the bucket's own
-#     history (90d), with the log_url and execution the launch records carry;
+#     history (90d), with the log_url and execution the launch records carry,
+#     over the repositories the real command reads: the bucket's every slug
+#     with --all, and this checkout's own repository alone without it (a
+#     checkout's local config names the repository the checkout is), so the
+#     check's --all is a fact the cases can hold it to;
 #   * `diagnose` and `logs --url` resolve an ending against the active runs and
 #     the window, widen to the whole bucket only on a miss, and show the pick
 #     list and one question only at a real terminal;
@@ -101,12 +105,18 @@ logurl() { printf 'https://console.cloud.google.com/run/detail/us-east5/job-acme
 exec_of() { printf 'projects/prj-fake/locations/us-east5/jobs/job-acme-web/executions/exec-%s\n' "$1"; }
 now_iso() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
-# rows_for window|wide|active: the runs the listing holds, as
-# run_id|created|terminal|title.
+# rows_for window|wide|active [bucket|config]: the runs the listing holds, as
+# run_id|created|terminal|title. `bucket` is every repository in the runs
+# bucket, which is the resolver's own scope (runstore.ResolveEnding lists every
+# slug) and so the scope every comparison the check makes is drawn from.
+# `config` is what `fugaro runs ls` reads WITHOUT --all: the local config's
+# repositories, which in a checkout of a Fugaro repository is that repository
+# alone — the difference that makes the check's own --all load-bearing.
 rows_for() {
-  local want=$1 id created terminal title inwin slug
+  local want=$1 scope=${2:-bucket} id created terminal title inwin slug
   while IFS='|' read -r id created terminal title inwin slug; do
     [ -n "$id" ] || continue
+    if [ "$scope" = config ] && [ "${slug:-$SLUG}" != "$SLUG" ]; then continue; fi
     case "$want" in
     window) [ "$inwin" = yes ] || continue ;;
     active) [ "$terminal" = false ] || continue ;;
@@ -284,11 +294,15 @@ cmd_run() { # --run-id ID --json TASK
     "$SLUG" "$id" "$id" "$id" "$(exec_of "$id")" "$(logurl "$id")"
 }
 
-cmd_runs_ls() { # --json --since W
-  local since=7d set=window a i=0 first=1
+cmd_runs_ls() { # --json --all --since W
+  local since=7d set=window scope=config a i=0 first=1
   a=("$@")
   while [ "$i" -lt "${#a[@]}" ]; do
     case "${a[$i]}" in
+    --all)
+      scope=bucket
+      i=$((i + 1))
+      ;;
     --since)
       since=${a[$((i + 1))]}
       i=$((i + 2))
@@ -313,7 +327,7 @@ cmd_runs_ls() { # --json --since W
     return 0
     ;;
   esac
-  rows_for "$set" >"$D/.rows"
+  rows_for "$set" "$scope" >"$D/.rows"
   printf '{"project":"sandbox-a","runs":['
   while IFS='|' read -r id created terminal title; do
     [ -n "$id" ] || continue
@@ -735,7 +749,7 @@ test_a_listing_that_fails_stops_the_run() {
   MODE=list-fails
   run440_default
   expect_status "$status" 2 "a listing that fails"
-  expect_contains "$(fact_line aborted)" "runs ls --json --since 7d failed" "a listing that fails: the reason"
+  expect_contains "$(fact_line aborted)" "runs ls --json --all --since 7d failed" "a listing that fails: the reason"
 }
 
 test_a_listing_whose_json_cannot_be_read_stops_the_run() {
