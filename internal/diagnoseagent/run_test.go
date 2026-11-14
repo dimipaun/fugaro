@@ -500,13 +500,18 @@ func TestRunChildEnvironmentHoldsNothingButTheHandle(t *testing.T) {
 	value := runValue(t, "handed")
 	env := childEnvironment([]string{
 		"PATH=/usr/bin", "HOME=/home/someone", "TERM=xterm", "TMPDIR=/tmp",
+		// The client's own store, moved: a child on the machine's own login has
+		// to look for that login where this machine keeps it (the owner's
+		// report of 2026-11-13), and the variable names a directory rather than
+		// a value.
+		"CLAUDE_CONFIG_DIR=/home/someone/elsewhere",
 		"ANTHROPIC_API_KEY=" + value, // the same credential, from the environment
 		"GH_TOKEN=" + value,
 		"AWS_SECRET_ACCESS_KEY=" + value,
 		"GOOGLE_APPLICATION_CREDENTIALS=/home/someone/key.json",
 		"NODE_OPTIONS=--require /home/someone/hook.js",
 	}, runHandle(t, value))
-	for _, want := range []string{"PATH=/usr/bin", "HOME=/home/someone", "TERM=xterm", "TMPDIR=/tmp", credsOAuthVar + "=" + value} {
+	for _, want := range []string{"PATH=/usr/bin", "HOME=/home/someone", "TERM=xterm", "TMPDIR=/tmp", "CLAUDE_CONFIG_DIR=/home/someone/elsewhere", credsOAuthVar + "=" + value} {
 		if !slices.Contains(env, want) {
 			t.Errorf("the child's environment lacks %q: %v", want, env)
 		}
@@ -514,7 +519,7 @@ func TestRunChildEnvironmentHoldsNothingButTheHandle(t *testing.T) {
 	for _, kv := range env {
 		name, _, _ := strings.Cut(kv, "=")
 		switch name {
-		case "PATH", "HOME", "TERM", "TMPDIR", credsOAuthVar:
+		case "PATH", "HOME", "TERM", "TMPDIR", "CLAUDE_CONFIG_DIR", credsOAuthVar:
 		default:
 			t.Errorf("the child's environment carries %s, which is neither a variable a diagnosis needs nor the handle's own credential", name)
 		}
@@ -1348,6 +1353,40 @@ func TestRunReadsTheLastBlockThisNonceFences(t *testing.T) {
 	}
 	if d.Outcome != OutcomeBug {
 		t.Errorf("the outcome is %q, want %q: the answer is the last block this nonce fences", d.Outcome, OutcomeBug)
+	}
+}
+
+// TestRunCarriesTheMachinesOwnLogin: LocalHandle is the one credential a
+// diagnosis may run on that this process never holds, and it is what `fugaro
+// troubleshoot` runs on when neither variable is set (the owner's report of
+// 2026-11-13). Run has to accept it, which is what Request.validate's
+// carries() is for, and the child it starts has to be handed no value at all:
+// the login is in claude's own store under the home directory the child
+// inherits, and anything of Fugaro's beside it would be a second credential.
+//
+// Mutation (run and restored): Request.validate's `!r.Handle.carries()` back to
+// `r.Handle.Secret() == ""` -> the diagnosis is refused before the child starts
+// and this fails, while every other test in the package stays green: the local
+// login path would be dead at runtime with the suite agreeing it was fine.
+func TestRunCarriesTheMachinesOwnLogin(t *testing.T) {
+	s := newRunSetup(t)
+	s.req.Handle = LocalHandle()
+	d, err := s.run(t, answer(t, fence(s.nonce, "outcome: bug\nsignature: update config invalid\nthe answer")))
+	if err != nil {
+		t.Fatalf("a diagnosis on the machine's own login was refused: %v", err)
+	}
+	if d.Outcome != OutcomeBug {
+		t.Errorf("the outcome is %q, want the answer's own %q", d.Outcome, OutcomeBug)
+	}
+	names := strings.Fields(runField(t, s.did(t), "env"))
+	if len(names) == 0 {
+		t.Fatal("the fake child recorded no environment, so this case proves nothing")
+	}
+	for _, name := range names {
+		switch name {
+		case credsOAuthVar, credsKeyVar:
+			t.Errorf("the child was handed %s: the machine's own login is not a value this process holds, and the child reads it from claude's own store", name)
+		}
 	}
 }
 
