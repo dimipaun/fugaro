@@ -56,7 +56,9 @@ type Options struct {
 	// once, the first time a PRSpec with non-empty Labels is seen
 	// (Bitbucket Cloud pull requests have no labels, so they are silently
 	// dropped otherwise), and once if the token may not read its own
-	// identity (GET /user) while OwnIdentities names none. Nil means no-op.
+	// identity (GET /user): OwnIdentities does not silence that one, because
+	// the set says which accounts are Fugaro's, never that this run can tell
+	// its own comments apart. Nil means no-op.
 	Warn func(string)
 	// OwnIdentities are the account UUIDs Fugaro's own Bitbucket tokens
 	// have, as the project's node lists them (T13, F20). The credentials
