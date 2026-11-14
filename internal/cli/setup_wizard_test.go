@@ -3,9 +3,9 @@ package cli
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -317,11 +317,9 @@ func TestCreationFlagsNeedACreation(t *testing.T) {
 // TestSetupCreatesOnlyForAPersonAtTheTerminal: the creation is not its own
 // confirmation, and no flag takes a person's place. A first run's project is
 // created only where a person is at the terminal, with nothing typed for it
-// (T7, docs/no-prompt-policy); --yes is the one way a person there leaves the
-// step instead, because the creation is initflow.Typed and --yes never covers a
-// Typed step, and --json, a pipe and --non-interactive each leave it for you
-// (D12: creating the project is `setup`'s). This is the row W0.1's matrix gains
-// for the door that creates.
+// (T7, docs/no-prompt-policy): --json and a pipe leave it for you, and the
+// flags that used to answer it are gone (T11). This is the row W0.1's matrix
+// gains for the door that creates.
 func TestSetupCreatesOnlyForAPersonAtTheTerminal(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -331,11 +329,8 @@ func TestSetupCreatesOnlyForAPersonAtTheTerminal(t *testing.T) {
 		created  bool
 	}{
 		{"a person at the terminal", true, newProj + "\n", nil, true},
-		{"--yes does not stand in for it", true, "yes\n", []string{}, false},
-		{"--yes at a terminal leaves it for a rerun", true, newProj + "\n", []string{}, false},
 		{"a pipe cannot confirm it", false, newProj + "\n", nil, false},
 		{"--json cannot confirm it", true, newProj + "\n", []string{"--json"}, false},
-		{"--non-interactive cannot confirm it", true, newProj + "\n", []string{}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newProjectRig(t)
@@ -361,6 +356,7 @@ func TestSetupCreatesOnlyForAPersonAtTheTerminal(t *testing.T) {
 // and registers no project stage (D11).
 func TestSetupOnAnExistingInstallationConvergesAndSaysSo(t *testing.T) {
 	newInitRig(t)
+	fakeTerminal(t)
 	out, _, err := executeStdin(t, "", "setup")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
@@ -368,16 +364,11 @@ func TestSetupOnAnExistingInstallationConvergesAndSaysSo(t *testing.T) {
 	if !strings.Contains(out, setupAlreadySetUp) {
 		t.Errorf("the run does not say the installation is already set up:\n%s", out)
 	}
-	js, _, err := executeStdin(t, "", "setup", "--json")
-	if err != nil {
-		t.Fatalf("%v\n%s", err, js)
-	}
-	var res convergeJSON
-	if err := json.Unmarshal([]byte(js), &res); err != nil {
-		t.Fatalf("%v:\n%s", err, js)
-	}
-	if got := res.state(initflow.Project); got != "" {
-		t.Errorf("the project stage ran on an installation that exists: %q\n%s", got, js)
+	// The account the run prints is where the one --json result document used to
+	// be read: --json confirms no step (T7), and the question here is only which
+	// steps the run opened.
+	if names := stepNames(out); slices.Contains(names, initflow.Project) {
+		t.Errorf("the project stage ran on an installation that exists: %q\n%s", names, out)
 	}
 }
 
