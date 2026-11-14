@@ -89,6 +89,21 @@ async function describe(user: {
 }
 
 /**
+ * True when two descriptions of a person say the same thing. `watch` answers a
+ * change, and a refresh of the token is not one: the claims it carries are the
+ * same, so answering it would re-run every read keyed on the session once an
+ * hour for nothing.
+ */
+function samePerson(a: SignedInUser, b: SignedInUser): boolean {
+  return (
+    a.uid === b.uid &&
+    a.email === b.email &&
+    a.provider === b.provider &&
+    a.authTime === b.authTime
+  )
+}
+
+/**
  * The port, for the project whose web config this is. `signInUrl` is where a
  * mailed link returns to -- the sign-in screen, which is what completes it --
  * and it is handed in rather than written here so that this file names no route
@@ -108,19 +123,30 @@ export async function createFirebaseAuthPort(
   return {
     watch(onUser) {
       let seen = 0
-      return firebaseAuth.onAuthStateChanged(instance, (user) => {
+      let last: SignedInUser | null = null
+      // The token is what `auth_time` is read from, and it is watched rather
+      // than the person, because signing in again is not a change of person: a
+      // same-uid sign-in is a new token with a new instant, and Firebase's
+      // auth-state listener does not fire for it. A session left holding the
+      // instant of the sign-in before would stop every change under D2187's
+      // five minutes -- and, since the step-up prompt hides itself once
+      // `signIn` answers, the person would have nothing left to press.
+      return firebaseAuth.onIdTokenChanged(instance, (user) => {
         // The answers to two quick changes can arrive out of order, and a
         // session that went back to signed-in after a sign-out would be a
         // screen drawn for somebody who is no longer there.
         const mine = ++seen
         if (user === null) {
+          last = null
           onUser(null)
           return
         }
         void describe(user).then((described) => {
-          if (mine === seen) {
-            onUser(described)
+          if (mine !== seen || (last !== null && samePerson(last, described))) {
+            return
           }
+          last = described
+          onUser(described)
         })
       })
     },
