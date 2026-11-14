@@ -462,9 +462,9 @@ guard_fugaro() {
 
 # ------------------------------------------------------------------- the steps
 # step_runs: the listing at the three windows the spec's row is about, and the
-# same 24 h argv with a page asked for. All four are made against the FIRST
-# installation named: the window's cost is a function of the bucket, not of the
-# installation the console happens to have selected.
+# same 24 h argv at the two page sizes the plan and the spec each name. All five
+# are made against the FIRST installation named: the window's cost is a function
+# of the bucket, not of the installation the console happens to have selected.
 step_runs() {
   local project=${PROJECTS[0]}
   read_runs runs-24h "$project" 24h
@@ -674,12 +674,14 @@ DRY_RUN=${CHECK_C0_DRY_RUN:-}
 while [ $# -gt 0 ]; do
   case "$1" in
   --project)
-    [ $# -ge 2 ] || die "--project needs a Fugaro project name. usage: $USAGE"
+    # An empty name is refused here rather than measured: FUGARO_PROJECT="" is
+    # the default installation, which is not one this check was told to read.
+    [ $# -ge 2 ] && [ -n "$2" ] || die "--project needs a Fugaro project name. usage: $USAGE"
     PROJECTS+=("$2")
     shift 2
     ;;
   --checkout)
-    [ $# -ge 2 ] || die "--checkout needs a path to a repository checkout. usage: $USAGE"
+    [ $# -ge 2 ] && [ -n "$2" ] || die "--checkout needs a path to a repository checkout. usage: $USAGE"
     CHECKOUTS+=("$2")
     shift 2
     ;;

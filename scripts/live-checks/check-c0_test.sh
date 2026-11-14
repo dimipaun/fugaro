@@ -455,6 +455,21 @@ test_a_missing_project_is_refused() {
   expect_absent "$calls" "fugaro" "no --project: nothing is run"
 }
 
+test_an_empty_name_is_refused() {
+  # FUGARO_PROJECT="" is the default installation, which is not one this check
+  # was told to read: an empty argument is an argument mistake, not a reading.
+  local dir=$work/empty
+  prepare "$dir"
+  run_check "$dir" -- --project "" --checkout "$dir/co"
+  expect_status "$status" 2 "an empty --project"
+  expect_contains "$err" "--project needs a Fugaro project name" "an empty --project: the message"
+  expect_absent "$calls" "fugaro" "an empty --project: nothing is run"
+  run_check "$dir" -- --project demo --checkout ""
+  expect_status "$status" 2 "an empty --checkout"
+  expect_contains "$err" "--checkout needs a path" "an empty --checkout: the message"
+  expect_absent "$calls" "fugaro" "an empty --checkout: nothing is run"
+}
+
 # Sharding, so a Go test could run these side by side: CHECK_TEST_SHARD="i/n"
 # runs every n-th test starting at i (each case works in its own directory under
 # $work), CHECK_TEST_ONLY=name runs that one alone.
@@ -489,6 +504,7 @@ t test_the_xtrace_guard
 t test_kept_scratch_is_reported
 t test_an_unknown_argument_is_refused
 t test_a_missing_project_is_refused
+t test_an_empty_name_is_refused
 
 if [ "$failures" -ne 0 ]; then
   echo "check-c0_test.sh: $failures failure(s)" >&2
