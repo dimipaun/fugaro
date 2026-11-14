@@ -330,14 +330,13 @@ func (e *cloudEnv) launchProjectJobFor(ctx context.Context, slug string, spec *t
 	}
 	// The repository's provider, first, because it decides more than the job's
 	// provider axis now: a workflow that names no job profile runs on the
-	// default profile of its repository's provider (D2310, R8), which is the
+	// default profile of its repository's provider (D2310, R8). That is the
 	// rule the runner's candidate logic answers with the same function
-	// (internal/runner's ProjectJobDefaultProfile), so a launcher and a runner
-	// cannot resolve one repository's workflow onto two profiles. A choice of
-	// no profile — the policy defines none for this provider — is the
-	// per-repository job (contract.md), and it is the answer this launcher
-	// gives for a workflow that names none on a project that has not
-	// published one for its provider.
+	// (internal/runner's ProjectJobDefaultProfile), so the two cannot resolve
+	// one repository's workflow onto two profiles. A resolution of no profile
+	// — the policy defines no profile for this provider — is the choice of the
+	// per-repository job, which is what a project that has published none for
+	// its provider keeps giving, down to the request body (contract.md).
 	provider := e.repoProvider(spec.Repo, co)
 	profile := w.JobProfile
 	if profile == "" {
@@ -415,11 +414,11 @@ func (e *cloudEnv) launchProjectJobFor(ctx context.Context, slug string, spec *t
 	// as it is in internal/infra's ProjectJobs, the function that deployed the
 	// job with this same number.
 	timeout, _ := config.ParseDuration(pr.TimeoutClass)
-	// The name is the choice's: the profile the launch decided on is the
-	// profile whose provider and account the job's name is built from, so the
-	// name cannot be built from a profile other than the chosen one
-	// (contract.md: the launcher computes the name from the choice, and the
-	// runner matches CLOUD_RUN_JOB against the same computation).
+	// The name is computed from the choice, which is the profile the launch
+	// decided on: the provider and the account are its own two axes, so a name
+	// built from any other profile would be the name of a job nobody deployed
+	// (contract.md: the runner matches CLOUD_RUN_JOB against this same
+	// computation).
 	return &launchProjectJob{
 		Name:    gcp.ProjectJobName(choice.Profile, pr.Provider, account),
 		Profile: choice.Profile,
