@@ -265,6 +265,64 @@ func TestProjectStoreKeepsTwoKeys(t *testing.T) {
 	}
 }
 
+// TestTheLaterWriteWinsTwoKeysOfTheSameTerm is the other half of T26's "latest
+// valid one". Two keys paid through the same day are both the latest, and the
+// object holds them in the order they were written -- Install appends, oldest
+// first -- so the write that came last is the one that applies. A reissue can
+// carry exactly the term of the key it replaces: a seat change reissues with
+// the term's own end (design/key-signing-service.md section 5.3), and the key
+// that states the seats the customer bought is the reissue. Decided the other
+// way, a seat change is a silent no-op -- the object holds the new key, the
+// installation runs on the old one, and the renewal sends the new key's secret
+// beside the old key's id, which the server refuses.
+func TestTheLaterWriteWinsTwoKeysOfTheSameTerm(t *testing.T) {
+	ctx := context.Background()
+	m := newMinted(t)
+	five := m.key(t, func(c *licence.Claims) { c.KeyID, c.Seats = "lk_test_five_seats", 5 })
+	eight := m.key(t, func(c *licence.Claims) { c.KeyID, c.Seats = "lk_test_eight_seats", 8 })
+	for _, tc := range []struct{ first, second, want string }{
+		{five, eight, "lk_test_eight_seats"},
+		{eight, five, "lk_test_five_seats"},
+	} {
+		r := newRig(t)
+		for _, key := range []string{tc.first, tc.second} {
+			if err := r.store.Install(ctx, []byte(key)); err != nil {
+				t.Fatalf("installing a key: %v", err)
+			}
+		}
+		if keys, err := r.store.Keys(ctx); err != nil || len(keys) != 2 {
+			t.Fatalf("the overlap holds %d keys (%v), want both: nothing an install does deletes a key", len(keys), err)
+		}
+		applied, err := r.store.Active(ctx, testNow, m.ring, testFirebaseProject, nil)
+		if err != nil {
+			t.Fatalf("Active over two keys of the same term: %v", err)
+		}
+		if applied.Claims.KeyID != tc.want {
+			t.Errorf("with the key written last being %s, Active answers %q, want it: of two keys paid through the same day the later write is the one the installation runs on (T26)", tc.want, applied.Claims.KeyID)
+		}
+	}
+
+	// The revocation keeps its teeth one term either way: it is weighed against
+	// the key that applies, whichever write that was, and the key beside it does
+	// not stand in (a revocation names one key_id and is not undone here).
+	r := newRig(t)
+	for _, key := range []string{five, eight} {
+		if err := r.store.Install(ctx, []byte(key)); err != nil {
+			t.Fatalf("installing a key: %v", err)
+		}
+	}
+	if err := r.store.RecordCheck(ctx, at(1), CheckRevoked, "lk_test_eight_seats"); err != nil {
+		t.Fatalf("recording a revocation: %v", err)
+	}
+	applied, err := r.store.Active(ctx, at(2), m.ring, testFirebaseProject, nil)
+	if err != nil {
+		t.Fatalf("Active after the revocation: %v", err)
+	}
+	if applied.Claims.KeyID != "lk_test_eight_seats" || !applied.Revoked {
+		t.Errorf("with the applied key of two of the same term revoked, Active answers %q (revoked %t), want that key and Free", applied.Claims.KeyID, applied.Revoked)
+	}
+}
+
 // TestTheStoreRefusesWhatItCannotRead pins the guard an install stands on: an
 // object of another version, or one that is not this store's shape, is refused
 // rather than read as far as it parses and then replaced -- the object is the

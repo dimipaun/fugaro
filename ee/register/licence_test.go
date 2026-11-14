@@ -39,6 +39,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"io/fs"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -423,6 +424,22 @@ func (f *licenceFixture) store(t *testing.T) *project.Store {
 	return s
 }
 
+// status runs `licence status --json` and answers it as the decoder's own map,
+// which is what a test that asks what the installation reads back has to look
+// at: the command's struct under test would agree with itself.
+func (f *licenceFixture) status(t *testing.T) map[string]any {
+	t.Helper()
+	out, _, err := f.exec(t, "", "licence", "status", "--json")
+	if err != nil {
+		t.Fatalf("licence status --json = %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("licence status --json wrote %q, which is not JSON: %v", out, err)
+	}
+	return got
+}
+
 // TestLicenceRenewalSecretIDIsTheInstallationsContainer pins the derived name of
 // the Secret Manager container `set` writes into and `refresh` reads.
 //
@@ -435,6 +452,81 @@ func TestLicenceRenewalSecretIDIsTheInstallationsContainer(t *testing.T) {
 	if got, want := licenceRenewalSecretID(licenceTestProject), "fugaro-project-aurora-licence-renewal-0e382f732fd21bbd"; got != want {
 		t.Errorf("the renewal secret container of %s is %q, want %q: K4.2's Terraform creates that container, and a derived name that moved is a write into one nobody reads", licenceTestProject, got, want)
 	}
+}
+
+// licenceRingPublished is whether this build's own keyring holds a key, read
+// once as the package's value: the fixtures swap licenceRing for a pair they
+// mint, so a test that asked later would be asking about a test's ring. The
+// ring is empty in the repository (.claude/rules/ee.md: a later task, S2.9,
+// publishes the production halves), and this is where a release that changes
+// that is caught.
+var licenceRingPublished = len(licenceRing) > 0
+
+// TestTheRenewalContainerIsCreatedBeforeTheRingIsPublished holds the order
+// S2.9 owes K4.2, which is the ground the container refusal stands on: `set`
+// tells a person to run `fugaro update` when the installation has no renewal
+// secret container, and that sentence is worth something only while `fugaro
+// update` is the command that creates one (CLAUDE.md: update is the whole
+// upgrade, and no release ships an operator step that is another command).
+//
+// Nothing creates that container today: K4.2's Terraform, the file
+// deploy/terraform/gcp/modules/installation/licence.tf and the installation
+// spec that feeds it, is not written yet. That is harmless exactly as long as
+// no key verifies — every verb refuses a key before it looks for a container —
+// and it stops being harmless the day the keyring is published: a valid key
+// with its secret then reaches a refusal that names a command which cannot
+// create the container, and the installation is stuck. So the gate is the
+// publication itself, and this test fails the release that ships it first.
+//
+// The scan looks for the logical name the container's id is derived from
+// (licenceRenewalSecretLogical) in the two places a container can be created
+// from: the installation's Terraform and the Go that fills its variables. A
+// name in a comment passes it, which is the fail-open direction: what it
+// catches is a cloud side that names the container nowhere at all.
+func TestTheRenewalContainerIsCreatedBeforeTheRingIsPublished(t *testing.T) {
+	found, read := updateNamesTheRenewalContainer(t)
+	if read == 0 {
+		t.Fatalf("the scan read no Terraform or Go under deploy/terraform and internal/infra, so it cannot tell whether `fugaro update` creates the container the licence commands write into")
+	}
+	if !licenceRingPublished {
+		return
+	}
+	if !found {
+		t.Errorf("this build's keyring holds a key and neither deploy/terraform nor internal/infra names %s: `fugaro licence set` refuses a key and its secret with \"run `fugaro update`\" when the container is missing, and a published ring is what makes that refusal reachable — K4.2 has to create the container in the same release that publishes the keyring, or the refusal names a command that cannot fix what it found", licenceRenewalSecretLogical)
+	}
+}
+
+// updateNamesTheRenewalContainer walks the cloud side of this repository for
+// the renewal container's logical name, and answers how many files it read.
+func updateNamesTheRenewalContainer(t *testing.T) (found bool, read int) {
+	t.Helper()
+	roots := []string{
+		filepath.Join("..", "..", "deploy", "terraform"),
+		filepath.Join("..", "..", "internal", "infra"),
+	}
+	for _, root := range roots {
+		err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			switch filepath.Ext(path) {
+			case ".tf", ".tfvars", ".go", ".json", ".yaml", ".yml":
+			default:
+				return nil
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			read++
+			found = found || strings.Contains(string(data), licenceRenewalSecretLogical)
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("reading the cloud side under %s: %v", root, err)
+		}
+	}
+	return found, read
 }
 
 // TestLicenceSetWritesTheProjectAndTheSecret is the happy path: a key read from
@@ -1060,6 +1152,164 @@ func TestLicenceSetRefusesASecretThatIsNotTheKeys(t *testing.T) {
 	}
 	if got := f.object(t).Raw; !bytes.Equal(got, before) {
 		t.Error("the refusal rewrote the project's object")
+	}
+}
+
+// TestLicenceSetOfTheSameTermIsTheKeyTheInstallationUses holds the reissue the
+// licence server mints with the term of the key it replaces: a seat change
+// reissues with the term's own end (design/key-signing-service.md section 5.3),
+// so the pasted key and the installed one are paid through the same day — and
+// the object holds the latest valid key (T26), decided for two of the same term
+// by the write that came last. A store that kept the older one would report a
+// change that did not happen, and the renewal would prove itself with the new
+// key's secret beside the old key's id, which the server refuses (403) — days
+// later, with the key that does apply one renewal closer to its end.
+//
+// The renewal is what reads the applied key back out: the body it sends carries
+// the id and the secret, and both must be the ones just set.
+func TestLicenceSetOfTheSameTermIsTheKeyTheInstallationUses(t *testing.T) {
+	f := newLicenceFixture(t)
+	first, firstSecret, _ := f.bundle(t)
+	f.seedSecretContainer(nil)
+	if _, _, err := f.exec(t, first+"\n"+firstSecret+"\n", "licence", "set"); err != nil {
+		t.Fatalf("licence set = %v", err)
+	}
+
+	reissue, reissueSecret, claims := f.bundle(t, func(c *licence.Claims) {
+		c.KeyID, c.Seats = "lk_test_k32_seats", 8
+	})
+	if _, _, err := f.exec(t, reissue+"\n"+reissueSecret+"\n", "licence", "set"); err != nil {
+		t.Fatalf("licence set of the reissue = %v", err)
+	}
+	obj := f.object(t)
+	if len(obj.Keys) != 2 || obj.Keys[1] != reissue {
+		t.Errorf("the project holds %d keys after the reissue, want the key it replaced and the reissue", len(obj.Keys))
+	}
+	view := f.status(t)
+	if view["state"] != string(licence.Active) || view["seats"] != float64(8) {
+		t.Errorf("licence status --json reads state %#v and seats %#v after the reissue, want active and 8: the key just set is the one the installation runs on", view["state"], view["seats"])
+	}
+
+	f.secrets.AllowAccess()
+	server := f.serveLicenceServer(t, nil)
+	if _, _, err := f.exec(t, "", "licence", "refresh"); err != nil {
+		t.Fatalf("licence refresh after the reissue = %v", err)
+	}
+	call := server.call(t, 0)
+	if call.KeyID != claims.KeyID {
+		t.Errorf("the renewal named key %q, want the reissue %q: the installation is renewing with the key it replaced", call.KeyID, claims.KeyID)
+	}
+	if call.RenewalSecret != reissueSecret {
+		t.Error("the renewal did not carry the secret the reissue renews with")
+	}
+}
+
+// TestLicenceSetRefusesAKeyTheInstallationWouldNotApply holds the other half of
+// the store's rule at the writer: a key whose term ends before the applied
+// key's is written to the object and never used (T26), so the set reports a
+// change that does not happen while the renewal secret written beside it takes
+// the renewal away from the key the installation does run on. It is refused
+// before either write, and neither the container nor the object moves.
+func TestLicenceSetRefusesAKeyTheInstallationWouldNotApply(t *testing.T) {
+	f := newLicenceFixture(t)
+	applied, appliedSecret, appliedClaims := f.bundle(t)
+	f.seedSecretContainer(nil)
+	if _, _, err := f.exec(t, applied+"\n"+appliedSecret+"\n", "licence", "set"); err != nil {
+		t.Fatalf("licence set = %v", err)
+	}
+	before := f.object(t).Raw
+
+	older, olderSecret, olderClaims := f.bundle(t, func(c *licence.Claims) {
+		c.KeyID, c.PaidThrough, c.IssuedAt = "lk_test_k32_older", f.now.Add(30*24*time.Hour), f.now.Add(-30*24*time.Hour)
+	})
+	out, errOut, err := f.exec(t, older+"\n"+olderSecret+"\n", "licence", "set")
+	if err == nil {
+		t.Fatal("a key the installation would never apply was installed")
+	}
+	if code := fcli.ExitCode(err); code != fcli.ExitUserError {
+		t.Errorf("the refusal exited %d, want %d: %v", code, fcli.ExitUserError, err)
+	}
+	for _, want := range []string{appliedClaims.KeyID, olderClaims.KeyID} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %q does not name %s: the person has both keys in front of them and the sentence has to say which one the installation runs on", err.Error(), want)
+		}
+	}
+	for _, text := range []string{out, errOut, err.Error()} {
+		if strings.Contains(text, older) || strings.Contains(text, olderSecret) {
+			t.Errorf("the refusal repeated the key or the secret it refused: %q", text)
+		}
+	}
+	if got := f.secrets.Latest(f.secretContainer()); string(got) != appliedSecret {
+		t.Error("the container's newest version is not the secret the applied key renews with: a secret was written for a key the installation does not run on")
+	}
+	if got := f.object(t).Raw; !bytes.Equal(got, before) {
+		t.Error("the refusal rewrote the project's object")
+	}
+}
+
+// TestLicenceSetReinstatesTheInstallationAfterARevocation is the recovery the
+// revoked-key refusal promises: the server revokes a leaked key and reissues it
+// under a new key_id with the term of the key it replaces, the installation is
+// Free until that reissue is set — and setting it has to be the change that
+// brings the installation back, not a no-op that leaves it on the revoked key.
+// `status` is what says so: it is the record the revocation lives in.
+func TestLicenceSetReinstatesTheInstallationAfterARevocation(t *testing.T) {
+	f := newLicenceFixture(t)
+	leaked, leakedSecret, leakedClaims := f.bundle(t)
+	f.seedSecretContainer(nil)
+	if _, _, err := f.exec(t, leaked+"\n"+leakedSecret+"\n", "licence", "set"); err != nil {
+		t.Fatalf("licence set = %v", err)
+	}
+	f.secrets.AllowAccess()
+	f.serveLicenceServer(t, func(keyservice.RenewalCall) (int, string) {
+		return http.StatusOK, `{"status":"` + keyservice.StatusRevoked + `"}`
+	})
+	if _, _, err := f.exec(t, "", "licence", "refresh"); err == nil {
+		t.Fatal("a revoked key was renewed")
+	}
+	revoked := f.status(t)
+	if revoked["revoked"] != true || revoked["state"] != string(licence.Expired) {
+		t.Fatalf("licence status --json reads revoked %#v state %#v after the server revoked the key, want true and expired", revoked["revoked"], revoked["state"])
+	}
+
+	// The reissue carries the term of the key it replaced, which is what the
+	// server mints for a leak: the same paid_through, a new key_id, its own
+	// renewal secret.
+	reissue, reissueSecret, reissueClaims := f.bundle(t, func(c *licence.Claims) {
+		c.KeyID = "lk_test_k32_reissue"
+	})
+	if _, _, err := f.exec(t, reissue+"\n"+reissueSecret+"\n", "licence", "set"); err != nil {
+		t.Fatalf("licence set of the reissue = %v", err)
+	}
+	back := f.status(t)
+	if back["revoked"] != false || back["state"] != string(licence.Active) {
+		t.Errorf("licence status --json reads revoked %#v state %#v after the reissue was set, want false and active: the reissue is what restores the installation", back["revoked"], back["state"])
+	}
+	if obj := f.object(t); len(obj.Keys) != 2 || !slices.Contains(obj.Keys, leaked) {
+		t.Errorf("the project holds %d keys after the reissue, want the revoked key beside it: nothing a revocation does deletes a key", len(obj.Keys))
+	}
+
+	// And the installation can renew again, with the reissue's id and secret:
+	// this is what the revoked key could not do.
+	successor, successorSecret, _ := f.bundle(t, func(c *licence.Claims) {
+		c.KeyID, c.PaidThrough, c.IssuedAt = "lk_test_k32_0003", f.now.Add(600*24*time.Hour), f.now.Add(300*24*time.Hour)
+	})
+	server := f.serveLicenceServer(t, func(keyservice.RenewalCall) (int, string) {
+		answer, err := json.Marshal(keyservice.Answer{Status: keyservice.StatusOK, Key: successor, RenewalSecret: successorSecret})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return http.StatusOK, string(answer)
+	})
+	if _, _, err := f.exec(t, "", "licence", "refresh"); err != nil {
+		t.Fatalf("licence refresh after the reissue = %v", err)
+	}
+	call := server.call(t, 0)
+	if call.KeyID != reissueClaims.KeyID {
+		t.Errorf("the renewal named key %q, want the reissue %q: the installation is still proving itself with the revoked key %s", call.KeyID, reissueClaims.KeyID, leakedClaims.KeyID)
+	}
+	if call.RenewalSecret != reissueSecret {
+		t.Error("the renewal did not carry the secret the reissue renews with")
 	}
 }
 

@@ -400,7 +400,11 @@ func openLicenceSecrets(ctx context.Context, lc *localcfg.Config) (*licenceSecre
 
 // licenceRenewalSecretID is the container K4.2's Terraform creates for the
 // installation's renewal secret, derived from the Fugaro project name exactly
-// as every other installation-wide container is.
+// as every other installation-wide container is. K4.2 is not written yet, so
+// nothing creates it: until it is, the keyring this build verifies with stays
+// empty (licenceRing), which is what keeps the refusal that names `fugaro
+// update` out of reach — the pair is held together by
+// TestTheRenewalContainerIsCreatedBeforeTheRingIsPublished.
 func licenceRenewalSecretID(fugaroProject string) string {
 	return gcp.ProjectSecretID(fugaroProject, licenceRenewalSecretLogical)
 }
@@ -457,10 +461,13 @@ func (s *licenceSecrets) latest(ctx context.Context) ([]byte, error) {
 
 // apiErr maps a Secret Manager failure to this command's own answer: a named
 // user error for the two an operator fixes at their own terminal — the
-// container is not there (Terraform creates it), and this identity may not
-// touch it — and otherwise the failure itself, redacted with the forms the
-// caller names (a server may repeat the payload it was sent). No branch carries
-// a value: the container's name is a name.
+// container is not there (Terraform creates it, K4.2, and the release that
+// publishes this build's keyring before that Terraform lands is failed by
+// TestTheRenewalContainerIsCreatedBeforeTheRingIsPublished rather than shipped
+// with a refusal that names a command which cannot create one), and this
+// identity may not touch it — and otherwise the failure itself, redacted with
+// the forms the caller names (a server may repeat the payload it was sent). No
+// branch carries a value: the container's name is a name.
 func (s *licenceSecrets) apiErr(op string, err error, values []string) error {
 	var ge *googleapi.Error
 	switch {
@@ -654,6 +661,35 @@ func licenceSet(cmd *cobra.Command, o *licenceSetOptions) error {
 	if !licenceSecretMatches(claims, bundle.secret) {
 		return fcli.UserErr("the renewal secret on line 2 is not the one key %s renews with: the key carries the digest of its own secret, which is what the licence server weighs a renewal against, so a pair these two lines name would be installed and would never renew — and nothing would say so until the next renewal, days later and possibly past the last window. Nothing was written: check line 2, which is the secret that came with the key, whole and on one line", safetext.Field(claims.KeyID))
 	}
+	store := project.New(cloud.RunsBucket())
+	// The key the installation would really run on, weighed by the store's own
+	// rule: the object holds the latest valid key (T26), so a paste whose term
+	// ends earlier than one already there is written to the object and never
+	// used, and a paste of the key the server has revoked brings nothing back.
+	// Both are refused before either write rather than reported after them,
+	// because the secret written here is the pasted key's: beside a key the
+	// installation does not run on, it would take the renewal away from the key
+	// it does. What `set` may never do is report a key while `status` reads
+	// another.
+	//
+	// A store this read cannot use is a refusal the store gives itself, and
+	// Install below answers it with what is wrong with the object; this has
+	// nothing to add to that and pre-empts nothing.
+	if applied, err := store.WouldApply(ctx, licenceNow(), licenceRing, licenceFirebaseProject(lc), []byte(bundle.key)); err == nil {
+		// free says the applied key's own state where the refusal names it: a
+		// revoked key is Free, and the person reading the sentence has to know
+		// that the key it names is not one that is working.
+		free := ""
+		if applied.Revoked {
+			free = ", and the licence server has revoked it, so the installation is Free"
+		}
+		switch {
+		case applied.Claims.KeyID != claims.KeyID || claims.PaidThrough.Before(applied.Claims.PaidThrough):
+			return fcli.UserErr("this installation applies key %s (paid through %s%s) and the key just pasted is key %s (paid through %s): the project keeps the latest valid key (T26), so a key whose term ends earlier than the applied key's is written to the object and never used — and the renewal secret written beside it would leave key %s unable to renew. Nothing was written: paste the key this installation runs on, or renew the key it holds (`fugaro licence refresh`)", safetext.Field(applied.Claims.KeyID), safetext.Field(applied.Claims.PaidThrough.UTC().Format(time.RFC3339)), free, safetext.Field(claims.KeyID), safetext.Field(claims.PaidThrough.UTC().Format(time.RFC3339)), safetext.Field(applied.Claims.KeyID))
+		case applied.Revoked:
+			return fcli.UserErr("key %s is the key this installation applies and the licence server has revoked it: a revoked key is Free however its term reads, and nothing here brings one back, so setting it again changes nothing and the renewal secret has not been written. A reissue is what restores everything (`fugaro licence set` with the key the licence server issues in its place)", safetext.Field(claims.KeyID))
+		}
+	}
 	// The secret is written before the key, and the key only after it landed: a
 	// key whose secret is not in the container is a key that cannot renew, and
 	// the other order would leave one behind on a failure between the two.
@@ -669,7 +705,7 @@ func licenceSet(cmd *cobra.Command, o *licenceSetOptions) error {
 			return err
 		}
 	}
-	if err := project.New(cloud.RunsBucket()).Install(ctx, []byte(bundle.key)); err != nil {
+	if err := store.Install(ctx, []byte(bundle.key)); err != nil {
 		if bundle.secret != "" {
 			// The secret landed and the key did not: the container is a version
 			// ahead of the project, and that is a state a person has to undo
