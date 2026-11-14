@@ -92,6 +92,16 @@ has both to do does both in a single ETag-guarded write. `fugaro project policy
 publish` builds its document through the same function, so the two doors cannot
 drift into two shapes of one node.
 
+What the publish writes is read and changed through `fugaro settings`, not by
+hand: `fugaro settings 'budget.*'` prints each key with the value a run gets,
+the layer that decided it and the built-in default, and `fugaro settings set
+budget.per_run_usd 5 --layer local` writes the value the next `fugaro update`
+publishes. `settings set` and `unset` never write the node themselves — every
+cloud write of this CLI is `fugaro update`'s, or the explicit door's — so a
+value the config states and the node does not carry yet reads as
+`unpublished` until that run has made it, which is what tells the operator an
+edit is still only local.
+
 A publish never touches the allow-list (`allow_repos`): it is the node's own,
 and re-seeding it is `--seed-repos` on the explicit door (P4 — removing an entry
 is how a repository is un-enrolled). And a node that already carries what the
