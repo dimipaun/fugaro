@@ -114,6 +114,29 @@ func TestFailureLineIsPrintedOnlyUnderALog(t *testing.T) {
 		}
 	})
 
+	t.Run("a failed plan-only run", func(t *testing.T) {
+		r := applyingRig(t)
+		r.script["plan"] = map[string]any{"exit": 1, "stderr": "Error: quota exceeded\n"}
+		r.save(t)
+		out, errOut, err := executeStdin(t, "", "update", "--plan-only")
+		if err == nil {
+			t.Fatalf("the plan failed, yet the run succeeded:\n%s%s", out, errOut)
+		}
+		// A run that only planned prints its stages as rows and opens no step, so
+		// the screen has no step line, no reason, no log's path and no command
+		// that resumes the run for this failure. main's line is the only place it
+		// is said (2026-11-14 review).
+		if line := topLevelLine(err); !strings.Contains(line, "quota exceeded") {
+			t.Errorf("the failed plan-only run printed no top-level line: %q", line)
+		}
+		if all := out + errOut; strings.Contains(all, "Something went wrong") {
+			t.Errorf("a plan-only run printed a failure block for a step it never opened:\n%s", all)
+		}
+		if !strings.Contains(newestLog(t, "update"), "quota exceeded") {
+			t.Errorf("the run's log lost the failure:\n%s", newestLog(t, "update"))
+		}
+	})
+
 	t.Run("a failure nothing printed keeps the top-level line", func(t *testing.T) {
 		if line := topLevelLine(errors.New("boom")); line != "fugaro: boom\n" {
 			t.Errorf("a plain error's top-level line is %q, want %q", line, "fugaro: boom\n")

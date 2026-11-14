@@ -77,11 +77,13 @@ func (r *initRun) ctx() context.Context {
 // this step and every one after it.
 //
 // In a managed project the confirmation is the gate's read of the two marks
-// (the ruling of 2026-11-01): the review screen is still printed — the owner's
-// own account of what is about to happen, which is what the screen is for —
-// and the ordinary steps go through, exactly as they do in a coding agent's
-// session the gate admitted. The screen is printed ONCE, as the question the
-// person answered was asked once.
+// (the ruling of 2026-11-01): the ordinary steps go through, exactly as they do
+// in a coding agent's session the gate admitted, and nobody is asked anything —
+// so the review is the run's own account of itself rather than something a
+// person reads before answering, and it goes to the log with the rest of that
+// account, coming back on the terminal under --verbose (reviewScreen). The
+// review is printed ONCE either way, as the question the person answered was
+// asked once.
 func (r *initRun) runCovers() (bool, error) {
 	rv := r.review
 	if rv == nil || r.o.planOnly || agentMarker(os.Getenv, r.stdinTerminal()) != "" || !initflow.CanConfirmRun(r.conditions()) {

@@ -1551,9 +1551,10 @@ func (r *initRun) stageDetail() io.Writer {
 // terminal, so main's top-level line would be the same failure a second time
 // (the owner's feedback of 2026-11-13). It keeps the log's own copy: what the
 // step printed is the reason cut to a clause, and the log holds it whole. It
-// answers for the error the account carries and no other — a run that failed
-// and then stopped for something else returns that something else untouched
-// (outcome, init_stages.go), because nothing printed it.
+// answers for the error the account carries and no other: a run that failed and
+// then stopped for something else returns that something else untouched, and so
+// does a run that only planned, whose account is rows and never a step (outcome,
+// init_stages.go) — nothing printed either one of them.
 func (r *initRun) failureShown(err error) error {
 	if err == nil || r.rep == nil || !r.rep.KeepsLog() {
 		return err

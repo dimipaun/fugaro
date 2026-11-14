@@ -431,7 +431,17 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 		// statement of how to unblock the run — a refusal's "needs a real
 		// terminal … or pass --yes" — so it reaches the screen like any other
 		// command's error (TestARefusalAfterAFailureStillSaysHowToUnblockIt).
+		//
+		// A run that only planned is neither: the loop prints its stages as rows
+		// and opens no step at all (record answers while it is executing, and
+		// only converge sets that), so its failure has no step line, no reason,
+		// no log's path and no command that resumes the run anywhere on the
+		// screen. Nothing printed it, so main's line is the only place it is
+		// said (TestFailureLineIsPrintedOnlyUnderALog/a_failed_plan-only_run).
 		_ = r.printResult()
+		if res.PlanOnly {
+			return res.Cause
+		}
 		return r.failureShown(res.Cause)
 	}
 	// D1553's self-flag, and it is here rather than beside markCreated above
