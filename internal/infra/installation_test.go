@@ -445,18 +445,21 @@ func TestCredentialsReviewJobAccountsDerivesTheReviewVariants(t *testing.T) {
 // failure internal/credsvc's own equality test
 // (TestReviewAccountsAreTheNamesProjectJobsDeploys) exists to prevent, one step
 // before it: where that one compares the service's derivation with the
-// deployer's set, this one holds the deployment's own table to the row the
+// deployer's set, this one holds the deployment's own table to the rows the
 // derivation has to grow for piece 2 of C1.
 //
-// The row is named once (implicitReviewRow), so the two sides cannot drift
-// apart by a spelling: the test asserts the table this run writes is exactly
-// that row for a project that has nothing else, and that the job the row names
-// is the job ProjectReviewJobs deploys — under the same name the service
-// derives a review's caller account from (credsvc.ReviewServiceAccountID over
-// the (profile, provider, account) triple).
+// The fixture records a repository of each provider, so there is one job per
+// provider (plan task RJ8, finding F6): the table is the whole set of them, in
+// the order the deployment writes it — (profile, provider, account), so
+// bitbucket before github. The rows are named once (implicitReviewRowOf), so
+// the two sides cannot drift apart by a spelling: the test asserts the table
+// this run writes is exactly those rows for a project that has nothing else, and
+// that the job each row names is the job ProjectReviewJobs deploys — under the
+// same name the service derives a review's caller account from
+// (credsvc.ReviewServiceAccountID over the (profile, provider, account) triple).
 func TestCredentialsReviewJobAccountsCarryTheImplicitJob(t *testing.T) {
 	lc := parseLC(t, implicitReviewLC())
-	want := []CredentialsReviewJob{implicitReviewRow()}
+	want := []CredentialsReviewJob{implicitReviewRowOf(bitbucketProvider), implicitReviewRowOf(githubProvider)}
 	rows, err := CredentialsReviewJobAccounts(lc)
 	if err != nil {
 		t.Fatal(err)
@@ -468,17 +471,18 @@ func TestCredentialsReviewJobAccountsCarryTheImplicitJob(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	row := implicitReviewRow()
-	job, ok := jobs[credsvc.ReviewJobName(row.Profile, row.Provider, row.Account)]
-	if !ok {
-		t.Fatalf("the deployment built %v, and the row %+v names a job nothing created: the service would admit an account no review ever runs as", sortedJobNames(jobs), row)
+	for _, row := range want {
+		job, ok := jobs[credsvc.ReviewJobName(row.Profile, row.Provider, row.Account)]
+		if !ok {
+			t.Fatalf("the deployment built %v, and the row %+v names a job nothing created: the service would admit an account no review ever runs as", sortedJobNames(jobs), row)
+		}
+		if got, want := job.ServiceAccount.AccountID, credsvc.ReviewServiceAccountID(row.Profile, row.Provider, row.Account); got != want {
+			t.Errorf("the account %s runs the job the row %+v names, and the service admits %s: a review caller is admitted by the account its job runs as", got, row, want)
+		}
 	}
-	if got, want := job.ServiceAccount.AccountID, credsvc.ReviewServiceAccountID(row.Profile, row.Provider, row.Account); got != want {
-		t.Errorf("the account %s runs the job the row %+v names, and the service admits %s: a review caller is admitted by the account its job runs as", got, row, want)
-	}
-	// And the spec carries it, under the key the module reads — the builder
+	// And the spec carries them, under the key the module reads — the builder
 	// filling a field the stage then drops is the failure the test above is
-	// about, and this is the same claim for this row.
+	// about, and this is the same claim for these rows.
 	image := "us-east5-docker.pkg.dev/proj-1234/fugaro-ghcr/dimipaun/fugaro-credentials:1.2.3@sha256:" + strings.Repeat("ab", 32)
 	svc, err := Credentials(lc, image, nil)
 	if err != nil {
@@ -489,7 +493,7 @@ func TestCredentialsReviewJobAccountsCarryTheImplicitJob(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !slices.Equal(svc.ReviewJobAccounts, want) {
-		t.Errorf("credentials_service.review_job_accounts = %+v, want the implicit row %+v", svc.ReviewJobAccounts, want)
+		t.Errorf("credentials_service.review_job_accounts = %+v, want the implicit rows %+v", svc.ReviewJobAccounts, want)
 	}
 }
 

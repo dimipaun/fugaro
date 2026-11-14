@@ -1165,6 +1165,234 @@ func TestProjectJobOfPolicySeesTheVariant(t *testing.T) {
 	}
 }
 
+// implicitReviewJobName is the name of an installation's implicit default
+// review-only job of provider, computed here the way the deployer computes it
+// (internal/infra's ImplicitReviewJobName over the deployer's implicit profile
+// name and the default account's variant segment). It is written through
+// credsvc.ReviewJobName, the deployer's own spelling of a review variant's
+// name, because internal/runner may not import the deployer: what this test
+// asks is that the runner answers for the name the deployer writes, and one
+// statement of it is enough for that.
+func implicitReviewJobName(provider string) string {
+	return credsvc.ReviewJobName(projectpolicy.DefaultProfileName, provider, config.ReviewVariantAccount(""))
+}
+
+// implicitReviewRun is a review-marked run in an installation's implicit
+// review-only job of provider: the execution the platform reported is that
+// job's computed name, the run's own task names the pull request it reviews,
+// and the policy is the caller's, nil with found false for a project that has
+// published none.
+//
+// The slug is the repository's under provider and not github's, because this
+// job is the one a repository no shared job serves reaches: every Bitbucket
+// review is launched onto it, and the runner has to place one whatever provider
+// its slug is (the provider of a run in this job is the job's own, read from
+// the name — and the name's provider is the one the launch resolved from the
+// repository).
+func implicitReviewRun(t *testing.T, provider, repo string, p *projectpolicy.Policy, found bool) *run {
+	t.Helper()
+	slug := identitySlug(t, provider, repo)
+	spec := &task.Spec{Version: 1, RunID: "20261114-101010-abcd", Repo: repo, Ref: "main",
+		Workflow: identityWorkflow, Mode: recipe.ModeReview, ReviewPRs: []int{7}, Task: "Review pull request #7"}
+	return identityRun(t, implicitReviewJobName(provider), slug, spec, p, found)
+}
+
+// reviewOnlyPolicy is a project's published policy with no profiles and the
+// caller's allow_repos: the node an installation that deploys the implicit
+// review jobs has until its owner declares a profile.
+func reviewOnlyPolicy(allow ...string) *projectpolicy.Policy {
+	return &projectpolicy.Policy{Version: projectpolicy.Version, AllowRepos: allow}
+}
+
+// TestImplicitReviewJobIsPlaced (RJ8, finding F6): a review of a repository no
+// shared coding job serves — every Bitbucket one, and every repository of a
+// project that has published no profile — is launched onto the installation's
+// implicit review-only job of the repository's provider, and the run in it is
+// placed rather than halted. The name is the deployer's own spelling
+// (implicitReviewJobName, which internal/infra's ImplicitReviewJobName computes
+// too), so the launch resolution and the placement are the same name by
+// construction rather than by a comparison one of them could get wrong: what
+// the golden plan pins on the deployer's side is that the job it deploys carries
+// the name credsvc.ReviewJobName computes.
+//
+// The three policies are the three states an installation that has deployed the
+// job can be in, and the last two are why the arrival is not the policy's: the
+// job is deployed from the installation's own local config, so a review of a
+// project that published nothing must still be placed, while a policy that
+// published profiles still decides which repositories its own lists admit.
+//
+// Mutation (run, restored): drop the loop over implicitReviewCandidates from
+// matchJobName. Every case halts with cannotPlaceJob. Mutation (run, restored):
+// read the admission out of a profile (the coding arm's rule) rather than the
+// project's allow_repos for an implicit job. The no-profiles case is refused
+// for a profile the policy does not define.
+func TestImplicitReviewJobIsPlaced(t *testing.T) {
+	for _, provider := range jobProviderKinds {
+		t.Run(provider, func(t *testing.T) {
+			repo := "acme/app"
+			canonical := provider + "/" + repo
+			for _, tc := range []struct {
+				name  string
+				what  string
+				p     *projectpolicy.Policy
+				found bool
+			}{
+				{"a policy that defines no profile", "the state the implicit job was built for: no profile exists to be launched onto, and the project's own allow-list is the only one there is", reviewOnlyPolicy(provider + "/acme/*"), true},
+				{"no policy at all", "an installation deploys the job from its local config, so a review may arrive before the first publish", nil, false},
+				{"a policy whose profiles name other jobs", "a profile of another provider's jobs neither places this run nor admits it", func() *projectpolicy.Policy {
+					p := policyOf(map[string]config.JobProfile{"other": profileOf(otherProviderKind(provider))})
+					p.AllowRepos = []string{provider + "/acme/*"}
+					return p
+				}(), true},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					r := implicitReviewRun(t, provider, repo, tc.p, tc.found)
+					profile, gotProvider, account, err := r.jobIdentity(context.Background())
+					if err != nil {
+						t.Fatalf("jobIdentity of the implicit review job %s = %v: %s", implicitReviewJobName(provider), err, tc.what)
+					}
+					if profile != projectpolicy.DefaultProfileName || gotProvider != provider || account != config.ReviewVariantAccount("")+config.ReviewVariantSuffix {
+						t.Fatalf("jobIdentity = %q/%q/%q, want %s/%s/%s", profile, gotProvider, account,
+							projectpolicy.DefaultProfileName, provider, config.ReviewVariantAccount("")+config.ReviewVariantSuffix)
+					}
+					if !r.job.Implicit || r.job.Class != classReview {
+						t.Fatalf("the run adopted %+v: want the implicit review-only job's own triple", r.job)
+					}
+					if err := r.admissionCheck(context.Background()); err != nil {
+						t.Fatalf("admissionCheck = %v: the project's allow-list admits a review of %s (%s)", err, repo, tc.what)
+					}
+				})
+			}
+
+			// And the allow-list is a gate: a project that admits another
+			// repository does not admit this one, and the refusal names it. It
+			// is the project's list and not a profile's, which is the half a
+			// review job cannot answer any other way (the job no profile
+			// defines has no profile admission to fail).
+			r := implicitReviewRun(t, provider, repo, reviewOnlyPolicy(provider+"/acme/other"), true)
+			err := r.admissionCheck(context.Background())
+			if err == nil {
+				t.Fatalf("a review of %s was admitted by an allow-list that names only %s/acme/other", canonical, provider)
+			}
+			for _, want := range []string{canonical, provider + "/acme/other", "allow_repos", "The run stops"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal %q lacks %q", err, want)
+				}
+			}
+		})
+	}
+}
+
+// otherProviderKind is a provider kind other than kind: the fixture profile of
+// the third case above pins it, so the profile its policy defines can never be
+// the job the run is in, whatever kind the run is for.
+func otherProviderKind(kind string) string {
+	for _, k := range jobProviderKinds {
+		if k != kind {
+			return k
+		}
+	}
+	return kind
+}
+
+// TestACodingRunIsNotPlacedInTheImplicitReviewJob (RJ8, and the mutation check
+// the plan calls RJ2's): the class rule of a project job's variant, on the job
+// no profile defines. The implicit job's container is the review container —
+// no App key, no Claude token, a read-only installation token from the
+// credentials service — so a run that is not a review may not adopt its
+// identity however it got there, and the class is the run's own marker and the
+// matched candidate and never the name's suffix read back out.
+//
+// The second half is the same rule in the direction a review could be sent
+// wrong: a review in the implicit job is placed (the case above), and the
+// name is not a name a coding run of any profile is admitted to.
+//
+// Mutation (run, restored): match the implicit names for every run rather than
+// asking the class. The coding run below is admitted, and a container that
+// holds no credential an ordinary run may use reports itself as a project job.
+func TestACodingRunIsNotPlacedInTheImplicitReviewJob(t *testing.T) {
+	for _, provider := range jobProviderKinds {
+		t.Run(provider, func(t *testing.T) {
+			slug := identitySlug(t, provider, "acme/app")
+			spec := &task.Spec{Version: 1, RunID: "20261114-101010-abcd", Repo: "acme/app", Ref: "main",
+				Workflow: identityWorkflow, Task: "Add a feature"}
+			p := &projectpolicy.Policy{Version: projectpolicy.Version, AllowRepos: []string{provider + "/acme/*"}}
+			r := identityRun(t, implicitReviewJobName(provider), slug, spec, p, true)
+			_, _, _, err := r.jobIdentity(context.Background())
+			if err == nil {
+				t.Fatalf("a coding run was placed in the implicit review-only job %s", implicitReviewJobName(provider))
+			}
+			for _, want := range []string{implicitReviewJobName(provider), "review-only variant", "is not a review", "The run stops"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal %q lacks %q", err, want)
+				}
+			}
+			if _, project := r.projectJob(); project {
+				t.Fatal("a coding run adopted the implicit review job's identity")
+			}
+		})
+	}
+}
+
+// TestTheImplicitReviewNameYieldsToAProfile (RJ8, the collision): a profile the
+// published policy defines under the implicit job's own name — the default
+// profile name, serving no account, is exactly the name internal/infra composes
+// for the implicit job of its provider — is the authority on it, on both sides.
+// The deployer deploys the profile's variant and suppresses the implicit
+// emission (internal/infra's implicitReviewVariant), so the job of that name is
+// the profile's, and the runner must place a run in it as the profile's
+// candidate: an implicit triple here would read the project's allow_repos where
+// the profile's own list is the gate, which is the narrowing a repository's own
+// fugaro.yaml selection is not allowed to undo (design §4.1).
+//
+// The two lists are the whole of the difference, and the second case is the
+// half that proves the first was not vacuous: the profile admits one repository
+// of the fixture's project and the project admits both.
+//
+// Mutation (run, restored): match the implicit candidates before the policy's.
+// The implicit triple is adopted, the admission falls back to the project's
+// list, and the repository the profile does not admit is admitted.
+func TestTheImplicitReviewNameYieldsToAProfile(t *testing.T) {
+	const repo = "acme/app"
+	pr := profileOf("github")
+	pr.AllowRepos = []string{"github/acme/other"}
+	p := policyOf(map[string]config.JobProfile{projectpolicy.DefaultProfileName: pr})
+	p.AllowRepos = []string{"github/acme/*"}
+	job := implicitReviewJobName("github")
+	if gcp.ProjectJobName(projectpolicy.DefaultProfileName, "github", reviewVariantAccount("")) != job {
+		t.Fatalf("the fixture's job %s is not the name the implicit candidates compute: this test would not be about a collision", job)
+	}
+
+	for _, tc := range []struct {
+		name string
+		repo string
+		want bool
+	}{
+		{"the repository the profile admits", "acme/other", true},
+		{"a repository only the project admits", repo, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := implicitReviewRun(t, "github", tc.repo, p, true)
+			err := r.admissionCheck(context.Background())
+			if !tc.want {
+				if err == nil {
+					t.Fatalf("a review of %s was admitted by the profile's own list", tc.repo)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("admissionCheck = %v", err)
+			}
+			if r.job.Implicit {
+				t.Errorf("the run adopted %+v: the name is one the published policy computes, so it is the profile's own job and its own list is the gate", r.job)
+			}
+			if r.job.Profile != projectpolicy.DefaultProfileName || r.job.Provider != "github" || r.job.Account != reviewVariantAccount("") {
+				t.Errorf("the run adopted %+v, want the profile's own review variant", r.job)
+			}
+		})
+	}
+}
+
 // clampConfigYAML is a repository that names no timeouts, which is the shape an
 // installation carries when it takes a release's new defaults without editing
 // its config: the engine's defaults apply, and this workflow's total is

@@ -272,28 +272,33 @@ func ProjectJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]Pr
 // reach no task of the design names. reviewVariant says what stays in its
 // environment.
 //
-// Beside the variants the coding set derives, the set holds the ONE implicit
-// default review job an installation with the credentials service on has
-// whether or not it declares a profile (implicitReviewVariant, the owner's
-// requirement of 2026-11-13): a project that publishes no profiles deploys no
-// shared coding job, so no variant above covers it, and `fugaro review --pr N`
-// would have nothing to run a review on for any of its repositories. It is a
-// job of the project rather than of a profile — the credentials service pairs
-// a review by the repository and the policy's admissions
-// (credsvc.ReviewJobAccountsFor), not by the job it ran on — so one job
-// serves every repository the service admits.
+// Beside the variants the coding set derives, the set holds the implicit
+// default review job of each provider ImplicitReviewProviders names, which an
+// installation with the credentials service on has whether or not it declares a
+// profile (implicitReviewVariant, the owner's requirement of 2026-11-13 for
+// github and of 2026-11-14 for bitbucket): a project that publishes no profiles
+// deploys no shared coding job, so no variant above covers it, and
+// `fugaro review --pr N` would have nothing to run a review on for any of its
+// repositories. Each is a job of the project rather than of a profile — the
+// credentials service pairs a review by the repository and the policy's
+// admissions (credsvc.ReviewJobAccountsFor), not by the job it ran on — so one
+// job per provider serves every repository of that provider the service admits.
 func ProjectReviewJobs(lc *localcfg.Config, bucket string, vertex bool) (map[string]ProjectJob, error) {
 	coding, err := ProjectJobs(lc, bucket, vertex)
 	if err != nil {
 		return nil, err
 	}
-	out := make(map[string]ProjectJob, len(coding)+1)
+	out := make(map[string]ProjectJob, len(coding)+len(ImplicitReviewProviders))
 	for _, j := range coding {
 		if err := addReviewVariant(out, coding, reviewVariant(lc, j)); err != nil {
 			return nil, err
 		}
 	}
-	if v, ok := implicitReviewVariant(lc, coding, bucket, vertex); ok {
+	for _, provider := range ImplicitReviewProviders {
+		v, ok := implicitReviewVariant(lc, coding, bucket, vertex, provider)
+		if !ok {
+			continue
+		}
 		if err := addReviewVariant(out, coding, v); err != nil {
 			return nil, err
 		}
@@ -403,15 +408,14 @@ func reviewVariant(lc *localcfg.Config, j ProjectJob) ProjectJob {
 }
 
 // ImplicitReviewProfile is the profile segment of the installation's implicit
-// default review-only job (implicitReviewVariant): the ONE review job a project
-// has whether or not it declares a profile, deployed for the default Claude
-// account on the github provider. (profile, provider, account) is what the
-// credentials service admits a review caller by, so the three segments are the
-// row this deployer writes into the service's own table and the one piece 2 of
-// C1 derives the service's admitted set from, and they are named here rather
-// than spelled twice: the provider is githubProvider and the account is
-// config.DefaultClaudeAccount, the account a review variant's own name spells
-// "default" for (config.ReviewVariantAccount).
+// default review-only jobs (implicitReviewVariant): the ONE review job a project
+// has per provider whether or not it declares a profile, deployed for the
+// default Claude account. (profile, provider, account) is what the credentials
+// service admits a review caller by, so the three segments are the row this
+// deployer writes into the service's own table and the one piece 2 of C1
+// derives the service's admitted set from, and they are named here rather than
+// spelled twice: the account is config.DefaultClaudeAccount, the account a
+// review variant's own name spells "default" for (config.ReviewVariantAccount).
 //
 // It is projectpolicy.DefaultProfileName, the profile a workflow that names
 // none runs on: the job serves the repositories of a project that declares no
@@ -419,18 +423,38 @@ func reviewVariant(lc *localcfg.Config, j ProjectJob) ProjectJob {
 // profiles are all Bitbucket ones has no profile that could name it either.
 const ImplicitReviewProfile = projectpolicy.DefaultProfileName
 
-// ImplicitReviewJobName is that job's name: the variant of the no-account job of
-// ImplicitReviewProfile on the github provider, which is the name
-// implicitReviewVariant deploys the job under — reviewVariant over the twin it
-// builds there, whose account is the axis's empty one, which
+// ImplicitReviewProviders are the provider kinds an installation deploys an
+// implicit default review-only job for, in the order ProjectReviewJobs builds
+// them: the two kinds config.Providers carries.
+//
+// It is exported because the runner's own placement set has to be the same
+// kinds and cannot be computed from this package (internal/infra imports
+// internal/runner for runner.SecretEnvsVar, so the arrow cannot be turned
+// round): internal/runner's projectjob.go adds one implicit review candidate per
+// jobProviderKinds entry, and a test beside it holds the two lists equal — a
+// kind on one list and not the other is a job deployed that no run may be placed
+// in, or a name the runner places that no installation deployed.
+//
+// The github job is the owner's requirement of 2026-11-13; the Bitbucket one is
+// the owner's word of 2026-11-14 (D2383, D2385). D2383 answered that Bitbucket
+// review needs no workspace token in particular — the proxy serves each request
+// with the narrowest token covering the repository — so a review job that holds
+// no token at all serves a Bitbucket project exactly as it serves a github one.
+var ImplicitReviewProviders = []string{githubProvider, bitbucketProvider}
+
+// ImplicitReviewJobName is the name of the implicit default review-only job of
+// provider: the variant of the no-account job of ImplicitReviewProfile on it,
+// which is the name implicitReviewVariant deploys the job under — reviewVariant
+// over the twin it builds there, whose account is the axis's empty one, which
 // config.ReviewVariantAccount spells "default".
 //
-// It is named for the reader that has the installation's own record in hand and
-// not the config: CarriedProjectReviewJobs finds the job by this name in the
-// tfvars a run deployed it into, and it is the same name the deployment derives
-// rather than a second spelling of it.
-func ImplicitReviewJobName() string {
-	return credsvc.ReviewJobName(ImplicitReviewProfile, githubProvider, config.ReviewVariantAccount(""))
+// It is named for the readers that have the installation's own record or config
+// in hand and not the job itself: CarriedProjectReviewJobs finds the job by this
+// name in the tfvars a run deployed it into, and internal/cli's
+// implicitReviewJobFor resolves a review onto it, and it is the same name the
+// deployment derives rather than a second spelling of it.
+func ImplicitReviewJobName(provider string) string {
+	return credsvc.ReviewJobName(ImplicitReviewProfile, provider, config.ReviewVariantAccount(""))
 }
 
 // implicitReviewJobTimeout is the task timeout of the implicit default review
@@ -442,21 +466,22 @@ func ImplicitReviewJobName() string {
 // default is.
 const implicitReviewJobTimeout = 3 * time.Hour
 
-// implicitReviewVariant is the installation's implicit default review-only job:
-// the review job a project has with no profile of its own, so that
-// `fugaro review --pr N` can run on any GitHub project with no profile to
-// declare and no policy to publish first (the owner's requirement of
-// 2026-11-13). ok is false when the installation deploys none, which is the
-// ordinary answer for every installation that is not the case above.
+// implicitReviewVariant is the installation's implicit default review-only job
+// for provider: the review job a project has with no shared job of its own on
+// that provider, so that `fugaro review --pr N` can run on any of its
+// repositories with no profile to declare and no policy to publish first (the
+// owner's requirement of 2026-11-13 for github, and the owner's word of
+// 2026-11-14 for bitbucket). ok is false when the installation deploys none for
+// that provider, which is the ordinary answer for most of them.
 //
-// This is the DEPLOYMENT half of that requirement, and the half C1 lands first:
-// the job, its own service account and the row the credentials service admits a
-// review caller by are all written here. The half that resolves a review onto it
-// is the launcher's, and it follows (C1's piece 3): internal/cli's reviewJobFor
-// refuses a launch whose repository resolved no shared project job even with
-// this job deployed, and its own sentence for that case names a project that has
-// published no profiles. Nothing has to change for this job to be deployed, and
-// no launch reaches it until that half lands.
+// This is the DEPLOYMENT half of that requirement: the job, its own service
+// account and the row the credentials service admits a review caller by are all
+// written here. The half that resolves a review onto it is the launcher's
+// (internal/cli's implicitReviewJobFor), which reads the job back out of this
+// same composition — so the two cannot disagree about which job a review runs
+// on, and a config this function deploys no job for is a launch the launcher
+// refuses with the installation named rather than a name Cloud Run would answer
+// 404 for.
 //
 // It exists because a review runs on a review-only variant and on nothing else:
 // a project that publishes no profiles deploys no shared coding job, so there
@@ -473,36 +498,54 @@ const implicitReviewJobTimeout = 3 * time.Hour
 //     token and its reviewer's model calls both come from the service, and a
 //     project without one has nothing for the job to fetch anything from —
 //     checkReviewService refuses that launch before it looks for a job.
+//   - The provider's own fact, which is what a job of that provider needs to run
+//     and no more. A github job runs on providers.EnvGitHubAppID and the module
+//     refuses one without it, so the gate is a single recorded Github App ID
+//     (recordedGitHubAppID): an installation that records none — or two, which
+//     recordedGitHubAppID reports as an error — gets no implicit github job. A
+//     Bitbucket job carries no provider variable at all: its git credential is
+//     the credentials service's, of whichever type covers the repository (D2383
+//     — the job holds no token), and the service is what the address reviewVariant
+//     adds names, so its gate is only that the installation has a Bitbucket
+//     repository for the job to serve (recordedBitbucketRepo). Neither gate is
+//     ever a refusal: this job is deployed for nobody who asked for it, and it
+//     must never be the reason an update that converges today stops converging.
 //   - No coding job whose review variant IS this job. The gate is the collision
 //     itself (the name and the service account addReviewVariant refuses a
 //     deployment on), and it is the same predicate for the same reason: every
 //     profile's accounts carry config.ProjectJobAccounts' empty segment, so a
-//     github coding job holds an entry whose variant is this job's own triple
-//     (ImplicitReviewProfile, github, config.ReviewVariantAccount's "default")
-//     when — and only when — the profile it belongs to is ImplicitReviewProfile.
-//     A github profile under any other name does NOT suppress the job, and that
-//     is deliberate rather than an oversight: suppressing it there would take
-//     the job out of the set for an installation that already deploys it, and
-//     the plan of the next update would carry its delete — which
+//     coding job of this provider holds an entry whose variant is this job's own
+//     triple (ImplicitReviewProfile, provider, config.ReviewVariantAccount's
+//     "default") when — and only when — the profile it belongs to is
+//     ImplicitReviewProfile. A profile under any other name does NOT suppress the
+//     job, and that is deliberate rather than an oversight: suppressing it there
+//     would take the job out of the set for an installation that already deploys
+//     it, and the plan of the next update would carry its delete — which
 //     RefuseProjectJobDeletes stops the whole update on, with "restore the
 //     profile as it was" as the only way out. Adding a profile is an ordinary
 //     act, so the job stays and the profile's own variants are added beside it.
-//   - A single Github App ID recorded (recordedGitHubAppID): a github job runs
-//     on providers.EnvGitHubAppID and the module refuses a job without it, so an
-//     installation that records none — or two, which recordedGitHubAppID reports
-//     as an error — gets no implicit job rather than a refusal: this job is
-//     deployed for nobody who asked for it, and it must never be the reason an
-//     update that converges today stops converging.
-func implicitReviewVariant(lc *localcfg.Config, coding map[string]ProjectJob, bucket string, vertex bool) (ProjectJob, bool) {
+func implicitReviewVariant(lc *localcfg.Config, coding map[string]ProjectJob, bucket string, vertex bool, provider string) (ProjectJob, bool) {
 	if lc.CredentialsService == nil {
 		return ProjectJob{}, false
 	}
-	appID, err := recordedGitHubAppID(lc)
-	if err != nil || appID == "" {
+	env := projectJobEnv(lc, bucket, vertex)
+	switch provider {
+	case githubProvider:
+		appID, err := recordedGitHubAppID(lc)
+		if err != nil || appID == "" {
+			return ProjectJob{}, false
+		}
+		env[providers.EnvGitHubAppID] = appID
+	case bitbucketProvider:
+		if !recordedBitbucketRepo(lc) {
+			return ProjectJob{}, false
+		}
+	default:
+		// A kind this deployer deploys no implicit job for: ImplicitReviewProviders
+		// is the list, and a provider added to config.Providers is not on it
+		// until it is named there.
 		return ProjectJob{}, false
 	}
-	env := projectJobEnv(lc, bucket, vertex)
-	env[providers.EnvGitHubAppID] = appID
 	// The variant of the no-account job the default profile would have if the
 	// project declared one, and a coding job is not deployed for it: reviewVariant
 	// is what turns this into the review job, so the four things that make a
@@ -510,12 +553,12 @@ func implicitReviewVariant(lc *localcfg.Config, coding map[string]ProjectJob, bu
 	// address and no Vertex grant) are stated in one place and not twice. Its
 	// bucket and token conditions are the installation's own, which is what the
 	// retitling in reviewVariant derives the variant's from.
-	saID := gcp.ProjectServiceAccountID(ImplicitReviewProfile, githubProvider, "")
+	saID := gcp.ProjectServiceAccountID(ImplicitReviewProfile, provider, "")
 	twin := ProjectJob{
 		Profile:        ImplicitReviewProfile,
-		Provider:       githubProvider,
-		Job:            gcp.ProjectJobName(ImplicitReviewProfile, githubProvider, ""),
-		ServiceAccount: ServiceAccount{AccountID: saID, DisplayName: gcp.ProjectSADisplayName(ImplicitReviewProfile, githubProvider, "")},
+		Provider:       provider,
+		Job:            gcp.ProjectJobName(ImplicitReviewProfile, provider, ""),
+		ServiceAccount: ServiceAccount{AccountID: saID, DisplayName: gcp.ProjectSADisplayName(ImplicitReviewProfile, provider, "")},
 		Image:          lc.BaseImage(config.BaseKind),
 		CPU:            strconv.Itoa(config.DefaultCPU),
 		Memory:         config.DefaultMemory,
@@ -563,6 +606,15 @@ func addProjectJob(out map[string]ProjectJob, j ProjectJob) error {
 // holds). A Bitbucket profile is skipped above, so it is also the only one a project
 // job is ever built for.
 const githubProvider = "github"
+
+// bitbucketProvider is the other kind config.Providers carries. No shared CODING
+// job is ever built for it (SharedJobProvider): the reason a Bitbucket
+// repository stays on the per-repository path is that a Bitbucket credential
+// cannot be scoped to one project's repositories, and a review-only job holds no
+// credential at all — it takes its git token and its model credential from the
+// credentials service (O1) — so that reason does not reach it, and it is the
+// second kind ImplicitReviewProviders names.
+const bitbucketProvider = "bitbucket"
 
 // projectJobGitHubAppID is the GitHub App ID every project job carries in its
 // environment, resolved from the installation's own configuration (owner
@@ -626,6 +678,36 @@ func recordedGitHubAppID(lc *localcfg.Config) (string, error) {
 		}
 	}
 	return id, nil
+}
+
+// recordedBitbucketRepo reports whether the local config records a Bitbucket
+// repository, which is the whole of what the implicit Bitbucket review job's
+// deployment is gated on.
+//
+// The job carries no Bitbucket token and no provider variable: its git
+// credential is the credentials service's, of whichever type covers the
+// repository (D2383 — the proxy serves each request with the narrowest covering
+// token), and the job's own environment names the service and nothing else. So
+// the fact the deployment needs is not a credential's, which this deployer
+// cannot read in any case (the bundle is the operator's, read by the
+// installation stage under the operator's own identity), but whether the
+// installation has a repository for the job to serve at all. A project whose
+// repositories are all GitHub ones gets no Bitbucket job, exactly as a project
+// that records no GitHub App ID gets no github one.
+//
+// The provider is read from the entry, the way recordedGitHubAppID reads it: an
+// entry that names none is a repository whose kind only its own fugaro.yaml
+// states, and a job deployed on that silence would be a job for a repository
+// this deployer cannot name. `fugaro update --repo` writes the field from the
+// checkout's own document (init.go's writeRepoConfig), so an onboarded
+// repository carries it.
+func recordedBitbucketRepo(lc *localcfg.Config) bool {
+	for _, name := range slices.Sorted(maps.Keys(lc.Repos)) {
+		if lc.Repos[name].Provider == bitbucketProvider {
+			return true
+		}
+	}
+	return false
 }
 
 // SharedJobProvider reports whether a shared project job serves that git

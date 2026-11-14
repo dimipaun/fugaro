@@ -787,18 +787,21 @@ func (e *cloudEnv) proxyGate(ctx context.Context, slug string, spec *task.Spec, 
 	return checkImageSince(ctx, e, slug, spec, kind, proxySince, subject, knows, "", warn)
 }
 
-// proxiedRepo is whether the run this launch starts is a proxied one: the
-// installation's local config carries the credentials service, the repository
-// is a Bitbucket one, the published node admits it with proxy: true, and the
-// launch hands the service's address to the job it starts. The kind is
-// derived from the pair the run itself trusts (the slug it is stored under and
-// the repository the task names), never from the local config's own provider,
-// as launchPolicyGates does for the allow-list.
+// nodeBrokersBitbucket is the published node's own answer to whether this
+// repository's Bitbucket access is brokered: the installation carries the
+// credentials service, the repository is a Bitbucket one, and the node admits
+// it with proxy: true (G15's one source — the document the credentials service
+// itself reads when a job asks it for the token).
 //
-// Every unreadable or absent answer is a "no": a read that failed, or a node
-// nothing published, leaves the launch to the gates that own those refusals
-// (launchPolicyGates words them, and cascadeLaunchRefusal the read's own).
-func (e *cloudEnv) proxiedRepo(ctx context.Context, slug string, spec *task.Spec) bool {
+// It is the half of proxiedRepo that reads documents, named for the second
+// caller that needs exactly it and no more: a review launched onto the
+// installation's implicit review-only job, which mounts no Bitbucket token and
+// cannot mount one, is servable only where the service will forward the token
+// for this repository (internal/cli's implicitReviewJobFor). Asking the
+// launch's own question there instead would refuse a repository whose
+// per-repository job is not handed the service's address while the implicit
+// review job always is, which is a launch that would have worked.
+func (e *cloudEnv) nodeBrokersBitbucket(ctx context.Context, slug string, spec *task.Spec) bool {
 	if e.lc == nil || e.lc.CredentialsService == nil || e.lc.CredentialsService.URL == "" {
 		return false
 	}
@@ -814,7 +817,21 @@ func (e *cloudEnv) proxiedRepo(ctx context.Context, slug string, spec *task.Spec
 	if err != nil {
 		return false
 	}
-	if !projectpolicy.AdmitRepo(p.BitbucketToken.AllowRepos, canonical) {
+	return projectpolicy.AdmitRepo(p.BitbucketToken.AllowRepos, canonical)
+}
+
+// proxiedRepo is whether the run this launch starts is a proxied one: the
+// published node brokers this repository (nodeBrokersBitbucket), and the launch
+// hands the service's address to the job it starts. The kind is derived from
+// the pair the run itself trusts (the slug it is stored under and the
+// repository the task names), never from the local config's own provider, as
+// launchPolicyGates does for the allow-list.
+//
+// Every unreadable or absent answer is a "no": a read that failed, or a node
+// nothing published, leaves the launch to the gates that own those refusals
+// (launchPolicyGates words them, and cascadeLaunchRefusal the read's own).
+func (e *cloudEnv) proxiedRepo(ctx context.Context, slug string, spec *task.Spec) bool {
+	if !e.nodeBrokersBitbucket(ctx, slug, spec) {
 		return false
 	}
 	// The last question is asked of the function that answers it for the

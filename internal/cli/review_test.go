@@ -31,6 +31,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // reviewCLI runs the review command through a real root, so the persistent
@@ -992,5 +993,259 @@ func TestFixBriefBuildsTheBriefForFixFirst(t *testing.T) {
 		if !strings.Contains(spec.Task, want) {
 			t.Errorf("the fix round's brief does not carry %q:\n%s", want, spec.Task)
 		}
+	}
+}
+
+// bitbucketReviewClaim is the repository the RJ8 launcher tests launch a review
+// for, and the one the fixture's local config records beside its GitHub ones.
+const bitbucketReviewClaim = "acme/bb"
+
+// bitbucketReviewPolicy is the fixture's published policy with the Bitbucket
+// repository admitted to the project: the profile and the accounts block stay
+// their own (a project's allow_repos is the gate a per-repository launch — and
+// the implicit review job's own admission — reads, and the profile is not the
+// repository's to be launched on in any case).
+//
+// Its bitbucket_token block is what makes the launch servable at all: the
+// implicit review-only job mounts no token, so the review is brokered or it is
+// refused (implicitReviewJobFor's nodeBrokersBitbucket arm), and a policy that
+// admits the repository without the proxy switch is the state
+// bitbucketReviewPolicyUnbrokered spells for the refusal's own test.
+func bitbucketReviewPolicy() string {
+	widened := strings.Replace(projectJobAccountsPolicy,
+		`"allow_repos":["github/acme/*"]`, `"allow_repos":["github/acme/*","bitbucket/acme/*"]`, 1)
+	return strings.Replace(widened, `{"version":5,`,
+		`{"version":5,"bitbucket_token":{"allow_repos":["bitbucket/acme/*"],"proxy":true},`, 1)
+}
+
+// bitbucketReviewPolicyUnbrokered is bitbucketReviewPolicy with the operator's
+// proxy switch off: the node admits the repository, and the credentials service
+// will not forward the token for it.
+func bitbucketReviewPolicyUnbrokered() string {
+	return strings.Replace(bitbucketReviewPolicy(), `"proxy":true`, `"proxy":false`, 1)
+}
+
+// allowAccountOnRepo adds repo to every claude_accounts and project_secrets
+// entry of the fixture's local config: its lists name acme/app alone, and a
+// launch may only name an account a repository's own list carries
+// (claudeAccountAllowed). It fails the test rather than writing a document the
+// fixture no longer holds.
+func allowAccountOnRepo(t *testing.T, repo string) {
+	t.Helper()
+	path := os.Getenv("FUGARO_CONFIG")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const app = `allow_data_to: ["acme/app"]`
+	if n := strings.Count(string(data), app); n == 0 {
+		t.Fatalf("the fixture's local config names no allow_data_to list to widen:\n%s", data)
+	}
+	widened := strings.ReplaceAll(string(data), app, `allow_data_to: ["acme/app","`+repo+`"]`)
+	if err := os.WriteFile(path, []byte(widened), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// recordGitHubAppID writes the App ID of the fixture's GitHub repository into
+// its local config. The fixture declares a github profile, and the deployer
+// refuses to compose any shared project job for a config like that until an App
+// ID is recorded (internal/infra's projectJobGitHubAppID): the composition a
+// review launcher reads is one computation over the whole config, so a fixture
+// of an installation whose configuration is deployable has to record one even
+// when the launch under test is the Bitbucket repository's.
+func recordGitHubAppID(t *testing.T) {
+	t.Helper()
+	path := os.Getenv("FUGARO_CONFIG")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const app = "  acme/app: { provider: github,"
+	if !strings.Contains(string(data), app) {
+		t.Fatalf("the fixture's local config no longer holds %q:\n%s", app, data)
+	}
+	recorded := strings.Replace(string(data), app, app+` github_app_id: "12345",`, 1)
+	if err := os.WriteFile(path, []byte(recorded), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// bitbucketReviewCheckout is the checkout a review of a Bitbucket repository is
+// launched from: the fixture's clone workflow document with the provider moved,
+// on a remote on Bitbucket's own host, committed on main and published as
+// origin/main — the ref the launch names, and the document the launcher's own
+// resolution reads (projectJobCheckoutYAML, which spells GitHub's host).
+func bitbucketReviewCheckout(t *testing.T, repo, yaml string) {
+	t.Helper()
+	testutil.IsolateGit(t)
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@bitbucket.org:"+repo+".git")
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": yaml})
+	testutil.Git(t, dir, "add", "fugaro.yaml")
+	testutil.Git(t, dir, "commit", "-q", "-m", "the repository's fugaro.yaml")
+	testutil.Git(t, dir, "update-ref", "refs/remotes/origin/main", "HEAD")
+	t.Chdir(dir)
+}
+
+// TestReviewLaunchesOnTheImplicitJobOfABitbucketRepository is RJ8's launcher
+// half, and the case the command had no answer for at all: no shared project
+// job ever serves Bitbucket (design §4.5, D5 as amended), and a repository of a
+// project that declares no profile has no coding job either, so before this
+// task a review of one refused with a sentence about a variant that does not
+// exist beside a job that does not exist. The installation deploys one implicit
+// review-only job per provider (internal/infra's ProjectReviewJobs, finding F6),
+// and the launch resolves the Bitbucket one out of the config's own composed
+// review set — the deployer's computation, so a gate this launcher read
+// differently cannot name a job no installation has.
+//
+// Mutation (run, restored): drop the implicitReviewJobFor arm of reviewJobFor
+// (leave a launch with no shared job on its per-repository job). The review runs
+// the Bitbucket repository's own job, which mounts the repository's token rather
+// than serving a review through the installation's credentials service. Mutation
+// (run, restored): compose the implicit job for every provider rather than the
+// providers ImplicitReviewProviders names, and the fixture's config — which
+// records a Bitbucket repository and no GitHub App ID — deploys a github one too;
+// this test's own assertion on the job's name is where the two differ, and
+// TestProviderKindsAgreeWithTheConfigsList holds the lists together.
+func TestReviewLaunchesOnTheImplicitJobOfABitbucketRepository(t *testing.T) {
+	f := newReviewFixture(t)
+	const bbRepo = bitbucketReviewClaim
+	addRepoToConfig(t, f.cloudFixture, bbRepo, "bitbucket")
+	recordGitHubAppID(t)
+	publishPolicy(t, f.launchBudgetFixture, bitbucketReviewPolicy())
+	implicit := infra.ImplicitReviewJobName("bitbucket")
+	f.run.AddProjectJob(implicit, infra.ImplicitReviewProfile, "bitbucket",
+		config.ReviewVariantAccount("")+config.ReviewVariantSuffix, "2", "4Gi")
+	f.run.SetJobTimeout(implicit, projectJobTimeout+backend.TaskTimeoutSlack)
+	bitbucketReviewCheckout(t, bbRepo, strings.Replace(projectJobRepoYAML, "provider: github", "provider: bitbucket", 1))
+
+	if _, errOut, err := reviewCLI(t, "--pr", "7"); err != nil {
+		t.Fatalf("a review of the Bitbucket repository %s: %v (stderr %q)", bbRepo, err, errOut)
+	}
+	calls := f.run.RunRequests()
+	if len(calls) != 1 {
+		t.Fatalf("the launch asked Cloud Run for %d executions, want 1", len(calls))
+	}
+	if calls[0].Job != implicit {
+		t.Errorf("the review ran the job %q, want the installation's implicit review-only job %q", calls[0].Job, implicit)
+	}
+	if slug, err := task.Slug("bitbucket", bbRepo); err != nil {
+		t.Fatal(err)
+	} else if perRepo := gcp.JobName(slug, "web"); calls[0].Job == perRepo {
+		t.Errorf("the review ran the repository's own job %q: that container mounts the repository's token, and a review takes its credential from the installation's credentials service", perRepo)
+	}
+	if got := calls[0].Env[runner.EnvReviewJob]; got != "1" {
+		t.Errorf("%s = %q on the review's execution, want \"1\": the marker is what tells the run it is the review job", runner.EnvReviewJob, got)
+	}
+	slug, id, err := parseRunRef(storedRunRef(t, f.cloudFixture))
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := reviewTaskSpec(t, f.cloudFixture, slug, id)
+	switch {
+	case spec.Mode != recipe.ModeReview:
+		t.Errorf("the stored task's mode is %q, want %q", spec.Mode, recipe.ModeReview)
+	case len(spec.ReviewPRs) != 1 || spec.ReviewPRs[0] != 7:
+		t.Errorf("the stored task reviews %v, want [7]", spec.ReviewPRs)
+	case spec.OAuthToken != "":
+		t.Errorf("the stored task names the account %q, want none: the implicit job serves the default account alone, and the credentials service pairs its caller with the account the job was deployed for", spec.OAuthToken)
+	}
+}
+
+// TestReviewRefusesWhenTheConfigComposesNoImplicitJob is the other half of the
+// resolution: the launcher reads the job out of the config's own composed review
+// set and never recomputes a name, so an installation whose config composes none
+// for this provider — here one that records no Bitbucket repository, which is the
+// gate the deployer's implicitReviewVariant applies — is refused with the
+// sentence that says what the job is gated on, rather than launched onto a name
+// Cloud Run would answer 404 for after the claim and the budget token.
+//
+// Mutation (run, restored): return the name from the launcher rather than
+// looking it up in the composed set. This launch reaches Cloud Run.
+func TestReviewRefusesWhenTheConfigComposesNoImplicitJob(t *testing.T) {
+	f := newReviewFixture(t)
+	const bbRepo = bitbucketReviewClaim
+	recordGitHubAppID(t)
+	publishPolicy(t, f.launchBudgetFixture, bitbucketReviewPolicy())
+	implicit := infra.ImplicitReviewJobName("bitbucket")
+	f.run.AddProjectJob(implicit, infra.ImplicitReviewProfile, "bitbucket",
+		config.ReviewVariantAccount("")+config.ReviewVariantSuffix, "2", "4Gi")
+	bitbucketReviewCheckout(t, bbRepo, strings.Replace(projectJobRepoYAML, "provider: github", "provider: bitbucket", 1))
+
+	err := wantReviewRefused(t, f.cloudFixture, []string{"--pr", "7"},
+		implicit, "bitbucket", "credentials service", "repos", "fugaro run --pr N --recipe "+reviewOnlyRecipe)
+	// The gate the config failed, so that the sentence a user reads says which
+	// line of their own config to look at rather than which job to go and find.
+	if !strings.Contains(err.Error(), "a repository of that provider is recorded") {
+		t.Errorf("the refusal does not name the gate the config failed: %q", err.Error())
+	}
+}
+
+// TestReviewRefusesATokenOnTheImplicitJob is the account axis of the resolution:
+// the implicit job is deployed for the default account alone (its account
+// segment is fixed where it is deployed, internal/infra's ImplicitReviewJobName),
+// and the credentials service pairs the caller it verifies with the account the
+// job was deployed for — so a review that names another account with --token is
+// refused here rather than launched onto the default account's job with a task
+// that says otherwise.
+//
+// Mutation (run, restored): drop the account refusal. This launch is admitted
+// and the job's reviewer is served as the default account while the task names
+// another one.
+func TestReviewRefusesATokenOnTheImplicitJob(t *testing.T) {
+	f := newReviewFixture(t)
+	const bbRepo = bitbucketReviewClaim
+	addRepoToConfig(t, f.cloudFixture, bbRepo, "bitbucket")
+	recordGitHubAppID(t)
+	publishPolicy(t, f.launchBudgetFixture, bitbucketReviewPolicy())
+	allowAccountOnRepo(t, bbRepo)
+	implicit := infra.ImplicitReviewJobName("bitbucket")
+	f.run.AddProjectJob(implicit, infra.ImplicitReviewProfile, "bitbucket",
+		config.ReviewVariantAccount("")+config.ReviewVariantSuffix, "2", "4Gi")
+	f.run.SetJobTimeout(implicit, projectJobTimeout+backend.TaskTimeoutSlack)
+	// The account has to be one the repository may use and one the fixture's
+	// installation has not marked: acme-personal is both, and the review
+	// document says agent.oauth: it is what a repository whose own fugaro.yaml
+	// names a named account carries (projectJobOAuthRepoYAML's provider moved).
+	bitbucketReviewCheckout(t, bbRepo, strings.Replace(projectJobOAuthRepoYAML, "provider: github", "provider: bitbucket", 1))
+
+	wantReviewRefused(t, f.cloudFixture, []string{"--pr", "7", "--token", "acme-personal"},
+		"acme-personal", "serves one account", config.DefaultClaudeAccount,
+		"fugaro run --pr N --recipe "+reviewOnlyRecipe)
+}
+
+// TestReviewRefusesABitbucketRepositoryTheNodeDoesNotBroker is the credential
+// axis of the same resolution, and the one state the implicit job cannot serve
+// at all: the job mounts no Bitbucket token (it is the property that makes it a
+// review job), so the token can only come from the credentials service, and the
+// service forwards it for a repository only where the published node admits it
+// with proxy: true. A repository the node admits without that switch is a
+// review whose container would open the repository with no token and stop at
+// its first git call (the runner's openProvider, on a variable that is not
+// set), which is a failure the operator reads in the run's output rather than
+// the sentence that names what to do instead.
+//
+// Mutation (run, restored): drop the nodeBrokersBitbucket arm of
+// implicitReviewJobFor, and this launch reaches Cloud Run and starts a review
+// that cannot read the pull request it was launched for.
+func TestReviewRefusesABitbucketRepositoryTheNodeDoesNotBroker(t *testing.T) {
+	f := newReviewFixture(t)
+	const bbRepo = bitbucketReviewClaim
+	addRepoToConfig(t, f.cloudFixture, bbRepo, "bitbucket")
+	recordGitHubAppID(t)
+	publishPolicy(t, f.launchBudgetFixture, bitbucketReviewPolicyUnbrokered())
+	implicit := infra.ImplicitReviewJobName("bitbucket")
+	f.run.AddProjectJob(implicit, infra.ImplicitReviewProfile, "bitbucket",
+		config.ReviewVariantAccount("")+config.ReviewVariantSuffix, "2", "4Gi")
+	f.run.SetJobTimeout(implicit, projectJobTimeout+backend.TaskTimeoutSlack)
+	bitbucketReviewCheckout(t, bbRepo, strings.Replace(projectJobRepoYAML, "provider: github", "provider: bitbucket", 1))
+
+	err := wantReviewRefused(t, f.cloudFixture, []string{"--pr", "7"},
+		"mounts no Bitbucket token", "proxy: true",
+		"fugaro run --pr N --recipe "+reviewOnlyRecipe)
+	if !strings.Contains(err.Error(), bbRepo) {
+		t.Errorf("the refusal does not name the repository whose access is not brokered: %q", err.Error())
 	}
 }
