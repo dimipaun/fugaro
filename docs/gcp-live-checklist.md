@@ -928,6 +928,8 @@ probe account carries predefined grants only).
 | 313 | CG13's endpoint on a real machine ([`docs/cli-output-console-graph/`](cli-output-console-graph/implementation-plan-graph.md), its **CG12** row 313, its task **CG13b** and the decision **D1359**, all of 2026-11-06): the registry file the daemon writes under the state directory (`<UserDir state>/fugaro/run/<id>.json`) is mode **0600** in a mode **0700** directory and carries a **nonce** minted per start; nothing about it is judged by a **pid** — liveness is a **handshake** with the file's own token (the answer must read back the id and the nonce, which a port or a pid another process took over cannot) plus the **lock** the daemon holds for its life (an `flock` the kernel drops when the process dies); `fugaro graph --source local:<id>` answers and goes through `endpoint.Probe`; a `kill -9` of the daemon leaves a file the reader must judge dead, **remove**, and never let it touch a **live process that has taken the pid**; and a **reboot** mints a different nonce. The three things CG13b's tests can only fake are real here: a SIGKILL that leaves a file behind, an `flock` the kernel drops, and a loopback listener that answers. A daemon a login unit supervises (launchd's `KeepAlive`, systemd's `Restart=always`) restarts itself within 5 to 10 seconds, so the crash half wants one started **by hand**: where the daemon came back the check reports that half as **NOT MEASURED** (exit 2) with the one line that fixes it, rather than misjudging it | See "Check 313" below; `bash scripts/live-checks/check313.sh [--id <the orchestrator's id>]` is the whole check **before** the reboot, and `bash scripts/live-checks/check313.sh --phase reboot --previous-nonce <the value the first block printed>` is what you run **after rebooting and starting a daemon again** — it repeats every reading and adds the nonce comparison. **You** run it, on your own machine, against a daemon you can lose, with an id that is **not `belong`** (refused before anything is read), and **no agent runs any step of it** | One loopback handshake, one local read and two `fugaro` commands: no model call, no run, no cloud call, nothing billable. **USER-RUN, NOT RUN.** |
 | 314 | The person's viewer role over `orchestrator/` ([`docs/cli-output-console-graph/`](cli-output-console-graph/implementation-plan-graph.md), its **CG12** row 314, the round-3 ruling **T2** of 2026-11-06 and its scheduling row **B4**; CG4 and CG6 merged on 2026-11-10): **T2 is UNVERIFIED until you run it** — no rules test can read a project's IAM, so whether `roles/firebasedatabase.viewer` on a **person's** credential covers the `orchestrator/` subtree is this reading and no other. `fugaro orchestrator ls --json` (CG4's shallow read of that subtree plus one lease read per id) **is** the read T2 is, made by your installation's own application-default credential; the check reads that credential's **type** first (a service account's, an impersonation's or a workload-identity federation's answers a different question and stops the run), reads the installation's own config file for the project its database belongs to (`budget.firebase_project`, else `gcp_project`) and reads the policy **on that project**, reads the roles the policy binds to `user:<the account>` or to its domain, and then reads the listing. A role that covers the whole project (`roles/owner`, `roles/editor`, `roles/firebasedatabase.admin`) bound beside viewer, or an `orchestrator/` holding no node, makes T2 **NOT MEASURED** (exit 2) rather than passed; a refused read is quoted and read as T2 answered **NO**. H7 — that no run or token identity reads or writes it — is CG6's pin, not this check's | See "Check 314" below; `bash scripts/live-checks/check314.sh [--project <name>] [--account <address>]` is the whole check. **You** run it, on a sandbox installation, **never `belong`** (refused in what you type and in what `doctor` answers), and **no agent runs any step of it** | One credential-file read, one `fugaro doctor --json`, one `gcloud projects get-iam-policy` and one `fugaro orchestrator ls --json`: no model call, no run, nothing billable, nothing written. **USER-RUN, NOT RUN.** |
 | 210 | A sampled run's shadow publishes nothing ([`docs/model-ab-testing/`](model-ab-testing/implementation-plan.md), its **Check 210** and task **A2.2**; **D550**–**D557**'s sampler — `ab.rate` and its ceiling, the daily cap, the champion's own hash of the run ID — **D554**'s publish mode `none`, and **A2.1**'s tests for the boundary this plan's Global constraints table states, "a challenger never pushes, never opens, updates or comments on a PR"): on the sandbox installation whose published project layer sets `ab.rate: 0.10` with one challenger named and whose repository carries no `ab.rate: 0` opt-out, small sandbox tasks launched until `fugaro runs ls` shows a pair (about ten launches expected at 0.10, the owner stopping at thirty, and **no flag forces a sample**) — and then, of that pair's two arms, exactly one `fugaro/<run-id>` branch on the remote and one pull request, both the champion's: the challenger's own record carries `ab.arm: challenger`, `ab.publish: none`, `ab.challenger` (the model the owner named) with `challenger_source: owner` and `outcome: none`, and **no** branch and **no** pull request, while **both** arms' patch objects are in the bucket — each fact read where it is written rather than from the row that claims it | See "Check 210" below; `bash scripts/live-checks/check210.sh --sandbox <a sandbox repository checkout> --yes` is the whole of it, its sibling test `scripts/live-checks/check210_test.sh` drives it against fake `fugaro`, `gcloud`, `git` and `gh` only and launches nothing, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project, account or region naming that installation is refused by name, and so is a coding agent's session); **no agent runs any step of it** | Up to **THIRTY sandbox runs** and what their tasks cost — each champion's implement stage and its review rounds, on the sandbox's own budget — plus the branches and pull requests those champions leave: **billable, and `--yes` is required** before anything is launched. Everything else is a read (the layer, `doctor`, both records out of the runs bucket, the remote's branch list, both patch objects, `fugaro ab --json`), and the launches stop at the **first** pair, so a sandbox already sampling at 0.10 costs a fraction of the bound. The teardown is part of the check: a launch that has not ended is stopped with `fugaro cancel --now` and read back, then every pull request this check's champions opened is closed and every branch they pushed is deleted, each read back. **OWNER-RUN, NOT RUN.** |
+| 310 | The default output on a real terminal ([`docs/cli-output-console-graph/`](cli-output-console-graph/implementation-plan-output.md), its **CL12** row 310 and its task **CL12**, written 2026-11-14; the decisions **D1351** and **D1352**, and **CL5b**'s **T4(a)**): on macOS or Linux, `fugaro update` at a real terminal is painted, its step lines carry the reporter's own marks, the line in flight turns in place and is taken down before the step's own line, and the run closes with its own summary line; `fugaro setup --plan-only` shows the plan view's rows; `NO_COLOR=1 fugaro update` is plain **at a terminal**, where the rule has something to turn off; `fugaro update | cat` writes **no escape byte at all**; `fugaro update --json` puts ONE document on stdout and the human lines on stderr; a forced failure (this check's own `terraform` first on PATH, so the run fails inside a stage) carries the failed step's line, the error's context, `full output: <path>` and the `Something went wrong. Run: fugaro troubleshoot <id>` line, and that log is mode **0600** in a **0700** directory holding the run's own lines whole; and the log directory prunes by its own rules (a twenty-day-old log is removed, another command's log beside it is left alone, and 51 runs leave the newest 50). Whether the spinner **looked** right is the one reading a script cannot take, so it is printed as one yes/no question you answer | See "Check 310" below; `bash scripts/live-checks/check310.sh --project <fugaro project> [--phase all\|look\|failure\|logs] [--runs N] [--fugaro-flags '<flags>'] [--dry-run]` is the whole of it, and `bash scripts/live-checks/check310_test.sh` drives it against fake tools. **You** run it, at a real terminal, on a project you name and **never `belong`** (refused before a single command is run), and **no agent runs any step of it** | Five real converges (`fugaro update` three times, a `setup --plan-only`, and the forced-failure runs, a second or two each and creating nothing because the only `terraform` on their PATH is the check's own stub) plus the 51 forced-failure runs the retention half needs: about two minutes in all. No model call, no run launched, no image built, nothing billable. **USER-RUN, NOT RUN.** |
+| 311 | The same output on Windows, in Windows Terminal and in the legacy console ([`docs/cli-output-console-graph/`](cli-output-console-graph/implementation-plan-output.md), its **CL12** row 311, written 2026-11-14; the virtual-terminal answer `termenv` reads on Windows, and **D1351**/**D1352**): the console's own code page and its own answer about virtual terminal sequences (`$Host.UI.SupportsVirtualTerminal`), the same five commands (a watched `fugaro update` and `fugaro setup --plan-only`, `NO_COLOR=1 fugaro update`, a piped run and `--json`), the forced failure with the failed step's line, its context, the log's path and the troubleshoot id, and the log's protection read as the **ACL** that stands in for 0600 on Windows, where a POSIX mode does not exist. **This check needs a Windows machine**: on anything else it stops with one line naming Check 310, and off Windows only `-DryRun` and `-SelfTest` work (the self-test parses the script and checks that its block keys, its phases and its code agree, and runs nothing). What the console **did** with the bytes is your reading — Windows has no `script` to borrow a pty with — asked as two yes/no questions per console | See "Check 311" below; `pwsh -NoProfile -File scripts/live-checks/check311.ps1 -Project <fugaro project> [-Phase all\|look\|failure\|logs] [-FugaroFlags '<flags>'] [-DryRun] [-SelfTest]` is the whole of it, run **twice**: once in Windows Terminal, once in the legacy console. `bash scripts/live-checks/check311_test.sh` reads it and drives the modes that run nothing. **You** run it, on your own machine, on a project you name and **never `belong`** (refused before the console is even read), and **no agent runs any step of it** | Five real converges plus one forced failure of a second or two: no model call, no run launched, no image built, nothing billable. Check 310's retention half (51 forced-failure runs) is deliberately **not** repeated here: retention is a property of the log directory, not of the console, and 310 reads it once on macOS or Linux. **USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -12912,6 +12914,153 @@ refusal named.
 
 **Paste back:** the `tools/list` answer, the two documents, the scope refusals, the role's permission list and the policy read-back — and
 **never a credential, and never a token**.
+
+## Check 310: the default output on a real terminal — one script you run (macOS or Linux, a project you name, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **CL12** of the CLI-output plan
+([`docs/cli-output-console-graph/implementation-plan-output.md`](cli-output-console-graph/implementation-plan-output.md), its **CL12** row 310, and
+the decisions **D1351** and **D1352**). The package's own tests read "a pipe gets no escape byte" and "a terminal gets colour" off a writer that is
+told whether it is a terminal; this check reads them off a **real pty** (the watched command is run under `script`, so the child's own stdout is a
+pty), a **real pipe**, and the **real log files** a converge leaves in the state directory. It is **OWNER-RUN**: **no agent runs any step of it**,
+and a project naming the owner's own installation (`belong`) is refused before a single command is run.
+
+**Run it:**
+
+```bash
+bash scripts/live-checks/check310.sh --project <fugaro project>
+bash scripts/live-checks/check310.sh --project <fugaro project> --phase look
+bash scripts/live-checks/check310.sh --project <fugaro project> --dry-run
+```
+
+`--project` is required: the check never lets the CLI fall back to "the only project config" on your machine, because the reading would then be of a
+project you did not name. `--phase look` is the five commands, `--phase failure` is the forced failure, `--phase logs` is the log directory's own
+rules, and `--phase all` (the default) is every one of them in that order; a phase that was not selected is recorded as **NOT MEASURED** rather
+than as a failure. `--runs N` (51 by default) is how many forced-failure runs the retention half needs, and fewer than 51 records that row as not
+measured. `--fugaro-flags '<flags>'` adds flags to every `fugaro` call, and `--dry-run` prints the plan and runs nothing at all.
+Environment: `CHECK310_PROJECT`, `CHECK310_RUNS`, `CHECK310_DRY_RUN`, `CHECK310_FUGARO`, `CHECK310_SCRIPT` and `CHECK310_TEE` — what
+each flag above falls back to, and the tools the readings use (this script's own test replaces the last three).
+
+**What it writes, and what it never touches.** `bash scripts/live-checks/check310_test.sh`, the sibling test, drives the script against a fake
+`fugaro` and a fake `script` that gives its child a real pty, so the terminal readings above are readings of a terminal and not of a stub that
+claims to be one; it runs no converge against your installation. The five commands of the look phase are real `fugaro update` and
+`fugaro setup --plan-only` runs against the project you name, and they do what those commands do. Outside its own scratch directory the check writes exactly two files: the two logs
+the retention half plants in the log directory (one stamped twenty days ago, one under another command's name), and it removes only the one the
+CLI's own pruning is supposed to remove. The logs your own runs left there are read, never deleted. The forced-failure runs create nothing: the only
+`terraform` on their PATH is the check's own stub, which answers `version -json` and refuses every plan and apply. No model call is made, no run is
+launched, no image is built, and nothing is billable.
+
+**The one reading a script cannot take.** Whether the line in flight **looked** right is not something a capture can decide, so the check prints it
+as one yes/no question on stderr and reads your answer: `y` passes the row, `n` fails it, and anything else records it as not measured. A run whose
+stdin is not a terminal records it as not measured rather than guessing. The plan view is deliberately not failed for a closing line it does not
+print: a plan-only run prints no summary at all (the loop's account is the execution's, `initflow`'s `!l.o.PlanOnly`).
+
+**Reading the `CHECK 310 RESULT` block.** ONE block on stdout, a `FACT <key>: PASS|FAIL|INFO — <detail>` line per fact, ending
+`CHECK 310 RESULT END (exit N)`. Exit 0 is every fact held, 1 is a fact that did not, and 2 is a reading the check could not take. The rows are, in
+order:
+
+- **`project`** — the project every command carried, and that the CLI was never left to fall back to "the only project config" on this machine.
+- **`belong`** — the guard: what you typed names no installation of the owner's own.
+- **`session`** — whether a coding agent's marker was set in this shell (always PASS or INFO, never a stop): a converge in an agent's session
+  applies nothing, so the readings still hold, and the one that is yours alone is the spinner question.
+- **`state-dir`** — the state directory the logs are read at, by `localcfg.UserDir`'s own rule (`$XDG_STATE_HOME` where it is set and absolute, else
+  `~/.local/state`).
+- **`log-dir`** — the five converges filed their logs there, which is where a failure's path points.
+- **`tty-colour`** — the run under `script` wrote escape bytes to a real terminal, and its step lines carry the reporter's own marks (`✔ ✖ ○ – ↳`).
+- **`tty-spinner`** — the line in flight was drawn and taken down again: the capture carries `\r\x1b[K`, the clear every spinner frame ends with.
+- **`tty-summary`** — the run closed with its own line, in `summaryLine`'s shape (`Done in 3.2s, 5 steps`, or Failed / Left for you).
+- **`setup-plan`** — the plan view is painted at a terminal and its rows carry the plan's own marks (`○` will do, `–` skipped, `↳` waiting).
+- **`no-color`** — `NO_COLOR=1` **at a terminal** wrote no escape byte: read off a pipe it would be off anyway, which is a reading of nothing.
+- **`piped`** — a pipe got no escape byte at all, which is what a log, a CI job and a pipeline all need.
+- **`json`** — `--json` put ONE document on stdout (so nothing human was printed there), it parses, it names the project that was typed, and the
+  human lines are on stderr.
+- **`spinner`** — YOUR answer to the one question: did the line in flight look right.
+- **`fail-step`** — the forced failure's own step line, with the reporter's failed mark and the reason after it.
+- **`fail-context`** — the error's context, four spaces in, under that line.
+- **`fail-log-path`** — `full output: <path>` and the `Something went wrong. Run: fugaro troubleshoot <id>` line, the id being that file's own stem.
+- **`fail-log-mode`** — the log that failure named is mode **0600**.
+- **`fail-log-context`** — and it holds the run's own lines whole, which is what makes a failure readable a day later (**D1352**).
+- **`log-dir-mode`** — the log directory is mode **0700**: the logs are the owner's own.
+- **`log-file-mode`** — a log the CLI itself filed is mode **0600**.
+- **`log-old-pruned`** — a log stamped twenty days ago was removed by the next converge's own open: CL3's 14 days, read on a file this check
+  planted rather than on one of yours.
+- **`log-keep`** — after 51 runs exactly 50 `update-*.log` files are left (the newest 50 per command name), and the newest is this run's own.
+- **`log-other-command`** — a log of another command's name beside them was left alone: the pruning matches the name exactly.
+- **`teardown`** — the scratch directory is gone, and nothing of yours was removed.
+- **`output`** — the verdict, naming every row above that did not hold.
+
+## Check 311: the same output on Windows, in Windows Terminal and in the legacy console — one script you run (a Windows machine, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **CL12** of the CLI-output plan
+([`docs/cli-output-console-graph/implementation-plan-output.md`](cli-output-console-graph/implementation-plan-output.md), its **CL12** row 311, and
+the decisions **D1351** and **D1352**). It is the one reading the macOS and Linux half cannot take: on Windows a console may or may not draw an
+escape sequence, which is what `termenv`'s ANSI profile is asked before a colour is written, so the same five commands are run again and the
+console's own answer is read with them. **This check needs a Windows machine.** It is **OWNER-RUN**: **no agent runs any step of it**, and a
+project naming the owner's own installation (`belong`) is refused before the console is even read.
+
+**Run it:**
+
+```powershell
+pwsh -NoProfile -File scripts/live-checks/check311.ps1 -Project <fugaro project>
+pwsh -NoProfile -File scripts/live-checks/check311.ps1 -Project <fugaro project> -DryRun
+pwsh -NoProfile -File scripts/live-checks/check311.ps1 -SelfTest
+```
+
+**Run it twice, once in each console** — Windows Terminal, and the legacy console (`conhost`: open `cmd.exe` from a shortcut that is not Windows
+Terminal, or `conhost.exe pwsh.exe`). The two blocks are the point: the same five commands, in the two consoles, each block naming the console it was
+run in (`WT_SESSION`, `TERM_PROGRAM`, or neither) so the two can be compared line for line. `-Phase look` is the five commands, `-Phase failure` is
+the forced failure, `-Phase logs` is the log's name and its protection, and `-Phase all` (the default) is every one of them.
+Environment: `CHECK311_FUGARO`, the CLI every command runs (this script's own test replaces it).
+
+**What runs where.** On Windows the whole check runs, and on anything else it stops with one line naming Check 310 as the check for that machine.
+Off Windows only two modes work: `-SelfTest`, which parses the script and checks that its block keys, its phases and its code agree — it runs no
+`fugaro` and reads no file of yours — and `-DryRun`, which prints the plan and runs nothing. Its sibling test
+(`bash scripts/live-checks/check311_test.sh`) reads the script as text where PowerShell is not installed, and runs those two modes and the two
+refusals for real wherever `pwsh` is on PATH, saying so in one line where it is not: a green run on a machine without PowerShell must not read as
+"the script works".
+
+**What it writes, and what it never touches.** As Check 310: five real converges against the project you name, a forced failure with this check's own
+`terraform.cmd` first on PATH (creating nothing), and one scratch directory under `%TEMP%` that is removed at the end. It removes no log of yours and
+changes no setting of your console — the code page is **read** and reported, never set, because it is what decides how the marks are drawn and a
+check that set it would be reading its own setting. It does **not** repeat 310's retention half: retention is a property of the log directory, not of
+the console, and 51 forced-failure runs to read it a second time would cost minutes for a fact already read.
+
+**The two readings that are yours.** Windows has no `script` to borrow a pty with, and PowerShell captures a native command's output through a pipe
+— which is not a console, and turns colour off — so the bytes of a run you watch cannot be read here the way 310 reads them. What the console **did**
+with those bytes is therefore your reading, asked as two yes/no questions per console: the view (painted, marked, the line in flight drawn and taken
+down, the plan view's rows), and `NO_COLOR=1` being plain where the run before it was painted. The view question says what to do if you saw no colour
+at all: run `cmd /c fugaro update` in the same console and answer for that — a difference between the two is your shell's own handling of a native
+command, not the CLI.
+
+**Reading the `CHECK 311 RESULT` block.** ONE block on stdout, a `FACT <key>: PASS|FAIL|INFO — <detail>` line per fact, ending
+`CHECK 311 RESULT END (exit N)`. Exit 0 is every fact held, 1 is a fact that did not, and 2 is a reading the check could not take (including a stop
+on the wrong platform). The rows are, in order:
+
+- **`project`** — the project every command carried, and that the CLI was never left to fall back to "the only project config" on this machine.
+- **`belong`** — the guard: what you typed names no installation of the owner's own.
+- **`session`** — whether a coding agent's marker was set in this shell (always PASS or INFO, never a stop).
+- **`console`** — which console this run is in and the evidence for it, its own code page, and the PowerShell and host it ran under.
+- **`vt-mode`** — the console host's own answer about virtual terminal sequences (`$Host.UI.SupportsVirtualTerminal`): true is a PASS, false is INFO
+  (colour written as an escape sequence would then be printed literally, and the view question is what settles what you saw), and a host that does
+  not answer the question is INFO too.
+- **`state-dir`** — the state directory, by `localcfg.UserDir`'s own rule (`%LOCALAPPDATA%` where it is set and absolute, else the profile's
+  `.local\state`).
+- **`log-dir`** — the converges filed their logs there, which is where a failure's path points.
+- **`console-view`** — YOUR answer: the run and the plan view painted, marked, the line in flight drawn and taken down, and the plan view's own rows.
+- **`tty-summary`** — the watched run closed with its own line, read from the log it filed: a run writes its own lines to the log, which is what lets
+  a closing line be read at all where the bytes of a console run cannot be.
+- **`no-color`** — YOUR answer: the `NO_COLOR=1` run was plain while the run before it was painted.
+- **`piped`** — the captured run wrote no escape byte to a pipe.
+- **`json`** — `--json` put ONE document on stdout and it names the project that was typed.
+- **`fail-step`**, **`fail-context`**, **`fail-log-path`**, **`fail-log-context`** — the forced failure's own step line, the context under it, the
+  log's path with the `Something went wrong. Run: fugaro troubleshoot <id>` line whose id is that file's own stem, and that log holding the run's own
+  lines whole.
+- **`fail-log-protection`** — the log that failure named is readable and writable by you, by SYSTEM and by the administrators, and by nobody else:
+  Windows has no 0600, so the **ACL** inside your own profile is what stands in for 310's mode reading.
+- **`log-name`** — the newest update log is named `<command>-<14 digits UTC>-<pid>.log`, which is the name the pruning and the troubleshoot id both
+  read back.
+- **`log-protection`**, **`log-dir-protection`** — the same ACL reading for the newest log and for the log directory.
+- **`teardown`** — the scratch directory is gone, no log of yours was deleted, and no setting of your console was changed.
+- **`output`** — the verdict, naming every row above that did not hold.
 
 ## Check 313: CG13's endpoint on a real machine — one script you run (your own machine and a daemon you can lose, an id that is not `belong`; run by you; NOT RUN)
 

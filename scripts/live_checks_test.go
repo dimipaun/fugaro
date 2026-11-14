@@ -142,6 +142,23 @@ import (
 // first CLI read of the window, which is half of what step 4 is about, and a
 // case that rewrites a copy of the script with the comparison removed proves
 // the FAIL it reads elsewhere is the comparison's.
+// Checks 310 and 311's fakes are the reporter's own rules run for real: a fake
+// `fugaro` whose colour turns on the output writer and NO_COLOR exactly as
+// report.NoColor decides it, whose line in flight is drawn with \r and taken
+// down with \r\x1b[K, whose closing line has summaryLine's shape, whose --json
+// puts one document on stdout and the human lines on stderr, whose failing run
+// prints the step's line, the error's context, the log's path and the
+// troubleshoot line under it, and whose log is a 0600 file in a 0700 directory
+// holding the run's own lines, pruned by OpenLog's own rules -- beside a fake
+// `script` that gives its child a REAL pty, so Check 310's terminal readings are
+// readings of a terminal rather than of a stub that claims to be one. 310's
+// forced failure is driven by the terraform stub the check itself writes, which
+// the fake `fugaro` runs and fails on. Check 311 is PowerShell, which is not
+// installed here, so its test is mostly a reading of its text: its block keys,
+// its phases, its guards, and its own -SelfTest, which parses the file and
+// checks that its keys, its phases and its code agree -- and the four cases that
+// cannot run a converge (-SelfTest, -DryRun and the two refusals) are run for
+// real wherever pwsh is on PATH, each saying so in one line where it is not.
 var liveCheckScripts = []struct {
 	name string
 	test string
@@ -190,6 +207,8 @@ var liveCheckScripts = []struct {
 	{"check119.sh", "check119_test.sh"},
 	{"check57b.sh", "check57b_test.sh"},
 	{"check124.sh", "check124_test.sh"},
+	{"check310.sh", "check310_test.sh"},
+	{"check311.ps1", "check311_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent
