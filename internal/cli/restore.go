@@ -140,7 +140,7 @@ Every step is money or permanent, so this command prints what it is about to
 make permanent — the new project, the budget amount, the root and the two files
 — before its first write, and the creating path it delegates to keeps its own
 typed questions (the new project's ID and the billing account) at a real
-terminal. There is no --yes, no --non-interactive and no address argument. The
+terminal. No flag stands in for a person at the terminal, and there is no address argument. The
 command is refused in a coding agent's session.
 
 It ends by printing what was NOT restored, as a list: the runs that were in

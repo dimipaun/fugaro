@@ -903,7 +903,7 @@ func confirmWidening(cmd *cobra.Command, lc *localcfg.Config, c initflow.Conditi
 // answer.
 func (p *workspacePublication) wideningWhy() string {
 	if !p.found {
-		return fmt.Sprintf("the workspace %s has no published record at %s, and this writes the one every run of its members reads — %s. It is the owner's own step: --yes does not stand in for it and nothing is typed at you, so run it yourself at your own terminal: %s",
+		return fmt.Sprintf("the workspace %s has no published record at %s, and this writes the one every run of its members reads — %s. It is the owner's own step: no flag stands in for it and nothing is typed at you, so run it yourself at your own terminal: %s",
 			p.record.Name, p.path, strings.Join(p.widens, "; "), selfCommand()+" update")
 	}
 	return fmt.Sprintf("this admits more to the workspace %s than the published record does: %s; every run of a member project reads the record, and what it admits is paid for by the workspace's own credentials", p.record.Name, strings.Join(p.widens, "; "))

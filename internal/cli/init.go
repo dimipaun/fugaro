@@ -492,7 +492,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	f.StringSliceVar(&o.baseKinds, "base", nil, "copy the release's base image (the only kind: base) into the project's registry now, besides what the checkout's fugaro.yaml needs (comma-separated or repeated)")
 	f.StringVar(&o.imageSource, "image-source", "", "the registry and owner the release images come from: a base kind is resolved and signature-verified there and pinned through the installation's remote repository, a history image is copied from it (default ghcr.io/dimipaun; a fork names its own, such as ghcr.io/acme)")
 	f.StringArrayVar(&o.expectDigests, "expect-digest", nil, "pin the digest of a release image, KIND=sha256:<hex> (KIND is base or history; repeatable): the digest of the source tag's manifest (the index), obtained out of band such as from the release notes. A base kind is cross-checked against it: its digest is verified against the release's cosign signature either way, and the two must agree. For history it is the trust anchor: without it "+d.name+" trusts what the release tag in ghcr.io resolves to now, which is whoever can write that tag")
-	f.StringArrayVar(&o.replaceImages, "replace-image", nil, "KIND (history; repeatable): let the converge replace that image's tag in your registry when it names another image, a release tag or history:latest (never done otherwise, so a hand-pushed history:latest needs it once). A base kind is refused: it is pinned by digest through the remote repository, so nothing of it is ever copied over. It names the intent only: replacing is an ordinary covered step, so --yes covers it in either door and a person at a real terminal without --yes confirms it by being there (a pipe, --json, --non-interactive and a coding agent's session confirm nothing)")
+	f.StringArrayVar(&o.replaceImages, "replace-image", nil, "KIND (history; repeatable): let the converge replace that image's tag in your registry when it names another image, a release tag or history:latest (never done otherwise, so a hand-pushed history:latest needs it once). A base kind is refused: it is pinned by digest through the remote repository, so nothing of it is ever copied over. It names the intent only: replacing is an ordinary covered step, so a person at a real terminal confirms it by being there (a pipe, --json and a coding agent's session confirm nothing)")
 	// The bake switch (IS7, D1901). Its usage is read on both doors, so it
 	// names no door: what it says about where the question is asked is about
 	// the run that creates the installation, which is the one whose answer is
@@ -506,14 +506,14 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	f.StringVar(&o.alertEmail, "alert-email", "", "where failed image checks and rebuilds are reported (default: the local config's)")
 	f.BoolVar(&o.noLogIsolation, "no-log-isolation", false, "leave Fugaro job logs in _Default instead of their own log bucket")
 	f.StringVar(&o.registryCleanup, "registry-cleanup", "", "Artifact Registry cleanup: dry-run (the default), on or off")
-	f.StringVar(&o.firebase, "firebase-project", "", "turn the shared budget on: the value is the installation's own GCP project id (the default; the flag is only needed to turn the shared budget on), and any other id is refused. It is the flag that asks for the backend — a run without it builds none — and that backend is three confirmed applies: the database's rules and mark, the Firestore history database (permanent us-east5 location: confirmed by the person at the terminal where it is a first-time question, covered by --yes where the run re-converges an installation that is already there) and the config")
+	f.StringVar(&o.firebase, "firebase-project", "", "turn the shared budget on: the value is the installation's own GCP project id (the default; the flag is only needed to turn the shared budget on), and any other id is refused. It is the flag that asks for the backend — a run without it builds none — and that backend is three confirmed applies: the database's rules and mark, the Firestore history database (permanent us-east5 location: confirmed by the person at the terminal where it is a first-time question, already there on a run that re-converges an installation that has it) and the config")
 	f.StringVar(&o.budgetMode, "budget-mode", "", "with --firebase-project: off, observe or enforce: the jobs' budget mode in the project config, and for observe and enforce the project-wide mode in the database (an absent one is seeded observe)")
 	f.StringArrayVar(&o.budgetAdmins, "budget-admin", nil, "with --firebase-project: an IAM member who may change caps and kill switches besides the GCP project's owners and editors (repeatable; default: the local config's terraform.budget_admins)")
-	f.BoolVar(&o.createProject, "create-project", false, "create the GCP project --gcp-project names and add Firebase to it, as you, at your own real terminal (never with --yes, --non-interactive or --json; nothing is typed there, being at it is what confirms the step). A first run of "+d.name+" always creates its project, so the flag only says so explicitly. Fugaro only starts fresh: an ID that already exists is refused, unless an earlier run of "+d.name+" created it (the resume). Billing is not linked unless --link-billing is also given; without it "+d.name+" prints the one gcloud command that links it, unless the run asks the billing question (no --yes, --non-interactive or --json, and no coding agent's session) and has no terminal, where it is refused there at once instead, in the sentence naming --link-billing")
+	f.BoolVar(&o.createProject, "create-project", false, "create the GCP project --gcp-project names and add Firebase to it, as you, at your own real terminal (never with --json; nothing is typed there, being at it is what confirms the step). A first run of "+d.name+" always creates its project, so the flag only says so explicitly. Fugaro only starts fresh: an ID that already exists is refused, unless an earlier run of "+d.name+" created it (the resume). Billing is not linked unless --link-billing is also given; without it "+d.name+" prints the one gcloud command that links it, unless the run asks the billing question (no --json and no coding agent's session) and has no terminal, where it is refused there at once instead, in the sentence naming --link-billing")
 	f.StringVar(&o.displayName, "display-name", "", "on a first run, which creates the project: its display name (default: its ID)")
 	f.StringVar(&o.parent, "parent", "", "on a first run, which creates the project: organizations/<number> or folders/<number> to create it under (default: no parent; an organization is never guessed)")
 	f.BoolVar(&o.managed, "managed", false, "on a first run, which creates the project: record its monthly budget in the creation fact. Every project "+d.name+" creates is Fugaro-managed (its runs bucket's creation fact and the fugaro_managed label); --managed is what records the budget amount the managed apply needs. The monthly budget amount is required — --budget, --budget-currency and --billing-account together, with no default and no suggestion taken for you — and the amount and the currency are recorded in the project's creation fact (gs://fugaro-runs-<gcp-project>/fugaro/managed.json), where a later run and a restore read what was chosen. It removes no confirmation: creating the project still takes a person at a real terminal, and the installation's ordinary steps share the run's one review. Flagging a project that already exists as managed is fugaro managed flag's, run by the owner at a terminal, "+managedFlaggingSentence)
-	f.StringVar(&o.linkBilling, "link-billing", "", "on a first run, which creates the project: link this billing account (an ID such as 0123AB-4567CD-89EF01) to the project, at your own real terminal, where being at it is what confirms the step. This may incur charges on that account; never with --yes. It never changes a project's existing billing link")
+	f.StringVar(&o.linkBilling, "link-billing", "", "on a first run, which creates the project: link this billing account (an ID such as 0123AB-4567CD-89EF01) to the project, at your own real terminal, where being at it is what confirms the step. This may incur charges on that account, and no flag confirms it. It never changes a project's existing billing link")
 	// --check is the update door's alone (D948): the read-only half of the
 	// retired `fugaro upgrade`, and the mode the skills ask for, because it
 	// promises no cloud call where a stage's own plan may make one. Its help
@@ -521,41 +521,14 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	// refuses it by name (setupDoor.foreign), the shape --forget has on that
 	// door.
 	f.BoolVar(&o.checkOnly, "check", false, "read-only: write nothing, run no claude command and make no cloud call, print what each step of "+d.name+" would do from this checkout's own files, and exit 1 when anything is stale. The checkout is PATH ("+d.name+" --check [PATH]); the converge's own flags are refused rather than ignored, because this mode runs none of them. The rules and the policy steps are skipped with a note naming the command that answers them: the deployed rules generation and the published policy node live in the cloud, and reading either is the call this flag promises not to make")
-	f.BoolVar(&o.planOnly, "plan-only", false, "stop after showing the plan (never takes --yes: it creates nothing on a flag's word)")
+	f.BoolVar(&o.planOnly, "plan-only", false, "stop after showing the plan (it creates nothing)")
 	f.BoolVar(&o.printVars, "print-vars", false, "print the Terraform variables and exit, with no cloud calls and no Terraform (ungated: no discovery, and with --repo no readiness gates)")
 	f.BoolVar(&o.configOnly, "config-only", false, "only write the local config, from the installation's outputs (else the flags)")
 	f.BoolVar(&o.publishConfig, "publish-config", false, "publish the shared config to the runs bucket and stop ("+d.name+" does it after it writes the local config)")
 	f.BoolVar(&o.anchor, "anchor", false, "in a checkout of an onboarded repository, only write the gcp_project line into its fugaro.yaml, after checking that every workflow's job image was submitted by fugaro "+gcpProjectFieldSince+" or later and built FROM a release base image of "+gcpProjectFieldSince+" or later, and that no base image the local config sets is a development or older one (no Terraform, no publish, no image copy; the diff, then --yes writes or a person at the terminal confirms it)")
 	f.BoolVar(&o.forget, "forget", false, "roll back: turn log isolation and registry cleanup off, then remove every address from Terraform's state. An installation that holds the managed deployer's fence has no rollback and this is refused there: the state removal would leave the seven scoped roles and their seven conditioned bindings live in the project, accounted for by nothing, and taking the project out of managed mode does not remove them (docs/design/managed-projects.md §10.2, \"Rolling back\")")
 	f.StringArrayVar(&o.allowDelete, "allow-delete", nil, "a resource address the plan may delete or replace (repeatable)")
-	f.BoolVar(&o.provisionBatch, "provision-batch", false, "after the installation's ordinary steps, provision the Batch compute backend into a state of its own (design docs/design/compute-backend.md §8.1 task 6): the Compute and Batch APIs, the run accounts' IAM, the launcher's, reaper's and preload accounts and roles, a Cloud NAT and router, and a preloaded boot image rebuilt on a schedule. It is money (a billable build, a NAT's hours) and permanent, so --yes never covers it and it takes a person at a real terminal; nothing runs it by default, and an installation reaches the backend only after this has run and `doctor` passes its gate. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor)")
-	// D12's answer of 2026-10-20 (docs/setup-wizard/reconciliation.md §5, and
-	// §5 of docs/coordinator/reconciliation.md): --yes is total over the
-	// ordinary steps a door owns, and the one step that moves between the doors
-	// is the Firestore database's location — covered in `update`, kept typed in
-	// `setup`, the door that asks for it as a first-time question. The door
-	// that takes --forget is `update`.
-	//
-	// Both doors print this one flag set, so both halves of the sentence have
-	// to be the reader's own door: a line naming the other one tells half its
-	// readers to switch commands for nothing
-	// (TestNoDoorsFlagHelpNamesTheOtherDoor).
-	covers := "a billable first image build, replacing a registry tag and onboarding an unlisted repository (on a provider's own host, with an origin git config that does not rewrite it)"
-	never := "creating a project, linking a billing account, the Firestore database's location, a secret value, or a policy publish that would loosen the published node"
-	if d.takes("forget") {
-		// update is also the door that runs the checkout's own steps, whose
-		// cloud half is the image refresh: every one of its billable builds —
-		// a rebuild of the workflow images this checkout already has — is
-		// asked for by itself, and --yes answers each of them, the same
-		// answer the door gives a repository's first build
-		// (internal/cli/image_refresh_steps.go, askBuild).
-		covers = "the Firestore database's location, a rebuild of the checkout's workflow images, " + covers
-		// The location is one of this door's covered steps, so it is not in
-		// this door's never list; the two that cannot arise here at all are
-		// still true of --yes wherever they can (they are the other door's
-		// flags, refused by name here).
-		never = "creating a project, linking a billing account, a secret value, or a policy publish that would loosen the published node"
-	}
+	f.BoolVar(&o.provisionBatch, "provision-batch", false, "after the installation's ordinary steps, provision the Batch compute backend into a state of its own (design docs/design/compute-backend.md §8.1 task 6): the Compute and Batch APIs, the run accounts' IAM, the launcher's, reaper's and preload accounts and roles, a Cloud NAT and router, and a preloaded boot image rebuilt on a schedule. It is money (a billable build, a NAT's hours) and permanent, so it takes a person at a real terminal; nothing runs it by default, and an installation reaches the backend only after this has run and `doctor` passes its gate. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor)")
 	// The agent clause is about what leaves this machine, and about how far
 	// such a session actually gets: the writes on this machine's own files are
 	// the only ones an apply there may make, and the stage that has them is the
@@ -574,25 +547,16 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	// the repository stop it applies past is #1836's, initflow's RunsPastStop).
 	// The help has to say that rather than promise a session a write it may not
 	// get to.
-	f.BoolVar(&o.yes, "yes", false, "confirm the ordinary steps without asking (only after reading what they do). It covers every ordinary step this door has — "+covers+" — and it never covers "+never+": those take a person at a real terminal, and no flag stands in for one. The single step a managed project does not confirm at all is a policy publish that would loosen its published node: at a real terminal the write prints one line saying what it does and the widening is read in the diff above it, a project's first node included — that diff names every member the node is created with. Under a coding agent's environment variable (CLAUDECODE and the like; CLAUDE_CODE_SSE_PORT alone is not one of them where standard input is a real terminal, because the Claude Code IDE extension sets it in a person's own terminal too, so it is a person's terminal and types the same confirmations, told in one line that they were accepted from an IDE terminal — another of those markers beside it, or no terminal, is what keeps a run a coding agent's session) "+d.name+" changes nothing outside this machine, --yes included, and the steps it will not run are listed under left_for_you (exit 1): the exceptions are "+d.name+" --anchor, which only edits the checkout's fugaro.yaml and honours --yes there, and the plugin stage, whose every write is on this machine's own files — the plugin installed in your own Claude Code at user scope, with nothing written in the checkout — so a coding agent's session applies it rather than leaving it for you. What such a session cannot take is the cloud half, whose writes are not this machine's: the checkout stage applies past a repository stage that needs you, and its plan drops the image refresh, which is left for the user as a named step (exit 1) rather than run over the stop. It fails closed rather than promising a write it may never reach, and none of it is a barrier: it is a mitigation — an agent that unsets its own variables is not stopped, and the real controls are the confirmations at a real terminal and the skills' lint")
-	f.StringVar(&o.onboardRepo, "onboard-repo", "", "owner/name of the checkout's origin repository (compared case-insensitively, without .git): the one opt-in that needs no terminal to wire and onboard a repository the project does not list yet, on github.com or bitbucket.org with an origin git config does not rewrite (--yes also covers onboarding such a repository, and neither it nor this flag is honoured in a coding agent's session; any other origin takes the confirmation of a person at the terminal)")
-	f.BoolVar(&o.coordinator, "coordinator", false, "with --firebase-project, opt the installation in to the coordinator's aggregation job (docs/coordinator, P5): the fugaro-coordinator service account, its roles/firebasedatabase.admin on the Firebase project (IAM cannot scope it to the coordinator's subtree; the job's own code does), roles/storage.objectViewer on the runs bucket, and — once the history image exists and the local config records a GitHub App ID — the Cloud Run job that holds the App key, its accessor on that one secret and a Scheduler job that runs it every 15 minutes. Nothing creates any of it by default. The opt-in is recorded in the local config (terraform.coordinator) once the apply has created the account, so later runs keep it. --yes never covers it, it is confirmed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor)")
-	// The flags --non-interactive only stops from prompting, worded for this
-	// door: --forget is fugaro update's, and setup's help must not describe
-	// what a flag setup refuses does.
-	stops := "--config-only"
-	if d.takes("forget") {
-		stops = "--forget and --config-only"
-	}
-	f.BoolVar(&o.ask, "ask", false, "ask for the confirmations a managed project's gate would have stood in for, one step at a time: without it a managed project takes no confirmation at all (the ruling of 2026-11-01), and this is the flag that puts them back for one run — the review's own question, and each step's own, the billable builds included. It is the symmetric half of --yes, which is the same flag for a project that is NOT managed, and the two contradict each other: pass one, or neither. It never weakens the gate, which judges every document and refuses in its own sentence before any prompt, and it never stands in for a confirmation: the step's own question is asked, and a no is a no. In a project whose marks do not answer \"managed\" it changes nothing and says so, and where no prompt can be answered — a coding agent's session, --json, --non-interactive, no terminal — it refuses the run rather than letting the gate's verdict stand in: a confirmation nobody can answer is never a silent proceed")
-	f.BoolVar(&o.nonInteractive, "non-interactive", false, "never prompt, and never read stdin: a step that needs you is listed under left_for_you (exit 1), and applying needs --yes, else the run only plans (a fresh state bucket needs a person at the terminal even then, so that plan exits 1); --yes never covers the steps that are the terminal's alone (see --yes). With "+stops+" it only stops them prompting: their confirmations then need --yes")
+	f.StringVar(&o.onboardRepo, "onboard-repo", "", "owner/name of the checkout's origin repository (compared case-insensitively, without .git): the one opt-in that needs no terminal to wire and onboard a repository the project does not list yet, on github.com or bitbucket.org with an origin git config does not rewrite (neither it nor this flag is honoured in a coding agent's session; any other origin takes the confirmation of a person at the terminal)")
+	f.BoolVar(&o.coordinator, "coordinator", false, "with --firebase-project, opt the installation in to the coordinator's aggregation job (docs/coordinator, P5): the fugaro-coordinator service account, its roles/firebasedatabase.admin on the Firebase project (IAM cannot scope it to the coordinator's subtree; the job's own code does), roles/storage.objectViewer on the runs bucket, and — once the history image exists and the local config records a GitHub App ID — the Cloud Run job that holds the App key, its accessor on that one secret and a Scheduler job that runs it every 15 minutes. Nothing creates any of it by default. The opt-in is recorded in the local config (terraform.coordinator) once the apply has created the account, so later runs keep it. No flag covers it, it is confirmed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor)")
+	f.BoolVar(&o.ask, "ask", false, "ask for the confirmations a managed project's gate would have stood in for, one step at a time: without it a managed project takes no confirmation at all (the ruling of 2026-11-01), and this is the flag that puts them back for one run — the review's own question, and each step's own, the billable builds included. It never weakens the gate, which judges every document and refuses in its own sentence before any prompt, and it never stands in for a confirmation: the step's own question is asked, and a no is a no. In a project whose marks do not answer \"managed\" it changes nothing and says so, and where no prompt can be answered — a coding agent's session, --json, no terminal — it refuses the run rather than letting the gate's verdict stand in: a confirmation nobody can answer is never a silent proceed")
 	f.BoolVar(&o.asJSON, "json", false, "print the result as JSON on stdout (progress goes to stderr)")
 	f.BoolVar(&o.repo, "repo", false, "onboard the repository of the checkout at PATH (default: the current directory) instead of the installation")
 	f.BoolVar(&o.checkApp, "check-github-app", false, "let the GitHub App pre-check read the App's private key from Secret Manager with your own credentials (held in memory only, for one signed token; refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it); without it "+d.name+" checks only with the key you typed in this run")
-	f.StringVar(&o.githubAppID, "github-app-id", "", "the GitHub App's ID, for a GitHub repository (not a secret; recorded in the local config; "+d.name+" asks once at a terminal, and --non-interactive needs it)")
+	f.StringVar(&o.githubAppID, "github-app-id", "", "the GitHub App's ID, for a GitHub repository (not a secret; recorded in the local config; "+d.name+" asks once at a terminal)")
 	f.BoolVar(&o.noBuild, "no-build", false, "with --repo: don't offer the first image builds")
 	f.BoolVar(&o.allowJobDelete, "allow-job-delete", false, "with --repo: lower the jobs' deletion protection, for offboarding")
-	f.BoolVar(&o.retire, "retire", false, "with --repo: run the retirement this config change needs (a workflow or a named account removed, a secret no longer mounted): remove the protected addresses from Terraform's state (destroying nothing), apply, then delete the orphaned Cloud Run jobs through the API. Both confirmations are a real terminal's, and nothing is typed at them; --yes, --non-interactive, --json, a pipe and a coding agent cover neither. Excludes --plan-only, --print-vars and --forget, which read or forget rather than apply")
+	f.BoolVar(&o.retire, "retire", false, "with --repo: run the retirement this config change needs (a workflow or a named account removed, a secret no longer mounted): remove the protected addresses from Terraform's state (destroying nothing), apply, then delete the orphaned Cloud Run jobs through the API. Both confirmations are a real terminal's, and nothing is typed at them; no flag, --json, a pipe and a coding agent cover neither. Excludes --plan-only, --print-vars and --forget, which read or forget rather than apply")
 	// The other door's flags are declared above and hidden here: a user
 	// reading this door's help must not be offered a flag it refuses, and
 	// --non-interactive's own list of what a run needs must not gain one.
@@ -2303,9 +2267,9 @@ func (r *initRun) unconfirmedWhy() string {
 // confirmed: --yes, except under --plan-only, which never takes it.
 func (r *initRun) yesRoute() string {
 	if r.o.planOnly {
-		return " (--plan-only never takes --yes: it creates nothing)"
+		return " (--plan-only creates nothing on any word)"
 	}
-	return ", or pass --yes once you have read what it does"
+	return ""
 }
 
 // ask reports whether the step is confirmed, under the banner a question is
@@ -2364,7 +2328,7 @@ func (r *initRun) askBanner(what string) (bool, error) {
 	case r.o.ask:
 		// askConfirm printed the question and the answer's own line.
 	case r.o.yes && !r.o.planOnly:
-		fmt.Fprintln(r.stageDetail(), "  confirmed by --yes")
+		fmt.Fprintln(r.stageDetail(), "  confirmed by this run's own answer")
 	case r.gateStandsIn():
 		fmt.Fprintf(r.stageDetail(), "  %s\n", initflow.OwnerProceeded())
 	}
@@ -2408,12 +2372,12 @@ func confirmStageWrite(cmd *cobra.Command, lc *localcfg.Config, c initflow.Condi
 		// The owner asked for this step's question back: askConfirm asks it
 		// below and refuses in its own sentence where nobody can answer one.
 	case yes:
-		fmt.Fprintln(out, "  confirmed by --yes")
+		fmt.Fprintln(out, "  confirmed by this run's own answer")
 		return nil
 	case initflow.PersonAtTheTerminal(c):
 		return nil
 	default:
-		return userErr("%s, or pass --yes once you have read what it does", initflow.NeedsTerminal("the confirmation of this step"))
+		return userErr("%s", initflow.NeedsTerminal("the confirmation of this step"))
 	}
 	ok, err := askConfirm(cmd, what+"?")
 	if err != nil {
@@ -2513,7 +2477,7 @@ func (r *initRun) askClass(class initflow.ConfirmClass, what string) (confirmed,
 	case stepLeave:
 		return false, false, nil
 	case stepByYes:
-		fmt.Fprintln(r.w, "  confirmed by --yes")
+		fmt.Fprintln(r.w, "  confirmed by this run's own answer")
 		return true, true, nil
 	}
 	ok, err := r.confirmNow(what + "?")
@@ -4059,7 +4023,7 @@ func (o *initOptions) checkCoordinator() error {
 		return userErr("--coordinator opts the installation in to the coordinator's aggregation job, whose account the Firebase root grants the database's admin: it needs --firebase-project (fugaro update --firebase-project <id> --coordinator)")
 	}
 	if o.yes {
-		return userErr("--yes never covers --coordinator: the opt-in creates an account that holds the Firebase project's database admin and a job that holds the GitHub App's key, so it is confirmed at a real terminal (run it again without --yes)")
+		return userErr("--coordinator is not covered by any flag this run takes: the opt-in creates an account that holds the Firebase project's database admin and a job that holds the GitHub App's key, so it is confirmed at a real terminal")
 	}
 	var set []string
 	for _, f := range []struct {

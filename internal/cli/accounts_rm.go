@@ -119,7 +119,6 @@ carries.`,
 	}
 	f := cmd.Flags()
 	f.StringVar(&o.profile, "profile", "", "the profile whose claude_accounts loses the name (a profile that lists accounts is taken out of it one at a time)")
-	f.BoolVar(&o.yes, "yes", false, "confirm the removal without a prompt")
 	return cmd
 }
 

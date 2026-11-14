@@ -246,7 +246,7 @@ func (r *initRun) printRetirements(spec infra.RepoSpec, rets []infra.Retirement)
 	n := len(infra.Removals(r.retireState, rets))
 	fmt.Fprintf(r.w, "\nOrder of operations:\n  1. remove %d %s from Terraform's state without destroying %s: the addresses no apply can delete (a secret container's prevent_destroy, a job whose deletion_protection the state says is on). Nothing in the cloud is deleted by this step.\n",
 		n, plural(n, "address", "addresses"), plural(n, "it", "them"))
-	fmt.Fprintln(r.w, "  2. plan, show the plan's own counts and its full delete list, and ask again — answered by the person at a real terminal, never by --yes.")
+	fmt.Fprintln(r.w, "  2. plan, show the plan's own counts and its full delete list, and ask again — answered by the person at a real terminal.")
 	fmt.Fprintf(r.w, "  3. apply, then delete the %d orphaned Cloud Run %s through the API.\n", len(api), plural(len(api), "job", "jobs"))
 	fmt.Fprintln(r.w, "\nNext command:\n  fugaro update --repo . --retire")
 	return nil

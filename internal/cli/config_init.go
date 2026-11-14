@@ -179,7 +179,6 @@ func newConfigInitCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&profile, "profile", "", "the project layer's profile to use (default: its default_profile)")
 	cmd.Flags().StringVar(&baseBranch, "base-branch", "", "the repository's base branch, when it is not main")
-	cmd.Flags().BoolVar(&yes, "yes", false, "write the file (without it, print it and exit 1 without writing)")
 	addCloudFlags(cmd, &o)
 	return cmd
 }

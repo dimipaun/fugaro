@@ -116,12 +116,11 @@ func newProjectReposRmCmd() *cobra.Command {
 			"admits it, which is the case a pattern makes (github/acme/app stays admitted\n" +
 			"while github/acme/* is there); the confirmation says which of the two it is.\n" +
 			"Removing * refuses every repository the rest of the list does not admit.\n" +
-			"So it asks you to type the project's name, and while a run is in flight --yes\n" +
-			"alone is not enough.",
+			"So it asks you to type the project's name, and while a run is in flight nothing\n" +
+			"confirms it.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error { return runProjectReposEdit(cmd, &o, args[0], true) },
 	}
-	cmd.Flags().BoolVar(&o.yes, "yes", false, "confirm the removal without typing the project's name (not while a run is in flight)")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
 }
@@ -832,7 +831,7 @@ type projectSyncOptions struct {
 func newProjectSyncCmd() *cobra.Command {
 	var o projectSyncOptions
 	cmd := &cobra.Command{
-		Use:   "sync [--bitbucket <workspace>] [--bitbucket-project <key>] [--check] [--github-app-id <id>] [--github-app-key] [--yes]",
+		Use:   "sync [--bitbucket <workspace>] [--bitbucket-project <key>] [--check] [--github-app-id <id>] [--github-app-key]",
 		Short: "Offer the provider's repositories that the allow-list does not admit",
 		Long: "Ask the provider which repositories it holds and offer the ones the published\n" +
 			"allow_repos does not admit, as one list written in one batch: nothing is\n" +
@@ -867,7 +866,6 @@ func newProjectSyncCmd() *cobra.Command {
 	f.BoolVar(&o.check, "check", false, "print what would be added and write nothing")
 	f.StringVar(&o.githubAppID, "github-app-id", "", "the GitHub App's ID (a number, not a secret); default: the one this machine's config holds")
 	f.BoolVar(&o.githubAppKey, "github-app-key", false, "read the project's GitHub App private key from Secret Manager to ask GitHub (your own credentials; refused in a coding agent's session)")
-	f.BoolVar(&o.yes, "yes", false, "accepted and does nothing: the batch is written with no confirmation")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
 }

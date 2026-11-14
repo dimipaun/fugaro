@@ -83,7 +83,7 @@ This command never prints a value: the entry it removes holds an allow-list
 and a switch, and a value is not a setting and is never in a diff.
 
 Run it at your own terminal: a removal of a secret is a value no plan shows,
-so a coding agent's session is refused, --yes included.`,
+so a coding agent's session is refused.`,
 		Args: func(_ *cobra.Command, args []string) error {
 			switch {
 			case len(args) == 0:
@@ -99,7 +99,6 @@ so a coding agent's session is refused, --yes included.`,
 	}
 	addCloudFlags(cmd, &o.cloud)
 	f := cmd.Flags()
-	f.BoolVar(&o.yes, "yes", false, "confirm the removal without a prompt")
 	f.BoolVar(&o.dryRun, "dry-run", false, "print what the removal would do and write nothing")
 	f.BoolVar(&o.asJSON, "json", false, "print the dry run's document as JSON (with --dry-run)")
 	return cmd
