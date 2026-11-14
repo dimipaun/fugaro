@@ -99,6 +99,30 @@ func TestContractRecordForms(t *testing.T) {
 			why: "a bare wildcard is not a coverage pattern",
 			rec: Record{Name: "bitbucket-token--wild", Type: TypeRepo, Coverage: []string{"*"}},
 		},
+		{
+			why: "a wildcard inside the workspace segment reaches every workspace (D464)",
+			rec: Record{Name: "bitbucket-token--prefix", Type: TypeRepo, Coverage: []string{"ac*/app"}},
+		},
+		{
+			why: "a wildcard inside the workspace segment reaches every workspace (D464)",
+			rec: Record{Name: "bitbucket-token--prefixws", Type: TypeWorkspace, Coverage: []string{"ac*/*"}},
+		},
+		{
+			why: "four wildcards in a name segment name no repository",
+			rec: Record{Name: "bitbucket-token--stars", Type: TypeRepo, Coverage: []string{"acme/****"}},
+		},
+		{
+			why: "a segment carries only the characters a repository name is made of",
+			rec: Record{Name: "bitbucket-token--space", Type: TypeRepo, Coverage: []string{"acme/we b"}},
+		},
+		{
+			why: "a segment carries only the characters a repository name is made of",
+			rec: Record{Name: "bitbucket-token--escape", Type: TypeRepo, Coverage: []string{"acme/ap%2Fp"}},
+		},
+		{
+			why: "an empty segment names nothing",
+			rec: Record{Name: "bitbucket-token--emptyseg", Type: TypeWorkspace, Coverage: []string{"acme/"}},
+		},
 	}
 	for _, tc := range disagree {
 		if err := tc.rec.Validate(); err == nil {

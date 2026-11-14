@@ -18,21 +18,31 @@ contract can be written on both sides at once and re-joined in I1.
 | the node key and the identity set | `projectpolicy.BitbucketTokensKey`, `BitbucketTokens`, `BitbucketTokenIdentities` | T3 |
 | the verifier | the add-time check `creds set` runs | T7 |
 | the proxy | the one snapshot, the selection step, the audit name | T8 |
-| the real store wired end to end, `internal/bbtokens/stub.go` and `stub_test.go` deleted | I1 | I1 |
+| I1 | the real store wired end to end, `internal/bbtokens/stub.go` and `stub_test.go` deleted | I1 |
 
 ## The record
 
 `Record` is the operator's own statement about one token: `Name` (the document key), `Type`, `Coverage`, `ProjectUUID`,
 `ProjectKey` and `Expires`. It holds no value; the value is the bundle's and is found by `Name`.
 
+**One spelling of coverage.** A coverage entry is written in the **local config's `allow_data_to` spelling** (D464), and
+not in the policy node's: exactly two segments, `workspace/name`, each of the characters a workspace or repository name is
+made of (`A-Za-z0-9._*-`, config's own `repoPatternSegmentRE`), with the **workspace segment literal** — a wildcard
+workspace would make one token reach every workspace, which is the widening the operator's own list refuses. It is
+character for character the rule `config`'s `invalidAllowDataToEntry` applies to an `allow_data_to` entry, so a token the
+operator could describe there is a token they can describe here. T3 is what provider-qualifies these two segments into the
+node's three-segment `allow_repos` spelling; the node never carries this one and a record never carries that one.
+
 `Validate` refuses a record whose type and coverage disagree (R1):
 
-- **`repo`** — every coverage entry is exactly `workspace/repo`: two non-empty segments, no `*`, no empty project UUID.
-- **`workspace`** — every entry is `workspace/*`: a literal owner and a bare `*` segment, no project UUID.
+- **`repo`** — every coverage entry is exactly `workspace/repo`, with no `*` anywhere: a repository token covers the
+  repositories it was created for, and a wildcard segment is a workspace token's form. No project UUID.
+- **`workspace`** — every entry is `workspace/*`: a literal workspace and a bare `*` name segment. No project UUID.
 - **`project`** — the same `workspace/*` form **plus** a non-empty `ProjectUUID`. The key is display only; a UUID cannot
   be renamed and a key can.
 - **untyped** (`TypeUntyped`, the empty string) — the legacy `bitbucket-token` key, whose coverage is the operator's
-  `allow_data_to` list as written: either of the two forms above, and no project UUID.
+  `allow_data_to` list **as written**: any entry in the spelling above, including a wildcard inside the name segment
+  (`acme/api-*`), and no project UUID.
 
 `Type` is redundant for matching and is stored for display and for the add-time check. Coverage states which token **can**
 serve a repository; it never replaces `allow_data_to`, which stays the operator's authorization (D2354).
@@ -49,7 +59,9 @@ creds state store rather than in the local config, so a hand-edited file cannot 
 `State` speaks the vocabulary the creds marks already use (F5): `available`, `exhausted` (Bitbucket's 429, until `Until`),
 `backed_off` (a 429 that named no `Retry-After`, until `Until`) and `broken` (a 401 a covered-repository read confirmed;
 an operator clears it). A token nothing has recorded is `available`, which is why `StatusStore.Read` answers the zero
-status rather than an error.
+status rather than an error — and `Status.Available()` is the one place the two spellings of "holds nothing" (the zero
+`State` and `StateAvailable`) are reconciled, exactly as `creds.Mark.Available()` does for the model marks. No other reader
+compares them itself.
 
 `Identity` is the account UUID `GET /2.0/user` answered, and it is empty for a repository token, which that endpoint
 refuses (R14) — the set is partial by design. `Count` is advisory: nothing queues or refuses a call on it (D2356), and

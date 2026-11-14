@@ -29,8 +29,12 @@ type BitbucketTokenNode struct {
 	Name string `json:"name"`
 	// Type is the record's own type: repo, project or workspace (R1).
 	Type string `json:"type"`
-	// Coverage are the patterns the token may serve, provider-qualified the
-	// way allow_repos entries are and matched with MatchRepo (D464).
+	// Coverage are the patterns the token may serve, in the NODE's spelling:
+	// provider-qualified and three-segment, exactly the way allow_repos entries
+	// are and matched with MatchRepo (D464). It is the record's own two-segment
+	// workspace/name coverage with the provider added by T3's derivation, and
+	// never a third spelling: the record's is the local config's allow_data_to
+	// form and this is the one the node matches canonical repositories with.
 	Coverage []string `json:"coverage"`
 	// Identity is the account UUID GET /2.0/user answered for the token, and
 	// it is empty for a repository token, which that endpoint refuses (R14,

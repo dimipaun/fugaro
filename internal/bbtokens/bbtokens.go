@@ -21,6 +21,7 @@ package bbtokens
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -67,11 +68,15 @@ type Record struct {
 	// Type is the token's scope: TypeRepo, TypeProject, TypeWorkspace, or
 	// TypeUntyped for the implicit record the legacy key is (R3).
 	Type Type
-	// Coverage are the patterns the token may serve, spelled exactly as the
-	// policy's allow_repos entries are (D464: owner/name, `*` inside a
-	// segment, never a wildcard owner). It says which token CAN serve a
-	// repository and never widens what a run may reach, which stays the
-	// operator's allow_data_to (D2354).
+	// Coverage are the patterns the token may serve, in the LOCAL CONFIG's
+	// allow_data_to spelling and not the node's: two segments, workspace/name,
+	// written with the characters a repository name is made of and with the
+	// workspace literal, exactly as config's invalidAllowDataToEntry holds an
+	// allow_data_to entry (D464). T3 is what provider-qualifies them into the
+	// node's three-segment allow_repos spelling.
+	//
+	// It says which token CAN serve a repository and never widens what a run
+	// may reach, which stays the operator's allow_data_to (D2354).
 	Coverage []string
 	// ProjectUUID is the project a TypeProject token is scoped to. It is the
 	// stable identifier and the value matching compares (R1).
@@ -95,8 +100,10 @@ func (r Record) Validate() error {
 			return fmt.Errorf("the repository token %s covers no repository", r.Name)
 		}
 		for _, c := range r.Coverage {
-			if !isRepoPattern(c) {
-				return fmt.Errorf("the repository token %s covers %q, which is not a workspace/repo pattern", r.Name, c)
+			if _, name, err := coverageSegments(c); err != nil {
+				return fmt.Errorf("the repository token %s covers %q, which is not a workspace/repo pattern: %w", r.Name, c, err)
+			} else if strings.Contains(name, "*") {
+				return fmt.Errorf("the repository token %s covers %q, which names more than one repository; a wildcard segment is a workspace token", r.Name, c)
 			}
 		}
 		if r.ProjectUUID != "" {
@@ -118,8 +125,8 @@ func (r Record) Validate() error {
 		}
 	case TypeUntyped:
 		for _, c := range r.Coverage {
-			if !isRepoPattern(c) && !isWorkspacePattern(c) {
-				return fmt.Errorf("the untyped token %s covers %q, which is neither a workspace/repo nor a workspace/* pattern", r.Name, c)
+			if _, _, err := coverageSegments(c); err != nil {
+				return fmt.Errorf("the untyped token %s covers %q: %w", r.Name, c, err)
 			}
 		}
 		if r.ProjectUUID != "" {
@@ -139,25 +146,45 @@ func coversOneWorkspace(r Record) error {
 		return fmt.Errorf("the %s token %s covers no workspace", r.Type, r.Name)
 	}
 	for _, c := range r.Coverage {
-		if !isWorkspacePattern(c) {
-			return fmt.Errorf("the %s token %s covers %q, which is not a workspace/* pattern", r.Type, r.Name, c)
+		if _, name, err := coverageSegments(c); err != nil {
+			return fmt.Errorf("the %s token %s covers %q, which is not a workspace/* pattern: %w", r.Type, r.Name, c, err)
+		} else if name != "*" {
+			return fmt.Errorf("the %s token %s covers %q, which does not name the whole workspace", r.Type, r.Name, c)
 		}
 	}
 	return nil
 }
 
-// isRepoPattern reports whether a coverage entry names exactly one repository:
-// two non-empty segments and no wildcard.
-func isRepoPattern(c string) bool {
-	owner, repo, ok := strings.Cut(c, "/")
-	return ok && owner != "" && owner != "*" && repo != "" && repo != "*" && !strings.Contains(repo, "/")
-}
+// coverageSegmentRE is one segment of a coverage pattern: the characters a
+// workspace or a repository name is made of, and "*" as a wildcard inside the
+// segment. It is character for character config's own repoPatternSegmentRE
+// (internal/config/providers.go), which is the copy an allow_data_to entry —
+// the list a record's coverage is written beside in the operator's config — is
+// held to.
+var coverageSegmentRE = regexp.MustCompile(`^[A-Za-z0-9._*-]+$`)
 
-// isWorkspacePattern reports whether a coverage entry names the whole of one
-// workspace: a literal owner and a bare `*` segment.
-func isWorkspacePattern(c string) bool {
-	owner, repo, ok := strings.Cut(c, "/")
-	return ok && owner != "" && owner != "*" && repo == "*"
+// coverageSegments splits one coverage entry into its two segments, and reports
+// an entry that is not one. It is D464's rule for an allow_data_to entry, the
+// spelling a record's coverage is written in: exactly two segments of the
+// characters above, neither empty nor a dot-path, and a LITERAL workspace —
+// a wildcard workspace would make one token reach every workspace, which is the
+// widening the operator's own list refuses. A wildcard *name* segment is left
+// to the caller, because it is what tells a workspace token from a repository
+// one.
+func coverageSegments(c string) (workspace, name string, err error) {
+	segs := strings.Split(c, "/")
+	if len(segs) != 2 {
+		return "", "", fmt.Errorf("%q is not a coverage pattern of the form workspace/name", c)
+	}
+	for _, s := range segs {
+		if s == "" || s == "." || s == ".." || !coverageSegmentRE.MatchString(s) {
+			return "", "", fmt.Errorf("%q is not a coverage pattern of the form workspace/name", c)
+		}
+	}
+	if strings.Contains(segs[0], "*") {
+		return "", "", fmt.Errorf("%q names a wildcard workspace, which reaches every workspace rather than one", c)
+	}
+	return segs[0], segs[1], nil
 }
 
 // MatchesProject reports whether the record is the project token for the UUID
@@ -210,6 +237,13 @@ type Status struct {
 	// a call on it.
 	Count int
 }
+
+// Available reports a status that holds nothing. It reads the zero Status as
+// available exactly as the model marks do (creds.Mark.Available): a token with
+// no status node, one whose node says StateAvailable, and one whose mark was
+// cleared are one thing, and no reader has to tell them apart — which is why
+// StatusStore.Read may answer the zero Status for a token nothing has recorded.
+func (s Status) Available() bool { return s.State == "" || s.State == StateAvailable }
 
 // BundleTokens is the bundle's Bitbucket tokens as a snapshot holds them: the
 // names the document holds and, for each, its value.
@@ -275,9 +309,10 @@ type ProjectResolver interface {
 // its own subtree of the creds state store so that the readers of the model
 // marks never see it (T6, D2351).
 type StatusStore interface {
-	// Read answers the token's status. A token nothing has recorded is
-	// StateAvailable rather than an error, which is what makes an empty store
-	// indistinguishable from a healthy one.
+	// Read answers the token's status. A token nothing has recorded is the
+	// zero Status rather than an error — which Status.Available reads as
+	// available, so an empty store is indistinguishable from a healthy one and
+	// no caller has to spell the two spellings of "nothing is wrong" itself.
 	Read(ctx context.Context, name Name) (Status, error)
 	// Write records the token's status.
 	Write(ctx context.Context, name Name, st Status) error

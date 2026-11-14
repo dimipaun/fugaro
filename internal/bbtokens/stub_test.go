@@ -45,6 +45,8 @@ func TestStubImplementsContract(t *testing.T) {
 
 	if got, err := stub.Read(ctx, "bitbucket-token--ws"); err != nil || got != (Status{}) {
 		t.Errorf("Read of a token the store holds nothing for = %+v, %v; want the zero status", got, err)
+	} else if !got.Available() {
+		t.Error("the zero status a store answers for a token it holds nothing for does not read as available")
 	}
 	broken := Status{State: StateBroken}
 	if err := stub.Write(ctx, "bitbucket-token--ws", broken); err != nil {
