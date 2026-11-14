@@ -67,13 +67,19 @@ var reporterCommands = map[string]string{
 	"managed apply":      "managed-apply",
 	"managed flag":       "managed-flag",
 	"managed unflag":     "managed-unflag",
-	"reaper":             "reaper",
-	"restore":            "restore",
-	"run":                "run",
-	"secrets rm":         "secrets-rm",
-	"secrets set":        "secrets-set",
-	"setup":              "setup",
-	"update":             "update",
+	// The enrolment converged behind one confirmation (RE1): this command
+	// writes this machine's entry, the image mapping, the allow-list, the
+	// publish and the repository's job, and prints each as a step of its run
+	// rather than one row by hand -- which is what keeps its siblings, whose
+	// writes are one row each, in exemptAnswers below.
+	"project repos add": "project-repos-add",
+	"reaper":            "reaper",
+	"restore":           "restore",
+	"run":               "run",
+	"secrets rm":        "secrets-rm",
+	"secrets set":       "secrets-set",
+	"setup":             "setup",
+	"update":            "update",
 }
 
 // builtLogName is one reporter command whose log name is not a literal at the
@@ -239,7 +245,6 @@ var exemptAnswers = map[string]string{
 	"project repos set":      "writes one repository's workflow selection or one job profile, and prints the row it wrote",
 	"project routing set":    "writes the project's routing posture into this machine's project config, and prints it",
 	"project routing unset":  "removes the project's routing posture from this machine's project config, and prints the result",
-	"project repos add":      "adds one repository to the policy's allow-list, and prints the entry it wrote",
 	"project repos rm":       "removes one repository from the policy's allow-list, and prints what it dropped",
 	"project sync":           "offers the installed repositories the allow-list does not admit, printing its own account by hand",
 	"recipes publish":        "publishes one recipe to the project, printing its own account of the write by hand",
