@@ -23,17 +23,18 @@ the one already anticipated, if B1's review finds the time-to-live cap belongs i
 | `Response.Token` | the service | the GitHub answer: one read-only installation token, with the user, the host and the expiry it is valid to |
 | `Response.Proxy` | the service | the Bitbucket answer: the proxy URL, and the repositories paired to the build's identity |
 
-`Response` is **exactly one of the two**, never both and never neither. Which one is the request's provider's
-(R6), and the client never asks twice for a shaped answer it did not get: a build that is answered nothing has
-nothing to clone with and fails.
+`Response` is **exactly one of the two**, never both and never neither. Which one comes back is the request's
+provider's (R6), and a build that is answered neither has nothing to clone with and fails rather than asking again
+wider.
 
 ## The answer
 
 - **GitHub: a narrowed installation token.** Read-only (`contents: read`, `metadata: read`), covering exactly the
   request's repositories of the caller's own project, expiring at GitHub's own instant. The request cannot widen
   it: a repository the entry's map does not put on the entry is refused by the service, naming the repository, and
-  the mint is audited (B1). Its reach is one repository per token only because the token is narrowed, which is the
-  same thing a run's is (spec decision 4).
+  the mint is audited (B1). Its reach is the request's repositories and no others: a build over several
+  repositories is one token covering exactly those, and it is the narrowing — not the token's kind — that bounds it,
+  the same way a run's token is bounded (spec decision 4).
 - **Bitbucket: a proxy grant, no token.** The build holds no token at all (D2302, R6): the service pairs the
   build's identity to the entry's repositories, and the build's git talks to the credentials service's proxy, as a
   job's does. The grant is not a secret and carries no expiry: what every call presents is the build identity's
