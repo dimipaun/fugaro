@@ -322,10 +322,6 @@ func (o stepOptions) again(path string) string {
 	args := []string{selfCommand(), "update"}
 	if o.check {
 		args = append(args, "--check")
-	} else {
-		if o.yes {
-			args = append(args, "--yes")
-		}
 	}
 	for _, f := range []struct{ name, v string }{
 		{"config", o.refresh.cloud.config}, {"project", o.refresh.cloud.project},

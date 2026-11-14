@@ -770,18 +770,12 @@ func (r *initRun) retireConfirm(rets []infra.Retirement, spec infra.RepoSpec, un
 // retireUnaskable is why a retirement's confirmation could not be
 // asked: initflow's own "needs a real terminal" sentence, plus the flags of
 // this run that make it unreachable. Nothing is typed at a confirmation any
-// more (T7), so the sentence names the confirmation and not a name to type. It
-// never offers --yes -- the design forbids it for a retirement -- so the flag
-// list is written as what those flags do not do, not as a route to take.
+// more (T7), so the sentence names the confirmation and not a name to type, and
+// the flag list says what those flags do not do rather than a route to take:
+// the two that once stood in for a confirmation are gone from the CLI (T11).
 func retireUnaskable(c initflow.Conditions) string {
 	msg := initflow.NeedsTerminal("the confirmation of a retirement")
 	var flags []string
-	if c.Yes {
-		flags = append(flags, "--yes")
-	}
-	if c.NonInteractive {
-		flags = append(flags, "--non-interactive")
-	}
 	if c.JSON {
 		flags = append(flags, "--json")
 	}

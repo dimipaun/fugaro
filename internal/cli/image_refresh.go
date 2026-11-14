@@ -129,9 +129,6 @@ func (o refreshOptions) again() string {
 	for _, d := range o.expectDigests {
 		args = append(args, "--expect-digest", quoteWord(d))
 	}
-	if o.yes {
-		args = append(args, "--yes")
-	}
 	return strings.Join(args, " ")
 }
 

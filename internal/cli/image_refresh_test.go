@@ -218,14 +218,11 @@ func TestRefreshAgainKeepsEveryFlag(t *testing.T) {
 	if got := (refreshOptions{}).again(); got != "fugaro image refresh" {
 		t.Errorf("no flags: %q", got)
 	}
-	// 2026-10-08 decision: a rerun of a run given --yes keeps it, so an
-	// unattended run that stops still reruns unattended.
-	o.yes = true
-	if got := o.again(); got != want+" --yes" {
-		t.Errorf("with --yes:\n%s\nwant:\n%s", got, want+" --yes")
-	}
-	if got := (refreshOptions{yes: true}).again(); got != "fugaro image refresh --yes" {
-		t.Errorf("--yes alone: %q", got)
+	// The line names no flag that stands in for a confirmation, whatever the
+	// run's own options carry (T11): --yes is gone from this command, so a
+	// printed line that named it would be refused on the flag.
+	if got := (refreshOptions{yes: true}).again(); got != "fugaro image refresh" {
+		t.Errorf("a run carrying its own answer: %q", got)
 	}
 }
 
