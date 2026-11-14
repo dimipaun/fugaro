@@ -12701,9 +12701,14 @@ read is never a pass and never a finding**: it ends the run at 2 and names itsel
    zero. The two runs side by side are the pair the block names at its end; either one alone measures half of it.
 5. **The review-only job ran the variant the sentinel names.** Rows `review-launch` and `review-env`, slice B, with `--review`. A run
    launched with `fugaro review --pr N` (or `fugaro run --pr N --recipe review-only`) on an installation that publishes the pairing's
-   sentinel and has the credentials service on. **FACT:** the job's own name carries the review variant of a value with a doubled dash
-   — `anthropic-api-key--project`, which is the project's own Anthropic key, or `provider-key--project`, which is slice C's and is
-   noted as such rather than read as this path — and the job's described environment and volumes hold **no** secret-sourced entry and
+   sentinel and has the credentials service on. **FACT:** the job the run was launched on is the one the published policy itself
+   derives for the account — the review-only variant of a `(profile, provider, account)` triple the policy serves, matched by
+   recomputing those names, because a name is not readable for the variant it is (the account is the last segment of it and the
+   policy's long ones are cut off it, so the variant and the same triple's shared job differ in the hash alone) — and that account is
+   a value with a doubled dash: `anthropic-api-key--project`, which is the project's own Anthropic key, or `provider-key--project`,
+   which is slice C's and is noted as such rather than read as this path. A run on the same triple's shared job, or on any job the
+   policy derives for no triple, fails the row — the shared job mounts the App key a review must not be able to read. The job's
+   described environment and volumes hold **no** secret-sourced entry and
    **no** secret volume: the review container mounts no credential of the repository's, because its read-only token and its model calls
    both come from the credentials service.
 6. **That run's calls were served by the key.** Row `review-log`. **FACT:** the gateway's lines for the review-only execution carry

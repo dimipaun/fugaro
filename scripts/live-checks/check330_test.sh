@@ -82,7 +82,16 @@ RUN_REF=$SLUG/$RUN_ID
 CONTRAST_REF=$SLUG/$CONTRAST_ID
 REVIEW_REF=$SLUG/$REVIEW_ID
 REVIEWER=claude-opus-4-5
-SENTINEL_JOB=fugaro-$SLUG-standard-anthropic-api-key--project-review
+# The review-only variant the fixture's own policy derives, as the deployment
+# computes it: internal/backend/gcp's ProjectJobName over (standard, github,
+# anthropic-api-key--project), with the account segment internal/credsvc's
+# ReviewJobName builds and the stem cut to 36 characters before the triple's
+# 12-hex hash. The account segment is only "anthropic-a" in the name, which is
+# why the check has to derive names rather than read them.
+SENTINEL_JOB=fugaro-p-standard-github-anthropic-a-999810468a57
+# The same triple's SHARED job: it differs from the variant above in the hash
+# alone, so a check that compared readable stems would read one as the other.
+SENTINEL_SHARED_JOB=fugaro-p-standard-github-anthropic-a-71c17459896a
 
 # Every fact key the block carries, whatever the run measured.
 BLOCK_KEYS=(project sandbox agent-session belong budget policy run contrast-run review-run
@@ -297,11 +306,17 @@ else:
     # The published policy names the axis's sentinel and one stage account, in
     # all three places a non-account value may sit: the project's default, a
     # stage's own declaration, and a profile's own list.
+    # The profile carries its provider, as every published profile does
+    # (projectpolicy's provider-required rule): a project job's name is derived
+    # over (profile, provider, account), so the document has to have all three.
     policy = {
         "budget": {"mode": s("FIX_BUDGET_MODE", "enforce")},
         "default_claude_account": s("FIX_DEFAULT_ACCOUNT", "anthropic-api-key--project"),
         "claude_account_stages": {"review": s("FIX_STAGE_ACCOUNT", "provider-key--project")},
-        "profiles": {"standard": {"claude_accounts": [s("FIX_PROFILE_ACCOUNT", "anthropic-api-key--project")]}},
+        "profiles": {"standard": {
+            "provider": "github",
+            "claude_accounts": [s("FIX_PROFILE_ACCOUNT", "anthropic-api-key--project")],
+        }},
     }
 write("policy.json", {"project": project, "policy": policy})
 
@@ -390,7 +405,18 @@ if not flag("FIX_NO_CONTRAST_RECORD"):
           {"run_id": contrast_id, "job": job, "execution": execution(contrast_id), "backend": "gcp"})
 
 # ------------------------------------------------------------ the review run (B)
-review_job = s("FIX_REVIEW_JOB", "fugaro-%s-standard-anthropic-api-key--project-review" % slug)
+# The review-only variants this fixture's profile derives, written out as the
+# deployment computes them (gcp.ProjectJobName over the triple, with
+# credsvc.ReviewJobName's account) rather than recomputed here: the check derives
+# these names itself, so a fixture that derived them the same way would agree with
+# the check's own derivation even if both were wrong.
+DERIVED_REVIEW_JOB = {
+    "anthropic-api-key--project": "fugaro-p-standard-github-anthropic-a-999810468a57",
+    "provider-key--project": "fugaro-p-standard-github-provider-ke-d9cfd230e7ef",
+    "team-b": "fugaro-p-standard-github-team-b-revi-e6fecafe504a",
+}
+profile_account = s("FIX_PROFILE_ACCOUNT", "anthropic-api-key--project")
+review_job = s("FIX_REVIEW_JOB", DERIVED_REVIEW_JOB[profile_account])
 if not flag("FIX_NO_REVIEW_RECORD"):
     write("objects/%s/%s/result.json" % (slug, review_id), {
         "run_id": review_id, "status": "done", "outcome": "ready",
@@ -781,26 +807,71 @@ test_slice_b_reads_the_sentinel_variant() {
 }
 
 # A run launched on the OTHER non-account value is slice C's, not this slice's —
-# and it is read, not mistaken for a failure of the Anthropic-key path.
+# and it is read, not mistaken for a failure of the Anthropic-key path. The
+# policy's own profile is what derives the job: the variant's name comes off the
+# account the profile lists, so the case spells the profile's account and the
+# fixture derives the name it has.
 test_slice_b_on_the_provider_key_variant_says_which_one_it_read() {
-  prepare "$work/slice-b-provider" FIX_REVIEW_JOB=fugaro-$SLUG-standard-provider-key--project-review
+  prepare "$work/slice-b-provider" FIX_PROFILE_ACCOUNT=provider-key--project
   run330_both
   expect_status "$status" 0 "the provider-key variant"
   expect_contains "$(fact_line review-launch)" "PASS" "the provider-key variant: the row passes"
   expect_contains "$(fact_line review-launch)" "provider-key--project" "the provider-key variant: and names which value it read"
   expect_contains "$(fact_line review-launch)" "slice C" "the provider-key variant: and says which slice it belongs to"
+  expect_contains "$(fact_line review-launch)" "fugaro-p-standard-github-provider-ke-d9cfd230e7ef" "the provider-key variant: the row reads the derived name, not the account's spelling"
   expect_scratch_gone "the provider-key variant"
 }
 
 # A review launched on an account's own variant is not the cloud Anthropic-key
 # path: that repository's review is served by the account.
 test_a_review_on_an_account_variant_is_a_fail() {
-  prepare "$work/slice-b-account" FIX_REVIEW_JOB=fugaro-$SLUG-standard-team-b-review
+  prepare "$work/slice-b-account" FIX_PROFILE_ACCOUNT=team-b
   run330_both
   expect_status "$status" 1 "a review on an account's variant"
   expect_contains "$(fact_line review-launch)" "FAIL" "a review on an account's variant: the row fails"
-  expect_contains "$(fact_line review-launch)" "not the review variant of either" "a review on an account's variant: and says what it is not"
+  expect_contains "$(fact_line review-launch)" "a Claude account's job" "a review on an account's variant: and says what it is"
+  expect_contains "$(fact_line review-launch)" "team-b" "a review on an account's variant: and names the account the policy derives it for"
   expect_scratch_gone "a review on an account's variant"
+}
+
+# The shared job of the sentinel's own triple: same profile, same provider, same
+# account, and a name whose readable part is identical to the variant's to the
+# character — only the hash differs. A check that matched the readable stem would
+# read the job that mounts the App key as the review-only variant.
+test_a_review_on_the_shared_job_of_the_sentinel_triple_is_a_fail() {
+  prepare "$work/slice-b-shared" FIX_REVIEW_JOB="$SENTINEL_SHARED_JOB"
+  run330_both
+  expect_status "$status" 1 "a review on the shared job"
+  expect_contains "$(fact_line review-launch)" "FAIL" "a review on the shared job: the row fails"
+  expect_contains "$(fact_line review-launch)" "SHARED job" "a review on the shared job: and says which job it is"
+  expect_contains "$(fact_line review-launch)" "anthropic-api-key--project" "a review on the shared job: naming the account the policy derives it over"
+  expect_scratch_gone "a review on the shared job"
+}
+
+# No published policy and slice B named: the account segments a project job's name
+# is derived from are the policy's profiles, so there is no name to compare the
+# run's job with — a row nobody could read, not a finding about the release.
+test_slice_b_with_no_published_policy_is_unmeasured() {
+  prepare "$work/slice-b-no-policy" FIX_NO_POLICY=1
+  run330_both
+  expect_status "$status" 2 "slice B with no published policy"
+  expect_contains "$(fact_line review-launch)" "FAIL" "slice B with no published policy: the row is not a pass"
+  expect_contains "$(fact_line review-launch)" "no policy is published" "slice B with no published policy: and says why it could not read it"
+  expect_contains "$(fact_line unmeasured)" "review-launch" "slice B with no published policy: the unmeasured row names it"
+  expect_contains "$(fact_line log-coder)" "PASS" "slice B with no published policy: slice A's own reading still holds"
+  expect_scratch_gone "slice B with no published policy"
+}
+
+# A job name no profile of the published policy derives under any provider and
+# account: a review launched on a job the policy does not know is not the variant
+# this slice reads, and the row says so rather than calling it a Claude account's.
+test_a_review_job_the_policy_does_not_derive_is_a_fail() {
+  prepare "$work/slice-b-unknown" FIX_REVIEW_JOB="fugaro-$SLUG-standard-anthropic-api-key--project-review"
+  run330_both
+  expect_status "$status" 1 "a job the policy does not derive"
+  expect_contains "$(fact_line review-launch)" "FAIL" "a job the policy does not derive: the row fails"
+  expect_contains "$(fact_line review-launch)" "no job the published policy derives" "a job the policy does not derive: and says so"
+  expect_scratch_gone "a job the policy does not derive"
 }
 
 # The review-only variant mounts no credential of the repository's: a job that
@@ -1271,6 +1342,9 @@ t test_an_unreadable_contrast_is_unmeasured
 t test_slice_b_reads_the_sentinel_variant
 t test_slice_b_on_the_provider_key_variant_says_which_one_it_read
 t test_a_review_on_an_account_variant_is_a_fail
+t test_a_review_on_the_shared_job_of_the_sentinel_triple_is_a_fail
+t test_slice_b_with_no_published_policy_is_unmeasured
+t test_a_review_job_the_policy_does_not_derive_is_a_fail
 t test_a_review_job_carrying_a_secret_is_a_fail
 t test_a_review_job_carrying_a_secret_volume_is_a_fail
 t test_a_review_run_on_a_route_is_a_fail

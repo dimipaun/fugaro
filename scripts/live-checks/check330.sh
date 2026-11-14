@@ -182,6 +182,15 @@ need_tools() {
 # answer. Every read here answers in seconds on a healthy installation.
 TIMEOUT=${CHECK330_TIMEOUT:-120}
 
+# The axis's two values that name no Claude account (config.AnthropicKeyAccount,
+# config.ProviderKeyAccount), as the published policy spells them. They are named
+# here because the account is what tells slice B's job from a Claude account's, and
+# the two are not interchangeable: the first is the project's own Anthropic key,
+# which is what this slice measures, and the second is the provider key, which is
+# slice C's and is not run before Check 50.
+ACCOUNT_ANTHROPIC_KEY=anthropic-api-key--project
+ACCOUNT_PROVIDER_KEY=provider-key--project
+
 # ------------------------------------------------------------- scratch + trap
 SCRATCH=""
 SCRATCH_MARKER=".chk330-mine"
@@ -272,7 +281,9 @@ remove_scratch() {
 # the same).
 write_reader() {
   cat >"$SCRATCH/read.py" <<'PY'
+import hashlib
 import json
+import re
 import sys
 
 
@@ -298,6 +309,51 @@ def num(value):
 def text(value):
     value = flat(value)
     return value if value else "-"
+
+
+# ------------------------------------------------------------------ job names
+# A project job's name is derived, not read: internal/backend/gcp's
+# ProjectJobName sanitizes `fugaro-p-<profile>-<provider>-<account>`, cuts the
+# readable part to 36 characters (the 49 a Cloud Run job name may hold, less the
+# "-" and the 12 hex of the hash that follows) and appends that hash of the
+# triple. The account is the name's LAST segment, so it is exactly what a long
+# name cuts off — the review-only variant and the shared job of one triple, over
+# a long account, differ in nothing but the hash. So a reader cannot tell from a
+# name which variant it is, and this one recomputes the names instead: what a run
+# was launched on is decided by matching its job against these.
+
+def sanitize_name(value):
+    out = re.sub(r"[^a-z0-9-]+", "-", value.lower())
+    while "--" in out:
+        out = out.replace("--", "-")
+    return out.strip("-")
+
+
+def project_job_name(profile, provider, account, limit=49, hexlen=12):
+    readable = sanitize_name("fugaro-p-%s-%s%s" % (profile, provider, "-" + account if account else ""))
+    suffix = "-" + hashlib.sha256(("%s\x00%s\x00%s" % (profile, provider, account)).encode("utf-8")).hexdigest()[:hexlen]
+    if len(readable) > limit - len(suffix):
+        readable = readable[: limit - len(suffix)]
+    readable = readable.rstrip("-")
+    return suffix[1:] if not readable else readable + suffix
+
+
+# config.ProjectJobAccounts: the account the profile's own no-account job is
+# built for, plus one per account it lists, with the default account spelled as
+# the empty one because that is how the job name's axis holds it.
+def project_job_accounts(pr):
+    out = [""]
+    for named in pr.get("claude_accounts") or []:
+        named = flat(named)
+        out.append("" if named == "default" else named)
+    return sorted(set(out))
+
+
+# config.ReviewVariantAccount and credsvc.ReviewJobName: the variant's account is
+# the axis's own spelling of the default account — "default", not the empty
+# string — with config.ReviewVariantSuffix on it.
+def review_job_account(account):
+    return (account or "default") + "-review"
 
 
 what = sys.argv[1]
@@ -353,6 +409,20 @@ elif what == "policy":
                 values.add(named)
     named = sorted(v for v in values if "--" in v)
     print("non_account=%s" % (",".join(named) if named else "-"))
+    # The jobs this policy derives, one row per class: `job <class> <profile>
+    # <provider> <account> <name>`, over each profile's own (profile, provider,
+    # account) triples. The account column is the axis's spelling ("" for the
+    # profile's no-account job), not the "-review" variant the name carries.
+    profiles = pol.get("profiles") or {}
+    for name in sorted(profiles):
+        pr = profiles[name] or {}
+        provider = flat(pr.get("provider"))
+        for account in project_job_accounts(pr):
+            print("job\tshared\t%s\t%s\t%s\t%s" % (
+                flat(name), provider, flat(account), project_job_name(flat(name), provider, account)))
+            print("job\treview\t%s\t%s\t%s\t%s" % (
+                flat(name), provider, flat(account),
+                project_job_name(flat(name), provider, review_job_account(account))))
 elif what == "record":
     cost = doc.get("cost") or {}
     print("run_id=%s" % flat(doc.get("run_id")))
@@ -458,6 +528,17 @@ field() { # field FILE KEY
 # stage_field FILE NAME COLUMN — one column of a `stage\t<name>\t...` row.
 stage_field() { # stage_field FILE NAME COLUMN
   awk -F'\t' -v name="$2" -v col="$3" '$1 == "stage" && $2 == name { print $col; exit }' "$1" 2>/dev/null || true
+}
+
+# job_row FILE NAME — the `job\t<class>\t<profile>\t<provider>\t<account>\t<name>`
+# row the policy reader printed for the job named NAME, as
+# `<class>\t<profile>\t<provider>\t<account>`; "" when the policy derives no such
+# name. A job name is identified by the names the deployment derives and not read
+# for the variant it is: derive cuts a project job's readable part to 36
+# characters, so a long account's segment is what comes off, and the shared job and
+# the review-only variant of one triple then differ in nothing but the hash.
+job_row() { # job_row FILE NAME
+  awk -F'\t' -v name="$2" '$1 == "job" && $6 == name { print $2 "\t" $3 "\t" $4 "\t" $5; exit }' "$1" 2>/dev/null || true
 }
 
 # own_stages_usd FILE — the run's OWN stages' model_usd, summed over every row,
@@ -609,7 +690,7 @@ step_policy() {
   read_json policy "$SCRATCH/policy.out" "$SCRATCH/policy.txt" ||
     stop "fugaro project policy show --json printed something this check cannot read as its document: $SCRATCH/policy.out"
   if [ "$(field "$SCRATCH/policy.txt" published)" != true ]; then
-    fact policy INFO "no policy is published in $P, so this installation's runs take their accounts from the job their launch picks and no sentinel is named: slice B's job row reads the variant the run was launched on, and this row has no policy to read beside it"
+    fact policy INFO "no policy is published in $P, so this installation's runs take their accounts from the job their launch picks and no sentinel is named: slice B's job row compares the run's job against the names a policy derives, so with none published there is nothing to compare it with and no policy to read beside it"
     fact budget INFO "no published policy, so there is no configured budget mode to read ($(field "$SCRATCH/policy.txt" mode)): this check refuses a mode-'off' installation from the policy alone, and says here that it could not read one"
     return 0
   fi
@@ -942,25 +1023,41 @@ step_slice_b() {
     return 0
   fi
 
-  # The variant's name carries the account segment with the review suffix, and
-  # the account is the value the published policy names for the profile: a value
-  # carrying a doubled dash is one of the axis's two that name no Claude account,
-  # which is the sentinel this slice publishes. The comparison drops the dashes
-  # and the case because a job name is sanitized (the project job naming), so the
-  # stem and not the exact spelling is what a reader has.
-  local stem
-  stem=$(printf '%s' "$job" | tr 'A-Z' 'a-z' | tr -cd 'a-z0-9')
-  case "$stem" in
-  *anthropicapikeyprojectreview*)
-    fact review-launch PASS "slice B's run was launched on $job: the job's own name carries the review variant of the sentinel anthropic-api-key--project, which is the variant a review of a repository whose profile names the project's Anthropic key runs on"
-    ;;
-  *providerkeyprojectreview*)
-    fact review-launch PASS "slice B's run was launched on $job: the job's own name carries the review variant of provider-key--project — the axis's OTHER non-account value, which is slice C's (AK6a) and not the Anthropic key this slice measures; read the key that served it with the step below, and note in the register which of the two this run was"
-    ;;
-  *)
-    fact review-launch FAIL "slice B's run was launched on $job, which is not the review variant of either of the axis's non-account values (anthropic-api-key--project, provider-key--project): a review of a repository whose profile names a Claude account runs on that account's variant, and this run is not the cloud Anthropic-key path slice B measures"
-    ;;
-  esac
+  # Which job the review ran on is the deployment's own derivation, recomputed
+  # from the published policy (the reader's `job` rows) and matched against the
+  # name the launch record carries. The name itself cannot answer it: the account
+  # is the last segment of the stem `fugaro-p-<profile>-<provider>-<account>`, and
+  # derive keeps 36 characters of that stem, so an account as long as either of the
+  # axis's non-account values is cut down to its first characters — and the shared
+  # job of the same triple differs from the variant in the hash alone. A doubled
+  # dash in the matched account is what tells an account from the two values that
+  # name none.
+  local matched class profile provider account
+  matched=$(job_row "$SCRATCH/policy.txt" "$job")
+  class=$(printf '%s' "$matched" | cut -f1)
+  profile=$(printf '%s' "$matched" | cut -f2)
+  provider=$(printf '%s' "$matched" | cut -f3)
+  account=$(printf '%s' "$matched" | cut -f4)
+  if [ -z "$matched" ] && [ "$(field "$SCRATCH/policy.txt" published)" != true ]; then
+    # No published policy is no set of names to compare against: the account
+    # segments every job name is derived from are the policy's profiles, so there
+    # is nothing here that could say which job the review ran on — and the row says
+    # that rather than reading the run as a finding about the release.
+    for key in review-launch review-env review-log; do
+      unmeasured "$key" "not read: no policy is published in $P, so this check has no (profile, provider, account) triple to derive the review job's name from and cannot say which job the review ran on"
+    done
+    return 0
+  elif [ -z "$matched" ]; then
+    fact review-launch FAIL "slice B's run was launched on $job, which is no job the published policy derives: the names it derives for its profiles are each profile's own shared job and that job's review-only variant, over the (profile, provider, account) triples the policy serves, and a run on anything else is not the cloud Anthropic-key path this slice measures. Check the run's reference against the policy this installation has published (fugaro project policy show), and launch the review on the review-only variant of the profile that names the project's Anthropic key"
+  elif [ "$class" = shared ]; then
+    fact review-launch FAIL "slice B's run was launched on $job, which the policy derives as the SHARED job of the profile $profile (provider $provider, account ${account:-no account}) and not as that job's review-only variant: the shared job mounts the repository's App key and its account's Claude token, and a review launched on it is the one thing the variant exists to prevent. A review runs on the variant, which is the job the same triple deploys beside the shared one"
+  elif [ "$ACCOUNT_ANTHROPIC_KEY" = "$account" ]; then
+    fact review-launch PASS "slice B's run was launched on $job, which the policy derives as the review-only variant of the profile $profile (provider $provider) whose account is $ACCOUNT_ANTHROPIC_KEY — the axis's value for the project's own Anthropic API key, and the variant a review of a repository whose profile names that key runs on"
+  elif [ "$ACCOUNT_PROVIDER_KEY" = "$account" ]; then
+    fact review-launch PASS "slice B's run was launched on $job, which the policy derives as the review-only variant of the profile $profile (provider $provider) whose account is $ACCOUNT_PROVIDER_KEY — the axis's OTHER non-account value, which is slice C's (AK6a) and not the Anthropic key this slice measures; read the key that served it with the step below, and note in the register which of the two this run was"
+  else
+    fact review-launch FAIL "slice B's run was launched on $job, which the policy derives as the review-only variant of the profile $profile (provider $provider, account ${account:-default}) — a Claude account's job, not the project's Anthropic key: a review of a repository the policy pairs with a Claude account runs on that account's variant, and this run is not the cloud Anthropic-key path slice B measures"
+  fi
 
   # The job's own environment: the review container mounts no credential of the
   # repository's, because its read-only token and its model calls both come from
@@ -1068,7 +1165,7 @@ print_plan() {
   say "and the rows it would print, in the block's own order:"
   say "  the guards and the reads: project, sandbox, agent-session, belong, budget, policy, run, contrast-run${REVIEW_REF:+, review-run}"
   say "  slice A: log-coder (the run's own stages' lines carry a route), log-review (the review class's lines carry none and are served as a Claude model), review-dollars (the review stage's model_usd is real and its model_notional_usd absent), route-by (the split carries the run's own stages and not the review's), contrast (the second run's review class reads credential=oauth with model_notional_usd equal to model_usd)"
-  say "  slice B (with --review): review-launch (the job is the review variant of the sentinel the policy names), review-env (the job's environment holds no credential), review-log (the run's calls reached the gateway with no route)"
+  say "  slice B (with --review): review-launch (the job is a name the published policy derives, and it is that triple's review-only variant rather than its shared job — the two names are recomputed here the way the deployment derives them, because the account is the last segment of the name and a long one is cut off it, so the hash alone tells the variant), review-env (the job's environment holds no credential), review-log (the run's calls reached the gateway with no route)"
   say "  restore: nothing to undo — this check creates nothing"
   say "Nothing was read and no verdict was taken: this dry run made no fugaro call and no gcloud call at all. The steps that stay yours (a browser, a refusal, the key's own name) are printed at the end of a real run, and they are in the register's section."
 }
