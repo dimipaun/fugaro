@@ -35,13 +35,15 @@ import (
 // has published a profile that serves the repository: the profile the workflow
 // names, or the default profile of the repository's own provider when it names
 // none (D2310, R8), for a provider a shared job serves at all (S1). The
-// checkout mode does not decide the job model (D2304): a `checkout: baked`
-// workflow runs on a shared job like any other. The mode still decides the
-// image of the repository's own job — a baked workflow that job's own derived
-// image, a clone workflow the installation's base image — while a shared job
-// holds the image the deployer gave its profile whatever its repositories'
-// workflows say (internal/infra's ProjectJobs; D2305 for what that image
-// becomes), so the mode no longer tells a reader which image a run lands in.
+// checkout mode no longer decides the job model (D2304) — a `checkout: baked`
+// workflow reaches a shared job once that job carries the tools the workflow
+// declares, which is the half of the same decision S10 ships (sharedJobBaked,
+// below) — and the mode still decides the image of the repository's own job: a
+// baked workflow that job's own derived image, a clone workflow the
+// installation's base image. A shared job holds the image the deployer gave its
+// profile whatever its repositories' workflows say (internal/infra's
+// ProjectJobs; D2305 for what that image becomes), so the mode never told a
+// reader which image a *shared* job's run lands in.
 // Every launch of a project that has published no profiles keeps the
 // per-repository job it has always had: that is what keeps this change
 // invisible to an installation that has not migrated, down to the request
@@ -88,6 +90,29 @@ type launchProjectJob struct {
 // whether a document is worth reading at all (launchConfigWhereTheTreeGivesNone)
 // and whether the profile the document selects has a job (launchProjectJobFor).
 var sharedJobProvider = infra.SharedJobProvider
+
+// sharedJobBaked is whether a `checkout: baked` workflow runs on a shared
+// project job, and it is false for the reason sharedJobProvider is github
+// alone: the half D2304's decision depends on has not shipped. D2304 gives the
+// job model to the profile and not to the checkout mode, and the *image* is
+// what made the checkout mode matter — a shared project job runs the image its
+// profile was deployed with (internal/infra's ProjectJobs deploys the
+// installation's base image; S10 gives it the project's catalog default image,
+// D2305), while a workflow's declared tools — image.apt, image.setup, a
+// dockerfile, the catalog entry whose build the deploy stamps — live in the
+// repository's own derived image and nowhere else. Moving a baked workflow onto
+// a shared job before that job carries them loses every one of them — a test
+// that needs postgres, say — and nothing would say so: the launch still judges
+// it as baked (the derived image's build record is what its image gate reads,
+// and the task it seals has clone false), so the run starts and fails on the
+// tool it does not have. The move therefore waits for the image, and S10 flips
+// this value in the change that deploys the catalog default for a profile.
+//
+// It is a variable for the same reason sharedJobProvider is: S4's test of the
+// baked half admits the workflow the way S10's own test will
+// (admitSharedJobBaked), and what a test admits there is what production does
+// the day the image ships.
+var sharedJobBaked = false
 
 // launchConfigWhereTheTreeGivesNone is the repository's own document for a
 // launch whose working tree could not answer with one: checkoutParse answers
@@ -323,6 +348,18 @@ func (e *cloudEnv) launchProjectJobFor(ctx context.Context, slug string, spec *t
 	}
 	w, ok := co.Workflows[spec.Workflow]
 	if !ok {
+		return nil, nil
+	}
+	// The checkout mode decides the image a run lands in and no longer which
+	// job it is (D2304) — for the modes whose image a shared project job can
+	// hold today. A baked workflow needs the tools its own workflow declares,
+	// which only the repository's derived image has, so it keeps the
+	// per-repository job until S10 gives the shared job the project's catalog
+	// default image (sharedJobBaked). A `checkout: shared` workflow is refused
+	// long before a launch reaches this (config.SharedCheckoutRefusal, while
+	// sharedCheckoutShipped is false), so clone and baked are the modes a
+	// document in hand can carry.
+	if w.Checkout != config.CheckoutClone && !sharedJobBaked {
 		return nil, nil
 	}
 	p, found, err := e.policy.read(ctx, e.lc)
@@ -1497,11 +1534,13 @@ var errNoConfigAtRef = errors.New("no fugaro.yaml at it")
 //
 // The fix named is the two ways out an operator has: repair the document the
 // message names (a fugaro.yaml that does not resolve, a layer that no longer
-// parses), or take the repository off the shared-job path — the published
-// policy serving no profile for the repository's provider keeps it on the
-// per-repository job it has always had, and the checkout mode does not decide
-// that (D2304).
+// parses), or take the repository off the shared-job path — a published policy
+// that serves no profile for the repository's provider keeps it on the
+// per-repository job it has always had, and a `checkout: baked` workflow keeps
+// that job too until a shared job carries the image it needs: D2304 leaves the
+// job model to the profile and not to the checkout mode, and the image half of
+// that decision is S10's (sharedJobBaked).
 func checkProjectJobAuthUnknown(repo, why string) error {
-	return userErr("cannot tell which Claude credential a run of %s would use on the shared project job its workflow selects, so nothing was launched: %s. A run resolves agent.auth from the fugaro.yaml at the ref it checks out, over the project layer its own task carries (project_layer in task.json), and this launch is judged on that same layer with that same fugaro.yaml — read at that ref out of your checkout's git objects, never out of the working tree — rather than on a guess: a shared job holds the credential its profile was deployed with — the account segment of its own name — so a launch whose credential cannot be resolved is refused instead of started on a job that may not be able to serve it. Fix what the message names, or keep this repository on its own per-repository job: a repository the published policy serves no profile for keeps the job it has always had, whatever its workflow's checkout says. Nothing was launched: no claim was taken, no budget token was minted and Cloud Run was not called",
+	return userErr("cannot tell which Claude credential a run of %s would use on the shared project job its workflow selects, so nothing was launched: %s. A run resolves agent.auth from the fugaro.yaml at the ref it checks out, over the project layer its own task carries (project_layer in task.json), and this launch is judged on that same layer with that same fugaro.yaml — read at that ref out of your checkout's git objects, never out of the working tree — rather than on a guess: a shared job holds the credential its profile was deployed with — the account segment of its own name — so a launch whose credential cannot be resolved is refused instead of started on a job that may not be able to serve it. Fix what the message names, or keep this repository on its own per-repository job: a repository the published policy serves no profile for keeps the job it has always had, and so does a `checkout: baked` workflow until a shared job carries the image it needs. Nothing was launched: no claim was taken, no budget token was minted and Cloud Run was not called",
 		repo, why)
 }

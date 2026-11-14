@@ -1664,10 +1664,10 @@ func TestProjectJobSentinelRefusedWhenTheRunIsNotAnAPIKeyRun(t *testing.T) {
 // the launch stops before the claim, as the account gate's refusals do.
 //
 // What keeps this repository on a job of its own is that the project has
-// published no profile for its provider (projectJobLegacyPolicy): the checkout
-// mode does not decide the job any more (D2304), so a workflow is on the
-// per-repository path exactly when no profile of the published policy serves
-// the repository's provider.
+// published no profile for its provider (projectJobLegacyPolicy): the profile
+// decides the job and not the workflow's checkout (D2304), so a repository no
+// profile of the published policy serves is on the per-repository path however
+// its workflow reads.
 //
 // Mutation (run, restore): delete the `job == nil && spec.OAuthToken == ...`
 // refusal in launchRun — the launch takes the claim, mints the budget token and
@@ -2289,11 +2289,19 @@ func TestRunRepoInItsCheckoutWithNoFugaroYAMLKeepsThePerRepositoryJob(t *testing
 // on a per-repository job the retirement then deletes (M2, D2303), and the
 // repository's work ran on a job whose profile its owner had already left.
 //
-// Mutation (run, restore): read the checkout mode in launchProjectJobFor again
-// (return nil, nil for a workflow that is not `checkout: clone`) — the launch
-// goes to the per-repository job and this test fails.
+// The move is admitted for the length of this test and not in the tree: the
+// image that makes it safe to take is S10's (sharedJobBaked, which S10 flips
+// when ProjectJobs deploys the project's catalog default image), so this test
+// is what proves the launcher's half of that decision while
+// TestLaunchProjectJobKeepsBakedWorkflowsOnTheirOwnJob proves the other — that
+// until the flip, a baked workflow keeps the job it has always had.
+//
+// Mutation (run, restore): judge the checkout mode without the switch (return
+// nil, nil for a workflow that is not `checkout: clone`) — the launch goes to
+// the per-repository job and this test fails.
 func TestLaunchProjectJobServesBakedWorkflows(t *testing.T) {
 	f := newProjectJobFixture(t)
+	admitSharedJobBaked(t)
 	baked := strings.Replace(projectJobRepoYAML, "checkout: clone", "checkout: baked", 1)
 	if !strings.Contains(baked, "checkout: baked") {
 		t.Fatal("the fixture has no checkout: clone to put a baked workflow in its place")
@@ -2306,6 +2314,40 @@ func TestLaunchProjectJobServesBakedWorkflows(t *testing.T) {
 	calls := f.run.RunRequests()
 	if len(calls) != 1 || calls[0].Job != f.job {
 		t.Fatalf("the launch made %d jobs.run calls (%+v), want one on the shared job %s: a baked workflow runs on a shared job like any other (D2304)", len(calls), calls, f.job)
+	}
+}
+
+// TestLaunchProjectJobKeepsBakedWorkflowsOnTheirOwnJob is the half of D2304
+// that waits for the image: a shared project job runs the image its profile was
+// deployed with, and the tools a workflow declares (image.apt, image.setup, a
+// dockerfile, the catalog entry its deploy stamps) are in the repository's own
+// derived image and nowhere else, so a `checkout: baked` workflow keeps the
+// per-repository job it has always had until S10 gives the shared job the
+// project's catalog default image. The rest of the launch is the same one
+// TestLaunchProjectJobServesBakedWorkflows makes: the same repository, under a
+// published profile that serves it, with the same derived image built — what
+// holds it on its own job is its checkout and nothing else about it.
+//
+// Mutation (run, restore): drop the switch from launchProjectJobFor's
+// precondition (return nil, nil only for a workflow that is not
+// `checkout: clone`, whatever sharedJobBaked says) — the baked workflow is moved
+// onto the shared job, whose image does not carry the tools it declares, and
+// this test fails.
+func TestLaunchProjectJobKeepsBakedWorkflowsOnTheirOwnJob(t *testing.T) {
+	f := newProjectJobFixture(t)
+	perRepo := gcp.JobName(appSlug, "web")
+	baked := strings.Replace(projectJobRepoYAML, "checkout: clone", "checkout: baked", 1)
+	if !strings.Contains(baked, "checkout: baked") {
+		t.Fatal("the fixture has no checkout: clone to put a baked workflow in its place")
+	}
+	projectJobCheckoutYAML(t, baked)
+
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261114-130000-bbbb", "Add a feature"); err != nil {
+		t.Fatalf("a launch of a baked workflow: %v", err)
+	}
+	calls := f.run.RunRequests()
+	if len(calls) != 1 || calls[0].Job != perRepo {
+		t.Fatalf("the launch made %d jobs.run calls (%+v), want one on the per-repository job %s: a shared project job does not carry the tools a baked workflow declares until S10 gives it the project's catalog default image (sharedJobBaked)", len(calls), calls, perRepo)
 	}
 }
 
@@ -2326,6 +2368,27 @@ func admitSharedJobProvider(t *testing.T, provider string) {
 	prev := sharedJobProvider
 	sharedJobProvider = func(kind string) bool { return kind == provider || prev(kind) }
 	t.Cleanup(func() { sharedJobProvider = prev })
+}
+
+// admitSharedJobBaked admits a `checkout: baked` workflow to a shared project
+// job for the length of the test.
+//
+// The tree does not admit it (sharedJobBaked, project_job.go): the move is
+// D2304's, and the image that makes it safe is S10's, which flips the switch in
+// the change that deploys the project's catalog default image for a profile.
+// Until then a test of the shared half turns it on here rather than waiting for
+// that release, and the two tests that turn it on are the ones that assert the
+// launcher's half of the decision — TestLaunchProjectJobServesBakedWorkflows and
+// the baked case of TestRunnerCandidatesMatchTheLauncher — beside
+// TestLaunchProjectJobKeepsBakedWorkflowsOnTheirOwnJob, which asserts what the
+// tree does today.
+//
+// No test in this package runs in parallel, so replacing the variable is a
+// test-local act.
+func admitSharedJobBaked(t *testing.T) {
+	t.Helper()
+	sharedJobBaked = true
+	t.Cleanup(func() { sharedJobBaked = false })
 }
 
 // The two profiles a project whose repositories are on both providers
@@ -2485,7 +2548,8 @@ func TestUnnamedWorkflowResolvesTheProfileOfItsProvider(t *testing.T) {
 // wrote down. Both of the rules this task changes are asked here, because they
 // are the two that decide a name: the provider-default rule (a Bitbucket
 // repository whose workflow names no profile) and the checkout mode that no
-// longer decides the job model (a baked workflow of the GitHub repository).
+// longer decides the job model (a baked workflow of the GitHub repository,
+// admitted here to the shared job as S10's flip of sharedJobBaked admits it).
 //
 // Mutation (run, restore): make ProjectJobDefaultProfile answer the project's
 // default profile whatever the provider is — the Bitbucket launch is made on
@@ -2513,6 +2577,10 @@ func TestRunnerCandidatesMatchTheLauncher(t *testing.T) {
 				addRepoToConfig(t, f.cloudFixture, tc.repo, provider)
 				bitbucketCheckout(t, tc.repo, "")
 			} else {
+				// The baked case is the shared job's once the image that makes
+				// the move safe is deployed (sharedJobBaked, S10's flip), which
+				// is the name this case has to agree on with the runner.
+				admitSharedJobBaked(t)
 				baked := strings.Replace(projectJobRepoYAML, "checkout: clone", "checkout: baked", 1)
 				projectJobCheckoutYAML(t, baked)
 			}

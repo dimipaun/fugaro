@@ -253,14 +253,17 @@ func checkReviewJobAdmitted() error {
 // provider and account the job belongs to.
 //
 // A launch that resolved no shared project job has no variant to run on: a
-// baked workflow keeps its per-repository job, a project that published no
-// profiles has no project jobs at all, and a repository the profile does not
-// admit is refused long before this. In each case there is nothing deployed
-// beside the coding job to launch, and starting the coding job instead is the
-// one thing this command exists not to do.
+// repository the published policy serves no profile for keeps the
+// per-repository job it has always had — a project that published no profiles
+// at all publishes no job either — as does a `checkout: baked` workflow while a
+// shared job does not carry the image it needs (sharedJobBaked, project_job.go),
+// and a repository the profile does not admit is refused long before this. In
+// each case there is nothing deployed beside the coding job to launch, and
+// starting the coding job instead is the one thing this command exists not to
+// do.
 func (e *cloudEnv) reviewJobFor(ctx context.Context, coding *launchProjectJob) (*launchProjectJob, error) {
 	if coding == nil {
-		return nil, userErr("a review runs on the review-only variant of a shared project job, and this repository has none: its workflow runs on a per-repository job (a baked workflow, or a project that has published no profiles), beside which no variant is deployed. Read the review in the run's own job instead, with fugaro run --pr N --recipe " + reviewOnlyRecipe)
+		return nil, userErr("a review runs on the review-only variant of a shared project job, and this repository has none: its workflow runs on a per-repository job — a repository the published policy serves no profile for, a project that has published no profiles at all, or, until a shared job carries the image it needs, a `checkout: baked` workflow — beside which no variant is deployed. Read the review in the run's own job instead, with fugaro run --pr N --recipe " + reviewOnlyRecipe)
 	}
 	p, found, err := e.policy.read(ctx, e.lc)
 	if err != nil {
