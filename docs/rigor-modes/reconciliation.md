@@ -874,7 +874,7 @@ folder's pin over the amendment the portal's P9.1 makes to that folder's plan an
 reconciliation and to `docs/design/key-signing-service.md` — the sign-in, the admin page
 and the account pages become the portal's surfaces, the service moves into one project
 with the website, and three questions the design left open are recorded as decided —
-moved the table's row from 132 to 133.
+moved the table's row from 133 to 134.
 Amended 2026-11-11: `abSince`, the launch-image gate the model-A/B work's A3.3
 puts on the pair's own task (`internal/cli/recipes_skew.go`: a runner older than
 the release the ab field landed in refuses the whole task at bootstrap, the
