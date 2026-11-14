@@ -148,6 +148,15 @@ type layerPlan struct {
 	// ordinary one and the answer reaches the project in the run that asked
 	// for it.
 	rigor *layerRigor
+	// pubSkip is why the answer written above is left UNPUBLISHED: the project
+	// layer's bucket could not be read, so this run has nothing to compare a
+	// publish against and makes none. What it leaves is the state a declined
+	// confirmation leaves — the answer written into the file, the object
+	// untouched — whose one documented next step is `fugaro update`
+	// (doctor's local-layer-file check). The answer itself is not lost with
+	// the bucket: it is this machine's own write, and the file is where the
+	// next converge reads it from.
+	pubSkip string
 }
 
 // layerRigor is the wizard's answer as this stage acts on it: the mode, the
@@ -251,6 +260,26 @@ func layerPlanFor(ctx context.Context, lc *localcfg.Config, mode rigor.Mode) (*l
 		// state it leaves is a local file the owner can still edit, and
 		// `fugaro config layer` and doctor report the same thing the next time
 		// the bucket answers.
+		//
+		// The wizard's answer is the one thing here that is NOT the bucket's
+		// to decide (task W): the local half is this machine's own write, and
+		// dropping it would lose the answer for good — a config that exists
+		// means the wizard asks nothing on the next converge, and refuses
+		// --rigor besides. So the file is written and only the publish is
+		// dropped, which is the state a declined confirmation already leaves;
+		// the bucket's bytes are what the publish would have been compared
+		// against, and the comparison is what a publish may not skip (D854).
+		if mode != "" {
+			base, writeBase := p.local, false
+			if !p.exists {
+				base, writeBase = layerRigorShell(lc), true
+			}
+			if err := p.rigorAnswer(lc, mode, base, writeBase); err != nil {
+				return nil, err
+			}
+			p.pubSkip = fmt.Sprintf("the project layer's bucket (%s) could not be read: %s", p.url, oneLineCLI(rerr.Error()))
+			return p, nil
+		}
 		p.skip = fmt.Sprintf("the project layer's bucket (%s) could not be read, so this run leaves the project layer and its local layer file as they are: %s", p.url, oneLineCLI(rerr.Error()))
 		return p, nil
 	case exists:
@@ -277,18 +306,6 @@ func layerPlanFor(ctx context.Context, lc *localcfg.Config, mode rigor.Mode) (*l
 	// what would catch a layer that moved in the meantime, so the answer is not
 	// gated on it twice.
 	if mode != "" {
-		// The answer is read again where it is written. The question's own
-		// reader is the one reading (setupRigorMode), so the value that reaches
-		// the file is a mode and not whatever a run carried here: a walk that
-		// skips the question — `fugaro update` on a machine with no project
-		// config, whose wizard returns before it — must not be able to publish
-		// a mode no layer may set, hotfix above all (D834), and a near miss
-		// would otherwise be written and refused only at the read-back below.
-		read, err := setupRigorMode(string(mode))
-		if err != nil {
-			return nil, userErr("--rigor %s: %v", pluginwire.Printable(string(mode)), err)
-		}
-		mode = read
 		base, writeBase := p.local, false
 		switch {
 		case p.exists:
@@ -297,21 +314,10 @@ func layerPlanFor(ctx context.Context, lc *localcfg.Config, mode rigor.Mode) (*l
 		default:
 			base, writeBase = layerRigorShell(lc), true
 		}
-		next, err := yamledit.SetScalar(base, rigorDefaultPath, string(mode))
-		if err != nil {
-			return nil, userErr("writing the rigor mode into %s: %v", p.path, err)
+		if err := p.rigorAnswer(lc, mode, base, writeBase); err != nil {
+			return nil, err
 		}
-		l, problems := projectLayerProblems(next, lc)
-		if len(problems) > 0 {
-			// A backstop: the answer is one scalar the layer parser reads, and
-			// a document that does not read back is refused rather than
-			// published as the shell it might have been left as.
-			return nil, userErr("%s would not read back after the rigor answer was written into it: %s", p.path, pluginwire.Printable(layerProblemsText(problems)))
-		}
-		p.rigor = &layerRigor{mode: mode, base: base, next: next, writeBase: writeBase}
-		p.local, p.l, p.exists = next, l, true
 		p.publish, p.adopted = true, !hasRecord
-		p.seed, p.recordGen, p.stale, p.skip = false, false, nil, ""
 		return p, nil
 	}
 	switch {
@@ -340,6 +346,44 @@ func layerPlanFor(ctx context.Context, lc *localcfg.Config, mode rigor.Mode) (*l
 		p.adopted = !hasRecord
 	}
 	return p, nil
+}
+
+// rigorAnswer splices the wizard's answer into the document this run writes
+// (base, which the two callers pick) and records the state it leaves: the mode,
+// the bytes, the document and the parsed layer, with every other plan flag
+// cleared, because the answer is what this run does and nothing else.
+//
+// It is one helper because the answer is spliced on two walks — the ordinary
+// one, where the bucket was read, and the one where it could not be, where the
+// file is still written and only the publish is dropped (pubSkip) — and the two
+// must write the same bytes for the same answer.
+func (p *layerPlan) rigorAnswer(lc *localcfg.Config, mode rigor.Mode, base []byte, writeBase bool) error {
+	// The answer is read again where it is written. The question's own reader is
+	// the one reading (setupRigorMode), so the value that reaches the file is a
+	// mode and not whatever a run carried here: a walk that skips the question —
+	// `fugaro update` on a machine with no project config, whose wizard returns
+	// before it — must not be able to write a mode no layer may set, hotfix
+	// above all (D834), and a near miss would otherwise be written and refused
+	// only at the read-back below.
+	read, err := setupRigorMode(string(mode))
+	if err != nil {
+		return userErr("--rigor %s: %v", pluginwire.Printable(string(mode)), err)
+	}
+	next, err := yamledit.SetScalar(base, rigorDefaultPath, string(read))
+	if err != nil {
+		return userErr("writing the rigor mode into %s: %v", p.path, err)
+	}
+	l, problems := projectLayerProblems(next, lc)
+	if len(problems) > 0 {
+		// A backstop: the answer is one scalar the layer parser reads, and a
+		// document that does not read back is refused rather than published as
+		// the shell it might have been left as.
+		return userErr("%s would not read back after the rigor answer was written into it: %s", p.path, pluginwire.Printable(layerProblemsText(problems)))
+	}
+	p.rigor = &layerRigor{mode: read, base: base, next: next, writeBase: writeBase}
+	p.local, p.l, p.exists = next, l, true
+	p.seed, p.recordGen, p.stale, p.skip, p.pubSkip = false, false, nil, "", ""
+	return nil
 }
 
 // layerPublishedRead reads the published object for the stage; a var because a
@@ -383,6 +427,8 @@ func (s *layerStage) Check(ctx context.Context) (initflow.Status, error) {
 	switch {
 	case p.skip != "":
 		return initflow.Status{State: initflow.Skipped, Detail: p.skip}, nil
+	case p.rigor != nil && p.pubSkip != "":
+		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("the wizard's rigor answer (%s) is written into %s: this run writes it and leaves the project layer unpublished, because %s. The next step for the unpublished layer is %s", p.rigor.mode, p.path, p.pubSkip, selfCommand()+" update")}, nil
 	case p.rigor != nil:
 		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("the wizard's rigor answer (%s) is written into %s: this run writes it and publishes the project layer, after your confirmation", p.rigor.mode, p.path)}, nil
 	case p.seed:
@@ -418,6 +464,8 @@ func (s *layerStage) Plan(ctx context.Context, env initflow.Env) (initflow.Plan,
 // this run's plan.
 func (p *layerPlan) planDetail() string {
 	switch {
+	case p.rigor != nil && p.pubSkip != "":
+		return fmt.Sprintf("write the wizard's rigor answer (%s) into %s and leave the project layer unpublished (%s)", p.rigor.mode, p.path, p.pubSkip)
 	case p.rigor != nil:
 		return fmt.Sprintf("write the wizard's rigor answer (%s) into %s and publish the project layer, after your confirmation", p.rigor.mode, p.path)
 	case p.seed:
@@ -456,6 +504,10 @@ func (s *layerStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outc
 		// `fugaro update` — rather than a file nobody can publish.
 		if err := s.writeRigor(env, p); err != nil {
 			return initflow.Outcome{}, err
+		}
+		if p.pubSkip != "" {
+			fmt.Fprintf(s.e.r.w, "%s; %s is written and left unpublished: run %s to publish it\n", p.pubSkip, p.path, selfCommand()+" update")
+			return initflow.Outcome{Changed: true, Detail: fmt.Sprintf("wrote the wizard's rigor answer (%s) into %s, which is left unpublished", p.rigor.mode, p.path)}, nil
 		}
 		return s.publish(ctx, env, p)
 	case p.seed:
@@ -657,6 +709,18 @@ func (s *layerStage) Verify(ctx context.Context) error {
 		}
 		if !bytes.Equal(data, p.published) {
 			return errors.New("the local layer file is not the published project layer it was written from")
+		}
+		return nil
+	case p.rigor != nil && !p.publish:
+		// The bucket could not be read, so the only write this run claims is the
+		// file: reading it back is the only way to see that it landed, and the
+		// object is not this run's to look for.
+		data, err := os.ReadFile(p.path)
+		if err != nil {
+			return fmt.Errorf("the wizard's rigor answer was written but %s cannot be read back: %w", p.path, err)
+		}
+		if !bytes.Equal(data, p.local) {
+			return fmt.Errorf("%s is not the document the wizard's rigor answer was written into", p.path)
 		}
 		return nil
 	case p.publish:

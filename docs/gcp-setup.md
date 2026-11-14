@@ -24,7 +24,7 @@ fugaro setup
 
 The one thing it needs from you is a name for the project: the GCP project ID (`fugaro-<name>`), the region (`us-east5`), the name itself and whether to bake the project's repositories into the images their jobs run (yes, which makes them start faster) are each asked once with a suggestion that Enter takes. The project's **rigor mode** — how much review every run of it gets — is the one question with no suggestion: type `poc`, `startup`, `pro` (the built-in default, what a project that says nothing runs) or `critical`, and the run writes the answer into the project layer and publishes it there and then. Each confirmation says what to type: the project ID to create the project, the billing account's ID to link it, the project's name to apply a plan. Fugaro only starts fresh: it creates the project, and refuses an ID that already exists.
 
-**If billing cannot be linked it pauses**, rather than failing: the project and its Firebase exist, the run ends with one `gcloud billing projects link <id> --billing-account=<account-id>` block to forward to whoever administers billing, and rerunning the same `fugaro setup` resumes the project it created.
+**If billing cannot be linked it pauses**, rather than failing: the project and its Firebase exist, the run ends with one `gcloud billing projects link <id> --billing-account=<account-id>` block to forward to whoever administers billing, and rerunning the same `fugaro setup` resumes the project it created and asks the rigor mode again — the paused run asked it before it stopped, and the answer is written by the run that asks (a rerun that cannot ask, `--yes` among them, is refused with `--rigor <mode>`).
 
 ## Verify
 

@@ -12,11 +12,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/rigor"
 )
 
 const (
@@ -1294,10 +1296,28 @@ func TestBillingLeftForTheAdminAndTheRerunResumes(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	out, errOut, err = r.run(t, true, initProjectName+"\n"+initProjectName+"\n"+newProj+"\n", "--operator", "user:dev@example.com", "--admin", "user:dev@example.com")
+	// The rigor answer comes first: the wizard's phase is the run's first, and
+	// the paused run is the one that asked this question and could not write it
+	// anywhere (wizardResumesCreation) — so this run asks it again, before the
+	// typed confirmations of the creation it resumes.
+	out, errOut, err = r.run(t, true, string(rigor.Critical)+"\n"+initProjectName+"\n"+initProjectName+"\n"+newProj+"\n", "--operator", "user:dev@example.com", "--admin", "user:dev@example.com")
 	all = refusalText(out, errOut, err)
 	if err != nil || strings.Contains(all, "already exists") {
 		t.Fatalf("the rerun after billing was linked did not complete: %v\n%s", err, all)
+	}
+	// The answer lands in this machine's layer file in the run that asked it:
+	// the paused run asked the question and stopped before the Layer stage,
+	// which is the only writer of it, and a resume that dropped the answer
+	// would leave the project on the built-in default for good — the wizard
+	// asks a run with a project config nothing, and refuses --rigor besides.
+	layer := readFileString(t, localLayerPath(t))
+	l, problems := config.ParseProjectLayer([]byte(layer), config.LayerAnchor{Project: initProjectName, GCPProject: newProj})
+	if len(problems) > 0 {
+		t.Fatalf("the layer file this run wrote does not read back as a project layer: %s\n%s", layerProblemsText(problems), layer)
+	}
+	if l.Defaults.Rigor.Default != rigor.Critical {
+		t.Errorf("the resumed run wrote defaults.rigor.default = %q into %s, want critical: the answer the pause could not carry is lost\n%s",
+			l.Defaults.Rigor.Default, localLayerPath(t), layer)
 	}
 	if n := len(r.crm.Creates()); n != 1 {
 		t.Errorf("%d project(s) created over the two runs, want the one", n)

@@ -91,6 +91,12 @@ func newWizardStage(ctx context.Context, r *initRun) *wizardStage {
 func (r *initRun) wizardInputs(ctx context.Context) (name, fromCheckout string, flags []string, creating bool) {
 	name, fromCheckout, missing, creating := r.firstRunMissing(ctx)
 	if !creating {
+		// A still-creating resume owes one question (task W): see
+		// wizardResumesCreation. The rest are settled in the config it selects,
+		// which is why this is not the first-run list above.
+		if r.wizardResumesCreation(ctx) && r.o.rigor == "" {
+			return "", "", []string{questionFor("--rigor").missing}, false
+		}
 		return "", "", nil, false
 	}
 	flags = make([]string, len(missing))
@@ -119,6 +125,24 @@ func (r *initRun) wizardInputs(ctx context.Context) (name, fromCheckout string, 
 		flags = append(flags, questionFor("--rigor").missing)
 	}
 	return name, fromCheckout, flags, true
+}
+
+// wizardResumesCreation is whether this run picks up a first run that paused at
+// billing (localcfg.Config.SetupPending): the config it selects is that run's,
+// and the creation — with the one question about the new project that run could
+// not have written anywhere — is this run's to finish.
+//
+// That question is the rigor answer (task W), and it is the reason this exists:
+// the paused run asked it before it applied anything, and then stopped at the
+// Project stage, which is before the Layer stage that writes and publishes the
+// answer. Keeping it only in memory lost it with that run, and no later run can
+// recover it — a config that exists means the wizard asks nothing and refuses
+// --rigor — so the resume asks it again, or takes it from the flag, and its own
+// layer stage writes it. The bake answer, which the paused run also had to
+// carry, is written into the config itself instead (carryBakeAnswer), which is
+// why it needs no question here.
+func (r *initRun) wizardResumesCreation(ctx context.Context) bool {
+	return r.o.setupCreates(true) && r.selectedPending(ctx)
 }
 
 // Name is the first slot of the canonical order, which is what makes the
@@ -221,10 +245,23 @@ func wizardFlagsLeft(flags []string) string {
 func (s *wizardStage) ask(ctx context.Context) error {
 	r, o := s.r, s.r.o
 	if !s.creating {
+		// The config a first run wrote when it paused at billing, this run's to
+		// finish: it creates, so it is the run the questions about a new project
+		// are asked on, and the one it still owes is the rigor answer — the
+		// paused run asked it and stopped before the layer stage, which is the
+		// only writer of it (wizardResumesCreation).
+		if r.wizardResumesCreation(ctx) {
+			if len(s.missing) > 0 && !r.canAsk() {
+				s.stop(initflow.LeftCommand, wizardFlagsLeft(s.missing))
+				return nil
+			}
+			if err := r.settleCreation(true); err != nil {
+				return s.answer(err)
+			}
+			return s.answer(s.askRigor())
+		}
 		// A project config is selected: this run's inputs are already settled
-		// and nothing is asked. Nothing is created either, unless the config is
-		// the one a first run wrote when it paused for billing: the rerun
-		// resumes that creation (the project stage reads the project again).
+		// and nothing is asked. Nothing is created either.
 		//
 		// --rigor is refused here rather than ignored (task W): the mode of a
 		// project that already exists is the project's own, and the one command

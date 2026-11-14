@@ -890,6 +890,58 @@ func TestTheLayerStageRefusesAModeNoLayerMaySet(t *testing.T) {
 	}
 }
 
+// TestTheLayerStageWritesTheRigorAnswerWhenTheBucketCannotBeRead: the answer is
+// this machine's own write and the publish is the cloud step, so a bucket this
+// run cannot read costs the publish and not the answer (task W; D900). What it
+// leaves is the state a declined confirmation already leaves — the answer in
+// the file, the object untouched — whose one documented next step is
+// `fugaro update`.
+//
+// Dropping the answer instead loses it for good: the config the run leaves
+// means the next converge asks the wizard nothing and refuses --rigor besides,
+// so the project would run the built-in default with nobody having chosen it —
+// the state D900 ends.
+func TestTheLayerStageWritesTheRigorAnswerWhenTheBucketCannotBeRead(t *testing.T) {
+	r := newRigorStageRig(t, "", "", "", string(rigor.Critical))
+	read := layerPublishedRead
+	t.Cleanup(func() { layerPublishedRead = read })
+	layerPublishedRead = func(context.Context, *localcfg.Config, string) ([]byte, int64, bool, error) {
+		return nil, 0, false, errors.New("the bucket is not there")
+	}
+	ctx := context.Background()
+
+	st, err := r.s.Check(ctx)
+	if err != nil {
+		t.Fatalf("check: %v\n%s", err, r.out)
+	}
+	if st.State != initflow.Todo {
+		t.Fatalf("the stage's state is %q, want todo: the answer is still this run's to write\n%s", st.State, r.out)
+	}
+	if !strings.Contains(st.Detail, "unpublished") || !strings.Contains(st.Detail, selfCommand()+" update") {
+		t.Errorf("the check does not say the answer is written and the layer left unpublished:\n%s", st.Detail)
+	}
+	if _, err := r.s.Apply(ctx, initflow.Env{Yes: true}); err != nil {
+		t.Fatalf("apply: %v\n%s", err, r.out)
+	}
+	got := readFileString(t, localLayerPath(t))
+	l, problems := config.ParseProjectLayer([]byte(got), config.LayerAnchor{Project: initProjectName, GCPProject: initProject})
+	if len(problems) > 0 {
+		t.Fatalf("the file this run wrote does not read back as a project layer: %s\n%s", layerProblemsText(problems), got)
+	}
+	if l.Defaults.Rigor.Default != rigor.Critical {
+		t.Errorf("defaults.rigor.default = %q, want critical: the bucket cost the answer\n%s", l.Defaults.Rigor.Default, got)
+	}
+	if obj, ok := rigorObject(t, r); ok {
+		t.Errorf("the layer was published although the bucket could not be read: %s", obj)
+	}
+	if out := r.out.String(); !strings.Contains(out, "left unpublished") || !strings.Contains(out, selfCommand()+" update") {
+		t.Errorf("the run does not say the answer is written and the layer left unpublished:\n%s", out)
+	}
+	if err := r.s.Verify(ctx); err != nil {
+		t.Fatalf("the write this run claims does not verify: %v", err)
+	}
+}
+
 // put publishes text as the project layer of this rig's bucket, as another
 // publisher would.
 func (r *layerStageRig) put(t *testing.T, text string) {
