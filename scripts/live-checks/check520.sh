@@ -443,7 +443,7 @@ step_release() {
   local v feature=no
   v=$(fugaro version 2>/dev/null | head -n 1 || true)
   fact "fugaro-version" PASS "${v:-fugaro version printed nothing}"
-  if "$FUGARO_BIN" models use --help 2>/dev/null | grep -q 'vision'; then feature=yes; fi
+  if { out=$("$FUGARO_BIN" models use --help 2>/dev/null || true); grep -q 'vision' <<<"$out"; }; then feature=yes; fi
   if [ "$feature" = no ]; then
     fact release FAIL "this fugaro has no agent.models.vision: 'fugaro models use --help' does not name the vision slot, so neither the slot nor the rewrite the run below measures is in this build. Check 520 needs release ${RELEASE} (the vision-model work) or later. Run 'fugaro update' at your terminal — that one command is the whole upgrade — and run this check again on the build it leaves you"
     stop "the installed fugaro has no agent.models.vision: this check needs release ${RELEASE}"

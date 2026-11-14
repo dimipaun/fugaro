@@ -656,7 +656,7 @@ step_release() {
   local v feature=no
   v=$(fugaro version 2>/dev/null | head -n 1 || true)
   fact "fugaro-version" PASS "${v:-fugaro version printed nothing}"
-  if "$FUGARO_BIN" ab --help 2>/dev/null | grep -q -- '--since'; then feature=yes; fi
+  if { out=$("$FUGARO_BIN" ab --help 2>/dev/null || true); grep -q -- '--since' <<<"$out"; }; then feature=yes; fi
   if [ "$feature" = no ]; then
     fact release FAIL "this fugaro carries no A/B: 'fugaro ab --help' does not name the command's own --since flag, so this build is either older than release ${RELEASE} — the release the pair launch ships in — or a core build, whose 'ab' is the D522 stub rather than the command. Check 210 needs release ${RELEASE} (docs/releases/v0.24.0.md) or later, built with the features it ships. Run 'fugaro update' at your terminal — that one command is the whole upgrade — and run this check again on the build it leaves you"
     stop "the installed fugaro carries no A/B: this check needs release ${RELEASE}"

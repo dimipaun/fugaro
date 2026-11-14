@@ -566,8 +566,8 @@ step_release() {
   v=$(fugaro version 2>/dev/null | head -n 1 || true)
   fact "fugaro-version" PASS "${v:-fugaro version printed nothing}"
   if ! "$FUGARO_BIN" followups --help >/dev/null 2>&1; then feature=no; fi
-  if ! "$FUGARO_BIN" runs ls --help 2>/dev/null | grep -q -- '--debt'; then feature=no; fi
-  if ! "$FUGARO_BIN" run --help 2>/dev/null | grep -q -- '--security'; then feature=no; fi
+  if ! { out=$("$FUGARO_BIN" runs ls --help 2>/dev/null || true); grep -q -- '--debt' <<<"$out"; }; then feature=no; fi
+  if ! { out=$("$FUGARO_BIN" run --help 2>/dev/null || true); grep -q -- '--security' <<<"$out"; }; then feature=no; fi
   if [ "$feature" = no ]; then
     fact release FAIL "this fugaro has no follow-ups or no --security: either 'fugaro followups --help' does not answer, 'fugaro runs ls --help' does not name --debt, or 'fugaro run --help' does not name --security, so neither the triage block these runs are read through nor the request the second run makes is in this build. Check 492 needs release ${RELEASE} (the post-review triage work) or later. Run 'fugaro update' at your terminal — that one command is the whole upgrade — and run this check again on the build it leaves you"
     stop "the installed fugaro does not carry the triage work: this check needs release ${RELEASE}"
