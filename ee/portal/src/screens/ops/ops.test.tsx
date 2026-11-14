@@ -265,14 +265,23 @@ function serve(replies: Record<string, Reply>): Server {
 interface Shown extends Server {
   signIn: ReturnType<typeof vi.fn>
   client: ApiClient
+  /**
+   * The SDK answering after a sign-in: the same person, with a new sign-in
+   * instant. It is the token's own `auth_time` that a step-up changes, and the
+   * uid does not move, so a fake that pushed a different person would be
+   * testing a case the app cannot meet.
+   */
+  again(age: number): void
 }
 
 /** The screen as the router mounts it, with the session and the API faked. */
 function show(user: SignedInUser | null, replies: Record<string, Reply>): Shown {
   const server = serve(replies)
   const signIn = vi.fn(() => Promise.resolve())
+  let listener: ((user: SignedInUser | null) => void) | null = null
   const port: AuthPort = {
     watch: (onUser) => {
+      listener = onUser
       onUser(user)
       return () => {}
     },
@@ -289,7 +298,14 @@ function show(user: SignedInUser | null, replies: Record<string, Reply>): Shown 
       <OpsScreen api={opsApi(client)} />
     </SessionProvider>,
   )
-  return { ...server, signIn, client }
+  return {
+    ...server,
+    signIn,
+    client,
+    again: (age) => {
+      listener?.(person(age))
+    },
+  }
 }
 
 /** The action buttons: every one of them changes something. */
@@ -359,6 +375,36 @@ describe('the operations screens', () => {
 
     fireEvent.click(within(asked).getByRole('button', { name: 'Sign in again' }))
     expect(shown.signIn).toHaveBeenCalledWith('google')
+  })
+
+  it('sends the change once the person has signed in again, and stops asking', async () => {
+    const shown = show(person(10 * 60 * 1000), routes({ 'POST /api/ops/mints': { body: ENTITLEMENT } }))
+    await screen.findByRole('heading', { name: 'Terms and keys' })
+    fillMint()
+    send('Mint')
+    await screen.findByRole('alert')
+    expect(shown.sent('POST', '/api/ops/mints')).toHaveLength(0)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in again' }))
+    shown.again(0)
+
+    // The same change, sent again by the person: the fields it was going to
+    // send are still there, because nothing landed and nothing was cleared,
+    // and the prompt is gone because it has been answered.
+    await waitFor(() => {
+      expect(screen.queryByText(/five minutes/)).toBeNull()
+    })
+    send('Mint')
+    await waitFor(() => {
+      expect(shown.sent('POST', '/api/ops/mints')).toHaveLength(1)
+    })
+    expect(shown.sent('POST', '/api/ops/mints')[0]?.body).toEqual({
+      workspace_id: 'ws_example',
+      row: 'team-monthly',
+      seats: 5,
+      ends_at: '2026-03-10T00:00:00.000Z',
+      check_interval: null,
+    })
   })
 
   it('sends a mint under a sign-in of the last five minutes, in the minter’s own shape', async () => {
