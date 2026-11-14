@@ -35,7 +35,7 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 script=$here/check-c39.sh
 work=$(mktemp -d)
 cleanup_all() {
-  if [ -n "${CHECK530_TEST_KEEP:-}" ]; then echo "kept: $work" >&2; else rm -rf "$work"; fi
+  if [ -n "${CHECK601_TEST_KEEP:-}" ]; then echo "kept: $work" >&2; else rm -rf "$work"; fi
 }
 trap cleanup_all EXIT
 
@@ -47,7 +47,7 @@ fail() {
 expect_contains() { # haystack needle what
   case "$1" in
   *"$2"*) ;;
-  *) fail "$3: expected to contain '$2'; got: $(printf '%s' "$1" | head -c "${CHECK530_TEST_HEAD:-900}")" ;;
+  *) fail "$3: expected to contain '$2'; got: $(printf '%s' "$1" | head -c "${CHECK601_TEST_HEAD:-900}")" ;;
   esac
 }
 expect_absent() {
@@ -56,13 +56,13 @@ expect_absent() {
   esac
 }
 expect_matches() { # haystack regex what
-  printf '%s\n' "$1" | grep -Eq "$2" || fail "$3: expected to match /$2/; got: $(printf '%s' "$1" | head -c "${CHECK530_TEST_HEAD:-900}")"
+  printf '%s\n' "$1" | grep -Eq "$2" || fail "$3: expected to match /$2/; got: $(printf '%s' "$1" | head -c "${CHECK601_TEST_HEAD:-900}")"
 }
 expect_status() { # status want what
   [ "$1" = "$2" ] || fail "$3: expected exit $2, got $1"
 }
 
-project=fugaro-chk530-test
+project=fugaro-chk601-test
 region=us-east5
 bucket=fugaro-runs-$project
 review_job=fugaro-review
@@ -89,7 +89,7 @@ printf 'gcloud %s\n' "$*" >>"$FAKE_LOG_DIR/gcloud.calls"
 mode=${FAKE_MODE:-ok}
 case "${1:-}" in
 config)
-  printf 'chk530-owner@example.com\n'
+  printf 'chk601-owner@example.com\n'
   ;;
 run)
   case "${2:-}" in
@@ -134,7 +134,7 @@ run)
       echo "ERROR: (gcloud.run.services.describe) NOT_FOUND: the service is not there" >&2
       exit 1
     fi
-    printf 'https://fugaro-credentials-chk530-uc.a.run.app\n'
+    printf 'https://fugaro-credentials-chk601-uc.a.run.app\n'
     ;;
   *) exit 1 ;;
   esac
@@ -263,7 +263,7 @@ doctor)
     checks="$checks{\"id\":\"project-account-stored\",\"ok\":true,\"severity\":\"info\",\"problem\":\"$census\",\"fix\":\"\"}"
   fi
   [ "$mode" = no-census-row ] && checks="$checks"
-  printf '{"project":{"name":"chk530","gcp_project":"%s","region":"%s"},"checks":[%s]}\n' \
+  printf '{"project":{"name":"chk601","gcp_project":"%s","region":"%s"},"checks":[%s]}\n' \
     "$FAKE_PROJECT" "$FAKE_REGION" "$checks"
   ;;
 *)
@@ -474,7 +474,7 @@ test_help() {
   prepare "$dir"
   run_check "$dir" -- --help
   expect_status "$status" 0 "--help"
-  expect_contains "$out" "Check 530 —" "--help: the check's own name"
+  expect_contains "$out" "Check 601 —" "--help: the check's own name"
   expect_contains "$out" "bash scripts/live-checks/check-c39.sh --sandbox" "--help: the command the owner types"
   expect_contains "$out" "steps 1, 2, 6 and 11 are measured here" "--help: which steps the script runs"
   expect_absent "$out" "FACT " "--help: no block and no verdict"
@@ -485,14 +485,14 @@ test_help() {
 test_dry_run() {
   local dir=$work/dry
   prepare "$dir"
-  run_ok "$dir" CHECK530_DRY_RUN=1
+  run_ok "$dir" CHECK601_DRY_RUN=1
   expect_status "$status" 0 "dry run"
-  expect_contains "$out" "CHECK 530 RESULT" "dry run: the block"
+  expect_contains "$out" "CHECK 601 RESULT" "dry run: the block"
   expect_contains "$out" "FACT xtrace: PASS" "dry run: the tracing guard"
   expect_contains "$out" "FACT agent-session: PASS" "dry run: the session guard"
   expect_contains "$out" "FACT belong: PASS" "dry run: the belong guard"
   expect_contains "$out" "FACT dry-run: PASS" "dry run: the marker row"
-  expect_contains "$out" "CHECK 530 RESULT END (exit 0)" "dry run: the end line"
+  expect_contains "$out" "CHECK 601 RESULT END (exit 0)" "dry run: the end line"
   # A dry run measured nothing about the review class, so no criterion row is in
   # its block: a FAIL row there would read as a verdict about a check nobody ran.
   expect_absent "$out" "FACT verdict-sig" "dry run: no criterion row"
@@ -518,7 +518,7 @@ test_happy_path() {
   done
   expect_contains "$out" "FACT cost: INFO" "happy path: the spend §8's step 11 reports"
   expect_contains "$out" "cost.model_usd=1.25" "happy path: what the run's record says it cost"
-  expect_contains "$out" "CHECK 530 RESULT END (exit 0)" "happy path: the end line"
+  expect_contains "$out" "CHECK 601 RESULT END (exit 0)" "happy path: the end line"
   # The steps that are a person's are printed and recorded as INFO, never faked.
   for n in 3 4 5 7 8 9 10; do
     expect_contains "$out" "FACT step-${n}: INFO" "happy path: step ${n} is the owner's"
@@ -537,8 +537,8 @@ test_happy_path() {
   # that travelled through a mode-0600 config file rather than a command line.
   local curl_calls
   curl_calls=$(cat "$dir/logs/curl.calls")
-  expect_contains "$curl_calls" "curl none https://fugaro-credentials-chk530-uc.a.run.app/v1/review/verify" "happy path: the unauthenticated call"
-  expect_contains "$curl_calls" "curl $review_sa https://fugaro-credentials-chk530-uc.a.run.app/v1/review/verify" "happy path: the review account's call"
+  expect_contains "$curl_calls" "curl none https://fugaro-credentials-chk601-uc.a.run.app/v1/review/verify" "happy path: the unauthenticated call"
+  expect_contains "$curl_calls" "curl $review_sa https://fugaro-credentials-chk601-uc.a.run.app/v1/review/verify" "happy path: the review account's call"
   expect_contains "$(cat "$dir/logs/curl.configs")" "600 " "happy path: the config holding the token is mode 0600"
   expect_contains "$(cat "$dir/logs/curl.tokens")" "${sentinel_prefix}${review_sa}" "happy path: the token travelled in the config file"
   # The two calls carry bodies the contract READS, and the verify one names the
@@ -599,7 +599,7 @@ test_an_installation_naming_belong_stops_the_check() {
   # measure nothing of what this case is about.
   local dir=$work/installation-from-doctor
   prepare "$dir"
-  run_ok "$dir" FAKE_PROJECT=fugaro-chk530-belong
+  run_ok "$dir" FAKE_PROJECT=fugaro-chk601-belong
   expect_status "$status" 1 "an installation naming belong"
   expect_contains "$err" "never run there" "an installation naming belong: the refusal"
   expect_absent "$(cat "$dir/logs/gcloud.calls")" "run jobs describe" "an installation naming belong: no job is read"
@@ -639,7 +639,7 @@ test_a_job_that_never_answers_is_not_measured() {
   # The check's own bound, not a tool's answer: the fake sleeps far longer than
   # the two seconds it is given, so the row this case reads is the one the bound
   # writes -- and the case would hang for five minutes if it did not fire.
-  run_ok "$dir" FAKE_MODE=job-describe-hangs CHECK530_TIMEOUT_SECONDS=2
+  run_ok "$dir" FAKE_MODE=job-describe-hangs CHECK601_TIMEOUT_SECONDS=2
   expect_status "$status" 2 "a job describe that never answers"
   expect_contains "$out" "FACT job-no-secret: FAIL" "a job describe that never answers: the row"
   expect_contains "$out" "could not be described" "a job describe that never answers: the reason is the bound, not a finding"
@@ -766,8 +766,8 @@ test_the_coding_gate_is_measured_only_when_asked_for() {
   expect_contains "$out" "and the sign route (unverified_run_identity, HTTP 403" "the coding gate: the sign route's own refusal, typed"
   local curl_calls
   curl_calls=$(cat "$dir/logs/curl.calls")
-  expect_contains "$curl_calls" "curl $coding_sa https://fugaro-credentials-chk530-uc.a.run.app/v1/review/verify" "the coding gate: the verify call"
-  expect_contains "$curl_calls" "curl $coding_sa https://fugaro-credentials-chk530-uc.a.run.app/v1/review/sign" "the coding gate: the sign call"
+  expect_contains "$curl_calls" "curl $coding_sa https://fugaro-credentials-chk601-uc.a.run.app/v1/review/verify" "the coding gate: the verify call"
+  expect_contains "$curl_calls" "curl $coding_sa https://fugaro-credentials-chk601-uc.a.run.app/v1/review/sign" "the coding gate: the sign call"
   # A sign call's body is one field, the digest, and it is held to the shape the
   # route reads: a body that route would refuse for itself answers the same
   # whether or not the gate let this caller through.
@@ -884,10 +884,10 @@ test_a_sandbox_without_a_config_is_refused() {
 test_kept_scratch_is_reported() {
   local dir=$work/keep
   prepare "$dir"
-  run_ok "$dir" CHECK530_KEEP_SCRATCH=1
+  run_ok "$dir" CHECK601_KEEP_SCRATCH=1
   expect_status "$status" 1 "a kept scratch directory"
   expect_contains "$out" "FACT scratch-removed: FAIL" "a kept scratch directory: the row"
-  expect_contains "$err" "CHECK530_KEEP_SCRATCH is set" "a kept scratch directory: the reason"
+  expect_contains "$err" "CHECK601_KEEP_SCRATCH is set" "a kept scratch directory: the reason"
   [ -d "$scratch" ] || fail "a kept scratch directory: $scratch was removed anyway"
   rm -rf "$scratch" 2>/dev/null || true
 }

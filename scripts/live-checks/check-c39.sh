@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Check 530 — the review class reads one repository, signs one verdict, and
+# Check 601 — the review class reads one repository, signs one verdict, and
 # reaches nothing else.
 #
 # The check is §8 of docs/c39-review-identity/spec.md, written by that work's
@@ -59,8 +59,8 @@
 # Runs:       by YOU. No agent runs any step of it, and its own test
 #             (check-c39_test.sh) drives it against fake tools only.
 # Cleanup:    the scratch directory and nothing else.
-# Output:     progress on stderr, ONE block on stdout headed CHECK 530 RESULT,
-#             then CHECK 530 RESULT END (exit N). Exit 0: every criterion held.
+# Output:     progress on stderr, ONE block on stdout headed CHECK 601 RESULT,
+#             then CHECK 601 RESULT END (exit N). Exit 0: every criterion held.
 #             1: a criterion did not hold, or a guard stopped the run. 2: the
 #             check could not measure — a tool is missing, doctor answered
 #             without a project, the service's URL or an ID token could not be
@@ -72,7 +72,7 @@
 # never enters a shell variable, a command line or the block, and the check
 # refuses a shell that was started with tracing on.
 #
-# Knobs (all CHECK530_*): DRY_RUN, KEEP_SCRATCH, SANDBOX, RUN, PR, CODING_JOB,
+# Knobs (all CHECK601_*): DRY_RUN, KEEP_SCRATCH, SANDBOX, RUN, PR, CODING_JOB,
 # BUCKET, SERVICE_URL, TIMEOUT_SECONDS (120), TOKEN_TIMEOUT_SECONDS (60),
 # LOG_FRESHNESS (30d). The project and the region are not knobs: the checkout's
 # own doctor is the only thing that names the installation, so a run cannot be
@@ -122,16 +122,16 @@ on_error() {
 }
 
 need_tools() {
-  command -v bash >/dev/null 2>&1 || die "Check 530 needs bash"
+  command -v bash >/dev/null 2>&1 || die "Check 601 needs bash"
   local t
   for t in mktemp date python3 gcloud fugaro curl; do
-    command -v "$t" >/dev/null 2>&1 || die "Check 530 needs '$t' and it is not on PATH"
+    command -v "$t" >/dev/null 2>&1 || die "Check 601 needs '$t' and it is not on PATH"
   done
 }
 
 # ------------------------------------------------------------- scratch + trap
 SCRATCH=""
-SCRATCH_MARKER=".chk530-mine"
+SCRATCH_MARKER=".chk601-mine"
 SCRATCH_REMOVED=no
 FACTS_CAPTURED=""
 CLEANUP_RUNNING=no
@@ -139,7 +139,7 @@ RESTORE_VERDICT=""
 RESTORE_NOTE=""
 
 scratch_up() {
-  SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/chk530.XXXXXXXX") || die "Check 530 cannot make a scratch directory"
+  SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/chk601.XXXXXXXX") || die "Check 601 cannot make a scratch directory"
   chmod 700 "$SCRATCH"
   : >"$SCRATCH/$SCRATCH_MARKER"
   FACTS_FILE="$SCRATCH/facts"
@@ -160,7 +160,7 @@ remove_scratch() {
     return 0
   fi
   if [ -n "$KEEP_SCRATCH" ]; then
-    say "CHECK530_KEEP_SCRATCH is set: $SCRATCH is kept"
+    say "CHECK601_KEEP_SCRATCH is set: $SCRATCH is kept"
     return 0
   fi
   rm -rf "$SCRATCH" 2>/dev/null || true
@@ -466,7 +466,7 @@ guard_agent_session() {
     if [ -n "${!name:-}" ]; then marker=$name; break; fi
   done
   if [ -n "$marker" ]; then
-    stop "${marker} is set, so this is a coding agent's session: Check 530 is yours to run at your own terminal, on the sandbox review run only, and no agent runs any step of it"
+    stop "${marker} is set, so this is a coding agent's session: Check 601 is yours to run at your own terminal, on the sandbox review run only, and no agent runs any step of it"
   fi
   fact agent-session PASS "no coding agent's marker is set (CLAUDECODE and the like): this is your own session, which is the one this check is written for"
 }
@@ -489,7 +489,7 @@ guard_name() { # guard_name NAME
   local hit
   hit=$(refused_installation "$1")
   [ -n "$hit" ] || return 0
-  fact belong FAIL "'$1' names the installation '$hit', which this check never reads: Check 530 reads a sandbox review run, and an installation you work in is never the subject of it"
+  fact belong FAIL "'$1' names the installation '$hit', which this check never reads: Check 601 reads a sandbox review run, and an installation you work in is never the subject of it"
   stop "the name '$1' matches the installation '$hit', which this check must never touch"
 }
 
@@ -503,7 +503,7 @@ guard_belong() {
 
 # -------------------------------------------------------------------- the plan
 plan() {
-  say "CHECK 530 plan (dry run: nothing below is run, and no row in the block was measured)"
+  say "CHECK 601 plan (dry run: nothing below is run, and no row in the block was measured)"
   say "  [offline] fugaro version — the build this check drives"
   say "  [network, read] fugaro doctor --json in ${SANDBOX} — the installation's project and region, the credentials-service-deployed row and the census line naming the review job"
   say "  [network, read] gcloud run jobs describe <the review job> --project ${PROJECT:-<the doctor project>} --region ${REGION:-<the doctor region>} — whether it mounts a secret at all"
@@ -538,7 +538,7 @@ BLOCK_KEYS=(fugaro-version xtrace agent-session belong sandbox project region bu
 print_block() { # print_block FACTS STATUS — always on the owner's own stdout
   local facts=$1 status=$2
   local key printed=""
-  printf '\nCHECK 530 RESULT\n' >&3
+  printf '\nCHECK 601 RESULT\n' >&3
   for key in "${BLOCK_KEYS[@]}"; do
     local line
     line=$(printf '%s\n' "$facts" | grep -m1 "^$key|" || true)
@@ -556,7 +556,7 @@ print_block() { # print_block FACTS STATUS — always on the owner's own stdout
     case $'\n'"$printed" in *$'\n'"$key"$'\n'*) continue ;; esac
     printf 'FACT %s: %s — %s\n' "$key" "$verdict" "$detail" >&3
   done
-  printf 'CHECK 530 RESULT END (exit %s)\n' "$status" >&3
+  printf 'CHECK 601 RESULT END (exit %s)\n' "$status" >&3
 }
 
 on_signal() {
@@ -1364,19 +1364,19 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-SANDBOX=${SANDBOX_CLI:-${CHECK530_SANDBOX:-$PWD}}
-RUN=${RUN:-${CHECK530_RUN:-}}
-PR=${PR:-${CHECK530_PR:-}}
-CODING_JOB=${CODING_JOB:-${CHECK530_CODING_JOB:-}}
-BUCKET=${BUCKET:-${CHECK530_BUCKET:-}}
+SANDBOX=${SANDBOX_CLI:-${CHECK601_SANDBOX:-$PWD}}
+RUN=${RUN:-${CHECK601_RUN:-}}
+PR=${PR:-${CHECK601_PR:-}}
+CODING_JOB=${CODING_JOB:-${CHECK601_CODING_JOB:-}}
+BUCKET=${BUCKET:-${CHECK601_BUCKET:-}}
 PROJECT=""
 REGION=""
-SERVICE_URL=${SERVICE_URL:-${CHECK530_SERVICE_URL:-}}
-DRY_RUN=${CHECK530_DRY_RUN:-$DRY_RUN_CLI}
-KEEP_SCRATCH=${CHECK530_KEEP_SCRATCH:-}
-TIMEOUT=${CHECK530_TIMEOUT_SECONDS:-120}
-TOKEN_TIMEOUT=${CHECK530_TOKEN_TIMEOUT_SECONDS:-60}
-LOG_FRESHNESS=${CHECK530_LOG_FRESHNESS:-30d}
+SERVICE_URL=${SERVICE_URL:-${CHECK601_SERVICE_URL:-}}
+DRY_RUN=${CHECK601_DRY_RUN:-$DRY_RUN_CLI}
+KEEP_SCRATCH=${CHECK601_KEEP_SCRATCH:-}
+TIMEOUT=${CHECK601_TIMEOUT_SECONDS:-120}
+TOKEN_TIMEOUT=${CHECK601_TOKEN_TIMEOUT_SECONDS:-60}
+LOG_FRESHNESS=${CHECK601_LOG_FRESHNESS:-30d}
 DRY_RUN=${DRY_RUN:-}
 # Resolved before anything runs, and by absolute path: this check drives the
 # installed release, so it must be the one on PATH when the check started rather
@@ -1442,7 +1442,7 @@ check_run_id() {
 
 main() {
   need_tools
-  [ -n "$FUGARO_BIN" ] || die "Check 530 needs 'fugaro' on PATH: the check drives the build you have installed, and it is not there"
+  [ -n "$FUGARO_BIN" ] || die "Check 601 needs 'fugaro' on PATH: the check drives the build you have installed, and it is not there"
   check_run_id
   scratch_up
   write_reader

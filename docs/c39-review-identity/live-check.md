@@ -1,22 +1,24 @@
 # The review half's live check — the register row's shape, and the owner's eleven steps one line each
 
-**Status: NOT RUN, and the number is taken — this is Check 530.** The check itself is [spec.md](spec.md)
+**Status: NOT RUN, and the number is taken — this is Check 601.** The check itself is [spec.md](spec.md)
 §8, which is the design's own statement of it; this file was the **register-shaped** stub of the entry, and
 that task **C3.9g2** has since filled it in: [docs/gcp-live-checklist.md](../gcp-live-checklist.md) carries
 the row and the section, and the owner's script is `scripts/live-checks/check-c39.sh`, with the test that
 drives it against fake tools (`scripts/live-checks/check-c39_test.sh`). **No agent runs any step of it**, and
 no agent has: every step measures a live project, a real review run and an owner's own terminal.
 
-**The number was taken at that task's merge, as this file said it would be.** `docs/gcp-live-checklist.md`
-was on the do-not-touch list of the release window in flight (0.16.0's, D1072) when this file was written, so
-the section below was written under the **name** §8 gives it, and the number is the one free at the merge of
-the pull request that adds it — C3.9g2's, per [implementation-plan.md](implementation-plan.md) C3.9g2. That
-is the register's own rule: a claim above the highest written section is settled at its merge, and whichever
-of two open claims merges second renumbers itself. The highest written section on `main` at that merge was
-**521**, 522–529 are [docs/vision-model](../vision-model/README.md)'s reserved-and-unused block and 540–599
-are held by six other works, so the free number above them was **530** — the number the register's section
-carries. The shape below is still the row's, read off Check 190 as this file says; where its wording and the
-register's differ, the register's governs.
+**The number was taken at that task's merge, as this file said it would be.** `docs/gcp-live-checklist.md` was
+on the do-not-touch list of the release window in flight (0.16.0's, D1072) when this file was written, so the
+section below was written under the **name** §8 gives it, and the number is the one free at the merge of the
+pull request that adds it — C3.9g2's, per [implementation-plan.md](implementation-plan.md) C3.9g2. That is the
+register's own rule: a claim above the highest written section is settled at its merge, and whichever of two
+open claims merges second renumbers itself, to the number free at its own merge. This file first read the
+highest written section on `main` as **521** and named **530**; **600** has since been written
+(`docs/accounts-add`'s four, above the register's block), and above it 540–549, 550–554, 560–569, 570–579,
+580–589 and 590–599 are held by six other works and **610–619** belong to [docs/review-job](../review-job/) —
+so nothing writes or claims **601–609**, and **601** is the number the register's section carries. The shape
+below is still the row's, read off Check 190 as this file says; where its wording and the register's differ,
+the register's governs.
 
 ## The row's shape, which is Check 190's
 
@@ -39,7 +41,7 @@ split this file makes):
 
 ## The section as the register carries it
 
-> ## Check 530: the review class reads one repository, signs one verdict, and reaches nothing else (the
+> ## Check 601: the review class reads one repository, signs one verdict, and reaches nothing else (the
 > `fugaro` installation only, sandbox repository only, never `belong`; run by you; NOT RUN)
 >
 > **NOT RUN.** Written by task **C3.9g2** of
@@ -56,7 +58,7 @@ split this file makes):
 > and `fugaro` on PATH — §8 names no tool beyond those two, and the row takes its wall clock from the
 > steps it carries. Never `belong`.
 >
-> **What you type.** The eleven steps below, and the `CHECK 530 RESULT` block pasted back here.
+> **What you type.** The eleven steps below, and the `CHECK 601 RESULT` block pasted back here.
 >
 > **Restore.** Nothing of the check's is created outside the sandbox; the throwaway signature, the
 > tampered copy and the second-sign attempt leave the sandbox's own artifact and the service's own node
