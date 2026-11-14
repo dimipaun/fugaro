@@ -192,6 +192,19 @@ cat)
     ;;
   esac
   case "$mode" in
+  *run-settles*)
+    # The poll's FIRST tick reads the run going and the second reads it ended:
+    # the record file is the terminal one. The scratch file the poll writes has
+    # to be truncated, not appended -- appended, the second tick leaves two JSON
+    # documents in it, every read after that fails to parse, and a run that has
+    # ended is reported as one still going.
+    if [ "$rid" = "$FAKE_RUN_ID" ]; then
+      n=$(grep -c "storage cat $url" "$FAKE_LOG_DIR/gcloud.calls" || true)
+      if [ "$n" -le 1 ]; then cat "$FAKE_JSON_DIR/rec-running.json"; exit 0; fi
+    fi
+    ;;
+  esac
+  case "$mode" in
   *bytes-change*)
     if [ "$rid" = "$FAKE_TARGET_RUN" ]; then
     # The second read of that one record is a DIFFERENT record: the bytes a
@@ -251,6 +264,15 @@ run)
   *launch-fails*)
     printf 'fugaro: the launch was refused\n' >&2
     exit 1
+    ;;
+  esac
+  case "$mode" in
+  *launch-other-project*)
+    # The launcher answers as the CLI would if it had acted on another
+    # installation: the run it names belongs to a project this check was never
+    # pointed at, and every read after it would be of that other one.
+    sed "s/\"project\":\"${project:-chk350-project}\"/\"project\":\"somebody-elses-project\"/" "$FAKE_JSON_DIR/launch.json"
+    exit 0
     ;;
   esac
   cat "$FAKE_JSON_DIR/launch.json"
@@ -632,7 +654,7 @@ test_happy_path() {
   calls=$(cat "$dir/logs/fugaro.calls")
   expect_contains "$calls" "run --repo $dir/repo --ref chk350-" "happy path: the launch names the checkout and its own branch"
   expect_contains "$calls" "runs ls --repo $repo_name --since" "happy path: the window is listed by the repository's slug"
-  expect_contains "$calls" "diagnose $slug/$our_run --json (in $dir/repo)" "happy path: the diagnosis is a read of the run in the checkout"
+  expect_contains "$calls" "diagnose $slug/$our_run --project $project --json (in $dir/repo)" "happy path: the diagnosis is a read of the run in the checkout"
   expect_contains "$(cat "$dir/logs/gcloud.calls")" "gs://$bucket/runs/$slug/$our_run/result.json" "happy path: the record is read at the run's own key"
   # Step 4's first reading is taken BEFORE the first `fugaro` read of the window:
   # a hash taken after it would compare a rewritten record with itself.
@@ -814,6 +836,31 @@ test_a_run_that_never_ends() {
   assert_scratch_removed "a run that never ends"
 }
 
+test_a_run_that_settles_on_a_later_tick() {
+  local dir=$work/settles
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=run-settles
+  expect_status "$status" 0 "a run that settles on a later tick"
+  expect_contains "$out" "FACT settled: PASS" "a run that settles on a later tick: the row"
+  expect_contains "$out" "ended within" "a run that settles on a later tick: it is seen to end"
+  assert_branch_gone "$dir" "a run that settles on a later tick"
+  assert_scratch_removed "a run that settles on a later tick"
+}
+
+test_a_launch_in_another_project() {
+  local dir=$work/otherproject
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=launch-other-project
+  expect_status "$status" 1 "a launch in another project"
+  expect_contains "$out" "FACT run: FAIL" "a launch in another project: the row"
+  expect_contains "$out" "somebody-elses-project" "a launch in another project: the project the reply named"
+  expect_contains "$out" "FACT settled: FAIL" "a launch in another project: nothing is followed"
+  expect_contains "$out" "there is no run to follow" "a launch in another project: nothing of it is touched"
+  assert_no_cancel "$dir" "a launch in another project"
+  assert_branch_gone "$dir" "a launch in another project"
+  assert_scratch_removed "a launch in another project"
+}
+
 test_a_cancel_that_does_not_answer() {
   local dir=$work/cancelfails
   prepare "$dir"
@@ -983,6 +1030,30 @@ test_a_window_with_no_old_record() {
   assert_branch_gone "$dir" "a window with no old record in it"
 }
 
+test_a_wider_since_reaches_an_older_record() {
+  local dir=$work/widersince far_stamp
+  far_stamp=$(python3 -c 'import datetime; print((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=40)).strftime("%Y%m%d-%H%M%S"))')
+  # The old record's MINT stamp is 40 days back -- outside the window the check
+  # works out for itself, and inside the one --since widens the bucket scan to.
+  # Its finish stays inside the week, which is what steps 3 and 4 need of it,
+  # and the two records nearer the week are taken out of the listing so that the
+  # default window really does hold none: that is the reading whose own advice
+  # is `--since 60d`, and this case is what says the advice works.
+  target_stamp=$far_stamp target_run="$far_stamp-tt" prepare "$dir"
+  grep -v -e "/$neighbour_run/" -e "/$old_run/" "$dir/json/listing.txt" >"$dir/json/listing.txt.new"
+  mv "$dir/json/listing.txt.new" "$dir/json/listing.txt"
+  run_check "$dir"
+  expect_status "$status" 2 "a record minted outside the default window"
+  expect_contains "$out" "FACT target: FAIL" "a record minted outside the default window: the row"
+  expect_contains "$out" "widen the window with --since 60d, which moves this bucket scan as well as the listing" "a record minted outside the default window: the advice"
+  run_check "$dir" -- --since 60d
+  expect_status "$status" 0 "the same record with --since 60d"
+  expect_contains "$out" "FACT target: PASS" "the same record with --since 60d: the row"
+  expect_contains "$(cat "$dir/logs/fugaro.calls")" "runs ls --repo $repo_name --since 60d --project $project --json" "the same record with --since 60d: the listing is read over the wider window"
+  assert_branch_gone "$dir" "the same record with --since 60d"
+  assert_scratch_removed "$dir" "the same record with --since 60d"
+}
+
 test_a_bucket_with_no_record_in_the_window() {
   local dir=$work/emptywindow
   prepare "$dir"
@@ -1085,7 +1156,7 @@ test_step5_reads_the_refutation() {
   expect_contains "$out" "FACT step5: PASS" "the refutation run: the row"
   expect_contains "$out" "carries failure_class stage_error_unexplained" "the refutation run: the class the plan expects"
   expect_contains "$out" "which is O6 unanswered" "the refutation run: what that class means"
-  expect_contains "$(cat "$dir/logs/fugaro.calls")" "diagnose $step5_run --json" "the refutation run: it is read, never made"
+  expect_contains "$(cat "$dir/logs/fugaro.calls")" "diagnose $step5_run --project $project --json" "the refutation run: it is read, never made"
   # The check launches a run of its own, so what says the refutation was READ is
   # that its id is never named to anything but a diagnose: it is a run the owner
   # made by hand, and this check neither starts nor stops one.
@@ -1184,6 +1255,8 @@ t test_a_checkout_with_no_origin
 t test_a_launch_that_fails
 t test_a_launch_that_names_no_run
 t test_a_run_that_never_ends
+t test_a_run_that_settles_on_a_later_tick
+t test_a_launch_in_another_project
 t test_a_cancel_that_does_not_answer
 t test_a_record_that_never_appears
 t test_a_class_that_is_not_config_invalid
@@ -1196,6 +1269,7 @@ t test_a_group_that_holds_too_many_runs
 t test_a_share_that_follows_the_spend
 t test_totals_that_move
 t test_a_window_with_no_old_record
+t test_a_wider_since_reaches_an_older_record
 t test_a_bucket_with_no_record_in_the_window
 t test_the_old_records_bytes_change
 t test_the_old_records_line_moves

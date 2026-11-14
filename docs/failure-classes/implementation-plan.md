@@ -587,8 +587,9 @@ which is the claim the design exists to make true.
 owner runs — `scripts/live-checks/check350.sh`, whose sibling `scripts/live-checks/check350_test.sh`
 drives it against a fake `gcloud` and a fake `fugaro` and nothing else — and `docs/gcp-live-checklist.md`
 carries the register's row and `## Check 350` section with it. **Steps 5 and 6 keep the numbered shape
-below and are never faked**: the script prints the prompt for each and measures neither, so the run step
-5 needs and the `brew upgrade` / `fugaro update` of step 6 stay yours. **No step of any of it has been
+below and are never faked**: the run step 5 needs and the `brew upgrade` / `fugaro update` of step 6 stay
+yours — the script prompts for both and makes neither, and it measures step 5 only when you hand it the
+run with `--step5-run`, whose class it then reads as a criterion like the others. **No step of any of it has been
 run**, and this section is not a reading about the classes.
 
 1. On the sandbox repository, take one run that fails for a cause the classifier can name on purpose

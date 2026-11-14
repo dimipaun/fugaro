@@ -44,9 +44,13 @@
 #      step needed there that the plan did not name is a defect in the release,
 #      not in the check.
 #
-# Nothing in this check is a criterion of the other's: steps 5 and 6 are the
-# owner's own runs, so their rows are the prompt and an INFO, and the exit status
-# is the verdict of steps 1 to 4 alone.
+# Step 5 is HALF yours: the run is yours to make and this check never fakes it,
+# but once you name it with --step5-run the class it carries IS a criterion like
+# any other — without that argument the row is the prompt it is, an INFO that
+# decides nothing, and with it a class other than the one the plan expects fails
+# the check. Step 6 is yours entirely: its row is a prompt and an INFO, and no
+# exit status of this check is ever about it. So the verdict is the rows of steps
+# 1 to 4, and step 5's read beside them when you passed one.
 #
 # The register's row and section are docs/gcp-live-checklist.md, "Check 350".
 #
@@ -62,10 +66,11 @@
 #             steps 1, 3 and 4 are read. --gcp-project is the GCP project id the
 #             bucket lives in (default: the same value as --project): `fugaro
 #             setup` names the two the same, and the gcloud reads are addressed
-#             with this one. --since is the listing window of steps 1 and 2
-#             (default: the one that reaches back past the week the digest
-#             reports, with room for a run that was minted before that week and
-#             finished inside it). --step5-run is a run YOU made for step 5,
+#             with this one. --since is the window of steps 1 and 2 AND the oldest mint
+#             steps 3 and 4 choose the old record from (default: the one that
+#             reaches back past the week the digest reports, with room for a run
+#             that was minted before that week and finished inside it), so a
+#             sandbox whose records are older than that wants a wider one. --step5-run is a run YOU made for step 5,
 #             whose class is then read here; without it step 5 is the prompt and
 #             an INFO row. `--dry-run` prints the guards and every command a real
 #             run would make, and runs nothing at all: no gcloud call, no
@@ -463,7 +468,11 @@ run_bounded() { # run_bounded SECONDS KEY DIR CMD...
     die "an internal error: run_bounded was told to run from '$dir', which is not a directory. Nothing below was measured"
   fi
   BOUNDED_TIMED_OUT=no
-  (trap - ERR; cd "$dir" || exit 1; exec "$@") >>"$SCRATCH/$key.out" 2>>"$SCRATCH/$key.err" &
+  # ONE file per key and TRUNCATED, never appended: the settle poll calls this
+  # once a tick with the same key, and an appending file would hold two JSON
+  # documents after the second tick — every read after it would fail to parse,
+  # and a run that ended on a later tick would be reported as one still going.
+  (trap - ERR; cd "$dir" || exit 1; exec "$@") >"$SCRATCH/$key.out" 2>"$SCRATCH/$key.err" &
   # The poll is a tenth of a second and the bound is counted in tenths: a read
   # that answers at once — every one of them, when the installation is healthy —
   # would otherwise cost this check a whole second each, and the owner watches
@@ -498,8 +507,8 @@ cancel_run() { # cancel_run WHY
   [ "$SETTLED" = yes ] && return 0
   [ "$CANCEL_DONE" = yes ] && return 0
   CANCEL_DONE=yes
-  say "cancelling $RUN_ID ($1): fugaro cancel $RUN_ID --now"
-  run_bounded "$RUN_BOUND_SECONDS" cancel "$REPO" fugaro cancel "$RUN_ID" --now --json
+  say "cancelling $RUN_ID ($1): fugaro cancel $RUN_ID --now --project $P"
+  run_bounded "$RUN_BOUND_SECONDS" cancel "$REPO" fugaro cancel "$RUN_ID" --now --project "$P" --json
   if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
     CANCEL_OK=no
     fact cancelled FAIL "the run $RUN_ID was cancelled with 'fugaro cancel $RUN_ID --now' and the command did not answer (exit $BOUNDED_STATUS): the run may still be going. Read it with 'fugaro runs show $RUN_ID' and cancel it yourself. What the command printed is in $SCRATCH/cancel.out and $SCRATCH/cancel.err"
@@ -757,8 +766,10 @@ first_line() {
 # --since` windows on the mint and not on the finish.
 compute_window() {
   local bounds
-  if ! bounds=$(python3 - <<'PY'
+  if ! bounds=$(python3 - "$SINCE" <<'PY'
 import datetime
+import re
+import sys
 now = datetime.datetime.now(datetime.timezone.utc)
 today = now.date()
 monday = today - datetime.timedelta(days=today.weekday())
@@ -766,10 +777,23 @@ to = monday
 frm = monday - datetime.timedelta(days=7)
 days = -(-(now - datetime.datetime.combine(frm, datetime.time.min, datetime.timezone.utc)).total_seconds() // 86400)
 days = int(max(1, days)) + 7
+# The bucket scan's lower bound is the LISTING's own window and never a second
+# one: the old record is CHOSEN from the bucket, but its row is read out of
+# `runs ls --since`, so a record minted outside that window would have no row to
+# read and a record minted inside it is one the listing already shows. That is
+# why `--since` moves this bound too — the default reaches back past the week's
+# first day with a week of room, because a run minted before the week and
+# finishing inside it is one steps 3 and 4 must still be able to read, and
+# `runs ls --since` windows on the mint and not on the finish.
+back = datetime.timedelta(days=days)
+want = sys.argv[1] if len(sys.argv) > 1 else ""
+match = re.match(r"^([0-9]*)([dhm])$", want)
+if match:
+    back = datetime.timedelta(seconds=int(match.group(1) or 0) * {"d": 86400, "h": 3600, "m": 60}[match.group(2)])
 # An hour of slack on the window's own edge: the CLI windows on its own clock,
 # read a moment after this one, so a run minted right at the edge is still in the
 # listing even though this stamp says it is just outside.
-since = now - datetime.timedelta(days=days) + datetime.timedelta(hours=1)
+since = now - back + datetime.timedelta(hours=1)
 print(frm.isoformat())
 print(to.isoformat())
 print(days)
@@ -884,7 +908,7 @@ step_launch() {
   fi
   say "launching one run of $REPO_NAME from the reference $BRANCH (refused at bootstrap, so nothing billable)"
   run_bounded "$LAUNCH_BOUND_SECONDS" launch "$REPO" \
-    fugaro run --repo "$REPO" --ref "$BRANCH" --json "$TASK_TEXT"
+    fugaro run --repo "$REPO" --ref "$BRANCH" --project "$P" --json "$TASK_TEXT"
   if [ "$BOUNDED_TIMED_OUT" = yes ]; then
     fact run FAIL "the launch did not finish inside ${LAUNCH_BOUND_SECONDS}s and was ended: what it printed is in $SCRATCH/launch.out and $SCRATCH/launch.err"
     return 0
@@ -897,9 +921,19 @@ step_launch() {
     fact run FAIL "fugaro run --json printed a document this check could not read: the launch is how the run is named, and its own --json view is what names it. What it printed is in $SCRATCH/launch.out"
     return 0
   fi
+  PROJECT_SEEN=$(field "$SCRATCH/launch.txt" project)
+  # The launch is the one place the project is not just a flag this check passes:
+  # it is where a run is created, and the run the rows below read is the one this
+  # reply names. A reply naming another project means every read after it would
+  # be of an installation this check was never pointed at -- so the run is not
+  # adopted at all: nothing below follows it and nothing cancels it, because the
+  # run of another installation is not this check's to touch.
+  if [ "$PROJECT_SEEN" != "$P" ]; then
+    fact run FAIL "fugaro run --json reports project '${PROJECT_SEEN:-none}' rather than the '$P' this check was told to use and passed to the command: the run and the records the rows below read would be another installation's, which is the accident the belong guard exists to prevent. This check follows and cancels nothing of it; what it printed is in $SCRATCH/launch.out"
+    return 0
+  fi
   RUN_ID=$(field "$SCRATCH/launch.txt" run_id)
   RUN_REF=$(field "$SCRATCH/launch.txt" run)
-  PROJECT_SEEN=$(field "$SCRATCH/launch.txt" project)
   local repo
   repo=$(field "$SCRATCH/launch.txt" repo)
   if [ -n "$repo" ]; then REPO_NAME=$repo; fi
@@ -911,7 +945,7 @@ step_launch() {
     fact run FAIL "fugaro run --json named no run this check could take a bucket key from (run_id=${RUN_ID:-none}, run=${RUN_REF:-none}): the record of the run it launched is what steps 1, 3 and 4 read, and the slug in that reply's own 'run' is where it lives. What it printed is in $SCRATCH/launch.out"
     return 0
   fi
-  fact run PASS "fugaro run launched $RUN_REF from the reference $BRANCH of $REPO_NAME in project ${PROJECT_SEEN:-$P} (status $(field "$SCRATCH/launch.txt" status)): the run is this check's own, and the rows below follow this one and no other"
+  fact run PASS "fugaro run launched $RUN_REF from the reference $BRANCH of $REPO_NAME in project $PROJECT_SEEN (status $(field "$SCRATCH/launch.txt" status)): the run is this check's own, and the rows below follow this one and no other"
 }
 
 # step_settle: the run has to end — and it ends in seconds, because the refusal
@@ -1016,7 +1050,7 @@ step_target() {
   seen=$(field "$SCRATCH/candidates.txt" count)
   candidates=$(field "$SCRATCH/candidates.txt" candidates)
   if [ -z "$candidates" ] || [ "$candidates" = 0 ]; then
-    fact target FAIL "gs://$B/runs/$SLUG/ holds $seen run record(s) and none of them was minted inside the window this check reads (--since $SINCE_USED: minted at or after $SINCE_STAMP and before ${WEEK_TO}T00:00:00Z, the day after the week's own last day): steps 3 and 4 need a record written before failure_class shipped that finished inside the week $WEEK_FROM..$WEEK_LAST, and this window holds none. Run the check on a sandbox repository that has run for longer than one week, or widen the window with --since 60d"
+    fact target FAIL "gs://$B/runs/$SLUG/ holds $seen run record(s) and none of them was minted inside the window this check reads (--since $SINCE_USED: minted at or after $SINCE_STAMP and before ${WEEK_TO}T00:00:00Z, the day after the week's own last day): steps 3 and 4 need a record written before failure_class shipped that finished inside the week $WEEK_FROM..$WEEK_LAST, and this window holds none. Run the check on a sandbox repository that has run for longer than one week, or widen the window with --since 60d, which moves this bucket scan as well as the listing"
     stop "the window --since $SINCE_USED of $SLUG holds no run record minted before the week $WEEK_FROM..$WEEK_LAST, so the week's own half of step 3 and the whole of step 4 have nothing to read. Nothing is concluded about the classes: this is a could-not-tell"
   fi
   local want=$CANDIDATES read_any=no skipped="" why="" stamp url line
@@ -1087,8 +1121,8 @@ step_target() {
 # checked against. This is the first `fugaro` read of the window, and with it the
 # old record has been read once.
 step_rows() {
-  say "reading the window: fugaro runs ls --repo $REPO_NAME --since $SINCE_USED --json"
-  run_bounded "$RUN_BOUND_SECONDS" rows "$REPO" fugaro runs ls --repo "$REPO_NAME" --since "$SINCE_USED" --json
+  say "reading the window: fugaro runs ls --repo $REPO_NAME --since $SINCE_USED --project $P --json"
+  run_bounded "$RUN_BOUND_SECONDS" rows "$REPO" fugaro runs ls --repo "$REPO_NAME" --since "$SINCE_USED" --project "$P" --json
   if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
     fact window FAIL "fugaro runs ls exited $BOUNDED_STATUS in $REPO (window --since $SINCE_USED): the rows the grouping is checked against are this read's, so nothing below could be measured. What it printed is in $SCRATCH/rows.err"
     return 0
@@ -1116,8 +1150,8 @@ step_agree() {
     fact agree FAIL "fugaro runs ls --json printed no row for $RUN_ID in this window (--since $SINCE_USED): the run this check launched is not in the listing it just read, so the row's class cannot be compared with the diagnosis. The listing's rows are in $SCRATCH/rows.out"
     return 0
   fi
-  say "reading the diagnosis: fugaro diagnose $RUN_REF --json"
-  run_bounded "$RUN_BOUND_SECONDS" diagnose "$REPO" fugaro diagnose "$RUN_REF" --json
+  say "reading the diagnosis: fugaro diagnose $RUN_REF --project $P --json"
+  run_bounded "$RUN_BOUND_SECONDS" diagnose "$REPO" fugaro diagnose "$RUN_REF" --project "$P" --json
   if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
     fact agree FAIL "fugaro diagnose exited $BOUNDED_STATUS for $RUN_REF: the diagnosis is half of what this step compares, so the two readings cannot be held against each other. What it printed is in $SCRATCH/diagnose.err"
     return 0
@@ -1155,8 +1189,8 @@ step_groups() {
     fact totals FAIL "there is no plain listing to compare the totals with: the row above says why"
     return 0
   fi
-  say "reading the grouping: fugaro runs ls --repo $REPO_NAME --since $SINCE_USED --group-by failure_class --json"
-  run_bounded "$RUN_BOUND_SECONDS" grouped "$REPO" fugaro runs ls --repo "$REPO_NAME" --since "$SINCE_USED" --group-by failure_class --json
+  say "reading the grouping: fugaro runs ls --repo $REPO_NAME --since $SINCE_USED --project $P --group-by failure_class --json"
+  run_bounded "$RUN_BOUND_SECONDS" grouped "$REPO" fugaro runs ls --repo "$REPO_NAME" --since "$SINCE_USED" --project "$P" --group-by failure_class --json
   if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
     fact groups FAIL "fugaro runs ls --group-by failure_class exited $BOUNDED_STATUS in $REPO: the block this step is about was not read. What it printed is in $SCRATCH/grouped.err"
     fact share FAIL "the grouped listing did not answer (exit $BOUNDED_STATUS), so no share was read"
@@ -1252,8 +1286,8 @@ step_target_class() {
     fact old-record FAIL "the old record $TARGET_KEY carries no run_id this check could diagnose: the class it lands in is what this row is about"
     return 0
   fi
-  say "reading the diagnosis of the old record: fugaro diagnose $SLUG/$TARGET_RUN --json"
-  run_bounded "$RUN_BOUND_SECONDS" old-diagnose "$REPO" fugaro diagnose "$SLUG/$TARGET_RUN" --json
+  say "reading the diagnosis of the old record: fugaro diagnose $SLUG/$TARGET_RUN --project $P --json"
+  run_bounded "$RUN_BOUND_SECONDS" old-diagnose "$REPO" fugaro diagnose "$SLUG/$TARGET_RUN" --project "$P" --json
   if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
     fact old-record FAIL "fugaro diagnose exited $BOUNDED_STATUS for the old record ${SLUG}/${TARGET_RUN}: the class its reason maps to is one of the two readings this row holds against each other. What it printed is in $SCRATCH/old-diagnose.err"
     return 0
@@ -1281,8 +1315,8 @@ step_target_class() {
 # person reads) and the summary block has to carry `failures` (the half a later
 # report reads), and the old record's own class has to be counted among them.
 step_digest() {
-  say "reading the week's report: fugaro runs digest --period week --repo $REPO_NAME --stdout"
-  run_bounded "$RUN_BOUND_SECONDS" digest "$REPO" fugaro runs digest --period week --repo "$REPO_NAME" --stdout
+  say "reading the week's report: fugaro runs digest --period week --repo $REPO_NAME --project $P --stdout"
+  run_bounded "$RUN_BOUND_SECONDS" digest "$REPO" fugaro runs digest --period week --repo "$REPO_NAME" --project "$P" --stdout
   if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
     fact digest FAIL "fugaro runs digest --period week exited $BOUNDED_STATUS in $REPO: the week's report was not read. What it printed is in $SCRATCH/digest.err"
     return 0
@@ -1291,8 +1325,8 @@ step_digest() {
     fact digest FAIL "the week's report carries no '## Failures' table: the table is drawn only when the period's summary holds failures, so either the week had none (and the block read below says which classes it does hold) or the report is not the one this check reads. The report is in $SCRATCH/digest.out"
     return 0
   fi
-  say "reading the week's summary block: fugaro runs digest --period week --repo $REPO_NAME --json"
-  run_bounded "$RUN_BOUND_SECONDS" digest-json "$REPO" fugaro runs digest --period week --repo "$REPO_NAME" --json
+  say "reading the week's summary block: fugaro runs digest --period week --repo $REPO_NAME --project $P --json"
+  run_bounded "$RUN_BOUND_SECONDS" digest-json "$REPO" fugaro runs digest --period week --repo "$REPO_NAME" --project "$P" --json
   if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
     fact digest FAIL "fugaro runs digest --json exited $BOUNDED_STATUS in $REPO: the summary block is the half of this step a later report reads, and it was not read. What it printed is in $SCRATCH/digest-json.err"
     return 0
@@ -1381,8 +1415,8 @@ step_step5() {
     fact step5 INFO "not measured by this run: step 5 is a run YOU make, and this check never fakes it — a job image whose agent call the account's own limit refuses, run by hand on the sandbox. Read it with 'fugaro diagnose <run> --json' afterwards, and run this check again with --step5-run <run> to have its class read here. The class the plan expects is stage_error_unexplained (O6 unanswered), and no class of its own"
     return 0
   fi
-  say "reading the refutation run: fugaro diagnose $STEP5_RUN --json"
-  run_bounded "$RUN_BOUND_SECONDS" step5 "$REPO" fugaro diagnose "$STEP5_RUN" --json
+  say "reading the refutation run: fugaro diagnose $STEP5_RUN --project $P --json"
+  run_bounded "$RUN_BOUND_SECONDS" step5 "$REPO" fugaro diagnose "$STEP5_RUN" --project "$P" --json
   if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
     fact step5 FAIL "fugaro diagnose exited $BOUNDED_STATUS for $STEP5_RUN: the run you named could not be read, so its class was not measured. What it printed is in $SCRATCH/step5.err"
     return 0
@@ -1439,7 +1473,7 @@ step_verdict() {
     owner "the classes were read, and a run this check launched may still be going: read the block's 'cancelled' row"
     exit 1
   fi
-  owner "every criterion of steps 1 to 4 held: the run's class is the one its cause deserves and the listing and the diagnosis agree on it, the window's groups add up with the shares the runs give, the week's report carries its Failures table and counts the old record's own class, and the old record's bytes are unchanged by three reads of it. Steps 5 and 6 are yours: the block's rows say what is still to run"
+  owner "every criterion this run measured held: the run's class is the one its cause deserves and the listing and the diagnosis agree on it, the window's groups add up with the shares the runs give, the week's report carries its Failures table and counts the old record's own class, and the old record's bytes are unchanged by three reads of it${STEP5_RUN:+, and the run you named for step 5 carries the class the plan expects}. Step 6 is yours and no exit status of this check is about it: the block's 'step5' and 'step6' rows say what is still to run"
   exit 0
 }
 
@@ -1450,20 +1484,20 @@ step_verdict() {
 print_plan() {
   say "dry run: NOTHING below was run. A real run would run, in this order:"
   say "  [local, writes] git -C $REPO hash-object -w, read-tree, update-index, write-tree and commit-tree into an index of this run's own (GIT_INDEX_FILE), with ONE file replaced — fugaro.yaml plus the unknown key chk350_invalid_key — then git update-ref refs/heads/$BRANCH and git push --no-verify origin refs/heads/$BRANCH: your work tree is never switched and your branch never moves"
-  say "  [network, writes] fugaro run --repo $REPO --ref $BRANCH --json '<the task below>' — ONE run of ${REPO_NAME:-this repository}, refused at bootstrap: no model is called and nothing is billed, and it does start one job execution"
+  say "  [network, writes] fugaro run --repo $REPO --ref $BRANCH --project $P --json '<the task below>' — ONE run of ${REPO_NAME:-this repository}, refused at bootstrap: no model is called and nothing is billed, and it does start one job execution"
   say "  [network, reads] gcloud storage cat gs://$B/runs/<the slug fugaro run answers>/<the run>/result.json every ${POLL_SECONDS}s until it is terminal (up to ${RUN_TIMEOUT}s; a run still going is cancelled with 'fugaro cancel <run> --now')"
   say "  [network, reads] gcloud storage ls -l --recursive gs://$B/runs/<the slug>/ — metadata only, and the OLD records are chosen from it: minted inside --since $SINCE_USED, before the week's last day ${WEEK_TO:-?}, nearest the week first"
   say "  [network, reads] gcloud storage cat of up to $CANDIDATES of those records, and gcloud storage ls -l of the one that is the old record — the step that takes the hash and the bucket's own line BEFORE the first fugaro read of the window, so a class written back by a reader could not be in them"
-  say "  [network, reads] fugaro runs ls --repo ${REPO_NAME:-<the repository>} --since $SINCE_USED --json — the window's rows, and the row of the run above"
-  say "  [network, reads] fugaro diagnose <the run> --json — the same class through the command a person reads a run with (step 1's agreement)"
-  say "  [network, reads] fugaro runs ls --repo ${REPO_NAME:-<the repository>} --since $SINCE_USED --group-by failure_class --json — the groups, the shares and the totals of step 2"
-  say "  [network, reads] fugaro diagnose <the old record's run> --json — the third read of the old record, which is what step 4 counts"
-  say "  [network, reads] fugaro runs digest --period week --repo ${REPO_NAME:-<the repository>} --stdout, and again with --json — the week's Failures table and the summary block beside it (step 3)"
+  say "  [network, reads] fugaro runs ls --repo ${REPO_NAME:-<the repository>} --since $SINCE_USED --project $P --json — the window's rows, and the row of the run above"
+  say "  [network, reads] fugaro diagnose <the run> --project $P --json — the same class through the command a person reads a run with (step 1's agreement)"
+  say "  [network, reads] fugaro runs ls --repo ${REPO_NAME:-<the repository>} --since $SINCE_USED --project $P --group-by failure_class --json — the groups, the shares and the totals of step 2"
+  say "  [network, reads] fugaro diagnose <the old record's run> --project $P --json — the third read of the old record, which is what step 4 counts"
+  say "  [network, reads] fugaro runs digest --period week --repo ${REPO_NAME:-<the repository>} --project $P --stdout, and again with --json — the week's Failures table and the summary block beside it (step 3)"
   say "  [network, reads] gcloud storage cat of the old record again, and gcloud storage ls -l of it: the same bytes and the same line as before the reads above (step 4)"
-  say "  [network, reads] fugaro diagnose <--step5-run> --json, ONLY when you passed one: the refutation run is yours to make and this check never fakes it"
+  say "  [network, reads] fugaro diagnose <--step5-run> --project $P --json, ONLY when you passed one: the refutation run is yours to make and this check never fakes it"
   say "and its Restore (also from the exit trap) would run:"
   say "  [network, deletes] git -C $REPO push --no-verify origin --delete $BRANCH, then git update-ref -d refs/heads/$BRANCH, then git ls-remote --heads origin $BRANCH and git rev-parse of the local ref, read back as gone"
-  say "  [network, reads, on giving up or on Ctrl-C] fugaro cancel <the run> --now --json"
+  say "  [network, reads, on giving up or on Ctrl-C] fugaro cancel <the run> --now --project $P --json"
   say "The run's own record is LEFT in the runs bucket (it is what step 1 read), and nothing else of this check's survives it."
   say "Nothing was pushed, launched, cancelled or deleted: this dry run made no gcloud call and no fugaro call at all."
 }

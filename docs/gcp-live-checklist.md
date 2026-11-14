@@ -13057,8 +13057,8 @@ throwaway reference is cut in it — and it is required; a directory that is not
 whose `origin` does not answer, is refused before anything is created. `--project` is the installation's
 Fugaro project and `--bucket` its runs bucket, where the records of steps 1, 3 and 4 are read; both are
 required, and the check reads neither out of a config that may name another. `--gcp-project` is the GCP
-project the bucket lives in (default: the same value as `--project`), `--since <Nd>` moves the listing
-window, `--step5-run <run id>` is the run **you** made for step 5, and `--dry-run` prints the guards and
+project the bucket lives in (default: the same value as `--project`), `--since <Nd>` moves the window the listing
+reads and the bucket scan steps 3 and 4 choose the old record from, `--step5-run <run id>` is the run **you** made for step 5, and `--dry-run` prints the guards and
 every command a real run would make — **and makes no call at all**: no gcloud call, no `fugaro` call, no
 object read, and no verdict.
 
