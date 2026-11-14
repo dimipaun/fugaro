@@ -280,7 +280,7 @@ resource "google_project_iam_custom_role" "reaper" {
     "batch.jobs.list",
     "batch.jobs.get",
     "batch.jobs.delete",
-    "batch.jobs.cancel",
+    "compute.instances.get",
     "compute.instances.list",
     "compute.instances.delete",
   ]
@@ -515,11 +515,11 @@ test_a_sweep_of_some_other_job_is_not_this_checks() {
 
 test_a_sixth_permission_on_the_role_is_a_fail() {
   setup_case sixth
-  FAKE57B_ROLE_PERMS="batch.jobs.list,batch.jobs.get,batch.jobs.delete,batch.jobs.cancel,compute.instances.list,compute.instances.delete" run57b
+  FAKE57B_ROLE_PERMS="batch.jobs.list,batch.jobs.get,batch.jobs.delete,compute.instances.get,compute.instances.list,compute.instances.delete" run57b
   FAKE57B_ROLE_PERMS=""
   expect_status "$status" 1 "sixth permission"
   expect_fact role FAIL "sixth permission"
-  expect_contains "$out" "batch.jobs.cancel" "sixth permission: the permission the module does not grant, named"
+  expect_contains "$out" "compute.instances.get" "sixth permission: the permission the module does not grant, named"
   expect_contains "$out" "deploy/terraform/gcp/modules/compute/iam.tf" "sixth permission: and the authority it is judged against"
   expect_contains "$out" "CHECK 57B RESULT: FAIL" "sixth permission: the verdict"
 }
@@ -531,7 +531,7 @@ test_the_tree_is_the_authority_for_the_role() {
   run57b
   expect_status "$status" 1 "the tree's list"
   expect_fact role FAIL "the tree's list"
-  expect_contains "$out" "batch.jobs.cancel" "the tree's list: the permission the fixture module grants and the live role does not hold"
+  expect_contains "$out" "compute.instances.get" "the tree's list: the permission the fixture module grants and the live role does not hold"
 }
 
 test_the_local_pass_must_decide_by_the_same_deadlines() {

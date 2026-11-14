@@ -361,7 +361,7 @@ PY
   WANT=$(printf '%s\n' "$EXPECTED_PERMS" | oneline)
   HAVE=$(printf '%s\n' "$ROLE_PERMS" | tr ' ' '\n' | sort | oneline)
   if [ "$HAVE" = "$WANT" ]; then
-    fact role PASS "${ROLE_NAME} holds exactly the five permissions the compute module grants it (${HAVE}), and no sixth: batch.jobs.list/get/delete and compute.instances.list/delete. A job stuck in QUEUED past the queue deadline is cleared with jobs.delete — the role holds no cancel, and batch.jobs.cancel is not a permission Google has"
+    fact role PASS "${ROLE_NAME} holds exactly the five permissions the compute module grants it (${HAVE}), and no sixth: batch.jobs.list/get/delete and compute.instances.list/delete. A job stuck in QUEUED past the queue deadline is cleared with jobs.delete — the role holds no cancel, because Batch defines no cancel permission to grant"
   else
     fact role FAIL "${ROLE_NAME} holds '${HAVE}' where ${P}'s module grants exactly '${WANT}': a permission the module does not grant is a widening on a role that deletes machines, and one below the list is a sweeper that cannot do its job. The module (deploy/terraform/gcp/modules/compute/iam.tf) is the authority — reconcile one against the other and record which"
   fi
