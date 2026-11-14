@@ -9,6 +9,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitops"
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/repourl"
@@ -93,6 +94,60 @@ func (r *run) runClass() jobClass {
 // for it.
 func reviewVariantAccount(account string) string {
 	return config.ReviewVariantAccount(account) + config.ReviewVariantSuffix
+}
+
+// implicitReviewCandidate is the installation's implicit default review-only
+// job (internal/infra's implicitReviewVariant, named by ImplicitReviewJobName)
+// as a candidate this run places: the review variant of the no-account job of
+// the default profile on github, and the ONE project job a policy that declares
+// no profile can have.
+//
+// It is in the set because the set is what the names a run may be placed in are
+// computed from, and this job is the one project job such a policy cannot
+// compute for itself: its triple names a profile the policy does not define. A
+// project that declares no profile runs every workflow on the default profile —
+// a job's name is a (profile, provider, account) triple, and the deployer
+// stands this job under that profile anyway (internal/infra's
+// ImplicitReviewProfile) — so without it the container of that job is a job no
+// policy computes, and every run of it halts in cannotPlaceJob however the
+// launcher resolved it (F3).
+//
+// The class is carried like any other candidate's, so a coding run in this job
+// is refused by checkJobClass exactly as a coding run is refused the variant of
+// a profile that does exist: nothing about a review job's container is a
+// coding run's to hold.
+//
+// It is in the set whether or not this installation deployed the job, and that
+// is not this set's question: the candidates are the names the POLICY defines
+// (R2-5), and the deployment's set is the subset the credentials-service switch
+// and a recorded GitHub App ID gate (internal/infra's ProjectReviewJobs and
+// implicitReviewVariant). A profile-derived variant is a candidate under the
+// same rule whether or not its own job was deployed — the switch gates the
+// jobs, never the names — and a review launch is refused where the service is
+// off before it looks for a job at all (internal/cli's checkReviewService).
+//
+// internal/infra cannot be imported here (it imports this package for
+// SecretEnvsVar), so the three segments are spelled with the functions the
+// deployer, the launcher and the credentials service spell them with:
+// projectpolicy.DefaultProfileName, which is what infra.ImplicitReviewProfile
+// is; gitprov.KindGitHub, the provider the deployer names; and the axis's
+// default account as reviewVariantAccount spells it, which is the account
+// segment internal/infra's ImplicitReviewJobName builds the name over
+// (config.ReviewVariantAccount's "default" plus the variant's suffix).
+//
+// That the deployer suppresses this job where a github profile named
+// DefaultProfileName already derives it is why projectJobCandidates adds the
+// candidate only for a name the policy does not derive itself: every profile
+// keeps the axis's empty account (config.ProjectJobAccounts), so such a
+// profile's variant of that account IS this candidate — the set holds one
+// entry for the one name, and the triple is the same either way.
+func implicitReviewCandidate() jobTriple {
+	return jobTriple{
+		Profile:  projectpolicy.DefaultProfileName,
+		Provider: gitprov.KindGitHub,
+		Account:  reviewVariantAccount(""),
+		Class:    classReview,
+	}
 }
 
 // projectJob is the identity this run adopted, and whether the job it is in is
@@ -356,9 +411,15 @@ func matchJobName(job string, p *projectpolicy.Policy, found bool, slug, workflo
 // container, which holds no App key and no Claude token, believes it is the
 // review job because the published policy computes that name and not because
 // its own name says so.
+//
+// The installation's implicit review-only job is in the set beside the
+// profiles, added when the policy does not derive its name itself — and it is
+// the one entry that can be there with no profile behind it, which is what
+// makes a policy that declares no profile have exactly one project job
+// (implicitReviewCandidate, reconciliation F3).
 func projectJobCandidates(p *projectpolicy.Policy) []jobTriple {
 	names := p.ProfileNames()
-	out := make([]jobTriple, 0, len(names))
+	out := make([]jobTriple, 0, len(names)+1)
 	for _, name := range names {
 		pr := p.Profiles[name]
 		for _, account := range config.ProjectJobAccounts(pr.JobProfile) {
@@ -366,7 +427,20 @@ func projectJobCandidates(p *projectpolicy.Policy) []jobTriple {
 			out = append(out, jobTriple{Profile: name, Provider: pr.Provider, Account: reviewVariantAccount(account), Class: classReview})
 		}
 	}
-	return out
+	imp := implicitReviewCandidate()
+	name := gcp.ProjectJobName(imp.Profile, imp.Provider, imp.Account)
+	for _, c := range out {
+		if gcp.ProjectJobName(c.Profile, c.Provider, c.Account) == name {
+			// The policy derives this job itself — a github profile under
+			// DefaultProfileName always derives the review variant of its
+			// no-account job, which is what the deployer's collision gate
+			// suppresses its own copy of the job for. The set is names, so the
+			// derivation's entry is the entry, and the triple is the same one
+			// either way.
+			return out
+		}
+	}
+	return append(out, imp)
 }
 
 // ProjectJobOfPolicy is the (profile, provider, account) of the project job
@@ -444,9 +518,10 @@ func jobWorkflow(workflow, token string) (variant string, ok bool) {
 // says which profiles this project's policy defines, so a reader can tell "the
 // job is stale" from "the policy is". A policy that defines no profiles is a
 // third case and says so: it is published — the rules a policy is read under
-// are deployed — but it names no profile, so the set is empty and no job is a
-// project job of it. Saying "no policy published" there would send the reader
-// to deploy rules that are already deployed.
+// are deployed — but it names no profile, so the only project job it derives
+// is the installation's implicit review-only job (implicitReviewCandidate) and
+// no other name is a project job of it. Saying "no policy published" there
+// would send the reader to deploy rules that are already deployed.
 //
 // The fix is a command either way: publishing the policy a project job is
 // defined by where there is none to define one, and the installation's own
@@ -464,7 +539,7 @@ func cannotPlaceJob(job string, p *projectpolicy.Policy, found bool, slug, workf
 			detail = fmt.Sprintf("This project's published policy defines the job profiles %s, and a project job is one whose name is gcp.ProjectJobName of one of their (profile, provider, account) triples", strings.Join(names, ", "))
 			fix = "The fix is `fugaro doctor`, then `fugaro update` with the current Fugaro, whose first apply is the one that deploys this project's jobs from that policy"
 		} else {
-			detail = "This project's published policy defines no job profiles at all, so it defines no project job either: a project job is gcp.ProjectJobName of a (profile, provider, account) triple, and a policy with no profiles has no such triple"
+			detail = fmt.Sprintf("This project's published policy defines no job profiles at all, so the only project job it derives is the installation's implicit review-only job %s — a review job — and that is not the job this run is in: every other project job is gcp.ProjectJobName of a (profile, provider, account) triple of a profile this policy defines, and a policy with no profiles defines none", gcp.ProjectJobName(implicitReviewCandidate().Profile, implicitReviewCandidate().Provider, implicitReviewCandidate().Account))
 		}
 	}
 	return fmt.Errorf("this run is in the Cloud Run job %s, and that is neither a project job of this project's policy nor the per-repository job of this run (%s for the slug %s and the workflow %s): a job the run cannot place may be another installation's, a job of a module version this policy no longer describes, or one created by hand, and the run adopts no identity from it. %s. %s",
