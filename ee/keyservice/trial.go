@@ -1,0 +1,550 @@
+// SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+// See ee/LICENSE for the terms.
+
+package keyservice
+
+// §14's Team trial (K2.7, D2136, D2201): the door a signed-in account asks at,
+// and the rule that one organisation's installation and one account get one.
+//
+// The trial is a normal Team key issued without payment, and nothing else about
+// it is special: it is minted from the `trial` row of the policy table, so its
+// fourteen days, its zero grace and its daily check are the row's and not this
+// file's (D2133, D2136, D2138, policy.go), and it is a v1 key like every other
+// issue path's, so a revocation can name its `key_id` and the installation reads
+// its claims back as it reads any other key's.
+//
+// What the file owns is §14's own rule. The installation is the workspace's
+// **Firebase project id** and the account is the one the sign-in proved (K2.4,
+// P1.3) — never one the request names — and the id is counted **with the
+// organisation** rather than alone (D2201): a project id is a caller's own
+// string that proves nothing (F37, TN3), so a rule keyed on it alone would let
+// any signed-in account at any domain name another organisation's project id,
+// take the trial that organisation was about to ask for and bar it for good.
+// Keyed on the pair, that ask spends the asking organisation's trial and nothing
+// else — and only a domain the account's own address names is counted for it:
+// from an address at a free mail provider no organisation is counted at all, and
+// the ask is refused (D453, below). The count is the store's atomic
+// check-and-write rather than a read this route makes before minting: two asks
+// arriving together are one trial, because only one of them can claim it (K2.2,
+// store.go's `ClaimTrial`).
+//
+// The key leaves by mail, the way every issue path's does: the bundle is the key
+// line and the renewal secret line, shown once and never stored (D2135, §7.3),
+// so the API's own answer carries no key and no secret — it is the SPA that put
+// the ask, and the account that holds the trial gets its key at its own address.
+
+import (
+	"context"
+	"errors"
+	"io"
+	"log"
+	"net/http"
+	"net/url"
+	"strings"
+)
+
+// RouteTrial is the trial's door on the portal's API (P1.0): the SPA's own
+// origin reaches it through Hosting's rewrite (F21), which is why it is
+// registered under the subtree rather than mounted by Handler.
+const RouteTrial = "/api/trial"
+
+// maxTrialBytes is what a trial ask may body. It carries a project id and
+// nothing else, and the cap is the mount's own rule read on this route rather
+// than a size that one field needs (api.go): a door a stranger can post to is
+// one whose body the service has to hold.
+const maxTrialBytes = 4 << 10
+
+func init() {
+	// The route reaches the sign-in verifier and says so, so that a deployment
+	// serving the trial without one is refused when it starts rather than
+	// answering every ask with a failure of its own (api.go's `reaching`).
+	registerAPI(http.MethodPost, RouteTrial, (*Service).trial,
+		withBody(maxTrialBytes), reaching(needSignIn))
+}
+
+// TrialCall is what a trial ask carries: the installation's Firebase project id,
+// and nothing else.
+//
+// It carries no term, no tier and no policy, because those are the row's
+// (D2133): a caller that could name them could mint a trial that never checks at
+// all. It carries no seat count either: this door is the self-serve trial, and
+// that one is **single-seat** by the owner's ruling — §10.3 of the Subscription
+// Terms makes the free seat's renewable key the self-serve, single-seat trial,
+// and B6 keys the same ruling to it — while a trial asked for more seats is
+// §17's: the manual request form, which a person reads and approves one at a
+// time. The minter mints the seat count this route names and refuses a request
+// that names another (minter.go), so a body carrying a seat count at all is a
+// body this route does not read.
+//
+// The body is read through decodeWire like the portal's other requests, strictly
+// (P1.1). The shape has no entry in the wire registry (wire.go): a registered
+// shape is a JSON Schema, a fixture and the SPA's own types beside it, and those
+// are the portal's wire area's files rather than this task's. What that leaves
+// untested is the SPA's agreement with this shape, not this side's reading of it.
+type TrialCall struct {
+	WorkspaceID string `json:"workspace_id"`
+}
+
+// trialPrefix opens the name one trial is held under, the way `rotation:` opens
+// a rotation's (renew.go): it is both the id the store files the trial under and
+// the source its issuance is written under, because what §14 counts and what the
+// store records of one trial are one thing.
+const trialPrefix = "trial:"
+
+// trialInstallation is the installation half of §14's rule as the store holds
+// it: the organisation the sign-in proved **with** the project id the ask named,
+// escaped whole (D2201).
+//
+// The store's Trial carries the one installation field §14's rule was written
+// against (K2.2, store.go), and D2201's amendment adds a second half to what
+// that field counts; the pair therefore goes into it joined rather than into a
+// second document, which is the store's to add and not this route's. What the
+// join has to survive is the store's own naming rule: the id a document is filed
+// under is one the deploy's backend can hold, so a slash in either half — a
+// project id is a caller's own string and nothing checks its shape here, and a
+// local part may carry one (§4.1's `address`) — would file the trial as a path
+// into another collection rather than as a document of this one (docstore's
+// `ErrUnstorableName`). Escaping each half is what keeps one half from reaching
+// into the other either: the separator is escaped inside either, so the join is
+// the only place it appears.
+func trialInstallation(organisation, installation string) string {
+	return trialPrefix + url.PathEscape(organisation) + "|" + url.PathEscape(installation)
+}
+
+// The refusals this route answers with. Each is a code a client branches on and
+// a sentence a person reads, and no sentence says anything about the service's
+// inside (§7.2's rule, api.go's refusal shape).
+const (
+	trialRateRefusal      = "Too many requests from this address just now. Try again shortly."
+	trialSignInRefusal    = "This request's sign-in could not be verified, so no trial was issued for it. Sign in to the licence project and ask again."
+	trialBodyRefusal      = "This request is not the ask this route reads: it carries the workspace's Firebase project id and nothing else. A trial of more than one seat is asked for through the request form."
+	trialClaimedRefusal   = "This account or this workspace has already had its trial, and §14's trial is one per installation and account."
+	trialWorkspaceEmpty   = "A trial names the workspace it is for, and this request names none."
+	trialFreeMailRefusal  = "A trial is granted to an organisation, and this account's address is at a free mail provider, where anyone can hold an address and the domain is not one organisation's. Ask again with an address at your organisation's own domain."
+	trialAccountRefusal   = "A trial is counted against the account the sign-in proved, and this address is not one a trial can be filed under. Ask again from another account."
+	trialWorkspaceRefusal = "A trial is filed under the workspace id this request names, and this one is not one a trial can be filed under: name the workspace's own Firebase project id, and nothing longer."
+)
+
+// trialNameBytes is the length the deploy's document store admits for the id of
+// one of its documents (docstore's `fileable`).
+const trialNameBytes = 1500
+
+// trialFileable answers whether the store can file a document under name, which
+// this route has to ask **before** it mints: the two names an ask is filed under
+// are made from strings the ask brought (the account the sign-in proved, and the
+// installation name the project id goes into), and the store answers a name its
+// backend cannot hold only when it is writing one — which is after the mint, so
+// an unfilable name would be answered by withdrawing the key the mint had
+// already signed: a §8 entry per ask, into a list that only grows, and a key
+// signed for nobody.
+//
+// The rule is the store's own, and it is written out here rather than imported
+// because the predicate behind it is unexported and the store's file is another
+// task's. What makes that safe is that the two have to answer alike: a name this
+// admits and the store refuses is exactly the failure this exists to close, so
+// the two move together — a slash is a path separator there, "." and ".." are
+// path traversal, `__…__` is the database's reserved form, and 1500 bytes is
+// the length it admits.
+func trialFileable(name string) bool {
+	if len(name) > trialNameBytes || name == "." || name == ".." ||
+		(len(name) >= 4 && strings.HasPrefix(name, "__") && strings.HasSuffix(name, "__")) {
+		return false
+	}
+	return !strings.ContainsFunc(name, func(r rune) bool { return r < 0x20 || r == 0x7f || r == '/' })
+}
+
+// trial is §14's trial route: a signed-in account asks for a trial for one
+// installation and is mailed its key.
+//
+// The order is the address's allowance, then the body, then the sign-in, then
+// the free mail refusal, then the two names the ask is filed under, then the
+// cheap half of §14's rule, then the account's domain's allowance, then the
+// mint, then the claim, and then the mail and the two records. The address's
+// allowance is spent first for the reason renew.go's is (a body this service
+// never parses is as cheap to serve as a good one); the sign-in is read before
+// the rule and before the mint because the account is half of what both count;
+// the free mail refusal follows the sign-in because it is the organisation the
+// sign-in proved that it reads (D453); the names are checked where both their
+// halves are known and before anything they would be written into, because the
+// store refuses a name it cannot file only when it writes one and every such
+// write comes after the mint (`trialFileable`); the rule is read before the mint
+// because minting for an ask that is going to be refused spends the key ring's
+// authority on a key nobody is given; and the domain's allowance comes after
+// everything that can refuse the ask without a key, because a domain is shared —
+// an ask that is refused mints nothing and must not spend an allowance other
+// accounts on that domain still need (the throttle is documented per domain:
+// docs/licensing/licence-key.md, "Limits, accepted").
+//
+// The mint stands before the claim and not after it, and that order costs
+// something either way: the claim is the store's check-and-write and it needs
+// the `key_id` the mint answers, so the two cannot be one act here. Minting
+// first means a lost race has a key to withdraw (`withdrawUnrecorded`, §8's
+// list) rather than a second trial nobody holds; claiming first would mean an
+// ask whose mail failed had burnt the installation's one trial, and a mail
+// failure is rarer than a person's second click. What is left of the price is
+// that a mail failure after the claim leaves the trial claimed and its key
+// unmailed: the store holds a trial naming a key, an operator sees it, and the
+// account is answered a failure rather than a key it never received.
+func (s *Service) trial(w http.ResponseWriter, r *http.Request) {
+	if !s.limiter.allow("ip:" + clientIP(r)) {
+		refuseAPI(w, http.StatusTooManyRequests, "rate_limited", trialRateRefusal)
+		return
+	}
+	call, ok := s.trialCall(w, r)
+	if !ok {
+		return
+	}
+	caller, ok := s.trialCaller(w, r)
+	if !ok {
+		return
+	}
+	// The organisation is read off the sign-in once and is the one value §14's
+	// rule, the throttle and the key all use: what the store counts a trial
+	// against, what the allowance is spent on and what the key says the trial
+	// belongs to are one thing, and a second reading of it would be a second
+	// rule (D2201).
+	organisation := domainOf(caller.Email)
+	// A free mail domain is refused here, which is D453's list read the way the
+	// free seat reads it (service.go's `freeSeatForm`: such a domain goes to the
+	// owner's queue rather than being minted for). What it protects is D2201's
+	// rule itself: an organisation that anybody can hold an address at is not an
+	// organisation, so a trial counted against one counts nothing — every account
+	// at gmail.example shares it, and the first of them to name a project id
+	// would spend every other one's trial for that id and bar the organisation
+	// that owns the project (409, and no method of the Store interface repairs a
+	// trial). The free seat's queue is not what this route does with it: a queued
+	// application is minted a free seat by the owner's key and has no path to a
+	// trial, and this is a door a signed-in stranger posts to, not a place a
+	// person reads a request. A trial is asked for with an address at the
+	// organisation's own domain.
+	if s.freeMail(organisation) {
+		refuseAPI(w, http.StatusForbidden, "free_mail_organisation", trialFreeMailRefusal)
+		return
+	}
+	// Two names this ask is filed under are made from strings the ask brought,
+	// and both are refused here when the store cannot hold them — before the
+	// allowance below, because a refusal spends nothing, and before the mint,
+	// because the store's own refusal would arrive after it (`trialFileable`).
+	// The account is the address the sign-in proved, read through §4.1's own
+	// rule, which admits a slash in a local part and so admits an address the
+	// account collection cannot file; the installation is the pair D2201 counts,
+	// whose workspace half the ask names and nothing bounds.
+	if !trialFileable(caller.Email) {
+		refuseAPI(w, http.StatusBadRequest, "unfileable_account", trialAccountRefusal)
+		return
+	}
+	installation := trialInstallation(organisation, call.WorkspaceID)
+	if !trialFileable(installation) {
+		refuseAPI(w, http.StatusBadRequest, "unfileable_workspace", trialWorkspaceRefusal)
+		return
+	}
+	if !s.trialFree(w, r, installation, caller.Email) {
+		return
+	}
+	// The account's own **domain's** allowance is spent here, and it is the
+	// throttle §14's trial is documented with: "the trial path is throttled per
+	// domain" (docs/licensing/licence-key.md, "Limits, accepted"), because the
+	// account a caller asks from is one they may open another of and the
+	// organisation behind it is not. It is spent after the sign-in and not with
+	// the address, for the reason a renewal's key allowance is (renew.go's
+	// `charged`): only a request that proved who asks is counted against that
+	// domain, so no caller can spend another domain's allowance. And it is spent
+	// after §14's rule rather than before it, because an ask the rule is going to
+	// refuse mints nothing and must not spend the domain's allowance either: a
+	// domain is shared — a free mail domain is the case D453's list exists for —
+	// so an account that already had its trial and keeps asking would otherwise
+	// hold that domain's allowance at nothing and lock every other account on it
+	// out of a trial it never took.
+	if !s.limiter.allow("domain:" + organisation) {
+		refuseAPI(w, http.StatusTooManyRequests, "rate_limited", trialRateRefusal)
+		return
+	}
+	// The v1 route and not the older format's, for the reason the paid path
+	// states (merchant.go's `paid`): what an installation is issued is a v1 key,
+	// and the intake holds one minter whose client answers both routes, so a
+	// service that could not answer a v1 request is refused rather than handed a
+	// key no released verifier reads (Check 174).
+	mints, answersV1 := s.mints.(MintsV1)
+	if !answersV1 {
+		s.trialFailed(w, errors.New("the intake's minter does not answer a v1 mint request, and a trial is a v1 key"))
+		return
+	}
+	answer, err := mints.MintV1(r.Context(), RequestV1{
+		Environment: s.cfg.Environment,
+		Policy:      PolicyTrial,
+		WorkspaceID: call.WorkspaceID,
+		// The account's own domain is the organisation the key names, which is
+		// the same reading of "one per organisation" the free seat's check uses
+		// (service.go's `domainOf`, §4.2). A trial's organisation is otherwise
+		// the portal's model of one (P3.3), which does not exist yet: until it
+		// does, the address the sign-in proved is the only organisation this
+		// route can name, and the key has to name one to verify at all. It is
+		// the same value the claim below is keyed on, and not a second reading
+		// of it: what the key says its organisation is and what the rule counted
+		// are one thing (D2201).
+		Organisation: organisation,
+		// One seat, which is what §10.3's self-serve trial is and what the ask
+		// cannot name: the minter refuses a key for nobody, and a trial of more
+		// than one seat is §17's request form.
+		Seats: 1,
+		// No term and no end: the row runs for its own fourteen days and the
+		// minter refuses a term on a row nothing renews (D2136, minter.go).
+	})
+	if err != nil {
+		s.trialFailed(w, err)
+		return
+	}
+	if err := s.store.ClaimTrial(r.Context(), Trial{
+		Installation: installation,
+		Account:      caller.Email,
+		KeyID:        answer.Record.KeyID,
+		At:           s.now(),
+	}); err != nil {
+		// An error is not the same as a claim that did not land. The deployed
+		// store is a transaction that is re-run when its result is lost, and the
+		// re-run reads the documents its own first attempt committed
+		// (firestore_store.go's `ClaimTrial`), so it answers "already claimed"
+		// about **this** ask — one that did land, whose trial names the key this
+		// mint answered. The key is what tells the two apart, and it is the only
+		// thing that can: nothing else in the store says which ask a trial holds.
+		landed, readErr := s.trialLanded(r.Context(), answer.Record.KeyID)
+		if readErr != nil {
+			// Nothing can say whether the claim landed, and this is the one case
+			// where withdrawing is the worse of the two harms: a trial that did
+			// land is this ask's own, and it leaves the account and the
+			// installation barred with no way back (no method of the Store
+			// interface repairs one). The key is left where the mint put it —
+			// nobody holds it, because the mail below never went out — and the
+			// ask is answered a failure: the customer asks again, and the ask
+			// that finds the trial claimed is one an operator reads the trial's
+			// key off (§8's list, K2.2).
+			s.trialFailed(w, errors.Join(err, readErr))
+			return
+		}
+		if !landed {
+			// The store answered, and no trial names this key: the claim did not
+			// land — the lost race (`trialFree` cannot see it) or a store that
+			// could not be written — so the key that was minted for it is
+			// recorded nowhere, the mail below never went out and nothing will
+			// write its issuance. It is withdrawn rather than left live: a key
+			// nobody holds is what §8's list is where the licensor can see it.
+			if withdrawErr := s.withdrawUnrecorded(r.Context(), answer.Record.KeyID); withdrawErr != nil {
+				s.trialFailed(w, errors.Join(err, withdrawErr))
+				return
+			}
+			if !errors.Is(err, ErrTrialAlreadyClaimed) {
+				s.trialFailed(w, err)
+				return
+			}
+			refuseAPI(w, http.StatusConflict, "trial_already_claimed", trialClaimedRefusal)
+			return
+		}
+		// The ask's own claim landed and its answer was lost: the trial is this
+		// ask's, the account never received its key, and serving it below is the
+		// whole of what is left to do.
+	}
+	answer.Record.Source = installation
+	answer.Record.Email = caller.Email
+	if err := s.mail.Send(r.Context(), paidKeyMail(caller.Email, answer.Key, answer.RenewalSecret)); err != nil {
+		s.trialFailed(w, err)
+		return
+	}
+	if err := s.store.SaveIssuance(r.Context(), answer.Record); err != nil {
+		// The store's answer is not the state, and this is where the two are told
+		// apart — as they are for the claim above and on the paid path
+		// (merchant.go's `paid`): the deployed store writes an issuance in a
+		// transaction that is re-run when its result is lost, and its re-run
+		// answers `ErrAlreadyRecorded` about its own commit
+		// (firestore_store.go's `SaveIssuance`). The key has been minted, claimed
+		// and mailed by now, so answering that as a failure would hand the account
+		// a key this store holds no state for — and a key with no state fails the
+		// proof the daily status check makes (renew.go's `proved`), so it is
+		// refused like any key nobody issued while asking again is answered 409:
+		// the trial is spent, and no method of the Store interface repairs one. So
+		// the record is re-read under the source this ask wrote it to, and only a
+		// source holding no record, or one holding another key's, is a failure.
+		held, recorded, readErr := s.recorded(r.Context(), installation)
+		if readErr != nil {
+			s.trialFailed(w, errors.Join(err, readErr))
+			return
+		}
+		if !recorded || held.KeyID != answer.Record.KeyID {
+			// Unlike the paid path this one withdraws nothing: the key is one the
+			// store has claimed a trial for and mailed, so a withdrawal would take
+			// the account's own key away and leave the trial spent with nothing in
+			// hand — the trial's claim names the key, which is what an operator
+			// reads it off (§8's list, K2.2). Nothing is written for it either, so
+			// what the account holds is a key its check-in is refused for, and the
+			// failure is reported rather than papered over.
+			s.trialFailed(w, err)
+			return
+		}
+		// The record is this key's, so the write landed and only its answer was
+		// lost: the rest of the pair is finished below rather than left unwritten,
+		// because the state written there is what the account's own key needs to
+		// be checked in (renew.go's `proved`).
+	}
+	if err := s.store.SaveKeyState(r.Context(), KeyState{
+		KeyID:             answer.Record.KeyID,
+		WorkspaceID:       call.WorkspaceID,
+		RenewalSecretHash: digest(answer.RenewalSecret),
+	}); err != nil {
+		// The pair's safe half, as on every issue path: the key is one the store
+		// holds a trial and an issuance for, so a revocation can name it and the
+		// trial is not lost with this write.
+		s.trialFailed(w, err)
+		return
+	}
+	// The answer carries no key and no secret (D2135): the bundle went to the
+	// account's own address, and an answer the SPA holds is not a place a
+	// credential may be shown.
+	w.WriteHeader(http.StatusOK)
+}
+
+// trialLanded answers whether the store holds the trial this ask claimed, which
+// is what tells a claim whose answer was lost from one that did not land: a key
+// is minted for one ask and minted here, so a trial naming this key is this
+// ask's claim and cannot be another's. The read is a read of the whole list
+// because the store's interface holds no lookup by key (`ClaimTrial` is the one
+// trial method that is not a list), and the list is small — one document per
+// installation that ever had a trial.
+func (s *Service) trialLanded(ctx context.Context, keyID string) (bool, error) {
+	trials, err := s.store.Trials(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, held := range trials {
+		if held.KeyID == keyID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// trialCall reads the ask's body: the route's own JSON, strictly, with the one
+// field it names present and non-empty. A body that carries anything else — a
+// seat count above all — is refused here rather than ignored, because
+// `decodeWire` is strict and a trial of more than one seat is not this door's to
+// give (§10.3, B6, §17). What the id says is not this route's to judge beyond
+// that: a project id that is not one mints a key that verifies and binds to
+// nothing anybody owns, which is the asker's own loss (wire.go's split,
+// `decodeWire`). The one thing judged is the name the id makes, and that check
+// is `trial`'s own: it needs the organisation the id is counted with (D2201) and
+// it has to come before the mint (`trialFileable`).
+func (s *Service) trialCall(w http.ResponseWriter, r *http.Request) (TrialCall, bool) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		refuseAPI(w, http.StatusBadRequest, "unreadable_body", "This request's body could not be read.")
+		return TrialCall{}, false
+	}
+	var call TrialCall
+	if err := decodeWire(body, &call); err != nil {
+		refuseAPI(w, http.StatusBadRequest, "unreadable_body", trialBodyRefusal)
+		return TrialCall{}, false
+	}
+	// The id is read as it arrived and never trimmed, the way a renewal reads a
+	// key's own id: what the key binds to and what the trial counts is the value
+	// the caller sent, and a service that repaired a misspelling would count
+	// something nobody asked for.
+	if strings.TrimSpace(call.WorkspaceID) == "" {
+		refuseAPI(w, http.StatusBadRequest, "unreadable_body", trialWorkspaceEmpty)
+		return TrialCall{}, false
+	}
+	return call, true
+}
+
+// trialCaller verifies the ask's sign-in and answers the account it names, which
+// is half of what §14's rule counts.
+//
+// The token rides in the request's `Authorization` header as a bearer token,
+// which is where the SPA's own calls carry the ID token it holds (P1.3): what is
+// verified is P1.3's business and not this route's — the verification itself is
+// signin.go's own reader of the seam, so the SPA's door and the CLI's flow are
+// answered by one verifier and one set of rules — and an ask whose token the
+// verifier refuses is answered the same way as one that carried none: the
+// account is what a trial is granted to, and there is no trial without one.
+func (s *Service) trialCaller(w http.ResponseWriter, r *http.Request) (Caller, bool) {
+	token, carried := bearerToken(r)
+	if !carried {
+		refuseAPI(w, http.StatusUnauthorized, "unverified_sign_in", trialSignInRefusal)
+		return Caller{}, false
+	}
+	caller, verified := s.verifySignIn(r.Context(), token)
+	if !verified {
+		refuseAPI(w, http.StatusUnauthorized, "unverified_sign_in", trialSignInRefusal)
+		return Caller{}, false
+	}
+	// The address is read the way every other part of this service reads one
+	// (§4.2's `address`, which the forms validate through), and what it answers is
+	// what the trial is counted against. A verifier that proved no address, or one
+	// it proved that is not an address, has not done the half of its job §14 needs
+	// and is answered as a sign-in that failed: the account is what a trial is
+	// granted to, and there is no trial without one. Reading it rather than
+	// trusting the spelling matters twice over — the rule counts one account and
+	// one organisation, and an address in another case is the same address — and
+	// the domain it answers is the one D453's list is compared against, which a
+	// spelling of its own would walk past.
+	email, readable := address(caller.Email)
+	if !readable {
+		refuseAPI(w, http.StatusUnauthorized, "unverified_sign_in", trialSignInRefusal)
+		return Caller{}, false
+	}
+	caller.Email = email
+	return caller, true
+}
+
+// trialFree answers whether the store holds no trial for this installation or
+// for this account, which is the cheap half of §14's rule: it reads the list and
+// refuses an ask that is certainly spent before a key is minted for it. It is
+// not the rule itself — two asks arriving together both pass it — and the
+// store's `ClaimTrial` is what decides between them.
+//
+// The installation it is handed is the pair and not the project id, which is the
+// whole of D2201: the id is a caller's own string and proves nothing (F37, TN3),
+// so a rule that counted it alone would hand any signed-in account at any domain
+// the power to take another organisation's trial by naming a project id it read
+// somewhere, and to bar that organisation for good. Counted as a pair, the same
+// ask spends only the naming organisation's trial.
+func (s *Service) trialFree(w http.ResponseWriter, r *http.Request, installation, account string) bool {
+	trials, err := s.store.Trials(r.Context())
+	if err != nil {
+		s.trialFailed(w, err)
+		return false
+	}
+	for _, held := range trials {
+		if held.Installation == installation || held.Account == account {
+			refuseAPI(w, http.StatusConflict, "trial_already_claimed", trialClaimedRefusal)
+			return false
+		}
+	}
+	return true
+}
+
+// trialFailed answers a failure of this route's own making: the API's one
+// failure shape, with the cause written to the process's log, which is where it
+// is read from (P1.6 reports the answer itself, and an answer's body is never a
+// service's inside, §7.2).
+func (s *Service) trialFailed(w http.ResponseWriter, err error) {
+	log.Printf("keyservice: the trial route could not serve this request: %v", err)
+	refuseAPI(w, http.StatusInternalServerError, apiFailedCode, apiFailedMessage)
+}
+
+// bearerToken reads the request's own bearer token: the scheme and the token,
+// and the scheme is compared without regard to case because RFC 7235 says the
+// two are one (a scheme is case-insensitive; a token is not, and it is handed on
+// exactly as it arrived).
+//
+// Anything else in the header is no token at all rather than a token to salvage:
+// a caller that put a key or a secret there has sent a credential to a route
+// that reads one field, and what this route does with it is nothing.
+func bearerToken(r *http.Request) (string, bool) {
+	scheme, token, found := strings.Cut(r.Header.Get("Authorization"), " ")
+	if !found || !strings.EqualFold(scheme, "Bearer") {
+		return "", false
+	}
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return "", false
+	}
+	return token, true
+}
