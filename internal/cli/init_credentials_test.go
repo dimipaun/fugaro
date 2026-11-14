@@ -737,8 +737,9 @@ func planDirs(t *testing.T, log string) []string {
 // already has the block keeps it. The block is the record of a service that
 // exists — its URL is the audience every caller's ID token is minted for, and
 // its job table is the installation's own — so the run carries it as it is
-// found and moves the members it owns: the image, and the one member the
-// carry's own rewrite writes over it (verifier_accounts, CSR14 — see the
+// found and moves the members it owns: the image, and the two members the
+// carry's own rewrite writes over it (verifier_accounts, CSR14, and
+// review_job_accounts, the review table the same refresh unions in — see the
 // expectation below).
 //
 // Mutation (verified, run and restored): rebuild the block from the spec
@@ -764,8 +765,12 @@ func TestUpdateKeepsAnOptedInInstallationsServiceUnchanged(t *testing.T) {
 	// one (the owner's ruling of 2026-11-10), so the run that publishes the
 	// node naming the verifier account is also the run that plans the
 	// installation root again after it, and the member arrives in the update
-	// that published it rather than in the one behind. Every other member is
-	// the earlier run's, byte for byte.
+	// that published it rather than in the one behind. review_job_accounts is
+	// the same kind of arrival for the other table the refresh composes: this
+	// rig's config records a Bitbucket repository and has the service opted in,
+	// so the installation deploys the implicit review-only job of that provider
+	// (plan task RJ8, finding F6) and the service has to admit the caller that
+	// runs it. Every other member is the earlier run's, byte for byte.
 	want := map[string]any{
 		"account_id":       infra.CredentialsAccountID,
 		"service":          infra.CredentialsServiceName,
@@ -775,6 +780,8 @@ func TestUpdateKeepsAnOptedInInstallationsServiceUnchanged(t *testing.T) {
 		"rtdb_url":         r.db.URL,
 		"job_accounts": []any{map[string]any{
 			"provider": "bitbucket", "repo": "acme/sandbox", "workflow": "web"}},
+		"review_job_accounts": []any{map[string]any{
+			"profile": infra.ImplicitReviewProfile, "provider": "bitbucket", "account": config.DefaultClaudeAccount}},
 		"url": credentialsServiceURL,
 		"verifier_accounts": []any{
 			"fugaro-verifier@proj-1234.iam.gserviceaccount.com"},
