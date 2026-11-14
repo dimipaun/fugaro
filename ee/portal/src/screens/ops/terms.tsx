@@ -15,7 +15,14 @@
 // policy could mint a key that never checks in (F28); the seats and the end are
 // the operator's and the end is capped at the row's term (F30, P1.8). `null` is
 // meaningful in both request shapes -- no new seat count, no end, no reason --
-// and so is an empty check interval, which means the row's own.
+// and in the mint it is one thing only: the check interval of an air-gapped
+// row. A connected term carries its own interval, because a key that never
+// checks in is one revocation cannot reach (F28).
+//
+// **A change names the field it needs before it is offered.** The four actions
+// share one form and each reads a different field of it, so the button that
+// would send an empty one is disabled: the API's refusal would be a sentence
+// telling an operator what the form in front of them already shows.
 //
 // **A key's only action is taking a handover away.** Operations never holds a
 // secret (F5): cutting a handover short destroys the bundle a reveal left for an
@@ -61,6 +68,9 @@ function MintForm({ api, actions }: { api: OpsApi; actions: OpsActions }) {
   const [seats, setSeats] = useState('1')
   const [ends, setEnds] = useState('')
   const [interval, setInterval] = useState('')
+  const [airGapped, setAirGapped] = useState(false)
+
+  const ready = airGapped || interval.trim() !== ''
 
   function mint(event: FormEvent): void {
     event.preventDefault()
@@ -70,7 +80,11 @@ function MintForm({ api, actions }: { api: OpsApi; actions: OpsActions }) {
         row: row.trim(),
         seats: Number(seats),
         ends_at: dayInstant(ends) ?? '',
-        check_interval: interval.trim() === '' ? null : interval.trim(),
+        // A null interval is the air-gapped row and nothing else (F28), so an
+        // empty field is not it: the operator says which of the two they mean,
+        // because a connected key that never checks in is one revocation cannot
+        // reach.
+        check_interval: airGapped ? null : interval.trim(),
       })
       // A form that kept what it had sent would send the same term again on a
       // second press, and the landed sentence below is what tells the operator
@@ -80,6 +94,7 @@ function MintForm({ api, actions }: { api: OpsApi; actions: OpsActions }) {
       setSeats('1')
       setEnds('')
       setInterval('')
+      setAirGapped(false)
     })
   }
 
@@ -140,13 +155,35 @@ function MintForm({ api, actions }: { api: OpsApi; actions: OpsActions }) {
         <input
           id="ops-mint-interval"
           value={interval}
+          disabled={airGapped}
           onChange={(event) => {
             setInterval(event.target.value)
           }}
-          placeholder="P7D, or empty for the row's own"
+          placeholder="P7D"
+          required={!airGapped}
         />
+        <p>
+          How often the installation asks whether its key is still good, as an ISO 8601 duration of
+          one to thirty days.
+        </p>
 
-        <button type="submit" disabled={busy}>
+        <label htmlFor="ops-mint-air-gapped">
+          <input
+            id="ops-mint-air-gapped"
+            type="checkbox"
+            checked={airGapped}
+            onChange={(event) => {
+              setAirGapped(event.target.checked)
+            }}
+          />
+          The air-gapped row: the installation never checks in
+        </label>
+        <p>
+          An air-gapped term is issued once as a file and is never revealed or rebound (D2206), and
+          it is the one thing the API reads an absent check interval as (F28).
+        </p>
+
+        <button type="submit" disabled={busy || !ready}>
           Mint
         </button>
       </fieldset>
@@ -167,6 +204,26 @@ function ChangeForm({ api, actions }: { api: OpsApi; actions: OpsActions }) {
   const [seats, setSeats] = useState('')
   const [end, setEnd] = useState('')
   const [reason, setReason] = useState('')
+
+  /**
+   * Whether this action has everything it reads. `comp` and `revoke` act on the
+   * term alone; `seats` and `extend` each read one more field, and an empty one
+   * of those is not a zero the API accepts: a seat count is at least one, and an
+   * end is an instant rather than the empty string `dayInstant` would have to
+   * answer.
+   */
+  function ready(action: EntitlementActionKind): boolean {
+    if (entitlement.trim() === '') {
+      return false
+    }
+    if (action === 'seats') {
+      return seats.trim() !== ''
+    }
+    if (action === 'extend') {
+      return end.trim() !== ''
+    }
+    return true
+  }
 
   function change(action: EntitlementActionKind): void {
     const body: OpsEntitlementAction = {
@@ -240,28 +297,28 @@ function ChangeForm({ api, actions }: { api: OpsApi; actions: OpsActions }) {
       <div>
         <button
           type="button"
-          disabled={busy || entitlement.trim() === ''}
+          disabled={busy || !ready('extend')}
           onClick={() => change('extend')}
         >
           Extend
         </button>
         <button
           type="button"
-          disabled={busy || entitlement.trim() === ''}
+          disabled={busy || !ready('seats')}
           onClick={() => change('seats')}
         >
           Change seats
         </button>
         <button
           type="button"
-          disabled={busy || entitlement.trim() === ''}
+          disabled={busy || !ready('comp')}
           onClick={() => change('comp')}
         >
           Comp
         </button>
         <button
           type="button"
-          disabled={busy || entitlement.trim() === ''}
+          disabled={busy || !ready('revoke')}
           onClick={() => change('revoke')}
         >
           Revoke

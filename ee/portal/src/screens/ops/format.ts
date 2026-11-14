@@ -30,11 +30,11 @@ export function thisMonth(now: Date): string {
 }
 
 /**
- * The instant a day ends for a term: midnight UTC of the day an operator
- * picked, or null when they picked none. A date field answers a day and the
- * shapes carry an instant (F30: an end is capped by the row, and a requested
- * end is a UTC instant), so the day the operator chose is the whole of it,
- * read as UTC rather than as the browser's zone.
+ * The instant a term ends when an operator picks a day: midnight UTC of that
+ * day, or null when they picked none. A date field answers a day and the shapes
+ * carry an instant (F30: an end is capped by the row, and a requested end is a
+ * UTC instant), so the day the operator chose is the whole of it, read as UTC
+ * rather than as the browser's zone.
  */
 export function dayInstant(day: string): string | null {
   if (day === '') {

@@ -337,6 +337,7 @@ function fillMint(): void {
   fireEvent.change(screen.getByLabelText('Row'), { target: { value: 'team-monthly' } })
   fireEvent.change(screen.getByLabelText('Seats'), { target: { value: '5' } })
   fireEvent.change(screen.getByLabelText('Ends'), { target: { value: '2026-03-10' } })
+  fireEvent.change(screen.getByLabelText('Check interval'), { target: { value: 'P7D' } })
 }
 
 describe('the operations screens', () => {
@@ -403,7 +404,7 @@ describe('the operations screens', () => {
       row: 'team-monthly',
       seats: 5,
       ends_at: '2026-03-10T00:00:00.000Z',
-      check_interval: null,
+      check_interval: 'P7D',
     })
   })
 
@@ -422,7 +423,7 @@ describe('the operations screens', () => {
       row: 'team-monthly',
       seats: 5,
       ends_at: '2026-03-10T00:00:00.000Z',
-      check_interval: null,
+      check_interval: 'P7D',
     })
   })
 
@@ -601,9 +602,9 @@ describe('the operations screens', () => {
       reason: null,
     })
 
-    // The directories go out under the name the API reads today, which is the
-    // amended D2207's and not the one `src/api/types/ops.ts` still spells: a
-    // body typed by that declaration would send a field the API refuses.
+    // The directories go out as `microsoft_directories`, the amended D2207's
+    // name for them: a body carrying the old `microsoft_tenants` is one the API
+    // refuses, and the two lists are the only place that name is sent at all.
     fireEvent.change(screen.getByLabelText('Email domains'), {
       target: { value: 'example.com\nexample.org' },
     })
@@ -628,6 +629,65 @@ describe('the operations screens', () => {
     // The entry is drawn under the sentence, so a truncated log is never read
     // as the whole of what operations did (D456).
     expect(screen.getByText(/ops@example\.com/)).toBeDefined()
+  })
+
+  it('sends no check interval for an air-gapped term, and waits for one otherwise', async () => {
+    const shown = show(person(0), routes({ 'POST /api/ops/mints': { body: ENTITLEMENT } }))
+    await screen.findByRole('heading', { name: 'Terms and keys' })
+
+    fireEvent.change(screen.getByLabelText('Workspace'), { target: { value: 'ws_example' } })
+    fireEvent.change(screen.getByLabelText('Row'), { target: { value: 'team-monthly' } })
+    fireEvent.change(screen.getByLabelText('Seats'), { target: { value: '5' } })
+    fireEvent.change(screen.getByLabelText('Ends'), { target: { value: '2026-03-10' } })
+
+    // A null interval is the air-gapped row and nothing else (F28), so an empty
+    // field is not a term that never checks in: the button waits for the
+    // operator to say which of the two they mean.
+    expect(screen.getByRole('button', { name: 'Mint' }).hasAttribute('disabled')).toBe(true)
+
+    fireEvent.click(screen.getByLabelText(/air-gapped row/))
+    send('Mint')
+
+    await waitFor(() => {
+      expect(shown.sent('POST', '/api/ops/mints')).toHaveLength(1)
+    })
+    expect(shown.sent('POST', '/api/ops/mints')[0]?.body).toEqual({
+      workspace_id: 'ws_example',
+      row: 'team-monthly',
+      seats: 5,
+      ends_at: '2026-03-10T00:00:00.000Z',
+      check_interval: null,
+    })
+  })
+
+  it('offers each change only once the field that change reads is filled', async () => {
+    show(person(0), routes())
+    await screen.findByRole('heading', { name: 'Terms and keys' })
+
+    const offered = (name: string): boolean =>
+      !screen.getByRole('button', { name }).hasAttribute('disabled')
+
+    // No term is named, so no action is offered at all.
+    for (const name of ['Extend', 'Change seats', 'Comp', 'Revoke']) {
+      expect(offered(name)).toBe(false)
+    }
+
+    fireEvent.change(screen.getByLabelText('Entitlement'), { target: { value: 'ent_1' } })
+
+    // A term alone is enough for the two actions that read nothing else, and
+    // not for the two that read a field of their own: `0` seats and an absent
+    // end are bodies the API refuses, and the form is where that is visible.
+    expect(offered('Comp')).toBe(true)
+    expect(offered('Revoke')).toBe(true)
+    expect(offered('Extend')).toBe(false)
+    expect(offered('Change seats')).toBe(false)
+
+    fireEvent.change(screen.getByLabelText('New seats'), { target: { value: '8' } })
+    expect(offered('Change seats')).toBe(true)
+    expect(offered('Extend')).toBe(false)
+
+    fireEvent.change(screen.getByLabelText('New end'), { target: { value: '2026-04-10' } })
+    expect(offered('Extend')).toBe(true)
   })
 
   it('refuses the screens to a caller who is not in the operations organisation', async () => {

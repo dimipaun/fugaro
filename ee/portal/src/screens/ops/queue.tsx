@@ -15,9 +15,9 @@
 //
 // **The stored body is never drawn.** An event is kept exactly as Paddle sent
 // it, buyer fields included, and it is the sales record counsel's retention item
-// is about (D457). Deciding one takes its id, its notification and the
-// entitlement it is attached to; a screen that printed the body would be reading
-// a customer's records out to whoever is at the desk.
+// is about (D457). Deciding one takes its id, the decision and the entitlement
+// it is attached to; a screen that printed the body would be reading a
+// customer's records out to whoever is at the desk.
 //
 // **A decision is by the id and never by the body.** Attaching one creates the
 // entitlement the event sold if it sold one (P4.2), so the id is what makes a
