@@ -825,10 +825,15 @@ var inlineAgentSites = []inlineAgentSite{
 // propertyAgentSites are the agent-marker sites the other ManagedXxx tests
 // drive, with the test that does.
 var propertyAgentSites = map[string]string{
-	"init.go askBanner":      "TestManagedNonManagedProjectNeverSkipsAConfirmation (the YesOrTyped class); ask is its wrapper (the question is asked with the run's line in flight down)",
-	"init.go confirmNow":     "TestManagedNonManagedProjectNeverSkipsAConfirmation (both classes), which reaches it through ask and askTyped",
-	"init.go conditions":     "TestManagedConfirmRuleMatchesTheTable, and the Typed class of the property through askTyped",
-	"init_stages.go options": "TestManagedConfirmRuleMatchesTheTable (options().Agent) and TestManagedPluginStageThroughTheLoopAppliesUnderEachMarker (the stage loop's agent gate: the plugin stage is LocalUnderAgent since U1, so the loop applies it there and the marker decides the line, not the write)",
+	"init.go askBanner":  "TestManagedNonManagedProjectNeverSkipsAConfirmation (the run's own confirmation); ask is its wrapper (the question is asked with the run's line in flight down)",
+	"init.go confirmNow": "TestManagedNonManagedProjectNeverSkipsAConfirmation (the run's own confirmation), which reaches it through ask and askCovered",
+	"init.go conditions": "TestManagedConfirmRuleMatchesTheTable, and every path of the property through the conditions it builds",
+	// stepConfirmation is the marker's own fence for the money-or-permanent
+	// steps: the property reaches it through askCovered and askTyped, and its
+	// rows are what a run that carries its own answer, or a session nobody is
+	// at, is answered by there.
+	"init.go stepConfirmation": "TestManagedNonManagedProjectNeverSkipsAConfirmation (the two steps the run's own answer does and does not reach), and TestRefusalMatrixTheMoneyRuleRefusesEveryMode",
+	"init_stages.go options":   "TestManagedConfirmRuleMatchesTheTable (options().Agent) and TestManagedPluginStageThroughTheLoopAppliesUnderEachMarker (the stage loop's agent gate: the plugin stage is LocalUnderAgent since U1, so the loop applies it there and the marker decides the line, not the write)",
 	// The policy stage refuses a marker itself rather than leaning on the
 	// loop's gate: it is SelfConfirming, so the loop would call it.
 	"init_policy_migrate.go Apply": "TestUpdatePolicyMigrationRefusedInAgentSession",
@@ -977,17 +982,17 @@ var initFlagCases = map[string]string{
 	// The table's dimensions (confirmTable). --yes and --non-interactive
 	// were two of them until T11 removed the flags everywhere: the
 	// conditions remain, but no flag declares them any more.
-	"json":      "dimension: never takes a Typed confirmation",
+	"json":      "dimension: never takes the person's own confirmation",
 	"plan-only": "dimension: folded into Yes=false by initRun.conditions; never takes --yes",
 	"ask":       "dimension: takes the gate out of the question (initflow.Conditions.Ask makes GateConfirms false), so every step falls back to the confirmation it would have had in a project that is not managed — the same decision the --ask half of every row already records. It never weakens the gate: the read and the admit are made before it is consulted. In a session that cannot answer it refuses (managed_ask.go), and `fugaro setup` refuses the flag by name: the gate is `fugaro update`'s",
 	// Flags whose steps confirm through the paths the property drives.
-	"create-project":   "its creation confirms through the Typed class (askTyped/canType, both covered)",
-	"managed":          "OUTSIDE the property: with --create-project it requires the budget amount (D64) and records it in the creation fact (Task 4.2); it adds a guard, so the creation still confirms through the Typed class (covered)",
-	"link-billing":     "the billing link confirms through the Typed class (askTyped/canType, both covered)",
+	"create-project":   "its creation confirms through askTyped/canType, both covered",
+	"managed":          "OUTSIDE the property: with --create-project it requires the budget amount (D64) and records it in the creation fact (Task 4.2); it adds a guard, so the creation still confirms through askTyped/canType (covered)",
+	"link-billing":     "the billing link confirms through askTyped/canType, both covered",
 	"replace-image":    "names the intent only; replacing confirms through askTyped (covered)",
 	"retire":           "both confirmations are askTyped; retireConfirm's agent refusal is an inline site (covered)",
 	"repo":             "the repository's applies confirm through ask/askOrdinary (covered)",
-	"firebase-project": "its applies confirm through ask, its Firestore location through the Typed class (covered)",
+	"firebase-project": "its applies confirm through ask (covered), its Firestore location through askCovered/canType (covered)",
 	"forget":           "its state removals confirm through ask (covered)",
 	"config-only":      "writes the local config; any confirmation is ask's (covered)",
 	"onboard-repo":     "an opt-in in place of the typed owner/name: refused under a marker (checkOnboardRepo, authState: inline sites, covered); for a non-managed project without a marker it opts in without typing, which is NOT in the table",
@@ -998,8 +1003,8 @@ var initFlagCases = map[string]string{
 	"allow-job-delete": "OUTSIDE the property: changes what a --repo plan holds, not whether it is confirmed",
 	"check":            "OUTSIDE the property: the read-only mode, which runs no step of any stage, so nothing is confirmed and --yes is refused beside it (refuseConvergeFlags, update_check.go). It is `fugaro update`'s alone (D948, U4 of docs/plugin-user-scope/implementation-plan.md) and `fugaro setup` declares it hidden and refuses it by name (setupDoor.foreign), the shape --forget has on that door",
 	"print-vars":       "no cloud call and no confirmation (canAsk is false under it)",
-	"no-build":         "only drops the first image build's offer (a Typed step); takes nothing away from a confirmation",
-	"provision-batch":  "main's compute stage (0.9.5, init_compute.go): registered noYes, its confirmation is the project's name typed (initflow.Typed), so --yes never covers it; added on the merge of main into next-0.8.5, the confirm table does not drive this stage itself",
+	"no-build":         "only drops the first image build's offer (a step only the person's own answer gives); takes nothing away from a confirmation",
+	"provision-batch":  "main's compute stage (0.9.5, init_compute.go): registered noYes, its confirmation is the person's own (no answer a run carries reaches it), so --yes never covers it; added on the merge of main into next-0.8.5, the confirm table does not drive this stage itself",
 	"coordinator":      "the coordinator's opt-in (P5): it is an apply of the installation's own roots whose steps confirm through ask (covered), but --yes is refused beside it (checkCoordinator), and a coding agent's session and a run with no terminal are refused before anything is read (refuseCoordinatorUnattended, an inline site, covered)",
 	// Values a confirmed step carries: they change what is confirmed, never whether.
 	// bake-repos (IS7) is one of them: it answers the wizard's own question and

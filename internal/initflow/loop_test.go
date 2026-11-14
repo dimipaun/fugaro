@@ -1198,7 +1198,7 @@ func TestARefusedStepIsNeverTheStagesOwnPrompt(t *testing.T) {
 			notText: []string{"type the project's name", "fugaro update"},
 		},
 		{
-			what: "a step whose confirmation class no plan gate covers", refusal: GateRefusedUnjudged, left: commandLeft,
+			what: "a step no plan gate may judge", refusal: GateRefusedUnjudged, left: commandLeft,
 			wantKind: LeftCommand,
 			wantText: []string{"fugaro update"},
 			// The D1026 refusal is NOT a plan outside the cover (it refused

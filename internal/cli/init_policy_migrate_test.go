@@ -790,7 +790,7 @@ func setCatalogConfigWithNoRepos(t *testing.T, f *projectFixture) {
 // write and not one a session makes: no flag stands in for the project's
 // name (T11 removed --yes), and a session with no terminal is refused — the
 // confirmation D846 reserves for the boundary every run is admitted by, and the
-// class a coding agent's session never reaches under the managed gate (D1026).
+// step a coding agent's session never reaches under the managed gate (D1026).
 //
 // A config that lists no repository is the publisher's own warning instead
 // (#1674): that node admits nothing, so every run of the project stops before

@@ -376,15 +376,17 @@ func (c coversIn) in(door string) bool {
 }
 
 // canConfirmStep is the call site's own rule as a yes-or-no, written out here
-// from the facts the run carries rather than asked of the run: the step is
-// confirmed by the run's own answer where D12's answer of 2026-10-20 reaches it
-// at this door (initRun.stepConfirmation's stepByYes), and otherwise by a person
-// at this run's own real terminal — no marker, no --json, no --non-interactive,
-// and a terminal on the input. Nothing else gives it: a pipe and a coding
-// agent's session confirm neither a covered step nor the person's own.
+// from the facts the run carries rather than asked of the run: a run that
+// carries its own answer gives a step D12's answer of 2026-10-20 reaches at
+// this door (initRun.stepConfirmation's stepByYes) and no other — a step only
+// the person's own answer confirms is left by that run even at a terminal — and
+// a step that answer does not reach waits for a person at this run's own real
+// terminal: no marker, no --json, no --non-interactive, and a terminal on the
+// input. Nothing else gives it: a pipe and a coding agent's session confirm
+// neither a covered step nor the person's own.
 func canConfirmStep(covered bool, o initOptions, c initflow.Conditions) bool {
-	if o.yes && !o.planOnly && covered {
-		return true
+	if o.yes && !o.planOnly {
+		return covered && c.Agent == ""
 	}
 	return c.Agent == "" && c.Terminal && !c.JSON && !o.nonInteractive
 }
