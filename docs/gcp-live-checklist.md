@@ -928,6 +928,7 @@ probe account carries predefined grants only).
 | 313 | CG13's endpoint on a real machine ([`docs/cli-output-console-graph/`](cli-output-console-graph/implementation-plan-graph.md), its **CG12** row 313, its task **CG13b** and the decision **D1359**, all of 2026-11-06): the registry file the daemon writes under the state directory (`<UserDir state>/fugaro/run/<id>.json`) is mode **0600** in a mode **0700** directory and carries a **nonce** minted per start; nothing about it is judged by a **pid** — liveness is a **handshake** with the file's own token (the answer must read back the id and the nonce, which a port or a pid another process took over cannot) plus the **lock** the daemon holds for its life (an `flock` the kernel drops when the process dies); `fugaro graph --source local:<id>` answers and goes through `endpoint.Probe`; a `kill -9` of the daemon leaves a file the reader must judge dead, **remove**, and never let it touch a **live process that has taken the pid**; and a **reboot** mints a different nonce. The three things CG13b's tests can only fake are real here: a SIGKILL that leaves a file behind, an `flock` the kernel drops, and a loopback listener that answers. A daemon a login unit supervises (launchd's `KeepAlive`, systemd's `Restart=always`) restarts itself within 5 to 10 seconds, so the crash half wants one started **by hand**: where the daemon came back the check reports that half as **NOT MEASURED** (exit 2) with the one line that fixes it, rather than misjudging it | See "Check 313" below; `bash scripts/live-checks/check313.sh [--id <the orchestrator's id>]` is the whole check **before** the reboot, and `bash scripts/live-checks/check313.sh --phase reboot --previous-nonce <the value the first block printed>` is what you run **after rebooting and starting a daemon again** — it repeats every reading and adds the nonce comparison. **You** run it, on your own machine, against a daemon you can lose, with an id that is **not `belong`** (refused before anything is read), and **no agent runs any step of it** | One loopback handshake, one local read and two `fugaro` commands: no model call, no run, no cloud call, nothing billable. **USER-RUN, NOT RUN.** |
 | 314 | The person's viewer role over `orchestrator/` ([`docs/cli-output-console-graph/`](cli-output-console-graph/implementation-plan-graph.md), its **CG12** row 314, the round-3 ruling **T2** of 2026-11-06 and its scheduling row **B4**; CG4 and CG6 merged on 2026-11-10): **T2 is UNVERIFIED until you run it** — no rules test can read a project's IAM, so whether `roles/firebasedatabase.viewer` on a **person's** credential covers the `orchestrator/` subtree is this reading and no other. `fugaro orchestrator ls --json` (CG4's shallow read of that subtree plus one lease read per id) **is** the read T2 is, made by your installation's own application-default credential; the check reads that credential's **type** first (a service account's, an impersonation's or a workload-identity federation's answers a different question and stops the run), reads the installation's own config file for the project its database belongs to (`budget.firebase_project`, else `gcp_project`) and reads the policy **on that project**, reads the roles the policy binds to `user:<the account>` or to its domain, and then reads the listing. A role that covers the whole project (`roles/owner`, `roles/editor`, `roles/firebasedatabase.admin`) bound beside viewer, or an `orchestrator/` holding no node, makes T2 **NOT MEASURED** (exit 2) rather than passed; a refused read is quoted and read as T2 answered **NO**. H7 — that no run or token identity reads or writes it — is CG6's pin, not this check's | See "Check 314" below; `bash scripts/live-checks/check314.sh [--project <name>] [--account <address>]` is the whole check. **You** run it, on a sandbox installation, **never `belong`** (refused in what you type and in what `doctor` answers), and **no agent runs any step of it** | One credential-file read, one `fugaro doctor --json`, one `gcloud projects get-iam-policy` and one `fugaro orchestrator ls --json`: no model call, no run, nothing billable, nothing written. **USER-RUN, NOT RUN.** |
 | 210 | A sampled run's shadow publishes nothing ([`docs/model-ab-testing/`](model-ab-testing/implementation-plan.md), its **Check 210** and task **A2.2**; **D550**–**D557**'s sampler — `ab.rate` and its ceiling, the daily cap, the champion's own hash of the run ID — **D554**'s publish mode `none`, and **A2.1**'s tests for the boundary this plan's Global constraints table states, "a challenger never pushes, never opens, updates or comments on a PR"): on the sandbox installation whose published project layer sets `ab.rate: 0.10` with one challenger named and whose repository carries no `ab.rate: 0` opt-out, small sandbox tasks launched until `fugaro runs ls` shows a pair (about ten launches expected at 0.10, the owner stopping at thirty, and **no flag forces a sample**) — and then, of that pair's two arms, exactly one `fugaro/<run-id>` branch on the remote and one pull request, both the champion's: the challenger's own record carries `ab.arm: challenger`, `ab.publish: none`, `ab.challenger` (the model the owner named) with `challenger_source: owner` and `outcome: none`, and **no** branch and **no** pull request, while **both** arms' patch objects are in the bucket — each fact read where it is written rather than from the row that claims it | See "Check 210" below; `bash scripts/live-checks/check210.sh --sandbox <a sandbox repository checkout> --yes` is the whole of it, its sibling test `scripts/live-checks/check210_test.sh` drives it against fake `fugaro`, `gcloud`, `git` and `gh` only and launches nothing, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project, account or region naming that installation is refused by name, and so is a coding agent's session); **no agent runs any step of it** | Up to **THIRTY sandbox runs** and what their tasks cost — each champion's implement stage and its review rounds, on the sandbox's own budget — plus the branches and pull requests those champions leave: **billable, and `--yes` is required** before anything is launched. Everything else is a read (the layer, `doctor`, both records out of the runs bucket, the remote's branch list, both patch objects, `fugaro ab --json`), and the launches stop at the **first** pair, so a sandbox already sampling at 0.10 costs a fraction of the bound. The teardown is part of the check: a launch that has not ended is stopped with `fugaro cancel --now` and read back, then every pull request this check's champions opened is closed and every branch they pushed is deleted, each read back. **OWNER-RUN, NOT RUN.** |
+| 211 | The judge's input is blind ([`docs/model-ab-testing/`](model-ab-testing/implementation-plan.md), its **Check 211** and task **A5.3**; **A5.1**'s bundle — `identifierIn` refuses a diff naming a run ID, a branch or the pair ID, `modelRedactor` replaces every model word with one placeholder — and **A5.2**'s judge run, whose own manifest and verdicts are what it is read through): on the sandbox installation whose published project layer names `ab.judge_model`, ONE `fugaro run --recipe ab-judge` over the repository's complete, unjudged pairs of its last fortnight (at least five, or the run is not the reading the plan asks for), and then, at the run's **own** prefix in the runs bucket, the launcher's `ab/manifest.json`, the run's `ab/verdicts.json` and each judged pair's stored judge input at the key its verdict names (`ab/inputs/<sha256(pair ID)[:8] hex>.json`) — **U1**: neither pass's system text nor its prompt names either arm's run ID, either arm's branch, the pair ID, the arms' or the judge's model (their IDs and the words their names are built from), a run-ID-shaped string or a commit trailer, PASS or FAIL; and **U2** recorded as a rate and never graded — how often a judge's own answers name a model — with the plan's own question ("which model wrote A?") stated in the row as having **no surface in this release**, since the judge's two calls per pair are fixed, no command asks a chosen model a question and a recipe cannot pin one. The run's own row is read too: a judge run publishes nothing — no branch and no pull request | See "Check 211" below; `bash scripts/live-checks/check211.sh --sandbox <a sandbox repository checkout> --yes` is the whole of it, its sibling test `scripts/live-checks/check211_test.sh` drives it against fake `fugaro` and `gcloud` only (beside a fake `git`, `gh` and `belong` that log any call and fail, since a judge run publishes nothing) and launches nothing, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project, account or region naming that installation is refused by name, and so is a coding agent's session); **no agent runs any step of it** | **ONE judge run**: two model calls per pair it takes on `ab.judge_model` through the project's model credential and budget, up to **twenty-five pairs** (so up to fifty calls), plus the launch's own listing — **billable, and `--yes` is required** before anything is launched. Everything else is a read (the catalog, the layer, `doctor`, the runs list and the run's own objects in the bucket), and a premise row that failed launches **nothing at all**. A judge run leaves no branch and no pull request, so the teardown has one thing to settle: a run that has **not ended** is stopped with `fugaro cancel --now` and read back as ended, and a cancel that answers while the run keeps going is a finding rather than a silence. **Nothing is deleted** — the run's manifest, its verdicts and its stored inputs are what the report reads. **OWNER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -15173,6 +15174,122 @@ challenger that pushed, opened a pull request or carried an outcome is the shado
 not holding, and **A2.1**'s job is where it is fixed. A check that cannot reach a pair inside its bound
 says what the sampler refused (`no-challenger`, `daily-count`, `unrouted`, `unpriced`, `needs-enforce`
 and the rest), which is a reading of the installation's own configuration rather than of the release.
+
+## Check 211: the judge's input is blind (sandbox project and sandbox repository only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **A5.3** of
+[docs/model-ab-testing/implementation-plan.md](model-ab-testing/implementation-plan.md) — its "A5.3
+Check 211" — and **run by you**: nothing below is a claim that the judge's input is blind. What it
+measures is the object the judge was really handed, read out of the runs bucket of a judge run that
+really ran. The check is `scripts/live-checks/check211.sh` (its sibling test
+`scripts/live-checks/check211_test.sh` drives it against fake `fugaro` and `gcloud` only — plus a fake
+`git`, `gh` and `belong` that log any call and fail, since a judge run publishes nothing — and launches
+nothing), what it starts is **one judge run, which is billable**, and **no agent runs any step of it**:
+a project, account or region naming `belong` is refused by name, and so is a coding agent's session.
+
+**Why it launches at all, and what it may not do.** A5.1's bundle is what keeps an identifier out of the
+judge's input — it refuses a diff that names a run, a branch or the pair ID and redacts every model word
+to one placeholder — and a test of the bundle is a test of the anonymiser, not of the object a judge run
+stored. The plan's own sentence is one `fugaro run --recipe ab-judge`, so the reading is taken from a run
+the launcher made over the repository's **complete, unjudged pairs of its last fortnight** (A5.2,
+**D569**): at least **five** of them, or the run is not the reading the plan asks for and the row says
+which. What it must not do is what a check is usually asked to do with money: a launch is made only
+after the two premise rows hold — the ab-judge recipe this build's own catalog carries, and the
+`ab.judge_model` the published project layer names — and a premise row that failed launches **nothing**,
+because a judge run launched on a premise that does not hold is an owner's spend on a reading nobody
+could grade.
+
+**What it settles.** Every fact at the place it is written, so that no row is the record's own word for
+itself:
+
+- **The release, and the premise.** `fugaro version` at **0.24.0** or later — the release the judge run
+  ships in, `evaluateSince`, `docs/releases/v0.24.0.md` — and the offline probe `fugaro run --help`,
+  whose usage line names the catalog's recipes as this build has them: the ab-judge recipe is registered
+  by the Subscription's `ee/register`, so a core build's line has no such name (**D522**). Then the
+  catalog itself through `fugaro recipes ls --json` — ab-judge, launchable, from the catalog, with the
+  one registered `ab_judge` step (a recipe of that name from the repository or the project **shadows**
+  the catalog's, and a shadow that is not the judge measures something else) — and the **published
+  project layer**, whose `ab:` block is read out of the layer's own text by `fugaro config layer --json`
+  and must name `judge_model` (**D553**): no command in this release resolves the block to a value, so
+  the row says in as many words that it is a text read.
+- **The one run, and its own row.** `fugaro run --repo <the checkout> --recipe ab-judge --json` names the
+  run it started; `fugaro runs ls --repo <the checkout> --json` is read back for that run's **own** row,
+  so the rows below are read at the prefix the release itself named (`run` = `<slug>/<run id>`, **one
+  path segment**) rather than at one this check built. The row must read **ended** — an input read from a
+  run still going is a reading of half a manifest — and must carry **no branch and no pull request**,
+  which is A5.2's `TestJudgeRunPublishesNothing` read from the installation rather than from the test.
+- **The run's own prefix.** `runs/<the slug>/<run>/ab/manifest.json` and `.../ab/verdicts.json` out of the
+  runs bucket (**A5.2**, **D559**): the launcher's manifest — the pairs it took and, per arm, the run, the
+  branch, the model and the patch object — and the verdicts, one entry per manifest pair in the manifest's
+  order, judged by the same `judge_model`, each judged pair naming the key of the stored input it was
+  judged from. A verdict for a pair the manifest does not hold, a pair neither judged nor skipped, a run
+  that skipped **every** pair, or two objects that disagree about which model judged are findings: a
+  reader joining the two by pair ID would read a pair nobody decided (**A5.4**).
+- **U1, over the object the judge was handed.** Each stored judge input at the key its verdict names
+  (`ab/inputs/<sha256(pair ID)[:8] hex>.json`, **A5.3**'s own object), and — of it — each pass's `system`
+  text and its `prompt`: neither may name either arm's **run ID**, either arm's **branch**, the **pair
+  ID**, the arms' or the judge's **model** (their IDs and the words their names are built from, the
+  vocabulary A5.1 redacts), a **run-ID-shaped** string or a **commit trailer**. A hit is a **FAIL** and
+  the row names it — the pair, the pass, where it was found and the string itself — because a hit here is
+  the anonymiser not holding on a real pair. The answers are read for U2 and are **not** graded.
+- **U2, recorded as a rate and never graded.** How often the judge's own answers name a model, and how
+  its verdicts split across the two arms it was shown blind, and how often its two swapped passes named
+  the same arm. **The plan's own question — "which model wrote A?" — has no surface in this release**, and
+  the row says so rather than inventing one: the judge's two calls per pair are fixed by `ee/ab/judge.go`
+  (two diffs, one closed vocabulary, no question of the check's own), **no command in this release asks a
+  chosen model a question** and a recipe cannot pin one. So the row reports what the judge's own stored
+  answers do support, and the gap is a finding for the owner below rather than a row that pretends to
+  measure it.
+
+**What a run costs.** **ONE judge run**: two model calls per pair it takes on `ab.judge_model` through the
+project's model credential and the project's budget — up to **twenty-five** pairs (`judgeManifestMax`, so
+up to fifty calls) — plus the launch's own listing. **Billable, and the check requires `--yes`**: without
+it the check prints the plan, changes nothing and exits. Every other call is a read (the catalog, the
+layer, `doctor`, the runs list, and the run's own objects in the bucket), and a premise row that failed
+launches nothing. On disk it is one scratch directory, removed at the end. A judge run leaves **no branch
+and no pull request**, so the teardown has one thing to settle: a run that has **not ended** — the case a
+check that gives up early leaves behind, since a run still going writes its verdicts after a teardown that
+read only what it had left so far — is stopped with `fugaro cancel --now` and **read back as ended**,
+where a cancel that answers while the run keeps going, or a launch the runs list does not carry, is a
+finding rather than a silence. **Nothing is deleted**: the run's manifest, its verdicts and its stored
+inputs are what the report reads (**A5.4**), and a check that deleted them would delete the reading.
+
+**Run it:**
+
+```sh
+bash scripts/live-checks/check211.sh --sandbox <a sandbox repository checkout> --dry-run
+bash scripts/live-checks/check211.sh --sandbox <a sandbox repository checkout> --yes
+bash scripts/live-checks/check211.sh --sandbox <a sandbox repository checkout> --yes --min-pairs 5
+```
+
+`--dry-run` prints what would be read and launched, runs nothing and is the way to check the premise
+before spending anything. A value given as a flag wins over the same value in the environment.
+
+Progress goes to stderr and one `CHECK 211 RESULT` block goes to stdout at the end: paste that whole
+block here and nothing else. The block's last line carries the run's status: **`0`** is every criterion
+that was measured holding; **`1`** is a measured criterion that did not hold, or a guard that stopped the
+run — among them a build without the judge recipe, a layer that names no `judge_model`, fewer than five
+pairs in the manifest, verdicts that do not match the manifest, a run that published a branch or a pull
+request, and **a stored judge input that names a run, a branch, a pair, a model or a trailer**; **`2`** is
+the check not being able to measure (a tool missing, the checkout not being one, a `--json` document that
+could not be read, a launch that was refused, or a judge run that had not ended). A key the run never
+reached reads `FAIL — not reached`. The knobs are `CHECK211_DRY_RUN`, `CHECK211_YES`,
+`CHECK211_KEEP_SCRATCH`, `CHECK211_SANDBOX`, `CHECK211_MIN_PAIRS` (5), `CHECK211_RELEASE` (0.24.0),
+`CHECK211_REGION` (us-east5), `CHECK211_RUN_TIMEOUT_SECONDS` (1800), `CHECK211_POLL_SECONDS` (15),
+`CHECK211_CLI_TIMEOUT_SECONDS` (180), `CHECK211_LAUNCH_TIMEOUT_SECONDS` (600),
+`CHECK211_DOCTOR_TIMEOUT_SECONDS` (300) and `CHECK211_CANCEL_TIMEOUT_SECONDS` (300).
+
+**What waits on it.** Nothing merges on it, and one thing in it is a **finding for you rather than a
+verdict**: the plan's U2 asks how often a judge asked *which model wrote A* names it, and **no surface in
+this release can ask that question** — the judge's call is fixed, no command asks a chosen model a
+question, and a recipe cannot pin one — so the row records the rate the release does support (how often
+the judge's own answers name a model, beside how its verdicts split) and states the gap in as many words.
+**The owner's decision this check raises is whether U2 is re-worded to what the release can measure, or
+whether the release grows a surface that asks a model a question.** A failed U1 is a **product** finding
+rather than a task: the bundle is A5.1's, the judge run is A5.2's, and a stored input naming a run ID, a
+branch, a model or a trailer is the plan's own Global-constraints row ("the judge never sees a run ID,
+branch name, model ID or commit metadata") not holding on real pairs — which is exactly what
+`TestBundleCarriesNoIdentifier` cannot see.
 
 ## Check 230: the author, the committer and the trailers, on GitHub and on Bitbucket (two sandbox repositories carrying `git.author: launcher`, a third with no such key, and their forges; never `belong`; run by you; NOT RUN)
 
