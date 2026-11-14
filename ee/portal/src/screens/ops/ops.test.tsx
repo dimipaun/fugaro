@@ -812,8 +812,62 @@ describe('the operations screens', () => {
     expect(offered('Change seats')).toBe(true)
     expect(offered('Extend')).toBe(false)
 
+    // The count and not the field: these buttons sit outside a form, so the
+    // input's own `min` is checked by nothing, and `0` and `2.5` are bodies the
+    // API refuses (`ops.schema.json`: an integer of at least one).
+    fireEvent.change(screen.getByLabelText('New seats'), { target: { value: '0' } })
+    expect(offered('Change seats')).toBe(false)
+    fireEvent.change(screen.getByLabelText('New seats'), { target: { value: '2.5' } })
+    expect(offered('Change seats')).toBe(false)
+    fireEvent.change(screen.getByLabelText('New seats'), { target: { value: '8' } })
+    expect(offered('Change seats')).toBe(true)
+
     fireEvent.change(screen.getByLabelText('New end'), { target: { value: '2026-04-10' } })
     expect(offered('Extend')).toBe(true)
+  })
+
+  it('waits for an id and not for a space where the id goes', async () => {
+    show(person(0), routes())
+    await screen.findByRole('heading', { name: 'Terms and keys' })
+
+    const offered = (name: string): boolean =>
+      !screen.getByRole('button', { name }).hasAttribute('disabled')
+
+    // `required` passes a field holding one space, and every one of these sends
+    // the trimmed value: the mint and the transfer would carry an empty id the
+    // API refuses, and the handover a path whose id is the separator itself
+    // (`/api/ops/keys//handover-cut`).
+    fillMint()
+    fireEvent.change(screen.getByLabelText('Workspace'), { target: { value: ' ' } })
+    expect(offered('Mint')).toBe(false)
+
+    fireEvent.change(screen.getByLabelText('Workspace'), { target: { value: 'ws_example' } })
+    fireEvent.change(screen.getByLabelText('Row'), { target: { value: ' ' } })
+    expect(offered('Mint')).toBe(false)
+
+    fireEvent.change(screen.getByLabelText('Row'), { target: { value: 'team-monthly' } })
+    expect(offered('Mint')).toBe(true)
+
+    fireEvent.change(screen.getByLabelText('Project id'), { target: { value: ' ' } })
+    fireEvent.change(screen.getByLabelText('Workspace that keeps it'), {
+      target: { value: 'ws_example' },
+    })
+    expect(offered('Transfer the project id')).toBe(false)
+
+    fireEvent.change(screen.getByLabelText('Project id'), { target: { value: 'example-portal' } })
+    fireEvent.change(screen.getByLabelText('Workspace that keeps it'), { target: { value: ' ' } })
+    expect(offered('Transfer the project id')).toBe(false)
+
+    fireEvent.change(screen.getByLabelText('Workspace that keeps it'), {
+      target: { value: 'ws_example' },
+    })
+    expect(offered('Transfer the project id')).toBe(true)
+
+    fireEvent.change(screen.getByLabelText('Key'), { target: { value: ' ' } })
+    expect(offered('Cut the handover short')).toBe(false)
+
+    fireEvent.change(screen.getByLabelText('Key'), { target: { value: 'key_1' } })
+    expect(offered('Cut the handover short')).toBe(true)
   })
 
   it('refuses the screens to a caller who is not in the operations organisation', async () => {

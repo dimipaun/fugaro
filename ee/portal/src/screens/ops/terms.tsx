@@ -70,7 +70,12 @@ function MintForm({ api, actions }: { api: OpsApi; actions: OpsActions }) {
   const [interval, setInterval] = useState('')
   const [airGapped, setAirGapped] = useState(false)
 
-  const ready = airGapped || interval.trim() !== ''
+  // A field that is a space passes `required` and trims to the empty string,
+  // which is the id the body would then carry: the API refuses an empty
+  // workspace id (`entitlements.schema.json`), so the button waits for the
+  // trimmed values the body is built from.
+  const ready =
+    workspace.trim() !== '' && row.trim() !== '' && (airGapped || interval.trim() !== '')
 
   function mint(event: FormEvent): void {
     event.preventDefault()
@@ -217,7 +222,13 @@ function ChangeForm({ api, actions }: { api: OpsApi; actions: OpsActions }) {
       return false
     }
     if (action === 'seats') {
-      return seats.trim() !== ''
+      // The count the body will carry, and not the field being filled: the
+      // buttons below are outside a form, so nothing else checks the input's
+      // own `min` -- and `Number` answers 0 for the empty string and 0 for the
+      // seat count nobody may buy, which the API refuses either way
+      // (`ops.schema.json`, `wire_ops.go`).
+      const count = Number(seats)
+      return Number.isInteger(count) && count >= 1
     }
     if (action === 'extend') {
       return end.trim() !== ''
@@ -336,6 +347,10 @@ function TransferForm({ api, actions }: { api: OpsApi; actions: OpsActions }) {
   const [workspace, setWorkspace] = useState('')
   const [reason, setReason] = useState('')
 
+  // The two ids, trimmed, because a field that is a space is an empty id the
+  // API refuses rather than the project or workspace somebody meant.
+  const ready = project.trim() !== '' && workspace.trim() !== ''
+
   function transfer(event: FormEvent): void {
     event.preventDefault()
     void submit(async () => {
@@ -389,7 +404,7 @@ function TransferForm({ api, actions }: { api: OpsApi; actions: OpsActions }) {
           }}
         />
 
-        <button type="submit" disabled={busy}>
+        <button type="submit" disabled={busy || !ready}>
           Transfer the project id
         </button>
       </fieldset>
@@ -404,6 +419,10 @@ function TransferForm({ api, actions }: { api: OpsApi; actions: OpsActions }) {
 function HandoverForm({ api, actions }: { api: OpsApi; actions: OpsActions }) {
   const { busy, failure, landed, submit } = useSubmission(actions)
   const [key, setKey] = useState('')
+
+  // A blank field would be read as the path's own separator
+  // (`/api/ops/keys//handover-cut`), so the button waits for a key id.
+  const ready = key.trim() !== ''
 
   function cut(event: FormEvent): void {
     event.preventDefault()
@@ -435,7 +454,7 @@ function HandoverForm({ api, actions }: { api: OpsApi; actions: OpsActions }) {
           required
         />
 
-        <button type="submit" disabled={busy}>
+        <button type="submit" disabled={busy || !ready}>
           Cut the handover short
         </button>
       </fieldset>
