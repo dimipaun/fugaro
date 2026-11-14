@@ -11,7 +11,7 @@ How this page is written
 
 # Fugaro: status of every spec under docs/
 
-As of 2026-11-14, read from `main`, the open pull requests and each plan's task list (the plans' own status lines are stale in about 30 folders). "About" marks an approximate count; **owner-run** is a live check or step only the owner performs. Each folder's README links to this page for its current state. The sections run from the nearest to done to the furthest; the finished specs are at the end. Released: CLI 0.23.1 (Tapir), console 0.122.0 (Strawberry). CLI 0.24.0 (Uakari) waits on Check 191 and the owner's go; CLI 0.25.0 (Vole) and console 0.123.0 (Tangerine) are scoped. Of the 26 open pull requests, 20 are live, 0 ready, 5 stalled and 1 orphan (#2535). Fourteen runs launched on 2026-11-14 are live (batch jm60); 13 have opened their draft pull request.
+As of 2026-11-14, read from `main`, the open pull requests and each plan's task list (the plans' own status lines are stale in about 30 folders). "About" marks an approximate count; **owner-run** is a live check or step only the owner performs. Each folder's README links to this page for its current state. The sections run from the nearest to done to the furthest; the finished specs are at the end. Released: CLI 0.23.1 (Tapir), console 0.122.0 (Strawberry). CLI 0.24.0 (Uakari) waits on Check 191 and the owner's go; CLI 0.25.0 (Vole) and console 0.123.0 (Tangerine) are scoped. Of the 27 open pull requests (this one excepted), 21 are live, 0 ready, 5 stalled and 1 orphan (#2535). Fourteen runs launched on 2026-11-14 are live (batch jm60); 13 have opened their draft pull request.
 
 ## In progress, close to done
 
@@ -52,7 +52,7 @@ As of 2026-11-14, read from `main`, the open pull requests and each plan's task 
 | bitbucket-workspace-token | 7/13 | T1.4, T2.2, T2.4, T2.6 and T2.7 |
 | binary-allow-rule | 5/11 | AR1 and AR3 to AR7, not started |
 | outer-loop-escalation | 11/18 | E6 (live, follow-up run on draft #2498), E10a (live, draft #2609), E10b, E12 to E14; D2046 ruled 2026-11-13: `escalation.ready_drafts` is on by default; owner Checks 540 to 542 |
-| bitbucket-token-types | 5/19 | T5 (stalled, draft #2588), T7 (stalled, draft #2593); T3, T4, T8 to T14, T16, I1 not started; CK (Checks 590 and 591) owner-run |
+| bitbucket-token-types | 5/19 | a follow-up run on the merged C1 is live (draft #2612); T5 (stalled, draft #2588), T7 (stalled, draft #2593); T3, T4, T8 to T14, T16, I1 not started; CK (Checks 590 and 591) owner-run |
 | subscriptions | about 22/51 | the rest not started or open; 10 owner-run; TN1 seat enforcement is not in 0.24.0 (owner) |
 | portal | 9/42 | owner P0.1 to P0.6; live (batch jm60): P1.8 (draft #2601), P2.3 (#2603), P3.4 (#2605), P4.4 (#2602), P5.3 (#2599), P6.4 (#2598), P9.2 (#2610); P2.1 (live, follow-up run on draft #2569); not started: P1.7, P2.2, P2.4, P3.1 to P3.3, P3.5, P3.6 (the renew entitlement gate), P4.1 to P4.3, P5.1, P5.2, P6.1 to P6.3, P7.1, P9.3, P9.4 |
 | review-job (no spec folder yet) | 3/5 | option C: one review-only job per provider and account so `fugaro review --pr N` works out of the box; C2 to C4 not launched, B-infra and the docs wait |
