@@ -836,6 +836,7 @@ func TestBudgetModeEnforceRefusedOnFirstRun(t *testing.T) {
 func TestInitFirebaseIdempotent(t *testing.T) {
 	r := newFBRig(t)
 	r.historyImage()
+	before := logNames(t, "setup")
 	if _, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes", "--budget-mode", "observe"); err != nil {
 		t.Fatal(err)
 	}
@@ -870,8 +871,8 @@ func TestInitFirebaseIdempotent(t *testing.T) {
 	}
 	// The run's own word about the config is the account of the step that writes
 	// it, so the screen carries it only where the run kept no log (G5): read
-	// beside it either way (keptLogs).
-	if account := out + keptLogs(t, "setup"); !strings.Contains(account, "is up to date") {
+	// beside it either way, and only the logs these two runs added (logsAdded).
+	if account := out + logsAdded(t, before, "setup"); !strings.Contains(account, "is up to date") {
 		t.Errorf("no word that the config is up to date:\n%s", account)
 	}
 }
