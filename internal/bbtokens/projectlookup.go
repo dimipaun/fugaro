@@ -49,6 +49,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
 )
 
@@ -279,17 +280,20 @@ func (l *ProjectLookup) ask(ctx context.Context, workspace, repo, value string) 
 }
 
 // splitCanonicalRepo reads a pairing's canonical repository
-// ("bitbucket/<workspace>/<repo>") into the two path segments the repository
+// ("<provider>/<workspace>/<repo>") into the two path segments the repository
 // API takes. A canonical that names another provider, or that is not
 // "<workspace>/<repo>", is refused rather than guessed at: this lookup addresses
-// one provider's API and must not be handed a repository it cannot place.
+// one provider's API and must not be handed a repository it cannot place. The
+// two halves of the repository name are the module's own reading of one
+// (gitprov.SplitRepo), so a canonical this lookup accepts and one another
+// reader accepts cannot mean two repositories.
 func splitCanonicalRepo(canonical string) (workspace, repo string, err error) {
 	provider, rest, ok := strings.Cut(canonical, "/")
-	if !ok || provider != "bitbucket" {
+	if !ok || provider != gitprov.KindBitbucket {
 		return "", "", errors.New("bbtokens: the project lookup names no Bitbucket repository")
 	}
-	workspace, repo, ok = strings.Cut(rest, "/")
-	if !ok || workspace == "" || repo == "" || strings.Contains(repo, "/") {
+	workspace, repo, ok = gitprov.SplitRepo(rest)
+	if !ok {
 		return "", "", errors.New("bbtokens: the project lookup names no Bitbucket repository")
 	}
 	return workspace, repo, nil
