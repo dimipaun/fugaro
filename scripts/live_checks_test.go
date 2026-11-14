@@ -44,7 +44,14 @@ import (
 // `fugaro`, a fake `gcloud` and a fake front door on a loopback port that mints
 // the check's tokens and serves the state group's own documents, with a fake
 // browser that opens the authorization URL the check prints and follows it to
-// the check's own loopback, so both sign-ins run with no network. Check 361's
+// the check's own loopback, so both sign-ins run with no network. Check 330's
+// are a fake `fugaro` answering the three installation reads it makes and a fake
+// `gcloud` whose runs bucket, per-execution gateway logs and job descriptions
+// are files of the case's own, both logging every call with the directory it was
+// made in: a case says what the check read off the run record and the gateway log
+// of the pair -- and which of the two review variants, which env entries and
+// which credential a run's review was served by -- as well as that it read the
+// installation from the sandbox and nowhere else. Check 361's
 // are a fake `gcloud` that mints a token sentinel and a fake
 // `curl` that answers the check's one read from files the test writes and
 // records the request -- the URL, the headers, and the Authorization header
@@ -101,6 +108,7 @@ var liveCheckScripts = []struct {
 	{"check303.sh", "check303_test.sh"},
 	{"check304.sh", "check304_test.sh"},
 	{"check305.sh", "check305_test.sh"},
+	{"check330.sh", "check330_test.sh"},
 	{"check340.sh", "check340_test.sh"},
 	{"check96.sh", "check96_test.sh"},
 	{"check361.sh", "check361_test.sh"},
