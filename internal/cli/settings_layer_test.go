@@ -1,12 +1,15 @@
 package cli
 
 import (
+	"context"
 	"errors"
+	"net"
 	"os"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
@@ -639,6 +642,19 @@ func settingsSourceOf(t *testing.T, doc settingsTestDoc, layer string) settingsT
 	return settingsTestSrc{}
 }
 
+// settingsLayerBucketUnreachable makes the installation's bucket unreadable for
+// the rest of the test. It is the other side of `--offline`'s promise: the flag
+// reads no published value on purpose and this read reaches none by accident,
+// and neither may claim `unpublished`, which is a comparison (spec §2.5).
+func settingsLayerBucketUnreachable(t *testing.T) {
+	t.Helper()
+	old := layerBucketOpener
+	t.Cleanup(func() { layerBucketOpener = old })
+	layerBucketOpener = func(context.Context, string) (*blobx.Bucket, error) {
+		return nil, &net.OpError{Op: "dial", Err: errors.New("no route to host")}
+	}
+}
+
 // TestSettingsMarksAPublishedLayerThatIsUnpublished is S4's red step: the
 // layer's rows read this machine's own file — the layer's one store (spec §2.2)
 // — and the STATE says whether what they read is what a run gets. The file's
@@ -652,7 +668,7 @@ func settingsSourceOf(t *testing.T, doc settingsTestDoc, layer string) settingsT
 // reads none (spec §2.5): a state that cannot be checked is not printed.
 func TestSettingsMarksAPublishedLayerThatIsUnpublished(t *testing.T) {
 	f := settingsLayerPublished(t, settingsLayerObject)
-	settingsLayerOwnLayerFile(t, settingsLayerOwnFileBody)
+	path := settingsLayerOwnLayerFile(t, settingsLayerOwnFileBody)
 
 	row := rowOf(t, readSettingsJSON(t, "layer.default_profile"), "layer.default_profile", "project")
 	if deref(row.Value) != "web" || row.Wins != "project" {
@@ -688,6 +704,21 @@ func TestSettingsMarksAPublishedLayerThatIsUnpublished(t *testing.T) {
 		if s.Layer == "project" {
 			t.Errorf("the offline document lists a project source (%q), and --offline read no project layer: %s", s.Status, s.Note)
 		}
+	}
+
+	// A bucket that cannot be opened is the same claim met the other way round,
+	// and the one a reader is likelier to meet: the file's values are still what
+	// these rows read — the file is a local document and does not depend on the
+	// bucket — but no key is unpublished, because a comparison nobody could make
+	// decides no difference. The source says which of the two it got.
+	settingsLayerBucketUnreachable(t)
+	unread := readSettingsJSON(t, "layer.default_profile")
+	row = rowOf(t, unread, "layer.default_profile", "project")
+	if deref(row.Value) != "web" || row.State != stateOK {
+		t.Errorf("value/state = %q/%q with the bucket unreachable, want the file's web/ok: nothing was compared, so nothing differs", deref(row.Value), row.State)
+	}
+	if s := settingsSourceOf(t, unread, "project"); !strings.Contains(s.Note, "was not read") || !strings.Contains(s.Note, path) {
+		t.Errorf("the project source = %q/%q, want it to name the file and say the published layer was not read", s.Status, s.Note)
 	}
 }
 

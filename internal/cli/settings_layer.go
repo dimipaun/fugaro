@@ -183,7 +183,7 @@ func (r *settingsRead) readLayerSide(ctx context.Context) {
 	// print, so the rows read the published object instead — and no key is
 	// claimed `unpublished` for it either: that word is decided between two
 	// parsed layers, and the parse's own sentence is what its owner needs.
-	s.values = layerDriftKeys(s.local, pub, s.unread == "" && pub == nil)
+	s.values = layerDriftKeys(s.local, pub, s.unread == "")
 	r.layerSide = s
 	r.layerMS = readMS(settingsNow().Sub(t))
 }
@@ -243,15 +243,18 @@ func (r *settingsRead) readPublishedLayer(ctx context.Context) (l *config.Projec
 
 // layerDriftKeys is the registry keys the local layer file states that the
 // published object does not carry the same way, keyed for the row that prints
-// `unpublished` (SD3). nothingPublished is the object's absence, known by the
-// read that looked: with no object published every key the file sets is one,
-// which is readPolicyLayer's own answer for an absent node — the file's value
-// is not what a run gets, and `unpublished` is what says so.
+// `unpublished` (SD3). read is whether the object's side was read at all: a
+// bucket that could not be reached read nothing, so nothing is compared and no
+// key is claimed — `unpublished` compares the file with the cloud and is never
+// printed for a scope whose cloud side was not read (spec §2.5). With the bucket
+// read and nothing published, every key the file states is one, which is
+// readPolicyLayer's own answer for an absent node: the file's value is not what
+// a run gets, and `unpublished` is what says so.
 //
 // The keys are the registry's and not the file's: a row is what a consumer
 // reads, and a key of the file no row carries has no row to mark.
-func layerDriftKeys(local, published *config.ProjectLayer, nothingPublished bool) map[string]bool {
-	if local == nil {
+func layerDriftKeys(local, published *config.ProjectLayer, read bool) map[string]bool {
+	if local == nil || !read {
 		return nil
 	}
 	out := map[string]bool{}
@@ -267,7 +270,7 @@ func layerDriftKeys(local, published *config.ProjectLayer, nothingPublished bool
 		if !ok {
 			continue
 		}
-		if nothingPublished {
+		if published == nil {
 			out[row.Key] = true
 			continue
 		}
