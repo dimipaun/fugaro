@@ -897,7 +897,11 @@ issues-resolved-on-update folder's pin over its resolved-on-update page and the
 one-line link to it from `docs/issues.md`, moved the table's row from 137 to
 138. Amended 2026-11-14: `internal/cli/docs_check600_test.go`, the pin over
 the named-accounts work's four owner-run live checks (LC1–LC4) and the register's
-Check 600 as they are written, moved the table's row from 138 to 139.) They
+Check 600 as they are written, **wrote the 139th pin without moving the row** —
+the merge that brought it (1e8c2cd0, #2627) touches no line of this file, so it is
+the stale row the rule below warns a reader about rather than a folder that moved
+it — and the row moves here, from 138 to 139, in the mobile plan work that read
+the figure and found it one short.) They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.
