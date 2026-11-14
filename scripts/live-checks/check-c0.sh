@@ -392,6 +392,10 @@ guard_xtrace() {
 # substring, so `fugaro-belong` and `belong-dev` are refused with `belong`
 # itself, and the name is refused before any read is made. The name is also held
 # to the characters a project name is made of, because it becomes a fact key.
+# The `belong` PASS row is not recorded here: the guard after this one refuses a
+# checkout under the name too, and a run that stops there must not leave a PASS
+# for `belong` beside its own refusal — so the row is recorded in main, once
+# both guards have let the run through.
 guard_projects() {
   local name lower
   for name in "${PROJECTS[@]}"; do
@@ -408,7 +412,6 @@ guard_projects() {
       ;;
     esac
   done
-  fact belong PASS "no installation named carries 'belong': the owner's own one is refused before any read is made, and the numbers this check takes come from the name(s) you chose"
   fact project PASS "$(printf '%s ' "${PROJECTS[@]}")— the installation(s) the runs, coordinator and budget reads are made against, selected with FUGARO_PROJECT=<name> so the argv stays the console's own words"
 }
 
@@ -719,6 +722,9 @@ main() {
   guard_xtrace
   guard_projects
   guard_checkouts
+  # Both belong guards have let the run through: the row they share reads PASS
+  # only here, so a refusal in either of them is the one the block carries.
+  fact belong PASS "no installation named and no checkout named carries 'belong': the owner's own one is refused before any read is made, and the numbers this check takes come from the name(s) you chose"
   if [ -n "$DRY_RUN" ]; then
     print_plan
     return 0

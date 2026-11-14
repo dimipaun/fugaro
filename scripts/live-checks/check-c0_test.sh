@@ -395,6 +395,21 @@ test_belong_is_refused_before_any_read() {
   expect_absent "$calls" "fugaro" "belong: no read is made at all"
 }
 
+test_a_checkout_naming_belong_is_refused_before_any_read() {
+  # The refusal is not the installation's alone: a checkout whose PATH carries
+  # the name is refused too, before any read. The directory really is a checkout
+  # — it has the `docs/` the plan read walks — so nothing but the name can be
+  # what refuses it.
+  local dir=$work/belongco
+  prepare "$dir"
+  mkdir -p "$dir/belong/co/docs"
+  run_check "$dir" -- --project demo --checkout "$dir/belong/co"
+  expect_status "$status" 2 "a checkout naming belong"
+  expect_contains "$out" "FACT belong: FAIL" "belong checkout: the row"
+  expect_contains "$err" "never reads a checkout under 'belong'" "belong checkout: the refusal"
+  expect_absent "$calls" "fugaro" "belong checkout: no read is made at all"
+}
+
 test_a_checkout_that_is_not_one_is_not_measured() {
   local dir=$work/notco
   prepare "$dir"
@@ -498,6 +513,7 @@ t test_a_document_of_the_wrong_shape_is_a_finding
 t test_the_documents_own_words_are_never_printed
 t test_a_hole_beats_a_finding
 t test_belong_is_refused_before_any_read
+t test_a_checkout_naming_belong_is_refused_before_any_read
 t test_a_checkout_that_is_not_one_is_not_measured
 t test_no_checkout_at_all_is_not_measured
 t test_the_xtrace_guard
