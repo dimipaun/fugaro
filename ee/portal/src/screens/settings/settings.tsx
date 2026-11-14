@@ -4,37 +4,33 @@
 // The organisation settings screen (portal plan P2.3; spec §Tenancy).
 //
 // **The organisation is read out of the person's own tenancy.** `GET /orgs` is
-// what the API answers a member with -- the organisations they belong to and
-// their membership in each -- and both things this screen needs are in it: the
-// organisation to draw and the role that decides whether this person may
-// rename it. Reading it twice, once as an organisation and once as a
-// membership list, would be two requests for one document. The type is spelled
-// here rather than in `src/api/types/orgs.ts` for the reason the organisations
-// screen gives: the objects are the API's area file's, and the screen's
-// envelope is the screen's.
+// what the API answers a member with — the organisations they belong to, and
+// nothing else (P2.1's `WireOrgList`) — and one of them is all this screen
+// needs: the organisation it draws. Reading it once as a list and picking the
+// one the URL names is also what answers a URL naming an organisation the
+// person is not in, which no single-organisation read distinguishes from an
+// organisation that is not there at all.
 //
-// **Only what the API can answer is drawn, and nothing is a decision this file
-// makes.** The type is set once and never moved (a customer organisation stays
-// one), the terms are the sign-up's record and there is none for the
-// operations organisation -- which is a record that does not exist rather than
-// an empty one -- and the name is the one field an owner or an admin may
-// change (D2195). A member is shown the same facts without the form, and the
-// API would refuse the write either way.
+// **The screen draws and writes nothing.** The type is set once and never moved
+// (a customer organisation stays one), the terms are the sign-up's record and
+// there is none for the operations organisation — which is a record that does
+// not exist rather than an empty one — and the name is the one field a person
+// would change: renaming is a later task's (`ee/portal/schemas/orgs.schema.json`,
+// and no route of P2.1's answers it), so there is nothing here to write it with.
+// A form that PATCHed a path nothing mounts would be a button whose only
+// outcome is a 404.
 //
 // **The URL names the organisation, and a URL that names none or names one the
 // person is not in is answered rather than drawn empty.** Both are states a
 // person reaches by editing an address or following a stale link, and a page
 // that drew nothing would look like a portal with an organisation that has no
 // settings. The value is text a person can edit, so it is read through the
-// switcher's reader (`organisationIdIn`) and encoded where the rename builds
-// its path: the client refuses a path that leaves the origin (`apiPath`) but
-// not a `..` segment inside one.
+// switcher's reader (`organisationIdIn`).
 
 import { useEffect, useMemo, useState } from 'react'
-import type { FormEvent } from 'react'
 import { Link, Navigate, useSearchParams } from 'react-router-dom'
 import { ApiError, createApiClient } from '../../api/client'
-import type { Membership, Organisation, OrganisationType } from '../../api/types/orgs'
+import type { OrganisationType } from '../../api/types/orgs'
 import { useSession } from '../../auth/session'
 import { SIGN_IN_PATH } from '../../routes'
 import type { Tenancy } from '../orgs/orgs'
@@ -72,9 +68,6 @@ export function SettingsScreen() {
   const [params] = useSearchParams()
   const organisationId = organisationIdIn(params.get('org'))
   const [load, setLoad] = useState<Load>({ status: 'loading' })
-  const [name, setName] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [failure, setFailure] = useState<string | null>(null)
 
   useEffect(() => {
     if (session.status !== 'signed-in' || organisationId === null) {
@@ -84,12 +77,8 @@ export function SettingsScreen() {
     void (async () => {
       try {
         const tenancy = await api.request<Tenancy>('/orgs')
-        const found = tenancy.organisations.find((one) => one.id === organisationId)
         if (live) {
           setLoad({ status: 'ready', tenancy })
-          // The field starts on the name the API answered: the person is
-          // editing it, not typing it from nothing.
-          setName(found?.name ?? '')
         }
       } catch (error) {
         if (live) {
@@ -101,35 +90,6 @@ export function SettingsScreen() {
       live = false
     }
   }, [api, session.status, organisationId])
-
-  async function rename(id: string, event: FormEvent): Promise<void> {
-    event.preventDefault()
-    setBusy(true)
-    setFailure(null)
-    try {
-      const saved = await api.request<Organisation>(`/orgs/${encodeURIComponent(id)}`, {
-        method: 'PATCH',
-        body: { name: name.trim() },
-      })
-      setLoad((current) =>
-        current.status === 'ready'
-          ? {
-              status: 'ready',
-              tenancy: {
-                ...current.tenancy,
-                organisations: current.tenancy.organisations.map((organisation) =>
-                  organisation.id === saved.id ? saved : organisation,
-                ),
-              },
-            }
-          : current,
-      )
-    } catch (error) {
-      setFailure(sentence(error))
-    } finally {
-      setBusy(false)
-    }
-  }
 
   if (session.status === 'signed-out') {
     return <Navigate to={SIGN_IN_PATH} replace />
@@ -150,10 +110,6 @@ export function SettingsScreen() {
   const selected: string = organisationId
   const tenancy = load.status === 'ready' ? load.tenancy : null
   const organisation = tenancy?.organisations.find((one) => one.id === selected)
-  const mine: Membership | undefined = tenancy?.memberships.find(
-    (membership) => membership.organisation_id === selected && membership.uid === session.user.uid,
-  )
-  const decides = mine !== undefined && (mine.role === 'owner' || mine.role === 'admin')
 
   if (load.status === 'failed') {
     return (
@@ -206,30 +162,6 @@ export function SettingsScreen() {
           )}
         </dd>
       </dl>
-
-      {decides ? (
-        <section>
-          <h2>Name</h2>
-          <form onSubmit={(event) => void rename(selected, event)}>
-            <label htmlFor="organisation-name">Organisation name</label>
-            <input
-              id="organisation-name"
-              name="name"
-              required
-              maxLength={64}
-              value={name}
-              onChange={(event) => {
-                setName(event.target.value)
-              }}
-            />
-            <button type="submit" disabled={busy}>
-              Save name
-            </button>
-          </form>
-        </section>
-      ) : null}
-
-      {failure === null ? null : <p role="alert">{failure}</p>}
     </main>
   )
 }

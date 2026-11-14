@@ -4,13 +4,21 @@
 // The members screen: who is in the organisation, and who has been asked
 // (portal plan P2.3; spec §Tenancy, F40).
 //
-// **Who may decide is read from the membership, never guessed.** The screen
-// finds the signed-in person in the list the API answered and offers the
-// invitation form to owners and admins only (D2195: owners and admins are who
-// invite). Nothing here is enforcement -- the API refuses a member's write --
-// and it is what keeps the refusal from being how a person finds out. A role
-// read from the token would be a role only the identity provider could take
-// away, which is why neither side keeps it there.
+// **Who may decide is the API's answer and not the screen's guess.** The member
+// list is an owner's or an admin's read (D2186, D2195: owners and admins are who
+// invite, and who else belongs is one of the things a member decides nothing
+// about), and the API answers a plain member's request for it with 403
+// `not_permitted`. That refusal is what tells this screen who the person is:
+// the list is what an owner or an admin reads, so having it is the same fact as
+// being one, and the invitation form is drawn for exactly the people the API
+// would accept an invitation from. Asking anywhere else — a role on the
+// membership, a second read — would be a copy of the rule kept on the wrong
+// side, and P2.1's list does not carry a role to copy.
+//
+// **The refused read is not a failure.** It is a state a member is in
+// permanently, so it draws the page they are entitled to — the invitation list
+// — instead of an error, and the whole page does not fail because one of its two
+// reads was refused.
 //
 // **An invitation is an address and not a person** (spec §Tenancy): the list
 // shows the address it is bound to and the state it has reached, and
@@ -55,14 +63,26 @@ const STATE_LABELS: Record<InviteState, string> = {
 
 const GENERIC_FAILURE = 'The portal could not read this organisation’s members. Try again.'
 
+/** One organisation's members, as `GET /orgs/{id}/members` answers them (P2.1). */
+interface MembersAnswer {
+  members: Membership[]
+}
+
 type Load =
   | { status: 'loading' }
   | { status: 'failed'; message: string }
-  | { status: 'ready'; members: Membership[]; invites: Invite[] }
+  | { status: 'ready'; members: Membership[] | null; invites: Invite[] }
 
 /** The sentence a person is shown for a failure. */
 function sentence(error: unknown): string {
   return error instanceof ApiError ? error.message : GENERIC_FAILURE
+}
+
+/** True when this refusal is the API saying this person may not read the
+ * organisation's members at all (P2.1's `not_permitted`): a member, not a
+ * failure. */
+function isNotPermitted(error: unknown): boolean {
+  return error instanceof ApiError && error.code === 'not_permitted'
 }
 
 export function MembersScreen() {
@@ -83,12 +103,14 @@ export function MembersScreen() {
     let live = true
     void (async () => {
       try {
-        const [members, invites] = await Promise.all([
-          api.request<Membership[]>(`/orgs/${encodeURIComponent(organisationId)}/members`),
+        const [answer, invites] = await Promise.all([
+          api
+            .request<MembersAnswer>(`/orgs/${encodeURIComponent(organisationId)}/members`)
+            .catch((error: unknown) => (isNotPermitted(error) ? null : Promise.reject(error))),
           api.request<Invite[]>(`/orgs/${encodeURIComponent(organisationId)}/invites`),
         ])
         if (live) {
-          setLoad({ status: 'ready', members, invites })
+          setLoad({ status: 'ready', members: answer?.members ?? null, invites })
         }
       } catch (error) {
         if (live) {
@@ -157,11 +179,8 @@ export function MembersScreen() {
   }
 
   const selected: string = organisationId
-  const mine =
-    load.status === 'ready'
-      ? load.members.find((member) => member.uid === session.user.uid)
-      : undefined
-  const decides = mine !== undefined && (mine.role === 'owner' || mine.role === 'admin')
+  const members = load.status === 'ready' ? load.members : null
+  const decides = members !== null
 
   return (
     <main>
@@ -171,18 +190,18 @@ export function MembersScreen() {
       </p>
       {load.status === 'failed' ? <p role="alert">{load.message}</p> : null}
 
-      {load.status === 'ready' ? (
+      {members === null ? null : (
         <section>
           <h2>Members</h2>
           <ul>
-            {load.members.map((member) => (
+            {members.map((member) => (
               <li key={member.uid}>
                 <span>{member.email}</span> <span>{ROLE_LABELS[member.role]}</span>
               </li>
             ))}
           </ul>
         </section>
-      ) : null}
+      )}
 
       {load.status === 'ready' ? (
         <section>

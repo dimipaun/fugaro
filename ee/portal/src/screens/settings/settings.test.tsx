@@ -3,23 +3,29 @@
 //
 // The organisation settings screen (portal plan P2.3; spec §Tenancy).
 //
-// **The screen reads the person's own tenancy, which is where the role is.**
-// `GET /orgs` answers the organisations somebody belongs to and their
-// memberships in them, and the membership is what says whether this person may
-// rename the organisation: owners and admins do (D2195's list of who decides),
-// a member reads the name and the terms. Nothing here is enforcement -- the API
-// refuses a member's write -- and it is what keeps the refusal from being how a
-// person finds out.
+// **The screen reads and draws, and it writes nothing.** The organisation it
+// draws is found in the person's own tenancy — `GET /orgs`, which is the list
+// P2.1 answers and the same read the organisations screen makes — and what it
+// draws is what that answer carries: the name, the type, when it was created and
+// the terms it accepted.
 //
-// The last two cases are the screen's edges: a URL naming no organisation, and
-// a URL naming one the person is not in.
+// The last case before the edges is the one that pins the absence: **there is no
+// rename here**, and there cannot be one. A rename is a PATCH of the
+// organisation, no route of P2.1 mounts one, and the schema calls it a later
+// task's (`ee/portal/schemas/orgs.schema.json`), so a form would be a button
+// whose only outcome is a 404. A name field appearing here again is a decision
+// for whoever mounts that route, and it fails this case until they make it.
+//
+// The edges at the end are the URL's: a person who names no organisation, an id
+// that cannot be one, and an organisation the person does not belong to — which
+// the list is what distinguishes from an organisation that is not there at all.
 //
 // Hermetic: the port is a fake and `fetch` is a queue of answers.
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { Membership, Organisation } from '../../api/types/orgs'
+import type { Organisation } from '../../api/types/orgs'
 import type { AuthPort, SignedInUser } from '../../auth/session'
 import { SessionProvider } from '../../auth/session'
 import { SettingsScreen } from './settings'
@@ -37,29 +43,21 @@ const EXAMPLE: Organisation = {
   created_at: '2026-02-10T11:00:00Z',
 }
 
-const RENAMED: Organisation = { ...EXAMPLE, name: 'Example Holdings' }
-
-const RENAMED_MEMBERSHIP: Membership = {
-  organisation_id: EXAMPLE.id,
-  uid: 'uid_dana',
-  email: 'dana@example.com',
-  role: 'owner',
-  created_at: '2026-02-10T11:00:00Z',
-  last_used_at: '2026-02-11T08:00:00Z',
+/** The operations organisation, whose terms are a record that does not exist. */
+const OPERATIONS: Organisation = {
+  id: 'org_ops',
+  name: 'Fugaro operations',
+  type: 'operations',
+  terms: null,
+  reseller_id: null,
+  created_at: '2026-01-01T00:00:00Z',
 }
 
 const PERSON: SignedInUser = {
-  uid: RENAMED_MEMBERSHIP.uid,
-  email: RENAMED_MEMBERSHIP.email,
+  uid: 'uid_dana',
+  email: 'dana@example.com',
   provider: 'google.com',
   authTime: 1_700_000_000_000,
-}
-
-function tenancy(membership: Membership): {
-  organisations: Organisation[]
-  memberships: Membership[]
-} {
-  return { organisations: [EXAMPLE], memberships: [membership] }
 }
 
 function port(user: SignedInUser | null = PERSON, overrides: Partial<AuthPort> = {}): AuthPort {
@@ -125,37 +123,32 @@ function mount(path: string, auth: AuthPort = port()): void {
 
 describe('the organisation settings screen', () => {
   it('shows the organisation, its type and the terms it accepted', async () => {
-    transport([json(200, tenancy(RENAMED_MEMBERSHIP))])
+    const fetch = transport([json(200, { organisations: [EXAMPLE] })])
     mount(`/settings?org=${EXAMPLE.id}`)
 
     expect(await screen.findByRole('heading', { name: EXAMPLE.name })).toBeDefined()
     expect(screen.getByText('Customer')).toBeDefined()
     expect(screen.getByText(/2026-10-27/)).toBeDefined()
+    expect(fetch).toHaveBeenCalledWith('/api/orgs', expect.anything())
   })
 
-  it('renames the organisation', async () => {
-    const fetch = transport([json(200, tenancy(RENAMED_MEMBERSHIP)), json(200, RENAMED)])
-    mount(`/settings?org=${EXAMPLE.id}`)
+  it('shows an operations organisation the absence of terms rather than an empty date', async () => {
+    transport([json(200, { organisations: [OPERATIONS] })])
+    mount(`/settings?org=${OPERATIONS.id}`)
 
-    fireEvent.change(await screen.findByLabelText('Organisation name'), {
-      target: { value: RENAMED.name },
-    })
-    fireEvent.click(screen.getByRole('button', { name: 'Save name' }))
-
-    expect(await screen.findByRole('heading', { name: RENAMED.name })).toBeDefined()
-    expect(fetch).toHaveBeenCalledWith(
-      `/api/orgs/${EXAMPLE.id}`,
-      expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ name: RENAMED.name }) }),
-    )
+    expect(await screen.findByRole('heading', { name: OPERATIONS.name })).toBeDefined()
+    expect(screen.getByText('Operations')).toBeDefined()
+    expect(screen.getByText(/No terms were accepted/)).toBeDefined()
   })
 
-  it('shows a member the name and no way to change it', async () => {
-    transport([json(200, tenancy({ ...RENAMED_MEMBERSHIP, role: 'member' }))])
+  it('draws no way to change the name, because no route answers a rename', async () => {
+    const fetch = transport([json(200, { organisations: [EXAMPLE] })])
     mount(`/settings?org=${EXAMPLE.id}`)
 
     expect(await screen.findByRole('heading', { name: EXAMPLE.name })).toBeDefined()
-    expect(screen.queryByLabelText('Organisation name')).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Save name' })).toBeNull()
+    expect(screen.queryByRole('textbox')).toBeNull()
+    expect(screen.queryByRole('button')).toBeNull()
+    expect(fetch).toHaveBeenCalledTimes(1)
   })
 
   it('sends a person whose URL names no organisation to the organisations screen', async () => {
@@ -174,7 +167,7 @@ describe('the organisation settings screen', () => {
   })
 
   it('says so when the URL names an organisation the person is not in', async () => {
-    transport([json(200, tenancy(RENAMED_MEMBERSHIP))])
+    transport([json(200, { organisations: [EXAMPLE] })])
     mount('/settings?org=org_somebody_else')
 
     expect(await screen.findByText(/not one you belong to/)).toBeDefined()

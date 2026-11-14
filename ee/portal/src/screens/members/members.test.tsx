@@ -3,13 +3,20 @@
 //
 // The members screen (portal plan P2.3; spec §Tenancy, F40).
 //
-// **What this suite pins is who may do what, and that the list is the API's.**
-// An owner invites an address with the role they chose and withdraws an
-// invitation through the list; a member reads the same page and is offered
-// neither. The role comes from the person's own membership in the list the API
-// answered, which is the same place the API reads it (P2.1: a role lives in the
-// membership and never in the token), so a screen that guessed it from the
-// person's address would be refused here.
+// **What this suite pins is who may do what, and that the answer is the API's.**
+// An owner reads the member list and, having it, invites an address with the
+// role they chose and withdraws an invitation through the list. A plain member
+// is refused the member list — 403 `not_permitted`, which P2.1 answers for a
+// read D2186 keeps to owners and admins — and this suite answers that refusal
+// the way the API sends it rather than with the 200 no owner would get: what the
+// member then sees is the invitations and none of the write surfaces, which is
+// the page their refusal entitles them to and not an error.
+//
+// That refusal is also the whole of how the screen knows who is asking: the
+// list is what an owner or an admin reads, so having it is the same fact as
+// being one. The signed-in person in the member case below is deliberately the
+// one the API would answer a list for if roles came from anywhere but the
+// membership — the screen decides from the refusal and never from the uid.
 //
 // The two cases at the end are the screen's own edges: a URL that names no
 // organisation is a person who never chose one, and nobody signed in is sent to
@@ -96,6 +103,16 @@ function json(status: number, body?: unknown): Response {
   } as unknown as Response
 }
 
+/** The refusal P2.1 answers a plain member's read of the member list with. */
+function notPermitted(): Response {
+  return json(403, {
+    error: {
+      code: 'not_permitted',
+      message: 'Only an organisation’s owners and admins may read its members.',
+    },
+  })
+}
+
 /** A `fetch` that answers each request from the queue, and records what it was asked. */
 function transport(answers: Response[]): ReturnType<typeof vi.fn> {
   const fetch = vi.fn(() => {
@@ -134,10 +151,7 @@ function mount(path: string, auth: AuthPort = port()): void {
 
 describe('the members screen', () => {
   it('lists the members, and the invitations the API answered', async () => {
-    transport([
-      json(200, [OWNER, COLLEAGUE]),
-      json(200, [PENDING]),
-    ])
+    transport([json(200, { members: [OWNER, COLLEAGUE] }), json(200, [PENDING])])
     mount(`/members?org=${ORGANISATION_ID}`)
 
     expect(await screen.findByText(COLLEAGUE.email)).toBeDefined()
@@ -148,7 +162,7 @@ describe('the members screen', () => {
 
   it('invites an address with the role chosen, and shows it waiting', async () => {
     const fetch = transport([
-      json(200, [OWNER]),
+      json(200, { members: [OWNER] }),
       json(200, []),
       json(200, PENDING),
     ])
@@ -172,7 +186,7 @@ describe('the members screen', () => {
 
   it('withdraws a pending invitation, and reads the list the API answers now', async () => {
     const fetch = transport([
-      json(200, [OWNER]),
+      json(200, { members: [OWNER] }),
       json(200, [PENDING]),
       json(204),
       json(200, [REVOKED]),
@@ -192,19 +206,29 @@ describe('the members screen', () => {
     )
   })
 
-  it('offers a member no way to invite or withdraw', async () => {
-    transport([json(200, [OWNER, COLLEAGUE]), json(200, [PENDING])])
+  it('draws a member the invitations and no member list, rather than an error', async () => {
+    transport([notPermitted(), json(200, [PENDING])])
     mount(
       `/members?org=${ORGANISATION_ID}`,
       port({ ...PERSON, uid: COLLEAGUE.uid, email: COLLEAGUE.email }),
     )
 
     expect(await screen.findByText(PENDING.email)).toBeDefined()
+    expect(screen.queryByText(OWNER.email)).toBeNull()
+    expect(screen.queryByRole('alert')).toBeNull()
     expect(screen.queryByLabelText('Email address')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Send invitation' })).toBeNull()
     expect(
       screen.queryByRole('button', { name: `Withdraw the invitation to ${PENDING.email}` }),
     ).toBeNull()
+  })
+
+  it('reads the member list once, and not again for a member the API refused', async () => {
+    const fetch = transport([notPermitted(), json(200, [])])
+    mount(`/members?org=${ORGANISATION_ID}`)
+
+    expect(await screen.findByText('Nobody has been invited to this organisation yet.')).toBeDefined()
+    expect(fetch).toHaveBeenCalledTimes(2)
   })
 
   it('sends a person whose URL names no organisation to the organisations screen', async () => {
@@ -223,7 +247,7 @@ describe('the members screen', () => {
   })
 
   it('keeps a URL’s own value in one path segment', async () => {
-    const fetch = transport([json(200, [OWNER]), json(200, [])])
+    const fetch = transport([json(200, { members: [OWNER] }), json(200, [])])
     mount('/members?org=../..%2Fx')
 
     expect(await screen.findByText(OWNER.email)).toBeDefined()

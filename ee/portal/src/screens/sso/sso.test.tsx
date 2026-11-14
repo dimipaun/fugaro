@@ -12,6 +12,13 @@
 // reseller Microsoft only once operations has pinned a directory, and nobody
 // is offered the emailed link the API refuses.
 //
+// The first case is also what pins the other half of a choice: **the refusal
+// writes nothing.** Choosing an organisation is a write (`POST /orgs/{id}/select`,
+// pinned in `switcher.test.tsx`), and the one refusal the switcher makes on its
+// own must not send it — a person who is turned away has not started working in
+// the organisation, and a `last_used_at` that moved anyway would land them there
+// the next time. The `fetch` below fails the test if anything reaches it.
+//
 // Hermetic: the port is a fake, so nothing reaches Firebase, and this suite
 // fetches nothing at all -- the switcher is handed its organisations.
 
@@ -19,7 +26,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import type { ReactElement } from 'react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { Membership, Organisation } from '../../api/types/orgs'
+import type { Organisation } from '../../api/types/orgs'
 import type { AuthPort, SignedInUser } from '../../auth/session'
 import { SessionProvider } from '../../auth/session'
 import { OrganisationSwitcher } from '../orgs/switcher'
@@ -45,15 +52,6 @@ const OPERATIONS: Organisation = {
   created_at: '2026-01-01T00:00:00Z',
 }
 
-const MEMBERSHIP: Membership = {
-  organisation_id: OPERATIONS.id,
-  uid: PERSON.uid,
-  email: PERSON.email,
-  role: 'member',
-  created_at: '2026-01-02T00:00:00Z',
-  last_used_at: null,
-}
-
 function port(user: SignedInUser | null = PERSON, overrides: Partial<AuthPort> = {}): AuthPort {
   return {
     watch: (onUser) => {
@@ -70,6 +68,19 @@ function port(user: SignedInUser | null = PERSON, overrides: Partial<AuthPort> =
   }
 }
 
+/** A `fetch` that fails the test if anything reaches it, because nothing should. */
+function transport(): ReturnType<typeof vi.fn> {
+  const fetch = vi.fn(() => {
+    throw new Error('a choice this suite refuses wrote something')
+  })
+  vi.stubGlobal('fetch', fetch)
+  return fetch
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
 /** Where the router ended up, so a refusal reads as "it did not go there". */
 function Landing() {
   const location = useLocation()
@@ -82,17 +93,13 @@ function show(element: ReactElement, auth: AuthPort = port()): void {
 
 describe('an organisation that needs a work account', () => {
   it('opens the dialog for an operations organisation picked by an email identity', async () => {
+    const fetch = transport()
     show(
       <MemoryRouter initialEntries={['/orgs']}>
         <Routes>
           <Route
             path="/orgs"
-            element={
-              <OrganisationSwitcher
-                entries={[{ organisation: OPERATIONS, membership: MEMBERSHIP }]}
-                selectedId={null}
-              />
-            }
+            element={<OrganisationSwitcher organisations={[OPERATIONS]} selectedId={null} />}
           />
           <Route path="*" element={<Landing />} />
         </Routes>
@@ -103,6 +110,7 @@ describe('an organisation that needs a work account', () => {
 
     expect(await screen.findByRole('dialog')).toBeDefined()
     expect(screen.queryByText(`/members?org=${OPERATIONS.id}`)).toBeNull()
+    expect(fetch).not.toHaveBeenCalled()
   })
 })
 

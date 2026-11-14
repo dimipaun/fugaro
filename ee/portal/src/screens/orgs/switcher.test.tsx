@@ -7,23 +7,32 @@
 // organisations it is given, it is the list: one link per organisation, into
 // that organisation's own screens, with the one the person is in marked. MOUNTED
 // by the organisations screen, it is the answer to "which organisation am I
-// working in", and the screen is what reads the API: it lands the person on the
-// organisation the API recorded as last used, and a new organisation takes them
-// to it.
+// working in", and the screen is what reads the API: it marks the head of the
+// list the API answered, which P2.1 ordered by last use, and a new organisation
+// takes the person to it.
+//
+// **Choosing one is a write, and the suite pins the write.** P2.1's
+// `POST /orgs/{id}/select` is the whole of what the switcher writes, and it is
+// what makes "they land in the last one used" come true the next time: a
+// switcher that only navigated would never record anything, and every case
+// below that follows a link would still pass.
 //
 // The one refusal the switcher makes on its own -- an operations organisation
 // chosen by an emailed-link identity -- is `sso.test.tsx`'s, where the dialog
-// it opens is what is being read.
+// it opens is what is being read. What is pinned here as well is that the
+// refusal is the one case that writes NOTHING: the queue is empty, so a
+// switcher that recorded a choice it had just refused would fail with the
+// test's own "the test did not answer this request".
 //
 // Hermetic: the port is a fake and `fetch` is a queue of answers, so no test
 // reaches Firebase or the API. What the queue pins is the request itself: the
 // path, the method and the body a screen sends are the API's contract, and a
 // screen that quietly changed one would otherwise pass every test it has.
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { Membership, Organisation } from '../../api/types/orgs'
+import type { Organisation } from '../../api/types/orgs'
 import type { AuthPort, SignedInUser } from '../../auth/session'
 import { SessionProvider } from '../../auth/session'
 import { OrgsScreen } from './orgs'
@@ -55,29 +64,13 @@ const OPERATIONS: Organisation = {
   created_at: '2026-01-01T00:00:00Z',
 }
 
-// The organisation the person last worked in is deliberately NOT the first the
-// API lists: with the two in the same order, "the last used one" and "the first
-// one listed" are the same id and a screen could answer either and pass.
-const TENANCY: { organisations: Organisation[]; memberships: Membership[] } = {
+// The API orders `GET /orgs` by last use, so the head is the organisation the
+// person last worked in (P2.1's `organisationsOf`). The fixture's head is
+// deliberately NOT the first id: a screen that picked `organisations[0]` blindly
+// and one that sorted by id would agree on any other pair, and the case below
+// would not be able to tell them apart.
+const TENANCY: { organisations: Organisation[] } = {
   organisations: [OPERATIONS, EXAMPLE],
-  memberships: [
-    {
-      organisation_id: EXAMPLE.id,
-      uid: 'uid_dana',
-      email: 'dana@example.com',
-      role: 'owner',
-      created_at: '2026-02-10T11:00:00Z',
-      last_used_at: '2026-02-11T08:00:00Z',
-    },
-    {
-      organisation_id: OPERATIONS.id,
-      uid: 'uid_dana',
-      email: 'dana@example.com',
-      role: 'member',
-      created_at: '2026-01-02T00:00:00Z',
-      last_used_at: null,
-    },
-  ],
 }
 
 const CREATED: Organisation = {
@@ -113,7 +106,7 @@ function port(overrides: Partial<AuthPort> = {}): AuthPort {
 }
 
 /** A response the client can read, without a real `fetch` behind it. */
-function json(status: number, body: unknown): Response {
+function json(status: number, body?: unknown): Response {
   return {
     ok: status >= 200 && status < 300,
     status,
@@ -157,21 +150,19 @@ function mount(path: string, auth: AuthPort = port()): void {
   )
 }
 
+function showSwitcher(selectedId: string | null): void {
+  render(
+    <SessionProvider port={port()}>
+      <MemoryRouter>
+        <OrganisationSwitcher organisations={TENANCY.organisations} selectedId={selectedId} />
+      </MemoryRouter>
+    </SessionProvider>,
+  )
+}
+
 describe('the organisation switcher', () => {
   it('links each organisation into its own screens', () => {
-    render(
-      <SessionProvider port={port()}>
-        <MemoryRouter>
-          <OrganisationSwitcher
-            entries={[
-              { organisation: EXAMPLE, membership: TENANCY.memberships[0]! },
-              { organisation: OPERATIONS, membership: TENANCY.memberships[1]! },
-            ]}
-            selectedId={null}
-          />
-        </MemoryRouter>
-      </SessionProvider>,
-    )
+    showSwitcher(null)
 
     expect(screen.getByRole('link', { name: EXAMPLE.name }).getAttribute('href')).toBe(
       `/members?org=${EXAMPLE.id}`,
@@ -182,19 +173,7 @@ describe('the organisation switcher', () => {
   })
 
   it('marks the organisation the person is in, and no other', () => {
-    render(
-      <SessionProvider port={port()}>
-        <MemoryRouter>
-          <OrganisationSwitcher
-            entries={[
-              { organisation: EXAMPLE, membership: TENANCY.memberships[0]! },
-              { organisation: OPERATIONS, membership: TENANCY.memberships[1]! },
-            ]}
-            selectedId={EXAMPLE.id}
-          />
-        </MemoryRouter>
-      </SessionProvider>,
-    )
+    showSwitcher(EXAMPLE.id)
 
     expect(screen.getByRole('link', { name: EXAMPLE.name }).getAttribute('aria-current')).toBe(
       'true',
@@ -205,15 +184,50 @@ describe('the organisation switcher', () => {
   })
 })
 
+describe('entering an organisation', () => {
+  it('records the choice, because it is what the next landing is read from', async () => {
+    // The write is the whole of what the switcher does beyond navigating: P2.1
+    // keeps the person's last use in their own membership, and a switcher that
+    // did not send this one would leave them landing on the same organisation
+    // for ever.
+    const fetch = transport([json(204)])
+    render(
+      <SessionProvider port={port()}>
+        <MemoryRouter initialEntries={['/orgs']}>
+          <Routes>
+            <Route
+              path="/orgs"
+              element={
+                <OrganisationSwitcher organisations={TENANCY.organisations} selectedId={null} />
+              }
+            />
+            <Route path="*" element={<Landing />} />
+          </Routes>
+        </MemoryRouter>
+      </SessionProvider>,
+    )
+
+    fireEvent.click(screen.getByRole('link', { name: EXAMPLE.name }))
+
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith(
+        `/api/orgs/${EXAMPLE.id}/select`,
+        expect.objectContaining({ method: 'POST' }),
+      )
+    })
+    expect(await screen.findByText(`/members?org=${EXAMPLE.id}`)).toBeDefined()
+  })
+})
+
 describe('the organisations screen', () => {
-  it('lists the organisations, and lands on the one the API recorded as last used', async () => {
+  it('lists the organisations and marks the head, which is the one last used', async () => {
     const fetch = transport([json(200, TENANCY)])
     mount('/orgs')
 
-    const used = await screen.findByRole('link', { name: EXAMPLE.name })
-    expect(used.getAttribute('aria-current')).toBe('true')
+    const first = await screen.findByRole('link', { name: OPERATIONS.name })
+    expect(first.getAttribute('aria-current')).toBe('true')
     expect(
-      screen.getByRole('link', { name: OPERATIONS.name }).getAttribute('aria-current'),
+      screen.getByRole('link', { name: EXAMPLE.name }).getAttribute('aria-current'),
     ).toBeNull()
     expect(fetch).toHaveBeenCalledWith(
       '/api/orgs',
@@ -223,23 +237,19 @@ describe('the organisations screen', () => {
     )
   })
 
-  it('falls back to the first organisation the API listed when none was ever used', async () => {
-    const unused = {
-      organisations: TENANCY.organisations,
-      memberships: TENANCY.memberships.map((one) => ({ ...one, last_used_at: null })),
-    }
-    transport([json(200, unused)])
-    mount('/orgs')
+  it('marks the organisation the URL names when it is one of the person’s own', async () => {
+    transport([json(200, TENANCY)])
+    mount(`/orgs?org=${EXAMPLE.id}`)
 
-    const first = await screen.findByRole('link', { name: OPERATIONS.name })
-    expect(first.getAttribute('aria-current')).toBe('true')
+    const named = await screen.findByRole('link', { name: EXAMPLE.name })
+    expect(named.getAttribute('aria-current')).toBe('true')
     expect(
-      screen.getByRole('link', { name: EXAMPLE.name }).getAttribute('aria-current'),
+      screen.getByRole('link', { name: OPERATIONS.name }).getAttribute('aria-current'),
     ).toBeNull()
   })
 
   it('goes to the members of the organisation the person chooses', async () => {
-    transport([json(200, TENANCY)])
+    transport([json(200, TENANCY), json(204)])
     mount('/orgs')
 
     fireEvent.click(await screen.findByRole('link', { name: OPERATIONS.name }))
