@@ -873,6 +873,8 @@ probe account carries predefined grants only).
 | 520 | A text-only coder reads a screenshot, on the vision model ([`docs/vision-model/`](vision-model/implementation-plan.md), its **Check 520** and task **V8**; **V1**'s `agent.models.vision`, **V2**'s `model_prices.*.image_tokens`, **V7**'s rewrite of the coder role, and **D2016** — which is why the state this measures is the coder priced **without** an image rate and not the plan's "with"): the sandbox repository's coder is priced without an image rate and `agent.models.vision` names a model that can read one, and one run whose task names a console `__screenshots__` PNG (the issue's own case, run `20261107-104613-b2af`) passes `implement` — and `fix`, where the recipe runs one — reaches its own `result.json`, and there every coder-role stage timing names the **vision** model's ID while `cost.model_by` carries that same model, so the split the issue is about is read from the record and not from the configuration; `fugaro diagnose <run> --json` prints the same split through the command an owner reads a run with | See "Check 520" below; `bash scripts/live-checks/check520.sh --sandbox <a sandbox repository checkout> --yes` is the whole of it, its sibling test `scripts/live-checks/check520_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call, and so is a coding agent's session); **no agent runs any step of it** | ONE sandbox run and what its task costs — the model spend of its coder-role stages, on the sandbox's own budget — plus the pull request that run opens: **billable, and `--yes` is required** before anything is launched. Every other call is a read (doctor, `models ls`, the run record, `diagnose`), and `CHECK520_MAX_MODEL_USD` turns the run's own figure into a criterion when you set it. The run's pull request and branch are left open for you to close. **OWNER-RUN, NOT RUN.** |
 | 521 | The early refusal, and the sentence an owner acts on ([`docs/vision-model/`](vision-model/implementation-plan.md), its **Check 521** and task **V8**; **V5**'s bootstrap refusal — "the coder can't read an image the task names" — and **D2005**, **D2006** and **D2001**): a repository whose coder is priced without an image rate and with **no** `agent.models.vision`, and a task whose text names a `.png`: the run is refused at **bootstrap**, before its first stage, so no stage's work is paid for and thrown away — the failure the refusal exists to remove; its record's `failure_class` is `config_invalid`, its `reason` names the slot to set and the price member that gives that slot's model an image rate, its stage list is **empty** and its cost is **zero** | See "Check 521" below; `bash scripts/live-checks/check521.sh --sandbox <a sandbox repository checkout>` is the whole of it, its sibling test `scripts/live-checks/check521_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call, and so is a coding agent's session); **no agent runs any step of it** | **NOTHING billable and no model call**: the run is refused at bootstrap, before its first stage, so no stage's work is paid for and the budget is not touched — which is why this check needs no `--yes`. It does start one Cloud Run job execution, and **nothing it launches outlives it**: a run that has not ended within `CHECK521_RUN_TIMEOUT_SECONDS` is cancelled with `fugaro cancel --now`, from the step that gives up on it and from the script's own exit trap. **OWNER-RUN, NOT RUN.** |
 | 292 | A catalog entry whose source names a build `context:` is built with the repository's files in it ([`docs/catalog-build-context/`](catalog-build-context/implementation-plan.md) §6, its **Check 292** and task **CB5**; that folder's **F22**, **F29**, **F30**, **F32** and **F33**, and **D1402**, **D1403**, **D1408** and **D1409**; the amendment it folds into is [`docs/project-image-catalog/context-design.md`](project-image-catalog/context-design.md), its §A5, §A6, §C3, §C4, §C5 and the fold-in at §11): one entry built from a repository's Dockerfile in a **subdirectory**, whose `COPY` reaches a file of the repository — the build the catalog could not run before this work — read back four ways: the built image **contains the copied file**, the record names **one** commit (`source_commit` and `context_commit` the same, and the image's `org.opencontainers.image.revision` that commit), the staged context **fires** the nightly decision with the `catalog-context` reason and the rebuild it submits is pinned to the staged commit, and after that rebuild the same entry decides **without** that reason. **What the plan's own step 4 cannot be run as written is the point of the section below:** the trigger's subject is the digest the operator's own copy **staged**, not the branch, so a pushed commit fires nothing by itself — the check is written against the code and says so | See "Check 292" below; **you** run it, on the **sandbox installation and the sandbox repository only, never `belong`**, from the sandbox repository's checkout, and **no agent runs any step of it** (there is **no script**: the check is the steps below) | One Cloud Build that runs (`fugaro image build <entry>`), one submitted-and-cancelled before its steps run (the staging that leaves the record behind), and the one rebuild the project's catalog check job submits when the entry fires: **all billable, and the rebuild is the point of the step**. Nothing is granted, no run is launched and no model is called, so there is no run spend. Two commits are pushed to the sandbox repository's branch and reverted (a third when step 5 loses its race with the build it cancels), and the entry, its staged objects, its record, its check state and its image are the check's own — the entry and its objects are removed in the Restore, the image is left in the shared registry (`fugaro image rm` never deletes one). **OWNER-RUN, NOT RUN.** |
+| 200 | Governance halts in a job from the tagged image, the edition carrier reads `ee`, and the digest runs from an untagged source build ([`docs/ee-reorg/`](ee-reorg/implementation-plan.md) §E3.4 and its checks table; **D522**'s core stub, **D523**'s no-notice rule and **R3**'s edition carrier): on the sandbox installation with the released 0.13.0 and its images refreshed to it, a run whose `governance.stage_timeout.implement` is set tiny **halts** — `halt.reason` `stage_budget`, `halt.detail` `time`, `failure_class` `halted_governance` — and its record carries the **checkpoint report** a person continues from; the image that run itself started on carries `edition: "ee"` in its build record at `builds/<slug>/<workflow>/image.json`, which is where the edition is read and deliberately **not** `fugaro version`, whose text does not change between the editions; and `fugaro runs digest --period day --stdout` **runs** from a source build without the tag (the digest is core, G5/T11), that binary proved untagged first by `fugaro report` answering the core stub | See "Check 200" below; `bash scripts/live-checks/check200.sh --sandbox <a sandbox repository checkout> --yes` is the whole of it, its sibling test `scripts/live-checks/check200_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox installation** and the sandbox repository only, **never `belong`** (a project, region, account, checkout path or repository name naming that installation is refused before a single call, and so is a coding agent's session); **no agent runs any step of it** | ONE sandbox run and what its task costs — launched under a tiny ceiling to be halted, so the spend is the implement stage up to that ceiling — plus the pull request that run opens: **billable, and `--yes` is required** before anything is launched. Every other call is a read (a version probe, `doctor`, the run's record, the image record, the digest) or a local build. The check writes ONE commit to a throwaway branch `chk200-<hex>` of the sandbox repository — the ceiling has to live on a ref the run's own `--ref` names — and its Restore deletes that branch locally and on origin, puts the checkout back on the branch it was on and reads back that `fugaro.yaml` is unchanged; the run's own pull request and branch are left open for you to close. **OWNER-RUN, NOT RUN.** |
+| 201 | The console's Spend and project views against the released 0.13.0 CLI ([`docs/ee-reorg/`](ee-reorg/implementation-plan.md) §E3.4 and its checks table; **D523**, which is why there is no notice for the check to see): the console pointed at the installed 0.13.0 CLI draws its **Spend** view and its **project views** from the documents a real CLI answers with — `report --json`, `budget show --json` and `runs stats --json` for the first, `budget show --json`, `accounts ls --json`, `secrets ls --json` and `project policy show --json` for the second — the figures agreeing with what those commands print when you read them beside the window, and **no notice of any kind on stderr**, no licence notice and no paid-command notice (D523) | See "Check 201" below; the check is **steps you do by hand** — a browser and a window are inherent to it, so there is **no script** — and **no agent runs any step of it** | Nothing billable and no model call: one window and a handful of reads, plus, only if you want a run's own figures in the view, a sandbox run you would have launched anyway. Nothing is created, granted or written by the check, and there is nothing to restore beyond closing the window. **OWNER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -13788,6 +13790,166 @@ built from, and the one a person can take over the log that actually failed on t
 
 **Paste back:** every `FACT` line above — the entry's `fugaro image ls` line, the built image's reference and digest, the record's `source_commit`, `context_commit`, `context_sha256` and `template_salt`, the image's `org.opencontainers.image.revision`, the check job's two lines for the entry with their `decision` and `reasons`, and the copied file's bytes as the image holds them — and **never a secret and never a token value**: this check prints none, and the one file it reads out of the image is one it wrote. Until this check runs, the feature is built and **unverified live**: the two things no hermetic test can hold are a real provider's tree read at a real commit (the tree read and the digest it produces) and a real Cloud Build carrying a context through the clone step and `docker build --file` — which is exactly what steps 3 to 5 measure. **Never run any step against `belong`**: this is the sandbox installation and the sandbox repository only, and no agent runs any step of it.
 
+## Check 200: the first tagged release — a governance halt, an edition carrier that says `ee`, and a digest from an untagged build (the sandbox installation and the sandbox repository only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **E3.4** of
+[docs/ee-reorg/implementation-plan.md](ee-reorg/implementation-plan.md) — its §E3.4 and its checks table —
+and **run by you**: nothing below is a claim that a tagged job halts. What it measures is a real run of the
+sandbox repository, on the released 0.13.0 and the images refreshed to it, over a task written to outlast
+the ceiling the check sets. The check is `scripts/live-checks/check200.sh` (its sibling test
+`scripts/live-checks/check200_test.sh` drives it against fake `gcloud`, `fugaro` and `go` only, and
+launches nothing), what it starts is **one sandbox run, which is billable**, and **no agent runs any step
+of it**: a project, region, account, checkout path or repository name naming `belong` is refused by name,
+and so is a coding agent's session.
+
+**What it settles.** Three facts the hermetic tests can pin only in the code, read on an installation that
+took the release — the tag's own reading, and the one the 0.13.0 notes leave to the owner:
+
+- **The governance halt, end to end.** A run launched under a tiny
+  `governance.stage_timeout.implement` (a minute by default) **halts** at that ceiling, and its own
+  `result.json` says so: `halt.reason` `stage_budget`, `halt.detail` `time`, `failure_class`
+  `halted_governance`, and a **checkpoint report** whose `trigger` is that same reason and whose
+  `why_over` is the runner's own sentence for the bound — "a stage passed its own time bound"
+  (`internal/runner/halt.go`) — with the stage timeout's empty `done`, `next` and `hard_instructions`
+  and the money the run had reached. A run that ended another way, halted on another bound, or halted
+  without a checkpoint is the failure each of those rows is for.
+- **The edition carrier, and the reading it is not.** The build record of the image **that run itself
+  ran** — `builds/<slug>/<workflow>/image.json`, with the workflow read from the run's own record and the
+  slug from the listing's own row — carries `edition: "ee"` (R3). This is deliberately **not** `fugaro
+  version`, whose text does not change between the editions: a check that read the version string would
+  pass on a core binary and say nothing about the image, which is exactly the slip R3 exists to remove.
+- **The digest from an untagged build.** `fugaro runs digest --period day --stdout` **runs** in a build
+  without the `ee` tag — the digest is core (G5, T11). The check builds that binary itself, from the
+  source checkout `--source` names (this script's own tree by default), and proves it untagged **before**
+  using it: `report` is a paid name, so an untagged build answers it with D522's core stub — "report is
+  part of Fugaro Subscription Edition; this build does not include it" — and a build that runs `report`
+  carries the tag and would prove nothing about an untagged one.
+
+**Where the ceiling is written, and why it is a branch.** `governance.stage_timeout.implement` is a
+governance key, and the only policy layers that reach a runner are the default branch's `fugaro.yaml` and
+the one the run is cut from (`internal/runner/policy.go`; `policy.Merge` tightens only). A write to the
+local config or the local project layer would reach no runner at all, and a project-layer publish would
+touch every repository of the installation. So the check writes the value into the sandbox checkout's own
+`fugaro.yaml` — the three lines `governance:` / `stage_timeout:` / `implement: <value>` — commits them on
+a throwaway branch `chk200-<hex>` cut from the branch you are on, pushes that branch, and launches the run
+with `--ref` naming it. The commit lives only on the branch that is deleted, so the branch you were on
+never moved.
+
+The check writes those lines itself, because **the CLI answers no write of that key**. A repository's
+`governance.stage_timeout` is one object-valued row: `fugaro settings set governance.stage_timeout
+<value> --layer repo` is refused when the file is read back, `fugaro settings set
+governance.stage_timeout.implement <value> --layer repo` answers "no setting has that name", the project
+layer's `layer.governance.stage_timeout.implement` reaches no run, and `--add-entry` answers that the block
+takes no entry (`internal/cli/settings_set.go`). A sandbox checkout whose `fugaro.yaml` already carries a
+`governance:` block is refused rather than edited twice: its members are yours, and a second `governance:`
+key is a file the strict decoder rejects at the run's bootstrap.
+
+**Run it:**
+
+```sh
+bash scripts/live-checks/check200.sh --sandbox <a sandbox repository checkout> --dry-run
+bash scripts/live-checks/check200.sh --sandbox <a sandbox repository checkout> --yes
+```
+
+`--sandbox` is the checkout of a repository of the **sandbox project**: the run is launched from it, its
+`fugaro.yaml` is where the ceiling is written, and the project is read from `fugaro doctor --json` rather
+than guessed. `--source` is a Fugaro source checkout, and it defaults to the tree this script lives in.
+`--dry-run` prints every command a real run would make and runs **nothing at all** — no `fugaro` call, no
+`gcloud` call, no `git` call — and prints no verdict. `--yes` is required to launch: without it the check
+prints the plan and exits. Needs `bash`, `mktemp`, `date`, `python3` (the `--json` documents are read with
+it), `git`, `go` (the untagged build), `gcloud` authenticated as you and able to read the runs bucket, and
+`fugaro` — the installed release, which is the whole point.
+
+Progress goes to stderr and one `CHECK 200 RESULT` block goes to stdout at the end: paste that whole block
+here and nothing else. **Exit `0`** is every criterion that was measured holding **and** the Restore
+confirming what it deleted; **`1`** is a measured criterion that did not hold — among them a run that did
+not halt on the stage timeout — or a Restore that could not confirm its deletion, which its own `restore`
+row names and which you then finish by hand; **`2`** is the check not being able to measure (a tool
+missing, the checkout not being one, a `--json` document that could not be read, the build record absent,
+the untagged build not being made, or a run that never ended). A key the run never reached reads
+`FAIL — not reached`. The knobs are `CHECK200_DRY_RUN`, `CHECK200_KEEP_SCRATCH`, `CHECK200_SANDBOX`,
+`CHECK200_SOURCE`, `CHECK200_YES`, `CHECK200_REPO` (the project configuration's key for the sandbox
+repository: the checkout directory's name by default), `CHECK200_TASK`, `CHECK200_STAGE_TIMEOUT` (1m),
+`CHECK200_RELEASE` (0.13.0), `CHECK200_REGION` (us-east5), `CHECK200_RUN_TIMEOUT_SECONDS` (3600),
+`CHECK200_POLL_SECONDS` (15), `CHECK200_CLI_TIMEOUT_SECONDS` (180), `CHECK200_BUILD_TIMEOUT_SECONDS`
+(900), `CHECK200_LAUNCH_TIMEOUT_SECONDS` (600) and `CHECK200_DOCTOR_TIMEOUT_SECONDS` (300). None of them
+can point the check at another project or another repository: the project comes from the checkout itself.
+
+**What waits on it.** The 0.13.0 tag itself: E3.4 is the owner-run half of the release and runs after it.
+A failed 200 is the first tagged release not halting a run it should — the one reading that says the
+`ee` image's governance is wired — and it returns to the owner as a decision rather than as a task, since
+the code half is pinned by `TestTaggedBinaryWires…` and `TestTaggedRunnerHaltsAsBefore` and a live
+disagreement with them is the release's, not a test's.
+
+## Check 201: the console's Spend and project views against the released 0.13.0 CLI — data, and no notice of any kind (your own machine, your own installation and the sandbox project; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **E3.4** of
+[docs/ee-reorg/implementation-plan.md](ee-reorg/implementation-plan.md) — its §E3.4 and its checks table —
+and **run by you**: nothing below is a claim that the console draws anything. This check is **human and
+has no script**: a browser window and a person's reading of it are inherent to what it settles, and an
+agent faking either would be reporting a window it never saw. **No agent runs any step of it**, and no
+step of it is a command an agent could run in your place — the reading is of a screen.
+
+**What it settles.** The two screens the 0.13.0 licensing work is most likely to have moved under, read
+against the CLI the release installs:
+
+- **The Spend view draws data.** With the console pointed at the installed 0.13.0 CLI and the sandbox
+  project selected, the Spend screen's panels draw from the documents a real CLI answers with —
+  `report --json` and `budget show --json` for the report and the caps, `runs stats --json` for the
+  by-person view — with each panel's own source line naming the read it came from and **no panel drawing
+  an empty box where a document exists**. `report` is a **paid name**: a core build answers it with
+  D522's stub, so a Spend view that draws nothing is the console being pointed at the wrong build as
+  readily as it is a console bug, and step 2 is what tells the two apart.
+- **The project views draw data.** The Projects screen's panels draw from `budget show --json`,
+  `accounts ls --json`, `secrets ls --json`, the policy panel from `project policy show --json` and
+  doctor's checks — each naming its source, and the repositories panel drawing the caps document's own
+  `repos` rather than a run list. The project view's later managed sections are **Check 360's** subject on
+  a managed project; here the reading is the panels' data and their sources, on the sandbox project.
+- **No notice of any kind appears.** **D523** is the fact: there is no licence notice and no notice on a
+  paid command, in either direction — a core build prints no licence warning, and the tagged build prints
+  nothing when it answers a paid name. The check is the reading that confirms none appears: nothing on
+  the console's stderr, in its log, or beside a command you run in step 2 says anything about a licence,
+  a key or an edition.
+
+**What you do.**
+
+1. On the machine whose installation you are checking, run `fugaro version` and record what it prints.
+   It must be **0.13.0 or later**; if it is not, run `fugaro update` at your terminal — that one command
+   is the whole upgrade — and start again. The console resolves the CLI from the well-known locations
+   (the desktop console's design §3.4), so the build it drives is the one on your `PATH`.
+2. In the sandbox repository's checkout, read the documents the two screens are drawn from and keep them:
+   `fugaro report --json`, `fugaro budget show --json`, `fugaro runs stats --json`, `fugaro accounts ls
+   --json`, `fugaro secrets ls --json` and `fugaro project policy show --json`. Watch stderr while you do
+   it: **nothing about a licence, a key or an edition may appear on it**, and a command that refuses is a
+   finding to record here rather than to work around.
+3. Open the console, select the sandbox project, and open **Spend**. Its range defaults to 7d/day.
+4. Read the Spend panels against step 2's documents: the figures agree with the document each panel's
+   source line names, and no panel is drawn empty or waiting while its document was read.
+5. Open the **Projects** view (and the project's own tab) and read its panels the same way: each names its
+   source, the repositories panel draws the caps document's `repos`, and the policy panel agrees with
+   `project policy show --json` and with `fugaro doctor`'s policy lines.
+6. Look at the console's own log or terminal, wherever you started it from, for anything a step printed
+   about a licence, a key or an edition.
+
+**Expected.** Every panel that has a document behind it draws, from that document, with its source line
+naming it; the figures agree with step 2's documents; the policy panel agrees with the CLI's own policy
+read and with doctor; and **no notice of any kind** — no licence notice, no paid-command notice, no
+edition warning — appears anywhere in steps 2, 5 or 6. **Refutation.** A panel drawn empty where its
+document was read, a figure that disagrees with the document it came from, a panel that waits for a
+sibling before drawing, or any notice at all: the last fails the check outright rather than being noted,
+because **D523** is that none exists, and one that appears is the release printing what the decision
+forbids.
+
+**Restore.** Nothing: one window and a handful of reads. No run is launched, no credential is minted, no
+project is written and no file is changed by the check itself — the sandbox run whose figures you may want
+in the Spend view is one you would have launched anyway, and its pull request is yours to close. Close the
+window and you are done.
+
+**What waits on it.** The 0.13.0 tag, as Check 200's does: both are the owner-run half of the release.
+A failed 201 is the console reading the released CLI wrongly or the release printing a notice it must not,
+and each returns to the owner as a decision rather than as a task: the console half is pinned hermetically
+by its own e2e specs against the stub, and a live disagreement with them is the release's, not a spec's.
+
 ## Check 230: the author, the committer and the trailers, on GitHub and on Bitbucket (two sandbox repositories carrying `git.author: launcher`, a third with no such key, and their forges; never `belong`; run by you; NOT RUN)
 
 **NOT RUN.** Written by task **X1** of
@@ -14109,3 +14271,4 @@ repositories and carries `pull_requests: write` alone.
 **What waits on it.** D4 (the advisory merge order) and the change-set half of the spec's promise
 that a set is ready or not ready as a whole: this run is the only reading of it, and a set that
 flips one pull request and leaves the other draft is a finding for this plan's owner.
+
