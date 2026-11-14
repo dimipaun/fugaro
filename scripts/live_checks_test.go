@@ -78,7 +78,14 @@ import (
 // owns; Check 302's are a fake `fugaro`, a real `uname` and a real terminal
 // (a pty its helper types the phase's one confirmation into), and it rewrites
 // a copy of its own script to prove the case that expects a quiet daemon log
-// to be a finding is not vacuous.
+// to be a finding is not vacuous. Check 310's fake is a fake `fugaro` that
+// answers the four commands the check drives in the shapes internal/report and
+// internal/initflow print them -- the line in flight, the step lines, the
+// closing line, the plan view, the `--json` document on stdout and the account
+// on stderr -- files a log with the sink's own name shape, mode and retention
+// rule, and fails exactly when the check's own fake `terraform` is first on
+// PATH, so the forced failure is the check's own shim end to end and a case
+// bends the one thing it judges.
 var liveCheckScripts = []struct {
 	name string
 	test string
@@ -101,6 +108,7 @@ var liveCheckScripts = []struct {
 	{"check303.sh", "check303_test.sh"},
 	{"check304.sh", "check304_test.sh"},
 	{"check305.sh", "check305_test.sh"},
+	{"check310.sh", "check310_test.sh"},
 	{"check340.sh", "check340_test.sh"},
 	{"check96.sh", "check96_test.sh"},
 	{"check361.sh", "check361_test.sh"},
