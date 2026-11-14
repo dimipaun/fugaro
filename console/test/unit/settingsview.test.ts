@@ -76,7 +76,6 @@ const ARGV: readonly string[] = Object.freeze([
   'budget.per_run_usd',
   '--layer',
   'project',
-  '--yes',
   '--',
   '12',
   '--project',

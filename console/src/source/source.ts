@@ -586,9 +586,9 @@ export interface FugaroSource {
    *
    * The argv is a pure function of the three arguments and carries **no**
    * renderer-supplied flag: the phase (`--dry-run --json` for the
-   * classification, `--yes` for either write) and the layer (`--layer <L>`) are
-   * main-process facts (`argvFor`'s own `settingsEdit`), and the value is the
-   * operator's one element behind the `--` terminator.
+   * classification, and no word for either write) and the layer (`--layer <L>`)
+   * are main-process facts (`argvFor`'s own `settingsEdit`), and the value is
+   * the operator's one element behind the `--` terminator.
    *
    * It is **asynchronous** for the reason every other method here is: the
    * binding's source is resolved (and its binary probed) on the first call, so
@@ -598,7 +598,7 @@ export interface FugaroSource {
   settingsEditArgv(args: ValidatedArguments, phase: SettingsEditPhase, layer: string): Promise<readonly string[]>
   /**
    * settingsEdit runs one phase: the dry run (which writes nothing, D1106) or
-   * the write (which carries `--yes`, D1107). It answers the dry run's
+   * the write (which carries no flag, D1107). It answers the dry run's
    * document or the write's sentence, or the CLI's own refusal sentence -- see
    * `SettingsEditSpawn`.
    *

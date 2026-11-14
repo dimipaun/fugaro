@@ -194,7 +194,11 @@ func stageWarn(lcPath string, customBase bool, reasons ...string) string {
 	return warnedLine(anchorProblemText("acme/app", "app", "base", lcPath, reasons, customBase))
 }
 
-func TestRepoStageAnchorYesWrites(t *testing.T) {
+// A run that carries its own answer (initflow.Env.Yes, what a nested converge
+// passes) writes the line and says so in one line. The flag a person used to
+// pass for that is gone (T11, docs/no-prompt-policy), and the write and its
+// sentence are what remains of it.
+func TestRepoStageAnchorAnsweredRunWrites(t *testing.T) {
 	yaml := anchorYAML()
 	s, out, dir := anchorRig(t, anchorLC(), yaml, "")
 	putRecord(t, "0.3.1")
@@ -205,7 +209,7 @@ func TestRepoStageAnchorYesWrites(t *testing.T) {
 	if got := readYAML(t, dir); got != withAnchor(yaml) {
 		t.Errorf("file:\n%s", got)
 	}
-	want := diffText(path) + "  confirmed by --yes\n" + updatedText(path) + stageWarn("", false, reasonRecordVersionOld("0.3.1"))
+	want := diffText(path) + "  confirmed by this run's own answer\n" + updatedText(path) + stageWarn("", false, reasonRecordVersionOld("0.3.1"))
 	if out.String() != want {
 		t.Errorf("output:\n%s\nwant:\n%s", out, want)
 	}
@@ -430,7 +434,7 @@ func TestRepoStageAnchorUnreadableRecord(t *testing.T) {
 	}
 	got := out.String()
 	if !strings.Contains(got, "its build record could not be read (") || !strings.Contains(got, "so its age is unknown") ||
-		!strings.HasSuffix(got, "(1) fugaro image refresh --repo acme/app --workflow app in the checkout, in your own terminal window, or with --yes from CI or a script (never in a coding agent's session; it verifies this release's base base image and pins it by digest through the installation's remote repository, points the daily image check job at it and rebuilds the image), (2) fugaro update --anchor, before you merge a change that adds gcp_project\n") {
+		!strings.HasSuffix(got, "(1) fugaro image refresh --repo acme/app --workflow app in the checkout, in your own terminal window (never in a coding agent's session; it verifies this release's base base image and pins it by digest through the installation's remote repository, points the daily image check job at it and rebuilds the image), (2) fugaro update --anchor, before you merge a change that adds gcp_project\n") {
 		t.Errorf("output:\n%s", got)
 	}
 }

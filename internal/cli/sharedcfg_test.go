@@ -94,8 +94,9 @@ func sharedRuns(t *testing.T) string {
 func TestInitConfigOnlyPublishesTheSharedConfig(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
+	fakeTerminal(t)
 	dir := sharedRuns(t)
-	if _, _, err := executeStdin(t, "", "setup", "--config-only", "--yes"); err != nil {
+	if _, _, err := executeStdin(t, "", "setup", "--config-only"); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(sharedObjectPath(dir))
@@ -144,13 +145,14 @@ func TestInitPublishConfigAsLauncherIsRefused(t *testing.T) {
 func TestInitWarnsWhenSharedConfigPublishIsForbidden(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
+	fakeTerminal(t)
 	old := sharedBucketOpener
 	sharedBucketOpener = func(ctx context.Context, _ string) (*blobx.Bucket, error) {
 		return r.gcs.Bucket(t, initRunsBucket), nil
 	}
 	t.Cleanup(func() { sharedBucketOpener = old })
 	r.gcs.DenyWrites(initRunsBucket, "fugaro/")
-	out, _, err := executeStdin(t, "", "setup", "--yes")
+	out, _, err := executeStdin(t, "", "setup")
 	if err != nil {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
@@ -192,6 +194,7 @@ func TestInitPublishConfigExcludesTheOtherModes(t *testing.T) {
 func TestInitPublishFailureWarnsAndSucceeds(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
+	fakeTerminal(t)
 	dir := sharedRuns(t)
 	if err := os.Chmod(dir, 0o500); err != nil {
 		t.Fatal(err)
@@ -201,7 +204,7 @@ func TestInitPublishFailureWarnsAndSucceeds(t *testing.T) {
 		f.Close()
 		t.Skip("the directory is writable despite its mode (running as root)")
 	}
-	out, _, err := executeStdin(t, "", "setup", "--config-only", "--yes")
+	out, _, err := executeStdin(t, "", "setup", "--config-only")
 	if err != nil {
 		t.Fatalf("a publish failure must not fail init: %v", err)
 	}

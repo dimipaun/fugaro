@@ -499,8 +499,8 @@ of the bundle and this task's file list, its tests and its SEC flag are as they 
 **Decisions:** the ruling of 2026-11-05; `CLAUDE.md`'s HARD RULE. **Verification:** `internal/cli`.
 
 - **Files:** `internal/cli/init_converge_test.go` (the convergence pair),
-  `internal/cli/update_managed_test.go` (its `--yes --provision-credentials` invocations at `:798`,
-  `:808` become plain `--yes`). **2 files.**
+  `internal/cli/update_managed_test.go` (its `--provision-credentials` invocations at `:798`,
+  `:808`, the `--yes` beside them gone with T11). **2 files.**
 - **Interfaces:** consumes DON1's write. Produces no interface of its own: it is the test that makes the
   HARD RULE falsifiable. Two directions, and the second is the one that is easy to forget:
   1. an installation whose recorded state is **0.19.0** — no `credentials_service` block, the
@@ -628,7 +628,7 @@ behaviour is already pinned in `managed_cost_test.go` where it belongs.
   **`internal/config/providers.go` (`:542`, `ServiceHeldSecretNames`'s own doc: "once an installation
   opts in AND the job's own account has given its own copy up")** and
   **`internal/cli/init_coordinator_test.go` (`:113`, `TestTheCoordinatorOptInIsRefusedWhereItCannotBe
-  Confirmed`, whose comment states "the opt-in follows `--provision-credentials` — `--yes` never covers
+  Confirmed`, whose comment states "the opt-in follows `--provision-credentials` — no flag covers
   it")** — the last two added by the review, and both are **Go sources with a retired phrase in them**,
   not documents, which is why they belong in this list rather than in the table below.
   **At most 28 Go files**, plus the documents in the table below — and the cap is the list, not a
@@ -845,7 +845,7 @@ credentials service). **Verification:** `internal/cli`, `internal/managed`.
 
   | state | the line |
   |---|---|
-  | no block in the local config | the installation has not opted into the service: this release deploys it only behind `fugaro update --provision-credentials` (the flag DON1 removes: until it lands, the credentials stage is registered behind it and nothing else runs it), and every run of an installation that never asked for it fetches its model credential the way it did before the service existed, so nothing here is broken or behind. Taking the opt-in is what moves the credential out of the jobs: every repository root re-applied after it drops its jobs' model credential in **every** `agent.auth` mode (which is why a project that takes it runs its workflows with `agent.auth: cascade`), the stage asks for its own **typed confirmation** (a `--yes` run does not cover it), and a GitHub run of it refuses to mint until the bundle holds the App's key (`fugaro creds set github-app-key`) |
+  | no block in the local config | the installation has not opted into the service: this release deploys it only behind `fugaro update --provision-credentials` (the flag DON1 removes: until it lands, the credentials stage is registered behind it and nothing else runs it), and every run of an installation that never asked for it fetches its model credential the way it did before the service existed, so nothing here is broken or behind. Taking the opt-in is what moves the credential out of the jobs: every repository root re-applied after it drops its jobs' model credential in **every** `agent.auth` mode (which is why a project that takes it runs its workflows with `agent.auth: cascade`), the stage asks for its own **typed confirmation** (no flag covers it), and a GitHub run of it refuses to mint until the bundle holds the App's key (`fugaro creds set github-app-key`) |
   | block present, Cloud Run answers `NOT_FOUND` | the block is written and the service is not deployed; `fugaro update --provision-credentials` re-applies the root (the same flag as the row above, for the same reason) |
   | deployed, the bundle holds no version | deployed and admitting nobody: the bundle is empty, and `fugaro creds set NAME` is the writer. **Warning**: the loader fails closed, so every model call of a run against it is refused |
   | deployed, the bundle's newest version is not `ENABLED` | deployed and admitting nobody: the version and its document are there and Secret Manager will not serve them, so the loader's read fails closed — the same refused model call as the row above, so the same **warning**. The line names the version and its state; `DISABLED` is the one an operator's incident disable leaves, and the fix names the enable (`gcloud secrets versions enable <version> --secret=<id>`) because `creds set` refuses while the newest version is disabled |
@@ -1275,8 +1275,8 @@ time; it may be two tasks' **across** levels and never within one. So:
 
 **A level with two writers of one file is the thing this table exists to make impossible**, and the
 first draft of this section had exactly that: DON2 and DON6 both wanted
-`internal/cli/update_managed_test.go`. The task that holds it is **DON2** — the file's `--yes
---provision-credentials` invocations are the convergence test's own fixture, so the task that owns the
+`internal/cli/update_managed_test.go`. The task that holds it is **DON2** — the file's `--provision-credentials`
+invocations (the `--yes` beside them gone with T11) are the convergence test's own fixture, so the task that owns the
 convergence owns them — and DON6 takes `managed_apply_test.go` instead. Naming the collision is the
 point: a shared-files table that has never caught one is a table nobody checked.
 
