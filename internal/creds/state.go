@@ -30,7 +30,7 @@
 //
 // # What is stored
 //
-// Four small nodes, all under creds/:
+// Five small nodes, all under creds/:
 //
 //   - creds/marks/<name> — one credential's Mark (available, exhausted until T,
 //     backed off, broken);
