@@ -79,6 +79,18 @@ import (
 // (a pty its helper types the phase's one confirmation into), and it rewrites
 // a copy of its own script to prove the case that expects a quiet daemon log
 // to be a finding is not vacuous.
+// Checks 420 to 422 are the model-crafts owner-run checks: 420 and 421 drive a
+// fake `fugaro` whose `craft ls --json`, `accounts pool ls --json`, `runs ls
+// --json` and `run` answer out of the case's own files and whose `creds ls`
+// names the credentials the check reads, over a fake `gcloud` and a fake
+// credentials service behind a fake `curl`, and 422 drives a fake `fugaro`
+// whose converge REALLY migrates the case's own local config the way the
+// release does, a fake `gcloud` that prints an access token and a fake `curl`
+// that serves the published policy node before and after it, with a mode for
+// each state a case bends: a build without the crafts, another installation's
+// config, a converge that fails or leaves a step, one that migrates nothing,
+// an account left unconverted with and without the note it is owed, a second
+// converge that moves the keys, and a node that moved, went or cannot be read.
 var liveCheckScripts = []struct {
 	name string
 	test string
@@ -114,6 +126,9 @@ var liveCheckScripts = []struct {
 	{"check511.sh", "check511_test.sh"},
 	{"check520.sh", "check520_test.sh"},
 	{"check521.sh", "check521_test.sh"},
+	{"check420.sh", "check420_test.sh"},
+	{"check421.sh", "check421_test.sh"},
+	{"check422.sh", "check422_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent
