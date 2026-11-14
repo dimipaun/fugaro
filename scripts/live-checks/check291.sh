@@ -2,22 +2,26 @@
 # Check 291 — what a catalog image's ENV does in a run, as ONE script YOU run.
 #
 # It settles the live half of task IE4 of the image-ENV work
-# (docs/image-env/implementation-plan.md §6; the reconciliation's D1370, D1371,
-# D1372, D1375 and D1381; issue #1755): a catalog entry whose Dockerfile sets an
+# (docs/image-env/implementation-plan.md §6; the reconciliation's D1371, D1372,
+# D1375 and D1381; issue #1755): a catalog entry whose Dockerfile sets an
 # ordinary marker and one reserved name, the stamp `fugaro update --repo` writes
-# on the job and `fugaro doctor --all` reads back, one trivial run reading the
-# marker present and the reserved name absent out of a command the run ran
-# through `fugaro verify`, and the refutation — the same workflow on a
-# repository-built image, which passes none of its image's own variables
-# (D1370). The register's row and section are docs/gcp-live-checklist.md,
-# "Check 291"; the rule it reads back is docs/base-image.md's "Bring your own".
+# on the job and `fugaro doctor --all` reads back, and one trivial run reading
+# the marker present and the reserved name absent out of a command the run ran
+# through `fugaro verify`. It does NOT read D1370's other half — the same
+# workflow on a repository-built image, which passes none of its image's own
+# variables — because `fugaro image build --workflow` is disabled under D1900:
+# it prints "repo-level images are disabled; the project's catalog image is
+# used" and builds nothing, so that refutation measures nothing at all while the
+# disable stands. The register's row and section are
+# docs/gcp-live-checklist.md, "Check 291"; the rule it reads back is
+# docs/base-image.md's "Bring your own".
 #
 # Usage:      bash scripts/live-checks/check291.sh --repo <owner/name> --region <region>
 #             [--workflow <name>] [--entry <name>] [--yes] [--dry-run]
 #             Run it FROM the sandbox repository's own checkout: it edits that
 #             checkout's fugaro.yaml, commits and pushes what it edited, and
-#             closes the pull requests the two runs open. --workflow names the
-#             workflow the runs land on (the only one in fugaro.yaml when it is
+#             closes the pull request the run opens. --workflow names the
+#             workflow the run lands on (the only one in fugaro.yaml when it is
 #             not named); --entry names the catalog entry this check publishes
 #             (fugaro-check291 by default); --region is the Cloud Run region the
 #             jobs are deployed in; --yes is the consent below; --dry-run prints
@@ -37,13 +41,12 @@
 #             `fugaro doctor` answers are each refused by name before anything
 #             is run.
 # Creates:    one catalog entry (published by `fugaro update`), one Cloud Build
-#             for it and one for the repository-built image of the refutation,
-#             two trivial sandbox runs and the branches and pull requests they
-#             open, and two commits on the sandbox repository's default branch.
+#             for it, one trivial sandbox run and the branch and pull request it
+#             opens, and two commits on the sandbox repository's default branch.
 #             Every one of them is undone by the Restore, which closes the pull
-#             requests, deletes their branches, takes the commits' files back
-#             and removes the catalog entry again.
-# Costs:      two Cloud Builds and two real runs of the sandbox repository. It
+#             request, deletes its branch, takes the commits' files back and
+#             removes the catalog entry again.
+# Costs:      one Cloud Build and one real run of the sandbox repository. It
 #             spends model money, so it asks: without --yes it prints the bound,
 #             records a FAILed `consent` fact and stops with exit 2 before
 #             anything is created.
@@ -102,7 +105,6 @@ RESTORE_STATE=untouched
 RESTORE_DETAIL=""
 YAML_CHANGED=no
 ENTRY_ADDED=no
-DOCKERFILE_ADDED=no
 RUNS_LAUNCHED=()
 TAGS=""
 FROM_IMAGE=""
@@ -117,12 +119,9 @@ CFG=""
 BUCKET=""
 BEFORE_ENTRIES=""
 BUILT_ENTRY=""
-BUILT_WORKFLOW=""
 ENTRY_LINE=""
 RUN1=""
-RUN2=""
 BRANCH1=""
-BRANCH2=""
 RUN_FOUND=""
 RUN_STATUS=""
 RESTORE_FAIL=""
@@ -621,24 +620,6 @@ def cmd_set_image_name(path, want, entry):
         lines = put_scalar_after(lines, start, ind, "image_name", entry)
     wr(path, lines)
 
-def cmd_swap_dockerfile(path, want, dockerfile):
-    """dockerfile: in place of the covering key, both edits in one write.
-
-    validateCatalogRef refuses `dockerfile:` beside `image_name:`/`needs:`, so a
-    file that kept both would be refused where it is parsed and neither the
-    build nor the converge would run at all.
-    """
-    lines = rd(path)
-    start, end = workflow_span(lines, want)
-    if start < 0:
-        die("no workflow named %s" % want)
-    ind = indent_of(lines[start]) + 2
-    for key in ("image_name", "needs", "image"):
-        lines, _ = drop_key(lines, start, end, key, ind)
-        start, end = workflow_span(lines, want)
-    lines = put_scalar_after(lines, start, ind, "dockerfile", dockerfile)
-    wr(path, lines)
-
 def cmd_set_commands_test(path, want, body):
     lines = rd(path)
     start, end = workflow_span(lines, want)
@@ -676,8 +657,6 @@ def main():
         cmd_imageenv(sys.argv[2], sys.argv[3])
     elif what == "set-image-name":
         cmd_set_image_name(sys.argv[2], sys.argv[3], sys.argv[4])
-    elif what == "swap-dockerfile":
-        cmd_swap_dockerfile(sys.argv[2], sys.argv[3], sys.argv[4])
     elif what == "set-commands-test":
         cmd_set_commands_test(sys.argv[2], sys.argv[3], sys.argv[4])
     else:
@@ -950,19 +929,19 @@ step_workflow() {
   esac
   local has_test
   has_test=$(field commands_test "$SCRATCH/wf.txt")
-  fact workflow PASS "the two runs land on workflow $WORKFLOW: $covered. Step 3 gives it image_name: $ENTRY, step 5 replaces that key with a dockerfile: of the repository's own, step 4 adds the presence-only commands.test (the workflow has one today: $has_test), and the Restore puts all of it back"
+  fact workflow PASS "the run lands on workflow $WORKFLOW: $covered. Step 3 gives it image_name: $ENTRY, step 4 adds the presence-only commands.test (the workflow has one today: $has_test), and the Restore puts both back"
 }
 
-# step_consent: two Cloud Builds and two real runs of the sandbox repository are
+# step_consent: one Cloud Build and one real run of the sandbox repository are
 # what this check spends, and the model money is the part no reading is worth
 # without your word.
 step_consent() {
-  local bound="one catalog entry published and built (one Cloud Build) on $INSTALLATION, two fugaro update --repo convergences of $REPO, two trivial runs of $REPO on $WORKFLOW (model spend), and the branches and pull requests those runs open — the Restore closes them, deletes their branches and takes the commits back"
+  local bound="one catalog entry published and built (one Cloud Build) on $INSTALLATION, two fugaro update --repo convergences of $REPO, one trivial run of $REPO on $WORKFLOW (model spend), and the branch and pull request that run opens — the Restore closes it, deletes its branch and takes the commits back"
   if [ "$YES" != yes ]; then
     owner "Check 291 spends: $bound."
     owner "Nothing has been created yet. Run it again with --yes to consent, or --dry-run to read the plan and call nothing at all."
     fact consent FAIL "this run was not consented to: it would spend $bound"
-    stop "Check 291 builds two images and launches two runs of $REPO. Say --yes to consent (or --dry-run to read the plan and call nothing): $USAGE"
+    stop "Check 291 builds one image and launches one run of $REPO. Say --yes to consent (or --dry-run to read the plan and call nothing at all): $USAGE"
   fi
   fact consent PASS "consented with --yes: this run spends $bound"
 }
@@ -1197,97 +1176,13 @@ step_run_value() {
   fact run-value PASS "run $RUN1's transcript carries no 'example.invalid' anywhere and no $RESERVED_NAME=value pair: the image's value reached nothing that prints"
 }
 
-# step_refutation: the same workflow on a repository-built image, and the half a
-# code review cannot settle (D1370). The covering key comes out in the same edit
-# the dockerfile: goes in — validateCatalogRef refuses the two together — and
-# `fugaro image build --workflow` is load-bearing: a bare `fugaro image build`
-# builds CATALOG entries, so it would rebuild this check's own entry and leave
-# .fugaro/<workflow>.Dockerfile unbuilt, and the 'marker: absent' below could
-# then be read off a stale image that never carried the marker.
-step_refutation() {
-  local st
-  st=$(capture "$SCRATCH/rendered.Dockerfile" fugaro image render --workflow "$WORKFLOW")
-  [ "$st" = 0 ] || stop "fugaro image render --workflow $WORKFLOW did not answer, and the repository-built Dockerfile of the refutation is what it prints"
-  mkdir -p "$CHECKOUT/.fugaro"
-  cp "$SCRATCH/rendered.Dockerfile" "$CHECKOUT/.fugaro/$WORKFLOW.Dockerfile"
-  cat >>"$CHECKOUT/.fugaro/$WORKFLOW.Dockerfile" <<EOF
-ENV $MARKER_NAME=$MARKER_VALUE
-ENV $RESERVED_NAME=$RESERVED_VALUE
-EOF
-  DOCKERFILE_ADDED=yes
-  st=$(capture "$SCRATCH/edit.err" python3 "$SCRATCH/reader.py" swap-dockerfile "$CHECKOUT/fugaro.yaml" "$WORKFLOW" ".fugaro/$WORKFLOW.Dockerfile")
-  [ "$st" = 0 ] || stop "this check could not give $WORKFLOW a dockerfile: of its own in $CHECKOUT/fugaro.yaml (its reason is above)"
-  YAML_CHANGED=yes
-  if ! commit_and_push "check291: build $WORKFLOW's image from the repository's own Dockerfile" fugaro.yaml ".fugaro/$WORKFLOW.Dockerfile"; then
-    fact refutation FAIL "the commit or the push of the repository-built Dockerfile did not succeed"
-    stop "the commit or the push of the refutation's Dockerfile did not succeed (git's own words are above): the build below reads the definition off the remote"
-  fi
-  owner "next: fugaro image build --workflow $WORKFLOW builds the repository's own image (the --workflow is what makes it the workflow's image and not this check's catalog entry). Answer its own confirmations at this terminal yourself."
-  if ! run_loud fugaro image build --workflow "$WORKFLOW"; then
-    fact refutation FAIL "fugaro image build --workflow $WORKFLOW did not exit 0"
-    stop "fugaro image build --workflow $WORKFLOW failed (its last lines are above), so there is no repository-built image to read the refutation off"
-  fi
-  BUILT_WORKFLOW=$(last_line 'built ')
-  if ! run_loud fugaro update --repo "$REPO"; then
-    fact refutation FAIL "fugaro update --repo $REPO did not exit 0 after the repository-built image was built"
-    stop "fugaro update --repo $REPO failed (its last lines are above), so the workflow's job was not converged onto the repository-built image"
-  fi
-  local image
-  image=$(gcloud run jobs describe "$JOB" --region "$REGION" --format='value(spec.template.template.containers[0].image)' 2>/dev/null | head -1 || true)
-  if [ -z "$image" ]; then
-    fact refutation FAIL "gcloud run jobs describe $JOB answered no image"
-    stop "gcloud run jobs describe $JOB --region $REGION answered no image for the job, so this check cannot say whether it carries the repository-built one and not the catalog entry's (is the region $REGION the one the job is in?)"
-  fi
-  case "$image" in
-  *"catalog-$ENTRY"*)
-    fact refutation FAIL "job $JOB still carries the catalog entry's image ($image)"
-    fail_stop "job $JOB carries the catalog entry's own image after the converge, so the refutation below would be read off the wrong image: the --workflow of 'fugaro image build --workflow $WORKFLOW' is what builds the repository's, and D1144 says a bare 'fugaro image build' builds catalog entries"
-    ;;
-  esac
-  read_doctor
-  local stamped entry
-  stamped=$(jfield stamped "$JOB" "$SCRATCH/doctor.vocab")
-  entry=$(jfield entry "$JOB" "$SCRATCH/doctor.vocab")
-  if [ "$stamped" != no ]; then
-    fact refutation FAIL "doctor's line for $JOB still reads catalog-stamped (entry $entry) after the converge onto the repository-built image"
-    fail_stop "fugaro doctor --all still reports job $JOB as catalog-stamped after it was converged onto the repository's own image, and the stamp is what the whole check rests on: read it yourself with 'fugaro doctor --all'"
-  fi
-  local why=""
-  if [ "$entry" = "$ENTRY" ]; then
-    why="; the line still names $ENTRY although it reads not catalog-stamped, and the two cannot both be true of one job"
-  fi
-  fact refutation "${why:+FAIL}${why:-PASS}" "the workflow now runs on the repository's own image ($image, its own build printed ${BUILT_WORKFLOW:-nothing this reader recognises}), which is not the entry's catalog-$ENTRY one, and doctor's line for $JOB reads not catalog-stamped: no project image_catalog entry chose it${why}"
-}
-
-# step_refutation_run: the second run, on the repository-built image, reading the
-# same marker absent. That is D1370's scope: a repository-built image passes none
-# of its image's own variables.
-step_refutation_run() {
-  if ! launch_run "refutation"; then
-    fact refutation-run FAIL "fugaro run --workflow $WORKFLOW did not name the run it launched"
-    stop "the second fugaro run --workflow $WORKFLOW did not print a --json document naming the run it launched and the branch it cut (its own output is above)"
-  fi
-  RUN2=$RUN_ID
-  BRANCH2=$RUN_BRANCH
-  RUNS_LAUNCHED+=("$BRANCH2")
-  if ! await_run "$RUN2"; then
-    fact refutation-run FAIL "run $RUN2 had not ended within ${RUN_WAIT_SECONDS}s (its row reads found=${RUN_FOUND:-nothing}, status=${RUN_STATUS:-nothing})"
-    stop "run $RUN2 had not ended after ${RUN_WAIT_SECONDS}s, and the transcript this step reads is written as the run's stages end. Watch it with 'fugaro watch $RUN2' and run this check again when it has ended — the run is a real one and is not cancelled by stopping here. Raise CHECK291_RUN_WAIT_SECONDS if it needs longer"
-  fi
-  if ! transcript_of "$RUN2" "$SCRATCH/run2.jsonl"; then
-    fact refutation-run FAIL "the transcript of run $RUN2 could not be read out of the runs bucket"
-    stop "this check could not read run $RUN2's stored transcript. Read it yourself: 'fugaro logs $RUN2'"
-  fi
-  grep -q 'marker: absent' "$SCRATCH/run2.jsonl" || {
-    fact refutation-run FAIL "run $RUN2's transcript does not carry 'marker: absent'"
-    fail_stop "run $RUN2's transcript carries no 'marker: absent', although its image is the repository's own and D1370 says such an image passes none of its own variables: read it yourself with 'fugaro logs $RUN2'"
-  }
-  grep -q 'reserved: absent' "$SCRATCH/run2.jsonl" || {
-    fact refutation-run FAIL "run $RUN2's transcript does not carry 'reserved: absent'"
-    fail_stop "run $RUN2's transcript carries no 'reserved: absent': read it yourself with 'fugaro logs $RUN2'"
-  }
-  fact refutation-run PASS "run $RUN2 of the same workflow on the repository-built image read 'marker: absent' and 'reserved: absent' — the same marker, set the same way in the repository's own Dockerfile, reached no run at all"
-}
+# The two steps that read D1370's other half used to sit here — the workflow
+# moved onto a repository-built image by `.fugaro/<workflow>.Dockerfile`, and a
+# second run reading the same marker absent off it. `fugaro image build
+# --workflow` is disabled under D1900 (the notice above, and nothing built), so
+# that image cannot be produced and the refutation would have measured the
+# catalog entry's image a second time. The checklist's section says where the
+# half stands now.
 
 # --------------------------------------------------------------- the Restore
 # restore_run undoes what this check created, in the order the commands allow,
@@ -1303,16 +1198,16 @@ restore_run() {
     RESTORE_DETAIL="the run stopped before it entered a checkout, so it created nothing to undo"
     return 0
   fi
-  if [ "$YAML_CHANGED" = no ] && [ "$DOCKERFILE_ADDED" = no ] && [ "$ENTRY_ADDED" = no ] && [ "${#RUNS_LAUNCHED[@]}" -eq 0 ]; then
+  if [ "$YAML_CHANGED" = no ] && [ "$ENTRY_ADDED" = no ] && [ "${#RUNS_LAUNCHED[@]}" -eq 0 ]; then
     RESTORE_STATE=untouched
     RESTORE_DETAIL="this run created nothing — no catalog entry, no commit, no run — so there is nothing to restore"
     return 0
   fi
   local detail=""
-  # 1. The repository's own configuration: the byte-for-byte backup, and the
-  #    Dockerfile step 5 added. Both go back in one commit, and `fugaro image rm`
-  #    below is refused while a workflow still names the entry, which is why this
-  #    part comes first.
+  # 1. The repository's own configuration: the byte-for-byte backup, committed
+  #    and pushed back out in one commit. `fugaro image rm` below is refused
+  #    while a workflow still names the entry, which is why this part comes
+  #    first.
   if [ "$YAML_CHANGED" = yes ] && [ -f "$SCRATCH/fugaro.yaml.bak" ]; then
     if cp "$SCRATCH/fugaro.yaml.bak" "$CHECKOUT/fugaro.yaml" 2>/dev/null; then
       detail="$detail; $REPO's fugaro.yaml is back byte-for-byte"
@@ -1320,25 +1215,11 @@ restore_run() {
       RESTORE_FAIL="$RESTORE_FAIL put $SCRATCH/fugaro.yaml.bak back at $CHECKOUT/fugaro.yaml;"
     fi
   fi
-  if [ "$DOCKERFILE_ADDED" = yes ]; then
-    rm -f "$CHECKOUT/.fugaro/$WORKFLOW.Dockerfile" 2>/dev/null || true
-    if [ -e "$CHECKOUT/.fugaro/$WORKFLOW.Dockerfile" ]; then
-      RESTORE_FAIL="$RESTORE_FAIL remove $CHECKOUT/.fugaro/$WORKFLOW.Dockerfile;"
-    else
-      detail="$detail; .fugaro/$WORKFLOW.Dockerfile is gone"
-    fi
-  fi
   if [ "$YAML_CHANGED" = yes ]; then
-    # Only the paths this run really created: `.fugaro/<workflow>.Dockerfile` is
-    # step 5's, and `git add` of a path that is not there stages NOTHING and
-    # fails, so a run that ended before step 5 would push no restoration at all
-    # and leave the branch naming the entry this Restore removes in part 3.
-    local paths=(fugaro.yaml)
-    [ "$DOCKERFILE_ADDED" = yes ] && paths+=(".fugaro/$WORKFLOW.Dockerfile")
-    if commit_and_push "check291: restore $WORKFLOW's own configuration" "${paths[@]}" >/dev/null 2>&1; then
+    if commit_and_push "check291: restore $WORKFLOW's own configuration" fugaro.yaml >/dev/null 2>&1; then
       detail="$detail; the check's own edits are committed back out on $BRANCH"
     else
-      RESTORE_FAIL="$RESTORE_FAIL commit and push the restoration of ${paths[*]} on branch $BRANCH;"
+      RESTORE_FAIL="$RESTORE_FAIL commit and push the restoration of fugaro.yaml on branch $BRANCH;"
     fi
   fi
   # 2. The convergence that redeploys the job from the restored configuration —
@@ -1358,8 +1239,8 @@ restore_run() {
       RESTORE_FAIL="$RESTORE_FAIL remove the catalog entry ('fugaro image rm $ENTRY' then 'fugaro update'; their output is in $SCRATCH/restore.rm and $SCRATCH/restore.publish);"
     fi
   fi
-  # 4. The pull requests the two runs opened and the branches they cut. `gh`
-  #    takes a branch name here, so the run record is not parsed for a number.
+  # 4. The pull request the run opened and the branch it cut. `gh` takes a
+  #    branch name here, so the run record is not parsed for a number.
   local branch state n=0
   for branch in ${RUNS_LAUNCHED[@]+"${RUNS_LAUNCHED[@]}"}; do
     n=$((n + 1))
@@ -1413,7 +1294,7 @@ restore_run() {
   fi
   if [ -z "$RESTORE_FAIL" ]; then
     RESTORE_STATE=done
-    RESTORE_DETAIL="this check's own things are undone: ${detail#; }. What is NOT undone is the fugaro update it ran, which is the point of it — and one ordinary run of $REPO is yours to make, since this check launches no third run"
+    RESTORE_DETAIL="this check's own things are undone: ${detail#; }. What is NOT undone is the fugaro update it ran, which is the point of it — and the ordinary sandbox run the section's last step suggests is yours to make, since this check does not launch it"
   else
     RESTORE_STATE=STILL_THERE
     RESTORE_DETAIL="this check undid part of what it created: ${detail#; }. STILL TO DO, by hand, in $CHECKOUT: $RESTORE_FAIL"
@@ -1448,21 +1329,11 @@ print_plan() {
   printf '     fugaro runs ls --repo %s --json            # waited for the run to END (terminal), up to %ss\n' "$REPO" "$RUN_WAIT_SECONDS" >&$out
   printf '     fugaro runs show --repo %s <run> --json ; gcloud storage ls/cat the transcript\n' "$REPO" >&$out
   printf '     read: marker: present, reserved: absent, and example.invalid NOWHERE\n' >&$out
-  printf '  5. fugaro image render --workflow %s > .fugaro/%s.Dockerfile (+ the two ENV lines)\n' "$WORKFLOW" "$WORKFLOW" >&$out
-  printf '     edit %s/fugaro.yaml: image_name: out, dockerfile: .fugaro/%s.Dockerfile in (one edit)\n' "$CHECKOUT" "$WORKFLOW" >&$out
-  printf '     git commit + git push origin %s\n' "${BRANCH:-<branch>}" >&$out
-  printf '     fugaro image build --workflow %s    # the --workflow is load-bearing (D1144): ONE Cloud Build\n' "$WORKFLOW" >&$out
-  printf '     fugaro update --repo %s ; gcloud run jobs describe <job> --region %s\n' "$REPO" "$REGION" >&$out
-  printf '     fugaro doctor --all                      # the job must read NOT catalog-stamped\n' >&$out
-  printf '     fugaro run --workflow %s --json %s\n' "$WORKFLOW" "'<the same trivial task>'" >&$out
-  printf '     fugaro runs ls --repo %s --json            # waited for the run to END (terminal), up to %ss\n' "$REPO" "$RUN_WAIT_SECONDS" >&$out
-  printf '     fugaro runs show --repo %s <run> --json ; gcloud storage ls/cat the transcript\n' "$REPO" >&$out
-  printf '     read: marker: absent and reserved: absent\n' >&$out
-  printf '  6. Restore (always, from the exit trap):\n' >&$out
-  printf '     put %s/fugaro.yaml back byte-for-byte, remove .fugaro/%s.Dockerfile\n' "$CHECKOUT" "$WORKFLOW" >&$out
+  printf '  5. Restore (always, from the exit trap):\n' >&$out
+  printf '     put %s/fugaro.yaml back byte-for-byte\n' "$CHECKOUT" >&$out
   printf '     git commit + git push origin %s ; fugaro update --repo %s\n' "${BRANCH:-<branch>}" "$REPO" >&$out
   printf '     fugaro image rm %s ; fugaro update\n' "$ENTRY" >&$out
-  printf '     gh pr close fugaro/<run> --delete-branch (both runs), read back CLOSED and the branch gone\n' >&$out
+  printf '     gh pr close fugaro/<run> --delete-branch (the one run), read back CLOSED and the branch gone\n' >&$out
   printf '     fugaro doctor --all                      # no stamp for %s and no hand-set %s\n' "$ENTRY" "$RESERVED_NAME" >&$out
   printf 'Nothing was created, published, built, committed, pushed or launched: this dry run made no cloud call and no fugaro call at all.\n' >&$out
 }
@@ -1471,7 +1342,7 @@ print_plan() {
 # Two key sets: the real run's rows, and the four a dry run can have — it makes
 # no doctor call, so it has no `installation` row to offer and must not print one
 # reading 'not reached' beside a plan that was never carried out.
-BLOCK_KEYS_REAL=(belong installation checkout workflow consent entry stamp reserved converged run-marker run-value refutation refutation-run restore)
+BLOCK_KEYS_REAL=(belong installation checkout workflow consent entry stamp reserved converged run-marker run-value restore)
 BLOCK_KEYS_DRY=(belong checkout workflow dry-run restore)
 BLOCK_KEYS=("${BLOCK_KEYS_REAL[@]}")
 
@@ -1537,8 +1408,6 @@ main() {
   step_converged
   step_run_marker
   step_run_value
-  step_refutation
-  step_refutation_run
 
   REACHED_END=yes
   trap - ERR

@@ -75,8 +75,8 @@ import (
 // Check 291's fakes are a fake `fugaro`, a fake `gcloud` and a fake `gh`, with
 // real git against a bare repository inside each case's own directory: the
 // catalog entry's line, the job's stamp and the names a run drops, the
-// reservation read with a name set on the job by hand, and the two runs'
-// transcripts all come out of the case's own state files, so a case bends one
+// reservation read with a name set on the job by hand, and the run's own
+// transcript all come out of the case's own state files, so a case bends one
 // reading at a time and says what the check then reads -- and its `--dry-run`
 // case pins that a plan makes no call at all. Its fake `run` names the run it
 // launched only in the `--json` document (a person's own line is a reporter step

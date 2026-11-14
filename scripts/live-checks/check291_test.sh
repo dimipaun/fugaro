@@ -7,10 +7,11 @@
 # directory), and the transcripts the check reads are files the fake `fugaro`
 # writes for the fake `gcloud` to serve. What it pins is the reading of each
 # fact (the stamp, the drops, the caveat, the marker present and the reserved
-# name absent, the refutation on a repository-built image), the guards (belong,
-# a checkout that is not the repository named, a dirty tree, a missing --yes), a
-# --dry-run that calls nothing at all, and a Restore that says what it could not
-# undo. Two shapes the check has to get right are fakes of their own here and not
+# name absent read off the run's own transcript, and the same line with one
+# reserved name set on the job by hand), the guards (belong, a checkout that is
+# not the repository named, a dirty tree, a missing --yes), a --dry-run that
+# calls nothing at all, and a Restore that says what it could not undo. Two
+# shapes the check has to get right are fakes of their own here and not
 # conveniences: the fake `run` prints the run it launched ONLY in the `--json`
 # document (what a person reads is a reporter step on stderr, whose short name is
 # not the run's id), and a run's transcript appears in the bucket only where the
@@ -154,29 +155,26 @@ job_line() {
   fi
   if [ -n "$held" ]; then
     names="${held//$'\n'/, }"
+    # The reading step_reserved is about: the name really set on the job has to
+    # come back among the names a run drops, and this knob is a line that drops
+    # a name the check never set instead.
+    knob drops_other_name && names="SOME_OTHER_NAME"
     echo "info image-env-$job: the job's image is catalog entry $entry, and a run drops 1 name(s) the job sets itself: $names — Fugaro reserves them, so nothing an image sets under them can shadow the routing, the credentials or a declared secret$caveat$suffix"
   else
     echo "info image-env-$job: the job's image is catalog entry $entry, and a run drops none of the names the job sets itself — the rest of its environment is Fugaro's own, which configures the run$caveat$suffix"
   fi
 }
 
-# write_transcript RID IDX — the stored transcript of the run IDX-th launched,
-# written when that run's row turns terminal and not before.
+# write_transcript RID — the stored transcript of run RID, written when that
+# run's row turns terminal and not before.
 write_transcript() {
   local d="$state/bucket/runs/chk291-sandbox/$1/transcripts"
   mkdir -p "$d"
-  case "$2" in
-  1)
-    printf '%s\n' '{"type":"result","text":"marker: present reserved: absent"}' >"$d/implement-1.jsonl"
-    [ -e "$state/knobs/run1_marker_absent" ] && printf '%s\n' '{"text":"marker: absent reserved: absent"}' >"$d/implement-1.jsonl"
-    [ -e "$state/knobs/run1_reserved_present" ] && printf '%s\n' '{"text":"marker: present reserved: present"}' >"$d/implement-1.jsonl"
-    [ -e "$state/knobs/run1_value" ] && printf '%s\n' '{"text":"marker: present reserved: absent env=https://example.invalid/x"}' >"$d/implement-1.jsonl"
-    [ -e "$state/knobs/run1_no_reserved_line" ] && printf '%s\n' '{"text":"marker: present"}' >"$d/implement-1.jsonl"
-    ;;
-  *)
-    printf '%s\n' '{"text":"marker: absent reserved: absent"}' >"$d/implement-1.jsonl"
-    ;;
-  esac
+  printf '%s\n' '{"type":"result","text":"marker: present reserved: absent"}' >"$d/implement-1.jsonl"
+  [ -e "$state/knobs/run1_marker_absent" ] && printf '%s\n' '{"text":"marker: absent reserved: absent"}' >"$d/implement-1.jsonl"
+  [ -e "$state/knobs/run1_reserved_present" ] && printf '%s\n' '{"text":"marker: present reserved: present"}' >"$d/implement-1.jsonl"
+  [ -e "$state/knobs/run1_value" ] && printf '%s\n' '{"text":"marker: present reserved: absent env=https://example.invalid/x"}' >"$d/implement-1.jsonl"
+  [ -e "$state/knobs/run1_no_reserved_line" ] && printf '%s\n' '{"text":"marker: present"}' >"$d/implement-1.jsonl"
 }
 
 case "$1" in
@@ -212,10 +210,6 @@ image)
     printf '%s\n' "$name" >"$state/entry-name"
     ;;
   build)
-    if [ "${3:-}" = "--workflow" ]; then
-      echo "built us-east5-docker.pkg.dev/chk291-proj/fugaro/repo-test@sha256:2222"
-      exit 0
-    fi
     [ -e "$state/knobs/build_fails" ] && { echo "fake: build failed" >&2; exit 1; }
     echo "built us-east5-docker.pkg.dev/chk291-proj/fugaro/catalog-$3@sha256:1111"
     ;;
@@ -230,8 +224,6 @@ update)
     # job carries the stamp exactly while a workflow names the entry.
     if grep -qE "^ +image_name: $entry\$" "$co/fugaro.yaml"; then
       echo stamp >"$state/job-state"
-    elif grep -qE "^ +dockerfile:" "$co/fugaro.yaml"; then
-      if [ -e "$state/knobs/refutation_still_stamped" ]; then echo stamp >"$state/job-state"; else echo dockerfile >"$state/job-state"; fi
     else
       echo none >"$state/job-state"
     fi
@@ -246,7 +238,7 @@ run)
   n=$((n + 1))
   echo "$n" >"$state/run-count"
   id="00000000-0000-4000-8000-00000000000$n"
-  printf '%s %s\n' "$id" "$n" >>"$state/launched"
+  printf '%s\n' "$id" >>"$state/launched"
   # What a person reads, on STDERR and behind the reporter's own glyph, exactly
   # as the real command prints it: `launched <short>` where <short> is NOT the
   # run's id. Nothing here is a shape a reader can take a run from, which is why
@@ -271,7 +263,7 @@ runs)
     # run's own bytes are not in the bucket while it is still going, so a check
     # that read them straight after the launch would read nothing at all.
     rows=""
-    while read -r rid idx; do
+    while read -r rid; do
       [ -n "$rid" ] || continue
       poll=$(cat "$state/polls-$rid" 2>/dev/null || echo 0)
       poll=$((poll + 1))
@@ -281,7 +273,7 @@ runs)
       if [ "$poll" -ge 2 ] && ! knob run_never_terminal; then term=true; status=succeeded; fi
       [ -n "$rows" ] && rows="$rows,"
       rows="$rows{\"run_id\":\"$rid\",\"run\":\"chk291-sandbox/$rid\",\"repo\":\"chk291-sandbox\",\"status\":\"$status\",\"terminal\":$term,\"branch\":\"fugaro/$rid\"}"
-      [ "$term" = true ] && write_transcript "$rid" "$idx"
+      [ "$term" = true ] && write_transcript "$rid"
     done <"$state/launched"
     printf '{"project":"chk291-sandbox","runs":[%s]}\n' "$rows"
     ;;
@@ -302,8 +294,8 @@ FAKE
 fake_gcloud() {
   cat >"$CASE/bin/gcloud" <<'FAKE'
 #!/usr/bin/env bash
-# A fake gcloud: the job's held names and its image come out of the case's own
-# state, and `storage ls`/`cat` serve the runs bucket the fake fugaro writes into.
+# A fake gcloud: the job's held names come out of the case's own state, and
+# `storage ls`/`cat` serve the runs bucket the fake fugaro writes into.
 state=${CHK291_STATE:?}
 printf 'gcloud %s\n' "$*" >>"$state/gcloud.log"
 bucket=chk291-bucket
@@ -328,17 +320,6 @@ run)
       esac
       shift
     done
-    ;;
-  describe)
-    # The job's image follows the checkout's own fugaro.yaml: a dockerfile: is
-    # the repository's derived image, an image_name:/nothing is the catalog
-    # entry's. A knob that bends the DOCTOR line must not bend this one too, or a
-    # case could not tell which reading failed.
-    if grep -qE "^ +dockerfile:" "${CHK291_CHECKOUT:?}/fugaro.yaml"; then
-      echo "us-east5-docker.pkg.dev/chk291-proj/fugaro/repo-test@sha256:2222"
-    else
-      echo "us-east5-docker.pkg.dev/chk291-proj/fugaro/catalog-fugaro-check291@sha256:1111"
-    fi
     ;;
   esac
   ;;
@@ -420,7 +401,7 @@ status_of() { cat "$CASE/status"; }
 set_origin() { git -C "$CHECKOUT" remote set-url origin "$1"; }
 
 # The whole block's rows, in the order the script prints them.
-REAL_KEYS="belong installation checkout workflow consent entry stamp reserved converged run-marker run-value refutation refutation-run restore"
+REAL_KEYS="belong installation checkout workflow consent entry stamp reserved converged run-marker run-value restore"
 
 assert_all_pass() { # assert_all_pass OUT LABEL
   local key
@@ -475,39 +456,35 @@ test_happy_path() {
   expect_status 0 "$(status_of)" "the happy path"
   assert_all_pass "$CASE/out" "the happy path"
 
-  # What it read: the entry's own line, the stamp, the reservation and the two
-  # runs' lines.
+  # What it read: the entry's own line, the stamp, the reservation and the run's
+  # own transcript.
   expect_contains "$CASE/out" "catalog entry fugaro-check291 is published and built" "the entry's own catalog line"
   expect_contains "$CASE/out" "a run drops none of the names the job sets itself" "the stamp's drops"
   expect_contains "$CASE/out" "GOOGLE_APPLICATION_CREDENTIALS" "the reservation's name"
-  expect_contains "$CASE/out" "marker: present" "the first run's marker"
-  expect_contains "$CASE/out" "marker: absent" "the refutation's marker"
-  expect_contains "$CASE/out" "reads not catalog-stamped" "the refutation's doctor line"
+  expect_contains "$CASE/out" "marker: present" "the run's marker"
   expect_contains "$CASE/out" "no 'example.invalid'" "the value row"
 
   # What it did, in the order the check's own steps do it.
   expect_contains "$LOG" "fugaro image add fugaro-check291 --inline" "the entry is added"
   expect_contains "$LOG" " --tags base" "the entry carries the workflow's own tags"
   expect_contains "$LOG" "fugaro image build fugaro-check291" "the entry is built"
-  expect_contains "$LOG" "fugaro image build --workflow test" "the refutation's image is built with --workflow (D1144)"
   expect_contains "$LOG" "fugaro image rm fugaro-check291" "the Restore removes the entry"
   # The launch is read out of its own --json document and the run waited for: the
   # fake puts a run's transcript in the bucket only where the listing turns that
-  # run's row terminal, so the two run readings above are themselves the proof
-  # that the check waited — the first poll answers an in-flight row.
+  # run's row terminal, so the run reading above is itself the proof that the
+  # check waited — the first poll answers an in-flight row.
   expect_contains "$CASE/err" "✔ launch launched" "the launch really printed the human step line, which names no run"
-  expect_contains "$LOG" "fugaro run --workflow test" "the runs are launched on the workflow"
+  expect_contains "$LOG" "fugaro run --workflow test" "the run is launched on the workflow"
   expect_contains "$LOG" " --json" "the launch is read out of its own --json document"
   expect_absent "$LOG" "runs show --repo $ORIGIN 00000000 " "the short name a launch prints to a person is never read as the run's id"
-  [ "$(grep -c 'runs ls --repo' "$LOG")" -ge 4 ] ||
-    fail "the check made $(grep -c 'runs ls --repo' "$LOG") listing read(s) for two runs, fewer than the two per run that waiting for a run to end costs"
+  [ "$(grep -c 'runs ls --repo' "$LOG")" -ge 2 ] ||
+    fail "the check made $(grep -c 'runs ls --repo' "$LOG") listing read(s) for one run, fewer than the two that waiting for a run to end costs"
   expect_contains "$GLOG" "--update-env-vars GOOGLE_APPLICATION_CREDENTIALS=/dev/null" "the reserved name is set on the job by hand"
-  expect_contains "$HLOG" "gh pr close fugaro/" "the Restore closes the pull requests"
-  [ "$(grep -c 'gh pr close' "$HLOG")" = 2 ] || fail "the Restore closed $(grep -c 'gh pr close' "$HLOG") pull request(s), wanted 2"
+  expect_contains "$HLOG" "gh pr close fugaro/" "the Restore closes the run's pull request"
+  [ "$(grep -c 'gh pr close' "$HLOG")" = 1 ] || fail "the Restore closed $(grep -c 'gh pr close' "$HLOG") pull request(s), wanted 1"
 
   # And what is left behind: nothing of this check's.
   [ ! -e "$STATE/entry-added" ] || fail "the catalog entry is still published"
-  [ ! -e "$CHECKOUT/.fugaro/test.Dockerfile" ] || fail ".fugaro/test.Dockerfile is still there"
   [ ! -e "$STATE/held" ] || [ ! -s "$STATE/held" ] || fail "a name is still set on the job"
   cmp -s "$STATE/fugaro.yaml.orig" "$CHECKOUT/fugaro.yaml" ||
     fail "fugaro.yaml is not byte-for-byte what it was: $(diff "$STATE/fugaro.yaml.orig" "$CHECKOUT/fugaro.yaml" | head -5)"
@@ -557,7 +534,7 @@ test_a_missing_yes_is_refused_before_anything_is_created() {
   run291 --repo "$ORIGIN" --region us-east5
   expect_status 2 "$(status_of)" "a run without --yes"
   expect_contains "$CASE/out" "FACT consent: FAIL" "the consent row"
-  expect_contains "$CASE/out" "two trivial runs" "the bound is printed in the block"
+  expect_contains "$CASE/out" "one trivial run" "the bound is printed in the block"
   expect_contains "$CASE/err" "--yes to consent" "the bound is printed to the owner"
   expect_absent "$LOG" "fugaro image" "nothing was created"
   [ ! -e "$STATE/entry-added" ] || fail "an entry was published without consent"
@@ -640,16 +617,32 @@ test_a_stamp_whose_line_carries_a_value_is_an_answer() {
   expect_contains "$CASE/out" "never a value (D1375)" "the row cites the rule"
 }
 
-test_a_refutation_that_stays_stamped_is_an_answer() {
-  setup_case stillstamped
-  : >"$STATE/knobs/refutation_still_stamped"
+# The reserved name's own half of the run row: the marker arrived and the line
+# this check reads the reservation off is not there at all. Nothing else in this
+# suite reads a transcript that carries 'marker: present' with no 'reserved:'
+# line, so without this case a check that stopped at the marker would pass.
+test_a_run_with_no_reserved_line_is_an_answer() {
+  setup_case noreserved
+  : >"$STATE/knobs/run1_no_reserved_line"
   run291 --repo "$ORIGIN" --region us-east5 --yes
-  expect_status 1 "$(status_of)" "a job that keeps the stamp on a repository-built image"
-  expect_contains "$CASE/out" "FACT refutation: FAIL" "the refutation row"
-  expect_contains "$CASE/out" "still reads catalog-stamped" "the row names the reading"
-  expect_contains "$CASE/out" "chk291-sandbox-test" "the row names the job"
-  # The second run never happened: the refutation is what would be read off it.
-  [ "$(cat "$STATE/run-count" 2>/dev/null || echo 0)" = 1 ] || fail "a second run was launched although the refutation had already failed"
+  expect_status 1 "$(status_of)" "a transcript carrying the marker and no reserved line"
+  expect_contains "$CASE/out" "FACT run-marker: FAIL" "the marker row"
+  expect_contains "$CASE/out" "does not carry 'reserved: absent'" "the row names the line that is missing"
+  expect_contains "$CASE/out" "which is the one thing the passthrough exists to prevent" "the row says what the missing line would mean"
+}
+
+# step_reserved's own reading, bent at the clause that is the whole point of the
+# step: the name really set on the job has to come back among the names a run
+# drops. The line here drops a name the check never set, so the reading fails on
+# the name and not on the drops being absent altogether.
+test_a_reservation_the_line_does_not_drop_is_an_answer() {
+  setup_case dropsother
+  : >"$STATE/knobs/drops_other_name"
+  run291 --repo "$ORIGIN" --region us-east5 --yes
+  expect_status 1 "$(status_of)" "a line that drops a name the check never set"
+  expect_contains "$CASE/out" "FACT reserved: FAIL" "the reserved row"
+  expect_contains "$CASE/out" "did not name GOOGLE_APPLICATION_CREDENTIALS among the names a run drops" "the row names what it read"
+  expect_contains "$CASE/out" "SOME_OTHER_NAME" "the row carries the name the line did drop"
 }
 
 test_doctor_with_no_image_env_line_stops() {
@@ -663,10 +656,9 @@ test_doctor_with_no_image_env_line_stops() {
 # A run that never ends is not an answer, and nothing is read off it: `fugaro run`
 # returns at launch, so the transcript this check reads is only in the bucket once
 # the run has ended, and a reading taken at the deadline would be a reading of a
-# run that has not run yet. The ending is also before step 5, which is the shape
-# the Restore has to put the branch back from: `.fugaro/test.Dockerfile` is not
-# there yet, and a `git add` that named it anyway would stage nothing and leave
-# the branch's fugaro.yaml naming the entry the Restore removes from the catalog.
+# run that has not run yet. The ending is also after the checkout carries two
+# commits of this check's own, which is the shape the Restore has to put the
+# branch back from: the branch it leaves on origin has to name no entry again.
 test_a_run_that_never_ends_stops_and_the_branch_is_put_back() {
   setup_case neverends
   : >"$STATE/knobs/run_never_terminal"
@@ -747,7 +739,8 @@ t test_a_reserved_name_that_reaches_the_run_is_an_answer
 t test_a_value_in_the_transcript_is_an_answer
 t test_a_stamp_whose_line_lost_its_caveat_is_an_answer
 t test_a_stamp_whose_line_carries_a_value_is_an_answer
-t test_a_refutation_that_stays_stamped_is_an_answer
+t test_a_run_with_no_reserved_line_is_an_answer
+t test_a_reservation_the_line_does_not_drop_is_an_answer
 t test_doctor_with_no_image_env_line_stops
 t test_a_run_that_never_ends_stops_and_the_branch_is_put_back
 t test_a_build_that_fails_stops_and_is_restored
