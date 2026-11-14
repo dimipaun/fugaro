@@ -407,7 +407,7 @@ JSON
 write_record() { # write_record DIR RUN_ID ARM PAIR_ID MODEL PUBLISH USD STARTED FINISHED [SPLIT_ID]
   local dir=$1 id=$2 arm=$3 pair=$4 model=$5 publish=$6 usd=$7 started=$8 finished=$9 split=${10:-}
   [ -n "$split" ] || { if [ "$arm" = champion ]; then split=$coder; else split=$model; fi; }
-  local ab publish_json finished_json
+  local ab finished_json
   ab='{"pair_id":"'"$pair"'","arm":"'"$arm"'"'
   if [ "$arm" = challenger ]; then
     ab="$ab"',"publish":"'"$publish"'","challenger":"'"$model"'","challenger_source":"owner"'

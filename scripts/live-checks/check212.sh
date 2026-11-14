@@ -856,7 +856,7 @@ step_launch() {
     unmeasured pair-launched "there is no layer and challenger to sample a pair from: the rows above say why"
     return 0
   fi
-  local attempts=0 id status model reason ref
+  local attempts=0 id status model reason
   say "at ab.rate ${RATE} the expected number of launches to pair one is about $(awk -v r="$RATE" 'BEGIN { printf "%.0f", 1 / r }'), and this check stops at ${MAX_LAUNCHES}"
   while [ "$attempts" -lt "$MAX_LAUNCHES" ]; do
     attempts=$((attempts + 1))
@@ -1204,7 +1204,7 @@ step_verdict() {
     ;;
   esac
   local pass bad=""
-  while IFS=$'\t' read -r tag id index swap label arm; do
+  while IFS=$'\t' read -r tag id index _swap label arm; do
     [ "$tag" = pass ] || continue
     [ "$id" = "$PAIR_ID" ] || continue
     pass="${arm:-(${label:-none})}"
