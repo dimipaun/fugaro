@@ -872,6 +872,7 @@ probe account carries predefined grants only).
 | 501 | The slim base, reached by the one command that is the whole upgrade ([`docs/image-setup-skill/`](image-setup-skill/implementation-plan.md), its **Check 501** and task **IS13**; **IS4**'s base, and the rule that `fugaro update` is the whole upgrade): the installation's base pin, read before and after `fugaro update` — run by the owner at their own terminal with no `--yes`, so the rebuild of the checkout's workflow images is answered by them in its own confirmation — and then one run on the sandbox that reaches its `result.json`, with the record's `image.built_at` at or after the moment the update started — the start, not the end, because the update waits for its own rebuilds before it returns: a pin the update moved says nothing about a run until a job starts on an image the upgrade built, and one whose image predates the update is the reading that the rebuild was declined | See "Check 501" below; `bash scripts/live-checks/check-501.sh --sandbox <a sandbox repository checkout>` is the whole of it, its sibling test `scripts/live-checks/check-501_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** (`fugaro-dev`) and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call, and the update is refused in such a checkout); **no agent runs any step of it** | What `fugaro update` costs on your installation — among its steps, the rebuild of the checkout's workflow images, billable and asked for on its own — plus one sandbox run and what its task costs. The check writes no pin, no config and no policy of its own: the only write is the update, whose steps you answer. **OWNER-RUN, NOT RUN.** |
 | 520 | A text-only coder reads a screenshot, on the vision model ([`docs/vision-model/`](vision-model/implementation-plan.md), its **Check 520** and task **V8**; **V1**'s `agent.models.vision`, **V2**'s `model_prices.*.image_tokens`, **V7**'s rewrite of the coder role, and **D2016** — which is why the state this measures is the coder priced **without** an image rate and not the plan's "with"): the sandbox repository's coder is priced without an image rate and `agent.models.vision` names a model that can read one, and one run whose task names a console `__screenshots__` PNG (the issue's own case, run `20261107-104613-b2af`) passes `implement` — and `fix`, where the recipe runs one — reaches its own `result.json`, and there every coder-role stage timing names the **vision** model's ID while `cost.model_by` carries that same model, so the split the issue is about is read from the record and not from the configuration; `fugaro diagnose <run> --json` prints the same split through the command an owner reads a run with | See "Check 520" below; `bash scripts/live-checks/check520.sh --sandbox <a sandbox repository checkout> --yes` is the whole of it, its sibling test `scripts/live-checks/check520_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call, and so is a coding agent's session); **no agent runs any step of it** | ONE sandbox run and what its task costs — the model spend of its coder-role stages, on the sandbox's own budget — plus the pull request that run opens: **billable, and `--yes` is required** before anything is launched. Every other call is a read (doctor, `models ls`, the run record, `diagnose`), and `CHECK520_MAX_MODEL_USD` turns the run's own figure into a criterion when you set it. The run's pull request and branch are left open for you to close. **OWNER-RUN, NOT RUN.** |
 | 521 | The early refusal, and the sentence an owner acts on ([`docs/vision-model/`](vision-model/implementation-plan.md), its **Check 521** and task **V8**; **V5**'s bootstrap refusal — "the coder can't read an image the task names" — and **D2005**, **D2006** and **D2001**): a repository whose coder is priced without an image rate and with **no** `agent.models.vision`, and a task whose text names a `.png`: the run is refused at **bootstrap**, before its first stage, so no stage's work is paid for and thrown away — the failure the refusal exists to remove; its record's `failure_class` is `config_invalid`, its `reason` names the slot to set and the price member that gives that slot's model an image rate, its stage list is **empty** and its cost is **zero** | See "Check 521" below; `bash scripts/live-checks/check521.sh --sandbox <a sandbox repository checkout>` is the whole of it, its sibling test `scripts/live-checks/check521_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call, and so is a coding agent's session); **no agent runs any step of it** | **NOTHING billable and no model call**: the run is refused at bootstrap, before its first stage, so no stage's work is paid for and the budget is not touched — which is why this check needs no `--yes`. It does start one Cloud Run job execution, and **nothing it launches outlives it**: a run that has not ended within `CHECK521_RUN_TIMEOUT_SECONDS` is cancelled with `fugaro cancel --now`, from the step that gives up on it and from the script's own exit trap. **OWNER-RUN, NOT RUN.** |
+| 550 | A repoint with a run in flight ([`docs/account-aliases/`](account-aliases/implementation-plan.md), its **Check 550** and task **AL3**; [spec.md](account-aliases/spec.md) §1 and §5, the reconciliation's **D2094**, **D2095**, **D2096** and **D2097**): the one claim of the alias work no hermetic test can take — an alias is repointed by one command, and the repoint moves **new launches only**, so a run launched before it keeps the account its own launch resolved. One run is launched, the alias is repointed while that run is in a stage, and the run's own `result.json` is read: its `stage_accounts` for `review` names the account the launch resolved and not the one the alias stands for now. A second run, launched after the repoint, has `review` served by the new target, so the repoint reached new launches; and the alias is moved back, so the installation ends the run as it began it. The two runs' pull requests are left for you to close | See "Check 550" below; `bash scripts/live-checks/check550.sh --sandbox <a sandbox repository checkout> --yes` is the whole of it, its sibling test `scripts/live-checks/check550_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox installation and the sandbox repository only, never `belong`** (a project, region or account naming that installation is refused by name, and so is a coding agent's session); **no agent runs any step of it** | **TWO sandbox runs and what their tasks cost**, on the sandbox's own budget, plus the two converges the repoint and the move back apply (the policy node and the job set, each) and the pull requests the runs open: **billable, and `--yes` is required** before anything is launched. Every other call is a read (`doctor`, `accounts ls`, two `settings get`, the runs list, the record). On disk it is one scratch directory, removed at the end. **OWNER-RUN, NOT RUN.** |
 | 292 | A catalog entry whose source names a build `context:` is built with the repository's files in it ([`docs/catalog-build-context/`](catalog-build-context/implementation-plan.md) §6, its **Check 292** and task **CB5**; that folder's **F22**, **F29**, **F30**, **F32** and **F33**, and **D1402**, **D1403**, **D1408** and **D1409**; the amendment it folds into is [`docs/project-image-catalog/context-design.md`](project-image-catalog/context-design.md), its §A5, §A6, §C3, §C4, §C5 and the fold-in at §11): one entry built from a repository's Dockerfile in a **subdirectory**, whose `COPY` reaches a file of the repository — the build the catalog could not run before this work — read back four ways: the built image **contains the copied file**, the record names **one** commit (`source_commit` and `context_commit` the same, and the image's `org.opencontainers.image.revision` that commit), the staged context **fires** the nightly decision with the `catalog-context` reason and the rebuild it submits is pinned to the staged commit, and after that rebuild the same entry decides **without** that reason. **What the plan's own step 4 cannot be run as written is the point of the section below:** the trigger's subject is the digest the operator's own copy **staged**, not the branch, so a pushed commit fires nothing by itself — the check is written against the code and says so | See "Check 292" below; **you** run it, on the **sandbox installation and the sandbox repository only, never `belong`**, from the sandbox repository's checkout, and **no agent runs any step of it** (there is **no script**: the check is the steps below) | One Cloud Build that runs (`fugaro image build <entry>`), one submitted-and-cancelled before its steps run (the staging that leaves the record behind), and the one rebuild the project's catalog check job submits when the entry fires: **all billable, and the rebuild is the point of the step**. Nothing is granted, no run is launched and no model is called, so there is no run spend. Two commits are pushed to the sandbox repository's branch and reverted (a third when step 5 loses its race with the build it cancels), and the entry, its staged objects, its record, its check state and its image are the check's own — the entry and its objects are removed in the Restore, the image is left in the shared registry (`fugaro image rm` never deletes one). **OWNER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
@@ -13563,6 +13564,86 @@ reads `FAIL — not reached`. The knobs are `CHECK521_DRY_RUN`, `CHECK521_KEEP_S
 that the refusal D2005 puts at bootstrap really happens there and really costs nothing. A failed 521 stops
 the release it belongs to, because the alternative is a repository whose run pays for a stage and then dies
 on the gateway — the state the issue reports.
+
+## Check 550: a repoint with a run in flight — the run keeps its own account, and the next launch gets the new one (sandbox installation and sandbox repository only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **AL3** of
+[docs/account-aliases/implementation-plan.md](account-aliases/implementation-plan.md) — its "Check 550" —
+and **run by you**: nothing below is a claim that a repoint under a live run behaves. The check is
+`scripts/live-checks/check550.sh` (its sibling test `scripts/live-checks/check550_test.sh` drives it against
+fake `gcloud` and `fugaro` only, and launches nothing), what it starts is **two sandbox runs, which are
+billable**, and **no agent runs any step of it**: a project, region or account naming `belong` is refused by
+name, and so is a coding agent's session — `accounts alias set` is refused there by name anyway (D2097), and
+refusing earlier is what makes the block say why rather than report that refusal as a finding.
+
+**What it settles.** [spec.md](account-aliases/spec.md) §1 and §5, at the one place no hermetic test in this
+tree can reach:
+
+- **The release.** `fugaro version` and the usage line `fugaro accounts alias --help` prints: the work ships
+  in **0.25.0**, so a build that predates it, or one whose `accounts alias` does not name `set`, stops with
+  the release named rather than measuring a repoint it cannot make. A build that reports no release number at
+  all (a dev build or a commit) is decided by the feature probe, not by a guess at how `dev` sorts.
+- **The premise, from the block itself.** `fugaro accounts ls --json`, read in the sandbox checkout: the
+  `claude_account_aliases` block declares an alias, that alias stands for an account the repository is
+  admitted to, and a **second** admitted account exists to repoint onto. `fugaro settings get
+  stages.review.claude_account` and `fugaro settings get default_claude_account` are read beside it, because
+  a repoint only moves a stage's account where a choice key names the alias (spec §4) — a repository whose
+  keys name the account directly is a different repository than this check is about, and the check stops
+  before it launches anything. The alias to move is the block's first, the account to move it onto is the
+  first admitted one it does not already stand for, and both are knobs.
+- **Run 1, and the repoint under it.** One run launched with `fugaro run --json` from the checkout, followed
+  with `fugaro runs ls --json --limit 1` until it is in a stage; `fugaro accounts alias set <alias> <target>
+  --yes` is then the **whole** of the repoint (D2096), and the move is read back off `fugaro accounts ls
+  --json` rather than taken from the command's exit status. A run that ended before the repoint landed is a
+  finding — the task is too short for this check, and it says so.
+- **The claim.** Run 1's `result.json`, read from the runs bucket at the key that listing's own row gives
+  (`runs/<the repository's slug>/<run>/result.json`, where the slug is **one path segment** and not the
+  `owner/name` the launch names) and checked against the run id this check launched. Its `stage_accounts`
+  for `review` names the account the launch resolved — the alias's target **before** the repoint — and not
+  the one the alias stands for now: the repoint did not reach a run in flight (D2094, D2095).
+- **The other half.** A second run, launched after the repoint, followed to its own record: its `review`
+  stage was served by the **new** target, so the repoint moved new launches and the installation converged
+  behind the command. A second run served by the old account is the repoint not having reached the job set.
+- **The move back.** The same one command, with the account the alias stood for, and the block read back:
+  the installation ends the run as it began it. A move back that does not land is a row that fails and names
+  the command to type — a check that left the owner's installation on a target the check chose is a check
+  that changed something of theirs.
+
+**What a run costs.** TWO sandbox runs and what their tasks cost, on the sandbox's own budget, plus the two
+converges the repoint and the move back apply (the policy node and the job set, each) and the pull requests
+the runs open. **Billable, and the check requires `--yes`**: without it the check prints the plan, changes
+nothing and exits. Every other call is a read (`doctor`, `accounts ls`, two `settings get`, the runs list,
+the record). Give the runs a task that takes **minutes rather than seconds** — the repoint has to land while
+run 1 is still in a stage, and `CHECK550_TASK` is where you say so. On disk it is one scratch directory,
+removed at the end. The two runs' pull requests and branches are **not** closed by the check: the `restore`
+row names them, because a pull request is the owner's to close.
+
+**Run it:**
+
+```sh
+bash scripts/live-checks/check550.sh --sandbox <a sandbox repository checkout> --dry-run
+bash scripts/live-checks/check550.sh --sandbox <a sandbox repository checkout> --yes
+```
+
+Progress goes to stderr and one `CHECK 550 RESULT` block goes to stdout at the end: paste that whole block
+here and nothing else. **Exit `0`** is every criterion that was measured holding; **`1`** is a measured
+criterion that did not hold, or a guard that stopped the run — among them a build older than the release the
+work ships in, a block with no alias, and a run that ended before the repoint landed; **`2`** is the check
+not being able to measure (a tool missing, the checkout not being one, a `--json` document that could not be
+read, or a run that never ended). A key the run never reached reads `FAIL — not reached`. The knobs are
+`CHECK550_DRY_RUN`, `CHECK550_YES`, `CHECK550_KEEP_SCRATCH`, `CHECK550_SANDBOX`, `CHECK550_REPO` (the
+repository as `owner/name`, when the checkout's own origin is not it), `CHECK550_ALIAS` (the block's first
+alias by default), `CHECK550_TARGET` (the first admitted account the alias does not already stand for by
+default), `CHECK550_TASK` and `CHECK550_RECIPE` (what both runs are launched with), `CHECK550_RELEASE`
+(0.25.0), `CHECK550_REGION` (us-east5), `CHECK550_RUN_TIMEOUT_SECONDS` (3600),
+`CHECK550_IMPLEMENT_WAIT_SECONDS` (900), `CHECK550_POLL_SECONDS` (15), `CHECK550_CLI_TIMEOUT_SECONDS` (180),
+`CHECK550_LAUNCH_TIMEOUT_SECONDS` (600), `CHECK550_REPOINT_TIMEOUT_SECONDS` (1800) and
+`CHECK550_DOCTOR_TIMEOUT_SECONDS` (300).
+
+**What waits on it.** The release that ships AL3 through AL6: a failed 550 is a repoint that moved a run
+that was already in flight — the run's review stage served by an account its own job did not mount — and it
+returns to the owner as a decision rather than as a task, because the alternative is a resolver that reads
+the block again per stage, which is a different design and not a fix.
 
 ## Check 410: the failure line, and a diagnosis with no setup (your own machine, your own installation; never `belong`; run by you; NOT RUN)
 
