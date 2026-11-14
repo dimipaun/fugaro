@@ -67,6 +67,12 @@ func newProjectReposCmd() *cobra.Command {
 type projectReposOptions struct {
 	cloud cloudOptions
 	yes   bool
+	// allowListOnly is `add`'s way back to what it did before RE1: one entry
+	// in the published allow-list and nothing else. It is a flag and not the
+	// absence of a flag because the wide change is the one that needs saying
+	// out loud — a person who wants only the list is writing a decision about
+	// admission, while the converge is the ordinary act of enrolling.
+	allowListOnly bool
 }
 
 func newProjectReposLsCmd() *cobra.Command {
@@ -91,17 +97,49 @@ func newProjectReposLsCmd() *cobra.Command {
 func newProjectReposAddCmd() *cobra.Command {
 	var o projectReposOptions
 	cmd := &cobra.Command{
-		Use:   "add <provider/owner/name | owner/name | *>",
-		Short: "Enroll a repository: add it to the policy's allow-list",
-		Long: "Add a canonical repository (github/acme/app, bitbucket/acme/*) to the\n" +
-			"published policy's allow_repos, through the same ETag-guarded write the\n" +
-			"publisher uses, and print the change. A bare owner/name takes its provider\n" +
-			"from this machine's project config, and * is the list's own entry for every\n" +
-			"repository: it is written as it is. Only allow_repos changes.",
+		Use:   "add <provider/owner/name | owner/name>",
+		Short: "Enroll a repository: one confirmation for the whole enrolment",
+		Long: "Enrol a repository in the project, in one confirmation. The command reads\n" +
+			"what it can — the provider and the default branch from the repository's own\n" +
+			"checkout and fugaro.yaml, the workflow list from that same file, the image\n" +
+			"entry its workflows select, the GitHub App ID and the account the project's\n" +
+			"other repositories are onboarded with — prints the whole list of what it\n" +
+			"will change, asks once, and then does each step as far as it can:\n" +
+			"\n" +
+			"  1. this machine's project config: the repository's repos: entry\n" +
+			"  2. this machine's project config: its repo-to-image mapping\n" +
+			"  3. the published policy's allow_repos\n" +
+			"  4. the publish of the policy node\n" +
+			"  5. the repository's job set and its run.invoker grant\n" +
+			"\n" +
+			"Every step is idempotent: a repository already enrolled converges to the\n" +
+			"same state, and a step that has nothing to do says so instead of writing\n" +
+			"the same bytes again. A value it cannot read it refuses with the one command\n" +
+			"that supplies it, and never guesses one. --yes answers the confirmation and\n" +
+			"nothing else: it never stands in for a refusal.\n" +
+			"\n" +
+			"Step 5 needs a checkout of the repository on this machine; without one it\n" +
+			"is left for you, and `fugaro update --repo` in a checkout of the repository\n" +
+			"creates its job and its grant. The first image build is not part of this\n" +
+			"(it is billable): `fugaro image build`. The map step writes the published\n" +
+			"map merged with this entry, never over it. Nothing here asks a run to\n" +
+			"finish, and nothing rewrites what a run in flight holds.\n" +
+			"\n" +
+			"--allow-list-only is the older, narrow behaviour: * is the allow-list's own\n" +
+			"entry for every repository and not a repository, so it is written with that\n" +
+			"flag and refused without it. With it, only allow_repos changes, exactly as\n" +
+			"before.",
 		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error { return runProjectReposEdit(cmd, &o, args[0], false) },
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if o.allowListOnly {
+				return runProjectReposEdit(cmd, &o, args[0], false)
+			}
+			return runProjectReposEnroll(cmd, &o, args[0])
+		},
 	}
 	addCloudFlags(cmd, &o.cloud)
+	cmd.Flags().BoolVar(&o.allowListOnly, "allow-list-only", false, "Write only the allow-list entry, as this command did before the whole enrolment converged (required for *)")
+	cmd.Flags().BoolVar(&o.yes, "yes", false, "Answer the one confirmation without typing the project's name (it never stands in for a refusal)")
 	return cmd
 }
 
