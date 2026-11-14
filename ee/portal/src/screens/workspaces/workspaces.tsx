@@ -62,23 +62,23 @@ function day(value: string): string {
   return DAY.format(new Date(value))
 }
 
-/**
- * The marker the checkout (P4.1) and the billing screen (P4.4) send a person
- * back with.
- *
- * A purchase or a seat change reaches the installation through
- * `fugaro licence refresh` (the spec's own sentence, pinned by P3.6's
- * `TestSeatChangeIsTheNextRenewal`), so the screen a payment lands on says so.
- * The marker is a query parameter rather than a prop because the two screens
- * that write it are other tasks' files and this one may not edit them; it is
- * read from the router's location and replaced through the router, so the
- * address the app holds and the address the browser shows stay one fact. A
- * reload, or a link back here, therefore does not tell somebody their purchase
- * has just landed a second time.
- */
+// The marker the checkout (P4.1) and the billing screen (P4.4) send a person
+// back with: `/workspaces?licence=changed`. A purchase or a seat change reaches
+// the installation through `fugaro licence refresh` (the spec's own sentence,
+// pinned by P3.6's `TestSeatChangeIsTheNextRenewal`), so the screen a payment
+// lands on says so. It is a query parameter rather than a prop because the two
+// screens that write it are other tasks' files and this one may not edit them.
 const REFRESH_MARKER = 'licence'
 const REFRESH_VALUE = 'changed'
 
+/**
+ * The query the marker leaves behind, or null when this address carries none.
+ *
+ * The marker is read from the router's location and replaced through the
+ * router, so the address the app holds and the address the browser shows stay
+ * one fact: a reload, or a link back here, does not tell somebody their
+ * purchase has just landed a second time.
+ */
 function spendsRefreshMarker(search: string): string | null {
   const params = new URLSearchParams(search)
   if (params.get(REFRESH_MARKER) !== REFRESH_VALUE) {
