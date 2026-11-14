@@ -42,6 +42,13 @@ type Name string
 // never stored a typed token behaves as it did before this work.
 const LegacyName Name = "bitbucket-token"
 
+// TypedNamePrefix is the bundle key family a typed token's document key is in:
+// the legacy key with a doubled dash. The doubled dash is deliberate (R13) —
+// ClaudeAccountNameRE cannot produce one, so a token's key can never be spelled
+// the way a model account's is — and it is the precedent the review-signing
+// family sets.
+const TypedNamePrefix = string(LegacyName) + "--"
+
 // Type is what a token is scoped to (R1). It is redundant for matching — the
 // coverage patterns and the project UUID are what match — and is stored for
 // display and for the add-time check, which needs to know which call to make.
@@ -64,7 +71,11 @@ const (
 // Record is one token's operator-stated facts (D2350, D2351). It carries no
 // value: the value is the bundle's (T1), and it is found by Name.
 type Record struct {
-	// Name is the token's document key.
+	// Name is the token's document key: bitbucket-token--<name> for a typed
+	// token, or bitbucket-token for the legacy untyped one. Validate ties the
+	// two together — the legacy key is the one untyped record and a typed record
+	// is in the family, with a name after the doubled dash — so the type can
+	// never be the untyped value by accident.
 	Name Name
 	// Type is the token's scope: TypeRepo, TypeProject, TypeWorkspace, or
 	// TypeUntyped for the implicit record the legacy key is (R3).
@@ -99,9 +110,9 @@ type Record struct {
 	Expires string
 }
 
-// Validate reports a record whose type and coverage disagree, which is refused
-// wherever a record is written or read rather than resolved in the selector's
-// favour (R1).
+// Validate reports a record whose name, type and coverage disagree, which is
+// refused wherever a record is written or read rather than resolved in the
+// selector's favour (R1).
 //
 // The coverage patterns themselves are held to the node's own rule for a
 // Bitbucket credential's reach, projectpolicy.ValidBitbucketTokenCoverage, and
@@ -111,6 +122,9 @@ type Record struct {
 // all (F14). What this adds on top is R1's type: which of those reaches each
 // type states.
 func (r Record) Validate() error {
+	if err := r.validateName(); err != nil {
+		return err
+	}
 	switch r.Type {
 	case TypeRepo:
 		if len(r.Coverage) == 0 {
@@ -158,6 +172,43 @@ func (r Record) Validate() error {
 		}
 	default:
 		return fmt.Errorf("the Bitbucket token %s has the unknown type %q", r.Name, r.Type)
+	}
+	return nil
+}
+
+// validateName ties a record's name to its type, which is the half of R1 that
+// was otherwise unstated: the legacy key is the ONE untyped record and every
+// typed record is in the bitbucket-token--<name> family, with a name after the
+// doubled dash. Without it the untyped type is a hole rather than a form — a
+// node entry written by hand without a "type" decodes as untyped and skips the
+// type-and-coverage agreement altogether — and two of the contract's own
+// statements have nothing behind them: that the legacy key is never an entry of
+// the node's bitbucket_tokens key, and that no token's name collides with a
+// model account's (R5, R13, R14).
+//
+// A name with no suffix is refused rather than read as a token the operator
+// left unnamed: the name is what the audit line, the status mark and the
+// `creds set` prompt speak a token by, so a name nobody can read a token off is
+// not a token this build can serve.
+func (r Record) validateName() error {
+	if r.Name == "" {
+		return fmt.Errorf("the Bitbucket token of type %q names no token, and a record is read by its name (bitbucket-token--<name>, or bitbucket-token for the legacy one)", r.Type)
+	}
+	if r.Type == TypeUntyped {
+		if r.Name != LegacyName {
+			return fmt.Errorf("the record %s states no type, and only %s is untyped: a typed token is named %s<name> (R5)", r.Name, LegacyName, TypedNamePrefix)
+		}
+		return nil
+	}
+	if r.Name == LegacyName {
+		return fmt.Errorf("the %s token is named %s, which is the legacy key: that key is the untyped record alone, and a typed token is named %s<name> (R14)", r.Type, LegacyName, TypedNamePrefix)
+	}
+	suffix, inFamily := strings.CutPrefix(string(r.Name), TypedNamePrefix)
+	if !inFamily {
+		return fmt.Errorf("the %s token is named %s, and a token's document key is %s<name>: the doubled dash is what keeps a token's name from being spelled the way a model account's is (R5, R13)", r.Type, r.Name, TypedNamePrefix)
+	}
+	if suffix == "" {
+		return fmt.Errorf("the %s token is named %s, which carries no name after the family's doubled dash", r.Type, r.Name)
 	}
 	return nil
 }

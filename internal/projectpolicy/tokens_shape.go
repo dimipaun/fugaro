@@ -30,7 +30,10 @@ const BitbucketTokensKey = "bitbucket_tokens"
 type BitbucketTokenNode struct {
 	// Name is the token's document key — bitbucket-token--<name>, or
 	// bitbucket-token for the legacy one — and never the bare suffix, so no
-	// name can collide with a model account (R5).
+	// name can collide with a model account (R5). A record whose name and type
+	// disagree is refused where it is read, `bbtokens.Record.Validate`, so an
+	// entry here that leaves its type out of the family serves nothing rather
+	// than passing as the untyped record.
 	Name string `json:"name"`
 	// Type is the record's own type: repo, project or workspace (R1).
 	Type string `json:"type"`

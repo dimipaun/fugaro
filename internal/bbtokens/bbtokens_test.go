@@ -39,7 +39,10 @@ func TestContractRecordForms(t *testing.T) {
 		},
 		{
 			why: "the legacy key is untyped and covers the block's allow_repos list",
-			rec: Record{Name: LegacyName, Type: TypeUntyped, Coverage: []string{"bitbucket/acme/app", "bitbucket/acme/*"}},
+			rec: Record{
+				Name: LegacyName, Type: TypeUntyped,
+				Coverage: []string{"bitbucket/acme/app", "bitbucket/acme/*", "bitbucket/acme/api-*"},
+			},
 		},
 		{
 			why: "the legacy key of a node with no bitbucket_token block covers nothing",
@@ -167,6 +170,38 @@ func TestContractRecordForms(t *testing.T) {
 		{
 			why: "a canonical repository never ends in .git",
 			rec: Record{Name: "bitbucket-token--git", Type: TypeRepo, Coverage: []string{"bitbucket/acme/app.git"}},
+		},
+		{
+			why: "a typed token is not named the legacy key, which is the untyped record alone",
+			rec: Record{Name: LegacyName, Type: TypeRepo, Coverage: []string{"bitbucket/acme/app"}},
+		},
+		{
+			why: "an untyped record is the legacy key, so a node entry that leaves its type out of the family is refused",
+			rec: Record{Name: "bitbucket-token--ci", Type: TypeUntyped, Coverage: []string{"bitbucket/acme/app"}},
+		},
+		{
+			why: "a node entry that leaves its type out covers nothing at all rather than skipping the type and coverage check",
+			rec: Record{Name: "bitbucket-token--ci", Type: TypeUntyped},
+		},
+		{
+			why: "a token with no name is not a token",
+			rec: Record{Name: "", Type: TypeRepo, Coverage: []string{"bitbucket/acme/app"}},
+		},
+		{
+			why: "a token with no name is not a token",
+			rec: Record{Name: "", Type: TypeUntyped, Coverage: []string{"bitbucket/acme/app"}},
+		},
+		{
+			why: "a name outside the family is one a model account could be spelled with",
+			rec: Record{Name: "ci", Type: TypeRepo, Coverage: []string{"bitbucket/acme/app"}},
+		},
+		{
+			why: "a name outside the family is one a model account could be spelled with",
+			rec: Record{Name: "bitbucket-token-ci", Type: TypeRepo, Coverage: []string{"bitbucket/acme/app"}},
+		},
+		{
+			why: "a name with nothing after the family's doubled dash names no token",
+			rec: Record{Name: "bitbucket-token--", Type: TypeWorkspace, Coverage: []string{"bitbucket/acme/*"}},
 		},
 	}
 	for _, tc := range disagree {

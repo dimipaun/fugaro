@@ -25,6 +25,22 @@ contract can be written on both sides at once and re-joined in I1.
 `Record` is the operator's own statement about one token: `Name` (the document key), `Type`, `Coverage`, `ProjectUUID`,
 `ProjectKey` and `Expires`. It holds no value; the value is the bundle's and is found by `Name`.
 
+**The name and the type are one fact.** `Validate` refuses a record whose name and type disagree, which is the other half
+of R1 and the half nothing else could hold:
+
+- a **typed** record is named `bitbucket-token--<name>` (`TypedNamePrefix`), with a non-empty name after the doubled dash.
+  The doubled dash is what keeps a token's name from being spelled the way a model account's name is, which
+  `ClaudeAccountNameRE` cannot produce (R5, R13) — so a name outside the family, a bare `ci` among them, is refused;
+- an **untyped** record is named `bitbucket-token` (`LegacyName`) and nothing else, and a typed record may not take that
+  name: the legacy key is the untyped record alone and is never an entry of the node's `bitbucket_tokens` key (R5, R14).
+  Without this, an operator's node entry that simply leaves `type` out would decode as untyped and skip the type-and-coverage
+  agreement altogether — the one form where a mistake would be silent;
+- a record with an **empty** name is refused: the name is what the audit line, the status mark and the `creds set` prompt
+  speak a token by, so a token with no name is one nobody can read out of any of them.
+
+The name's **suffix** is otherwise the operator's own label: C1 fixes what the family is and that the name is not empty, and
+leaves the characters a name may hold to the config and bundle sides (T2, T1) rather than inventing a second rule here.
+
 **One spelling of coverage.** A coverage entry is written in the **policy node's** spelling and not the local config's:
 provider-qualified, as in `bitbucket/workspace-a/repo-a` or `bitbucket/workspace-a/*`, which is what `MatchRepo` compares
 against a canonical repository. It is held to **`projectpolicy.ValidBitbucketTokenCoverage`**, the node's own rule for one
