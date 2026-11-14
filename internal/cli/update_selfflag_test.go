@@ -35,8 +35,8 @@ func unmanagedUpdateRig(t *testing.T) *initRig {
 
 // updateBudgetArgs is the owner's own command line: `fugaro update` given the
 // budget once — the trio the doors take together (--budget,
-// --budget-currency and --billing-account) — under --yes, which covers
-// update's ordinary steps.
+// --budget-currency and --billing-account) — at the owner's own terminal,
+// where the person being there is what confirms update's ordinary steps.
 func updateBudgetArgs(extra ...string) []string {
 	return append([]string{"update", "--budget", "50", "--budget-currency", "USD", "--billing-account", billingAcc}, extra...)
 }
@@ -51,6 +51,7 @@ func updateBudgetArgs(extra ...string) []string {
 // forbids.
 func TestUpdateOnAnUnmanagedInstallationFlagsItAndNeedsNoSecondCommand(t *testing.T) {
 	r := unmanagedUpdateRig(t)
+	fakeTerminal(t)
 	out, errOut, err := executeStdin(t, "", updateBudgetArgs()...)
 	if err != nil {
 		t.Fatalf("fugaro update with the budget: %v\n%s\n%s", err, out, errOut)
@@ -152,6 +153,7 @@ func TestUpdateFinishesAFlagWhoseLabelWriteFailed(t *testing.T) {
 	if managedFlagIsManaged(t, r) {
 		t.Fatal("the seeded state already reads as managed, so this test proves nothing about finishing it")
 	}
+	fakeTerminal(t)
 	out, errOut, err := executeStdin(t, "", updateBudgetArgs()...)
 	if err != nil {
 		t.Fatalf("fugaro update with the budget over a half-written flag: %v\n%s\n%s", err, out, errOut)
@@ -192,6 +194,7 @@ func TestUpdateDoesNotFinishAFactThatRecordsAnotherAmount(t *testing.T) {
 		GCPProject: initProject,
 		Budget:     &managed.Budget{Amount: 75, Currency: "EUR"},
 	})
+	fakeTerminal(t)
 	out, errOut, err := executeStdin(t, "", updateBudgetArgs()...)
 	if err != nil {
 		t.Fatalf("fugaro update with the budget over a fact recording another amount: %v\n%s\n%s", err, out, errOut)
@@ -230,6 +233,7 @@ func TestUpdateDoesNotFinishAFactAboutAnotherProject(t *testing.T) {
 		GCPProject: "someone-elses-project",
 		Budget:     &managed.Budget{Amount: 50, Currency: "USD"},
 	})
+	fakeTerminal(t)
 	out, errOut, err := executeStdin(t, "", updateBudgetArgs()...)
 	if err != nil {
 		t.Fatalf("fugaro update with the budget over a fact about another project: %v\n%s\n%s", err, out, errOut)
@@ -308,6 +312,7 @@ func TestUpdateDoesNotFlagAProjectWhoseStateIsElsewhere(t *testing.T) {
 	// self-flag.
 	r.appendConfig(t, "terraform: { state_bucket: fugaro-tfstate-elsewhere }\n")
 	r.gcs.AddBucket("fugaro-tfstate-elsewhere", initProjectNumber, map[string]string{"fugaro": "tfstate"})
+	fakeTerminal(t)
 	out, errOut, err := executeStdin(t, "", updateBudgetArgs()...)
 	if err != nil {
 		t.Fatalf("fugaro update with the budget and a state bucket the config names: %v\n%s\n%s", err, out, errOut)
@@ -347,6 +352,7 @@ func TestUpdateDoesNotFlagAProjectWhoseStateIsElsewhere(t *testing.T) {
 func TestSetupDoesNotFlagAnUnmanagedInstallation(t *testing.T) {
 	r := unmanagedUpdateRig(t)
 	args := append([]string{"setup"}, updateBudgetArgs()[1:]...)
+	fakeTerminal(t)
 	out, errOut, err := executeStdin(t, "", args...)
 	if err != nil {
 		t.Fatalf("fugaro setup with the budget on an existing installation: %v\n%s\n%s", err, out, errOut)
@@ -377,6 +383,11 @@ func TestUpdateSelfFlagRefusesInsideAFugaroRun(t *testing.T) {
 		t.Run(marker, func(t *testing.T) {
 			r := unmanagedUpdateRig(t)
 			t.Setenv(marker, "x")
+			// The run's own process is not a coding agent's session, so it is the
+			// person at the terminal who confirms the converge's ordinary steps
+			// and this run reaches the fence rather than stopping at the first
+			// step that asks.
+			fakeTerminal(t)
 			out, errOut, err := executeStdin(t, "", updateBudgetArgs()...)
 			if err == nil {
 				t.Fatalf("a Fugaro run's process flagged the installation:\n%s\n%s", out, errOut)
@@ -406,11 +417,11 @@ func TestUpdateSelfFlagRefusesInsideAFugaroRun(t *testing.T) {
 // TestUpdatePlanOnlyFlagsNothing: --plan-only creates and changes nothing, and
 // the self-flag's whole output is the two marks that take the installation's
 // typed confirmation away. A preview that wrote them would turn a consent gate
-// off on a read-only flag's word — and the update's own help says, in as many
-// words, that this door never takes --yes because it changes nothing on a
-// flag's word. So the same command line as the HARD RULE's test, with
-// --plan-only, leaves the installation exactly as unmanaged as it found it,
-// and says nothing about flagging it.
+// off on a read-only flag's word — and --plan-only's own help says it creates
+// nothing, and creating nothing is the whole of what a preview may do. So the
+// same command line as the HARD RULE's test, with --plan-only, leaves the
+// installation exactly as unmanaged as it found it, and says nothing about
+// flagging it.
 func TestUpdatePlanOnlyFlagsNothing(t *testing.T) {
 	r := unmanagedUpdateRig(t)
 	out, errOut, err := executeStdin(t, "", updateBudgetArgs("--plan-only")...)
