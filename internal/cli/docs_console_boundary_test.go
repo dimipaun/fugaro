@@ -271,6 +271,14 @@ var consoleBoundaryAllowList = []string{
 // nothing outside `ee/` imports any of it. At this version it brings no
 // indirect entry with it, so the require line below is the whole of what the
 // module graph gained, and it is not here for the console's sake either.
+//
+// The seventh is not a dependency this tree chose at all: dependabot's
+// go_modules group bumped the opentelemetry-go modules to 1.47.0 (#2677,
+// 2026-11-14) and brought `go.opentelemetry.io/otel/log` with them, all of it
+// under OpenTelemetry's existing require lines in the indirect block. The
+// versions recorded here move with that bump and the new line is added, which
+// is the deliberate edit this baseline asks for; nothing about it is the
+// console's, and none of the six above changes.
 var consoleGoModRequireBaseline = []string{
 	"cel.dev/expr v0.25.2 // indirect",
 	"cloud.google.com/go v0.123.0 // indirect",
@@ -333,11 +341,12 @@ var consoleGoModRequireBaseline = []string{
 	"go.opentelemetry.io/contrib/detectors/gcp v1.44.0 // indirect",
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.68.0 // indirect",
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.69.0 // indirect",
-	"go.opentelemetry.io/otel v1.46.0 // indirect",
-	"go.opentelemetry.io/otel/metric v1.46.0 // indirect",
-	"go.opentelemetry.io/otel/sdk v1.44.0 // indirect",
-	"go.opentelemetry.io/otel/sdk/metric v1.44.0 // indirect",
-	"go.opentelemetry.io/otel/trace v1.46.0 // indirect",
+	"go.opentelemetry.io/otel v1.47.0 // indirect",
+	"go.opentelemetry.io/otel/log v1.47.0 // indirect",
+	"go.opentelemetry.io/otel/metric v1.47.0 // indirect",
+	"go.opentelemetry.io/otel/sdk v1.47.0 // indirect",
+	"go.opentelemetry.io/otel/sdk/metric v1.47.0 // indirect",
+	"go.opentelemetry.io/otel/trace v1.47.0 // indirect",
 	"gocloud.dev v0.46.0",
 	"golang.org/x/crypto v0.57.0 // indirect",
 	"golang.org/x/net v0.59.0 // indirect",
