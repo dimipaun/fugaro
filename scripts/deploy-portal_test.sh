@@ -45,11 +45,27 @@ setup() {
   echo '{"hosting":{"site":"fugaro-portal","public":"dist","rewrites":[{"source":"/api/**","run":{"serviceId":"fugaro-portal-api","region":"europe-west1"}}]}}' >"$work/repo/ee/portal/firebase-staging.json"
   echo '{"name":"fugaro-portal","scripts":{"build":"vite build"}}' >"$work/repo/ee/portal/package.json"
   : >"$work/repo/ee/keyservice/cloudbuild.yaml"
+  # P1.7's two programs, which the script checks for before it builds anything:
+  # neither is in the tree yet, so a tree without them is what the refusal below
+  # is for.
+  mkdir -p "$work/repo/ee/keyservice/cmd/portal-api" "$work/repo/ee/keyservice/cmd/minter"
+  : >"$work/repo/ee/keyservice/cmd/portal-api/main.go"
+  : >"$work/repo/ee/keyservice/cmd/minter/main.go"
   : >"$work/calls"
   for tool in gcloud firebase node; do
     printf '#!/usr/bin/env bash\necho "%s $*" >>"%s"\n' "$tool" "$work/calls" >"$work/bin/$tool"
   done
-  printf '#!/usr/bin/env bash\necho "git $*" >>"%s"\necho abc1234\n' "$work/calls" >"$work/bin/git"
+  # git answers the two questions the script asks it: HEAD's sha, and whether the
+  # tree is clean. STUB_DIRTY makes the second one say it is not.
+  cat >"$work/bin/git" <<EOF
+#!/usr/bin/env bash
+echo "git \$*" >>"$work/calls"
+if [[ "\$*" == "status --porcelain" ]]; then
+  [[ -z \${STUB_DIRTY:-} ]] || echo " M ee/portal/firebase.json"
+  exit 0
+fi
+echo abc1234
+EOF
   printf '#!/usr/bin/env bash\necho "go $*" >>"%s"\necho "go-env GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT:-}" >>"%s"\n' \
     "$work/calls" "$work/calls" >"$work/bin/go"
   # The stub npm records its arguments, and `npm run build` writes the bundle.
@@ -96,6 +112,7 @@ run --dry-run --project my-portal-1
 [[ $out == *"would run: gcloud run deploy fugaro-key-minter"* ]] || fail "dry run does not print the minter's deploy: $out"
 [[ $out == *"would run: firebase deploy --only hosting,firestore:rules --project my-portal-1 --config ee/portal/firebase.json"* ]] ||
   fail "dry run does not print the hosting and rules deploy with the portal's config: $out"
+[[ $out == *"re-apply"* ]] && fail "the dry run names images to apply the services with, and nothing was pushed: $out"
 
 # 2b. --config and --region are honoured together where they agree: the staging
 #     installation's configuration names another region, and the deploy runs
@@ -103,10 +120,32 @@ run --dry-run --project my-portal-1
 setup
 run --dry-run --project my-portal-1 --config ee/portal/firebase-staging.json --region europe-west1
 [[ $status -eq 0 ]] || fail "the staging dry run exited $status: $out"
-[[ $out == *"would run: gcloud builds submit --config ee/keyservice/cloudbuild.yaml --project my-portal-1 --region europe-west1 ."* ]] ||
-  fail "the dry run did not build in the region it was given: $out"
+[[ $out == *"would run: gcloud builds submit --config ee/keyservice/cloudbuild.yaml --substitutions=_REPOSITORY=europe-west1-docker.pkg.dev/my-portal-1/fugaro-portal,_TAG=abc1234 --project my-portal-1 --region europe-west1 ."* ]] ||
+  fail "the dry run did not build in the region it was given, with the images it will name: $out"
 [[ $out == *"would run: firebase deploy --only hosting,firestore:rules --project my-portal-1 --config ee/portal/firebase-staging.json"* ]] ||
   fail "the dry run did not deploy the configuration it was given: $out"
+
+# 2c. --image-repository reaches the build as well as the two deploys: the build
+#     pushes what the deploys name, so a repository only one of them saw would
+#     leave both services pointing at an image nobody pushed.
+setup
+run --dry-run --project my-portal-1 --image-repository us-east5-docker.pkg.dev/my-portal-1/portal-images
+[[ $status -eq 0 ]] || fail "the image-repository dry run exited $status: $out"
+[[ $out == *"--substitutions=_REPOSITORY=us-east5-docker.pkg.dev/my-portal-1/portal-images,_TAG=abc1234"* ]] ||
+  fail "the build was not told the repository to push to: $out"
+[[ $out == *"would run: gcloud run deploy fugaro-portal-api --image us-east5-docker.pkg.dev/my-portal-1/portal-images/fugaro-portal-api:abc1234"* ]] ||
+  fail "the API's deploy does not name the image the build was told to push: $out"
+[[ $out == *"would run: gcloud run deploy fugaro-key-minter --image us-east5-docker.pkg.dev/my-portal-1/portal-images/fugaro-key-minter:abc1234"* ]] ||
+  fail "the minter's deploy does not name the image the build was told to push: $out"
+
+# 2d. A dirty working tree is refused: the tag names HEAD and Cloud Build uploads
+#     the tree, so the image would be one the tag does not describe.
+setup
+STUB_DIRTY=1 run --dry-run --project my-portal-1
+[[ $status -ne 0 ]] || fail "a run from a dirty tree was accepted"
+[[ $out == *"uncommitted changes"* && $out == *"abc1234"* ]] || fail "the refusal does not name the tree and the tag it would carry: $out"
+called "npm run build" && fail "a run from a dirty tree built the SPA first: $(cat "$work/calls")"
+called "gcloud" && fail "a run from a dirty tree called gcloud: $(cat "$work/calls")"
 
 # 3. A real run (stubbed) runs exactly those commands, in the deploy's order: the
 #    build, then the two services, then the hosting site and its rules.
@@ -114,7 +153,7 @@ setup
 run --project my-portal-1
 [[ $status -eq 0 ]] || fail "deploy exited $status: $out"
 for want in \
-  "gcloud builds submit --config ee/keyservice/cloudbuild.yaml --project my-portal-1 --region us-east5 ." \
+  "gcloud builds submit --config ee/keyservice/cloudbuild.yaml --substitutions=_REPOSITORY=us-east5-docker.pkg.dev/my-portal-1/fugaro-portal,_TAG=abc1234 --project my-portal-1 --region us-east5 ." \
   "gcloud run deploy fugaro-portal-api --image us-east5-docker.pkg.dev/my-portal-1/fugaro-portal/fugaro-portal-api:abc1234 --project my-portal-1 --region us-east5" \
   "gcloud run deploy fugaro-key-minter --image us-east5-docker.pkg.dev/my-portal-1/fugaro-portal/fugaro-key-minter:abc1234 --project my-portal-1 --region us-east5" \
   "firebase deploy --only hosting,firestore:rules --project my-portal-1 --config ee/portal/firebase.json"; do
@@ -122,6 +161,11 @@ for want in \
 done
 [[ $(grep -n "firebase deploy" "$work/calls" | cut -d: -f1) -gt $(grep -n "gcloud run deploy fugaro-portal-api" "$work/calls" | cut -d: -f1) ]] ||
   fail "the hosting site was deployed before the API it rewrites to: $(cat "$work/calls")"
+# The services are Terraform's and the images are this script's, so the deploy
+# says which images to apply that root with: without it the owner's next apply
+# writes its own two over what was just revised.
+[[ $out == *"re-apply ee/keyservice/terraform/services with -var api_image=us-east5-docker.pkg.dev/my-portal-1/fugaro-portal/fugaro-portal-api:abc1234 -var minter_image=us-east5-docker.pkg.dev/my-portal-1/fugaro-portal/fugaro-key-minter:abc1234"* ]] ||
+  fail "the deploy does not name the images to apply the services with: $out"
 
 # 4. --seed-operations runs the API program's one-time subcommand, after the
 #    deploy, against the project the deploy named.
@@ -157,6 +201,19 @@ for missing in "${BUNDLE_ENV[@]%%=*}"; do
   [[ $status -ne 0 ]] || fail "a run without $missing was accepted"
   [[ $out == *"$missing"* ]] || fail "the refusal does not name $missing: $out"
   [[ ! -s $work/calls ]] || fail "a run without $missing ran tools first: $(cat "$work/calls")"
+done
+
+# 5b. P1.7's files are refused when they are missing, before anything is built:
+#     the build definition and the two programs are that task's, none of them is
+#     in the tree yet, and the deploy would otherwise find them gone at its first
+#     cloud command -- after the SPA was built and with the site half-deployed.
+for path in ee/keyservice/cloudbuild.yaml ee/keyservice/cmd/portal-api ee/keyservice/cmd/minter; do
+  setup
+  rm -rf "${work:?}/repo/$path"
+  run --project my-portal-1
+  [[ $status -ne 0 ]] || fail "a tree without $path was deployed from"
+  [[ $out == *"$path is missing"* && $out == *"P1.7"* ]] || fail "the refusal does not name $path and the task that writes it: $out"
+  [[ ! -s $work/calls ]] || fail "a tree without $path ran tools first: $(cat "$work/calls")"
 done
 
 # 6. An agent's session is refused: this script deploys the service that signs

@@ -36,9 +36,24 @@
 # OWNER-RUN. This deploys the service that signs licence keys and the site that
 # sells them; no coding agent deploys or operates it, and the script refuses a
 # session that is one (R5 as amended by D440). The images are P1.7's, built by
-# Cloud Build from ee/keyservice/cloudbuild.yaml; the two services are that task's
+# Cloud Build from ee/keyservice/cloudbuild.yaml; the two services are P1.5's
 # Terraform (ee/keyservice/terraform/services), whose defaults the names below
-# follow.
+# follow. The build definition and the two programs the images run are P1.7's,
+# and none of the three is in the tree yet: the script refuses a tree that does
+# not hold them rather than building the SPA and failing at its first cloud
+# command with the site half-deployed.
+#
+# WHO OWNS THE RUNNING IMAGE. The Terraform owns both services and writes each
+# one's image from var.api_image and var.minter_image, ignoring only `client` and
+# `client_version`: the next apply of that root, for any reason and with whatever
+# images it is given, puts both services back on the images in its own variables
+# and the revision this script deployed stops serving. So the apply that decides
+# the image has to be the one that carries it, and the line to run after a deploy
+# is printed by the deploy itself: re-apply ee/keyservice/terraform/services with
+# -var api_image and -var minter_image set to the two images just pushed, or the
+# root has to stop managing template[0].containers[0].image (a change in that
+# root, not in this script). Until one of the two is done, what is running and
+# what Terraform would apply are the same only until that apply.
 #
 # Authentication is whatever `gcloud auth login` and `firebase login` the operator
 # already did. This script never reads, prints or takes a token or a key, and
@@ -130,6 +145,16 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$root"
 [[ -f $config ]] || die "the Firebase configuration is missing: $config"
 
+# The cloud half is P1.7's -- the build definition and the two programs the
+# images run -- and none of it is in the tree yet. It is checked here, before
+# anything is built, because the deploy reaches it after the SPA build and a
+# missing file found there is a site half-deployed: P1.7 is not a dependency this
+# task can wait for, and a run that cannot work is one that says so at once.
+for path in ee/keyservice/cloudbuild.yaml ee/keyservice/cmd/portal-api ee/keyservice/cmd/minter; do
+  [[ -e $path ]] ||
+    die "$path is missing: the images this deploys are P1.7's (ee/keyservice/cloudbuild.yaml and the two programs under ee/keyservice/cmd), and P1.7 has not landed yet. Nothing was built, deployed or seeded."
+done
+
 # The region is not the operator's to pick freely: the SPA reaches the API
 # through the /api/** rewrite in the configuration above, so a service deployed
 # anywhere else is one that rewrite cannot reach. The configuration names
@@ -163,6 +188,14 @@ fi
 image_base=${image_repository:-$region-docker.pkg.dev/$project/fugaro-portal}
 tag=$(git rev-parse --short HEAD)
 
+# The tag names a commit, and Cloud Build reads the working tree: a tree with
+# uncommitted changes is uploaded under HEAD's tag, so the image would be one the
+# tag does not describe and nobody can rebuild from it. The services are then
+# revised to it silently, which is the one thing a deploy cannot say afterwards.
+if [[ -n $(git status --porcelain) ]]; then
+  die "the working tree has uncommitted changes, and Cloud Build uploads the tree rather than the commit: an image tagged $tag would be one $tag does not describe. Commit or stash first."
+fi
+
 echo "deploy-portal: building the SPA (ee/portal)"
 (
   cd "$root/ee/portal"
@@ -185,7 +218,16 @@ run_or_print() {
   "$@"
 }
 
+# The two names the run deploys are the two the build has to push, and the build
+# is told them rather than asked to guess: a manual submit leaves $SHORT_SHA
+# empty, and a --image-repository override reaches this script alone, so a build
+# that named its own images would leave the two deploys below naming an image
+# nothing pushed -- or, worse, a tag that already exists, which is the previous
+# image still serving under the new revision's name. ee/keyservice/cloudbuild.yaml
+# (P1.7) has to push $_REPOSITORY/fugaro-portal-api:$_TAG and
+# $_REPOSITORY/fugaro-key-minter:$_TAG, and nothing else with those tags.
 run_or_print gcloud builds submit --config ee/keyservice/cloudbuild.yaml \
+  --substitutions="_REPOSITORY=$image_base,_TAG=$tag" \
   --project "$project" --region "$region" .
 
 run_or_print gcloud run deploy fugaro-portal-api \
@@ -194,9 +236,11 @@ run_or_print gcloud run deploy fugaro-key-minter \
   --image "$image_base/fugaro-key-minter:$tag" --project "$project" --region "$region"
 
 # The rules travel with the site they fence: the database the Terraform creates
-# is deployed with the denial its clients are held to (ee/portal/firestore.rules,
-# P1.5), and a site deployed without it is one whose store the next database
-# creation decides the rules for.
+# -- `portal`, named in the entry this configuration deploys them under, because
+# a rules deploy names the database it applies to and a bare object is
+# `(default)`, which this project has not got -- is deployed with the denial its
+# clients are held to (ee/portal/firestore.rules, P1.5), and a site deployed
+# without it is one whose store the next database creation decides the rules for.
 run_or_print firebase deploy --only hosting,firestore:rules --project "$project" --config "$config"
 
 if [[ -n $seed_address ]]; then
@@ -212,4 +256,9 @@ if [[ $dry_run == true ]]; then
   echo "deploy-portal: dry run: nothing was deployed"
 else
   echo "deploy-portal: done: $project is running the portal"
+  # The services are Terraform's and the images are this script's, so an apply of
+  # that root writes its own var.api_image and var.minter_image over what was just
+  # deployed (see the header). Naming the two values while the owner is still at
+  # the terminal is what makes that a step rather than a surprise.
+  echo "deploy-portal: re-apply ee/keyservice/terraform/services with -var api_image=$image_base/fugaro-portal-api:$tag -var minter_image=$image_base/fugaro-key-minter:$tag, or its next apply puts the previous two images back"
 fi

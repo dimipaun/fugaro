@@ -1,7 +1,10 @@
 {
-  "firestore": {
-    "rules": "firestore.rules"
-  },
+  "firestore": [
+    {
+      "database": "portal",
+      "rules": "firestore.rules"
+    }
+  ],
   "hosting": {
     "site": "fugaro-portal",
     "public": "dist",

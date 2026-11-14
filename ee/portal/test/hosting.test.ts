@@ -16,13 +16,16 @@
 // P9.2's deploy script): a rewrite to a service that does not exist, or one in
 // another region, is a portal whose every request fails.
 //
-// The same file carries the other half of the deploy: the `firestore.rules`
-// block is what makes `firebase deploy --only hosting,firestore:rules` upload
-// the denial the portal's documents are held to beside the site that reads them
-// through the API, and the `emulators` block is what the portal workflow's
-// `--only firestore` starts for the store's own suite. A rules path that named
-// nothing, or a deploy that named only hosting, would leave the database the
-// Terraform creates with rules nobody reviewed.
+// The same file carries the other half of the deploy: the `firestore` entry is
+// what makes `firebase deploy --only hosting,firestore:rules` upload the denial
+// the portal's documents are held to beside the site that reads them through the
+// API, and the `emulators` block is what the portal workflow's `--only firestore`
+// starts for the store's own suite. A rules path that named nothing, or a deploy
+// that named only hosting, would leave the database the Terraform creates with
+// rules nobody reviewed -- and the database entry is why this one is the array
+// form: the Terraform creates a *named* database, `portal`, while a bare object
+// is the `(default)` database the project has not got, so the object form would
+// deploy the denial somewhere nobody reads it from.
 //
 // Nothing here deploys anything or reaches the network: the configuration is
 // read as text, and the facts it has to agree with are read from the
@@ -55,8 +58,14 @@ interface HostingConfig {
   headers?: HeaderRule[]
 }
 
+interface FirestoreRules {
+  database?: string
+  rules?: string
+}
+
 interface FirebaseConfig {
-  firestore?: { rules?: string }
+  /** The array form, one entry per database: a bare object is `(default)`. */
+  firestore?: FirestoreRules[]
   hosting?: HostingConfig
   emulators?: { firestore?: { host?: string; port?: number }; ui?: { enabled?: boolean } }
 }
@@ -264,9 +273,17 @@ describe('the portal hosting configuration', () => {
   })
 
   it('deploys the rules that deny the database its clients, with the site', () => {
-    // The database is created by P1.7's Terraform; its rules are not, and a
+    // The database is created by the Terraform; its rules are not, and a
     // database nobody deploys rules on is one the next creation decides for.
-    expect(parsed.firestore?.rules).toBe('firestore.rules')
+    // Its name is read from the resource that creates it rather than repeated
+    // here: a bare `firestore` object is the `(default)` database, which this
+    // project has not got, and a name that drifted from the resource would be
+    // a denial deployed onto a database nothing writes to while `portal` ran
+    // with whatever rules it was created with.
+    const terraform = read('../../keyservice/terraform/services/main.tf')
+    const database = /resource "google_firestore_database" "portal"[\s\S]*?\n\s*name\s*=\s*"([^"]+)"/.exec(terraform)?.[1]
+    expect(database).toBe('portal')
+    expect(parsed.firestore).toEqual([{ database, rules: 'firestore.rules' }])
     expect(read('../firestore.rules')).toContain('allow read, write: if false;')
     const script = read('../../../scripts/deploy-portal.sh')
     const deploy = /run_or_print firebase deploy ([^\n]*)/.exec(script)?.[1] ?? ''
