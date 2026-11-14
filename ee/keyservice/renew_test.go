@@ -1293,6 +1293,56 @@ func TestAKeyWithNoSubscriptionIsRefused(t *testing.T) {
 	}
 }
 
+// TestAKeyWhoseSubscriptionTheStoreLostIsNeverRenewed: the record names a
+// subscription the store does not hold, and that is the one state this route
+// cannot read the money from at all — the same inconsistency `merchant.Renew`
+// refuses as ErrUnknownSubscription. The answer is a failure and not a key, and
+// not the uniform refusal either: nothing here can tell a paid term from an
+// unpaid one, so the mint is never asked and the holder's retry is what asks a
+// store that has the subscription back.
+func TestAKeyWhoseSubscriptionTheStoreLostIsNeverRenewed(t *testing.T) {
+	f, spy := renewing(t)
+	keyID, secret, _ := heldKey(t, f, PolicyTeamMonthly)
+	f.inTheRenewalWindow(t, keyID)
+
+	f.store.mu.Lock()
+	delete(f.store.subscriptions, subscriptionFor(keyID))
+	f.store.mu.Unlock()
+	if _, held, err := f.store.Subscription(context.Background(), subscriptionFor(keyID)); err != nil || held {
+		t.Fatalf("the subscription is still held (held=%v err=%v), so this test proves nothing", held, err)
+	}
+
+	rec := f.call(RouteRenew, RenewalCall{KeyID: keyID, WorkspaceID: workspaceID, RenewalSecret: secret})
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("a key whose subscription the store lost was answered %d, want %d: nothing here can read whether the term was paid for", rec.Code, http.StatusInternalServerError)
+	}
+	if got := spy.minted(); got != 0 {
+		t.Errorf("the minter was asked for %d key(s) for a key whose subscription is gone, want none", got)
+	}
+	// The same key renews once the store holds the subscription again, so what
+	// failed above is the missing state and not the fixture's key.
+	record := f.issuance(t, keyID)
+	policy, known := DefaultPolicy(record.Plan)
+	if !known {
+		t.Fatalf("the key was minted from the row %q, which is not in the policy table", record.Plan)
+	}
+	if err := f.store.SaveSubscription(context.Background(), Subscription{
+		ID:           record.Subscription,
+		Organisation: record.Organisation,
+		WorkspaceID:  workspaceID,
+		Seats:        record.Seats,
+		TermDays:     30,
+		Email:        record.Email,
+		At:           f.now,
+		Expires:      covered(record, policy, f.now),
+	}); err != nil {
+		t.Fatalf("writing the subscription back: %v", err)
+	}
+	if got := answerOf(t, f.call(RouteRenew, RenewalCall{KeyID: keyID, WorkspaceID: workspaceID, RenewalSecret: secret})).Key; got == "" {
+		t.Error("the same key renewed once its subscription was written back, want a failure only while the store holds none")
+	}
+}
+
 // TestStatusCarriesNoKey: F11 — the status endpoint answers the key's state and
 // whether a successor exists, and nothing else. It carries no key and no secret
 // in either answer, before or after a renewal: a reader of the job's check must
