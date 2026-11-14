@@ -112,13 +112,21 @@ function httpsUrl(url: string): string | null {
 
 export function BillingScreen() {
   const workspaceId = useParams<{ workspaceId: string }>().workspaceId
-  // The workspace is part of which screen this is: everything below belongs to
-  // one, so the key throws the whole of it away when the path names another,
-  // rather than leaving a refusal raised for the last workspace, or its seat
-  // count in the field, to be read -- and sent -- beside the next one's name.
-  // A reset would have to name every piece of state and would still draw the
-  // old one for the render before the request goes out.
-  return <WorkspaceBilling key={workspaceId} workspaceId={workspaceId} />
+  const { state } = useSession()
+  const person = state.status === 'signed-in' ? state.user.uid : ''
+  // The workspace and the session are both part of which screen this is:
+  // everything below belongs to one workspace and was read for one person. The
+  // key throws the whole of it away when the path names another workspace, or
+  // when the session names another person -- the SDK reports one uid after
+  // another with no sign-out between them, so the path alone is not the screen
+  // -- rather than leaving a refusal raised for the last one, or its seat count
+  // in the field, to be read -- and sent -- beside the next one's. A reset
+  // would have to name every piece of state and would still draw the old one
+  // for the render before the request goes out.
+  //
+  // The two are joined with a NUL because any other separator could sit inside
+  // an id, and two pairs joined into one string would be one key.
+  return <WorkspaceBilling key={workspaceId + '\u0000' + person} workspaceId={workspaceId} />
 }
 
 function WorkspaceBilling({ workspaceId }: { workspaceId: string | undefined }) {

@@ -77,6 +77,14 @@ const PERSON: SignedInUser = {
   authTime: 1770800000000,
 }
 
+/** The person who replaces them under a mounted screen, with a token of their own. */
+const OTHER: SignedInUser = {
+  uid: 'uid_other',
+  email: 'grace@example.com',
+  provider: 'google.com',
+  authTime: 1770900000000,
+}
+
 /** A port for a person -- signed in by default, whose token the requests carry. */
 function port(who: SignedInUser | null = PERSON): AuthPort {
   return {
@@ -94,13 +102,15 @@ function port(who: SignedInUser | null = PERSON): AuthPort {
 }
 
 /**
- * A port that answers nothing until the test says so, the way the SDK's does:
- * the stored session is read before `onAuthStateChanged` fires, and until then
- * `idToken` has nobody to mint for. Until `answer()` the screen is mounted with
- * the session unanswered, which is the moment this screen must not ask in.
+ * A port the test drives itself, the way the SDK's does: the stored session is
+ * read before `onAuthStateChanged` fires, so until `tell()` the screen is
+ * mounted with the session unanswered -- the moment this screen must not ask in
+ * -- and afterwards it reports whoever the test names, one person after another
+ * if it is asked to. The token a request carries is the current person's, so a
+ * change of person is visible in what the next request sends.
  */
-function pendingPort(): { auth: AuthPort; answer: () => void; leave: () => void } {
-  let answered: SignedInUser | null = null
+function pendingPort(): { auth: AuthPort; tell: (user: SignedInUser | null) => void } {
+  let current: SignedInUser | null = null
   let notify: ((user: SignedInUser | null) => void) | null = null
   return {
     auth: {
@@ -108,23 +118,16 @@ function pendingPort(): { auth: AuthPort; answer: () => void; leave: () => void 
         notify = onUser
         return () => {}
       },
-      idToken: () => Promise.resolve(answered === null ? null : 'token-one'),
+      idToken: () => Promise.resolve(current === null ? null : `token-${current.uid}`),
       signIn: () => Promise.resolve(),
       sendSignInLink: () => Promise.resolve(),
       isSignInLink: () => false,
       completeSignInLink: () => Promise.resolve(),
       signOut: () => Promise.resolve(),
     },
-    answer: () => {
-      answered = PERSON
-      notify?.(PERSON)
-    },
-    // The other thing the SDK does under a mounted screen: a session that ends
-    // -- a sign-out, a token the server no longer accepts -- is a change of
-    // user to nobody, and the screen is still there when it arrives.
-    leave: () => {
-      answered = null
-      notify?.(null)
+    tell: (user) => {
+      current = user
+      notify?.(user)
     },
   }
 }
@@ -339,7 +342,7 @@ describe('the billing screen', () => {
 
   it('asks nothing until the session has been answered, and then asks with the token', async () => {
     const calls = stubFetch([() => answer(200, SUBSCRIPTION)])
-    const { auth, answer: answerSession } = pendingPort()
+    const { auth, tell } = pendingPort()
     show('/billing/ws_example', '/billing/:workspaceId', auth)
 
     // The session is still being read, so there is no token to send yet: a
@@ -358,13 +361,13 @@ describe('the billing screen', () => {
     expect(calls).toHaveLength(0)
 
     act(() => {
-      answerSession()
+      tell(PERSON)
     })
 
     await screen.findByText('Seats')
     expect(calls).toHaveLength(1)
     expect(calls[0]!.url).toBe('/api/workspaces/ws_example/subscription')
-    expect(header(calls[0]!, 'Authorization')).toBe('Bearer token-one')
+    expect(header(calls[0]!, 'Authorization')).toBe('Bearer token-uid_example')
   })
 
   it('tells somebody signed out to sign in, rather than asking without a token', async () => {
@@ -384,16 +387,16 @@ describe('the billing screen', () => {
 
   it('draws none of the subscription once the session has gone', async () => {
     stubFetch([() => answer(200, SUBSCRIPTION)])
-    const { auth, answer: answerSession, leave } = pendingPort()
+    const { auth, tell } = pendingPort()
     show('/billing/ws_example', '/billing/:workspaceId', auth)
 
     act(() => {
-      answerSession()
+      tell(PERSON)
     })
     await screen.findByText('Seats')
 
     act(() => {
-      leave()
+      tell(null)
     })
 
     // What was on screen was one workspace's billing, shown to somebody who had
@@ -401,6 +404,45 @@ describe('the billing screen', () => {
     // it, and the seat field is the sharp end -- a whole quantity, so a click
     // would move a subscription the person on this machine no longer is.
     expect(screen.getByText(SIGN_IN).textContent).toBe(SIGN_IN)
+    expect(screen.queryByText('Seats')).toBeNull()
+    expect(screen.queryByLabelText(SEATS)).toBeNull()
+    expect(screen.queryByRole('button', { name: PORTAL_BUTTON })).toBeNull()
+  })
+
+  it('draws nothing of the last session to the person who replaces it', async () => {
+    const calls = stubFetch([
+      () => answer(200, SUBSCRIPTION),
+      () =>
+        answer(403, {
+          error: { code: 'not_a_member', message: 'You are not a member of this workspace.' },
+        }),
+    ])
+    const { auth, tell } = pendingPort()
+    show('/billing/ws_example', '/billing/:workspaceId', auth)
+
+    act(() => {
+      tell(PERSON)
+    })
+    await screen.findByText('Seats')
+
+    // The SDK reports one person after another with no sign-out between them,
+    // and this path is unchanged: whoever is next is not the person the facts
+    // on screen were read for. The API is asked again, as them.
+    act(() => {
+      tell(OTHER)
+    })
+    await waitFor(() => {
+      expect(calls).toHaveLength(2)
+    })
+    expect(calls[1]!.url).toBe('/api/workspaces/ws_example/subscription')
+    expect(header(calls[1]!, 'Authorization')).toBe('Bearer token-uid_other')
+
+    // A refusal does not put the last session's subscription back: beside it
+    // sits a field carrying a whole quantity, and one click would move a
+    // subscription belonging to somebody who is no longer at this machine.
+    expect((await screen.findByRole('alert')).textContent).toBe(
+      'You are not a member of this workspace.',
+    )
     expect(screen.queryByText('Seats')).toBeNull()
     expect(screen.queryByLabelText(SEATS)).toBeNull()
     expect(screen.queryByRole('button', { name: PORTAL_BUTTON })).toBeNull()
