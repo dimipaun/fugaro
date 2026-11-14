@@ -397,9 +397,9 @@ func TestWizardPhaseOptionsMatchTheRun(t *testing.T) {
 		term bool
 	}{
 		{"plain", &initOptions{door: setupDoor.name}, true},
-		{"--non-interactive", &initOptions{door: setupDoor.name, nonInteractive: true}, false},
+		{"a run that never prompts", &initOptions{door: setupDoor.name, nonInteractive: true}, false},
 		{"--json", &initOptions{door: setupDoor.name, asJSON: true}, true},
-		{"--yes", &initOptions{door: setupDoor.name, yes: true}, true},
+		{"a run that carries its own answer", &initOptions{door: setupDoor.name, yes: true}, true},
 		{"no terminal", &initOptions{door: setupDoor.name}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

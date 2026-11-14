@@ -146,28 +146,29 @@ func TestDocsCheck81FingerprintsMatchTheGoldenRules(t *testing.T) {
 
 // TestDocsCheck82ConfirmationIsTheOrdinaryOne: the database step's
 // confirmation is `confirmOrdinary` -> `askOrdinary` -> `ask`, and `ask` takes
-// `--yes` (`confirmed by --yes`) for every step that is not typed and not
-// under --plan-only. Check 82 said the confirmation "is not `--yes`", which is
-// the one thing the code does not say; what is true, and what the check needs,
-// is that a coding agent's session never confirms it (initflow.AgentError) and
-// that this check does not take the --yes shortcut.
+// an ordinary step's confirmation from the person at the terminal it runs at.
+// A flag used to answer it for them (`confirmed by --yes`), and T11 of
+// `docs/no-prompt-policy` removed that flag, so no path prints a flag's answer
+// any more. What is true, and what the check needs, is that a coding agent's
+// session never confirms it (initflow.AgentError) and that this check says
+// whose confirmation it is rather than claiming a flag answered it.
 func TestDocsCheck82ConfirmationIsTheOrdinaryOne(t *testing.T) {
 	const path = "docs/gcp-live-checklist.md"
 	doc := readDoc(t, path)
 	section := docSection(t, path, doc, "## Check 82:")
 
 	src := readSrc(t, "init.go")
-	if !strings.Contains(src, "if r.o.yes && !r.o.planOnly {") {
-		t.Errorf("internal/cli/init.go no longer shows `ask` taking --yes for an ordinary step: the checklist's text about the database step's confirmation is written against this code, so read it again before changing the check")
+	if strings.Contains(src, "confirmed by --yes") {
+		t.Errorf("internal/cli/init.go still prints `confirmed by --yes`: that flag is gone, so no path records a flag's answer and the check has no shortcut to name")
 	}
-	if !strings.Contains(src, "confirmed by --yes") {
-		t.Errorf("internal/cli/init.go no longer prints %q: check 82 quotes it as what the owner sees instead of the typed confirmation", "confirmed by --yes")
+	if !strings.Contains(src, "return r.canType(), nil") {
+		t.Errorf("internal/cli/init.go's `ask` no longer takes an ordinary step's confirmation from the terminal it runs at (`return r.canType(), nil`): check 82 is written against that code — read the plan and type the name — so read it again before changing the check")
 	}
 	if strings.Contains(section, "is not `--yes`") {
-		t.Errorf("## Check 82: says the database step's confirmation is not --yes, and internal/cli/init.go's ask takes --yes for an ordinary step (the database step is confirmOrdinary, not confirmLocation's typed one): an owner who passed --yes would read the check as saying the CLI refused something it accepted")
+		t.Errorf("## Check 82: says the database step's confirmation is not --yes, and no flag of that name exists any more: a sentence about a flag the CLI refuses is a claim about a door that is not there")
 	}
-	if !strings.Contains(section, "confirmed by --yes") {
-		t.Errorf("## Check 82: does not name the `confirmed by --yes` line: the check's point is that it does not take that shortcut, so it has to name the shortcut")
+	if !strings.Contains(section, "The confirmation is the owner's own, at their own real terminal") {
+		t.Errorf("## Check 82: does not say whose confirmation this step's is: it is the person's at the terminal they run the command in, and an owner reading the check for what to type has to find that out here")
 	}
 }
 

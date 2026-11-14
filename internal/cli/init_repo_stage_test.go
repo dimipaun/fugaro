@@ -798,15 +798,19 @@ func rigEngine(t *testing.T, r *initRig, o *initOptions) *initEngine {
 	return &initEngine{r: run, lc: lc, spec: spec, path: r.cfg, old: old}
 }
 
-// With every input given, the repository stage's own Missing makes
-// --non-interactive name the GitHub App's ID before any stage runs.
-func TestNonInteractiveNamesAppIDFromTheStage(t *testing.T) {
+// With every input given, the repository stage's own Missing makes a run that
+// never prompts name the GitHub App's ID before any stage runs. The flag that
+// said so on the command line is gone (T11, docs/no-prompt-policy), so it is
+// the run itself that carries the shape now, and the stage is driven on its own
+// as the other one-stage tests drive theirs.
+func TestARunThatNeverPromptsNamesAppIDFromTheStage(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
 	root := repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", "aurora", ""))
 	t.Chdir(root)
-	_, _, err := executeStdin(t, "", "setup", "--non-interactive", "--yes", "--onboard-repo", "acme/app")
-	if err == nil || !strings.Contains(err.Error(), "--non-interactive: missing") || !strings.Contains(err.Error(), "--github-app-id") {
+	e := rigEngine(t, r, &initOptions{door: setupDoor.name, nonInteractive: true, onboardRepo: "acme/app"})
+	if _, err := initflow.Run(t.Context(), []initflow.Stage{newRepositoryStage(e)}, e.options()); err == nil ||
+		!strings.Contains(err.Error(), "never prompts") || !strings.Contains(err.Error(), "missing --github-app-id") {
 		t.Fatalf("%v", err)
 	}
 	if len(r.ran(t, "apply")) != 0 {

@@ -37,7 +37,7 @@ func TestAccountsAddRefusesAName(t *testing.T) {
 
 			// The name goes after -- because one of the table's own cases
 			// starts with a dash, and a name is a name however it begins.
-			_, _, err := execute(t, "accounts", "add", "--repos", "acme/app", "--yes", "--", tc.name)
+			_, _, err := execute(t, "accounts", "add", "--repos", "acme/app", "--", tc.name)
 			if err == nil {
 				t.Fatalf("%q was accepted as an account name", tc.name)
 			}
@@ -66,7 +66,7 @@ func TestAccountsAddRefusesAName(t *testing.T) {
 func TestAccountsAddRefusesASubsetViolation(t *testing.T) {
 	accountsAddFixture(t, accountsAddLocalTwoRepos)
 
-	_, _, err := execute(t, "accounts", "add", "team-a", "--repos", "acme/app", "--yes")
+	_, _, err := execute(t, "accounts", "add", "team-a", "--repos", "acme/app")
 	if err == nil {
 		t.Fatal("the subset rule was not applied")
 	}
@@ -88,7 +88,7 @@ func TestAccountsAddSubsetRuleIsCheckedBeforeAnyWrite(t *testing.T) {
 	path := accountsAddFixture(t, accountsAddLocalTwoRepos)
 	before := readFileString(t, path)
 
-	if _, _, err := execute(t, "accounts", "add", "team-a", "--repos", "acme/app", "--yes"); err == nil {
+	if _, _, err := execute(t, "accounts", "add", "team-a", "--repos", "acme/app"); err == nil {
 		t.Fatal("the subset rule was not applied")
 	}
 	if after := readFileString(t, path); after != before {
@@ -137,7 +137,7 @@ func TestAccountsAddRefusesAPreExistingAccountMissingARepository(t *testing.T) {
 	path := accountsAddFixture(t, accountsAddLocalStaleAccount)
 	before := readFileString(t, path)
 
-	_, _, err := execute(t, "accounts", "add", "team-a", "--repos", "acme/app,acme/lib", "--profile", "standard", "--yes")
+	_, _, err := execute(t, "accounts", "add", "team-a", "--repos", "acme/app,acme/lib", "--profile", "standard")
 	if err == nil {
 		t.Fatal("an account that covered less than the profile admits was left in place")
 	}
@@ -206,7 +206,7 @@ func TestAccountsAddRefusesAProfileTheRuleCannotBeAskedAbout(t *testing.T) {
 			path := accountsAddFixture(t, tc.local)
 			before := readFileString(t, path)
 
-			_, _, err := execute(t, "accounts", "add", "team-a", "--repos", "acme/app", "--profile", "standard", "--yes")
+			_, _, err := execute(t, "accounts", "add", "team-a", "--repos", "acme/app", "--profile", "standard")
 			if err == nil {
 				t.Fatal("an account was added to a profile the rule cannot be asked about")
 			}
@@ -234,7 +234,7 @@ func TestAccountsAddWithoutACheckoutRequiresRepos(t *testing.T) {
 	before := readFileString(t, path)
 	t.Chdir(t.TempDir())
 
-	_, _, err := execute(t, "accounts", "add", "team-a", "--yes")
+	_, _, err := execute(t, "accounts", "add", "team-a")
 	if err == nil {
 		t.Fatal("an account with no repositories was declared")
 	}

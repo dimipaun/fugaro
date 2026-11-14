@@ -1119,11 +1119,13 @@ async function pressWhenReady(confirm: Page, label: string): Promise<void> {
 
 /** settingsWrites is the argv of every settings write the console has run so far,
  * read from the spawn log: the record of what was spawned, and the second
- * reading of "the console ran the command line it showed". */
+ * reading of "the console ran the command line it showed". A write is told from
+ * the read and from a dry run by its `set`/`unset` subcommand and the absence of
+ * `--dry-run`. */
 function settingsWrites(where: string): readonly (readonly string[])[] {
   return readsOf(where)
     .map((record) => record.argv)
-    .filter((argv) => argv[1] === 'settings' && argv.includes('--yes'))
+    .filter((argv) => argv[1] === 'settings' && (argv[2] === 'set' || argv[2] === 'unset') && !argv.includes('--dry-run'))
 }
 
 /** stubWrites is the stub's own record of every settings line it was handed,
@@ -1308,7 +1310,7 @@ test.describe('the Projects view in the dashboard', () => {
 
     const shown = await shownArgv(confirm)
     expect(shown.slice(1)).toEqual([
-      'settings', 'set', SETTINGS_KEY, '--layer', 'repo', '--yes', '--project', 'e2e', '--', '3',
+      'settings', 'set', SETTINGS_KEY, '--layer', 'repo', '--project', 'e2e', '--', '3',
     ])
     await pressWhenReady(confirm, SAVE_LABEL)
 
@@ -1319,8 +1321,8 @@ test.describe('the Projects view in the dashboard', () => {
     // own record of the command line it was handed -- written by the stub, from
     // `$0` and every argument -- is the command line the window drew, word for
     // word, for both phases of the flow. The dry run's is the spelling that
-    // carries **no** `--yes`: the CLI's confirmation is its own question and
-    // `--yes` is the console's answer to it (D1107).
+    // carries `--dry-run --json`; the write's carries no phase flag at all
+    // (D1107).
     const dryLine = [
       shown[0], 'settings', 'set', SETTINGS_KEY, '--layer', 'repo', '--dry-run', '--json', '--project', 'e2e', '--', '3',
     ].join(' ')
@@ -1355,7 +1357,7 @@ test.describe('the Projects view in the dashboard', () => {
 
     const shown = await shownArgv(confirm)
     expect(shown.slice(1)).toEqual([
-      'settings', 'set', SETTINGS_WIDENING_KEY, '--layer', 'local', '--yes', '--project', 'e2e', '--', 'true',
+      'settings', 'set', SETTINGS_WIDENING_KEY, '--layer', 'local', '--project', 'e2e', '--', 'true',
     ])
     await tick.check()
     await expect(confirm.getByRole('button', { name: SAVE_LABEL })).toBeEnabled()
@@ -1388,7 +1390,6 @@ test.describe('the Projects view in the dashboard', () => {
       before + 1,
     )
     expect(stubWrites(cli).at(-1)).toContain('--dry-run')
-    expect(stubWrites(cli).at(-1)).not.toContain('--yes')
     expect(settingsWrites(spawnLog)).toHaveLength(writes)
   })
 
