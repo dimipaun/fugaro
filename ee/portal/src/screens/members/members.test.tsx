@@ -239,6 +239,32 @@ describe('the members screen', () => {
     )
   })
 
+  it('keeps an invitation id in one path segment when it withdraws one', async () => {
+    // The id is the API's to choose and this screen's to carry: an unencoded `/`
+    // in it ends the segment, so the browser resolves the rest of the path to a
+    // different resource and the withdrawal becomes a DELETE of that, with the
+    // bearer token on it.
+    const awkward: Invite = { ...PENDING, id: 'inv/1' }
+    const fetch = transport([
+      json(200, { members: [OWNER] }),
+      invitations([awkward]),
+      json(204),
+      invitations([]),
+    ])
+    mount(`/members?org=${ORGANISATION_ID}`)
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: `Withdraw the invitation to ${awkward.email}` }),
+    )
+
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith(
+        `/api/orgs/${ORGANISATION_ID}/invites/inv%2F1`,
+        expect.objectContaining({ method: 'DELETE' }),
+      )
+    })
+  })
+
   it('draws a member the invitations and no member list, rather than an error', async () => {
     transport([notPermitted(), invitations([PENDING])])
     mount(

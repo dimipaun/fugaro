@@ -183,9 +183,10 @@ export function MembersScreen() {
     setBusy(true)
     setFailure(null)
     try {
-      await api.request<void>(`/orgs/${encodeURIComponent(id)}/invites/${inviteId}`, {
-        method: 'DELETE',
-      })
+      await api.request<void>(
+        `/orgs/${encodeURIComponent(id)}/invites/${encodeURIComponent(inviteId)}`,
+        { method: 'DELETE' },
+      )
       const invitations = await api.request<InvitesAnswer>(
         `/orgs/${encodeURIComponent(id)}/invites`,
       )
