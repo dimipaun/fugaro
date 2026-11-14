@@ -72,6 +72,11 @@ import (
 // older than the release, a coder that reads images itself, a slot that is set,
 // a run that never ends, a record that is another run's, and a refusal whose
 // sentence has lost one of the parts an owner needs.
+// Check 210's fakes are a fake `fugaro`, a fake `gcloud`, a fake `git` and a
+// fake `gh`: the fake launcher is a counter, so the run IDs are the case's own,
+// and the fake `git` and `gh` really delete a branch and really move a pull
+// request from OPEN to CLOSED, so the teardown's own read-backs are readings of
+// state that changed.
 // Check 301's fakes are a fake `fugaro`, a fake launchd and a fake systemd
 // whose boot id and unit files the test writes, so a reboot, a second
 // instance's refusal and T7's re-render are all readings of files the test
@@ -86,6 +91,7 @@ var liveCheckScripts = []struct {
 	{"check90.sh", "check90_test.sh"},
 	{"check91.sh", "check91_test.sh"},
 	{"check111.sh", "check111_test.sh"},
+	{"check210.sh", "check210_test.sh"},
 	{"check130.sh", "check130_test.sh"},
 	{"check145.sh", "check145_test.sh"},
 	{"check146.sh", "check146_test.sh"},
