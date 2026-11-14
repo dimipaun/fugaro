@@ -892,7 +892,10 @@ repository with no slot, refused at bootstrap — moved the table's row from 134
 owner-run Checks 303, 304 and 305 in the register, moved the table's row from 135 to
 136. Amended 2026-11-13: `internal/cli/docs_check301_302_test.go`, the pin over the
 owner-run Checks 301 and 302 in the register, moved the table's row from 136 to
-137.) They
+137. Amended 2026-11-14: `internal/cli/docs_issues_resolved_test.go`, the
+issues-resolved-on-update folder's pin over its resolved-on-update page and the
+one-line link to it from `docs/issues.md`, moved the table's row from 137 to
+138.) They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.

@@ -506,6 +506,13 @@ const (
 	// docAccounts is the account document, which states the repository-level
 	// source beside the block and the profiles' lists it unions with.
 	docAccounts = "docs/project-claude-accounts.md"
+	// docMobileAuth is the document that states the declared allowlist: D231
+	// of the mobile work's reconciliation decides where the declaration lives,
+	// what the publish seeds from it and what it must never re-add, and the
+	// keys of the block are named there and in the plan's P5 and nowhere else
+	// yet. The spec is the owner's own text and states no key, so a document
+	// of the block's own would be the one that takes these rows over.
+	docMobileAuth = "docs/mobile-auth/reconciliation.md"
 )
 
 // layerRow is a row of the project layer's file. The layer is its only store,
@@ -1113,6 +1120,22 @@ var localRows = []Row{
 	// refuses a name outside the order and a model under the class's floor, so
 	// the classes' two ends are the two answers an absent key can take).
 	locTighten("orchestrator.decision_model_per_class", "each class's floor: haiku for a routine decision and opus for a sensitive one", "project policy", docOrchestrator),
+
+	// The declared mobile allowlist's three members (docs/mobile-auth, D231).
+	// The block is stated in the machine's own config, exactly as the
+	// orchestrator's is and for a stronger reason: the role an entry carries is
+	// an authority over every phone admitted to the project's runs, and every
+	// other store of it is one a run or a teammate can write (localcfg's
+	// MobileAllow comment says which). `fugaro project policy publish` is what
+	// carries the entries to the device node the rules read, so the rows name
+	// that token rather than `settings set`, whose allowlist deliberately does
+	// not carry them: an entry is a list of records a scalar write cannot
+	// express, and the role in it is not a value the generic path may set. The
+	// default is the block's own emptiness — an absent mobile_allow: declares
+	// nothing, so nothing is seeded and nobody is admitted by the file.
+	locLocal("mobile_allow.*.uid", "no uid: an entry that names one seeds no device node, and the node is what admits a phone (D231)", "project policy", docMobileAuth),
+	locLocal("mobile_allow.*.address", "required: the administered email or the domain the entry admits", "project policy", docMobileAuth),
+	locLocal("mobile_allow.*.role", "required: an entry with no role is refused rather than given one", "project policy", docMobileAuth),
 
 	// The four members of a repository's entry a PERSON writes are the generic
 	// writer's (D1173, docs/config-management/spec.md §3.4): they are a map of
