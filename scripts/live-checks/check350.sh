@@ -97,10 +97,12 @@
 #             --now`, from the step that gives up on it and from the exit trap.
 # Runs:       by YOU. No agent runs any step of it.
 # Output:     progress on stderr, ONE block on stdout headed CHECK 350 RESULT.
-#             Exit 0 when every criterion of steps 1 to 4 held, 1 when one of
-#             them FAILED — or when they all held and the Restore could not
-#             confirm that the branch is gone, which the block's `restore` row
-#             names — and 2 when the run could not tell (a guard stopped it, the
+#             Exit 0 when every criterion of steps 1 to 4 held — and step 5's
+#             too, when you passed --step5-run and let the check read that run —
+#             1 when one of them FAILED, or when they all held and the Restore
+#             could not confirm that the branch is gone, which the block's
+#             `restore` row names, and 2 when the run could not tell (a guard
+#             stopped it, the
 #             window holds no record old enough for steps 3 and 4, the run never
 #             ended, a read did not answer, a tool is missing, an internal error
 #             ended it). `2` is not an answer about the classes, and the block's
@@ -229,6 +231,7 @@ T1_LINE=""
 # reading from a narrow one.
 WEEK_FROM=""
 WEEK_TO=""
+WEEK_LAST=""
 SINCE_USED=""
 SINCE_STAMP=""
 WEEK_TO_STAMP=""
@@ -750,6 +753,7 @@ print(to.isoformat())
 print(days)
 print(since.strftime("%Y%m%d-%H%M%S"))
 print(to.strftime("%Y%m%d-000000"))
+print((to - datetime.timedelta(days=1)).isoformat())
 PY
   ); then
     stop "this check could not work out the week the digest reports (python3 did not answer), so it cannot tell which records steps 3 and 4 are about"
@@ -760,12 +764,15 @@ PY
   days=$(printf '%s\n' "$bounds" | sed -n 3p)
   SINCE_STAMP=$(printf '%s\n' "$bounds" | sed -n 4p)
   WEEK_TO_STAMP=$(printf '%s\n' "$bounds" | sed -n 5p)
+  WEEK_LAST=$(printf '%s\n' "$bounds" | sed -n 6p)
   SINCE_USED=${SINCE:-${days}d}
 }
 
 # in_window STAMP: whether an RFC3339 stamp falls inside the week steps 3 and 4
-# are about, [WEEK_FROM, WEEK_TO). A stamp the reader could not give is "no": a
-# record whose own time cannot be read is not evidence about a week.
+# are about. That week is the digest's own period, which runs from WEEK_FROM to
+# WEEK_LAST inclusive (the Sunday); the listing's mint bound is the exclusive
+# WEEK_TO beside it. A stamp the reader could not give is "no": a record whose
+# own time cannot be read is not evidence about a week.
 in_window() { # in_window STAMP
   [ -n "$1" ] || return 1
   local day=${1%%T*}
@@ -977,8 +984,8 @@ step_target() {
   seen=$(field "$SCRATCH/candidates.txt" count)
   candidates=$(field "$SCRATCH/candidates.txt" candidates)
   if [ -z "$candidates" ] || [ "$candidates" = 0 ]; then
-    fact target FAIL "gs://$B/runs/$SLUG/ holds $seen run record(s) and none of them was minted inside the window this check reads (--since $SINCE_USED: minted at or after $SINCE_STAMP and before the week's last day ${WEEK_TO}T00:00:00Z): steps 3 and 4 need a record written before failure_class shipped that finished inside the week $WEEK_FROM..$WEEK_TO, and this window holds none. Run the check on a sandbox repository that has run for longer than one week, or widen the window with --since 60d"
-    stop "the window --since $SINCE_USED of $SLUG holds no run record minted before the week $WEEK_FROM..$WEEK_TO, so the week's own half of step 3 and the whole of step 4 have nothing to read. Nothing is concluded about the classes: this is a could-not-tell"
+    fact target FAIL "gs://$B/runs/$SLUG/ holds $seen run record(s) and none of them was minted inside the window this check reads (--since $SINCE_USED: minted at or after $SINCE_STAMP and before ${WEEK_TO}T00:00:00Z, the day after the week's own last day): steps 3 and 4 need a record written before failure_class shipped that finished inside the week $WEEK_FROM..$WEEK_LAST, and this window holds none. Run the check on a sandbox repository that has run for longer than one week, or widen the window with --since 60d"
+    stop "the window --since $SINCE_USED of $SLUG holds no run record minted before the week $WEEK_FROM..$WEEK_LAST, so the week's own half of step 3 and the whole of step 4 have nothing to read. Nothing is concluded about the classes: this is a could-not-tell"
   fi
   local want=$CANDIDATES read_any=no skipped="" why="" stamp url line
   [ "$want" -gt "$candidates" ] && want=$candidates
@@ -1271,8 +1278,8 @@ step_digest() {
   # The period the document itself names is held against this check's own week:
   # the candidates were drawn from this check's bounds, and a document reporting
   # another period would mean the two are not the same week.
-  if [ "$pf" != "$WEEK_FROM" ] || [ "$pt" != "$WEEK_TO" ]; then
-    fact digest FAIL "$see is not the week this check read the bucket for (${WEEK_FROM}..${WEEK_TO}): the old record was chosen from this check's own week, so a report of another period cannot be held against it — read the report's own period and run the check again. The block is in $SCRATCH/digest-json.out"
+  if [ "$pf" != "$WEEK_FROM" ] || [ "$pt" != "$WEEK_LAST" ]; then
+    fact digest FAIL "$see is not the week this check read the bucket for (${WEEK_FROM}..${WEEK_LAST}): the old record was chosen from this check's own week, so a report of another period cannot be held against it — read the report's own period and run the check again. The block is in $SCRATCH/digest-json.out"
     return 0
   fi
   local counted
@@ -1371,15 +1378,20 @@ row_verdict() { # row_verdict KEY
   sed -n "s/^$1|\([A-Z]*\)|.*/\1/p" "$FACTS_FILE" | head -1
 }
 
-# step_verdict: the rows of steps 1 to 4 decide, and nothing else does. Steps 5
-# and 6 are your own runs, so their rows are read as the prompt they are: a
-# missing --step5-run leaves the block with an INFO row and does not end the run
-# as a failure.
+# step_verdict: the rows of steps 1 to 4 decide, and nothing else does — except
+# step 5's read when you passed one: that run is yours to make and this check
+# never fakes it, but once you hand the check its ref the class it carries IS a
+# criterion, and a class other than the one the plan expects is a finding like
+# any other. Without --step5-run the row is the prompt it is, and INFO decides
+# nothing. Step 6 is entirely yours.
 step_verdict() {
   local key failed=() list=""
   for key in launch settled class agree window target groups share totals digest old-record readonly; do
     [ "$(row_verdict "$key")" = FAIL ] && failed+=("$key")
   done
+  if [ -n "$STEP5_RUN" ] && [ "$(row_verdict step5)" = FAIL ]; then
+    failed+=(step5)
+  fi
   REACHED_END=yes
   if [ ${#failed[@]} -gt 0 ]; then
     list=$(printf '%s, ' "${failed[@]}")
@@ -1603,7 +1615,7 @@ main() {
   fact project PASS "$P (typed by the owner, and the Fugaro project every command this check makes carries)"
   fact gcp-project PASS "$GCP (the GCP project the runs bucket belongs to)"
   fact bucket PASS "$B (typed by the owner: the runs bucket the records of steps 1, 3 and 4 are read from, and READ ONLY — this check writes no object)"
-  fact week INFO "the window steps 1 and 2 are listed with is --since $SINCE_USED, and the week steps 3 and 4 are about is ${WEEK_FROM}..${WEEK_TO} — the week the digest reports: the one before the week today falls in, Monday to Sunday, UTC, with a run counted in the period it finishes"
+  fact week INFO "the window steps 1 and 2 are listed with is --since $SINCE_USED, and the week steps 3 and 4 are about is ${WEEK_FROM}..${WEEK_LAST} — the week the digest reports: the one before the week today falls in, Monday to Sunday, UTC, with a run counted in the period it finishes"
   if [ -n "$DRY_RUN" ]; then
     fact dry-run PASS "guards and the plan only: nothing was pushed, launched, cancelled or deleted, and no gcloud call and no fugaro call was made at all"
     print_plan
