@@ -762,10 +762,24 @@ func TestJudgeFailedOrTimedOutRunIsBlocked(t *testing.T) {
 			{"no verdict at all", &runstore.Record{}},
 			{"a word this build does not know", &runstore.Record{MergeJudge: &runstore.MergeJudge{Verdict: "lgtm", Reason: "x", FollowUps: []runstore.MergeJudgeFollowUp{}}}},
 			{"a block that names nothing", &runstore.Record{MergeJudge: &runstore.MergeJudge{Verdict: runstore.MergeJudgeBlocked, Reason: "x", FollowUps: []runstore.MergeJudgeFollowUp{}}}},
+			// The one shape the rows above do not reach, and the one a reader
+			// that checked the word before the flag would answer merge on: the
+			// merge word *and* the run's own word that it could not read its
+			// answer. readJudgeVerdict writes the two together only as a block,
+			// so this comes off the wire — an older writer's record, or one a
+			// hand edited — and G1 is that no shape of them merges.
+			{"a merge word the run could not read", &runstore.Record{MergeJudge: &runstore.MergeJudge{Verdict: runstore.MergeJudgeMergeWithFollowUps, Reason: "x", Unreadable: true, FollowUps: []runstore.MergeJudgeFollowUp{}}}},
 		} {
 			if v := runner.MergeJudgeOf(tc.rec); v.Verdict != runstore.MergeJudgeBlocked || !v.Unreadable {
 				t.Errorf("%s reads as %+v, want a block", tc.name, v)
 			}
+		}
+		// The other way round, so the loop above is not passing because this
+		// reader blocks everything: the merge word, readable and from a run
+		// that answered, comes back as the word itself — and even that is an
+		// opinion about a merge and never one (D2031, D2047).
+		if v := runner.MergeJudgeOf(&runstore.Record{MergeJudge: &runstore.MergeJudge{Verdict: runstore.MergeJudgeMergeWithFollowUps, Reason: "sound", FollowUps: []runstore.MergeJudgeFollowUp{}}}); v.Verdict != runstore.MergeJudgeMergeWithFollowUps || v.Unreadable {
+			t.Errorf("a readable verdict reads as %+v, want the word the judge answered", v)
 		}
 	})
 }
