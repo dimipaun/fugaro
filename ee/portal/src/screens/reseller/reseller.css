@@ -1,0 +1,155 @@
+/* SPDX-License-Identifier: LicenseRef-Fugaro-Subscription */
+/* See ee/LICENSE for the terms. */
+/*
+ * The reseller screen's styles (portal plan P6.4). They live beside the screen
+ * rather than in `src/styles.css` because that file is the skeleton's and the
+ * plan gives this task one directory: a screen's rules arrive with the screen.
+ *
+ * Every colour, space and size is the token layer's, imported once by
+ * `src/styles.css`, so the portal stays one product and the two figures a
+ * statement carries line up as a column of numbers.
+ *
+ * Mobile-first, as the sheet that imports the tokens is: the phone is the
+ * window the portal is read on. On one, a customer and a statement are stacked
+ * cards and the tables inside them are short and set in the small size -- the
+ * columns a key is drawn with are an id, a workspace, a row, a count and two
+ * dates, and a phone wraps them rather than losing one. The single media query
+ * is the heads-up: side by side, a statement's month sits beside its figures
+ * and its lines, which is the one block with room to spare.
+ */
+
+.reseller {
+  max-width: var(--page-max);
+  margin: 0 auto;
+  padding: var(--space-xl) var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xl);
+}
+
+.reseller h2 {
+  font-size: var(--font-size-lg);
+  margin: 0 0 var(--space-sm);
+}
+
+.reseller h3 {
+  font-size: var(--font-size-base);
+  margin: 0;
+}
+
+.reseller__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-sm);
+}
+
+.reseller__table th,
+.reseller__table td {
+  text-align: left;
+  padding: var(--space-2xs) var(--space-sm) var(--space-2xs) 0;
+  border-bottom: var(--border-width) solid var(--border);
+}
+
+.reseller__table thead th {
+  color: var(--text-muted);
+  font-weight: var(--weight-medium);
+}
+
+.reseller__caption {
+  caption-side: bottom;
+  text-align: left;
+  padding-top: var(--space-2xs);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.reseller__id {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
+
+.reseller__customers {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.reseller__customer {
+  padding: var(--space-md);
+  background: var(--panel);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.reseller__customer .reseller__id {
+  margin: var(--space-3xs) 0;
+}
+
+.reseller__linked {
+  margin: 0 0 var(--space-sm);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.reseller__statements {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.reseller__statement {
+  padding: var(--space-md);
+  background: var(--panel);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.reseller__state {
+  margin: var(--space-3xs) 0 var(--space-sm);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.reseller__amounts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm) var(--space-md);
+  margin: 0 0 var(--space-md);
+}
+
+.reseller__amounts dt {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.reseller__amounts dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (min-width: 48rem) {
+  .reseller__statement {
+    display: grid;
+    grid-template-columns: 12rem 1fr;
+    column-gap: var(--space-lg);
+    align-items: baseline;
+  }
+
+  .reseller__statement h3,
+  .reseller__state,
+  .reseller__amounts {
+    grid-column: 1;
+  }
+
+  .reseller__statement .reseller__table {
+    grid-column: 2;
+    grid-row: 1 / span 3;
+  }
+}
