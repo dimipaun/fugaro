@@ -873,6 +873,9 @@ probe account carries predefined grants only).
 | 520 | A text-only coder reads a screenshot, on the vision model ([`docs/vision-model/`](vision-model/implementation-plan.md), its **Check 520** and task **V8**; **V1**'s `agent.models.vision`, **V2**'s `model_prices.*.image_tokens`, **V7**'s rewrite of the coder role, and **D2016** — which is why the state this measures is the coder priced **without** an image rate and not the plan's "with"): the sandbox repository's coder is priced without an image rate and `agent.models.vision` names a model that can read one, and one run whose task names a console `__screenshots__` PNG (the issue's own case, run `20261107-104613-b2af`) passes `implement` — and `fix`, where the recipe runs one — reaches its own `result.json`, and there every coder-role stage timing names the **vision** model's ID while `cost.model_by` carries that same model, so the split the issue is about is read from the record and not from the configuration; `fugaro diagnose <run> --json` prints the same split through the command an owner reads a run with | See "Check 520" below; `bash scripts/live-checks/check520.sh --sandbox <a sandbox repository checkout> --yes` is the whole of it, its sibling test `scripts/live-checks/check520_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call, and so is a coding agent's session); **no agent runs any step of it** | ONE sandbox run and what its task costs — the model spend of its coder-role stages, on the sandbox's own budget — plus the pull request that run opens: **billable, and `--yes` is required** before anything is launched. Every other call is a read (doctor, `models ls`, the run record, `diagnose`), and `CHECK520_MAX_MODEL_USD` turns the run's own figure into a criterion when you set it. The run's pull request and branch are left open for you to close. **OWNER-RUN, NOT RUN.** |
 | 521 | The early refusal, and the sentence an owner acts on ([`docs/vision-model/`](vision-model/implementation-plan.md), its **Check 521** and task **V8**; **V5**'s bootstrap refusal — "the coder can't read an image the task names" — and **D2005**, **D2006** and **D2001**): a repository whose coder is priced without an image rate and with **no** `agent.models.vision`, and a task whose text names a `.png`: the run is refused at **bootstrap**, before its first stage, so no stage's work is paid for and thrown away — the failure the refusal exists to remove; its record's `failure_class` is `config_invalid`, its `reason` names the slot to set and the price member that gives that slot's model an image rate, its stage list is **empty** and its cost is **zero** | See "Check 521" below; `bash scripts/live-checks/check521.sh --sandbox <a sandbox repository checkout>` is the whole of it, its sibling test `scripts/live-checks/check521_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call, and so is a coding agent's session); **no agent runs any step of it** | **NOTHING billable and no model call**: the run is refused at bootstrap, before its first stage, so no stage's work is paid for and the budget is not touched — which is why this check needs no `--yes`. It does start one Cloud Run job execution, and **nothing it launches outlives it**: a run that has not ended within `CHECK521_RUN_TIMEOUT_SECONDS` is cancelled with `fugaro cancel --now`, from the step that gives up on it and from the script's own exit trap. **OWNER-RUN, NOT RUN.** |
 | 292 | A catalog entry whose source names a build `context:` is built with the repository's files in it ([`docs/catalog-build-context/`](catalog-build-context/implementation-plan.md) §6, its **Check 292** and task **CB5**; that folder's **F22**, **F29**, **F30**, **F32** and **F33**, and **D1402**, **D1403**, **D1408** and **D1409**; the amendment it folds into is [`docs/project-image-catalog/context-design.md`](project-image-catalog/context-design.md), its §A5, §A6, §C3, §C4, §C5 and the fold-in at §11): one entry built from a repository's Dockerfile in a **subdirectory**, whose `COPY` reaches a file of the repository — the build the catalog could not run before this work — read back four ways: the built image **contains the copied file**, the record names **one** commit (`source_commit` and `context_commit` the same, and the image's `org.opencontainers.image.revision` that commit), the staged context **fires** the nightly decision with the `catalog-context` reason and the rebuild it submits is pinned to the staged commit, and after that rebuild the same entry decides **without** that reason. **What the plan's own step 4 cannot be run as written is the point of the section below:** the trigger's subject is the digest the operator's own copy **staged**, not the branch, so a pushed commit fires nothing by itself — the check is written against the code and says so | See "Check 292" below; **you** run it, on the **sandbox installation and the sandbox repository only, never `belong`**, from the sandbox repository's checkout, and **no agent runs any step of it** (there is **no script**: the check is the steps below) | One Cloud Build that runs (`fugaro image build <entry>`), one submitted-and-cancelled before its steps run (the staging that leaves the record behind), and the one rebuild the project's catalog check job submits when the entry fires: **all billable, and the rebuild is the point of the step**. Nothing is granted, no run is launched and no model is called, so there is no run spend. Two commits are pushed to the sandbox repository's branch and reverted (a third when step 5 loses its race with the build it cancels), and the entry, its staged objects, its record, its check state and its image are the check's own — the entry and its objects are removed in the Restore, the image is left in the shared registry (`fugaro image rm` never deletes one). **OWNER-RUN, NOT RUN.** |
+| 490 | A trivial finding is deferred, and the run still ends ready ([`docs/post-review-triage/`](post-review-triage/implementation-plan.md), its **Check 490** and task **T-TR13**; **T-TR8**'s ruling that a Startup run whose reviewer reports only a finding below the floor finishes ready with the finding recorded as a follow-up, and the two things **T-TR7b** writes for an owner to read): one real Startup run over a task this check writes — exactly one word of one sentence in one documentation file, so the reviewer's finding is the trivial one — read from its own `result.json`: it ends **ready** after **one** review round that reported a finding, the mode it resolved is one the triage step governs, its `triage` block holds a round whose entry for that finding reads `defer` from a source outside the floor, and `deferred.findings` names **the same key**, so the verdict and the follow-up are one finding and not two; and the pull request's **Deferred (follow-ups)** section, read with `gh pr view`, carries that key and the reviewer's own summary — the text Check 491 files from | See "Check 490" below; `bash scripts/live-checks/check490.sh --sandbox <a sandbox repository checkout> --yes` is the whole of it, its sibling test `scripts/live-checks/check490_test.sh` drives it against fake `gcloud`, `fugaro` and `gh` only, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call, and so is a coding agent's session); **no agent runs any step of it** | ONE sandbox run and what its task costs — the model spend of a documentation change, its review rounds and its triage calls, on the sandbox's own budget — plus the pull request that run opens: **billable, and `--yes` is required** before anything is launched. Every other call is a read (doctor, the runs list, the record, `gh pr view`), and `CHECK490_MAX_MODEL_USD` turns the run's own figure into a criterion when you set it. The pull request and its branch are left **open**, because Check 491 files from them. **OWNER-RUN, NOT RUN.** |
+| 491 | The deferrals are filed, one debt task per group, and listed ([`docs/post-review-triage/`](post-review-triage/implementation-plan.md), its **Check 491** and task **T-TR13**; **T-TR10**'s `fugaro followups RUN` and `fugaro runs ls --debt`): after Check 490's pull request is **merged**, the parent run's plan (`fugaro followups RUN --json`, which refuses an open or a closed pull request, so a plan that answers is the reading that it is merged) is held against the parent's own record — every group the triage tied its deferrals into is named by exactly one task, none left over and none counted twice — then `--launch` files **one debt task per group**, each read back from its own `task.json` (the debt mark, the parent run, the keys it settles and the parent's **applied** mode, never empty), `fugaro runs ls --debt --json` lists every one of them and no row that is not a task filed from a deferral, and the plan read again has nothing left to file, which is what makes an interrupted call safe to repeat | See "Check 491" below; `bash scripts/live-checks/check491.sh --sandbox <a sandbox repository checkout> --run <the parent run> --yes` is the whole of it, its sibling test `scripts/live-checks/check491_test.sh` drives it against fake `gcloud` and `fugaro` only, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call, and so is a coding agent's session); **no agent runs any step of it** | One sandbox run started per group — each does the work of a start and is cancelled by the check as soon as it has read the task, so the figure is a fraction of a run and the pull request a whole one would open is never opened: **billable, and `--yes` is required** before anything is filed, with `CHECK491_MAX` capping how many groups one call files (the command's own default). Nothing it files outlives it, and the parent run and its pull request are left exactly as they were. **OWNER-RUN, NOT RUN.** |
+| 492 | A `security` finding is never deferred, at level 2 and at the level 3 the request turns on ([`docs/post-review-triage/`](post-review-triage/implementation-plan.md), its **Check 492** and task **T-TR13**; **D1847**'s tension — every level's findings are triaged, and the level-3 pass the plan considered was declined — on **T-TR6**'s table, whose floor no verdict may move, and **T-TR8**'s hold): TWO real Startup runs over a task built to draw an openly exploitable weakness (an argument of a shell command line taken as it arrives), the second launched with `fugaro run --security`, which turns review level 3 on for the run whatever paths it changed. Each run's record must place that finding as `block` from the **table** with the floor's own sentence as its reason — the triage step may not move it — and its `deferred.findings` must name none of the keys the floor held, so no follow-up task can be filed from it; the second run's block must also hold a round at level `l3`, and when that round holds nothing the floor had to hold the row says so rather than reading a pass out of an empty list. **What the check cannot read back is the class itself**: the triage path records no per-finding class, so the class is the task's — the row says so — and what the rows read is the table's own sentence for a finding the severity override covers | See "Check 492" below; `bash scripts/live-checks/check492.sh --sandbox <a sandbox repository checkout> --yes` is the whole of it, its sibling test `scripts/live-checks/check492_test.sh` drives it against fake `gcloud` and `fugaro` only, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call, and so is a coding agent's session); **no agent runs any step of it** | TWO sandbox runs and what their task costs — each small, and the second one paying for the level-3 review round the request asks for — plus the pull requests they open: **billable, and `--yes` is required** before anything is launched. The second run is launched only when the first leg's rows are all PASS: a leg that could not be graded is not a comparison worth a second run's money, and the row that skips it says so. Nothing either run starts outlives the check: a run that has not ended within `CHECK492_RUN_TIMEOUT_SECONDS` is cancelled with `fugaro cancel --now`, from the step that gives up on it and from the script's own exit trap. `CHECK492_MAX_MODEL_USD` turns the two runs' summed figure into a criterion when you set it. The pull requests and their branches are left open for you. **OWNER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -13787,6 +13790,215 @@ built from, and the one a person can take over the log that actually failed on t
 6. **Restore.** Push the sandbox branch back — the commits this check made go with it — remove the entry (`fugaro image rm <name>`; it refuses while a job still runs the entry, which is why step 2 keeps it off every `needs:`) and publish with `fugaro update`, then `fugaro update --repo <the sandbox repository>` so its jobs are back on the config step 1 recorded. The entry's staged objects, its record and its check state are the check's own and live under `builds/`: `gcloud storage rm "gs://<runs bucket>/builds/catalog/<entry>/*"` and `gcloud storage rm "gs://<runs bucket>/builds/<slug>/catalog/<entry>/*"` remove them — the second is the record and the `check.json` beside it, which is where the check's own back-off lives — so the next nightly run has nothing of this entry to decide and no back-off of the check's to read. **Do not remove `builds/image-lock.json`**: that lock is the project's, shared with every other entry, and it is not this check's to delete. The **image** stays in the installation's shared registry: `fugaro image rm` never deletes one, and deleting it is not this check's to do. **FACT:** `fugaro image ls` reads the catalog as step 1 recorded it, and `fugaro doctor` is quiet.
 
 **Paste back:** every `FACT` line above — the entry's `fugaro image ls` line, the built image's reference and digest, the record's `source_commit`, `context_commit`, `context_sha256` and `template_salt`, the image's `org.opencontainers.image.revision`, the check job's two lines for the entry with their `decision` and `reasons`, and the copied file's bytes as the image holds them — and **never a secret and never a token value**: this check prints none, and the one file it reads out of the image is one it wrote. Until this check runs, the feature is built and **unverified live**: the two things no hermetic test can hold are a real provider's tree read at a real commit (the tree read and the digest it produces) and a real Cloud Build carrying a context through the clone step and `docker build --file` — which is exactly what steps 3 to 5 measure. **Never run any step against `belong`**: this is the sandbox installation and the sandbox repository only, and no agent runs any step of it.
+
+## Check 490: a trivial finding is deferred, and the run still ends ready (sandbox project and sandbox repository only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **T-TR13** of
+[docs/post-review-triage/implementation-plan.md](post-review-triage/implementation-plan.md) — its "Checks
+490–492" — and **run by you**: nothing below is a claim that a trivial finding is deferred. What it measures is one
+real Startup run on the sandbox whose reviewer reports the plan's own trivial finding. The check is
+`scripts/live-checks/check490.sh` (its sibling test `scripts/live-checks/check490_test.sh` drives it against fake
+`gcloud`, `fugaro` and `gh` only, and launches nothing), and **no agent runs any step of it**: a project or region
+naming `belong` is refused by name, and so is a coding agent's session.
+
+**What it settles.** **T-TR8**'s ruling — a Startup run whose reviewer reports only a finding below the floor
+finishes **ready** with the finding recorded as a follow-up — and the two things **T-TR7b** writes for an owner to
+read: the `triage` block in `result.json` and the **Deferred (follow-ups)** section of the pull request. The failure
+it removes is the one this work exists for: a run that pays for a fix round over a one-word documentation nit, or
+that ends a draft because a reviewer would not let it go.
+
+- **The release.** `fugaro version`, the usage line `fugaro followups --help` prints and the `--debt` line of
+  `fugaro runs ls --help`. The work is unreleased until **0.24.0**, so a build without it has no triage block to
+  read, and the check stops there and names the release rather than measuring a run that cannot carry one.
+- **The premise, from the checkout.** `agent.triage: false` in the sandbox's own `fugaro.yaml` is read before
+  anything is launched: a repository that turns the step off records no triage block whatever the run does, and the
+  check says so instead of spending.
+- **The run.** ONE sandbox run, launched with `fugaro run --mode startup --json` over a task this check writes:
+  exactly one word of one sentence in one documentation file (`CHECK490_DOC`, `README.md` by default) is to be
+  changed so the sentence no longer matches the code. It is followed with `fugaro runs ls --json` until it is
+  terminal, and **nothing it launches outlives it** — a run that has not ended within `CHECK490_RUN_TIMEOUT_SECONDS`
+  is cancelled with `fugaro cancel --now` from the step that gives up on it **and** from the script's exit trap, so a
+  Ctrl-C in the middle cancels it too.
+- **The ending, from the record.** `result.json`, read from the runs bucket at the key the listing's row gives and
+  checked against the run id this check launched: the run ended **ready** after **one** review round that reported a
+  finding, and the mode it resolved is one the triage step governs (`startup` or `pro`).
+- **The verdict, and the deferral that took effect.** The record's `triage` block holds a round whose entry for that
+  finding reads `defer` from a source outside the floor, and `deferred.findings` names **the same key** — so the
+  verdict and the follow-up are one finding and not two, and the run left behind exactly what the block said it
+  deferred.
+- **What the pull request says.** Its `Deferred (follow-ups)` section, read with `gh pr view --json`: it carries that
+  key and the reviewer's own one-line summary, which is the text an owner reads before `fugaro followups` — Check 491
+  files from exactly this.
+
+**What a run costs.** ONE sandbox run and what its task costs — the model spend of a documentation change, its review
+rounds and its triage calls, on the sandbox's own budget — plus the pull request that run opens: **billable**, and
+`--yes` is required before anything is launched. Every other call is a read (doctor, the runs list, the record, `gh pr
+view`). It creates nothing else: no job of its own, no build, no binding and no account. On disk it is one scratch
+directory, removed at the end.
+
+**Run it:**
+
+```sh
+bash scripts/live-checks/check490.sh --sandbox <a sandbox repository checkout> --dry-run
+bash scripts/live-checks/check490.sh --sandbox <a sandbox repository checkout> --yes
+```
+
+Progress goes to stderr and one `CHECK 490 RESULT` block goes to stdout at the end: paste that whole block here and
+nothing else. **Exit `0`** is every criterion that was measured holding; **`1`** is a measured criterion that did not
+hold, or a guard that stopped the run — among them a build older than the release, a premise that is not the state
+this measures, a run that did not end ready, and a round that did not defer the finding; **`2`** is the check not
+being able to measure (a tool missing, the checkout not being one, a record that could not be read, or a run that
+never ended and had to be cancelled). A key the run never reached reads `FAIL — not reached`. The knobs are
+`CHECK490_DRY_RUN`, `CHECK490_KEEP_SCRATCH`, `CHECK490_SANDBOX`, `CHECK490_DOC`, `CHECK490_TASK`,
+`CHECK490_RECIPE`, `CHECK490_RELEASE` (0.24.0), `CHECK490_REGION` (us-east5), `CHECK490_RUN_TIMEOUT_SECONDS`
+(3600), `CHECK490_POLL_SECONDS` (15), `CHECK490_CLI_TIMEOUT_SECONDS` (180), `CHECK490_LAUNCH_TIMEOUT_SECONDS`
+(600), `CHECK490_CANCEL_TIMEOUT_SECONDS` (300), `CHECK490_DOCTOR_TIMEOUT_SECONDS` (300) and
+`CHECK490_MAX_MODEL_USD` (unset: the run's own figure is reported, not graded).
+
+**What waits on it.** Check 491 is filed from this run's pull request and its record: **merging** the pull request it
+leaves is what makes 491 runnable, and the account of the stage this release ships is a claim about this reading
+until the block below is pasted here.
+
+## Check 491: the deferrals are filed, one debt task per group, and listed (sandbox project and sandbox repository only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **T-TR13** of
+[docs/post-review-triage/implementation-plan.md](post-review-triage/implementation-plan.md) — its "Checks
+490–492" — and **run by you**: nothing below is a claim that a deferral becomes a task. What it measures is
+`fugaro followups RUN`, on a real parent run whose pull request you have merged, and the way an owner lists what that
+filed. The check is `scripts/live-checks/check491.sh` (its sibling test `scripts/live-checks/check491_test.sh` drives
+it against fake `gcloud` and `fugaro` only, and launches nothing), and **no agent runs any step of it**: a project or
+region naming `belong` is refused by name, and so is a coding agent's session.
+
+**What it settles.** **T-TR10**'s two commands and the rule that makes an interrupted filing safe to repeat. The
+failure it removes is a deferral an owner cannot act on: a finding deferred in a run's record that no command turns
+into work, or one filed twice because a first call was interrupted.
+
+- **The release.** `fugaro version`, the usage line `fugaro followups --help` prints and the `--debt` line of
+  `fugaro runs ls --help`: **0.24.0** or a build that answers all three, and a build without the command stops here
+  with the release named.
+- **The parent, and the state this needs.** The parent run is Check 490's — `--run <the parent run>` — and the plan
+  (`fugaro followups RUN --json`, without `--launch`) is read first: the command finds the run's pull request on the
+  branch its launcher wrote and refuses an **open** or a **closed** one, so a plan that answers is itself the reading
+  that the pull request is **merged**, which is the state this check depends on and the one step only you can do.
+- **The plan against the record.** The parent's `result.json`, read from the runs bucket: its `deferred.findings` and
+  the group the triage tied each one to, and the mode the run resolved. Every group of the record is named by exactly
+  **one** task of the plan — a group already covered by an earlier call's run is named as filed — and the two sets
+  together cover the record's findings with none left over and none counted twice. A plan that names no key of the
+  record, names a group twice, or names a group the cap left behind is the finding.
+- **The filing.** `fugaro followups RUN --launch --json`: one debt task per group, each with a run ID of its own. A
+  plan with nothing to file — every group already has a run — launches nothing, which is what makes this check safe
+  to run twice.
+- **Each filed run's own task.** `task.json`, read from the runs bucket: the debt mark, the parent run and the keys
+  it settles, and the mode the task carries — **the parent's applied mode**, never empty. A task whose mode is empty
+  resolves its own at bootstrap, which is exactly the drift this row is about.
+- **The listing.** `fugaro runs ls --debt --json`: each filed run is listed, carrying its parent and its keys, and
+  every row the filter prints is a task filed from a deferral rather than an ordinary run.
+- **Idempotence.** The plan read again has nothing left to file. A second call files nothing, which is what makes an
+  interrupted first one safe to repeat.
+
+**What a run costs.** One sandbox run started per group — each does the work of a start and is cancelled as soon as
+this check has read its task, so the figure is a fraction of a run and the pull request a whole one would open is
+never opened: **billable**, and `--yes` is required before anything is filed. `CHECK491_MAX` caps how many groups one
+call files (the command's own default, 10), and `CHECK491_KEEP_RUNS` leaves the filed runs going — the check's
+default is to stop them, from the exit trap as well as the ordinary way out, so **nothing it files outlives it**.
+Every other call is a read (doctor, the plan, the record, the tasks, the runs list). It creates nothing else: no job of
+its own, no build, no binding and no account. The parent run and its pull request are left exactly as they were, and
+on disk it is one scratch directory, removed at the end.
+
+**Run it:**
+
+```sh
+bash scripts/live-checks/check491.sh --sandbox <a sandbox repository checkout> --run <the parent run> --dry-run
+bash scripts/live-checks/check491.sh --sandbox <a sandbox repository checkout> --run <the parent run> --yes
+```
+
+Progress goes to stderr and one `CHECK 491 RESULT` block goes to stdout at the end: paste that whole block here and
+nothing else. **Exit `0`** is every criterion that was measured holding; **`1`** is a measured criterion that did not
+hold, or a guard that stopped the run — among them a build older than the release, a pull request that is not merged,
+a plan that does not cover the record's groups, and a filed run that could not be cancelled; **`2`** is the check not
+being able to measure (a tool missing, the checkout not being one, a `--json` document that could not be read, or a
+filed run that could not be cancelled). A key the run never reached reads `FAIL — not reached`. The knobs are
+`CHECK491_DRY_RUN`, `CHECK491_KEEP_SCRATCH`, `CHECK491_KEEP_RUNS`, `CHECK491_SANDBOX`, `CHECK491_RUN`,
+`CHECK491_MAX`, `CHECK491_RELEASE` (0.24.0), `CHECK491_REGION` (us-east5), `CHECK491_POLL_SECONDS` (15),
+`CHECK491_LIST_TIMEOUT_SECONDS` (300), `CHECK491_CLI_TIMEOUT_SECONDS` (180),
+`CHECK491_LAUNCH_TIMEOUT_SECONDS` (600), `CHECK491_CANCEL_TIMEOUT_SECONDS` (300) and
+`CHECK491_DOCTOR_TIMEOUT_SECONDS` (300).
+
+## Check 492: a `security` finding is never deferred, at level 2 and at the level 3 the request turns on (sandbox project and sandbox repository only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **T-TR13** of
+[docs/post-review-triage/implementation-plan.md](post-review-triage/implementation-plan.md) — its "Checks
+490–492" — and **run by you**: nothing below is a claim that an exploitable weakness is held. What it measures is
+TWO real Startup runs over a task built to draw one, the second carrying `--security`. The check is
+`scripts/live-checks/check492.sh` (its sibling test `scripts/live-checks/check492_test.sh` drives it against fake
+`gcloud` and `fugaro` only, and launches nothing), and **no agent runs any step of it**: a project or region naming
+`belong` is refused by name, and so is a coding agent's session.
+
+**What it settles.** **D1847**'s tension, which is the reason the check needs two runs: every review level's findings
+are triaged — the plan considered leaving level 3 alone and declined — while the floor holds a finding no verdict may
+move. The failure it removes is the one this whole work must not introduce: an exploitable weakness waved through as
+a follow-up task because a judge, a mode's tolerance or a level-3 pass let it go.
+
+- **The release.** `fugaro version`, the usage lines `fugaro followups --help` answers and `fugaro runs ls --help`
+  names `--debt`, **and** the `--security` line of `fugaro run --help` — the request the second run makes. The work
+  is unreleased until **0.24.0**; a build that lacks any of the three stops here with the release named.
+- **The premise, from the checkout.** `agent.triage: false` in the sandbox's own `fugaro.yaml` is read before
+  anything is launched: a repository that turns the step off records no triage block, and two runs at such a checkout
+  would answer nothing.
+- **What the check is about, and what it cannot read back.** The class is the reviewer's and the table's; the record
+  keeps the table's answer and **not the class** — a triage entry carries the key, the verdict, the reason, the group
+  and the source, and a deferral carries the key, the summary, the reason, the group and the source, so no row can
+  read `security` out of `result.json`. The class is therefore the **task's**: the default task asks for a change
+  whose point is an exploit (an argument of a shell command line taken as it arrives and interpolated unquoted), and
+  the rows read the one sentence the table itself writes for a finding the severity override covers — a `security` or
+  `data_loss` class, or an impact of 5 — which is the floor. `CHECK492_TASK` makes this row a statement about another
+  task.
+- **Two runs.** The first is launched with `fugaro run --mode startup --json`, at the level Startup resolves; the
+  second with the same command plus `--security`, which turns review level 3 on for the run whatever paths it
+  changed. Each is followed with `fugaro runs ls --json` until it is terminal. **Nothing either run starts outlives
+  the check** — a run that has not ended within `CHECK492_RUN_TIMEOUT_SECONDS` is cancelled with `fugaro cancel --now`
+  from the step that gives up on it **and** from the script's exit trap, so a Ctrl-C cancels both. The second run is
+  launched only when the first leg's rows are **all PASS**: a leg that could not be graded is not a comparison worth a
+  second run's money, and the row that skips it says so.
+- **The floor, from each record.** `result.json`, read from the runs bucket at the key the listing's row gives and
+  checked against the run id this check launched: the mode it resolved is one the triage step governs, and the triage
+  block holds an entry whose reason is the floor's own sentence — `the floor holds this finding: no verdict may defer
+  it` — reading `block` from source `table`. A floor-held entry reading `defer`, or placed by anything other than the
+  table, is exactly the failure this check is about.
+- **The deferral that must NOT have taken effect.** `deferred.findings` names **none** of the keys the floor held, in
+  either run. A verdict that blocks one finding while the record leaves it behind as a follow-up is the same failure
+  one step later: `fugaro followups` would file it as work somebody may merge around.
+- **The level the request turns on.** The second run's triage block holds a round at level `l3`, so the findings of
+  the level `--security` turned on were judged by the triage step rather than passed through. When that round holds a
+  finding the floor held, the row reads the same two things there; when it holds none — the adversarial round reported
+  nothing on a head the round before it had fixed — the row says so rather than reading a pass out of an empty list.
+
+**What a run costs.** TWO sandbox runs and what their task costs — a small change, its review rounds and its triage
+calls, on the sandbox's own budget — plus the pull requests they open: **billable**, and `--yes` is required before
+anything is launched. The second run also pays for review level 3, which the first does not buy. `CHECK492_MAX_MODEL_USD`
+turns the two runs' summed figure into a criterion when you set it. Every other call is a read (doctor, the runs list,
+the two records). It creates nothing else: no job of its own, no build, no binding and no account. The pull requests
+and their branches are left **open** for you, and on disk it is one scratch directory, removed at the end.
+
+**Run it:**
+
+```sh
+bash scripts/live-checks/check492.sh --sandbox <a sandbox repository checkout> --dry-run
+bash scripts/live-checks/check492.sh --sandbox <a sandbox repository checkout> --yes
+```
+
+Progress goes to stderr and one `CHECK 492 RESULT` block goes to stdout at the end: paste that whole block here and
+nothing else. **Exit `0`** is every criterion that was measured holding; **`1`** is a measured criterion that did not
+hold, or a guard that stopped the run — among them a build older than the release, a premise that is not the state
+this measures, an entry the triage step deferred, a deferral naming a key the floor held, and a level-3 round that
+never ran; **`2`** is the check not being able to measure (a tool missing, the checkout not being one, a record that
+could not be read, or a run that never ended and had to be cancelled). A key the run never reached reads `FAIL — not
+reached`. The knobs are `CHECK492_DRY_RUN`, `CHECK492_KEEP_SCRATCH`, `CHECK492_SANDBOX`, `CHECK492_TASK`,
+`CHECK492_SECURITY_TASK` (the second run's task, when you would rather bend only it), `CHECK492_RECIPE`,
+`CHECK492_RELEASE` (0.24.0), `CHECK492_REGION` (us-east5), `CHECK492_RUN_TIMEOUT_SECONDS` (3600),
+`CHECK492_POLL_SECONDS` (15), `CHECK492_CLI_TIMEOUT_SECONDS` (180), `CHECK492_LAUNCH_TIMEOUT_SECONDS` (600),
+`CHECK492_CANCEL_TIMEOUT_SECONDS` (300), `CHECK492_DOCTOR_TIMEOUT_SECONDS` (300) and `CHECK492_MAX_MODEL_USD`
+(unset: the two runs' figure is reported, not graded).
 
 ## Check 230: the author, the committer and the trailers, on GitHub and on Bitbucket (two sandbox repositories carrying `git.author: launcher`, a third with no such key, and their forges; never `belong`; run by you; NOT RUN)
 
