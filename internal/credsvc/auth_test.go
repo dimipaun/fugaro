@@ -986,6 +986,15 @@ func TestASharedAccountInTwoSetsIsRefusedWhole(t *testing.T) {
 // The owner's answer of 2026-10-19: the IAM bit says an authorised identity
 // called, the email says which. A token minted for another principal that
 // holds run.invoker on the service is refused.
+//
+// Every case is run against each of the three job classes, because the class's
+// branch is what calls checkCallerToken and each branch calls it for itself: the
+// token's own window and its email's verification are the same check in all
+// three, and a class whose branch forgot it would admit a caller the other two
+// refuse — an expired shared job's token into the profile's whole repository
+// set, or an expired review job's into the read-only mint. Testing one class
+// leaves the other two branches unchecked, which is what the shared branch's
+// call was until these subtests existed.
 func TestVerifyRefusesForeignIDTokenEmail(t *testing.T) {
 	cases := map[string]func(map[string]any){
 		"another job service account": func(c map[string]any) { c["email"] = testOtherSA },
@@ -1002,14 +1011,42 @@ func TestVerifyRefusesForeignIDTokenEmail(t *testing.T) {
 		"an expired token": func(c map[string]any) {
 			c["exp"] = testNow().Add(-time.Minute).Unix()
 		},
-		"another issuer": func(c map[string]any) { c["iss"] = "https://accounts.example.invalid" },
+		// The two claims a token makes about when it begins, both beyond the
+		// skew the service allows a caller's clock (clockSkew).
+		"an iat in the future": func(c map[string]any) { c["iat"] = testNow().Add(10 * time.Minute).Unix() },
+		"a nbf in the future":  func(c map[string]any) { c["nbf"] = testNow().Add(10 * time.Minute).Unix() },
+		"another issuer":       func(c map[string]any) { c["iss"] = "https://accounts.example.invalid" },
 	}
-	for name, mutate := range cases {
-		t.Run(name, func(t *testing.T) {
-			f := newFixture(t)
-			_, err := f.verify(f.runToken(), f.jobToken(mutate), f.job)
-			if !errors.Is(err, ErrUnverifiedJob) {
-				t.Fatalf("err = %v, want ErrUnverifiedJob", err)
+	// The three classes a job's ID token is presented as. The fixture's own
+	// account lists are what make each one that class: the per-repository job's
+	// account is the default, the shared one is the row newFixture writes, and
+	// the review one is configured here.
+	classes := map[string]struct {
+		email  string
+		config func(*AuthConfig)
+	}{
+		"a per-repository job's account": {email: testJobSA},
+		"a shared project job's account": {email: testSharedSA},
+		"a review job's account": {
+			email: testReviewSA,
+			config: func(c *AuthConfig) {
+				c.ReviewJobAccounts = []ReviewJobAccount{{Email: testReviewSA, Account: testAccount}}
+			},
+		},
+	}
+	for class, cc := range classes {
+		t.Run(class, func(t *testing.T) {
+			for name, mutate := range cases {
+				t.Run(name, func(t *testing.T) {
+					f := newFixtureWith(t, cc.config)
+					_, err := f.verify(f.runToken(), f.jobToken(func(c map[string]any) {
+						c["email"] = cc.email
+						mutate(c)
+					}), f.job)
+					if !errors.Is(err, ErrUnverifiedJob) {
+						t.Fatalf("err = %v, want ErrUnverifiedJob", err)
+					}
+				})
 			}
 		})
 	}
