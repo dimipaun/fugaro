@@ -265,20 +265,22 @@ function serve(replies: Record<string, Reply>): Server {
 interface Shown extends Server {
   signIn: ReturnType<typeof vi.fn>
   client: ApiClient
-  /**
-   * The SDK answering after a sign-in: the same person, with a new sign-in
-   * instant. It is the token's own `auth_time` that a step-up changes, and the
-   * uid does not move, so a fake that pushed a different person would be
-   * testing a case the app cannot meet.
-   */
-  again(age: number): void
 }
 
 /** The screen as the router mounts it, with the session and the API faked. */
 function show(user: SignedInUser | null, replies: Record<string, Reply>): Shown {
   const server = serve(replies)
-  const signIn = vi.fn(() => Promise.resolve())
   let listener: ((user: SignedInUser | null) => void) | null = null
+  // A sign-in answers the session itself. The person signing in again is the
+  // same person -- the same uid, a new sign-in instant -- and the port the real
+  // one is watched through is the SDK's token listener, which fires when the
+  // token changes and not when the uid does (`src/auth/firebase.ts`). A fake
+  // that let a case push a user from outside a sign-in would hand the screen a
+  // notification it can never really get, and a screen that only worked under
+  // one would pass here and never work in production.
+  const signIn = vi.fn(async () => {
+    listener?.(person(0))
+  })
   const port: AuthPort = {
     watch: (onUser) => {
       listener = onUser
@@ -302,9 +304,6 @@ function show(user: SignedInUser | null, replies: Record<string, Reply>): Shown 
     ...server,
     signIn,
     client,
-    again: (age) => {
-      listener?.(person(age))
-    },
   }
 }
 
@@ -387,11 +386,13 @@ describe('the operations screens', () => {
     expect(shown.sent('POST', '/api/ops/mints')).toHaveLength(0)
 
     fireEvent.click(screen.getByRole('button', { name: 'Sign in again' }))
-    shown.again(0)
 
     // The same change, sent again by the person: the fields it was going to
     // send are still there, because nothing landed and nothing was cleared,
-    // and the prompt is gone because it has been answered.
+    // and the prompt is gone because it has been answered. That the send below
+    // goes through at all is the point of the case: the sign-in answered the
+    // session with a fresh instant through the port's own watch, so a guard
+    // still reading the old one would refuse this second send too.
     await waitFor(() => {
       expect(screen.queryByText(/five minutes/)).toBeNull()
     })

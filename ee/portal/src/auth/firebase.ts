@@ -108,7 +108,17 @@ export async function createFirebaseAuthPort(
   return {
     watch(onUser) {
       let seen = 0
-      return firebaseAuth.onAuthStateChanged(instance, (user) => {
+      // `onIdTokenChanged` and not `onAuthStateChanged`, because the session
+      // carries the token's own `auth_time` and that claim moves only when the
+      // token does. In the SDK `notifyAuthListeners` hands every notification to
+      // the token listeners and hands it to the auth-state listeners only when
+      // the uid has moved since the last one (`authStateSubscription.next` sits
+      // behind `lastNotifiedUid`) -- so a person signing in again as themselves,
+      // which is the step-up P5.1 asks for, changes the token and not the uid.
+      // An auth-state listener never hears it: `authTime` stays as old as the
+      // session, and every change they make is refused as stale for as long as
+      // the tab is open.
+      return firebaseAuth.onIdTokenChanged(instance, (user) => {
         // The answers to two quick changes can arrive out of order, and a
         // session that went back to signed-in after a sign-out would be a
         // screen drawn for somebody who is no longer there.
