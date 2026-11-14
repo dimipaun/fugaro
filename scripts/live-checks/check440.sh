@@ -183,6 +183,12 @@ ENDING_A=""
 ENDING_B=""
 OLD_ID=""
 OLD_ENDING=""
+# The run older than the window as `<slug>/<run-id>`, with the run's OWN slug:
+# the listing it is found in is bucket-wide, so that run may belong to another
+# repository in the same bucket, and this checkout's slug beside its ID would be
+# a false reading of D1702. Empty when neither the listing nor `--old-run` names
+# a slug, and then the rows that read it pin the ID alone.
+OLD_REF=""
 LOG_URL_A=""
 # Whether the two runs were seen in the live feed at all, which is what makes
 # `cancel <ending>`'s own reading of them possible.
@@ -1053,6 +1059,9 @@ step_old_run() {
   cut -d'|' -f1 "$SCRATCH/old-listing.rows" >"$SCRATCH/old-ids"
   if [ -n "$OLD_RUN" ]; then
     OLD_ID=${OLD_RUN##*/}
+    case "$OLD_RUN" in
+    */*) OLD_REF="$OLD_RUN" ;;
+    esac
   else
     local line
     while IFS= read -r line; do
@@ -1066,6 +1075,10 @@ step_old_run() {
   if [ -z "$OLD_ID" ]; then
     stop "no run older than ${OLD_DAYS} days is in the last $OLD_WINDOW of this installation's bucket, so there is nothing for the widening to find: pass --old-run <slug>/<run-id> naming a run the bucket holds and that the last $WINDOW does not, or run this check again once a run has aged past ${OLD_DAYS} days"
   fi
+  # The old run's own slug, out of that listing's `run` cell, which carries
+  # `<slug>/<run-id>`: the listing holds every repository's runs, so the check
+  # may not assume this one belongs to the checkout it was run from.
+  [ -n "$OLD_REF" ] || OLD_REF=$(cell "$(row_of old-listing "$OLD_ID")" 7)
   [ -n "$OLD_ENDING" ] || OLD_ENDING=$(shortest_ending "$OLD_ID" "$SCRATCH/old-ids")
 
   # The window is what the widening is measured against: a run the last seven
@@ -1085,7 +1098,7 @@ step_old_run() {
     OLD_ID=""
     return 0
   fi
-  fact old-run PASS "the run $SLUG/$OLD_ID is older than ${OLD_DAYS} days, is NOT in the last $WINDOW, and is in the bucket's last $OLD_WINDOW; its ending $OLD_ENDING is unique among the $(wc -l <"$SCRATCH/old-ids" | tr -d ' ') runs that listing holds, so it names that one run"
+  fact old-run PASS "the run ${OLD_REF:-$OLD_ID} is older than ${OLD_DAYS} days, is NOT in the last $WINDOW, and is in the bucket's last $OLD_WINDOW; its ending $OLD_ENDING is unique among the $(wc -l <"$SCRATCH/old-ids" | tr -d ' ') runs that listing holds, so it names that one run"
 }
 
 # step_cancel_finished: `cancel` reads an ending against the ACTIVE runs alone,
@@ -1104,7 +1117,7 @@ step_cancel_finished() {
     fact cancel-finished-refuses FAIL "fugaro cancel $OLD_ENDING was refused, but not with the finished run's own sentence: $(printf '%s' "$out" | tr '\n' ' ' | cut -c1-400)"
     return 0
   fi
-  fact cancel-finished-refuses PASS "fugaro cancel $OLD_ENDING ($SLUG/$OLD_ID, finished long ago) exited 1 with 'no active run ending \"$OLD_ENDING\"; pass the full run ID': the active-only reading names no run to act on and cancels nothing (D1710)"
+  fact cancel-finished-refuses PASS "fugaro cancel $OLD_ENDING (${OLD_REF:-$OLD_ID}, finished long ago) exited 1 with 'no active run ending \"$OLD_ENDING\"; pass the full run ID': the active-only reading names no run to act on and cancels nothing (D1710)"
 }
 
 # step_widen: D1702. The window has no match, so the lookup lists the bucket's
@@ -1123,11 +1136,14 @@ step_widen() {
     fact window-widens FAIL "fugaro diagnose $OLD_ENDING exited $BOUNDED_STATUS: the ending of a run the bucket still holds is refused rather than looked up past the window: $(one_line "$SCRATCH/widen.err")"
     return 0
   fi
-  if ! grep -q "^Run:      $SLUG/$OLD_ID\$" <<<"$out"; then
-    fact window-widens FAIL "fugaro diagnose $OLD_ENDING did not diagnose $SLUG/$OLD_ID (the run is not in the last $WINDOW, so only the widening can have found it): $(printf '%s' "$out" | tr '\n' ' ' | cut -c1-400)"
+  # `${OLD_REF:-[^/]*/$OLD_ID}`: the run's own slug when one was read, and
+  # otherwise any slug at all, because a run the check cannot name the slug of
+  # must not be failed for printing the slug it really has.
+  if ! grep -qE "^Run:      ${OLD_REF:-[^/]*/$OLD_ID}\$" <<<"$out"; then
+    fact window-widens FAIL "fugaro diagnose $OLD_ENDING did not diagnose ${OLD_REF:-the run $OLD_ID} (the run is not in the last $WINDOW, so only the widening can have found it): $(printf '%s' "$out" | tr '\n' ' ' | cut -c1-400)"
     return 0
   fi
-  fact window-widens PASS "fugaro diagnose $OLD_ENDING exited 0 and printed 'Run:      $SLUG/$OLD_ID', a run the last $WINDOW does not hold: the lookup widened past the window on the miss alone (D1702), and the diagnosis carries the full ID (D1705)"
+  fact window-widens PASS "fugaro diagnose $OLD_ENDING exited 0 and printed 'Run:      ${OLD_REF:-<slug>/$OLD_ID}', a run the last $WINDOW does not hold: the lookup widened past the window on the miss alone (D1702), and the diagnosis carries the full ID (D1705)"
 }
 
 # step_latency: F5's cost, as a figure and never a criterion. What it measures

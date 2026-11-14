@@ -100,8 +100,8 @@ now_iso() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 # rows_for window|wide|active: the runs the listing holds, as
 # run_id|created|terminal|title.
 rows_for() {
-  local want=$1 id created terminal title inwin
-  while IFS='|' read -r id created terminal title inwin; do
+  local want=$1 id created terminal title inwin slug
+  while IFS='|' read -r id created terminal title inwin slug; do
     [ -n "$id" ] || continue
     case "$want" in
     window) [ "$inwin" = yes ] || continue ;;
@@ -114,6 +114,16 @@ rows_for() {
 ids_of() { rows_for "$1" | cut -d'|' -f1; }
 title_of() { awk -F'|' -v id="$2" '$1==id {print $4; exit}' "$D/runs"; }
 created_of() { awk -F'|' -v id="$2" '$1==id {print $2; exit}' "$D/runs"; }
+
+# slug_of ID: the repository slug of a run. The runs the check launches are this
+# checkout's, and a seeded one may be another repository's — the 90-day listing
+# the old run is found in is bucket-wide, so the row's own `run` cell and the
+# `Run:` line carry THAT run's slug and not this checkout's.
+slug_of() {
+  local s
+  s=$(awk -F'|' -v id="$1" '$1==id {print $6; exit}' "$D/runs")
+  printf '%s' "${s:-$SLUG}"
+}
 
 # match_in REF LISTFILE: the ids of the list that end with REF.
 match_in() {
@@ -155,7 +165,7 @@ ending_rows() {
     ending=$(shortest_ending "$id" "$file")
     status=running
     case "$(rows_for wide)" in *"$id|"*"|true|"*) status=succeeded ;; esac
-    printf '  %d) %s/%s  %s  %s  %s\n' "$i" "$SLUG" "$ending" "$status" \
+    printf '  %d) %s/%s  %s  %s  %s\n' "$i" "$(slug_of "$id")" "$ending" "$status" \
       "$(when_cell "$(created_of "" "$id")")" "$(title_of "" "$id")"
   done <"$file"
 }
@@ -164,12 +174,12 @@ full_rows() { # FILE — the same candidates as cancel offers them (D1710).
   local file=$1 id
   while IFS= read -r id; do
     [ -n "$id" ] || continue
-    printf '  %s/%s  %s\n' "$SLUG" "$id" "$(title_of "" "$id")"
+    printf '  %s/%s  %s\n' "$(slug_of "$id")" "$id" "$(title_of "" "$id")"
   done <"$file"
 }
 
 diagnose_of() { # id
-  printf 'Run:      %s/%s\n' "$SLUG" "$1"
+  printf 'Run:      %s/%s\n' "$(slug_of "$1")" "$1"
   printf 'Status:   succeeded\n'
   printf 'Cost:     $0.00\n'
 }
@@ -306,7 +316,7 @@ cmd_runs_ls() { # --json --since W
     [ "$first" = 1 ] || printf ','
     first=0
     printf '{"run":"%s/%s","run_id":"%s","created":"%s","status":"%s","title":"%s","log_url":"%s","execution":"%s","terminal":%s}' \
-      "$SLUG" "$id" "$id" "$created" \
+      "$(slug_of "$id")" "$id" "$id" "$created" \
       "$([ "$terminal" = true ] && printf succeeded || printf running)" \
       "$title" "$(logurl "$id")" "$(exec_of "$id")" "$terminal"
   done <"$D/.rows"
@@ -461,8 +471,8 @@ print((datetime.datetime.now(datetime.timezone.utc)
 PY
 }
 
-seed_run() { # id created terminal title in-window
-  printf '%s|%s|%s|%s|%s\n' "$1" "$2" "$3" "$4" "$5" >>"$dir/state/runs"
+seed_run() { # id created terminal title in-window [slug]
+  printf '%s|%s|%s|%s|%s|%s\n' "$1" "$2" "$3" "$4" "$5" "${6:-}" >>"$dir/state/runs"
 }
 
 # seed_history: the run older than the window and one inside it, which is the
@@ -916,14 +926,25 @@ test_the_scratch_directory_can_be_kept() {
 
 test_the_block_never_carries_a_run_of_the_owners_own() {
   setup_case no-owner-runs
-  seed_history
+  # The run older than the window belongs to ANOTHER repository in the same
+  # bucket, which is what the check has to read: the listing it is found in
+  # holds every repository's runs, so a block that pinned this checkout's slug
+  # beside that run's ID would report a working D1702 as a failure.
+  seed_run "$OLD_ID" "$(iso_ago 9)" true "another repository's old run" no other-repo
+  seed_run "$RECENT_ID" "$(iso_ago 1)" true "a recent run" yes
   run440_default
-  # The block is what the owner pastes back: it carries this run's own two IDs
-  # and the seeded ones, and nothing else that looks like a run.
   local ids
   ids=$(launched_ids)
+  expect_status "$status" 0 "a bucket whose old run is another repository's"
   expect_contains "$out" "$(printf '%s\n' "$ids" | sed -n 1p)" "the block names the first run"
   expect_contains "$out" "$(printf '%s\n' "$ids" | sed -n 2p)" "the block names the second run"
+  expect_contains "$(fact_line window-widens)" "PASS" "the widening of another repository's run"
+  expect_contains "$(fact_line window-widens)" "Run:      other-repo/$OLD_ID" "the widening: the old run's OWN slug and ID"
+  expect_contains "$(fact_line old-run)" "other-repo/$OLD_ID" "the old-run row: the old run's OWN slug"
+  expect_contains "$(fact_line cancel-finished-refuses)" "other-repo/$OLD_ID" "the finished-run row: the old run's OWN slug"
+  # The other half of the same reading: the checkout's own slug is never printed
+  # beside the old run's ID, which is the false FAIL this case exists for.
+  expect_absent "$out" "$SLUG/$OLD_ID" "the block pins this checkout's slug beside the old run's ID"
 }
 
 # Sharding, so the package's Go test can run the tests of this file side by
