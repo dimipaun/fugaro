@@ -525,7 +525,7 @@ func TestAnInstallationHoldingTheImplicitReviewJobConvergesThroughBothTransition
 	if _, errOut, err := executeStdin(t, "", "update", "--yes"); err != nil {
 		t.Fatalf("the run that deploys the credentials service failed: %v\n%s", err, errOut)
 	}
-	name := infra.ImplicitReviewJobName()
+	name := infra.ImplicitReviewJobName("github")
 	deployed := reviewJobOf(t, r, name, "the run that deployed the credentials service")
 
 	for _, c := range []struct {

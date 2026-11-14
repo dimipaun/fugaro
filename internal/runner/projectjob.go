@@ -48,6 +48,13 @@ type jobTriple struct {
 	Provider string
 	Account  string
 	Class    jobClass
+	// Implicit marks the installation's implicit default review-only job,
+	// which no profile of the published policy defines (implicitReviewCandidates).
+	// It is a fact about where the identity came from and not about the name:
+	// the two readers that have to know are admissionCheck, whose profile
+	// admission has no profile to read, and checkProjectJobAccount, which asks
+	// the same question of the same set.
+	Implicit bool
 }
 
 // jobClass is which of the two jobs of one (profile, provider, account) axis a
@@ -303,19 +310,29 @@ func (r *run) jobName() (string, error) {
 // job of (slug, workflow, token) (project = false), or a halt.
 //
 // The order is the plan's: the computed project names first, because that match
-// carries an identity; then the run's own per-repository job name, recomputed
-// with gcp.WorkflowVariant so a named OAuth run matches the job it was launched
-// as (B2 — the deployed job of a named run is JobName(slug,
-// WorkflowVariant(wf, token)), and comparing against the plain workflow would
-// refuse every one of its own executions, which is the bug internal/cli's
-// cloud.go:271-300 documents for --run-id repeats, ls, logs, diagnose and
-// follow-up); then nothing.
+// carries an identity and because the published policy is the authority on
+// every name it computes — a profile it defines under the implicit job's own
+// name wins, which is the same job the deployer's collision gate leaves standing
+// (internal/infra's implicitReviewVariant); then the implicit default review
+// jobs, which no profile defines and which are computed from the provider kinds
+// alone, so they are there whether or not a policy is published; then the run's
+// own per-repository job name, recomputed with gcp.WorkflowVariant so a named
+// OAuth run matches the job it was launched as (B2 — the deployed job of a named
+// run is JobName(slug, WorkflowVariant(wf, token)), and comparing against the
+// plain workflow would refuse every one of its own executions, which is the bug
+// internal/cli's cloud.go:271-300 documents for --run-id repeats, ls, logs,
+// diagnose and follow-up); then nothing.
 func matchJobName(job string, p *projectpolicy.Policy, found bool, slug, workflow, token string) (jobTriple, bool, error) {
 	if found {
 		for _, c := range projectJobCandidates(p) {
 			if gcp.ProjectJobName(c.Profile, c.Provider, c.Account) == job {
 				return c, true, nil
 			}
+		}
+	}
+	for _, c := range implicitReviewCandidates() {
+		if gcp.ProjectJobName(c.Profile, c.Provider, c.Account) == job {
+			return c, true, nil
 		}
 	}
 	variant, err := legacyVariant(job, slug, workflow, token)
@@ -365,6 +382,43 @@ func projectJobCandidates(p *projectpolicy.Policy) []jobTriple {
 			out = append(out, jobTriple{Profile: name, Provider: pr.Provider, Account: account, Class: classCoding})
 			out = append(out, jobTriple{Profile: name, Provider: pr.Provider, Account: reviewVariantAccount(account), Class: classReview})
 		}
+	}
+	return out
+}
+
+// implicitReviewCandidates is the identity of the installation's implicit
+// default review-only jobs: one per provider kind a shared project job exists
+// for (jobProviderKinds, the same list the deployer's ProjectJobs iterates for
+// the coding jobs and internal/cli holds to config.Providers), under the
+// deployer's implicit profile name and the default account's variant segment,
+// which is the name internal/infra's ImplicitReviewJobName computes.
+//
+// It is a second set and not part of projectJobCandidates on purpose, and the
+// difference is what each set is a function of. projectJobCandidates is the
+// published policy and nothing else — that is what makes the runner's and the
+// launcher's answer about a profile's job unforgeable — while these names exist
+// whether or not a policy does: an installation deploys the job from its own
+// local config, so a run in one has a job to bind to before the first policy is
+// published. Nothing a policy says can add or remove one, and a profile the
+// policy happens to define under the same name is matched first, which is the
+// job the deployer's collision gate leaves standing.
+//
+// The profile name is projectpolicy.DefaultProfileName and not a local-config
+// value: the deployer writes it into the job's own name (ImplicitReviewProfile),
+// and a run reads the name back by computing it, never by parsing it (R2-5).
+// jobProviderKinds is the whole list because it is the whole list of kinds a
+// Cloud Run job's storage slug exists under: a run in a job of any other kind
+// halts rather than adopting an identity no installation deploys.
+func implicitReviewCandidates() []jobTriple {
+	out := make([]jobTriple, 0, len(jobProviderKinds))
+	for _, kind := range jobProviderKinds {
+		out = append(out, jobTriple{
+			Profile:  projectpolicy.DefaultProfileName,
+			Provider: kind,
+			Account:  reviewVariantAccount(""),
+			Class:    classReview,
+			Implicit: true,
+		})
 	}
 	return out
 }
@@ -602,12 +656,17 @@ func (r *run) checkProjectJobAccount(ctx context.Context, auth string) error {
 		return fmt.Errorf("this run is in the project job %s, and this project has published no policy to read its account from: the run stops rather than holding a credential no policy bounds",
 			gcp.ProjectJobName(job.Profile, job.Provider, job.Account))
 	}
+	if job.Class == classReview {
+		// Before the profile lookup, because a review job's profile is not
+		// always the policy's: an implicit review job carries the deployer's
+		// own profile name, which no policy defines (implicitReviewCandidates),
+		// and the review arm reads nothing out of a profile. The lookup below
+		// is the coding arm's, and it cannot be reached on a review job.
+		return r.checkProjectReviewJobAccount(job)
+	}
 	pr, err := p.ProfileFor(job.Profile)
 	if err != nil {
 		return fmt.Errorf("this run is in the project job %s: %w", gcp.ProjectJobName(job.Profile, job.Provider, job.Account), err)
-	}
-	if job.Class == classReview {
-		return r.checkProjectReviewJobAccount(job)
 	}
 	account, oauth := "", auth == "oauth"
 	if oauth {
@@ -651,8 +710,12 @@ func (r *run) checkProjectJobAccount(ctx context.Context, auth string) error {
 }
 
 // checkProjectReviewJobAccount is checkProjectJobAccount's review arm: a run
-// in the review-only variant of its profile's job, which the job identity has
-// already held to its class (checkJobClass).
+// in a review-only job, the variant of a profile's job or the installation's
+// implicit one (jobTriple.Implicit), which the job identity has already held to
+// its class (checkJobClass). Neither shape reads a profile: the variant's job
+// is the profile's by its name alone, and the implicit job's profile is the
+// deployer's own, which no policy defines — so the coding arm's lookup is not
+// this arm's business and, for the implicit job, would refuse the run.
 //
 // It admits, and the three rules the coding arm applies are each refused for a
 // reason that does not hold here:

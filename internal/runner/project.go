@@ -500,14 +500,16 @@ func remoteAdmissionErr(remote, kind, repo, slug string) error {
 // every repository of its profile and holds its own token, and the service
 // admitting a shared coding caller is B5.3, not this.
 //
-// This rule is the runner's half of the review variant, and today it is the
-// only half that exists. A Bitbucket profile is deployed no project job at
-// all (internal/infra's ProjectJobs skips a provider no shared job serves,
-// D505), so there is no Bitbucket review variant for a launch to resolve, and
-// a review launch in a Bitbucket repository is refused by internal/cli's
-// reviewJobFor before any container starts. Both halves are follow-ups, the
-// deploy one first: until it lands, no run reaches this path, and nothing here
-// is a substitute for it.
+// This rule is the runner's half of the review job. A Bitbucket profile gets no
+// shared coding job at all (internal/infra's ProjectJobs skips a provider no
+// shared job serves, D505), so the job a Bitbucket review is launched onto is
+// the installation's implicit review-only one: `fugaro review --pr N` resolves
+// it there (internal/infra's ProjectReviewJobs, internal/cli's
+// implicitReviewJobFor), and this run is placed in it by the review candidate
+// internal/runner computes whether or not a policy is published
+// (implicitReviewCandidates). That container mounts no Bitbucket token either,
+// so the service's proxy is the only way it can clone what it reviews — which
+// is the case this whole paragraph is about.
 func (r *run) proxiedBitbucket(p *projectpolicy.Policy, found, project bool, kind, repo string) bool {
 	if kind != gitprov.KindBitbucket || !found || p == nil || p.BitbucketToken == nil || !p.BitbucketToken.Proxy {
 		return false
@@ -1289,6 +1291,18 @@ func (r *run) admissionCheck(ctx context.Context) error {
 	canonical, err := projectpolicy.Canonical(kind, repo)
 	if err != nil {
 		return fmt.Errorf("the repository this run was launched for cannot be named in the project's allow-list: %w", err)
+	}
+	if project && job.Implicit {
+		// The implicit review-only job: no profile of the policy defines it, so
+		// there is no profile whose list could admit this repository, and the
+		// list that does bound it is the project's own allow_repos — the rule a
+		// per-repository run gets, and the only one that exists here. Reading
+		// the profile anyway would refuse every review in the job the launch
+		// resolved onto, which is the one job this run can be in.
+		if !projectpolicy.AdmitRepo(p.AllowRepos, canonical) {
+			return fmt.Errorf("%s. The run stops before any lease exists", projectpolicy.NotAdmitted(p.AllowRepos, canonical))
+		}
+		return nil
 	}
 	if project {
 		// The profile's admission (plan task 3.3 step 4, design §4.1): the

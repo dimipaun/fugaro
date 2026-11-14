@@ -66,7 +66,7 @@ func TestCarriedProjectReviewJobsKeepsTheJobTheConfigCanNoLongerCompose(t *testi
 	// composes, so the carry's narrowness is tested by the same document.
 	one := implicitReviewLC() + implicitReviewProfileLCBlock
 	deployed := projectReviewJobsDocument(t, one)
-	name := ImplicitReviewJobName()
+	name := ImplicitReviewJobName(githubProvider)
 	job, ok := reviewJobsOf(t, deployed)[name]
 	if !ok {
 		t.Fatalf("the installation that records one App ID deploys %v, want the implicit review job %s", reviewJobsOf(t, deployed), name)
@@ -152,7 +152,7 @@ func reviewJobAppID(t *testing.T, vars []byte, name, appID string) []byte {
 // early return: the fixture's fresh document comes back with the record's job
 // instead of its own.
 func TestCarriedProjectReviewJobsLeavesTheSpecsOwnJobAlone(t *testing.T) {
-	name := ImplicitReviewJobName()
+	name := ImplicitReviewJobName(githubProvider)
 	composed := projectReviewJobsDocument(t, implicitReviewLC())
 	if _, ok := reviewJobsOf(t, composed)[name]; !ok {
 		t.Fatalf("the fixture composes no %s: %v", name, reviewJobsOf(t, composed))
