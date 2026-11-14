@@ -702,7 +702,7 @@ func (s *pluginStage) remove(rem *pluginwire.Removal, env initflow.Env) (bool, *
 	case s.e.r.gateStandsIn() && initflow.PersonAtTheTerminal(s.e.r.conditions()):
 		fmt.Fprintf(w, "  %s\n", initflow.OwnerProceeded())
 	case env.Yes:
-		fmt.Fprintln(w, "  confirmed by --yes")
+		fmt.Fprintln(w, "  confirmed by this run's own answer")
 	default:
 		ok, err := s.e.r.confirmNow("remove the " + pluginwire.PluginID + " pin from " + rem.Path + "?")
 		if err != nil {

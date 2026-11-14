@@ -763,7 +763,7 @@ func (m *policyMigration) refuseRunsInFlight(ctx context.Context, yes bool, answ
 	if yes {
 		return nil
 	}
-	return userErr("%d run(s) are in flight: a run that is mid-flight read the policy this migration would rewrite, so it is refused without --yes; wait for them (fugaro runs ls), or pass --yes once you have read what it does", inflight)
+	return userErr("%d run(s) are in flight: a run that is mid-flight read the policy this migration would rewrite, so it is refused while they run; wait for them (fugaro runs ls), then repeat it", inflight)
 }
 
 // writesNode is whether this run's confirmation ends in a write to the published
