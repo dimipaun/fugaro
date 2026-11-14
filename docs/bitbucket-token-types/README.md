@@ -1,12 +1,13 @@
 # Bitbucket token types in the credential proxy
 
-**Status (2026-11-14): one task of the plan below is written — C1, the token-store contract, the four files its Files line
-names (`internal/bbtokens/bbtokens.go`, `stub.go`, `bbtokens_test.go` and `stub_test.go`) with `internal/projectpolicy/tokens_shape.go`
-and `docs/bitbucket-token-types/contract.md` besides, on the branch `fugaro/20261113-201001-7a01`; every other task of the
-plan is plan only, the others it is decoupled into being written by runs launched beside this one and not in this tree.** C1
-is the contract T3, T4, T8, T13 and T16 are written against (implementation-plan.md). The plan and the reconciliation still
-say that no task is approved, and this line is not an approval: whoever records one writes it here. Owner: the project owner
-(the spec names none). Date: 2026-11-14. Checked against `origin/main` at `a7921b57`.
+**Status (2026-11-14): C1, the token-store contract, is written and merged on `main` (PR #2590) — the four files its Files
+line names (`internal/bbtokens/bbtokens.go`, `stub.go`, `bbtokens_test.go` and `stub_test.go`) with
+`internal/projectpolicy/tokens_shape.go` and `docs/bitbucket-token-types/contract.md` besides — and T1 (#2591), T2 (#2594),
+T6 (#2589) and T15 (#2592) have merged beside it; every other task of the plan is plan only, decoupled into being written
+by runs launched beside this one.** C1 is the contract T3, T4, T8, T13 and T16 are written against
+(implementation-plan.md). The plan and the reconciliation still say that no task is approved, and this line is not an
+approval: whoever records one writes it here. Owner: the project owner (the spec names none). Date: 2026-11-14. Checked
+against `origin/main` at `6eda5ddf`.
 
 *The status as first written, kept:* **Status: plan only; nothing is implemented; no task approved.** Owner: the project
 owner (the spec names none). Date: 2026-11-13. Checked against `origin/main` at `abd0a60af`.
