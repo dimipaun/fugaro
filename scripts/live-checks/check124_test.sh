@@ -41,7 +41,7 @@ trap cleanup_all EXIT
 # passed rather than as a test that never ran.
 KNOBS="FAKE124_JOBS FAKE124_JOBJSON FAKE124_JOBLABELS FAKE124_STATE_SEQ
 FAKE124_CODE FAKE124_RETRY FAKE124_MACHINE FAKE124_BOOT FAKE124_NET FAKE124_SUBNET
-FAKE124_SPOT FAKE124_INSTANCES FAKE124_RUNVMS FAKE124_TEMPLATES FAKE124_IMAGES
+FAKE124_SPOT FAKE124_INSTANCES FAKE124_RUNVMS FAKE124_RUNVMS_SEQ FAKE124_TEMPLATES FAKE124_IMAGES
 FAKE124_DELETE FAKE124_DOCTOR_ALL FAKE124_DOCTOR FAKE124_STRICT_EXIT
 FAKE124_PLANONLY FAKE124_PLANONLY_EXIT FAKE124_VALIDATE FAKE124_VALIDATE_EXIT
 FAKE124_BACKENDS FAKE124_BACKENDS_EXIT FAKE124_RUNS FAKE124_RUNS_FIRST
@@ -209,6 +209,24 @@ def task_exit_code():
     return int(env("FAKE124_CODE", "4242"))
 
 
+def runvms():
+    # The VMs ONE `compute instances list` answers with, advanced once per call
+    # and sticking at the last: the in-flight read and the reclaim read are two
+    # calls of the same command, and a case that needs them to disagree says so
+    # here -- `;` between two calls' answers, `|` between the VMs of one answer.
+    # A case that leaves this unset gets FAKE124_RUNVMS on every call.
+    seq = env("FAKE124_RUNVMS_SEQ")
+    if not seq:
+        return maybe("FAKE124_RUNVMS", "fugaro-run-vm\tus-east5-a")
+    parts = seq.split(";")
+    path = os.path.join(state, "runvmsseen")
+    n = 0
+    if os.path.exists(path):
+        n = int(open(path).read().strip() or 0)
+    open(path, "w").write(str(n + 1))
+    return parts[min(n, len(parts) - 1)].replace("|", "\n")
+
+
 def job_json(jobid, labelv):
     alloc = {
         "instances": [{"policy": {
@@ -258,7 +276,7 @@ elif args[:3] == ["batch", "jobs", "describe"]:
                                   env("FAKE124_LABELV", "x"))))
 elif args[:3] == ["compute", "instances", "list"]:
     if "zone.basename" in fmt():
-        emit(maybe("FAKE124_RUNVMS", "fugaro-run-vm\tus-east5-a"))
+        emit(runvms())
     else:
         emit(maybe("FAKE124_INSTANCES"))
 elif args[:3] == ["compute", "instances", "delete"]:
@@ -792,7 +810,39 @@ someone-elses-vm	us-east5-b'
   run124 --part c
   expect_status "$status" 1 "two VMs carrying the label value"
   expect_fact reclaim FAIL "two VMs carrying the label value"
+  # Which row refused, and why: the in-flight step is the one that sees the two,
+  # so the reclaim step is never taken -- a different reason from the guard's
+  # own, and the two cases below this one tell them apart.
+  expect_contains "$out" "FACT in-flight: FAIL — the job " \
+    "two VMs carrying the label value: the row that refuses is the in-flight one"
+  expect_contains "$out" "2 VM(s) carry its label value" \
+    "two VMs carrying the label value: the in-flight row's own count"
+  expect_contains "$out" "FACT reclaim: FAIL — not taken:" \
+    "two VMs carrying the label value: the reclaim row says it was never taken"
   expect_absent "$(cat "$dir/state/gcloud.calls")" "instances delete" "two VMs: nothing was deleted"
+}
+
+test_part_c_a_second_vm_at_the_delete_is_refused() {
+  # The guard that makes the delete safe is the RECLAIM step's own read: the
+  # in-flight row saw exactly one VM, and a second one carrying the job's own
+  # label value by the time of the delete is what the guard has to catch. The
+  # fake answers the two reads from a sequence, so this case really does reach
+  # the guard's refusal branch -- the case above refuses a step earlier and
+  # would stay green if the guard were dropped.
+  setup_case c-two-at-reclaim
+  export FAKE124_RUNS_FIRST=same
+  export FAKE124_STATE_SEQ="RUNNING:FAILED"
+  export FAKE124_RUNVMS_SEQ='fugaro-run-vm	us-east5-a;fugaro-run-vm	us-east5-a|someone-elses-vm	us-east5-b'
+  run124 --part c
+  expect_status "$status" 1 "a second VM at the delete"
+  expect_contains "$out" "FACT exit-code: INFO" \
+    "a second VM at the delete: the run went through the tree read before the selection"
+  expect_fact in-flight PASS "a second VM at the delete"
+  expect_contains "$out" "FACT reclaim: FAIL — the selection found 2 VM(s) carrying the job's own label value (${LABELV})" \
+    "a second VM at the delete: the guard's own reason, with the count and the label value it found them under"
+  expect_contains "$out" "Nothing was deleted" \
+    "a second VM at the delete: the row says the refusal deleted nothing"
+  expect_absent "$(cat "$dir/state/gcloud.calls")" "instances delete" "a second VM at the delete: no delete"
 }
 
 test_part_c_a_job_that_never_runs_is_not_deleted() {
@@ -1079,6 +1129,7 @@ t test_part_c_an_exit_code_the_tree_does_not_carry_is_a_fail
 t test_part_c_the_checkout_is_the_tree_when_it_carries_it
 t test_part_c_a_tree_without_run_go_is_a_fail
 t test_part_c_two_vms_refuse_to_be_deleted
+t test_part_c_a_second_vm_at_the_delete_is_refused
 t test_part_c_a_job_that_never_runs_is_not_deleted
 t test_part_c_a_job_that_ends_succeeded_is_a_fail
 t test_part_c_a_missing_retry_count_is_a_fail
