@@ -329,8 +329,12 @@ func ssoRuleFor(org WireOrganisation) (SSORule, bool) {
 // requireSSO applies the rule the membership in org demands to this request's
 // sign-in (D2207, F10). It is told the organisation the membership is IN and
 // never the organisation the request is about: a person who belongs to an
-// operations or a reseller organisation is refused by email link for every
-// request that membership carries, including one about a customer organisation.
+// operations or a reseller organisation is refused by email link on every
+// request that membership is what reaches the thing they asked for — the
+// organisation itself, a read across organisations, the selection of it —
+// including one about a customer organisation. The one request it is not applied
+// to is the list of the caller's own memberships, which uses no membership of a
+// subject and reads across nothing (organisationsOf).
 //
 // The rule itself is P1.3's and is applied through the sign-in seam, so a
 // deployment's verifier answers it: what this file decides is which rule a
