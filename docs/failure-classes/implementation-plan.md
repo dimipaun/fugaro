@@ -583,6 +583,15 @@ owner's own work runs in.** No agent runs any step of it: every live check in th
 owner-run, and this one is read by a person because it is a claim about **what the owner can see**,
 which is the claim the design exists to make true.
 
+**Written 2026-11-14, and NOT RUN.** Steps 1 to 4 and the read half of step 5 are now ONE script the
+owner runs — `scripts/live-checks/check350.sh`, whose sibling `scripts/live-checks/check350_test.sh`
+drives it against a fake `gcloud` and a fake `fugaro` and nothing else — and `docs/gcp-live-checklist.md`
+carries the register's row and `## Check 350` section with it. **Steps 5 and 6 keep the numbered shape
+below and are never faked**: the run step 5 needs and the `brew upgrade` / `fugaro update` of step 6 stay
+yours — the script prompts for both and makes neither, and it measures step 5 only when you hand it the
+run with `--step5-run`, whose class it then reads as a criterion like the others. **No step of any of it has been
+run**, and this section is not a reading about the classes.
+
 1. On the sandbox repository, take one run that fails for a cause the classifier can name on purpose
    (a `fugaro.yaml` with an invalid key is `config_invalid`, and it is repeatable without touching
    anything else). Read `fugaro runs ls --json` and `fugaro diagnose <run>`: **the row and the
