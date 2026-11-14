@@ -9,13 +9,18 @@
 // fence is therefore the build's own and it is not in this package: the clone
 // runs in a build step whose Dockerfile Fugaro generates entirely and which
 // alone holds the credential, the entry's own build carries no secret mount and
-// no identity — it is built where the project's build identity is not
-// obtainable, which is a requirement on the build's topology and not an
-// observation about it (rule 4) — and what reaches the entry is the checkout as
-// a named build context. Nothing here enforces any of that, and nothing here
-// decides who may call: this package is the shape the two sides are written
-// against, and the rules they both rely on are stated in
-// docs/shared-jobs-default/contract-build-token.md.
+// no identity, and what reaches the entry is the checkout as a named build
+// context. No RUN of the entry's build reaches the project's build identity
+// either: the docker build runs without --network=cloudbuild, so BuildKit's
+// default network has no metadata server, and the path that remains, a RUN
+// --network=host, is closed by a builder that denies the network.host
+// entitlement -- which the design requires and no live check has proved yet
+// (docs/design/v1.md §7.2; live check 11b). The entry's Dockerfile is built
+// where that identity is not obtainable as the second lock (rule 4 of
+// docs/shared-jobs-default/contract-build-token.md). Nothing here enforces any
+// of that, and nothing here decides who may call: this package is the shape the
+// two sides are written against, and the rules they both rely on are stated in
+// that document.
 //
 // The service side is the build route (B1); the build side is the bake plan
 // (B2) and the generated clone step (B8). Until the route exists, stub.go

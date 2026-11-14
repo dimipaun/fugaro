@@ -72,13 +72,19 @@ wider.
 4. **The entry's build carries no secret and no identity.** No `--secret` argument, no secret mount, no service
    account of its own: a catalog entry may not ask for either, and one that does is refused by name, with the line
    it is written on (B9, D2311). The entry's `RUN` steps cannot read the credential the clone was given and cannot
-   alter the clone's tools, because they never share a stage with them. And the entry's Dockerfile is **built where
-   the project's build identity is not obtainable** (B5): in an execution of its own, run as an account that is not
-   that identity and has no invoker on the build route, so that the token an entry's `RUN` can mint for itself is
-   neither one the build route accepts nor one the proxy has paired (the answer above). That last part is a
-   requirement on the build's topology and not an observation about it, and what holds it is a test B2 and B8 owe
-   rather than anything in this contract's shape
-   ([below](#the-fence-is-a-requirement-on-the-builds-topology-and-this-shape-cannot-hold-it)).
+   alter the clone's tools, because they never share a stage with them. Neither does an entry's `RUN` reach the
+   project's build identity (B5): the `docker build` runs without `--network=cloudbuild`, so a `RUN` on BuildKit's
+   default network has no metadata server to ask (`docs/design/v1.md` §7.2), and the path that remains,
+   `RUN --network=host`, is held shut by a builder that denies the `network.host` entitlement, with
+   `fugaro validate` refusing `--network` in a repository Dockerfile — a remedy the design names and the tree
+   does not hold yet (§7.2; check 11b of `docs/gcp-live-checklist.md` requires that path `blocked` or
+   `build-refused`, and has not been run live). And the topology is the second lock, not the first: the entry's
+   Dockerfile is **built where that identity is not obtainable** — in an execution of its own, run as an account
+   that is not that identity and has no invoker on the build route — so that a `RUN` that did reach a metadata
+   server mints a token neither accepted at the build route nor paired at the proxy (the answer above).
+   Both halves are requirements on the build and not observations about it, and what holds them is a test B2 and B8
+   owe rather than anything in this contract's shape
+   ([below](#the-fence-is-the-builders-network-and-the-builds-topology-and-this-shape-holds-neither)).
 5. **The credential is written per host, and offered to that host alone.** A clone, fetch, push or LFS URL on any
    other host — a URL written in `.gitmodules` or `.lfsconfig` included — is refused **before any credential is
    offered**, and `protocol.ext` and `protocol.file` are set to never (B8). A repository that names another host
@@ -108,23 +114,35 @@ wider.
 
 ## What this contract cannot promise
 
-### The fence is a requirement on the build's topology, and this shape cannot hold it
+### The fence is the builder's network and the build's topology, and this shape holds neither
 
-Rule 4 is written as a requirement and not as an observation, because the build as it stands today does not meet
-it: the whole catalog build runs as the project's one build account (B5) and the entry's Dockerfile is built by
-that same Cloud Build execution (B2, B8), whose containers are, in this repository's own words, on the cloudbuild
-network "next to the metadata server and the build account's token" (`images/derived/cloudbuild.yaml`). In that
-topology an entry's `RUN` can mint the account's token — which for Bitbucket **is** the credential the proxy
-accepts, with no `--secret` for B9 to refuse, and for GitHub is what the build route accepts, so the entry could
-name any entry of the project (rule 8). B9's refusal does not close that, and
-`TestEntryBuildCarriesNoSecretAndNoIdentity` checks the build's configuration, not what its containers can reach,
-so it is not the test of rule 4.
+Rule 4 is written as a requirement and not as an observation: what keeps an entry's `RUN` from the project's
+build identity today is the network boundary, and that is a live fact about the builder rather than something
+this repository's code holds. The `docker build` runs without `--network=cloudbuild`, so a `RUN` on BuildKit's
+default network cannot reach the metadata server (`docs/design/v1.md` §7.2). The comment in
+`images/derived/cloudbuild.yaml` — "next to the metadata server and the build account's token" — is about a Cloud
+Build **step**'s container, which is the live check's control probe: check 11b of `docs/gcp-live-checklist.md`
+requires a step on the `cloudbuild` network to be `REACHABLE` and a `RUN` to be blocked, or a probe that can
+reach nothing would prove nothing. The path that remains is `RUN --network=host`, and the design's answer to it
+is a builder that denies the `network.host` entitlement, with `fugaro validate` refusing `--network` in a
+repository Dockerfile as a partial guard (§7.2) — neither of which is in the tree, and both of which belong to B2
+and B8 if rule 4 is to hold where the network is what holds it. Nothing has proved it yet: check 11b, which
+requires a `RUN --network=host` to be `blocked` or `build-refused`, has not been run live
+(`docs/gcp-live-checklist.md`). On a builder that allows `network.host`, an entry's `RUN` can mint the build
+account's token — which for Bitbucket **is** the credential the proxy accepts, with no `--secret` for B9 to
+refuse, and for GitHub is what the build route accepts, so the entry could name any entry of the project
+(rule 8). B9's refusal does not close that, and
+`TestEntryBuildCarriesNoSecretAndNoIdentity` checks the build's configuration, not the network a `RUN` gets, so
+it is not the test of rule 4.
 
-So B2 and B8 owe the topology that makes rule 4 true — the entry's Dockerfile built in an execution of its own, as
-an account other than the project's build identity and with no invoker on the build route — and the test that
-holds it: what an entry's build step can mint for itself is refused at the build route and at the proxy. Nothing
-in this contract's shape enforces the requirement, and a build that runs the entry's Dockerfile as the project's
-build identity does not meet it.
+So B2 and B8 owe both halves of rule 4 — a builder that denies the `network.host` entitlement, `fugaro validate`
+refusing `--network` in a repository Dockerfile, and, behind them, the entry's Dockerfile built in an execution of
+its own as an account other than the project's build identity and with no invoker on the build route — and the
+tests that hold them: what the build renders (that builder, that account, that refusal), and the probe check 11b
+defines — the metadata server by name and by address, from a `RUN` on BuildKit's default network and from a
+`RUN --network=host`, both refused — run against the builder the catalog build's entry step uses, where today's
+probes are the derived build's. Nothing in this contract's shape enforces any of it, and a build whose entry step
+runs as the project's build identity on a builder that allows `network.host` does not meet the rule.
 
 ### Two Bitbucket builds of one project at once are not isolated from each other
 
