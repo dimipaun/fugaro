@@ -51,9 +51,12 @@
 #             stranded job, in that project and region, carrying this check's
 #             own `fugaro_chk=57b` label.
 # Costs:      one Scheduler run, one Cloud Run job execution, a handful of
-#             `gcloud` reads, and one Batch job that never leaves `QUEUED` --
-#             which holds no VM and therefore bills nothing. No model call, no
-#             build, no run of the backend.
+#             `gcloud` reads, and one Batch job that never leaves `QUEUED`: it
+#             names an accelerator-optimized machine type whose GPU the
+#             project's quota was never granted, so Batch's own quota check
+#             delays it there and no VM is ever created for it -- it holds no VM
+#             and therefore bills nothing. No model call, no build, no run of
+#             the backend.
 # Runs:       by YOU. No agent runs any step of it. The `fugaro setup` an
 #             unprovisioned installation needs is PRINTED, never run: its
 #             confirmation is typed and a coding agent's session is refused it.
@@ -587,9 +590,17 @@ step_local_pass() {
 # stranded: the deliberately stranded job, and what the pass does with it. The
 # job is this check's own — labelled with the installation's marker and this
 # check's own fugaro_chk=57b beside a well-formed per-run label, so the reaper
-# attributes it to a run and judges it like any other job — and it asks for a
-# share of a machine no machine type can hold, which is what keeps it in QUEUED
-# and is exactly the shape the design's step 9 describes.
+# attributes it to a run and judges it like any other job — and it names an
+# accelerator-optimized machine type, which is what keeps it in QUEUED: Batch
+# accepts the job (every field is valid, and the task's share fits the VM it
+# names) and its quota check then delays scheduling, because a GPU comes with
+# such a VM and this project was never granted GPU quota. Waiting cannot end
+# that, so the job sits in QUEUED — holding no VM and billing nothing — until
+# the queue deadline deletes it, which is the sweep this step measures. **The
+# design's step 9 raises a share until the job stops scheduling; the API now
+# refuses such a share at submit** (`machine_type "e2-standard-4" cannot satisfy
+# compute_resource …`, the owner's run of 2026-11-14), so a stranded job is
+# built out of a resource the project's quota cannot grant instead.
 step_stranded() {
   batch_jobs_json >"$SCRATCH/jobs.json"
   python3 - "$SCRATCH/jobs.json" >"$SCRATCH/stranded.fields" <<'PY'
@@ -630,7 +641,7 @@ PY
 
   if [ "$existing" = 0 ]; then
     strand_one || return 0
-    fact stranded INFO "no stranded job of this check's was there, so this run created one: ${STRANDED_NAME}, QUEUED and never scheduling (it asks for 64000m/1048576MiB of an e2-standard-4, whose whole VM is 4000m/16384MiB). The pass that judges it decides by a queue deadline of ${QUEUE_DEADLINE:-<not read>}, so the deletion this step measures is due at ${STRANDED_NAME}'s creation plus that deadline: run this script again after then and the line above this one will carry the reaper's own 'deleted job …' instead. Nothing is concluded today, and nothing was deleted"
+    fact stranded INFO "no stranded job of this check's was there, so this run created one: ${STRANDED_NAME}, QUEUED and never scheduling (it names the accelerator-optimized machine type g4-standard-48 -- one whose GPU comes with the VM, and which this project has no GPU quota for -- with a 2000m/4096MiB share that fits it, so the API accepts the job and Batch's quota check delays it; no VM is created for it, so it bills nothing). The pass that judges it decides by a queue deadline of ${QUEUE_DEADLINE:-<not read>}, so the deletion this step measures is due at ${STRANDED_NAME}'s creation plus that deadline: run this script again after then and the line above this one will carry the reaper's own 'deleted job …' instead. Nothing is concluded today, and nothing was deleted"
   else
     # A job that is here after its own deadline is the finding: the pass has run
     # (this run fired it) and left it. Anything younger is simply not due yet.
@@ -675,17 +686,27 @@ PY
       fact stranded INFO "this check's own job ${STRANDED_NAME} is there but its creation time ('${STRANDED_CREATED}') could not be read, so whether the pass should have swept it is unknown: record the job's own status and the pass's report, and do not read this row as either answer"
       ;;
     *)
-      fact stranded INFO "this check's own job ${STRANDED_NAME} (state $(grep '^job|' "$SCRATCH/stranded.fields" | head -n 1 | cut -d'|' -f3), created ${STRANDED_CREATED}) is inside the queue deadline the pass decides by (${QUEUE_DEADLINE}), whose own line shows it left it alone: a job still waiting for capacity within the deadline is Batch's to manage, and the sweep is due at ${due}. Run this script again after that time and its 'stranded' row will carry the reaper's own 'deleted job …' line instead of this one"
+      fact stranded INFO "this check's own job ${STRANDED_NAME} (state $(grep '^job|' "$SCRATCH/stranded.fields" | head -n 1 | cut -d'|' -f3), created ${STRANDED_CREATED}) is inside the queue deadline the pass decides by (${QUEUE_DEADLINE}), whose own line shows it left it alone: a job still queued for a resource the project's quota has not granted, within the deadline, is Batch's to manage, and the sweep is due at ${due}. Run this script again after that time and its 'stranded' row will carry the reaper's own 'deleted job …' line instead of this one"
       ;;
     esac
   fi
 }
 
-# strand_one: submit the job that never leaves QUEUED. The request is the one
-# the design's step 9 names as the shape that never schedules, so no image is
-# ever pulled and no VM is ever created: it asks for a share no machine type
-# can hold. If the API refuses it, the check stops rather than inventing a
-# second shape -- the request itself is the thing to record.
+# strand_one: submit the job that never leaves QUEUED. The request asks for an
+# accelerator-optimized machine type -- one whose GPU is attached with the VM,
+# and for which this project holds no GPU quota (GPU quota is granted on
+# request, and a sandbox installation has never asked for one) -- with a task
+# share well inside that VM. Every field is valid, so the API's submit-time
+# validation accepts it, and Batch's own quota check is what keeps it
+# unschedulable: no VM is ever created, no image is ever pulled, and the job
+# waits in QUEUED until the queue deadline deletes it. That is the documented
+# shape of a job that cannot run (cloud.google.com/batch/docs/create-run-job,
+# "Quotas and limits": a job cannot run if it exceeds the project's quota for a
+# resource it requires), and the state the queue deadline exists for
+# (cloud.google.com/batch/docs/troubleshooting, "Insufficient quota": a job in
+# QUEUED whose scheduling the quota check delays). If the API refuses the
+# request anyway, the check stops rather than inventing a third shape -- the
+# request itself is the thing to record.
 strand_one() {
   STRANDED_NAME="fugaro-chk57b-$(date -u +%Y%m%dt%H%M)"
   local label="chk57b-$(date -u +%Y%m%dt%H%M)"
@@ -698,12 +719,12 @@ job = {
         "taskCount": "1",
         "parallelism": "1",
         "taskSpec": {
-            "computeResource": {"cpuMilli": "64000", "memoryMib": "1048576"},
+            "computeResource": {"cpuMilli": "2000", "memoryMib": "4096"},
             "runnables": [{"container": {"imageUri": "gcr.io/cloud-batch/noop", "commands": ["/bin/true"]}}],
         },
     }],
     "allocationPolicy": {
-        "instances": [{"policy": {"machineType": "e2-standard-4"}}],
+        "instances": [{"policy": {"machineType": "g4-standard-48"}}],
         "labels": labels,
     },
     "labels": labels,
@@ -712,7 +733,7 @@ json.dump(job, open(sys.argv[1], "w"), indent=2)
 PY
   gcloud batch jobs submit "$STRANDED_NAME" --project="${P:?}" --location="${L:?}" --config="$SCRATCH/stranded.json" >"$SCRATCH/submit.out" 2>"$SCRATCH/err" \
     || {
-      fact stranded FAIL "the deliberately stranded job could not be created: $(oneline <"$SCRATCH/err"). The request asks for 64000m/1048576MiB of an e2-standard-4 (whose whole VM is 4000m/16384MiB), which the design's step 9 names as the shape that stays QUEUED — a refusal of THIS request is a fact about the Batch API to record, and the sweep this step measures is not measured by this run"
+      fact stranded FAIL "the deliberately stranded job could not be created: $(oneline <"$SCRATCH/err"). The request names the accelerator-optimized machine type g4-standard-48 with a 2000m/4096MiB share that fits it, which is a request the Batch API's submit-time validation accepts: a refusal of THIS request is a fact about the Batch API to record (it is the shape that replaced a share no machine type can hold — 64000m/1048576MiB on an e2-standard-4 is refused outright, 'machine_type \"e2-standard-4\" cannot satisfy compute_resource …'), and the sweep this step measures is not measured by this run"
       STRANDED_NAME=""
       return 1
     }
@@ -761,7 +782,7 @@ print_plan() {
   say "  [cloud]  gcloud logging read (resource.type=cloud_run_job AND resource.labels.job_name=${REAPER_JOB}) — the pass's own report and its three deadlines"
   say "  [local]  fugaro reaper --dry-run --project ${INSTALL} --gcp-project ${P} — the same sweep from this checkout, deciding by the same deadlines (deletes nothing)"
   say "  [cloud]  gcloud batch jobs list --filter=labels.${CHK_LABEL}=${CHK_VALUE} — this check's own stranded job, if an earlier run made one"
-  say "  [cloud]  gcloud batch jobs submit <name> (if there is none) — ONE job asking for 64000m/1048576MiB of an e2-standard-4, which never leaves QUEUED, carries fugaro=managed and a well-formed fugaro_run beside this check's fugaro_chk=57b, and holds no VM"
+  say "  [cloud]  gcloud batch jobs submit <name> (if there is none) — ONE job naming the accelerator-optimized machine type g4-standard-48 (whose GPU the project has no quota for) with a 2000m/4096MiB share that fits it, which never leaves QUEUED, carries fugaro=managed and a well-formed fugaro_run beside this check's fugaro_chk=57b, and holds no VM"
   say "  [cloud]  gcloud logging read (--freshness ${CHK57B_SWEEP_AGE:-30d}) — the reaper's own 'deleted job <a job of this check's> (queued for N minutes …)' line, which is the sweep 57b-10 asks for; it is only printable after the queue deadline, so a first run reads it as INFO and a later run reads it as PASS"
   say "  [yours]  an unprovisioned installation is NOT provisioned by this script: the plan, the typed confirmation and the apply are yours — fugaro setup --provision-batch --project ${INSTALL}"
   say "and its Restore (also from the exit trap) would remove: the scratch directory ${SCRATCH} and nothing else. The stranded job is left in place on purpose; it holds no VM and bills nothing, and the row names the one command that removes it"

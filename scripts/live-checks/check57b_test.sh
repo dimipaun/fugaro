@@ -111,6 +111,14 @@ RUN_URI = ("https://us-east5-run.googleapis.com/apis/run.googleapis.com/v1/"
 HEADLINE = ("reaped projects/fugaro-dev/locations/us-east5: queue deadline 24h2m0s, "
             "run budget 24h17m0s, max age 48h19m0s")
 
+# The whole VM each machine type this suite's check may name carries, as the
+# Batch API checks it at submit. e2-standard-4 is the type the check used to
+# send an impossible share against -- the owner's run of 2026-11-14 was refused
+# with 'machine_type "e2-standard-4" cannot satisfy compute_resource
+# cpu_milli:64000 memory_mib:1048576' -- so this fake refuses that body in the
+# API's own words rather than accepting whatever a case writes.
+MACHINE_CAPACITY = {"e2-standard-4": (4, 16384), "g4-standard-48": (48, 184320)}
+
 
 def env(name, default=""):
     return os.environ.get(name) or default
@@ -216,6 +224,19 @@ elif args[:3] == ["batch", "jobs", "submit"]:
     if env("FAKE57B_SUBMIT") == "fails":
         die("INVALID_ARGUMENT: the request is refused")
     cfg = flag("--config")
+    body = json.load(open(cfg, encoding="utf-8"))
+    machine = (((body.get("allocationPolicy") or {}).get("instances") or [{}])[0]
+               .get("policy") or {}).get("machineType")
+    res = (((body.get("taskGroups") or [{}])[0].get("taskSpec") or {})
+           .get("computeResource") or {})
+    if machine not in MACHINE_CAPACITY:
+        die("INVALID_ARGUMENT: machine_type field is invalid. machine_type %r is not "
+            "one this suite knows a capacity for" % machine)
+    vcpu, mib = MACHINE_CAPACITY[machine]
+    if int(res.get("cpuMilli", 0)) > vcpu * 1000 or int(res.get("memoryMib", 0)) > mib:
+        die('INVALID_ARGUMENT: machine_type field is invalid. machine_type "%s" cannot '
+            'satisfy compute_resource cpu_milli:%s memory_mib:%s.'
+            % (machine, res.get("cpuMilli"), res.get("memoryMib")))
     shutil.copyfile(cfg, os.path.join(state, "submitted.json"))
 elif args[:3] == ["batch", "jobs", "describe"]:
     print(env("FAKE57B_CREATED", ago(hours=1)))
@@ -426,7 +447,8 @@ test_happy_path_creates_the_stranded_job() {
   expect_contains "$out" "would reap projects/fugaro-dev/locations/us-east5" "happy path: the local dry run's own headline"
   expect_fact stranded INFO "happy path"
   expect_contains "$out" "so this run created one: fugaro-chk57b-" "happy path: the job this run stranded, named"
-  expect_contains "$out" "64000m/1048576MiB" "happy path: and the request that keeps it out of QUEUED"
+  expect_contains "$out" "g4-standard-48" "happy path: and the machine type whose GPU quota keeps it out of QUEUED"
+  expect_contains "$out" "2000m/4096MiB share that fits it" "happy path: which the request's own share fits"
   expect_contains "$out" "run this script again after then" "happy path: the row says what a later run will show instead"
   expect_fact restore PASS "happy path"
   expect_contains "$out" "is LEFT IN PLACE on purpose" "happy path: the restore row names the job it left"
@@ -449,10 +471,21 @@ for where, labels in (("labels", top), ("allocationPolicy.labels", alloc)):
         bad.append("%s.fugaro_run is %r" % (where, labels.get("fugaro_run")))
 if top.get("fugaro_run") != alloc.get("fugaro_run"):
     bad.append("the two fugaro_run values differ, so the reaper cannot attribute the job to a run")
+# The job the check strands must be one the API ACCEPTS and still cannot
+# schedule: it names the accelerator-optimized type whose GPU is attached with
+# the VM and whose quota this project has never been granted, and its share is
+# well inside that VM -- so the shape the check used to send (a share no machine
+# type can hold) is a failure here, and the fake's submit refuses it as the API
+# does.
+machine = (((d.get("allocationPolicy") or {}).get("instances") or [{}])[0]
+           .get("policy") or {}).get("machineType")
 res = (d.get("taskGroups") or [{}])[0].get("taskSpec", {}).get("computeResource", {})
-if int(res.get("cpuMilli", 0)) <= 4000 or int(res.get("memoryMib", 0)) <= 16384:
-    bad.append("the requested share (%s) is one an e2-standard-4 could hold, so the job would schedule"
-               % res)
+if machine != "g4-standard-48":
+    bad.append("the machine type is %r, not the accelerator-optimized g4-standard-48 whose "
+               "GPU quota is what keeps the job in QUEUED" % machine)
+if int(res.get("cpuMilli", 0)) > 48000 or int(res.get("memoryMib", 0)) > 184320:
+    bad.append("the requested share (%s) is one no g4-standard-48 could hold, which is the "
+               "request the Batch API refuses at submit" % res)
 print("OK" if not bad else "BAD " + "; ".join(bad))
 PY
 )
@@ -639,6 +672,40 @@ test_a_refused_stranded_job_is_a_fail() {
   expect_contains "$out" "a refusal of THIS request is a fact about the Batch API to record" "refused submit: and that the refusal is the finding"
 }
 
+# The fake's teeth, and the reason the case above is not vacuous: `batch jobs
+# submit` holds the machine type against the task's share the way the API's
+# submit-time validation does, in the API's own words -- the owner's run of
+# 2026-11-14 was refused with 'machine_type "e2-standard-4" cannot satisfy
+# compute_resource cpu_milli:64000 memory_mib:1048576'. So the request the check
+# writes now is one this fake accepts, and the shape it wrote before is one no
+# case can get past.
+test_the_fake_refuses_the_request_the_api_refuses() {
+  setup_case fake-teeth
+  local status=0
+  cat >"$dir/old.json" <<'JSON'
+{
+  "taskGroups": [{"taskSpec": {"computeResource": {"cpuMilli": "64000", "memoryMib": "1048576"}}}],
+  "allocationPolicy": {"instances": [{"policy": {"machineType": "e2-standard-4"}}]}
+}
+JSON
+  FAKE57B_DIR="$dir/state" "$dir/bin/gcloud" batch jobs submit fugaro-chk57b-old \
+    --project fugaro-dev --location us-east5 --config "$dir/old.json" 2>"$dir/old.err" || status=$?
+  expect_status "$status" 1 "the shape the check used to send"
+  expect_contains "$(cat "$dir/old.err")" \
+    'machine_type "e2-standard-4" cannot satisfy compute_resource cpu_milli:64000 memory_mib:1048576' \
+    "the shape the check used to send: refused in the API's own words"
+  status=0
+  cat >"$dir/new.json" <<'JSON'
+{
+  "taskGroups": [{"taskSpec": {"computeResource": {"cpuMilli": "2000", "memoryMib": "4096"}}}],
+  "allocationPolicy": {"instances": [{"policy": {"machineType": "g4-standard-48"}}]}
+}
+JSON
+  FAKE57B_DIR="$dir/state" "$dir/bin/gcloud" batch jobs submit fugaro-chk57b-new \
+    --project fugaro-dev --location us-east5 --config "$dir/new.json" || status=$?
+  expect_status "$status" 0 "the shape the check sends now"
+}
+
 test_a_stranded_job_with_no_readable_time_measures_nothing() {
   setup_case unreadable
   FAKE57B_JOBS=unreadable run57b
@@ -805,6 +872,7 @@ t test_a_job_that_is_not_the_reapers_invocation_is_a_fail
 t test_a_schedule_at_another_cadence_is_a_fail
 t test_an_unprovisioned_installation_points_at_the_owners_step
 t test_a_refused_stranded_job_is_a_fail
+t test_the_fake_refuses_the_request_the_api_refuses
 t test_a_stranded_job_with_no_readable_time_measures_nothing
 t test_dry_run_runs_nothing
 t test_every_guard_stops
