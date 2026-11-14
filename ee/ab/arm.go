@@ -130,7 +130,7 @@ func ReviewerArm(ctx context.Context, run fcli.PlannedRun, champion fcli.RunReco
 		if errors.Is(err, runstore.ErrNotFound) {
 			return nil, ReasonNoChampionPatch, nil
 		}
-		return nil, "", err
+		return nil, "", fcli.RemoteErr(fmt.Errorf("reading the champion %s's patch: %w", champion.ID(), err))
 	}
 	layer := abBlock(cfg)
 	var pair config.AB
@@ -148,7 +148,7 @@ func ReviewerArm(ctx context.Context, run fcli.PlannedRun, champion fcli.RunReco
 	case errors.Is(err, runstore.ErrNotFound):
 		return nil, "", fmt.Errorf("the champion %s wrote no task, and the arm of a pair is launched from the task its champion ran", champion.ID())
 	case err != nil:
-		return nil, "", err
+		return nil, "", fcli.RemoteErr(fmt.Errorf("reading the champion %s's task: %w", champion.ID(), err))
 	}
 	// The arm's block names the run the patch was read and judged under, which
 	// is the prefix the record was read from and not the id the record spells:
