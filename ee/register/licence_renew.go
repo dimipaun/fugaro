@@ -464,10 +464,16 @@ func (s *licenceSecrets) enabledVersions(ctx context.Context) ([]int, error) {
 	})
 	if err != nil {
 		var ge *googleapi.Error
-		// A name this build cannot read is already the error the caller is
-		// owed; everything else Secret Manager answered goes through apiErr,
-		// which names the two an operator fixes at their own terminal.
-		if errors.As(err, &ge) {
+		switch {
+		case errors.As(err, &ge) && ge.Code == http.StatusForbidden:
+			// A refusal of the list is not apiErr's refusal: apiErr names the
+			// two permissions a payload read needs, and an operator who grants
+			// those two is refused here again, because listing a container's
+			// versions is a third. The container is named so the grant has one
+			// target, the same as every other refusal in this family.
+			return nil, fcli.UserErr("this identity may not list the versions of the renewal secret container %s in project %s: the job reads them to find the version the installed key proves itself with, and that call needs secretmanager.versions.list on that one secret, which a project owner has",
+				safetext.Field(s.id), safetext.Field(s.project))
+		case errors.As(err, &ge):
 			return nil, s.apiErr("read", err, nil)
 		}
 		return nil, err
