@@ -253,8 +253,17 @@ def job_json(jobid, labelv):
         "allocationPolicy": alloc,
         "status": {
             "state": peek_state(),
-            "statusEvents": [{"description": "Job state changed to FAILED"}],
-            "taskGroups": {"0": {"tasks": [{"exitCode": task_exit_code()}]}},
+            # The task's exit code rides a task-level status event, which is the
+            # only place Batch v1 has it (StatusEvent.TaskExecution.ExitCode),
+            # and the shape internal/backend/batch/batch_test.go's own
+            # preemptEvent() writes. A code anywhere else is a shape the API
+            # does not have, and the check reads the API's.
+            "statusEvents": [
+                {"description": "Job state changed to FAILED"},
+                {"type": "STATUS_CHANGED", "description": "Task state is FAILED",
+                 "taskState": "FAILED",
+                 "taskExecution": {"exitCode": task_exit_code()}},
+            ],
         },
     }
 
@@ -277,6 +286,8 @@ elif args[:3] == ["batch", "jobs", "describe"]:
 elif args[:3] == ["compute", "instances", "list"]:
     if "zone.basename" in fmt():
         emit(runvms())
+    elif env("FAKE124_INSTANCES") == "fails":
+        die("PERMISSION_DENIED: the caller does not have compute.instances.list")
     else:
         emit(maybe("FAKE124_INSTANCES"))
 elif args[:3] == ["compute", "instances", "delete"]:
@@ -285,6 +296,8 @@ elif args[:3] == ["compute", "instances", "delete"]:
     print("Deleted [https://www.googleapis.com/compute/v1/projects/%s/zones/%s/instances/%s]."
           % (PROJECT, flag("--zone", "?"), args[3]), file=sys.stderr)
 elif args[:3] == ["compute", "instance-templates", "list"]:
+    if env("FAKE124_TEMPLATES") == "fails":
+        die("PERMISSION_DENIED: the caller does not have compute.instanceTemplates.list")
     emit(maybe("FAKE124_TEMPLATES"))
 elif args[:3] == ["compute", "images", "list"]:
     emit(maybe("FAKE124_IMAGES", "fugaro-preload-deadbeef"))
@@ -968,6 +981,38 @@ test_part_d_an_instance_template_that_is_someone_elses_is_a_fail() {
   expect_contains "$out" "the TEMPLATES diff is not empty" "an instance template appeared"
 }
 
+test_part_d_a_vm_read_that_never_answered_is_a_fail() {
+  # The diff row is what says nothing is orphaned, so an empty list from a read
+  # that FAILED is not an empty diff: against 124a's before-state, which is
+  # empty in the ordinary case, the two would be indistinguishable and the row
+  # would report a PASS from a read that never answered.
+  setup_case d-vm-read
+  : >"$dir/work/jobs-before.txt"
+  : >"$dir/work/instances-before.txt"
+  : >"$dir/work/templates-before.txt"
+  export FAKE124_INSTANCES=fails
+  run124 --part d
+  expect_status "$status" 1 "a VM read that never answered"
+  expect_fact diff FAIL "a VM read that never answered"
+  expect_contains "$out" "the VMs could not be listed now" \
+    "a VM read that never answered: the row names the read, and why an empty answer is not a reading"
+  expect_absent "$out" "are both EMPTY" "a VM read that never answered: no PASS claims the diffs are empty"
+}
+
+test_part_d_a_template_read_that_never_answered_is_a_fail() {
+  setup_case d-template-read
+  : >"$dir/work/jobs-before.txt"
+  : >"$dir/work/instances-before.txt"
+  : >"$dir/work/templates-before.txt"
+  export FAKE124_TEMPLATES=fails
+  run124 --part d
+  expect_status "$status" 1 "a template read that never answered"
+  expect_fact diff FAIL "a template read that never answered"
+  expect_contains "$out" "the instance templates could not be listed now" \
+    "a template read that never answered: the row names the read"
+  expect_absent "$out" "are both EMPTY" "a template read that never answered: no PASS claims the diffs are empty"
+}
+
 test_part_d_a_new_batch_warning_is_a_fail() {
   setup_case d-warning
   : >"$dir/work/jobs-before.txt"
@@ -1141,6 +1186,8 @@ t test_part_d_without_the_before_state_is_a_fail
 t test_part_d_a_leaked_vm_is_a_fail
 t test_part_d_a_job_still_running_is_a_fail
 t test_part_d_an_instance_template_that_is_someone_elses_is_a_fail
+t test_part_d_a_vm_read_that_never_answered_is_a_fail
+t test_part_d_a_template_read_that_never_answered_is_a_fail
 t test_part_d_a_new_batch_warning_is_a_fail
 t test_part_d_a_missing_preload_image_is_a_fail
 t test_part_d_dry_run_touches_no_cloud

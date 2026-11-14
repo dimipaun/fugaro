@@ -978,13 +978,16 @@ d = json.load(open(sys.argv[1]))
 st = d.get("status") or {}
 tg = (d.get("taskGroups") or [{}])[0]
 ts = tg.get("taskSpec") or {}
-res = tg.get("taskGroups") if False else None
+# The task's exit code is the one a status EVENT carries, and the only place
+# Batch v1 puts it: Status.taskGroups is a map of TaskGroupStatus, whose own
+# fields are counts and instances and no code. This is the same path
+# internal/backend/batch/run.go's preempted() reads its reserved code off, and
+# reading it elsewhere leaves the comparison below empty on every real run.
 code = ""
-execs = st.get("taskGroups") or {}
-for name, g in (execs.items() if isinstance(execs, dict) else []):
-    for t in (g.get("tasks") or []):
-        if "exitCode" in t:
-            code = t.get("exitCode")
+for e in (st.get("statusEvents") or []):
+    te = e.get("taskExecution") or {}
+    if "exitCode" in te:
+        code = te.get("exitCode")
 print("state|" + str(st.get("state") or ""))
 print("retry|" + ("present:%s" % ts.get("maxRetryCount") if "maxRetryCount" in ts else "absent"))
 print("code|" + str(code))
@@ -1145,8 +1148,16 @@ step_diff() {
   }
   sort -o "$SCRATCH/jobs-now.txt" "$SCRATCH/jobs-now.txt"
   run_capture "$SCRATCH/instances-now.txt" "$SCRATCH/err" gcloud compute instances list --project="${P:?}" --filter="labels.fugaro=managed" --format='value(name)'
+  [ "$RUN_STATUS" = 0 ] || {
+    fact diff FAIL "the VMs could not be listed now, so this part's whole reading — that the check left nothing behind — cannot be made: an empty list from a read that never answered diffs empty against 124a's before-state and would read as nothing orphaned. $(oneline <"$SCRATCH/err")"
+    return 0
+  }
   sort -o "$SCRATCH/instances-now.txt" "$SCRATCH/instances-now.txt"
   run_capture "$SCRATCH/templates-now.txt" "$SCRATCH/err" gcloud compute instance-templates list --project="${P:?}" --format='value(name)'
+  [ "$RUN_STATUS" = 0 ] || {
+    fact diff FAIL "the instance templates could not be listed now, so the templates half of this part's reading cannot be made: an empty list from a read that never answered diffs empty against 124a's before-state and would read as nothing orphaned. $(oneline <"$SCRATCH/err")"
+    return 0
+  }
   sort -o "$SCRATCH/templates-now.txt" "$SCRATCH/templates-now.txt"
   local djobs dinst dtpl
   djobs=$(diff "$W/jobs-before.txt" "$SCRATCH/jobs-now.txt" || true)
