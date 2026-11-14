@@ -212,9 +212,12 @@ REVIEW_EXEC=""
 # One reason per read that failed, so a criterion row can say WHY it could not
 # be read instead of reading as a finding about the release.
 RUN_RECORD_PROBLEM=""
+RUN_LAUNCH_PROBLEM=""
 RUN_CALLS_PROBLEM=""
 CONTRAST_RECORD_PROBLEM=""
+CONTRAST_LAUNCH_PROBLEM=""
 REVIEW_RECORD_PROBLEM=""
+REVIEW_LAUNCH_PROBLEM=""
 REVIEW_CALLS_PROBLEM=""
 # The rows the slices read off the records and the logs.
 ROUTES=""
@@ -361,10 +364,18 @@ elif what == "record":
         print("route_by_total=-")
     else:
         total = 0.0
+        attributed = 0.0
         for name, usd in sorted(routes.items()):
             total += float(usd or 0)
+            # "unattributed" is the split's own residual: spend the ledger holds
+            # that no stage report carried, so it has no route to be told from
+            # (internal/runner/cost.go, unattributedModel). It is not a provider
+            # route's share, which is what the reader of this row compares.
+            if name != "unattributed":
+                attributed += float(usd or 0)
             print("route\t%s\t%s" % (flat(name), num(usd)))
         print("route_by_total=%s" % num(total))
+        print("route_by_attributed=%s" % num(attributed))
     # Columns: 2 name, 3 model, 4 model_usd, 5 model_notional_usd,
     # 6 credential, 7 served_by, 8 calls, 9 duration_s.
     for stage in doc.get("stages") or []:
@@ -436,13 +447,28 @@ read_json() { # read_json QUERY FILE DEST
   python3 "$SCRATCH/read.py" "$1" "$2" >"$3" 2>"$3.err"
 }
 
-field() { # field FILE KEY — the value of one `key=value` line, "" when absent
-  sed -n "s/^$2=//p" "$1" 2>/dev/null | head -n 1
+# field FILE KEY — the value of one `key=value` line, "" when absent. A file
+# that is not there is what a read that did not answer leaves behind, and the
+# caller says so in a row of its own: under `set -o pipefail` sed's failure would
+# otherwise end the run as this check's internal error.
+field() { # field FILE KEY
+  { sed -n "s/^$2=//p" "$1" 2>/dev/null || true; } | head -n 1
 }
 
 # stage_field FILE NAME COLUMN — one column of a `stage\t<name>\t...` row.
 stage_field() { # stage_field FILE NAME COLUMN
   awk -F'\t' -v name="$2" -v col="$3" '$1 == "stage" && $2 == name { print $col; exit }' "$1" 2>/dev/null || true
+}
+
+# own_stages_usd FILE — the run's OWN stages' model_usd, summed over every row,
+# not over the first row of each name: the bounce loop runs `fix` and
+# `review_first` once per finding and once per bounce (internal/runner's
+# bounce_test.go records implement, review_first, fix, review, fix, review_first,
+# review), so a sum that stopped at the first row of each name would leave every
+# later round out of the run's real spend and read a healthy run as a failed
+# criterion.
+own_stages_usd() { # own_stages_usd FILE
+  awk -F'\t' '$1 == "stage" && ($2 == "plan" || $2 == "implement" || $2 == "fix" || $2 == "review_first") && $4 != "-" { s += $4 } END { printf "%.6f", s + 0 }' "$1" 2>/dev/null || true
 }
 
 stage_names() { # stage_names FILE — every stage the record ran, comma-separated
@@ -529,7 +555,7 @@ guard_belong() { # guard_belong NAME...
       ;;
     esac
   done
-  fact belong PASS "nothing this check was given or read names the owner's own installation: the project is ${P:-the one the checkout belongs to}, the region is ${REGION:-the checkout region}, and neither contains the word"
+  fact belong PASS "nothing this check was given or read names the owner's own installation: the project is ${P:-the one the checkout belongs to}, the region is ${REGION:-the checkout region}${LOG_VIEW:+, the log view is $LOG_VIEW}, the checkout is ${SANDBOX:-not named}, and none of them contains the word"
 }
 
 # budget_guard MODE: the installation's published budget mode decides whether
@@ -563,7 +589,10 @@ step_project() {
   [ -n "$REGION" ] || stop "fugaro doctor --json named no region for $SANDBOX: the log filter is scoped to the job's region"
   BUCKET="fugaro-runs-${P}"
   guard_agent_session
-  guard_belong "$P" "$REGION" "$SANDBOX" "$RUN_REF" "$CONTRAST_REF" "$REVIEW_REF"
+  # The log view is guarded with the rest: it is what every log read is scoped
+  # to (--resource-names), so a view naming the owner's own installation is that
+  # installation's logs read, whatever the checkout and the run references say.
+  guard_belong "$P" "$REGION" "$SANDBOX" "$RUN_REF" "$CONTRAST_REF" "$REVIEW_REF" "$LOG_VIEW"
   fact project PASS "the sandbox checkout belongs to $P ($REGION), and its runs are read there: gs://$BUCKET/runs/<slug>/<run>/"
   fact sandbox PASS "$SANDBOX is a Fugaro checkout the installed fugaro reads its project config from (fugaro.yaml valid=$(field "$SCRATCH/doctor.txt" yaml_valid) at $(field "$SCRATCH/doctor.txt" yaml_path)); every fugaro call below is made from it"
 }
@@ -809,26 +838,25 @@ step_slice_a() {
   if [ -n "$why_record" ]; then
     unmeasured route-by "$why_record"
   else
-    local route_total cost_total own_total usd
+    local route_total route_attributed cost_total own_total
     route_total=$(field "$record" route_by_total)
+    route_attributed=$(field "$record" route_by_attributed)
     cost_total=$(field "$record" cost_usd)
-    own_total=0
-    for name in plan implement fix review_first; do
-      usd=$(stage_field "$record" "$name" 4)
-      [ "$usd" != "-" ] || continue
-      [ -n "$usd" ] || continue
-      own_total=$(awk -v a="$own_total" -v b="$usd" 'BEGIN { printf "%.6f", a + b }')
-    done
+    own_total=$(own_stages_usd "$record")
+    # The routes' share, not the split's whole: the residual ("unattributed") is
+    # the ledger's leftovers and belongs to no route, so counting it as a
+    # provider's would read a run that is healthy as one whose split carries
+    # money the coder's stages never spent.
     if [ "$route_total" = "-" ] || [ -z "$route_total" ]; then
       fact route-by FAIL "run $RUN_ID's cost carries no route_by at all, and its own stages' calls carried a route in the log above: the split that says which route paid for what was never written"
-    elif ! above_zero "$route_total"; then
-      fact route-by FAIL "run $RUN_ID's route_by is $route_total, so no provider route paid for a call of a run whose own stages' calls carried a route in the log: the split and the log disagree"
-    elif ! close_enough "$route_total" "$own_total" 0.02; then
-      fact route-by FAIL "run $RUN_ID's route_by totals \$$route_total and its own stages' (plan, implement, fix, review_first) model_usd totals \$$own_total: the split is not the run's own stages' spend, so the review class's dollars may be in it"
-    elif close_enough "$route_total" "$cost_total" 0.02; then
-      fact route-by FAIL "run $RUN_ID's route_by totals \$$route_total and the run's whole model_usd is \$$cost_total: the two are the same money, so the review class's dollars are inside the provider's split — the one thing this reading is for"
+    elif [ -z "$route_attributed" ] || ! above_zero "$route_attributed"; then
+      fact route-by FAIL "run $RUN_ID's route_by is $route_total, of which no provider route carries anything ($route_attributed), for a run whose own stages' calls carried a route in the log: the split and the log disagree"
+    elif ! close_enough "$route_attributed" "$own_total" 0.02; then
+      fact route-by FAIL "run $RUN_ID's provider routes total \$$route_attributed (of $route_total written) and its own stages' (plan, implement, fix, review_first, every round) model_usd totals \$$own_total: the split is not the run's own stages' spend, so the review class's dollars may be in it"
+    elif close_enough "$route_attributed" "$cost_total" 0.02; then
+      fact route-by FAIL "run $RUN_ID's provider routes total \$$route_attributed and the run's whole model_usd is \$$cost_total: the two are the same money, so the review class's dollars are inside the provider's split — the one thing this reading is for"
     else
-      fact route-by PASS "run $RUN_ID's route_by totals \$$route_total, which is its own stages' spend (\$$own_total), against a run total of \$$cost_total: the split carries the coder's stages and not the review class's"
+      fact route-by PASS "run $RUN_ID's provider routes total \$$route_attributed (of $route_total written), which is its own stages' spend (\$$own_total, every round of them), against a run total of \$$cost_total: the split carries the coder's stages and not the review class's"
     fi
   fi
 
@@ -882,15 +910,25 @@ step_slice_b() {
     fact review-run INFO "slice B was not named (no --review), so no review run was resolved and the cloud Anthropic-key path was not read"
     return 0
   fi
+  # Slice B's three rows stand on documents the owner launched and this check
+  # only reads: one that is not there is a row nobody could read, not a finding
+  # about the api-key path (unmeasured, as slice A's identical paths are), and
+  # the register's section says so.
   if [ -z "$REVIEW_ID" ]; then
     for key in review-launch review-env review-log; do
-      fact "$key" FAIL "not read: slice B's run reference did not resolve (see the review-run row)"
+      unmeasured "$key" "not read: slice B's run reference did not resolve (see the review-run row)"
     done
     return 0
   fi
   if [ -n "$REVIEW_RECORD_PROBLEM" ]; then
     for key in review-launch review-env review-log; do
-      fact "$key" FAIL "not read: $REVIEW_RECORD_PROBLEM"
+      unmeasured "$key" "not read: $REVIEW_RECORD_PROBLEM"
+    done
+    return 0
+  fi
+  if [ -n "$REVIEW_LAUNCH_PROBLEM" ]; then
+    for key in review-launch review-env review-log; do
+      unmeasured "$key" "not read: $REVIEW_LAUNCH_PROBLEM"
     done
     return 0
   fi
@@ -899,7 +937,7 @@ step_slice_b() {
   job=$(field "$SCRATCH/review-run-launch.txt" job)
   if [ -z "$job" ]; then
     for key in review-launch review-env review-log; do
-      fact "$key" FAIL "not read: run $REVIEW_ID's launch record names no job, so this check cannot say which job the review ran on"
+      unmeasured "$key" "not read: run $REVIEW_ID's launch record names no job, so this check cannot say which job the review ran on"
     done
     return 0
   fi
@@ -1198,7 +1236,7 @@ main() {
     # The dry run names no project — reading one would be a fugaro call — so its
     # belong guard is over what you typed; the plan says that a real run reads
     # the project and guards over it.
-    guard_belong "$SANDBOX" "$RUN_REF" "$CONTRAST_REF" "$REVIEW_REF"
+    guard_belong "$SANDBOX" "$RUN_REF" "$CONTRAST_REF" "$REVIEW_REF" "$LOG_VIEW"
     fact dry-run PASS "guards and the plan only: nothing was read, no fugaro call and no gcloud call was made, and no verdict was taken"
     print_plan
     # A dry run measured nothing, so its block carries only what it did settle:

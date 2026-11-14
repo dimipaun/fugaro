@@ -326,6 +326,14 @@ stages = [
     stage("fix", coder, 0.1, served_by="api-key", calls=1),
     stage("review_first", reviewer, 0.1, served_by="api-key", calls=1),
 ]
+if flag("FIX_BOUNCE"):
+    # A run that fixed a finding and was reviewed again: the bounce loop writes
+    # the stage's own name once per round (internal/runner/bounce_test.go records
+    # implement, review_first, fix, review, fix, review_first, review), so `fix`
+    # and `review_first` appear twice and the run's own spend is 0.9.
+    stages.append(stage("fix", coder, 0.1, served_by="api-key", calls=1))
+    stages.append(stage("review_first", reviewer, 0.1, served_by="api-key", calls=1))
+    own = 0.9
 if not flag("FIX_NO_REVIEW_STAGE"):
     stages.append(stage(
         "review", reviewer,
@@ -690,6 +698,32 @@ test_a_missing_split_is_a_fail() {
   expect_scratch_gone "a missing split"
 }
 
+# A run that fixed a finding runs `fix` and `review_first` once per round, and
+# the split carries a residual ("unattributed") that belongs to no route: a sum
+# that took only the first row of each stage name, and a total that counted the
+# residual as a provider's share, both read this healthy run as a failed
+# criterion — which is the shape the register tells the owner to launch.
+test_a_bouncing_run_with_a_residual_reads_as_its_own_stages_spend() {
+  prepare "$work/bounce" FIX_BOUNCE=1 FIX_ROUTE_BY='{"provider-x": 0.9, "unattributed": 0.05}'
+  run330_default
+  expect_status "$status" 0 "a bouncing run with a residual"
+  expect_contains "$(fact_line route-by)" "PASS" "a bouncing run with a residual: the split is the run's own stages' spend"
+  expect_contains "$(fact_line route-by)" '0.900000' "a bouncing run with a residual: every round is summed"
+  expect_contains "$(fact_line route-by)" 'of 0.95' "a bouncing run with a residual: and the residual is in the row"
+  expect_scratch_gone "a bouncing run with a residual"
+}
+
+# The residual is not a licence to skip the reading: a split whose routes carry
+# more than the run's own stages' spend is still the review's dollars in it.
+test_a_bouncing_run_whose_routes_carry_too_much_is_a_fail() {
+  prepare "$work/bounce-fat" FIX_BOUNCE=1 FIX_ROUTE_BY='{"provider-x": 0.9, "provider-y": 0.4}'
+  run330_default
+  expect_status "$status" 1 "a bouncing run whose routes carry too much"
+  expect_contains "$(fact_line route-by)" "FAIL" "a bouncing run whose routes carry too much: the row fails"
+  expect_contains "$(fact_line route-by)" "1.3" "a bouncing run whose routes carry too much: and sums every route"
+  expect_scratch_gone "a bouncing run whose routes carry too much"
+}
+
 # The contrast is the other half of the pair: an account-served review reads
 # credential=oauth with a notional figure EQUAL to the real one, and a second run
 # whose review was not account-served measures nothing about the contrast.
@@ -845,6 +879,38 @@ test_an_unreadable_record_is_unmeasured() {
   expect_scratch_gone "an unreadable record"
 }
 
+# Slice B's own documents are the owner's, not this check's: the review run's
+# record is read only for the job its launch names, and a launch record nobody
+# can read is a row nobody could take — not this check's internal error, which
+# would throw away the rows it had already read and cost the owner the launch.
+test_an_unreadable_launch_record_is_unmeasured() {
+  prepare "$work/launch-403"
+  RUN330_ENV=(FAKE330_STORAGE_FAIL="$SLUG/$REVIEW_ID/launch.json")
+  run330_both
+  expect_status "$status" 2 "an unreadable launch record"
+  expect_contains "$(fact_line review-launch)" "could not be read" "an unreadable launch record: the row says why"
+  expect_contains "$(fact_line unmeasured)" "review-launch" "an unreadable launch record: the unmeasured row names it"
+  expect_contains "$(fact_line review-dollars)" "PASS" "an unreadable launch record: slice A's own half is still read"
+  expect_absent "$out" "FACT aborted" "an unreadable launch record: the check itself is not the failure"
+  expect_scratch_gone "an unreadable launch record"
+}
+
+# The same contract for the review run's own record: a document that is not
+# there is a row nobody could take, and the run ends as one that could not tell
+# rather than as a finding about the cloud Anthropic-key path.
+test_an_unreadable_review_record_is_unmeasured() {
+  prepare "$work/review-record-403"
+  RUN330_ENV=(FAKE330_STORAGE_FAIL="$SLUG/$REVIEW_ID/result.json")
+  run330_both
+  expect_status "$status" 2 "an unreadable review record"
+  expect_contains "$(fact_line review-run)" "PASS" "an unreadable review record: the run itself was still resolved"
+  expect_contains "$(fact_line review-launch)" "could not be read" "an unreadable review record: the row says why"
+  expect_contains "$(fact_line unmeasured)" "review-launch" "an unreadable review record: the unmeasured row names them"
+  expect_contains "$(fact_line unmeasured)" "review-log" "an unreadable review record: all three of slice B's rows"
+  expect_contains "$(fact_line review-dollars)" "PASS" "an unreadable review record: slice A's own half is still read"
+  expect_scratch_gone "an unreadable review record"
+}
+
 # A reference that resolves to no run is a reference that resolves to nothing,
 # and the check says which runs the listing does hold rather than reading another
 # one.
@@ -985,6 +1051,49 @@ test_belong_in_a_run_reference_is_refused() {
   expect_contains "$(fact_line belong)" "api-demo/belong" "belong in a run reference: and names what it read"
   expect_gcloud_never_called "belong in a run reference: no cloud call at all"
   expect_scratch_gone "belong in a run reference"
+}
+
+# A log view naming it is refused too, and before a single read: that value is
+# the scope of every log read (--resource-names), so a guard that did not see it
+# would read the owner's own installation's logs while the belong row read PASS.
+test_belong_in_a_log_view_is_refused() {
+  prepare "$work/log-view-guard"
+  RUN330_ARGS=(--sandbox "$dir/sandbox" --run "$RUN_REF" --contrast "$CONTRAST_REF"
+    --log-view "projects/prj-belong-owner/locations/$REGION/views/run-logs")
+  run330
+  expect_status "$status" 2 "belong in a log view"
+  expect_contains "$(fact_line belong)" "FAIL" "belong in a log view: the row fails"
+  expect_contains "$(fact_line belong)" "prj-belong-owner" "belong in a log view: and names the view it read"
+  expect_contains "$out" "FACT aborted: FAIL" "belong in a log view: the run stops"
+  expect_gcloud_never_called "belong in a log view: no cloud call at all"
+  expect_scratch_gone "belong in a log view"
+}
+
+# The dry run's guard is the same guard: the view is refused there too, before
+# the plan is printed and before any read.
+test_a_dry_run_still_refuses_belong_in_a_log_view() {
+  prepare "$work/dry-log-view"
+  run330 --sandbox "$dir/sandbox" --run "$RUN_REF" --contrast "$CONTRAST_REF" --dry-run \
+    --log-view "projects/prj-belong-owner/locations/$REGION/views/run-logs"
+  expect_status "$status" 2 "the dry run against a belong-named log view"
+  expect_contains "$(fact_line belong)" "FAIL" "the dry run against a belong-named log view: the guard is asked"
+  expect_contains "$(fact_line belong)" "prj-belong-owner" "the dry run against a belong-named log view: and names the view"
+  expect_absent "$out" "FACT dry-run:" "the dry run against a belong-named log view: and it never reaches the plan"
+  expect_gcloud_never_called "the dry run against a belong-named log view: no cloud call"
+  expect_scratch_gone "the dry run against a belong-named log view"
+}
+
+# A log view that is not it is read, and the belong row says which view it
+# stepped over rather than leaving the reader to guess.
+test_a_log_view_is_named_in_the_belong_row() {
+  prepare "$work/log-view-named"
+  RUN330_ARGS=(--sandbox "$dir/sandbox" --run "$RUN_REF" --contrast "$CONTRAST_REF"
+    --log-view "projects/$PROJECT/locations/global/buckets/fugaro/views/run-logs")
+  run330
+  expect_status "$status" 0 "a log view named in the belong row"
+  expect_contains "$(fact_line belong)" "PASS" "a log view named in the belong row: the guard passes"
+  expect_contains "$(fact_line belong)" "views/run-logs" "a log view named in the belong row: and the row names it"
+  expect_scratch_gone "a log view named in the belong row"
 }
 
 # The review class refuses a run with no gateway (F11), so a mode-`off`
@@ -1154,6 +1263,8 @@ t test_a_zero_review_dollar_is_a_fail
 t test_a_split_that_is_not_the_own_stages_spend_is_a_fail
 t test_a_split_equal_to_the_whole_run_is_a_fail
 t test_a_missing_split_is_a_fail
+t test_a_bouncing_run_with_a_residual_reads_as_its_own_stages_spend
+t test_a_bouncing_run_whose_routes_carry_too_much_is_a_fail
 t test_a_contrast_that_is_not_account_served_is_a_fail
 t test_a_contrast_whose_figures_disagree_is_a_fail
 t test_an_unreadable_contrast_is_unmeasured
@@ -1166,6 +1277,8 @@ t test_a_review_run_on_a_route_is_a_fail
 t test_an_undescribable_review_job_is_unmeasured
 t test_a_review_run_that_does_not_resolve_is_unmeasured
 t test_an_unreadable_record_is_unmeasured
+t test_an_unreadable_launch_record_is_unmeasured
+t test_an_unreadable_review_record_is_unmeasured
 t test_a_reference_that_resolves_to_no_run_is_unmeasured
 t test_a_run_without_an_execution_has_no_log_to_read
 t test_a_run_without_a_review_stage_is_unmeasured
@@ -1177,11 +1290,14 @@ t test_a_read_that_does_not_come_back_is_bounded
 t test_an_installation_with_no_published_policy_reads_as_one
 t test_belong_is_refused
 t test_belong_in_a_run_reference_is_refused
+t test_belong_in_a_log_view_is_refused
+t test_a_log_view_is_named_in_the_belong_row
 t test_a_budget_mode_of_off_stops
 t test_a_coding_agent_session_is_refused
 t test_a_traced_shell_is_refused
 t test_a_dry_run_prints_the_plan_and_makes_no_call
 t test_a_dry_run_still_refuses_belong
+t test_a_dry_run_still_refuses_belong_in_a_log_view
 t test_slice_c_is_refused_naming_check_50
 t test_usage_and_arguments
 
