@@ -394,6 +394,22 @@ def write(doc):
     os.rename(tmp, path)
 
 
+def supervisor_is_due():
+    # The supervisor's RestartSec is counted in reads here: the first N calls see
+    # the file the daemon left behind, and with FAKE313_SUPERVISE_AFTER=2 the
+    # restart lands on the read the crash half makes, which is the window the
+    # check has to notice.
+    counter = os.path.join(os.environ["FAKE313_DIR"], "graph.calls")
+    try:
+        with open(counter, encoding="utf-8") as fh:
+            call = int(fh.read().strip() or "0") + 1
+    except (OSError, ValueError):
+        call = 1
+    with open(counter, "w", encoding="utf-8") as fh:
+        fh.write("%d" % call)
+    return call >= int(os.environ.get("FAKE313_SUPERVISE_AFTER", "1"))
+
+
 state = "node"
 try:
     with open(path, encoding="utf-8") as fh:
@@ -401,7 +417,7 @@ try:
 except FileNotFoundError:
     doc = None
 if doc is not None:
-    if mode == "supervise":
+    if mode == "supervise" and supervisor_is_due():
         doc["pid"] = int(os.environ["FAKE313_SUPERVISE_PID"])
         doc["nonce"] = secrets.token_hex(32)
         write(doc)
@@ -455,6 +471,7 @@ setup_case() { # setup_case NAME
   DAEMON=0
   MODE=reader
   SUPERVISE_PID=""
+  SUPERVISE_AFTER=1
 }
 
 wait_for() { # wait_for FILE TENTHS
@@ -501,6 +518,7 @@ run313() { # run313 [args...]
     FAKE313_DIR="$CASE/log" FAKE313_FAKES="$CASE/bin" \
     FAKE313_RUN_DIR="$CASE/state/fugaro/run" FAKE313_ID="$ID" FAKE313_MODE="$MODE" \
     ${SUPERVISE_PID:+FAKE313_SUPERVISE_PID=$SUPERVISE_PID} \
+    FAKE313_SUPERVISE_AFTER="$SUPERVISE_AFTER" \
     CHECK313_FUGARO="$CASE/bin/fugaro" CHECK313_CURL_SECONDS=5 \
     CHECK313_WAIT_SECONDS=10 CHECK313_DECOY_SECONDS=30 \
     "${bash_args[@]}" "$script" ${1+"$@"} 2>"$CASE/log/err") || status=$?
@@ -763,11 +781,16 @@ test_a_reader_that_keeps_the_dead_file_fails() {
   run313 --id "$ID"
   expect_fail_row dead-file "a reader that keeps the file it judged dead"
   expect_contains "$out" "STILL THERE" "the row says the file survived"
-  expect_fail_row pid-reuse "the planted file survived too"
+  expect_fail_row pid-reuse "the file that was never removed is what the row reports"
+  expect_contains "$out" "this row could not be measured" "the row says why it has nothing to plant over"
   expect_status "$status" 1 "a reader that keeps the file it judged dead"
-  if [ -e "$CASE/state/fugaro/run/$ID.json" ]; then
-    fail "a reader that keeps the file it judged dead: the check left the file it planted behind"
-  fi
+  # The file at the path is the dead daemon's own: this check writes over nothing
+  # that is already there, and removes nothing that is not its own.
+  local left
+  left=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["pid"], d["nonce"])' \
+    "$CASE/state/fugaro/run/$ID.json" 2>/dev/null || true)
+  [ "$left" = "$(cat "$CASE/log/daemon.pid") $(the_nonce)" ] \
+    || fail "a reader that keeps the file it judged dead: the file left at the path is not the daemon's own ('${left:-none}')"
 }
 
 test_a_reader_that_trusts_the_pid_is_caught() {
@@ -822,6 +845,138 @@ test_a_daemon_that_comes_back_is_not_measured() {
   nonce_now=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["nonce"])' "$CASE/state/fugaro/run/$ID.json")
   [ "$nonce_now" != "$(the_nonce)" ] \
     || fail "a daemon a supervisor started again: the check overwrote the new daemon's file with the dead one's"
+}
+
+test_a_restart_the_crash_half_meets_is_not_measured() {
+  setup_case lateread
+  start_daemon
+  MODE=supervise
+  # The restart lands on the read the crash half makes (the second graph read),
+  # which is AFTER the crash-half row was written: the check has to notice it
+  # before the dead-file and lock-free rows and before it plants anything.
+  SUPERVISE_AFTER=2
+  start_bystander
+  SUPERVISE_PID=$BYSTANDER
+  run313 --id "$ID"
+  expect_status "$status" 2 "a restart that lands while the crash half runs"
+  expect_info_row crash-half "a restart that lands while the crash half runs"
+  expect_contains "$out" "belongs to a NEW daemon (pid $SUPERVISE_PID)" "the row names the daemon that took the path"
+  expect_absent "$out" "is still the dead daemon's own" "the crash-half row the run first wrote was replaced, not left standing"
+  expect_info_row graph-after-crash "the read the restart landed on is not the crash half's either"
+  expect_info_row dead-file "the removal was not measured"
+  expect_info_row lock-free "the lock was not measured"
+  expect_info_row pid-reuse "nothing was planted over a live daemon's file"
+  expect_contains "$out" "FACT teardown: PASS — this run planted no registry file" \
+    "a restart while the crash half ran: nothing of this check's is at the path"
+  if [ -e "$CASE/state/fugaro/run/.check313-plant.tmp" ]; then
+    fail "a restart while the crash half ran: the check planted a file anyway"
+  fi
+  local pid_now nonce_now
+  read -r pid_now nonce_now < <(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["pid"], d["nonce"])' \
+    "$CASE/state/fugaro/run/$ID.json" 2>/dev/null)
+  [ "$pid_now" = "$SUPERVISE_PID" ] \
+    || fail "a restart while the crash half ran: the daemon's own file is not the one left at the path (pid '${pid_now:-none}')"
+  [ "$nonce_now" != "$(the_nonce)" ] \
+    || fail "a restart while the crash half ran: the check overwrote the new daemon's file with the dead one's"
+}
+
+test_a_daemons_file_is_kept_when_it_arrives_during_the_reuse_read() {
+  setup_case latereuse
+  start_daemon
+  MODE=supervise
+  # The restart lands on the pid-reuse read (the third), after this check has
+  # already planted its own file: what the reader judged is then not the planted
+  # file, and the file the daemon wrote is the one that must survive the teardown.
+  SUPERVISE_AFTER=3
+  start_bystander
+  SUPERVISE_PID=$BYSTANDER
+  run313 --id "$ID"
+  expect_status "$status" 2 "a restart that lands during the pid-reuse read"
+  expect_info_row pid-reuse "the reuse read is not measured when the path changes under it"
+  expect_contains "$out" "while this read ran" "the row says when the restart landed"
+  local pid_now
+  pid_now=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["pid"])' \
+    "$CASE/state/fugaro/run/$ID.json" 2>/dev/null || true)
+  [ "$pid_now" = "$SUPERVISE_PID" ] \
+    || fail "a restart during the pid-reuse read: the daemon's own file did not survive the teardown (pid '${pid_now:-none}')"
+  if kill -0 "$SUPERVISE_PID" 2>/dev/null; then :; else fail "a restart during the pid-reuse read: the check signalled the daemon that took the path"; fi
+}
+
+# The window between the check's own look at the path and its write to it is a
+# few microseconds wide, and a supervisor's restart lands there by chance: this
+# case's ps takes the path the moment the check asks about the process holding the
+# dead pid, which is exactly that window.
+write_a_ps_that_takes_the_path() {
+  local real_ps
+  real_ps=$(command -v ps)
+  cat >"$CASE/bin/ps" <<PS_EOF
+#!/usr/bin/env bash
+set -euo pipefail
+out=\$("$real_ps" "\$@")
+case "\$out" in
+sleep*) python3 "$CASE/bin/take_the_path.py" || true ;;
+esac
+printf '%s\n' "\$out"
+PS_EOF
+  cat >"$CASE/bin/take_the_path.py" <<'TAKE_EOF'
+#!/usr/bin/env python3
+"""The daemon a supervisor started again: its own file at the same path.
+
+It carries the identity the case's daemon wrote -- the address and the token out
+of the case's log -- with a fresh nonce, because the nonce is what a start mints,
+and the pid of the process the case started to stand for it.
+"""
+import json
+import os
+import secrets
+import time
+
+path = os.path.join(os.environ["FAKE313_RUN_DIR"], os.environ["FAKE313_ID"] + ".json")
+if os.path.exists(path):
+    raise SystemExit(0)
+
+
+def recorded(name):
+    with open(os.path.join(os.environ["FAKE313_DIR"], name), encoding="utf-8") as fh:
+        return fh.read().strip()
+
+
+doc = {
+    "id": os.environ["FAKE313_ID"],
+    "pid": int(os.environ["FAKE313_SUPERVISE_PID"]),
+    "addr": recorded("addr.txt"),
+    "token": recorded("token.txt"),
+    "nonce": secrets.token_hex(32),
+    "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+}
+fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+with os.fdopen(fd, "w", encoding="utf-8") as fh:
+    json.dump(doc, fh)
+TAKE_EOF
+  chmod +x "$CASE/bin/ps" "$CASE/bin/take_the_path.py"
+}
+
+test_a_daemon_that_takes_the_path_before_the_plant_is_not_written_over() {
+  setup_case lateplant
+  start_daemon
+  MODE=supervise
+  # No read takes the path over (the counter never comes due): the restart lands
+  # between the check's look at the path and its write, where a cp would overwrite
+  # the file a live daemon had just written.
+  SUPERVISE_AFTER=9
+  start_bystander
+  SUPERVISE_PID=$BYSTANDER
+  write_a_ps_that_takes_the_path
+  run313 --id "$ID"
+  expect_status "$status" 2 "a daemon that takes the path before the plant"
+  expect_info_row pid-reuse "the check planted nothing over it"
+  expect_contains "$out" "FACT teardown: PASS — this run planted no registry file" \
+    "a daemon that takes the path before the plant: nothing of this check's is at the path"
+  local pid_now
+  pid_now=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["pid"])' \
+    "$CASE/state/fugaro/run/$ID.json" 2>/dev/null || true)
+  [ "$pid_now" = "$SUPERVISE_PID" ] \
+    || fail "a daemon that takes the path before the plant: the daemon's own file did not survive (pid '${pid_now:-none}')"
 }
 
 test_the_reboot_phase_compares_the_nonce() {
@@ -961,6 +1116,9 @@ t test_a_reader_that_trusts_the_pid_is_caught
 t test_a_reader_that_kills_the_pid_is_caught
 t test_a_read_that_fails_fails_the_live_row
 t test_a_daemon_that_comes_back_is_not_measured
+t test_a_restart_the_crash_half_meets_is_not_measured
+t test_a_daemons_file_is_kept_when_it_arrives_during_the_reuse_read
+t test_a_daemon_that_takes_the_path_before_the_plant_is_not_written_over
 t test_the_reboot_phase_compares_the_nonce
 t test_a_nonce_reused_across_a_reboot_fails
 t test_the_reboot_phase_without_a_previous_nonce_is_not_measured

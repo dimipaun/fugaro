@@ -12680,9 +12680,12 @@ handshake and the lock decide.
 (launchd's `KeepAlive`, systemd's `Restart=always` with `RestartSec=5`), so a SIGKILL of a supervised daemon is undone
 within about 5 to 10 seconds: a fresh process takes the lock and writes a fresh file at the same path. The crash half
 therefore wants a daemon **started by hand in a terminal**, and the check guards the other case rather than misjudging it —
-after the kill it compares the file it finds with the one it killed, and where a different file is there it records
-`crash-half` and reports the **crash half as NOT MEASURED (exit 2)** with the one line that fixes it: stop the unit, or
-start a daemon by hand. That is a stop and not a finding: the endpoint's live half still holds, and the row says so.
+after the kill, and again before every row that reads or writes the registry file, it compares the file it finds with the
+one it killed, and where a different file is there it records `crash-half` and reports the **crash half as NOT MEASURED
+(exit 2)** with the one line that fixes it: stop the unit, or start a daemon by hand. A restart that lands between two
+rows is caught by the same comparison, and the daemon that came back keeps the file it wrote: this check never writes over
+a file that is already at the path. That is a stop and not a finding: the endpoint's live half still holds, and the row
+says so.
 
 **Reading the `CHECK 313 RESULT` block.** ONE block on stdout, a `FACT <key>: PASS|FAIL|INFO — <detail>` line per fact,
 ending `CHECK 313 RESULT END (exit N)`. The rows are, in order:
@@ -12712,7 +12715,8 @@ ending `CHECK 313 RESULT END (exit N)`. The rows are, in order:
 - **`crash`** — the `kill -9` was made, and the process is gone.
 - **`crash-half`** — `INFO`, and it says which of the two cases this run was: the file found after the kill is still the dead
   daemon's own (so the reading below is that daemon's and nothing else wrote it), or a **new daemon** a supervisor started
-  answered at the same path (so the crash half was **NOT MEASURED**).
+  answered at the same path (so the crash half was **NOT MEASURED**). The row is replaced if a restart takes the path later
+  in the run, rather than a first reading standing over rows that read a different file.
 - **`graph-after-crash`** — the same scope read again after the kill: it must still answer, from the node or the cache, which
   is the fallback T5(a) gives a daemon that is not running.
 - **`dead-file`** — the registry file is **gone**: the read that found the handshake failing and the lock free removed it.
@@ -12722,7 +12726,9 @@ ending `CHECK 313 RESULT END (exit N)`. The rows are, in order:
   kernel hands out again on its own schedule, so the check does not wait for that lottery: it puts the dead daemon's **own
   file** back, byte for byte, with the one field the reader must not consult replaced by the pid of a live process it starts,
   and reads the scope once more. The reader must still judge it dead — nothing answers the handshake and the lock is free —
-  remove it, and leave that process **running and unsignalled**.
+  remove it, and leave that process **running and unsignalled**. The file is written only where the path is **empty**: a
+  daemon a supervisor started again between two rows keeps the file it wrote, and the row then records that it could not be
+  measured.
 - **`reboot-nonce`** — with `--phase reboot`, the new daemon's nonce differs from `--previous-nonce`, and with no
   `--previous-nonce` the row records that it was not measured rather than passing.
 - **`endpoint`** — the verdict: the live half and the crash half, or the live half with the crash half named as not measured.
@@ -12736,8 +12742,9 @@ pid is not the daemon's, the daemon came back before the crash half's read, a to
 **What it writes, and what it never does.** It signals exactly one process — the pid the registry file names, and only when
 its command line is the daemon's. It writes exactly one file outside its own scratch directory: the copy of the dead daemon's
 own registry described under `pid-reuse`, at the same 0600 in the same 0700 directory, removed by the read that judges it
-dead and by this run's own teardown if that read did not — and written **only where the crash half was measured**, so a daemon
-that came back never has its file overwritten. It creates no cloud resource, spends nothing and touches no project: the only
+dead and by this run's own teardown if that read did not — and written **only where the crash half was measured and the path
+is empty**, so a daemon that came back never has its file overwritten, and neither has one that is still there because the
+read that judged it dead did not remove it. It creates no cloud resource, spends nothing and touches no project: the only
 network call is the loopback handshake. `CHECK313_WAIT_SECONDS`, `CHECK313_DECOY_SECONDS` and `CHECK313_CURL_SECONDS` bound
 the waits (10, 600 and 10) and exist so the script's own test can run the same code in a second or two.
 
@@ -12755,8 +12762,8 @@ not wait for: it plants the dead file with a live pid instead, which reads the s
 without depending on the machine's timing. A daemon whose supervisor restarts it makes the crash half unmeasurable, and the
 check says so rather than pretending. The hermetic half is `scripts/live-checks/check313_test.sh`, run from
 `scripts/live_checks_test.go` — a fake `fugaro` and a fake `curl` beside a real loopback daemon of the test's own, so the
-mode, the nonce, the handshake, the SIGKILL, the removed dead file and the pid a live process takes are all readings of
-processes and files the test owns — and **no agent ran any step of this check**.
+mode, the nonce, the handshake, the SIGKILL, the removed dead file, the pid a live process takes and a restart that lands
+between two rows are all readings of processes and files the test owns — and **no agent ran any step of this check**.
 
 ## Check 314: the person's viewer role over `orchestrator/` — one script you run (a sandbox installation, never `belong`; run by you; NOT RUN)
 

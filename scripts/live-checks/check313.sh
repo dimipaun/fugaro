@@ -192,6 +192,37 @@ fact() { # fact KEY PASS|FAIL|INFO "detail"
   printf '%s|%s|%s\n' "$1" "$2" "$3" >>"$FACTS_FILE"
 }
 
+# rewrite_fact replaces the row a key already has, or writes it when there is
+# none. The block prints the FIRST row a key carries, so a reading that turns out
+# to be stale has to be replaced in place: appending a second one would leave the
+# stale row in the block and hide the correction.
+rewrite_fact() { # rewrite_fact KEY PASS|FAIL|INFO "detail"
+  [ -n "$FACTS_FILE" ] || return 0
+  python3 - "$FACTS_FILE" "$1" "$2" "$3" <<'PY'
+import sys
+
+path, key, verdict, detail = sys.argv[1:5]
+row = "%s|%s|%s" % (key, verdict, detail)
+with open(path, encoding="utf-8") as fh:
+    rows = fh.read().split("\n")
+out, replaced = [], False
+for line in rows:
+    if not replaced and line.startswith(key + "|"):
+        out.append(row)
+        replaced = True
+    else:
+        out.append(line)
+if not replaced:
+    out.append(row)
+with open(path, "w", encoding="utf-8") as fh:
+    fh.write("\n".join(out))
+PY
+}
+
+has_fact() { # has_fact KEY
+  [ -n "$FACTS_FILE" ] && grep -q "^$1|" "$FACTS_FILE" 2>/dev/null
+}
+
 # on_error: an INTERNAL error is a fact, never a verdict. Under `set -e` the
 # first command that fails outside a guard would end the run with no fact at all,
 # and the block would then read as an answer about the endpoint for a run that
@@ -294,10 +325,14 @@ remove_decoy() {
 
 # The planted copy is the one file this check writes outside its scratch
 # directory. A read that judged it dead removes it; this is the run ending
-# without one, and the teardown says so either way.
+# without one, and the teardown says so either way. Only this check's own plant is
+# removed: the pid and the nonce it wrote are read back first, so a daemon a
+# supervisor started again between the plant and the end of the run keeps the
+# registry file it wrote.
 remove_planted() {
   [ "$PLANTED" = yes ] || return 0
-  if [ -e "$REG_PATH" ]; then
+  [ -e "$REG_PATH" ] || return 0
+  if [ "$(file_now)" = "$DECOY_PID $NONCE" ]; then
     rm -f "$REG_PATH" 2>/dev/null || true
   fi
   return 0
@@ -760,27 +795,54 @@ print("%s %s" % (doc.get("pid"), doc.get("nonce")))
 PY
 }
 
-# The daemon of a login unit comes back by itself (launchd's KeepAlive, systemd's
-# Restart=always with RestartSec=5), and the readings after a crash are about a
-# file that no live process owns: where a supervisor has already written a new
+# crash_half_restarted PID records that a daemon a supervisor started again holds
+# the path. The window the crash half needs is 5 to 10 seconds wide (RestartSec=5,
+# launchd's KeepAlive), so the restart can land anywhere in it -- including
+# between two rows of this check, after the crash-half row was already written.
+# The row is therefore replaced rather than appended to.
+crash_half_restarted() { # crash_half_restarted PID
+  local pid=${1:-?}
+  CRASH_HALF=restarted
+  CRASH_HALF_REASON="the registry file at $REG_PATH belongs to a NEW daemon (pid $pid) a supervisor started again after the SIGKILL of pid $DAEMON_PID. The installed daemon is a login unit (launchd's KeepAlive, systemd's Restart=always with RestartSec=5, so 5 to 10 seconds), and the only window in which the crash half can be read is that one: stop the unit (launchctl bootout gui/$UID/<the daemon's label>, or systemctl --user stop <the unit>) or start a daemon by hand with 'fugaro orchestrator run', and run this check again. This is a stop and not a failure: the removal it would read is this check's other half, and it was not measured"
+  rewrite_fact crash-half INFO "$CRASH_HALF_REASON"
+}
+
+# recheck_the_crash_half re-reads the path before a step that reads or writes it,
+# and it never fails a `set -e` shell: callers read CRASH_HALF. The graph read
+# that follows the crash was made around the same time as this look, so its own
+# PASS would claim a fallback to the node and the cache that this run cannot show
+# either -- it is replaced too. The callers that find a restart later than that
+# read leave it standing.
+recheck_the_crash_half() {
+  [ "$CRASH_HALF" = measured ] || return 0
+  local now
+  now=$(file_now)
+  case "$now" in
+  "" | "$DAEMON_PID "*) return 0 ;;
+  esac
+  crash_half_restarted "${now%% *}"
+  if has_fact graph-after-crash; then
+    rewrite_fact graph-after-crash INFO "not measured: a daemon a supervisor started again took the path while this read ran, so the file it read was not the dead daemon's own"
+  fi
+  return 0
+}
+
+# The daemon of a login unit comes back by itself, and the readings after a crash
+# are about a file that no live process owns: where a supervisor has written a new
 # one, the crash half is NOT MEASURED rather than failed, and the run says which
 # one thing fixes it. The live half above stands either way.
 after_crash() {
   local now
   now=$(file_now)
-  if [ -z "$now" ]; then
-    fact crash-half INFO "measured: no registry file is at $REG_PATH after the SIGKILL, so the rows below read a path nothing owns"
+  if [ -n "$now" ] && [ "${now%% *}" != "$DAEMON_PID" ]; then
+    crash_half_restarted "${now%% *}"
     return 0
   fi
-  case "$now" in
-  "$DAEMON_PID "*)
+  if [ -z "$now" ]; then
+    fact crash-half INFO "measured: no registry file is at $REG_PATH after the SIGKILL, so the rows below read a path nothing owns"
+  else
     fact crash-half INFO "measured: the file at $REG_PATH is still the dead daemon's own (pid $DAEMON_PID, nonce $NONCE), so the crash half below is its reading and nothing else wrote it in the meantime"
-    return 0
-    ;;
-  esac
-  CRASH_HALF=restarted
-  CRASH_HALF_REASON="the registry file at $REG_PATH belongs to a NEW daemon (pid ${now%% *}) a supervisor started again after the SIGKILL of pid $DAEMON_PID. The installed daemon is a login unit (launchd's KeepAlive, systemd's Restart=always with RestartSec=5, so 5 to 10 seconds), and the only window in which the crash half can be read is that one: stop the unit (launchctl bootout gui/$UID/<the daemon's label>, or systemctl --user stop <the unit>) or start a daemon by hand with 'fugaro orchestrator run', and run this check again. This is a stop and not a failure: the removal it would read is this check's other half, and it was not measured"
-  fact crash-half INFO "$CRASH_HALF_REASON"
+  fi
 }
 
 judge_graph_after_crash() {
@@ -797,6 +859,7 @@ judge_graph_after_crash() {
 }
 
 judge_dead_file() {
+  recheck_the_crash_half
   if [ "$CRASH_HALF" = restarted ]; then
     fact dead-file INFO "not measured: the file at $REG_PATH is the new daemon's, and the dead one's was removed or replaced before this check could tell which"
     return 0
@@ -809,6 +872,7 @@ judge_dead_file() {
 }
 
 judge_lock_free() {
+  recheck_the_crash_half
   if [ "$CRASH_HALF" = restarted ]; then
     fact lock-free INFO "not measured: the lock is the new daemon's now, so whether the kernel dropped the dead one's is no longer readable here"
     return 0
@@ -836,32 +900,53 @@ judge_lock_free() {
 # behind, a file naming a pid that now belongs to somebody else. The reader must
 # still judge it dead (nothing answers the handshake and the lock is free),
 # remove it, and leave that process running.
+# Returns 0 when the plant is there, 1 when a daemon a supervisor started again
+# holds the path, and 2 when the dead daemon's own file is still there because the
+# read that judged it dead did not remove it. Nothing is ever written over a file
+# that is on the path: the file is opened with O_EXCL, because a supervisor's
+# restart can land at any point in the 5-to-10-second window and a cp that lands
+# after one would overwrite a live daemon's registry with a dead daemon's. A link
+# would say the same but needs both paths on one filesystem, and the scratch
+# directory is TMPDIR's.
 plant_dead_file_with_live_pid() {
   cat >"$SCRATCH/replant.py" <<'PY'
 import json, os, sys
 
-path, pid = sys.argv[1], int(sys.argv[2])
-with open(path, encoding="utf-8") as fh:
+src, path, pid = sys.argv[1], sys.argv[2], int(sys.argv[3])
+with open(src, encoding="utf-8") as fh:
     doc = json.load(fh)
 doc["pid"] = pid
-tmp = os.path.join(os.path.dirname(path), ".check313-plant.tmp")
-fd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+try:
+    fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+except FileExistsError:
+    raise SystemExit(3)
 with os.fdopen(fd, "w", encoding="utf-8") as fh:
     json.dump(doc, fh)
-os.rename(tmp, path)
 PY
   # The bytes that go back are the dead daemon's own, taken before the read that
   # removed the file: the re-planted document is the daemon's, not one this check
   # invented -- in the same 0700 directory and at the same 0600 the daemon wrote
   # it.
-  cp "$SAVED_REG" "$REG_PATH" || stop "the dead daemon's registry file could not be put back for the pid-reuse row"
-  chmod 600 "$REG_PATH" || stop "the re-planted registry file could not be made 0600"
-  python3 "$SCRATCH/replant.py" "$REG_PATH" "$DECOY_PID" ||
-    stop "the re-planted registry file could not be given the live pid"
-  PLANTED=yes
+  local rc=0
+  python3 "$SCRATCH/replant.py" "$SAVED_REG" "$REG_PATH" "$DECOY_PID" || rc=$?
+  case "$rc" in
+  0) PLANTED=yes ;;
+  3)
+    case "$(file_now)" in
+    "$DAEMON_PID $NONCE") return 2 ;;
+    *)
+      crash_half_restarted "$(file_now | cut -d' ' -f1)"
+      return 1
+      ;;
+    esac
+    ;;
+  *) stop "the dead daemon's registry file could not be put back for the pid-reuse row (python3 exited $rc)" ;;
+  esac
+  return 0
 }
 
 judge_pid_reuse() {
+  recheck_the_crash_half
   if [ "$CRASH_HALF" = restarted ]; then
     fact pid-reuse INFO "not measured: a daemon is serving this id again, and writing this check's own file over a live daemon's registry is the one write it must not make"
     return 0
@@ -874,7 +959,19 @@ judge_pid_reuse() {
     fact pid-reuse FAIL "the process this check starts to hold the dead file's pid (pid $DECOY_PID) did not come up, so the row measured nothing"
     return 0
   fi
-  plant_dead_file_with_live_pid
+  local planted=0
+  plant_dead_file_with_live_pid || planted=$?
+  case "$planted" in
+  0) ;;
+  1)
+    fact pid-reuse INFO "not measured: a daemon a supervisor started again wrote its own registry file at $REG_PATH, so this check planted nothing over it and the removal this row reads was not made"
+    return 0
+    ;;
+  2)
+    fact pid-reuse FAIL "the dead daemon's own file is STILL at $REG_PATH, so this row could not be measured: it is the file the read that judged it dead had to remove, and nothing may be written over a file that is already there"
+    return 0
+    ;;
+  esac
   read_scope reuse
   if kill -0 "$DECOY_PID" 2>/dev/null; then alive=yes; else alive=no; fi
   cmd_after=$(ps -o command= -ww -p "$DECOY_PID" 2>/dev/null || true)
@@ -884,6 +981,12 @@ judge_pid_reuse() {
     fact pid-reuse FAIL "the process holding the dead file's pid (pid $DECOY_PID) is running another command than it was ($(printf '%s' "$cmd_after" | cut -c1-80)): it was replaced rather than left alone"
   elif [ -e "$REG_PATH" ] && [ "$(file_now)" = "$DECOY_PID $NONCE" ]; then
     fact pid-reuse FAIL "the registry file naming a LIVE pid ($DECOY_PID) survived the read: the file is judged by the handshake and the lock, and neither of them answered for it, so the reader that read it had to remove it"
+  elif [ -e "$REG_PATH" ]; then
+    # The path changed while this read ran: a supervisor's restart writes its own
+    # file, so what the reader judged is not what this check planted and the
+    # removal this row reads was not made. That daemon's file is left where it is.
+    crash_half_restarted "$(file_now | cut -d' ' -f1)"
+    fact pid-reuse INFO "not measured: a daemon a supervisor started again wrote its own registry file at $REG_PATH while this read ran, so the file the reader judged is not the one this check planted, and the daemon's own file is left where it is"
   elif [ "$SCOPE_STATUS" != 0 ]; then
     fact pid-reuse FAIL "the read of the file whose pid is a live process's exited $SCOPE_STATUS: the scope must read the node or the cache whatever the file's pid says. Its own line: ${SCOPE_ERR:-<none>}"
   else
@@ -958,7 +1061,7 @@ print_plan() {
   say "  [reads] ps -o command= -ww -p <the file's pid> -- the pid is signalled only when its command line is the daemon's"
   say "  [reads] ${FUGARO_BIN} graph --source local:$ID --json -- the read that goes through endpoint.Probe"
   say "  [writes] kill -9 on that pid, the same read again, and the registry file (gone) and the lock (free) read back; where a supervisor has already started the daemon again, the crash half is reported as NOT MEASURED and nothing below it runs"
-  say "  [writes] one process of this check's own, and the dead daemon's own file put back with that process's pid in it, then the scope read once more: the file must be judged by the handshake and the lock, removed, and that process left running and unsignalled"
+  say "  [writes] one process of this check's own, and the dead daemon's own file written again with that process's pid in it -- created only where the path is empty, never over a daemon a supervisor started again -- then the scope read once more: the file must be judged by the handshake and the lock, removed, and that process left running and unsignalled"
   say "  [writes] the teardown: that process stopped, the planted file removed if the read did not, the credential file and the scratch directory removed"
   say "  phase reboot: the same readings after a reboot, plus the nonce compared with the one --previous-nonce names"
   say "Nothing is created in the cloud, no model call is made and nothing is billable."
