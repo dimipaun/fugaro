@@ -4,6 +4,15 @@
 D360–D367 on 2026-10-26, and D360, D362, D363 and D367 went against the recommendation. Those
 answers approve the reconciliation. Each task of the plan still needs the owner's own explicit go.
 
+**Amended 2026-11-13 (the token-types plan, T15): D506 is extended to a key family.** The upstream Bitbucket token
+still lives in the credentials bundle, and [docs/bitbucket-token-types](../bitbucket-token-types/README.md) rules —
+its D2350 answered 2026-11-13 as recommended — that the bundle holds a whole family of them: one key per token, spelled
+`bitbucket-token--<name>`, beside the legacy `bitbucket-token`, each with its own local-config record and its own status
+in the creds state store, added by `fugaro creds set bitbucket-token--<name>`. D506's reason is untouched and carries
+over whole: one document, one grant, no per-token Secret Manager secret and no second accessor (F2 of that plan), and an
+older loader refuses a bundle holding the family. Nothing else in this folder moves: S3 stays parked, and the read
+consumer is still the one credential the coordinator's reads spend.
+
 **Amended 2026-11-10 (owner ruling): S3 is superseded by the secrets-brokering proxy chain.** The run-token
 slice S3 was parked "until a push and pull-request proxy exists"; that proxy is the B1 chain of
 [docs/secrets-brokering](../secrets-brokering/), under which no run holds a Bitbucket token at all, so a
