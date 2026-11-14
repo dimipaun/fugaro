@@ -78,7 +78,13 @@ import (
 // owns; Check 302's are a fake `fugaro`, a real `uname` and a real terminal
 // (a pty its helper types the phase's one confirmation into), and it rewrites
 // a copy of its own script to prove the case that expects a quiet daemon log
-// to be a finding is not vacuous.
+// to be a finding is not vacuous. Check 350's are a fake `gcloud` and a fake
+// `fugaro` beside a REAL local checkout and its bare origin -- git stays on this
+// machine -- with one shared call log for both fakes, so a case says what the
+// check read AND in what order: the hash of the old record is taken before the
+// first CLI read of the window, which is half of what step 4 is about, and a
+// case that rewrites a copy of the script with the comparison removed proves
+// the FAIL it reads elsewhere is the comparison's.
 var liveCheckScripts = []struct {
 	name string
 	test string
@@ -114,6 +120,7 @@ var liveCheckScripts = []struct {
 	{"check511.sh", "check511_test.sh"},
 	{"check520.sh", "check520_test.sh"},
 	{"check521.sh", "check521_test.sh"},
+	{"check350.sh", "check350_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent
