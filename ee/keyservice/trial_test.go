@@ -351,6 +351,55 @@ func TestTrialIsRefusedWithoutAVerifiedSignIn(t *testing.T) {
 	}
 }
 
+// TestTrialIsRefusedForAFreeMailOrganisation: the organisation a trial is
+// counted against is the account's own domain, and a domain on D453's list is
+// not an organisation — anybody can hold an address at one, so a trial counted
+// against it is counted against every one of its holders, and D2201's rule
+// ("that ask spends the asking organisation's trial and nothing else") would say
+// the opposite of what it exists for: the first gmail.example account to name a
+// project id would spend every other account's trial for that id and bar the
+// organisation that owns the project for good. The free seat reads such a domain
+// the same way (service.go's `freeSeatForm` sends it to the owner's queue), and
+// the comparison is D453's own — exact, on a domain lowercased as every other
+// address this service reads (§4.1's `address`), so a sign-in that spells its
+// domain in another case is refused too rather than counted as an organisation
+// of its own. The account's domain half is what is refused and not the route:
+// the same intake serves an address at a domain of its own.
+func TestTrialIsRefusedForAFreeMailOrganisation(t *testing.T) {
+	f := trialAs(t)
+	for _, account := range []string{"founder@gmail.example", "founder@Outlook.Example"} {
+		f.signsInAs("uid-"+account, account)
+		rec := f.askFrom("198.51.100.40:4040", trialBody(workspaceID, trialSeats))
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("an ask from %s answered %d (%s), want 403: a free mail domain is not an organisation (D453)", account, rec.Code, rec.Body.String())
+		}
+		if code := trialFaultCode(t, rec); code != "free_mail_organisation" {
+			t.Errorf("the refusal of %s carries the code %q, want %q", account, code, "free_mail_organisation")
+		}
+	}
+	if minted := f.mintedKeys(); len(minted) != 0 {
+		t.Errorf("an ask from a free mail domain minted %d key(s), want none", len(minted))
+	}
+	f.signsInAs("uid-trial", trialAccount)
+	if rec := f.ask(trialBody(workspaceID, trialSeats)); rec.Code != http.StatusOK {
+		t.Errorf("an address at a domain of its own answered %d (%s), want 200: the refusal is the account's domain's, not the route's", rec.Code, rec.Body.String())
+	}
+}
+
+// trialFaultCode reads the code out of a refusal, which is what a client
+// branches on (api.go's refusal shape). An answer that is not a refusal at all
+// is reported and answered with no code, rather than stopping the test: what the
+// caller did wrong is the status the test above already holds.
+func trialFaultCode(t *testing.T, rec *httptest.ResponseRecorder) string {
+	t.Helper()
+	var held apiError
+	if err := json.Unmarshal(rec.Body.Bytes(), &held); err != nil {
+		t.Errorf("the answer is not the API's error object: %v: %s", err, rec.Body.String())
+		return ""
+	}
+	return held.Error.Code
+}
+
 // TestTrialIsRefusedForABodyItCannotRead: the body is the API's own JSON and it
 // is read strictly, so a body with a field this route does not know, a body
 // naming no workspace and one naming no seat count are refused before anything

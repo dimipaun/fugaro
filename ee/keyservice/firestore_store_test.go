@@ -383,6 +383,47 @@ func testTrialOnce(t *testing.T, open func(t *testing.T) Store) {
 	if err := store.ClaimTrial(ctx, Trial{Organisation: "acme.example", Installation: "acme-sprocket", Account: "other@acme.example", KeyID: "fgk_7", At: issuedAt}); err != nil {
 		t.Errorf("ClaimTrial for an account that was only named by a refused claim = %v, want the trial handed out", err)
 	}
+
+	// The pair is joined under an escape, and these are the two names that say
+	// why it has to be (D2201, `trialPair`). Values the separator joins into one
+	// string are still two pairs — an organisation called "a" with an
+	// installation called "x|y" is not the organisation "a|x" with the
+	// installation "y" — so a store that filed them under one name would spend
+	// the first organisation's trial on the second's ask, which is the harm
+	// D2201 keys the rule on the pair to prevent. A slash is the other half: in
+	// the document store it addresses a subcollection rather than a document, so
+	// an unescaped pair carrying one is not a name the store can file at all.
+	for _, escaped := range []Trial{
+		{Organisation: "a", Installation: "x|y", Account: "separator@a.example", KeyID: "fgk_8"},
+		{Organisation: "a|x", Installation: "y", Account: "collision@a.example", KeyID: "fgk_9"},
+		{Organisation: "a.example", Installation: "acme/widget", Account: "slash@a.example", KeyID: "fgk_10"},
+	} {
+		escaped.At = issuedAt
+		if err := store.ClaimTrial(ctx, escaped); err != nil {
+			t.Errorf("ClaimTrial for %q at %q = %v, want the trial handed out: the pair is escaped, so no two pairs are one name and every id it joins is one the store can file",
+				escaped.Organisation, escaped.Installation, err)
+		}
+	}
+	held, err = store.Trials(ctx)
+	if err != nil {
+		t.Fatalf("Trials = %v", err)
+	}
+	if len(held) != 6 {
+		t.Errorf("the store holds %d trial(s), want the six that were claimed and no refused one: %+v", len(held), held)
+	}
+	named := map[string]bool{}
+	for _, h := range held {
+		named[h.Organisation+"\x00"+h.Installation] = true
+	}
+	for _, want := range []struct{ organisation, installation string }{
+		{"a", "x|y"},
+		{"a|x", "y"},
+		{"a.example", "acme/widget"},
+	} {
+		if !named[want.organisation+"\x00"+want.installation] {
+			t.Errorf("the store does not hold the trial for %q at %q, so the two are one name: %+v", want.organisation, want.installation, held)
+		}
+	}
 }
 
 // TestTheDocStoreDropsAnExpiredHandover is the one thing the suite above cannot

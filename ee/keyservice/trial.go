@@ -21,10 +21,12 @@ package keyservice
 // keyed on it alone would let any signed-in account at any domain name another
 // organisation's project id, take the trial that organisation was about to ask
 // for and bar it for good. Keyed on the pair, that ask spends the asking
-// organisation's trial and nothing else. The count is the store's atomic
-// check-and-write rather than a read this route makes before minting: two asks
-// arriving together are one trial, because only one of them can claim it (K2.2,
-// store.go's `ClaimTrial`).
+// organisation's trial and nothing else — and only a domain the account's own
+// address names is counted for it: from an address at a free mail provider no
+// organisation is counted at all, and the ask is refused (D453, below). The
+// count is the store's atomic check-and-write rather than a read this route
+// makes before minting: two asks arriving together are one trial, because only
+// one of them can claim it (K2.2, store.go's `ClaimTrial`).
 //
 // The key leaves by mail, the way every issue path's does: the bundle is the key
 // line and the renewal secret line, shown once and never stored (D2135, §7.3),
@@ -96,12 +98,13 @@ func trialSource(organisation, installation string) string {
 // a sentence a person reads, and no sentence says anything about the service's
 // inside (§7.2's rule, api.go's refusal shape).
 const (
-	trialRateRefusal    = "Too many requests from this address just now. Try again shortly."
-	trialSignInRefusal  = "This request's sign-in could not be verified, so no trial was issued for it. Sign in to the licence project and ask again."
-	trialBodyRefusal    = "This request is not the ask this route reads: it carries the workspace's Firebase project id and the seats the trial is asked for, and nothing else."
-	trialClaimedRefusal = "This account or this workspace has already had its trial, and §14's trial is one per installation and account."
-	trialWorkspaceEmpty = "A trial names the workspace it is for, and this request names none."
-	trialSeatsRefusal   = "A trial is asked for a number of seats, and this request asks for none."
+	trialRateRefusal     = "Too many requests from this address just now. Try again shortly."
+	trialSignInRefusal   = "This request's sign-in could not be verified, so no trial was issued for it. Sign in to the licence project and ask again."
+	trialBodyRefusal     = "This request is not the ask this route reads: it carries the workspace's Firebase project id and the seats the trial is asked for, and nothing else."
+	trialClaimedRefusal  = "This account or this workspace has already had its trial, and §14's trial is one per installation and account."
+	trialWorkspaceEmpty  = "A trial names the workspace it is for, and this request names none."
+	trialFreeMailRefusal = "A trial is granted to an organisation, and this account's address is at a free mail provider, where anyone can hold an address and the domain is not one organisation's. Ask again with an address at your organisation's own domain."
+	trialSeatsRefusal    = "A trial is asked for a number of seats, and this request asks for none."
 )
 
 // trialSeatFloor is the seat count below which an ask is not an ask. It is one:
@@ -156,6 +159,23 @@ func (s *Service) trial(w http.ResponseWriter, r *http.Request) {
 	// belongs to are one thing, and a second reading of it would be a second
 	// rule (D2201).
 	organisation := domainOf(caller.Email)
+	// A free mail domain is refused here, which is D453's list read the way the
+	// free seat reads it (service.go's `freeSeatForm`: such a domain goes to the
+	// owner's queue rather than being minted for). What it protects is D2201's
+	// rule itself: an organisation that anybody can hold an address at is not an
+	// organisation, so a trial counted against one counts nothing — every account
+	// at gmail.example shares it, and the first of them to name a project id
+	// would spend every other one's trial for that id and bar the organisation
+	// that owns the project (409, and no method of the Store interface repairs a
+	// trial). The free seat's queue is not what this route does with it: a queued
+	// application is minted a free seat by the owner's key and has no path to a
+	// trial, and this is a door a signed-in stranger posts to, not a place a
+	// person reads a request. A trial is asked for with an address at the
+	// organisation's own domain.
+	if s.freeMail(organisation) {
+		refuseAPI(w, http.StatusForbidden, "free_mail_organisation", trialFreeMailRefusal)
+		return
+	}
 	if !s.trialFree(w, r, call, caller.Email, organisation) {
 		return
 	}
@@ -364,13 +384,22 @@ func (s *Service) trialCaller(w http.ResponseWriter, r *http.Request) (Caller, b
 		refuseAPI(w, http.StatusUnauthorized, "unverified_sign_in", trialSignInRefusal)
 		return Caller{}, false
 	}
-	if strings.TrimSpace(caller.Email) == "" {
-		// A verified sign-in with no address is a verifier that has not done the
-		// half of its job §14 needs, and the account is what the trial is for:
-		// minting one for no account would be a trial nobody can be counted for.
+	// The address is read the way every other part of this service reads one
+	// (§4.2's `address`, which the forms validate through), and what it answers is
+	// what the trial is counted against. A verifier that proved no address, or one
+	// it proved that is not an address, has not done the half of its job §14 needs
+	// and is answered as a sign-in that failed: the account is what a trial is
+	// granted to, and there is no trial without one. Reading it rather than
+	// trusting the spelling matters twice over — the rule counts one account and
+	// one organisation, and an address in another case is the same address — and
+	// the domain it answers is the one D453's list is compared against, which a
+	// spelling of its own would walk past.
+	email, readable := address(caller.Email)
+	if !readable {
 		refuseAPI(w, http.StatusUnauthorized, "unverified_sign_in", trialSignInRefusal)
 		return Caller{}, false
 	}
+	caller.Email = email
 	return caller, true
 }
 
