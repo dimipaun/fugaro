@@ -135,25 +135,53 @@ func TestAccountsAliasSetWritesAndConverges(t *testing.T) {
 	}
 }
 
-// TestAccountsAliasSetRefusedInAgentSession: the command moves which credential
-// this project's stages spend, so it is the owner's own step at their own
-// terminal and a coding agent's session is refused whatever --yes says (D2097,
-// the no-prompt policy D1540). The refusal comes before anything is read, so
-// the file is byte-identical afterwards.
-func TestAccountsAliasSetRefusedInAgentSession(t *testing.T) {
+// TestAccountsAliasWritesRefusedInAgentSession: moving an alias decides which
+// credential this project's stages spend, so both leaves are the owner's own
+// step at their own terminal and a coding agent's session is refused whatever
+// --yes says (D2097, the no-prompt policy D1540). The loop is over agentMarkers
+// itself rather than a copy, so a marker the tree adds is one these commands are
+// held to, and over both leaves because both are the same write to the same
+// block: an rm a session could make silently would leave the keys naming a name
+// the file no longer defines, which is the state the loader refuses.
+//
+// What the sentence has to carry is the marker as well as the command: the write
+// path's own refusal is a second fence behind this one, so an outcome-only test
+// would stay green over a deleted call site. The file is byte-identical
+// afterwards, and nothing is printed but the sentence — the refusal is the first
+// thing either leaf does, which is why no diff is offered here.
+func TestAccountsAliasWritesRefusedInAgentSession(t *testing.T) {
 	aliasFixture(t, "")
-	t.Setenv(agentMarkers[0], "1")
 	before := aliasConfig(t)
+	for _, marker := range agentMarkers {
+		for _, tc := range []struct {
+			name string
+			args []string
+			want string
+		}{
+			{"set", []string{"accounts", "alias", "set", "reviewer", "team-b"}, "fugaro accounts alias set reviewer team-b"},
+			{"rm", []string{"accounts", "alias", "rm", "reviewer"}, "fugaro accounts alias rm reviewer"},
+		} {
+			t.Run(marker+"/"+tc.name, func(t *testing.T) {
+				t.Setenv(marker, "1")
 
-	out, errOut, err := execute(t, "accounts", "alias", "set", "reviewer", "team-b", "--yes")
-	if err == nil {
-		t.Fatalf("the repoint was admitted in a coding agent's session:\n%s\n%s", out, errOut)
-	}
-	if !strings.Contains(err.Error(), "coding agent's session") {
-		t.Errorf("the refusal does not name the session it refuses: %v", err)
-	}
-	if after := aliasConfig(t); after != before {
-		t.Errorf("the refusal wrote the file anyway:\n%s", after)
+				out, errOut, err := execute(t, append(tc.args, "--yes")...)
+				if err == nil {
+					t.Fatalf("the write was admitted in a coding agent's session:\n%s\n%s", out, errOut)
+				}
+				if ExitCode(err) != ExitUserError {
+					t.Errorf("exit %d, want a user error: %v", ExitCode(err), err)
+				}
+				if !strings.Contains(err.Error(), marker) {
+					t.Errorf("the refusal does not name %s, so nobody knows which variable to unset: %v", marker, err)
+				}
+				if !strings.Contains(err.Error(), tc.want) {
+					t.Errorf("the refusal does not print the command to run at a terminal (%q): %v", tc.want, err)
+				}
+				if after := aliasConfig(t); after != before {
+					t.Errorf("the refusal wrote the file anyway:\n%s", after)
+				}
+			})
+		}
 	}
 }
 
@@ -205,13 +233,62 @@ func TestAccountsAliasRmRefusedWhileAKeyNamesIt(t *testing.T) {
 	if err == nil {
 		t.Fatalf("the alias was removed while default_claude_account and stages.review.claude_account still name it:\n%s\n%s", out, errOut)
 	}
-	for _, want := range []string{"default_claude_account", "stages.review.claude_account", "fugaro accounts alias set"} {
+	// The last of the three is the sentence's own grammar: two keys are "they",
+	// and a refusal that printed the objective form in the subject's place would
+	// read "the account them should choose".
+	for _, want := range []string{"default_claude_account", "stages.review.claude_account", "fugaro accounts alias set", "the account they should choose"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not name %q: %v", want, err)
 		}
 	}
 	if after := aliasConfig(t); after != before {
 		t.Errorf("the refusal wrote the file anyway:\n%s", after)
+	}
+}
+
+// TestAccountsAliasRmRemovesAndConverges is the removal end to end, and it is
+// about what the report says after the block is gone: the job row and the last
+// line are about the account the alias STOOD for, which the command reads before
+// it edits the file. The target is not derivable afterwards — the block no
+// longer holds the name — so a report that looked it up in the config it just
+// wrote would print an empty account: a job row reading "no job: no profile
+// serves  yet" over a job that is there, and a closing line naming nobody.
+//
+// The rig is the set test's with the two choice keys pointed at the account
+// itself rather than at the alias: no key names the alias, which is what the
+// removal requires, and the node is seeded with the members those keys resolve
+// to, which is the state the publish has nothing to widen.
+func TestAccountsAliasRmRemovesAndConverges(t *testing.T) {
+	local := strings.Replace(aliasRigLocal, "default_claude_account: reviewer", "default_claude_account: team-a", 1)
+	local = strings.Replace(local, "review: { claude_account: reviewer }", "review: { claude_account: team-a }", 1)
+	r := newAddRigWith(t, local)
+	node := addPolicyNode()
+	node["default_claude_account"] = "team-a"
+	node["claude_account_stages"] = map[string]any{"review": "team-a"}
+	r.db.Set(projectpolicy.PathShared(), node)
+
+	out, _, err := execute(t, "accounts", "alias", "rm", "reviewer", "--yes")
+	if err != nil {
+		t.Fatalf("accounts alias rm: %v\nstdout:\n%s", err, out)
+	}
+	lc := r.addLocal(t)
+	if _, still := lc.ClaudeAccountAliases["reviewer"]; still {
+		t.Fatalf("claude_account_aliases.reviewer survived the removal:\n%s", out)
+	}
+	if lc.DefaultClaudeAccount != "team-a" || lc.ClaudeAccountStages["review"].ClaudeAccount != "team-a" {
+		t.Fatalf("default_claude_account = %q and stages.review.claude_account = %q, want both team-a: the removal takes the alias's entry and nothing else",
+			lc.DefaultClaudeAccount, lc.ClaudeAccountStages["review"].ClaudeAccount)
+	}
+	if strings.Contains(out, "no profile serves") {
+		t.Errorf("the deploy row read the target back off the config it had just emptied, so it names no job:\n%s", out)
+	}
+	if !strings.Contains(out, "claude_account_aliases.reviewer removed") {
+		t.Errorf("the report does not say the entry it removed:\n%s", out)
+	}
+	// The account the alias stood for is named where the owner reads it: the
+	// closing line says the jobs it left standing are untouched.
+	if !strings.Contains(out, "team-a") || !strings.Contains(out, "is gone from this machine's config") {
+		t.Errorf("the closing line does not name the account the alias stood for:\n%s", out)
 	}
 }
 

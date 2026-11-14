@@ -196,6 +196,11 @@ func runAccountsAliasRm(cmd *cobra.Command, alias string, o accountsAliasSetOpti
 	if err != nil {
 		return err
 	}
+	// The account the alias stood for is read before the removal: after it the
+	// block no longer holds it, and the report's job row and closing line are
+	// about the account whose jobs are left standing, not about a name that went
+	// with the entry.
+	target := lc.ClaudeAccountAliases[alias]
 	after, next, err := accountsAliasRmResolve(sel.Path, lc, alias, old)
 	if err != nil {
 		return err
@@ -204,14 +209,14 @@ func runAccountsAliasRm(cmd *cobra.Command, alias string, o accountsAliasSetOpti
 		Path:    sel.Path,
 		Old:     old,
 		New:     next,
-		What:    fmt.Sprintf("remove claude_account_aliases.%s (%s) of this machine's config; it is never published (D2090)", pluginwire.Printable(alias), pluginwire.Printable(lc.ClaudeAccountAliases[alias])),
+		What:    fmt.Sprintf("remove claude_account_aliases.%s (%s) of this machine's config; it is never published (D2090)", pluginwire.Printable(alias), pluginwire.Printable(target)),
 		Kind:    settingsDocLocal,
 		Command: accountsAliasRmCommand(alias),
 		Yes:     o.yes,
 	}); err != nil {
 		return err
 	}
-	return accountsAliasConverge(cmd.Context(), cmd, after, next, sel.Path, alias, "", true)
+	return accountsAliasConverge(cmd.Context(), cmd, after, next, sel.Path, alias, target, true)
 }
 
 // accountsAliasResolve is the edit, or the refusal: the block this file would
@@ -275,7 +280,7 @@ func accountsAliasRmResolve(path string, lc *localcfg.Config, alias string, old 
 	if keys := accountsAliasKeyNames(lc, alias); len(keys) > 0 {
 		return nil, nil, userErr("claude_account_aliases.%s is named by %s, so removing it would leave %s resolving to a name this config does not define; point %s at the account %s should choose instead (`fugaro accounts alias set %s ACCOUNT`), or change %s, and remove the alias once nothing names it; nothing was written",
 			pluginwire.Printable(alias), strings.Join(quoteKeys(keys), ", "), accountsAliasThem(keys),
-			accountsAliasThem(keys), accountsAliasThem(keys), pluginwire.Printable(alias), accountsAliasThem(keys))
+			accountsAliasThem(keys), accountsAliasThey(keys), pluginwire.Printable(alias), accountsAliasThem(keys))
 	}
 	next, err := yamledit.RemoveKeyWithOptions(old, []string{"claude_account_aliases", alias}, yamledit.RemoveOptions{DropEmptyParents: true})
 	if err != nil {
@@ -339,6 +344,17 @@ func accountsAliasThem(keys []string) string {
 	return "them"
 }
 
+// accountsAliasThey is the keys as the subject of their own clause. It is not
+// accountsAliasThem: that one is the objective form the same refusals need for
+// "leave them resolving", and a sentence that used it as a subject would read
+// "the account them should choose".
+func accountsAliasThey(keys []string) string {
+	if len(keys) == 1 {
+		return "it"
+	}
+	return "they"
+}
+
 // accountsAliasWhat is the sentence this run prints before the write: the one
 // entry that moves, and the keys it moves for, so whoever reads the run knows
 // which launches change and which do not.
@@ -387,7 +403,7 @@ func accountsAliasLogName(removing bool) string {
 // own runner over the registered stages (accountsAddRunStages): the node has to
 // carry the account the keys now resolve to, and the job set has to mount that
 // account's token, whichever command moved them.
-func accountsAliasConverge(ctx context.Context, cmd *cobra.Command, after *localcfg.Config, wrote []byte, path, alias, account string, removing bool) error {
+func accountsAliasConverge(ctx context.Context, cmd *cobra.Command, after *localcfg.Config, wrote []byte, path, alias, target string, removing bool) error {
 	run := stepRunFor(cmd, accountsAliasLogName(removing), cmd.ErrOrStderr())
 	defer run.close()
 	stages, err := accountsAddRunStages(ctx, cmd, run, after, path, wrote, "accounts alias")
@@ -399,7 +415,7 @@ func accountsAliasConverge(ctx context.Context, cmd *cobra.Command, after *local
 	// nothing left to run, and a line claiming a member the node does not carry
 	// would be the one sentence it may not print.
 	members, why := accountsAliasNode(ctx, after)
-	accountsAliasReport(cmd, after, stages, alias, account, members, why)
+	accountsAliasReport(cmd, after, stages, alias, target, removing, members, why)
 	return nil
 }
 
@@ -428,27 +444,27 @@ func accountsAliasNode(ctx context.Context, lc *localcfg.Config) (map[string]str
 // accountsAliasReport is the command's answer: the entry that moved, the
 // members the node now carries, what the installation did, and the one line that
 // says what is left — which is nothing.
-func accountsAliasReport(cmd *cobra.Command, lc *localcfg.Config, stages map[string]initflow.StageResult, alias, account string, members map[string]string, why string) {
+//
+// target is the account the alias stood for, which the removal reads before the
+// edit: the block no longer holds it once the file is written, and the job row
+// and the closing line are about that account, not about the alias name.
+func accountsAliasReport(cmd *cobra.Command, lc *localcfg.Config, stages map[string]initflow.StageResult, alias, target string, removed bool, members map[string]string, why string) {
 	w := cmd.OutOrStdout()
 	row := func(label, value, rest string) {
 		fmt.Fprintf(w, "%-10s%-18s%s\n", label, pluginwire.Printable(value), rest)
 	}
-	if account != "" {
-		row("alias", alias, "claude_account_aliases."+pluginwire.Printable(alias)+" = "+pluginwire.Printable(account))
-	} else {
+	if removed {
 		row("alias", alias, "claude_account_aliases."+pluginwire.Printable(alias)+" removed")
+	} else {
+		row("alias", alias, "claude_account_aliases."+pluginwire.Printable(alias)+" = "+pluginwire.Printable(target))
 	}
 	// The jobs are the resolved account's, whichever alias moved: the job set is
 	// per (profile, provider, account), so this is the same job `accounts add`
 	// names for that account.
-	target := account
-	if target == "" {
-		target = lc.ClaudeAccountAliases[alias]
-	}
 	profile := accountsAddProfileOf(lc, target)
 	row("deploy", "jobs", accountsAddDeployLine(lc, profile, target, stages[initflow.Installation]))
 	row("publish", "policy node", accountsAliasPublishLine(stages[initflow.Policy], members, why))
-	fmt.Fprintln(w, accountsAliasLastLine(alias, target, account == ""))
+	fmt.Fprintln(w, accountsAliasLastLine(alias, target, removed))
 }
 
 // accountsAliasPublishLine is what the published node's account-choice members
