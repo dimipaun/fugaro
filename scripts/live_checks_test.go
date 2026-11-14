@@ -72,6 +72,12 @@ import (
 // older than the release, a coder that reads images itself, a slot that is set,
 // a run that never ends, a record that is another run's, and a refusal whose
 // sentence has lost one of the parts an owner needs.
+// Check 440's fakes are a fake `fugaro` that resolves a run ending the way the
+// CLI does -- the active runs and the window first, the whole bucket only on a
+// miss, the numbered pick list and one question only at a real terminal, and
+// never a cancel through an ending -- and a fake `gcloud` for the two rows that
+// read the runs bucket, over a run set each case seeds, so a case says what the
+// check measured and that it launched nothing here.
 // Check 301's fakes are a fake `fugaro`, a fake launchd and a fake systemd
 // whose boot id and unit files the test writes, so a reboot, a second
 // instance's refusal and T7's re-render are all readings of files the test
@@ -114,6 +120,7 @@ var liveCheckScripts = []struct {
 	{"check511.sh", "check511_test.sh"},
 	{"check520.sh", "check520_test.sh"},
 	{"check521.sh", "check521_test.sh"},
+	{"check440.sh", "check440_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent

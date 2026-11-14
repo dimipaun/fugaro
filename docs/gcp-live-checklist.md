@@ -873,6 +873,8 @@ probe account carries predefined grants only).
 | 520 | A text-only coder reads a screenshot, on the vision model ([`docs/vision-model/`](vision-model/implementation-plan.md), its **Check 520** and task **V8**; **V1**'s `agent.models.vision`, **V2**'s `model_prices.*.image_tokens`, **V7**'s rewrite of the coder role, and **D2016** — which is why the state this measures is the coder priced **without** an image rate and not the plan's "with"): the sandbox repository's coder is priced without an image rate and `agent.models.vision` names a model that can read one, and one run whose task names a console `__screenshots__` PNG (the issue's own case, run `20261107-104613-b2af`) passes `implement` — and `fix`, where the recipe runs one — reaches its own `result.json`, and there every coder-role stage timing names the **vision** model's ID while `cost.model_by` carries that same model, so the split the issue is about is read from the record and not from the configuration; `fugaro diagnose <run> --json` prints the same split through the command an owner reads a run with | See "Check 520" below; `bash scripts/live-checks/check520.sh --sandbox <a sandbox repository checkout> --yes` is the whole of it, its sibling test `scripts/live-checks/check520_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call, and so is a coding agent's session); **no agent runs any step of it** | ONE sandbox run and what its task costs — the model spend of its coder-role stages, on the sandbox's own budget — plus the pull request that run opens: **billable, and `--yes` is required** before anything is launched. Every other call is a read (doctor, `models ls`, the run record, `diagnose`), and `CHECK520_MAX_MODEL_USD` turns the run's own figure into a criterion when you set it. The run's pull request and branch are left open for you to close. **OWNER-RUN, NOT RUN.** |
 | 521 | The early refusal, and the sentence an owner acts on ([`docs/vision-model/`](vision-model/implementation-plan.md), its **Check 521** and task **V8**; **V5**'s bootstrap refusal — "the coder can't read an image the task names" — and **D2005**, **D2006** and **D2001**): a repository whose coder is priced without an image rate and with **no** `agent.models.vision`, and a task whose text names a `.png`: the run is refused at **bootstrap**, before its first stage, so no stage's work is paid for and thrown away — the failure the refusal exists to remove; its record's `failure_class` is `config_invalid`, its `reason` names the slot to set and the price member that gives that slot's model an image rate, its stage list is **empty** and its cost is **zero** | See "Check 521" below; `bash scripts/live-checks/check521.sh --sandbox <a sandbox repository checkout>` is the whole of it, its sibling test `scripts/live-checks/check521_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call, and so is a coding agent's session); **no agent runs any step of it** | **NOTHING billable and no model call**: the run is refused at bootstrap, before its first stage, so no stage's work is paid for and the budget is not touched — which is why this check needs no `--yes`. It does start one Cloud Run job execution, and **nothing it launches outlives it**: a run that has not ended within `CHECK521_RUN_TIMEOUT_SECONDS` is cancelled with `fugaro cancel --now`, from the step that gives up on it and from the script's own exit trap. **OWNER-RUN, NOT RUN.** |
 | 292 | A catalog entry whose source names a build `context:` is built with the repository's files in it ([`docs/catalog-build-context/`](catalog-build-context/implementation-plan.md) §6, its **Check 292** and task **CB5**; that folder's **F22**, **F29**, **F30**, **F32** and **F33**, and **D1402**, **D1403**, **D1408** and **D1409**; the amendment it folds into is [`docs/project-image-catalog/context-design.md`](project-image-catalog/context-design.md), its §A5, §A6, §C3, §C4, §C5 and the fold-in at §11): one entry built from a repository's Dockerfile in a **subdirectory**, whose `COPY` reaches a file of the repository — the build the catalog could not run before this work — read back four ways: the built image **contains the copied file**, the record names **one** commit (`source_commit` and `context_commit` the same, and the image's `org.opencontainers.image.revision` that commit), the staged context **fires** the nightly decision with the `catalog-context` reason and the rebuild it submits is pinned to the staged commit, and after that rebuild the same entry decides **without** that reason. **What the plan's own step 4 cannot be run as written is the point of the section below:** the trigger's subject is the digest the operator's own copy **staged**, not the branch, so a pushed commit fires nothing by itself — the check is written against the code and says so | See "Check 292" below; **you** run it, on the **sandbox installation and the sandbox repository only, never `belong`**, from the sandbox repository's checkout, and **no agent runs any step of it** (there is **no script**: the check is the steps below) | One Cloud Build that runs (`fugaro image build <entry>`), one submitted-and-cancelled before its steps run (the staging that leaves the record behind), and the one rebuild the project's catalog check job submits when the entry fires: **all billable, and the rebuild is the point of the step**. Nothing is granted, no run is launched and no model is called, so there is no run spend. Two commits are pushed to the sandbox repository's branch and reverted (a third when step 5 loses its race with the build it cancels), and the entry, its staged objects, its record, its check state and its image are the check's own — the entry and its objects are removed in the Restore, the image is left in the shared registry (`fugaro image rm` never deletes one). **OWNER-RUN, NOT RUN.** |
+| 440 | A short run ending resolves to the one run it names, and the collision is answered the way **D1700** says ([`docs/short-run-ids/`](short-run-ids/implementation-plan.md), its **Check 440** and task **SR13**, and the decisions the section below reads: **D1700** — the numbered pick list and one question at a person's terminal, the refusal that shows the same rows anywhere else — **D1701** (four characters is the minimum, refused before any listing), **D1702** (the lookup widens past the seven-day window on a miss alone), **D1705** (a report carries the full `<slug>/<run-id>` and never the ending), **D1709**, **D1710** (`cancel <ending>` cancels nothing, ever) and **F5** (the widening's cost, UNVERIFIED)): two runs launched with `--run-id` values chosen to share their last four characters — so the collision is certain rather than hoped for — and then `fugaro logs <the shared ending>` and `fugaro diagnose <the shared ending>` at a terminal (the list, and the diagnosis carrying the full ID), the same ending piped (the refusal, its rows and its two ways out), `fugaro diagnose abc` (the minimum's own sentence), `fugaro cancel <the shared ending>` (the active-only list of full run IDs, having cancelled nothing), `fugaro cancel <the ending of a run older than the window>` (`no active run ending`), `fugaro diagnose <that older run's ending>` (the widening, and the seconds it took) | See "Check 440" below: **you** run it, on the **sandbox installation and the sandbox repository only, never `belong`**, from the sandbox repository's checkout, and **no agent runs any step of it**. It is `scripts/live-checks/check440.sh`, ONE script, with `--dry-run` (the guards and the plan, and no fugaro and no gcloud call at all), a `FACT` line per reading, and a Restore that cancels the two runs | Two sandbox runs of your checkout and what their tasks spend — **the launches are model calls and real money**, and each may open a pull request. Every other call is a read. The Restore cancels both runs and reads back that it did; their records stay where they are (a run's history is the installation's) and a pull request either of them opened is **yours to close**. One scratch directory, removed at the end. **OWNER-RUN, NOT RUN.** |
+| 441 | The console's live tab beside `fugaro watch`, over the same runs ([`docs/short-run-ids/`](short-run-ids/implementation-plan.md), its **Check 441** and task **SR13**, **D1704** — the live tab follows `watch` in the order of the rows, the short ID each row is named by, and the words a state is said in — and **SR9**'s own owner-only half, the two live goldens `console/test/e2e/__screenshots__/live-light-darwin.png` and `live-dark-darwin.png`): the RUN cell's short ID extended over the repository's rows, the row order by start time and then ID, the state wording, the BY cell, the door that opens the full ID, and the two pictures re-recorded on your own Mac | See "Check 441" below; **you** run it, on the **sandbox installation and the sandbox repository only, never `belong`**, on your own machine, and **no agent runs any step of it** — what it reads is a window and a picture, so there is **no script**: the check is the numbered steps below | Nothing of the check's own: it launches no run (a run of yours has to be going for either view to draw rows, and that run's spend is yours), writes nothing to the cloud, grants nothing and reads no credential. The two re-recorded PNGs are the check's only artifact, and they are committed. **OWNER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -14109,3 +14111,141 @@ repositories and carries `pull_requests: write` alone.
 **What waits on it.** D4 (the advisory merge order) and the change-set half of the spec's promise
 that a set is ready or not ready as a whole: this run is the only reading of it, and a set that
 flips one pull request and leaves the other draft is a finding for this plan's owner.
+
+## Check 440: a short run ending resolves to the one run it names — the pick list, the refusal, the minimum, the active-only cancel and the widening (sandbox installation and sandbox repository only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **SR13** of
+[docs/short-run-ids/implementation-plan.md](short-run-ids/implementation-plan.md) and **run by you**: nothing
+below is a claim that an ending resolves to the run it names. What it reads is a real installation's runs
+bucket and a real terminal, and neither is in this tree. The check is
+`scripts/live-checks/check440.sh` (its sibling test `scripts/live-checks/check440_test.sh` drives it against a
+fake `fugaro` and a fake `gcloud` only, and launches nothing), what it starts is **two sandbox runs, which
+are billable**, and **no agent runs any step of it**: the installation named `belong` is refused by name
+before anything is launched, and so is a coding agent's session.
+
+**The collision is made, not hoped for.** The two runs are launched with `--run-id` values this run mints
+itself, one second apart, sharing their last four characters. That flag is the one door that lets a check
+choose the IDs it is about — a run an *ending* names is never launched, because the bucket cannot vouch for
+which run an ending means — and every reading below is about that shared ending.
+
+**What it settles.**
+
+- **The ending reads the run it names.** `fugaro logs --url <an ending longer than the shared four>` prints
+  one run's console link, and the link is compared against the `log_url` of that run's own row in
+  `fugaro runs ls --json`. `--url` rather than the log lines, deliberately: the runner's `run_id` is a Cloud
+  Logging field the view does not print (`internal/backend/gcp/logs.go`), so a log line proves nothing about
+  which run was read.
+- **The refusal, away from a terminal (D1700).** `fugaro diagnose <the shared ending> < /dev/null` exits 1
+  with `"<ending>" names 2 runs`, the numbered rows, and `pass a longer ending or the full run ID`. Those rows
+  are the list's own, and the check reads each run's row number and ending out of them — which is what it
+  answers the pick list with below.
+- **The pick list, at a person's terminal (D1700, D1705).** The same ending under a pty — a real terminal, as
+  `scripts/live-checks/check111.sh` does it — asks `which run? [1-2] `; answering one run's row prints
+  `Run:      <slug>/<run-id>` **in full**, never the ending that was typed. The same list is read a second
+  time through `fugaro logs --url <the shared ending>`, whose printed link has to be the run the answer named.
+- **The minimum (D1701).** `fugaro diagnose abc` exits 1 with `"abc" is 3 characters; an ending needs at
+  least 4, the shortest form a run is shown in`, refused before any listing.
+- **An ending cancels nothing (D1710).** `fugaro cancel <the shared ending>` is polled until the live feed
+  holds both runs — the feed is written by the runner inside the container rather than by the launch, so this
+  is the one reading that waits — and then read for its refusal: `"<ending>" names 2 active runs`, both rows
+  as `<slug>/<full run-id>`, and `pass one of the full run IDs above`. An exit 0 there is the finding this row
+  exists for, and it is reported at once rather than waited out. `--bucket <bucket>` adds the runs bucket's own
+  reading of the same thing: each run's `launch.json` is under its own prefix and **no** `cancel` object is
+  under either.
+- **A finished run's ending (D1710).** `fugaro cancel <the ending of a run the bucket still holds and the
+  seven-day window does not>` exits 1 with `no active run ending "<ending>"; pass the full run ID` — no list,
+  and no cancel.
+- **The widening (D1702), and what it costs (F5).** The run older than eight days is found by listing the
+  bucket's own ninety-day window, and the check reads that the seven-day listing does **not** hold it;
+  `fugaro diagnose <its ending>` then exits 0 with that run's `Run:` line, which only the widening can have
+  found. The seconds the two listings and the widening took are a `latency` row: **a figure and not a
+  criterion**, because F5 leaves the cost of the wider listing UNVERIFIED and one installation's seconds are
+  not a bound.
+
+**What a run costs.** TWO sandbox runs of your checkout and what their tasks spend, on the sandbox's own
+budget, plus whatever pull requests they open. **Billable, and the check requires `--yes`**: without it the
+check prints the plan, changes nothing and exits 2. Every other call is a read (`runs ls`, `diagnose`, `logs`,
+`cancel <an ending>`, and the bucket listing), and `--dry-run` makes no call at all. The Restore cancels both
+launched runs and reads the `status` and the marker back from each cancel's own `--json`; their records stay
+where they are, because a run's history is the installation's, and a pull request either of them opened is
+yours to close. On disk it is one scratch directory (mode 0700, outside every git work tree), removed at the
+end.
+
+**Run it:**
+
+```sh
+bash scripts/live-checks/check440.sh --installation <the dev installation> --dry-run
+bash scripts/live-checks/check440.sh --installation <the dev installation> --yes
+bash scripts/live-checks/check440.sh --installation <the dev installation> --yes --bucket gs://<the runs bucket>
+```
+
+Run it from the sandbox repository's own checkout: the two runs are runs **of** that repository, and the
+check refuses a directory that carries no `fugaro.yaml`. The runs bucket's name is in `fugaro doctor`'s
+`runs-bucket-iam` line; `--bucket` is optional and its row reads `not measured` without it. The bucket name is
+global, so no project is passed with it — the installation's name and its GCP project are two different
+things, and this check is given only the first. `--old-run <slug>/<run-id>` names the run older than the
+window by hand, for a bucket that holds none the discovery finds.
+
+Progress goes to stderr and one `CHECK 440 RESULT` block goes to stdout at the end: paste that whole block
+here and nothing else. **Exit 0** is every criterion that was measured holding; **1** is a measured criterion
+that did not hold; **2** is the check not being able to measure — a guard that stopped it (no `--yes`, the
+name `belong`, a coding agent's session, a directory that is not a checkout, no run older than the window), a
+launch or a listing that failed, or an error of its own. A key the run never reached reads `FAIL — not
+reached`. The knobs are `CHECK440_DRY_RUN`, `CHECK440_YES`, `CHECK440_FUGARO`, `CHECK440_TASK`,
+`CHECK440_KEEP_SCRATCH`, `CHECK440_CLI_TIMEOUT_SECONDS` (180), `CHECK440_LAUNCH_TIMEOUT_SECONDS` (600),
+`CHECK440_ACTIVE_TIMEOUT_SECONDS` (420), `CHECK440_POLL_SECONDS` (10), `CHECK440_OLD_DAYS` (8),
+`CHECK440_WINDOW` (7d) and `CHECK440_OLD_WINDOW` (90d).
+
+**What waits on it.** The release that carries SR3 and SR9 — the resolver and the console's live tab, this
+check's own two dependencies — so what it reads is shipped behaviour rather than a branch. A failed 440 is the
+short-form rules not holding where a person meets them, and it returns to the owner as a decision about the
+resolver rather than as a task.
+
+## Check 441: the console's live tab beside `fugaro watch`, and the two live goldens re-recorded (sandbox installation and sandbox repository only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **SR13** of
+[docs/short-run-ids/implementation-plan.md](short-run-ids/implementation-plan.md) and **run by you**: what it
+reads is a window and a picture, so there is **no script** — the check is the numbered steps below, and **no
+agent runs any step of it**. It settles **D1704** (the live tab follows `watch` in the order of the rows, the
+short ID each row is named by, and the words a state is said in) and **SR9**'s own owner-only half: the two
+live goldens are recorded on the owner's Mac and by nobody else (`.claude/rules/console.md`), so the task that
+changed the tab notes them and does not touch them.
+
+**What it settles.** Two views of the same runs, side by side:
+
+- **The short ID.** The RUN cell draws the ending the CLI would show — the last four characters, extended one
+  character at a time over the rows the repository is showing together, so a colliding pair is told apart
+  exactly as `fugaro diagnose` tells it apart. The two runs Check 440 launches are the case to look with.
+- **The order.** Rows are ordered by start time and then by ID, which is `watch`'s own order, so the two views
+  never disagree about which run is which row.
+- **The wording.** The state words are the CLI's (`watch`'s), not the console's invention: a run the CLI calls
+  something is called that on both sides.
+- **The door, and the full ID.** Opening a row gives the full `<slug>/<run-id>`: the drawn text is the short
+  ID, and the full one is the attribute the door reads (the sanitized field, never the drawn text — SR9's own
+  red step).
+- **The BY cell.** The launcher, as `watch --json`'s launcher field names it, so a row says who started the
+  run and not only what it is doing.
+
+**The steps.**
+
+1. On your own machine, in the sandbox repository's checkout, have a run going: `fugaro run --json "<a task>"`
+   is billable and may open a pull request, and a run already in flight will do. For the extension, the two
+   runs of Check 440 — launched to share their last four characters — are the pair to compare.
+2. In one terminal, run `fugaro watch` and read its frame: the order of the rows, the ending each row is named
+   by, the words the states are said in, and the launcher column.
+3. In another terminal, open the console against the same installation: `cd console && npm run build && npx
+   electron .`, and open the **Live** tab.
+4. Compare the two, row by row, against the five readings above. A row named by a different ending, an order
+   that differs, a state word the CLI does not use, a BY cell that disagrees, or a door that opens the short
+   ID rather than the full one is the finding: write it down with the run IDs it happened on.
+5. **Re-record the two live goldens.** They are drawn from the suite's own fixture rather than from an
+   installation, so this step needs no run of yours: `cd console && npm run build && npx playwright test
+   live.spec.ts --update-snapshots`, then look at
+   `console/test/e2e/__screenshots__/live-light-darwin.png` and `live-dark-darwin.png`, and commit both. CI
+   skips these goldens (`FUGARO_CONSOLE_GOLDENS=skip`), and the owner is the only one who records them.
+6. Record the result here: what the two views showed, the commit that carries the two re-recorded PNGs, and
+   PASS or FAIL for each of the five readings.
+
+**What it costs.** Nothing of the check's own: it launches no run, writes nothing to the cloud, grants nothing
+and reads no credential. A run of yours has to be going for either view to draw rows, and that run's spend is
+yours; re-recording the goldens is local and free.
