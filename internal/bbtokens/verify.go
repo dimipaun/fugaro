@@ -49,6 +49,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
+	"github.com/dimipaun/fugaro/internal/gitprov/httpjson"
 )
 
 // maxAnswerBytes bounds one of the check's reads. Every call it makes is a
@@ -209,9 +210,10 @@ func (r *Result) proveRead(scope string) {
 // in its header — at a host the adapter does not name, and the verification of
 // that rule is a test of the constant rather than of a caller's manners.
 type Verifier struct {
-	// Client is the HTTP client; nil means http.DefaultClient. A test hands it
-	// a transport that serves the constant root from a fixture, which is the
-	// only way the check reaches one without a network.
+	// Client is the HTTP client; nil means one of the check's own. A test hands
+	// it a transport that serves the constant root from a fixture, which is the
+	// only way the check reaches one without a network. A client that sets no
+	// timeout of its own is given one (see client).
 	Client *http.Client
 }
 
@@ -551,6 +553,25 @@ func projectURL(workspace, key string) string {
 	return bitbucket.DefaultBaseURL + "/workspaces/" + url.PathEscape(workspace) + "/projects/" + url.PathEscape(key)
 }
 
+// client is the client the check reads with. A client that sets no timeout of
+// its own is given the bound every other Bitbucket call in this program carries
+// (httpjson.DefaultTimeout): `creds set` passes no deadline and has none to
+// pass, so a connection accepted and never answered would otherwise hold the
+// operator at a prompt that never returns, with nothing to tell them the token
+// is fine. A caller's own client is copied rather than changed, and a timeout
+// it set itself is kept: the check is a handful of small reads, so what bounds
+// them is the caller's business when the caller says.
+func (v *Verifier) client() *http.Client {
+	c := http.Client{}
+	if v.Client != nil {
+		c = *v.Client
+	}
+	if c.Timeout == 0 {
+		c.Timeout = httpjson.DefaultTimeout
+	}
+	return &c
+}
+
 // get is the check's one call: a read, addressed by a URL this file built from
 // the record's own escaped segments and from no other text. The answer's body
 // is read bounded. The token rides in the Authorization header and is named
@@ -563,11 +584,7 @@ func (v *Verifier) get(ctx context.Context, target, token string) (int, []byte, 
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/json")
-	client := v.Client
-	if client == nil {
-		client = http.DefaultClient
-	}
-	resp, err := client.Do(req)
+	resp, err := v.client().Do(req)
 	if err != nil {
 		return 0, nil, nil, err
 	}

@@ -10,6 +10,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
+
+	"github.com/dimipaun/fugaro/internal/gitprov/httpjson"
 )
 
 // testToken is the token the check is handed. It is plain words and not a
@@ -521,6 +524,40 @@ func TestVerifyMakesOnlyReadCalls(t *testing.T) {
 		}
 	})
 
+	t.Run("a client with no timeout of its own is given one", func(t *testing.T) {
+		own := &http.Client{}
+		v := &Verifier{Client: own}
+		if got := v.client().Timeout; got != httpjson.DefaultTimeout {
+			t.Errorf("the check's client timeout = %v, want %v: an answer that never comes must not hold creds set open", got, httpjson.DefaultTimeout)
+		}
+		if own.Timeout != 0 {
+			t.Errorf("the check changed the caller's client: timeout = %v", own.Timeout)
+		}
+		if got := (&Verifier{}).client().Timeout; got != httpjson.DefaultTimeout {
+			t.Errorf("the client of a verifier with none = %v, want %v", got, httpjson.DefaultTimeout)
+		}
+		if got, want := (&Verifier{Client: &http.Client{Timeout: time.Minute}}).client().Timeout, time.Minute; got != want {
+			t.Errorf("the check replaced a caller's own timeout %v with %v", want, got)
+		}
+	})
+
+	t.Run("an answer that never comes is refused, not waited for", func(t *testing.T) {
+		v := &Verifier{Client: &http.Client{
+			Timeout: 50 * time.Millisecond,
+			Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				<-r.Context().Done()
+				return nil, r.Context().Err()
+			}),
+		}}
+		res := v.Verify(context.Background(), testToken, repoRecord())
+		if res.OK {
+			t.Fatal("OK = true, want a refusal")
+		}
+		if res.Message != msgRefused {
+			t.Errorf("message = %q, want %q: a call that was never answered has shown nothing", res.Message, msgRefused)
+		}
+	})
+
 	t.Run("every call addresses Bitbucket's own root", func(t *testing.T) {
 		f := newFakeBitbucket(t, repoAnswers())
 		if res := f.verifier().Verify(context.Background(), testToken, repoRecord()); !res.OK {
@@ -533,6 +570,13 @@ func TestVerifyMakesOnlyReadCalls(t *testing.T) {
 		}
 	})
 }
+
+// roundTripFunc is the transport one test writes inline to hold a call open,
+// and the whole of what that test needs: it answers nothing and reaches no
+// host.
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestVerifyReportsWriteNotVerified(t *testing.T) {
 	answers := repoAnswers()
