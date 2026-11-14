@@ -15843,12 +15843,15 @@ carry.
 
 ```bash
 bash scripts/live-checks/check606.sh --project fugaro --gcp-project fugaro-dev \
-  --checkout <the sandbox checkout> --payload <the payload as text> --phone-read <the file your reading is in>
+  --checkout <the sandbox checkout> --payload-file <the file you captured the payload into> \
+  --phone-read <the file your reading is in>
 ```
 
 `--dry-run` prints the guard and every call it would make and makes none of them. The script reads the
-payload from a **text file you captured** — it never decodes an image, and it never asks a model to read
-one.
+payload from the **text file you captured** and not from a command line — the payload carries a
+one-shot `p~` token, so a value on the command line would reach a shell's history and a process listing,
+which is what Check 605's `--token-file` exists to avoid — and it never decodes an image and never asks
+a model to read one.
 
 ## Check 607: the first screen with no account (the app's own build on a device or simulator, with the network off; run by you; NOT RUN)
 
