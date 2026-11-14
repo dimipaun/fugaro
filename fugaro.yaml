@@ -85,4 +85,4 @@ workflows:
         done
         exit $rc
     resources: { cpu: 4, memory: 8Gi }
-    timeouts: { total: 3h, stage: 150m, verify: 25m, finalize_reserve: 5m }
+    timeouts: { total: 4h, stage: 3h, verify: 25m, finalize_reserve: 5m }
