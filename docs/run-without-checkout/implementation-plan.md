@@ -1,6 +1,6 @@
 # Launching a run for a repository without its checkout: implementation plan
 
-**Status: design answered by the owner 2026-11-04; A0, A1, A2 and A3 landed (2026-11-10, the person read set, the file-at-a-ref reader, the launch's decision and its read at the forge), A4 landed (2026-11-12, a retry and a follow-up reuse the recorded job) and B1 landed with these pages (2026-11-12); B2, C1 and D1 not started; no other task approved.**
+**Status: design answered by the owner 2026-11-04; A0, A1, A2 and A3 landed (2026-11-10, the person read set, the file-at-a-ref reader, the launch's decision and its read at the forge), A4 landed (2026-11-12, a retry and a follow-up reuse the recorded job) and B1 landed with these pages (2026-11-12); C1 is answered (2026-11-14, the independent review of A0, A1 and A3, its verdict document in review-c1.md); B2 and D1 not started; no other task approved.**
 
 The decisions each task answers are named in its heading; they are **D901–D915** in
 [reconciliation.md §3](reconciliation.md), answered by the owner on 2026-11-04, each with the reason for
