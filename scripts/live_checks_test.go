@@ -72,6 +72,15 @@ import (
 // older than the release, a coder that reads images itself, a slot that is set,
 // a run that never ends, a record that is another run's, and a refusal whose
 // sentence has lost one of the parts an owner needs.
+// Check 313's fakes are a fake `fugaro` and a fake `curl` that performs the
+// handshake, beside a daemon of the test's own -- a real loopback server holding
+// the id's lock and writing its registry file -- so the mode and the nonce, the
+// handshake, the SIGKILL, the removed dead file and the pid a live process takes
+// are all readings of processes and files the case owns; Check 314's are a fake
+// `fugaro` whose `doctor --json` and `orchestrator ls --json` answer out of the
+// case's own files and a fake `gcloud` that answers the account and the project's
+// IAM policy, so a case says which project the policy was read on, which person's
+// roles it carries, and that a run which stopped earlier called nothing more.
 // Check 301's fakes are a fake `fugaro`, a fake launchd and a fake systemd
 // whose boot id and unit files the test writes, so a reboot, a second
 // instance's refusal and T7's re-render are all readings of files the test
@@ -101,6 +110,8 @@ var liveCheckScripts = []struct {
 	{"check303.sh", "check303_test.sh"},
 	{"check304.sh", "check304_test.sh"},
 	{"check305.sh", "check305_test.sh"},
+	{"check313.sh", "check313_test.sh"},
+	{"check314.sh", "check314_test.sh"},
 	{"check340.sh", "check340_test.sh"},
 	{"check96.sh", "check96_test.sh"},
 	{"check361.sh", "check361_test.sh"},
