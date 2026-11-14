@@ -1,8 +1,10 @@
 package creds
 
 import (
+	"encoding/json"
 	"errors"
 	"math"
+	"strings"
 	"testing"
 	"time"
 )
@@ -655,4 +657,304 @@ func TestAWindowNeverShortensAReportedReset(t *testing.T) {
 	if at, _ := inside.Ready(now, set); !at.Equal(since.Add(window)) {
 		t.Fatalf("a reset inside the window = %s; want the window's end %s", at, since.Add(window))
 	}
+}
+
+// ---------------------------------------------------------------------------
+// A Bitbucket token's status (T6, D2356)
+// ---------------------------------------------------------------------------
+
+// tokenStatusStore is the store the token statuses are read and written through,
+// checked here rather than left to the first caller that wires one.
+var _ TokenStatusStore = (*RTDBStore)(nil)
+
+// A Bitbucket token's hold, its identity and its count are one node of their
+// OWN, under a subtree the cascade's marks are not in, and the read has the
+// discipline the marks' read has: a node this release cannot model stops it.
+//
+// The subtree is the whole point of the type. The readers of creds/marks —
+// `fugaro accounts`, `fugaro doctor`, the review path — present what they read
+// there as the cascade's model credentials, so a Bitbucket token named `ci`
+// written among them would be read as the model account `ci`.
+func TestBitbucketTokenStatusSubtree(t *testing.T) {
+	db := newFakeDB()
+	st := &RTDBStore{DB: db}
+	name := "bitbucket-token--ci"
+
+	// The add-time check's own write: the identity it proved, when, and the
+	// hold a 401 left beside them.
+	tok := TokenVerified(TokenBroken(TokenStatus{}, now), now.Add(-time.Hour), "uuid-ci")
+	got, err := st.UpdateTokenStatus(ctx, name, func(TokenStatus, bool) (TokenStatus, error) {
+		return tok, nil
+	})
+	if err != nil {
+		t.Fatalf("writing a Bitbucket token's status: %v", err)
+	}
+	if got.State != StateBroken || !got.VerifiedAt.Equal(now.Add(-time.Hour)) || got.Identity != "uuid-ci" {
+		t.Fatalf("the status written = %+v; want the broken hold, the identity and its date", got)
+	}
+
+	// It is one node of its own, under a path of its own, and the marks subtree
+	// holds nothing of it.
+	if _, ok := db.nodes[PathTokenStatus(name)]; !ok {
+		t.Fatalf("the status of %q is not at %s: it is at %v", name, PathTokenStatus(name), keysOfMap(db.nodes))
+	}
+	if !strings.HasPrefix(PathTokenStatus(name), pathTokens+"/") {
+		t.Fatalf("PathTokenStatus(%q) = %q; want it under %q", name, PathTokenStatus(name), pathTokens)
+	}
+	if _, ok := db.nodes[PathMark(name)]; ok {
+		t.Fatalf("a Bitbucket token's status was written under the cascade's marks: %s", PathMark(name))
+	}
+
+	// The read gives back the name and every part of the status.
+	all, err := st.TokenStatuses(ctx)
+	if err != nil {
+		t.Fatalf("reading the Bitbucket tokens' statuses: %v", err)
+	}
+	back, ok := all[name]
+	if !ok {
+		t.Fatalf("the status of %q came back under the keys %v", name, keysOfMap(all))
+	}
+	if back.State != StateBroken || back.Identity != "uuid-ci" || back.Count != 0 {
+		t.Fatalf("the status read as %+v; want the one that was written", back)
+	}
+
+	// A second token is its own node, so one token's status is never read as
+	// another's.
+	other := "bitbucket-token--build"
+	if _, err := st.UpdateTokenStatus(ctx, other, func(TokenStatus, bool) (TokenStatus, error) {
+		return TokenThrottled(TokenStatus{}, now, now.Add(time.Minute), Settings{}), nil
+	}); err != nil {
+		t.Fatalf("writing a second token's status: %v", err)
+	}
+	all, err = st.TokenStatuses(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 2 || all[other].State != StateExhausted || all[name].State != StateBroken {
+		t.Fatalf("the statuses read as %v; want the two that were written", all)
+	}
+
+	// The discipline the marks' read has, on this subtree: a node this release
+	// cannot model, and a key that is not the canonical escaping of a name,
+	// both stop the read rather than being read as a usable token.
+	db2 := newFakeDB()
+	db2.nodes[pathTokens] = json.RawMessage(`"a string, not the subtree"`)
+	if _, err := (&RTDBStore{DB: db2}).TokenStatuses(ctx); err == nil {
+		t.Fatal("a tokens subtree that is not an object read as no tokens at all")
+	}
+	db3 := newFakeDB()
+	db3.put(PathTokenStatus(name), map[string]any{"state": "broken", "unmodelled": true})
+	if _, err := (&RTDBStore{DB: db3}).TokenStatuses(ctx); err == nil {
+		t.Fatal("a token status carrying a member this release does not model was read as one")
+	}
+	db4 := newFakeDB()
+	db4.nodes[pathTokens] = json.RawMessage(`{"%zz": {"state": "broken"}}`)
+	if _, err := (&RTDBStore{DB: db4}).TokenStatuses(ctx); err == nil {
+		t.Fatal("a token status keyed by something that is not an escaped name read as a token")
+	}
+
+	// An empty name is a programming error rather than a node.
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Error("an empty token name did not panic")
+			}
+		}()
+		PathTokenStatus("")
+	}()
+}
+
+// The red step: a Bitbucket token named `ci` marked broken is not the model
+// account `ci` marked broken, and no reader of the cascade's marks ever sees it.
+//
+// The two live side by side here, under one name, and each reader is given
+// exactly its own: `Marks` — what `fugaro accounts`, `fugaro doctor` and the
+// review path read — answers the model account and never the token, and
+// `TokenStatuses` answers the token and never the account.
+func TestModelMarkReadersNeverSeeABitbucketToken(t *testing.T) {
+	db := newFakeDB()
+	st := &RTDBStore{DB: db}
+	const name = "ci"
+
+	if _, err := st.UpdateTokenStatus(ctx, name, func(TokenStatus, bool) (TokenStatus, error) {
+		return TokenBroken(TokenStatus{Identity: "uuid-ci"}, now), nil
+	}); err != nil {
+		t.Fatalf("marking the Bitbucket token broken: %v", err)
+	}
+
+	marks, err := st.Marks(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m, ok := marks[name]; ok {
+		t.Fatalf("a reader of the cascade's marks reads the Bitbucket token %q as %+v: a broken repository token would be shown as a broken model account", name, m)
+	}
+	if len(marks) != 0 {
+		t.Fatalf("the cascade's marks hold %v after only a Bitbucket token was marked", keysOfMap(marks))
+	}
+
+	// And the other direction, with both written for one name.
+	if _, err := st.UpdateMark(ctx, name, func(Mark, bool) (Mark, error) {
+		return Mark{State: StateAvailable}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	marks, err = st.Marks(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m, ok := marks[name]; !ok || !m.Available() {
+		t.Fatalf("the model account %q reads as %+v; want the available mark it was given", name, m)
+	}
+	tokens, err := st.TokenStatuses(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tok, ok := tokens[name]; !ok || tok.State != StateBroken || tok.Identity != "uuid-ci" {
+		t.Fatalf("the Bitbucket token %q reads as %+v; want the broken hold it was given, untouched by the model account's mark", name, tok)
+	}
+}
+
+// The model credentials' own marks are what they were: the same four members on
+// the wire, the same algebra, and D142's window still theirs.
+//
+// It is written because T6 generalises the state's NAME (a token's name is a
+// namespace of its own beside the accounts') and the temptation is to generalise
+// the state with it — a shared mark that dropped D142's window for everyone, or
+// a token's throttle that kept it. Both directions are pinned here: the window
+// holds a shared model token for the rest of it, and a Bitbucket token's
+// throttle is its Retry-After and nothing more.
+func TestModelCredentialMarksUnchanged(t *testing.T) {
+	b, err := json.Marshal(Mark{State: StateExhausted, Until: now, Since: now, Backoff: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(b, &members); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"state", "until", "since", "backoff"}
+	if len(members) != len(want) {
+		t.Fatalf("a mark's members on the wire = %v; want exactly %v: a field never changes meaning", keysOfMap(members), want)
+	}
+	for _, k := range want {
+		if _, ok := members[k]; !ok {
+			t.Errorf("a mark's members on the wire = %v; want %v among them", keysOfMap(members), k)
+		}
+	}
+
+	// D142's first control is on by default, and an exhaustion under it holds
+	// the shared token for the rest of the window its exhaustion opened.
+	window := Settings{Window: 5 * time.Hour, BackoffCap: 5 * time.Hour}
+	since := now.Add(-time.Minute)
+	m := Exhaust(Mark{}, since, now.Add(time.Minute), window)
+	if at, ok := m.Ready(now, window); !ok || !at.Equal(since.Add(5*time.Hour)) {
+		t.Fatalf("a shared model token exhausted inside its window is ready at %s, %v; want the window's end %s", at, ok, since.Add(5*time.Hour))
+	}
+	// A successful probe does not put it back in rotation inside that window.
+	p := ProbeSucceeded(Mark{State: StateBackedOff, Since: since, Backoff: time.Minute, Until: now}, now, window)
+	if p.State != StateExhausted || !p.Until.Equal(since.Add(5*time.Hour)) {
+		t.Fatalf("a successful probe with the control on left %+v; want it held until the window's end", p)
+	}
+
+	// A Bitbucket token's 429 is the upstream's own limit and its Retry-After is
+	// the whole answer: the same settings that hold a model token for five hours
+	// hold this one for the minute Bitbucket named.
+	throttled := TokenThrottled(TokenStatus{}, now, now.Add(time.Minute), window)
+	if throttled.State != StateExhausted || !throttled.Until.Equal(now.Add(time.Minute)) {
+		t.Fatalf("a throttled Bitbucket token = %+v; want it held until the Retry-After Bitbucket named", throttled)
+	}
+	// A token's hold is read as State and Until — the contract's plain fields —
+	// and not through the model credentials' Settings-aware algebra: D142's
+	// window has no subject on a Bitbucket token, so a reader that handed the
+	// project's model settings to Ready would hold this token for the window
+	// again. With the control off, which is the token's own reading of it, the
+	// minute is the whole of the answer.
+	if at, ok := throttled.Ready(now, noWindow()); !ok || !at.Equal(now.Add(time.Minute)) {
+		t.Fatalf("the throttled token is ready at %s, %v; want the minute Bitbucket named", at, ok)
+	}
+	// And the same settings are what the write is handed, which is not the same
+	// statement: the hold on this token has lapsed — a State and an Until an
+	// hour in the past, which is the whole of what a reader of a token's hold
+	// reads — so the 429 arriving now is a fresh exhaustion and the minute it
+	// named replaces the date. Handed the window, Exhaust would read that lapsed
+	// hold as still in force (Ready measures it from Since), find the minute
+	// earlier than the window's end, and discard the reset Bitbucket had just
+	// named: the token would come out of a fresh 429 carrying the hour-old Until
+	// and read as usable.
+	lapsed := TokenStatus{Mark: Mark{State: StateExhausted, Until: now.Add(-time.Hour), Since: now.Add(-2 * time.Hour)}}
+	renewed := TokenThrottled(lapsed, now, now.Add(time.Minute), window)
+	if renewed.State != StateExhausted || !renewed.Until.Equal(now.Add(time.Minute)) || !renewed.Since.Equal(now) {
+		t.Fatalf("a 429 on a token whose hold had lapsed left %+v; want it exhausted until the minute Bitbucket named, dated now", renewed)
+	}
+	// A 429 that named no reset is the backed-off case, through the same
+	// doubling wait a failed probe leaves (D153).
+	noReset := TokenThrottled(TokenStatus{}, now, time.Time{}, Settings{BackoffInitial: 15 * time.Minute, BackoffCap: time.Hour})
+	if noReset.State != StateBackedOff || noReset.Backoff != 15*time.Minute || !noReset.Until.Equal(now.Add(15*time.Minute)) {
+		t.Fatalf("a 429 naming no reset left %+v; want a backed-off token waiting 15m", noReset)
+	}
+	if !noReset.NeedsProbe(now.Add(15 * time.Minute)) {
+		t.Fatal("a backed-off Bitbucket token whose wait passed does not report needing a probe")
+	}
+	// A 401 is broken and out until an operator clears it, and neither a 429 nor
+	// a successful probe puts it back — the rule the model marks already have.
+	broken := TokenThrottled(TokenBroken(TokenStatus{}, now), now, now.Add(time.Hour), window)
+	if broken.State != StateBroken {
+		t.Fatalf("a 429 on a broken Bitbucket token left %+v; want it broken still", broken)
+	}
+	if got := TokenSucceeded(broken, now, window); got.State != StateBroken {
+		t.Fatalf("a successful probe cleared a broken Bitbucket token: %+v", got)
+	}
+	if got := TokenSucceeded(noReset, noReset.Until, window); !got.Available() {
+		t.Fatalf("a successful probe of a backed-off Bitbucket token left %+v; want it back in service", got)
+	}
+	// A probe that proved nothing doubles the wait and leaves the exhaustion's
+	// date where it was, which is the model probe's own answer (ProbeFailed): a
+	// 5xx is the same exhaustion still being held rather than a fresh one, so a
+	// token backed off for hours does not come out of it looking like one
+	// exhausted a moment ago — which is what D154's "least recently exhausted"
+	// orders by.
+	held := TokenStatus{Mark: Mark{State: StateBackedOff, Until: now, Backoff: time.Hour, Since: now.Add(-4 * time.Hour)}}
+	unproven := TokenUnproven(held, now, window)
+	if unproven.State != StateBackedOff || unproven.Backoff != 2*time.Hour || !unproven.Since.Equal(now.Add(-4*time.Hour)) {
+		t.Fatalf("a probe that proved nothing left %+v; want the wait doubled with the date of the exhaustion it belongs to", unproven)
+	}
+	// The same write landing on an exhausted hold, which is what a probe in
+	// flight when a 429 arrived produces: with the window in the answer, that
+	// lapsed exhaustion would read as still in force and swallow the probe's
+	// failure, leaving the token on a date in the past — which is the state a
+	// reader of a token reads as usable.
+	raced := TokenStatus{Mark: Mark{State: StateExhausted, Until: now.Add(-time.Hour), Since: now.Add(-2 * time.Hour)}}
+	after := TokenUnproven(raced, now, window)
+	if after.State != StateBackedOff || !after.Until.Equal(now.Add(DefaultBackoffInitial)) || !after.Since.Equal(now.Add(-2*time.Hour)) {
+		t.Fatalf("a probe that proved nothing on an exhausted token left %+v; want the first wait, dated with the exhaustion it belongs to", after)
+	}
+
+	// Nothing above moved a model mark, and the store still writes the marks
+	// where selection reads them.
+	db := newFakeDB()
+	st := &RTDBStore{DB: db}
+	if _, err := st.UpdateMark(ctx, a1.Name, func(Mark, bool) (Mark, error) { return Break(now), nil }); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := db.nodes[PathMark(a1.Name)]; !ok {
+		t.Fatalf("a model mark is not at %s", PathMark(a1.Name))
+	}
+	marks, err := st.Marks(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m, ok := marks[a1.Name]; !ok || !m.Broken() {
+		t.Fatalf("the model mark of %q read as %+v; want it broken", a1.Name, m)
+	}
+}
+
+// keysOfMap is the keys of a subtree the tests above name in a failure, so a
+// read that answers under an unexpected key says which key it was.
+func keysOfMap[T any](m map[string]T) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }
