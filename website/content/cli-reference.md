@@ -4000,8 +4000,10 @@ server has revoked reads `expired` with `revoked: true` and is Free in
 behaviour: nothing is deleted and a new key restores everything.
 
 --json prints {project, state, tier, seats, paid_through, kind, renewal_mode,
-source, revoked, last_check}, with paid_through null where no key is installed
-and last_check the last revocation check's own record.
+source, revoked, last_check, warning}, with paid_through null where no key is
+installed, last_check the last revocation check's own record and warning the
+windows the key's own policy has open now, each with the roles it reaches and
+the instant it opened (null while none is open).
 
 This is a read: it is not refused inside a coding agent's session.
 

@@ -719,6 +719,7 @@ func licenceSet(cmd *cobra.Command, o *licenceSetOptions) error {
 	w := cmd.OutOrStdout()
 	fmt.Fprintf(w, "key installed in project %s (%s)\n", safetext.Field(lc.Name), project.Object)
 	licenceWriteClaims(w, claims, state)
+	licenceWarnLine(cmd.ErrOrStderr(), licenceWarningTermsOfKey(claims, state), licenceNow())
 	if bundle.secret != "" {
 		fmt.Fprintf(w, "renewal secret written to Secret Manager container %s\n", safetext.Field(licenceRenewalSecretID(lc.Name)))
 	} else if claims.RenewalMode != licence.RenewalNone && claims.RenewalMode != "" {
@@ -768,8 +769,10 @@ server has revoked reads ` + "`expired`" + ` with ` + "`revoked: true`" + ` and 
 behaviour: nothing is deleted and a new key restores everything.
 
 --json prints {project, state, tier, seats, paid_through, kind, renewal_mode,
-source, revoked, last_check}, with paid_through null where no key is installed
-and last_check the last revocation check's own record.
+source, revoked, last_check, warning}, with paid_through null where no key is
+installed, last_check the last revocation check's own record and warning the
+windows the key's own policy has open now, each with the roles it reaches and
+the instant it opened (null while none is open).
 
 This is a read: it is not refused inside a coding agent's session.`,
 		Args: func(_ *cobra.Command, args []string) error {
@@ -810,6 +813,14 @@ type licenceStatusJSON struct {
 	// LastCheck is the last revocation check the installation ran, in the
 	// store's own record shape, and null where it never ran one.
 	LastCheck *project.Check `json:"last_check"`
+	// Warning is the windows of the key's own warning policy that are open now,
+	// each with the roles it reaches and since when, and the sentence it is
+	// shown as (K3.5); it is null while none is open. A reader outside this
+	// process picks the newest window that reaches its own reader's role rather
+	// than assuming the caller of the CLI: the console and the app know who is
+	// looking, and the windows of the default policy reach different roles at
+	// different instants (spec section 7.1).
+	Warning *licenceWarningJSON `json:"warning"`
 }
 
 func licenceStatus(cmd *cobra.Command, o *licenceStatusOptions) error {
@@ -861,6 +872,8 @@ func licenceStatus(cmd *cobra.Command, o *licenceStatusOptions) error {
 		check := view.Check
 		out.LastCheck = &check
 	}
+	terms := licenceWarningTermsOfView(view)
+	out.Warning = licenceStatusWarning(terms, licenceNow())
 	if o.asJSON {
 		enc := json.NewEncoder(cmd.OutOrStdout())
 		enc.SetIndent("", "  ")
@@ -884,6 +897,9 @@ func licenceStatus(cmd *cobra.Command, o *licenceStatusOptions) error {
 	if err := tw.Flush(); err != nil {
 		return err
 	}
+	// The key's own policy, and not this build's: a window between these
+	// figures and the notes below, because it is the one line a person acts on.
+	licenceWarnLine(cmd.ErrOrStderr(), terms, licenceNow())
 	licenceStatusNotes(cmd.ErrOrStderr(), lc, view)
 	return nil
 }
@@ -1108,6 +1124,7 @@ func licenceRefresh(cmd *cobra.Command, o *licenceRefreshOptions) error {
 	w := cmd.OutOrStdout()
 	fmt.Fprintf(w, "renewed: the new key is installed in project %s (%s)\n", safetext.Field(lc.Name), project.Object)
 	licenceWriteClaims(w, next, state)
+	licenceWarnLine(cmd.ErrOrStderr(), licenceWarningTermsOfKey(next, state), licenceNow())
 	if answer.RenewalSecret == "" {
 		fmt.Fprintln(cmd.ErrOrStderr(), "note: the licence server answered no renewal secret with the new key, so this installation cannot renew again without one: paste it with `fugaro licence set`")
 	}

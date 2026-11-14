@@ -1414,7 +1414,7 @@ func TestLicenceStatusJSONShape(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &got); err != nil {
 		t.Fatalf("licence status --json wrote %q, which is not JSON: %v", out, err)
 	}
-	want := []string{"kind", "last_check", "paid_through", "project", "renewal_mode", "revoked", "seats", "source", "state", "tier"}
+	want := []string{"kind", "last_check", "paid_through", "project", "renewal_mode", "revoked", "seats", "source", "state", "tier", "warning"}
 	if keys := slices.Sorted(maps.Keys(got)); !slices.Equal(keys, want) {
 		t.Fatalf("licence status --json names %v, want %v", keys, want)
 	}
