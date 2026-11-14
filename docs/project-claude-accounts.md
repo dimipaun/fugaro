@@ -249,7 +249,10 @@ guessed at. A profile and a repository entry may both name one account: the publ
 entries add, so nothing already admitted is narrowed. Each account a repository entry names must
 **cover that repository** (§4, the same subset rule a profile meets), and the same `publish` writes
 the repository's child admission under `config/policy/repos/$slug` from the account list it
-published.
+published. The list lives in this entry alone — it is in no `fugaro.yaml` and in no Terraform input
+— so the `fugaro update --repo .` that rebuilds the entry from those two **carries it over**:
+writing the key once and updating the repository afterwards keeps the admission, and only `fugaro
+accounts rm` (§2) or an edit of the file takes it away.
 
 ## 4. The rules `publish` and `fugaro setup` enforce
 
