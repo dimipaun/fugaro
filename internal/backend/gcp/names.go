@@ -628,6 +628,26 @@ func bucketPrefixClause(bucket, prefix, slug string) string {
 	return fmt.Sprintf(`resource.name.startsWith("projects/_/buckets/%s/objects/%s/%s/")`, bucket, prefix, slug)
 }
 
+// objectListPrefixAttr is the request attribute a List call carries: the
+// prefix the caller asked for, relative to the bucket. A List request names no
+// object, so resource.name matches nothing for it and this attribute is the
+// only thing in the request that says which listing was asked for
+// (docs/design/bucket-iam.md §4, the H3 veto, and §11 item V7).
+const objectListPrefixAttr = "storage.googleapis.com/objectListPrefix"
+
+// projectBucketListClause is the listing half of a prefix-limited condition:
+// the prefix a List request must carry, with its trailing slash. Without the
+// slash a listing of runs-old/ would match a grant meant for runs/.
+//
+// The value is the request's OWN prefix — "runs/", never the full
+// projects/_/buckets/<b>/objects/runs/ path: no request attribute ever carries
+// that string, so a clause naming it lists nothing, and the account holding
+// one would be refused every listing it makes (Check 340 of
+// docs/gcp-live-checklist.md read both forms live and settled this one).
+func projectBucketListClause(prefix string) string {
+	return fmt.Sprintf(`api.getAttribute('%s', '').startsWith("%s/")`, objectListPrefixAttr, prefix)
+}
+
 // BucketConditionTitlePrefix is the fixed part of BucketConditionTitle: a
 // caller that must recognise the title rather than build it (internal/infra/tf
 // reads a plan's condition titles) takes it from here, so the two spellings
@@ -668,6 +688,89 @@ const CatalogReadConditionTitlePrefix = "fugaro-catalog-read-"
 // CatalogReadConditionTitle is the title of the catalog read condition of
 // the build account saID, as the repository module sets it.
 func CatalogReadConditionTitle(saID string) string { return CatalogReadConditionTitlePrefix + saID }
+
+// ReportsReadPrefix is the runs bucket area the reports job reads: every
+// repository's run records, which is what its reports are built from. It is
+// the first of JobBucketPrefixes because that is where the records are, and a
+// prefix of its own here because the job's read is scoped to it and not to the
+// other two.
+const ReportsReadPrefix = "runs"
+
+// ReportsBucketPrefix is the runs bucket area the reports job writes: one
+// report per repository and period, and the project's aggregate beside them.
+// The job is its one writer (E4, ruling 3), which is why no launcher's write
+// condition carries it.
+const ReportsBucketPrefix = "reports"
+
+// reportsCondition is the one definition of the reports job's two conditions,
+// and the only place its clause kinds are put together: the objects under
+// prefix, from resource.name, joined to the listing of that same prefix from
+// the request attribute, with " || ".
+//
+// Both halves are needed and neither is enough. A condition on resource.name
+// grants no listing at all — a List request names no object, so no object
+// clause matches it (docs/design/bucket-iam.md §2.3, live check 7's 403 on
+// listing runs/) — and the listing half cannot read an object, because a get
+// carries no objectListPrefix. The join is an OR and never an AND: a
+// conjunction is the shape a reader reaches for first and it matches nothing,
+// since no single request carries both, and the job would be refused
+// everything it does. Each half's scope is the whole prefix and not one
+// repository's runs/<slug>/: the job summarises every repository, so it lists
+// each slug's records under the one prefix, and what the owner asked for is
+// the listing prefixes and nothing else.
+func reportsCondition(bucket, prefix string) string {
+	return strings.Join([]string{
+		projectBucketPrefixClause(bucket, prefix),
+		projectBucketListClause(prefix),
+	}, " || ")
+}
+
+// ReportsReadCondition is the condition of the read-only (objectViewer) grant
+// the reports job holds on the runs bucket: reads under runs/ — the run
+// records its reports summarise — and the listing of runs/, which is how it
+// finds a repository's records (runs/<slug>/).
+//
+// It has no slug because the job is the project's: it reports every repository
+// admitted to the profile, so the records it may read are no longer inside one
+// repository's prefix (gcp.ProjectBucketCondition's reason).
+func ReportsReadCondition(bucket string) string {
+	return reportsCondition(bucket, ReportsReadPrefix)
+}
+
+// ReportsWriteCondition is the condition of the read-write (objectUser) grant
+// the reports job holds on the runs bucket: reads, writes, overwrites and
+// deletes under reports/ — the stored report of each repository and period
+// and the project's aggregate, each overwritten with the same content on a
+// rerun — and the listing of reports/, which is what a later period's report
+// and the year's roll-up read.
+//
+// objectUser and not objectViewer is the whole of E4's ruling 3: the job is
+// the prefix's one writer. A launcher reads a stored report through the
+// unconditioned bucket-wide objectViewer they already hold, so reports/ is
+// deliberately NOT added to gcp.LauncherBucketCondition.
+func ReportsWriteCondition(bucket string) string {
+	return reportsCondition(bucket, ReportsBucketPrefix)
+}
+
+// ReportsReadConditionTitlePrefix is the fixed part of
+// ReportsReadConditionTitle: a caller that must recognise the title rather
+// than build it (internal/infra/tf reads a plan's condition titles) takes it
+// from here, so the two spellings cannot drift apart.
+const ReportsReadConditionTitlePrefix = "fugaro-reports-read-"
+
+// ReportsReadConditionTitle is the title of the reports job's runs/ read
+// condition, as the installation module sets it.
+func ReportsReadConditionTitle(saID string) string { return ReportsReadConditionTitlePrefix + saID }
+
+// ReportsWriteConditionTitlePrefix is ReportsReadConditionTitlePrefix for the
+// other binding, and distinct from it on purpose: a condition that differs in
+// one byte is another binding, and a plan that swapped the two grants' titles
+// is one internal/infra/tf refuses rather than reads as the module's own.
+const ReportsWriteConditionTitlePrefix = "fugaro-reports-write-"
+
+// ReportsWriteConditionTitle is the title of the reports job's reports/ write
+// condition, as the installation module sets it.
+func ReportsWriteConditionTitle(saID string) string { return ReportsWriteConditionTitlePrefix + saID }
 
 // CatalogRecordsCondition is the condition of the read-write (objectUser)
 // grant the project's catalog check job holds on ONE repository's area of the

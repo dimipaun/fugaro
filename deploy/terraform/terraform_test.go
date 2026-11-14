@@ -937,12 +937,23 @@ func skipString(code string, i int) int {
 
 // The alert and the log exclusion pick out the check jobs by a name
 // prefix, which must be the one gcp.CheckJobName gives them.
+//
+// The reports job's alert (reports.tf, slice P) filters on a prefix of its own,
+// which is not a check job's and must not be read as one: gcp.CheckJobName's
+// names are the repository checks', and the reports job's Go name is
+// internal/infra's (R7) rather than this package's, so the one thing this test
+// can hold about that filter is that it is exactly the prefix the installation
+// module's own validation pins the job's name to.
 func TestCheckJobPrefixMatchesGo(t *testing.T) {
 	re := regexp.MustCompile(`job_name=~\\"\^([a-z0-9-]+)\\"`)
-	seen := 0
+	seen, reports := 0, 0
 	walk(t, func(path string, b []byte) {
 		for _, m := range re.FindAllSubmatch(b, -1) {
 			seen++
+			if prefix := string(m[1]); prefix == reportsJobPrefix {
+				reports++
+				continue
+			}
 			for _, slug := range []string{"bitbucket-acme-sandbox", strings.Repeat("a", 80)} {
 				if name := gcp.CheckJobName(slug); !strings.HasPrefix(name, string(m[1])) {
 					t.Errorf("%s matches check jobs by %q, but the check job of %s is %s", path, m[1], slug, name)
@@ -952,6 +963,20 @@ func TestCheckJobPrefixMatchesGo(t *testing.T) {
 	})
 	if seen < 3 {
 		t.Errorf("found %d check-job name filters, want the alert's two and the exclusion's", seen)
+	}
+	if reports != 1 {
+		t.Errorf("found %d reports-job name filters, want the reports alert's one", reports)
+	}
+	// ... and that prefix is the one the module's own validation pins the job's
+	// name to, which is the line this test can read while the job's Go name is
+	// internal/infra's (R7): a filter matching a prefix the module would not
+	// accept as a job name watches for a job nobody can deploy.
+	vars, err := fs.ReadFile(FS, "gcp/modules/installation/variables.tf")
+	if err != nil {
+		t.Fatalf("reading the installation module's variables: %v", err)
+	}
+	if !strings.Contains(string(vars), `startswith(var.reports.job, "`+reportsJobPrefix+`")`) {
+		t.Errorf("the reports alert filters on %q, which is not the prefix the module's own validation pins the job's name to", reportsJobPrefix)
 	}
 }
 
@@ -1696,7 +1721,7 @@ var (
 	// The narrowing is not what makes the plan covered either:
 	// internal/infra/tf's grant rules do NOT accept an allUsers member, so the
 	// update whose plan carries this grant asks its own typed confirmation.
-	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials|coordinator|mcp_server|fugaro_verifier|intake)\[0\]\.member|google_service_account\.catalog_check\[0\]\.member|google_service_account\.workspace\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|coordinator_account|workspace_service_account|installation\.scheduler_service_account|installation\.catalog_check_service_account)\}")$`)
+	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials|coordinator|mcp_server|fugaro_verifier|intake)\[0\]\.member|google_service_account\.(catalog_check|reports)\[0\]\.member|google_service_account\.workspace\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|coordinator_account|workspace_service_account|installation\.scheduler_service_account|installation\.catalog_check_service_account)\}")$`)
 
 	// workspaceRolePath and workspaceRoleType name the ONE custom role in this
 	// tree no module creates: the workspace root's own (W3 of the workspaces
@@ -1747,6 +1772,14 @@ const (
 	publicMemberPath  = "gcp/modules/installation/coordinator.tf"
 	publicMemberBlock = "google_cloud_run_v2_service_iam_member.coordinator_front_door_public"
 )
+
+// reportsJobPrefix is the name prefix the installation module requires of the
+// reports job (reports.tf, slice P): its alert filters on it, and the prefix
+// the module's own validation pins the job's name to is what
+// TestCheckJobPrefixMatchesGo holds that filter to. The job's Go name is
+// internal/infra's (R7), which is why the literal lives here and not in
+// internal/backend/gcp beside CheckJobName's.
+const reportsJobPrefix = "fugarorpt-"
 
 // memberAllowed is allowedMemberExprs plus the one exception above, and it is
 // the single decision every IAM block of this tree is held to.

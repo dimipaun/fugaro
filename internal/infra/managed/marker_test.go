@@ -924,6 +924,12 @@ func TestRunAccountsHaveNoWritePathToTheMarker(t *testing.T) {
 		"a job account's tokens grant":         gcp.TokenBucketCondition(testBucket, "web-a1b2c3"),
 		"a build account's grant":              gcp.BucketCondition(testBucket, gcp.BuildBucketPrefixes, "web"),
 		"a launcher's grant":                   gcp.LauncherBucketCondition(testBucket),
+		// The reports job's two (slice P, ruling E4): the runs it summarises,
+		// read-only, and the reports it writes. Each is one prefix of the
+		// bucket and neither is its root — and the listing half each carries
+		// names no object at all, so it cannot reach the marker either.
+		"a reports job's read grant":  gcp.ReportsReadCondition(testBucket),
+		"a reports job's write grant": gcp.ReportsWriteCondition(testBucket),
 	} {
 		prefixes := startsWithPrefixes(expr, testBucket)
 		if len(prefixes) == 0 {
@@ -2125,6 +2131,25 @@ var runAccountGrants = setOf(
 	// the installation having a job at all (the count), the way check.tf's
 	// deploy_job is.
 	`google_service_account_iam_member | "roles/iam.serviceAccountUser" | service_account_id=google_service_account.build.name | "serviceAccount:${var.installation.catalog_check_service_account}" | for_each= | perms=`,
+
+	// The reports job and its own account (slice P, rulings E1 and E4): the
+	// project's one reports job, which reads every repository's run records and
+	// writes the stored reports. Reviewed whole for the reason the catalog
+	// check's block above is — a tftest cannot enumerate a module's resources —
+	// and it is two bucket rows and one invoker, the account's whole reach in
+	// the tree.
+	//
+	// The write is objectUser on runs/ under gcp.ReportsWriteCondition, whose
+	// prefix is asserted above to be reports/ alone and not the bucket's root;
+	// the read is objectViewer on runs/ under gcp.ReportsReadCondition, the
+	// same read the launchers and the front door hold. Neither is a project
+	// role, a secret, an actAs or a token minting: the account mounts no
+	// credential of any kind (reports.tf), so nothing here reaches the marker,
+	// and the invoker row is the scheduler account's, the same roles/run.invoker
+	// the check job's row above is.
+	`google_storage_bucket_iam_member | "roles/storage.objectViewer" | bucket=google_storage_bucket.runs.name | google_service_account.reports[0].member | for_each= | perms=`,
+	`google_storage_bucket_iam_member | "roles/storage.objectUser" | bucket=google_storage_bucket.runs.name | google_service_account.reports[0].member | for_each= | perms=`,
+	`google_cloud_run_v2_job_iam_member | "roles/run.invoker" | name=google_cloud_run_v2_job.reports[0].name | google_service_account.scheduler.member | for_each= | perms=`,
 
 	// The history account's: the Firebase databases, its run listing, and a
 	// read of the runs bucket.
@@ -3425,6 +3450,12 @@ var narrowingConditions = map[string]bool{
 	// bytes this names are the narrow ones is asserted above, on the builder
 	// itself.
 	"each.value.records_condition.expression": true,
+	// The reports job's write grant (slice P, ruling E4): the module is handed
+	// gcp.ReportsWriteCondition, the objects under reports/ joined to the
+	// listing of reports/ itself. That the bytes this names are the narrow ones
+	// — one prefix, never the bucket's root — is asserted above, on the builder
+	// itself, and the module's own plan is read by the installation root's test.
+	"var.reports.write_condition.expression": true,
 }
 
 // grantMembers is who a grant is to: the member attribute, or the members of
