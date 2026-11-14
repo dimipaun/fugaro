@@ -351,6 +351,21 @@ func TestSelectSkipsThrottledAndBroken(t *testing.T) {
 			marks: map[Name]Status{repo.Name: {State: StateExhausted, Until: time.Now().Add(-time.Minute)}},
 			want:  repo.Name,
 		},
+		// A broken mark carries no Until — the contract says so, and T6's store
+		// writes none — so a node that carries one anyway must not read as a
+		// hold that lapsed: an operator clears a broken token, nothing else does.
+		{
+			why:   "a broken token is not a hold that lapses, whatever Until the node carries",
+			marks: map[Name]Status{repo.Name: {State: StateBroken, Until: time.Now().Add(-time.Minute)}},
+			want:  workspace.Name,
+		},
+		// Until's zero value is "no end" and not "lapsed long ago", which is the
+		// reading `!now.Before(Until)` on its own would give it.
+		{
+			why:   "an exhaustion that named no end holds on",
+			marks: map[Name]Status{repo.Name: {State: StateExhausted}},
+			want:  workspace.Name,
+		},
 	} {
 		t.Run(tc.why, func(t *testing.T) {
 			sel := selectionOf(t, both, nil, fakeStatus{marks: tc.marks})
@@ -397,6 +412,20 @@ func TestSelectSkipsThrottledAndBroken(t *testing.T) {
 			}
 		})
 	}
+
+	// The class a lone broken token earns, and not ClassNotCovered: the token
+	// covers the repository and is in the way, which is what an operator has to
+	// read off the refusal.
+	t.Run("a lone broken token whose Until has passed is still the reason", func(t *testing.T) {
+		marks := map[Name]Status{repo.Name: {State: StateBroken, Until: time.Now().Add(-time.Minute)}}
+		sel := selectionOf(t, []Record{repo}, nil, fakeStatus{marks: marks})
+
+		_, err := sel.Select(ctx, Snapshot{Bundle: bundleOf(repo.Name)}, canonical, false)
+		ref := refusalClass(t, err)
+		if ref.Class != ClassBroken {
+			t.Errorf("Select refused with %q, want %q", ref.Class, ClassBroken)
+		}
+	})
 }
 
 // TestSelectSkipsAKeyWithNoRecordAndARecordWithNoKey is R14's fail-closed half:
