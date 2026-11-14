@@ -953,30 +953,51 @@ func TestTickSpendsNothingWhileTheNodesGuardsHold(t *testing.T) {
 // trying to write it, and the breaker counts those failures as cycles that did
 // nothing.
 //
-// Mutation: derive the id by appending alone and the cycle below ends with the
-// state's own words — the decision id is not a name — instead of asking.
+// The lengths below are the boundary either side of the cut the digest leaves
+// room for. 53 is the longest id the suffix alone still fits, and 54 is the one
+// that takes the digest and is shorter than the room the tail takes — the id
+// whose name is the whole of it rather than a cut of it.
+//
+// Mutation: derive the id by appending alone and every cycle below ends with
+// the state's own words — the decision id is not a name — instead of asking;
+// take the id as a cut of the tail's length and the 54-character one ends the
+// cycle with a slice out of range.
 func TestTickAsksAboutAnItemWithALongID(t *testing.T) {
-	now := o6Now()
-	long := "wi-" + strings.Repeat("x", 61)
-	w, its := spentOn(t, long, now, rebased(now, headA, 1))
-	h, l := ladderTick(t, stack(t, now, []orchestrator.WorkItem{w}, its), now)
-	l.reads[long] = orchestrator.LadderReading{}
+	for _, tc := range []struct {
+		name string
+		id   string
+	}{
+		{name: "the longest the suffix fits", id: "wi-" + strings.Repeat("x", 50)},
+		{name: "shorter than the room the tail leaves", id: "wi-" + strings.Repeat("x", 51)},
+		{name: "exactly the room the tail leaves", id: "wi-" + strings.Repeat("x", 52)},
+		{name: "the longest name the state takes", id: "wi-" + strings.Repeat("x", 61)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			now := o6Now()
+			w, its := spentOn(t, tc.id, now, rebased(now, headA, 1))
+			h, l := ladderTick(t, stack(t, now, []orchestrator.WorkItem{w}, its), now)
+			l.reads[tc.id] = orchestrator.LadderReading{}
 
-	rep := h.step()
+			rep := h.step()
 
-	if rep.Escalated != 0 {
-		t.Fatalf("the cycle reports %d moves, and an item it could not read is a question", rep.Escalated)
-	}
-	s := h.state()
-	if len(s.Decisions) != 1 {
-		t.Fatalf("the node carries %d decisions, and a reading that was not made is one question", len(s.Decisions))
-	}
-	d := s.Decisions[0]
-	if d.WaitingOn != orchestrator.OnPerson || !strings.Contains(d.Question, long) {
-		t.Fatalf("the decision is %+v, and it is the item that could not be read that a person is asked about", d)
-	}
-	if len(d.ID) > 64 || !strings.HasPrefix(d.ID, "wi-") {
-		t.Fatalf("the decision id %q is not a name the item's own id could be written under", d.ID)
+			if rep.Escalated != 0 {
+				t.Fatalf("the cycle reports %d moves, and an item it could not read is a question", rep.Escalated)
+			}
+			s := h.state()
+			if len(s.Decisions) != 1 {
+				t.Fatalf("the node carries %d decisions, and a reading that was not made is one question", len(s.Decisions))
+			}
+			d := s.Decisions[0]
+			if d.WaitingOn != orchestrator.OnPerson || !strings.Contains(d.Question, tc.id) {
+				t.Fatalf("the decision is %+v, and it is the item that could not be read that a person is asked about", d)
+			}
+			if len(d.ID) > 64 || !strings.HasPrefix(d.ID, "wi-") {
+				t.Fatalf("the decision id %q is not a name the item's own id could be written under", d.ID)
+			}
+			if len(d.ID) < len(tc.id) {
+				t.Fatalf("the decision id %q is shorter than the id it names, %q", d.ID, tc.id)
+			}
+		})
 	}
 }
 

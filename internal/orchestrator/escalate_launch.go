@@ -465,6 +465,11 @@ func (c *cycle) askLadder(ctx context.Context, w WorkItem, question string) erro
 // validate.go) — and otherwise the item's id cut to fit with a digest of the
 // whole of it behind, which is what keeps a name the state accepts and keeps
 // two long ids that share a prefix apart.
+//
+// The cut is the shorter of the id and the room the tail leaves, because the
+// two are not ordered: an id of 54 characters is one the suffix alone does not
+// fit and that is still shorter than the 55 the tail leaves, so an id taken as
+// a cut of that length would be read past its end.
 func ladderQuestionID(itemID string) string {
 	const suffix = "-escalation"
 	if len(itemID)+len(suffix) <= maxNameRunes {
@@ -472,7 +477,7 @@ func ladderQuestionID(itemID string) string {
 	}
 	sum := sha256.Sum256([]byte(itemID))
 	tail := "-" + hex.EncodeToString(sum[:])[:questionHashHex]
-	return itemID[:maxNameRunes-len(tail)] + tail
+	return itemID[:min(len(itemID), maxNameRunes-len(tail))] + tail
 }
 
 const (
