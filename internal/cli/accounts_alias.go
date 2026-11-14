@@ -399,6 +399,21 @@ func accountsAliasLogName(removing bool) string {
 	return "accounts-alias-set"
 }
 
+// accountsAliasDoor is the verb this command's own converge runs under: the door
+// accountsAddRunStages names on every line it prints, and the fact
+// initOptions.ownerHand reads to tell a run that IS the owner's hand at their
+// terminal from one that is not (D2097).
+const accountsAliasDoor = "accounts alias"
+
+// ownerHand is whether this run's own command already IS the owner's hand at
+// their terminal: `fugaro accounts alias set` and `accounts alias rm` refuse a
+// coding agent's session before they read anything (accountsAliasSession,
+// D2097), so the account choice their publish carries was made by the owner
+// standing at their own terminal. The command they typed is that confirmation,
+// and the typed name the publish asks of every other door would be a second one
+// for the same decision — which the no-prompt policy does not have (D1540, F10).
+func (o *initOptions) ownerHand() bool { return o.door == accountsAliasDoor }
+
 // accountsAliasConverge is the publish and the deploy, through `accounts add`'s
 // own runner over the registered stages (accountsAddRunStages): the node has to
 // carry the account the keys now resolve to, and the job set has to mount that
@@ -406,7 +421,7 @@ func accountsAliasLogName(removing bool) string {
 func accountsAliasConverge(ctx context.Context, cmd *cobra.Command, after *localcfg.Config, wrote []byte, path, alias, target string, removing bool) error {
 	run := stepRunFor(cmd, accountsAliasLogName(removing), cmd.ErrOrStderr())
 	defer run.close()
-	stages, err := accountsAddRunStages(ctx, cmd, run, after, path, wrote, "accounts alias")
+	stages, err := accountsAddRunStages(ctx, cmd, run, after, path, wrote, accountsAliasDoor)
 	if err != nil {
 		return err
 	}
