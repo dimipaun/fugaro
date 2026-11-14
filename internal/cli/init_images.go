@@ -519,19 +519,35 @@ func (s *imagesStage) pinsBase() bool {
 
 func (s *imagesStage) Check(ctx context.Context) (initflow.Status, error) {
 	items, notes, err := s.items(ctx)
-	switch {
-	case err != nil:
+	if err != nil {
 		return initflow.Status{}, err
-	case len(items) == 0 && len(notes) > 0:
+	}
+	set := s.staleCatalog(ctx)
+	if set.unread != "" {
+		// A bucket this run could not read is a skip with the reason, never a
+		// failed update and never a clean "No changes" (the layer stage's
+		// rule): the stage may not say the catalog images are current when it
+		// could not tell.
+		notes = append(notes, catalogPlanDetail(set))
+	}
+	switch {
+	case len(items) == 0 && len(notes) > 0 && !set.any():
 		// "No changes" is the stage's word for nothing to do (design
 		// image-refresh.md's step 2); the notes say which kind and why.
 		return initflow.Status{State: initflow.Skipped, Detail: "No changes: " + strings.Join(notes, "; ")}, nil
-	case len(items) == 0:
+	case len(items) == 0 && !set.any():
 		return initflow.Status{State: initflow.Skipped, Detail: "no image to pin or copy: the history image goes with --firebase-project, and a base image with --base KIND, with a checkout whose fugaro.yaml names it, or with a project image catalog whose entries this installation builds"}, nil
 	case releaseVersion() == "":
 		return initflow.Status{State: initflow.Skipped, Detail: "development build, no published images to pin or copy: build one from a checkout (sh images/build-base.sh <kind> <tag> and docker push <tag>), then fugaro update --base-image KIND=<tag>"}, nil
 	}
-	return initflow.Status{State: initflow.Todo, Detail: "pins this release's base images by digest and copies the release images your registry lacks"}, nil
+	var parts []string
+	if len(items) > 0 {
+		parts = append(parts, "pins this release's base images by digest and copies the release images your registry lacks")
+	}
+	if set.any() {
+		parts = append(parts, catalogPlanDetail(set))
+	}
+	return initflow.Status{State: initflow.Todo, Detail: strings.Join(parts, "; ")}, nil
 }
 
 func unpinnedText(u []string) string {
@@ -716,8 +732,15 @@ func (s *imagesStage) prepare(ctx context.Context) (*mirror.Mirror, []imageItem,
 }
 
 func (s *imagesStage) Plan(ctx context.Context, env initflow.Env) (initflow.Plan, error) {
+	set := s.staleCatalog(ctx)
 	m, items, err := s.prepare(ctx)
 	if err != nil || m == nil {
+		if set.any() {
+			return initflow.Plan{Detail: catalogPlanDetail(set)}, err
+		}
+		if set.unread != "" {
+			return initflow.Plan{NothingToDo: true, Detail: "No changes: " + catalogPlanDetail(set)}, err
+		}
 		return initflow.Plan{NothingToDo: true}, err
 	}
 	pl, err := s.read(ctx, m, items)
@@ -727,10 +750,20 @@ func (s *imagesStage) Plan(ctx context.Context, env initflow.Env) (initflow.Plan
 	s.show(pl)
 	n, bytes := pending(pl)
 	base := pins(pl)
-	if n == 0 && len(base) == 0 {
+	if n == 0 && len(base) == 0 && !set.any() {
+		if set.unread != "" {
+			return initflow.Plan{NothingToDo: true, Detail: "No changes: " + catalogPlanDetail(set)}, nil
+		}
 		return initflow.Plan{NothingToDo: true, Detail: "No changes"}, nil
 	}
-	return initflow.Plan{Detail: changeDetail(n, bytes, len(base))}, nil
+	detail := changeDetail(n, bytes, len(base))
+	if extra := catalogPlanDetail(set); extra != "" {
+		if detail != "" {
+			detail += "; "
+		}
+		detail += extra
+	}
+	return initflow.Plan{Detail: detail}, nil
 }
 
 // changeDetail is one line saying what the stage will do: how many images it
@@ -767,12 +800,13 @@ func (s *imagesStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 		return initflow.Outcome{}, err
 	}
 	r := s.e.r
+	set := s.staleCatalog(ctx)
 	m, items, err := s.prepare(ctx)
 	if err != nil {
 		return initflow.Outcome{}, err
 	}
 	if m == nil {
-		return initflow.Outcome{Detail: "No changes"}, nil
+		return s.catalogOutcome(set, initflow.Outcome{Detail: "No changes"}), nil
 	}
 	pl, err := s.read(ctx, m, items)
 	if err != nil {
@@ -832,9 +866,9 @@ func (s *imagesStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 		return initflow.Outcome{}, err
 	}
 	if !changed && len(base) == 0 {
-		return initflow.Outcome{Detail: "No changes"}, nil
+		return s.catalogOutcome(set, initflow.Outcome{Detail: "No changes"}), nil
 	}
-	return initflow.Outcome{Changed: true, Detail: applyDetail(changed, len(base))}, nil
+	return s.catalogOutcome(set, initflow.Outcome{Changed: true, Detail: applyDetail(changed, len(base))}), nil
 }
 
 // confirmText is the stage's own confirmation: what it copies (and how big,
