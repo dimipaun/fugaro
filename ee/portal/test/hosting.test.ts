@@ -16,8 +16,16 @@
 // P9.2's deploy script): a rewrite to a service that does not exist, or one in
 // another region, is a portal whose every request fails.
 //
+// The same file carries the other half of the deploy: the `firestore.rules`
+// block is what makes `firebase deploy --only hosting,firestore:rules` upload
+// the denial the portal's documents are held to beside the site that reads them
+// through the API, and the `emulators` block is what the portal workflow's
+// `--only firestore` starts for the store's own suite. A rules path that named
+// nothing, or a deploy that named only hosting, would leave the database the
+// Terraform creates with rules nobody reviewed.
+//
 // Nothing here deploys anything or reaches the network: the configuration is
-// read as text, and the two facts it has to agree with are read from the
+// read as text, and the facts it has to agree with are read from the
 // repository.
 
 import { readFileSync } from 'node:fs'
@@ -48,7 +56,9 @@ interface HostingConfig {
 }
 
 interface FirebaseConfig {
+  firestore?: { rules?: string }
   hosting?: HostingConfig
+  emulators?: { firestore?: { host?: string; port?: number }; ui?: { enabled?: boolean } }
 }
 
 function read(path: string): string {
@@ -251,6 +261,24 @@ describe('the portal hosting configuration', () => {
     // Vite names every emitted file with its content hash, so a year is safe
     // here and a deploy is picked up by the page's own revalidation above.
     expect(header(assets, 'Cache-Control')).toBe('public, max-age=31536000, immutable')
+  })
+
+  it('deploys the rules that deny the database its clients, with the site', () => {
+    // The database is created by P1.7's Terraform; its rules are not, and a
+    // database nobody deploys rules on is one the next creation decides for.
+    expect(parsed.firestore?.rules).toBe('firestore.rules')
+    expect(read('../firestore.rules')).toContain('allow read, write: if false;')
+    const script = read('../../../scripts/deploy-portal.sh')
+    const deploy = /run_or_print firebase deploy ([^\n]*)/.exec(script)?.[1] ?? ''
+    expect(deploy).toContain('--only hosting,firestore:rules')
+  })
+
+  it('carries the emulator the store\'s own suite is run against', () => {
+    // ee/keyservice/docstore's Firestore suite runs under the emulator the
+    // staged portal workflow starts from this file (`--only firestore`), and
+    // the host it dials is the one the emulator publishes to the child.
+    expect(parsed.emulators?.firestore?.host).toBe('127.0.0.1')
+    expect(parsed.emulators?.ui?.enabled).toBe(false)
   })
 
   it('carries the business licence notice beside it', () => {

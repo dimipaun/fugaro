@@ -1,4 +1,7 @@
 {
+  "firestore": {
+    "rules": "firestore.rules"
+  },
   "hosting": {
     "site": "fugaro-portal",
     "public": "dist",
@@ -31,5 +34,10 @@
         "headers": [{ "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }]
       }
     ]
+  },
+  "emulators": {
+    "singleProjectMode": true,
+    "ui": { "enabled": false },
+    "firestore": { "host": "127.0.0.1", "port": 8080 }
   }
 }

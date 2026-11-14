@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Build, deploy and seed the Fugaro portal in one project: the SPA to its Hosting
-# site, the API and the key minter to Cloud Run, and optionally the operations
-# organisation's first invitation.
+# site, the Firestore rules the database's clients are denied by, the API and the
+# key minter to Cloud Run, and optionally the operations organisation's first
+# invitation.
 #
 # Usage: scripts/deploy-portal.sh [--project <id>] [--region <region>]
 #                                 [--config <path>] [--image-repository <repo>]
@@ -12,7 +13,8 @@
 #   --region <region>    the region the two Cloud Run services and the build run in
 #                        (default: us-east5, the region ee/portal/firebase.json's
 #                        /api/** rewrite names).
-#   --config <path>      the Hosting configuration, relative to the repository root
+#   --config <path>      the Firebase configuration -- the Hosting site and the
+#                        Firestore rules -- relative to the repository root
 #                        (default: ee/portal/firebase.json). The portal has its own:
 #                        the root firebase.json belongs to the website, and this
 #                        script never touches it.
@@ -124,7 +126,7 @@ done
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$root"
-[[ -f $config ]] || die "the Hosting configuration is missing: $config"
+[[ -f $config ]] || die "the Firebase configuration is missing: $config"
 
 for tool in node npm gcloud firebase git; do
   command -v "$tool" >/dev/null 2>&1 || die "$tool is not installed or not on PATH"
@@ -176,7 +178,11 @@ run_or_print gcloud run deploy fugaro-portal-api \
 run_or_print gcloud run deploy fugaro-key-minter \
   --image "$image_base/fugaro-key-minter:$tag" --project "$project" --region "$region"
 
-run_or_print firebase deploy --only hosting --project "$project" --config "$config"
+# The rules travel with the site they fence: the database the Terraform creates
+# is deployed with the denial its clients are held to (ee/portal/firestore.rules,
+# P1.5), and a site deployed without it is one whose store the next database
+# creation decides the rules for.
+run_or_print firebase deploy --only hosting,firestore:rules --project "$project" --config "$config"
 
 if [[ -n $seed_address ]]; then
   if [[ $dry_run == true ]]; then

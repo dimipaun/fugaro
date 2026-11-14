@@ -90,11 +90,11 @@ run --dry-run --project my-portal-1 --region europe-west1
 [[ $out == *"would run: gcloud builds submit"* ]] || fail "dry run does not print the Cloud Build: $out"
 [[ $out == *"would run: gcloud run deploy fugaro-portal-api"* ]] || fail "dry run does not print the API's deploy: $out"
 [[ $out == *"would run: gcloud run deploy fugaro-key-minter"* ]] || fail "dry run does not print the minter's deploy: $out"
-[[ $out == *"would run: firebase deploy --only hosting --project my-portal-1 --config ee/portal/firebase.json"* ]] ||
-  fail "dry run does not print the hosting deploy with the portal's config: $out"
+[[ $out == *"would run: firebase deploy --only hosting,firestore:rules --project my-portal-1 --config ee/portal/firebase.json"* ]] ||
+  fail "dry run does not print the hosting and rules deploy with the portal's config: $out"
 
 # 3. A real run (stubbed) runs exactly those commands, in the deploy's order: the
-#    build, then the two services, then the hosting site.
+#    build, then the two services, then the hosting site and its rules.
 setup
 run --project my-portal-1
 [[ $status -eq 0 ]] || fail "deploy exited $status: $out"
@@ -102,7 +102,7 @@ for want in \
   "gcloud builds submit --config ee/keyservice/cloudbuild.yaml --project my-portal-1 --region us-east5 ." \
   "gcloud run deploy fugaro-portal-api --image us-east5-docker.pkg.dev/my-portal-1/fugaro-portal/fugaro-portal-api:abc1234 --project my-portal-1 --region us-east5" \
   "gcloud run deploy fugaro-key-minter --image us-east5-docker.pkg.dev/my-portal-1/fugaro-portal/fugaro-key-minter:abc1234 --project my-portal-1 --region us-east5" \
-  "firebase deploy --only hosting --project my-portal-1 --config ee/portal/firebase.json"; do
+  "firebase deploy --only hosting,firestore:rules --project my-portal-1 --config ee/portal/firebase.json"; do
   called "$want" || fail "the deploy did not call: $want ($(cat "$work/calls"))"
 done
 [[ $(grep -n "firebase deploy" "$work/calls" | cut -d: -f1) -gt $(grep -n "gcloud run deploy fugaro-portal-api" "$work/calls" | cut -d: -f1) ]] ||
