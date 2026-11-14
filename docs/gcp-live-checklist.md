@@ -873,6 +873,8 @@ probe account carries predefined grants only).
 | 520 | A text-only coder reads a screenshot, on the vision model ([`docs/vision-model/`](vision-model/implementation-plan.md), its **Check 520** and task **V8**; **V1**'s `agent.models.vision`, **V2**'s `model_prices.*.image_tokens`, **V7**'s rewrite of the coder role, and **D2016** — which is why the state this measures is the coder priced **without** an image rate and not the plan's "with"): the sandbox repository's coder is priced without an image rate and `agent.models.vision` names a model that can read one, and one run whose task names a console `__screenshots__` PNG (the issue's own case, run `20261107-104613-b2af`) passes `implement` — and `fix`, where the recipe runs one — reaches its own `result.json`, and there every coder-role stage timing names the **vision** model's ID while `cost.model_by` carries that same model, so the split the issue is about is read from the record and not from the configuration; `fugaro diagnose <run> --json` prints the same split through the command an owner reads a run with | See "Check 520" below; `bash scripts/live-checks/check520.sh --sandbox <a sandbox repository checkout> --yes` is the whole of it, its sibling test `scripts/live-checks/check520_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call, and so is a coding agent's session); **no agent runs any step of it** | ONE sandbox run and what its task costs — the model spend of its coder-role stages, on the sandbox's own budget — plus the pull request that run opens: **billable, and `--yes` is required** before anything is launched. Every other call is a read (doctor, `models ls`, the run record, `diagnose`), and `CHECK520_MAX_MODEL_USD` turns the run's own figure into a criterion when you set it. The run's pull request and branch are left open for you to close. **OWNER-RUN, NOT RUN.** |
 | 521 | The early refusal, and the sentence an owner acts on ([`docs/vision-model/`](vision-model/implementation-plan.md), its **Check 521** and task **V8**; **V5**'s bootstrap refusal — "the coder can't read an image the task names" — and **D2005**, **D2006** and **D2001**): a repository whose coder is priced without an image rate and with **no** `agent.models.vision`, and a task whose text names a `.png`: the run is refused at **bootstrap**, before its first stage, so no stage's work is paid for and thrown away — the failure the refusal exists to remove; its record's `failure_class` is `config_invalid`, its `reason` names the slot to set and the price member that gives that slot's model an image rate, its stage list is **empty** and its cost is **zero** | See "Check 521" below; `bash scripts/live-checks/check521.sh --sandbox <a sandbox repository checkout>` is the whole of it, its sibling test `scripts/live-checks/check521_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call, and so is a coding agent's session); **no agent runs any step of it** | **NOTHING billable and no model call**: the run is refused at bootstrap, before its first stage, so no stage's work is paid for and the budget is not touched — which is why this check needs no `--yes`. It does start one Cloud Run job execution, and **nothing it launches outlives it**: a run that has not ended within `CHECK521_RUN_TIMEOUT_SECONDS` is cancelled with `fugaro cancel --now`, from the step that gives up on it and from the script's own exit trap. **OWNER-RUN, NOT RUN.** |
 | 292 | A catalog entry whose source names a build `context:` is built with the repository's files in it ([`docs/catalog-build-context/`](catalog-build-context/implementation-plan.md) §6, its **Check 292** and task **CB5**; that folder's **F22**, **F29**, **F30**, **F32** and **F33**, and **D1402**, **D1403**, **D1408** and **D1409**; the amendment it folds into is [`docs/project-image-catalog/context-design.md`](project-image-catalog/context-design.md), its §A5, §A6, §C3, §C4, §C5 and the fold-in at §11): one entry built from a repository's Dockerfile in a **subdirectory**, whose `COPY` reaches a file of the repository — the build the catalog could not run before this work — read back four ways: the built image **contains the copied file**, the record names **one** commit (`source_commit` and `context_commit` the same, and the image's `org.opencontainers.image.revision` that commit), the staged context **fires** the nightly decision with the `catalog-context` reason and the rebuild it submits is pinned to the staged commit, and after that rebuild the same entry decides **without** that reason. **What the plan's own step 4 cannot be run as written is the point of the section below:** the trigger's subject is the digest the operator's own copy **staged**, not the branch, so a pushed commit fires nothing by itself — the check is written against the code and says so | See "Check 292" below; **you** run it, on the **sandbox installation and the sandbox repository only, never `belong`**, from the sandbox repository's checkout, and **no agent runs any step of it** (there is **no script**: the check is the steps below) | One Cloud Build that runs (`fugaro image build <entry>`), one submitted-and-cancelled before its steps run (the staging that leaves the record behind), and the one rebuild the project's catalog check job submits when the entry fires: **all billable, and the rebuild is the point of the step**. Nothing is granted, no run is launched and no model is called, so there is no run spend. Two commits are pushed to the sandbox repository's branch and reverted (a third when step 5 loses its race with the build it cancels), and the entry, its staged objects, its record, its check state and its image are the check's own — the entry and its objects are removed in the Restore, the image is left in the shared registry (`fugaro image rm` never deletes one). **OWNER-RUN, NOT RUN.** |
+| 310 | The CLI's default output at a real terminal, on macOS ([`docs/cli-output-console-graph/`](cli-output-console-graph/implementation-plan-output.md), its task **CL12** and the guarantees **G1**–**G8** that plan's **CL5b**, **CL9** and **CL10** were written to, whose own table names the five commands below): `fugaro update` at a real terminal draws the colour and the line in flight and prints one line per step with a closing line and an exit status that agree with it (G1, G3, G4); `fugaro setup --plan-only` prints the plan view, and its log holds the same rows, whole and uncoloured (CL5a); `NO_COLOR=1 fugaro update` and `fugaro update \| cat` print every step with no escape sequence and no carriage return (G1, G4); `fugaro update --json` puts one document on stdout and the account on stderr (G2); a forced failure inside a stage prints the step's name, the last lines of the stage's own output and the log's path, and its log is 0600 inside a 0700 directory and holds what the screen did not (G5, G8); and the retention rule removes the oldest log past 14 days or past the newest 50 per command name and touches nothing else — another command's log, a link, a directory, a name that is not the sink's (G6); `fugaro doctor --json` files no log at all (G7) | See "Check 310" below; `bash scripts/live-checks/check310.sh` is the whole of it — one idempotent script, one `PASS`/`FAIL`/`INFO` line per fact, and `--dry-run` to print what it would run without running any of it — and its sibling test `scripts/live-checks/check310_test.sh` drives it against a fake `fugaro` and a fake `terraform` only; **you** run it, on your own machine and your own terminal, against an installation the check reads from `fugaro doctor --json` or you name with `--installation`, and an installation named `belong` — or a project whose id contains that name — is refused before a single call; **no agent runs any step of it** (a coding agent's session is refused outright) | Four `fugaro update` runs and one `fugaro setup --plan-only`, every one of them a re-converge of an installation that already exists: on a converged one each applies nothing and costs nothing billable, and **no model call is made by any step of this check**. The forced-failure run writes nothing at all — its `terraform` is a fake that answers the version question and refuses the rest. Nothing is created and nothing is granted; the only writes are the log directory and the check's own scratch directory, whose 54 seeded logs are removed again, and any of your own logs the retention rule removes while the seeds are there are copied aside and put back byte for byte. **USER-RUN, NOT RUN.** |
+| 311 | The same default output on Windows — Windows Terminal and the legacy console ([`docs/cli-output-console-graph/`](cli-output-console-graph/implementation-plan-output.md), its task **CL12** and its own 311 row; the reconciliation's **T4** and **T4(a)**, **D1355**, and the sentence `internal/report/style.go` carries — the ANSI sixteen are what every terminal draws and what the legacy Windows console draws "once virtual terminal processing is on (Check 311)"): whether both consoles draw the colour and the line in flight the reporter draws at a real terminal, whether `NO_COLOR` set to anything and a pipe turn both off there too with every step still printed, whether `--json`'s stdout is one document a Windows shell parses, and — the reading this check exists for — whether the legacy console draws the escapes or prints them, since **nothing in this tree calls `termenv`'s `EnableVirtualTerminalProcessing`** | See "Check 311" below; the steps are the same commands typed in each console, by **you**, on a Windows machine with the CLI installed, and **no agent runs any step of it** — there is **no script** for this one: it is the procedure below, because the subject is a console on a machine no test in this repository can reach | One installation's own `fugaro update` runs in each console, on an installation that is already converged: each applies nothing and **no model call is made**. Nothing is created, granted or deleted, and the log directory is the only thing written. A legacy console that prints the escape sequences is the finding this check exists to make — and it is a **code** decision (the virtual-terminal call), not a reason to edit this row. **USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -14109,3 +14111,227 @@ repositories and carries `pull_requests: write` alone.
 **What waits on it.** D4 (the advisory merge order) and the change-set half of the spec's promise
 that a set is ready or not ready as a whole: this run is the only reading of it, and a set that
 flips one pull request and leaves the other draft is a finding for this plan's owner.
+
+## Check 310: the CLI's default output at a real terminal on macOS — the colour, the line in flight, the plan view, the log's mode and its retention (your own machine and your own terminal; never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **CL12** of
+[docs/cli-output-console-graph/implementation-plan-output.md](cli-output-console-graph/implementation-plan-output.md)
+— its "Owner-run checks (no agent performs any step)" table, whose 310 row names the five commands and the
+`ls -l ~/.local/state/fugaro/logs` that closes them — and **run by you**: what it measures is what the account looks
+like at a terminal a person is watching, and no offline run can answer that. The check is
+`scripts/live-checks/check310.sh` (its sibling test `scripts/live-checks/check310_test.sh` drives it against a fake
+`fugaro` and a fake `terraform` only), the owner types `bash scripts/live-checks/check310.sh`, and **no agent runs any
+step of it** — the script refuses a coding agent's session outright, reading the same markers `internal/agentenv`
+sets, so an agent that tried would get a refusal and not a reading. Nothing here goes near the dev installation: an
+installation named `belong`, or a project whose id contains that name, is refused by name before a single call, which
+is what **never `belong`** means on this row.
+
+**What it settles.** The guarantees **G1** to **G8** of the plan above, which are the whole of what **CL5b**, **CL9**
+and **CL10** were written to: the account `fugaro update` and `fugaro setup` print, the log behind it and the failure
+block in front of it. Every other test of that work drives the reporter with a fake terminal, a fake environment and a
+fixture; this is the only place the two are a real `fugaro` on a real pty in front of a real person, which is why the
+plan hands it to you and why the row reads **NOT RUN** until you paste the block back.
+
+- **The five commands, in the order the plan's row names them.** `fugaro update` at the terminal draws colour and the
+  line in flight and prints one line per step, a closing line and an exit status that agree (G1, G3, G4); `NO_COLOR=1`
+  set to anything and `| cat` each print every step with **no** escape sequence and **no** carriage return (G1, G4);
+  `--json` puts one document on stdout and the account on stderr, and the document's own outcome agrees with the exit
+  status (G2, G3). The check reads each of the four with the CLI's own stdout on a pty of the check's own, so "a real
+  terminal" is a reading and not the owner's word for one. `NO_COLOR` is read as the plan's G4 writes it — present and
+  not empty — and `CLICOLOR_FORCE` is not honoured (T4(a), D1355).
+- **The plan view is the log's own rows.** `fugaro setup --plan-only` prints a header and one row per stage with no
+  closing line, and the log it files holds the same rows whole and uncoloured (CL5a): under `--plan-only` no step is
+  ever run, so the log's copy is the only place a row's whole reason survives. A plan view whose log is missing, or
+  whose log holds fewer rows than the screen, is the finding.
+- **The read that files no log at all.** `fugaro doctor --json` is a listing: one JSON document and no log
+  (G7). The check reads the log directory before and after it and refuses a new name.
+- **The forced failure, and the one shim.** The failure has to land *inside* a stage to reach the block G8 describes,
+  so the check puts a fake `terraform` first on PATH — it answers the one question the CLI asks before it converges
+  (its version, in JSON) and refuses every other subcommand. What is then read is the step line naming the stage, the
+  last lines of the stage's own output printed under it, the log's path, and `fugaro troubleshoot`'s own line naming
+  the run (G8). The stage's own output must be in the log **and not** on the screen: without `--verbose` the default
+  view is one line per step, and a run that streamed its stage's output to the terminal is the drift this reading
+  exists for.
+- **The log's mode and its retention.** The failure run's own log is `0600` inside a `0700` directory (G5), the log
+  holds no escape sequence at all (a log is read with a pager, where the colour that helps a person watching is
+  noise), and the retention rule — 14 days, or the newest 50 per command name — prunes the 54 logs the check seeds for
+  you back to the rule and touches **nothing** it must not: another command's log, a symlink, a directory, or a name
+  that is not the sink's own (G6). Retention reads the directory and never a history, which is why 54 seeded logs stand
+  in for 51 runs.
+- **The platform is a row and not a premise.** On macOS the `platform` fact is a `PASS` naming the release; on another
+  system it is `INFO` and says so, because every reading below is the CLI's own output, which is the same on both, and
+  only the plan's 310 row is macOS's. A Linux machine is a useful run and not this check.
+- **A step left for you is a reading too.** Every `fugaro` call gets a real terminal on stdout and `/dev/null` on
+  stdin, so a converge that reaches a question a person would be asked reads end-of-file instead of blocking, and the
+  step it cannot confirm is reported as one left for you. That is a reading of the closing line and the exit status —
+  and on an installation that is already converged there is nothing to confirm, so a run that leaves a step for you is
+  either a real finding or a machine that needs one ordinary `fugaro update` first.
+
+**What a run costs.** Four `fugaro update` runs and one `fugaro setup --plan-only` of an installation that already
+exists: on a converged installation each applies nothing, and **no model call is made by any step of this check**. The
+forced-failure run writes nothing at all — its `terraform` is a fake. Nothing is created, granted or deleted: the only
+writes are the log directory and the check's own scratch directory, whose seeded logs are removed again, and any of
+**your** logs the retention rule removes while the seeds are there are copied aside first and put back byte for byte
+in the teardown (the rule would remove them on your next `fugaro update` anyway, and the `restore` fact names them).
+The scratch directory is refused inside a git work tree, so a run cannot be made in a checkout by accident.
+
+**The commands.**
+
+```sh
+bash scripts/live-checks/check310.sh --dry-run
+bash scripts/live-checks/check310.sh
+bash scripts/live-checks/check310.sh --installation <the installation to re-converge>
+ls -l ~/.local/state/fugaro/logs
+```
+
+The `ls -l` is the plan's own last step: the log directory as the CLI leaves it, printed in the block as the `ls` fact
+and again before the block for you to read in full.
+
+Progress goes to stderr and one `CHECK 310 RESULT` block goes to stdout at the end: paste that block here and nothing
+else. Every key is printed whatever happened — one the run never reached reads `FAIL — not reached` — so the block is
+safe to diff between two runs. **Exit `0`** is every judged fact holding; **`1`** is a judged fact that did not hold
+(the CLI's output has drifted from G1 to G8); **`2`** is the run not being able to tell (a guard stopped it, a command
+never printed the account this check reads, a tool is missing, an internal error ended it). The judged facts are
+`update-tty`, `tty-colour`, `tty-spin`, `plan-only`, `plan-log`, `no-color`, `piped`, `json`, `json-stderr`, `failure`,
+`failure-id`, `failure-log`, `log-plain`, `log-mode`, `retention`, `retention-guards`, `doctor`, `installation` and
+`restore`; `belong`, `xtrace`, `agent`, `platform`, `fugaro`, `logdir` and `ls` are the guards and the readings around
+them. The knobs are `CHECK310_INSTALLATION` (the installation to drive; the same as `--installation`),
+`CHECK310_DRY_RUN` (the same as `--dry-run`) and `CHECK310_RUN_TIMEOUT` (1800 seconds: how long one `fugaro` call may
+take before the check gives up on it, `0` for no bound).
+
+**What it does not read.** `doctor`'s default view (G9) is a screen, and this check compares no screens;
+`fugaro -v` against `fugaro update -v` (G10) is not one of the five commands the plan's row names; and G11 — an agent
+session sees the same default output — is refused rather than read, because this check is the owner's and an agent's
+session is what it must never be run from. The Windows half of the same account is **Check 311** below, and the
+plan's **314** is the graph work's and not this one's.
+
+
+## Check 311: the same default output on Windows — Windows Terminal and the legacy console, the colour and the line in flight (a Windows machine with the CLI installed; never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **CL12** of
+[docs/cli-output-console-graph/implementation-plan-output.md](cli-output-console-graph/implementation-plan-output.md)
+— its "Owner-run checks (no agent performs any step)" table, whose 311 row says "the same commands in each console" —
+and **run by you**: the subject is a console on a machine no test in this repository can reach, so **there is no
+script** for this one and none is proposed. `internal/report/style.go` already carries the claim this check is the
+only reading of — the ANSI sixteen are "what every terminal draws and the legacy Windows console draws once virtual
+terminal processing is on (Check 311)" — and the reconciliation's **T4** records what is not done about it:
+`termenv` v0.16.0 has `EnableVirtualTerminalProcessing` and **nothing in this tree calls it** (D1355). **No agent runs
+any step of it.**
+
+**What it settles.** Whether the account the plan's G1, G3 and G4 describe survives the one platform the reporter's
+colour rule was written around: colour and the line in flight in **Windows Terminal** (which turns virtual-terminal
+processing on for everything it hosts, so ANSI is drawn), the same in the **legacy console** (a real `conhost.exe`
+window, which does not), and — the reading this check exists for — which of the two things the legacy console does
+with the escapes: draw them, or print them literally. `NO_COLOR` set to anything, a pipe and `--json` are read in both
+consoles, because the rule that turns colour and the line in flight off is the CLI's own and must not depend on the
+console. The **log's mode and the 51-log retention rule are Check 310's readings and are not repeated here**: Windows
+has no `0600` and the sink relies on `%LOCALAPPDATA%` being per-user by Windows' own ACL, so this check claims nothing
+about either. `--no-color` and `--ascii` are not among the commands below: neither flag is declared on `fugaro update`
+today (only `fugaro watch` takes them), and `NO_COLOR=1` is the switch the plan's own 310 row names.
+
+**Getting the legacy console, rather than a `cmd.exe` tab in Windows Terminal.** Windows Terminal is the default
+terminal host on Windows 11 and it turns virtual-terminal processing on for every console it hosts, so a `cmd.exe`
+tab inside it is **not** this reading. Open a real one: **Settings → System → For developers → Terminal → "Windows
+Console Host"**, then start `cmd.exe` — the window that opens is `conhost.exe`'s own, and its title bar is the classic
+one. Put it back afterwards if you want your default.
+
+**The commands.** Type these in Windows Terminal first, then in the legacy console. The one-liners are what make a
+reading objective: they print `True`/`False` rather than asking you to look for a control character, and
+`[char]27` is the escape, `[char]13` the carriage return.
+
+```powershell
+fugaro version
+fugaro update
+$env:NO_COLOR = '1'; fugaro update; Remove-Item Env:NO_COLOR
+(fugaro update | Out-String).Contains([char]27)
+(fugaro update | Out-String).Contains([char]13)
+(fugaro update --json | Out-String) | ConvertFrom-Json
+$env:NO_COLOR = '1'; (fugaro update | Out-String).Contains([char]27); Remove-Item Env:NO_COLOR
+```
+
+```bat
+REM the same, in the legacy console (conhost.exe, virtual terminal processing off)
+fugaro version
+fugaro update
+set NO_COLOR=1
+fugaro update
+powershell -NoProfile -Command "(fugaro update | Out-String).Contains([char]27)"
+set NO_COLOR=
+fugaro update | more
+powershell -NoProfile -Command "(fugaro update | Out-String).Contains([char]27)"
+powershell -NoProfile -Command "(fugaro update | Out-String).Contains([char]13)"
+powershell -NoProfile -Command "(fugaro update --json | Out-String) | ConvertFrom-Json | Out-Null; 'parsed'"
+dir "%LOCALAPPDATA%\fugaro\logs"
+```
+
+**The PASS facts.** In **each** console, read in this order:
+
+- **The account, in Windows Terminal.** `fugaro update` prints one line per step with a mark and a colour, draws a line
+  in flight (the frames `|`, `/`, `-`, `\` over the step that is running) and closes with one line naming the outcome
+  — `Done`, `Left for you` or `Failed`. The exit status agrees with it: `$LASTEXITCODE` is `0` for `Done`, `1` for a
+  step left for you or a refusal, `2` for a cloud error (G1, G3). The colour is the sixteen ANSI colours, drawn and not
+  printed: the escape (`[char]27`) is nowhere on the screen.
+- **The account, in the legacy console.** The same lines, the same marks and the same closing line, and the same exit
+  status. What the colour does here is the reading: **either** the marks and the words are coloured (virtual-terminal
+  processing is on — the call `internal/report/style.go` names is being made somewhere, and the sentence in that file
+  is true), **or** each coloured line shows the escape sequence it was written with, literally, around the mark. The
+  second is a **finding**, and it is the one the tree predicts: nothing calls
+  `termenv`'s `EnableVirtualTerminalProcessing`, so the reporter writes ANSI to a console that cannot draw it. It is a
+  **code** decision for the owner (T4, D1355) and not a reason to edit this row — paste the two lines you saw and the
+  block's own line, and the decision is the owner's.
+- **`NO_COLOR=1`.** In each console: every step is still printed, one line per step, and the marks and the words are
+  plain — no colour anywhere, and the line in flight is not drawn either, because it follows the colour rule exactly.
+  The objective half is the one-liner with `NO_COLOR` still set, which must print `False`; the account must still be
+  there in full. This is the reading that says the colour rule is the CLI's own and not the console's.
+- **A pipe.** `(fugaro update | Out-String)` and `fugaro update | more`: stdout is not a terminal, so the steps are
+  still printed and both one-liners are `False` again — the escape and the carriage return are the two things the CLI
+  must never write where nobody is watching. `Out-String` is the `| cat` of PowerShell — the child's stdout is a pipe
+  either way, and what comes back is the string the CLI wrote, which is where an escape sequence would be visible.
+- **`--json`.** `fugaro update --json` prints **one** document on stdout and nothing else, and the account goes to
+  stderr. `ConvertFrom-Json` must parse it and print the object (in the legacy console the one-liner must print
+  `parsed`); a parse error, or any human line mixed into stdout, is the failure (G2). `ConvertFrom-Json` is a real
+  parser and not a substring test, which is what makes this the objective half of G2 on Windows.
+- **The log directory.** `dir "%LOCALAPPDATA%\fugaro\logs"` lists one log per logged command, named
+  `<command>-<14 digits UTC>-<pid>.log`, and the newest one holds the run's own output — including the stage's own
+  output that the screen did not show. The mode is not read here (see above).
+- **The failure block, in either console.** The one path that needs a fake `terraform`, exactly as Check 310's script
+  makes one. Write it with the block below, put its directory first on PATH, and run `fugaro update`: the step line
+  names the stage, the last lines of the stage's own output are printed under it, and the log's path is printed beside
+  the line that names `fugaro troubleshoot <id>`. The fake answers `version` and `version -json` and refuses every
+  other subcommand, so the failure lands inside a stage rather than before it.
+
+```powershell
+$dir = Join-Path $env:TEMP 'check311'
+New-Item -ItemType Directory -Force $dir | Out-Null
+@'
+@echo off
+if "%~1"=="version" goto version
+if "%~1"=="-version" goto plain
+if "%~1"=="--version" goto plain
+goto fail
+:version
+if "%~2"=="-json" (
+  echo {"terraform_version":"1.9.9","platform":"check311","provider_selections":{},"terraform_outdated":false}
+  exit /b 0
+)
+:plain
+echo Terraform v1.9.9
+exit /b 0
+:fail
+echo check311 fake terraform: this subcommand is refused on purpose 1>&2
+exit /b 1
+'@ | Set-Content -Encoding ascii (Join-Path $dir 'terraform.cmd')
+$env:PATH = "$dir;$env:PATH"
+fugaro update
+```
+
+**What a run costs.** One installation's own `fugaro update` in each console, on an installation that is already
+converged: each applies nothing and **no model call is made**. Nothing is created, granted or deleted, and the log
+directory is the only thing written — the fake `terraform` writes nothing at all. The log directory is your own
+machine's, so the only thing to clean up is `%TEMP%\check311` if you want it gone.
+
+**Paste back.** The `CHECK 310 RESULT` block is the macOS half of this row and is not what you paste here; for this
+one, paste the closing line of `fugaro update` from each console, the one-liners' output (`False`, `False`, and the
+parsed document), and — if the legacy console printed escapes — the two lines exactly as they appeared. That is what
+says whether the reporter's colour rule holds on Windows, and it is the whole of what this check decides.
+
