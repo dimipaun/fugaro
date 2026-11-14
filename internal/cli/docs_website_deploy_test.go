@@ -18,7 +18,10 @@ package cli
 // plan's P9.2 adds to its vetting step (a firebase.json naming a Hosting `site`
 // or `target` is refused as well as one naming another public dir or a
 // lifecycle hook). A staged copy wins while it exists, which is what lets a
-// later task stage a further change to an already-copied workflow.
+// later task stage a further change to an already-copied workflow; the file
+// GitHub runs is checked beside it all the same, because the copy-in will
+// replace that file with the staged text and until then it is the one holding
+// the credential.
 //
 // What is asserted here is the fields GitHub executes, parsed out of the YAML,
 // not strings in comments: the trigger block, the pinned actions, the
@@ -62,15 +65,19 @@ const (
 	websitePromoteKind
 )
 
-// websiteWorkflowExpectations are the two facts the checker reads out of the
-// repository rather than repeating: the channel pattern scripts/deploy-website.sh
-// validates --channel against (so "the same pattern" is a checked claim and not
-// a copy-pasted one), and the owner login, read from the repository
-// website/data/site.yaml names (so the promote guard cannot drift from it).
+// websiteWorkflowExpectations are what the checker needs from outside the file
+// it reads: the two facts it takes from the repository rather than repeating --
+// the channel pattern scripts/deploy-website.sh validates --channel against (so
+// "the same pattern" is a checked claim and not a copy-pasted one), and the
+// owner login, read from the repository website/data/site.yaml names (so the
+// promote guard cannot drift from it) -- and whether the file under check is
+// one that carries the portal's site-or-target gate, which the staged preview
+// copy adds and the file GitHub runs has not been copied in with yet.
 type websiteWorkflowExpectations struct {
-	kind           websiteWorkflowKind
-	channelPattern string
-	ownerLogin     string
+	kind             websiteWorkflowKind
+	channelPattern   string
+	ownerLogin       string
+	siteOrTargetGate bool
 }
 
 // deployScriptChannelPatternRE pulls the pattern out of the script's own
@@ -84,6 +91,12 @@ var workflowChannelPatternRE = regexp.MustCompile(`\[\[\s*\$CHANNEL\s*=~\s*(\S+)
 // siteRepositoryOwnerRE reads the owner out of website/data/site.yaml's
 // `repository:` value, the URL the site's links are built from.
 var siteRepositoryOwnerRE = regexp.MustCompile(`(?m)^repository:\s*https://github\.com/([^/\s]+)/`)
+
+// websiteGateWordsRE matches the words the portal's site-or-target gate is
+// written in: the two Hosting keys it refuses, and the two phrases the step it
+// renames and the message it extends use. A line that merely mentions the
+// website does not match, so it says nothing about the gate.
+var websiteGateWordsRE = regexp.MustCompile(`\.hosting\.(site|target)\b|names a site\b|no site or target\b`)
 
 // websiteWorkflowBytes reads a staged workflow while its staged copy exists
 // and the real file once it is gone, the fallback images/base_workflow_test.go
@@ -459,9 +472,20 @@ func websiteWorkflowProblems(name string, want websiteWorkflowExpectations, data
 			}) {
 				add("build-isolation", "%s job %q deploys without taking the build as an artifact from a credential-free job", name, jobID)
 			}
-			if !jobRuns("predeploy") || !jobRuns("postdeploy") || !jobRuns(`"website/dist"`) ||
-				!jobRuns(".hosting.site == null") || !jobRuns(".hosting.target == null") {
-				add("build-isolation", "%s job %q does not refuse a firebase.json with lifecycle hooks, a public dir other than website/dist, or a hosting site or target", name, jobID)
+			// The gate is asked for where the file under check carries it: the
+			// staged preview copy does, and the file GitHub runs is checked
+			// before the copy-in and has only what the two other refusals need.
+			refusedWhat := "lifecycle hooks or a public dir other than website/dist"
+			refusals := []string{"predeploy", "postdeploy", `"website/dist"`}
+			if want.siteOrTargetGate {
+				refusedWhat = "lifecycle hooks, a public dir other than website/dist, or a hosting site or target"
+				refusals = append(refusals, ".hosting.site == null", ".hosting.target == null")
+			}
+			for _, refusal := range refusals {
+				if !jobRuns(refusal) {
+					add("build-isolation", "%s job %q does not refuse a firebase.json with %s: no %s in a run: step", name, jobID, refusedWhat, refusal)
+					break
+				}
 			}
 		}
 	case websitePromoteKind:
@@ -508,35 +532,71 @@ func websiteWorkflowProblems(name string, want websiteWorkflowExpectations, data
 	return problems
 }
 
-// hostedWebsiteWorkflows returns the two files' bytes and their expectations.
-func hostedWebsiteWorkflows(t *testing.T) []struct {
+// websiteWorkflowFile is one file the shape checks read, with the expectations
+// to read it against: the staged copy under docs/pending-workflows/, or the
+// file under .github/workflows/ where a staged copy waits over it.
+type websiteWorkflowFile struct {
 	name string
 	path string
 	data []byte
 	want websiteWorkflowExpectations
-} {
-	t.Helper()
-	base := websiteExpectations(t)
-	preview := base
-	preview.kind = websitePreviewKind
-	promote := base
-	promote.kind = websitePromoteKind
-	return []struct {
-		name string
-		path string
-		data []byte
-		want websiteWorkflowExpectations
-	}{
-		{"website-preview.yml", websitePreviewStaged, websiteWorkflowBytes(t, websitePreviewStaged, websitePreviewReal, "website-preview"), preview},
-		{"website-promote.yml", websitePromoteStaged, websiteWorkflowBytes(t, websitePromoteStaged, websitePromoteReal, "website-promote"), promote},
-	}
 }
 
-// TestWebsiteDeployWorkflowsHoldTheirShape: both staged workflows satisfy every
-// rule websiteWorkflowProblems states, and the rules are not vacuous -- the
-// checker finds something to check in each file (a file that failed to parse,
-// or one whose trigger block vanished, is reported rather than silently
-// passed).
+// hostedWebsiteWorkflows returns the files the shape checks read and the
+// expectations to read each against: the staged copy while it exists -- the
+// change waiting for the owner, carrying the portal's site-or-target gate --
+// and, where the file under .github/workflows/ exists as well, that file too.
+// The copy-in overwrites the file that runs, so while a change waits over it
+// that file is the one holding the credential, and an edit to it must be
+// checked rather than hidden behind the staged copy; it is checked without the
+// gate, which has not been copied in to it.
+func hostedWebsiteWorkflows(t *testing.T) []websiteWorkflowFile {
+	t.Helper()
+	base := websiteExpectations(t)
+	var files []websiteWorkflowFile
+	for _, pair := range []struct {
+		name        string
+		staged      string
+		real        string
+		mustContain string
+		kind        websiteWorkflowKind
+	}{
+		{"website-preview.yml", websitePreviewStaged, websitePreviewReal, "website-preview", websitePreviewKind},
+		{"website-promote.yml", websitePromoteStaged, websitePromoteReal, "website-promote", websitePromoteKind},
+	} {
+		want := base
+		want.kind = pair.kind
+		want.siteOrTargetGate = pair.kind == websitePreviewKind
+		files = append(files, websiteWorkflowFile{
+			name: pair.name,
+			path: pair.staged,
+			data: websiteWorkflowBytes(t, pair.staged, pair.real, pair.mustContain),
+			want: want,
+		})
+		if _, err := os.Stat(pair.staged); err != nil {
+			continue // the staged copy is gone: the file above is the one that runs
+		}
+		real, err := os.ReadFile(pair.real)
+		if err != nil {
+			continue // not under .github/workflows/ yet: nothing runs it
+		}
+		want.siteOrTargetGate = false
+		files = append(files, websiteWorkflowFile{
+			name: pair.name + " as it runs today",
+			path: pair.real,
+			data: real,
+			want: want,
+		})
+	}
+	return files
+}
+
+// TestWebsiteDeployWorkflowsHoldTheirShape: every file hostedWebsiteWorkflows
+// returns -- each staged copy, and the file GitHub runs wherever one is staged
+// over it -- satisfies every rule websiteWorkflowProblems states, and the rules
+// are not vacuous: the checker finds something to check in each file (a file
+// that failed to parse, or one whose trigger block vanished, is reported rather
+// than silently passed).
 func TestWebsiteDeployWorkflowsHoldTheirShape(t *testing.T) {
 	for _, wf := range hostedWebsiteWorkflows(t) {
 		problems := websiteWorkflowProblems(wf.name, wf.want, wf.data)
@@ -615,6 +675,94 @@ func TestWebsiteDeployWorkflowsAreNotInGithubWorkflows(t *testing.T) {
 	}
 }
 
+// TestWebsiteStagedPreviewCarriesOnlyTheGate: while the F40 gate waits, the
+// staged copy is the file GitHub runs plus that change and nothing else. The
+// owner's copy-in replaces the running file with the staged text, so an edit
+// smuggled into the staged copy would reach the workflow that holds the
+// credential with the gate as its cover, and an edit already made to the
+// running file would be undone by the same copy-in without a word about it.
+func TestWebsiteStagedPreviewCarriesOnlyTheGate(t *testing.T) {
+	staged, err := os.ReadFile(websitePreviewStaged)
+	if err != nil {
+		t.Skip("the staged copy is gone: it was copied into .github/workflows/")
+	}
+	real, err := os.ReadFile(websitePreviewReal)
+	if err != nil {
+		return // the expected state before the owner copies the workflow in
+	}
+	for _, problem := range websiteStagedChangeProblems(string(real), string(staged)) {
+		t.Error(problem)
+	}
+}
+
+// websiteStagedChangeProblems returns the lines the staged copy and the file
+// that runs do not share and that the gate does not account for. The change is
+// these lines and only these: the staged copy's header (comments, which nothing
+// executes), the gate's two refusals, the step the gate renames and the message
+// it extends -- which are the running file's own lines with the gate's words
+// added to them -- and so any other line one file has and the other does not is
+// a change nobody staged.
+func websiteStagedChangeProblems(real, staged string) []string {
+	counts := map[string]int{}
+	for _, line := range strings.Split(staged, "\n") {
+		counts[line]++
+	}
+	for _, line := range strings.Split(real, "\n") {
+		counts[line]--
+	}
+	var changes []string
+	for _, line := range append(strings.Split(staged, "\n"), strings.Split(real, "\n")...) {
+		if counts[line] != 0 {
+			counts[line] = 0
+			changes = append(changes, line)
+		}
+	}
+
+	var problems []string
+	for _, line := range changes {
+		if !websiteGateLine(line, changes) {
+			problems = append(problems, fmt.Sprintf("the staged copy and the file that runs do not share %q, and the gate does not account for it: the copy-in would carry that line into the workflow that holds the credential", line))
+		}
+	}
+	return problems
+}
+
+// websiteGateLine reports whether a line only one of the two files has is part
+// of the gate: a comment of the staged copy's header, a line the gate is
+// written in (its two refusals, the step's name, the message it prints), or one
+// of the running file's own lines that such a line extends by adding words to
+// it.
+func websiteGateLine(line string, changes []string) bool {
+	if strings.HasPrefix(strings.TrimSpace(line), "#") || websiteGateWordsRE.MatchString(line) {
+		return true
+	}
+	return slices.ContainsFunc(changes, func(other string) bool { return websiteGateExtends(other, line) })
+}
+
+// websiteGateExtends reports whether other -- a line the gate is written in --
+// says everything line says: the words of line are among other's, after their
+// punctuation is taken off. The gate renames a step and extends the message it
+// prints, so those two of the running file's lines read as the gate's own with
+// words added to them.
+func websiteGateExtends(other, line string) bool {
+	if !websiteGateWordsRE.MatchString(other) {
+		return false
+	}
+	const punctuation = `"'()[]{}:;,`
+	words := map[string]int{}
+	for _, word := range strings.Fields(other) {
+		words[strings.Trim(word, punctuation)]++
+	}
+	for _, word := range strings.Fields(line) {
+		word = strings.Trim(word, punctuation)
+		if words[word] == 0 {
+			return false
+		}
+		words[word]--
+	}
+	return true
+}
+
 // TestWebsiteWorkflowChecksFindEveryMutation feeds each rule the weakening it
 // exists to catch and requires the check that names that rule to report it --
 // not merely some problem -- so a check that quietly stopped working fails
@@ -624,20 +772,22 @@ func TestWebsiteWorkflowChecksFindEveryMutation(t *testing.T) {
 	base := websiteExpectations(t)
 	preview := base
 	preview.kind = websitePreviewKind
+	preview.siteOrTargetGate = true
 	promote := base
 	promote.kind = websitePromoteKind
 
 	previewData := string(websiteWorkflowBytes(t, websitePreviewStaged, websitePreviewReal, "website-preview"))
 	promoteData := string(websiteWorkflowBytes(t, websitePromoteStaged, websitePromoteReal, "website-promote"))
 
-	for _, tc := range []struct {
+	type mutation struct {
 		what    string
 		want    websiteWorkflowExpectations
 		data    string
 		old     string
 		new     string
 		checkID string
-	}{
+	}
+	mutations := []mutation{
 		{"a push trigger added", preview, previewData, "on:\n  # The one and only trigger", "on:\n  push:\n    branches: [main]\n  # The one and only trigger", "manual-only"},
 		{"a schedule trigger added", promote, promoteData, "on:\n  # The one and only trigger", "on:\n  schedule:\n    - cron: \"0 0 * * *\"\n  # The one and only trigger", "manual-only"},
 		{"a pull_request_target trigger elsewhere in the file", preview, previewData, "name: website-preview", "name: website-preview\npull_request_target: {}", "no-pull-request-target"},
@@ -672,7 +822,25 @@ func TestWebsiteWorkflowChecksFindEveryMutation(t *testing.T) {
 		{"the actor guard pointed at someone else", promote, promoteData, "    if: github.actor == 'dimipaun'", "    if: github.actor == 'someone-else'", "promote-actor"},
 		{"the in-job actor check dropped", promote, promoteData, `[[ $GITHUB_ACTOR == "dimipaun" ]]`, `[[ -n $GITHUB_ACTOR ]]`, "promote-actor"},
 		{"the promotion replaced by a build and deploy", promote, promoteData, "          firebase hosting:clone", "          npm run check && firebase hosting:channel:deploy", "promote-clone"},
-	} {
+	}
+	// The file that runs, while the gate is staged over it: it is the preview
+	// workflow as it reads until the owner copies the change in, so the rules
+	// are asked of that text too -- and of it without the gate, which it has not
+	// been copied in with. The two mutations below are the ones an edit to that
+	// file looks like.
+	if _, err := os.Stat(websitePreviewReal); err == nil {
+		realPreviewData, err := os.ReadFile(websitePreviewReal)
+		if err != nil {
+			t.Fatal(err)
+		}
+		realPreview := preview
+		realPreview.siteOrTargetGate = false
+		mutations = append(mutations,
+			mutation{"a credential written into the file that runs while the gate is staged", realPreview, string(realPreviewData), "          service_account: ${{ vars.GCP_DEPLOYER_SERVICE_ACCOUNT }}", "          credentials_json: ${{ secrets.GCP_SA_KEY }}", "no-credential"},
+			mutation{"a pull_request_target written into the file that runs while the gate is staged", realPreview, string(realPreviewData), "name: website-preview", "name: website-preview\npull_request_target: {}", "no-pull-request-target"},
+		)
+	}
+	for _, tc := range mutations {
 		t.Run(tc.what, func(t *testing.T) {
 			if !strings.Contains(tc.data, tc.old) {
 				t.Fatalf("the mutation does not apply: the file no longer contains %q, so this case tests nothing", tc.old)
