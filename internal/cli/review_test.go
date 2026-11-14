@@ -27,6 +27,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -658,6 +659,78 @@ func TestReviewRefusesAnImplicitJobForAnotherAccount(t *testing.T) {
 			t.Errorf("the refusal does not say %q: %v", want, err)
 		}
 	}
+}
+
+// TestReviewRefusesAnImplicitJobWhenNoPolicyIsPublished is the fourth of the
+// resolution's facts, and the run's own: a run places itself in the job it is in
+// by the policy the project published (internal/runner's matchJobName), and a
+// project job is one that policy defines — so with no policy the implicit job's
+// name is a job the run cannot place at all, and the container halts at
+// admission (cannotPlaceJob's absent case) after the claim, the budget token and
+// the execution were paid for. The launch is refused here instead, in the words
+// of the run's own refusal and with the fix it names, so the review has a way to
+// run today.
+//
+// The installation is the admitted one in every other respect — the credentials
+// service is published, the App ID is recorded, and the review is on the account
+// the implicit job serves — so the absent policy is the only thing this refusal
+// is about. The node is taken away after the fixture published it: the state an
+// owner reaches by deleting the policy, with the rules marker it was published
+// under still in place.
+//
+// Mutation (run, restore): drop the read and resolve as before, and this launch
+// starts a job whose container stops on it.
+func TestReviewRefusesAnImplicitJobWhenNoPolicyIsPublished(t *testing.T) {
+	f := newImplicitReviewFixture(t)
+	f.db.Set(projectpolicy.PathShared(), nil)
+	projectJobCheckoutYAML(t, bakedOAuthRepoYAML(t))
+
+	wantReviewRefused(t, f.cloudFixture, []string{"--pr", "7"},
+		"has published no policy",
+		"fugaro project policy publish",
+		reviewOnlyRecipe)
+}
+
+// TestReviewRefusesAnImplicitJobTheProfileDoesNotAdmit is the fifth of the
+// resolution's facts. The name the deployment holds is the one the policy's own
+// standard profile derives — a github profile named DefaultProfileName, which is
+// what every project that adopts profiles has — so it is one entry of the
+// policy's candidate set under the profile's triple rather than the
+// installation's implicit entry: internal/runner's projectJobCandidates adds the
+// implicit candidate only for a name no profile derives, and the run in that job
+// is admitted by the profile's list rather than by the project's allow_repos
+// (admissionCheck's two arms, which runner.ProjectJobIsImplicitReviewJob tells
+// apart by name). A repository the project enrolled but the profile's own
+// narrower list leaves out would otherwise reach Cloud Run, take the claim and
+// mint the token, and stop only in the runner, so the profile's half of the
+// admission is asked at the launch too — the launcher's twin of the run's own
+// check (profileAdmissionRefusal).
+//
+// The two lists are the state this is about: the project admits github/acme/*,
+// and the profile's own list names one repository, which a profile's list can do
+// and can only narrow (projectpolicy.AdmissionRefusal words it).
+//
+// Mutation (run, restore): drop the profile half, and this launch starts the job
+// the run refuses the repository in.
+func TestReviewRefusesAnImplicitJobTheProfileDoesNotAdmit(t *testing.T) {
+	// The fixture's own policy with one field moved: the standard profile's list
+	// names acme/other rather than acme/app, and both accounts cover it, so the
+	// document is one publish could write (a profile's list is exact and every
+	// account has to cover it) and the project's own list still admits acme/app.
+	const narrowed = `{"version":5,"allow_repos":["github/acme/*"],` +
+		`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h",` +
+		`"claude_accounts":["acme-personal","default"],"allow_repos":["github/acme/other"]}},` +
+		`"accounts":{"acme-personal":{"allow_repos":["github/acme/app","github/acme/other"]},` +
+		`"default":{"allow_repos":["github/acme/app","github/acme/other"]}}}`
+
+	f := newImplicitReviewFixture(t)
+	publishPolicy(t, f.launchBudgetFixture, narrowed)
+	projectJobCheckoutYAML(t, bakedOAuthRepoYAML(t))
+
+	wantReviewRefused(t, f.cloudFixture, []string{"--pr", "7"},
+		`the job profile "standard" does not admit github/acme/app`,
+		"its allow_repos is github/acme/other",
+		"The launch stops before any execution exists")
 }
 
 // TestReviewRefusesAnImplicitJobForBitbucket is the provider the implicit job

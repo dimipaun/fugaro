@@ -265,7 +265,7 @@ func checkReviewJobAdmitted() error {
 // thing this command exists not to do.
 func (e *cloudEnv) reviewJobFor(ctx context.Context, coding *launchProjectJob, spec *task.Spec, slug string) (*launchProjectJob, error) {
 	if coding == nil {
-		return e.implicitReviewJobFor(spec, slug)
+		return e.implicitReviewJobFor(ctx, spec, slug)
 	}
 	p, found, err := e.policy.read(ctx, e.lc)
 	if err != nil {
@@ -292,7 +292,7 @@ func (e *cloudEnv) reviewJobFor(ctx context.Context, coding *launchProjectJob, s
 // internal/infra deploys the job (implicitReviewVariant), and this resolves a
 // review onto it.
 //
-// Three things decide it, and the first two are the deployment's own facts
+// Five things decide it, and the first two are the deployment's own facts
 // rather than a second copy of them (implicitReviewJob):
 //
 //   - The provider. The implicit job is on the github provider, which is the
@@ -319,7 +319,26 @@ func (e *cloudEnv) reviewJobFor(ctx context.Context, coding *launchProjectJob, s
 //     GitHub App ID its provider needs to start. An installation that has
 //     neither deploys no such job, and this refuses as it did before the job
 //     existed.
-func (e *cloudEnv) implicitReviewJobFor(spec *task.Spec, slug string) (*launchProjectJob, error) {
+//   - Whether the project has published a policy. The run places itself in the
+//     job it is in by the policy the project published (internal/runner's
+//     matchJobName), and a project job is one that policy defines: with no
+//     policy, this name is a job the run cannot place at all and it halts at
+//     admission inside the container the launch had already paid for
+//     (cannotPlaceJob). A launch of this shape is refused here instead, with
+//     the same fix the run's own refusal names.
+//   - And, where that policy derives this job's name from a profile of its
+//     own, whether the profile admits the repository. The name is then one
+//     entry of the policy's candidate set under the profile's triple rather
+//     than the implicit entry (internal/runner's projectJobCandidates, which
+//     adds the implicit candidate only for a name the policy does not derive
+//     itself; ProjectJobIsImplicitReviewJob is that question asked by name),
+//     and the run in it is admitted by that profile's list rather than by the
+//     project's allow_repos (the implicit arm's comment in internal/runner's
+//     admissionCheck). Without this half a repository the profile does not
+//     admit reaches Cloud Run, takes the claim and mints the token, and stops
+//     only in the runner — which is what the sibling arm refuses for the job
+//     it derives (launchProjectJobFor → profileAdmissionRefusal).
+func (e *cloudEnv) implicitReviewJobFor(ctx context.Context, spec *task.Spec, slug string) (*launchProjectJob, error) {
 	if provider, ok := runner.ProviderForSlug(slug, spec.Repo); ok && !infra.SharedJobProvider(provider) {
 		return nil, userErr("a review runs on the review-only variant of a shared project job, and no shared job serves %s: a Bitbucket credential cannot be scoped to one project's repositories, so every Bitbucket repository keeps its own job and no variant is deployed beside it — and the installation's implicit default review-only job, the one a review of a repository with no shared job of its own runs on, is on the github provider alone. Read the review in the run's own job instead, with fugaro run --pr N --recipe "+reviewOnlyRecipe,
 			pluginwire.Printable(provider))
@@ -332,6 +351,23 @@ func (e *cloudEnv) implicitReviewJobFor(spec *task.Spec, slug string) (*launchPr
 	if account != job.Account {
 		return nil, userErr("a review runs on the review-only variant of a shared project job, and this repository resolved none: it would be reviewed on the installation's implicit default review-only job, which serves the %s account alone, and this review is on %s. A review's job is the job the credentials service pairs it by — the review container mounts no credential of its own, and the service serves the account of the caller whose own job row names that account — so the run would be refused its credential inside a job it had already paid for. Review the pull request on the %s account (drop --token), or give the repository a checkout: clone workflow selecting a profile that serves %s, whose own review-only variant is deployed beside that profile's job; or read the review in the run's own job, with fugaro run --pr N --recipe "+reviewOnlyRecipe,
 			config.DefaultClaudeAccount, pluginwire.Printable(account), config.DefaultClaudeAccount, pluginwire.Printable(account))
+	}
+	// The run's own placement, asked here so that a review the run would halt
+	// on is refused before the claim, the token and the execution rather than
+	// after them. It is the launcher's read of the same document every other
+	// gate reads (launchPolicyGates, which ran before this), so it costs no
+	// call the launch was not already making.
+	p, found, err := e.policy.read(ctx, e.lc)
+	if err != nil {
+		return nil, policyReadErr(err)
+	}
+	if !found || p == nil {
+		return nil, userErr("a review runs on the installation's implicit default review-only job, and this project has published no policy: the run places itself in the job it is in by the policy the project published, and a project job is one that policy defines — with none, this job is one the run cannot place at all, so it would halt at admission inside the container this launch had already paid for. Publish the project's policy with fugaro project policy publish (fugaro doctor first, for the rules a policy is read under and the version this Fugaro writes), and this review has the policy that places it; until then, read the review in the run's own job, with fugaro run --pr N --recipe " + reviewOnlyRecipe)
+	}
+	if profile, provider, _, ok := runner.ProjectJobOfPolicy(p, job.Job); ok && !runner.ProjectJobIsImplicitReviewJob(p, job.Job) {
+		if err := profileAdmissionRefusal(p, profile, provider, spec.Repo); err != nil {
+			return nil, err
+		}
 	}
 	return &launchProjectJob{
 		Name:    job.Job,

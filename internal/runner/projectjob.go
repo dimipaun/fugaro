@@ -507,6 +507,38 @@ func ProjectJobOfPolicy(p *projectpolicy.Policy, job string) (profile, provider,
 	return "", "", "", false
 }
 
+// ProjectJobIsImplicitReviewJob is whether job is the installation's implicit
+// default review-only job as *this* policy defines it, rather than a job of one
+// of its profiles — the flag matchJobName places the run by (jobTriple.Implicit,
+// which the admission and the clock read), asked by name so a reader outside
+// this package can place the same name the same way without computing the
+// candidate set itself.
+//
+// The distinction is not readable off the name: a policy whose default github
+// profile already derives that name holds ONE entry for it, under the profile's
+// own triple, and the run in it is admitted by that profile rather than by the
+// project's allow_repos (projectJobCandidates adds the implicit candidate only
+// for a name the policy does not derive itself). A launcher that read such a
+// name back as the implicit job would check the project's list where the run
+// checks the profile's — or the reverse — and the launch and the run would
+// disagree about the repositories the job serves, and about which side refuses
+// a repository neither admits.
+//
+// false answers for a name no candidate computes as well as for a profile's job:
+// both are names the implicit entry does not carry, and a caller that needs the
+// difference asks ProjectJobOfPolicy for it.
+func ProjectJobIsImplicitReviewJob(p *projectpolicy.Policy, job string) bool {
+	if p == nil || job == "" {
+		return false
+	}
+	for _, c := range projectJobCandidates(p) {
+		if gcp.ProjectJobName(c.Profile, c.Provider, c.Account) == job {
+			return c.Implicit
+		}
+	}
+	return false
+}
+
 // legacyVariant is gcp.WorkflowVariant(workflow, token) for the workflow the
 // run's own task.json names, with the two refusals that keep the variant's
 // preconditions honest: WorkflowVariant panics on a workflow or a token outside
