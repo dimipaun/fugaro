@@ -78,7 +78,13 @@ import (
 // owns; Check 302's are a fake `fugaro`, a real `uname` and a real terminal
 // (a pty its helper types the phase's one confirmation into), and it rewrites
 // a copy of its own script to prove the case that expects a quiet daemon log
-// to be a finding is not vacuous.
+// to be a finding is not vacuous. Check 200's are a fake `gcloud` that serves
+// the run's own record and the image's build record, a fake `fugaro` that
+// answers `version`, `doctor`, the settings write, `run` and `runs ls`, and a
+// fake `go` whose build writes a binary that answers a paid name with the core
+// stub -- beside a REAL local git repository and its bare origin, so the
+// throwaway branch, the commit, the push and the Restore's own deletion are
+// readings of a repository the test owns rather than of a fake's log.
 var liveCheckScripts = []struct {
 	name string
 	test string
@@ -114,6 +120,7 @@ var liveCheckScripts = []struct {
 	{"check511.sh", "check511_test.sh"},
 	{"check520.sh", "check520_test.sh"},
 	{"check521.sh", "check521_test.sh"},
+	{"check200.sh", "check200_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent
